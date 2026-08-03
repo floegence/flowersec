@@ -217,15 +217,32 @@ git config --global merge.conflictstyle zdiff3
   before race, coverage, browser, integration, or package-validation work begins.
 - After a complete-gate failure, rerun the smallest failing check first. A
   confirmed transient external failure permits at most one same-SHA complete
-  retry after the focused check is GREEN; a repeated failure requires an
-  infrastructure or gate fix.
+  retry only after the focused check and every remaining tail stage are GREEN;
+  a repeated failure requires an infrastructure or gate fix.
 - When a parallel final lane fails, record and report the first failure, stop
   scheduling new work, and perform only bounded cleanup or drainage of work
   already running.
+- After an exact-main pre-push failure at stage S, rerun the smallest failing
+  case first, then the affected boundary. On the repaired frozen candidate,
+  continue with the explicit stages after S that were not reached or were
+  cancelled. Do not immediately restart the complete pre-push gate.
+- A pre-push recovery cycle may contain multiple diagnostic tail
+  continuations. When a later tail stage fails, fix its smallest failing case,
+  pass the affected boundary, and continue with the stages after that failure.
+  Do not restart the complete pre-push gate until every remaining tail stage
+  has been reached and is GREEN.
+- After all tail stages are GREEN, run `./scripts/push-main.sh` once from the
+  beginning. If that complete run finds another failure, begin a new recovery
+  cycle instead of immediately repeating the complete gate. Diagnostic tail
+  validation never replaces the final complete pre-push gate.
+- This continuation exception applies only to the exact-main pre-push gate.
+  Other test, formal collector, evidence, and release workflows may rerun
+  completely after the smallest failure and affected checks are GREEN when
+  their own fresh full-run contract requires it.
 - Keep external progress records as compact current-state snapshots. Store
   chronological evidence in checksummed logs rather than append-only journals.
 - Default package tests must remain fast. Real browsers, network namespaces, Docker, remote runners, child-process systems, large fixtures, stress, performance, weak-network, soak, resource-cleanup evidence, full-package race, and repository-wide integration checks belong to explicit final-integration targets, independent packages, or named selectors, not the daily default path.
-- Full-package race, complete `transportcheck`, browser, integration, stress, performance, weak-network, and resource-cleanup gates may run only after implementation is complete, the feature is synchronized, and the candidate SHA is frozen. Run them once for the exact `main` SHA through the pre-push gate.
+- Full-package race, complete `transportcheck`, browser, integration, stress, performance, weak-network, and resource-cleanup gates may run only after implementation is complete, the feature is synchronized, and the candidate SHA is frozen. In the normal no-failure flow, run them once for the exact `main` SHA through the pre-push gate. The recovery exception above permits only the required diagnostic tail continuations before one final complete pre-push run.
 - `go test -parallel N` changes concurrency only for tests that explicitly call `t.Parallel()`; it is never a substitute for test ownership and layering.
 - Independent focused test groups may run in parallel only when they do not share ports, directories, process-global environment, browser state, containers, or a remote runner. Environment-mutating or shared-runner tests must remain serial.
 - The exact-main final gate runs dependency-free source contracts first, then a
@@ -236,7 +253,7 @@ git config --global merge.conflictstyle zdiff3
   updating the Make-graph contract tests.
 - A single test case should normally finish within five minutes. Terminate it at ten minutes and retain its output and artifacts.
 - Keep the final acceptance strength unchanged. Do not gain speed by deleting coverage, reducing workloads, weakening thresholds, skipping the final gate, or relabeling evidence; move tests to the correct layer instead.
-- Do not repeat the same expensive complete gate when neither code nor an acceptance contract changed.
+- Do not repeat the same expensive complete gate when neither code nor an acceptance contract changed, except for the single confirmed-transient retry allowed above after the tail is GREEN.
 - Before starting an expensive command, classify it as focused, affected, or final pre-push. If it cannot be classified, do not default to the complete suite.
 
 ### 3.2 Portable release runners
