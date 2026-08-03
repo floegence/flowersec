@@ -287,6 +287,9 @@ test("deploy preserves bounded Rust diagnostics and classifies source build fail
   assert.match(deploy, /tail -c 16384/);
   assert.match(deploy, /deploy_rust_dependency_cache/);
   assert.ok(deploy.indexOf("locked_cargo_cache_ready") < deploy.indexOf("rustup run 1.88.0 cargo build"));
+  assert.match(deploy, /sudo -n env[\s\S]+HOME=\/root[\s\S]+CARGO_HOME=\/usr\/local\/cargo[\s\S]+rustup run 1\.88\.0 cargo build/);
+  assert.match(deploy, /sudo -n install -o "\$\(id -u\)" -g "\$\(id -g\)" -m 0500/);
+  assert.match(deploy, /trap 'sudo -n rm -rf -- "\$build_temp"' EXIT HUP INT TERM/);
   assert.match(deploy, /deploy_rust_runner_build[\s\S]+product 50/);
 });
 

@@ -325,7 +325,7 @@ run_guest_deploy() {
     [[ $(sha256sum "$prepared_transportcheck" | awk '{print $1}') == "$(jq -r '.transportcheck_sha256' "$prepared_metadata")" ]] || agent_fail prepared_transportcheck_digest "prepared transportcheck digest drifted" identity 30
   else
     build_temp=$(mktemp -d "$guest_root/.prepared-$source_sha.XXXXXX")
-    trap 'rm -rf -- "$build_temp"' EXIT HUP INT TERM
+    trap 'sudo -n rm -rf -- "$build_temp"' EXIT HUP INT TERM
     if ! (
       cd "$guest_repo/flowersec-ts"
       npm run build >&2
@@ -347,16 +347,18 @@ run_guest_deploy() {
     rust_build_log=$build_temp/rust-build.stderr
     if ! (
       cd "$guest_repo/flowersec-rust"
-      CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$build_temp/rust-target" \
-        rustup run 1.88.0 cargo build --locked --release --example transport_release_runner
+      sudo -n env HOME=/root RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo CARGO_NET_OFFLINE=true \
+        CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$build_temp/rust-target" \
+        /usr/local/cargo/bin/rustup run 1.88.0 cargo build --locked --release --example transport_release_runner
     ) 2>"$rust_build_log"; then
       rust_build_diagnostic=$(tail -c 16384 "$rust_build_log")
       agent_fail deploy_rust_runner_build \
         "prepared Rust release runner build failed: ${rust_build_diagnostic:-no stderr was produced}" product 50
     fi
+    sudo -n install -o "$(id -u)" -g "$(id -g)" -m 0500 \
+      "$build_temp/rust-target/release/examples/transport_release_runner" "$build_temp/transport-release-runner-rust"
+    sudo -n rm -rf -- "$build_temp/rust-target"
     rm -f -- "$rust_build_log"
-    mv -- "$build_temp/rust-target/release/examples/transport_release_runner" "$build_temp/transport-release-runner-rust"
-    rm -rf -- "$build_temp/rust-target"
     metadata_revision=$(go version -m "$build_temp/transportcheck" | sed -n 's/^[[:space:]]*build[[:space:]]*vcs\.revision=//p')
     metadata_modified=$(go version -m "$build_temp/transportcheck" | sed -n 's/^[[:space:]]*build[[:space:]]*vcs\.modified=//p')
     [[ $metadata_revision == "$source_sha" && $metadata_modified == false ]]
