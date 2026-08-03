@@ -27,6 +27,18 @@ type Result struct {
 	CleanupDuration time.Duration                       `json:"cleanup_duration_ns"`
 }
 
+func closeTunnelOwners(ctx context.Context, closers ...func(context.Context) error) error {
+	results := make(chan error, len(closers))
+	for _, closeOwner := range closers {
+		go func() { results <- closeOwner(ctx) }()
+	}
+	var joined error
+	for range closers {
+		joined = errors.Join(joined, <-results)
+	}
+	return joined
+}
+
 // Run executes one frozen cold/RPC/bulk workload and owns final pair and
 // endpoint cleanup. The release runner repeats this call for each independent
 // run rather than reusing transport state across runs.
@@ -104,7 +116,7 @@ func Run(ctx context.Context, endpoint *Endpoint, plan transportrelease.ProfileP
 	cleanupCtx, cancelCleanup := context.WithTimeout(ctx, cleanupLimit)
 	pairClosed = true
 	endpointClosed = true
-	resultErr = errors.Join(pair.Close(cleanupCtx), endpoint.Close(cleanupCtx))
+	resultErr = closeTunnelOwners(cleanupCtx, pair.Close, endpoint.Close)
 	deadlineErr = completedWithin(cleanupCtx, cleanupStarted, cleanupLimit)
 	cancelCleanup()
 	if resultErr != nil || deadlineErr != nil {

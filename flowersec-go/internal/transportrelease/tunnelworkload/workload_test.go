@@ -60,6 +60,22 @@ func TestPairCloseRetainsUnexpectedSessionCloseErrors(t *testing.T) {
 	}
 }
 
+func TestCloseTunnelOwnersCancelsEndpointBeforeWaitingForPairTermination(t *testing.T) {
+	terminated := make(chan struct{})
+	pair := &Pair{
+		Client: &terminalCloseSession{terminated: terminated},
+		Server: &terminalCloseSession{terminated: terminated},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := closeTunnelOwners(ctx, pair.Close, func(context.Context) error {
+		close(terminated)
+		return nil
+	}); err != nil {
+		t.Fatalf("close tunnel owners with dependent termination: %v", err)
+	}
+}
+
 func TestRunColdRequiresIndependentCleanupDeadline(t *testing.T) {
 	_, err := RunCold(context.Background(), &Endpoint{}, 1, 1, 1, time.Second, 0)
 	if err == nil || !errors.Is(err, errInvalidTunnelColdWorkload) {
