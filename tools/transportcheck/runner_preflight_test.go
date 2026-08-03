@@ -91,6 +91,16 @@ func TestRunnerPreflightRejectsNarrowFormalLaneCPUCanary(t *testing.T) {
 	}
 }
 
+func TestRunnerPreflightEffectiveCPUCountUsesWorkloadCgroupRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "cpuset.cpus.effective"), []byte("0-5\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := runnerPreflightEffectiveCPUCount(root); got != 6 {
+		t.Fatalf("effective CPU count = %d, want 6", got)
+	}
+}
+
 func TestRunnerPreflightRejectsMissingRustDependencyCacheBeforeFormalWorkload(t *testing.T) {
 	request, facts := greenRunnerPreflightFixture("formal")
 	facts.RustDepsReady = false

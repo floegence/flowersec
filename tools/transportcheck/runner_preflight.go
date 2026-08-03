@@ -312,7 +312,7 @@ func collectRunnerPreflightFacts(ctx context.Context, request runnerPreflightReq
 	facts.ChromiumVersion = runnerPreflightChromiumVersion(ctx, repository)
 	facts.NetNSCanary = runnerPreflightNetNSCanary(ctx)
 	facts.BPFCanary = runnerPreflightBPFCanary(ctx)
-	facts.EffectiveCPUs = runnerPreflightEffectiveCPUCount()
+	facts.EffectiveCPUs = runnerPreflightEffectiveCPUCount(request.CgroupRootPath)
 	facts.CgroupCanary, facts.Controllers, facts.LaneCPUs, facts.LaneCPUMax, facts.LaneMemoryLimit, facts.LaneSwapLimit, facts.LanePidsLimit = runnerPreflightCgroupCanary(ctx, request.CgroupRootPath, request.Mode)
 	facts.MemoryAvailable = readMeminfoBytes("MemAvailable")
 	facts.MemoryLimit = runnerPreflightCgroupValue("memory.max")
@@ -717,8 +717,8 @@ func runnerPreflightCgroupCanary(ctx context.Context, root, mode string) (bool, 
 	return false, strings.Fields(string(controllers)), len(laneCPUs), laneCPUMax, laneMemory, laneSwap, lanePids
 }
 
-func runnerPreflightEffectiveCPUCount() int {
-	cpus, _ := runnerPreflightCPUSet(filepath.Join(runnerPreflightCurrentCgroup(), "cpuset.cpus.effective"))
+func runnerPreflightEffectiveCPUCount(root string) int {
+	cpus, _ := runnerPreflightCPUSet(filepath.Join(root, "cpuset.cpus.effective"))
 	return len(cpus)
 }
 
