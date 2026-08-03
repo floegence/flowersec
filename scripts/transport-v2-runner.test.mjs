@@ -129,8 +129,12 @@ test("provision repairs generated build ownership and deploy reserves stdout for
   assert.match(deploy, /agent_fail deploy_ts_build/);
   assert.match(deploy, /agent_fail deploy_go_runner_build/);
   assert.match(deploy, /agent_fail deploy_transportcheck_build/);
+  assert.match(deploy, /agent_fail deploy_rust_runner_build/);
   assert.match(deploy, /agent_fail deploy_identity_generation/);
   assert.match(deploy, /npm run build >&2/);
+  assert.match(deploy, /cargo build --locked --release --example transport_release_runner/);
+  assert.match(deploy, /rust_runner_sha256/);
+  assert.match(deploy, /transport-release-runner-rust/);
   assert.match(deploy, /make -C "\$guest_repo" transport-runner-config >&2/);
 });
 

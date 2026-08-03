@@ -135,6 +135,9 @@ test("release wrapper reuses only a digest-verified exact-SHA prepared runner", 
   assert.match(runner, /flowersec-prepared-runner-v1/);
   assert.match(runner, /prepared low-level runner digest drifted/);
   assert.match(runner, /prepared transportcheck digest drifted/);
+  assert.match(runner, /prepared Rust release runner digest drifted/);
+  assert.match(runner, /rust_release_runner=\$prepared_root\/transport-release-runner-rust/);
+  assert.match(runner, /if \[\[ -z \$prepared_root \]\]; then[\s\S]*cargo build --locked --release --example transport_release_runner/);
   const preparedValidation = runner.indexOf('jq -e --arg sha "$final_sha"');
   const strictPreflight = runner.indexOf('"$transportcheck" runner-preflight');
   assert.notEqual(preparedValidation, -1);

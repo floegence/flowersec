@@ -171,7 +171,6 @@ race_low_level_runner=$build_directory/transport-release-runner-race
 base_low_level_runner=$build_directory/base-transport-release-runner
 bpf_object=$build_directory/packet_fault.o
 rust_target_directory=$build_directory/rust-target
-rust_release_runner=$rust_target_directory/release/examples/transport_release_runner
 
 prepared_root=${FLOWERSEC_RELEASE_PREPARED_ROOT:-}
 if [[ -n $prepared_root ]]; then
@@ -179,13 +178,16 @@ if [[ -n $prepared_root ]]; then
   prepared_metadata=$prepared_root/metadata.json
   low_level_runner=$prepared_root/transport-release-runner
   transportcheck=$prepared_root/transportcheck
-  [[ -f $prepared_metadata && ! -L $prepared_metadata && -x $low_level_runner && ! -L $low_level_runner && -x $transportcheck && ! -L $transportcheck ]] || fail "prepared exact-SHA runner is unavailable"
+  rust_release_runner=$prepared_root/transport-release-runner-rust
+  [[ -f $prepared_metadata && ! -L $prepared_metadata && -x $low_level_runner && ! -L $low_level_runner && -x $rust_release_runner && ! -L $rust_release_runner && -x $transportcheck && ! -L $transportcheck ]] || fail "prepared exact-SHA runner is unavailable"
   jq -e --arg sha "$final_sha" '.schema == "flowersec-prepared-runner-v1" and .source_sha == $sha' "$prepared_metadata" >/dev/null || fail "prepared runner metadata drifted"
   [[ $(sha256sum "$low_level_runner" | awk '{print $1}') == "$(jq -r '.runner_sha256' "$prepared_metadata")" ]] || fail "prepared low-level runner digest drifted"
+  [[ $(sha256sum "$rust_release_runner" | awk '{print $1}') == "$(jq -r '.rust_runner_sha256' "$prepared_metadata")" ]] || fail "prepared Rust release runner digest drifted"
   [[ $(sha256sum "$transportcheck" | awk '{print $1}') == "$(jq -r '.transportcheck_sha256' "$prepared_metadata")" ]] || fail "prepared transportcheck digest drifted"
 else
   low_level_runner=$build_directory/transport-release-runner
   transportcheck=$build_directory/transportcheck
+  rust_release_runner=$rust_target_directory/release/examples/transport_release_runner
   (
     cd "$source_root/flowersec-ts"
     npm run build
@@ -292,11 +294,13 @@ install -d -o root -g root -m 0700 "$report_directory"
 
 git clone --quiet --no-local --no-checkout "$source_root" "$base_source_root"
 git -C "$base_source_root" checkout --quiet --detach "$base_sha"
-(
-  cd "$source_root/flowersec-rust"
-  CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$rust_target_directory" \
-    rustup run 1.88.0 cargo build --locked --release --example transport_release_runner
-)
+if [[ -z $prepared_root ]]; then
+  (
+    cd "$source_root/flowersec-rust"
+    CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$rust_target_directory" \
+      rustup run 1.88.0 cargo build --locked --release --example transport_release_runner
+  )
+fi
 [[ -f $rust_release_runner && ! -L $rust_release_runner && -x $rust_release_runner ]] || fail "Rust release runner build is unavailable"
 (
   cd "$source_root/flowersec-go"

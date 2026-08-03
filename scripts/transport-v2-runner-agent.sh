@@ -148,6 +148,7 @@ prepared_root=$guest_root/prepared/$source_sha
 prepared_metadata=$prepared_root/metadata.json
 prepared_runner=$prepared_root/transport-release-runner
 prepared_transportcheck=$prepared_root/transportcheck
+prepared_rust_runner=$prepared_root/transport-release-runner-rust
 stable_agent=/usr/local/libexec/flowersec-transport-v2-runner-agent
 stable_config=/etc/flowersec/transport-v2-runner.json
 stable_request=/run/flowersec/transport-v2-runner-request.json
@@ -250,7 +251,7 @@ guest_go_architecture() {
 }
 
 run_guest_deploy() {
-  local expected identity build_temp toolchain_material toolchain_sha dist_sha runner_sha transportcheck_sha metadata_revision metadata_modified actual_go_architecture
+  local expected identity build_temp toolchain_material toolchain_sha dist_sha runner_sha rust_runner_sha transportcheck_sha metadata_revision metadata_modified actual_go_architecture
   expected=$(jq -r '.bundle_sha256' "$request")
   [[ -f $guest_bundle && ! -L $guest_bundle ]]
   [[ $(sha256sum "$guest_bundle" | awk '{print $1}') == "$expected" ]] || agent_fail guest_bundle_digest "guest deploy bundle digest drifted" identity 30
@@ -264,16 +265,19 @@ run_guest_deploy() {
   export PATH=/usr/local/go/bin:/usr/local/cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
   actual_go_architecture=$(guest_go_architecture) || agent_fail guest_architecture "guest architecture is unsupported" policy 30
   export GOOS=linux GOARCH="$actual_go_architecture" CGO_ENABLED=0 GOWORK=off GOFLAGS=-mod=readonly GOPROXY=off
+  export RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo CARGO_NET_OFFLINE=true
   install -d -m 0700 "$(dirname "$prepared_root")"
   find "$guest_root" -maxdepth 1 -type d -name ".prepared-$source_sha.*" -exec rm -rf -- {} +
   if [[ -e $prepared_root || -L $prepared_root ]]; then
     [[ -d $prepared_root && ! -L $prepared_root && -f $prepared_metadata && ! -L $prepared_metadata ]]
     jq -e --arg sha "$source_sha" '
       .schema == "flowersec-prepared-runner-v1" and .source_sha == $sha and
-      (.runner_sha256 | test("^[0-9a-f]{64}$")) and (.transportcheck_sha256 | test("^[0-9a-f]{64}$")) and
+      (.runner_sha256 | test("^[0-9a-f]{64}$")) and (.rust_runner_sha256 | test("^[0-9a-f]{64}$")) and
+      (.transportcheck_sha256 | test("^[0-9a-f]{64}$")) and
       (.toolchain_sha256 | test("^[0-9a-f]{64}$")) and (.dist_sha256 | test("^[0-9a-f]{64}$"))
     ' "$prepared_metadata" >/dev/null
     [[ $(sha256sum "$prepared_runner" | awk '{print $1}') == "$(jq -r '.runner_sha256' "$prepared_metadata")" ]] || agent_fail prepared_runner_digest "prepared runner digest drifted" identity 30
+    [[ -x $prepared_rust_runner && ! -L $prepared_rust_runner && $(sha256sum "$prepared_rust_runner" | awk '{print $1}') == "$(jq -r '.rust_runner_sha256' "$prepared_metadata")" ]] || agent_fail prepared_rust_runner_digest "prepared Rust runner digest drifted" identity 30
     [[ $(sha256sum "$prepared_transportcheck" | awk '{print $1}') == "$(jq -r '.transportcheck_sha256' "$prepared_metadata")" ]] || agent_fail prepared_transportcheck_digest "prepared transportcheck digest drifted" identity 30
   else
     build_temp=$(mktemp -d "$guest_root/.prepared-$source_sha.XXXXXX")
@@ -296,10 +300,20 @@ run_guest_deploy() {
     ); then
       agent_fail deploy_transportcheck_build "prepared transportcheck build failed" environment 20
     fi
+    if ! (
+      cd "$guest_repo/flowersec-rust"
+      CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$build_temp/rust-target" \
+        rustup run 1.88.0 cargo build --locked --release --example transport_release_runner >&2
+    ); then
+      agent_fail deploy_rust_runner_build "prepared Rust release runner build failed" environment 20
+    fi
+    mv -- "$build_temp/rust-target/release/examples/transport_release_runner" "$build_temp/transport-release-runner-rust"
+    rm -rf -- "$build_temp/rust-target"
     metadata_revision=$(go version -m "$build_temp/transportcheck" | sed -n 's/^[[:space:]]*build[[:space:]]*vcs\.revision=//p')
     metadata_modified=$(go version -m "$build_temp/transportcheck" | sed -n 's/^[[:space:]]*build[[:space:]]*vcs\.modified=//p')
     [[ $metadata_revision == "$source_sha" && $metadata_modified == false ]]
     runner_sha=$(sha256sum "$build_temp/transport-release-runner" | awk '{print $1}')
+    rust_runner_sha=$(sha256sum "$build_temp/transport-release-runner-rust" | awk '{print $1}')
     transportcheck_sha=$(sha256sum "$build_temp/transportcheck" | awk '{print $1}')
     toolchain_material=$(cd "$guest_repo" && printf '%s\n' \
       "$(go version)" \
@@ -309,12 +323,13 @@ run_guest_deploy() {
     toolchain_sha=$(printf '%s' "$toolchain_material" | sha256sum | awk '{print $1}')
     dist_sha=$(cd "$guest_repo/flowersec-ts" && find dist -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
     jq -n --arg schema flowersec-prepared-runner-v1 --arg source_sha "$source_sha" \
-      --arg runner_sha256 "$runner_sha" --arg transportcheck_sha256 "$transportcheck_sha" \
+      --arg runner_sha256 "$runner_sha" --arg rust_runner_sha256 "$rust_runner_sha" \
+      --arg transportcheck_sha256 "$transportcheck_sha" \
       --arg toolchain_sha256 "$toolchain_sha" --arg dist_sha256 "$dist_sha" \
-      '{schema:$schema,source_sha:$source_sha,runner_sha256:$runner_sha256,
+      '{schema:$schema,source_sha:$source_sha,runner_sha256:$runner_sha256,rust_runner_sha256:$rust_runner_sha256,
         transportcheck_sha256:$transportcheck_sha256,toolchain_sha256:$toolchain_sha256,dist_sha256:$dist_sha256}' \
       >"$build_temp/metadata.json"
-    chmod 0500 "$build_temp/transport-release-runner" "$build_temp/transportcheck"
+    chmod 0500 "$build_temp/transport-release-runner" "$build_temp/transport-release-runner-rust" "$build_temp/transportcheck"
     chmod 0600 "$build_temp/metadata.json"
     mv -- "$build_temp" "$prepared_root"
     build_temp=
@@ -353,12 +368,13 @@ run_guest_doctor_root() {
   local -a dependency_args=()
   [[ $(id -u) == 0 ]] || doctor_fail workload_context "doctor is not running as root"
   [[ ${FLOWERSEC_RUNNER_CONTEXT:-} == formal && ${FLOWERSEC_RUNNER_CONTEXT_SHA:-} == "$source_sha" ]] || doctor_fail workload_context "formal systemd context is not exact"
-  [[ -x $prepared_runner && ! -L $prepared_runner && -x $prepared_transportcheck && ! -L $prepared_transportcheck && -f $prepared_metadata && ! -L $prepared_metadata ]] || doctor_fail prepared_runner "exact-SHA prepared runner is unavailable" identity
+  [[ -x $prepared_runner && ! -L $prepared_runner && -x $prepared_rust_runner && ! -L $prepared_rust_runner && -x $prepared_transportcheck && ! -L $prepared_transportcheck && -f $prepared_metadata && ! -L $prepared_metadata ]] || doctor_fail prepared_runner "exact-SHA prepared runner is unavailable" identity
   jq -e --arg sha "$source_sha" '.schema == "flowersec-prepared-runner-v1" and .source_sha == $sha' "$prepared_metadata" >/dev/null || doctor_fail prepared_runner "prepared runner metadata drifted" identity
   runner_sha=$(jq -r '.runner_sha256' "$prepared_metadata")
   toolchain_sha=$(jq -r '.toolchain_sha256' "$prepared_metadata")
   dist_sha=$(jq -r '.dist_sha256' "$prepared_metadata")
   [[ $(sha256sum "$prepared_runner" | awk '{print $1}') == "$runner_sha" ]] || doctor_fail prepared_runner "prepared runner digest drifted" identity
+  [[ $(sha256sum "$prepared_rust_runner" | awk '{print $1}') == "$(jq -r '.rust_runner_sha256' "$prepared_metadata")" ]] || doctor_fail prepared_runner "prepared Rust runner digest drifted" identity
   [[ $(sha256sum "$prepared_transportcheck" | awk '{print $1}') == "$(jq -r '.transportcheck_sha256' "$prepared_metadata")" ]] || doctor_fail prepared_runner "prepared transportcheck digest drifted" identity
   metadata_revision=$(go version -m "$prepared_transportcheck" | sed -n 's/^[[:space:]]*build[[:space:]]*vcs\.revision=//p')
   metadata_modified=$(go version -m "$prepared_transportcheck" | sed -n 's/^[[:space:]]*build[[:space:]]*vcs\.modified=//p')
@@ -597,6 +613,7 @@ run_guest_cleanup() {
     [[ -d $prepared_root && ! -L $prepared_root && -f $prepared_metadata && ! -L $prepared_metadata ]]
     jq -e --arg sha "$source_sha" '.schema == "flowersec-prepared-runner-v1" and .source_sha == $sha' "$prepared_metadata" >/dev/null
     [[ $(sha256sum "$prepared_runner" | awk '{print $1}') == "$(jq -r '.runner_sha256' "$prepared_metadata")" ]] || doctor_fail prepared_runner_digest "prepared runner digest blocks cleanup" cleanup
+    [[ $(sha256sum "$prepared_rust_runner" | awk '{print $1}') == "$(jq -r '.rust_runner_sha256' "$prepared_metadata")" ]] || doctor_fail prepared_rust_runner_digest "prepared Rust runner digest blocks cleanup" cleanup
     [[ $(sha256sum "$prepared_transportcheck" | awk '{print $1}') == "$(jq -r '.transportcheck_sha256' "$prepared_metadata")" ]] || doctor_fail prepared_transportcheck_digest "prepared transportcheck digest blocks cleanup" cleanup
     rm -rf -- "$prepared_root"
   fi
