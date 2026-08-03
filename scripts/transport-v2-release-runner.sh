@@ -167,26 +167,38 @@ build_directory=$(mktemp -d /tmp/flowersec-transport-release-build.XXXXXX)
 export TMPDIR="$build_directory"
 base_source_root=$build_directory/base-source
 
-low_level_runner=$build_directory/transport-release-runner
 race_low_level_runner=$build_directory/transport-release-runner-race
 base_low_level_runner=$build_directory/base-transport-release-runner
-transportcheck=$build_directory/transportcheck
 bpf_object=$build_directory/packet_fault.o
 rust_target_directory=$build_directory/rust-target
 rust_release_runner=$rust_target_directory/release/examples/transport_release_runner
 
-(
-  cd "$source_root/flowersec-ts"
-  npm run build
-)
-(
-  cd "$source_root/flowersec-go"
-  go build -trimpath -buildvcs=false -o "$low_level_runner" ./internal/cmd/transport-release-runner
-)
-(
-  cd "$source_root/tools/transportcheck"
-  go build -trimpath -buildvcs=true -o "$transportcheck" .
-)
+prepared_root=${FLOWERSEC_RELEASE_PREPARED_ROOT:-}
+if [[ -n $prepared_root ]]; then
+  [[ $prepared_root == /* && -d $prepared_root && ! -L $prepared_root ]]
+  prepared_metadata=$prepared_root/metadata.json
+  low_level_runner=$prepared_root/transport-release-runner
+  transportcheck=$prepared_root/transportcheck
+  [[ -f $prepared_metadata && ! -L $prepared_metadata && -x $low_level_runner && ! -L $low_level_runner && -x $transportcheck && ! -L $transportcheck ]] || fail "prepared exact-SHA runner is unavailable"
+  jq -e --arg sha "$final_sha" '.schema == "flowersec-prepared-runner-v1" and .source_sha == $sha' "$prepared_metadata" >/dev/null || fail "prepared runner metadata drifted"
+  [[ $(sha256sum "$low_level_runner" | awk '{print $1}') == "$(jq -r '.runner_sha256' "$prepared_metadata")" ]] || fail "prepared low-level runner digest drifted"
+  [[ $(sha256sum "$transportcheck" | awk '{print $1}') == "$(jq -r '.transportcheck_sha256' "$prepared_metadata")" ]] || fail "prepared transportcheck digest drifted"
+else
+  low_level_runner=$build_directory/transport-release-runner
+  transportcheck=$build_directory/transportcheck
+  (
+    cd "$source_root/flowersec-ts"
+    npm run build
+  )
+  (
+    cd "$source_root/flowersec-go"
+    go build -trimpath -buildvcs=false -o "$low_level_runner" ./internal/cmd/transport-release-runner
+  )
+  (
+    cd "$source_root/tools/transportcheck"
+    go build -trimpath -buildvcs=true -o "$transportcheck" .
+  )
+fi
 
 verify_clean_vcs_stamp() {
   local executable=$1
@@ -212,6 +224,13 @@ toolchain_digest() {
 typescript_dist_digest() {
   (cd "$source_root/flowersec-ts" && find dist -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
 }
+
+expected_toolchain_sha256=$(toolchain_digest)
+expected_dist_sha256=$(typescript_dist_digest)
+if [[ -n $prepared_root ]]; then
+  expected_toolchain_sha256=$(jq -r '.toolchain_sha256' "$prepared_metadata")
+  expected_dist_sha256=$(jq -r '.dist_sha256' "$prepared_metadata")
+fi
 
 preflight_urls=${FLOWERSEC_RELEASE_PREFLIGHT_URLS:-}
 [[ -n $preflight_urls ]] || fail "FLOWERSEC_RELEASE_PREFLIGHT_URLS is required"
@@ -248,8 +267,8 @@ timeout --signal=TERM --kill-after=1s 30s "$transportcheck" runner-preflight \
   -runner-executable "$low_level_runner" \
   -runner-sha256 "$(sha256sum "$low_level_runner" | awk '{print $1}')" \
   -host-bpftool "$host_bpftool" \
-  -toolchain-sha256 "$(toolchain_digest)" \
-  -dist-sha256 "$(typescript_dist_digest)" \
+  -toolchain-sha256 "$expected_toolchain_sha256" \
+  -dist-sha256 "$expected_dist_sha256" \
   -lock-path "$formal_lock_file" \
   -lock-owner "$formal_lock_owner" \
   -cgroup-root /sys/fs/cgroup \

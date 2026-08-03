@@ -306,7 +306,7 @@ release-version-check:
 	node scripts/check-release-version-consistency.mjs
 
 release-test:
-	node --test scripts/check-release-version-consistency.test.mjs scripts/release.test.mjs
+	node --test scripts/check-release-version-consistency.test.mjs scripts/release.test.mjs scripts/transport-v2-runner.test.mjs
 
 security-makefile-check:
 	node scripts/check-security-makefile.mjs Makefile

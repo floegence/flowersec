@@ -129,6 +129,19 @@ test("release wrapper rebuilds the final browser bundle before collection", () =
   assert.ok(browserBuild < preflight && preflight < collection, "browser build, unified preflight, and collection must stay ordered");
 });
 
+test("release wrapper reuses only a digest-verified exact-SHA prepared runner", () => {
+  const runner = fs.readFileSync(runnerPath, "utf8");
+  assert.match(runner, /FLOWERSEC_RELEASE_PREPARED_ROOT/);
+  assert.match(runner, /flowersec-prepared-runner-v1/);
+  assert.match(runner, /prepared low-level runner digest drifted/);
+  assert.match(runner, /prepared transportcheck digest drifted/);
+  const preparedValidation = runner.indexOf('jq -e --arg sha "$final_sha"');
+  const strictPreflight = runner.indexOf('"$transportcheck" runner-preflight');
+  assert.notEqual(preparedValidation, -1);
+  assert.notEqual(strictPreflight, -1);
+  assert.ok(preparedValidation < strictPreflight, "prepared runner identity must fail before unified preflight");
+});
+
 test("release wrapper starts no formal workload before strict unified preflight GREEN", () => {
   const runner = fs.readFileSync(runnerPath, "utf8");
   const preflight = runner.indexOf('"$transportcheck" runner-preflight');

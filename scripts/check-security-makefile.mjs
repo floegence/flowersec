@@ -386,7 +386,7 @@ export function verifySecurityMakefile(makefile) {
       "\t$(MAKE) release-test",
     ]],
     ["release-version-check", ["\tnode scripts/check-release-version-consistency.mjs"]],
-    ["release-test", ["\tnode --test scripts/check-release-version-consistency.test.mjs scripts/release.test.mjs"]],
+    ["release-test", ["\tnode --test scripts/check-release-version-consistency.test.mjs scripts/release.test.mjs scripts/transport-v2-runner.test.mjs"]],
     ["release-check", [
       "\tnode scripts/main-gate-receipt.mjs verify --head \"$$(git rev-parse HEAD)\" --remote-main \"$$(git rev-parse origin/main)\" --evidence-report \"$(TRANSPORT_V2_EVIDENCE_REPORT)\" --evidence-base \"$(TRANSPORT_V2_BASE_SHA)\"",
     ]],

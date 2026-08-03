@@ -17,6 +17,27 @@ Changing from one supported runner host or architecture to another changes only 
 
 The offline signing host requires the complete unsigned artifact directory, the clean exact-final-SHA repository, the production Ed25519 PKCS#8 private key, and the public key pinned by `testdata/transport_v2/evidence_trust_store.json`. The private key must never enter the Linux runner, its privileged container, Git, or chat.
 
+### Three-tier remote runner
+
+Use `scripts/transport-v2-runner.sh` for a runner reached through an SSH host, an LXC container, and a KVM guest. The entrypoint accepts `doctor`, `provision`, `deploy`, `run-formal`, `collect`, and `cleanup`. It transfers checked-in agents at every hop, verifies deploy bundles by SHA-256, closes stdin for every SSH and LXC process, and records each successful transition atomically. Repeating a completed exact-SHA action reads its receipt instead of repeating the remote work.
+
+Runner-specific topology belongs in a repository-external or Git-ignored mode-`0600` JSON file with schema `flowersec-remote-runner-config-v1`. It supplies the SSH and SCP executables and target, remote agent/config/request paths, LXC name and root, guest SSH target/port/identity/known-hosts paths, guest repository and evidence roots, the private state path, proxy URL, and HTTPS dependency metadata URLs. Hostnames, container identities, keys, and proxy addresses must not be committed.
+
+For an exact frozen candidate, run the actions in this order:
+
+```sh
+./scripts/transport-v2-runner.sh provision --config "$RUNNER_CONFIG" --sha "$FINAL_SHA"
+./scripts/transport-v2-runner.sh deploy --config "$RUNNER_CONFIG" --sha "$FINAL_SHA"
+./scripts/transport-v2-runner.sh doctor --config "$RUNNER_CONFIG" --sha "$FINAL_SHA" --base-sha "$BASE_SHA"
+./scripts/transport-v2-runner.sh run-formal --config "$RUNNER_CONFIG" --sha "$FINAL_SHA" --base-sha "$BASE_SHA"
+./scripts/transport-v2-runner.sh collect --config "$RUNNER_CONFIG" --sha "$FINAL_SHA" --base-sha "$BASE_SHA" --output "$FRESH_CLOSURE_ARCHIVE"
+./scripts/transport-v2-runner.sh cleanup --config "$RUNNER_CONFIG" --sha "$FINAL_SHA"
+```
+
+`doctor` runs as root in a bounded transient systemd unit and verifies the exact checkout and manifest, private identity, safe-directory policy, pinned toolchains, locked Cargo cache, Chromium, proxy-backed dependency metadata, resources, capability canaries, fresh artifact/lock paths, and zero residual workload state. `run-formal` starts the checked-in `flowersec-formal@.service` template only after that exact-SHA doctor receipt is GREEN.
+
+`collect` writes one SHA-256-verified archive to the fresh local output path for either GREEN closure transfer or RED diagnostics. After `cleanup` confirms the same archive receipt before deleting remote task artifacts, extract a GREEN archive into a fresh repository-external directory and use that byte-identical directory for offline signing.
+
 The runner owns real measurements. It must execute every owner in `case_registry.json`, every 15-run cell in `performance_manifest.json`, real-browser WebTransport, qlog/pcap semantics, common-kernel weak-network cases, migration/rebinding, PMTUD, capacity, soak, resource cleanup, and race. For `clean-01`, the base variant must run the base executable from the base checkout and the candidate variant must run the final executable from the final checkout; both manifests must be byte-identical. The raw index binds each variant's source SHA, executable digest, command digest, and report digest. It must not synthesize artifacts, run both variants from the final executable, or convert local smoke output into signed evidence.
 
 Forced browser WebTransport keeps each cold operation in the open-loop inflight
