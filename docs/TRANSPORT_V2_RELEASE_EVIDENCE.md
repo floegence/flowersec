@@ -21,7 +21,7 @@ The offline signing host requires the complete unsigned artifact directory, the 
 
 Use `scripts/transport-v2-runner.sh` for a runner reached through an SSH host, an LXC container, and a KVM guest. The entrypoint accepts `doctor`, `provision`, `deploy`, `run-formal`, `collect`, and `cleanup`. It transfers checked-in agents at every hop, verifies deploy bundles by SHA-256, closes stdin for every SSH and LXC process, and records each successful transition atomically. Repeating a completed exact-SHA action reads its receipt instead of repeating the remote work.
 
-Runner-specific topology belongs in a repository-external or Git-ignored mode-`0600` JSON file with schema `flowersec-remote-runner-config-v1`. It supplies the SSH, SCP, and remote absolute LXC executables, the SSH target, remote agent/config/request paths, LXC name and root, guest SSH target/port/identity/known-hosts paths, guest repository and evidence roots, the private state path, proxy URL, and HTTPS dependency metadata URLs. Hostnames, container identities, keys, and proxy addresses must not be committed.
+Runner-specific topology belongs in a repository-external or Git-ignored mode-`0600` JSON file with schema `flowersec-remote-runner-config-v1`. It supplies the SSH, SCP, and remote absolute LXC executables, the SSH target, remote agent/config/request paths, LXC name and root, guest SSH target/port/identity/known-hosts paths, guest architecture and eight-CPU KVM executable/argv/legacy-pid identity, guest repository and evidence roots, the private state path, proxy URL, and HTTPS dependency metadata URLs. Hostnames, container identities, VM argv, keys, and proxy addresses must not be committed.
 
 For an exact frozen candidate, run the actions in this order:
 
@@ -34,7 +34,7 @@ For an exact frozen candidate, run the actions in this order:
 ./scripts/transport-v2-runner.sh cleanup --config "$RUNNER_CONFIG" --sha "$FINAL_SHA"
 ```
 
-`doctor` runs as root in a bounded transient systemd unit and verifies the exact checkout and manifest, private identity, safe-directory policy, pinned toolchains, locked Cargo cache, Chromium, proxy-backed dependency metadata, resources, capability canaries, fresh artifact/lock paths, and zero residual workload state. `run-formal` starts the checked-in `flowersec-formal@.service` template only after that exact-SHA doctor receipt is GREEN.
+`provision` installs the checked KVM helper and service, converges the private executable/argv topology idempotently, and preserves the stable dependency proxy and caches across exact-SHA cleanup. `doctor` verifies that KVM identity before running as root in a bounded transient systemd unit and checking the exact checkout and manifest, private identity, safe-directory policy, pinned toolchains, locked Cargo cache, Chromium, proxy-backed dependency metadata, resources, capability canaries, fresh artifact/lock paths, and zero residual workload state. `run-formal` starts the checked-in `flowersec-formal@.service` template only after that exact-SHA doctor receipt is GREEN.
 
 `collect` writes one SHA-256-verified archive to the fresh local output path for either GREEN closure transfer or RED diagnostics. After `cleanup` confirms the same archive receipt before deleting remote task artifacts, extract a GREEN archive into a fresh repository-external directory and use that byte-identical directory for offline signing.
 

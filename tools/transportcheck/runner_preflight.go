@@ -386,7 +386,7 @@ func evaluateRunnerPreflight(request runnerPreflightRequest, facts runnerPreflig
 	add("cgroup_controllers", containsAll(facts.Controllers, []string{"cpuset", "cpu", "memory", "pids"}), "environment", "required cgroup controllers are delegated", strings.Join(facts.Controllers, ","), "cpuset,cpu,memory,pids")
 	requiredCPUs, laneCPUs := 1, 1
 	if request.Mode == "formal" {
-		requiredCPUs, laneCPUs = 6, collectionLaneCPUs
+		requiredCPUs, laneCPUs = 8, collectionLaneCPUs
 	}
 	laneCPUMax := fmt.Sprintf("%d00000 100000", laneCPUs)
 	add("cpu", facts.EffectiveCPUs >= requiredCPUs && facts.LaneCPUs == laneCPUs && facts.LaneCPUMax == laneCPUMax, "environment", "effective CPUs and the workload lane CPU window match the execution contract", fmt.Sprintf("effective=%d lane=%d cpu.max=%s", facts.EffectiveCPUs, facts.LaneCPUs, facts.LaneCPUMax), fmt.Sprintf("effective>=%d lane=%d cpu.max=%s", requiredCPUs, laneCPUs, laneCPUMax))

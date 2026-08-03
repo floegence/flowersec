@@ -29,7 +29,7 @@ fi
 jq -e --arg action "$action" '
   .schema == "flowersec-remote-runner-request-v1" and
   (keys | sort) == (["action","agent_sha256","archive_sha256","base_sha","bundle_sha256","config_sha256",
-    "host_bundle_path","host_helper_sha256","output_path","proxy_sha256","schema","source_sha","template_sha256"] | sort) and
+    "host_bundle_path","host_helper_sha256","kvm_helper_sha256","kvm_template_sha256","output_path","proxy_sha256","schema","source_sha","template_sha256"] | sort) and
   (.action == $action or ($action == "doctor-root" and .action == "doctor") or ($action == "run-formal-root" and .action == "run-formal")) and
   (.source_sha | test("^[0-9a-f]{40}$")) and
   (.base_sha == "" or (.base_sha | test("^[0-9a-f]{40}$"))) and
@@ -37,17 +37,23 @@ jq -e --arg action "$action" '
   (.host_helper_sha256 | test("^[0-9a-f]{64}$")) and
   (.proxy_sha256 | test("^[0-9a-f]{64}$")) and
   (.template_sha256 | test("^[0-9a-f]{64}$")) and
+  (.kvm_helper_sha256 | test("^[0-9a-f]{64}$")) and
+  (.kvm_template_sha256 | test("^[0-9a-f]{64}$")) and
   (.archive_sha256 == "" or (.archive_sha256 | test("^[0-9a-f]{64}$")))
 ' "$request" >/dev/null || usage
 jq -e --arg action "$action" '
   .schema == "flowersec-remote-runner-config-v1" and
   ((keys | sort) == (["artifact_root","dependency_urls","guest_identity_file","guest_known_hosts_file","guest_port",
-      "guest_repo","guest_root","guest_target","host_agent_path","host_config_path","host_request_path","lxc_executable","lxc_name",
+      "guest_architecture","guest_effective_cpus","guest_launcher_argv","guest_launcher_executable","guest_legacy_pid_file",
+      "guest_repo","guest_root","guest_target","guest_vm_name","host_agent_path","host_config_path","host_request_path","lxc_executable","lxc_name",
       "lxc_root","proxy_url","runner_id","schema","scp_executable","ssh_executable","ssh_target","state_path"] | sort) or
     (($action == "collect" or $action == "cleanup") and
-      (keys | sort) == (["artifact_root","dependency_urls","guest_identity_file","guest_known_hosts_file","guest_port",
-        "guest_repo","guest_root","guest_target","host_agent_path","host_config_path","host_request_path","lxc_name",
-        "lxc_root","proxy_url","runner_id","schema","scp_executable","ssh_executable","ssh_target","state_path"] | sort)))
+      ((keys | sort) == (["artifact_root","dependency_urls","guest_identity_file","guest_known_hosts_file","guest_port",
+          "guest_repo","guest_root","guest_target","host_agent_path","host_config_path","host_request_path","lxc_executable","lxc_name",
+          "lxc_root","proxy_url","runner_id","schema","scp_executable","ssh_executable","ssh_target","state_path"] | sort) or
+       (keys | sort) == (["artifact_root","dependency_urls","guest_identity_file","guest_known_hosts_file","guest_port",
+          "guest_repo","guest_root","guest_target","host_agent_path","host_config_path","host_request_path","lxc_name",
+          "lxc_root","proxy_url","runner_id","schema","scp_executable","ssh_executable","ssh_target","state_path"] | sort))))
 ' "$config" >/dev/null || usage
 source_sha=$(jq -r '.source_sha' "$request")
 base_sha=$(jq -r '.base_sha' "$request")
@@ -138,6 +144,8 @@ lxd_agent=$lxc_root/transport-v2-runner-agent.sh
 lxd_config=$lxc_root/runner-config.json
 lxd_request=$lxc_root/request.json
 lxd_bundle=$lxc_root/$source_sha.bundle
+lxd_kvm_helper=$lxc_root/transport-v2-runner-kvm.py
+lxd_kvm_template=$lxc_root/flowersec-kvm-guest@.service
 guest_bundle=$guest_root/$source_sha.bundle
 short_sha=${source_sha:0:12}
 unit=flowersec-formal@$short_sha-$runner_id.service
@@ -168,10 +176,43 @@ guest_scp_args=(-q -i "$guest_identity_file" -o BatchMode=yes -o StrictHostKeyCh
   -o UserKnownHostsFile="$guest_known_hosts_file" -o ConnectTimeout=10 -o ConnectionAttempts=1 -P "$guest_port")
 
 run_lxd() {
-  local nested_result nested_status archive_path archive_sha lxd_archive lxd_archive_temp lxd_template guest_template candidate expected_archive
+  local nested_result nested_status archive_path archive_sha lxd_archive lxd_archive_temp lxd_template guest_template candidate expected_archive kvm_result kvm_status guest_ready
   chmod 0700 "$lxd_agent"
   chmod 0600 "$lxd_config" "$lxd_request"
-  "$ssh_executable" -n "${guest_ssh_args[@]}" install -d -m 0700 "$guest_root"
+  if [[ $action == provision || $action == doctor ]]; then
+    [[ -x $lxd_kvm_helper && ! -L $lxd_kvm_helper && $(sha256sum "$lxd_kvm_helper" | awk '{print $1}') == "$(jq -r '.kvm_helper_sha256' "$request")" ]] || agent_fail lxd_kvm_helper_digest "LXD KVM helper digest drifted" identity 30
+    set +e
+    if [[ $action == provision ]]; then
+      [[ -f $lxd_kvm_template && ! -L $lxd_kvm_template && $(sha256sum "$lxd_kvm_template" | awk '{print $1}') == "$(jq -r '.kvm_template_sha256' "$request")" ]] || agent_fail lxd_kvm_template_digest "LXD KVM template digest drifted" identity 30
+      kvm_result=$("$lxd_kvm_helper" provision "$lxd_config" "$lxd_kvm_template")
+    else
+      kvm_result=$("$lxd_kvm_helper" doctor "$lxd_config")
+    fi
+    kvm_status=$?
+    set -e
+    jq -e --arg status "$(if [[ $kvm_status == 0 ]]; then printf GREEN; else printf RED; fi)" --arg runner "$runner_id" \
+      --arg architecture "$(jq -r '.guest_architecture' "$lxd_config")" --argjson cpus "$(jq -r '.guest_effective_cpus' "$lxd_config")" '
+      (keys | sort) == (["architecture","check_id","effective_cpus","message","runner_id","schema","status"] | sort) and
+      .schema == "flowersec-kvm-guest-result-v1" and .status == $status and .runner_id == $runner and
+      .architecture == $architecture and .effective_cpus == $cpus and (.check_id | type == "string") and (.message | type == "string")
+    ' <<<"$kvm_result" >/dev/null || agent_fail kvm_result_schema "KVM helper returned invalid closed-schema JSON" identity 30
+    if [[ $kvm_status != 0 ]]; then
+      agent_fail "$(jq -r '.check_id' <<<"$kvm_result")" "$(jq -r '.message' <<<"$kvm_result")" environment 20
+    fi
+  fi
+  if [[ $action == provision ]]; then
+    guest_ready=false
+    for _ in {1..30}; do
+      if "$ssh_executable" -n "${guest_ssh_args[@]}" -o ConnectTimeout=2 install -d -m 0700 "$guest_root" >/dev/null 2>&1; then
+        guest_ready=true
+        break
+      fi
+      sleep 2
+    done
+    [[ $guest_ready == true ]] || agent_fail guest_reachability "provisioned KVM guest did not become reachable" unreachable 20
+  else
+    "$ssh_executable" -n "${guest_ssh_args[@]}" install -d -m 0700 "$guest_root"
+  fi
   "$scp_executable" "${guest_scp_args[@]}" -- "$lxd_agent" "$guest_target:$guest_agent"
   "$scp_executable" "${guest_scp_args[@]}" -- "$lxd_config" "$guest_target:$guest_config"
   "$scp_executable" "${guest_scp_args[@]}" -- "$lxd_request" "$guest_target:$guest_request"
@@ -231,7 +272,7 @@ run_lxd() {
   write_status_atomically "$lxd_request.status" "$nested_result"
   printf '%s\n' "$nested_result"
   if [[ $action == cleanup && $nested_status == 0 ]]; then
-    rm -f -- "$lxd_agent" "$lxd_config" "$lxd_request" "$lxd_request.status" "$lxc_root/flowersec-formal@.service"
+    rm -f -- "$lxd_agent" "$lxd_config" "$lxd_request" "$lxd_request.status" "$lxc_root/flowersec-formal@.service" "$lxd_kvm_helper" "$lxd_kvm_template"
   fi
   if [[ $nested_status != 0 ]]; then exit "$nested_status"; fi
 }

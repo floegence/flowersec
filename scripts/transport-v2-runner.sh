@@ -54,15 +54,25 @@ sha256_file() {
 jq -e --arg action "$action" '
   .schema == "flowersec-remote-runner-config-v1" and
   ((keys | sort) == (["artifact_root","dependency_urls","guest_identity_file","guest_known_hosts_file","guest_port",
-      "guest_repo","guest_root","guest_target","host_agent_path","host_config_path","host_request_path","lxc_executable","lxc_name",
+      "guest_architecture","guest_effective_cpus","guest_launcher_argv","guest_launcher_executable","guest_legacy_pid_file",
+      "guest_repo","guest_root","guest_target","guest_vm_name","host_agent_path","host_config_path","host_request_path","lxc_executable","lxc_name",
       "lxc_root","proxy_url","runner_id","schema","scp_executable","ssh_executable","ssh_target","state_path"] | sort) or
     (($action == "collect" or $action == "cleanup") and
-      (keys | sort) == (["artifact_root","dependency_urls","guest_identity_file","guest_known_hosts_file","guest_port",
-        "guest_repo","guest_root","guest_target","host_agent_path","host_config_path","host_request_path","lxc_name",
-        "lxc_root","proxy_url","runner_id","schema","scp_executable","ssh_executable","ssh_target","state_path"] | sort))) and
+      ((keys | sort) == (["artifact_root","dependency_urls","guest_identity_file","guest_known_hosts_file","guest_port",
+          "guest_repo","guest_root","guest_target","host_agent_path","host_config_path","host_request_path","lxc_executable","lxc_name",
+          "lxc_root","proxy_url","runner_id","schema","scp_executable","ssh_executable","ssh_target","state_path"] | sort) or
+       (keys | sort) == (["artifact_root","dependency_urls","guest_identity_file","guest_known_hosts_file","guest_port",
+          "guest_repo","guest_root","guest_target","host_agent_path","host_config_path","host_request_path","lxc_name",
+          "lxc_root","proxy_url","runner_id","schema","scp_executable","ssh_executable","ssh_target","state_path"] | sort)))) and
   ([.runner_id,.ssh_target,.ssh_executable,.scp_executable,.host_agent_path,.host_config_path,.host_request_path,
     .state_path,(.lxc_executable // "/snap/bin/lxc"),.lxc_name,.lxc_root,.guest_target,.guest_identity_file,.guest_known_hosts_file,
     .guest_root,.guest_repo,.artifact_root,.proxy_url] | all(type == "string" and length > 0)) and
+  ((has("guest_architecture") | not) or
+    (.guest_architecture | IN("amd64","arm64")) and .guest_effective_cpus == 8 and
+    (.guest_launcher_executable | type == "string" and startswith("/")) and
+    (.guest_legacy_pid_file | type == "string" and startswith("/")) and
+    (.guest_vm_name | type == "string" and test("^[A-Za-z0-9_.-]+$")) and
+    (.guest_launcher_argv | type == "array" and length > 0 and all(type == "string"))) and
   (.guest_port | type == "number" and . >= 1 and . <= 65535) and
   (.dependency_urls | type == "array" and length > 0 and all(type == "string" and startswith("https://")))
 ' "$config" >/dev/null || { echo "runner config is invalid" >&2; exit 2; }
@@ -80,7 +90,10 @@ agent_source=$script_root/transport-v2-runner-agent.sh
 host_helper_source=$script_root/transport-v2-runner-host.py
 proxy_source=$script_root/transport-v2-runner-proxy.py
 template_source=$script_root/flowersec-formal@.service
-[[ -x $agent_source && -x $host_helper_source && -f $proxy_source && -f $template_source && ! -L $agent_source && ! -L $host_helper_source && ! -L $proxy_source && ! -L $template_source ]] || {
+kvm_helper_source=$script_root/transport-v2-runner-kvm.py
+kvm_template_source=$script_root/flowersec-kvm-guest@.service
+[[ -x $agent_source && -x $host_helper_source && -f $proxy_source && -f $template_source && -x $kvm_helper_source && -f $kvm_template_source &&
+  ! -L $agent_source && ! -L $host_helper_source && ! -L $proxy_source && ! -L $template_source && ! -L $kvm_helper_source && ! -L $kvm_template_source ]] || {
   echo "checked-in runner agents are unavailable" >&2
   exit 2
 }
@@ -183,6 +196,8 @@ agent_sha256=$(sha256_file "$agent_source")
 host_helper_sha256=$(sha256_file "$host_helper_source")
 proxy_sha256=$(sha256_file "$proxy_source")
 template_sha256=$(sha256_file "$template_source")
+kvm_helper_sha256=$(sha256_file "$kvm_helper_source")
+kvm_template_sha256=$(sha256_file "$kvm_template_source")
 if [[ $action == deploy ]]; then
   bundle=$(mktemp "$(dirname "$state_path")/.transport-v2-runner-bundle.XXXXXX")
   git -C "$repository" bundle create "$bundle" HEAD
@@ -219,10 +234,13 @@ jq -n \
   --arg host_helper_sha256 "$host_helper_sha256" \
   --arg proxy_sha256 "$proxy_sha256" \
   --arg template_sha256 "$template_sha256" \
+  --arg kvm_helper_sha256 "$kvm_helper_sha256" \
+  --arg kvm_template_sha256 "$kvm_template_sha256" \
   --arg host_bundle_path "$host_bundle_path" \
   '{schema:$schema,action:$action,source_sha:$source_sha,base_sha:$base_sha,output_path:$output_path,
     config_sha256:$config_sha256,bundle_sha256:$bundle_sha256,archive_sha256:$archive_sha256,
     agent_sha256:$agent_sha256,host_helper_sha256:$host_helper_sha256,proxy_sha256:$proxy_sha256,template_sha256:$template_sha256,
+    kvm_helper_sha256:$kvm_helper_sha256,kvm_template_sha256:$kvm_template_sha256,
     host_bundle_path:$host_bundle_path}' >"$request"
 
 persist_failure() {
@@ -283,6 +301,14 @@ if [[ $action == provision ]]; then
   host_template_path=$(dirname "$host_agent_path")/flowersec-formal@.service
   run_transport "$scp_executable" -q -o ConnectTimeout=10 -o ConnectionAttempts=1 -- "$proxy_source" "$ssh_target:$host_proxy_path"
   run_transport "$scp_executable" -q -o ConnectTimeout=10 -o ConnectionAttempts=1 -- "$template_source" "$ssh_target:$host_template_path"
+fi
+if [[ $action == provision || $action == doctor ]]; then
+  host_kvm_helper_path=$(dirname "$host_agent_path")/transport-v2-runner-kvm.py
+  run_transport "$scp_executable" -q -o ConnectTimeout=10 -o ConnectionAttempts=1 -- "$kvm_helper_source" "$ssh_target:$host_kvm_helper_path"
+fi
+if [[ $action == provision ]]; then
+  host_kvm_template_path=$(dirname "$host_agent_path")/flowersec-kvm-guest@.service
+  run_transport "$scp_executable" -q -o ConnectTimeout=10 -o ConnectionAttempts=1 -- "$kvm_template_source" "$ssh_target:$host_kvm_template_path"
 fi
 if [[ $action == deploy ]]; then
   run_transport "$scp_executable" -q -o ConnectTimeout=10 -o ConnectionAttempts=1 -- "$bundle" "$ssh_target:$host_bundle_path"

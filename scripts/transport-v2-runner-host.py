@@ -15,16 +15,21 @@ import urllib.parse
 
 CONFIG_KEYS = {
     "artifact_root", "dependency_urls", "guest_identity_file", "guest_known_hosts_file", "guest_port",
-    "guest_repo", "guest_root", "guest_target", "host_agent_path", "host_config_path", "host_request_path",
+    "guest_architecture", "guest_effective_cpus", "guest_launcher_argv", "guest_launcher_executable", "guest_legacy_pid_file",
+    "guest_repo", "guest_root", "guest_target", "guest_vm_name", "host_agent_path", "host_config_path", "host_request_path",
     "lxc_executable", "lxc_name", "lxc_root", "proxy_url", "runner_id", "schema", "scp_executable", "ssh_executable",
     "ssh_target", "state_path",
 }
-LEGACY_CONFIG_KEYS = CONFIG_KEYS - {"lxc_executable"}
+RECOVERY_CONFIG_KEYS = CONFIG_KEYS - {
+    "guest_architecture", "guest_effective_cpus", "guest_launcher_argv", "guest_launcher_executable",
+    "guest_legacy_pid_file", "guest_vm_name",
+}
+LEGACY_CONFIG_KEYS = RECOVERY_CONFIG_KEYS - {"lxc_executable"}
 LEGACY_LXC_EXECUTABLE = "/snap/bin/lxc"
 REQUEST_KEYS = {
     "action", "agent_sha256", "archive_sha256", "base_sha", "bundle_sha256", "config_sha256",
     "host_bundle_path", "host_helper_sha256", "output_path", "proxy_sha256", "schema", "source_sha",
-    "template_sha256",
+    "template_sha256", "kvm_helper_sha256", "kvm_template_sha256",
 }
 BASE_RESULT_KEYS = {
     "action", "base_sha", "check_id", "classification", "message", "schema", "source_sha", "status",
@@ -119,7 +124,7 @@ def require_executable(path, check_id):
 
 def validate_inputs(agent_path, helper_path, config, request, action):
     config_keys = set(config)
-    legacy_recovery = action in {"collect", "cleanup"} and config_keys == LEGACY_CONFIG_KEYS
+    legacy_recovery = action in {"collect", "cleanup"} and frozenset(config_keys) in {frozenset(RECOVERY_CONFIG_KEYS), frozenset(LEGACY_CONFIG_KEYS)}
     if (config_keys != CONFIG_KEYS and not legacy_recovery) or config.get("schema") != "flowersec-remote-runner-config-v1":
         raise RunnerFailure("host_config_schema", "host runner config schema is invalid", "input", 10)
     if set(request) != REQUEST_KEYS or request.get("schema") != "flowersec-remote-runner-request-v1":
@@ -130,7 +135,7 @@ def validate_inputs(agent_path, helper_path, config, request, action):
         raise RunnerFailure("host_action", "host runner argv and request actions differ", "input", 10)
     if not re.fullmatch(r"[0-9a-f]{40}", request["source_sha"]):
         raise RunnerFailure("host_source_sha", "host runner SHA is invalid", "input", 10)
-    for name in ("agent_sha256", "host_helper_sha256", "proxy_sha256", "template_sha256"):
+    for name in ("agent_sha256", "host_helper_sha256", "proxy_sha256", "template_sha256", "kvm_helper_sha256", "kvm_template_sha256"):
         if not SHA256.fullmatch(request[name]):
             raise RunnerFailure("host_request_digest", f"invalid request digest: {name}", "input", 10)
     for name in (
@@ -139,6 +144,14 @@ def validate_inputs(agent_path, helper_path, config, request, action):
     ):
         if not isinstance(config[name], str) or not SAFE_TOKEN.fullmatch(config[name]):
             raise RunnerFailure("host_config_token", f"unsafe host runner token: {name}", "input", 10)
+    if config_keys == CONFIG_KEYS:
+        for name in ("guest_architecture", "guest_launcher_executable", "guest_legacy_pid_file", "guest_vm_name"):
+            if not isinstance(config[name], str) or not SAFE_TOKEN.fullmatch(config[name]):
+                raise RunnerFailure("host_config_token", f"unsafe KVM runner token: {name}", "input", 10)
+        if config["guest_architecture"] not in {"amd64", "arm64"} or config["guest_effective_cpus"] != 8:
+            raise RunnerFailure("host_kvm_cpu", "formal KVM guest must use the supported eight-CPU architecture", "input", 10)
+        if not isinstance(config["guest_launcher_argv"], list) or not config["guest_launcher_argv"] or not all(isinstance(value, str) for value in config["guest_launcher_argv"]):
+            raise RunnerFailure("host_kvm_argv", "KVM launcher argv must be a non-empty string array", "input", 10)
     require_digest(agent_path, request["agent_sha256"], "host_agent_digest")
     require_digest(helper_path, request["host_helper_sha256"], "host_helper_digest")
     require_executable(config.get("lxc_executable", LEGACY_LXC_EXECUTABLE), "host_lxc")
@@ -244,6 +257,22 @@ def transfer_to_lxd(config, request, agent_path, helper_directory):
         remote_template = lxc(config, "exec", lxc_name, "--", "sha256sum", lxd_template).stdout.split()[0]
         if remote_template != request["template_sha256"]:
             raise RunnerFailure("lxd_template_digest", "LXD template transfer digest drifted", "identity", 30)
+    if request["action"] in {"provision", "doctor"}:
+        kvm_helper = os.path.join(helper_directory, "transport-v2-runner-kvm.py")
+        require_digest(kvm_helper, request["kvm_helper_sha256"], "kvm_helper_digest")
+        lxd_kvm_helper = f"{lxc_root}/transport-v2-runner-kvm.py"
+        lxc(config, "file", "push", "--mode=0700", kvm_helper, f"{lxc_name}{lxd_kvm_helper}")
+        remote_kvm_helper = lxc(config, "exec", lxc_name, "--", "sha256sum", lxd_kvm_helper).stdout.split()[0]
+        if remote_kvm_helper != request["kvm_helper_sha256"]:
+            raise RunnerFailure("lxd_kvm_helper_digest", "LXD KVM helper transfer digest drifted", "identity", 30)
+    if request["action"] == "provision":
+        kvm_template = os.path.join(helper_directory, "flowersec-kvm-guest@.service")
+        require_digest(kvm_template, request["kvm_template_sha256"], "kvm_template_digest")
+        lxd_kvm_template = f"{lxc_root}/flowersec-kvm-guest@.service"
+        lxc(config, "file", "push", "--mode=0644", kvm_template, f"{lxc_name}{lxd_kvm_template}")
+        remote_kvm_template = lxc(config, "exec", lxc_name, "--", "sha256sum", lxd_kvm_template).stdout.split()[0]
+        if remote_kvm_template != request["kvm_template_sha256"]:
+            raise RunnerFailure("lxd_kvm_template_digest", "LXD KVM template transfer digest drifted", "identity", 30)
     if request["action"] == "deploy":
         bundle = request["host_bundle_path"]
         require_digest(bundle, request["bundle_sha256"], "host_bundle_digest")
@@ -292,8 +321,6 @@ def cleanup_host(config, request, helper_directory):
             if os.path.lexists(candidate):
                 require_digest(candidate, expected, "host_cleanup_digest")
                 os.unlink(candidate)
-    command(["systemctl", "--user", "stop", "flowersec-transport-v2-proxy.service"], 15, False)
-    command(["systemctl", "--user", "reset-failed", "flowersec-transport-v2-proxy.service"], 15, False)
     for candidate in pathlib.Path(host_directory).glob(f".collect-{request['source_sha']}.*"):
         if candidate.is_dir() and not candidate.is_symlink():
             shutil.rmtree(candidate)
@@ -340,6 +367,8 @@ def main():
                 config["host_agent_path"], config["host_config_path"], config["host_request_path"], status_path,
                 helper_path, os.path.join(helper_directory, "transport-v2-runner-proxy.py"),
                 os.path.join(helper_directory, "flowersec-formal@.service"),
+                os.path.join(helper_directory, "transport-v2-runner-kvm.py"),
+                os.path.join(helper_directory, "flowersec-kvm-guest@.service"),
             ):
                 try:
                     os.unlink(path)

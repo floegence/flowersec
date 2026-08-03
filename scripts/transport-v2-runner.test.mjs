@@ -10,6 +10,7 @@ const repository = path.resolve(import.meta.dirname, "..");
 const controllerPath = path.join(repository, "scripts", "transport-v2-runner.sh");
 const agentPath = path.join(repository, "scripts", "transport-v2-runner-agent.sh");
 const hostHelperPath = path.join(repository, "scripts", "transport-v2-runner-host.py");
+const kvmHelperPath = path.join(repository, "scripts", "transport-v2-runner-kvm.py");
 
 test("three-tier runner uses fixed agents and closed stdin", async () => {
   const controller = await readFile(controllerPath, "utf8");
@@ -42,6 +43,130 @@ test("three-tier runner uses fixed agents and closed stdin", async () => {
   assert.match(proxy, /--allow-host/);
   assert.match(service, /\/usr\/local\/libexec\/flowersec-transport-v2-runner-agent/);
   assert.match(formalRunner, /FLOWERSEC_RELEASE_PREPARED_ROOT/);
+  const cleanupStart = hostHelper.indexOf("def cleanup_host(");
+  const cleanupEnd = hostHelper.indexOf("\n\ndef main()", cleanupStart);
+  assert.doesNotMatch(hostHelper.slice(cleanupStart, cleanupEnd), /flowersec-transport-v2-proxy\.service/);
+});
+
+test("KVM provisioning is checked-in, structured, and bound to the eight-CPU guest context", async () => {
+  const controller = await readFile(controllerPath, "utf8");
+  const agent = await readFile(agentPath, "utf8");
+  const helper = await readFile(kvmHelperPath, "utf8");
+  const service = await readFile(path.join(repository, "scripts", "flowersec-kvm-guest@.service"), "utf8");
+
+  for (const field of [
+    "guest_architecture",
+    "guest_effective_cpus",
+    "guest_launcher_argv",
+    "guest_launcher_executable",
+    "guest_legacy_pid_file",
+    "guest_vm_name",
+  ]) {
+    assert.match(controller, new RegExp(`\\b${field}\\b`));
+  }
+  assert.match(controller, /kvm_helper_sha256/);
+  assert.match(controller, /kvm_template_sha256/);
+  assert.match(agent, /transport-v2-runner-kvm\.py/);
+  assert.match(agent, /flowersec-kvm-guest@\.service/);
+  assert.match(agent, /"\$lxd_kvm_helper" (?:provision|doctor) "\$lxd_config"/);
+  assert.match(helper, /subprocess\.run\(/);
+  assert.match(helper, /shell=False/);
+  assert.match(helper, /stdin=subprocess\.DEVNULL/);
+  assert.match(helper, /config\["guest_effective_cpus"\] != 8/);
+  assert.match(service, /ExecStart=\/usr\/local\/libexec\/flowersec-transport-v2-runner-kvm run/);
+});
+
+test("KVM provisioning preserves argv, resumes idempotently, and rejects foreign legacy ownership", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "flowersec-kvm-provision-contract-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const probe = spawnSync("python3", ["-c", String.raw`
+import importlib.util
+import json
+import os
+import pathlib
+import sys
+
+helper_path, root = sys.argv[1:]
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("flowersec_runner_kvm", helper_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.STABLE_HELPER = os.path.join(root, "stable", "runner-kvm")
+module.STABLE_CONFIG_ROOT = os.path.join(root, "config")
+module.STABLE_TEMPLATE = os.path.join(root, "systemd", "flowersec-kvm-guest@.service")
+qemu = os.path.join(root, "qemu-system-aarch64")
+pathlib.Path(qemu).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+os.chmod(qemu, 0o755)
+template = os.path.join(root, "template.service")
+pathlib.Path(template).write_text("unit\n", encoding="utf-8")
+special = "literal $() 'quoted value'"
+argv = ["-name", "runner-contract", "-smp", "8", "-netdev", "user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22", "-D", special]
+config = {
+    "schema": "flowersec-remote-runner-config-v1",
+    "runner_id": "runner-contract",
+    "guest_architecture": "arm64",
+    "guest_effective_cpus": 8,
+    "guest_launcher_executable": qemu,
+    "guest_launcher_argv": argv,
+    "guest_legacy_pid_file": os.path.join(root, "legacy.pid"),
+    "guest_vm_name": "runner-contract",
+    "guest_port": 2222,
+}
+calls = []
+active = False
+class Result:
+    def __init__(self, stdout="", returncode=0):
+        self.stdout = stdout
+        self.stderr = ""
+        self.returncode = returncode
+def command(arguments, timeout=30, check=True):
+    global active
+    calls.append(arguments)
+    if arguments[1] == "enable":
+        active = True
+    if arguments[1] == "is-active":
+        return Result("active\n" if active else "inactive\n", 0 if active else 3)
+    if arguments[1] == "show":
+        return Result("42\n")
+    return Result()
+module.command = command
+module.process_argv = lambda pid: [qemu, *argv]
+module.process_executable = lambda pid: os.path.realpath(qemu)
+module.provision(config, template)
+first = list(calls)
+calls.clear()
+module.provision(config, template)
+second = list(calls)
+assert any(call[1:3] == ["enable", "--now"] for call in first), first
+assert not any(call[1] in {"enable", "start", "stop", "daemon-reload"} for call in second), second
+assert module.process_argv(42)[-1] == special
+
+seven_cpu = dict(config)
+seven_cpu["guest_effective_cpus"] = 7
+seven_cpu["guest_launcher_argv"] = ["-name", "runner-contract", "-smp", "7", "-netdev", "user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22"]
+try:
+    module.validate_config(seven_cpu)
+except module.KVMFailure as error:
+    assert error.check_id == "kvm_cpu"
+else:
+    raise AssertionError("seven-CPU formal guest was accepted")
+
+legacy = pathlib.Path(config["guest_legacy_pid_file"])
+legacy.write_text("99\n", encoding="ascii")
+os.chmod(legacy, 0o600)
+module.process_argv = lambda pid: [qemu, "-name", "another-task"]
+module.process_executable = lambda pid: os.path.realpath(qemu)
+try:
+    module.stop_owned_legacy(config)
+except module.KVMFailure as error:
+    assert error.check_id == "kvm_legacy_ownership"
+else:
+    raise AssertionError("foreign legacy process was accepted")
+assert legacy.read_text(encoding="ascii") == "99\n"
+print(json.dumps({"first": first, "second": second, "special": special}))
+`, kvmHelperPath, root], { encoding: "utf8" });
+  assert.equal(probe.status, 0, `${probe.stderr}\n${probe.stdout}`);
+  assert.equal(JSON.parse(probe.stdout).special, "literal $() 'quoted value'");
 });
 
 test("provision waits for the dependency proxy socket after systemd reports active", async () => {
@@ -200,6 +325,12 @@ test("controller does not expand parameters or commit partial GREEN state", asyn
     host_request_path: "/home/runner/.flowersec-remote-request.json",
     state_path: state,
     lxc_executable: "/usr/bin/lxc",
+    guest_architecture: "arm64",
+    guest_effective_cpus: 8,
+    guest_launcher_executable: "/usr/bin/qemu-system-aarch64",
+    guest_launcher_argv: ["-name", "runner-contract", "-smp", "8", "-netdev", "user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22"],
+    guest_legacy_pid_file: "/run/runner-contract.pid",
+    guest_vm_name: "runner-contract",
     lxc_name: "flowersec-release-ubuntu24",
     lxc_root: "/workspace/flowersec-remote",
     guest_target: "runner@127.0.0.1",
@@ -295,6 +426,12 @@ printf '%s\n' '{"schema":"flowersec-remote-runner-result-v1","status":"GREEN","a
     host_request_path: "/home/runner/.flowersec-remote/request.json",
     state_path: state,
     lxc_executable: "/usr/bin/lxc",
+    guest_architecture: "arm64",
+    guest_effective_cpus: 8,
+    guest_launcher_executable: "/usr/bin/qemu-system-aarch64",
+    guest_launcher_argv: ["-name", "cleanup-resume-contract", "-smp", "8", "-netdev", "user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22"],
+    guest_legacy_pid_file: "/run/cleanup-resume-contract.pid",
+    guest_vm_name: "cleanup-resume-contract",
     lxc_name: "flowersec-release-ubuntu24",
     lxc_root: "/workspace/flowersec-remote",
     guest_target: "runner@127.0.0.1",
@@ -414,9 +551,12 @@ test("host agent needs no jq and closes every LXC stdin before state transitions
   await copyFile(agentPath, agent);
   await chmod(agent, 0o700);
   const hostHelper = path.join(root, "transport-v2-runner-host.py");
+  const kvmHelper = path.join(root, "transport-v2-runner-kvm.py");
   await copyFile(hostHelperPath, hostHelper);
+  await copyFile(kvmHelperPath, kvmHelper);
   await chmod(hostHelper, 0o700);
-  await writeFile(fakeLXC, `#!/bin/sh\nset -eu\nif IFS= read -r unexpected; then exit 91; fi\nprintf 'stdin=eof %s\\n' "$*" >>"${calls}"\ncase "$*" in\n  *'-- sha256sum '*'transport-v2-runner-agent.sh'*) sha256sum "${agent}" ;;\n  *'-- sha256sum '*'runner-config.json'*) sha256sum "${config}" ;;\n  *'--role lxd doctor'*) printf '%s\\n' '{"schema":"flowersec-remote-runner-result-v1","status":"GREEN","action":"doctor","source_sha":"${sourceSHA}","base_sha":"","classification":"none","message":"lxc stdin closed","check_id":""}' ;;\n  *'--role lxd cleanup'*) printf '%s\\n' '{"schema":"flowersec-remote-runner-result-v1","status":"RED","action":"cleanup","source_sha":"${sourceSHA}","base_sha":"","classification":"residual","message":"bounded cleanup failed","check_id":"residual_process"}'; exit 20 ;;\nesac\n`);
+  await chmod(kvmHelper, 0o700);
+  await writeFile(fakeLXC, `#!/bin/sh\nset -eu\nif IFS= read -r unexpected; then exit 91; fi\nprintf 'stdin=eof %s\\n' "$*" >>"${calls}"\ncase "$*" in\n  *'-- sha256sum '*'transport-v2-runner-agent.sh'*) sha256sum "${agent}" ;;\n  *'-- sha256sum '*'runner-config.json'*) sha256sum "${config}" ;;\n  *'-- sha256sum '*'transport-v2-runner-kvm.py'*) sha256sum "${kvmHelper}" ;;\n  *'--role lxd doctor'*) printf '%s\\n' '{"schema":"flowersec-remote-runner-result-v1","status":"GREEN","action":"doctor","source_sha":"${sourceSHA}","base_sha":"","classification":"none","message":"lxc stdin closed","check_id":""}' ;;\n  *'--role lxd cleanup'*) printf '%s\\n' '{"schema":"flowersec-remote-runner-result-v1","status":"RED","action":"cleanup","source_sha":"${sourceSHA}","base_sha":"","classification":"residual","message":"bounded cleanup failed","check_id":"residual_process"}'; exit 20 ;;\nesac\n`);
   await chmod(fakeLXC, 0o700);
   await writeFile(fakeSystemctl, "#!/bin/sh\ncase \"$*\" in *'is-active'*) echo active;; esac\n");
   await writeFile(fakeSS, "#!/bin/sh\nprintf '%s\\n' 'LISTEN 0 128 10.0.0.1:3128 0.0.0.0:*'\n");
@@ -435,6 +575,12 @@ test("host agent needs no jq and closes every LXC stdin before state transitions
     host_request_path: request,
     state_path: path.join(root, "state.json"),
     lxc_executable: fakeLXC,
+    guest_architecture: "arm64",
+    guest_effective_cpus: 8,
+    guest_launcher_executable: "/usr/bin/qemu-system-aarch64",
+    guest_launcher_argv: ["-name", "runner-contract", "-smp", "8", "-netdev", "user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22"],
+    guest_legacy_pid_file: "/run/runner-contract.pid",
+    guest_vm_name: "runner-contract",
     lxc_name: "flowersec-release-ubuntu24",
     lxc_root: "/workspace/flowersec-remote",
     guest_target: "runner@127.0.0.1",
@@ -450,6 +596,7 @@ test("host agent needs no jq and closes every LXC stdin before state transitions
   const configSHA = createHash("sha256").update(configText).digest("hex");
   const agentSHA = createHash("sha256").update(await readFile(agent, "utf8")).digest("hex");
   const hostHelperSHA = createHash("sha256").update(await readFile(hostHelper, "utf8")).digest("hex");
+  const kvmHelperSHA = createHash("sha256").update(await readFile(kvmHelper, "utf8")).digest("hex");
   await writeFile(config, configText);
   await chmod(config, 0o600);
   await writeFile(request, `${JSON.stringify({
@@ -465,6 +612,8 @@ test("host agent needs no jq and closes every LXC stdin before state transitions
     host_helper_sha256: hostHelperSHA,
     proxy_sha256: "c".repeat(64),
     template_sha256: "d".repeat(64),
+    kvm_helper_sha256: kvmHelperSHA,
+    kvm_template_sha256: "e".repeat(64),
     host_bundle_path: path.join(root, "unused.bundle"),
   })}\n`);
   await chmod(request, 0o600);
@@ -492,6 +641,8 @@ test("host agent needs no jq and closes every LXC stdin before state transitions
     host_helper_sha256: hostHelperSHA,
     proxy_sha256: "c".repeat(64),
     template_sha256: "d".repeat(64),
+    kvm_helper_sha256: kvmHelperSHA,
+    kvm_template_sha256: "e".repeat(64),
     host_bundle_path: path.join(root, "unused.bundle"),
   })}\n`);
   await chmod(request, 0o600);
@@ -677,6 +828,8 @@ exec /bin/rm "$@"
     host_helper_sha256: hostHelperSHA,
     proxy_sha256: "c".repeat(64),
     template_sha256: "d".repeat(64),
+    kvm_helper_sha256: "f".repeat(64),
+    kvm_template_sha256: "1".repeat(64),
     host_bundle_path: path.join(root, "unused.bundle"),
   })}\n`;
   await writeFile(request, requestFor("e".repeat(64)));

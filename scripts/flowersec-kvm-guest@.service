@@ -1,0 +1,16 @@
+[Unit]
+Description=Flowersec formal KVM guest %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/flowersec-transport-v2-runner-kvm run /etc/flowersec/transport-v2-kvm-%i.json
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=60s
+TimeoutStopSec=15s
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

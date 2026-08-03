@@ -91,6 +91,17 @@ func TestRunnerPreflightRejectsNarrowFormalLaneCPUCanary(t *testing.T) {
 	}
 }
 
+func TestRunnerPreflightRejectsFormalGuestWithFewerThanEightEffectiveCPUs(t *testing.T) {
+	request, facts := greenRunnerPreflightFixture("formal")
+	facts.EffectiveCPUs = 7
+
+	report := evaluateRunnerPreflight(request, facts)
+	check := runnerPreflightCheckByID(t, report, "cpu")
+	if report.Status != "RED" || check.Status != "RED" || check.Classification != "environment" || !strings.Contains(check.Expected, "effective>=8") {
+		t.Fatalf("CPU check = %#v, report status = %s", check, report.Status)
+	}
+}
+
 func TestRunnerPreflightEffectiveCPUCountUsesWorkloadCgroupRoot(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "cpuset.cpus.effective"), []byte("0-5\n"), 0o600); err != nil {
@@ -390,7 +401,7 @@ func greenRunnerPreflightFixture(mode string) (runnerPreflightRequest, runnerPre
 		RustVersion: "rustc 1.88.0 (6b00bc388 2025-06-23)", CargoVersion: "cargo 1.88.0 (873a06493 2025-05-10)",
 		RustDepsReady:   true,
 		ChromiumVersion: "151.0.7922.34", NetNSCanary: true, BPFCanary: true, CgroupCanary: true,
-		Controllers: []string{"cpuset", "cpu", "memory", "pids"}, EffectiveCPUs: 6, LaneCPUs: 2, LaneCPUMax: "200000 100000", MemoryAvailable: 8 << 30, MemoryLimit: "max",
+		Controllers: []string{"cpuset", "cpu", "memory", "pids"}, EffectiveCPUs: 8, LaneCPUs: 2, LaneCPUMax: "200000 100000", MemoryAvailable: 8 << 30, MemoryLimit: "max",
 		LaneMemoryLimit: "4294967296", LaneSwapLimit: "0", LanePidsLimit: "8192",
 		SwapLimit: "1073741824", PidsLimit: "8192", DiskAvailable: 8 << 30, NoFileLimit: 32768,
 		ArtifactFresh: true, LockAvailable: true, DNSReachable: true, DependencyReady: true,
