@@ -141,6 +141,17 @@ test("release wrapper starts no formal workload before strict unified preflight 
   assert.match(runner, /runner-preflight \$\{preflight_check:-preflight_collection\}/);
 });
 
+test("release wrapper scopes dependency proxy access to unified preflight", () => {
+  const runner = fs.readFileSync(runnerPath, "utf8");
+  assert.match(runner, /preflight_proxy=\$\{FLOWERSEC_RELEASE_PREFLIGHT_PROXY:-\}/);
+  assert.match(runner, /HTTP_PROXY="\$preflight_proxy" \\\nHTTPS_PROXY="\$preflight_proxy" \\\nhttp_proxy="\$preflight_proxy" \\\nhttps_proxy="\$preflight_proxy" \\/);
+  assert.doesNotMatch(runner, /export (?:HTTP|HTTPS|ALL)_PROXY=/);
+  assert.ok(
+    runner.indexOf('HTTP_PROXY="$preflight_proxy"') < runner.indexOf('"$transportcheck" runner-preflight'),
+    "proxy environment must apply to the unified preflight invocation",
+  );
+});
+
 test("release wrapper collects bounded capacity parts before strict merge", () => {
   const runner = fs.readFileSync(runnerPath, "utf8");
   assert.match(

@@ -215,6 +215,7 @@ typescript_dist_digest() {
 
 preflight_urls=${FLOWERSEC_RELEASE_PREFLIGHT_URLS:-}
 [[ -n $preflight_urls ]] || fail "FLOWERSEC_RELEASE_PREFLIGHT_URLS is required"
+preflight_proxy=${FLOWERSEC_RELEASE_PREFLIGHT_PROXY:-}
 read -r -a preflight_url_list <<<"$preflight_urls"
 preflight_url_args=()
 for preflight_url in "${preflight_url_list[@]}"; do
@@ -228,6 +229,14 @@ FLOWERSEC_RUNNER_CONTEXT=formal \
 FLOWERSEC_RUNNER_CONTEXT_SHA="$final_sha" \
 FLOWERSEC_RUNNER_LOCK_OWNER="$formal_lock_owner" \
 FLOWERSEC_RUNNER_LAUNCHER_VERIFIED=1 \
+HTTP_PROXY="$preflight_proxy" \
+HTTPS_PROXY="$preflight_proxy" \
+http_proxy="$preflight_proxy" \
+https_proxy="$preflight_proxy" \
+ALL_PROXY= \
+all_proxy= \
+NO_PROXY= \
+no_proxy= \
 timeout --signal=TERM --kill-after=1s 30s "$transportcheck" runner-preflight \
   -mode formal \
   -repo "$source_root" \
