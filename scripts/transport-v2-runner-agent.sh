@@ -265,18 +265,24 @@ run_guest_deploy() {
   else
     build_temp=$(mktemp -d "$guest_root/.prepared-$source_sha.XXXXXX")
     trap 'rm -rf -- "$build_temp"' EXIT HUP INT TERM
-    (
+    if ! (
       cd "$guest_repo/flowersec-ts"
       npm run build
-    )
-    (
+    ); then
+      agent_fail deploy_ts_build "prepared TypeScript build failed" environment 20
+    fi
+    if ! (
       cd "$guest_repo/flowersec-go"
       go build -trimpath -buildvcs=false -o "$build_temp/transport-release-runner" ./internal/cmd/transport-release-runner
-    )
-    (
+    ); then
+      agent_fail deploy_go_runner_build "prepared Go release runner build failed" environment 20
+    fi
+    if ! (
       cd "$guest_repo/tools/transportcheck"
       go build -trimpath -buildvcs=true -o "$build_temp/transportcheck" .
-    )
+    ); then
+      agent_fail deploy_transportcheck_build "prepared transportcheck build failed" environment 20
+    fi
     metadata_revision=$(go version -m "$build_temp/transportcheck" | sed -n 's/^[[:space:]]*build[[:space:]]*vcs\.revision=//p')
     metadata_modified=$(go version -m "$build_temp/transportcheck" | sed -n 's/^[[:space:]]*build[[:space:]]*vcs\.modified=//p')
     [[ $metadata_revision == "$source_sha" && $metadata_modified == false ]]
@@ -425,8 +431,9 @@ provision_locked_cargo_cache() {
 }
 
 run_guest_provision() {
-  local guest_template
+  local guest_template dist_path
   guest_template=$guest_root/flowersec-formal@.service
+  dist_path=$guest_repo/flowersec-ts/dist
   [[ -f $guest_template && ! -L $guest_template ]]
   [[ $(sha256sum "$guest_template" | awk '{print $1}') == "$(jq -r '.template_sha256' "$request")" ]] || agent_fail guest_template_digest "guest template digest drifted" identity 30
   sudo -n install -d -m 0755 /usr/local/libexec /etc/flowersec
@@ -437,6 +444,13 @@ run_guest_provision() {
   [[ $(sudo -n sha256sum "$stable_config" | awk '{print $1}') == "$(jq -r '.config_sha256' "$request")" ]] || agent_fail stable_config_digest "installed formal config digest drifted" identity 30
   sudo -n systemctl daemon-reload
   sudo -n git config --global --replace-all safe.directory "$guest_repo"
+  if [[ -e $dist_path || -L $dist_path ]]; then
+    [[ -d $dist_path && ! -L $dist_path ]] || \
+      agent_fail provision_build_permissions "generated TypeScript dist path is not a regular directory" identity 30
+    if ! sudo -n chown -R --reference="$guest_repo" -- "$dist_path" || [[ ! -w $dist_path ]]; then
+      agent_fail provision_build_permissions "generated TypeScript dist path is not writable by the checkout owner" environment 20
+    fi
+  fi
   for tool in go node jq flock timeout tini ip nft tc bpftool clang rustup cargo curl docker; do
     command -v "$tool" >/dev/null || \
       agent_fail provision_tool "required provision tool is unavailable: $tool" environment 20

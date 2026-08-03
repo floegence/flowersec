@@ -115,6 +115,22 @@ test("provision fills the locked Cargo cache through the proxy and verifies it o
   assert.ok(agent.indexOf("cargo fetch --locked") < agent.lastIndexOf("locked_cargo_cache_ready"));
 });
 
+test("provision repairs generated build ownership and deploy reports build failures", async () => {
+  const agent = await readFile(agentPath, "utf8");
+  const provisionStart = agent.indexOf("run_guest_provision() {");
+  const provisionEnd = agent.indexOf("\nrun_guest_formal() {", provisionStart);
+  const provision = agent.slice(provisionStart, provisionEnd);
+  const deployStart = agent.indexOf("run_guest_deploy() {");
+  const deployEnd = agent.indexOf("\ndoctor_fail() {", deployStart);
+  const deploy = agent.slice(deployStart, deployEnd);
+
+  assert.match(provision, /chown -R --reference="\$guest_repo"/);
+  assert.match(provision, /agent_fail provision_build_permissions/);
+  assert.match(deploy, /agent_fail deploy_ts_build/);
+  assert.match(deploy, /agent_fail deploy_go_runner_build/);
+  assert.match(deploy, /agent_fail deploy_transportcheck_build/);
+});
+
 test("controller does not expand parameters or commit partial GREEN state", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "flowersec-runner-contract-"));
   t.after(() => rm(root, { recursive: true, force: true }));
