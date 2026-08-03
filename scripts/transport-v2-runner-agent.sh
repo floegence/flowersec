@@ -39,16 +39,21 @@ jq -e --arg action "$action" '
   (.template_sha256 | test("^[0-9a-f]{64}$")) and
   (.archive_sha256 == "" or (.archive_sha256 | test("^[0-9a-f]{64}$")))
 ' "$request" >/dev/null || usage
-jq -e '
+jq -e --arg action "$action" '
   .schema == "flowersec-remote-runner-config-v1" and
-  (keys | sort) == (["artifact_root","dependency_urls","guest_identity_file","guest_known_hosts_file","guest_port",
-    "guest_repo","guest_root","guest_target","host_agent_path","host_config_path","host_request_path","lxc_name",
-    "lxc_root","proxy_url","runner_id","schema","scp_executable","ssh_executable","ssh_target","state_path"] | sort)
+  ((keys | sort) == (["artifact_root","dependency_urls","guest_identity_file","guest_known_hosts_file","guest_port",
+      "guest_repo","guest_root","guest_target","host_agent_path","host_config_path","host_request_path","lxc_executable","lxc_name",
+      "lxc_root","proxy_url","runner_id","schema","scp_executable","ssh_executable","ssh_target","state_path"] | sort) or
+    (($action == "collect" or $action == "cleanup") and
+      (keys | sort) == (["artifact_root","dependency_urls","guest_identity_file","guest_known_hosts_file","guest_port",
+        "guest_repo","guest_root","guest_target","host_agent_path","host_config_path","host_request_path","lxc_name",
+        "lxc_root","proxy_url","runner_id","schema","scp_executable","ssh_executable","ssh_target","state_path"] | sort)))
 ' "$config" >/dev/null || usage
 source_sha=$(jq -r '.source_sha' "$request")
 base_sha=$(jq -r '.base_sha' "$request")
 runner_id=$(jq -r '.runner_id' "$config")
 lxc_name=$(jq -r '.lxc_name' "$config")
+lxc_executable=$(jq -r '.lxc_executable // "/snap/bin/lxc"' "$config")
 lxc_root=$(jq -r '.lxc_root' "$config")
 guest_target=$(jq -r '.guest_target' "$config")
 guest_port=$(jq -r '.guest_port' "$config")
@@ -63,7 +68,7 @@ host_agent_path=$(jq -r '.host_agent_path' "$config")
 host_config_path=$(jq -r '.host_config_path' "$config")
 host_request_path=$(jq -r '.host_request_path' "$config")
 
-for value in "$runner_id" "$lxc_name" "$lxc_root" "$guest_target" "$guest_identity_file" "$guest_known_hosts_file" \
+for value in "$runner_id" "$lxc_executable" "$lxc_name" "$lxc_root" "$guest_target" "$guest_identity_file" "$guest_known_hosts_file" \
   "$guest_root" "$guest_repo" "$artifact_root" "$host_agent_path" "$host_config_path" "$host_request_path"; do
   [[ $value =~ ^[A-Za-z0-9_@./:-]+$ ]] || { echo "unsafe runner agent token" >&2; exit 2; }
 done

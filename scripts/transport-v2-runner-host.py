@@ -16,9 +16,11 @@ import urllib.parse
 CONFIG_KEYS = {
     "artifact_root", "dependency_urls", "guest_identity_file", "guest_known_hosts_file", "guest_port",
     "guest_repo", "guest_root", "guest_target", "host_agent_path", "host_config_path", "host_request_path",
-    "lxc_name", "lxc_root", "proxy_url", "runner_id", "schema", "scp_executable", "ssh_executable",
+    "lxc_executable", "lxc_name", "lxc_root", "proxy_url", "runner_id", "schema", "scp_executable", "ssh_executable",
     "ssh_target", "state_path",
 }
+LEGACY_CONFIG_KEYS = CONFIG_KEYS - {"lxc_executable"}
+LEGACY_LXC_EXECUTABLE = "/snap/bin/lxc"
 REQUEST_KEYS = {
     "action", "agent_sha256", "archive_sha256", "base_sha", "bundle_sha256", "config_sha256",
     "host_bundle_path", "host_helper_sha256", "output_path", "proxy_sha256", "schema", "source_sha",
@@ -108,8 +110,15 @@ def require_digest(path, expected, check_id):
         raise RunnerFailure(check_id, f"digest drifted: {path}", "identity", 30)
 
 
+def require_executable(path, check_id):
+    if not os.path.isabs(path) or not os.path.isfile(path) or os.path.islink(path) or not os.access(path, os.X_OK):
+        raise RunnerFailure(check_id, f"configured executable is unavailable: {path}")
+
+
 def validate_inputs(agent_path, helper_path, config, request, action):
-    if set(config) != CONFIG_KEYS or config.get("schema") != "flowersec-remote-runner-config-v1":
+    config_keys = set(config)
+    legacy_recovery = action in {"collect", "cleanup"} and config_keys == LEGACY_CONFIG_KEYS
+    if (config_keys != CONFIG_KEYS and not legacy_recovery) or config.get("schema") != "flowersec-remote-runner-config-v1":
         raise RunnerFailure("host_config_schema", "host runner config schema is invalid", "input", 10)
     if set(request) != REQUEST_KEYS or request.get("schema") != "flowersec-remote-runner-request-v1":
         raise RunnerFailure("host_request_schema", "host runner request schema is invalid", "input", 10)
@@ -130,6 +139,7 @@ def validate_inputs(agent_path, helper_path, config, request, action):
             raise RunnerFailure("host_config_token", f"unsafe host runner token: {name}", "input", 10)
     require_digest(agent_path, request["agent_sha256"], "host_agent_digest")
     require_digest(helper_path, request["host_helper_sha256"], "host_helper_digest")
+    require_executable(config.get("lxc_executable", LEGACY_LXC_EXECUTABLE), "host_lxc")
 
 
 def validate_nested(payload, request):
@@ -153,7 +163,9 @@ def parse_result(output, request):
 
 
 def lxc(config, *arguments, timeout=30, check=True):
-    return command(["lxc", *arguments], timeout, check)
+    executable = config.get("lxc_executable", LEGACY_LXC_EXECUTABLE)
+    require_executable(executable, "host_lxc")
+    return command([executable, *arguments], timeout, check)
 
 
 def proxy_listening(config):

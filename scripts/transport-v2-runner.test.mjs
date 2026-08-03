@@ -195,6 +195,7 @@ test("controller does not expand parameters or commit partial GREEN state", asyn
     host_config_path: "/home/runner/.flowersec-remote-config.json",
     host_request_path: "/home/runner/.flowersec-remote-request.json",
     state_path: state,
+    lxc_executable: "/usr/bin/lxc",
     lxc_name: "flowersec-release-ubuntu24",
     lxc_root: "/workspace/flowersec-remote",
     guest_target: "runner@127.0.0.1",
@@ -289,6 +290,7 @@ printf '%s\n' '{"schema":"flowersec-remote-runner-result-v1","status":"GREEN","a
     host_config_path: "/home/runner/.flowersec-remote/config.json",
     host_request_path: "/home/runner/.flowersec-remote/request.json",
     state_path: state,
+    lxc_executable: "/usr/bin/lxc",
     lxc_name: "flowersec-release-ubuntu24",
     lxc_root: "/workspace/flowersec-remote",
     guest_target: "runner@127.0.0.1",
@@ -327,6 +329,72 @@ printf '%s\n' '{"schema":"flowersec-remote-runner-result-v1","status":"GREEN","a
   assert.equal(JSON.parse(secondCleanup.stdout).message, "remote cleanup executed");
 });
 
+test("legacy config can recover an exact-state collection but cannot start another action", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "flowersec-legacy-recovery-contract-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fakeSCP = path.join(root, "scp");
+  const fakeSSH = path.join(root, "ssh");
+  const state = path.join(root, "state.json");
+  const config = path.join(root, "config.json");
+  const output = path.join(root, "closure.tar.gz");
+  const sourceSHA = "a".repeat(40);
+  const baseSHA = "b".repeat(40);
+  await writeFile(fakeSCP, "#!/bin/sh\nexit 0\n");
+  await writeFile(fakeSSH, `#!/bin/sh
+set -eu
+if IFS= read -r unexpected; then exit 91; fi
+printf '%s\n' '{"schema":"flowersec-remote-runner-result-v1","status":"RUNNING","action":"collect","source_sha":"${sourceSHA}","base_sha":"${baseSHA}","classification":"none","check_id":"","message":"legacy exact-state recovery"}'
+`);
+  await chmod(fakeSCP, 0o700);
+  await chmod(fakeSSH, 0o700);
+  const configText = `${JSON.stringify({
+    schema: "flowersec-remote-runner-config-v1",
+    runner_id: "legacy-recovery-contract",
+    ssh_target: "runner-host",
+    ssh_executable: fakeSSH,
+    scp_executable: fakeSCP,
+    host_agent_path: "/home/runner/.flowersec-remote/agent",
+    host_config_path: "/home/runner/.flowersec-remote/config.json",
+    host_request_path: "/home/runner/.flowersec-remote/request.json",
+    state_path: state,
+    lxc_name: "flowersec-release-ubuntu24",
+    lxc_root: "/workspace/flowersec-remote",
+    guest_target: "runner@127.0.0.1",
+    guest_port: 2222,
+    guest_identity_file: "/workspace/runner/id_ed25519",
+    guest_known_hosts_file: "/workspace/runner/known_hosts",
+    guest_root: "/home/runner/.flowersec-remote",
+    guest_repo: "/workspace/flowersec",
+    artifact_root: "/evidence",
+    proxy_url: "http://10.0.0.1:3128",
+    dependency_urls: ["https://example.invalid"],
+  }, null, 2)}\n`;
+  await writeFile(config, configText);
+  await chmod(config, 0o600);
+  await writeFile(state, `${JSON.stringify({
+    schema: "flowersec-remote-runner-state-v1",
+    config_sha256: createHash("sha256").update(configText).digest("hex"),
+    actions: {
+      "run-formal": { status: "RUNNING", source_sha: sourceSHA, base_sha: baseSHA },
+    },
+  })}\n`);
+  await chmod(state, 0o600);
+
+  const collect = spawnSync(controllerPath, ["collect", "--config", config, "--sha", sourceSHA, "--base-sha", baseSHA, "--output", output], {
+    cwd: repository,
+    encoding: "utf8",
+  });
+  assert.equal(collect.status, 0, collect.stderr);
+  assert.equal(JSON.parse(collect.stdout).message, "legacy exact-state recovery");
+
+  const doctor = spawnSync(controllerPath, ["doctor", "--config", config, "--sha", sourceSHA, "--base-sha", baseSHA], {
+    cwd: repository,
+    encoding: "utf8",
+  });
+  assert.equal(doctor.status, 2);
+  assert.match(doctor.stderr, /runner config is invalid/);
+});
+
 test("host agent needs no jq and closes every LXC stdin before state transitions", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "flowersec-lxc-stdin-contract-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -362,6 +430,7 @@ test("host agent needs no jq and closes every LXC stdin before state transitions
     host_config_path: config,
     host_request_path: request,
     state_path: path.join(root, "state.json"),
+    lxc_executable: fakeLXC,
     lxc_name: "flowersec-release-ubuntu24",
     lxc_root: "/workspace/flowersec-remote",
     guest_target: "runner@127.0.0.1",
@@ -431,6 +500,71 @@ test("host agent needs no jq and closes every LXC stdin before state transitions
   assert.equal(JSON.parse(await readFile(`${request}.status`, "utf8")).status, "RED");
 });
 
+test("host helper uses the private absolute LXC executable without ambient PATH", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "flowersec-lxc-path-contract-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fakeLXC = path.join(root, "lxc-private");
+  await writeFile(fakeLXC, "#!/bin/sh\nset -eu\nif IFS= read -r unexpected; then exit 91; fi\nprintf '%s\\n' \"$*\"\n");
+  await chmod(fakeLXC, 0o700);
+  const probe = spawnSync("python3", ["-c", String.raw`
+import importlib.util
+import sys
+
+helper_path, lxc_path = sys.argv[1:]
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("flowersec_runner_host", helper_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+completed = module.lxc({"lxc_executable": lxc_path}, "info", "runner")
+print(completed.stdout, end="")
+`, hostHelperPath, fakeLXC], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: "/usr/bin:/bin" },
+  });
+  assert.equal(probe.status, 0, `${probe.stderr}\n${probe.stdout}`);
+  assert.equal(probe.stdout, "info runner\n");
+
+  const legacy = spawnSync("python3", ["-c", String.raw`
+import importlib.util
+import sys
+
+helper_path, lxc_path = sys.argv[1:]
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("flowersec_runner_host", helper_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.LEGACY_LXC_EXECUTABLE = lxc_path
+completed = module.lxc({}, "info", "legacy-runner")
+print(completed.stdout, end="")
+`, hostHelperPath, fakeLXC], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: "/usr/bin:/bin" },
+  });
+  assert.equal(legacy.status, 0, `${legacy.stderr}\n${legacy.stdout}`);
+  assert.equal(legacy.stdout, "info legacy-runner\n");
+
+  const missing = spawnSync("python3", ["-c", String.raw`
+import importlib.util
+import sys
+
+helper_path, lxc_path = sys.argv[1:]
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("flowersec_runner_host", helper_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+try:
+    module.lxc({"lxc_executable": lxc_path}, "info", "runner")
+except module.RunnerFailure as error:
+    print(error.check_id)
+    raise SystemExit(23)
+`, hostHelperPath, path.join(root, "missing-lxc")], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: "/usr/bin:/bin" },
+  });
+  assert.equal(missing.status, 23, missing.stderr);
+  assert.equal(missing.stdout, "host_lxc\n");
+});
+
 test("guest cleanup fails closed on archive drift and removes only verified exact-SHA artifacts", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "flowersec-cleanup-contract-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -487,6 +621,7 @@ exec /bin/rm "$@"
     host_config_path: path.join(root, "host-config.json"),
     host_request_path: path.join(root, "host-request.json"),
     state_path: path.join(root, "state.json"),
+    lxc_executable: "/usr/bin/lxc",
     lxc_name: "flowersec-release-ubuntu24",
     lxc_root: path.join(root, "lxd"),
     guest_target: "runner@127.0.0.1",

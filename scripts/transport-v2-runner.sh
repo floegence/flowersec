@@ -51,17 +51,22 @@ sha256_file() {
 }
 
 [[ $(file_mode "$config") == 600 ]] || { echo "runner config must be mode 0600" >&2; exit 2; }
-jq -e '
+jq -e --arg action "$action" '
   .schema == "flowersec-remote-runner-config-v1" and
-  (keys | sort) == (["artifact_root","dependency_urls","guest_identity_file","guest_known_hosts_file","guest_port",
-    "guest_repo","guest_root","guest_target","host_agent_path","host_config_path","host_request_path","lxc_name",
-    "lxc_root","proxy_url","runner_id","schema","scp_executable","ssh_executable","ssh_target","state_path"] | sort) and
+  ((keys | sort) == (["artifact_root","dependency_urls","guest_identity_file","guest_known_hosts_file","guest_port",
+      "guest_repo","guest_root","guest_target","host_agent_path","host_config_path","host_request_path","lxc_executable","lxc_name",
+      "lxc_root","proxy_url","runner_id","schema","scp_executable","ssh_executable","ssh_target","state_path"] | sort) or
+    (($action == "collect" or $action == "cleanup") and
+      (keys | sort) == (["artifact_root","dependency_urls","guest_identity_file","guest_known_hosts_file","guest_port",
+        "guest_repo","guest_root","guest_target","host_agent_path","host_config_path","host_request_path","lxc_name",
+        "lxc_root","proxy_url","runner_id","schema","scp_executable","ssh_executable","ssh_target","state_path"] | sort))) and
   ([.runner_id,.ssh_target,.ssh_executable,.scp_executable,.host_agent_path,.host_config_path,.host_request_path,
-    .state_path,.lxc_name,.lxc_root,.guest_target,.guest_identity_file,.guest_known_hosts_file,
+    .state_path,(.lxc_executable // "/snap/bin/lxc"),.lxc_name,.lxc_root,.guest_target,.guest_identity_file,.guest_known_hosts_file,
     .guest_root,.guest_repo,.artifact_root,.proxy_url] | all(type == "string" and length > 0)) and
   (.guest_port | type == "number" and . >= 1 and . <= 65535) and
   (.dependency_urls | type == "array" and length > 0 and all(type == "string" and startswith("https://")))
 ' "$config" >/dev/null || { echo "runner config is invalid" >&2; exit 2; }
+jq -e '(.lxc_executable // "/snap/bin/lxc") | startswith("/")' "$config" >/dev/null || { echo "runner LXC executable must be absolute" >&2; exit 2; }
 if [[ $action == collect ]]; then
   [[ $output_path == /* && ! -L $output_path && -d $(dirname "$output_path") ]] || {
     echo "collect requires an absolute local output path with an existing parent" >&2
@@ -79,10 +84,6 @@ template_source=$script_root/flowersec-formal@.service
   echo "checked-in runner agents are unavailable" >&2
   exit 2
 }
-[[ $(git -C "$repository" rev-parse HEAD) == "$source_sha" ]] || {
-  echo "runner SHA must match the current exact checkout" >&2
-  exit 3
-}
 runner_id=$(jq -r '.runner_id' "$config")
 ssh_target=$(jq -r '.ssh_target' "$config")
 ssh_executable=$(jq -r '.ssh_executable' "$config")
@@ -95,7 +96,7 @@ host_agent_path=$(jq -r '.host_agent_path' "$config")
 host_config_path=$(jq -r '.host_config_path' "$config")
 host_request_path=$(jq -r '.host_request_path' "$config")
 state_path=$(jq -r '.state_path' "$config")
-for value in "$runner_id" "$ssh_target" "$host_agent_path" "$host_config_path" "$host_request_path"; do
+for value in "$runner_id" "$ssh_target" "$host_agent_path" "$host_config_path" "$host_request_path" "$(jq -r '.lxc_executable // "/snap/bin/lxc"' "$config")"; do
   [[ $value =~ ^[A-Za-z0-9_@./:-]+$ ]] || { echo "runner config contains an unsafe remote token" >&2; exit 2; }
 done
 host_remote_root=$(dirname "$host_agent_path")
@@ -113,6 +114,15 @@ if [[ -e $state_path || -L $state_path ]]; then
 fi
 
 config_sha256=$(sha256_file "$config")
+if [[ $(git -C "$repository" rev-parse HEAD) != "$source_sha" ]]; then
+  [[ ($action == collect || $action == cleanup) && -f $state_path && ! -L $state_path ]] &&
+    jq -e --arg sha "$source_sha" --arg config_sha256 "$config_sha256" '
+      .config_sha256 == $config_sha256 and .actions["run-formal"].source_sha == $sha
+    ' "$state_path" >/dev/null 2>&1 || {
+      echo "runner SHA must match the current exact checkout outside exact-state recovery" >&2
+      exit 3
+    }
+fi
 case "$action" in
   doctor)
     jq -e --arg sha "$source_sha" --arg config_sha256 "$config_sha256" '

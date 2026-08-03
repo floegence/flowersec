@@ -21,7 +21,7 @@ The offline signing host requires the complete unsigned artifact directory, the 
 
 Use `scripts/transport-v2-runner.sh` for a runner reached through an SSH host, an LXC container, and a KVM guest. The entrypoint accepts `doctor`, `provision`, `deploy`, `run-formal`, `collect`, and `cleanup`. It transfers checked-in agents at every hop, verifies deploy bundles by SHA-256, closes stdin for every SSH and LXC process, and records each successful transition atomically. Repeating a completed exact-SHA action reads its receipt instead of repeating the remote work.
 
-Runner-specific topology belongs in a repository-external or Git-ignored mode-`0600` JSON file with schema `flowersec-remote-runner-config-v1`. It supplies the SSH and SCP executables and target, remote agent/config/request paths, LXC name and root, guest SSH target/port/identity/known-hosts paths, guest repository and evidence roots, the private state path, proxy URL, and HTTPS dependency metadata URLs. Hostnames, container identities, keys, and proxy addresses must not be committed.
+Runner-specific topology belongs in a repository-external or Git-ignored mode-`0600` JSON file with schema `flowersec-remote-runner-config-v1`. It supplies the SSH, SCP, and remote absolute LXC executables, the SSH target, remote agent/config/request paths, LXC name and root, guest SSH target/port/identity/known-hosts paths, guest repository and evidence roots, the private state path, proxy URL, and HTTPS dependency metadata URLs. Hostnames, container identities, keys, and proxy addresses must not be committed.
 
 For an exact frozen candidate, run the actions in this order:
 
