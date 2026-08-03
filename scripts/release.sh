@@ -43,14 +43,15 @@ if [[ "$head" != "$origin_main" ]]; then
 fi
 
 node scripts/check-release-version-consistency.mjs "$version"
-(
-  cd tools/releasenotes
-  go run . \
-    --repo ../.. \
-    --current-tag "flowersec-go/v$version" \
-    --current-ref "$head" \
-    --output /dev/null
-)
+previous_release_tag=$(git tag --list 'flowersec-go/v*' --sort=-v:refname | grep -Fvx "flowersec-go/v$version" | head -1 || true)
+release_range="$head"
+if [[ -n "$previous_release_tag" ]]; then
+  release_range="$previous_release_tag..$head"
+fi
+if [[ -z "$(git log --format='%s' "$release_range" | sed -n '/[^[:space:]]/p' | head -1)" ]]; then
+  echo "release notes require at least one non-empty commit subject" >&2
+  exit 1
+fi
 
 tags=(
   "flowersec-go/v$version"

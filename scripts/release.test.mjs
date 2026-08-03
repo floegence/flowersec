@@ -7,6 +7,17 @@ import test from "node:test";
 
 const sourceRoot = path.resolve(import.meta.dirname, "..");
 const releaseMutationConcurrency = 4;
+const mainGateGraphFiles = [
+  "Makefile",
+  ".githooks/pre-push",
+  "scripts/check-security-makefile.mjs",
+  "scripts/check-transport-v2-evidence.sh",
+  "scripts/main-gate-receipt.mjs",
+  "scripts/push-main.sh",
+  "scripts/release.sh",
+  "scripts/run-final-lanes.mjs",
+  "scripts/run-final-stage.mjs",
+];
 const releasePolicyFixtureFiles = [
   "Makefile",
   ".github/dependabot.yml",
@@ -30,6 +41,7 @@ const releasePolicyFixtureFiles = [
   "scripts/check-transport-v2-evidence.sh",
   "scripts/release.sh",
   "scripts/push-main.sh",
+  "scripts/main-gate-receipt.mjs",
   "scripts/release.test.mjs",
 ];
 const repositoryLocalEnvironmentVariables = [
@@ -42,6 +54,7 @@ const repositoryLocalEnvironmentVariables = [
   "GIT_GRAFT_FILE",
   "GIT_IMPLICIT_WORK_TREE",
   "GIT_INDEX_FILE",
+  "GIT_INTERNAL_SUPER_PREFIX",
   "GIT_NO_REPLACE_OBJECTS",
   "GIT_OBJECT_DIRECTORY",
   "GIT_PREFIX",
@@ -120,6 +133,30 @@ function executablePath(name) {
   return result.stdout.trim();
 }
 
+function writeMainGateReceipt(repo, evidenceReport, evidenceBase) {
+  const head = runGit(["-C", repo, "rev-parse", "HEAD"]);
+  const result = spawnSync(
+    process.execPath,
+    [
+      "scripts/main-gate-receipt.mjs",
+      "write",
+      "--head",
+      head,
+      "--origin-main",
+      head,
+      "--evidence-report",
+      evidenceReport,
+      "--evidence-base",
+      evidenceBase,
+    ],
+    { cwd: repo, encoding: "utf8", env: isolatedEnvironment() },
+  );
+  if (result.status !== 0) {
+    throw new Error(`could not write fixture main gate receipt:\n${result.stdout}${result.stderr}`);
+  }
+  return path.join(repo, ".git/flowersec/main-gate-receipts", `${head}.json`);
+}
+
 function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-release-script-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -136,20 +173,16 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   fs.mkdirSync(path.join(repo, "examples/rust"), { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
 
-  for (const script of ["release.sh", "check-release-version-consistency.mjs"]) {
-    fs.copyFileSync(path.join(sourceRoot, "scripts", script), path.join(repo, "scripts", script));
+  for (const file of mainGateGraphFiles) {
+    const destination = path.join(repo, file);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(path.join(sourceRoot, file), destination);
   }
-  fs.chmodSync(path.join(repo, "scripts/release.sh"), 0o755);
-  fs.cpSync(
-    path.join(sourceRoot, "tools/releasenotes"),
-    path.join(repo, "tools/releasenotes"),
-    {
-      recursive: true,
-      filter(source) {
-        return !source.endsWith("_test.go");
-      },
-    },
+  fs.copyFileSync(
+    path.join(sourceRoot, "scripts/check-release-version-consistency.mjs"),
+    path.join(repo, "scripts/check-release-version-consistency.mjs"),
   );
+  fs.chmodSync(path.join(repo, "scripts/release.sh"), 0o755);
   fs.writeFileSync(
     path.join(repo, "flowersec-ts/package.json"),
     JSON.stringify({ version: "0.26.0" }),
@@ -166,6 +199,7 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   fs.writeFileSync(path.join(repo, "examples/rust/Cargo.toml"), "[package]\nname = \"example\"\n");
   fs.writeFileSync(path.join(repo, "tracked.txt"), "clean\n");
   const evidenceReport = path.join(repo, "evidence/report.json");
+  fs.writeFileSync(path.join(repo, "evidence/artifact.bin"), "signed artifact\n");
   fs.writeFileSync(evidenceReport, "{}\n");
 
   fs.writeFileSync(
@@ -200,6 +234,8 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   runGit(["-C", repo, "commit", "-m", "test: release fixture"]);
   runGit(["-C", repo, "remote", "add", "origin", origin]);
   runGit(["-C", repo, "push", "-u", "origin", "main"]);
+
+  writeMainGateReceipt(repo, evidenceReport, "1".repeat(40));
 
   return { bin, evidenceReport, gitLog, origin, realGit, realMake, repo };
 }
@@ -377,7 +413,7 @@ test("release gates stay wired into local checks and publication workflows", () 
   );
   assert.match(makefile, /^check: security-makefile-check\n(?:\t.*\n)*\t\$\(MAKE\) final-integration-lanes$/m);
   assert.match(makefile, /^final-integration-lanes:\n\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 race \$\(MAKE\) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 languages node scripts\/run-final-lanes\.mjs \$\(MAKE\) final-go-check final-ts-check final-swift-check final-rust-check$/m);
-  assert.match(makefile, /^release-check:\n(?:\t.*\n)*\t\$\(MAKE\) transport-v2-signed-evidence-check$/m);
+  assert.match(makefile, /^release-check:\n\tnode scripts\/main-gate-receipt\.mjs verify /m);
   assert.doesNotMatch(makefile, /^release-check:\n(?:\t.*\n)*\t\$\(MAKE\) transport-v2-release-evidence$/m);
   assert.match(
     releaseWorkflow,
@@ -412,6 +448,116 @@ test("daily Go tests select fast transport contracts while final check owns the 
   assert.doesNotMatch(goTest, /tools\/transportcheck.*go test.*\.\/\.\.\./);
   assert.match(fast, /go test -timeout=5m -count=1 -run/);
   assert.match(complete, /run-go-test-race-shards\.sh tools\/transportcheck 6 5m 3 normal/);
+});
+
+test("release consumes the exact main gate receipt without rerunning validation", () => {
+  const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
+  const releaseRecipe = makefile.match(/^release-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  const releaseScript = fs.readFileSync(path.join(sourceRoot, "scripts/release.sh"), "utf8");
+  const pushScript = fs.readFileSync(path.join(sourceRoot, "scripts/push-main.sh"), "utf8");
+  const prePush = fs.readFileSync(path.join(sourceRoot, ".githooks/pre-push"), "utf8");
+
+  assert.doesNotMatch(releaseRecipe, /\$\(MAKE\) check/);
+  assert.doesNotMatch(releaseRecipe, /transport-v2-signed-evidence-check|check-transport-v2-evidence/);
+  assert.match(releaseRecipe, /main-gate-receipt\.mjs verify/);
+  assert.doesNotMatch(releaseScript, /\bmake check\b/);
+  assert.doesNotMatch(
+    releaseScript,
+    /\b(?:go run|go test|npm|cargo|swift (?:build|test)|transport-v2-release-evidence)\b/,
+  );
+  assert.match(releaseScript, /make release-check/);
+  assert.doesNotMatch(prePush, /make(?: -C \"\$repo_root\")? check/);
+  assert.match(prePush, /main-gate-receipt\.mjs"?\s+verify/);
+
+  const evidence = pushScript.indexOf("transport-v2-signed-evidence-check");
+  const gate = pushScript.indexOf("make check");
+  const receipt = pushScript.indexOf('node "$receipt_script" write');
+  const push = pushScript.indexOf("git push origin");
+  assert.ok(evidence >= 0 && evidence < gate, "signed evidence must precede the complete gate");
+  assert.ok(gate < receipt && receipt < push, "the successful gate receipt must precede push");
+});
+
+test("main gate receipt binds the exact SHA, gate graph, and signed evidence", (t) => {
+  const fixture = createReleaseScriptFixture(t);
+  const head = runGit(["-C", fixture.repo, "rev-parse", "HEAD"]);
+  const receipt = path.join(
+    fixture.repo,
+    ".git/flowersec/main-gate-receipts",
+    `${head}.json`,
+  );
+  assert.equal(fs.statSync(receipt).mode & 0o777, 0o400);
+
+  const exact = spawnSync(
+    process.execPath,
+    [
+      "scripts/main-gate-receipt.mjs",
+      "verify",
+      "--head",
+      head,
+      "--remote-main",
+      head,
+      "--evidence-report",
+      fixture.evidenceReport,
+      "--evidence-base",
+      "1".repeat(40),
+    ],
+    { cwd: fixture.repo, encoding: "utf8", env: isolatedEnvironment() },
+  );
+  assert.equal(exact.status, 0, `${exact.stdout}${exact.stderr}`);
+
+  const artifact = path.join(fixture.repo, "evidence/artifact.bin");
+  fs.writeFileSync(artifact, "mutated artifact\n");
+  const mutatedArtifact = spawnSync(
+    process.execPath,
+    [
+      "scripts/main-gate-receipt.mjs",
+      "verify",
+      "--head",
+      head,
+      "--evidence-report",
+      fixture.evidenceReport,
+      "--evidence-base",
+      "1".repeat(40),
+    ],
+    { cwd: fixture.repo, encoding: "utf8", env: isolatedEnvironment() },
+  );
+  assert.notEqual(mutatedArtifact.status, 0, `${mutatedArtifact.stdout}${mutatedArtifact.stderr}`);
+  assert.match(mutatedArtifact.stderr, /evidenceClosureSHA256 mismatch/);
+  fs.writeFileSync(artifact, "signed artifact\n");
+
+  const otherEvidenceDirectory = path.join(path.dirname(fixture.repo), "other-evidence");
+  fs.mkdirSync(otherEvidenceDirectory);
+  const otherEvidence = path.join(otherEvidenceDirectory, "report.json");
+  fs.writeFileSync(otherEvidence, "{\"different\":true}\n");
+  const mismatchedEvidence = spawnSync(
+    process.execPath,
+    [
+      "scripts/main-gate-receipt.mjs",
+      "verify",
+      "--head",
+      head,
+      "--evidence-report",
+      otherEvidence,
+      "--evidence-base",
+      "1".repeat(40),
+    ],
+    { cwd: fixture.repo, encoding: "utf8", env: isolatedEnvironment() },
+  );
+  assert.notEqual(
+    mismatchedEvidence.status,
+    0,
+    `${mismatchedEvidence.stdout}${mismatchedEvidence.stderr}`,
+  );
+  assert.match(mismatchedEvidence.stderr, /evidenceReportSHA256 mismatch/);
+
+  fs.chmodSync(receipt, 0o600);
+  const writable = spawnSync(
+    process.execPath,
+    ["scripts/main-gate-receipt.mjs", "verify", "--head", head],
+    { cwd: fixture.repo, encoding: "utf8", env: isolatedEnvironment() },
+  );
+  assert.notEqual(writable.status, 0, `${writable.stdout}${writable.stderr}`);
+  assert.match(writable.stderr, /read-only regular non-symlink/);
 });
 
 test("local transport evidence mutations use focused validators", () => {
@@ -726,28 +872,32 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     assert.match(result.stderr, /Dependabot|reviewed value|fields/i);
   });
 
-  schedulePolicyTest("signed Transport v2 evidence disconnected from release-check", () => {
+  schedulePolicyTest("immutable evidence receipt disconnected from release-check", () => {
     const root = createReleasePolicyFixture(t);
     const makefilePath = path.join(root, "Makefile");
     const makefile = fs.readFileSync(makefilePath, "utf8");
+    const receiptCheck = "\tnode scripts/main-gate-receipt.mjs verify --head \"$$(git rev-parse HEAD)\" --remote-main \"$$(git rev-parse origin/main)\" --evidence-report \"$(TRANSPORT_V2_EVIDENCE_REPORT)\" --evidence-base \"$(TRANSPORT_V2_BASE_SHA)\"\n";
+    assert.ok(makefile.includes(receiptCheck));
     fs.writeFileSync(
       makefilePath,
-      makefile.replace("\t$(MAKE) transport-v2-signed-evidence-check\n", ""),
+      makefile.replace(receiptCheck, ""),
     );
     const result = runReleasePolicy(root);
     assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-    assert.match(result.stderr, /transport-v2-signed-evidence-check/);
+    assert.match(result.stderr, /release-check|main-gate-receipt/);
   });
 
-  schedulePolicyTest("Transport v2 evidence generation cannot run inside release-check", () => {
+  schedulePolicyTest("Transport v2 evidence generation cannot re-enter release-check", () => {
     const root = createReleasePolicyFixture(t);
     const makefilePath = path.join(root, "Makefile");
     const makefile = fs.readFileSync(makefilePath, "utf8");
+    const receiptCheck = "\tnode scripts/main-gate-receipt.mjs verify --head \"$$(git rev-parse HEAD)\" --remote-main \"$$(git rev-parse origin/main)\" --evidence-report \"$(TRANSPORT_V2_EVIDENCE_REPORT)\" --evidence-base \"$(TRANSPORT_V2_BASE_SHA)\"\n";
+    assert.ok(makefile.includes(receiptCheck));
     fs.writeFileSync(
       makefilePath,
       makefile.replace(
-        "\t$(MAKE) transport-v2-signed-evidence-check\n",
-        "\t$(MAKE) transport-v2-release-evidence\n\t$(MAKE) transport-v2-signed-evidence-check\n",
+        receiptCheck,
+        `\t$(MAKE) transport-v2-release-evidence\n${receiptCheck}`,
       ),
     );
     const result = runReleasePolicy(root);
@@ -1394,42 +1544,46 @@ test("pre-push accepts only the complete release tag set for the gated commit", 
   }
 });
 
-test("pre-push runs the complete gate once for the exact main HEAD", (t) => {
-  const hook = path.join(sourceRoot, ".githooks/pre-push");
-  const head = runGit(["-C", sourceRoot, "rev-parse", "HEAD"]);
-  const deleted = "0".repeat(40);
-  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-pre-push-bin-"));
-  const marker = path.join(bin, "make.args");
-  const make = path.join(bin, "make");
-  fs.writeFileSync(make, "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$FLOWERSEC_TEST_MAKE_MARKER\"\n", { mode: 0o755 });
-  t.after(() => fs.rmSync(bin, { recursive: true, force: true }));
-  const result = spawnSync("sh", [hook], {
-    cwd: sourceRoot,
-    encoding: "utf8",
-    env: isolatedEnvironment({
-      ...process.env,
-      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-      FLOWERSEC_TEST_MAKE_MARKER: marker,
-    }),
-    input: `refs/heads/main ${head} refs/heads/main ${deleted}\n`,
+test("pre-push requires the exact receipt and never runs the complete gate", (t) => {
+  const marker = path.join(os.tmpdir(), `flowersec-pre-push-make-${process.pid}-${Date.now()}`);
+  t.after(() => fs.rmSync(marker, { force: true }));
+  const fixture = createReleaseScriptFixture(
+    t,
+    `#!/bin/sh\nprintf invoked > ${JSON.stringify(marker)}\nexit 99\n`,
+  );
+  const hook = path.join(fixture.repo, ".githooks/pre-push");
+  const head = runGit(["-C", fixture.repo, "rev-parse", "HEAD"]);
+  const input = `refs/heads/main ${head} refs/heads/main ${head}\n`;
+  const env = isolatedEnvironment({
+    FLOWERSEC_TEST_GIT_LOG: fixture.gitLog,
+    FLOWERSEC_TEST_REAL_GIT: fixture.realGit,
+    PATH: `${fixture.bin}${path.delimiter}${process.env.PATH}`,
   });
-  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
-  assert.equal(fs.readFileSync(marker, "utf8").trim(), `-C ${sourceRoot} check`);
 
-  fs.rmSync(marker);
   const verified = spawnSync("sh", [hook], {
-    cwd: sourceRoot,
+    cwd: fixture.repo,
     encoding: "utf8",
-    env: isolatedEnvironment({
-      ...process.env,
-      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-      FLOWERSEC_MAIN_GATE_COMMIT: head,
-      FLOWERSEC_TEST_MAKE_MARKER: marker,
-    }),
-    input: `refs/heads/main ${head} refs/heads/main ${deleted}\n`,
+    env,
+    input,
   });
   assert.equal(verified.status, 0, `${verified.stdout}${verified.stderr}`);
-  assert.equal(fs.existsSync(marker), false, "the exact prevalidated SHA must not rerun make check");
+  assert.equal(fs.existsSync(marker), false, "pre-push must not invoke make");
+
+  const receipt = path.join(
+    fixture.repo,
+    ".git/flowersec/main-gate-receipts",
+    `${head}.json`,
+  );
+  fs.unlinkSync(receipt);
+  const missing = spawnSync("sh", [hook], {
+    cwd: fixture.repo,
+    encoding: "utf8",
+    env,
+    input,
+  });
+  assert.notEqual(missing.status, 0, `${missing.stdout}${missing.stderr}`);
+  assert.match(missing.stderr, /main gate receipt is missing/);
+  assert.equal(fs.existsSync(marker), false, "missing receipt must fail closed without make");
 });
 
 test("main push gates the exact SHA before opening the remote transport", () => {
@@ -1441,7 +1595,8 @@ test("main push gates the exact SHA before opening the remote transport", () => 
   assert.notEqual(gate, -1, "main push must run the complete gate");
   assert.notEqual(push, -1, "main push must use normal git push");
   assert.ok(gate < push, "the gate must finish before git opens the push transport");
-  assert.match(source, /FLOWERSEC_MAIN_GATE_COMMIT=/);
+  assert.match(source, /main-gate-receipt\.mjs/);
+  assert.doesNotMatch(source, /FLOWERSEC_MAIN_GATE_COMMIT=/);
   assert.doesNotMatch(source, /--no-verify/);
 });
 
@@ -1450,14 +1605,18 @@ test("main push passes only the checked HEAD after the gate completes", (t) => {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const bin = path.join(root, "bin");
   const log = path.join(root, "commands.log");
+  const evidenceDirectory = path.join(root, "evidence");
+  const evidenceReport = path.join(evidenceDirectory, "report.json");
   const head = "a".repeat(40);
   const origin = "b".repeat(40);
   fs.mkdirSync(bin);
+  fs.mkdirSync(evidenceDirectory);
+  fs.writeFileSync(evidenceReport, "{}\n");
   fs.writeFileSync(
     path.join(bin, "git"),
     [
       "#!/bin/sh",
-      "printf 'git %s gate=%s\\n' \"$*\" \"${FLOWERSEC_MAIN_GATE_COMMIT:-}\" >> \"$FLOWERSEC_TEST_COMMAND_LOG\"",
+      "printf 'git %s\\n' \"$*\" >> \"$FLOWERSEC_TEST_COMMAND_LOG\"",
       "case \"$*\" in",
       "  'status --short') exit 0 ;;",
       "  'symbolic-ref --short -q HEAD') printf 'main\\n' ; exit 0 ;;",
@@ -1477,6 +1636,20 @@ test("main push passes only the checked HEAD after the gate completes", (t) => {
     "#!/bin/sh\nprintf 'make %s\\n' \"$*\" >> \"$FLOWERSEC_TEST_COMMAND_LOG\"\n",
     { mode: 0o755 },
   );
+  fs.writeFileSync(
+    path.join(bin, "node"),
+    [
+      "#!/bin/sh",
+      "printf 'node %s\\n' \"$*\" >> \"$FLOWERSEC_TEST_COMMAND_LOG\"",
+      "case \" $* \" in",
+      "  *' verify '*) exit 3 ;;",
+      "  *' write '*) exit 0 ;;",
+      "esac",
+      "exit 91",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
 
   const result = spawnSync("bash", [path.join(sourceRoot, "scripts/push-main.sh")], {
     cwd: sourceRoot,
@@ -1485,14 +1658,17 @@ test("main push passes only the checked HEAD after the gate completes", (t) => {
       ...process.env,
       FLOWERSEC_TEST_COMMAND_LOG: log,
       PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      TRANSPORT_V2_BASE_SHA: "c".repeat(40),
+      TRANSPORT_V2_EVIDENCE_REPORT: evidenceReport,
     }),
   });
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
   const commands = fs.readFileSync(log, "utf8").trim().split("\n");
+  const evidence = commands.indexOf("make transport-v2-signed-evidence-check");
   const gate = commands.indexOf("make check");
+  const receipt = commands.findIndex((command) => command.startsWith("node ") && command.includes(" write "));
   const push = commands.findIndex((command) => command.startsWith("git push origin "));
-  assert.ok(gate >= 0 && push > gate, commands.join("\n"));
-  assert.match(commands[push], new RegExp(` gate=${head}$`));
+  assert.ok(evidence >= 0 && gate > evidence && receipt > gate && push > receipt, commands.join("\n"));
 });
 
 test("transport browser smoke builds a clean TypeScript checkout before bundle tests", () => {

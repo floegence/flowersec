@@ -20,15 +20,15 @@ if [ -n "$main_line" ]; then
   main_sha=$(printf '%s\n' "$main_line" | awk '{ print $2 }')
   repo_root=$(git rev-parse --show-toplevel)
   head_sha=$(git -C "$repo_root" rev-parse HEAD)
+  remote_main=$(printf '%s\n' "$main_line" | awk '{ print $4 }')
   if [ "$main_sha" != "$head_sha" ]; then
     printf '%s\n' '[flowersec] main pre-push gate must verify the exact checked-out HEAD.' >&2
     exit 1
   fi
-  verified_main_sha=${FLOWERSEC_MAIN_GATE_COMMIT:-${FLOWERSEC_RELEASE_GATE_COMMIT:-}}
-  if [ "$verified_main_sha" != "$main_sha" ]; then
-    printf '%s\n' '[flowersec] running final main pre-push gate (make check)'
-    make -C "$repo_root" check
-  fi
+  printf '%s\n' '[flowersec] verifying the immutable exact-SHA main gate receipt'
+  node "$repo_root/scripts/main-gate-receipt.mjs" verify \
+    --head "$main_sha" \
+    --remote-main "$remote_main"
 fi
 
 if [ ! -s "$release_lines" ]; then

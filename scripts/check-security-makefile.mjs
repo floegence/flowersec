@@ -388,8 +388,7 @@ export function verifySecurityMakefile(makefile) {
     ["release-version-check", ["\tnode scripts/check-release-version-consistency.mjs"]],
     ["release-test", ["\tnode --test scripts/check-release-version-consistency.test.mjs scripts/release.test.mjs"]],
     ["release-check", [
-      "\t$(MAKE) check",
-      "\t$(MAKE) transport-v2-signed-evidence-check",
+      "\tnode scripts/main-gate-receipt.mjs verify --head \"$$(git rev-parse HEAD)\" --remote-main \"$$(git rev-parse origin/main)\" --evidence-report \"$(TRANSPORT_V2_EVIDENCE_REPORT)\" --evidence-base \"$(TRANSPORT_V2_BASE_SHA)\"",
     ]],
     ["final-network-preflight", [
       "\tnode scripts/run-final-lanes.mjs $(MAKE) final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight",

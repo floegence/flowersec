@@ -938,14 +938,23 @@ test("precommit cannot disconnect language security wrappers", () => {
   }
 });
 
-test("release-check cannot suppress or disconnect the complete check gate", () => {
-  const exactLine = "\t$(MAKE) check";
-  for (const replacement of ["", "\t-$(MAKE) check", `${exactLine} || true`]) {
+test("release-check stays static and cannot disconnect signed evidence", () => {
+  const exactLine = "\tnode scripts/main-gate-receipt.mjs verify --head \"$$(git rev-parse HEAD)\" --remote-main \"$$(git rev-parse origin/main)\" --evidence-report \"$(TRANSPORT_V2_EVIDENCE_REPORT)\" --evidence-base \"$(TRANSPORT_V2_BASE_SHA)\"";
+  for (const replacement of ["", `\t-${exactLine.slice(1)}`, `${exactLine} || true`]) {
     const mutated = replaceTargetRecipeLine(canonical, "release-check", exactLine, replacement);
     const result = check(mutated);
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /release-check.*check|exact, unsuppressed/i);
+    assert.match(result.stderr, /release-check|exact, unsuppressed/i);
   }
+  const repeatedGate = replaceTargetRecipeLine(
+    canonical,
+    "release-check",
+    exactLine,
+    `\t$(MAKE) transport-v2-signed-evidence-check\n${exactLine}`,
+  );
+  const repeated = check(repeatedGate);
+  assert.notEqual(repeated.status, 0);
+  assert.match(repeated.stderr, /release-check|exact recipe/i);
   const ignored = check(`${canonical}\n.IGNORE: release-check\n`);
   assert.notEqual(ignored.status, 0);
   assert.match(ignored.stderr, /IGNORE.*release-check|release-check.*IGNORE/i);

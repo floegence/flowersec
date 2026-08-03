@@ -2498,8 +2498,8 @@ func TestMakeTargetsUseEvidenceClassificationGate(t *testing.T) {
 		"\t$(MAKE) transport-v2-unit",
 		"\t$(MAKE) weaknet-smoke",
 		"\t$(MAKE) quic-native-smoke",
-		"release-check:\n\t$(MAKE) check",
-		"\t$(MAKE) transport-v2-signed-evidence-check",
+		"release-check:\n\tnode scripts/main-gate-receipt.mjs verify",
+		"transport-v2-signed-evidence-check:\n\t./scripts/check-transport-v2-evidence.sh",
 		"override TRANSPORT_V2_TRUST_STORE := $(CURDIR)/testdata/transport_v2/evidence_trust_store.json",
 		"override TRANSPORT_V2_TRUST_POLICY := $(CURDIR)/testdata/transport_v2/evidence_trust_policy.json",
 		`./scripts/check-transport-v2-evidence.sh "$(TRANSPORT_V2_EVIDENCE_REPORT)" "$(TRANSPORT_V2_BASE_SHA)"`,
@@ -2565,14 +2565,17 @@ func TestUnsignedCollectorIsExplicitAndExcludedFromReleaseCheck(t *testing.T) {
 	for _, required := range []string{
 		"transport-v2-release-evidence:",
 		`"$(TRANSPORT_V2_RELEASE_RUNNER)" --target all --report "$(TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT)"`,
-		"release-check:\n\t$(MAKE) check\n\t$(MAKE) transport-v2-signed-evidence-check",
+		"release-check:\n\tnode scripts/main-gate-receipt.mjs verify",
 	} {
 		if !strings.Contains(makefile, required) {
 			t.Errorf("Makefile is missing collector/release boundary %q", required)
 		}
 	}
-	if strings.Contains(makefile, "release-check:\n\t$(MAKE) check\n\t$(MAKE) transport-v2-release-evidence") {
-		t.Fatal("release-check must not execute the unsigned collector")
+	releaseRecipe := strings.SplitN(strings.SplitN(makefile, "release-check:\n", 2)[1], "\n\n", 2)[0]
+	for _, forbidden := range []string{"transport-v2-release-evidence", "transport-v2-signed-evidence-check", "$(MAKE) check"} {
+		if strings.Contains(releaseRecipe, forbidden) {
+			t.Fatalf("release-check must not execute %q", forbidden)
+		}
 	}
 	command := exec.Command(
 		"make", "--no-print-directory", "transport-v2-release-evidence",

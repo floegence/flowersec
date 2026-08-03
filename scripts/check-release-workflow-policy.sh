@@ -19,7 +19,7 @@ fi
 
 version_checker=scripts/check-release-version-consistency.mjs
 
-for required in Makefile .github/dependabot.yml "$release_workflow" "$rust_workflow" "$ci_workflow" "$codeql_workflow" scripts/release.sh scripts/push-main.sh "$version_checker" scripts/release.test.mjs scripts/check-release-version-consistency.test.mjs scripts/check-container-release-policy.mjs scripts/check-release-workflows.rb scripts/check-security-makefile.mjs scripts/run-final-stage.mjs scripts/run-final-stage.test.mjs scripts/run-precommit-wave.mjs scripts/run-precommit-wave.test.mjs scripts/check-transport-v2-evidence.sh .githooks/pre-push; do
+for required in Makefile .github/dependabot.yml "$release_workflow" "$rust_workflow" "$ci_workflow" "$codeql_workflow" scripts/release.sh scripts/push-main.sh scripts/main-gate-receipt.mjs "$version_checker" scripts/release.test.mjs scripts/check-release-version-consistency.test.mjs scripts/check-container-release-policy.mjs scripts/check-release-workflows.rb scripts/check-security-makefile.mjs scripts/run-final-stage.mjs scripts/run-final-stage.test.mjs scripts/run-precommit-wave.mjs scripts/run-precommit-wave.test.mjs scripts/check-transport-v2-evidence.sh .githooks/pre-push; do
   if [[ ! -f "$required" ]]; then
     echo "missing release policy file: $required" >&2
     exit 1

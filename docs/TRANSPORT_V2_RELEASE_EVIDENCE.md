@@ -287,10 +287,19 @@ The signer and runner changes must be reviewed independently from the feature un
 
 ## Release sequence
 
-1. Merge the complete feature and security/documentation changes into `main`, push the full local `main` tip, and keep the worktree clean.
-2. On the audited Linux system, check out that exact `main` SHA and collect `report.unsigned.json` plus its referenced artifacts into a fresh directory. The wrapper creates an independent detached base checkout, verifies the base and final manifests are byte-identical, and builds separate VCS-stamped runners before collecting the paired `clean-01` variants. The collector never receives a private key and never emits a signed report.
+1. Merge the complete feature and security/documentation changes into local `main`, keep the worktree clean, and freeze the exact candidate SHA without moving `origin/main`.
+2. On the audited Linux system, check out that exact candidate SHA from an audited staging source and collect `report.unsigned.json` plus its referenced artifacts into a fresh directory. The wrapper creates an independent detached base checkout, verifies the base and final manifests are byte-identical, and builds separate VCS-stamped runners before collecting the paired `clean-01` variants. The collector never receives a private key and never emits a signed report.
 3. Stop the privileged collector, transfer the complete directory without changing bytes, and use `transportcheck sign` in a read-only, `--network none` signing container with the repository-external private key mounted read-only. The signer verifies the report, every artifact digest, runner policy, clean final SHA, base SHA, and ancestry before atomically creating `report.json` in the same directory.
-4. Transfer the immutable signed directory back without changing bytes. From the synchronized clean `main` worktree, run:
+4. Transfer the immutable signed directory back without changing bytes. From the clean frozen local `main` worktree, run the only complete main gate and push:
+
+```bash
+TRANSPORT_V2_EVIDENCE_REPORT=/absolute/path/to/evidence/report.json \
+TRANSPORT_V2_BASE_SHA=<40-character-ancestor-sha> \
+scripts/push-main.sh
+```
+
+`scripts/push-main.sh` verifies the signed evidence before running `make check`, writes a read-only receipt bound to the exact HEAD, gate graph, evidence report, complete evidence-directory closure, and original remote boundary, then pushes main. The pre-push hook accepts only that exact receipt and never reruns `make check`.
+5. After `origin/main` matches the verified candidate, publish from the same clean worktree:
 
 ```bash
 TRANSPORT_V2_EVIDENCE_REPORT=/absolute/path/to/evidence/report.json \
@@ -298,7 +307,7 @@ TRANSPORT_V2_BASE_SHA=<40-character-ancestor-sha> \
 scripts/release.sh <version>
 ```
 
-5. `scripts/release.sh` records the signed report digest, reruns the full local release gate without invoking the collector, verifies the signature, runner policy, repository state, final/base SHA relationship, registered cases, performance cells, and referenced artifacts, then confirms the signed report bytes did not change before creating any tag.
-6. Only after the atomic tag push succeeds may hosted publication jobs publish ecosystem artifacts. Confirm all publication jobs and registry artifacts before upgrading downstream repositories.
+`scripts/release.sh` verifies the immutable signed evidence closure through the exact main gate receipt, plus repository state, release metadata, and tags, without running tests, builds, package validation, or the collector.
+6. Only after the atomic tag push succeeds may hosted publication jobs perform the ref-dependent build, signing, attestation, publication, and registry readback work. Confirm all publication jobs and registry artifacts before upgrading downstream repositories.
 
 If any input is absent, the local runner identity does not match the actual host or deterministic build, the report final SHA differs, the repository is dirty, or one case is incomplete, stop. Do not bypass, downgrade, or relabel the evidence gate.

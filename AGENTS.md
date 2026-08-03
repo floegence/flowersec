@@ -94,10 +94,11 @@
 
 ## 3. Local quality gate (required)
 
-- Local gates are authoritative. Do not run the complete gate on intermediate
-  feature tips; use `./scripts/push-main.sh` for the synchronized exact-main
-  candidate so `make check`, identity revalidation, the pre-push hook, and the
-  remote push apply to one unchanged SHA.
+- Local gates are authoritative. A normal feature commit runs only the fast
+  pre-commit gate. Required formal evidence is collected and signed for the
+  final frozen main candidate before `./scripts/push-main.sh` runs the one
+  complete `make check`, writes the exact-SHA gate receipt, and pushes main.
+  The pre-push hook validates that receipt and never reruns the gate.
 - Ordinary GitHub push and pull-request CI is source-only and fast. Expensive
   builds, package validation, coverage, browsers, integration, race,
   weak-network, performance, soak, and evidence belong to exact-main local
@@ -112,9 +113,10 @@
   gate and must not reach final-only builds, package/publish validation,
   coverage, race, browsers, Docker, remote runners, weak-network, performance,
   soak, or integration work.
-- `make check` owns complete final validation, including all checks excluded
-  from pre-commit. The Makefile and its graph-contract tests are authoritative
-  for the exact target inventory; pre-commit never replaces final validation.
+- `make check` owns the final candidate's only complete test run, including all
+  checks excluded from pre-commit. Release verification owns no tests and only
+  consumes the immutable signed evidence and exact gate receipt. The Makefile
+  and its graph-contract tests are authoritative for the target inventory.
 
 ### 3.1 Mandatory validation layers
 
@@ -125,17 +127,22 @@
 - When a parallel final lane fails, record and report the first failure, stop
   scheduling new work, and perform only bounded cleanup or drainage of work
   already running.
-- In the normal flow, the synchronized main candidate runs one complete
-  `./scripts/push-main.sh`.
+- A normal feature commit runs only the fast pre-commit gate.
+- The final frozen main candidate runs exactly one complete `make check`
+  through `./scripts/push-main.sh`.
+- Required formal evidence must be collected and signed for that exact
+  candidate before the final main push.
 - If pre-push fails at stage S, keep main frozen and recover in the task feature
   worktree: fix the smallest failure, pass affected checks, then run the
   remaining stages after S. Repeat from any later tail failure until the tail
   is GREEN.
 - After the tail is GREEN, synchronize and integrate the feature once, then run
   one complete `./scripts/push-main.sh`. Tail runs are diagnostic and never
-  replace the final complete gate.
-- Other test, evidence, and release workflows may rerun completely after the
-  smallest failure and affected checks pass.
+  replace the final complete gate. When the candidate changes, regenerate only
+  the formal evidence bound to the new candidate.
+- Release verification consumes the immutable signed evidence and the exact
+  main gate receipt. It must not rerun tests, builds, coverage, race, browser,
+  package validation, or the collector.
 - Keep external progress records as compact current-state snapshots. Store
   chronological evidence in checksummed logs rather than append-only journals.
 - Default package tests must remain fast. Real browsers, network namespaces, Docker, remote runners, child-process systems, large fixtures, stress, performance, weak-network, soak, resource-cleanup evidence, full-package race, and repository-wide integration checks belong to explicit final-integration targets, independent packages, or named selectors, not the daily default path.
@@ -171,9 +178,11 @@
 
 - A version release uses matching Go `flowersec-go/v<version>`, SwiftPM
   `<version>`, and Rust `flowersec-rust/v<version>` tags.
-- `scripts/release.sh <version>` is the only release entrypoint. Run it from a
-  clean synchronized `main`; it validates the signed evidence and release
-  contracts, then pushes `main` and the complete matching tag set atomically.
+- `scripts/release.sh <version>` is the verification-and-publication-only
+  release entrypoint. Run it from a clean synchronized `main`; it consumes the
+  signed evidence and exact main gate receipt, validates static release
+  contracts without running tests or builds, then pushes `main` and the
+  complete matching tag set atomically.
 - Reusable downstream capabilities follow an upstream-first flow: implement,
   validate, release, and verify Flowersec before upgrading consumers to the
   published version. Never use local path or source-checkout wiring as the

@@ -250,8 +250,7 @@ rust-release-check: rust-check rust-audit rust-deny rust-cover-check rust-semver
 rust-final-check: rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-cover-check rust-fuzz-build rust-semver-check
 
 release-check:
-	$(MAKE) check
-	$(MAKE) transport-v2-signed-evidence-check
+	node scripts/main-gate-receipt.mjs verify --head "$$(git rev-parse HEAD)" --remote-main "$$(git rev-parse origin/main)" --evidence-report "$(TRANSPORT_V2_EVIDENCE_REPORT)" --evidence-base "$(TRANSPORT_V2_BASE_SHA)"
 
 example-source-check:
 	node --test scripts/sdk-examples.test.mjs
