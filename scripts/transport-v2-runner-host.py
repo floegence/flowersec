@@ -331,7 +331,7 @@ def recover_lxd_collection(config, request, lxd_request):
         os.chmod(temporary_status, 0o600)
         with open(temporary_status, "r", encoding="utf-8") as source:
             payload = parse_result(source.read(), request)
-        if payload["status"] not in {"GREEN", "RED"}:
+        if payload["status"] not in {"GREEN", "RED"} or payload.get("lxd_archive_ready") is not True:
             return None
         archive_sha = payload.get("archive_sha256", "")
         archive_path = payload.get("lxd_archive_path", "")
@@ -341,6 +341,7 @@ def recover_lxd_collection(config, request, lxd_request):
         }
         if not SHA256.fullmatch(archive_sha) or os.path.dirname(archive_path) != config["lxc_root"] or os.path.basename(archive_path) not in expected_names:
             raise RunnerFailure("lxd_result_schema", "LXD collection status has an invalid archive receipt", "identity", 30)
+        del payload["lxd_archive_ready"]
         return payload
     finally:
         shutil.rmtree(temporary_directory, ignore_errors=True)

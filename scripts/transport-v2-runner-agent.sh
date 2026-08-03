@@ -176,7 +176,7 @@ guest_scp_args=(-q -i "$guest_identity_file" -o BatchMode=yes -o StrictHostKeyCh
   -o UserKnownHostsFile="$guest_known_hosts_file" -o ConnectTimeout=10 -o ConnectionAttempts=1 -P "$guest_port")
 
 run_lxd() {
-  local nested_result nested_status archive_path archive_sha lxd_archive lxd_archive_temp lxd_template guest_template candidate expected_archive kvm_result kvm_status guest_ready
+  local nested_result nested_status status_result archive_path archive_sha lxd_archive lxd_archive_temp lxd_template guest_template candidate expected_archive kvm_result kvm_status guest_ready
   chmod 0700 "$lxd_agent"
   chmod 0600 "$lxd_config" "$lxd_request"
   if [[ $action == provision || $action == doctor ]]; then
@@ -240,6 +240,8 @@ run_lxd() {
   if [[ $action == collect && ($(jq -r '.status' <<<"$nested_result") == GREEN || $(jq -r '.status' <<<"$nested_result") == RED) ]]; then
     archive_path=$(jq -er '.archive_path' <<<"$nested_result")
     archive_sha=$(jq -er '.archive_sha256' <<<"$nested_result")
+    nested_result=$(jq -c '. + {lxd_archive_ready:false}' <<<"$nested_result")
+    write_status_atomically "$lxd_request.status" "$nested_result"
     lxd_archive=$lxc_root/$(basename "$archive_path")
     if [[ ! -e $lxd_archive && ! -L $lxd_archive ]]; then
       lxd_archive_temp=$(mktemp "$lxc_root/.collect-$source_sha.XXXXXX")
@@ -251,7 +253,7 @@ run_lxd() {
       mv -- "$lxd_archive_temp" "$lxd_archive"
     fi
     [[ $(sha256sum "$lxd_archive" | awk '{print $1}') == "$archive_sha" ]] || agent_fail lxd_archive_digest "LXD collection archive digest drifted" identity 30
-    nested_result=$(jq -c --arg path "$lxd_archive" '. + {lxd_archive_path:$path}' <<<"$nested_result")
+    nested_result=$(jq -c --arg path "$lxd_archive" '. + {lxd_archive_path:$path} | del(.lxd_archive_ready)' <<<"$nested_result")
   fi
   if [[ $action == cleanup ]]; then
     expected_archive=$(jq -r '.archive_sha256' "$request")
@@ -269,7 +271,11 @@ run_lxd() {
     fi
     find "$lxc_root" -maxdepth 1 -type f -name ".collect-$source_sha.*" -delete
   fi
-  write_status_atomically "$lxd_request.status" "$nested_result"
+  status_result=$nested_result
+  if [[ $action == collect && ($(jq -r '.status' <<<"$nested_result") == GREEN || $(jq -r '.status' <<<"$nested_result") == RED) ]]; then
+    status_result=$(jq -c '. + {lxd_archive_ready:true}' <<<"$nested_result")
+  fi
+  write_status_atomically "$lxd_request.status" "$status_result"
   printf '%s\n' "$nested_result"
   if [[ $action == cleanup && $nested_status == 0 ]]; then
     rm -f -- "$lxd_agent" "$lxd_config" "$lxd_request" "$lxd_request.status" "$lxc_root/flowersec-formal@.service" "$lxd_kvm_helper" "$lxd_kvm_template"

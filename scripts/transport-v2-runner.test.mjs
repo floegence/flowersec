@@ -37,6 +37,7 @@ test("three-tier runner uses fixed agents and closed stdin", async () => {
   assert.ok(agent.indexOf("transport-v2-runner-host.py") < agent.indexOf("jq -e"));
   assert.match(hostHelper, /stdin=subprocess\.DEVNULL/);
   assert.match(agent, /archive_sha256/);
+  assert.match(agent, /lxd_archive_ready/);
   assert.match(agent, /artifact_ownership/);
   assert.doesNotMatch(proxy, /10\.191\.|goproxy\.cn|registry\.npmjs\.org|crates\.io/);
   assert.match(proxy, /--listen-host/);
@@ -344,7 +345,7 @@ try:
         "schema": "flowersec-remote-runner-result-v1", "status": "GREEN", "action": "collect",
         "source_sha": source_sha, "base_sha": base_sha, "classification": "none", "check_id": "",
         "message": "recovered terminal collection", "archive_path": "/evidence/closure.tar.gz",
-        "archive_sha256": "c" * 64, "lxd_archive_path": f"/workspace/{source_sha}-runner-formal-closure.tar.gz",
+        "archive_sha256": "c" * 64, "lxd_archive_path": f"/workspace/{source_sha}-runner-formal-closure.tar.gz", "lxd_archive_ready": True,
     }
     status.write_text(json.dumps(payload) + "\n", encoding="utf-8")
     os.chmod(status, 0o600)
@@ -362,7 +363,7 @@ try:
     request = {"action": "collect", "source_sha": source_sha, "base_sha": base_sha}
     config = {"runner_id": "runner", "lxc_name": "runner", "lxc_root": "/workspace", "host_agent_path": os.path.join(root, "agent")}
     recovered = module.recover_lxd_collection(config, request, "/workspace/request.json")
-    assert recovered == payload, recovered
+    assert recovered == {key: value for key, value in payload.items() if key != "lxd_archive_ready"}, recovered
     assert len(calls) == 1, calls
     payload["source_sha"] = "d" * 40
     status.write_text(json.dumps(payload) + "\n", encoding="utf-8")
