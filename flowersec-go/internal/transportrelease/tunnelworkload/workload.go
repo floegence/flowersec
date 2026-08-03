@@ -128,35 +128,45 @@ func RunCold(
 		return nil, errInvalidTunnelColdWorkload
 	}
 	results := make([]transportrelease.ConnectOperation, operations)
-	workErrors := make(chan error, operations)
+	workerCtx, cancelWorkers := context.WithCancelCause(ctx)
+	defer cancelWorkers(nil)
+	firstFailure := make(chan error, 1)
+	reportFailure := func(err error) {
+		if ctx.Err() != nil {
+			return
+		}
+		select {
+		case firstFailure <- err:
+			cancelWorkers(err)
+		default:
+		}
+	}
 	semaphore := make(chan struct{}, maxInflight)
 	var group sync.WaitGroup
 	phaseStart := time.Now()
 	interval := time.Second / time.Duration(startRatePerSecond)
+schedule:
 	for ordinal := 1; ordinal <= operations; ordinal++ {
 		scheduled := phaseStart.Add(time.Duration(ordinal-1) * interval)
-		if err := waitUntil(ctx, scheduled); err != nil {
-			workErrors <- err
+		if err := waitUntil(workerCtx, scheduled); err != nil {
 			break
 		}
 		select {
 		case semaphore <- struct{}{}:
-		case <-ctx.Done():
-			workErrors <- context.Cause(ctx)
-			ordinal = operations
-			continue
+		case <-workerCtx.Done():
+			break schedule
 		}
 		group.Add(1)
 		go func(ordinal int, scheduled time.Time) {
 			defer group.Done()
 			defer func() { <-semaphore }()
-			operationCtx, cancel := context.WithTimeout(ctx, operationDeadline)
+			operationCtx, cancel := context.WithTimeout(workerCtx, operationDeadline)
 			defer cancel()
 			started := time.Now()
 			pair, err := endpoint.Connect(operationCtx)
 			duration := time.Since(started)
 			if err != nil {
-				workErrors <- fmt.Errorf("tunnel cold connection %d: %w", ordinal, err)
+				reportFailure(fmt.Errorf("tunnel cold connection %d: %w", ordinal, err))
 				return
 			}
 			cleanupStarted := time.Now()
@@ -165,7 +175,7 @@ func RunCold(
 			cleanupCancel()
 			cleanupDuration := time.Since(cleanupStarted)
 			if closeErr != nil {
-				workErrors <- fmt.Errorf("tunnel cold connection %d cleanup: %w", ordinal, closeErr)
+				reportFailure(fmt.Errorf("tunnel cold connection %d cleanup: %w", ordinal, closeErr))
 				return
 			}
 			results[ordinal-1] = transportrelease.ConnectOperation{
@@ -175,16 +185,13 @@ func RunCold(
 		}(ordinal, scheduled)
 	}
 	group.Wait()
+	select {
+	case err := <-firstFailure:
+		return nil, err
+	default:
+	}
 	if err := contextCompletionError(ctx); err != nil {
 		return nil, err
-	}
-	close(workErrors)
-	var joined error
-	for err := range workErrors {
-		joined = errors.Join(joined, err)
-	}
-	if joined != nil {
-		return nil, joined
 	}
 	for index, operation := range results {
 		if operation.Ordinal != index+1 || operation.Duration <= 0 || operation.CleanupDuration <= 0 || operation.StartedAt.Before(operation.ScheduledAt) {

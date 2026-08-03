@@ -3,6 +3,7 @@ package tunnelworkload
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,6 +64,23 @@ func TestRunColdRequiresIndependentCleanupDeadline(t *testing.T) {
 	_, err := RunCold(context.Background(), &Endpoint{}, 1, 1, 1, time.Second, 0)
 	if err == nil || !errors.Is(err, errInvalidTunnelColdWorkload) {
 		t.Fatalf("RunCold cleanup deadline error = %v", err)
+	}
+}
+
+func TestRunColdStopsSchedulingAndPreservesFirstProductFailure(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	started := time.Now()
+	_, err := RunCold(ctx, &Endpoint{}, 3, 1, 2, time.Second, time.Second)
+	elapsed := time.Since(started)
+	if !errors.Is(err, errEndpointClosed) || !strings.Contains(err.Error(), "tunnel cold connection 1") {
+		t.Fatalf("RunCold first failure = %v", err)
+	}
+	if strings.Contains(err.Error(), "tunnel cold connection 2") || elapsed >= 400*time.Millisecond {
+		t.Fatalf("RunCold scheduled after first failure: elapsed=%s error=%v", elapsed, err)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("RunCold canceled its caller context: %v", ctx.Err())
 	}
 }
 
