@@ -320,6 +320,64 @@ print(json.dumps({"collect": module.action_timeout("collect"), "cleanup": module
   assert.deepEqual(JSON.parse(probe.stdout), { collect: 9 * 60, cleanup: 3 * 60 });
 });
 
+test("host collect resumes a terminal exact-state LXD receipt", () => {
+  const probe = spawnSync("python3", ["-c", String.raw`
+import importlib.util
+import json
+import os
+import pathlib
+import shutil
+import sys
+import tempfile
+
+helper_path = sys.argv[1]
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("flowersec_runner_host", helper_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+root = tempfile.mkdtemp()
+try:
+    source_sha = "a" * 40
+    base_sha = "b" * 40
+    status = pathlib.Path(root, "request.json.status")
+    payload = {
+        "schema": "flowersec-remote-runner-result-v1", "status": "GREEN", "action": "collect",
+        "source_sha": source_sha, "base_sha": base_sha, "classification": "none", "check_id": "",
+        "message": "recovered terminal collection", "archive_path": "/evidence/closure.tar.gz",
+        "archive_sha256": "c" * 64, "lxd_archive_path": f"/workspace/{source_sha}-runner-formal-closure.tar.gz",
+    }
+    status.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    os.chmod(status, 0o600)
+    calls = []
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+    def fake_lxc(config, *arguments, timeout=30, check=True):
+        calls.append(arguments)
+        assert arguments[:2] == ("file", "pull"), arguments
+        shutil.copyfile(status, arguments[-1])
+        return Result()
+    module.lxc = fake_lxc
+    request = {"action": "collect", "source_sha": source_sha, "base_sha": base_sha}
+    config = {"runner_id": "runner", "lxc_name": "runner", "lxc_root": "/workspace", "host_agent_path": os.path.join(root, "agent")}
+    recovered = module.recover_lxd_collection(config, request, "/workspace/request.json")
+    assert recovered == payload, recovered
+    assert len(calls) == 1, calls
+    payload["source_sha"] = "d" * 40
+    status.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    try:
+        module.recover_lxd_collection(config, request, "/workspace/request.json")
+    except module.RunnerFailure as error:
+        assert error.check_id == "lxd_result_schema", error.check_id
+    else:
+        raise AssertionError("drifted LXD collection status was accepted")
+finally:
+    shutil.rmtree(root)
+`, hostHelperPath], { encoding: "utf8" });
+  assert.equal(probe.status, 0, `${probe.stderr}\n${probe.stdout}`);
+});
+
 test("doctor mirrors the formal build and browser identity context", async () => {
   const agent = await readFile(agentPath, "utf8");
   const preflight = await readFile(path.join(repository, "tools", "transportcheck", "runner_preflight.go"), "utf8");

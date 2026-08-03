@@ -315,6 +315,37 @@ def pull_collection(config, request, payload):
     return {**payload, "host_archive_path": host_archive}
 
 
+def recover_lxd_collection(config, request, lxd_request):
+    if request["action"] != "collect":
+        return None
+    host_directory = os.path.dirname(config["host_agent_path"])
+    temporary_directory = tempfile.mkdtemp(prefix=f".status-{request['source_sha']}.", dir=host_directory)
+    temporary_status = os.path.join(temporary_directory, "status.json")
+    try:
+        completed = lxc(
+            config, "file", "pull", f"{config['lxc_name']}{lxd_request}.status", temporary_status,
+            timeout=30, check=False,
+        )
+        if completed.returncode != 0:
+            return None
+        os.chmod(temporary_status, 0o600)
+        with open(temporary_status, "r", encoding="utf-8") as source:
+            payload = parse_result(source.read(), request)
+        if payload["status"] not in {"GREEN", "RED"}:
+            return None
+        archive_sha = payload.get("archive_sha256", "")
+        archive_path = payload.get("lxd_archive_path", "")
+        expected_names = {
+            f"{request['source_sha']}-{config['runner_id']}-formal-closure.tar.gz",
+            f"{request['source_sha']}-{config['runner_id']}-formal-failure.tar.gz",
+        }
+        if not SHA256.fullmatch(archive_sha) or os.path.dirname(archive_path) != config["lxc_root"] or os.path.basename(archive_path) not in expected_names:
+            raise RunnerFailure("lxd_result_schema", "LXD collection status has an invalid archive receipt", "identity", 30)
+        return payload
+    finally:
+        shutil.rmtree(temporary_directory, ignore_errors=True)
+
+
 def cleanup_host(config, request, helper_directory):
     expected = request["archive_sha256"]
     host_directory = os.path.dirname(config["host_agent_path"])
@@ -356,23 +387,28 @@ def main():
         if action in {"provision", "doctor"}:
             verify_proxy(config)
         lxd_agent, lxd_config, lxd_request = transfer_to_lxd(config, request, agent_path, helper_directory)
-        nested = lxc(
-            config, "exec", config["lxc_name"], "--", lxd_agent, "--role", "lxd", action, lxd_config,
-            lxd_request, "flowersec-remote-runner-v1", timeout=action_timeout(action), check=False,
-        )
-        if nested.returncode != 0:
-            emit_nested_stderr(nested.stderr)
-        payload = parse_result(nested.stdout, request)
+        payload = recover_lxd_collection(config, request, lxd_request)
+        if payload is None:
+            nested = lxc(
+                config, "exec", config["lxc_name"], "--", lxd_agent, "--role", "lxd", action, lxd_config,
+                lxd_request, "flowersec-remote-runner-v1", timeout=action_timeout(action), check=False,
+            )
+            if nested.returncode != 0:
+                emit_nested_stderr(nested.stderr)
+            payload = parse_result(nested.stdout, request)
+            nested_returncode = nested.returncode
+        else:
+            nested_returncode = 0 if payload["status"] == "GREEN" else 20
         payload = pull_collection(config, request, payload)
-        if action == "deploy" and nested.returncode == 0:
+        if action == "deploy" and nested_returncode == 0:
             os.unlink(request["host_bundle_path"])
             lxd_bundle = f"{config['lxc_root']}/{request['source_sha']}.bundle"
             lxc(config, "exec", config["lxc_name"], "--", "rm", "-f", "--", lxd_bundle)
-        if action == "cleanup" and nested.returncode == 0:
+        if action == "cleanup" and nested_returncode == 0:
             cleanup_host(config, request, helper_directory)
         write_status(status_path, payload)
         print(json.dumps(payload, separators=(",", ":")), flush=True)
-        if action == "cleanup" and nested.returncode == 0:
+        if action == "cleanup" and nested_returncode == 0:
             for path in (
                 config["host_agent_path"], config["host_config_path"], config["host_request_path"], status_path,
                 helper_path, os.path.join(helper_directory, "transport-v2-runner-proxy.py"),
@@ -384,7 +420,7 @@ def main():
                     os.unlink(path)
                 except FileNotFoundError:
                     pass
-        return nested.returncode
+        return nested_returncode
     except RunnerFailure as error:
         payload = result_json(request, "RED", str(error), error.check_id, error.classification)
         try:
