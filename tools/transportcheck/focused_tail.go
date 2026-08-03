@@ -86,6 +86,8 @@ type focusedTailPrepared struct {
 	SourceSHA       string `json:"source_sha"`
 	RunnerPath      string `json:"runner_path"`
 	RunnerSHA256    string `json:"runner_sha256"`
+	PreflightPath   string `json:"preflight_path"`
+	PreflightSHA256 string `json:"preflight_sha256"`
 	ToolchainSHA256 string `json:"toolchain_sha256"`
 	DistSHA256      string `json:"typescript_dist_sha256"`
 }

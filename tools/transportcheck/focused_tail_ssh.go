@@ -224,17 +224,25 @@ func (executor *sshFocusedTailExecutor) Preflight(ctx context.Context, request f
 		return err
 	}
 	agentRequest := newFocusedTailAgentRequest(request, config, cell, prepared, shard)
-	var response struct {
-		Status string `json:"status"`
-	}
+	var response runnerPreflightReport
 	if err := executor.runAgent(ctx, config, "preflight", agentRequest, &response); err != nil {
 		return err
 	}
 	if err := executor.requireLock(); err != nil {
 		return err
 	}
-	if response.Status != "GREEN" {
-		return errors.New("focused-tail remote preflight did not return GREEN")
+	if response.Schema != runnerPreflightSchema || response.Status != "GREEN" || response.Classification != "none" ||
+		response.Mode != "focused" || response.SourceSHA != request.SHA || response.BaseSHA != "" || response.WorkloadStarted ||
+		response.CheckID != "" || response.Message != "" || len(response.Checks) == 0 {
+		if response.CheckID != "" {
+			return fmt.Errorf("focused-tail remote preflight %s: %s", response.CheckID, response.Message)
+		}
+		return errors.New("focused-tail remote preflight returned an invalid or non-GREEN report")
+	}
+	for _, check := range response.Checks {
+		if check.Status != "GREEN" {
+			return fmt.Errorf("focused-tail remote preflight %s: %s", check.CheckID, check.Message)
+		}
 	}
 	return nil
 }

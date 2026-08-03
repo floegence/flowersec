@@ -173,7 +173,7 @@
   zero-residual requirements.
 - Follow `docs/TRANSPORT_V2_RELEASE_EVIDENCE.md` for runner setup, collection,
   signing, and verification details.
-- Remote focused and tail recovery must use the checked-in resumable orchestrator. Inline SSH/LXC pipelines are limited to read-only diagnosis. The orchestrator resumes from exact-SHA receipts, stops on the first failure, and never retries product failures automatically.
+- Every remote focused or formal workload must pass the checked-in preflight in the exact workload context. Any later environment-class failure that preflight could have detected requires a regression contract and preflight update before retry.
 
 ## 4. Release / tag policy
 

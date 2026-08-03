@@ -39,6 +39,7 @@ topology=$(jq -r '.cell.topology' <<<"$request")
 shard=$(jq -r '.shard' <<<"$request")
 receipt_root=$artifact_root/.focused-tail-receipts/$source_sha/$cell
 lock_file=$artifact_root/.focused-tail.lock
+lock_owner=focused-$source_sha-$cell
 
 fail() {
   printf 'focused-tail remote agent: %s\n' "$*" >&2
@@ -60,11 +61,11 @@ require_real_directory() {
 
 toolchain_digest() {
   local material
-  material=$(printf '%s\n' \
+  material=$(cd "$source_root" && printf '%s\n' \
     "$(go version)" \
     "$(go env GOOS GOARCH CGO_ENABLED)" \
     "$(node --version)" \
-    "$(sha256sum "$source_root/flowersec-go/go.mod" "$source_root/flowersec-go/go.sum" "$source_root/flowersec-ts/package-lock.json")")
+    "$(sha256sum flowersec-go/go.mod flowersec-go/go.sum flowersec-ts/package-lock.json)")
   printf '%s' "$material" | sha256sum | awk '{print $1}'
 }
 
@@ -73,15 +74,19 @@ typescript_dist_digest() {
 }
 
 validate_prepared() {
-  local prepared_sha prepared_runner prepared_runner_sha prepared_toolchain prepared_dist
+  local prepared_sha prepared_runner prepared_runner_sha prepared_preflight prepared_preflight_sha prepared_toolchain prepared_dist
   prepared_sha=$(jq -r '.prepared.source_sha // ""' <<<"$request")
   prepared_runner=$(jq -r '.prepared.runner_path // ""' <<<"$request")
   prepared_runner_sha=$(jq -r '.prepared.runner_sha256 // ""' <<<"$request")
+  prepared_preflight=$(jq -r '.prepared.preflight_path // ""' <<<"$request")
+  prepared_preflight_sha=$(jq -r '.prepared.preflight_sha256 // ""' <<<"$request")
   prepared_toolchain=$(jq -r '.prepared.toolchain_sha256 // ""' <<<"$request")
   prepared_dist=$(jq -r '.prepared.typescript_dist_sha256 // ""' <<<"$request")
   [[ $prepared_sha == "$source_sha" ]] || fail "prepared source SHA mismatch"
   [[ $prepared_runner =~ ^/[A-Za-z0-9._/-]{1,511}$ && -x $prepared_runner && ! -L $prepared_runner ]] || fail "prepared runner is unavailable"
   [[ $prepared_runner_sha =~ ^[0-9a-f]{64}$ && $(sha256sum "$prepared_runner" | awk '{print $1}') == "$prepared_runner_sha" ]] || fail "prepared runner digest mismatch"
+  [[ $prepared_preflight =~ ^/[A-Za-z0-9._/-]{1,511}$ && -x $prepared_preflight && ! -L $prepared_preflight ]] || fail "prepared preflight is unavailable"
+  [[ $prepared_preflight_sha =~ ^[0-9a-f]{64}$ && $(sha256sum "$prepared_preflight" | awk '{print $1}') == "$prepared_preflight_sha" ]] || fail "prepared preflight digest mismatch"
   [[ $prepared_toolchain =~ ^[0-9a-f]{64}$ && $(toolchain_digest) == "$prepared_toolchain" ]] || fail "prepared toolchain digest mismatch"
   [[ $prepared_dist =~ ^[0-9a-f]{64}$ && $(typescript_dist_digest) == "$prepared_dist" ]] || fail "prepared TypeScript dist digest mismatch"
 }
@@ -90,6 +95,8 @@ if [[ $action == hold-lock ]]; then
   install -d -m 0700 "$artifact_root"
   exec 9>"$lock_file"
   flock -n 9 || fail "another focused-tail job owns the remote runner"
+  printf '%s\n' "$lock_owner" >"$lock_file"
+  chmod 0600 "$lock_file"
   printf '{"status":"LOCKED"}\n'
   exec sleep 86400
 fi
@@ -100,6 +107,7 @@ if [[ $action == prepare ]]; then
   require_real_directory "$cache_root" "$source_root"
   current_toolchain=$(toolchain_digest)
   runner=$cache_root/$source_sha-$current_toolchain-transport-release-runner
+  preflight_runner=$cache_root/$source_sha-$current_toolchain-transportcheck
   runner_digest_file=$runner.sha256
   if [[ -e $runner || -e $runner_digest_file ]]; then
     [[ -x $runner && ! -L $runner && -f $runner_digest_file && ! -L $runner_digest_file ]] || fail "cached runner shape is invalid"
@@ -119,6 +127,25 @@ if [[ $action == prepare ]]; then
     mv "$temporary_runner.sha256" "$runner_digest_file"
     trap - EXIT INT TERM
   fi
+  preflight_digest_file=$preflight_runner.sha256
+  if [[ -e $preflight_runner || -e $preflight_digest_file ]]; then
+    [[ -x $preflight_runner && ! -L $preflight_runner && -f $preflight_digest_file && ! -L $preflight_digest_file ]] || fail "cached preflight shape is invalid"
+    expected_preflight=$(<"$preflight_digest_file")
+    [[ $expected_preflight =~ ^[0-9a-f]{64}$ && $(sha256sum "$preflight_runner" | awk '{print $1}') == "$expected_preflight" ]] || fail "cached preflight digest drifted"
+  else
+    temporary_preflight=$(mktemp "$cache_root/.focused-preflight.XXXXXX")
+    trap 'rm -f -- "$temporary_preflight" "$temporary_preflight.sha256"' EXIT INT TERM
+    (cd "$source_root/tools/transportcheck" && go build -trimpath -buildvcs=true -o "$temporary_preflight" .)
+    chmod 0700 "$temporary_preflight"
+    expected_preflight=$(sha256sum "$temporary_preflight" | awk '{print $1}')
+    printf '%s\n' "$expected_preflight" >"$temporary_preflight.sha256"
+    chmod 0600 "$temporary_preflight.sha256"
+    sync -f "$temporary_preflight"
+    sync -f "$temporary_preflight.sha256"
+    mv "$temporary_preflight" "$preflight_runner"
+    mv "$temporary_preflight.sha256" "$preflight_digest_file"
+    trap - EXIT INT TERM
+  fi
   (cd "$source_root/flowersec-ts" && npm run build >/dev/null)
   dist_digest=$(typescript_dist_digest)
   require_exact_source
@@ -126,9 +153,11 @@ if [[ $action == prepare ]]; then
     --arg source_sha "$source_sha" \
     --arg runner_path "$runner" \
     --arg runner_sha256 "$expected_runner" \
+    --arg preflight_path "$preflight_runner" \
+    --arg preflight_sha256 "$expected_preflight" \
     --arg toolchain_sha256 "$current_toolchain" \
     --arg typescript_dist_sha256 "$dist_digest" \
-    '{source_sha:$source_sha,runner_path:$runner_path,runner_sha256:$runner_sha256,toolchain_sha256:$toolchain_sha256,typescript_dist_sha256:$typescript_dist_sha256}'
+    '{source_sha:$source_sha,runner_path:$runner_path,runner_sha256:$runner_sha256,preflight_path:$preflight_path,preflight_sha256:$preflight_sha256,toolchain_sha256:$toolchain_sha256,typescript_dist_sha256:$typescript_dist_sha256}'
   exit 0
 fi
 
@@ -247,43 +276,6 @@ lane=$cgroup_root/lane-0
 workload=$lane/workload
 supervisor=/sys/fs/cgroup/flowersec-release-supervisor
 
-preflight() {
-  [[ $(uname -m) == aarch64 || $(uname -m) == x86_64 ]] || fail "unsupported runner architecture"
-  grep -q '^VERSION_ID="24.04"$' /etc/os-release || fail "Ubuntu version mismatch"
-  [[ $(go version) =~ ^go\ version\ go1\.26\.5\ linux/ ]] || fail "Go version mismatch"
-  [[ $(node --version) == v24.14.1 ]] || fail "Node version mismatch"
-  [[ $(tini --version 2>&1) == 'tini version 0.19.0' ]] || fail "tini version mismatch"
-  for executable in ip nft tc jq flock timeout tini; do command -v "$executable" >/dev/null || fail "missing executable $executable"; done
-  for controller in cpuset cpu memory pids; do grep -qw "$controller" /sys/fs/cgroup/cgroup.controllers || fail "missing cgroup controller $controller"; done
-  browser=$(cd "$source_root/flowersec-ts" && PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright node -e 'const { chromium }=require("playwright"); console.log(chromium.executablePath())')
-  [[ $($browser --version | awk '{print $NF}') == 151.0.7922.34 ]] || fail "Chromium version mismatch"
-  active=$(ps -eo state=,comm= | awk '$1 !~ /^Z/ && ($2 ~ /transport-release/ || $2 ~ /chrome|chromium/) {n++} END{print n+0}')
-  zombies=$(ps -eo state= | awk '$1 ~ /^Z/ {n++} END{print n+0}')
-  [[ $active == 0 && $zombies == 0 ]] || fail "runner or browser process residual"
-  [[ $(awk '/MemAvailable:/ {print $2}' /proc/meminfo) -ge 4194304 ]] || fail "available memory below 4 GiB"
-  [[ $(awk '/SwapTotal:/ {print $2}' /proc/meminfo) -ge 1048572 ]] || fail "1 GiB swap is unavailable"
-  [[ $(df -Pk "$artifact_root" | awk 'NR == 2 {print $4}') -ge 6291456 ]] || fail "artifact disk below 6 GiB"
-  [[ ! -e $output_root && ! -L $output_root ]] || fail "artifact path is not fresh"
-  [[ ! -e $cgroup_root && ! -L $cgroup_root ]] || fail "cgroup path is not fresh"
-  [[ -z $(ip netns list | awk '$1 ~ /^fc-/ || $1 ~ /^fs-/ {print $1}') ]] || fail "network namespace residual"
-}
-
-if [[ $action == preflight ]]; then
-  preflight
-  printf '{"status":"GREEN"}\n'
-  exit 0
-fi
-
-set +e
-preflight_output=$(preflight 2>&1)
-preflight_result=$?
-set -e
-if [[ $preflight_result != 0 ]]; then
-  jq -n --arg message "$preflight_output" \
-    '{receipt:null,failure:{classification:"environment",workload_started:false,message:$message}}'
-  exit 0
-fi
-
 cleanup() {
   if [[ -d $lane ]] && grep -q 'populated 1' "$lane/cgroup.events" 2>/dev/null; then
     printf '1' >"$lane/cgroup.kill" 2>/dev/null || true
@@ -309,7 +301,6 @@ setup_lane() {
   done
   [[ $delegated == 1 ]] || fail "could not delegate cgroup controllers"
 
-  install -d -m 0700 "$output_root/artifacts"
   mkdir "$cgroup_root"
   printf '0,1,2,3' >"$cgroup_root/cpuset.cpus"
   printf '0' >"$cgroup_root/cpuset.mems"
@@ -326,7 +317,38 @@ setup_lane() {
   [[ $(cat "$lane/memory.swap.current") == 0 ]] || fail "isolated lane is using swap"
   printf '+cpuset +cpu +memory +pids' >"$lane/cgroup.subtree_control"
   mkdir "$workload"
-  date -Is >"$output_root/started-at.txt"
+}
+
+preflight_report=$receipt_root/shard-$shard_label.preflight.json
+run_unified_preflight() {
+  local preflight_runner runner_config
+  preflight_runner=$(jq -r '.prepared.preflight_path' <<<"$request")
+  runner_config=$source_root/.flowersec/transport-runner.json
+  install -d -m 0700 "$receipt_root"
+  env \
+    FLOWERSEC_RUNNER_CONTEXT=focused \
+    FLOWERSEC_RUNNER_CONTEXT_SHA="$source_sha" \
+    FLOWERSEC_RUNNER_LOCK_OWNER="$lock_owner" \
+    FLOWERSEC_RUNNER_LAUNCHER_VERIFIED=1 \
+    FLOWERSEC_RUNNER_LAUNCHER_RUNTIME=lxc \
+    FLOWERSEC_RUNNER_REACHABILITY_VERIFIED=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright \
+    FLOWERSEC_WORKLOAD_CGROUP="$workload" \
+    /bin/sh -c 'printf "%s\n" "$$" >"$FLOWERSEC_WORKLOAD_CGROUP/cgroup.procs" && exec "$@"' \
+    flowersec-preflight timeout --signal=TERM --kill-after=1s 30s "$preflight_runner" runner-preflight \
+      -mode focused \
+      -repo "$source_root" \
+      -sha "$source_sha" \
+      -runner-config "$runner_config" \
+      -output "$preflight_report" \
+      -artifact-path "$output_root" \
+      -runner-executable "$(jq -r '.prepared.runner_path' <<<"$request")" \
+      -runner-sha256 "$(jq -r '.prepared.runner_sha256' <<<"$request")" \
+      -toolchain-sha256 "$(jq -r '.prepared.toolchain_sha256' <<<"$request")" \
+      -dist-sha256 "$(jq -r '.prepared.typescript_dist_sha256' <<<"$request")" \
+      -lock-path "$lock_file" \
+      -lock-owner "$lock_owner" \
+      -cgroup-root "$lane"
 }
 
 set +e
@@ -340,6 +362,31 @@ if [[ $setup_result != 0 ]]; then
     '{receipt:null,failure:{classification:"environment",workload_started:false,message:$message}}'
   exit 0
 fi
+
+if [[ $action == preflight ]]; then
+  set +e
+  run_unified_preflight >/dev/null 2>&1
+  preflight_result=$?
+  set -e
+  cleanup
+  trap - EXIT INT TERM
+  if [[ -f $preflight_report && ! -L $preflight_report ]]; then
+    cat "$preflight_report"
+    exit 0
+  fi
+  jq -n --arg message "unified preflight did not produce a report (exit=$preflight_result)" \
+    --arg mode "focused" --arg sha "$source_sha" \
+    '{schema:"flowersec-runner-preflight-v1",status:"RED",classification:"environment",mode:$mode,source_sha:$sha,base_sha:"",workload_started:false,duration_ms:0,check_id:"preflight_collection",message:$message,checks:[{check_id:"preflight_collection",status:"RED",classification:"environment",message:$message,actual:"missing report",expected:"atomic report"}]}'
+  exit 0
+fi
+
+jq -e --arg schema "flowersec-runner-preflight-v1" --arg sha "$source_sha" \
+  '.schema == $schema and .status == "GREEN" and .classification == "none" and .mode == "focused" and
+   .source_sha == $sha and .base_sha == "" and .workload_started == false and .check_id == "" and .message == "" and
+   (.checks | length > 0 and all(.status == "GREEN"))' "$preflight_report" >/dev/null || fail "exact-SHA unified preflight receipt is unavailable"
+
+install -d -m 0700 "$output_root/artifacts"
+date -Is >"$output_root/started-at.txt"
 
 first_run=$(( (shard - 1) * 3 + 1 ))
 set +e

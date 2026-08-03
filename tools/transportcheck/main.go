@@ -31,7 +31,7 @@ func run(args []string, output io.Writer) error {
 
 func runContext(ctx context.Context, args []string, output io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: transportcheck <manifest|runner-config|focused-tail|collect|merge-capacity|evidence|sign|gate> [flags]")
+		return errors.New("usage: transportcheck <manifest|runner-config|runner-preflight|focused-tail|collect|merge-capacity|evidence|sign|gate> [flags]")
 	}
 	switch args[0] {
 	case "manifest":
@@ -88,6 +88,36 @@ func runContext(ctx context.Context, args []string, output io.Writer) error {
 		}
 		_, _ = fmt.Fprintf(output, "runner config written: id=%s os=%s architecture=%s kernel=%s output=%s\n", config.RunnerID, config.OS, config.Architecture, config.KernelRelease, *outputPath)
 		return nil
+	case "runner-preflight":
+		flags := flag.NewFlagSet("runner-preflight", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		request := runnerPreflightRequest{}
+		flags.StringVar(&request.Mode, "mode", "", "focused or formal workload context")
+		flags.StringVar(&request.RepositoryPath, "repo", "", "clean source checkout root")
+		flags.StringVar(&request.SHA, "sha", "", "exact full source Git SHA")
+		flags.StringVar(&request.BaseSHA, "base-sha", "", "exact full base Git SHA for formal mode")
+		flags.StringVar(&request.RunnerConfigPath, "runner-config", "", "private ignored runner identity")
+		flags.StringVar(&request.OutputPath, "output", "", "atomic JSON result path or - for stdout")
+		flags.StringVar(&request.ArtifactPath, "artifact-path", "", "fresh workload artifact path")
+		flags.StringVar(&request.RunnerExecutable, "runner-executable", "", "prepared low-level runner executable")
+		flags.StringVar(&request.RunnerExecutableSHA256, "runner-sha256", "", "expected runner executable digest")
+		flags.StringVar(&request.HostBPFExecutable, "host-bpftool", "", "formal exact-kernel host bpftool executable")
+		flags.StringVar(&request.ExpectedToolchainSHA256, "toolchain-sha256", "", "expected prepared toolchain digest")
+		flags.StringVar(&request.ExpectedDistSHA256, "dist-sha256", "", "expected TypeScript dist digest")
+		flags.StringVar(&request.LockPath, "lock-path", "", "unique workload lock path")
+		flags.StringVar(&request.LockOwner, "lock-owner", "", "stable owner recorded in the held workload lock")
+		flags.StringVar(&request.CgroupRootPath, "cgroup-root", "/sys/fs/cgroup", "delegated cgroup root used by the workload")
+		flags.Func("dependency-url", "formal dependency metadata endpoint (repeatable)", func(value string) error {
+			request.DependencyURLs = append(request.DependencyURLs, value)
+			return nil
+		})
+		if err := flags.Parse(args[1:]); err != nil {
+			return runnerPreflightError(runnerPreflightInput, err.Error())
+		}
+		if flags.NArg() != 0 || request.Mode == "" || request.RepositoryPath == "" || request.SHA == "" || request.RunnerConfigPath == "" || request.OutputPath == "" || request.ArtifactPath == "" || request.LockPath == "" || request.LockOwner == "" {
+			return runnerPreflightError(runnerPreflightInput, "runner-preflight requires -mode, -repo, -sha, -runner-config, -output, -artifact-path, -lock-path, and -lock-owner")
+		}
+		return runRunnerPreflight(ctx, request, output)
 	case "focused-tail":
 		flags := flag.NewFlagSet("focused-tail", flag.ContinueOnError)
 		flags.SetOutput(io.Discard)

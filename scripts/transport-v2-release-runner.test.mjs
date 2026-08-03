@@ -53,26 +53,11 @@ test("release wrapper loads host identity from a git-ignored local config", () =
   assert.doesNotMatch(runner, /expected_kernel=.*trust_policy/);
 });
 
-test("release wrapper accepts private runner config modes and rejects public modes", () => {
+test("release wrapper delegates private runner identity validation to the unified preflight", () => {
   const runner = fs.readFileSync(runnerPath, "utf8");
-  const modeGuard = runner.match(
-    /^\(\((.+runner_config_mode.+)\)\) \|\| fail "runner config must not be accessible by group or other users"$/m,
-  )?.[1];
-  assert.ok(modeGuard, "runner config mode guard must remain directly testable");
-
-  for (const [mode, accepted] of [
-    ["600", true],
-    ["640", false],
-    ["604", false],
-    ["666", false],
-  ]) {
-    const result = spawnSync(
-      "bash",
-      ["-c", `runner_config_mode=$1; (( ${modeGuard} ))`, "runner-config-mode", mode],
-      { encoding: "utf8" },
-    );
-    assert.equal(result.status === 0, accepted, `runner config mode ${mode} acceptance mismatch`);
-  }
+  assert.match(runner, /"\$transportcheck" runner-preflight/);
+  assert.match(runner, /-runner-config "\$runner_config_path"/);
+  assert.doesNotMatch(runner, /runner_config_mode|local_runner_(?:id|os|architecture|kernel)/);
 });
 
 test("release wrapper freezes the audited source, host, builds, and collect argv", () => {
@@ -85,15 +70,11 @@ test("release wrapper freezes the audited source, host, builds, and collect argv
   assert.match(runner, /install -d -o root -g root -m 0700 "\$report_directory"/);
   assert.match(runner, /chown -R "\$release_owner_uid:\$release_owner_gid" "\$report_directory"/);
   assert.match(runner, /readonly source_root=\/workspace\/flowersec/);
-  assert.match(runner, /git -C "\$source_root" status --porcelain --untracked-files=all/);
-  assert.match(runner, /merge-base --is-ancestor "\$base_sha" "\$final_sha"/);
-	assert.match(runner, /git clone --quiet --no-local --no-checkout "\$source_root" "\$base_source_root"/);
-	assert.match(runner, /checkout --quiet --detach "\$base_sha"/);
-	assert.match(runner, /base and final performance manifests must be byte-identical/);
+  assert.match(runner, /git clone --quiet --no-local --no-checkout "\$source_root" "\$base_source_root"/);
+  assert.match(runner, /checkout --quiet --detach "\$base_sha"/);
   assert.match(runner, /ID:-} == ubuntu && \$\{VERSION_ID:-} == 24\.04/);
   assert.match(runner, /actual_kernel=\$\(uname -r\)/);
-  assert.match(runner, /host kernel \$actual_kernel does not match local runner config \$local_runner_kernel/);
-  assert.match(runner, /ip netns add "\$probe_namespace"/);
+  assert.match(runner, /-runner-config "\$runner_config_path"/);
   assert.match(runner, /go build -trimpath -buildvcs=false -o "\$low_level_runner"/);
 	assert.match(runner, /cargo build --locked --release --example transport_release_runner/);
 	assert.match(runner, /CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="\$rust_target_directory"/);
@@ -109,7 +90,7 @@ test("release wrapper freezes the audited source, host, builds, and collect argv
   assert.match(runner, /clang -O2 -g -Wall -Werror -target bpf/);
   assert.match(runner, /-D"__TARGET_ARCH_\$\{bpf_target_arch\}"/);
   assert.match(runner, /-I"\$bpf_system_include"/);
-  assert.match(runner, /runner build changed the source checkout/);
+  assert.match(runner, /runner-preflight report is not strict GREEN/);
   assert.match(runner, /"\$transportcheck" collect \\/);
 	assert.match(runner, /FLOWERSEC_RUST_RELEASE_RUNNER="\$rust_release_runner" "\$transportcheck" collect/);
   for (const flag of [
@@ -136,17 +117,28 @@ test("release wrapper contains low-level temporary files in its private build ro
 
 test("release wrapper rebuilds the final browser bundle before collection", () => {
   const runner = fs.readFileSync(runnerPath, "utf8");
-  const finalCheckoutClean = runner.indexOf('git -C "$source_root" status --porcelain --untracked-files=all');
   const browserDirectory = runner.indexOf('cd "$source_root/flowersec-ts"');
   const browserBuild = runner.indexOf("npm run build", browserDirectory);
+  const preflight = runner.indexOf('"$transportcheck" runner-preflight');
   const collection = runner.indexOf('"$transportcheck" collect');
 
-  assert.notEqual(finalCheckoutClean, -1, "wrapper must verify the final checkout is clean");
   assert.notEqual(browserDirectory, -1, "wrapper must build from the final TypeScript checkout");
   assert.notEqual(browserBuild, -1, "wrapper must run the clean browser build");
+  assert.notEqual(preflight, -1, "wrapper must run the unified preflight");
   assert.notEqual(collection, -1, "wrapper must invoke the evidence collector");
-  assert.ok(finalCheckoutClean < browserDirectory, "the final checkout must be clean before building browser dist");
-  assert.ok(browserBuild < collection, "browser dist must be rebuilt before evidence collection");
+  assert.ok(browserBuild < preflight && preflight < collection, "browser build, unified preflight, and collection must stay ordered");
+});
+
+test("release wrapper starts no formal workload before strict unified preflight GREEN", () => {
+  const runner = fs.readFileSync(runnerPath, "utf8");
+  const preflight = runner.indexOf('"$transportcheck" runner-preflight');
+  const strictGreen = runner.indexOf("runner-preflight report is not strict GREEN");
+  const reportDirectory = runner.indexOf('install -d -o root -g root -m 0700 "$report_directory"');
+  const rustBuild = runner.indexOf("cargo build --locked --release");
+  const collect = runner.indexOf('"$transportcheck" collect');
+  assert.ok(preflight >= 0 && strictGreen > preflight);
+  for (const index of [reportDirectory, rustBuild, collect]) assert.ok(index > strictGreen);
+  assert.match(runner, /runner-preflight \$\{preflight_check:-preflight_collection\}/);
 });
 
 test("release wrapper collects bounded capacity parts before strict merge", () => {

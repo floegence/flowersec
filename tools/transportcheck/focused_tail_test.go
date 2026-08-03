@@ -149,9 +149,9 @@ func TestFocusedTailCheckedInEntryPointStaysOutsideAutomaticGates(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	rule := "Remote focused and tail recovery must use the checked-in resumable orchestrator. Inline SSH/LXC pipelines are limited to read-only diagnosis. The orchestrator resumes from exact-SHA receipts, stops on the first failure, and never retries product failures automatically."
+	rule := "Every remote focused or formal workload must pass the checked-in preflight in the exact workload context. Any later environment-class failure that preflight could have detected requires a regression contract and preflight update before retry."
 	if strings.Count(string(agentsData), rule) != 1 {
-		t.Fatal("AGENTS.md must contain exactly the concise remote focused-tail rule")
+		t.Fatal("AGENTS.md must contain exactly the concise unified remote preflight rule")
 	}
 }
 
