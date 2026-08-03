@@ -142,9 +142,15 @@ test("doctor mirrors the formal build and browser identity context", async () =>
   const doctorStart = agent.indexOf("run_guest_doctor() {");
   const doctorEnd = agent.indexOf("\nlocked_cargo_cache_ready() {", doctorStart);
   const doctor = agent.slice(doctorStart, doctorEnd);
+  const formalStart = agent.indexOf("run_guest_formal_root() {");
+  const formalEnd = agent.indexOf("\nrun_guest_collect() {", formalStart);
+  const formal = agent.slice(formalStart, formalEnd);
 
   assert.match(deploy, /"\$\(node --version\)"/);
   for (const assignment of [
+    "--setenv=GOOS=linux",
+    '--setenv=GOARCH="$actual_go_architecture"',
+    "--setenv=CGO_ENABLED=0",
     "--setenv=CARGO_NET_OFFLINE=true",
     "--setenv=GOWORK=off",
     "--setenv=GOFLAGS=-mod=readonly",
@@ -154,6 +160,9 @@ test("doctor mirrors the formal build and browser identity context", async () =>
   ]) {
     assert.ok(doctor.includes(assignment), `doctor is missing ${assignment}`);
   }
+  assert.match(agent, /guest_go_architecture\(\)[\s\S]*x86_64\) printf '%s\\n' amd64[\s\S]*aarch64\) printf '%s\\n' arm64/);
+  assert.match(deploy, /export GOOS=linux GOARCH="\$actual_go_architecture" CGO_ENABLED=0/);
+  assert.match(formal, /export GOOS=linux GOARCH="\$actual_go_architecture" CGO_ENABLED=0/);
 });
 
 test("controller does not expand parameters or commit partial GREEN state", async (t) => {

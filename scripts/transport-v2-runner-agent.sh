@@ -236,8 +236,16 @@ guest_result() {
   printf '%s\n' "$payload"
 }
 
+guest_go_architecture() {
+  case $(uname -m) in
+    x86_64) printf '%s\n' amd64 ;;
+    aarch64) printf '%s\n' arm64 ;;
+    *) return 1 ;;
+  esac
+}
+
 run_guest_deploy() {
-  local expected identity build_temp toolchain_material toolchain_sha dist_sha runner_sha transportcheck_sha metadata_revision metadata_modified
+  local expected identity build_temp toolchain_material toolchain_sha dist_sha runner_sha transportcheck_sha metadata_revision metadata_modified actual_go_architecture
   expected=$(jq -r '.bundle_sha256' "$request")
   [[ -f $guest_bundle && ! -L $guest_bundle ]]
   [[ $(sha256sum "$guest_bundle" | awk '{print $1}') == "$expected" ]] || agent_fail guest_bundle_digest "guest deploy bundle digest drifted" identity 30
@@ -249,8 +257,8 @@ run_guest_deploy() {
   [[ $(git -C "$guest_repo" rev-parse HEAD) == "$source_sha" ]]
   test -z "$(git -C "$guest_repo" status --porcelain --untracked-files=all)"
   export PATH=/usr/local/go/bin:/usr/local/cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-  export GOOS=linux CGO_ENABLED=0 GOWORK=off GOFLAGS=-mod=readonly GOPROXY=off
-  case $(uname -m) in x86_64) export GOARCH=amd64 ;; aarch64) export GOARCH=arm64 ;; *) exit 3 ;; esac
+  actual_go_architecture=$(guest_go_architecture) || agent_fail guest_architecture "guest architecture is unsupported" policy 30
+  export GOOS=linux GOARCH="$actual_go_architecture" CGO_ENABLED=0 GOWORK=off GOFLAGS=-mod=readonly GOPROXY=off
   install -d -m 0700 "$(dirname "$prepared_root")"
   find "$guest_root" -maxdepth 1 -type d -name ".prepared-$source_sha.*" -exec rm -rf -- {} +
   if [[ -e $prepared_root || -L $prepared_root ]]; then
@@ -392,8 +400,9 @@ run_guest_doctor_root() {
 }
 
 run_guest_doctor() {
-  local doctor_unit nested_result nested_status
+  local doctor_unit nested_result nested_status actual_go_architecture
   doctor_unit=flowersec-doctor-$short_sha-$runner_id.service
+  actual_go_architecture=$(guest_go_architecture) || doctor_fail guest_architecture "guest architecture is unsupported" policy
   sudo -n systemctl reset-failed "$doctor_unit" >/dev/null 2>&1 || true
   set +e
   nested_result=$(sudo -n systemd-run --quiet --wait --pipe --collect --unit="$doctor_unit" \
@@ -401,6 +410,7 @@ run_guest_doctor() {
     --setenv=PATH=/usr/local/go/bin:/usr/local/cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     --setenv=HOME=/root --setenv=RUSTUP_HOME=/usr/local/rustup --setenv=CARGO_HOME=/usr/local/cargo \
     --setenv=LC_ALL=C.UTF-8 --setenv=TZ=UTC --setenv=CARGO_NET_OFFLINE=true \
+    --setenv=GOOS=linux --setenv=GOARCH="$actual_go_architecture" --setenv=CGO_ENABLED=0 \
     --setenv=GOWORK=off --setenv=GOFLAGS=-mod=readonly --setenv=GOPROXY=off \
     --setenv=GOMODCACHE="$guest_home/go/pkg/mod" \
     --setenv=PLAYWRIGHT_BROWSERS_PATH="$guest_home/.cache/ms-playwright" \
@@ -495,15 +505,17 @@ run_guest_formal() {
 }
 
 run_guest_formal_root() {
-  local urls release_owner_uid release_owner_gid
+  local urls release_owner_uid release_owner_gid actual_go_architecture
   [[ $(id -u) == 0 ]]
   [[ $(git -c safe.directory="$guest_repo" -C "$guest_repo" rev-parse HEAD) == "$source_sha" ]]
   test -z "$(git -c safe.directory="$guest_repo" -C "$guest_repo" status --porcelain --untracked-files=all)"
   urls=$(jq -r '.dependency_urls | join(" ")' "$config")
   release_owner_uid=$(stat -c %u "$guest_repo")
   release_owner_gid=$(stat -c %g "$guest_repo")
+  actual_go_architecture=$(guest_go_architecture)
   export PATH=/usr/local/go/bin:/usr/local/cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
   export HOME=/root RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo CARGO_NET_OFFLINE=true
+  export GOOS=linux GOARCH="$actual_go_architecture" CGO_ENABLED=0
   export GOWORK=off GOFLAGS=-mod=readonly GOPROXY=off GOMODCACHE=$guest_home/go/pkg/mod
   export PLAYWRIGHT_BROWSERS_PATH=$guest_home/.cache/ms-playwright
   export FLOWERSEC_RUNNER_REACHABILITY_VERIFIED=1 FLOWERSEC_RUNNER_LAUNCHER_RUNTIME=lxc
