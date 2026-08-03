@@ -404,6 +404,25 @@ run_guest_doctor() {
   guest_result "$nested_result"
 }
 
+locked_cargo_cache_ready() {
+  (cd "$guest_repo/flowersec-rust" &&
+    HOME="$guest_home" RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo CARGO_NET_OFFLINE=true \
+    rustup run 1.88.0 cargo metadata --locked --offline --format-version 1 >/dev/null 2>&1)
+}
+
+provision_locked_cargo_cache() {
+  if locked_cargo_cache_ready; then return; fi
+  if ! (cd "$guest_repo/flowersec-rust" &&
+    HTTP_PROXY="$proxy_url" HTTPS_PROXY="$proxy_url" http_proxy="$proxy_url" https_proxy="$proxy_url" \
+    ALL_PROXY= all_proxy= NO_PROXY= no_proxy= HOME="$guest_home" \
+    RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo CARGO_NET_OFFLINE=false \
+    rustup run 1.88.0 cargo fetch --locked); then
+    agent_fail provision_cargo_cache "failed to fill the locked Cargo cache through the configured proxy" environment 20
+  fi
+  locked_cargo_cache_ready || \
+    agent_fail provision_cargo_cache "locked Cargo cache is incomplete after provisioning" environment 20
+}
+
 run_guest_provision() {
   local guest_template
   guest_template=$guest_root/flowersec-formal@.service
@@ -417,10 +436,17 @@ run_guest_provision() {
   [[ $(sudo -n sha256sum "$stable_config" | awk '{print $1}') == "$(jq -r '.config_sha256' "$request")" ]] || agent_fail stable_config_digest "installed formal config digest drifted" identity 30
   sudo -n systemctl daemon-reload
   sudo -n git config --global --replace-all safe.directory "$guest_repo"
-  for tool in go node jq flock timeout tini ip nft tc bpftool clang rustup cargo curl docker; do command -v "$tool" >/dev/null; done
-  sudo -n timeout --signal=TERM --kill-after=1s 10s docker info --format '{{.ServerVersion}}' >/dev/null
-  (cd "$guest_repo/flowersec-rust" && CARGO_NET_OFFLINE=true rustup run 1.88.0 cargo metadata --locked --offline --format-version 1 >/dev/null)
-  find "$guest_home/.cache/ms-playwright" -type f -name chrome -perm -111 -print -quit | grep -q .
+  for tool in go node jq flock timeout tini ip nft tc bpftool clang rustup cargo curl docker; do
+    command -v "$tool" >/dev/null || \
+      agent_fail provision_tool "required provision tool is unavailable: $tool" environment 20
+  done
+  if ! sudo -n timeout --signal=TERM --kill-after=1s 10s docker info --format '{{.ServerVersion}}' >/dev/null; then
+    agent_fail provision_docker "Docker is unavailable in the formal service context" environment 20
+  fi
+  provision_locked_cargo_cache
+  if ! find "$guest_home/.cache/ms-playwright" -type f -name chrome -perm -111 -print -quit | grep -q .; then
+    agent_fail provision_chromium "provisioned Chromium executable is unavailable" environment 20
+  fi
   guest_result "$(result_json GREEN "stable toolchain, cache, Chromium, permissions, and proxy prerequisites are provisioned")"
 }
 

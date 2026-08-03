@@ -90,6 +90,25 @@ assert socket_probes == 3, socket_probes
   assert.equal(probe.status, 0, `${probe.stderr}\n${probe.stdout}`);
 });
 
+test("provision fills the locked Cargo cache through the proxy and verifies it offline", async () => {
+  const agent = await readFile(agentPath, "utf8");
+  const provisionStart = agent.indexOf("run_guest_provision() {");
+  const provisionEnd = agent.indexOf("\nrun_guest_formal() {", provisionStart);
+  const provision = agent.slice(provisionStart, provisionEnd);
+
+  assert.notEqual(provisionStart, -1);
+  assert.notEqual(provisionEnd, -1);
+  assert.match(agent, /provision_locked_cargo_cache\(\)/);
+  assert.match(agent, /cargo fetch --locked/);
+  assert.match(agent, /HTTP_PROXY="\$proxy_url" HTTPS_PROXY="\$proxy_url"/);
+  assert.match(agent, /RUSTUP_HOME=\/usr\/local\/rustup CARGO_HOME=\/usr\/local\/cargo/);
+  assert.match(agent, /CARGO_NET_OFFLINE=true/);
+  assert.match(agent, /rustup run 1\.88\.0 cargo metadata --locked --offline/);
+  assert.match(agent, /agent_fail provision_cargo_cache/);
+  assert.match(provision, /provision_locked_cargo_cache/);
+  assert.ok(agent.indexOf("cargo fetch --locked") < agent.lastIndexOf("locked_cargo_cache_ready"));
+});
+
 test("controller does not expand parameters or commit partial GREEN state", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "flowersec-runner-contract-"));
   t.after(() => rm(root, { recursive: true, force: true }));
