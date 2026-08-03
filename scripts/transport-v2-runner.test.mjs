@@ -277,6 +277,27 @@ test("provision repairs generated build ownership and deploy reserves stdout for
   assert.match(deploy, /make -C "\$guest_repo" transport-runner-config >&2/);
 });
 
+test("deploy preserves bounded Rust diagnostics and classifies source build failures as product failures", async () => {
+  const agent = await readFile(agentPath, "utf8");
+  const deployStart = agent.indexOf("run_guest_deploy() {");
+  const deployEnd = agent.indexOf("\ndoctor_fail() {", deployStart);
+  const deploy = agent.slice(deployStart, deployEnd);
+
+  assert.match(deploy, /rust-build\.stderr/);
+  assert.match(deploy, /tail -c 16384/);
+  assert.match(deploy, /deploy_rust_runner_build[\s\S]+product 50/);
+});
+
+test("host failures forward only bounded nested stderr and cleanup retains the first failure", async () => {
+  const controller = await readFile(controllerPath, "utf8");
+  const hostHelper = await readFile(hostHelperPath, "utf8");
+
+  assert.match(hostHelper, /MAX_NESTED_STDERR_BYTES = 16384/);
+  assert.match(hostHelper, /emit_nested_stderr\(nested\.stderr\)/);
+  assert.match(hostHelper, /encoded\[-MAX_NESTED_STDERR_BYTES:\]/);
+  assert.match(controller, /if \$existing \| has\("last_failure"\) then \.last_failure=\$existing\.last_failure else \. end/);
+});
+
 test("doctor mirrors the formal build and browser identity context", async () => {
   const agent = await readFile(agentPath, "utf8");
   const preflight = await readFile(path.join(repository, "tools", "transportcheck", "runner_preflight.go"), "utf8");
@@ -407,6 +428,16 @@ test("controller does not expand parameters or commit partial GREEN state", asyn
   assert.deepEqual(failedState.actions, written.actions);
   assert.equal(failedState.last_failure.check_id, "runner_reachability");
   assert.equal(failedState.last_failure.classification, "unreachable");
+
+  await writeFile(fakeSSH, `#!/bin/sh\nset -eu\nif IFS= read -r unexpected; then exit 91; fi\nprintf '%s\\n' '{"schema":"flowersec-remote-runner-result-v1","status":"GREEN","action":"cleanup","source_sha":"${sourceSHA}","base_sha":"","classification":"none","check_id":"","message":"remote cleanup executed"}'\n`);
+  const cleanup = spawnSync(controllerPath, ["cleanup", "--config", config, "--sha", sourceSHA], {
+    cwd: repository,
+    encoding: "utf8",
+  });
+  assert.equal(cleanup.status, 0, cleanup.stderr);
+  const cleanedState = JSON.parse(await readFile(state, "utf8"));
+  assert.equal(cleanedState.actions.cleanup.status, "GREEN");
+  assert.deepEqual(cleanedState.last_failure, failedState.last_failure);
 });
 
 test("a later failed action invalidates an earlier cleanup receipt", async (t) => {

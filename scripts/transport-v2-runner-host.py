@@ -36,6 +36,7 @@ BASE_RESULT_KEYS = {
 }
 SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_@./:-]+$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+MAX_NESTED_STDERR_BYTES = 16384
 
 
 class RunnerFailure(Exception):
@@ -108,6 +109,13 @@ def command(argv, timeout, check=True):
         message = completed.stderr.strip() or completed.stdout.strip() or f"command exited {completed.returncode}"
         raise RunnerFailure("host_command", message)
     return completed
+
+
+def emit_nested_stderr(value):
+    encoded = value.encode("utf-8", errors="replace")
+    diagnostic = encoded[-MAX_NESTED_STDERR_BYTES:].decode("utf-8", errors="replace").strip()
+    if diagnostic:
+        print(f"nested runner stderr (bounded tail):\n{diagnostic}", file=sys.stderr, flush=True)
 
 
 def require_digest(path, expected, check_id):
@@ -352,6 +360,8 @@ def main():
             config, "exec", config["lxc_name"], "--", lxd_agent, "--role", "lxd", action, lxd_config,
             lxd_request, "flowersec-remote-runner-v1", timeout=action_timeout(action), check=False,
         )
+        if nested.returncode != 0:
+            emit_nested_stderr(nested.stderr)
         payload = parse_result(nested.stdout, request)
         payload = pull_collection(config, request, payload)
         if action == "deploy" and nested.returncode == 0:

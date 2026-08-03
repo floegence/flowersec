@@ -292,7 +292,7 @@ guest_go_architecture() {
 }
 
 run_guest_deploy() {
-  local expected identity build_temp toolchain_material toolchain_sha dist_sha runner_sha rust_runner_sha transportcheck_sha metadata_revision metadata_modified actual_go_architecture
+  local expected identity build_temp rust_build_log rust_build_diagnostic toolchain_material toolchain_sha dist_sha runner_sha rust_runner_sha transportcheck_sha metadata_revision metadata_modified actual_go_architecture
   expected=$(jq -r '.bundle_sha256' "$request")
   [[ -f $guest_bundle && ! -L $guest_bundle ]]
   [[ $(sha256sum "$guest_bundle" | awk '{print $1}') == "$expected" ]] || agent_fail guest_bundle_digest "guest deploy bundle digest drifted" identity 30
@@ -341,13 +341,17 @@ run_guest_deploy() {
     ); then
       agent_fail deploy_transportcheck_build "prepared transportcheck build failed" environment 20
     fi
+    rust_build_log=$build_temp/rust-build.stderr
     if ! (
       cd "$guest_repo/flowersec-rust"
       CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$build_temp/rust-target" \
-        rustup run 1.88.0 cargo build --locked --release --example transport_release_runner >&2
-    ); then
-      agent_fail deploy_rust_runner_build "prepared Rust release runner build failed" environment 20
+        rustup run 1.88.0 cargo build --locked --release --example transport_release_runner
+    ) 2>"$rust_build_log"; then
+      rust_build_diagnostic=$(tail -c 16384 "$rust_build_log")
+      agent_fail deploy_rust_runner_build \
+        "prepared Rust release runner build failed: ${rust_build_diagnostic:-no stderr was produced}" product 50
     fi
+    rm -f -- "$rust_build_log"
     mv -- "$build_temp/rust-target/release/examples/transport_release_runner" "$build_temp/transport-release-runner-rust"
     rm -rf -- "$build_temp/rust-target"
     metadata_revision=$(go version -m "$build_temp/transportcheck" | sed -n 's/^[[:space:]]*build[[:space:]]*vcs\.revision=//p')

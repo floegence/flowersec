@@ -366,6 +366,7 @@ write_state_atomically() {
     --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '{schema:"flowersec-remote-runner-state-v1",config_sha256:$config_sha256,updated_at:$updated_at,
       actions:($existing.actions // {})} |
+      if $existing | has("last_failure") then .last_failure=$existing.last_failure else . end |
       if $action != "cleanup" then del(.actions.cleanup) else . end |
       .actions[$action]=$result' >"$temporary"
   chmod 0600 "$temporary"
