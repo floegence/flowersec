@@ -77,11 +77,7 @@ func openCollectionLaneSet(count int, isolated, caseSuite bool) (_ collectionLan
 			resultErr = errors.Join(resultErr, set.Close())
 		}
 	}()
-	selected := make([]int, 0, len(allowed))
-	for _, cpus := range laneCPUs {
-		selected = append(selected, cpus...)
-	}
-	if err := writeCgroupValue(root, "cpuset.cpus", formatCPUSet(selected)); err != nil {
+	if err := writeCgroupValue(root, "cpuset.cpus", formatCPUSet(allowed)); err != nil {
 		return nil, err
 	}
 	if err := writeCgroupValue(root, "cpuset.mems", strings.TrimSpace(string(memoryNodes))); err != nil {
@@ -202,40 +198,4 @@ func writeCgroupValue(root, name, value string) error {
 		return fmt.Errorf("write cgroup %s: %w", name, err)
 	}
 	return nil
-}
-
-func parseCPUSet(value string) ([]int, error) {
-	if value == "" {
-		return nil, errors.New("CPU set is empty")
-	}
-	var result []int
-	for _, item := range strings.Split(value, ",") {
-		bounds := strings.Split(item, "-")
-		if len(bounds) > 2 {
-			return nil, fmt.Errorf("invalid CPU set %q", value)
-		}
-		first, err := strconv.Atoi(bounds[0])
-		if err != nil || first < 0 {
-			return nil, fmt.Errorf("invalid CPU set %q", value)
-		}
-		last := first
-		if len(bounds) == 2 {
-			last, err = strconv.Atoi(bounds[1])
-			if err != nil || last < first {
-				return nil, fmt.Errorf("invalid CPU set %q", value)
-			}
-		}
-		for cpu := first; cpu <= last; cpu++ {
-			result = append(result, cpu)
-		}
-	}
-	return result, nil
-}
-
-func formatCPUSet(cpus []int) string {
-	parts := make([]string, len(cpus))
-	for index, cpu := range cpus {
-		parts[index] = strconv.Itoa(cpu)
-	}
-	return strings.Join(parts, ",")
 }

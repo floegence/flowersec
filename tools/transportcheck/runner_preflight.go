@@ -100,6 +100,9 @@ type runnerPreflightFacts struct {
 	BPFCanary         bool
 	CgroupCanary      bool
 	Controllers       []string
+	EffectiveCPUs     int
+	LaneCPUs          int
+	LaneCPUMax        string
 	LaneMemoryLimit   string
 	LaneSwapLimit     string
 	LanePidsLimit     string
@@ -309,7 +312,8 @@ func collectRunnerPreflightFacts(ctx context.Context, request runnerPreflightReq
 	facts.ChromiumVersion = runnerPreflightChromiumVersion(ctx, repository)
 	facts.NetNSCanary = runnerPreflightNetNSCanary(ctx)
 	facts.BPFCanary = runnerPreflightBPFCanary(ctx)
-	facts.CgroupCanary, facts.Controllers, facts.LaneMemoryLimit, facts.LaneSwapLimit, facts.LanePidsLimit = runnerPreflightCgroupCanary(ctx, request.CgroupRootPath, request.Mode)
+	facts.EffectiveCPUs = runnerPreflightEffectiveCPUCount()
+	facts.CgroupCanary, facts.Controllers, facts.LaneCPUs, facts.LaneCPUMax, facts.LaneMemoryLimit, facts.LaneSwapLimit, facts.LanePidsLimit = runnerPreflightCgroupCanary(ctx, request.CgroupRootPath, request.Mode)
 	facts.MemoryAvailable = readMeminfoBytes("MemAvailable")
 	facts.MemoryLimit = runnerPreflightCgroupValue("memory.max")
 	facts.SwapLimit = runnerPreflightCgroupValue("memory.swap.max")
@@ -380,6 +384,12 @@ func evaluateRunnerPreflight(request runnerPreflightRequest, facts runnerPreflig
 	add("bpf_canary", facts.BPFCanary, "environment", "BPF canary was created and removed", strconv.FormatBool(facts.BPFCanary), "true")
 	add("cgroup_canary", facts.CgroupCanary, "environment", "cgroup canary was created and removed", strconv.FormatBool(facts.CgroupCanary), "true")
 	add("cgroup_controllers", containsAll(facts.Controllers, []string{"cpuset", "cpu", "memory", "pids"}), "environment", "required cgroup controllers are delegated", strings.Join(facts.Controllers, ","), "cpuset,cpu,memory,pids")
+	requiredCPUs, laneCPUs := 1, 1
+	if request.Mode == "formal" {
+		requiredCPUs, laneCPUs = 6, collectionLaneCPUs
+	}
+	laneCPUMax := fmt.Sprintf("%d00000 100000", laneCPUs)
+	add("cpu", facts.EffectiveCPUs >= requiredCPUs && facts.LaneCPUs == laneCPUs && facts.LaneCPUMax == laneCPUMax, "environment", "effective CPUs and the workload lane CPU window match the execution contract", fmt.Sprintf("effective=%d lane=%d cpu.max=%s", facts.EffectiveCPUs, facts.LaneCPUs, facts.LaneCPUMax), fmt.Sprintf("effective>=%d lane=%d cpu.max=%s", requiredCPUs, laneCPUs, laneCPUMax))
 	memoryRequired := uint64(8 << 30)
 	if request.Mode == "focused" {
 		memoryRequired = 3 << 30
@@ -649,11 +659,11 @@ func runnerPreflightBPFCanary(ctx context.Context) bool {
 	return os.Remove(path) == nil
 }
 
-func runnerPreflightCgroupCanary(ctx context.Context, root, mode string) (bool, []string, string, string, string) {
+func runnerPreflightCgroupCanary(ctx context.Context, root, mode string) (bool, []string, int, string, string, string, string) {
 	controllers, _ := os.ReadFile(filepath.Join(root, "cgroup.controllers"))
 	path := filepath.Join(root, fmt.Sprintf("flowersec-preflight-%d", os.Getpid()))
 	if err := os.Mkdir(path, 0700); err != nil {
-		return false, strings.Fields(string(controllers)), "", "", ""
+		return false, strings.Fields(string(controllers)), 0, "", "", "", ""
 	}
 	cleaned := false
 	defer func() {
@@ -662,33 +672,62 @@ func runnerPreflightCgroupCanary(ctx context.Context, root, mode string) (bool, 
 		}
 	}()
 	memory := "4294967296"
+	laneCPUCount := collectionLaneCPUs
 	if mode == "focused" {
 		memory = "3221225472"
+		laneCPUCount = 1
 	}
-	for name, value := range map[string]string{"memory.max": memory, "memory.swap.max": "0", "pids.max": "8192"} {
+	allowed, err := runnerPreflightCPUSet(filepath.Join(root, "cpuset.cpus.effective"))
+	if err != nil || len(allowed) < laneCPUCount {
+		return false, strings.Fields(string(controllers)), 0, "", "", "", ""
+	}
+	memoryNodes := runnerPreflightReadValue(root, "cpuset.mems.effective")
+	if memoryNodes == "" {
+		return false, strings.Fields(string(controllers)), 0, "", "", "", ""
+	}
+	cpuMax := fmt.Sprintf("%d00000 100000", laneCPUCount)
+	for name, value := range map[string]string{
+		"cpuset.cpus": formatCPUSet(allowed[:laneCPUCount]), "cpuset.mems": memoryNodes, "cpu.max": cpuMax,
+		"memory.max": memory, "memory.swap.max": "0", "pids.max": "8192",
+	} {
 		if err := os.WriteFile(filepath.Join(path, name), []byte(value), 0600); err != nil {
-			return false, strings.Fields(string(controllers)), "", "", ""
+			return false, strings.Fields(string(controllers)), 0, "", "", "", ""
 		}
 	}
+	laneCPUs, _ := runnerPreflightCPUSet(filepath.Join(path, "cpuset.cpus.effective"))
+	laneCPUMax := runnerPreflightReadValue(path, "cpu.max")
 	laneMemory := runnerPreflightReadValue(path, "memory.max")
 	laneSwap := runnerPreflightReadValue(path, "memory.swap.max")
 	lanePids := runnerPreflightReadValue(path, "pids.max")
 	command := exec.CommandContext(ctx, "/bin/sh", "-c", `printf '%s' "$$" > "$1/cgroup.procs"`, "flowersec-cgroup-canary", path)
 	if err := command.Run(); err != nil {
-		return false, strings.Fields(string(controllers)), laneMemory, laneSwap, lanePids
+		return false, strings.Fields(string(controllers)), len(laneCPUs), laneCPUMax, laneMemory, laneSwap, lanePids
 	}
 	for attempt := 0; attempt < 20; attempt++ {
 		if err := os.Remove(path); err == nil {
 			cleaned = true
-			return laneMemory == memory && laneSwap == "0" && lanePids == "8192", strings.Fields(string(controllers)), laneMemory, laneSwap, lanePids
+			return len(laneCPUs) == laneCPUCount && laneCPUMax == cpuMax && laneMemory == memory && laneSwap == "0" && lanePids == "8192", strings.Fields(string(controllers)), len(laneCPUs), laneCPUMax, laneMemory, laneSwap, lanePids
 		}
 		select {
 		case <-ctx.Done():
-			return false, strings.Fields(string(controllers)), laneMemory, laneSwap, lanePids
+			return false, strings.Fields(string(controllers)), len(laneCPUs), laneCPUMax, laneMemory, laneSwap, lanePids
 		case <-time.After(25 * time.Millisecond):
 		}
 	}
-	return false, strings.Fields(string(controllers)), laneMemory, laneSwap, lanePids
+	return false, strings.Fields(string(controllers)), len(laneCPUs), laneCPUMax, laneMemory, laneSwap, lanePids
+}
+
+func runnerPreflightEffectiveCPUCount() int {
+	cpus, _ := runnerPreflightCPUSet(filepath.Join(runnerPreflightCurrentCgroup(), "cpuset.cpus.effective"))
+	return len(cpus)
+}
+
+func runnerPreflightCPUSet(path string) ([]int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseCPUSet(strings.TrimSpace(string(data)))
 }
 
 func runnerPreflightReadValue(root, name string) string {

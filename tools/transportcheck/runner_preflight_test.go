@@ -44,6 +44,7 @@ func TestRunnerPreflightEveryCheckIsClosedAndFailClosed(t *testing.T) {
 		"bpf_canary":             func(f *runnerPreflightFacts) { f.BPFCanary = false },
 		"cgroup_canary":          func(f *runnerPreflightFacts) { f.CgroupCanary = false },
 		"cgroup_controllers":     func(f *runnerPreflightFacts) { f.Controllers = []string{"cpu"} },
+		"cpu":                    func(f *runnerPreflightFacts) { f.EffectiveCPUs = 5 },
 		"memory":                 func(f *runnerPreflightFacts) { f.MemoryAvailable = 1 },
 		"swap":                   func(f *runnerPreflightFacts) { f.LaneSwapLimit = "max" },
 		"pids":                   func(f *runnerPreflightFacts) { f.PidsLimit = "1" },
@@ -75,6 +76,18 @@ func TestRunnerPreflightEveryCheckIsClosedAndFailClosed(t *testing.T) {
 	}
 	if len(mutations) != len(report.Checks) {
 		t.Fatalf("tested checks = %d, report checks = %d", len(mutations), len(report.Checks))
+	}
+}
+
+func TestRunnerPreflightRejectsNarrowFormalLaneCPUCanary(t *testing.T) {
+	request, facts := greenRunnerPreflightFixture("formal")
+	facts.LaneCPUs = 1
+	facts.LaneCPUMax = "100000 100000"
+
+	report := evaluateRunnerPreflight(request, facts)
+	check := runnerPreflightCheckByID(t, report, "cpu")
+	if report.Status != "RED" || check.Status != "RED" || check.Classification != "environment" || !strings.Contains(check.Expected, "lane=2") {
+		t.Fatalf("CPU check = %#v, report status = %s", check, report.Status)
 	}
 }
 
@@ -367,13 +380,15 @@ func greenRunnerPreflightFixture(mode string) (runnerPreflightRequest, runnerPre
 		RustVersion: "rustc 1.88.0 (6b00bc388 2025-06-23)", CargoVersion: "cargo 1.88.0 (873a06493 2025-05-10)",
 		RustDepsReady:   true,
 		ChromiumVersion: "151.0.7922.34", NetNSCanary: true, BPFCanary: true, CgroupCanary: true,
-		Controllers: []string{"cpuset", "cpu", "memory", "pids"}, MemoryAvailable: 8 << 30, MemoryLimit: "max",
+		Controllers: []string{"cpuset", "cpu", "memory", "pids"}, EffectiveCPUs: 6, LaneCPUs: 2, LaneCPUMax: "200000 100000", MemoryAvailable: 8 << 30, MemoryLimit: "max",
 		LaneMemoryLimit: "4294967296", LaneSwapLimit: "0", LanePidsLimit: "8192",
 		SwapLimit: "1073741824", PidsLimit: "8192", DiskAvailable: 8 << 30, NoFileLimit: 32768,
 		ArtifactFresh: true, LockAvailable: true, DNSReachable: true, DependencyReady: true,
 	}
 	if mode == "focused" {
 		facts.SwapLimit = "0"
+		facts.LaneCPUs = 1
+		facts.LaneCPUMax = "100000 100000"
 		facts.LaneMemoryLimit = "3221225472"
 		request.BaseSHA = ""
 	}

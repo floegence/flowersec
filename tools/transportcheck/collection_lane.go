@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -16,19 +17,52 @@ func allocateCollectionLaneCPUs(allowed []int, laneCount, maximumPerLane int) ([
 	if len(allowed) < laneCount {
 		return nil, fmt.Errorf("release runner requires at least %d delegated CPUs, got %d", laneCount, len(allowed))
 	}
-	usable := min(len(allowed), laneCount*maximumPerLane)
-	base, extra := usable/laneCount, usable%laneCount
+	width := min(len(allowed), maximumPerLane)
 	result := make([][]int, laneCount)
-	offset := 0
 	for lane := range result {
-		count := base
-		if lane < extra {
-			count++
+		start := lane * len(allowed) / laneCount
+		for offset := range width {
+			result[lane] = append(result[lane], allowed[(start+offset)%len(allowed)])
 		}
-		result[lane] = append([]int(nil), allowed[offset:offset+count]...)
-		offset += count
+		sort.Ints(result[lane])
 	}
 	return result, nil
+}
+
+func parseCPUSet(value string) ([]int, error) {
+	if value == "" {
+		return nil, errors.New("CPU set is empty")
+	}
+	var result []int
+	for _, item := range strings.Split(value, ",") {
+		bounds := strings.Split(item, "-")
+		if len(bounds) > 2 {
+			return nil, fmt.Errorf("invalid CPU set %q", value)
+		}
+		first, err := strconv.Atoi(bounds[0])
+		if err != nil || first < 0 {
+			return nil, fmt.Errorf("invalid CPU set %q", value)
+		}
+		last := first
+		if len(bounds) == 2 {
+			last, err = strconv.Atoi(bounds[1])
+			if err != nil || last < first {
+				return nil, fmt.Errorf("invalid CPU set %q", value)
+			}
+		}
+		for cpu := first; cpu <= last; cpu++ {
+			result = append(result, cpu)
+		}
+	}
+	return result, nil
+}
+
+func formatCPUSet(cpus []int) string {
+	parts := make([]string, len(cpus))
+	for index, cpu := range cpus {
+		parts[index] = strconv.Itoa(cpu)
+	}
+	return strings.Join(parts, ",")
 }
 
 const (
