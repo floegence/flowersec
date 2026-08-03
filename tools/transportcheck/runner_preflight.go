@@ -91,6 +91,7 @@ type runnerPreflightFacts struct {
 	TiniVersion     string
 	RustVersion     string
 	CargoVersion    string
+	RustDepsReady   bool
 	ChromiumVersion string
 	NetNSCanary     bool
 	BPFCanary       bool
@@ -291,6 +292,7 @@ func collectRunnerPreflightFacts(ctx context.Context, request runnerPreflightReq
 	if request.Mode == "formal" {
 		facts.RustVersion = runnerPreflightCommandOutput("rustup", "run", "1.88.0", "rustc", "--version")
 		facts.CargoVersion = runnerPreflightCommandOutput("rustup", "run", "1.88.0", "cargo", "--version")
+		facts.RustDepsReady = runnerPreflightRustDependencies(ctx, repository)
 	}
 	facts.ChromiumVersion = runnerPreflightChromiumVersion(ctx, repository)
 	facts.NetNSCanary = runnerPreflightNetNSCanary(ctx)
@@ -353,6 +355,9 @@ func evaluateRunnerPreflight(request runnerPreflightRequest, facts runnerPreflig
 		versionExpected += "; rustc/cargo 1.88.0"
 	}
 	add("tool_versions", versionsOK, "environment", "workload tools match the pinned versions", fmt.Sprintf("go=%s node=%s tini=%s rustc=%s cargo=%s", facts.GoVersion, facts.NodeVersion, facts.TiniVersion, facts.RustVersion, facts.CargoVersion), versionExpected)
+	if request.Mode == "formal" {
+		add("rust_dependency_cache", facts.RustDepsReady, "environment", "the locked Rust dependency graph is available offline", strconv.FormatBool(facts.RustDepsReady), "true")
+	}
 	add("chromium", facts.ChromiumVersion == "151.0.7922.34", "environment", "Chromium is the pinned release", facts.ChromiumVersion, "151.0.7922.34")
 	add("netns_canary", facts.NetNSCanary, "environment", "network namespace canary was created and removed", strconv.FormatBool(facts.NetNSCanary), "true")
 	add("bpf_canary", facts.BPFCanary, "environment", "BPF canary was created and removed", strconv.FormatBool(facts.BPFCanary), "true")
@@ -495,6 +500,14 @@ func runnerPreflightCommandOutput(name string, arguments ...string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(output))
+}
+
+func runnerPreflightRustDependencies(ctx context.Context, repository string) bool {
+	command := exec.CommandContext(ctx, "rustup", "run", "1.88.0", "cargo", "metadata",
+		"--locked", "--offline", "--format-version", "1",
+		"--manifest-path", filepath.Join(repository, "flowersec-rust", "Cargo.toml"))
+	command.Env = append(os.Environ(), "CARGO_NET_OFFLINE=true")
+	return command.Run() == nil
 }
 
 func runnerPreflightPlatform() (bool, string) {

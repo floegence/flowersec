@@ -37,6 +37,7 @@ func TestRunnerPreflightEveryCheckIsClosedAndFailClosed(t *testing.T) {
 		"typescript_dist_digest": func(f *runnerPreflightFacts) { f.DistSHA = strings.Repeat("d", 64) },
 		"required_tools":         func(f *runnerPreflightFacts) { f.Tools["go"] = false },
 		"tool_versions":          func(f *runnerPreflightFacts) { f.GoVersion = "wrong" },
+		"rust_dependency_cache":  func(f *runnerPreflightFacts) { f.RustDepsReady = false },
 		"chromium":               func(f *runnerPreflightFacts) { f.ChromiumVersion = "wrong" },
 		"netns_canary":           func(f *runnerPreflightFacts) { f.NetNSCanary = false },
 		"bpf_canary":             func(f *runnerPreflightFacts) { f.BPFCanary = false },
@@ -73,6 +74,66 @@ func TestRunnerPreflightEveryCheckIsClosedAndFailClosed(t *testing.T) {
 	}
 	if len(mutations) != len(report.Checks) {
 		t.Fatalf("tested checks = %d, report checks = %d", len(mutations), len(report.Checks))
+	}
+}
+
+func TestRunnerPreflightRejectsMissingRustDependencyCacheBeforeFormalWorkload(t *testing.T) {
+	request, facts := greenRunnerPreflightFixture("formal")
+	facts.RustDepsReady = false
+
+	report := evaluateRunnerPreflight(request, facts)
+	if report.Status != "RED" || report.WorkloadStarted {
+		t.Fatalf("report = %#v", report)
+	}
+	check := runnerPreflightCheckByID(t, report, "rust_dependency_cache")
+	if check.Status != "RED" || check.Classification != "environment" || check.Actual != "false" || check.Expected != "true" {
+		t.Fatalf("check = %#v", check)
+	}
+}
+
+func TestRunnerPreflightRustDependencyProbeIsOfflineAndPreservesArguments(t *testing.T) {
+	directory := t.TempDir()
+	argumentsPath := filepath.Join(directory, "arguments")
+	offlinePath := filepath.Join(directory, "offline")
+	rustupPath := filepath.Join(directory, "rustup")
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "$FLOWERSEC_TEST_ARGUMENTS"
+printf '%s\n' "${CARGO_NET_OFFLINE:-}" > "$FLOWERSEC_TEST_OFFLINE"
+exit "${FLOWERSEC_TEST_STATUS:-0}"
+`
+	if err := os.WriteFile(rustupPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory)
+	t.Setenv("FLOWERSEC_TEST_ARGUMENTS", argumentsPath)
+	t.Setenv("FLOWERSEC_TEST_OFFLINE", offlinePath)
+	t.Setenv("CARGO_NET_OFFLINE", "false")
+	repository := filepath.Join(directory, `repo $() 'quoted'`)
+	if !runnerPreflightRustDependencies(context.Background(), repository) {
+		t.Fatal("offline dependency probe rejected the successful command")
+	}
+	arguments, err := os.ReadFile(argumentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantArguments := strings.Join([]string{
+		"run", "1.88.0", "cargo", "metadata", "--locked", "--offline", "--format-version", "1",
+		"--manifest-path", filepath.Join(repository, "flowersec-rust", "Cargo.toml"), "",
+	}, "\n")
+	if string(arguments) != wantArguments {
+		t.Fatalf("arguments = %q, want %q", arguments, wantArguments)
+	}
+	offline, err := os.ReadFile(offlinePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(offline) != "true\n" {
+		t.Fatalf("CARGO_NET_OFFLINE = %q", offline)
+	}
+
+	t.Setenv("FLOWERSEC_TEST_STATUS", "17")
+	if runnerPreflightRustDependencies(context.Background(), repository) {
+		t.Fatal("offline dependency probe accepted the failed command")
 	}
 }
 
@@ -253,6 +314,7 @@ func greenRunnerPreflightFixture(mode string) (runnerPreflightRequest, runnerPre
 		ConfigValid: true, IdentityValid: true, ToolchainSHA: toolchain, DistSHA: dist, Tools: tools,
 		GoVersion: "go version go1.26.5 linux/arm64", NodeVersion: "v24.14.1", TiniVersion: "tini version 0.19.0",
 		RustVersion: "rustc 1.88.0 (6b00bc388 2025-06-23)", CargoVersion: "cargo 1.88.0 (873a06493 2025-05-10)",
+		RustDepsReady:   true,
 		ChromiumVersion: "151.0.7922.34", NetNSCanary: true, BPFCanary: true, CgroupCanary: true,
 		Controllers: []string{"cpuset", "cpu", "memory", "pids"}, MemoryAvailable: 8 << 30, MemoryLimit: "max",
 		LaneMemoryLimit: "4294967296", LaneSwapLimit: "0", LanePidsLimit: "8192",
