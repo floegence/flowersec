@@ -628,8 +628,14 @@ func (pair *Pair) Close(ctx context.Context) error {
 			if entry.session == nil {
 				continue
 			}
+			terminated := entry.session.Termination()
 			select {
-			case <-entry.session.Termination():
+			case <-terminated:
+				continue
+			default:
+			}
+			select {
+			case <-terminated:
 			case <-ctx.Done():
 				pair.closeErr = errors.Join(pair.closeErr, fmt.Errorf("%s tunnel session cleanup: %w", entry.label, context.Cause(ctx)))
 			}

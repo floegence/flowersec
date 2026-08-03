@@ -60,6 +60,19 @@ func TestPairCloseRetainsUnexpectedSessionCloseErrors(t *testing.T) {
 	}
 }
 
+func TestPairClosePrefersCompletedTerminationOverExpiredCleanupContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for range 64 {
+		terminated := make(chan struct{})
+		close(terminated)
+		pair := &Pair{Client: &terminalCloseSession{terminated: terminated}}
+		if err := pair.Close(ctx); err != nil {
+			t.Fatalf("Pair.Close completed termination = %v", err)
+		}
+	}
+}
+
 func TestCloseTunnelOwnersCancelsEndpointBeforeWaitingForPairTermination(t *testing.T) {
 	terminated := make(chan struct{})
 	pair := &Pair{
