@@ -225,6 +225,7 @@ persist_failure() {
     --arg action "$action" \
     '{schema:"flowersec-remote-runner-state-v1",config_sha256:$config_sha256,updated_at:$updated_at,
       actions:($existing.actions // {}),last_failure:$failure} |
+     if $action != "cleanup" then del(.actions.cleanup) else . end |
      if $action == "collect" then .actions[$action]=$failure else . end' >"$failure_state"
   chmod 0600 "$failure_state"
   mv -f -- "$failure_state" "$state_path"
@@ -328,7 +329,9 @@ write_state_atomically() {
     --arg config_sha256 "$config_sha256" \
     --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '{schema:"flowersec-remote-runner-state-v1",config_sha256:$config_sha256,updated_at:$updated_at,
-      actions:($existing.actions // {})} | .actions[$action]=$result' >"$temporary"
+      actions:($existing.actions // {})} |
+      if $action != "cleanup" then del(.actions.cleanup) else . end |
+      .actions[$action]=$result' >"$temporary"
   chmod 0600 "$temporary"
   mv -f -- "$temporary" "$state_path"
 }

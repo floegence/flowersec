@@ -156,6 +156,12 @@ def lxc(config, *arguments, timeout=30, check=True):
     return command(["lxc", *arguments], timeout, check)
 
 
+def proxy_listening(config):
+    parsed = urllib.parse.urlparse(config["proxy_url"])
+    sockets = command(["ss", "-ltn"], 10, False)
+    return sockets.returncode == 0 and f"{parsed.hostname}:{parsed.port}" in sockets.stdout
+
+
 def start_proxy(config, request, helper_directory):
     proxy_path = os.path.join(helper_directory, "transport-v2-runner-proxy.py")
     require_digest(proxy_path, request["proxy_sha256"], "proxy_digest")
@@ -176,11 +182,16 @@ def start_proxy(config, request, helper_directory):
         "--property=RestartSec=2s", "--property=RuntimeMaxSec=24h", "--property=TimeoutStopSec=5s",
         "/usr/bin/python3", proxy_path, "--listen-host", parsed.hostname, "--listen-port", str(parsed.port), *allowed,
     ], 30)
+    active_seen = False
     for _ in range(50):
         active = command(["systemctl", "--user", "is-active", unit], 5, False)
         if active.stdout.strip() == "active":
-            return
+            active_seen = True
+            if proxy_listening(config):
+                return
         time.sleep(0.1)
+    if active_seen:
+        raise RunnerFailure("proxy_socket", "host dependency proxy did not open the configured endpoint")
     raise RunnerFailure("proxy_service", "host dependency proxy did not become active")
 
 
@@ -189,9 +200,7 @@ def verify_proxy(config):
     active = command(["systemctl", "--user", "is-active", unit], 5, False)
     if active.stdout.strip() != "active":
         raise RunnerFailure("proxy_service", "host dependency proxy is not active")
-    parsed = urllib.parse.urlparse(config["proxy_url"])
-    sockets = command(["ss", "-ltn"], 10).stdout
-    if f"{parsed.hostname}:{parsed.port}" not in sockets:
+    if not proxy_listening(config):
         raise RunnerFailure("proxy_socket", "host dependency proxy is not listening on the configured endpoint")
 
 

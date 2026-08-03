@@ -44,6 +44,52 @@ test("three-tier runner uses fixed agents and closed stdin", async () => {
   assert.match(formalRunner, /FLOWERSEC_RELEASE_PREPARED_ROOT/);
 });
 
+test("provision waits for the dependency proxy socket after systemd reports active", async () => {
+  const proxyPath = path.join(repository, "scripts", "transport-v2-runner-proxy.py");
+  const probe = spawnSync("python3", ["-c", String.raw`
+import hashlib
+import importlib.util
+import os
+import sys
+
+helper_path, proxy_path = sys.argv[1:]
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("flowersec_runner_host", helper_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+socket_probes = 0
+
+class Result:
+    def __init__(self, stdout="", returncode=0):
+        self.stdout = stdout
+        self.stderr = ""
+        self.returncode = returncode
+
+def fake_command(argv, timeout, check=True):
+    global socket_probes
+    if argv[:3] == ["systemctl", "--user", "is-active"]:
+        return Result("active\n")
+    if argv == ["ss", "-ltn"]:
+        socket_probes += 1
+        if socket_probes >= 3:
+            return Result("LISTEN 0 128 10.0.0.1:3128 0.0.0.0:*\n")
+    return Result()
+
+module.command = fake_command
+module.time.sleep = lambda _: None
+with open(proxy_path, "rb") as source:
+    proxy_sha256 = hashlib.sha256(source.read()).hexdigest()
+module.start_proxy(
+    {"proxy_url": "http://10.0.0.1:3128", "dependency_urls": ["https://example.invalid"]},
+    {"proxy_sha256": proxy_sha256},
+    os.path.dirname(proxy_path),
+)
+assert socket_probes == 3, socket_probes
+`, hostHelperPath, proxyPath], { encoding: "utf8" });
+  assert.equal(probe.status, 0, `${probe.stderr}\n${probe.stdout}`);
+});
+
 test("controller does not expand parameters or commit partial GREEN state", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "flowersec-runner-contract-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -131,6 +177,74 @@ test("controller does not expand parameters or commit partial GREEN state", asyn
   assert.deepEqual(failedState.actions, written.actions);
   assert.equal(failedState.last_failure.check_id, "runner_reachability");
   assert.equal(failedState.last_failure.classification, "unreachable");
+});
+
+test("a later failed action invalidates an earlier cleanup receipt", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "flowersec-cleanup-resume-contract-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const calls = path.join(root, "calls.log");
+  const fakeSCP = path.join(root, "scp");
+  const fakeSSH = path.join(root, "ssh");
+  const state = path.join(root, "state.json");
+  const config = path.join(root, "config.json");
+  const sourceSHA = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repository, encoding: "utf8" }).stdout.trim();
+
+  await writeFile(fakeSCP, "#!/bin/sh\nexit 0\n");
+  await writeFile(fakeSSH, `#!/bin/sh
+set -eu
+if IFS= read -r unexpected; then exit 91; fi
+printf '%s\n' "$*" >>"${calls}"
+if [ "${"$"}{FLOWERSEC_FAKE_SSH_FAIL:-0}" = 1 ]; then exit 23; fi
+printf '%s\n' '{"schema":"flowersec-remote-runner-result-v1","status":"GREEN","action":"cleanup","source_sha":"${sourceSHA}","base_sha":"","classification":"none","check_id":"","message":"remote cleanup executed"}'
+`);
+  await chmod(fakeSCP, 0o700);
+  await chmod(fakeSSH, 0o700);
+  const configText = `${JSON.stringify({
+    schema: "flowersec-remote-runner-config-v1",
+    runner_id: "cleanup-resume-contract",
+    ssh_target: "runner-host",
+    ssh_executable: fakeSSH,
+    scp_executable: fakeSCP,
+    host_agent_path: "/home/runner/.flowersec-remote/agent",
+    host_config_path: "/home/runner/.flowersec-remote/config.json",
+    host_request_path: "/home/runner/.flowersec-remote/request.json",
+    state_path: state,
+    lxc_name: "flowersec-release-ubuntu24",
+    lxc_root: "/workspace/flowersec-remote",
+    guest_target: "runner@127.0.0.1",
+    guest_port: 2222,
+    guest_identity_file: "/workspace/runner/id_ed25519",
+    guest_known_hosts_file: "/workspace/runner/known_hosts",
+    guest_root: "/home/runner/.flowersec-remote",
+    guest_repo: "/workspace/flowersec",
+    artifact_root: "/evidence",
+    proxy_url: "http://10.0.0.1:3128",
+    dependency_urls: ["https://example.invalid"],
+  }, null, 2)}\n`;
+  await writeFile(config, configText);
+  await chmod(config, 0o600);
+
+  const firstCleanup = spawnSync(controllerPath, ["cleanup", "--config", config, "--sha", sourceSHA], {
+    cwd: repository,
+    encoding: "utf8",
+  });
+  assert.equal(firstCleanup.status, 0, firstCleanup.stderr);
+
+  const failedProvision = spawnSync(controllerPath, ["provision", "--config", config, "--sha", sourceSHA], {
+    cwd: repository,
+    encoding: "utf8",
+    env: { ...process.env, FLOWERSEC_FAKE_SSH_FAIL: "1" },
+  });
+  assert.equal(failedProvision.status, 20);
+  const callsAfterFailure = await readFile(calls, "utf8");
+
+  const secondCleanup = spawnSync(controllerPath, ["cleanup", "--config", config, "--sha", sourceSHA], {
+    cwd: repository,
+    encoding: "utf8",
+  });
+  assert.equal(secondCleanup.status, 0, secondCleanup.stderr);
+  assert.notEqual(await readFile(calls, "utf8"), callsAfterFailure);
+  assert.equal(JSON.parse(secondCleanup.stdout).message, "remote cleanup executed");
 });
 
 test("host agent needs no jq and closes every LXC stdin before state transitions", async (t) => {
