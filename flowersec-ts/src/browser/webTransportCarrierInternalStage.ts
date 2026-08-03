@@ -133,6 +133,7 @@ class BrowserWebTransportCarrier implements BrowserWebTransportCarrierInternalSt
   private readonly acceptWaiters = new Set<AcceptWaiter>();
   private readonly transport: BrowserWebTransportLikeInternalStage;
   private readonly closeTimeoutMs: number;
+  private readonly postReadyTurn: Promise<void>;
   private terminalError: Error | undefined;
   private closing = false;
   private closePromise: Promise<void> | undefined;
@@ -152,6 +153,9 @@ class BrowserWebTransportCarrier implements BrowserWebTransportCarrierInternalSt
     this.path = path;
     this.inboundBidirectionalStreamCapacity = maxIncomingStreams;
     this.closeTimeoutMs = closeTimeoutMs;
+    // Chromium can deliver a network-service closure immediately after ready.
+    // Give that networking task a turn before the first Mojo CreateStream call.
+    this.postReadyTurn = new Promise((resolve) => setTimeout(resolve, 0));
     this.bidirectionalReader = transport.incomingBidirectionalStreams.getReader();
     this.unidirectionalReader = transport.incomingUnidirectionalStreams.getReader();
     this.unreliableDatagrams = createUnreliableDatagrams(
@@ -185,6 +189,9 @@ class BrowserWebTransportCarrier implements BrowserWebTransportCarrierInternalSt
   async openStream(
     options: Readonly<{ signal?: AbortSignal }> = {},
   ): Promise<BrowserWebTransportCarrierStreamInternalStage> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    await waitWithSignal(this.postReadyTurn, options.signal);
     this.assertOpen();
     throwIfAborted(options.signal);
     const pending = this.transport.createBidirectionalStream();
