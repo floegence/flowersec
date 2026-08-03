@@ -109,6 +109,7 @@ test("provision fills the locked Cargo cache through the proxy and verifies it o
   assert.match(agent, /agent_fail provision_cargo_cache/);
   assert.match(cache, /sudo -n timeout --signal=TERM --kill-after=5s 8m env/);
   assert.match(cache, /HOME=\/root/);
+  assert.match(cache, /\/usr\/local\/cargo\/bin\/rustup run 1\.88\.0/);
   assert.doesNotMatch(cache, /HOME="\$guest_home"/);
   assert.match(provision, /provision_locked_cargo_cache/);
   assert.ok(agent.indexOf("cargo fetch --locked") < agent.lastIndexOf("locked_cargo_cache_ready"));

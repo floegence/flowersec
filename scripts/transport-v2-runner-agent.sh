@@ -407,7 +407,7 @@ run_guest_doctor() {
 locked_cargo_cache_ready() {
   sudo -n timeout --signal=TERM --kill-after=5s 30s env \
     HOME=/root RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo CARGO_NET_OFFLINE=true \
-    rustup run 1.88.0 cargo metadata --locked --offline --format-version 1 \
+    /usr/local/cargo/bin/rustup run 1.88.0 cargo metadata --locked --offline --format-version 1 \
     --manifest-path "$guest_repo/flowersec-rust/Cargo.toml" >/dev/null 2>&1
 }
 
@@ -417,7 +417,7 @@ provision_locked_cargo_cache() {
     HTTP_PROXY="$proxy_url" HTTPS_PROXY="$proxy_url" http_proxy="$proxy_url" https_proxy="$proxy_url" \
     ALL_PROXY= all_proxy= NO_PROXY= no_proxy= HOME=/root \
     RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo CARGO_NET_OFFLINE=false \
-    rustup run 1.88.0 cargo fetch --locked --manifest-path "$guest_repo/flowersec-rust/Cargo.toml"; then
+    /usr/local/cargo/bin/rustup run 1.88.0 cargo fetch --locked --manifest-path "$guest_repo/flowersec-rust/Cargo.toml"; then
     agent_fail provision_cargo_cache "failed to fill the locked Cargo cache through the configured proxy" environment 20
   fi
   locked_cargo_cache_ready || \
