@@ -462,6 +462,7 @@ run_guest_provision() {
   [[ $(sudo -n sha256sum "$stable_config" | awk '{print $1}') == "$(jq -r '.config_sha256' "$request")" ]] || agent_fail stable_config_digest "installed formal config digest drifted" identity 30
   sudo -n systemctl daemon-reload
   sudo -n git config --global --replace-all safe.directory "$guest_repo"
+  sudo -n git config --global --add safe.directory "$guest_repo/.git"
   if [[ -e $dist_path || -L $dist_path ]]; then
     [[ -d $dist_path && ! -L $dist_path ]] || \
       agent_fail provision_build_permissions "generated TypeScript dist path is not a regular directory" identity 30
@@ -578,7 +579,7 @@ run_guest_cleanup() {
       [[ -n $expected_archive ]] || doctor_fail artifact_ownership "remote formal artifact has no checksummed local receipt" cleanup
       [[ -f $candidate && ! -L $candidate && $(sha256sum "$candidate" | awk '{print $1}') == "$expected_archive" ]] || doctor_fail artifact_digest "remote formal archive digest does not match the local receipt" cleanup
       archive_found=$((archive_found + 1))
-      rm -- "$candidate"
+      sudo -n rm -- "$candidate"
     fi
   done
   [[ $archive_found -le 1 ]] || doctor_fail artifact_ownership "multiple remote formal archives exist" cleanup
@@ -596,10 +597,11 @@ run_guest_cleanup() {
   fi
   find "$guest_root" -maxdepth 1 -type d -name ".prepared-$source_sha.*" -exec rm -rf -- {} +
   preflight_report=$guest_root/preflight/$source_sha-formal.json
-  if [[ -e $preflight_report || -L $preflight_report ]]; then
-    [[ -f $preflight_report && ! -L $preflight_report ]]
-    rm -- "$preflight_report"
-    rmdir "$guest_root/preflight" 2>/dev/null || true
+  if sudo -n test -e "$preflight_report" || sudo -n test -L "$preflight_report"; then
+    sudo -n test -f "$preflight_report"
+    ! sudo -n test -L "$preflight_report"
+    sudo -n rm -- "$preflight_report"
+    sudo -n rmdir "$guest_root/preflight" 2>/dev/null || true
   fi
   identity=$guest_repo/.flowersec/transport-runner.json
   if [[ -e $identity || -L $identity ]]; then

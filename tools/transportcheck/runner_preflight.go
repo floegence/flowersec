@@ -72,50 +72,51 @@ type runnerPreflightReport struct {
 }
 
 type runnerPreflightFacts struct {
-	Context         bool
-	Reachable       bool
-	LauncherRuntime string
-	PlatformValid   bool
-	PlatformActual  string
-	SourceSHA       string
-	Clean           bool
-	BaseAncestor    bool
-	ManifestEqual   bool
-	ConfigValid     bool
-	IdentityValid   bool
-	ConfigError     string
-	IdentityError   string
-	ToolchainSHA    string
-	DistSHA         string
-	Tools           map[string]bool
-	GoVersion       string
-	NodeVersion     string
-	TiniVersion     string
-	RustVersion     string
-	CargoVersion    string
-	RustDepsReady   bool
-	ChromiumVersion string
-	NetNSCanary     bool
-	BPFCanary       bool
-	CgroupCanary    bool
-	Controllers     []string
-	LaneMemoryLimit string
-	LaneSwapLimit   string
-	LanePidsLimit   string
-	MemoryAvailable uint64
-	MemoryLimit     string
-	SwapLimit       string
-	PidsLimit       string
-	DiskAvailable   uint64
-	NoFileLimit     uint64
-	ArtifactFresh   bool
-	LockAvailable   bool
-	ResidualProcess int
-	ResidualNetNS   int
-	ResidualCgroup  int
-	ResidualBPF     int
-	DNSReachable    bool
-	DependencyReady bool
+	Context           bool
+	Reachable         bool
+	LauncherRuntime   string
+	PlatformValid     bool
+	PlatformActual    string
+	SourceSHA         string
+	Clean             bool
+	BaseAncestor      bool
+	ManifestEqual     bool
+	BaseCheckoutReady bool
+	ConfigValid       bool
+	IdentityValid     bool
+	ConfigError       string
+	IdentityError     string
+	ToolchainSHA      string
+	DistSHA           string
+	Tools             map[string]bool
+	GoVersion         string
+	NodeVersion       string
+	TiniVersion       string
+	RustVersion       string
+	CargoVersion      string
+	RustDepsReady     bool
+	ChromiumVersion   string
+	NetNSCanary       bool
+	BPFCanary         bool
+	CgroupCanary      bool
+	Controllers       []string
+	LaneMemoryLimit   string
+	LaneSwapLimit     string
+	LanePidsLimit     string
+	MemoryAvailable   uint64
+	MemoryLimit       string
+	SwapLimit         string
+	PidsLimit         string
+	DiskAvailable     uint64
+	NoFileLimit       uint64
+	ArtifactFresh     bool
+	LockAvailable     bool
+	ResidualProcess   int
+	ResidualNetNS     int
+	ResidualCgroup    int
+	ResidualBPF       int
+	DNSReachable      bool
+	DependencyReady   bool
 }
 
 type runnerPreflightExitError struct {
@@ -275,6 +276,7 @@ func collectRunnerPreflightFacts(ctx context.Context, request runnerPreflightReq
 			finalManifest, finalErr := os.ReadFile(filepath.Join(repository, "testdata/transport_v2/performance_manifest.json"))
 			facts.ManifestEqual = err == nil && finalErr == nil && string(baseManifest) == string(finalManifest)
 		}
+		facts.BaseCheckoutReady = runnerPreflightBaseCheckout(ctx, repository, request.BaseSHA)
 	}
 	if err := validateRunnerPreflightConfig(request, repository); err == nil {
 		facts.ConfigValid = true
@@ -340,6 +342,7 @@ func evaluateRunnerPreflight(request runnerPreflightRequest, facts runnerPreflig
 	if request.Mode == "formal" {
 		add("base_ancestry", facts.BaseAncestor, "identity", "base SHA is an ancestor of the candidate", strconv.FormatBool(facts.BaseAncestor), "true")
 		add("manifest_identity", facts.ManifestEqual, "identity", "base and candidate manifests are byte-identical", strconv.FormatBool(facts.ManifestEqual), "true")
+		add("base_checkout", facts.BaseCheckoutReady, "environment", "base checkout can be cloned in the exact workload context", strconv.FormatBool(facts.BaseCheckoutReady), "true")
 	}
 	identityActual := fmt.Sprintf("config=%t identity=%t", facts.ConfigValid, facts.IdentityValid)
 	if facts.ConfigError != "" || facts.IdentityError != "" {
@@ -522,6 +525,20 @@ func runnerPreflightRustDependencies(ctx context.Context, repository string) boo
 		"--manifest-path", filepath.Join(repository, "flowersec-rust", "Cargo.toml"))
 	command.Env = append(os.Environ(), "CARGO_NET_OFFLINE=true")
 	return command.Run() == nil
+}
+
+func runnerPreflightBaseCheckout(ctx context.Context, repository, baseSHA string) bool {
+	root, err := os.MkdirTemp("", "flowersec-runner-preflight-base-")
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(root)
+	checkout := filepath.Join(root, "base-source")
+	clone := exec.CommandContext(ctx, "git", "clone", "--quiet", "--no-local", "--no-checkout", repository, checkout)
+	if clone.Run() != nil {
+		return false
+	}
+	return exec.CommandContext(ctx, "git", "-C", checkout, "checkout", "--quiet", "--detach", baseSHA).Run() == nil
 }
 
 func runnerPreflightPlatform() (bool, string) {

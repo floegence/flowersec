@@ -136,6 +136,7 @@ test("provision repairs generated build ownership and deploy reserves stdout for
 
 test("doctor mirrors the formal build and browser identity context", async () => {
   const agent = await readFile(agentPath, "utf8");
+  const preflight = await readFile(path.join(repository, "tools", "transportcheck", "runner_preflight.go"), "utf8");
   const deployStart = agent.indexOf("run_guest_deploy() {");
   const deployEnd = agent.indexOf("\ndoctor_fail() {", deployStart);
   const deploy = agent.slice(deployStart, deployEnd);
@@ -163,6 +164,10 @@ test("doctor mirrors the formal build and browser identity context", async () =>
   assert.match(agent, /guest_go_architecture\(\)[\s\S]*x86_64\) printf '%s\\n' amd64[\s\S]*aarch64\) printf '%s\\n' arm64/);
   assert.match(deploy, /export GOOS=linux GOARCH="\$actual_go_architecture" CGO_ENABLED=0/);
   assert.match(formal, /export GOOS=linux GOARCH="\$actual_go_architecture" CGO_ENABLED=0/);
+  assert.match(agent, /git config --global --add safe\.directory "\$guest_repo\/\.git"/);
+  assert.match(preflight, /BaseCheckoutReady/);
+  assert.match(preflight, /runnerPreflightBaseCheckout/);
+  assert.match(preflight, /add\("base_checkout"/);
 });
 
 test("controller does not expand parameters or commit partial GREEN state", async (t) => {
@@ -442,12 +447,25 @@ test("guest cleanup fails closed on archive drift and removes only verified exac
   const runnerID = "cleanup-contract";
   const artifact = path.join(artifactRoot, `formal-${sourceSHA}-${runnerID}`);
   const archive = path.join(artifactRoot, `${sourceSHA}-${runnerID}-formal-closure.tar.gz`);
+  const preflightRoot = path.join(guestRoot, "preflight");
+  const preflightReport = path.join(preflightRoot, `${sourceSHA}-formal.json`);
   await mkdir(artifact);
+  await mkdir(preflightRoot);
   await writeFile(path.join(artifact, "report.unsigned.json"), "evidence\n");
   await writeFile(archive, "checksummed closure\n");
+  await writeFile(preflightReport, "preflight\n");
   await copyFile(agentPath, agent);
   await chmod(agent, 0o700);
-  await writeFile(fakeSudo, "#!/bin/sh\nset -eu\n[ \"${1:-}\" != -n ] || shift\ncase \"$*\" in *'/run/flowersec/transport-v2-runner-request.json'*) exit 0;; esac\nexec \"$@\"\n");
+  await writeFile(fakeSudo, "#!/bin/sh\nset -eu\n[ \"${1:-}\" != -n ] || shift\ncase \"$*\" in *'/run/flowersec/transport-v2-runner-request.json'*) exit 0;; esac\nFLOWERSEC_TEST_SUDO=1 exec \"$@\"\n");
+  await writeFile(path.join(bin, "rm"), `#!/bin/sh
+set -eu
+for argument in "$@"; do
+  case "$argument" in
+    "${archive}"|"${preflightReport}") [ "${"$"}{FLOWERSEC_TEST_SUDO:-}" = 1 ] || exit 73 ;;
+  esac
+done
+exec /bin/rm "$@"
+`);
   for (const [name, body] of [
     ["systemctl", "#!/bin/sh\nexit 0\n"],
     ["pgrep", "#!/bin/sh\nexit 1\n"],
@@ -457,6 +475,7 @@ test("guest cleanup fails closed on archive drift and removes only verified exac
     await writeFile(path.join(bin, name), body);
     await chmod(path.join(bin, name), 0o700);
   }
+  await chmod(path.join(bin, "rm"), 0o700);
   await chmod(fakeSudo, 0o700);
   const configText = `${JSON.stringify({
     schema: "flowersec-remote-runner-config-v1",
@@ -522,4 +541,5 @@ test("guest cleanup fails closed on archive drift and removes only verified exac
   assert.equal(JSON.parse(cleaned.stdout).status, "GREEN");
   await assert.rejects(readFile(archive));
   await assert.rejects(readFile(path.join(artifact, "report.unsigned.json")));
+  await assert.rejects(readFile(preflightReport));
 });

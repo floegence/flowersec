@@ -32,6 +32,7 @@ func TestRunnerPreflightEveryCheckIsClosedAndFailClosed(t *testing.T) {
 		"source_clean":           func(f *runnerPreflightFacts) { f.Clean = false },
 		"base_ancestry":          func(f *runnerPreflightFacts) { f.BaseAncestor = false },
 		"manifest_identity":      func(f *runnerPreflightFacts) { f.ManifestEqual = false },
+		"base_checkout":          func(f *runnerPreflightFacts) { f.BaseCheckoutReady = false },
 		"runner_identity":        func(f *runnerPreflightFacts) { f.IdentityValid = false },
 		"toolchain_digest":       func(f *runnerPreflightFacts) { f.ToolchainSHA = strings.Repeat("c", 64) },
 		"typescript_dist_digest": func(f *runnerPreflightFacts) { f.DistSHA = strings.Repeat("d", 64) },
@@ -146,6 +147,44 @@ exit "${FLOWERSEC_TEST_STATUS:-0}"
 	t.Setenv("FLOWERSEC_TEST_STATUS", "17")
 	if runnerPreflightRustDependencies(context.Background(), repository) {
 		t.Fatal("offline dependency probe accepted the failed command")
+	}
+}
+
+func TestRunnerPreflightBaseCheckoutUsesFormalCloneAndCleansScratch(t *testing.T) {
+	directory := t.TempDir()
+	argumentsPath := filepath.Join(directory, "arguments")
+	gitPath := filepath.Join(directory, "git")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$FLOWERSEC_TEST_ARGUMENTS"
+exit "${FLOWERSEC_TEST_STATUS:-0}"
+`
+	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory)
+	t.Setenv("FLOWERSEC_TEST_ARGUMENTS", argumentsPath)
+	repository := filepath.Join(directory, "repository")
+	baseSHA := strings.Repeat("b", 40)
+	if !runnerPreflightBaseCheckout(context.Background(), repository, baseSHA) {
+		t.Fatal("base checkout probe rejected successful formal clone commands")
+	}
+	arguments, err := os.ReadFile(argumentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(arguments)), "\n")
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "clone --quiet --no-local --no-checkout "+repository+" ") ||
+		!strings.Contains(lines[1], "checkout --quiet --detach "+baseSHA) {
+		t.Fatalf("git arguments = %q", lines)
+	}
+	cloneFields := strings.Fields(lines[0])
+	checkout := cloneFields[len(cloneFields)-1]
+	if _, err := os.Lstat(filepath.Dir(checkout)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("base checkout scratch was not removed: %v", err)
+	}
+	t.Setenv("FLOWERSEC_TEST_STATUS", "17")
+	if runnerPreflightBaseCheckout(context.Background(), repository, baseSHA) {
+		t.Fatal("base checkout probe accepted a failed formal clone")
 	}
 }
 
@@ -323,7 +362,7 @@ func greenRunnerPreflightFixture(mode string) (runnerPreflightRequest, runnerPre
 	}
 	facts := runnerPreflightFacts{
 		Context: true, Reachable: true, LauncherRuntime: "lxc", PlatformValid: true, PlatformActual: "linux/arm64 ubuntu 24.04", SourceSHA: sha, Clean: true, BaseAncestor: true, ManifestEqual: true,
-		ConfigValid: true, IdentityValid: true, ToolchainSHA: toolchain, DistSHA: dist, Tools: tools,
+		ConfigValid: true, IdentityValid: true, BaseCheckoutReady: true, ToolchainSHA: toolchain, DistSHA: dist, Tools: tools,
 		GoVersion: "go version go1.26.5 linux/arm64", NodeVersion: "v24.14.1", TiniVersion: "tini version 0.19.0",
 		RustVersion: "rustc 1.88.0 (6b00bc388 2025-06-23)", CargoVersion: "cargo 1.88.0 (873a06493 2025-05-10)",
 		RustDepsReady:   true,
