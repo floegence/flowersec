@@ -362,9 +362,17 @@ try:
     module.lxc = fake_lxc
     request = {"action": "collect", "source_sha": source_sha, "base_sha": base_sha}
     config = {"runner_id": "runner", "lxc_name": "runner", "lxc_root": "/workspace", "host_agent_path": os.path.join(root, "agent")}
+    prior = {
+        "schema": "flowersec-remote-runner-result-v1", "status": "RUNNING", "action": "run-formal",
+        "source_sha": source_sha, "base_sha": base_sha, "classification": "none", "check_id": "",
+        "message": "unique supervised formal collector started",
+    }
+    status.write_text(json.dumps(prior) + "\n", encoding="utf-8")
+    assert module.recover_lxd_collection(config, request, "/workspace/request.json") is None
+    status.write_text(json.dumps(payload) + "\n", encoding="utf-8")
     recovered = module.recover_lxd_collection(config, request, "/workspace/request.json")
     assert recovered == {key: value for key, value in payload.items() if key != "lxd_archive_ready"}, recovered
-    assert len(calls) == 1, calls
+    assert len(calls) == 2, calls
     payload["source_sha"] = "d" * 40
     status.write_text(json.dumps(payload) + "\n", encoding="utf-8")
     try:

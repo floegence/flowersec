@@ -330,7 +330,18 @@ def recover_lxd_collection(config, request, lxd_request):
             return None
         os.chmod(temporary_status, 0o600)
         with open(temporary_status, "r", encoding="utf-8") as source:
-            payload = parse_result(source.read(), request)
+            raw_status = source.read()
+        try:
+            previous = json.loads(raw_status.strip())
+        except json.JSONDecodeError:
+            previous = None
+        if isinstance(previous, dict) and previous.get("action") == "run-formal":
+            if (set(previous) == BASE_RESULT_KEYS and previous.get("schema") == "flowersec-remote-runner-result-v1"
+                    and previous.get("status") == "RUNNING" and previous.get("source_sha") == request["source_sha"]
+                    and previous.get("base_sha") == request["base_sha"]):
+                return None
+            raise RunnerFailure("lxd_result_schema", "prior LXD formal receipt identity drifted", "identity", 30)
+        payload = parse_result(raw_status, request)
         if payload["status"] not in {"GREEN", "RED"} or payload.get("lxd_archive_ready") is not True:
             return None
         archive_sha = payload.get("archive_sha256", "")
