@@ -40,6 +40,7 @@ import (
 const (
 	defaultMaxInboundStreams uint16 = 32
 	listenerAudience                = "transport-release-listener"
+	releaseEstablishTimeout         = 30 * time.Second
 )
 
 var errEndpointClosed = errors.New("production tunnel workload endpoint closed")
@@ -150,6 +151,8 @@ func releaseCoordinatorConfig(plan transportrelease.ProfilePlan) (tunnelv2.Confi
 	}
 	config := tunnelv2.DefaultConfig()
 	config.PairTimeout = time.Duration(plan.Cold.PhaseDeadlineSeconds) * time.Second
+	config.AdmissionResponseTimeout = releaseEstablishTimeout
+	config.ActivationTimeout = releaseEstablishTimeout
 	return config, nil
 }
 
@@ -696,7 +699,7 @@ func releaseContractWithStreams(suite protocolv2.Suite, maxStreams uint16) (arti
 	suffix := hex.EncodeToString(nonce[:])
 	contract := artifactv2.SessionContract{
 		ChannelID: "tunnel-" + suffix, InitExpireAtUnixSeconds: time.Now().Add(time.Hour).Unix(),
-		IdleTimeoutSeconds: 60, EstablishTimeoutSeconds: 30,
+		IdleTimeoutSeconds: 60, EstablishTimeoutSeconds: uint16(releaseEstablishTimeout / time.Second),
 		RekeyPrepareTimeoutSeconds: 10, RekeyCompletionTimeoutSeconds: 30,
 		MaxInboundStreams: maxStreams, AllowedSuites: []uint16{uint16(suite)}, DefaultSuite: uint16(suite),
 	}

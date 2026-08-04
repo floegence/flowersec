@@ -124,8 +124,8 @@ func TestReleaseCoordinatorPairTimeoutCoversColdPhase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.PairTimeout != 55*time.Second {
-		t.Fatalf("release pair timeout = %s, want cold phase deadline", config.PairTimeout)
+	if config.PairTimeout != 55*time.Second || config.AdmissionResponseTimeout != 30*time.Second || config.ActivationTimeout != 30*time.Second {
+		t.Fatalf("release coordinator timeouts = pair %s response %s activation %s", config.PairTimeout, config.AdmissionResponseTimeout, config.ActivationTimeout)
 	}
 }
 
