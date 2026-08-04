@@ -22,6 +22,7 @@ use crate::{
 pub struct ConnectorOptions {
     trust_roots_der: Vec<Vec<u8>>,
     connect_timeout: Duration,
+    close_flush_timeout: Option<Duration>,
 }
 
 impl ConnectorOptions {
@@ -34,6 +35,7 @@ impl ConnectorOptions {
         Ok(Self {
             trust_roots_der,
             connect_timeout: Duration::from_secs(10),
+            close_flush_timeout: None,
         })
     }
 
@@ -43,6 +45,18 @@ impl ConnectorOptions {
             return Err(error(PathKind::Direct, ConnectErrorCode::InvalidInput));
         }
         self.connect_timeout = connect_timeout;
+        Ok(self)
+    }
+
+    /// Overrides the bounded session close-control delivery deadline.
+    pub fn with_close_flush_timeout(
+        mut self,
+        close_flush_timeout: Duration,
+    ) -> Result<Self, ConnectError> {
+        if close_flush_timeout.is_zero() {
+            return Err(error(PathKind::Direct, ConnectErrorCode::InvalidInput));
+        }
+        self.close_flush_timeout = Some(close_flush_timeout);
         Ok(self)
     }
 
@@ -238,6 +252,9 @@ impl Connector {
         let mut config = plan.session_config;
         config.local_endpoint_instance_id = plan.local_endpoint_instance_id;
         config.expected_peer_endpoint_instance_id = plan.expected_peer_endpoint_instance_id;
+        if let Some(close_flush_timeout) = self.options.close_flush_timeout {
+            config.deadlines.close_flush = close_flush_timeout;
+        }
         let limits =
             RawQuicLimits::for_session_v2(config.max_inbound_streams, self.options.connect_timeout)
                 .map_err(|_| error(path, ConnectErrorCode::InvalidInput))?;
@@ -443,6 +460,22 @@ mod tests {
                 .unwrap_err()
                 .code(),
             ConnectErrorCode::InvalidInput
+        );
+        assert_eq!(
+            ConnectorOptions::new(vec![vec![1]])
+                .unwrap()
+                .with_close_flush_timeout(Duration::ZERO)
+                .unwrap_err()
+                .code(),
+            ConnectErrorCode::InvalidInput
+        );
+        assert_eq!(
+            ConnectorOptions::new(vec![vec![1]])
+                .unwrap()
+                .with_close_flush_timeout(Duration::from_secs(12))
+                .unwrap()
+                .close_flush_timeout,
+            Some(Duration::from_secs(12))
         );
     }
 

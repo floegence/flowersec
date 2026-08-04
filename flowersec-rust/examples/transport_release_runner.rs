@@ -338,8 +338,13 @@ async fn run_client(request: ClientRequest) -> Result<RoleResult, AnyError> {
 
     signal_phase(request.control_directory.as_deref(), "rpc", "start").await?;
     let request_start = capture_resource_snapshot()?;
-    let (session, commits) =
-        connect_artifact(&persistent_artifact, trust_roots, connect_timeout).await?;
+    let (session, commits) = connect_artifact(
+        &persistent_artifact,
+        trust_roots,
+        connect_timeout,
+        Duration::from_millis(request.plan.cleanup_timeout_ms),
+    )
+    .await?;
     if commits.load(Ordering::SeqCst) != 1 {
         return Err("persistent artifact commit count is invalid".into());
     }
@@ -408,6 +413,7 @@ async fn run_cold_client(
     let phase_unix_ns = unix_ns()?;
     let interval = Duration::from_secs_f64(1.0 / f64::from(plan.cold_start_rate_per_second));
     let operation_timeout = Duration::from_millis(plan.cold_operation_timeout_ms);
+    let close_flush_timeout = Duration::from_millis(plan.cleanup_timeout_ms);
     let mut tasks = JoinSet::new();
     for (index, artifact) in artifacts.into_iter().enumerate() {
         let offset = interval.mul_f64(index as f64);
@@ -423,7 +429,7 @@ async fn run_cold_client(
             let started = Instant::now();
             let (session, commits) = tokio::time::timeout(
                 operation_timeout,
-                connect_artifact(&artifact, roots, connect_timeout),
+                connect_artifact(&artifact, roots, connect_timeout, close_flush_timeout),
             )
             .await
             .map_err(|_| "cold connect timed out")??;
@@ -466,6 +472,7 @@ async fn connect_artifact(
     artifact_json: &str,
     trust_roots: Vec<Vec<u8>>,
     connect_timeout: Duration,
+    close_flush_timeout: Duration,
 ) -> Result<(Arc<dyn Session>, Arc<AtomicUsize>), AnyError> {
     let artifact = Artifact::parse(artifact_json.as_bytes())?;
     let commits = Arc::new(AtomicUsize::new(0));
@@ -477,7 +484,9 @@ async fn connect_artifact(
             Ok(())
         }
     });
-    let options = ConnectorOptions::new(trust_roots)?.with_connect_timeout(connect_timeout)?;
+    let options = ConnectorOptions::new(trust_roots)?
+        .with_connect_timeout(connect_timeout)?
+        .with_close_flush_timeout(close_flush_timeout)?;
     let session = flowersec::connect(&mut lease, options).await?;
     if commits.load(Ordering::SeqCst) != 1 {
         return Err("artifact spend was not committed exactly once".into());
