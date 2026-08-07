@@ -58,6 +58,7 @@
     "test": "npm run build && vitest run --exclude 'src/**/*.integration.test.ts'",
     "test:browser": "npm run test:browser:chromium",
     "test:browser:chromium": "npm run ensure:browser && npm run build && playwright test --project=chromium",
+    "test:browser:firefox": "npm run ensure:browser:firefox && npm run build && playwright test --project=firefox-compat",
     "test:browser:webkit": "npm run ensure:browser:webkit && npm run build && playwright test --project=webkit-smoke",
     "ensure:browser": "node ./scripts/ensure-playwright-browsers.mjs chromium",
     "ensure:browser:firefox": "node ./scripts/ensure-playwright-browsers.mjs firefox",

@@ -101,7 +101,10 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
 
   try {
     await ensureEmptyOutputDirectory(plan.output_directory);
-    site = await startBrowserModuleSite(plan.module_bind_address, plan.module_advertise_host);
+    site = await startBrowserModuleSite(plan.module_bind_address, plan.module_advertise_host, {
+      secure: true,
+      outputDirectory: plan.output_directory,
+    });
     browser = await playwright.launch(chromiumCapacityLaunchOptions(
       plan,
       chromiumExecutablePath(playwright),

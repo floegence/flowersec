@@ -1393,11 +1393,14 @@ test("main push passes only the checked HEAD after the gate completes", (t) => {
   assert.equal(commands.filter((command) => command === "make test").length, 1, commands.join("\n"));
 });
 
-test("browser diagnostics remain an explicit registry test", () => {
+test("browser compatibility remains explicit and separate from Chromium smoke", () => {
   const registry = fs.readFileSync(path.join(sourceRoot, "flowersec-go/internal/cmd/flowersec-test/registry.go"), "utf8");
-  assert.match(registry, /commandEntry\("diagnostic\/browser", "diagnostic"/);
+  assert.match(registry, /browserCompatibilityEntry\("browser\/firefox\/webtransport-capability"/);
+  assert.match(registry, /browserCompatibilityEntry\("browser\/webkit\/webtransport-capability"/);
+  assert.doesNotMatch(registry, /"diagnostic\/browser"/);
   const packageManifest = fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8");
   assert.match(packageManifest, /"test:browser": "npm run test:browser:chromium"/);
   assert.match(packageManifest, /"test:browser:chromium": "npm run ensure:browser && npm run build && playwright test --project=chromium"/);
+  assert.match(packageManifest, /"test:browser:firefox": "npm run ensure:browser:firefox && npm run build && playwright test --project=firefox-compat"/);
   assert.match(packageManifest, /"test:browser:webkit": "npm run ensure:browser:webkit && npm run build && playwright test --project=webkit-smoke"/);
 });

@@ -56,14 +56,21 @@ type relationExpectation struct {
 	Right    string `json:"right"`
 }
 
-func TestWeaknetSmoke(t *testing.T) {
+func TestWeaknetRawQUICSmoke(t *testing.T) {
 	if os.Getenv("FLOWERSEC_RUN_WEAKNET_SMOKE") != "1" {
 		t.Skip("run through make weaknet-smoke")
 	}
-	for _, result := range []smokeCase{runRawQUICSmoke(t), runWebSocketSmoke(t)} {
-		if err := validateSmokeCase(result); err != nil {
-			t.Fatal(err)
-		}
+	if err := validateSmokeCase(runRawQUICSmoke(t)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWeaknetWebSocketSmoke(t *testing.T) {
+	if os.Getenv("FLOWERSEC_RUN_WEAKNET_SMOKE") != "1" {
+		t.Skip("run through make weaknet-smoke")
+	}
+	if err := validateSmokeCase(runWebSocketSmoke(t)); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -118,7 +125,7 @@ func runRawQUICSmoke(t *testing.T) smokeCase {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pumpContext, cancelPumps := context.WithCancel(context.Background())
+	pumpContext, cancelPumps := context.WithCancel(weaknetSmokeContext)
 	pumpDone := []chan error{make(chan error, 1), make(chan error, 1)}
 	go func() { pumpDone[0] <- forward.Run(pumpContext) }()
 	go func() { pumpDone[1] <- reverse.Run(pumpContext) }()
@@ -126,14 +133,14 @@ func runRawQUICSmoke(t *testing.T) smokeCase {
 	serverSessionCh := make(chan carrier.Session, 1)
 	serverErrCh := make(chan error, 1)
 	go func() {
-		session, acceptErr := listener.Accept(context.Background())
+		session, acceptErr := listener.Accept(weaknetSmokeContext)
 		if acceptErr != nil {
 			serverErrCh <- acceptErr
 			return
 		}
 		serverSessionCh <- session
 	}()
-	clientSession, err := rawquic.Dial(context.Background(), front.LocalAddr().String(), clientTLS, quicbase.DefaultLimits())
+	clientSession, err := rawquic.Dial(weaknetSmokeContext, front.LocalAddr().String(), clientTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +190,7 @@ func runWebSocketSmoke(t *testing.T) smokeCase {
 			serverErrCh <- err
 			return
 		}
-		_, err = admissionws.Serve(context.Background(), conn, nil, func(context.Context, *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
+		_, err = admissionws.Serve(weaknetSmokeContext, conn, nil, func(context.Context, *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
 			return artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, nil
 		})
 		if err != nil {
@@ -210,7 +217,7 @@ func runWebSocketSmoke(t *testing.T) smokeCase {
 	serverToClientExpected := weaknet.Counters{}
 	clientToServerRelay := newByteRelay(t, weaknet.ClientToServer, &clientToServerExpected)
 	serverToClientRelay := newByteRelay(t, weaknet.ServerToClient, &serverToClientExpected)
-	pumpContext, cancelPumps := context.WithCancel(context.Background())
+	pumpContext, cancelPumps := context.WithCancel(weaknetSmokeContext)
 	pumpDone := []chan error{make(chan error, 1), make(chan error, 1)}
 	go func() {
 		clientConn, acceptErr := front.Accept()
@@ -243,12 +250,12 @@ func runWebSocketSmoke(t *testing.T) smokeCase {
 			MinVersion: tls.VersionTLS13, InsecureSkipVerify: true, // Local smoke proxy only.
 		},
 	}
-	clientConn, _, err := dialer.Dial("wss://"+front.Addr().String()+"/flowersec/v2/direct", nil)
+	clientConn, _, err := dialer.DialContext(weaknetSmokeContext, "wss://"+front.Addr().String()+"/flowersec/v2/direct", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rawFSB2 := validWebSocketFSB2(t)
-	if _, err := admissionws.Commit(context.Background(), clientConn, rawFSB2, nil); err != nil {
+	if _, err := admissionws.Commit(weaknetSmokeContext, clientConn, rawFSB2, nil); err != nil {
 		t.Fatal(err)
 	}
 	clientSession, err := carrierws.NewAfterAdmission(clientConn, carrierws.ClientRole, carrierws.SubprotocolDirect, carrierws.DefaultResourcePolicy())
@@ -409,7 +416,7 @@ func newByteRelay(t *testing.T, direction weaknet.Direction, expected *weaknet.C
 
 func assertResetIsolation(t *testing.T, client, server carrier.Session) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(weaknetSmokeContext, 10*time.Second)
 	defer cancel()
 	resetStream, err := client.OpenStream(ctx)
 	if err != nil {

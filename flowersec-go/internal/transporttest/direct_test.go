@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -466,6 +467,10 @@ func TestProductDirectBrowserEndpointRequiresConcreteOriginAndExposesCertificate
 	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil || len(decoded) != 32 {
 		t.Fatalf("certificate hash = %q: %v", encoded, err)
+	}
+	expected := sha256.Sum256(endpoint.certificateDER)
+	if string(decoded) != string(expected[:]) {
+		t.Fatalf("certificate hash does not match the served leaf DER")
 	}
 }
 

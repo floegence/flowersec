@@ -85,8 +85,17 @@ const acceptanceRegistry = registry.match(/func registry\(\)[\s\S]*?func browser
 assert.doesNotMatch(acceptanceRegistry, /commandEntry\("browser\/[^"]+",\s*"acceptance"/);
 assert.match(registry, /browserSmokeEntry\("browser\/chromium\/webtransport\/direct"/);
 assert.match(registry, /func browserSmokeEntry[\s\S]*commandEntry\(id, "browser-smoke"/);
+assert.match(registry, /browserCompatibilityEntry\("browser\/firefox\/webtransport-capability"/);
+assert.match(registry, /browserCompatibilityEntry\("browser\/webkit\/webtransport-capability"/);
+assert.match(registry, /func browserCompatibilityEntry[\s\S]*commandEntry\(id, "browser-compat"/);
 assert.doesNotMatch(acceptanceRegistry, /--report|--artifact-dir|performance_manifest|case_registry|raw_execution/i);
-assert.match(registry, /"diagnostic\/kernel-outage"[\s\S]*?FLOWERSEC_LINUX_NETLAB_INTEGRATION[\s\S]*?TestPrivilegedReorderDuplicateAndOutage/);
+for (const id of [
+  "coverage/go", "coverage/typescript", "coverage/rust", "coverage/swift", "race/go",
+  "diagnostic/weaknet/raw-quic/direct", "diagnostic/weaknet/websocket/direct",
+  "diagnostic/kernel/topology-lifecycle", "diagnostic/kernel/fault-schedules",
+  "diagnostic/kernel/reorder-duplicate-outage", "diagnostic/kernel/socket-traversal",
+]) assert.match(registry, new RegExp(`"${escapeRegex(id)}"`));
+assert.doesNotMatch(registry, /"diagnostic\/(?:protocol|browser|interop|weaknet|kernel-outage|quic)"/);
 
 const hostInit = read("scripts/test-host-init.sh");
 const hostEntry = read("scripts/test-host.sh");
@@ -94,6 +103,7 @@ const browserEnsure = read("flowersec-ts/scripts/ensure-playwright-browsers.mjs"
 const packageManifest = read("flowersec-ts/package.json");
 assert.match(hostInit, /VERSION_ID/);
 assert.match(hostInit, /goproxy\.cn|npmmirror\.com|rsproxy\.cn/);
+assert.match(hostInit, /\[source\.crates-io\][\s\S]*replace-with = "rsproxy"[\s\S]*\[source\.rsproxy\]/);
 assert.match(hostInit, /BTF|bpftool|netns|cgroup|Chromium|Swift 6\.1/i);
 assert.match(hostInit, /clang -target bpf -O2 -x c -c/);
 assert.match(hostInit, /npm --prefix "\$source_root\/flowersec-ts" run ensure:browser/);
@@ -108,11 +118,13 @@ assert.match(browserEnsure, /PLAYWRIGHT_DOWNLOAD_HOST/);
 assert.match(browserEnsure, /PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT/);
 assert.match(browserEnsure, /fs\.accessSync\(file, fs\.constants\.X_OK\)/);
 assert.match(packageManifest, /"ensure:browser": "node \.\/scripts\/ensure-playwright-browsers\.mjs chromium"/);
+assert.match(packageManifest, /"test:browser:firefox": "npm run ensure:browser:firefox[^"]*--project=firefox-compat"/);
 assert.match(packageManifest, /"ensure:browser:webkit": "node \.\/scripts\/ensure-playwright-browsers\.mjs webkit"/);
 assert.match(hostInit, /browser-test-runner\.mjs" --runtime-canary/);
 assert.match(hostInit, /playwright_chromium/);
+assert.match(hostInit, /init_tmp_baseline=\$\(mktemp[\s\S]*finalize_init_temps[\s\S]*comm -13[\s\S]*swift_canary=\$\(mktemp -d[\s\S]*TMPDIR="\$swift_canary" swiftc/);
 assert.doesNotMatch(hostInit, /chromium_path=.*command -v chromium/);
-for (const executable of ["go", "make", "node", "npm", "rustup", "cargo", "rustc", "swift", "git", "curl", "jq", "tar", "xz", "gcc", "g++", "clang", "clang++", "pkg-config", "python3", "sh", "realpath", "ip", "nsenter", "tc", "nft", "iptables", "ethtool", "bpftool", "sysctl", "mount", "mountpoint", "umount"]) {
+for (const executable of ["go", "make", "node", "npm", "rustup", "cargo", "rustc", "swift", "swiftc", "git", "curl", "jq", "tar", "xz", "gcc", "g++", "clang", "clang++", "pkg-config", "python3", "sh", "realpath", "ip", "nsenter", "tc", "nft", "iptables", "ethtool", "bpftool", "sysctl", "mount", "mountpoint", "umount"]) {
   const boundary = /^[A-Za-z0-9_]+$/.test(executable) ? `\\b${escapeRegex(executable)}\\b` : escapeRegex(executable);
   assert.match(hostInit, new RegExp(boundary), `host init must check ${executable}`);
 }
@@ -120,9 +132,10 @@ assert.match(hostInit, /bpftool prog load/);
 assert.match(hostInit, /tc.*clsact|clsact.*tc/);
 assert.match(hostInit, /nft add table/);
 assert.match(hostInit, /iptables/);
-assert.match(hostInit, /swift test --disable-automatic-resolution --filter/);
+assert.match(hostInit, /flowersec-swift-canary[\s\S]*swiftc/);
+assert.doesNotMatch(hostInit, /swift test|TransportV2|IDNAHostV2/);
 assert.match(hostInit, /clang\+\+ -std=c\+\+17 -x c\+\+ -fsyntax-only/);
-assert.match(hostInit, /trap cleanup_probe EXIT/);
+assert.match(hostInit, /trap 'cleanup_probe; finalize_init_temps' EXIT/);
 assert.match(hostInit, /cleanup_probe\ntrap - EXIT/);
 assert.match(hostInit, /host capability canary cleanup left resources/);
 assert.match(hostInit, /BPF verifier load/);
@@ -134,6 +147,8 @@ assert.match(hostEntry, /sudo -n true/);
 assert.match(hostEntry, /https:\/\/ghfast\.top\/https:\/\/github\.com/);
 assert.match(hostEntry, /HOME="\$host_home" PATH="\$host_path" TMPDIR="\$host_tmp"/);
 assert.match(hostEntry, /git -C "\$host_workspace" checkout --detach --force "\$source_sha"/);
+assert.match(hostEntry, /status --porcelain --untracked-files=all/);
+assert.doesNotMatch(hostEntry, /status --porcelain --untracked-files=no/);
 assert.doesNotMatch(hostEntry, /sudo -E|sudo su|ssh |scp |rsync /);
 assert.match(hostEntry, /readonly host_open_file_limit=65536/);
 assert.match(hostEntry, /hard_limit=\$\(ulimit -Hn\)/);

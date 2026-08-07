@@ -149,8 +149,13 @@ func TestBrowserTunnelEndpointRejectsInvalidTopologyAndUsesP256Pin(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if digest, err := base64.RawURLEncoding.DecodeString(encoded); err != nil || len(digest) != 32 {
+	digest, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil || len(digest) != 32 {
 		t.Fatalf("certificate hash = %q: %v", encoded, err)
+	}
+	expected := sha256.Sum256(endpoint.certificateDER)
+	if string(digest) != string(expected[:]) {
+		t.Fatalf("certificate hash does not match the served leaf DER")
 	}
 	certificate, err := x509.ParseCertificate(endpoint.certificateDER)
 	if err != nil {

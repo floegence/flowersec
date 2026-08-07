@@ -35,12 +35,19 @@ func registry() []registeredTest {
 		browserSmokeEntry("browser/chromium/webtransport/direct", "Chromium runs the direct WebTransport topology"),
 		browserSmokeEntry("browser/chromium-tunnel-wt-wss", "Chromium WebTransport tunnel bridges to production Go wss"),
 		browserSmokeEntry("browser/chromium-tunnel-wt-quic", "Chromium WebTransport tunnel bridges to production Go raw_quic"),
-		commandEntry("diagnostic/protocol", "diagnostic", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "./internal/protocolv2", "./internal/artifactv2", "./internal/admissionv2", "./internal/session", "./internal/transporttest"),
-		commandEntry("diagnostic/browser", "diagnostic", 10*time.Minute, "npm", "--prefix", "flowersec-ts", "run", "test:browser"),
-		vitestEntry("diagnostic/interop", "diagnostic", "src/interop/goSession.integration.test.ts", ""),
-		commandEntryWithEnvironment("diagnostic/weaknet", "diagnostic", 5*time.Minute, []string{"FLOWERSEC_RUN_WEAKNET_SMOKE=1"}, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "./internal/weaknet", "./internal/weaknetsmoke"),
-		commandEntryWithEnvironment("diagnostic/kernel-outage", "diagnostic", 5*time.Minute, []string{"FLOWERSEC_LINUX_NETLAB_INTEGRATION=1"}, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestPrivilegedReorderDuplicateAndOutage$", "./internal/transporttest/linuxnetlab"),
-		commandEntry("diagnostic/quic", "diagnostic", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "./internal/carrier/rawquic", "./internal/tunnelv2"),
+		browserCompatibilityEntry("browser/firefox/webtransport-capability", "firefox", "Firefox reports unsupported native WebTransport connection"),
+		browserCompatibilityEntry("browser/webkit/webtransport-capability", "webkit", "WebKit reports unsupported native WebTransport DATAGRAM surface"),
+		commandEntry("coverage/go", "coverage-race", 10*time.Minute, "make", "go-cover-check"),
+		commandEntry("coverage/typescript", "coverage-race", 10*time.Minute, "make", "ts-cover-check"),
+		commandEntry("coverage/rust", "coverage-race", 10*time.Minute, "make", "rust-cover-check"),
+		commandEntry("coverage/swift", "coverage-race", 10*time.Minute, "make", "swift-test", "swift-cover-check"),
+		commandEntry("race/go", "coverage-race", 10*time.Minute, "make", "go-test-race"),
+		commandEntryWithEnvironment("diagnostic/weaknet/raw-quic/direct", "diagnostic", 5*time.Minute, []string{"FLOWERSEC_RUN_WEAKNET_SMOKE=1"}, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestWeaknetRawQUICSmoke$", "./internal/weaknetsmoke"),
+		commandEntryWithEnvironment("diagnostic/weaknet/websocket/direct", "diagnostic", 5*time.Minute, []string{"FLOWERSEC_RUN_WEAKNET_SMOKE=1"}, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestWeaknetWebSocketSmoke$", "./internal/weaknetsmoke"),
+		privilegedGoTestEntry("diagnostic/kernel/topology-lifecycle", "TestPrivilegedTopologyLifecycle"),
+		privilegedGoTestEntry("diagnostic/kernel/fault-schedules", "TestPrivilegedExactFaultSchedules"),
+		privilegedGoTestEntry("diagnostic/kernel/reorder-duplicate-outage", "TestPrivilegedReorderDuplicateAndOutage"),
+		privilegedGoTestEntry("diagnostic/kernel/socket-traversal", "TestPrivilegedGoSocketsTraverseNamespaces"),
 	}
 	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
 		tests = append(tests,
@@ -56,15 +63,39 @@ func registry() []registeredTest {
 		"CAP-STREAM-WT-DIRECT-100X128", "CAP-STREAM-WT-WSS-100X128", "CAP-STREAM-WT-QUIC-100X128",
 		"CAP-WW-1000", "CAP-QQ-1000", "CAP-WQ-1000", "CAP-QW-1000",
 	} {
-		tests = append(tests, commandEntryWithEnvironment("performance/capacity/"+strings.ToLower(id), "performance", 5*time.Minute,
-			[]string{"FLOWERSEC_TEST_CAPACITY_CASE=" + id}, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestFocusedProductionCapacityCase$", "./internal/transporttest/performance"))
+		tests = append(tests, performanceCapacityEntry("performance/capacity/"+strings.ToLower(id), id))
 	}
 	tests = append(tests, commandEntryWithEnvironment("performance/soak", "performance", 10*time.Minute, []string{"FLOWERSEC_TEST_SOAK=1"}, "go", "-C", "flowersec-go", "test", "-timeout=10m", "-count=1", "-run", "^TestFocusedProductionSoakCase$", "./internal/transporttest/performance"))
 	return tests
 }
 
+func performanceCapacityEntry(id, caseID string) registeredTest {
+	return registeredTest{ID: id, Suite: "performance", Timeout: 5 * time.Minute, Run: func(ctx context.Context, run runContext) error {
+		return runCommand(ctx, run.Root, withRunID(performanceCapacityEnvironment(caseID), run.RunID), "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestFocusedProductionCapacityCase$", "./internal/transporttest/performance")
+	}}
+}
+
+func performanceCapacityEnvironment(caseID string) []string {
+	return []string{"FLOWERSEC_TEST_CAPACITY_CASE=" + caseID}
+}
+
+func withRunID(environment []string, runID string) []string {
+	return append(append([]string(nil), environment...), "FLOWERSEC_TEST_RUN_ID="+runID)
+}
+
 func browserSmokeEntry(id, title string) registeredTest {
-	return commandEntry(id, "browser-smoke", 5*time.Minute, "npm", "--prefix", "flowersec-ts", "run", "test:browser:chromium", "--", "--grep", exactTitle(title))
+	return commandEntry(id, "browser-smoke", 5*time.Minute, "npm", "--prefix", "flowersec-ts", "run", "test:browser:chromium", "--", "--grep", playwrightTitle(title))
+}
+
+func browserCompatibilityEntry(id, browser, title string) registeredTest {
+	return commandEntry(id, "browser-compat", 5*time.Minute, "npm", "--prefix", "flowersec-ts", "run", "test:browser:"+browser, "--", "--grep", playwrightTitle(title))
+}
+
+func playwrightTitle(title string) string { return regexp.QuoteMeta(title) }
+
+func privilegedGoTestEntry(id, testName string) registeredTest {
+	return commandEntryWithEnvironment(id, "diagnostic", 5*time.Minute, []string{"FLOWERSEC_LINUX_NETLAB_INTEGRATION=1"},
+		"go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^"+regexp.QuoteMeta(testName)+"$", "./internal/transporttest/linuxnetlab")
 }
 
 func vitestEntry(id, suite, file, title string) registeredTest {
@@ -89,7 +120,7 @@ func commandEntry(id, suite string, timeout time.Duration, command string, argum
 
 func commandEntryWithEnvironment(id, suite string, timeout time.Duration, environment []string, command string, arguments ...string) registeredTest {
 	return registeredTest{ID: id, Suite: suite, Timeout: timeout, Run: func(ctx context.Context, run runContext) error {
-		return runCommand(ctx, run.Root, environment, command, arguments...)
+		return runCommand(ctx, run.Root, withRunID(environment, run.RunID), command, arguments...)
 	}}
 }
 
@@ -114,15 +145,42 @@ func runCommand(ctx context.Context, directory string, environment []string, nam
 		return nil
 	case <-ctx.Done():
 		_ = syscall.Kill(-command.Process.Pid, syscall.SIGTERM)
-		select {
-		case err := <-done:
-			return errors.Join(context.Cause(ctx), err, errors.New(output.String()))
-		case <-time.After(5 * time.Second):
+		err, drained := waitForCommandGroup(command.Process.Pid, done, 5*time.Second)
+		if !drained {
 			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-			<-done
-			return errors.Join(context.Cause(ctx), errors.New("subprocess ignored SIGTERM"), errors.New(output.String()))
+			if err == nil {
+				err = <-done
+			}
+			return errors.Join(context.Cause(ctx), err, errors.New("subprocess group did not finish teardown after SIGTERM"), errors.New(output.String()))
+		}
+		return errors.Join(context.Cause(ctx), err, errors.New(output.String()))
+	}
+}
+
+func waitForCommandGroup(processGroup int, done <-chan error, grace time.Duration) (error, bool) {
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	var processErr error
+	processDone := false
+	for {
+		if processDone && processGroupFinished(processGroup) {
+			return processErr, true
+		}
+		select {
+		case processErr = <-done:
+			processDone = true
+		case <-ticker.C:
+		case <-timer.C:
+			return processErr, false
 		}
 	}
+}
+
+func processGroupFinished(processGroup int) bool {
+	err := syscall.Kill(-processGroup, 0)
+	return errors.Is(err, syscall.ESRCH)
 }
 
 type tailBuffer struct {

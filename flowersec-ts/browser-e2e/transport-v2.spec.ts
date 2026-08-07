@@ -10,8 +10,32 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const repositoryRoot = path.resolve(packageRoot, "..");
 
 test("Chromium runs the direct WebTransport topology", async ({ page, browserName }) => {
-  test.skip(browserName !== "chromium", "Chromium is the blocking browser runtime");
+  test.skip(browserName !== "chromium", "requires Chromium");
   test.setTimeout(45_000);
+  await runDirectWebTransport(page);
+});
+
+for (const opposite of ["wss", "raw_quic"] as const) {
+  test(`Chromium WebTransport tunnel bridges to production Go ${opposite}`, async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "requires Chromium");
+    test.setTimeout(45_000);
+    await runTunnelWebTransport(page, opposite);
+  });
+}
+
+test("Firefox reports unsupported native WebTransport connection", async ({ page, browserName }) => {
+  test.skip(browserName !== "firefox", "requires Firefox");
+  test.setTimeout(45_000);
+  await expect(runDirectWebTransport(page)).rejects.toThrow(/dial_failed.*WebTransport connection rejected/);
+});
+
+test("WebKit reports unsupported native WebTransport DATAGRAM surface", async ({ page, browserName }) => {
+  test.skip(browserName !== "webkit", "requires WebKit");
+  test.setTimeout(45_000);
+  await expect(runDirectWebTransport(page)).rejects.toThrow(/dial_failed.*outgoing DATAGRAMs/);
+});
+
+async function runDirectWebTransport(page: Page): Promise<void> {
   const source = await artifactFor("direct", "t1");
   const peer = startPeer("browser-webtransport-peer", "direct");
   const stderr = captureStderr(peer);
@@ -25,7 +49,17 @@ test("Chromium runs the direct WebTransport topology", async ({ page, browserNam
       const sdk = await import("/dist/browser/index.js");
       const artifact = sdk.parseArtifact(artifactJSON);
       const lease = sdk.createArtifactLease(artifact, async () => undefined);
-      const session = await sdk.connectBrowserSession(lease);
+      const session = await sdk.connectBrowserSession(lease).catch(async (error: unknown) => {
+        const internal = await import("/dist/utils/errors.js");
+        if (!(error instanceof internal.ConnectError)) throw error;
+        const details = internal.connectErrorDetailsInternal(error);
+        throw new Error(JSON.stringify({
+          publicCode: error.code,
+          internalCode: details.code,
+          stage: details.stage,
+          candidates: details.diagnostics,
+        }));
+      });
       if (session.unreliableMessages === undefined) throw new Error("WebTransport DATAGRAM was not negotiated");
       const sent = await session.unreliableMessages.send(
         new TextEncoder().encode("browser-datagram"),
@@ -58,52 +92,58 @@ test("Chromium runs the direct WebTransport topology", async ({ page, browserNam
     expect(await processExit(peer), stderr.join("")).toBe(0);
   } finally {
     await site.close();
-    if (peer.exitCode === null) peer.kill("SIGKILL");
+    await stopPeer(peer);
   }
-});
+}
 
-for (const opposite of ["wss", "raw_quic"] as const) {
-  test(`Chromium WebTransport tunnel bridges to production Go ${opposite}`, async ({ page, browserName }) => {
-    test.skip(browserName !== "chromium", "WebKit has no production WebTransport capability");
-    test.setTimeout(45_000);
-    const peer = spawn(
-      "go",
-      ["run", "./internal/cmd/browser-webtransport-peer", "--opposite", opposite],
-      { cwd: path.join(repositoryRoot, "flowersec-go"), stdio: ["ignore", "pipe", "pipe"] },
-    );
-    const stderr = captureStderr(peer);
-    const site = await startBrowserModuleSite();
-    try {
-      const endpoint = JSON.parse(await firstLine(peer.stdout)) as {
-        artifact_json: string;
-        certificate_hash: string;
-      };
-      await installWebTransportCertificateHash(page, endpoint.certificate_hash, opposite === "wss");
-      await page.goto(site.origin, { waitUntil: "networkidle" });
-      const result = await page.evaluate(async (artifactJSON) => {
-        const sdk = await import("/dist/browser/index.js");
-        const artifact = sdk.parseArtifact(artifactJSON);
-        const lease = sdk.createArtifactLease(artifact, async () => undefined);
-        const session = await sdk.connectBrowserSession(lease);
-        const stream = await session.openStream("mixed.echo");
-        await stream.write(new TextEncoder().encode("browser-mixed"));
-        await stream.closeWrite();
-        const response = new TextDecoder().decode(await stream.read());
-        const eof = await stream.read();
-        await session.close();
-        return { response, eof };
-      }, endpoint.artifact_json).catch((error: unknown) => {
-        throw new Error(`${error instanceof Error ? error.message : String(error)}\nGo mixed peer:\n${stderr.join("")}`);
+async function runTunnelWebTransport(page: Page, opposite: "wss" | "raw_quic"): Promise<void> {
+  const peer = spawn(
+    "go",
+    ["run", "./internal/cmd/browser-webtransport-peer", "--opposite", opposite],
+    { cwd: path.join(repositoryRoot, "flowersec-go"), stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const stderr = captureStderr(peer);
+  const site = await startBrowserModuleSite();
+  try {
+    const endpoint = JSON.parse(await firstLine(peer.stdout)) as {
+      artifact_json: string;
+      certificate_hash: string;
+    };
+    await installWebTransportCertificateHash(page, endpoint.certificate_hash, opposite === "wss");
+    await page.goto(site.origin, { waitUntil: "networkidle" });
+    const result = await page.evaluate(async (artifactJSON) => {
+      const sdk = await import("/dist/browser/index.js");
+      const artifact = sdk.parseArtifact(artifactJSON);
+      const lease = sdk.createArtifactLease(artifact, async () => undefined);
+      const session = await sdk.connectBrowserSession(lease).catch(async (error: unknown) => {
+        const internal = await import("/dist/utils/errors.js");
+        if (!(error instanceof internal.ConnectError)) throw error;
+        const details = internal.connectErrorDetailsInternal(error);
+        throw new Error(JSON.stringify({
+          publicCode: error.code,
+          internalCode: details.code,
+          stage: details.stage,
+          candidates: details.diagnostics,
+        }));
       });
+      const stream = await session.openStream("mixed.echo");
+      await stream.write(new TextEncoder().encode("browser-mixed"));
+      await stream.closeWrite();
+      const response = new TextDecoder().decode(await stream.read());
+      const eof = await stream.read();
+      await session.close();
+      return { response, eof };
+    }, endpoint.artifact_json).catch((error: unknown) => {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\nGo mixed peer:\n${stderr.join("")}`);
+    });
 
-      expect(result.response).toBe(`go-${opposite.replace("_", "-")}`);
-      expect(result.eof).toBeNull();
-      expect(await processExit(peer), stderr.join("")).toBe(0);
-    } finally {
-      await site.close();
-      if (peer.exitCode === null) peer.kill("SIGKILL");
-    }
-  });
+    expect(result.response).toBe(`go-${opposite.replace("_", "-")}`);
+    expect(result.eof).toBeNull();
+    expect(await processExit(peer), stderr.join("")).toBe(0);
+  } finally {
+    await site.close();
+    await stopPeer(peer);
+  }
 }
 
 type MutableArtifact = { path: { candidates: Array<{ id: string; carrier: string; url: string }> } };
@@ -177,4 +217,16 @@ async function firstLine(stream: NodeJS.ReadableStream): Promise<string> {
 async function processExit(process: ReturnType<typeof spawn>): Promise<number | null> {
   if (process.exitCode !== null) return process.exitCode;
   return await new Promise((resolve) => process.once("exit", (code) => resolve(code)));
+}
+
+async function stopPeer(peer: ReturnType<typeof spawn>): Promise<void> {
+  if (peer.exitCode !== null) return;
+  peer.kill("SIGTERM");
+  const stopped = await Promise.race([
+    processExit(peer).then(() => true),
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), 1_000)),
+  ]);
+  if (stopped || peer.exitCode !== null) return;
+  peer.kill("SIGKILL");
+  await processExit(peer);
 }

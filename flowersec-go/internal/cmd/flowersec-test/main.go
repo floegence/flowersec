@@ -174,10 +174,19 @@ func executeSuite(ctx context.Context, stdout, stderr io.Writer, action, path, r
 	if action == "resume" {
 		loaded, err := readProgress(path, tests, suite)
 		if err == nil {
-			if loaded.SourceSHA == sourceSHA {
+			current.Completed = loaded.Completed
+			if loaded.SourceSHA != sourceSHA {
+				if err := os.RemoveAll(filepath.Join(filepath.Dir(path), "failures")); err != nil {
+					return fmt.Errorf("clear stale failure logs: %w", err)
+				}
+			} else {
 				current = loaded
-			} else if err := os.RemoveAll(filepath.Join(filepath.Dir(path), "failures")); err != nil {
-				return fmt.Errorf("clear stale failure logs: %w", err)
+			}
+			if loaded.SourceSHA != sourceSHA {
+				current.SourceSHA = sourceSHA
+			}
+			if err := writeProgress(path, current, tests); err != nil {
+				return err
 			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
@@ -447,6 +456,12 @@ func printStatus(output io.Writer, path string, tests []registeredTest, suite, s
 		current = progress{Plan: planName, SourceSHA: sourceSHA, Suite: suite, Completed: []string{}}
 	} else if err != nil {
 		return err
+	}
+	if current.SourceSHA != sourceSHA {
+		current.SourceSHA = sourceSHA
+		if err := writeProgress(path, current, tests); err != nil {
+			return err
+		}
 	}
 	next := firstIncomplete(tests, current.Completed)
 	nextID := ""

@@ -19,7 +19,7 @@ func TestPrivilegedGoSocketsTraverseNamespaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(privilegedTestContext, 15*time.Second)
 	defer cancel()
 	lab, err := Open(ctx, ExecRunner{}, config)
 	if err != nil {

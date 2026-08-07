@@ -28,6 +28,17 @@ func TestExactTitleMatchesOnlyTheCompleteTitle(t *testing.T) {
 	}
 }
 
+func TestPlaywrightTitleMatchesAUniqueTitleInsideTheFullTestName(t *testing.T) {
+	title := "Firefox reports unsupported native WebTransport connection"
+	pattern := regexp.MustCompile(playwrightTitle(title))
+	if !pattern.MatchString("transport-v2.spec.ts › " + title) {
+		t.Fatal("Playwright selector did not match the full test name")
+	}
+	if pattern.MatchString("Firefox reports another capability") {
+		t.Fatal("Playwright selector matched a different title")
+	}
+}
+
 func TestVitestEntryUsesRepositoryConfigFromTheRunnerRoot(t *testing.T) {
 	entry := vitestEntry("test/typescript", "acceptance", "src/example.test.ts", "exact title")
 	if entry.ID != "test/typescript" || entry.Suite != "acceptance" || entry.Timeout != 5*time.Minute {
@@ -36,6 +47,30 @@ func TestVitestEntryUsesRepositoryConfigFromTheRunnerRoot(t *testing.T) {
 	want := []string{"--prefix", "flowersec-ts", "exec", "--", "vitest", "run", "--config", "flowersec-ts/vitest.config.ts", "flowersec-ts/src/example.test.ts", "-t", "^exact title$"}
 	if got := vitestArguments("src/example.test.ts", "exact title"); strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("vitest arguments = %q, want %q", got, want)
+	}
+}
+
+func TestPerformanceRegistryUsesCanonicalRunIDEnvironment(t *testing.T) {
+	capacityEntries := 0
+	for _, test := range registry() {
+		if test.Suite != "performance" || !strings.HasPrefix(test.ID, "performance/capacity/") {
+			continue
+		}
+		capacityEntries++
+		runID, err := newRunID(test.ID)
+		if err != nil {
+			t.Fatalf("%s: generate run ID: %v", test.ID, err)
+		}
+		if !strings.HasPrefix(runID, safeName(test.ID)+"-") {
+			t.Fatalf("%s: run ID %q does not use canonical test prefix", test.ID, runID)
+		}
+		parts := withRunID(performanceCapacityEnvironment("CAP-TEST"), runID)
+		if len(parts) != 2 || parts[0] != "FLOWERSEC_TEST_CAPACITY_CASE=CAP-TEST" || parts[1] != "FLOWERSEC_TEST_RUN_ID="+runID {
+			t.Fatalf("%s: capacity environment = %#v", test.ID, parts)
+		}
+	}
+	if capacityEntries != 12 {
+		t.Fatalf("capacity registry entries = %d, want 12", capacityEntries)
 	}
 }
 
@@ -141,9 +176,13 @@ func TestResumeStartsFreshWhenSourceSHAChanges(t *testing.T) {
 	state := t.TempDir()
 	progressPath := filepath.Join(state, "acceptance.json")
 	var firstRuns atomic.Int32
+	var secondRuns atomic.Int32
 	tests := testRegistry(
 		func(context.Context, runContext) error { firstRuns.Add(1); return nil },
-		func(context.Context, runContext) error { return errors.New("current source failure") },
+		func(context.Context, runContext) error {
+			secondRuns.Add(1)
+			return errors.New("current source failure")
+		},
 	)
 	old := acceptanceProgress("test/a")
 	old.SourceSHA = "abcdef0123456789abcdef0123456789abcdef01"
@@ -154,18 +193,40 @@ func TestResumeStartsFreshWhenSourceSHAChanges(t *testing.T) {
 	if err := atomicWrite(stale, []byte("old source failure\n")); err != nil {
 		t.Fatal(err)
 	}
-	if err := executeSuite(context.Background(), ioDiscard{}, ioDiscard{}, "resume", progressPath, t.TempDir(), "acceptance", testSourceSHA, tests, false); err != nil {
+	if err := executeSuite(context.Background(), ioDiscard{}, ioDiscard{}, "resume", progressPath, t.TempDir(), "acceptance", testSourceSHA, tests, false); err == nil || !strings.Contains(err.Error(), "current source failure") {
+		t.Fatalf("resume error = %v", err)
+	}
+	current, err := readProgress(progressPath, tests, "acceptance")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.SourceSHA != testSourceSHA || strings.Join(current.Completed, ",") != "test/a" || firstRuns.Load() != 0 || secondRuns.Load() != 1 {
+		t.Fatalf("resumed progress = %+v runs=%d/%d", current, firstRuns.Load(), secondRuns.Load())
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("resume retained old-source failure log: %v", err)
+	}
+}
+
+func TestStatusMigratesSourceSHAWithoutDroppingCompletedIDs(t *testing.T) {
+	state := t.TempDir()
+	progressPath := filepath.Join(state, "acceptance.json")
+	tests := testRegistry(func(context.Context, runContext) error { return nil }, func(context.Context, runContext) error { return nil })
+	old := acceptanceProgress("test/a")
+	old.SourceSHA = "abcdef0123456789abcdef0123456789abcdef01"
+	if err := writeProgress(progressPath, old, tests); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := printStatus(&output, progressPath, tests, "acceptance", testSourceSHA); err != nil {
 		t.Fatal(err)
 	}
 	current, err := readProgress(progressPath, tests, "acceptance")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current.SourceSHA != testSourceSHA || strings.Join(current.Completed, ",") != "test/a" || firstRuns.Load() != 1 {
-		t.Fatalf("resumed progress = %+v", current)
-	}
-	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("resume retained old-source failure log: %v", err)
+	if current.SourceSHA != testSourceSHA || strings.Join(current.Completed, ",") != "test/a" || !strings.Contains(output.String(), `"next":"test/b"`) {
+		t.Fatalf("migrated status=%+v output=%s", current, output.String())
 	}
 }
 
@@ -193,11 +254,11 @@ func TestSuccessfulRunRemovesTempDirectoryAndFailureLog(t *testing.T) {
 
 func TestCancelledCommandReceivesTermAndIsWaited(t *testing.T) {
 	directory := t.TempDir()
-	marker := filepath.Join(directory, "terminated")
+	marker := filepath.Join(directory, "descendant-terminated")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runCommand(ctx, directory, []string{"MARKER=" + marker}, "sh", "-c", `trap 'touch "$MARKER"; exit 0' TERM; while :; do sleep 1; done`)
+		done <- runCommand(ctx, directory, []string{"MARKER=" + marker}, "sh", "-c", `trap 'exit 0' TERM; sh -c 'trap '\''sleep 0.2; touch "$MARKER"; exit 0'\'' TERM; while :; do sleep 1; done' & wait`)
 	}()
 	time.Sleep(100 * time.Millisecond)
 	cancel()
@@ -210,7 +271,41 @@ func TestCancelledCommandReceivesTermAndIsWaited(t *testing.T) {
 		t.Fatal("cancelled command was not waited")
 	}
 	if _, err := os.Stat(marker); err != nil {
-		t.Fatalf("subprocess did not handle TERM: %v", err)
+		t.Fatalf("descendant teardown did not finish before the runner returned: %v", err)
+	}
+}
+
+func TestCancelledGoTestFinishesTestOwnedCleanup(t *testing.T) {
+	directory := t.TempDir()
+	ready := filepath.Join(directory, "ready")
+	cleaned := filepath.Join(directory, "cleaned")
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- runCommand(ctx, workingDirectory, []string{
+			"FLOWERSEC_SIGNAL_READY=" + ready,
+			"FLOWERSEC_SIGNAL_CLEANED=" + cleaned,
+		}, "go", "test", "-count=1", "./testdata/signalcleanup")
+	}()
+	deadline := time.Now().Add(30 * time.Second)
+	for !regularFile(ready) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !regularFile(ready) {
+		cancel()
+		<-done
+		t.Fatal("Go child test did not become ready")
+	}
+	cancel()
+	if err := <-done; err == nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled Go test = %v", err)
+	}
+	if !regularFile(cleaned) {
+		t.Fatal("runner returned before the Go child test completed t.Cleanup")
 	}
 }
 

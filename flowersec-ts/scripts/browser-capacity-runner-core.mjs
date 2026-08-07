@@ -89,11 +89,11 @@ export function chromiumCapacityLaunchOptions(plan, chromiumExecutable, launcher
   const executable = absolutePath(chromiumExecutable, "Chromium executable");
   const launcher = absolutePath(launcherPath, "Chromium netns launcher");
   const secureOrigin = browserModuleOrigin(moduleOrigin, normalized.module_advertise_host);
+  if (!secureOrigin.startsWith("https://")) throw new TypeError("browser capacity module origin must use HTTPS");
   return {
     headless: true,
     executablePath: launcher,
     args: [
-      `--unsafely-treat-insecure-origin-as-secure=${secureOrigin}`,
       "--quic-client-connection-options=TBBR",
       `--log-net-log=${path.join(normalized.output_directory, "chromium-netlog.json")}`,
       "--net-log-capture-mode=IncludeSensitive",
@@ -113,7 +113,7 @@ function browserModuleOrigin(value, advertiseHost) {
   } catch {
     throw new TypeError("browser module origin must be a valid URL");
   }
-  if (origin.protocol !== "http:" || origin.hostname !== advertiseHost || origin.username !== "" || origin.password !== "" || origin.pathname !== "/" || origin.search !== "" || origin.hash !== "") {
+  if ((origin.protocol !== "http:" && origin.protocol !== "https:") || origin.hostname !== advertiseHost || origin.username !== "" || origin.password !== "" || origin.pathname !== "/" || origin.search !== "" || origin.hash !== "") {
     throw new TypeError("browser module origin must use the advertised IP");
   }
   return origin.origin;

@@ -12,13 +12,20 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      grep: /Chromium (runs|WebTransport)/,
       use: {
         browserName: "chromium",
         channel: "chromium",
       },
     },
     {
+      name: "firefox-compat",
+      grep: /Firefox reports/,
+      use: { browserName: "firefox" },
+    },
+    {
       name: "webkit-smoke",
+      grep: /WebKit reports/,
       use: { browserName: "webkit" },
     },
   ],

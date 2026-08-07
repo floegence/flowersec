@@ -37,7 +37,8 @@ export async function createBrowserWebTransportClientV2(
     return adaptWebTransportCarrierSessionV2(transport, options);
   } catch (error) {
     transport.close({ closeCode: 6, reason: "WebTransport start failed" });
-    throw new RuntimeError("runtime_start_failed", "browser WebTransport failed to start", error);
+    const detail = error instanceof Error && error.message !== "" ? `: ${error.message}` : "";
+    throw new RuntimeError("runtime_start_failed", `browser WebTransport failed to start${detail}`, error);
   }
 }
 

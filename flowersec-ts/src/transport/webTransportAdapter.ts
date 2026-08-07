@@ -50,15 +50,15 @@ export function hasWebTransportConstructorSurfaceV2(value: unknown): boolean {
 }
 
 function requireWebTransportSessionSurfaceV2(value: WebTransportSessionLikeV2): void {
-  if (
-    typeof value.createBidirectionalStream !== "function" ||
-    typeof value.close !== "function" ||
-    typeof value.incomingBidirectionalStreams?.getReader !== "function" ||
-    typeof value.datagrams?.readable?.getReader !== "function" ||
-    typeof value.datagrams?.writable?.getWriter !== "function" ||
-    typeof value.closed?.then !== "function"
-  ) {
-    throw new TypeError("WebTransport runtime lacks the required stream, DATAGRAM, close, or termination surface");
+  const missing: string[] = [];
+  if (typeof value.createBidirectionalStream !== "function") missing.push("outgoing bidirectional streams");
+  if (typeof value.incomingBidirectionalStreams?.getReader !== "function") missing.push("incoming bidirectional streams");
+  if (typeof value.datagrams?.readable?.getReader !== "function") missing.push("incoming DATAGRAMs");
+  if (typeof value.datagrams?.writable?.getWriter !== "function") missing.push("outgoing DATAGRAMs");
+  if (typeof value.close !== "function") missing.push("close");
+  if (typeof value.closed?.then !== "function") missing.push("termination");
+  if (missing.length !== 0) {
+    throw new TypeError(`WebTransport runtime lacks required ${missing.join(", ")}`);
   }
 }
 

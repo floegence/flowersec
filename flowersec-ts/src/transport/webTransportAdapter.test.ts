@@ -9,6 +9,21 @@ import {
 const bytes = (value: string): Uint8Array => new TextEncoder().encode(value);
 
 describe("runtime-neutral WebTransport carrier adapter", () => {
+  test("identifies each missing native runtime surface", () => {
+    expect(() => adaptWebTransportCarrierSessionV2({
+      closed: Promise.resolve(),
+      incomingBidirectionalStreams: undefined,
+      datagrams: undefined,
+      createBidirectionalStream: undefined,
+      close: undefined,
+    } as unknown as WebTransportSessionLikeV2, {
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    })).toThrow(
+      "WebTransport runtime lacks required outgoing bidirectional streams, incoming bidirectional streams, incoming DATAGRAMs, outgoing DATAGRAMs, close",
+    );
+  });
+
   test("maps stream FIN, DATAGRAM, and close without runtime-specific session logic", async () => {
     const outgoing = streamFixture([bytes("reply")]);
     const incoming = streamFixture([bytes("request")]);

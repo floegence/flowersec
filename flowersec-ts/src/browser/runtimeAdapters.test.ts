@@ -66,7 +66,7 @@ describe("browser runtime adapters", () => {
     await expect(createBrowserWebTransportClientV2(
       "https://example.test/flowersec/webtransport/v2/direct",
       { path: "direct", inboundBidirectionalStreamCapacity: 66 },
-    )).rejects.toMatchObject({ code: "runtime_start_failed" });
+    )).rejects.toMatchObject({ code: "runtime_start_failed", message: "browser WebTransport failed to start: network down" });
     expect(failed.instances[0]!.close).toHaveBeenCalled();
   });
 

@@ -513,9 +513,10 @@ test("freezes Chromium tunnel capacity at exactly 1000 live sessions", () => {
     normalized,
     "/cache/playwright/chromium/chrome",
     path.resolve("scripts/chromium-netns-launcher.sh"),
-    "http://192.0.2.1:38123",
+    "https://192.0.2.1:38123",
   );
   assert.equal(options.env.FLOWERSEC_CLIENT_NETNS, forcedPlan.client_netns);
+  assert.ok(!options.args.some((argument) => argument.startsWith("--unsafely-treat-insecure-origin-as-secure=")));
   assert.ok(options.args.includes(`--log-net-log=${path.join(outputDirectory, "chromium-netlog.json")}`));
   assert.ok(options.args.includes("--net-log-capture-mode=IncludeSensitive"));
 });

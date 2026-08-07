@@ -58,9 +58,11 @@ make test
 After fixing a failure, use `make test-resume` to run the first incomplete test
 for the same source commit.
 
-Use `make browser-smoke` for the three local Chromium topologies. Use
-`make diagnostic` for explicit privileged browser, weak-network, and kernel
-diagnostics, and `make performance` for capacity and soak workloads.
+Use `make coverage-race` for the four language coverage lanes and exclusive Go
+race. Use `make browser-smoke` for the three local Chromium topologies and
+`make browser-compat` for explicit Firefox/WebKit capability checks. Privileged
+weak-network and kernel diagnostics use `make diagnostic`; capacity and soak
+use `make performance`.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>

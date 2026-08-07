@@ -14,8 +14,23 @@ instances, namespaces, faults, and temporary files that they create.
 | Rust raw QUIC against Go | Rust-to-Go direct and tunnel integration tests |
 | Swift WSS against Go | Swift-to-Go integration tests |
 | Chromium direct, WebTransport-to-WSS tunnel, and WebTransport-to-QUIC tunnel | Local `make browser-smoke` using the Chromium Playwright project |
-| Network namespaces, BPF, tc, weak networks, Firefox, and WebKit | Explicit `make diagnostic` workloads on a prepared privileged host |
+| Firefox and WebKit native WebTransport capability | Local `make browser-compat`; unsupported runtime surfaces are asserted explicitly |
+| Network namespaces, BPF, tc, and weak networks | Explicit `make diagnostic` workloads on a prepared privileged host |
 | Capacity, resource, and soak thresholds | Explicit `make performance` workloads |
+
+The expensive inventory has four groups and no second manifest:
+
+| Group | Stable runner IDs |
+| --- | --- |
+| Coverage and race | `coverage/{go,typescript,rust,swift}`, `race/go` |
+| Local real browsers | Three `browser/chromium/*` topology IDs plus `browser/{firefox,webkit}/webtransport-capability` |
+| Privileged Linux diagnostics | `diagnostic/weaknet/{raw-quic,websocket}/direct` and four `diagnostic/kernel/*` lifecycle IDs |
+| Performance | Twelve `performance/capacity/*` IDs and `performance/soak` |
+
+Coverage and race run with `make coverage-race`. Browser compatibility uses
+real native connections: Firefox currently rejects the connection before
+admission, while WebKit currently lacks the outgoing DATAGRAM surface. Those
+explicit unsupported contracts do not substitute for Chromium smoke.
 
 `make precommit` is the fast feature-commit gate. `make test` is the bounded,
 single-host acceptance gate used by `scripts/push-main.sh`; neither command

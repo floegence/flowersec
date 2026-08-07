@@ -98,7 +98,7 @@ sync_workspace() {
     git -C "$host_workspace" checkout --detach --force "$source_sha"
   fi
   [[ $(git -C "$host_workspace" rev-parse HEAD) == "$source_sha" ]] || { echo "root workspace SHA mismatch" >&2; exit 1; }
-  [[ -z $(git -C "$host_workspace" status --porcelain --untracked-files=no) ]] || { echo "root workspace has tracked modifications" >&2; exit 1; }
+  [[ -z $(git -C "$host_workspace" status --porcelain --untracked-files=all) ]] || { echo "root workspace is not clean" >&2; exit 1; }
 }
 
 if [[ ${1:-} == --root ]]; then
@@ -122,7 +122,27 @@ if [[ ${1:-} == --root ]]; then
   sync_workspace "$source_sha" "$source_url"
   cd "$host_workspace"
   if [[ $action == init ]]; then
-    exec ./scripts/test-host-init.sh
+    init_tmp_baseline=$(mktemp "$host_tmp/init-wrapper-baseline.XXXXXX")
+    find "$host_tmp" -maxdepth 1 -type d -name 'TemporaryDirectory.*' -printf '%f\n' | sort >"$init_tmp_baseline"
+    cleanup_init_wrapper_temps() {
+      while IFS= read -r residual; do
+        [[ -n $residual ]] || continue
+        find "$host_tmp/$residual" -depth -delete >/dev/null 2>&1 || true
+      done < <(comm -13 "$init_tmp_baseline" <(find "$host_tmp" -maxdepth 1 -type d -name 'TemporaryDirectory.*' -printf '%f\n' | sort))
+    }
+    trap 'cleanup_init_wrapper_temps; rm -f -- "$init_tmp_baseline"' EXIT
+    init_status=0
+    ./scripts/test-host-init.sh || init_status=$?
+    for _ in {1..50}; do
+      cleanup_init_wrapper_temps
+      residual_count=$(comm -13 "$init_tmp_baseline" <(find "$host_tmp" -maxdepth 1 -type d -name 'TemporaryDirectory.*' -printf '%f\n' | sort) | wc -l)
+      ((residual_count == 0)) && break
+      sleep 0.1
+    done
+    trap - EXIT
+    cleanup_init_wrapper_temps
+    rm -f -- "$init_tmp_baseline"
+    exit "$init_status"
   fi
   runner_directory=$host_cache/bin
   runner=$runner_directory/flowersec-test-$source_sha
@@ -150,7 +170,7 @@ if ((EUID != 0)); then
   sudo -n true >/dev/null 2>&1 || { echo "unsupported test host: direct root or sudo -n access is required" >&2; exit 1; }
 fi
 source_root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "run test-host.sh from a Flowersec checkout" >&2; exit 1; }
-[[ -z $(git -C "$source_root" status --porcelain --untracked-files=no) ]] || { echo "source checkout has tracked modifications" >&2; exit 1; }
+[[ -z $(git -C "$source_root" status --porcelain --untracked-files=all) ]] || { echo "source checkout is not clean" >&2; exit 1; }
 source_sha=$(git -C "$source_root" rev-parse HEAD)
 [[ $source_sha =~ ^[0-9a-f]{40}$ ]] || { echo "source SHA must be a full Git object ID" >&2; exit 1; }
 source_url=$(normalize_origin "$(git -C "$source_root" remote get-url origin)")

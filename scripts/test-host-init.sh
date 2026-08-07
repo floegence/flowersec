@@ -135,10 +135,47 @@ install_swift() {
   fi
 }
 
+configure_cargo_source() {
+  local cargo_config=$host_home/.cargo/config.toml
+  install -d -m 0700 "$host_home/.cargo"
+  if [[ ! -f $cargo_config ]] ||
+     ! grep -Fqx 'replace-with = "rsproxy"' "$cargo_config" 2>/dev/null ||
+     ! grep -Fqx 'registry = "sparse+https://rsproxy.cn/index/"' "$cargo_config" 2>/dev/null; then
+    cat >"$cargo_config" <<'EOF'
+[source.crates-io]
+replace-with = "rsproxy"
+
+[source.rsproxy]
+registry = "sparse+https://rsproxy.cn/index/"
+EOF
+    chmod 0600 "$cargo_config"
+  fi
+}
+
 install_go
 install_node
 install_rust
 install_swift
+configure_cargo_source
+
+init_tmp_baseline=$(mktemp "$host_tmp/init-tmp-baseline.XXXXXX")
+find "$host_tmp" -maxdepth 1 -type d -name 'TemporaryDirectory.*' -printf '%f\n' | sort >"$init_tmp_baseline"
+cleanup_init_temps() {
+  while IFS= read -r residual; do
+    [[ -n $residual ]] || continue
+    find "$host_tmp/$residual" -depth -delete >/dev/null 2>&1 || true
+  done < <(comm -13 "$init_tmp_baseline" <(find "$host_tmp" -maxdepth 1 -type d -name 'TemporaryDirectory.*' -printf '%f\n' | sort))
+}
+finalize_init_temps() {
+  for _ in {1..20}; do
+    cleanup_init_temps
+    residual_count=$(comm -13 "$init_tmp_baseline" <(find "$host_tmp" -maxdepth 1 -type d -name 'TemporaryDirectory.*' -printf '%f\n' | sort) | wc -l)
+    ((residual_count == 0)) && break
+    sleep 0.1
+  done
+  rm -f -- "$init_tmp_baseline"
+}
+trap finalize_init_temps EXIT
 
 # Swiftly may leave a project-local selector when invoked from a checkout. It
 # is not part of the exact-SHA workspace and must never become test state.
@@ -146,7 +183,7 @@ if [[ -e "$source_root/.swift-version" ]] && ! git -C "$source_root" ls-files --
   rm -f -- "$source_root/.swift-version"
 fi
 
-required_commands=(go make node npm rustup cargo rustc swift git curl jq tar xz gcc g++ clang clang++ openssl pkg-config python3 sh realpath ip nsenter tc nft iptables ethtool bpftool sysctl mount mountpoint umount)
+required_commands=(go make node npm rustup cargo rustc swift swiftc git curl jq tar xz gcc g++ clang clang++ openssl pkg-config python3 sh realpath ip nsenter tc nft iptables ethtool bpftool sysctl mount mountpoint umount)
 for required in "${required_commands[@]}"; do
   resolved=$(type -P "$required" || true)
   [[ -n $resolved && $resolved == /* && -x $resolved ]] || { echo "missing host capability: $required" >&2; exit 1; }
@@ -204,7 +241,7 @@ cleanup_probe() {
   done
   [[ ! -e $probe_pin && ! -e $probe_object ]] || { echo "host capability canary cleanup left resources" >&2; return 1; }
 }
-trap cleanup_probe EXIT
+trap 'cleanup_probe; finalize_init_temps' EXIT
 [[ ${#probe_netns} -le 15 && ${#probe_host_if} -le 15 && ${#probe_peer_if} -le 15 && ${#probe_ifb} -le 15 ]] || { echo "missing host capability: IFNAMSIZ-safe canary names" >&2; exit 1; }
 ip netns add "$probe_netns" || { echo "missing host capability: network namespaces" >&2; exit 1; }
 ip link add name "$probe_host_if" type veth peer name "$probe_peer_if" || { echo "missing host capability: veth" >&2; exit 1; }
@@ -236,6 +273,7 @@ bpftool -j map dump pinned "$probe_pin/maps/flowersec_fault_stats" | jq -e . >/d
 ip netns exec "$probe_netns" tc filter add dev "$probe_peer_if" ingress pref 20 protocol all bpf direct-action object-pinned "$probe_pin/program"
 cleanup_probe
 trap - EXIT
+trap finalize_init_temps EXIT
 df -Pk "$host_root" | awk 'NR == 2 && $4 >= 10485760 { ok=1 } END { exit(ok ? 0 : 1) }' || { echo "missing host capacity: 10 GiB free disk" >&2; exit 1; }
 free -m | awk 'NR == 2 && $7 >= 2048 { ok=1 } END { exit(ok ? 0 : 1) }' || { echo "missing host capacity: 2 GiB available memory" >&2; exit 1; }
 fd_hard=$(ulimit -Hn)
@@ -282,6 +320,16 @@ playwright_chromium=$(cd "$source_root/flowersec-ts" && node --input-type=module
 FLOWERSEC_CHROMIUM_EXECUTABLE="$playwright_chromium" node "$source_root/flowersec-ts/scripts/browser-test-runner.mjs" --runtime-canary "$playwright_chromium"
 ln -sfn -- "$playwright_chromium" "$host_cache/chromium"
 
-(cd "$source_root/flowersec-swift" && swift test --disable-automatic-resolution --filter 'TransportV2|IDNAHostV2')
+swift_canary=$(mktemp -d "$host_tmp/swift-canary.XXXXXX")
+printf 'print("flowersec-swift-canary")\n' >"$swift_canary/main.swift"
+if ! TMPDIR="$swift_canary" swiftc "$swift_canary/main.swift" -o "$swift_canary/canary" ||
+   ! "$swift_canary/canary" | grep -Fx 'flowersec-swift-canary' >/dev/null; then
+  echo "missing host capability: Swift compile and run" >&2
+  exit 1
+fi
+find "$swift_canary" -depth -delete >/dev/null 2>&1 || true
+
+finalize_init_temps
+trap - EXIT
 
 echo "GREEN test-host-init distro=${VERSION_ID} architecture=${architecture} kernel=$(uname -r) sha=$(git -C "$source_root" rev-parse HEAD)"

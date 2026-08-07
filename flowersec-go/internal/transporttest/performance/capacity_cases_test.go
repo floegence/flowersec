@@ -33,7 +33,7 @@ func TestFocusedProductionCapacityCase(t *testing.T) {
 	if !ok {
 		t.Fatalf("focused production capacity case %q is unavailable in a Go test process", id)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), capacityCaseTimeout(definition))
+	ctx, cancel := context.WithTimeout(performanceTestContext, capacityCaseTimeout(definition))
 	defer cancel()
 	if definition.Kind == capacityBrowserTunnel || definition.Kind == capacityBrowserStream {
 		runFocusedBrowserCapacityCase(t, ctx, definition)

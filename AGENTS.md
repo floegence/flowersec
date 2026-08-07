@@ -94,7 +94,7 @@
 
 ## 3. External Linux test hosts
 
-- Local acceptance and Chromium smoke tests run as an ordinary user. External hosts are reserved for explicit privileged diagnostics and performance work.
+- Local acceptance, Chromium smoke, and explicit browser compatibility tests run as an ordinary user. External hosts are reserved for privileged diagnostics and performance work.
 - Privileged suites run only on dedicated Ubuntu 22.04+ amd64/x86_64/aarch64 hosts with non-interactive root access in the fixed `/var/lib/flowersec-test` environment. Never run root tests in a user's checkout or cache.
 - Do not implement root/non-root fallback, per-suite privilege switching, cache ownership repair, or host-specific execution paths. `test-host-init.sh` prepares only host-wide prerequisites.
 - `flowersec-test` records only the source SHA, suite, plan, and completed test IDs. Each test owns setup, privileged resources, cancellation, and cleanup and returns GREEN or RED with minimal first-failure output.

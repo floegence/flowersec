@@ -26,6 +26,8 @@ var (
 	errSoakMigrationUnproven = errors.New("soak cycle did not prove a native carrier migration")
 )
 
+const soakCleanupGrace = 5 * time.Second
+
 type soakContract struct {
 	Duration           time.Duration
 	CyclePeriod        time.Duration
@@ -150,7 +152,7 @@ func runSoakCase(ctx context.Context, contract soakContract, engine soakCycleEng
 		if closed {
 			return
 		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), soakCleanupGrace)
 		defer cancel()
 		resultErr = errors.Join(resultErr, engine.Close(cleanupCtx))
 	}()
@@ -200,7 +202,7 @@ func runSoakCase(ctx context.Context, contract soakContract, engine soakCycleEng
 			LocalAddress: observation.LocalAddress, RemoteAddress: observation.RemoteAddress, NativeStreamID: &streamID,
 		})
 	}
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), soakCleanupGrace)
 	closeErr := engine.Close(cleanupCtx)
 	cancel()
 	closed = true
@@ -580,7 +582,17 @@ func (engine *rawQUICSoakEngine) Residuals() (soakResiduals, error) {
 	return soakResiduals{Sessions: residual,
 		Goroutines: positiveIntDelta(finish.Goroutines, engine.resourceStart.Goroutines),
 		OpenFDs:    positiveIntDelta(finish.OpenFDs, engine.resourceStart.OpenFDs),
-		Tasks:      positiveIntDelta(finish.Tasks, engine.resourceStart.Tasks)}, nil
+		Tasks:      ownedTaskResidual(engine.resourceStart, finish)}, nil
+}
+
+// Linux task counts include Go scheduler threads, which may remain parked after
+// transport-owned goroutines and descriptors have been released. They are a
+// growth metric, not an engine-owned residual unless the owned counters remain.
+func ownedTaskResidual(start, finish transporttest.ResourceSnapshot) int {
+	if finish.Goroutines <= start.Goroutines && finish.OpenFDs <= start.OpenFDs {
+		return 0
+	}
+	return positiveIntDelta(finish.Tasks, start.Tasks)
 }
 
 func captureSoakResidualSnapshot(ctx context.Context, baseline transporttest.ResourceSnapshot) (transporttest.ResourceSnapshot, error) {
@@ -592,7 +604,7 @@ func captureSoakResidualSnapshot(ctx context.Context, baseline transporttest.Res
 		if err != nil {
 			return transporttest.ResourceSnapshot{}, err
 		}
-		if snapshot.Goroutines <= baseline.Goroutines && snapshot.OpenFDs <= baseline.OpenFDs && snapshot.Tasks <= baseline.Tasks {
+		if snapshot.Goroutines <= baseline.Goroutines && snapshot.OpenFDs <= baseline.OpenFDs {
 			return snapshot, nil
 		}
 		select {

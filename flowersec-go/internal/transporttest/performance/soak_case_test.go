@@ -18,11 +18,23 @@ func TestProductionSoakContractIsFrozen(t *testing.T) {
 	}
 }
 
+func TestOwnedTaskResidualIgnoresParkedRuntimeThreads(t *testing.T) {
+	start := transporttest.ResourceSnapshot{Goroutines: 4, OpenFDs: 7, Tasks: 8}
+	finish := transporttest.ResourceSnapshot{Goroutines: 4, OpenFDs: 7, Tasks: 12}
+	if got := ownedTaskResidual(start, finish); got != 0 {
+		t.Fatalf("parked runtime task residual = %d, want 0", got)
+	}
+	finish.Goroutines++
+	if got := ownedTaskResidual(start, finish); got != 4 {
+		t.Fatalf("owned task residual = %d, want 4", got)
+	}
+}
+
 func TestFocusedProductionSoakCase(t *testing.T) {
 	if os.Getenv("FLOWERSEC_TEST_SOAK") != "1" {
 		t.Skip("set FLOWERSEC_TEST_SOAK=1 to run the production soak")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), productionSoakContract().Duration+30*time.Second)
+	ctx, cancel := context.WithTimeout(performanceTestContext, productionSoakContract().Duration+30*time.Second)
 	defer cancel()
 	result, err := runNativeProductionSoakCase(ctx)
 	if err != nil {

@@ -32,6 +32,10 @@ test("current Make graph satisfies the security contract", () => {
 test("local and external test targets remain separated", () => {
   const browserRecipe = canonical.match(/^browser-smoke:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.equal(browserRecipe.trim(), "go -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-smoke");
+  const coverageRecipe = canonical.match(/^coverage-race:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.equal(coverageRecipe.trim(), "go -C flowersec-go run ./internal/cmd/flowersec-test run --suite coverage-race");
+  const compatibilityRecipe = canonical.match(/^browser-compat:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.equal(compatibilityRecipe.trim(), "go -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-compat");
   for (const [target, action, suite] of [
     ["diagnostic", "run", "diagnostic"],
     ["performance", "run", "performance"],
@@ -77,6 +81,8 @@ test("protected recipes and definitions cannot be replaced", () => {
     canonical.replace("test:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite acceptance", "test:\n\t@true"),
     canonical.replace("test-resume:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test resume --suite acceptance", "test-resume:\n\t@true"),
     canonical.replace("browser-smoke:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-smoke", "browser-smoke:\n\t@true"),
+    canonical.replace("coverage-race:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite coverage-race", "coverage-race:\n\t@true"),
+    canonical.replace("browser-compat:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-compat", "browser-compat:\n\t@true"),
     canonical.replace("precommit:\n\t$(MAKE) precommit-source", "precommit:\n\t$(MAKE) check"),
     canonical.replace("final-race-check:\n\t$(MAKE) go-test-race", "final-race-check:\n\t@true"),
     `${canonical}\nsecurity-dependency-check:\n\t@true\n`,
