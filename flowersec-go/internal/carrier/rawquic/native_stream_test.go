@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
 )
 
 func TestStabilizePacketConnDisablesOOBButPreservesSocketControls(t *testing.T) {
@@ -58,7 +60,7 @@ func TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs(t *testing.T) {
 	serverTLS, clientTLS := nativeTestTLS(t)
 	serverTLS.NextProtos = []string{ALPNDirect}
 	clientTLS.NextProtos = []string{ALPNDirect}
-	listener, err := Listen("127.0.0.1:0", serverTLS, DefaultLimits())
+	listener, err := Listen("127.0.0.1:0", serverTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
@@ -68,7 +70,7 @@ func TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs(t *testing.T) {
 		session, _ := listener.Accept(context.Background())
 		serverCh <- session
 	}()
-	client, err := Dial(context.Background(), listener.Addr().String(), clientTLS, DefaultLimits())
+	client, err := Dial(context.Background(), listener.Addr().String(), clientTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -111,7 +113,7 @@ func TestClientMigrationValidatesAndSwitchesExclusivelyToNewPacketConn(t *testin
 	serverTLS, clientTLS := nativeTestTLS(t)
 	serverTLS.NextProtos = []string{ALPNDirect}
 	clientTLS.NextProtos = []string{ALPNDirect}
-	listener, err := Listen("127.0.0.1:0", serverTLS, DefaultLimits())
+	listener, err := Listen("127.0.0.1:0", serverTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +128,7 @@ func TestClientMigrationValidatesAndSwitchesExclusivelyToNewPacketConn(t *testin
 		t.Fatal(err)
 	}
 	oldPacketConn := &observedPacketConn{PacketConn: oldUDP}
-	client, err := dialPacketConnForTest(context.Background(), listener.Addr().String(), clientTLS, DefaultLimits(), oldPacketConn)
+	client, err := dialPacketConnForTest(context.Background(), listener.Addr().String(), clientTLS, quicbase.DefaultLimits(), oldPacketConn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +205,7 @@ func TestServerPassivelyRebindsPeerWithoutReplacingSession(t *testing.T) {
 	serverTLS, clientTLS := nativeTestTLS(t)
 	serverTLS.NextProtos = []string{ALPNDirect}
 	clientTLS.NextProtos = []string{ALPNDirect}
-	listener, err := Listen("127.0.0.1:0", serverTLS, DefaultLimits())
+	listener, err := Listen("127.0.0.1:0", serverTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +217,7 @@ func TestServerPassivelyRebindsPeerWithoutReplacingSession(t *testing.T) {
 		session, _ := listener.Accept(context.Background())
 		serverCh <- session
 	}()
-	client, err := Dial(context.Background(), proxy.LocalAddr().String(), clientTLS, DefaultLimits())
+	client, err := Dial(context.Background(), proxy.LocalAddr().String(), clientTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,12 +241,88 @@ func TestServerPassivelyRebindsPeerWithoutReplacingSession(t *testing.T) {
 	assertNativeStreamRoundTrip(t, ctx, server, client, "same-session-after-rebind")
 }
 
+func TestRawQUICHandshakeRecoversAfterInitialFlightBlackhole(t *testing.T) {
+	serverTLS, clientTLS := nativeTestTLS(t)
+	serverTLS.NextProtos = []string{ALPNDirect}
+	clientTLS.NextProtos = []string{ALPNDirect}
+	listener, err := Listen("127.0.0.1:0", serverTLS, quicbase.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	serverDone := make(chan error, 1)
+	go func() {
+		session, acceptErr := listener.Accept(context.Background())
+		serverDone <- acceptErr
+		if acceptErr == nil {
+			_ = session.Close()
+		}
+	}()
+	udpConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gated := &initialFlightGatePacketConn{
+		UDPConn: udpConn,
+		openAt:  time.Now().Add(2 * time.Second),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := dialPacketConnForTest(ctx, listener.Addr().String(), clientTLS, quicbase.DefaultLimits(), gated)
+	if err != nil {
+		t.Fatalf("Dial after initial-flight blackhole: %v (dropped=%d forwarded=%d received=%d)", err, gated.dropped.Load(), gated.forwarded.Load(), gated.received.Load())
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	select {
+	case acceptErr := <-serverDone:
+		if acceptErr != nil {
+			t.Fatal(acceptErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not finish recovered handshake")
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if forwarded := gated.forwarded.Load(); forwarded < 2 || gated.received.Load() == 0 {
+		t.Fatalf("recovered packet flow = %d forwarded, %d received", forwarded, gated.received.Load())
+	}
+	if dropped := gated.dropped.Load(); dropped > 8 {
+		t.Fatalf("two-second outage amplified the opening flight to %d datagrams, want at most 8", dropped)
+	}
+}
+
+type initialFlightGatePacketConn struct {
+	*net.UDPConn
+	openAt    time.Time
+	dropped   atomic.Uint64
+	forwarded atomic.Uint64
+	received  atomic.Uint64
+}
+
+func (conn *initialFlightGatePacketConn) WriteTo(payload []byte, address net.Addr) (int, error) {
+	if time.Now().Before(conn.openAt) {
+		conn.dropped.Add(1)
+		return len(payload), nil
+	}
+	conn.forwarded.Add(1)
+	return conn.UDPConn.WriteTo(payload, address)
+}
+
+func (conn *initialFlightGatePacketConn) ReadFrom(payload []byte) (int, net.Addr, error) {
+	read, address, err := conn.UDPConn.ReadFrom(payload)
+	if read > 0 {
+		conn.received.Add(1)
+	}
+	return read, address, err
+}
+
 func newMigrationTestPair(t *testing.T, clientPacketConn net.PacketConn) (*Session, *Session) {
 	t.Helper()
 	serverTLS, clientTLS := nativeTestTLS(t)
 	serverTLS.NextProtos = []string{ALPNDirect}
 	clientTLS.NextProtos = []string{ALPNDirect}
-	listener, err := Listen("127.0.0.1:0", serverTLS, DefaultLimits())
+	listener, err := Listen("127.0.0.1:0", serverTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,9 +334,9 @@ func newMigrationTestPair(t *testing.T, clientPacketConn net.PacketConn) (*Sessi
 	}()
 	var client *Session
 	if clientPacketConn == nil {
-		client, err = Dial(context.Background(), listener.Addr().String(), clientTLS, DefaultLimits())
+		client, err = Dial(context.Background(), listener.Addr().String(), clientTLS, quicbase.DefaultLimits())
 	} else {
-		client, err = dialPacketConnForTest(context.Background(), listener.Addr().String(), clientTLS, DefaultLimits(), clientPacketConn)
+		client, err = dialPacketConnForTest(context.Background(), listener.Addr().String(), clientTLS, quicbase.DefaultLimits(), clientPacketConn)
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +351,7 @@ func dialPacketConnForTest(
 	ctx context.Context,
 	address string,
 	tlsConfig *tls.Config,
-	limits Limits,
+	limits quicbase.Limits,
 	packetConn net.PacketConn,
 ) (*Session, error) {
 	preparedTLS, err := prepareTLS(tlsConfig, false)

@@ -19,6 +19,8 @@ test("derives the published production dependency ranges with lock coverage", ()
     name: "flowersec-package-cache-preflight",
     private: true,
     dependencies: {
+      "@fails-components/webtransport": "1.6.7",
+      "@fails-components/webtransport-transport-http3-quiche": "1.6.7",
       "@noble/ciphers": "^0.6.0",
       "@noble/curves": "^1.9.0",
       "@noble/hashes": "^1.8.0",

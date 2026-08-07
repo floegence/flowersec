@@ -1,3 +1,6 @@
 export * from "../facade.js";
-export { connectBrowserSessionV2 as connectBrowserSession } from "./connectV2.js";
-export type { BrowserSessionConnectorV2Options as BrowserSessionOptions } from "./connectV2.js";
+export { connectBrowserSession, createBrowserConnectionController } from "./connectSession.js";
+export type {
+  BrowserConnectionControllerOptions,
+  BrowserSessionOptions,
+} from "./connectSession.js";

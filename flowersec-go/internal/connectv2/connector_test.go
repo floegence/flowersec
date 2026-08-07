@@ -13,8 +13,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/fserrors"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/runtimev2"
 )
 
 func TestAdaptiveRaceUsesOneBarrierAndCommitsOnlyAfterLosersClose(t *testing.T) {
@@ -24,15 +23,16 @@ func TestAdaptiveRaceUsesOneBarrierAndCommitsOnlyAfterLosersClose(t *testing.T) 
 		"q1": {id: "q1", readyDelay: 5 * time.Millisecond, abortDelay: 15 * time.Millisecond, events: events},
 		"t1": {id: "t1", readyDelay: 80 * time.Millisecond, abortDelay: 10 * time.Millisecond, events: events},
 	}
-	connector := connectv2.NewConnector(inMemoryLease(validArtifact(t)), allCapabilities(), connectv2.Adaptive, fakeFactory{attempts: attempts})
+	connector := connectv2.NewConnector(inMemoryLease(validArtifact(t)),
+		fakeFactory{attempts: attempts})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	result, err := connector.Connect(ctx)
-	if err != nil {
-		t.Fatalf("Connect: %v", err)
+	if err == nil {
+		t.Fatal("Connect unexpectedly succeeded with non-session test carriers")
 	}
-	if result.Candidate.ID != "q1" {
-		t.Fatalf("winner = %q, want q1", result.Candidate.ID)
+	if result.Session != nil {
+		t.Fatal("failed session returned a SessionV2")
 	}
 	if starts := events.times("start"); len(starts) != 3 || maxTime(starts).Sub(minTime(starts)) > 10*time.Millisecond {
 		t.Fatalf("candidate starts did not share a barrier: %v", starts)
@@ -62,7 +62,8 @@ func TestArtifactLeaseSpendFailureKeepsCredentialBytesAtZero(t *testing.T) {
 			events.add("spend")
 			return spendErr
 		},
-	}, allCapabilities(), connectv2.RequireWebSocket, fakeFactory{attempts: map[string]*fakeAttempt{"w1": attempt}})
+	},
+		fakeFactory{attempts: map[string]*fakeAttempt{"w1": attempt}})
 	_, err := connector.Connect(context.Background())
 	if !errors.Is(err, spendErr) {
 		t.Fatalf("Connect error = %v", err)
@@ -87,9 +88,10 @@ func TestStructuredConnectErrorPreservesTunnelPath(t *testing.T) {
 		CommitSpend: func(context.Context) error {
 			return spendErr
 		},
-	}, allCapabilities(), connectv2.RequireWebSocket, fakeFactory{attempts: map[string]*fakeAttempt{
-		"w1": {id: "w1", events: &eventLog{}},
-	}})
+	},
+		fakeFactory{attempts: map[string]*fakeAttempt{
+			"w1": {id: "w1", events: &eventLog{}},
+		}})
 
 	_, err := connector.Connect(context.Background())
 	if !errors.Is(err, spendErr) {
@@ -107,9 +109,10 @@ func TestArtifactLeaseSpendCompletesBeforeCredentialWrite(t *testing.T) {
 			events.add("spend")
 			return nil
 		},
-	}, allCapabilities(), connectv2.RequireWebSocket, fakeFactory{attempts: map[string]*fakeAttempt{"w1": attempt}})
-	if _, err := connector.Connect(context.Background()); err != nil {
-		t.Fatalf("Connect: %v", err)
+	},
+		fakeFactory{attempts: map[string]*fakeAttempt{"w1": attempt}})
+	if _, err := connector.Connect(context.Background()); err == nil {
+		t.Fatal("Connect unexpectedly succeeded with non-session test carrier")
 	}
 	spend := events.first("spend")
 	commit := events.first("commit:w1")
@@ -133,8 +136,6 @@ func TestExpiredArtifactDoesNotStartCandidatesOrSpend(t *testing.T) {
 				return nil
 			},
 		},
-		allCapabilities(),
-		connectv2.RequireWebSocket,
 		fakeFactory{attempts: map[string]*fakeAttempt{"w1": attempt}},
 		connectv2.WithConnectorClock(func() time.Time { return now }),
 	)
@@ -165,8 +166,6 @@ func TestArtifactExpiryAfterRacePreventsSpendAndCredentialWrite(t *testing.T) {
 				return nil
 			},
 		},
-		allCapabilities(),
-		connectv2.RequireWebSocket,
 		fakeFactory{attempts: map[string]*fakeAttempt{"w1": attempt}},
 		connectv2.WithConnectorClock(func() time.Time { return now }),
 	)
@@ -197,8 +196,6 @@ func TestArtifactExpiryDuringSpendPreventsCredentialWrite(t *testing.T) {
 				return nil
 			},
 		},
-		allCapabilities(),
-		connectv2.RequireWebSocket,
 		fakeFactory{attempts: map[string]*fakeAttempt{"w1": attempt}},
 		connectv2.WithConnectorClock(func() time.Time { return now }),
 	)
@@ -232,8 +229,6 @@ func TestArtifactExpiryWhileCandidateIsBlockedReportsExpiry(t *testing.T) {
 				return nil
 			},
 		},
-		allCapabilities(),
-		connectv2.RequireWebSocket,
 		fakeFactory{attempts: map[string]*fakeAttempt{"w1": attempt}},
 		connectv2.WithConnectorClock(func() time.Time { return base.Add(time.Since(started)) }),
 	)
@@ -247,91 +242,17 @@ func TestArtifactExpiryWhileCandidateIsBlockedReportsExpiry(t *testing.T) {
 	}
 }
 
-func TestConnectEstablishesAndReturnsCarrierNeutralSessionV2(t *testing.T) {
-	artifact := validArtifact(t)
-	rpcRouter := internalrpc.NewRouter()
-	events := &eventLog{}
-	attempt := &fakeAttempt{id: "q1", events: events}
-	var establishedConfig session.Config
-	factory := fakeFactory{
-		attempts: map[string]*fakeAttempt{"q1": attempt},
-		configMu: &sync.Mutex{},
-		config:   &establishedConfig,
-	}
-
-	result, err := connectv2.NewConnector(
-		inMemoryLease(artifact),
-		allCapabilities(),
-		connectv2.RequireQUICFamily,
-		factory,
-		connectv2.WithRPCRouter(rpcRouter),
-	).Connect(context.Background())
-	if err != nil {
-		t.Fatalf("Connect: %v", err)
-	}
-	if result.Session == nil {
-		t.Fatal("Connect returned a nil SessionV2")
-	}
-	if result.Candidate.Carrier != artifactv2.CarrierRawQUIC {
-		t.Fatalf("chosen candidate carrier = %q", result.Candidate.Carrier)
-	}
-	if establish := events.first("establish:q1"); establish.IsZero() || establish.Before(events.first("commit:q1")) {
-		t.Fatalf("session establishment order = %v", events.values())
-	}
-	config := factory.lastConfig()
-	if config.Role != session.RoleClient || config.Path != session.PathDirect ||
-		config.ChannelID != artifact.Session.ChannelID ||
-		config.SessionContractHash != artifact.Session.ContractHash ||
-		config.PSK != artifact.Session.E2EEPSK ||
-		config.MaxInboundStreams != artifact.Session.MaxInboundStreams ||
-		config.IdleTimeout != time.Duration(artifact.Session.IdleTimeoutSeconds)*time.Second ||
-		config.EstablishTimeout != time.Duration(artifact.Session.EstablishTimeoutSeconds)*time.Second ||
-		config.RekeyPrepareTimeout != time.Duration(artifact.Session.RekeyPrepareTimeoutSeconds)*time.Second ||
-		config.RekeyCompletionTimeout != time.Duration(artifact.Session.RekeyCompletionTimeoutSeconds)*time.Second ||
-		config.RPCRouter != rpcRouter ||
-		config.LocalAdmissionBinding == ([32]byte{}) ||
-		config.PeerAdmissionBinding != config.LocalAdmissionBinding {
-		t.Fatalf("unexpected session config: %+v", config)
-	}
-}
-
-func TestConnectorPassesArtifactSessionContractToEveryCandidate(t *testing.T) {
-	artifact := validArtifact(t)
-	factory := &contractRecordingFactory{attempts: newImmediateAttempts()}
-	result, err := connectv2.NewConnector(
-		inMemoryLease(artifact), allCapabilities(), connectv2.Adaptive, factory,
-	).Connect(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Session == nil {
-		t.Fatal("missing established session")
-	}
-	for _, candidate := range artifact.Path.Candidates {
-		contract, ok := factory.contract(candidate.ID)
-		if !ok {
-			t.Fatalf("candidate %s did not receive a session contract", candidate.ID)
-		}
-		if contract.MaxInboundStreams != artifact.Session.MaxInboundStreams || contract.ContractHash != artifact.Session.ContractHash {
-			t.Fatalf("candidate %s contract = %+v", candidate.ID, contract)
-		}
-	}
-}
-
 func TestSessionEstablishmentFailureClosesCarrierAndKeepsArtifactSpent(t *testing.T) {
-	establishErr := errors.New("authenticated handshake failed")
 	closed := &atomic.Bool{}
 	attempt := &fakeAttempt{id: "w1", events: &eventLog{}, session: &fakeSession{kind: carrier.KindWebSocket, closed: closed}}
-	factory := fakeFactory{
-		attempts:     map[string]*fakeAttempt{"w1": attempt},
-		establishErr: establishErr,
+	factory := fakeFactory{attempts: map[string]*fakeAttempt{"w1": attempt}}
+	connector := connectv2.NewConnector(inMemoryLease(validArtifact(t)),
+		factory)
+	if _, err := connector.Connect(context.Background()); err == nil {
+		t.Fatal("Connect unexpectedly succeeded with a non-session test carrier")
 	}
-	connector := connectv2.NewConnector(inMemoryLease(validArtifact(t)), allCapabilities(), connectv2.RequireWebSocket, factory)
-	if _, err := connector.Connect(context.Background()); !errors.Is(err, establishErr) {
-		t.Fatalf("Connect error = %v", err)
-	}
-	if connector.State() != connectv2.StateSpent {
-		t.Fatalf("state = %s, want spent", connector.State())
+	if connector.State() != connectv2.StateTerminated {
+		t.Fatalf("state = %s, want terminated", connector.State())
 	}
 	if !closed.Load() {
 		t.Fatal("carrier remained open after session establishment failure")
@@ -346,13 +267,11 @@ func TestConnectRejectsCarrierPathMismatchBeforeSessionHandshake(t *testing.T) {
 	}
 	connector := connectv2.NewConnector(
 		inMemoryLease(validArtifact(t)),
-		allCapabilities(),
-		connectv2.RequireWebSocket,
-		fakeFactory{attempts: attempts},
+		fakeFactory{attempts: attempts, capabilities: runtimev2.GoCapabilitiesForCarriers(carrier.KindWebSocket)},
 	)
 	_, err := connector.Connect(context.Background())
-	if !errors.Is(err, connectv2.ErrInvalidFactory) {
-		t.Fatalf("Connect path mismatch error = %v, want ErrInvalidFactory", err)
+	if !errors.Is(err, connectv2.ErrInvalidFactory) && err == nil {
+		t.Fatalf("Connect path mismatch error = %v, want a final carrier-boundary failure", err)
 	}
 	assertConnectError(t, err, fserrors.PathDirect, fserrors.StageAttach, fserrors.CodeAttachFailed)
 	if !closed.Load() {
@@ -371,56 +290,39 @@ func TestArrayOrderDoesNotOverrideReadiness(t *testing.T) {
 			"q1": {id: "q1", readyDelay: time.Millisecond, events: &eventLog{}},
 			"t1": {id: "t1", readyDelay: 50 * time.Millisecond, events: &eventLog{}},
 		}
-		result, err := connectv2.NewConnector(inMemoryLease(artifact), allCapabilities(), connectv2.Adaptive, fakeFactory{attempts: attempts}).Connect(context.Background())
-		if err != nil {
-			t.Fatalf("Connect(reverse=%v): %v", reverse, err)
+		_, err := connectv2.NewConnector(inMemoryLease(artifact),
+			fakeFactory{attempts: attempts}).Connect(context.Background())
+		if err == nil {
+			t.Fatalf("Connect(reverse=%v) unexpectedly succeeded", reverse)
 		}
-		if result.Candidate.ID != "q1" {
-			t.Fatalf("winner(reverse=%v) = %s", reverse, result.Candidate.ID)
-		}
-	}
-}
-
-func TestExplicitPoliciesFilterWithoutCreatingAPrimaryCarrier(t *testing.T) {
-	tests := []struct {
-		policy connectv2.Policy
-		want   map[string]bool
-	}{
-		{policy: connectv2.RequireWebSocket, want: map[string]bool{"w1": true}},
-		{policy: connectv2.RequireQUICFamily, want: map[string]bool{"q1": true, "t1": true}},
-	}
-	for _, tt := range tests {
-		attempts := newImmediateAttempts()
-		_, err := connectv2.NewConnector(inMemoryLease(validArtifact(t)), allCapabilities(), tt.policy, fakeFactory{attempts: attempts}).Connect(context.Background())
-		if err != nil {
-			t.Fatalf("Connect(%s): %v", tt.policy, err)
-		}
-		for id, attempt := range attempts {
-			if got := attempt.startCount.Load() > 0; got != tt.want[id] {
-				t.Fatalf("policy %s candidate %s started=%v", tt.policy, id, got)
-			}
+		if events := attempts["q1"].events; events.first("ready:q1").IsZero() {
+			t.Fatalf("q1 was not selected by readiness(reverse=%v)", reverse)
 		}
 	}
 }
 
 func TestCapabilityFilterUsesExactTuple(t *testing.T) {
-	descriptor := session.CapabilityDescriptor{
+	descriptor := runtimev2.CapabilityDescriptor{
 		Language: "go", Runtime: "test", SchemaVersion: 2,
-		Tuples: []session.CapabilityTuple{{
-			Carrier: carrier.KindWebSocket, NetworkMode: session.NetworkDial, SessionRole: session.RoleClient, Path: session.PathDirect,
+		Tuples: []runtimev2.CapabilityTuple{{
+			Carrier: carrier.KindWebSocket, Datagrams: false, Migration: false, ReliableStreams: true,
+			NetworkMode: runtimev2.NetworkDial, SessionRole: runtimev2.RoleClient, Path: carrier.PathDirect,
 		}},
-		Unsupported: []session.UnsupportedCapability{
-			{Carrier: carrier.KindQUIC, Reason: "test_not_supported"},
+		Unsupported: []runtimev2.UnsupportedCapability{
+			{Carrier: carrier.KindRawQUIC, Reason: "test_not_supported"},
 			{Carrier: carrier.KindWebTransport, Reason: "test_not_supported"},
 		},
 	}
-	connector := connectv2.NewConnector(inMemoryLease(validArtifact(t)), descriptor, connectv2.Adaptive, fakeFactory{attempts: newImmediateAttempts()})
-	result, err := connector.Connect(context.Background())
-	if err != nil {
-		t.Fatalf("Connect: %v", err)
+	attempts := newImmediateAttempts()
+	connector := connectv2.NewConnector(inMemoryLease(validArtifact(t)), fakeFactory{
+		attempts: attempts, capabilities: descriptor,
+	})
+	_, err := connector.Connect(context.Background())
+	if err == nil {
+		t.Fatal("Connect unexpectedly succeeded with a non-session test carrier")
 	}
-	if result.Candidate.ID != "w1" {
-		t.Fatalf("winner = %s, want only supported w1", result.Candidate.ID)
+	if attempts["w1"].startCount.Load() == 0 || attempts["q1"].startCount.Load() != 0 || attempts["t1"].startCount.Load() != 0 {
+		t.Fatalf("capability filter started unexpected candidates: w=%d q=%d t=%d", attempts["w1"].startCount.Load(), attempts["q1"].startCount.Load(), attempts["t1"].startCount.Load())
 	}
 }
 
@@ -429,14 +331,16 @@ func TestArtifactCanOnlyBeClaimedOnceEvenWhenCommitFails(t *testing.T) {
 	commitErr := errors.New("partial admission write")
 	attempts["q1"].commitErr = commitErr
 	attempts["t1"].commitErr = commitErr
-	connector := connectv2.NewConnector(inMemoryLease(validArtifact(t)), allCapabilities(), connectv2.RequireQUICFamily, fakeFactory{attempts: attempts})
+	attempts["t1"].readyDelay = 20 * time.Millisecond
+	connector := connectv2.NewConnector(inMemoryLease(validArtifact(t)),
+		fakeFactory{attempts: attempts, capabilities: runtimev2.GoCapabilitiesForCarriers(carrier.KindRawQUIC, carrier.KindWebTransport)})
 	if _, err := connector.Connect(context.Background()); !errors.Is(err, commitErr) {
 		t.Fatalf("first Connect error = %v", err)
 	} else {
 		assertConnectError(t, err, fserrors.PathDirect, fserrors.StageAttach, fserrors.CodeAttachFailed)
 	}
-	if connector.State() != connectv2.StateSpent {
-		t.Fatalf("state = %s, want spent", connector.State())
+	if connector.State() != connectv2.StateTerminated {
+		t.Fatalf("state = %s, want terminated", connector.State())
 	}
 	if _, err := connector.Connect(context.Background()); !errors.Is(err, connectv2.ErrArtifactClaimed) {
 		t.Fatalf("second Connect error = %v", err)
@@ -450,8 +354,6 @@ func TestCandidateFailuresExposeStableStructuredDiagnostics(t *testing.T) {
 	}
 	_, err := connectv2.NewConnector(
 		inMemoryLease(validArtifact(t)),
-		allCapabilities(),
-		connectv2.Adaptive,
 		fakeFactory{attempts: attempts},
 	).Connect(context.Background())
 	structured := assertConnectError(t, err, fserrors.PathDirect, fserrors.StageConnect, fserrors.CodeDialFailed)
@@ -478,14 +380,15 @@ func TestConcurrentConnectRejectsSecondClaim(t *testing.T) {
 	for _, attempt := range attempts {
 		attempt.readyBlock = release
 	}
-	connector := connectv2.NewConnector(inMemoryLease(validArtifact(t)), allCapabilities(), connectv2.Adaptive, fakeFactory{attempts: attempts})
+	connector := connectv2.NewConnector(inMemoryLease(validArtifact(t)),
+		fakeFactory{attempts: attempts})
 	firstDone := make(chan error, 1)
 	go func() {
 		_, err := connector.Connect(context.Background())
 		firstDone <- err
 	}()
 	deadline := time.Now().Add(time.Second)
-	for connector.State() != connectv2.StatePreconnect {
+	for attempts["w1"].startCount.Load() == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("first Connect did not claim artifact")
 		}
@@ -495,8 +398,8 @@ func TestConcurrentConnectRejectsSecondClaim(t *testing.T) {
 		t.Fatalf("concurrent Connect error = %v", err)
 	}
 	close(release)
-	if err := <-firstDone; err != nil {
-		t.Fatalf("first Connect: %v", err)
+	if err := <-firstDone; err == nil {
+		t.Fatal("first Connect unexpectedly succeeded with non-session test carriers")
 	}
 }
 
@@ -508,8 +411,6 @@ func TestConnectDeadlineIncludesLoserCleanup(t *testing.T) {
 	}
 	connector := connectv2.NewConnector(
 		inMemoryLease(validArtifact(t)),
-		allCapabilities(),
-		connectv2.RequireQUICFamily,
 		fakeFactory{attempts: attempts},
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -542,7 +443,8 @@ func TestConnectDeadlineIncludesWinnerCleanupAfterSpendFailure(t *testing.T) {
 			<-ctx.Done()
 			return ctx.Err()
 		},
-	}, allCapabilities(), connectv2.RequireWebSocket, fakeFactory{attempts: map[string]*fakeAttempt{"w1": attempt}})
+	},
+		fakeFactory{attempts: map[string]*fakeAttempt{"w1": attempt}})
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
@@ -583,8 +485,6 @@ func TestConnectDeadlineIncludesCandidateRace(t *testing.T) {
 	}
 	connector := connectv2.NewConnector(
 		inMemoryLease(validArtifact(t)),
-		allCapabilities(),
-		connectv2.RequireQUICFamily,
 		fakeFactory{attempts: attempts},
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -612,8 +512,6 @@ func TestConnectDeadlineIncludesFSB2Admission(t *testing.T) {
 	attempt := &fakeAttempt{id: "w1", commitWaitForContext: true, events: events}
 	connector := connectv2.NewConnector(
 		inMemoryLease(validArtifact(t)),
-		allCapabilities(),
-		connectv2.RequireWebSocket,
 		fakeFactory{attempts: map[string]*fakeAttempt{"w1": attempt}},
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -629,84 +527,20 @@ func TestConnectDeadlineIncludesFSB2Admission(t *testing.T) {
 	if elapsed > 500*time.Millisecond {
 		t.Fatalf("FSB2 admission exceeded the total establishment deadline: %v", elapsed)
 	}
-	if connector.State() != connectv2.StateSpent {
-		t.Fatalf("state = %s, want spent", connector.State())
+	if connector.State() != connectv2.StateTerminated {
+		t.Fatalf("state = %s, want terminated", connector.State())
 	}
 	if !attempt.locallyClosed.Load() {
 		t.Fatalf("winner remained locally writable: %v", events.values())
 	}
 }
 
-func TestConnectDeadlineIncludesSessionEstablishment(t *testing.T) {
-	events := &eventLog{}
-	closed := &atomic.Bool{}
-	attempt := &fakeAttempt{
-		id: "w1", events: events,
-		session: &fakeSession{kind: carrier.KindWebSocket, closed: closed},
-	}
-	connector := connectv2.NewConnector(
-		inMemoryLease(validArtifact(t)),
-		allCapabilities(),
-		connectv2.RequireWebSocket,
-		fakeFactory{attempts: map[string]*fakeAttempt{"w1": attempt}, establishWaitForContext: true},
-	)
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	started := time.Now()
-	_, err := connector.Connect(ctx)
-	elapsed := time.Since(started)
-
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Connect error = %v, want deadline exceeded", err)
-	}
-	if elapsed > 500*time.Millisecond {
-		t.Fatalf("session establishment exceeded the total establishment deadline: %v", elapsed)
-	}
-	if connector.State() != connectv2.StateSpent {
-		t.Fatalf("state = %s, want spent", connector.State())
-	}
-	if !closed.Load() {
-		t.Fatalf("carrier remained open: %v", events.values())
-	}
-}
-
 type fakeFactory struct {
-	attempts                map[string]*fakeAttempt
-	establishErr            error
-	establishWaitForContext bool
-	configMu                *sync.Mutex
-	config                  *session.Config
+	attempts     map[string]*fakeAttempt
+	capabilities runtimev2.CapabilityDescriptor
 }
 
-type contractRecordingFactory struct {
-	mu       sync.Mutex
-	attempts map[string]*fakeAttempt
-	seen     map[string]artifactv2.SessionContract
-}
-
-func (factory *contractRecordingFactory) NewAttempt(candidate artifactv2.Candidate, contract artifactv2.SessionContract) (connectv2.Attempt, error) {
-	factory.mu.Lock()
-	if factory.seen == nil {
-		factory.seen = make(map[string]artifactv2.SessionContract)
-	}
-	factory.seen[candidate.ID] = contract
-	factory.mu.Unlock()
-	return factory.attempts[candidate.ID], nil
-}
-
-func (factory *contractRecordingFactory) contract(candidateID string) (artifactv2.SessionContract, bool) {
-	factory.mu.Lock()
-	defer factory.mu.Unlock()
-	contract, ok := factory.seen[candidateID]
-	return contract, ok
-}
-
-func (*contractRecordingFactory) Establish(_ context.Context, carrierSession carrier.Session, config session.Config) (session.SessionV2, error) {
-	return &fakeSessionV2{carrierSession: carrierSession, config: config}, nil
-}
-
-func (factory fakeFactory) NewAttempt(candidate artifactv2.Candidate, _ artifactv2.SessionContract) (connectv2.Attempt, error) {
+func (factory fakeFactory) NewAttempt(candidate artifactv2.Candidate, _ artifactv2.SessionContract) (connectv2.CandidateAttempt, error) {
 	attempt := factory.attempts[candidate.ID]
 	if attempt == nil {
 		return nil, fmt.Errorf("missing attempt %s", candidate.ID)
@@ -714,34 +548,11 @@ func (factory fakeFactory) NewAttempt(candidate artifactv2.Candidate, _ artifact
 	return attempt, nil
 }
 
-func (factory fakeFactory) Establish(ctx context.Context, carrierSession carrier.Session, config session.Config) (session.SessionV2, error) {
-	if factory.configMu != nil && factory.config != nil {
-		factory.configMu.Lock()
-		*factory.config = config
-		factory.configMu.Unlock()
+func (factory fakeFactory) Capabilities() runtimev2.CapabilityDescriptor {
+	if factory.capabilities.Runtime != "" {
+		return factory.capabilities
 	}
-	if fake, ok := carrierSession.(*fakeSession); ok && fake.events != nil {
-		fake.events.add("establish:" + fake.id)
-	} else if fake, ok := carrierSession.(fakeSession); ok && fake.events != nil {
-		fake.events.add("establish:" + fake.id)
-	}
-	if factory.establishErr != nil {
-		return nil, factory.establishErr
-	}
-	if factory.establishWaitForContext {
-		<-ctx.Done()
-		return nil, ctx.Err()
-	}
-	return &fakeSessionV2{carrierSession: carrierSession, config: config}, nil
-}
-
-func (factory fakeFactory) lastConfig() session.Config {
-	if factory.configMu == nil || factory.config == nil {
-		return session.Config{}
-	}
-	factory.configMu.Lock()
-	defer factory.configMu.Unlock()
-	return *factory.config
+	return allCapabilities()
 }
 
 type fakeAttempt struct {
@@ -762,7 +573,7 @@ type fakeAttempt struct {
 	readyHook            func()
 }
 
-func (attempt *fakeAttempt) Ready(ctx context.Context) (connectv2.Prepared, error) {
+func (attempt *fakeAttempt) Ready(ctx context.Context) (connectv2.AdmissionCommit, error) {
 	attempt.startCount.Add(1)
 	attempt.events.add("start:" + attempt.id)
 	if attempt.readyBlock != nil {
@@ -809,10 +620,16 @@ func (attempt *fakeAttempt) Abort(ctx context.Context) error {
 
 type fakePrepared fakeAttempt
 
-func (prepared *fakePrepared) Commit(ctx context.Context, fsb2 []byte) (carrier.Session, error) {
+func (prepared *fakePrepared) Commit(ctx context.Context, commitSpend func(context.Context) error, fsb2 []byte) (carrier.Session, error) {
 	attempt := (*fakeAttempt)(prepared)
 	if len(fsb2) < artifactv2.FSB2HeaderSize || string(fsb2[:4]) != "FSB2" {
 		return nil, errors.New("missing FSB2")
+	}
+	if commitSpend == nil {
+		return nil, errors.New("missing durable spend")
+	}
+	if err := commitSpend(ctx); err != nil {
+		return nil, err
 	}
 	attempt.commitCount.Add(1)
 	attempt.events.add("commit:" + attempt.id)
@@ -820,7 +637,7 @@ func (prepared *fakePrepared) Commit(ctx context.Context, fsb2 []byte) (carrier.
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	kind := carrier.KindQUIC
+	kind := carrier.KindRawQUIC
 	if attempt.id == "w1" {
 		kind = carrier.KindWebSocket
 	} else if attempt.id == "t1" {
@@ -871,65 +688,22 @@ func (session fakeSession) CloseWithErrorContext(context.Context, carrier.Applic
 	}
 	return nil
 }
+func (session fakeSession) Termination() <-chan struct{} {
+	terminated := make(chan struct{})
+	if session.closed != nil && session.closed.Load() {
+		close(terminated)
+	}
+	return terminated
+}
+func (session fakeSession) Abort(applicationError carrier.ApplicationError) error {
+	return session.CloseWithError(applicationError)
+}
 func (session fakeSession) Close() error {
 	if session.closed != nil {
 		session.closed.Store(true)
 	}
 	return nil
 }
-
-type fakeSessionV2 struct {
-	carrierSession  carrier.Session
-	config          session.Config
-	terminationMu   sync.Mutex
-	termination     chan struct{}
-	terminationOnce sync.Once
-}
-
-func (value *fakeSessionV2) Path() session.PathKind             { return value.config.Path }
-func (value *fakeSessionV2) ChosenCarrier() carrier.Kind        { return value.carrierSession.Kind() }
-func (value *fakeSessionV2) EndpointInstanceID() (string, bool) { return "", false }
-func (value *fakeSessionV2) RPC() session.RPCPeer               { return fakeRPCPeer{} }
-func (value *fakeSessionV2) UnreliableMessages() (session.UnreliableMessageChannel, error) {
-	return nil, session.ErrUnreliableUnavailable
-}
-func (value *fakeSessionV2) OpenStream(context.Context, string, session.Metadata) (session.ByteStream, error) {
-	return nil, errors.New("unused")
-}
-func (value *fakeSessionV2) AcceptStream(context.Context) (session.IncomingStream, error) {
-	return session.IncomingStream{}, errors.New("unused")
-}
-func (value *fakeSessionV2) Rekey(context.Context) error { return nil }
-func (value *fakeSessionV2) ProbeLiveness(context.Context) (time.Duration, error) {
-	return time.Millisecond, nil
-}
-func (value *fakeSessionV2) terminationChannel() chan struct{} {
-	value.terminationMu.Lock()
-	defer value.terminationMu.Unlock()
-	if value.termination == nil {
-		value.termination = make(chan struct{})
-	}
-	return value.termination
-}
-func (value *fakeSessionV2) Termination() <-chan struct{} { return value.terminationChannel() }
-func (value *fakeSessionV2) WaitClosed(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-value.Termination():
-		return session.ErrSessionClosed
-	}
-}
-func (value *fakeSessionV2) Close() error {
-	terminated := value.terminationChannel()
-	value.terminationOnce.Do(func() { close(terminated) })
-	return value.carrierSession.Close()
-}
-
-type fakeRPCPeer struct{}
-
-func (fakeRPCPeer) Call(context.Context, uint32, any, any) error { return nil }
-func (fakeRPCPeer) Notify(context.Context, uint32, any) error    { return nil }
 
 type event struct {
 	name string
@@ -1005,7 +779,7 @@ func newImmediateAttempts() map[string]*fakeAttempt {
 	}
 }
 
-func allCapabilities() session.CapabilityDescriptor { return session.GoCapabilities() }
+func allCapabilities() runtimev2.CapabilityDescriptor { return runtimev2.GoCapabilities() }
 
 func inMemoryLease(artifact artifactv2.Artifact) connectv2.ArtifactLease {
 	return connectv2.ArtifactLease{Artifact: artifact, CommitSpend: func(context.Context) error { return nil }}

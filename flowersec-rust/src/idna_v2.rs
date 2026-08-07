@@ -5,6 +5,7 @@
 pub const UNICODE_VERSION: &str = "15.1.0";
 
 /// Stable failure returned when a host is not valid under the v2 IDNA contract.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum IdnaHostErrorV2 {
     /// The host failed Unicode 15.1 UTS #46 non-transitional processing.
@@ -18,6 +19,7 @@ pub enum IdnaHostErrorV2 {
 /// Unicode 15.1 UTS #46. This rejects code points introduced after Unicode 15.1
 /// even when the host runtime carries newer Unicode data. Strict processing
 /// enables STD3, Bidi, ContextJ, hyphen, A-label round-trip, and DNS length checks.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn lookup_ascii(host: &str) -> Result<String, IdnaHostErrorV2> {
     if host.is_empty() || host.ends_with('.') {
         return Err(IdnaHostErrorV2::InvalidHost);

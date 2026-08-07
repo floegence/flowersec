@@ -1,14 +1,12 @@
 package webtransport_test
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,12 +23,13 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
 	"github.com/quic-go/quic-go/http3"
 )
 
 func TestBindSessionLimitsUsesExactPhysicalCapacity(t *testing.T) {
-	limits, err := webtransport.BindSessionLimits(webtransport.DefaultLimits(), 1)
+	limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +41,7 @@ func TestBindSessionLimitsUsesExactPhysicalCapacity(t *testing.T) {
 func TestServerCloseWaitsForServeRegistration(t *testing.T) {
 	for iteration := 0; iteration < 100; iteration++ {
 		serverTLS, _ := testTLSConfigs(t)
-		server, err := webtransport.NewServer(serverTLS, webtransport.DefaultLimits(), func(*http.Request) bool { return true })
+		server, err := webtransport.NewServer(serverTLS, quicbase.DefaultLimits(), func(*http.Request) bool { return true })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -105,7 +104,7 @@ func TestURLRegistryRejectsCrossPathAndAmbientURLFeatures(t *testing.T) {
 
 func TestServerRequiresExplicitOriginPolicy(t *testing.T) {
 	serverTLS, _ := testTLSConfigs(t)
-	if _, err := webtransport.NewServer(serverTLS, webtransport.DefaultLimits(), nil); !errors.Is(err, webtransport.ErrOriginPolicyRequired) {
+	if _, err := webtransport.NewServer(serverTLS, quicbase.DefaultLimits(), nil); !errors.Is(err, webtransport.ErrOriginPolicyRequired) {
 		t.Fatalf("NewServer nil Origin policy error = %v", err)
 	}
 }
@@ -114,37 +113,37 @@ func TestDialerAndServerRejectTLSAuthenticationBypass(t *testing.T) {
 	_, clientTLS := testTLSConfigs(t)
 
 	missingCertificate := &tls.Config{MinVersion: tls.VersionTLS13, NextProtos: []string{http3.NextProtoH3}}
-	if _, err := webtransport.NewServer(missingCertificate, webtransport.DefaultLimits(), func(*http.Request) bool { return true }); !errors.Is(err, webtransport.ErrInvalidTLS) {
+	if _, err := webtransport.NewServer(missingCertificate, quicbase.DefaultLimits(), func(*http.Request) bool { return true }); !errors.Is(err, webtransport.ErrInvalidTLS) {
 		t.Fatalf("NewServer missing certificate error = %v, want ErrInvalidTLS", err)
 	}
 	serverTLS, _ := testTLSConfigs(t)
 	serverTLS.Certificates = append([]tls.Certificate(nil), serverTLS.Certificates...)
 	serverTLS.Certificates[0].PrivateKey = nil
-	if _, err := webtransport.NewServer(serverTLS, webtransport.DefaultLimits(), func(*http.Request) bool { return true }); !errors.Is(err, webtransport.ErrInvalidTLS) {
+	if _, err := webtransport.NewServer(serverTLS, quicbase.DefaultLimits(), func(*http.Request) bool { return true }); !errors.Is(err, webtransport.ErrInvalidTLS) {
 		t.Fatalf("NewServer missing private key error = %v, want ErrInvalidTLS", err)
 	}
 
 	missingRoots := clientTLS.Clone()
 	missingRoots.RootCAs = nil
-	if _, err := webtransport.NewDialer(missingRoots, webtransport.DefaultLimits()); !errors.Is(err, webtransport.ErrInvalidTLS) {
+	if _, err := webtransport.NewDialer(missingRoots, quicbase.DefaultLimits()); !errors.Is(err, webtransport.ErrInvalidTLS) {
 		t.Fatalf("NewDialer missing roots error = %v, want ErrInvalidTLS", err)
 	}
 	emptyRoots := clientTLS.Clone()
 	emptyRoots.RootCAs = x509.NewCertPool()
-	if _, err := webtransport.NewDialer(emptyRoots, webtransport.DefaultLimits()); !errors.Is(err, webtransport.ErrInvalidTLS) {
+	if _, err := webtransport.NewDialer(emptyRoots, quicbase.DefaultLimits()); !errors.Is(err, webtransport.ErrInvalidTLS) {
 		t.Fatalf("NewDialer empty roots error = %v, want ErrInvalidTLS", err)
 	}
 
 	insecure := clientTLS.Clone()
 	insecure.InsecureSkipVerify = true
-	if _, err := webtransport.NewDialer(insecure, webtransport.DefaultLimits()); !errors.Is(err, webtransport.ErrInvalidTLS) {
+	if _, err := webtransport.NewDialer(insecure, quicbase.DefaultLimits()); !errors.Is(err, webtransport.ErrInvalidTLS) {
 		t.Fatalf("NewDialer insecure verification error = %v, want ErrInvalidTLS", err)
 	}
 }
 
 func TestDialRejectsWrongHostnameAndTrustRoot(t *testing.T) {
 	serverTLS, clientTLS := testTLSConfigs(t)
-	server, err := webtransport.NewServer(serverTLS, webtransport.DefaultLimits(), func(*http.Request) bool { return true })
+	server, err := webtransport.NewServer(serverTLS, quicbase.DefaultLimits(), func(*http.Request) bool { return true })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +181,7 @@ func TestDialRejectsWrongHostnameAndTrustRoot(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			config := clientTLS.Clone()
 			mutate(config)
-			dialer, err := webtransport.NewDialer(config, webtransport.DefaultLimits())
+			dialer, err := webtransport.NewDialer(config, quicbase.DefaultLimits())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -310,85 +309,9 @@ func TestAdapterSourceDoesNotExposeDatagramsOrReferenceYamux(t *testing.T) {
 	}
 }
 
-func TestDialerCloseFlushesReleaseQLOG(t *testing.T) {
-	directory := t.TempDir()
-	t.Setenv("QLOGDIR", directory)
-	t.Setenv("FLOWERSEC_TRANSPORT_RELEASE_EVIDENCE", "1")
-	serverTLS, clientTLS := testTLSConfigs(t)
-	server, err := webtransport.NewServer(serverTLS, webtransport.DefaultLimits(), func(*http.Request) bool { return true })
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverSession := make(chan carrier.Session, 1)
-	server.SetHandler(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		session, upgradeErr := server.Upgrade(writer, request)
-		if upgradeErr == nil {
-			serverSession <- session
-		}
-	}))
-	packetConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	serveDone := make(chan error, 1)
-	go func() { serveDone <- server.Serve(packetConn) }()
-	dialer, err := webtransport.NewDialer(clientTLS, webtransport.DefaultLimits())
-	if err != nil {
-		t.Fatal(err)
-	}
-	target := (&url.URL{Scheme: "https", Host: net.JoinHostPort("localhost", fmt.Sprint(packetConn.LocalAddr().(*net.UDPAddr).Port)), Path: webtransport.PathDirect}).String()
-	client, err := dialer.Dial(context.Background(), target, "https://client.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var serverPeer carrier.Session
-	select {
-	case serverPeer = <-serverSession:
-	case <-time.After(5 * time.Second):
-		t.Fatal("WebTransport server session timed out")
-	}
-	if err := client.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := serverPeer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := dialer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := server.Close(); err != nil {
-		t.Fatal(err)
-	}
-	_ = packetConn.Close()
-	select {
-	case <-serveDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("WebTransport server did not stop")
-	}
-	entries, err := os.ReadDir(directory)
-	if err != nil || len(entries) < 2 {
-		t.Fatalf("qlog entries = %d, err=%v", len(entries), err)
-	}
-	for _, entry := range entries {
-		data, err := os.ReadFile(filepath.Join(directory, entry.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for index, record := range bytes.Split(data, []byte{0x1e}) {
-			payload := bytes.TrimSpace(record)
-			if index == 0 && len(payload) == 0 {
-				continue
-			}
-			if len(payload) == 0 || !json.Valid(payload) {
-				t.Fatalf("qlog %s contains an incomplete record", entry.Name())
-			}
-		}
-	}
-}
-
 func TestDialerCloseBeforeDialIsIdempotent(t *testing.T) {
 	_, clientTLS := testTLSConfigs(t)
-	dialer, err := webtransport.NewDialer(clientTLS, webtransport.DefaultLimits())
+	dialer, err := webtransport.NewDialer(clientTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +328,7 @@ func TestDialerCloseBeforeDialIsIdempotent(t *testing.T) {
 
 func TestDialerCloseLocalRejectsNewDialsAndRemainsFullyClosable(t *testing.T) {
 	_, clientTLS := testTLSConfigs(t)
-	dialer, err := webtransport.NewDialer(clientTLS, webtransport.DefaultLimits())
+	dialer, err := webtransport.NewDialer(clientTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +349,7 @@ func TestDialerCloseLocalRejectsNewDialsAndRemainsFullyClosable(t *testing.T) {
 func newSessionPair(t *testing.T, path string) (carrier.Session, carrier.Session) {
 	t.Helper()
 	serverTLS, clientTLS := testTLSConfigs(t)
-	server, err := webtransport.NewServer(serverTLS, webtransport.DefaultLimits(), func(request *http.Request) bool {
+	server, err := webtransport.NewServer(serverTLS, quicbase.DefaultLimits(), func(request *http.Request) bool {
 		return request.Header.Get("Origin") == "https://client.example"
 	})
 	if err != nil {
@@ -458,7 +381,7 @@ func newSessionPair(t *testing.T, path string) (carrier.Session, carrier.Session
 		}
 	})
 
-	dialer, err := webtransport.NewDialer(clientTLS, webtransport.DefaultLimits())
+	dialer, err := webtransport.NewDialer(clientTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatalf("NewDialer: %v", err)
 	}

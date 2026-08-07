@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/observability"
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
 )
 
@@ -154,7 +153,6 @@ func TestClientRequestIDOverflowFailsBeforeWrite(t *testing.T) {
 		nextID:  maxPortableRequestID + 1,
 		pending: make(map[uint64]chan rpcv1.RpcEnvelope),
 		notify:  make(map[uint32]map[*notifyHandler]struct{}),
-		obs:     observability.NoopRPCObserver,
 	}
 	if _, _, err := client.Call(context.Background(), 1, json.RawMessage(`{}`)); err == nil {
 		t.Fatal("expected request ID overflow")

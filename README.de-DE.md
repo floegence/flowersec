@@ -50,10 +50,10 @@ raw QUIC und WebTransport bewahren das native Verhalten von FIN, RESET_STREAM, S
 Führe die v2-Unit-Suites aus:
 
 ```bash
-make transport-v2-unit
+make test
 ```
 
-Carrier-spezifische Nachweise liefern `make transport-conformance-smoke`, `make transport-browser-smoke` und `make transport-interop-smoke`.
+Explizite Protokoll-, Browser-, Schwachnetz- und Interoperabilitaetsdiagnosen laufen mit `make diagnostic`; Kapazitaets- und Soak-Tests mit `make performance`.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>

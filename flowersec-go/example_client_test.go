@@ -56,12 +56,12 @@ func ExampleConnect() {
 func reportRecovery(err error) {
 	var connectError *flowersec.ConnectError
 	if errors.As(err, &connectError) {
-		fmt.Fprintf(os.Stderr, "recovery=%s\n", flowersec.ClassifyConnectError(connectError).Action)
+		fmt.Fprintf(os.Stderr, "recovery=%s\n", connectError.RetryDisposition().Kind)
 		return
 	}
 	var sessionError *flowersec.SessionError
 	if errors.As(err, &sessionError) {
-		fmt.Fprintf(os.Stderr, "recovery=%s\n", flowersec.ClassifySessionError(sessionError).Action)
+		fmt.Fprintf(os.Stderr, "recovery=%s\n", sessionError.RetryDisposition().Kind)
 		return
 	}
 	reportExampleError(err)

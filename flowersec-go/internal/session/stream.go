@@ -63,21 +63,6 @@ type openResponse struct {
 	err      error
 }
 
-// ReleaseEvidenceNativeStreamID returns the physical QUIC stream identity for
-// privileged in-repository evidence collectors without widening ByteStream.
-func ReleaseEvidenceNativeStreamID(stream ByteStream) (int64, bool) {
-	encrypted, ok := stream.(*encryptedStream)
-	if !ok || encrypted == nil || encrypted.carrier == nil {
-		return 0, false
-	}
-	identified, ok := encrypted.carrier.(interface{ NativeStreamID() int64 })
-	if !ok {
-		return 0, false
-	}
-	id := identified.NativeStreamID()
-	return id, id >= 0
-}
-
 const (
 	reservedRPCStreamKind  = "flowersec.rpc.v2"
 	maxCoalescedWriteBytes = 4 * protocolv2.MaxDataBytes

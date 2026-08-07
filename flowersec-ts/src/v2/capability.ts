@@ -11,6 +11,9 @@ export type RuntimeCapabilityTupleV2 = Readonly<{
   networkMode: NetworkModeV2;
   path: PathKind;
   sessionRole: SessionRoleV2;
+  reliableStreams: boolean;
+  datagrams: boolean;
+  migration: boolean;
 }>;
 
 export type UnsupportedRuntimeCarrierV2 = Readonly<{
@@ -26,30 +29,12 @@ export type RuntimeCapabilityDescriptorV2 = Readonly<{
   unsupported: readonly UnsupportedRuntimeCarrierV2[];
 }>;
 
-export type BrowserRuntimeFeaturesV2 = Readonly<{
-  WebSocket?: unknown;
-  WebTransport?: unknown;
-}>;
-
 const encoder = new TextEncoder();
 const carriers: readonly CarrierKind[] = Object.freeze(["raw_quic", "websocket", "webtransport"]);
 const registryToken = /^[a-z][a-z0-9_]{0,127}$/;
 const digestLabel = encoder.encode("flowersec-v2-runtime-capability\0");
 
-function tuple(
-  carrier: CarrierKind,
-  networkMode: NetworkModeV2,
-  path: PathKind,
-  sessionRole: SessionRoleV2,
-): RuntimeCapabilityTupleV2 {
-  return Object.freeze({ carrier, networkMode, path, sessionRole });
-}
-
-function unsupported(carrier: CarrierKind, reason: string): UnsupportedRuntimeCarrierV2 {
-  return Object.freeze({ carrier, reason });
-}
-
-function descriptor(
+export function defineRuntimeCapabilityDescriptorV2(
   runtime: string,
   tuples: readonly RuntimeCapabilityTupleV2[],
   unsupportedCarriers: readonly UnsupportedRuntimeCarrierV2[],
@@ -58,55 +43,11 @@ function descriptor(
     language: "typescript",
     runtime,
     schemaVersion: 2,
-    tuples: Object.freeze([...tuples]),
-    unsupported: Object.freeze([...unsupportedCarriers]),
+    tuples: Object.freeze(tuples.map((entry) => Object.freeze({ ...entry }))),
+    unsupported: Object.freeze(unsupportedCarriers.map((entry) => Object.freeze({ ...entry }))),
   };
   validateRuntimeCapabilityDescriptorV2(value);
   return Object.freeze(value);
-}
-
-export const BROWSER_RUNTIME_CAPABILITY_V2 = descriptor(
-  "browser",
-  [
-    tuple("websocket", "dial", "direct", "client"),
-    tuple("websocket", "dial", "tunnel", "client"),
-    tuple("websocket", "dial", "tunnel", "server"),
-    tuple("webtransport", "dial", "direct", "client"),
-    tuple("webtransport", "dial", "tunnel", "client"),
-    tuple("webtransport", "dial", "tunnel", "server"),
-  ],
-  [unsupported("raw_quic", "browser_no_raw_udp")],
-);
-
-export const NODE_RUNTIME_CAPABILITY_V2 = descriptor(
-  "node",
-  [
-    tuple("websocket", "dial", "direct", "client"),
-    tuple("websocket", "dial", "tunnel", "client"),
-    tuple("websocket", "dial", "tunnel", "server"),
-  ],
-  [
-    unsupported("raw_quic", "no_production_grade_node_quic_runtime"),
-    unsupported("webtransport", "no_production_grade_node_quic_runtime"),
-  ],
-);
-
-export function detectBrowserRuntimeCapabilityV2(
-  runtime: BrowserRuntimeFeaturesV2 = globalThis as BrowserRuntimeFeaturesV2,
-): RuntimeCapabilityDescriptorV2 {
-  const available = new Set<CarrierKind>();
-  if (typeof runtime.WebSocket === "function") available.add("websocket");
-  if (typeof runtime.WebTransport === "function") available.add("webtransport");
-  const tuples = BROWSER_RUNTIME_CAPABILITY_V2.tuples.filter(({ carrier }) => available.has(carrier));
-  const unavailable = [...BROWSER_RUNTIME_CAPABILITY_V2.unsupported];
-  if (!available.has("websocket")) {
-    unavailable.push(unsupported("websocket", "browser_websocket_api_unavailable"));
-  }
-  if (!available.has("webtransport")) {
-    unavailable.push(unsupported("webtransport", "browser_webtransport_api_unavailable"));
-  }
-  unavailable.sort(compareUnsupported);
-  return descriptor("browser", tuples, unavailable);
 }
 
 export function encodeRuntimeCapabilityDescriptorV2(descriptor: RuntimeCapabilityDescriptorV2): string {
@@ -115,8 +56,10 @@ export function encodeRuntimeCapabilityDescriptorV2(descriptor: RuntimeCapabilit
     language: descriptor.language,
     runtime: descriptor.runtime,
     schemaVersion: descriptor.schemaVersion,
-    tuples: descriptor.tuples.map(({ carrier, networkMode, path, sessionRole }) => ({
-      carrier, networkMode, path, sessionRole,
+    tuples: descriptor.tuples.map(({
+      carrier, networkMode, path, sessionRole, reliableStreams, datagrams, migration,
+    }) => ({
+      carrier, datagrams, migration, networkMode, path, reliableStreams, sessionRole,
     })),
     unsupported: descriptor.unsupported.map(({ carrier, reason }) => ({ carrier, reason })),
   });
@@ -185,18 +128,31 @@ function decodeDescriptor(input: unknown): RuntimeCapabilityDescriptorV2 {
     throw new TypeError("runtime capability collections must be arrays");
   }
   const tuples = object.tuples.map((input) => {
-    const value = exactObject(input, ["carrier", "networkMode", "path", "sessionRole"]);
-    return tuple(
-      requireCarrier(value.carrier),
-      requireNetworkMode(value.networkMode),
-      requirePath(value.path),
-      requireSessionRole(value.sessionRole),
-    );
+    const value = exactObject(input, [
+      "carrier", "networkMode", "path", "sessionRole", "reliableStreams", "datagrams", "migration",
+    ]);
+    if (typeof value.reliableStreams !== "boolean" || typeof value.datagrams !== "boolean" ||
+        typeof value.migration !== "boolean") {
+      throw new TypeError("invalid runtime capability features");
+    }
+    const decoded: RuntimeCapabilityTupleV2 = Object.freeze({
+      carrier: requireCarrier(value.carrier),
+      networkMode: requireNetworkMode(value.networkMode),
+      path: requirePath(value.path),
+      sessionRole: requireSessionRole(value.sessionRole),
+      reliableStreams: true,
+      datagrams: value.datagrams,
+      migration: value.migration,
+    });
+    if (decoded.reliableStreams !== value.reliableStreams) {
+      throw new TypeError("runtime capability requires reliable streams");
+    }
+    return decoded;
   });
   const unsupportedCarriers = object.unsupported.map((input) => {
     const value = exactObject(input, ["carrier", "reason"]);
     if (typeof value.reason !== "string") throw new TypeError("unsupported reason must be a string");
-    return unsupported(requireCarrier(value.carrier), value.reason);
+    return Object.freeze({ carrier: requireCarrier(value.carrier), reason: value.reason });
   });
   if (typeof object.language !== "string" || typeof object.runtime !== "string" || object.schemaVersion !== 2) {
     throw new TypeError("invalid runtime capability descriptor header");
@@ -214,8 +170,12 @@ function decodeDescriptor(input: unknown): RuntimeCapabilityDescriptorV2 {
 
 function validateTuple(value: RuntimeCapabilityTupleV2): void {
   if (!carriers.includes(value.carrier) || !["dial", "listen"].includes(value.networkMode) ||
-      !["direct", "tunnel"].includes(value.path) || !["client", "server"].includes(value.sessionRole)) {
+      !["direct", "tunnel"].includes(value.path) || !["client", "server"].includes(value.sessionRole) ||
+      value.reliableStreams !== true || typeof value.datagrams !== "boolean" || typeof value.migration !== "boolean") {
     throw new TypeError("invalid runtime capability tuple");
+  }
+  if (value.carrier === "websocket" && (value.datagrams || value.migration)) {
+    throw new TypeError("WebSocket runtime capability cannot advertise datagrams or migration");
   }
   const valid = value.path === "direct"
     ? (value.networkMode === "dial" && value.sessionRole === "client") ||

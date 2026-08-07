@@ -78,6 +78,9 @@ pub trait CarrierStreamV2: fmt::Debug + Send + Sync + 'static {
     async fn close_write_delivered(&self) -> io::Result<()> {
         self.close_write().await
     }
+    /// Stops the peer's send direction without resetting the local send direction.
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn stop_sending(&self) -> io::Result<()>;
     /// Aborts both directions with the carrier's stable generic reset code.
     async fn reset(&self) -> io::Result<()>;
     /// Releases local resources after bounded shutdown.
@@ -114,8 +117,10 @@ pub trait CarrierSessionV2: fmt::Debug + Send + Sync + 'static {
     async fn receive_unreliable_message(&self) -> Result<Bytes, CarrierUnreliableMessageErrorV2> {
         Err(CarrierUnreliableMessageErrorV2::Unavailable)
     }
-    /// Closes the complete carrier session.
+    /// Gracefully closes the complete carrier session.
     async fn close(&self) -> io::Result<()>;
+    /// Immediately aborts native resources without waiting for graceful delivery.
+    fn abort(&self);
 }
 
 /// Closed carrier-level failure set used by the encrypted unreliable-message
@@ -196,13 +201,16 @@ pub enum PathKind {
     Tunnel,
 }
 
-/// One exact supported combination of carrier, network mode, role, and path.
+/// One exact supported combination with independently declared data-plane capabilities.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct CapabilityTupleV2 {
     pub carrier: CarrierKind,
     pub network_mode: NetworkMode,
     pub session_role: SessionRole,
     pub path: PathKind,
+    pub reliable_streams: bool,
+    pub datagrams: bool,
+    pub migration: bool,
 }
 
 /// One explicit unsupported carrier reason. Absence is never interpreted as
@@ -231,24 +239,32 @@ impl CapabilityTupleV2 {
         network_mode: NetworkMode,
         session_role: SessionRole,
         path: PathKind,
+        reliable_streams: bool,
+        datagrams: bool,
+        migration: bool,
     ) -> Self {
         Self {
             carrier,
             network_mode,
             session_role,
             path,
+            reliable_streams,
+            datagrams,
+            migration,
         }
     }
 
     /// Returns whether the tuple represents a legal Flowersec deployment role.
     pub const fn is_valid(self) -> bool {
-        matches!(
-            (self.network_mode, self.session_role, self.path),
-            (NetworkMode::Dial, SessionRole::Client, PathKind::Direct)
-                | (NetworkMode::Listen, SessionRole::Server, PathKind::Direct)
-                | (NetworkMode::Dial, SessionRole::Client, PathKind::Tunnel)
-                | (NetworkMode::Dial, SessionRole::Server, PathKind::Tunnel)
-        )
+        self.reliable_streams
+            && matches!(
+                (self.network_mode, self.session_role, self.path),
+                (NetworkMode::Dial, SessionRole::Client, PathKind::Direct)
+                    | (NetworkMode::Listen, SessionRole::Server, PathKind::Direct)
+                    | (NetworkMode::Dial, SessionRole::Client, PathKind::Tunnel)
+                    | (NetworkMode::Dial, SessionRole::Server, PathKind::Tunnel)
+            )
+            && (!self.migration || matches!(self.network_mode, NetworkMode::Dial))
     }
 }
 
@@ -263,24 +279,36 @@ pub(crate) const NATIVE_RUST_CAPABILITIES_V2: &[CapabilityTupleV2] = &[
         NetworkMode::Dial,
         SessionRole::Client,
         PathKind::Direct,
+        true,
+        true,
+        true,
     ),
     CapabilityTupleV2::new(
         CarrierKind::RawQuic,
         NetworkMode::Dial,
         SessionRole::Client,
         PathKind::Tunnel,
+        true,
+        true,
+        true,
     ),
     CapabilityTupleV2::new(
         CarrierKind::RawQuic,
         NetworkMode::Dial,
         SessionRole::Server,
         PathKind::Tunnel,
+        true,
+        true,
+        true,
     ),
     CapabilityTupleV2::new(
         CarrierKind::RawQuic,
         NetworkMode::Listen,
         SessionRole::Server,
         PathKind::Direct,
+        true,
+        true,
+        false,
     ),
 ];
 
@@ -295,11 +323,11 @@ pub(crate) fn native_rust_capability_descriptor_v2() -> RuntimeCapabilityDescrip
         unsupported: vec![
             UnsupportedRuntimeCarrierV2 {
                 carrier: CarrierKind::Wss,
-                reason: "transport_v2_websocket_adapter_not_committed".into(),
+                reason: "unsupported_websocket_runtime".into(),
             },
             UnsupportedRuntimeCarrierV2 {
                 carrier: CarrierKind::WebTransport,
-                reason: "rust_webtransport_not_committed".into(),
+                reason: "unsupported_webtransport_runtime".into(),
             },
         ],
     }
@@ -309,9 +337,13 @@ pub(crate) fn native_rust_capability_descriptor_v2() -> RuntimeCapabilityDescrip
 #[serde(deny_unknown_fields)]
 struct CapabilityTupleWireV2 {
     carrier: CarrierKind,
+    datagrams: bool,
+    migration: bool,
     #[serde(rename = "networkMode")]
     network_mode: NetworkMode,
     path: PathKind,
+    #[serde(rename = "reliableStreams")]
+    reliable_streams: bool,
     #[serde(rename = "sessionRole")]
     session_role: SessionRole,
 }
@@ -359,8 +391,11 @@ pub(crate) fn encode_runtime_capability_descriptor_v2(
             .iter()
             .map(|tuple| CapabilityTupleWireV2 {
                 carrier: tuple.carrier,
+                datagrams: tuple.datagrams,
+                migration: tuple.migration,
                 network_mode: tuple.network_mode,
                 path: tuple.path,
+                reliable_streams: tuple.reliable_streams,
                 session_role: tuple.session_role,
             })
             .collect(),
@@ -391,9 +426,12 @@ pub(crate) fn decode_runtime_capability_descriptor_v2(
             .into_iter()
             .map(|tuple| CapabilityTupleV2 {
                 carrier: tuple.carrier,
+                datagrams: tuple.datagrams,
+                migration: tuple.migration,
                 network_mode: tuple.network_mode,
                 session_role: tuple.session_role,
                 path: tuple.path,
+                reliable_streams: tuple.reliable_streams,
             })
             .collect(),
         unsupported: wire
@@ -1057,6 +1095,9 @@ mod tests {
                 NetworkMode::Listen,
                 SessionRole::Client,
                 PathKind::Tunnel,
+                true,
+                true,
+                false,
             )])
             .is_err()
         );

@@ -148,12 +148,6 @@
       "error_code": "noncanonical_fsb2"
     },
     {
-      "id": "fsa2-unknown-reason",
-      "kind": "fsa2_hex",
-      "value": "4653413202010007756e6b6e6f776e",
-      "error_code": "unknown_admission_reason"
-    },
-    {
       "id": "fsa2-success-with-reason",
       "kind": "fsa2_hex",
       "value": "465341320200000d696e76616c69645f746f6b656e",

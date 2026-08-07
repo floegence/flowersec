@@ -203,7 +203,7 @@ func TestYamuxResetIsIsolatedFromSiblingStream(t *testing.T) {
 func TestExactSubprotocolAndTLS13AreRequired(t *testing.T) {
 	_, server := newUpgradedPair(t, SubprotocolDirect)
 	resources := DefaultResourcePolicy()
-	if _, err := NewAfterAdmission(server, ServerRole, SubprotocolTunnel, resources, LivenessPolicy{}); !errors.Is(err, ErrInvalidSubprotocol) {
+	if _, err := NewAfterAdmission(server, ServerRole, SubprotocolTunnel, resources); !errors.Is(err, ErrInvalidSubprotocol) {
 		t.Fatalf("NewAfterAdmission subprotocol error = %v", err)
 	}
 }
@@ -242,14 +242,14 @@ func newCarrierPair(t *testing.T, subprotocol string) (*Session, *Session) {
 	serverCh := make(chan *Session, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		session, err := NewAfterAdmission(serverConn, ServerRole, subprotocol, resources, LivenessPolicy{})
+		session, err := NewAfterAdmission(serverConn, ServerRole, subprotocol, resources)
 		if err != nil {
 			errCh <- err
 			return
 		}
 		serverCh <- session
 	}()
-	client, err := NewAfterAdmission(clientConn, ClientRole, subprotocol, resources, LivenessPolicy{})
+	client, err := NewAfterAdmission(clientConn, ClientRole, subprotocol, resources)
 	if err != nil {
 		t.Fatalf("client NewAfterAdmission: %v", err)
 	}

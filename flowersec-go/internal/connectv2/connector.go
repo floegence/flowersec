@@ -15,17 +15,18 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/fserrors"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
 	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/runtimev2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 )
 
 var (
 	ErrArtifactClaimed       = errors.New("Flowersec v2 artifact is already claimed")
 	ErrNoCompatibleTransport = errors.New("no compatible Flowersec v2 transport")
-	ErrInvalidPolicy         = errors.New("invalid Flowersec v2 carrier policy")
 	ErrLoserCloseTimeout     = errors.New("candidate loser did not become locally closed")
 	ErrInvalidFactory        = errors.New("invalid Flowersec v2 candidate factory")
 	ErrInvalidArtifactLease  = errors.New("invalid Flowersec v2 artifact lease")
 	ErrArtifactExpired       = errors.New("Flowersec v2 artifact initiation deadline expired")
+	ErrCredentialCommit      = errors.New("Flowersec v2 durable credential spend failed")
 )
 
 const (
@@ -33,41 +34,27 @@ const (
 	expiredCleanupGrace      = 100 * time.Millisecond
 )
 
-type Policy string
-
-const (
-	Adaptive          Policy = "adaptive"
-	RequireWebSocket  Policy = "require_websocket"
-	RequireQUICFamily Policy = "require_quic_family"
-)
-
 type State uint32
 
 const (
-	StateValidated State = iota
-	StatePreconnect
-	StateWinnerSelected
-	StateLosersLocallyClosed
-	StateCommitting
-	StateSpent
+	StateAttempt State = iota
+	StateReady
+	StateWinner
+	StateAdmitted
 	StateEstablished
 	StateTerminated
 )
 
 func (state State) String() string {
 	switch state {
-	case StateValidated:
-		return "validated"
-	case StatePreconnect:
-		return "preconnect"
-	case StateWinnerSelected:
-		return "winner_selected"
-	case StateLosersLocallyClosed:
-		return "losers_locally_closed"
-	case StateCommitting:
-		return "committing"
-	case StateSpent:
-		return "spent"
+	case StateAttempt:
+		return "attempt"
+	case StateReady:
+		return "ready"
+	case StateWinner:
+		return "winner"
+	case StateAdmitted:
+		return "admitted"
 	case StateEstablished:
 		return "established"
 	case StateTerminated:
@@ -77,33 +64,31 @@ func (state State) String() string {
 	}
 }
 
-// Attempt performs transport-only setup. Ready must not write FSB2 or any
+// CandidateAttempt performs transport-only setup. Ready must not write FSB2 or any
 // Flowersec credential bytes. Abort returns only after the attempt is locally
 // unable to write, or returns an error when that boundary cannot be reached.
-type Attempt interface {
-	Ready(context.Context) (Prepared, error)
+type CandidateAttempt interface {
+	Ready(context.Context) (AdmissionCommit, error)
 	Abort(context.Context) error
 }
 
-// Prepared has reached the carrier-ready boundary. Commit is the sole method
-// allowed to write the supplied FSB2 admission frame. Close returns only after
-// the prepared carrier is locally unable to write, or returns an error.
-type Prepared interface {
-	Commit(context.Context, []byte) (carrier.Session, error)
+// AdmissionCommit has reached the carrier-ready boundary. Commit first invokes
+// the durable spend boundary and is then the sole method allowed to write the
+// supplied FSB2 admission frame. Close returns only after the prepared carrier
+// is locally unable to write, or returns an error.
+type AdmissionCommit interface {
+	Commit(context.Context, func(context.Context) error, []byte) (carrier.Session, error)
 	Close(context.Context) error
 }
 
-type Factory interface {
-	NewAttempt(artifactv2.Candidate, artifactv2.SessionContract) (Attempt, error)
+type CandidateFactory interface {
+	Capabilities() runtimev2.CapabilityDescriptor
+	NewAttempt(artifactv2.Candidate, artifactv2.SessionContract) (CandidateAttempt, error)
 }
 
 type Result struct {
 	Candidate artifactv2.Candidate
 	Session   session.SessionV2
-}
-
-type sessionEstablisher interface {
-	Establish(context.Context, carrier.Session, session.Config) (session.SessionV2, error)
 }
 
 // ArtifactLease binds an artifact to the caller's durable single-use state.
@@ -116,10 +101,9 @@ type ArtifactLease struct {
 
 type Connector struct {
 	lease             ArtifactLease
-	capabilities      session.CapabilityDescriptor
-	policy            Policy
-	factory           Factory
+	factory           CandidateFactory
 	state             atomic.Uint32
+	claimed           atomic.Bool
 	loserCloseTimeout time.Duration
 	now               func() time.Time
 	rpcRouter         *internalrpc.Router
@@ -146,9 +130,9 @@ func WithRPCRouter(router *internalrpc.Router) ConnectorOption {
 	}
 }
 
-func NewConnector(lease ArtifactLease, capabilities session.CapabilityDescriptor, policy Policy, factory Factory, options ...ConnectorOption) *Connector {
+func NewConnector(lease ArtifactLease, factory CandidateFactory, options ...ConnectorOption) *Connector {
 	connector := &Connector{
-		lease: lease, capabilities: capabilities, policy: policy, factory: factory,
+		lease: lease, factory: factory,
 		loserCloseTimeout: defaultLoserCloseTimeout, now: time.Now,
 	}
 	for _, option := range options {
@@ -156,7 +140,7 @@ func NewConnector(lease ArtifactLease, capabilities session.CapabilityDescriptor
 			option(connector)
 		}
 	}
-	connector.state.Store(uint32(StateValidated))
+	connector.state.Store(uint32(StateAttempt))
 	return connector
 }
 
@@ -169,17 +153,17 @@ func (connector *Connector) State() State {
 
 type attemptEntry struct {
 	candidate artifactv2.Candidate
-	attempt   Attempt
+	attempt   CandidateAttempt
 }
 
 type readyResult struct {
 	entry    attemptEntry
-	prepared Prepared
+	prepared AdmissionCommit
 	err      error
 }
 
 func (connector *Connector) Connect(ctx context.Context) (Result, error) {
-	if connector == nil || !connector.state.CompareAndSwap(uint32(StateValidated), uint32(StatePreconnect)) {
+	if connector == nil || !connector.claimed.CompareAndSwap(false, true) {
 		return Result{}, connectError(connectorPath(connector), fserrors.StageValidate, fserrors.CodeInvalidInput, ErrArtifactClaimed, nil)
 	}
 	if ctx == nil {
@@ -214,16 +198,13 @@ func (connector *Connector) Connect(ctx context.Context) (Result, error) {
 	)
 	defer cancelEstablish()
 	ctx = establishContext
-	if err := connector.capabilities.Validate(); err != nil {
+	capabilities := connector.factory.Capabilities()
+	if err := capabilities.Validate(); err != nil {
 		return terminate(fserrors.StageValidate, fserrors.CodeInvalidOption, err, nil)
 	}
-	candidates, err := connector.compatibleCandidates()
+	candidates, err := connector.compatibleCandidates(capabilities)
 	if err != nil {
-		code := fserrors.CodeTransportPolicyDenied
-		if errors.Is(err, ErrInvalidPolicy) {
-			code = fserrors.CodeInvalidOption
-		}
-		return terminate(fserrors.StageValidate, code, err, nil)
+		return terminate(fserrors.StageValidate, fserrors.CodeUnsupportedCapability, err, nil)
 	}
 
 	entries := make([]attemptEntry, 0, len(candidates))
@@ -287,6 +268,7 @@ func (connector *Connector) Connect(ctx context.Context) (Result, error) {
 			if ready.err == nil {
 				ready.err = ErrInvalidFactory
 			}
+			ready.err = fserrors.Runtime("candidate ready", ready.err)
 			code := contextCode(ready.err, fserrors.CodeDialFailed)
 			diagnostics = append(diagnostics, candidateDiagnostic(ready.entry.candidate, fserrors.StageConnect, code, ready.err))
 			diagnosticErrors = append(diagnosticErrors, fmt.Errorf("candidate %s: %w", ready.entry.candidate.ID, ready.err))
@@ -297,7 +279,7 @@ func (connector *Connector) Connect(ctx context.Context) (Result, error) {
 	}
 	cancelRace()
 	if winner.prepared != nil {
-		connector.state.Store(uint32(StateWinnerSelected))
+		connector.state.Store(uint32(StateReady))
 	}
 
 	cleanupDiagnostics, cleanupErr := connector.closeLosers(ctx, entries, winner, &readyGroup, readyResults)
@@ -323,7 +305,7 @@ func (connector *Connector) Connect(ctx context.Context) (Result, error) {
 		err := errors.Join(append([]error{ErrNoCompatibleTransport}, diagnosticErrors...)...)
 		return terminate(fserrors.StageConnect, contextCode(err, fserrors.CodeDialFailed), err, diagnostics)
 	}
-	connector.state.Store(uint32(StateLosersLocallyClosed))
+	connector.state.Store(uint32(StateWinner))
 	if err := ctx.Err(); err != nil {
 		return terminate(fserrors.StageAttach, contextCode(err, fserrors.CodeAttachFailed), errors.Join(err, connector.closePrepared(ctx, winner.prepared)), diagnostics)
 	}
@@ -342,48 +324,55 @@ func (connector *Connector) Connect(ctx context.Context) (Result, error) {
 	if !expiry.After(connector.now()) {
 		return terminate(fserrors.StageValidate, fserrors.CodeTimeout, errors.Join(ErrArtifactExpired, connector.closePrepared(ctx, winner.prepared)), diagnostics)
 	}
-	connector.state.Store(uint32(StateCommitting))
-	if err := connector.lease.CommitSpend(ctx); err != nil {
-		return terminate(fserrors.StageHandshake, contextCode(err, fserrors.CodeCredentialCommitFailed), errors.Join(err, connector.closePrepared(ctx, winner.prepared)), diagnostics)
+	commitSpend := func(commitContext context.Context) error {
+		if err := connector.lease.CommitSpend(commitContext); err != nil {
+			return fmt.Errorf("%w: %w", ErrCredentialCommit, err)
+		}
+		if !expiry.After(connector.now()) {
+			return ErrArtifactExpired
+		}
+		return commitContext.Err()
 	}
-	// Commit is an opaque transport write. The durable lease is already SPENT,
-	// and even an error can follow a partial write.
-	connector.state.Store(uint32(StateSpent))
-	if !expiry.After(connector.now()) {
-		return Result{}, connectError(path, fserrors.StageValidate, fserrors.CodeTimeout, errors.Join(ErrArtifactExpired, connector.closePrepared(ctx, winner.prepared)), diagnostics)
-	}
-	if err := ctx.Err(); err != nil {
-		return Result{}, connectError(path, fserrors.StageAttach, contextCode(err, fserrors.CodeAttachFailed), errors.Join(err, connector.closePrepared(ctx, winner.prepared)), diagnostics)
-	}
-	carrierSession, err := winner.prepared.Commit(ctx, fsb2)
+	carrierSession, err := winner.prepared.Commit(ctx, commitSpend, fsb2)
 	if err != nil {
-		return Result{}, connectError(path, fserrors.StageAttach, contextCode(err, fserrors.CodeAttachFailed), errors.Join(err, connector.closePrepared(ctx, winner.prepared)), diagnostics)
+		if errors.Is(err, ErrCredentialCommit) {
+			return terminate(fserrors.StageHandshake, contextCode(err, fserrors.CodeCredentialCommitFailed), errors.Join(err, connector.closePrepared(ctx, winner.prepared)), diagnostics)
+		}
+		if errors.Is(err, ErrArtifactExpired) {
+			return terminate(fserrors.StageValidate, fserrors.CodeTimeout, errors.Join(err, connector.closePrepared(ctx, winner.prepared)), diagnostics)
+		}
+		err = fserrors.Carrier("admission commit", err)
+		return terminate(fserrors.StageAttach, contextCode(err, fserrors.CodeAttachFailed), errors.Join(err, connector.closePrepared(ctx, winner.prepared)), diagnostics)
 	}
 	if carrierSession == nil {
-		return Result{}, connectError(path, fserrors.StageAttach, fserrors.CodeAttachFailed, errors.Join(ErrInvalidFactory, connector.closePrepared(ctx, winner.prepared)), diagnostics)
+		return terminate(fserrors.StageAttach, fserrors.CodeAttachFailed, errors.Join(ErrInvalidFactory, connector.closePrepared(ctx, winner.prepared)), diagnostics)
 	}
+	connector.state.Store(uint32(StateAdmitted))
 	wantKind, kindErr := carrierKind(winner.entry.candidate.Carrier)
-	wantPath, pathErr := candidateCarrierPath(winner.entry.candidate)
-	if kindErr != nil || pathErr != nil || carrierSession.Kind() != wantKind || carrierSession.Path() != wantPath {
+	wantPath := carrier.PathDirect
+	if connector.lease.Artifact.Path.Kind == artifactv2.PathTunnel {
+		wantPath = carrier.PathTunnel
+	}
+	if kindErr != nil || carrierSession.Kind() != wantKind || carrierSession.Path() != wantPath {
 		_ = carrierSession.Close()
-		return Result{}, connectError(path, fserrors.StageAttach, fserrors.CodeAttachFailed, errors.Join(ErrInvalidFactory, kindErr, pathErr), diagnostics)
+		return terminate(fserrors.StageAttach, fserrors.CodeAttachFailed, errors.Join(ErrInvalidFactory, kindErr), diagnostics)
 	}
 	sessionConfig := connector.sessionConfig(fsb2)
-	var established session.SessionV2
-	if establisher, ok := connector.factory.(sessionEstablisher); ok {
-		established, err = establisher.Establish(ctx, carrierSession, sessionConfig)
-	} else {
-		established, err = session.Establish(ctx, carrierSession, sessionConfig)
-	}
+	established, err := session.Establish(ctx, carrierSession, sessionConfig)
 	if err != nil {
-		_ = carrierSession.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "session establishment failed"})
-		return Result{}, connectError(path, fserrors.StageHandshake, contextCode(err, fserrors.CodeHandshakeFailed), err, diagnostics)
+		err = fserrors.Session("establish", err)
+		_ = carrierSession.Abort(carrier.ApplicationError{Code: 6, Reason: "session establishment failed"})
+		return terminate(fserrors.StageHandshake, contextCode(err, fserrors.CodeHandshakeFailed), err, diagnostics)
 	}
 	if established == nil {
-		_ = carrierSession.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "session establishment failed"})
-		return Result{}, connectError(path, fserrors.StageHandshake, fserrors.CodeHandshakeFailed, ErrInvalidFactory, diagnostics)
+		_ = carrierSession.Abort(carrier.ApplicationError{Code: 6, Reason: "session establishment failed"})
+		return terminate(fserrors.StageHandshake, fserrors.CodeHandshakeFailed, ErrInvalidFactory, diagnostics)
 	}
 	connector.state.Store(uint32(StateEstablished))
+	go func() {
+		<-established.Termination()
+		connector.state.Store(uint32(StateTerminated))
+	}()
 	return Result{Candidate: winner.entry.candidate, Session: established}, nil
 }
 
@@ -419,7 +408,7 @@ func (connector *Connector) sessionConfig(rawFSB2 []byte) session.Config {
 	}
 }
 
-func (connector *Connector) closePrepared(ctx context.Context, prepared Prepared) error {
+func (connector *Connector) closePrepared(ctx context.Context, prepared AdmissionCommit) error {
 	if prepared == nil {
 		return nil
 	}
@@ -515,7 +504,7 @@ func (connector *Connector) closeLosers(ctx context.Context, entries []attemptEn
 
 func connectorPath(connector *Connector) fserrors.Path {
 	if connector == nil {
-		return fserrors.PathAuto
+		return ""
 	}
 	if connector.lease.Artifact.Path.Kind == artifactv2.PathTunnel {
 		return fserrors.PathTunnel
@@ -562,16 +551,13 @@ func cleanupTimeoutDiagnostics(entries []attemptEntry, winner readyResult, err e
 	return diagnostics
 }
 
-func (connector *Connector) compatibleCandidates() ([]artifactv2.Candidate, error) {
-	if connector.policy != Adaptive && connector.policy != RequireWebSocket && connector.policy != RequireQUICFamily {
-		return nil, ErrInvalidPolicy
-	}
-	path := session.PathDirect
-	role := session.RoleClient
+func (connector *Connector) compatibleCandidates(capabilities runtimev2.CapabilityDescriptor) ([]artifactv2.Candidate, error) {
+	path := carrier.PathDirect
+	role := runtimev2.RoleClient
 	if connector.lease.Artifact.Path.Kind == artifactv2.PathTunnel {
-		path = session.PathTunnel
+		path = carrier.PathTunnel
 		if connector.lease.Artifact.Path.Role == 2 {
-			role = session.RoleServer
+			role = runtimev2.RoleServer
 		}
 	}
 	out := make([]artifactv2.Candidate, 0, len(connector.lease.Artifact.Path.Candidates))
@@ -580,14 +566,7 @@ func (connector *Connector) compatibleCandidates() ([]artifactv2.Candidate, erro
 		if err != nil {
 			return nil, err
 		}
-		if connector.policy == RequireWebSocket && kind != carrier.KindWebSocket {
-			continue
-		}
-		if connector.policy == RequireQUICFamily && kind == carrier.KindWebSocket {
-			continue
-		}
-		tuple := session.CapabilityTuple{Carrier: kind, NetworkMode: session.NetworkDial, SessionRole: role, Path: path}
-		if connector.capabilities.Supports(tuple) {
+		if supportsCarrierRoute(capabilities, kind, role, path) {
 			out = append(out, candidate)
 		}
 	}
@@ -597,12 +576,21 @@ func (connector *Connector) compatibleCandidates() ([]artifactv2.Candidate, erro
 	return out, nil
 }
 
+func supportsCarrierRoute(capabilities runtimev2.CapabilityDescriptor, kind carrier.Kind, role runtimev2.SessionRole, path carrier.Path) bool {
+	for _, tuple := range capabilities.Tuples {
+		if tuple.Carrier == kind && tuple.NetworkMode == runtimev2.NetworkDial && tuple.SessionRole == role && tuple.Path == path && tuple.ReliableStreams {
+			return true
+		}
+	}
+	return false
+}
+
 func carrierKind(value artifactv2.Carrier) (carrier.Kind, error) {
 	switch value {
 	case artifactv2.CarrierWebSocket:
 		return carrier.KindWebSocket, nil
 	case artifactv2.CarrierRawQUIC:
-		return carrier.KindQUIC, nil
+		return carrier.KindRawQUIC, nil
 	case artifactv2.CarrierWebTransport:
 		return carrier.KindWebTransport, nil
 	default:

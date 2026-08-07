@@ -2,13 +2,15 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 import {
-  BROWSER_RUNTIME_CAPABILITY_V2,
-  NODE_RUNTIME_CAPABILITY_V2,
   decodeRuntimeCapabilityDescriptorV2,
-  detectBrowserRuntimeCapabilityV2,
   encodeRuntimeCapabilityDescriptorV2,
   runtimeCapabilityDigestHexV2,
 } from "./capability.js";
+import {
+  BROWSER_RUNTIME_CAPABILITY_V2,
+  detectBrowserRuntimeCapabilityV2,
+} from "../browser/runtimeCapability.js";
+import { NODE_RUNTIME_CAPABILITY_V2 } from "../node/runtimeCapability.js";
 
 const vectors = JSON.parse(
   readFileSync(new URL("../../../testdata/transport_v2/capability_vectors.json", import.meta.url), "utf8"),
@@ -27,31 +29,32 @@ describe("runtime capability v2", () => {
       runtime: "browser",
       schemaVersion: 2,
       tuples: [
-        { carrier: "websocket", networkMode: "dial", path: "direct", sessionRole: "client" },
-        { carrier: "websocket", networkMode: "dial", path: "tunnel", sessionRole: "client" },
-        { carrier: "websocket", networkMode: "dial", path: "tunnel", sessionRole: "server" },
-        { carrier: "webtransport", networkMode: "dial", path: "direct", sessionRole: "client" },
-        { carrier: "webtransport", networkMode: "dial", path: "tunnel", sessionRole: "client" },
-        { carrier: "webtransport", networkMode: "dial", path: "tunnel", sessionRole: "server" },
+        { carrier: "websocket", networkMode: "dial", path: "direct", sessionRole: "client", reliableStreams: true, datagrams: false, migration: false },
+        { carrier: "websocket", networkMode: "dial", path: "tunnel", sessionRole: "client", reliableStreams: true, datagrams: false, migration: false },
+        { carrier: "websocket", networkMode: "dial", path: "tunnel", sessionRole: "server", reliableStreams: true, datagrams: false, migration: false },
+        { carrier: "webtransport", networkMode: "dial", path: "direct", sessionRole: "client", reliableStreams: true, datagrams: true, migration: false },
+        { carrier: "webtransport", networkMode: "dial", path: "tunnel", sessionRole: "client", reliableStreams: true, datagrams: true, migration: false },
+        { carrier: "webtransport", networkMode: "dial", path: "tunnel", sessionRole: "server", reliableStreams: true, datagrams: true, migration: false },
       ],
       unsupported: [{ carrier: "raw_quic", reason: "browser_no_raw_udp" }],
     });
   });
 
-  test("advertises the production Node WebSocket dial connector", () => {
+  test("advertises only implemented Node carrier connectors", () => {
     expect(NODE_RUNTIME_CAPABILITY_V2).toEqual({
       language: "typescript",
       runtime: "node",
       schemaVersion: 2,
       tuples: [
-        { carrier: "websocket", networkMode: "dial", path: "direct", sessionRole: "client" },
-        { carrier: "websocket", networkMode: "dial", path: "tunnel", sessionRole: "client" },
-        { carrier: "websocket", networkMode: "dial", path: "tunnel", sessionRole: "server" },
+        { carrier: "websocket", networkMode: "dial", path: "direct", sessionRole: "client", reliableStreams: true, datagrams: false, migration: false },
+        { carrier: "websocket", networkMode: "dial", path: "tunnel", sessionRole: "client", reliableStreams: true, datagrams: false, migration: false },
+        { carrier: "websocket", networkMode: "dial", path: "tunnel", sessionRole: "server", reliableStreams: true, datagrams: false, migration: false },
+        { carrier: "webtransport", networkMode: "dial", path: "direct", sessionRole: "client", reliableStreams: true, datagrams: true, migration: false },
+        { carrier: "webtransport", networkMode: "dial", path: "tunnel", sessionRole: "client", reliableStreams: true, datagrams: true, migration: false },
+        { carrier: "webtransport", networkMode: "dial", path: "tunnel", sessionRole: "server", reliableStreams: true, datagrams: true, migration: false },
+        { carrier: "webtransport", networkMode: "listen", path: "direct", sessionRole: "server", reliableStreams: true, datagrams: true, migration: false },
       ],
-      unsupported: [
-        { carrier: "raw_quic", reason: "no_production_grade_node_quic_runtime" },
-        { carrier: "webtransport", reason: "no_production_grade_node_quic_runtime" },
-      ],
+      unsupported: [{ carrier: "raw_quic", reason: "raw_quic_adapter_not_implemented" }],
     });
   });
 

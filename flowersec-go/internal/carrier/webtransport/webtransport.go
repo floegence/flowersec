@@ -7,10 +7,10 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,11 +20,9 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	carrierlife "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/internal/lifecycle"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
 	quic "github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
-	http3qlog "github.com/quic-go/quic-go/http3/qlog"
-	"github.com/quic-go/quic-go/qlogwriter"
 	wt "github.com/quic-go/webtransport-go"
 )
 
@@ -46,22 +44,14 @@ var (
 	ErrInvalidSession          = errors.New("invalid WebTransport session")
 )
 
-type Limits = rawquic.Limits
-
-func DefaultLimits() Limits { return rawquic.DefaultLimits() }
-
-func BindSessionLimits(limits Limits, maxLogical uint16) (Limits, error) {
-	return rawquic.BindSessionLimits(limits, maxLogical)
-}
-
 // newQUICConfig enables native HTTP/3 datagrams and partial stream reset while
 // keeping application early data disabled.
-func newQUICConfig(limits Limits) (*quic.Config, error) {
+func newQUICConfig(limits quicbase.Limits) (*quic.Config, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
 	return &quic.Config{
-		InitialPacketSize:                rawquic.MinimumInitialPacketSize,
+		InitialPacketSize:                quicbase.MinimumInitialPacketSize,
 		HandshakeIdleTimeout:             limits.HandshakeIdleTimeout,
 		MaxIdleTimeout:                   limits.MaxIdleTimeout,
 		InitialStreamReceiveWindow:       limits.InitialStreamReceiveWindow,
@@ -74,114 +64,12 @@ func newQUICConfig(limits Limits) (*quic.Config, error) {
 		Allow0RTT:                        false,
 		EnableDatagrams:                  true,
 		EnableStreamResetPartialDelivery: true,
-		Tracer:                           releaseEvidenceTracer,
 	}, nil
-}
-
-func releaseEvidenceTracer(ctx context.Context, isClient bool, connID quic.ConnectionID) qlogwriter.Trace {
-	if os.Getenv("FLOWERSEC_TRANSPORT_RELEASE_EVIDENCE") != "1" {
-		return nil
-	}
-	trace := http3qlog.DefaultConnectionTracer(ctx, isClient, connID)
-	if trace == nil {
-		return nil
-	}
-	return newDrainAwareQLOGTrace(trace)
-}
-
-type drainAwareQLOGTrace struct {
-	qlogwriter.Trace
-	mu        sync.Mutex
-	recorders map[*drainAwareQLOGRecorder]struct{}
-	closeErr  error
-}
-
-type drainAwareQLOGRecorder struct {
-	qlogwriter.Recorder
-	trace  *drainAwareQLOGTrace
-	once   sync.Once
-	mu     sync.Mutex
-	closed bool
-	err    error
-}
-
-func newDrainAwareQLOGTrace(trace qlogwriter.Trace) *drainAwareQLOGTrace {
-	return &drainAwareQLOGTrace{Trace: trace, recorders: make(map[*drainAwareQLOGRecorder]struct{})}
-}
-
-func (trace *drainAwareQLOGTrace) AddProducer() qlogwriter.Recorder {
-	recorder := trace.Trace.AddProducer()
-	if recorder == nil {
-		return nil
-	}
-	tracked := &drainAwareQLOGRecorder{Recorder: recorder, trace: trace}
-	trace.mu.Lock()
-	trace.recorders[tracked] = struct{}{}
-	trace.mu.Unlock()
-	return tracked
-}
-
-func (trace *drainAwareQLOGTrace) producerClosed(recorder *drainAwareQLOGRecorder, err error) {
-	trace.mu.Lock()
-	trace.closeErr = errors.Join(trace.closeErr, err)
-	delete(trace.recorders, recorder)
-	trace.mu.Unlock()
-}
-
-func (trace *drainAwareQLOGTrace) drain(ctx context.Context) error {
-	// webtransport-go does not close the producer created by NewRawClientConn.
-	// The caller reaches this boundary only after the owning QUIC connection ends.
-	trace.mu.Lock()
-	recorders := make([]*drainAwareQLOGRecorder, 0, len(trace.recorders))
-	for recorder := range trace.recorders {
-		recorders = append(recorders, recorder)
-	}
-	trace.mu.Unlock()
-	completed := make(chan error, 1)
-	go func() {
-		var result error
-		for _, recorder := range recorders {
-			result = errors.Join(result, recorder.Close())
-		}
-		trace.mu.Lock()
-		result = errors.Join(result, trace.closeErr)
-		remaining := len(trace.recorders)
-		trace.mu.Unlock()
-		if remaining != 0 {
-			result = errors.Join(result, fmt.Errorf("WebTransport qlog trace retained %d producers", remaining))
-		}
-		completed <- result
-	}()
-	select {
-	case err := <-completed:
-		return err
-	case <-ctx.Done():
-		return fmt.Errorf("WebTransport qlog trace did not close: %w", context.Cause(ctx))
-	}
-}
-
-func (recorder *drainAwareQLOGRecorder) RecordEvent(event qlogwriter.Event) {
-	recorder.mu.Lock()
-	defer recorder.mu.Unlock()
-	if !recorder.closed {
-		recorder.Recorder.RecordEvent(event)
-	}
-}
-
-func (recorder *drainAwareQLOGRecorder) Close() error {
-	recorder.once.Do(func() {
-		recorder.mu.Lock()
-		recorder.closed = true
-		recorder.err = recorder.Recorder.Close()
-		recorder.mu.Unlock()
-		recorder.trace.producerClosed(recorder, recorder.err)
-	})
-	return recorder.err
 }
 
 // newServerQUICConfig reserves the long-lived HTTP/3 CONNECT request stream in
 // addition to the carrier's control, RPC, and logical data streams.
-func newServerQUICConfig(limits Limits) (*quic.Config, error) {
+func newServerQUICConfig(limits quicbase.Limits) (*quic.Config, error) {
 	config, err := newQUICConfig(limits)
 	if err != nil {
 		return nil, err
@@ -217,7 +105,7 @@ const webTransportConnectionDrainTimeout = 5 * time.Second
 // a production WebTransport dialer or endpoint shutdown.
 func ConnectionDrainTimeout() time.Duration { return webTransportConnectionDrainTimeout }
 
-func NewDialer(tlsConfig *tls.Config, limits Limits) (*Dialer, error) {
+func NewDialer(tlsConfig *tls.Config, limits quicbase.Limits) (*Dialer, error) {
 	preparedTLS, err := prepareTLS(tlsConfig, false)
 	if err != nil {
 		return nil, err
@@ -333,7 +221,7 @@ func (dialer *Dialer) Close() error {
 }
 
 // CloseLocal synchronously makes this dialer and every connection it already
-// owns locally unusable. Close still owns bounded qlog and connection drain.
+// owns locally unusable. Close still owns the bounded connection drain.
 func (dialer *Dialer) CloseLocal() error {
 	if dialer == nil || dialer.inner == nil {
 		return nil
@@ -395,25 +283,11 @@ func clientTLSConfigForAddress(config *tls.Config, address string) (*tls.Config,
 
 func (dialer *Dialer) observeQUICConnection(tracked *dialConnection) {
 	<-tracked.connection.Context().Done()
-	ctx, cancel := context.WithTimeout(context.Background(), webTransportConnectionDrainTimeout)
-	err := waitForQLOGTraceClose(ctx, tracked.connection.QlogTrace())
-	cancel()
-	tracked.done <- err
+	tracked.done <- nil
 	close(tracked.done)
 	dialer.mu.Lock()
 	delete(dialer.connections, tracked.connection)
 	dialer.mu.Unlock()
-}
-
-func waitForQLOGTraceClose(ctx context.Context, trace qlogwriter.Trace) error {
-	if trace == nil {
-		return nil
-	}
-	tracked, ok := trace.(*drainAwareQLOGTrace)
-	if !ok {
-		return errors.New("WebTransport qlog trace does not expose a drain boundary")
-	}
-	return tracked.drain(ctx)
 }
 
 type Server struct {
@@ -427,7 +301,7 @@ type Server struct {
 	closeErr    error
 }
 
-func NewServer(tlsConfig *tls.Config, limits Limits, checkOrigin func(*http.Request) bool) (*Server, error) {
+func NewServer(tlsConfig *tls.Config, limits quicbase.Limits, checkOrigin func(*http.Request) bool) (*Server, error) {
 	if checkOrigin == nil {
 		return nil, ErrOriginPolicyRequired
 	}
@@ -616,15 +490,12 @@ func wrapSession(inner *wt.Session, capacity uint16, path carrier.Path) (*Sessio
 	return session, nil
 }
 
-func (*Session) Kind() carrier.Kind                 { return carrier.KindWebTransport }
-func (session *Session) Path() carrier.Path         { return session.path }
-func (session *Session) MaxIncomingStreams() uint16 { return session.capacity }
+func (*Session) Kind() carrier.Kind                   { return carrier.KindWebTransport }
+func (session *Session) Path() carrier.Path           { return session.path }
+func (session *Session) MaxIncomingStreams() uint16   { return session.capacity }
+func (session *Session) Termination() <-chan struct{} { return session.inner.Context().Done() }
 
 func (*Session) UnreliableAvailable() bool { return true }
-
-func (session *Session) ProbeEstablishment() error {
-	return session.SendUnreliable([]byte{0})
-}
 
 func (session *Session) SendUnreliable(payload []byte) error {
 	if len(payload) == 0 || len(payload) > carrier.MaxUnreliableWireBytes {
@@ -678,8 +549,43 @@ func (session *Session) AcceptStream(ctx context.Context) (carrier.Stream, error
 	return &Stream{inner: stream, lifecycle: carrierlife.NewStream(session.inner.Context())}, nil
 }
 
+// OpenAdmissionStream creates the server-owned native stream for the FSB2/FSA2
+// exchange and publishes its WebTransport stream header before the server
+// waits for peer credentials.
+func OpenAdmissionStream(ctx context.Context, session *Session) (carrier.Stream, error) {
+	if session == nil {
+		return nil, ErrInvalidSession
+	}
+	stream, err := session.OpenStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	written, err := stream.Write(nil)
+	if err != nil || written != 0 {
+		_ = stream.Reset()
+		if err != nil {
+			return nil, err
+		}
+		return nil, io.ErrShortWrite
+	}
+	return stream, nil
+}
+
+// AcceptAdmissionStream accepts the server-owned native stream for the
+// FSB2/FSA2 exchange.
+func AcceptAdmissionStream(ctx context.Context, session *Session) (carrier.Stream, error) {
+	if session == nil {
+		return nil, ErrInvalidSession
+	}
+	return session.AcceptStream(ctx)
+}
+
 func (session *Session) CloseWithError(applicationError carrier.ApplicationError) error {
 	return session.CloseWithErrorContext(context.Background(), applicationError)
+}
+
+func (session *Session) Abort(applicationError carrier.ApplicationError) error {
+	return session.CloseWithError(applicationError)
 }
 
 func (session *Session) CloseWithErrorContext(ctx context.Context, applicationError carrier.ApplicationError) error {
@@ -733,7 +639,10 @@ type Stream struct {
 	lifecycle      *carrierlife.Stream
 	closeWriteOnce sync.Once
 	closeWriteErr  error
+	stopOnce       sync.Once
+	stopErr        error
 	resetOnce      sync.Once
+	resetErr       error
 }
 
 func (stream *Stream) Read(payload []byte) (int, error) {
@@ -756,13 +665,21 @@ func (stream *Stream) CloseWrite() error {
 	return stream.closeWriteErr
 }
 
+func (stream *Stream) StopSending() error {
+	stream.stopOnce.Do(func() {
+		stream.inner.CancelRead(streamResetCode)
+		stream.lifecycle.StopSendingResult(nil)
+	})
+	return stream.stopErr
+}
+
 func (stream *Stream) Reset() error {
 	stream.resetOnce.Do(func() {
-		stream.inner.CancelRead(streamResetCode)
+		stream.resetErr = stream.StopSending()
 		stream.inner.CancelWrite(streamResetCode)
 		stream.lifecycle.Terminate(carrier.ErrStreamReset)
 	})
-	return nil
+	return stream.resetErr
 }
 
 func (stream *Stream) Close() error { return stream.Reset() }
@@ -862,5 +779,4 @@ func validateApplicationError(applicationError carrier.ApplicationError) error {
 
 var _ carrier.Session = (*Session)(nil)
 var _ carrier.UnreliableTransport = (*Session)(nil)
-var _ carrier.EstablishmentProber = (*Session)(nil)
 var _ carrier.Stream = (*Stream)(nil)

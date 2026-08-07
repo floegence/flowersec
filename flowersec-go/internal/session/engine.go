@@ -38,6 +38,15 @@ const (
 	sessionCloseFlushTimeout       = 2 * time.Second
 )
 
+type sessionLifecycle uint8
+
+const (
+	lifecycleOpening sessionLifecycle = iota
+	lifecycleOpen
+	lifecycleClosing
+	lifecycleClosed
+)
+
 // Config binds one endpoint's authenticated artifact and admission state to a
 // carrier-neutral Flowersec v2 session handshake.
 type Config struct {
@@ -98,7 +107,7 @@ type engineSession struct {
 	openFrozen             bool
 	openChanged            chan struct{}
 	nextID                 uint64
-	closing                bool
+	lifecycle              sessionLifecycle
 	closingCh              chan struct{}
 	goingAway              bool
 	goAwayLastAccepted     uint64
@@ -145,10 +154,6 @@ type engineSession struct {
 
 	closeOnce     sync.Once
 	closeErr      error
-	closePrepared chan struct{}
-	closePrepOnce sync.Once
-	closeProceed  chan struct{}
-	closeProcOnce sync.Once
 	closeWaitOnce sync.Once
 	closeWaitErr  error
 	wg            sync.WaitGroup
@@ -200,14 +205,12 @@ func Establish(ctx context.Context, carrierSession carrier.Session, config Confi
 	if err := validateEngineConfig(carrierSession, &config); err != nil {
 		return nil, err
 	}
-	stopProbes := carrier.StartEstablishmentProbes(ctx, carrierSession, carrier.EstablishmentProbeInterval)
-	defer stopProbes()
 	establishContext, cancelEstablish := context.WithTimeout(ctx, config.EstablishTimeout)
 	defer cancelEstablish()
 	control, material, err := performHandshake(establishContext, carrierSession, config)
 	if err != nil {
-		if contextErr := establishContext.Err(); contextErr != nil {
-			err = contextErr
+		if contextErr := establishContext.Err(); contextErr != nil && !errors.Is(err, contextErr) {
+			err = errors.Join(err, contextErr)
 		}
 		_ = closeCarrierWithin(establishContext, carrierSession, carrier.ApplicationError{Code: 6, Reason: "handshake failed"})
 		return nil, fmt.Errorf("%w: %w", ErrHandshake, err)
@@ -218,6 +221,7 @@ func Establish(ctx context.Context, carrierSession carrier.Session, config Confi
 		return nil, err
 	}
 	session.startControlWriter()
+	session.markOpen()
 	session.start()
 	return session, nil
 }
@@ -298,10 +302,9 @@ func newEngineSession(carrierSession carrier.Session, control carrier.Stream, co
 		ctx: ctx, cancel: cancel, control: control,
 		sendRoots:   map[uint32]protocolv2.EpochRoots{0: sendRoots},
 		recvRoots:   map[uint32]protocolv2.EpochRoots{0: receiveRoots},
-		openChanged: openChanged, nextID: nextID, closingCh: make(chan struct{}),
+		openChanged: openChanged, nextID: nextID,
+		lifecycle: lifecycleOpening, closingCh: make(chan struct{}),
 		peerSessionClose: make(chan struct{}),
-		closePrepared:    make(chan struct{}),
-		closeProceed:     make(chan struct{}),
 		outboundPermits:  make(chan struct{}, maxInbound),
 		inboundPermits:   make(chan struct{}, maxInbound),
 		acceptCh:         make(chan IncomingStream, maxInbound),
@@ -348,9 +351,8 @@ func (s *engineSession) start() {
 	}
 }
 
-func (s *engineSession) Path() PathKind              { return s.config.Path }
-func (s *engineSession) ChosenCarrier() carrier.Kind { return s.carrier.Kind() }
-func (s *engineSession) RPC() RPCPeer                { return s.rpcPeer }
+func (s *engineSession) Path() PathKind { return s.config.Path }
+func (s *engineSession) RPC() RPCPeer   { return s.rpcPeer }
 
 func (s *engineSession) UnreliableMessages() (UnreliableMessageChannel, error) {
 	if s.unreliable == nil {
@@ -393,7 +395,7 @@ func (s *engineSession) AcceptStream(ctx context.Context) (IncomingStream, error
 		ctx = context.Background()
 	}
 	s.openMu.Lock()
-	closing := s.closing
+	closing := s.lifecycle >= lifecycleClosing
 	closingCh := s.closingCh
 	s.openMu.Unlock()
 	if closing {
@@ -408,7 +410,7 @@ func (s *engineSession) AcceptStream(ctx context.Context) (IncomingStream, error
 		return IncomingStream{}, ErrSessionClosed
 	case incoming := <-s.acceptCh:
 		s.openMu.Lock()
-		closing = s.closing
+		closing = s.lifecycle >= lifecycleClosing
 		s.openMu.Unlock()
 		if closing {
 			_ = incoming.Stream.Reset()
@@ -420,21 +422,23 @@ func (s *engineSession) AcceptStream(ctx context.Context) (IncomingStream, error
 
 func (s *engineSession) Close() error {
 	s.closeOnce.Do(func() {
-		s.markClosing()
+		s.beginClosing()
 		closeContext, cancelClose := context.WithTimeout(context.Background(), sessionCloseFlushTimeout)
 		defer cancelClose()
 		protocolErr := s.sendGoAway(1)
 		protocolErr = errors.Join(protocolErr, s.sendControl(protocolv2.InnerSessionClose, []byte{0, 1}))
 		protocolErr = errors.Join(protocolErr, s.flushControl(closeContext))
-		s.signalClosePrepared()
 		protocolErr = errors.Join(protocolErr, s.control.CloseWrite())
-		s.resetAllStreams()
 		select {
 		case <-s.peerSessionClose:
-		case <-s.closeProceed:
+		case <-s.carrier.Termination():
 		case <-closeContext.Done():
 		}
+		s.resetAllStreams()
+		// Local cancellation owns teardown. Peer acknowledgement is advisory and
+		// must not keep this session's workers or carrier resources writable.
 		s.cancel(ErrSessionClosed)
+		s.markClosed()
 		carrierErr := closeCarrierWithin(closeContext, s.carrier, carrier.ApplicationError{Code: 1, Reason: "session closed"})
 		s.closeErr = errors.Join(protocolErr, carrierErr)
 	})
@@ -444,20 +448,6 @@ func (s *engineSession) Close() error {
 		s.closeWaitErr = s.waitForWorkers(waitContext)
 	})
 	return errors.Join(s.closeErr, s.closeWaitErr)
-}
-
-func (s *engineSession) closePreparation() <-chan struct{} { return s.closePrepared }
-
-func (s *engineSession) signalClosePrepared() {
-	if s.closePrepared != nil {
-		s.closePrepOnce.Do(func() { close(s.closePrepared) })
-	}
-}
-
-func (s *engineSession) completeClose() {
-	if s.closeProceed != nil {
-		s.closeProcOnce.Do(func() { close(s.closeProceed) })
-	}
 }
 
 func (s *engineSession) waitForWorkers(ctx context.Context) error {
@@ -474,22 +464,39 @@ func (s *engineSession) waitForWorkers(ctx context.Context) error {
 	}
 }
 
-func (s *engineSession) markClosing() {
+func (s *engineSession) markOpen() {
 	s.openMu.Lock()
-	if !s.closing {
-		s.closing = true
+	if s.lifecycle == lifecycleOpening {
+		s.lifecycle = lifecycleOpen
+	}
+	s.openMu.Unlock()
+}
+
+func (s *engineSession) beginClosing() {
+	s.openMu.Lock()
+	if s.lifecycle < lifecycleClosing {
+		s.lifecycle = lifecycleClosing
 		s.goingAway = true
 		close(s.closingCh)
-		s.closingCh = nil
 	}
 	s.openMu.Unlock()
 }
 
 func (s *engineSession) isClosing() bool {
 	s.openMu.Lock()
-	closing := s.closing
+	closing := s.lifecycle >= lifecycleClosing
 	s.openMu.Unlock()
 	return closing
+}
+
+func (s *engineSession) markClosed() {
+	s.openMu.Lock()
+	if s.lifecycle < lifecycleClosing {
+		close(s.closingCh)
+	}
+	s.lifecycle = lifecycleClosed
+	s.goingAway = true
+	s.openMu.Unlock()
 }
 
 func (s *engineSession) signalPeerSessionClose() {
@@ -499,14 +506,14 @@ func (s *engineSession) signalPeerSessionClose() {
 func (s *engineSession) handlePeerSessionClose() {
 	s.signalPeerSessionClose()
 	s.closeOnce.Do(func() {
-		s.markClosing()
+		s.beginClosing()
 		closeContext, cancelClose := context.WithTimeout(context.Background(), sessionCloseFlushTimeout)
 		defer cancelClose()
 		protocolErr := s.sendControl(protocolv2.InnerSessionClose, []byte{0, 1})
 		protocolErr = errors.Join(protocolErr, s.flushControl(closeContext))
-		s.signalClosePrepared()
 		protocolErr = errors.Join(protocolErr, s.control.CloseWrite())
 		s.cancel(ErrSessionClosed)
+		s.markClosed()
 		s.resetAllStreams()
 		carrierErr := closeCarrierWithin(closeContext, s.carrier, carrier.ApplicationError{Code: 1, Reason: "session closed"})
 		s.closeErr = errors.Join(protocolErr, carrierErr)
@@ -525,7 +532,7 @@ func (s *engineSession) fail(err error) {
 		err = ErrSessionClosed
 	}
 	s.closeOnce.Do(func() {
-		s.signalClosePrepared()
+		s.markClosed()
 		s.cancel(err)
 		s.resetAllStreams()
 		closeContext, cancelClose := context.WithTimeout(context.Background(), sessionCloseFlushTimeout)

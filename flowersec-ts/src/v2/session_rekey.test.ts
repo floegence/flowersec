@@ -8,6 +8,7 @@ import {
 import type { OperationOptionsV2 } from "./contract.js";
 import { CipherSuiteV2, encodeStreamKeyUpdateACKV2 } from "./protocol.js";
 import { establishSessionV2, type SessionConfigV2, type SessionV2 } from "./session.js";
+import { nodeSessionRuntimeV2 } from "../node/sessionRuntime.js";
 
 const encode = (value: string) => new TextEncoder().encode(value);
 const decode = (value: Uint8Array | null) => value === null ? null : new TextDecoder().decode(value);
@@ -25,6 +26,7 @@ function config(role: "client" | "server"): SessionConfigV2 {
     peerAdmissionBinding: new Uint8Array(32).fill(0x33),
     localEndpointInstanceID: "",
     expectedPeerEndpointInstanceID: "",
+    runtime: nodeSessionRuntimeV2,
   };
 }
 
@@ -187,6 +189,7 @@ class BlockingApplicationReadCarrier implements CarrierSessionV2 {
       write: async (data, writeOptions = {}) => await stream.write(data, writeOptions),
       closeWrite: async () => await stream.closeWrite(),
       reset: async () => await stream.reset(),
+      stopSending: async () => await stream.stopSending(),
       abort: (error) => {
         this.gate.resolve();
         stream.abort(error);
@@ -196,6 +199,10 @@ class BlockingApplicationReadCarrier implements CarrierSessionV2 {
 
   async close(error?: Readonly<{ code: number; reason: string }>): Promise<void> {
     await this.inner.close(error);
+  }
+
+  async waitTermination(): Promise<void> {
+    await this.inner.waitTermination();
   }
 
   abort(error?: Readonly<{ code: number; reason: string }>): void {

@@ -3,6 +3,26 @@ import XCTest
 
 @testable import Flowersec
 
+extension TransportV2CarrierSession {
+  var capabilities: CarrierCapabilitiesV2 {
+    CarrierCapabilitiesV2(reliableStreams: true, datagrams: false, migration: false)
+  }
+
+  func sendDatagram(_ data: Data) async throws {
+    throw TransportV2CarrierError.datagramsUnavailable
+  }
+
+  func receiveDatagram(maxBytes: Int) async throws -> Data {
+    throw TransportV2CarrierError.datagramsUnavailable
+  }
+}
+
+extension TransportV2CarrierStream {
+  func stopSending(code: UInt16) async throws {
+    throw TransportV2CarrierError.stopSendingUnsupported
+  }
+}
+
 final class TransportV2SessionTests: XCTestCase {
   func testNOnePhysicalCapacityEstablishesAndCarriesOneApplicationStream() async throws {
     let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair(
@@ -1229,7 +1249,8 @@ final class TransportV2SessionTests: XCTestCase {
   }
 
   private func readSessionWireVectors() throws -> SessionWireVectors {
-    let url = packageRoot().appendingPathComponent("testdata/transport_v2/session_wire_vectors.json")
+    let url = packageRoot().appendingPathComponent(
+      "testdata/transport_v2/session_wire_vectors.json")
     return try JSONDecoder().decode(
       SessionWireVectors.self,
       from: Data(contentsOf: url)

@@ -18,7 +18,7 @@ import {
   registerServiceWorkerAndEnsureControl,
   type ProxyRuntime,
   type ProxyRuntimeOptions,
-  type ProxyRuntimeScopeV2,
+  type ProxyRuntimeScope,
 } from "./index.js";
 
 describe("proxy v2 public contract", () => {
@@ -45,7 +45,7 @@ describe("proxy v2 public contract", () => {
       controllerBridge: { allowedOrigins: ["https://app.example"] },
       limits: { maxBodyBytes: 1024 },
     });
-    expectTypeOf(scope).toEqualTypeOf<ProxyRuntimeScopeV2>();
+    expectTypeOf(scope).toEqualTypeOf<ProxyRuntimeScope>();
     expect(scope.mode).toBe("controller_bridge");
 
     expect(() => assertProxyRuntimeScopeV2({

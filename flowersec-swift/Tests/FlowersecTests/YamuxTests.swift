@@ -150,93 +150,6 @@ final class FlowersecYamuxTests: XCTestCase {
     XCTAssertEqual(reads, [12, 200 * 1024, 12])
   }
 
-  func testProbeCorrelatesAckAndReturnsRoundTripTime() async throws {
-    let channel = InMemoryYamuxChannel()
-    let client = FlowersecYamuxClient(channel: channel)
-    let probe = Task { try await client.probeLiveness(timeout: .seconds(1)) }
-    let ping = await channel.nextWrittenFrame()
-    XCTAssertEqual(ping[1], 2)
-    XCTAssertEqual(ping.readUInt16BE(at: 2), 1)
-    let id = ping.readUInt32BE(at: 8)
-    await channel.feed(header(type: 2, flags: 2, streamID: 0, length: id))
-
-    let rtt = try await probe.value
-    XCTAssertGreaterThanOrEqual(rtt, .zero)
-    await client.close()
-  }
-
-  func testProbeTimeoutClosesSessionAndIgnoresLateAck() async throws {
-    let channel = InMemoryYamuxChannel()
-    let client = FlowersecYamuxClient(channel: channel)
-    let first = Task { try await client.probeLiveness(timeout: .milliseconds(20)) }
-    let ping = await channel.nextWrittenFrame()
-    let firstID = ping.readUInt32BE(at: 8)
-    do {
-      _ = try await first.value
-      XCTFail("Expected liveness timeout")
-    } catch let error as FlowersecError {
-      XCTAssertEqual(error.code, .timeout)
-    }
-
-    await channel.feed(header(type: 2, flags: 2, streamID: 0, length: firstID))
-    do {
-      _ = try await client.probeLiveness(timeout: .seconds(1))
-      XCTFail("Expected the timed-out session to remain closed")
-    } catch let error as FlowersecError {
-      XCTAssertEqual(error.code, .notConnected)
-    }
-  }
-
-  func testTunnelProbeTimeoutUsesTunnelYamuxPath() async throws {
-    let channel = InMemoryYamuxChannel()
-    let client = FlowersecYamuxClient(channel: channel, path: .tunnel)
-    let probe = Task { try await client.probeLiveness(timeout: .milliseconds(20)) }
-    _ = await channel.nextWrittenFrame()
-
-    do {
-      _ = try await probe.value
-      XCTFail("Expected liveness timeout")
-    } catch let error as FlowersecError {
-      XCTAssertEqual(error.path, .tunnel)
-      XCTAssertEqual(error.stage, .yamux)
-      XCTAssertEqual(error.code, .timeout)
-    }
-  }
-
-  func testTunnelProbeValidationUsesTunnelPath() async throws {
-    let channel = InMemoryYamuxChannel()
-    let client = FlowersecYamuxClient(channel: channel, path: .tunnel)
-
-    do {
-      _ = try await client.probeLiveness(timeout: .zero)
-      XCTFail("Expected liveness timeout validation to fail")
-    } catch let error as FlowersecError {
-      XCTAssertEqual(error.path, .tunnel)
-      XCTAssertEqual(error.stage, .validate)
-      XCTAssertEqual(error.code, .invalidInput)
-    }
-  }
-
-  func testConcurrentProbesShareOnePing() async throws {
-    let channel = InMemoryYamuxChannel()
-    let client = FlowersecYamuxClient(channel: channel)
-    let first = Task { try await client.probeLiveness(timeout: .seconds(1)) }
-    let ping = await channel.nextWrittenFrame()
-
-    let second = Task { try await client.probeLiveness(timeout: .seconds(1)) }
-    try await Task.sleep(for: .milliseconds(5))
-    let probeWriteCount = await channel.writeCount()
-    XCTAssertEqual(probeWriteCount, 1)
-
-    await channel.feed(
-      header(type: 2, flags: 2, streamID: 0, length: ping.readUInt32BE(at: 8))
-    )
-    let firstRTT = try await first.value
-    let secondRTT = try await second.value
-    XCTAssertEqual(firstRTT, secondRTT)
-    await client.close()
-  }
-
   func testConcurrentStreamWritesDoNotOvercommitInitialWindow() async throws {
     let channel = InMemoryYamuxChannel()
     let client = FlowersecYamuxClient(channel: channel)
@@ -379,7 +292,9 @@ final class FlowersecYamuxTests: XCTestCase {
     await client.close()
   }
 
-  func testStreamReadBufferCompactsOnlyAfterConsumedPrefixReachesThresholdAndHalfStorage() async throws {
+  func testStreamReadBufferCompactsOnlyAfterConsumedPrefixReachesThresholdAndHalfStorage()
+    async throws
+  {
     let channel = InMemoryYamuxChannel()
     let client = FlowersecYamuxClient(channel: channel)
     let stream = try await client.openStream()

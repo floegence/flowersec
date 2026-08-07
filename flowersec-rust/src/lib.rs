@@ -3,11 +3,12 @@
 
 //! Native Rust support for Flowersec v2 secure direct and tunneled sessions.
 //!
-//! Maintained callers use the opaque [`Artifact`], one-shot [`connect`], and
-//! carrier-neutral [`Session`] contracts. Native runtimes accept direct
-//! sessions through [`Acceptor`] without receiving carrier or wire objects.
-//! Carrier configuration, candidates, wire formats, and cryptographic state
-//! are crate-private.
+//! Maintained callers use the opaque [`Artifact`], one-shot [`connect`],
+//! optional long-lived [`ConnectionController`], and carrier-neutral
+//! [`Session`] contracts. Native runtimes accept direct sessions through
+//! [`Acceptor`] without receiving carrier or wire objects. Carrier
+//! configuration, candidates, wire formats, and cryptographic state are
+//! crate-private.
 //!
 //! ```compile_fail
 //! use flowersec::framing;
@@ -36,11 +37,13 @@
 //! ```
 
 mod acceptor_v2;
+mod admission_v2;
 mod artifact_v2;
+mod connection_controller;
 mod connector_v2;
 mod crypto_v2;
-mod error_classification;
 mod idna_v2;
+mod native_runtime_v2;
 mod protocol_v2;
 mod raw_quic_v2;
 mod session_v2;
@@ -48,17 +51,15 @@ mod transport_v2;
 
 #[cfg(test)]
 mod defaults_contract;
-#[cfg(test)]
-mod error_classification_contract;
-
 pub use acceptor_v2::{AcceptError, AcceptErrorCode, Acceptor, AcceptorOptions};
 pub use artifact_v2::{Artifact, ArtifactError, ArtifactLease, ArtifactSpendError};
-pub use connector_v2::{
-    ConnectError, ConnectErrorCode, ConnectorOptions, connect, connect_with_cancellation,
+pub use connection_controller::{
+    ArtifactSource, ArtifactSourceError, ConnectionController, ConnectionControllerOptions,
+    ConnectionControllerStartError, ConnectionFailure, ConnectionState, ConnectionStatus,
+    RetryDisposition, RetryPolicy, RetryPolicyError,
 };
-pub use error_classification::{
-    ErrorRetryAction, ErrorRetryClassification, classify_connect_error, classify_session_error,
-};
+pub use connector_v2::{ConnectError, ConnectErrorCode};
+pub use native_runtime_v2::{ConnectorOptions, connect, connect_with_cancellation};
 pub use transport_v2::{
     ByteStreamV2 as ByteStream, IncomingStreamV2 as IncomingStream, JsonObjectV2 as JsonObject,
     RpcCallError, RpcError, RpcPeerExt, RpcPeerV2 as RpcPeer, SessionError, SessionTermination,

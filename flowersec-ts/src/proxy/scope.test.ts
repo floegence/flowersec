@@ -17,6 +17,8 @@ describe("proxy.runtime@2 scope", () => {
       serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
       limits: { timeoutMs: 3_000, maxBodyBytes: 4096 },
     });
+    expect(scope.mode).toBe("service_worker");
+    if (scope.mode !== "service_worker") throw new Error("expected service-worker scope");
     expect(Object.isFrozen(scope)).toBe(true);
     expect(Object.isFrozen(scope.serviceWorker)).toBe(true);
   });

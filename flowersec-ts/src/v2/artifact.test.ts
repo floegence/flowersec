@@ -15,6 +15,7 @@ import {
   encodeFSB2RequestV2,
   type ArtifactCandidateV2,
   type ArtifactV2Error,
+  type ArtifactV2ErrorCode,
   type ArtifactV2,
   type DirectArtifactPathV2,
 } from "./artifact.js";
@@ -66,7 +67,6 @@ type IDNAVectorFixture = Readonly<{
 const fixture = JSON.parse(
   readFileSync(new URL("../../../testdata/transport_v2/artifact_vectors.json", import.meta.url), "utf8"),
 ) as ArtifactVectorFixture;
-const reasons = new Set(["capacity", "invalid_token"]);
 const idnaFixture = JSON.parse(
   readFileSync(new URL("../../../testdata/transport_v2/idna_vectors.json", import.meta.url), "utf8"),
 ) as IDNAVectorFixture;
@@ -123,11 +123,11 @@ describe("transport v2 artifact and admission vectors", () => {
           case "fsb2_hex":
             return decodeFSB2RequestV2(fromHex(vector.value));
           case "fsa2_hex":
-            return decodeFSA2ResponseV2(fromHex(vector.value), reasons);
+            return decodeFSA2ResponseV2(fromHex(vector.value));
         }
       };
       expect(operation, vector.id).toThrowError(
-        expect.objectContaining<Partial<ArtifactV2Error>>({ code: vector.error_code }),
+        expect.objectContaining<Partial<ArtifactV2Error>>({ code: vector.error_code as ArtifactV2ErrorCode }),
       );
     }
   });
@@ -142,26 +142,23 @@ describe("transport v2 artifact and admission vectors", () => {
     );
   });
 
-  test("matches FSA2 statuses and enforces the audited reason registry", () => {
+  test("matches FSA2 statuses and enforces bounded canonical reason tokens", () => {
     for (const vector of fixture.fsa2) {
       const response = {
         status: vector.status as AdmissionStatusV2,
         reason: vector.reason,
       };
-      expect(hex(encodeFSA2ResponseV2(response, reasons)), vector.id).toBe(vector.frame_hex);
-      expect(decodeFSA2ResponseV2(fromHex(vector.frame_hex), reasons)).toEqual(response);
+      expect(hex(encodeFSA2ResponseV2(response)), vector.id).toBe(vector.frame_hex);
+      expect(decodeFSA2ResponseV2(fromHex(vector.frame_hex))).toEqual(response);
     }
 
-    expect(() =>
-      encodeFSA2ResponseV2(
-        { status: AdmissionStatusV2.Reject, reason: "not_audited" },
-        reasons,
-      ),
-    ).toThrowError(expect.objectContaining({ code: "unknown_admission_reason" }));
+    expect(decodeFSA2ResponseV2(fromHex("465341320201000b6e6f745f61756469746564"))).toEqual({
+      status: AdmissionStatusV2.Reject,
+      reason: "not_audited",
+    });
     expect(() =>
       encodeFSA2ResponseV2(
         { status: AdmissionStatusV2.Success, reason: "invalid_token" },
-        reasons,
       ),
     ).toThrowError(expect.objectContaining({ code: "invalid_fsa2" }));
   });
@@ -257,7 +254,7 @@ function directArtifact(): ArtifactV2 & Readonly<{ path: DirectArtifactPathV2 }>
   expect(vector).toBeDefined();
   const artifact = decodeArtifactV2JSON(vector!.artifact_json);
   if (artifact.path.kind !== "direct") throw new Error("fixture path drifted");
-  return artifact;
+  return artifact as ArtifactV2 & Readonly<{ path: DirectArtifactPathV2 }>;
 }
 
 function withDirectCandidates(

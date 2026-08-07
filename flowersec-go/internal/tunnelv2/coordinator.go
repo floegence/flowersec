@@ -279,7 +279,7 @@ func validateCarrierBinding(decoded *artifactv2.DecodedRequest, actual carrier.K
 	switch actual {
 	case carrier.KindWebSocket:
 		expected = artifactv2.CarrierWebSocket
-	case carrier.KindQUIC:
+	case carrier.KindRawQUIC:
 		expected = artifactv2.CarrierRawQUIC
 	case carrier.KindWebTransport:
 		expected = artifactv2.CarrierWebTransport

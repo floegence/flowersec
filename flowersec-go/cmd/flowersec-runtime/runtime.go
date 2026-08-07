@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
+	websocketadmission "github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
 	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
@@ -36,7 +38,7 @@ type runtimeServer struct {
 	reasons     artifactv2.ReasonRegistry
 	coordinator *tunnelv2.Coordinator
 	wsResources carrierws.ResourcePolicy
-	quicLimits  rawquic.Limits
+	quicLimits  quicbase.Limits
 	directSlots chan struct{}
 	logger      *log.Logger
 
@@ -70,7 +72,7 @@ func newRuntimeServer(config Config, authorizer authorizationProvider, logger *l
 	if err != nil {
 		return nil, &ConfigError{Field: "max_inbound_streams", Err: err}
 	}
-	quicLimits, err := rawquic.BindSessionLimits(rawquic.DefaultLimits(), config.MaxInboundStreams)
+	quicLimits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), config.MaxInboundStreams)
 	if err != nil {
 		return nil, &ConfigError{Field: "max_inbound_streams", Err: err}
 	}
@@ -135,8 +137,7 @@ func (runtime *runtimeServer) Serve(ctx context.Context) error {
 		TLSConfig:         runtime.tlsConfig.Clone(),
 	}
 	runtime.addCloser(httpServerCloser{server: wssHTTP, timeout: runtime.config.shutdownTimeout()})
-	wssTLS := newWebSocketHandshakeListener(tls.NewListener(wssListener, runtime.tlsConfig.Clone()))
-	wssHTTP.ConnState = wssTLS.connState
+	wssTLS := tls.NewListener(wssListener, runtime.tlsConfig.Clone())
 
 	errorsCh := make(chan error, 4)
 	runtime.listenerWG.Add(4)
@@ -186,17 +187,33 @@ func (runtime *runtimeServer) acceptRawQUIC(ctx context.Context, listener *rawqu
 		runtime.sessionWG.Add(1)
 		go func() {
 			defer runtime.sessionWG.Done()
-			sessionContext := withAuthorizationContext(ctx, authorizationContext{carrier: carrier.KindQUIC})
+			sessionContext := withAuthorizationContext(ctx, authorizationContext{carrier: carrier.KindRawQUIC})
 			if carrierSession.Path() == carrier.PathTunnel {
-				runtime.serveNativeTunnel(sessionContext, carrierSession)
+				runtime.serveRawQUICTunnel(sessionContext, carrierSession)
 				return
 			}
-			runtime.serveNativeDirect(sessionContext, carrierSession)
+			runtime.serveRawQUICDirect(sessionContext, carrierSession)
 		}()
 	}
 }
 
-func (runtime *runtimeServer) serveNativeDirect(ctx context.Context, carrierSession carrier.Session) {
+func (runtime *runtimeServer) serveRawQUICDirect(ctx context.Context, carrierSession *rawquic.Session) {
+	runtime.serveNativeDirect(ctx, carrierSession, func(admissionContext context.Context) (carrier.Stream, error) {
+		return rawquic.AcceptAdmissionStream(admissionContext, carrierSession)
+	})
+}
+
+func (runtime *runtimeServer) serveWebTransportDirect(ctx context.Context, carrierSession *carrierwt.Session) {
+	runtime.serveNativeDirect(ctx, carrierSession, func(admissionContext context.Context) (carrier.Stream, error) {
+		return carrierwt.OpenAdmissionStream(admissionContext, carrierSession)
+	})
+}
+
+func (runtime *runtimeServer) serveNativeDirect(
+	ctx context.Context,
+	carrierSession carrier.Session,
+	openAdmission func(context.Context) (carrier.Stream, error),
+) {
 	if !runtime.acquireDirectSlot() {
 		_ = carrierSession.CloseWithError(carrier.ApplicationError{Code: 7, Reason: "capacity"})
 		return
@@ -204,14 +221,14 @@ func (runtime *runtimeServer) serveNativeDirect(ctx context.Context, carrierSess
 	defer runtime.releaseDirectSlot()
 	admissionContext, cancel := context.WithTimeout(ctx, runtime.config.admissionTimeout())
 	defer cancel()
-	admissionStream, err := admissionv2.ServerStream(admissionContext, carrierSession)
+	admissionStream, err := openAdmission(admissionContext)
 	if err != nil {
 		_ = carrierSession.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "admission failed"})
 		return
 	}
 	var authorization *directAuthorization
 	decoded, err := admissionv2.Serve(admissionContext, admissionStream, runtime.reasons, func(authorizeContext context.Context, decoded *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
-		if !chosenCarrierMatches(decoded, carrier.KindQUIC) {
+		if !chosenCarrierMatches(decoded, carrierSession.Kind()) {
 			return artifactv2.AdmissionResponse{}, ErrInvalidAuthorization
 		}
 		response, allowed, authorizeErr := authorizeDirect(authorizeContext, runtime.authorizer, decoded, runtime.reasons, runtime.config.MaxInboundStreams)
@@ -226,10 +243,26 @@ func (runtime *runtimeServer) serveNativeDirect(ctx context.Context, carrierSess
 	runtime.serveAuthorizedDirect(ctx, carrierSession, decoded, authorization)
 }
 
-func (runtime *runtimeServer) serveNativeTunnel(ctx context.Context, carrierSession carrier.Session) {
+func (runtime *runtimeServer) serveRawQUICTunnel(ctx context.Context, carrierSession *rawquic.Session) {
+	runtime.serveNativeTunnel(ctx, carrierSession, func(admissionContext context.Context) (carrier.Stream, error) {
+		return rawquic.AcceptAdmissionStream(admissionContext, carrierSession)
+	})
+}
+
+func (runtime *runtimeServer) serveWebTransportTunnel(ctx context.Context, carrierSession *carrierwt.Session) {
+	runtime.serveNativeTunnel(ctx, carrierSession, func(admissionContext context.Context) (carrier.Stream, error) {
+		return carrierwt.OpenAdmissionStream(admissionContext, carrierSession)
+	})
+}
+
+func (runtime *runtimeServer) serveNativeTunnel(
+	ctx context.Context,
+	carrierSession carrier.Session,
+	openAdmission func(context.Context) (carrier.Stream, error),
+) {
 	admissionContext, cancel := context.WithTimeout(ctx, runtime.config.admissionTimeout())
 	defer cancel()
-	admissionStream, err := admissionv2.ServerStream(admissionContext, carrierSession)
+	admissionStream, err := openAdmission(admissionContext)
 	if err != nil {
 		_ = carrierSession.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "admission failed"})
 		return
@@ -240,7 +273,7 @@ func (runtime *runtimeServer) serveNativeTunnel(ctx context.Context, carrierSess
 		return
 	}
 	if err := runtime.coordinator.Serve(ctx, leg); err != nil && ctx.Err() == nil {
-		runtime.logger.Printf("tunnel raw QUIC session ended: %v", stableRuntimeError(err))
+		runtime.logger.Printf("tunnel %s session ended: %v", carrierSession.Kind(), stableRuntimeError(err))
 	}
 }
 
@@ -272,7 +305,7 @@ func (runtime *runtimeServer) handleWebSocket(baseContext context.Context, write
 		carrier: carrier.KindWebSocket, remoteAddress: request.RemoteAddr,
 	})
 	if subprotocol == carrierws.SubprotocolTunnel {
-		leg, err := tunnelv2.NewWebSocketPendingLeg(connection, runtime.wsResources, carrierws.LivenessPolicy{})
+		leg, err := tunnelv2.NewWebSocketPendingLeg(connection, runtime.wsResources)
 		if err != nil {
 			_ = connection.Close()
 			return
@@ -290,7 +323,7 @@ func (runtime *runtimeServer) handleWebSocket(baseContext context.Context, write
 	admissionContext, cancel := context.WithTimeout(ctx, runtime.config.admissionTimeout())
 	defer cancel()
 	var authorization *directAuthorization
-	decoded, err := carrierws.ServeAdmission(admissionContext, connection, runtime.reasons, func(authorizeContext context.Context, decoded *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
+	decoded, err := websocketadmission.Serve(admissionContext, connection, runtime.reasons, func(authorizeContext context.Context, decoded *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
 		if !chosenCarrierMatches(decoded, carrier.KindWebSocket) {
 			return artifactv2.AdmissionResponse{}, ErrInvalidAuthorization
 		}
@@ -303,7 +336,7 @@ func (runtime *runtimeServer) handleWebSocket(baseContext context.Context, write
 		return
 	}
 	defer authorization.Release()
-	carrierSession, err := carrierws.NewAfterAdmission(connection, carrierws.ServerRole, subprotocol, runtime.wsResources, carrierws.LivenessPolicy{})
+	carrierSession, err := carrierws.NewAfterAdmission(connection, carrierws.ServerRole, subprotocol, runtime.wsResources)
 	if err != nil {
 		_ = connection.Close()
 		return
@@ -331,9 +364,9 @@ func (runtime *runtimeServer) webTransportHandler(baseContext context.Context, s
 			go func() {
 				defer runtime.sessionWG.Done()
 				if path == carrierwt.PathTunnel {
-					runtime.serveNativeTunnel(ctx, carrierSession)
+					runtime.serveWebTransportTunnel(ctx, carrierSession)
 				} else {
-					runtime.serveNativeDirect(ctx, carrierSession)
+					runtime.serveWebTransportDirect(ctx, carrierSession)
 				}
 			}()
 		})
@@ -415,7 +448,7 @@ func chosenCarrierMatches(decoded *artifactv2.DecodedRequest, kind carrier.Kind)
 		return false
 	}
 	want := artifactv2.CarrierWebSocket
-	if kind == carrier.KindQUIC {
+	if kind == carrier.KindRawQUIC {
 		want = artifactv2.CarrierRawQUIC
 	} else if kind == carrier.KindWebTransport {
 		want = artifactv2.CarrierWebTransport

@@ -155,7 +155,7 @@ describe("transport v2 shared crypto vectors", () => {
       () => openRecord(CipherSuiteV2.ChaCha20Poly1305, material, h3, 1n, direction, { ...header, sequence: 1n }, ciphertext),
       () => {
         const changed = ciphertext.slice();
-        changed[0] ^= 0x80;
+        changed[0] = (changed[0] ?? 0) ^ 0x80;
         return openRecord(CipherSuiteV2.ChaCha20Poly1305, material, h3, 1n, direction, header, changed);
       },
     ];

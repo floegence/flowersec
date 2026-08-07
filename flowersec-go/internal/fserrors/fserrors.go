@@ -1,12 +1,64 @@
 package fserrors
 
-import "fmt"
+import (
+	"fmt"
+)
+
+// RuntimeError owns failures produced before a carrier contract exists, such
+// as socket, TLS, HTTP/3, or native runtime startup.
+type RuntimeError struct {
+	Operation string
+	Err       error
+}
+
+func (e *RuntimeError) Error() string { return fmt.Sprintf("runtime %s: %v", e.Operation, e.Err) }
+func (e *RuntimeError) Unwrap() error { return e.Err }
+
+// CarrierError owns reliable-stream, datagram, admission transport, and native
+// carrier termination failures after the runtime adapter is ready.
+type CarrierError struct {
+	Operation string
+	Err       error
+}
+
+func (e *CarrierError) Error() string { return fmt.Sprintf("carrier %s: %v", e.Operation, e.Err) }
+func (e *CarrierError) Unwrap() error { return e.Err }
+
+// SessionError owns Flowersec handshake, RPC, rekey, liveness, and logical
+// stream protocol failures above an admitted carrier.
+type SessionError struct {
+	Operation string
+	Err       error
+}
+
+func (e *SessionError) Error() string { return fmt.Sprintf("session %s: %v", e.Operation, e.Err) }
+func (e *SessionError) Unwrap() error { return e.Err }
+
+func Runtime(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &RuntimeError{Operation: operation, Err: err}
+}
+
+func Carrier(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &CarrierError{Operation: operation, Err: err}
+}
+
+func Session(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &SessionError{Operation: operation, Err: err}
+}
 
 // Path identifies the top-level connect path.
 type Path string
 
 const (
-	PathAuto   Path = "auto"
 	PathTunnel Path = "tunnel"
 	PathDirect Path = "direct"
 )
@@ -20,7 +72,6 @@ const (
 	StageAttach    Stage = "attach"
 	StageHandshake Stage = "handshake"
 	StageSecure    Stage = "secure"
-	StageYamux     Stage = "yamux"
 	StageRPC       Stage = "rpc"
 	StageClose     Stage = "close"
 )
@@ -51,7 +102,7 @@ const (
 	CodeInvalidEndpointInstanceID Code = "invalid_endpoint_instance_id"
 	CodeInvalidOption             Code = "invalid_option"
 	CodeResolveFailed             Code = "resolve_failed"
-	CodeTransportPolicyDenied     Code = "transport_policy_denied"
+	CodeUnsupportedCapability     Code = "unsupported_capability"
 	CodeCredentialCommitFailed    Code = "credential_commit_failed"
 	CodeRandomFailed              Code = "random_failed"
 	CodeUpgradeFailed             Code = "upgrade_failed"
@@ -75,7 +126,6 @@ const (
 	CodeHandshakeFailed           Code = "handshake_failed"
 	CodePingFailed                Code = "ping_failed"
 	CodeRekeyFailed               Code = "rekey_failed"
-	CodeMuxFailed                 Code = "mux_failed"
 	CodeAcceptStreamFailed        Code = "accept_stream_failed"
 	CodeOpenStreamFailed          Code = "open_stream_failed"
 	CodeStreamHelloFailed         Code = "stream_hello_failed"

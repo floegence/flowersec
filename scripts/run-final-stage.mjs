@@ -8,8 +8,8 @@ import path from "node:path";
 const [, , secondsText, stage, command, ...args] = process.argv;
 const seconds = Number(secondsText);
 if (!Number.isInteger(seconds) || seconds < 1 || seconds > 595
-  || !["preflight", "contracts", "packages", "race", "languages", "post"].includes(stage) || !command) {
-  process.stderr.write("usage: run-final-stage.mjs <1-595 seconds> <preflight|contracts|packages|race|languages|post> <command> [args...]\n");
+  || !["preflight", "contracts", "packages", "race", "languages", "browser", "post"].includes(stage) || !command) {
+  process.stderr.write("usage: run-final-stage.mjs <1-595 seconds> <preflight|contracts|packages|race|languages|browser|post> <command> [args...]\n");
   process.exit(2);
 }
 

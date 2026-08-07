@@ -15,7 +15,7 @@ Flowersec protects artifact credentials, endpoint identity, session keys, RPC pa
 
 All carrier candidates may prepare without credentials. Exactly one winner is selected. The application must durably commit the artifact spend before the connector writes FSB2 or any credential byte. A failed or uncertain post-commit write never makes the artifact reusable.
 
-Admission binds the artifact, selected carrier, path, endpoint identities, capability descriptor, and session contract hash. Unknown fields, duplicate keys, invalid Unicode hosts, expired artifacts, unregistered rejection reasons, and mismatched bindings fail closed.
+Admission binds the artifact, selected carrier, path, endpoint identities, capability descriptor, and session contract hash. Unknown fields, duplicate keys, invalid Unicode hosts, expired artifacts, malformed rejection tokens, and mismatched bindings fail closed. Servers emit only deployment-registered rejection reasons; SDK clients validate the bounded wire token and project every rejection to the stable admission failure boundary without embedding the deployment registry.
 
 ## Session Security
 

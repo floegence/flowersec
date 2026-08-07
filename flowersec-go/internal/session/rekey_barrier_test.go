@@ -18,7 +18,7 @@ import (
 )
 
 func TestRekeyAdvancesEveryActiveStream(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -54,7 +54,7 @@ func TestRekeyAdvancesEveryActiveStream(t *testing.T) {
 }
 
 func TestSessionKeyUpdateRejectsWatermarkBeyondResolvedFrontier(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -103,7 +103,7 @@ func TestStreamKeyUpdateACKWireOrder(t *testing.T) {
 }
 
 func TestSimultaneousRekeyAdvancesBothActiveDirections(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -130,7 +130,7 @@ func TestSimultaneousRekeyAdvancesBothActiveDirections(t *testing.T) {
 }
 
 func TestActiveStreamSupportsConsecutiveRekeys(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -155,7 +155,7 @@ func TestActiveStreamSupportsConsecutiveRekeys(t *testing.T) {
 }
 
 func TestDuplicateIdenticalRekeyACKsAreIdempotent(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -184,7 +184,7 @@ func TestDuplicateIdenticalRekeyACKsAreIdempotent(t *testing.T) {
 }
 
 func TestConsecutiveRekeysCleanObsoleteEpochRoots(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -216,7 +216,7 @@ func TestConsecutiveRekeysCleanObsoleteEpochRoots(t *testing.T) {
 }
 
 func TestHalfClosedDirectionsDoNotRetainObsoleteEpochRoots(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -265,7 +265,7 @@ func TestHalfClosedDirectionsDoNotRetainObsoleteEpochRoots(t *testing.T) {
 }
 
 func TestCleanupEpochRootsDoesNotDependOnActiveIOLocks(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -320,7 +320,7 @@ func TestCleanupEpochRootsDoesNotDependOnActiveIOLocks(t *testing.T) {
 }
 
 func TestRekeyPrepareTimeoutUnfreezesBeforeCommit(t *testing.T) {
-	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 	clientConfig, serverConfig := testEngineConfigs(2)
 	clientConfig.RekeyPrepareTimeout = 30 * time.Millisecond
 	serverConfig.RekeyPrepareTimeout = 30 * time.Millisecond
@@ -364,7 +364,7 @@ func TestRekeyPrepareTimeoutUnfreezesBeforeCommit(t *testing.T) {
 }
 
 func TestRekeyCompletionTimeoutClosesCommittedSession(t *testing.T) {
-	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 	clientConfig, serverConfig := testEngineConfigs(2)
 	clientConfig.RekeyCompletionTimeout = 30 * time.Millisecond
 	serverConfig.RekeyCompletionTimeout = 30 * time.Millisecond
@@ -398,7 +398,7 @@ func TestRekeyCompletionTimeoutClosesCommittedSession(t *testing.T) {
 
 func TestReceivedRekeyCompletionTimeoutClosesSession(t *testing.T) {
 	t.Run("responder freeze", func(t *testing.T) {
-		clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+		clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 		clientConfig, serverConfig := testEngineConfigs(2)
 		serverConfig.RekeyCompletionTimeout = 30 * time.Millisecond
 		client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
@@ -416,7 +416,7 @@ func TestReceivedRekeyCompletionTimeoutClosesSession(t *testing.T) {
 	})
 
 	t.Run("stream update", func(t *testing.T) {
-		clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+		clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 		clientConfig, serverConfig := testEngineConfigs(2)
 		serverConfig.RekeyCompletionTimeout = 30 * time.Millisecond
 		client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
@@ -440,7 +440,7 @@ func TestReceivedRekeyCompletionTimeoutClosesSession(t *testing.T) {
 }
 
 func TestConcurrentRekeyReturnsImmediately(t *testing.T) {
-	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 	clientConfig, serverConfig := testEngineConfigs(2)
 	client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
 	defer client.Close()
@@ -506,7 +506,7 @@ func assertReceivedRekeyTimeout(t *testing.T, session *engineSession, result <-c
 }
 
 func TestFutureEpochStreamDataCanArriveBeforeSessionUpdate(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 

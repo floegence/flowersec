@@ -1,19 +1,8 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-package-cache-preflight ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-publish-preflight rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check rust-final-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-source-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check transportcheck-fast transport-runner-config transportcheck-focused-tail transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-soak bench-transport-ab transport-v2-release-collect-conformance-smoke transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check-short go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test browser-smoke precommit diagnostic performance go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-package-cache-preflight ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-publish-preflight rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-source-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-source precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check flowersec-test-contract go-cover-check-short go-cover-check nightly-check
 
-CHECK_INTEROP ?= 1
-TRANSPORT_RUNNER_CONFIG ?= $(CURDIR)/.flowersec/transport-runner.json
-TRANSPORT_FOCUSED_TAIL_SHA ?=
-TRANSPORT_FOCUSED_TAIL_CELL ?= clean-08
-TRANSPORT_FOCUSED_TAIL_START_SHARD ?= 1
-TRANSPORT_FOCUSED_TAIL_RUNNER_CONFIG ?= $(CURDIR)/.flowersec/focused-tail-runner.json
-TRANSPORT_FOCUSED_TAIL_STATE ?= $(CURDIR)/.flowersec/focused-tail/$(TRANSPORT_FOCUSED_TAIL_SHA)-$(TRANSPORT_FOCUSED_TAIL_CELL).state.json
-TRANSPORT_FOCUSED_TAIL_RECEIPTS ?= $(CURDIR)/.flowersec/focused-tail/receipts
+FLOWERSEC_TEST_HOST ?= ./scripts/test-host.sh
 SWIFTPM_CACHE_PATH := $(CURDIR)/.flowersec/swiftpm-cache
 
-YAMUX_INTEROP ?= 1
-YAMUX_INTEROP_STRESS ?= 0
-YAMUX_INTEROP_CLIENT_RST ?= 0
-YAMUX_INTEROP_DEBUG ?= 0
 SWIFT_SOURCE_GUARD_PATTERN := Redeven|redeven|RedevenFlowersec|RedevenRPCClient|FlowersecDirectClient|FlowersecDirectSession|FlowersecDirectError|RuntimeFS|RuntimeGit|RuntimeTerminal|RuntimeFlower|RuntimeTypedRPC|RuntimeJSONValue|RuntimeRPCPayload|FlowerMessage|TerminalSession|MonitorSnapshot|direct runtime
 SWIFT_SOURCE_GUARD_PATHS := flowersec-swift/Sources Package.swift README.md flowersec-swift/README.md docs examples .github
 SWIFT_SOURCE_GUARD_PRUNE := .build .git .swiftpm dist node_modules
@@ -45,65 +34,52 @@ gen-examples:
 	gofmt -w examples/gen
 	cd flowersec-go && gofmt -w internal/testgen
 
-test: go-test ts-test
+test:
+	$(MAKE) go-test ts-test
+
+browser-smoke:
+	$(FLOWERSEC_TEST_HOST) run --suite browser-smoke
+
+diagnostic:
+	$(FLOWERSEC_TEST_HOST) run --suite diagnostic
+
+performance:
+	$(FLOWERSEC_TEST_HOST) run --suite performance
 
 go-test:
-	cd flowersec-go && go test -timeout=5m ./...
+	cd flowersec-go && go test -timeout=5m $$(../scripts/list-default-go-test-packages.sh)
 	cd tools/idlgen && go test -timeout=5m ./...
 	cd tools/releasenotes && go test -timeout=5m ./...
 	cd tools/stabilitycheck && go test -timeout=5m ./...
-	$(MAKE) transportcheck-fast
 
 go-test-short:
-	cd flowersec-go && go test -short -timeout=5m ./...
+	cd flowersec-go && go test -short -timeout=5m $$(../scripts/list-default-go-test-packages.sh)
 	cd tools/idlgen && go test -short -timeout=5m ./...
 	cd tools/releasenotes && go test -short -timeout=5m ./...
 	cd tools/stabilitycheck && go test -short -timeout=5m ./...
-	$(MAKE) transportcheck-fast
 
 go-test-race:
-	cd flowersec-go && go test -race -timeout=5m ./...
+	cd flowersec-go && go test -race -timeout=5m $$(../scripts/list-default-go-test-packages.sh)
 	cd tools/idlgen && go test -race -timeout=5m ./...
 	cd tools/releasenotes && go test -race -timeout=5m ./...
 	cd tools/stabilitycheck && go test -race -timeout=5m ./...
-	./scripts/run-go-test-race-shards.sh tools/transportcheck auto 5m auto race 1
 
 go-vet:
 	cd flowersec-go && go vet ./...
 	cd tools/idlgen && go vet ./...
 	cd tools/releasenotes && go vet ./...
 	cd tools/stabilitycheck && go vet ./...
-	cd tools/transportcheck && go vet ./...
-
-transport-runner-config:
-	cd tools/transportcheck && go run . runner-config -repo "$(CURDIR)" -output "$(TRANSPORT_RUNNER_CONFIG)"
-
-transportcheck-focused-tail:
-	@test -n "$(TRANSPORT_FOCUSED_TAIL_SHA)" || (echo "TRANSPORT_FOCUSED_TAIL_SHA must be set to the exact clean source SHA" >&2; exit 2)
-	cd tools/transportcheck && go run . focused-tail \
-		-repo "$(CURDIR)" \
-		-sha "$(TRANSPORT_FOCUSED_TAIL_SHA)" \
-		-cell "$(TRANSPORT_FOCUSED_TAIL_CELL)" \
-		-start-shard "$(TRANSPORT_FOCUSED_TAIL_START_SHARD)" \
-		-state "$(TRANSPORT_FOCUSED_TAIL_STATE)" \
-		-receipt-dir "$(TRANSPORT_FOCUSED_TAIL_RECEIPTS)" \
-		-runner-config "$(TRANSPORT_FOCUSED_TAIL_RUNNER_CONFIG)"
 
 go-vulncheck:
 	node scripts/check-go-security.mjs
 
 ts-test:
-	cd flowersec-ts && \
-		YAMUX_INTEROP=$(YAMUX_INTEROP) \
-		YAMUX_INTEROP_STRESS=$(YAMUX_INTEROP_STRESS) \
-		YAMUX_INTEROP_CLIENT_RST=$(YAMUX_INTEROP_CLIENT_RST) \
-		YAMUX_INTEROP_DEBUG=$(YAMUX_INTEROP_DEBUG) \
-		npm test
-	node --test flowersec-ts/scripts/browser-release-collector-core.node-test.mjs
+	cd flowersec-ts && npm test
+	node --test flowersec-ts/scripts/browser-acceptance-core.node-test.mjs
 
 ts-test-short: ts-ensure-deps
-	cd flowersec-ts && npx vitest run --exclude 'src/**/*.integration.test.ts' --exclude 'src/v2/session_go_interop.test.ts' --exclude 'src/v2/browserBundle.test.ts'
-	node --test flowersec-ts/scripts/browser-release-collector-core.node-test.mjs
+	cd flowersec-ts && npx vitest run --exclude 'src/**/*.integration.test.ts' --exclude 'src/v2/browserBundle.test.ts'
+	node --test flowersec-ts/scripts/browser-acceptance-core.node-test.mjs
 
 ts-browser-ensure:
 	cd flowersec-ts && npm run ensure:browser
@@ -267,7 +243,7 @@ rust-release-check: rust-check rust-audit rust-deny rust-cover-check rust-semver
 rust-final-check: rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-cover-check rust-fuzz-build rust-semver-check
 
 release-check:
-	node scripts/main-gate-receipt.mjs verify --head "$$(git rev-parse HEAD)" --remote-main "$$(git rev-parse origin/main)" --evidence-report "$(TRANSPORT_V2_EVIDENCE_REPORT)" --evidence-base "$(TRANSPORT_V2_BASE_SHA)"
+	node scripts/check-release-version-consistency.mjs
 
 example-source-check:
 	node --test scripts/sdk-examples.test.mjs
@@ -306,13 +282,13 @@ release-version-check:
 	node scripts/check-release-version-consistency.mjs
 
 release-test:
-	node --test scripts/check-release-version-consistency.test.mjs scripts/release.test.mjs scripts/transport-v2-runner.test.mjs
+	node --test scripts/check-release-version-consistency.test.mjs scripts/release.test.mjs
 
 security-makefile-check:
 	node scripts/check-security-makefile.mjs Makefile
 
 security-dependency-check:
-	node --test scripts/security-dependencies.test.mjs scripts/go-security.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/prepare-ts-package-cache.test.mjs scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs scripts/run-precommit-wave.test.mjs
+	node --test scripts/security-dependencies.test.mjs scripts/go-security.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/prepare-ts-package-cache.test.mjs scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs scripts/run-precommit-wave.test.mjs scripts/test-architecture-contract.mjs
 	node scripts/generate-source-inventory.mjs --check
 
 security-package-check: ts-build
@@ -347,6 +323,9 @@ precommit-rust:
 	$(MAKE) rust-test-short
 
 precommit:
+	$(MAKE) precommit-source
+
+precommit-source:
 	node scripts/run-precommit-wave.mjs generate $(MAKE) gen-check
 	node scripts/run-precommit-wave.mjs dependencies $(MAKE) ts-ensure-deps
 	node scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check example-source-check
@@ -363,104 +342,9 @@ stability-rust-check:
 
 stability-check: stability-source-check stability-swift-check stability-rust-check
 
-transportcheck-fast:
-	cd tools/transportcheck && go test -timeout=5m -count=1 -run '^(TestCheckedInManifestAndRegistryAreValid|TestFrozenSingleTestTargetsDoNotExceedFiveMinutes|TestCheckedInRegistryOwnersHaveMakeRecipes|TestCheckedInEvidenceTrustPolicyPinsExactRunner|TestManifestRejectsInvalidFrozenContract|TestManifestDigestIsCanonicalAndTamperEvident|TestManifestAcceptsMeasuredEdgeRecoveryBudgetWithinFiveMinuteCell|TestCaseRegistryRejectsInvalidOwnership|TestStrictJSONRejectsUnknownFields|TestEvidenceMetaSchemaAndGateClassifications|TestMakeTargetsUseEvidenceClassificationGate|TestFocusedTail.*)$$' .
-
-transport-v2-unit:
-	./scripts/run-go-test-race-shards.sh tools/transportcheck 6 5m 3 normal
-	cd tools/transportcheck && go run . manifest -manifest ../../testdata/transport_v2/performance_manifest.json -registry ../../testdata/transport_v2/case_registry.json -makefile ../../Makefile
-	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-v2-unit -classification contract_only
-
-transport-conformance-smoke:
-	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-conformance-smoke -classification local_smoke
-	cd flowersec-go && go test -timeout=5m -count=1 ./internal/protocolv2 ./internal/artifactv2 ./internal/admissionv2 ./internal/session
-	cd flowersec-ts && npx vitest run src/v2
-	cd flowersec-rust && rustup run 1.88.0 cargo test --all-features --lib --test transport_v2_contract
-	swift test --filter 'TransportV2|IDNAHostV2'
-	@echo "classification=local_smoke; no signed release evidence is claimed"
-
-transport-browser-smoke:
-	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-browser-smoke -classification local_smoke
-	cd flowersec-ts && npm run build
-	cd flowersec-ts && npx vitest run src/browser/connectV2.test.ts src/browser/webTransportCarrierInternalStage.test.ts src/v2/browserBundle.test.ts
-	cd flowersec-ts && npx playwright test --project=chromium
-	@echo "classification=local_smoke; Chromium WebTransport interoperability evidence is not claimed"
-
-transport-interop-smoke:
-	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-interop-smoke -classification local_smoke
-	cd flowersec-ts && npx vitest run src/v2/session_go_interop.test.ts
-	cd flowersec-rust && rustup run 1.88.0 cargo test --all-features --lib rust_and_go_run_full_session_v2_over_raw_quic_direct_and_tunnel
-	@echo "classification=local_smoke; the full cross-language release matrix is not claimed"
-
-WEAKNET_SMOKE_REPORT ?= /tmp/flowersec-weaknet-smoke.json
-WEAKNET_SMOKE_REPORT_ABS = $(abspath $(WEAKNET_SMOKE_REPORT))
-
-weaknet-smoke:
-	cd flowersec-go && FLOWERSEC_RUN_WEAKNET_SMOKE=1 WEAKNET_SMOKE_REPORT="$(WEAKNET_SMOKE_REPORT_ABS)" go test -timeout=5m -count=1 -run '^TestWeaknetSmoke$$' ./internal/weaknetsmoke
-	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target weaknet-smoke -classification local_smoke -report "$(WEAKNET_SMOKE_REPORT_ABS)"
-
-quic-native-smoke:
-	@if [ "$(QUIC_NATIVE_REQUIRE_SIGNED_EVIDENCE)" = "1" ]; then \
-		echo "signed qlog-backed native QUIC evidence is unavailable; local_smoke cannot satisfy NS-N1/NS-N2"; \
-		exit 1; \
-	fi
-	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target quic-native-smoke -classification local_smoke
-	cd flowersec-go && go test -timeout=5m -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesExclusivelyToNewPacketConn)$$' ./internal/carrier/rawquic
-	cd flowersec-go && go test -timeout=5m -count=1 -run '^TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers$$' ./internal/tunnelv2
-	@echo "classification=local_smoke; qlog/system performance evidence is not claimed"
-
-quic-native-race-smoke:
-	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target quic-native-race-smoke -classification local_smoke
-	cd flowersec-go && go test -race -timeout=5m -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesExclusivelyToNewPacketConn)$$' ./internal/carrier/rawquic
-	cd flowersec-go && go test -race -timeout=5m -count=1 -run '^TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers$$' ./internal/tunnelv2
-	@echo "classification=local_smoke; qlog-backed race evidence is not claimed"
-
-TRANSPORT_V2_EVIDENCE_REPORT ?=
-TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT ?=
-TRANSPORT_V2_BASE_SHA ?=
-TRANSPORT_V2_RELEASE_RUNNER ?=
-override TRANSPORT_V2_TRUST_STORE := $(CURDIR)/testdata/transport_v2/evidence_trust_store.json
-override TRANSPORT_V2_TRUST_POLICY := $(CURDIR)/testdata/transport_v2/evidence_trust_policy.json
-
-define run_transport_v2_release_target
-	@if [ -z "$(TRANSPORT_V2_RELEASE_RUNNER)" ] || [ -z "$(TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT)" ] || [ -z "$(TRANSPORT_V2_BASE_SHA)" ]; then \
-		echo "$@: requires TRANSPORT_V2_RELEASE_RUNNER, TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT, and TRANSPORT_V2_BASE_SHA" >&2; \
-		exit 2; \
-	fi
-	@if [ ! -x "$(TRANSPORT_V2_RELEASE_RUNNER)" ]; then \
-		echo "$@: release runner is not executable: $(TRANSPORT_V2_RELEASE_RUNNER)" >&2; \
-		exit 2; \
-	fi
-	"$(TRANSPORT_V2_RELEASE_RUNNER)" --target "$@" --report "$(TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT)"
-endef
-
-transport-conformance-full weaknet-full weaknet-system quic-native-proof quic-native-race bench-transport-capacity bench-transport-soak bench-transport-ab:
-	$(run_transport_v2_release_target)
-
-transport-v2-release-collect-conformance-smoke:
-	@if [ -z "$(TRANSPORT_V2_RELEASE_RUNNER)" ] || [ -z "$(TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT)" ] || [ -z "$(TRANSPORT_V2_BASE_SHA)" ]; then \
-		echo "$@: requires TRANSPORT_V2_RELEASE_RUNNER, TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT, and TRANSPORT_V2_BASE_SHA" >&2; \
-		exit 2; \
-	fi
-	@if [ ! -x "$(TRANSPORT_V2_RELEASE_RUNNER)" ]; then \
-		echo "$@: release runner is not executable: $(TRANSPORT_V2_RELEASE_RUNNER)" >&2; \
-		exit 2; \
-	fi
-	"$(TRANSPORT_V2_RELEASE_RUNNER)" --target "transport-conformance-smoke" --report "$(TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT)"
-
-transport-v2-release-evidence:
-	@if [ -z "$(TRANSPORT_V2_RELEASE_RUNNER)" ] || [ -z "$(TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT)" ] || [ -z "$(TRANSPORT_V2_BASE_SHA)" ]; then \
-		echo "$@: requires TRANSPORT_V2_RELEASE_RUNNER, TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT, and TRANSPORT_V2_BASE_SHA" >&2; \
-		exit 2; \
-	fi
-	@if [ ! -x "$(TRANSPORT_V2_RELEASE_RUNNER)" ]; then \
-		echo "$@: release runner is not executable: $(TRANSPORT_V2_RELEASE_RUNNER)" >&2; \
-		exit 2; \
-	fi
-	"$(TRANSPORT_V2_RELEASE_RUNNER)" --target all --report "$(TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT)"
-
-transport-v2-signed-evidence-check:
-	./scripts/check-transport-v2-evidence.sh "$(TRANSPORT_V2_EVIDENCE_REPORT)" "$(TRANSPORT_V2_BASE_SHA)"
+flowersec-test-contract:
+	cd flowersec-go && go test -timeout=5m ./internal/cmd/flowersec-test ./internal/transporttest/acceptance ./internal/transporttest/linuxnetlab
+	cd flowersec-go && go test -timeout=5m -run '^(TestCapacityCoordinatorConfigHoldsExactReleaseSessionCount|TestStreamCapacityWebSocketResourcesCoverAllPhysicalStreams|TestStreamCapacityUsesTightBridgeCopyBufferOnly)$$' ./internal/transporttest/tunnelworkload
 
 go-cover-check-short:
 	cd tools/stabilitycheck && go run . verify-go-coverage-short
@@ -468,15 +352,12 @@ go-cover-check-short:
 go-cover-check:
 	cd tools/stabilitycheck && go run . verify-go-coverage
 
-compat-check:
-	$(MAKE) transport-conformance-smoke
-
 nightly-check:
 	$(MAKE) ts-ci
 	$(MAKE) stability-check
 	$(MAKE) rust-release-check
 	$(MAKE) rust-fuzz-check
-	@if [ "$(CHECK_INTEROP)" = "1" ]; then $(MAKE) transport-interop-smoke; fi
+	$(MAKE) diagnostic
 
 check: security-makefile-check
 	$(MAKE) release-policy-check
@@ -523,15 +404,13 @@ final-package-validation:
 final-integration-lanes:
 	CARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check
 	CARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check final-rust-check
+	node scripts/run-final-stage.mjs 595 browser $(MAKE) browser-smoke
 
 final-post-validation:
 	$(MAKE) example-check
-	@if [ "$(CHECK_INTEROP)" = "1" ]; then $(MAKE) transport-interop-smoke; fi
 
 final-go-check:
-	$(MAKE) transport-v2-unit
-	$(MAKE) weaknet-smoke
-	$(MAKE) quic-native-smoke
+	$(MAKE) flowersec-test-contract
 	$(MAKE) go-vet
 	$(MAKE) go-test
 	$(MAKE) go-cover-check

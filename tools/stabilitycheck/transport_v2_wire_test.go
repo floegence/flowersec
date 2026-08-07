@@ -19,8 +19,8 @@ func TestTransportV2WireFixtureRegistryIsRequired(t *testing.T) {
 	if contract.Docs.Wire != "docs/TRANSPORT_V2_WIRE.md" {
 		t.Fatalf("transport v2 wire document = %q", contract.Docs.Wire)
 	}
-	if len(contract.WireFixtures) != 9 {
-		t.Fatalf("transport v2 normative wire fixture count = %d, want 9", len(contract.WireFixtures))
+	if len(contract.WireFixtures) != len(transportV2WireFixtureExpectations) {
+		t.Fatalf("transport v2 normative wire fixture count = %d, want %d", len(contract.WireFixtures), len(transportV2WireFixtureExpectations))
 	}
 	foundDatagram := false
 	for _, fixture := range contract.WireFixtures {
@@ -77,10 +77,20 @@ func TestTransportV2WireFixtureRegistryRejectsFalseApplicability(t *testing.T) {
 		{
 			name: "unsupported runtime claims codec",
 			mutate: func(copy *transportV2Contract) {
-				consumer := &copy.WireFixtures[0].Consumers[3]
-				consumer.Applicability = "required"
-				consumer.Source = "flowersec-rust/tests/raw_quic_v2.rs"
-				consumer.UnsupportedReason = ""
+				for fixtureIndex := range copy.WireFixtures {
+					if copy.WireFixtures[fixtureIndex].ID != "datagram" {
+						continue
+					}
+					for consumerIndex := range copy.WireFixtures[fixtureIndex].Consumers {
+						consumer := &copy.WireFixtures[fixtureIndex].Consumers[consumerIndex]
+						if consumer.Runtime == "swift_ios" {
+							consumer.Applicability = "required"
+							consumer.Source = "flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift"
+							consumer.UnsupportedReason = ""
+							return
+						}
+					}
+				}
 			},
 			wantErr: "must use unsupported reason",
 		},

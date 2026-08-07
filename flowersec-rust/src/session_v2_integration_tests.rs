@@ -365,6 +365,10 @@ impl CarrierSessionV2 for GatedUnreliableCarrierSession {
     async fn close(&self) -> io::Result<()> {
         self.inner.close().await
     }
+
+    fn abort(&self) {
+        self.inner.abort();
+    }
 }
 
 #[async_trait::async_trait]
@@ -389,6 +393,10 @@ impl CarrierSessionV2 for CapacityReportingCarrierSession {
     async fn close(&self) -> io::Result<()> {
         self.inner.close().await
     }
+
+    fn abort(&self) {
+        self.inner.abort();
+    }
 }
 
 #[async_trait::async_trait]
@@ -411,6 +419,10 @@ impl CarrierSessionV2 for FailingNthOpenCarrierSession {
     }
     async fn close(&self) -> io::Result<()> {
         self.inner.close().await
+    }
+
+    fn abort(&self) {
+        self.inner.abort();
     }
 }
 
@@ -497,6 +509,10 @@ impl CarrierSessionV2 for ControlFlushOrderCarrierSession {
         );
         self.inner.close().await
     }
+
+    fn abort(&self) {
+        self.inner.abort();
+    }
 }
 
 #[async_trait::async_trait]
@@ -515,6 +531,10 @@ impl CarrierStreamV2 for ControlFlushOrderCarrierStream {
             Ordering::Release,
         );
         self.inner.close_write().await
+    }
+
+    async fn stop_sending(&self) -> io::Result<()> {
+        self.inner.stop_sending().await
     }
 
     async fn reset(&self) -> io::Result<()> {
@@ -559,6 +579,10 @@ impl CarrierSessionV2 for BlockingApplicationReadCarrierSession {
     async fn close(&self) -> io::Result<()> {
         self.inner.close().await
     }
+
+    fn abort(&self) {
+        self.inner.abort();
+    }
 }
 
 #[async_trait::async_trait]
@@ -582,6 +606,10 @@ impl CarrierStreamV2 for BlockingApplicationReadCarrierStream {
 
     async fn close_write(&self) -> io::Result<()> {
         self.inner.close_write().await
+    }
+
+    async fn stop_sending(&self) -> io::Result<()> {
+        self.inner.stop_sending().await
     }
 
     async fn reset(&self) -> io::Result<()> {
@@ -624,6 +652,10 @@ impl CarrierSessionV2 for BlockingNthWriteCarrierSession {
     async fn close(&self) -> io::Result<()> {
         self.inner.close().await
     }
+
+    fn abort(&self) {
+        self.inner.abort();
+    }
 }
 
 #[async_trait::async_trait]
@@ -643,6 +675,9 @@ impl CarrierStreamV2 for BlockingNthWriteCarrierStream {
     }
     async fn close_write(&self) -> io::Result<()> {
         self.inner.close_write().await
+    }
+    async fn stop_sending(&self) -> io::Result<()> {
+        self.inner.stop_sending().await
     }
     async fn reset(&self) -> io::Result<()> {
         self.inner.reset().await
@@ -679,6 +714,10 @@ impl CarrierSessionV2 for GatedCarrierSession {
     async fn close(&self) -> io::Result<()> {
         self.inner.close().await
     }
+
+    fn abort(&self) {
+        self.inner.abort();
+    }
 }
 
 #[async_trait::async_trait]
@@ -695,6 +734,9 @@ impl CarrierStreamV2 for GatedCarrierStream {
     }
     async fn close_write(&self) -> io::Result<()> {
         self.inner.close_write().await
+    }
+    async fn stop_sending(&self) -> io::Result<()> {
+        self.inner.stop_sending().await
     }
     async fn reset(&self) -> io::Result<()> {
         self.inner.reset().await
@@ -1768,9 +1810,9 @@ async fn signed_idle_timeout_is_refreshed_by_protocol_activity() {
 }
 
 #[derive(Debug)]
-struct CloseObservingCarrierSession {
+struct TerminationObservingCarrierSession {
     inner: Arc<dyn CarrierSessionV2>,
-    closes: Arc<AtomicU64>,
+    terminations: Arc<AtomicU64>,
 }
 
 #[derive(Debug)]
@@ -1811,10 +1853,14 @@ impl CarrierSessionV2 for HangingCloseCarrierSession {
         let _guard = ActiveCloseGuard(self.active_closes.clone());
         std::future::pending().await
     }
+
+    fn abort(&self) {
+        self.inner.abort();
+    }
 }
 
 #[async_trait::async_trait]
-impl CarrierSessionV2 for CloseObservingCarrierSession {
+impl CarrierSessionV2 for TerminationObservingCarrierSession {
     fn kind(&self) -> CarrierKind {
         self.inner.kind()
     }
@@ -1832,8 +1878,13 @@ impl CarrierSessionV2 for CloseObservingCarrierSession {
     }
 
     async fn close(&self) -> io::Result<()> {
-        self.closes.fetch_add(1, Ordering::AcqRel);
+        self.terminations.fetch_add(1, Ordering::AcqRel);
         self.inner.close().await
+    }
+
+    fn abort(&self) {
+        self.terminations.fetch_add(1, Ordering::AcqRel);
+        self.inner.abort();
     }
 }
 
@@ -1895,10 +1946,10 @@ async fn direct_and_tunnel_endpoint_identity_shapes_fail_before_carrier_io() {
 async fn protocol_failure_closes_carrier_and_wakes_blocked_accept() {
     let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
     let injected_client_carrier = client_inner.clone();
-    let closes = Arc::new(AtomicU64::new(0));
-    let client_carrier: Arc<dyn CarrierSessionV2> = Arc::new(CloseObservingCarrierSession {
+    let terminations = Arc::new(AtomicU64::new(0));
+    let client_carrier: Arc<dyn CarrierSessionV2> = Arc::new(TerminationObservingCarrierSession {
         inner: client_inner,
-        closes: closes.clone(),
+        terminations: terminations.clone(),
     });
     let (client, server) = tokio::join!(
         establish_session_v2(
@@ -1928,12 +1979,12 @@ async fn protocol_failure_closes_carrier_and_wakes_blocked_accept() {
         .expect_err("accept after failure must fail");
     assert_eq!(error, SessionError::Closed);
     tokio::time::timeout(Duration::from_millis(250), async {
-        while closes.load(Ordering::Acquire) == 0 {
+        while terminations.load(Ordering::Acquire) == 0 {
             tokio::task::yield_now().await;
         }
     })
     .await
-    .expect("protocol failure did not close the local carrier");
+    .expect("protocol failure did not terminate the local carrier");
     let first_cause = client.wait_termination().await.error;
     let repeated_cause = client.wait_termination().await.error;
     assert_eq!(first_cause, SessionError::Closed);

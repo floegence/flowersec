@@ -254,8 +254,8 @@ func TestConnectorRejectsInvalidCarrierNeutralOptions(t *testing.T) {
 		if !errors.Is(err, flowersec.ErrInvalidConnectorOptions) {
 			t.Fatalf("Connect error = %v, want errors.Is ErrInvalidConnectorOptions", err)
 		}
-		if got := flowersec.ClassifyConnectError(connectErr).Action; got != flowersec.RetryActionStop {
-			t.Fatalf("classification = %q, want stop", got)
+		if got := connectErr.RetryDisposition().Kind; got != flowersec.RetryDispositionTerminal {
+			t.Fatalf("retry disposition = %q, want terminal", got)
 		}
 	}
 	if _, err := flowersec.Connect(context.Background(), flowersec.ArtifactLease{}, flowersec.ConnectorOptions{
@@ -267,8 +267,8 @@ func TestConnectorRejectsInvalidCarrierNeutralOptions(t *testing.T) {
 		if !errors.As(err, &connectErr) || connectErr.Code() != flowersec.ConnectInvalidInput {
 			t.Fatalf("Connect zero lease error = %#v, want ConnectInvalidInput", err)
 		}
-		if got := flowersec.ClassifyConnectError(connectErr).Action; got != flowersec.RetryActionStop {
-			t.Fatalf("zero lease classification = %q, want stop", got)
+		if got := connectErr.RetryDisposition().Kind; got != flowersec.RetryDispositionTerminal {
+			t.Fatalf("zero lease retry disposition = %q, want terminal", got)
 		}
 	}
 	for _, origin := range []string{

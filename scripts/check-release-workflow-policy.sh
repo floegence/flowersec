@@ -19,7 +19,7 @@ fi
 
 version_checker=scripts/check-release-version-consistency.mjs
 
-for required in Makefile .github/dependabot.yml "$release_workflow" "$rust_workflow" "$ci_workflow" "$codeql_workflow" scripts/release.sh scripts/push-main.sh scripts/main-gate-receipt.mjs "$version_checker" scripts/release.test.mjs scripts/check-release-version-consistency.test.mjs scripts/check-container-release-policy.mjs scripts/check-release-workflows.rb scripts/check-security-makefile.mjs scripts/run-final-stage.mjs scripts/run-final-stage.test.mjs scripts/run-precommit-wave.mjs scripts/run-precommit-wave.test.mjs scripts/check-transport-v2-evidence.sh .githooks/pre-push; do
+for required in Makefile .github/dependabot.yml "$release_workflow" "$rust_workflow" "$ci_workflow" "$codeql_workflow" scripts/release.sh scripts/push-main.sh "$version_checker" scripts/release.test.mjs scripts/check-release-version-consistency.test.mjs scripts/check-container-release-policy.mjs scripts/check-release-workflows.rb scripts/check-security-makefile.mjs scripts/run-final-stage.mjs scripts/run-final-stage.test.mjs scripts/run-precommit-wave.mjs scripts/run-precommit-wave.test.mjs .githooks/pre-push; do
   if [[ ! -f "$required" ]]; then
     echo "missing release policy file: $required" >&2
     exit 1
@@ -32,8 +32,8 @@ if ! grep -Eq '^node scripts/check-release-version-consistency\.mjs "\$version"$
   echo "the release script must validate all maintained version facts" >&2
   exit 1
 fi
-if ! grep -Fxq 'env -u MAKE -u MAKE_COMMAND -u MAKEFLAGS -u GNUMAKEFLAGS -u MFLAGS -u MAKEFILES -u MAKEFILE_LIST -u MAKEOVERRIDES -u MAKELEVEL -u MAKE_RESTARTS -u MAKECMDGOALS -u TRANSPORT_V2_RELEASE_RUNNER -u TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT TRANSPORT_V2_EVIDENCE_REPORT="$evidence_report" TRANSPORT_V2_BASE_SHA="$evidence_base_sha" make release-check' scripts/release.sh; then
-  echo "the release script must isolate release-check from inherited make controls" >&2
+if grep -Eq '(^|[[:space:]])make([[:space:]]|$)|main-gate-receipt|TRANSPORT_V2_EVIDENCE|TRANSPORT_V2_BASE_SHA' scripts/release.sh; then
+  echo "the release script must not run tests or consume test outputs or prior gate state" >&2
   exit 1
 fi
 ruby -W0 scripts/check-release-workflows.rb >/dev/null

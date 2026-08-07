@@ -86,9 +86,7 @@ describe("WebSocketBinaryTransport", () => {
 
   test("fails fast when queued bytes exceed limit", async () => {
     const ws = new FakeWebSocket();
-    const onWsError = vi.fn();
-    const onWsClose = vi.fn();
-    const transport = new WebSocketBinaryTransport(ws, { webSocketLimits: { maxInboundQueuedBytes: 4 }, observer: { onWsClose, onWsError } });
+    const transport = new WebSocketBinaryTransport(ws, { webSocketLimits: { maxInboundQueuedBytes: 4 } });
 
     ws.emit("message", { data: new Uint8Array([1, 2, 3]).buffer });
     ws.emit("message", { data: new Uint8Array([4, 5]).buffer });
@@ -96,8 +94,6 @@ describe("WebSocketBinaryTransport", () => {
     await waitForClosed(ws);
     expect(ws.closed).toBe(true);
     await expect(transport.readBinary()).rejects.toThrow(/ws recv buffer exceeded/);
-    expect(onWsError).toHaveBeenCalledWith("recv_buffer_exceeded");
-    expect(onWsClose).toHaveBeenCalledWith("local", undefined);
   });
 
   test("supports array buffer views", async () => {
@@ -112,14 +108,12 @@ describe("WebSocketBinaryTransport", () => {
 
   test("rejects text frames", async () => {
     const ws = new FakeWebSocket();
-    const onWsError = vi.fn();
-    const transport = new WebSocketBinaryTransport(ws, { observer: { onWsError } });
+    const transport = new WebSocketBinaryTransport(ws);
 
     const read = transport.readBinary();
     ws.emit("message", { data: "text" });
 
     await expect(read).rejects.toThrow(/unexpected text frame/);
-    expect(onWsError).toHaveBeenCalledWith("unexpected_text_frame");
   });
 
   testWithBlob("preserves message order across async blob decoding", async () => {
@@ -140,52 +134,44 @@ describe("WebSocketBinaryTransport", () => {
 
   test("readBinary rejects on websocket error event", async () => {
     const ws = new FakeWebSocket();
-    const onWsError = vi.fn();
-    const transport = new WebSocketBinaryTransport(ws, { observer: { onWsError } });
+    const transport = new WebSocketBinaryTransport(ws);
 
     const read = transport.readBinary();
     ws.emit("error", {});
 
     await expect(read).rejects.toThrow(/websocket error/);
-    expect(onWsError).toHaveBeenCalledWith("error");
   });
 
   test("readBinary rejects on websocket close event", async () => {
     const ws = new FakeWebSocket();
-    const onWsClose = vi.fn();
-    const transport = new WebSocketBinaryTransport(ws, { observer: { onWsClose } });
+    const transport = new WebSocketBinaryTransport(ws);
 
     const read = transport.readBinary();
     ws.emit("close", { code: 1008, reason: "invalid_token" });
 
     await expect(read).rejects.toBeInstanceOf(WsCloseError);
     await expect(read).rejects.toMatchObject({ code: 1008, reason: "invalid_token" });
-    expect(onWsClose).toHaveBeenCalledWith("peer_or_error", 1008);
   });
 
   test("close rejects pending readers", async () => {
     const ws = new FakeWebSocket();
-    const onWsClose = vi.fn();
-    const transport = new WebSocketBinaryTransport(ws, { observer: { onWsClose } });
+    const transport = new WebSocketBinaryTransport(ws);
 
     const read = transport.readBinary();
     transport.close();
 
     await expect(read).rejects.toThrow(/websocket closed/);
     expect(ws.closed).toBe(true);
-    expect(onWsClose).toHaveBeenCalledWith("local", undefined);
   });
 
   test("rejects unexpected message types", async () => {
     const ws = new FakeWebSocket();
-    const onWsError = vi.fn();
-    const transport = new WebSocketBinaryTransport(ws, { observer: { onWsError } });
+    const transport = new WebSocketBinaryTransport(ws);
 
     const read = transport.readBinary();
     ws.emit("message", { data: 123 });
 
     await expect(read).rejects.toThrow(/unexpected message type/);
-    expect(onWsError).toHaveBeenCalledWith("unexpected_message_type");
   });
 
   testWithBlob("messageChain propagates blob decode errors", async () => {
@@ -196,14 +182,12 @@ describe("WebSocketBinaryTransport", () => {
     }
 
     const ws = new FakeWebSocket();
-    const onWsError = vi.fn();
-    const transport = new WebSocketBinaryTransport(ws, { observer: { onWsError } });
+    const transport = new WebSocketBinaryTransport(ws);
 
     const read = transport.readBinary();
     ws.emit("message", { data: new BadBlob([new Uint8Array([1])]) });
 
     await expect(read).rejects.toThrow(/boom/);
-    expect(onWsError).toHaveBeenCalledWith("error");
   });
 
   test("maxInboundQueuedBytes allows exact limit then fails on overflow", async () => {
@@ -249,8 +233,7 @@ describe("WebSocketBinaryTransport", () => {
     try {
       const ws = new FakeWebSocket();
       ws.bufferedAmount = 5;
-      const onDiagnosticEvent = vi.fn();
-      const transport = new WebSocketBinaryTransport(ws, { observer: { onDiagnosticEvent }, webSocketLimits: {
+      const transport = new WebSocketBinaryTransport(ws, { webSocketLimits: {
         outboundLowWatermarkBytes: 1,
         outboundHighWatermarkBytes: 4,
         outboundHardLimitBytes: 10,
@@ -261,11 +244,6 @@ describe("WebSocketBinaryTransport", () => {
       await vi.advanceTimersByTimeAsync(30);
       await expected;
       expect(ws.closed).toBe(true);
-      expect(onDiagnosticEvent).toHaveBeenCalledWith(expect.objectContaining({
-        code_domain: "event",
-        code: "queue_pressure",
-        stage: "transport",
-      }));
     } finally { vi.useRealTimers(); }
   });
 

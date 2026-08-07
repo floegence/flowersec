@@ -181,6 +181,13 @@ final class ConnectorV2Tests: XCTestCase {
     let server = WebSocketCarrierSessionV2(
       transport: pair.server, path: .direct, client: false, inboundCapacity: 3)
 
+    await XCTAssertThrowsErrorAsync(try await client.sendDatagram(Data())) {
+      XCTAssertEqual($0 as? TransportV2CarrierError, .datagramsUnavailable)
+    }
+    await XCTAssertThrowsErrorAsync(try await client.receiveDatagram(maxBytes: 1)) {
+      XCTAssertEqual($0 as? TransportV2CarrierError, .datagramsUnavailable)
+    }
+
     let outbound = try await client.openStream()
     let inbound = try await server.acceptStream()
     let written = try await outbound.write(Data("hello".utf8))
@@ -189,6 +196,9 @@ final class ConnectorV2Tests: XCTestCase {
     XCTAssertEqual(written, 5)
     XCTAssertEqual(first, Data("he".utf8))
     XCTAssertEqual(second, Data("llo".utf8))
+    await XCTAssertThrowsErrorAsync(try await outbound.stopSending(code: 6)) {
+      XCTAssertEqual($0 as? TransportV2CarrierError, .stopSendingUnsupported)
+    }
     try await outbound.closeWrite()
     let eof = try await inbound.read(maxBytes: 1)
     XCTAssertNil(eof)
@@ -200,6 +210,20 @@ final class ConnectorV2Tests: XCTestCase {
     XCTAssertEqual(reverseWritten, 2)
     XCTAssertEqual(reverseRead, Data("ok".utf8))
     await client.close(code: 0, reason: "done")
+    await server.close(code: 0, reason: "done")
+  }
+
+  func testWebSocketCarrierAbortSynchronouslyRejectsLateStreams() async throws {
+    let pair = ConnectorBinaryPair()
+    let client = WebSocketCarrierSessionV2(
+      transport: pair.client, path: .direct, client: true, inboundCapacity: 1)
+    let server = WebSocketCarrierSessionV2(
+      transport: pair.server, path: .direct, client: false, inboundCapacity: 1)
+
+    client.abort(code: 6, reason: "test abort")
+    await XCTAssertThrowsErrorAsync(try await client.openStream()) {
+      XCTAssertEqual($0 as? TransportV2CarrierError, .closed)
+    }
     await server.close(code: 0, reason: "done")
   }
 
@@ -220,14 +244,10 @@ final class ConnectorV2Tests: XCTestCase {
     let artifact = try loadArtifact()
     let events = ConnectorEventRecorder()
     let lease = ArtifactLease(artifact: artifact) { await events.append("spend") }
-    let transport = ConnectorAdmissionTransport(events: events)
-    let connector = try ConnectionAttempt(
+    let connector = try SessionConnectorV2(
       lease: lease,
       options: ConnectorOptions(),
-      dial: { _, _, _ in
-        await events.append("dial")
-        return transport
-      }
+      runtime: ConnectorAdmissionRuntime(events: events)
     )
 
     do {
@@ -311,6 +331,20 @@ private actor ConnectorBinaryQueue {
 }
 
 private enum ConnectorQueueError: Error { case closed, invalid }
+
+private func XCTAssertThrowsErrorAsync<T>(
+  _ expression: @autoclosure () async throws -> T,
+  _ errorHandler: (any Error) -> Void = { _ in },
+  file: StaticString = #filePath,
+  line: UInt = #line
+) async {
+  do {
+    _ = try await expression()
+    XCTFail("Expected expression to throw", file: file, line: line)
+  } catch {
+    errorHandler(error)
+  }
+}
 
 private func decodeTest32(_ value: String) throws -> Data {
   var text = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
@@ -524,22 +558,44 @@ private actor ConnectorEventRecorder {
   func values() -> [String] { events }
 }
 
-private actor ConnectorAdmissionTransport: FlowersecBinaryTransport {
+private struct ConnectorAdmissionRuntime: RuntimeCarrierAdapterV2 {
+  let capabilities = RuntimeCapabilitiesV2.macOS
+  let events: ConnectorEventRecorder
+
+  func validate(options: ConnectorOptions) throws {}
+
+  func prepare(
+    candidate: CanonicalCandidateV2,
+    path: PathKind,
+    role: SessionRoleV2,
+    options: ConnectorOptions
+  ) async throws -> any PreparedCarrierConnectionV2 {
+    await events.append("dial")
+    return ConnectorAdmissionConnection(events: events)
+  }
+}
+
+private actor ConnectorAdmissionConnection: PreparedCarrierConnectionV2 {
+  nonisolated let carrier = CarrierKind.webSocket
   private let events: ConnectorEventRecorder
 
   init(events: ConnectorEventRecorder) { self.events = events }
 
-  func writeBinary(_ data: Data) async throws {
+  func writeAdmission(_ data: Data) async throws {
     XCTAssertEqual(data.prefix(4), Data("FSB2".utf8))
     await events.append("write")
   }
 
-  func readBinary() async throws -> Data {
+  func readAdmission() async throws -> Data {
     await events.append("read")
     var response = Data("FSA2".utf8)
     response.append(contentsOf: [2, 1, 0, 8])
     response.append(Data("capacity".utf8))
     return response
+  }
+
+  func makeCarrier(inboundCapacity: UInt16) async throws -> any TransportV2CarrierSession {
+    throw ConnectorQueueError.invalid
   }
 
   func close() async { await events.append("close") }

@@ -112,7 +112,7 @@ describe("transport v2 FSC2/FSH2 shared handshake vectors", () => {
     const control = encodeControlPrefaceV2();
     for (const offset of [0, 4, 5, 15]) {
       const changed = control.slice();
-      changed[offset] ^= 1;
+      changed[offset] = (changed[offset] ?? 0) ^ 1;
       expect(() => parseControlPrefaceV2(changed)).toThrow();
     }
 

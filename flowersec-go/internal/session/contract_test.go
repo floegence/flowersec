@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/runtimev2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 )
 
@@ -66,24 +67,24 @@ func TestSessionV2ContractIsCarrierNeutral(t *testing.T) {
 }
 
 func TestGoCapabilityDescriptorUsesExactTuples(t *testing.T) {
-	descriptor := session.GoCapabilities()
+	descriptor := runtimev2.GoCapabilities()
 	if err := descriptor.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 
-	want := []session.CapabilityTuple{
-		{Carrier: carrier.KindWebSocket, NetworkMode: session.NetworkDial, SessionRole: session.RoleClient, Path: session.PathDirect},
-		{Carrier: carrier.KindWebSocket, NetworkMode: session.NetworkListen, SessionRole: session.RoleServer, Path: session.PathDirect},
-		{Carrier: carrier.KindWebSocket, NetworkMode: session.NetworkDial, SessionRole: session.RoleClient, Path: session.PathTunnel},
-		{Carrier: carrier.KindWebSocket, NetworkMode: session.NetworkDial, SessionRole: session.RoleServer, Path: session.PathTunnel},
-		{Carrier: carrier.KindQUIC, NetworkMode: session.NetworkDial, SessionRole: session.RoleClient, Path: session.PathDirect},
-		{Carrier: carrier.KindQUIC, NetworkMode: session.NetworkListen, SessionRole: session.RoleServer, Path: session.PathDirect},
-		{Carrier: carrier.KindQUIC, NetworkMode: session.NetworkDial, SessionRole: session.RoleClient, Path: session.PathTunnel},
-		{Carrier: carrier.KindQUIC, NetworkMode: session.NetworkDial, SessionRole: session.RoleServer, Path: session.PathTunnel},
-		{Carrier: carrier.KindWebTransport, NetworkMode: session.NetworkDial, SessionRole: session.RoleClient, Path: session.PathDirect},
-		{Carrier: carrier.KindWebTransport, NetworkMode: session.NetworkListen, SessionRole: session.RoleServer, Path: session.PathDirect},
-		{Carrier: carrier.KindWebTransport, NetworkMode: session.NetworkDial, SessionRole: session.RoleClient, Path: session.PathTunnel},
-		{Carrier: carrier.KindWebTransport, NetworkMode: session.NetworkDial, SessionRole: session.RoleServer, Path: session.PathTunnel},
+	want := []runtimev2.CapabilityTuple{
+		{Carrier: carrier.KindWebSocket, NetworkMode: runtimev2.NetworkDial, SessionRole: runtimev2.RoleClient, Path: carrier.PathDirect, ReliableStreams: true, Datagrams: false, Migration: false},
+		{Carrier: carrier.KindWebSocket, NetworkMode: runtimev2.NetworkListen, SessionRole: runtimev2.RoleServer, Path: carrier.PathDirect, ReliableStreams: true, Datagrams: false, Migration: false},
+		{Carrier: carrier.KindWebSocket, NetworkMode: runtimev2.NetworkDial, SessionRole: runtimev2.RoleClient, Path: carrier.PathTunnel, ReliableStreams: true, Datagrams: false, Migration: false},
+		{Carrier: carrier.KindWebSocket, NetworkMode: runtimev2.NetworkDial, SessionRole: runtimev2.RoleServer, Path: carrier.PathTunnel, ReliableStreams: true, Datagrams: false, Migration: false},
+		{Carrier: carrier.KindRawQUIC, NetworkMode: runtimev2.NetworkDial, SessionRole: runtimev2.RoleClient, Path: carrier.PathDirect, ReliableStreams: true, Datagrams: true, Migration: true},
+		{Carrier: carrier.KindRawQUIC, NetworkMode: runtimev2.NetworkListen, SessionRole: runtimev2.RoleServer, Path: carrier.PathDirect, ReliableStreams: true, Datagrams: true, Migration: false},
+		{Carrier: carrier.KindRawQUIC, NetworkMode: runtimev2.NetworkDial, SessionRole: runtimev2.RoleClient, Path: carrier.PathTunnel, ReliableStreams: true, Datagrams: true, Migration: true},
+		{Carrier: carrier.KindRawQUIC, NetworkMode: runtimev2.NetworkDial, SessionRole: runtimev2.RoleServer, Path: carrier.PathTunnel, ReliableStreams: true, Datagrams: true, Migration: true},
+		{Carrier: carrier.KindWebTransport, NetworkMode: runtimev2.NetworkDial, SessionRole: runtimev2.RoleClient, Path: carrier.PathDirect, ReliableStreams: true, Datagrams: true, Migration: false},
+		{Carrier: carrier.KindWebTransport, NetworkMode: runtimev2.NetworkListen, SessionRole: runtimev2.RoleServer, Path: carrier.PathDirect, ReliableStreams: true, Datagrams: true, Migration: false},
+		{Carrier: carrier.KindWebTransport, NetworkMode: runtimev2.NetworkDial, SessionRole: runtimev2.RoleClient, Path: carrier.PathTunnel, ReliableStreams: true, Datagrams: true, Migration: false},
+		{Carrier: carrier.KindWebTransport, NetworkMode: runtimev2.NetworkDial, SessionRole: runtimev2.RoleServer, Path: carrier.PathTunnel, ReliableStreams: true, Datagrams: true, Migration: false},
 	}
 	for _, tuple := range want {
 		if !descriptor.Supports(tuple) {
@@ -93,20 +94,20 @@ func TestGoCapabilityDescriptorUsesExactTuples(t *testing.T) {
 
 	invalid := descriptor
 	invalid.Tuples = append(invalid.Tuples, descriptor.Tuples[0])
-	if err := invalid.Validate(); !errors.Is(err, session.ErrDuplicateCapability) {
+	if err := invalid.Validate(); !errors.Is(err, runtimev2.ErrDuplicateCapability) {
 		t.Fatalf("duplicate error = %v, want ErrDuplicateCapability", err)
 	}
 
-	invalid = session.CapabilityDescriptor{
+	invalid = runtimev2.CapabilityDescriptor{
 		Runtime: "invalid-cross-product",
-		Tuples: []session.CapabilityTuple{{
-			Carrier:     carrier.KindQUIC,
-			NetworkMode: session.NetworkListen,
-			SessionRole: session.RoleClient,
-			Path:        session.PathDirect,
+		Tuples: []runtimev2.CapabilityTuple{{
+			Carrier:     carrier.KindRawQUIC,
+			NetworkMode: runtimev2.NetworkListen,
+			SessionRole: runtimev2.RoleClient,
+			Path:        carrier.PathDirect,
 		}},
 	}
-	if err := invalid.Validate(); !errors.Is(err, session.ErrInvalidCapability) {
+	if err := invalid.Validate(); !errors.Is(err, runtimev2.ErrInvalidCapability) {
 		t.Fatalf("cross-product error = %v, want ErrInvalidCapability", err)
 	}
 }
@@ -144,22 +145,22 @@ func TestCapabilityDescriptorMatchesSharedCanonicalVector(t *testing.T) {
 		t.Fatal("go-native capability vector is missing")
 	}
 
-	descriptor := session.GoCapabilities()
-	encoded, err := session.EncodeCapabilityDescriptor(descriptor)
+	descriptor := runtimev2.GoCapabilities()
+	encoded, err := runtimev2.EncodeCapabilityDescriptor(descriptor)
 	if err != nil {
 		t.Fatalf("EncodeCapabilityDescriptor: %v", err)
 	}
 	if string(encoded) != vector.CanonicalJSON {
 		t.Fatalf("canonical descriptor = %s, want %s", encoded, vector.CanonicalJSON)
 	}
-	digest, err := session.CapabilityDescriptorDigest(descriptor)
+	digest, err := runtimev2.CapabilityDescriptorDigest(descriptor)
 	if err != nil {
 		t.Fatalf("CapabilityDescriptorDigest: %v", err)
 	}
 	if hex.EncodeToString(digest[:]) != vector.DigestHex {
 		t.Fatalf("digest = %x, want %s", digest, vector.DigestHex)
 	}
-	decoded, err := session.DecodeCapabilityDescriptor(encoded)
+	decoded, err := runtimev2.DecodeCapabilityDescriptor(encoded)
 	if err != nil {
 		t.Fatalf("DecodeCapabilityDescriptor: %v", err)
 	}
@@ -169,17 +170,17 @@ func TestCapabilityDescriptorMatchesSharedCanonicalVector(t *testing.T) {
 }
 
 func TestCapabilityDescriptorDecoderRejectsUnknownAndNonCanonicalInput(t *testing.T) {
-	canonical, err := session.EncodeCapabilityDescriptor(session.GoCapabilities())
+	canonical, err := runtimev2.EncodeCapabilityDescriptor(runtimev2.GoCapabilities())
 	if err != nil {
 		t.Fatal(err)
 	}
 	withUnknown := append([]byte(nil), canonical[:len(canonical)-1]...)
 	withUnknown = append(withUnknown, []byte(`,"extra":true}`)...)
-	if _, err := session.DecodeCapabilityDescriptor(withUnknown); err == nil {
+	if _, err := runtimev2.DecodeCapabilityDescriptor(withUnknown); err == nil {
 		t.Fatal("descriptor with unknown field was accepted")
 	}
 	withWhitespace := append([]byte(" "), canonical...)
-	if _, err := session.DecodeCapabilityDescriptor(withWhitespace); err == nil {
+	if _, err := runtimev2.DecodeCapabilityDescriptor(withWhitespace); err == nil {
 		t.Fatal("non-canonical descriptor was accepted")
 	}
 }

@@ -11,12 +11,14 @@ use std::{
 use crate::raw_quic_v2::{
     RAW_QUIC_INITIAL_RTT, RawQuicApplicationError, RawQuicClientConfig, RawQuicLimits,
     RawQuicListener, RawQuicPathProfile, RawQuicServerConfig, RawQuicSession, RawQuicStream,
-    SessionContractV2,
 };
 use crate::{
     Acceptor, AcceptorOptions, ConnectorOptions,
+    admission_v2::{AdmissionCommitErrorV2, AdmissionCommitV2, CandidateAttemptV2},
     artifact_v2::{Artifact, ArtifactLease},
     connect,
+    connector_v2::RuntimeFailureV2,
+    native_runtime_v2::dial_resolved_raw_quic,
     protocol_v2::CipherSuiteV2,
     session_v2::{RpcHandlerV2, SessionConfigV2, establish_session_v2},
     transport_v2::{
@@ -353,6 +355,45 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
 }
 
 #[tokio::test]
+async fn native_runtime_dials_ipv4_listener_after_ipv6_first_resolution() {
+    let profile = RawQuicPathProfile::Direct;
+    let limits = session_limits(1);
+    let listener = RawQuicListener::bind(loopback_ephemeral(), server_config(profile, limits))
+        .expect("bind IPv4-only listener");
+    let ipv4 = listener.local_addr().expect("IPv4 listener address");
+    assert!(ipv4.is_ipv4());
+    let ipv6_first = SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), ipv4.port());
+    let server = tokio::spawn(async move { listener.accept().await.expect("accept IPv4 dial") });
+
+    let canceled = CancellationToken::new();
+    canceled.cancel();
+    let failure = dial_resolved_raw_quic(
+        "localhost",
+        vec![ipv6_first, ipv4],
+        client_config(profile, limits),
+        tokio::time::Instant::now() + Duration::from_secs(2),
+        canceled,
+    )
+    .await
+    .expect_err("pre-canceled address dial must not start");
+    assert_eq!(failure, RuntimeFailureV2::Canceled);
+
+    let client = dial_resolved_raw_quic(
+        "localhost",
+        vec![ipv6_first, ipv4],
+        client_config(profile, limits),
+        tokio::time::Instant::now() + Duration::from_secs(2),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("IPv4 address succeeds after IPv6 address fails");
+    let server = server.await.expect("join IPv4 listener");
+
+    client.close();
+    server.close();
+}
+
+#[tokio::test]
 async fn public_acceptor_establishes_opaque_direct_session() {
     let options = AcceptorOptions {
         bind_address: loopback_ephemeral(),
@@ -498,7 +539,7 @@ fn public_connector_artifact(
     profile: RawQuicPathProfile,
     tunnel_role: u8,
 ) -> Vec<u8> {
-    let contract = session_contract(1);
+    let contract_hash = session_contract_hash(1, 30);
     let candidate = serde_json::json!({
         "id":"q1", "carrier":"raw_quic", "url":format!("quic://localhost:{}", address.port()),
         "wire_profile":format!("flowersec-{}/2", profile_name(profile)),
@@ -518,7 +559,7 @@ fn public_connector_artifact(
     };
     serde_json::to_vec(&serde_json::json!({
         "v":2,"profile":"flowersec/2",
-        "session":{"channel_id":"channel-1","init_expire_at_unix_s":2000000000_i64,"idle_timeout_seconds":60,"establish_timeout_seconds":30,"rekey_prepare_timeout_seconds":10,"rekey_completion_timeout_seconds":30,"max_inbound_streams":1,"e2ee_psk_b64u":URL_SAFE_NO_PAD.encode([0x92;32]),"allowed_suites":[1,2],"default_suite":1,"selected_features":0,"contract_hash_b64u":URL_SAFE_NO_PAD.encode(contract.contract_hash)},
+        "session":{"channel_id":"channel-1","init_expire_at_unix_s":2000000000_i64,"idle_timeout_seconds":60,"establish_timeout_seconds":30,"rekey_prepare_timeout_seconds":10,"rekey_completion_timeout_seconds":30,"max_inbound_streams":1,"e2ee_psk_b64u":URL_SAFE_NO_PAD.encode([0x92;32]),"allowed_suites":[1,2],"default_suite":1,"selected_features":0,"contract_hash_b64u":URL_SAFE_NO_PAD.encode(contract_hash)},
         "path":path,"scoped":[],"correlation":{"v":2,"tags":[]}
     })).expect("encode facade artifact")
 }
@@ -637,204 +678,6 @@ async fn exact_direct_and_tunnel_alpn_complete_tls13_handshakes() {
             IpAddr::V4(Ipv4Addr::LOCALHOST)
         );
         native_round_trip(&client, &server).await;
-    }
-}
-
-#[tokio::test]
-async fn raw_quic_admission_preflight_rejects_invalid_fsb2_before_opening_stream() {
-    let valid = admission_request_fixture(RawQuicPathProfile::Direct);
-    let mut cases = Vec::new();
-
-    let mut reserved = valid.clone();
-    reserved[6] = 1;
-    cases.push(("reserved-header", reserved));
-
-    let mut truncated = valid.clone();
-    truncated.pop();
-    cases.push(("truncated-payload", truncated));
-
-    let mut trailing = valid.clone();
-    trailing.push(0);
-    cases.push(("trailing-byte", trailing));
-
-    let mut noncanonical = valid.clone();
-    let payload_length = u32::from_be_bytes(noncanonical[8..12].try_into().expect("length"));
-    noncanonical.push(b' ');
-    noncanonical[8..12].copy_from_slice(&(payload_length + 1).to_be_bytes());
-    cases.push(("noncanonical-json", noncanonical));
-
-    let mut wrong_path = valid.clone();
-    wrong_path[5] = 2;
-    cases.push(("wrong-path", wrong_path));
-
-    let mut wrong_candidate = valid.clone();
-    let chosen = b"\"chosen_candidate_id\":\"q1\"";
-    let chosen_offset = wrong_candidate
-        .windows(chosen.len())
-        .position(|window| window == chosen)
-        .expect("chosen candidate field");
-    wrong_candidate[chosen_offset + chosen.len() - 2] = b't';
-    cases.push(("non-raw-quic-chosen-candidate", wrong_candidate));
-
-    let invalid_authority = mutate_fsb2_payload(&valid, |payload| {
-        payload["candidates"][0]["normalized_url"] = serde_json::json!("quic://");
-    });
-    cases.push(("invalid-candidate-authority", invalid_authority));
-
-    let duplicate_tuple = mutate_fsb2_payload(&valid, |payload| {
-        let candidates = payload["candidates"]
-            .as_array_mut()
-            .expect("candidate array");
-        let mut duplicate = candidates[0].clone();
-        duplicate["id"] = serde_json::json!("q2");
-        candidates.insert(1, duplicate);
-    });
-    cases.push(("duplicate-candidate-tuple", duplicate_tuple));
-
-    for (name, raw) in cases {
-        let (_listener, client, server) = new_pair(
-            RawQuicPathProfile::Direct,
-            session_limits(1),
-            session_limits(1),
-        )
-        .await;
-        let result = client
-            .commit_admission_and_establish_v2(
-                &raw,
-                raw_session_config(
-                    SessionRole::Client,
-                    PathKind::Direct,
-                    [0; 32],
-                    Some(fsb2_binding(&raw)),
-                    None,
-                    None,
-                    Duration::from_secs(1),
-                ),
-                session_contract(1),
-            )
-            .await;
-        assert!(result.is_err(), "accepted malformed FSB2 case {name}");
-        assert!(
-            !matches!(
-                tokio::time::timeout(Duration::from_millis(100), server.accept_stream()).await,
-                Ok(Ok(_))
-            ),
-            "opened an admission stream for malformed FSB2 case {name}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn raw_quic_admission_preflight_binds_fsb2_to_session_config_before_opening_stream() {
-    let direct = admission_request_fixture(RawQuicPathProfile::Direct);
-    let tunnel = admission_request_fixture(RawQuicPathProfile::Tunnel);
-
-    let mut wrong_channel = raw_session_config(
-        SessionRole::Client,
-        PathKind::Direct,
-        [0; 32],
-        Some(fsb2_binding(&direct)),
-        None,
-        None,
-        Duration::from_secs(1),
-    );
-    wrong_channel.channel_id = "other-channel".into();
-
-    let mut wrong_contract = wrong_channel.clone();
-    wrong_contract.channel_id = "channel-1".into();
-    wrong_contract.session_contract_hash = [0x55; 32];
-
-    let wrong_binding = raw_session_config(
-        SessionRole::Client,
-        PathKind::Direct,
-        [0x77; 32],
-        Some(fsb2_binding(&direct)),
-        None,
-        None,
-        Duration::from_secs(1),
-    );
-
-    let wrong_direct_role = raw_session_config(
-        SessionRole::Server,
-        PathKind::Direct,
-        [0; 32],
-        Some(fsb2_binding(&direct)),
-        None,
-        None,
-        Duration::from_secs(1),
-    );
-
-    let wrong_tunnel_role = raw_session_config(
-        SessionRole::Server,
-        PathKind::Tunnel,
-        [0; 32],
-        None,
-        Some("endpoint-client"),
-        Some("endpoint-server"),
-        Duration::from_secs(1),
-    );
-
-    let wrong_tunnel_endpoint = raw_session_config(
-        SessionRole::Client,
-        PathKind::Tunnel,
-        [0; 32],
-        None,
-        Some("other-endpoint"),
-        Some("endpoint-server"),
-        Duration::from_secs(1),
-    );
-
-    for (name, profile, raw, config) in [
-        (
-            "channel-id",
-            RawQuicPathProfile::Direct,
-            direct.clone(),
-            wrong_channel,
-        ),
-        (
-            "session-contract-hash",
-            RawQuicPathProfile::Direct,
-            direct.clone(),
-            wrong_contract,
-        ),
-        (
-            "local-admission-binding",
-            RawQuicPathProfile::Direct,
-            direct.clone(),
-            wrong_binding,
-        ),
-        (
-            "direct-role",
-            RawQuicPathProfile::Direct,
-            direct,
-            wrong_direct_role,
-        ),
-        (
-            "tunnel-role",
-            RawQuicPathProfile::Tunnel,
-            tunnel.clone(),
-            wrong_tunnel_role,
-        ),
-        (
-            "tunnel-endpoint-instance-id",
-            RawQuicPathProfile::Tunnel,
-            tunnel,
-            wrong_tunnel_endpoint,
-        ),
-    ] {
-        let (_listener, client, server) =
-            new_pair(profile, session_limits(1), session_limits(1)).await;
-        let result = client
-            .commit_admission_and_establish_v2(&raw, config, session_contract(1))
-            .await;
-        assert!(result.is_err(), "accepted FSB2/config mismatch {name}");
-        assert!(
-            !matches!(
-                tokio::time::timeout(Duration::from_millis(100), server.accept_stream()).await,
-                Ok(Ok(_))
-            ),
-            "opened an admission stream for FSB2/config mismatch {name}"
-        );
     }
 }
 
@@ -1345,7 +1188,7 @@ async fn raw_quic_negotiates_and_transfers_native_unreliable_messages() {
 }
 
 #[tokio::test]
-async fn raw_quic_unreliable_messages_reject_oversize_without_stream_fallback() {
+async fn raw_quic_unreliable_messages_report_oversize_directly() {
     let (_listener, client, server) = new_pair(
         RawQuicPathProfile::Direct,
         default_limits(),
@@ -1366,7 +1209,7 @@ async fn raw_quic_unreliable_messages_reject_oversize_without_stream_fallback() 
 }
 
 #[tokio::test]
-async fn raw_quic_unreliable_send_reports_exhausted_budget_without_queue_fallback() {
+async fn raw_quic_unreliable_send_reports_exhausted_budget_directly() {
     let profile = RawQuicPathProfile::Direct;
     let limits = default_limits();
     let listener = RawQuicListener::bind(loopback_ephemeral(), server_config(profile, limits))
@@ -1564,8 +1407,8 @@ async fn rust_and_go_run_full_session_v2_over_raw_quic_direct_and_tunnel() {
         )
         .await
         .expect("dial Go SessionV2 server");
-        let contract = session_contract_with_psk(4, [0x42; 32]);
-        let raw_fsb2 = admission_request_fixture_with_contract(profile, contract.contract_hash);
+        let contract_hash = session_contract_hash(4, 30);
+        let raw_fsb2 = admission_request_fixture_with_contract(profile, contract_hash);
         let (local_endpoint, peer_endpoint) = match profile {
             RawQuicPathProfile::Direct => (None, None),
             RawQuicPathProfile::Tunnel => (
@@ -1573,33 +1416,32 @@ async fn rust_and_go_run_full_session_v2_over_raw_quic_direct_and_tunnel() {
                 Some("endpoint-server".to_owned()),
             ),
         };
-        let session = raw
-            .commit_admission_and_establish_v2(
-                &raw_fsb2,
-                SessionConfigV2 {
-                    role: SessionRole::Client,
-                    path: match profile {
-                        RawQuicPathProfile::Direct => PathKind::Direct,
-                        RawQuicPathProfile::Tunnel => PathKind::Tunnel,
-                    },
-                    channel_id: "channel-1".into(),
-                    session_contract_hash: contract.contract_hash,
-                    suite: CipherSuiteV2::ChaCha20Poly1305,
-                    psk: [0x42; 32],
-                    max_inbound_streams: 4,
-                    idle_timeout: Duration::from_secs(60),
-                    local_admission_binding: [0; 32],
-                    peer_admission_binding: (profile == RawQuicPathProfile::Direct)
-                        .then(|| fsb2_binding(&raw_fsb2)),
-                    local_endpoint_instance_id: local_endpoint,
-                    expected_peer_endpoint_instance_id: peer_endpoint,
-                    rpc_handler: Some(Arc::new(InteropRpc)),
-                    deadlines: Default::default(),
+        let session = admit_test_client(
+            raw,
+            raw_fsb2.clone(),
+            SessionConfigV2 {
+                role: SessionRole::Client,
+                path: match profile {
+                    RawQuicPathProfile::Direct => PathKind::Direct,
+                    RawQuicPathProfile::Tunnel => PathKind::Tunnel,
                 },
-                contract,
-            )
-            .await
-            .expect("admit and establish Rust SessionV2");
+                channel_id: "channel-1".into(),
+                session_contract_hash: contract_hash,
+                suite: CipherSuiteV2::ChaCha20Poly1305,
+                psk: [0x42; 32],
+                max_inbound_streams: 4,
+                idle_timeout: Duration::from_secs(60),
+                local_admission_binding: [0; 32],
+                peer_admission_binding: (profile == RawQuicPathProfile::Direct)
+                    .then(|| fsb2_binding(&raw_fsb2)),
+                local_endpoint_instance_id: local_endpoint,
+                expected_peer_endpoint_instance_id: peer_endpoint,
+                rpc_handler: Some(Arc::new(InteropRpc)),
+                deadlines: Default::default(),
+            },
+        )
+        .await
+        .expect("admit and establish Rust SessionV2");
 
         let stream = session
             .open_stream("rust-open", StreamMetadata::empty())
@@ -1720,22 +1562,21 @@ async fn tunnel_session_accepts_distinct_admission_bindings_for_both_legs() {
     )
     .await
     .expect("dial tunnel raw QUIC");
-    let client = raw
-        .commit_admission_and_establish_v2(
-            &admission_request_fixture(profile),
-            raw_session_config(
-                SessionRole::Client,
-                PathKind::Tunnel,
-                [0; 32],
-                None,
-                Some("endpoint-client"),
-                Some("endpoint-server"),
-                Duration::from_secs(30),
-            ),
-            session_contract(1),
-        )
-        .await
-        .expect("establish client with independent tunnel binding");
+    let client = admit_test_client(
+        raw,
+        admission_request_fixture(profile),
+        raw_session_config(
+            SessionRole::Client,
+            PathKind::Tunnel,
+            [0; 32],
+            None,
+            Some("endpoint-client"),
+            Some("endpoint-server"),
+            Duration::from_secs(30),
+        ),
+    )
+    .await
+    .expect("establish client with independent tunnel binding");
     let server = server_task.await.expect("join tunnel server");
     client.close().await.expect("close tunnel client");
     server.close().await.expect("close tunnel server");
@@ -1765,9 +1606,8 @@ async fn admission_and_session_handshake_share_one_establishment_deadline() {
     )
     .await
     .expect("dial admission deadline peer");
-    let deadline_contract = session_contract_with_establish(1, 1);
-    let deadline_raw =
-        admission_request_fixture_with_contract(profile, deadline_contract.contract_hash);
+    let deadline_contract_hash = session_contract_hash(1, 30);
+    let deadline_raw = admission_request_fixture_with_contract(profile, deadline_contract_hash);
     let mut deadline_config = raw_session_config(
         SessionRole::Client,
         PathKind::Direct,
@@ -1777,16 +1617,76 @@ async fn admission_and_session_handshake_share_one_establishment_deadline() {
         None,
         Duration::from_secs(1),
     );
-    deadline_config.session_contract_hash = deadline_contract.contract_hash;
+    deadline_config.session_contract_hash = deadline_contract_hash;
     let result = tokio::time::timeout(
         Duration::from_secs(2),
-        raw.commit_admission_and_establish_v2(&deadline_raw, deadline_config, deadline_contract),
+        admit_test_client(raw, deadline_raw, deadline_config),
     )
     .await
     .expect("admission ignored the total establishment deadline")
     .expect_err("stalled FSA2 must time out");
     assert_eq!(result.kind(), std::io::ErrorKind::TimedOut);
     stalled_server.abort();
+}
+
+async fn admit_test_client(
+    raw: RawQuicSession,
+    raw_fsb2: Vec<u8>,
+    mut config: SessionConfigV2,
+) -> std::io::Result<Arc<dyn crate::Session>> {
+    let profile = match config.path {
+        PathKind::Direct => RawQuicPathProfile::Direct,
+        PathKind::Tunnel => RawQuicPathProfile::Tunnel,
+    };
+    let artifact = admission_artifact_fixture(
+        profile,
+        config.max_inbound_streams,
+        config.session_contract_hash,
+    );
+    let mut lease = ArtifactLease::new(artifact, || async { Ok(()) });
+    let credential = lease
+        .artifact()
+        .encode_fsb2("q1")
+        .expect("encode fixture admission credential");
+    assert_eq!(credential.raw, raw_fsb2, "fixture admission credential");
+    config.local_admission_binding = credential.binding;
+    let deadline = tokio::time::Instant::now() + config.deadlines.establish;
+    let admitted = AdmissionCommitV2::new(
+        CandidateAttemptV2::attempt()
+            .ready(Arc::new(raw))
+            .select_winner(),
+        &mut lease,
+        credential,
+        config.max_inbound_streams,
+    )
+    .commit(deadline, &CancellationToken::new())
+    .await
+    .map_err(admission_test_error)?;
+    let session =
+        tokio::time::timeout_at(deadline, establish_session_v2(admitted.carrier(), config))
+            .await
+            .map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "session establishment timed out",
+                )
+            })??;
+    admitted.mark_established();
+    Ok(session)
+}
+
+fn admission_test_error(error: AdmissionCommitErrorV2) -> std::io::Error {
+    let kind = match error {
+        AdmissionCommitErrorV2::Timeout => std::io::ErrorKind::TimedOut,
+        AdmissionCommitErrorV2::Canceled => std::io::ErrorKind::Interrupted,
+        AdmissionCommitErrorV2::Rejected | AdmissionCommitErrorV2::Retryable => {
+            std::io::ErrorKind::PermissionDenied
+        }
+        AdmissionCommitErrorV2::Spend | AdmissionCommitErrorV2::Carrier => {
+            std::io::ErrorKind::ConnectionAborted
+        }
+    };
+    std::io::Error::new(kind, "admission failed")
 }
 
 async fn new_pair(
@@ -1912,39 +1812,27 @@ fn fsb2_binding(raw: &[u8]) -> [u8; 32] {
 }
 
 fn fixture_contract_hash() -> [u8; 32] {
-    session_contract(1).contract_hash
+    session_contract_hash(1, 30)
 }
 
-fn session_contract(max_inbound_streams: u16) -> SessionContractV2 {
-    session_contract_with_psk(max_inbound_streams, [0x92; 32])
-}
-
-fn session_contract_with_establish(
-    max_inbound_streams: u16,
-    establish_timeout_seconds: u64,
-) -> SessionContractV2 {
-    let mut contract = session_contract_with_psk(max_inbound_streams, [0x92; 32]);
-    contract.establish_timeout_seconds = establish_timeout_seconds;
-    contract.contract_hash = contract.canonical_hash();
-    contract
-}
-
-fn session_contract_with_psk(max_inbound_streams: u16, psk: [u8; 32]) -> SessionContractV2 {
-    let mut contract = SessionContractV2 {
-        channel_id: "channel-1".into(),
-        idle_timeout_seconds: 60,
-        establish_timeout_seconds: 30,
-        rekey_prepare_timeout_seconds: 10,
-        rekey_completion_timeout_seconds: 30,
-        max_inbound_streams,
-        psk,
-        allowed_suites: vec![1, 2],
-        default_suite: 1,
-        selected_features: 0,
-        contract_hash: [0; 32],
-    };
-    contract.contract_hash = contract.canonical_hash();
-    contract
+fn session_contract_hash(max_inbound_streams: u16, establish_timeout_seconds: u64) -> [u8; 32] {
+    let canonical = serde_json::json!({
+        "allowed_suites": [1, 2],
+        "channel_id": "channel-1",
+        "default_suite": 1,
+        "establish_timeout_seconds": establish_timeout_seconds,
+        "idle_timeout_seconds": 60,
+        "max_inbound_streams": max_inbound_streams,
+        "profile": "flowersec/2",
+        "rekey_completion_timeout_seconds": 30,
+        "rekey_prepare_timeout_seconds": 10,
+        "selected_features": 0,
+    });
+    let canonical = serde_json::to_vec(&canonical).expect("encode session contract");
+    let mut preimage = b"flowersec-v2-session-contract\0".to_vec();
+    preimage.extend_from_slice(&(canonical.len() as u32).to_be_bytes());
+    preimage.extend_from_slice(&canonical);
+    sha2::Sha256::digest(preimage).into()
 }
 
 fn loopback_ephemeral() -> SocketAddr {
@@ -1959,10 +1847,7 @@ fn admission_request_fixture_with_max(
     profile: RawQuicPathProfile,
     max_inbound_streams: u16,
 ) -> Vec<u8> {
-    admission_request_fixture_with_contract(
-        profile,
-        session_contract(max_inbound_streams).contract_hash,
-    )
+    admission_request_fixture_with_contract(profile, session_contract_hash(max_inbound_streams, 30))
 }
 
 fn admission_request_fixture_with_contract(
@@ -1991,6 +1876,35 @@ fn admission_request_fixture_with_contract(
         payload["session_contract_hash_b64u"] =
             serde_json::json!(URL_SAFE_NO_PAD.encode(contract_hash));
     })
+}
+
+fn admission_artifact_fixture(
+    profile: RawQuicPathProfile,
+    max_inbound_streams: u16,
+    contract_hash: [u8; 32],
+) -> Artifact {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../testdata/transport_v2/artifact_vectors.json"
+    ))
+    .expect("parse artifact vectors");
+    let path = profile_name(profile);
+    let vector = fixture["positive"]
+        .as_array()
+        .expect("positive vectors")
+        .iter()
+        .find(|vector| vector["path_kind"] == path)
+        .expect("profile artifact vector");
+    let mut artifact: serde_json::Value = serde_json::from_str(
+        vector["artifact_json"]
+            .as_str()
+            .expect("profile artifact JSON"),
+    )
+    .expect("decode profile artifact");
+    artifact["session"]["max_inbound_streams"] = serde_json::json!(max_inbound_streams);
+    artifact["session"]["contract_hash_b64u"] =
+        serde_json::json!(URL_SAFE_NO_PAD.encode(contract_hash));
+    Artifact::parse(serde_json::to_vec(&artifact).expect("encode profile artifact"))
+        .expect("parse profile artifact")
 }
 
 fn admission_request_vector_fixture(profile: RawQuicPathProfile) -> Vec<u8> {

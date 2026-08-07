@@ -38,14 +38,3 @@ export class YamuxResourceExhaustedError extends Error {
 export function isYamuxResourceExhaustedError(error: unknown): error is YamuxResourceExhaustedError {
   return error instanceof YamuxResourceExhaustedError;
 }
-
-export class YamuxPingTimeoutError extends Error {
-  constructor() {
-    super("yamux ping timeout");
-    this.name = "YamuxPingTimeoutError";
-  }
-}
-
-export function isYamuxPingTimeoutError(error: unknown): error is YamuxPingTimeoutError {
-  return error instanceof YamuxPingTimeoutError;
-}

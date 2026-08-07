@@ -30,7 +30,7 @@ class ByteQueue {
 
   private flush(): void {
     while (this.waiters.length > 0) {
-      const next = this.waiters[0];
+      const next = this.waiters[0]!;
       const out = this.tryRead(next.n);
       if (out == null) return;
       this.waiters.shift();
@@ -101,4 +101,3 @@ describe("json framing", () => {
     await expect(p).rejects.toThrow(/eof/);
   });
 });
-

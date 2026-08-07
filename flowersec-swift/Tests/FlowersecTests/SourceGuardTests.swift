@@ -101,8 +101,9 @@ final class SourceGuardTests: XCTestCase {
     let sourceRoot = packageRoot().appendingPathComponent("flowersec-swift/Sources/Flowersec")
     let publicContractFiles: Set<String> = [
       "Artifact.swift",
+      "ConnectionController.swift",
       "Connector.swift",
-      "ErrorClassification.swift",
+      "RetryDisposition.swift",
       "TransportV2.swift",
     ]
     for file in try swiftFiles(under: sourceRoot)
@@ -193,6 +194,28 @@ final class SourceGuardTests: XCTestCase {
     XCTAssertFalse(
       FileManager.default.fileExists(atPath: generated.path),
       "Transport v1 generated Swift source directory must not be maintained")
+  }
+
+  func testSwiftPublicSurfaceDoesNotRestoreLegacyRecoveryAPI() throws {
+    let sourceRoot = packageRoot().appendingPathComponent("flowersec-swift/Sources/Flowersec")
+    for name in ["ErrorClassification.swift", "Reconnect.swift"] {
+      XCTAssertFalse(
+        FileManager.default.fileExists(atPath: sourceRoot.appendingPathComponent(name).path),
+        "Swift SDK must not restore legacy recovery file \(name)"
+      )
+    }
+
+    let source = try swiftFiles(under: sourceRoot)
+      .map { try String(contentsOf: $0, encoding: .utf8) }
+      .joined(separator: "\n")
+    for symbol in [
+      "RetryAction",
+      "ErrorRetryClassification",
+      "classifyConnectError",
+      "classifySessionError",
+    ] {
+      XCTAssertFalse(source.contains(symbol), "Swift SDK must not restore legacy symbol \(symbol)")
+    }
   }
 
   private func swiftFiles(under root: URL) throws -> [URL] {

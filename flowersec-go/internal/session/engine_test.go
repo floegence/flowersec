@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,7 +21,7 @@ import (
 )
 
 func TestSessionTerminationCanBeObservedAndWaited(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 1)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 1)
 	defer server.Close()
 
 	terminated := client.Termination()
@@ -47,12 +48,12 @@ func TestSessionTerminationCanBeObservedAndWaited(t *testing.T) {
 }
 
 func TestEstablishAndBidirectionalLogicalStreams(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 4)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 4)
 	defer client.Close()
 	defer server.Close()
 
-	if client.Path() != PathTunnel || client.ChosenCarrier() != carrier.KindQUIC {
-		t.Fatalf("client identity = path:%s carrier:%s", client.Path(), client.ChosenCarrier())
+	if client.Path() != PathTunnel {
+		t.Fatalf("client path = %s", client.Path())
 	}
 	if got, ok := client.EndpointInstanceID(); !ok || got != "server-instance" {
 		t.Fatalf("client peer endpoint = %q, %v", got, ok)
@@ -99,7 +100,7 @@ func TestEstablishAndBidirectionalLogicalStreams(t *testing.T) {
 }
 
 func TestByteStreamCoalescesFourEncryptedRecordsIntoOneCarrierWrite(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -159,7 +160,7 @@ func TestByteStreamCoalescesFourEncryptedRecordsIntoOneCarrierWrite(t *testing.T
 }
 
 func TestEstablishRejectsCarrierStreamCapacityMismatchBeforeHandshake(t *testing.T) {
-	clientCarrier, _ := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, _ := newMemoryCarrierPair(carrier.KindRawQUIC)
 	clientConfig, _ := testEngineConfigs(2)
 	clientCarrier.setMaxIncomingStreams(5)
 
@@ -177,7 +178,7 @@ func TestEstablishRejectsCarrierStreamCapacityMismatchBeforeHandshake(t *testing
 }
 
 func TestEstablishRejectsCarrierPathMismatchBeforeHandshake(t *testing.T) {
-	clientCarrier, _ := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, _ := newMemoryCarrierPair(carrier.KindRawQUIC)
 	clientConfig, _ := testEngineConfigs(2)
 	clientConfig.Path = PathDirect
 	clientConfig.LocalEndpointInstanceID = ""
@@ -211,7 +212,7 @@ func TestRPCPeerUsesReservedEncryptedStreamsInBothDirections(t *testing.T) {
 	serverConfig.RekeyCompletionTimeout = 500 * time.Millisecond
 	clientConfig.RPCRouter = clientRouter
 	serverConfig.RPCRouter = serverRouter
-	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 	client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
 	defer closeEnginePair(client, server)
 
@@ -304,7 +305,7 @@ func closeEnginePair(left, right *engineSession) {
 }
 
 func TestOpenStreamCanonicalizesUnicodeMetadataBeforeWritingOPEN(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -390,7 +391,7 @@ func TestAdmissionBindingHandshakePolicy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			clientConfig, serverConfig := testEngineConfigs(2)
 			tt.configure(&clientConfig, &serverConfig)
-			clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+			clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 			client, server, clientErr, serverErr := tryEstablishPair(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
 			if tt.wantErr {
 				if clientErr == nil && serverErr == nil {
@@ -499,7 +500,7 @@ func TestConcurrentStreamsAreIndependentAndIDsAreNeverReused(t *testing.T) {
 }
 
 func TestMaxInboundStreamsPermitIsContextBounded(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 1)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 1)
 	defer client.Close()
 	defer server.Close()
 
@@ -540,7 +541,7 @@ func TestMaxInboundStreamsPermitIsContextBounded(t *testing.T) {
 }
 
 func TestCleanBilateralFINDoesNotResetNativeCarrierStream(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 1)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 1)
 	defer client.Close()
 	defer server.Close()
 
@@ -576,7 +577,7 @@ func TestCleanBilateralFINDoesNotResetNativeCarrierStream(t *testing.T) {
 }
 
 func TestProbeLivenessAndSessionRekeyGateNewStreams(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 4)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 4)
 	defer client.Close()
 	defer server.Close()
 
@@ -616,7 +617,7 @@ func TestProbeLivenessAndSessionRekeyGateNewStreams(t *testing.T) {
 }
 
 func TestProbeLivenessAllowsMaximumNonceAndWrapsToZero(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -634,7 +635,7 @@ func TestProbeLivenessAllowsMaximumNonceAndWrapsToZero(t *testing.T) {
 }
 
 func TestTransitionIDMaximumIsUsedExactlyOnce(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -654,7 +655,7 @@ func TestTransitionIDMaximumIsUsedExactlyOnce(t *testing.T) {
 }
 
 func TestEpochMaximumRekeySendsResourceExhaustedGoAway(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -716,7 +717,7 @@ func TestControlReadDoesNotWrapEpochAfterMaximum(t *testing.T) {
 }
 
 func TestLogicalIDCapSendsResourceExhaustedGoAway(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 	client.openMu.Lock()
@@ -729,7 +730,7 @@ func TestLogicalIDCapSendsResourceExhaustedGoAway(t *testing.T) {
 }
 
 func TestLogicalIDMaximumSlotCanBeOpened(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 	client.openMu.Lock()
@@ -753,7 +754,7 @@ func TestLogicalIDMaximumSlotCanBeOpened(t *testing.T) {
 }
 
 func TestGoAwayRejectsInvalidLastAcceptedBoundary(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -772,7 +773,7 @@ func TestGoAwayRejectsInvalidLastAcceptedBoundary(t *testing.T) {
 }
 
 func TestSentAndReceivedGoAwayKeepIndependentBoundaries(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -788,7 +789,7 @@ func TestSentAndReceivedGoAwayKeepIndependentBoundaries(t *testing.T) {
 }
 
 func TestSendGoAwayUsesPeerResolvedFrontier(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -817,7 +818,7 @@ func TestSendGoAwayUsesPeerResolvedFrontier(t *testing.T) {
 }
 
 func TestGoAwayBoundaryCancelsAlreadyAllocatedOpening(t *testing.T) {
-	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 	clientConfig, serverConfig := testEngineConfigs(2)
 	client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
 	defer client.Close()
@@ -853,7 +854,7 @@ func TestGoAwayBoundaryCancelsAlreadyAllocatedOpening(t *testing.T) {
 }
 
 func TestOpenContextCancellationCommitsResetBeforeLaterRekey(t *testing.T) {
-	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 	clientConfig, serverConfig := testEngineConfigs(2)
 	client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
 	defer client.Close()
@@ -909,7 +910,7 @@ func TestStreamSequenceFailureIsStreamScoped(t *testing.T) {
 
 func assertInjectedStreamFailureScoped(t *testing.T, allowSenderError bool, mutate func(*memoryStream)) {
 	t.Helper()
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -965,7 +966,7 @@ func assertInjectedStreamFailureScoped(t *testing.T, allowSenderError bool, muta
 }
 
 func TestP256HandshakeAndOpen(t *testing.T) {
-	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 	clientConfig, serverConfig := testEngineConfigs(2)
 	clientConfig.Suite = protocolv2.SuiteAES256GCM
 	serverConfig.Suite = protocolv2.SuiteAES256GCM
@@ -985,7 +986,7 @@ func TestP256HandshakeAndOpen(t *testing.T) {
 }
 
 func TestPeerResourceExhaustionReturnsOpenReject(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 	server.inboundPermits <- struct{}{}
@@ -1005,7 +1006,7 @@ func TestPeerResourceExhaustionReturnsOpenReject(t *testing.T) {
 }
 
 func TestGoAwayRejectsNewOpenWithoutImmediateClose(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 	if err := client.sendControl(protocolv2.InnerGoAway, marshalIDReason(0, 2)); err != nil {
@@ -1035,7 +1036,7 @@ func TestGoAwayRejectsNewOpenWithoutImmediateClose(t *testing.T) {
 }
 
 func TestHandshakeRejectsMismatchedPSK(t *testing.T) {
-	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 	clientConfig, serverConfig := testEngineConfigs(2)
 	serverConfig.PSK[0] ^= 1
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -1055,13 +1056,15 @@ func TestHandshakeRejectsMismatchedPSK(t *testing.T) {
 }
 
 func TestHandshakeContextCancelsStalledControlStream(t *testing.T) {
-	clientCarrier, _ := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, _ := newMemoryCarrierPair(carrier.KindRawQUIC)
 	clientConfig, _ := testEngineConfigs(2)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	started := time.Now()
 	if _, err := Establish(ctx, clientCarrier, clientConfig); err == nil {
 		t.Fatal("stalled handshake succeeded")
+	} else if !strings.Contains(err.Error(), "client handshake write control preface") {
+		t.Fatalf("stalled handshake error = %v, want client control-write stage", err)
 	}
 	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
 		t.Fatalf("stalled handshake ignored context for %v", elapsed)
@@ -1069,7 +1072,7 @@ func TestHandshakeContextCancelsStalledControlStream(t *testing.T) {
 }
 
 func TestEstablishAppliesSessionTimeoutWithoutCallerDeadline(t *testing.T) {
-	clientCarrier, _ := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, _ := newMemoryCarrierPair(carrier.KindRawQUIC)
 	clientConfig, _ := testEngineConfigs(2)
 	clientConfig.EstablishTimeout = 30 * time.Millisecond
 	started := time.Now()
@@ -1082,7 +1085,7 @@ func TestEstablishAppliesSessionTimeoutWithoutCallerDeadline(t *testing.T) {
 }
 
 func TestEstablishTimeoutBoundsHangingCarrierCleanup(t *testing.T) {
-	clientCarrier, _ := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, _ := newMemoryCarrierPair(carrier.KindRawQUIC)
 	releaseClose := make(chan struct{})
 	defer close(releaseClose)
 	clientCarrier.closeBlock = releaseClose
@@ -1104,7 +1107,7 @@ func TestEstablishTimeoutBoundsHangingCarrierCleanup(t *testing.T) {
 }
 
 func TestSessionIdleTimeoutClosesWithoutCallerDeadline(t *testing.T) {
-	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 	clientConfig, serverConfig := testEngineConfigs(2)
 	clientConfig.IdleTimeout = 30 * time.Millisecond
 	serverConfig.IdleTimeout = 30 * time.Millisecond
@@ -1141,7 +1144,7 @@ func TestCloseStopsNewOpensAndUnblocksAccept(t *testing.T) {
 }
 
 func TestCloseFlushesAuthenticatedSessionCloseBeforeCarrierShutdown(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer server.Close()
 
 	writeBlocked := make(chan struct{})
@@ -1195,7 +1198,7 @@ func TestCloseFlushesAuthenticatedSessionCloseBeforeCarrierShutdown(t *testing.T
 }
 
 func TestCloseDeadlineCoversCarrierShutdown(t *testing.T) {
-	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 	clientConfig, serverConfig := testEngineConfigs(2)
 	client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
 	defer server.Close()
@@ -1224,14 +1227,14 @@ func TestCloseDeadlineCoversCarrierShutdown(t *testing.T) {
 }
 
 func TestCloseWaitsForOwnedWorkers(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 
 	workerStarted := make(chan struct{})
 	releaseWorker := make(chan struct{})
 	client.wg.Add(1)
 	go func() {
 		defer client.wg.Done()
-		<-client.ctx.Done()
+		<-client.closingCh
 		close(workerStarted)
 		<-releaseWorker
 	}()
@@ -1283,7 +1286,7 @@ func TestWorkerDrainHonorsContext(t *testing.T) {
 }
 
 func TestProtocolFailureCannotHoldCloseForeverInCarrierShutdown(t *testing.T) {
-	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 	clientConfig, serverConfig := testEngineConfigs(2)
 	client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
 	defer server.Close()
@@ -1310,7 +1313,7 @@ func TestProtocolFailureCannotHoldCloseForeverInCarrierShutdown(t *testing.T) {
 }
 
 func TestCloseRejectsQueuedAcceptBeforeControlFlushCompletes(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer server.Close()
 
 	queued, err := server.OpenStream(context.Background(), "queued-before-close", Metadata{})
@@ -1370,7 +1373,7 @@ func TestCloseRejectsQueuedAcceptBeforeControlFlushCompletes(t *testing.T) {
 }
 
 func TestCloseUnblocksAcceptBeforeControlFlushCompletes(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer server.Close()
 
 	acceptResult := make(chan error, 1)
@@ -1415,10 +1418,19 @@ func TestCloseUnblocksAcceptBeforeControlFlushCompletes(t *testing.T) {
 		t.Fatal("blocked AcceptStream waited for control flush")
 	}
 	client.openMu.Lock()
+	lifecycle := client.lifecycle
 	closingNotification := client.closingCh
 	client.openMu.Unlock()
-	if closingNotification != nil {
-		t.Fatal("Close retained its one-shot accept notification after entering the closing state")
+	if lifecycle != lifecycleClosing {
+		t.Fatalf("lifecycle during control flush = %d, want closing", lifecycle)
+	}
+	if closingNotification == nil {
+		t.Fatal("closing session released ownership of its accept notification")
+	}
+	select {
+	case <-closingNotification:
+	default:
+		t.Fatal("closing session did not close its accept notification")
 	}
 	select {
 	case <-client.Termination():
@@ -1441,6 +1453,16 @@ func TestCloseUnblocksAcceptBeforeControlFlushCompletes(t *testing.T) {
 	}
 	if err := client.WaitClosed(context.Background()); !errors.Is(err, ErrSessionClosed) {
 		t.Fatalf("WaitClosed after Close = %v, want ErrSessionClosed", err)
+	}
+	client.openMu.Lock()
+	lifecycle = client.lifecycle
+	ownedClosingNotification := client.closingCh
+	client.openMu.Unlock()
+	if lifecycle != lifecycleClosed {
+		t.Fatalf("lifecycle after Close = %d, want closed", lifecycle)
+	}
+	if ownedClosingNotification != closingNotification {
+		t.Fatal("closed session replaced or released its accept notification")
 	}
 }
 
@@ -1554,33 +1576,6 @@ func TestEstablishWaitsForClientFinishedWrite(t *testing.T) {
 	}
 	defer client.session.Close()
 	defer server.session.Close()
-}
-
-func TestEstablishmentRecoveryProbesStopAtBoundary(t *testing.T) {
-	prober := &countingEstablishmentProber{}
-	stop := carrier.StartEstablishmentProbes(context.Background(), prober, 5*time.Millisecond)
-	deadline := time.Now().Add(100 * time.Millisecond)
-	for prober.calls.Load() < 2 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if prober.calls.Load() < 2 {
-		stop()
-		t.Fatal("establishment probes did not run")
-	}
-	stop()
-	stop()
-	stoppedAt := prober.calls.Load()
-	time.Sleep(20 * time.Millisecond)
-	if got := prober.calls.Load(); got != stoppedAt {
-		t.Fatalf("establishment probes continued after stop: before=%d after=%d", stoppedAt, got)
-	}
-}
-
-type countingEstablishmentProber struct{ calls atomic.Int32 }
-
-func (prober *countingEstablishmentProber) ProbeEstablishment() error {
-	prober.calls.Add(1)
-	return nil
 }
 
 func establishWithCarriers(t *testing.T, clientCarrier, serverCarrier carrier.Session, clientConfig, serverConfig Config) (*engineSession, *engineSession) {
@@ -1891,6 +1886,13 @@ func (s *memoryCarrierSession) CloseWithError(applicationError carrier.Applicati
 	return s.CloseWithErrorContext(context.Background(), applicationError)
 }
 
+func (s *memoryCarrierSession) Termination() <-chan struct{} { return s.ctx.Done() }
+
+func (s *memoryCarrierSession) Abort(applicationError carrier.ApplicationError) error {
+	s.closeNow(applicationError)
+	return nil
+}
+
 func (s *memoryCarrierSession) CloseWithErrorContext(ctx context.Context, applicationError carrier.ApplicationError) error {
 	s.closeActive.Add(1)
 	defer s.closeActive.Add(-1)
@@ -2009,6 +2011,7 @@ func (s *memoryStream) setWriteHook(hook func([]byte)) {
 }
 func (s *memoryStream) Context() context.Context { return s.ctx }
 func (s *memoryStream) CloseWrite() error        { return s.writer.Close() }
+func (s *memoryStream) StopSending() error       { return s.Reset() }
 
 func (s *memoryStream) Reset() error {
 	s.reset.Do(func() {

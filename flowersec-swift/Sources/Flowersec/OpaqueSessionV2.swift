@@ -180,7 +180,7 @@ func redactTransportErrorV2(_ error: any Error) -> SessionError {
       return .closed
     case .resourceExhausted:
       return .resourceExhausted
-    case .invalidInput, .dialFailed, .muxFailed, .pingFailed, .rpcFailed:
+    case .invalidInput, .muxFailed, .rpcFailed:
       return .operationFailed
     }
   }

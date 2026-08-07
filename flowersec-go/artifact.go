@@ -53,9 +53,23 @@ var errArtifactLeaseConsumed = errors.New("Flowersec artifact lease already cons
 
 type artifactLeaseState struct {
 	mu          sync.Mutex
+	claimed     bool
 	spending    bool
 	consumed    bool
 	commitSpend func(context.Context) error
+}
+
+func (lease ArtifactLease) claimForConnectionController() bool {
+	if lease.state == nil {
+		return false
+	}
+	lease.state.mu.Lock()
+	defer lease.state.mu.Unlock()
+	if lease.state.claimed || lease.state.spending || lease.state.consumed {
+		return false
+	}
+	lease.state.claimed = true
+	return true
 }
 
 // String deliberately reveals no artifact or callback contents.

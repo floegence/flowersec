@@ -16,6 +16,7 @@ import {
   deriveNextEpoch,
 } from "./protocol.js";
 import { establishSessionV2, type SessionConfigV2 } from "./session.js";
+import { nodeSessionRuntimeV2 } from "../node/sessionRuntime.js";
 import {
   UNRELIABLE_MESSAGE_WIRE_BYTES_V2,
   UnreliableMessageError,
@@ -274,6 +275,7 @@ function sessionConfigs(): readonly [SessionConfigV2, SessionConfigV2] {
     localEndpointInstanceID: "",
     expectedPeerEndpointInstanceID: "",
     idleTimeoutMs: 0,
+    runtime: nodeSessionRuntimeV2,
   };
   return [{ ...common, role: "client" }, { ...common, role: "server" }];
 }
@@ -291,6 +293,7 @@ function withDatagrams(
     acceptStream: async (options) => await carrier.acceptStream(options),
     close: async (error) => await carrier.close(error),
     abort: (error) => carrier.abort(error),
+    waitTermination: () => carrier.waitTermination(),
   };
 }
 
@@ -310,7 +313,7 @@ class CapturingTransport implements CarrierUnreliableDatagramsV2 {
 
   constructor(readonly maxDatagramSize: number = UNRELIABLE_MESSAGE_WIRE_BYTES_V2) {}
 
-  async send(data: Uint8Array): Promise<"accepted"> {
+  async send(data: Uint8Array): Promise<"accepted" | "dropped_carrier"> {
     this.sent.push(data.slice());
     this.peer?.enqueue(data);
     return "accepted";
@@ -340,7 +343,7 @@ class HangingTransport extends CapturingTransport {
   sendCount = 0;
   private readonly gate = deferred<void>();
 
-  override async send(): Promise<"accepted"> {
+  override async send(): Promise<"accepted" | "dropped_carrier"> {
     this.sendCount++;
     await this.gate.promise;
     return "accepted";

@@ -24,11 +24,10 @@ const (
 	SubprotocolDirect = "flowersec.direct.v2"
 	SubprotocolTunnel = "flowersec.tunnel.v2"
 
-	closeStatusCode           = 4000
-	maxCloseReasonBytes       = 123
-	yamuxHeaderSizeBytes      = 12
-	closeControlTimeout       = 500 * time.Millisecond
-	establishmentProbeTimeout = 100 * time.Millisecond
+	closeStatusCode      = 4000
+	maxCloseReasonBytes  = 123
+	yamuxHeaderSizeBytes = 12
+	closeControlTimeout  = 500 * time.Millisecond
 )
 
 // ResourcePolicy is the Flowersec-owned resource contract for a WebSocket
@@ -42,13 +41,6 @@ type ResourcePolicy struct {
 	MaxStreamWriteQueueBytes    int
 	MaxStreamReceiveBytes       int
 	MaxSessionReceiveBytes      int
-}
-
-// LivenessPolicy configures acknowledged hop-level probes. Its zero value
-// disables automatic probes.
-type LivenessPolicy struct {
-	Interval time.Duration
-	Timeout  time.Duration
 }
 
 // DefaultResourcePolicy returns the hardened WebSocket carrier defaults.
@@ -120,7 +112,7 @@ const (
 // NewAfterAdmission switches an authenticated v2 WebSocket from its bounded
 // admission message to hop-local Yamux. Admission bytes must be exchanged by
 // the caller before invoking this function.
-func NewAfterAdmission(conn *gorillaws.Conn, role Role, subprotocol string, resources ResourcePolicy, liveness LivenessPolicy) (*Session, error) {
+func NewAfterAdmission(conn *gorillaws.Conn, role Role, subprotocol string, resources ResourcePolicy) (*Session, error) {
 	if role != ClientRole && role != ServerRole {
 		return nil, ErrInvalidRole
 	}
@@ -132,23 +124,23 @@ func NewAfterAdmission(conn *gorillaws.Conn, role Role, subprotocol string, reso
 		return nil, err
 	}
 	byteConn := newBinaryByteConn(conn, int64(normalized.MaxFrameBytes+yamuxHeaderSizeBytes))
-	return newSessionWithByteConn(conn, byteConn, role, subprotocol, normalized, fsyamux.LivenessOptions(liveness), nil)
+	return newSessionWithByteConn(conn, byteConn, role, subprotocol, normalized, nil)
 }
 
-func newSessionWithByteConn(conn *gorillaws.Conn, byteConn net.Conn, role Role, subprotocol string, limits fsyamux.YamuxLimits, liveness fsyamux.LivenessOptions, beforeMuxClose func() error) (*Session, error) {
+func newSessionWithByteConn(conn *gorillaws.Conn, byteConn net.Conn, role Role, subprotocol string, limits fsyamux.YamuxLimits, beforeMuxClose func() error) (*Session, error) {
 	if err := byteConn.SetDeadline(time.Time{}); err != nil {
 		return nil, fmt.Errorf("clear WebSocket admission deadline: %w", err)
 	}
 	var mux *fsyamux.Session
 	if role == ClientRole {
 		var err error
-		mux, err = fsyamux.NewClient(byteConn, limits, liveness)
+		mux, err = fsyamux.NewClient(byteConn, limits)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		var err error
-		mux, err = fsyamux.NewServer(byteConn, limits, liveness)
+		mux, err = fsyamux.NewServer(byteConn, limits)
 		if err != nil {
 			return nil, err
 		}
@@ -198,19 +190,10 @@ type Session struct {
 	closeControl   func(context.Context, carrier.ApplicationError) error
 }
 
-func (*Session) Kind() carrier.Kind                 { return carrier.KindWebSocket }
-func (session *Session) Path() carrier.Path         { return session.path }
-func (session *Session) MaxIncomingStreams() uint16 { return session.capacity }
-
-func (session *Session) ProbeEstablishment() error {
-	return ProbeEstablishment(session.raw)
-}
-
-// ProbeEstablishment sends one acknowledgement-eliciting control frame without
-// entering the application data stream.
-func ProbeEstablishment(conn *gorillaws.Conn) error {
-	return conn.WriteControl(gorillaws.PingMessage, nil, time.Now().Add(establishmentProbeTimeout))
-}
+func (*Session) Kind() carrier.Kind                   { return carrier.KindWebSocket }
+func (session *Session) Path() carrier.Path           { return session.path }
+func (session *Session) MaxIncomingStreams() uint16   { return session.capacity }
+func (session *Session) Termination() <-chan struct{} { return session.ctx.Done() }
 
 func pathForSubprotocol(subprotocol string) carrier.Path {
 	if subprotocol == SubprotocolTunnel {
@@ -272,6 +255,17 @@ func (session *Session) acceptLoop() {
 
 func (session *Session) CloseWithError(applicationError carrier.ApplicationError) error {
 	return session.CloseWithErrorContext(context.Background(), applicationError)
+}
+
+func (session *Session) Abort(applicationError carrier.ApplicationError) error {
+	if session == nil {
+		return nil
+	}
+	session.closeOnce.Do(func() {
+		session.cancel(io.ErrClosedPipe)
+		session.closeErr = errors.Join(session.mux.Close(), session.raw.Close())
+	})
+	return session.closeErr
 }
 
 func (session *Session) CloseWithErrorContext(ctx context.Context, applicationError carrier.ApplicationError) error {
@@ -365,6 +359,10 @@ func (stream *Stream) CloseWrite() error {
 	err := stream.inner.CloseWrite()
 	stream.lifecycle.CloseWriteResult(err)
 	return err
+}
+
+func (stream *Stream) StopSending() error {
+	return carrier.ErrStopSendingUnavailable
 }
 
 func (stream *Stream) Reset() error {
@@ -469,6 +467,5 @@ func validSubprotocol(value string) bool {
 }
 
 var _ carrier.Session = (*Session)(nil)
-var _ carrier.EstablishmentProber = (*Session)(nil)
 var _ carrier.Stream = (*Stream)(nil)
 var _ net.Conn = (*binaryByteConn)(nil)

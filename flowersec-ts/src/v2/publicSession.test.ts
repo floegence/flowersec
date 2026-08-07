@@ -64,7 +64,7 @@ describe("opaque public SessionV2 projection", () => {
 
   test("classifies a carrier close as a closed session without exposing carrier details", async () => {
     const internalError = Object.assign(new Error("private carrier detail"), {
-      name: "CarrierV2Error",
+      name: "CarrierError",
       code: "closed",
     });
     const stream = fakeStream(internalError);
@@ -72,26 +72,6 @@ describe("opaque public SessionV2 projection", () => {
 
     await expect(session.waitTermination()).resolves.toEqual({ error: new SessionError("closed") });
     expect((await session.waitTermination()).error.message).not.toContain("carrier");
-  });
-
-  test("classifies a browser carrier close without exposing browser carrier details", async () => {
-    const internalError = Object.assign(new Error("private WebTransport detail"), {
-      name: "BrowserWebTransportCarrierInternalStageError",
-      code: "carrier_closed",
-    });
-    const stream = fakeStream(internalError);
-    const session = projectSessionV2(fakeSession(stream, internalError));
-
-    await expect(session.waitTermination()).resolves.toEqual({ error: new SessionError("closed") });
-    expect((await session.waitTermination()).error.message).not.toContain("WebTransport");
-  });
-
-  test("classifies known browser carrier codes across an error realm boundary", async () => {
-    const internalError = Object.assign(new Error("private carrier detail"), { code: "carrier_closed" });
-    const stream = fakeStream(internalError);
-    const session = projectSessionV2(fakeSession(stream, internalError));
-
-    await expect(session.waitTermination()).resolves.toEqual({ error: new SessionError("closed") });
   });
 
   test("projects RPC application outcomes as a discriminated union", async () => {

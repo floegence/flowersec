@@ -50,10 +50,10 @@ Raw QUIC et WebTransport préservent le comportement natif de FIN, RESET_STREAM,
 Exécutez les suites de tests unitaires v2 :
 
 ```bash
-make transport-v2-unit
+make test
 ```
 
-Pour obtenir des preuves propres à chaque transport, exécutez `make transport-conformance-smoke`, `make transport-browser-smoke` et `make transport-interop-smoke`.
+Utilisez `make diagnostic` pour les diagnostics explicites de protocole, navigateur, reseau degrade et interoperabilite, et `make performance` pour la capacite et le soak.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>

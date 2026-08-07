@@ -13,7 +13,7 @@ import (
 )
 
 func TestNativeResetDoesNotWaitForBlockedControlWriter(t *testing.T) {
-	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 	clientConfig, serverConfig := testEngineConfigs(2)
 	client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
 	defer client.Close()

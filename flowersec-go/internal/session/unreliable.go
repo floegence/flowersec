@@ -121,7 +121,7 @@ func (channel *unreliableChannel) Receive(ctx context.Context) ([]byte, error) {
 		wire, err := channel.transport.ReceiveUnreliable(ctx)
 		if err != nil {
 			channel.session.openMu.Lock()
-			closing := channel.session.closing
+			closing := channel.session.lifecycle >= lifecycleClosing
 			channel.session.openMu.Unlock()
 			if closing {
 				return nil, ErrSessionClosed

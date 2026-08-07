@@ -43,7 +43,7 @@ class ByteQueue {
 
   private flush(): void {
     while (this.waiters.length > 0) {
-      const next = this.waiters[0];
+      const next = this.waiters[0]!;
       const out = this.tryRead(next.n);
       if (out == null) return;
       this.waiters.shift();
@@ -67,7 +67,7 @@ class ByteQueue {
         this.chunks.shift();
       } else {
         out.set(chunk.subarray(0, remaining), offset);
-        this.chunks[0] = chunk.subarray(remaining);
+        this.chunks[0] = new Uint8Array(chunk.subarray(remaining));
         remaining = 0;
       }
     }
@@ -86,7 +86,7 @@ function decodeEnvelope(frame: Uint8Array): RpcEnvelope {
 }
 
 async function makeFrame(env: RpcEnvelope): Promise<Uint8Array> {
-  let out = new Uint8Array();
+  let out: Uint8Array<ArrayBufferLike> = new Uint8Array();
   await writeJsonFrame(async (b) => {
     out = b;
   }, env);

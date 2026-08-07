@@ -1,9 +1,10 @@
 use flowersec::{
-    ArtifactLease, ConnectorOptions, ErrorRetryAction, RpcPeer, RpcPeerExt, SessionError,
-    SessionTermination, StreamMetadata, StreamMetadataError, classify_connect_error,
-    classify_session_error, connect,
+    ArtifactLease, ArtifactSource, ArtifactSourceError, ConnectionController,
+    ConnectionControllerOptions, ConnectorOptions, RetryDisposition, RetryPolicy, RpcPeer,
+    RpcPeerExt, SessionError, SessionTermination, StreamMetadata, StreamMetadataError, connect,
 };
 use serde::{Deserialize, Serialize};
+use std::{sync::Arc, time::Duration};
 
 #[derive(Serialize)]
 struct TypedRequest {
@@ -37,31 +38,34 @@ fn exposes_explicit_options_and_typed_rpc() {
 }
 
 #[test]
-fn recovery_classification_has_no_derived_boolean_state() {
-    let source = include_str!("../src/error_classification.rs");
-    assert!(!source.contains("pub retryable:"));
-    assert!(!source.contains("pub refresh_artifact:"));
+fn connection_controller_requires_a_refreshable_artifact_source() {
+    fn compile_controller(source: Arc<dyn ArtifactSource>) -> ConnectionController {
+        let connector = ConnectorOptions::new(vec![vec![1]]).expect("explicit trust roots");
+        let retry = RetryPolicy::new(Duration::from_millis(1), 2, Duration::from_secs(1))
+            .expect("retry policy");
+        ConnectionController::new(
+            source,
+            ConnectionControllerOptions::new(connector).with_retry_policy(retry),
+        )
+    }
+    let _ = compile_controller;
 }
 
 #[test]
-fn recovery_action_names_match_portable_contract() {
-    assert_eq!(ErrorRetryAction::Retry.as_str(), "retry");
+fn artifact_source_failures_require_structured_dispositions() {
     assert_eq!(
-        ErrorRetryAction::RefreshArtifact.as_str(),
-        "refresh_artifact"
+        ArtifactSourceError::terminal().disposition(),
+        RetryDisposition::Terminal
     );
-    assert_eq!(ErrorRetryAction::Stop.as_str(), "stop");
-
-    let closed = classify_session_error(SessionError::Closed);
-    assert_eq!(closed.action, ErrorRetryAction::RefreshArtifact);
-    assert!(closed.session_closed);
+    assert_eq!(
+        ArtifactSourceError::retryable().disposition(),
+        RetryDisposition::Retryable
+    );
 }
 
 #[test]
 fn public_error_codes_expose_direct_stable_strings() {
     let connect_error = ConnectorOptions::new(vec![]).expect_err("empty trust roots are invalid");
-    let connection = classify_connect_error(connect_error);
-    assert_eq!(connection.action, ErrorRetryAction::Stop);
     assert_eq!(connect_error.as_str(), "invalid_input");
     assert_eq!(SessionError::Timeout.as_str(), "timeout");
     assert_eq!(SessionError::GoingAway.as_str(), "going_away");
@@ -96,24 +100,9 @@ fn session_termination_is_a_stable_value() {
 
 #[test]
 fn session_error_names_cover_portable_session_states() {
-    assert_eq!(
-        classify_session_error(SessionError::GoingAway).action,
-        ErrorRetryAction::RefreshArtifact
-    );
-    assert_eq!(
-        classify_session_error(SessionError::StreamRejected).action,
-        ErrorRetryAction::Stop
-    );
-    assert_eq!(
-        classify_session_error(SessionError::StreamReset).action,
-        ErrorRetryAction::Retry
-    );
-    assert_eq!(
-        classify_session_error(SessionError::RekeyFailed).action,
-        ErrorRetryAction::Retry
-    );
-    assert_eq!(
-        classify_session_error(SessionError::LivenessFailed).action,
-        ErrorRetryAction::Retry
-    );
+    assert_eq!(SessionError::GoingAway.as_str(), "going_away");
+    assert_eq!(SessionError::StreamRejected.as_str(), "stream_rejected");
+    assert_eq!(SessionError::StreamReset.as_str(), "stream_reset");
+    assert_eq!(SessionError::RekeyFailed.as_str(), "rekey_failed");
+    assert_eq!(SessionError::LivenessFailed.as_str(), "liveness_failed");
 }

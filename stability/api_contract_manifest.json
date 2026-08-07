@@ -95,16 +95,6 @@
           },
           {
             "kind": "type",
-            "expr": "flowersec.RetryAction",
-            "doc_token": "`flowersec.RetryAction`"
-          },
-          {
-            "kind": "type",
-            "expr": "flowersec.ErrorRetryClassification",
-            "doc_token": "`flowersec.ErrorRetryClassification`"
-          },
-          {
-            "kind": "type",
             "expr": "flowersec.SessionError",
             "doc_token": "`flowersec.SessionError`"
           },
@@ -389,16 +379,6 @@
             "doc_token": "`flowersec.ConnectErrorCode.String()`"
           },
           {
-            "kind": "func",
-            "expr": "flowersec.ClassifyConnectError",
-            "doc_token": "`flowersec.ClassifyConnectError(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "flowersec.ClassifySessionError",
-            "doc_token": "`flowersec.ClassifySessionError(...)`"
-          },
-          {
             "kind": "method",
             "expr": "(*flowersec.SessionError).Error",
             "doc_token": "`flowersec.SessionError.Error()`"
@@ -534,21 +514,6 @@
             "doc_token": "`flowersec.UnreliableDroppedCarrier`"
           },
           {
-            "kind": "const",
-            "expr": "flowersec.RetryActionRetry",
-            "doc_token": "`flowersec.RetryActionRetry`"
-          },
-          {
-            "kind": "const",
-            "expr": "flowersec.RetryActionRefreshArtifact",
-            "doc_token": "`flowersec.RetryActionRefreshArtifact`"
-          },
-          {
-            "kind": "const",
-            "expr": "flowersec.RetryActionStop",
-            "doc_token": "`flowersec.RetryActionStop`"
-          },
-          {
             "kind": "var",
             "expr": "flowersec.ErrInvalidConnectorOptions",
             "doc_token": "`flowersec.ErrInvalidConnectorOptions`"
@@ -572,6 +537,197 @@
             "kind": "var",
             "expr": "flowersec.ErrSessionHandlersFrozen",
             "doc_token": "`flowersec.ErrSessionHandlersFrozen`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.ArtifactSource",
+            "doc_token": "`flowersec.ArtifactSource`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.ArtifactSourceError",
+            "doc_token": "`flowersec.ArtifactSourceError`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.ArtifactSource.Acquire",
+            "signature": "func(flowersec.ArtifactSource, context.Context) (flowersec.ArtifactLease, *flowersec.ArtifactSourceError)",
+            "doc_token": "`flowersec.ArtifactSource`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ArtifactSourceError).Error",
+            "doc_token": "`flowersec.ArtifactSourceError`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ArtifactSourceError).Unwrap",
+            "doc_token": "`flowersec.ArtifactSourceError`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ArtifactSourceError).RetryDisposition",
+            "doc_token": "`flowersec.ArtifactSourceError`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.ConnectionController",
+            "doc_token": "`flowersec.ConnectionController`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.ConnectionFailure",
+            "doc_token": "`flowersec.ConnectionFailure`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.ConnectionState",
+            "doc_token": "`flowersec.ConnectionState`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.ConnectionStatus",
+            "doc_token": "`flowersec.ConnectionStatus`"
+          },
+          {
+            "kind": "method",
+            "expr": "flowersec.ConnectionStatus.String",
+            "doc_token": "`flowersec.ConnectionStatus`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.RetryDisposition",
+            "doc_token": "`flowersec.RetryDisposition`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.RetryDispositionKind",
+            "doc_token": "`flowersec.RetryDisposition`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.RetryPolicy",
+            "doc_token": "`flowersec.RetryPolicy`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.DefaultRetryPolicy",
+            "doc_token": "`flowersec.RetryPolicy`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewConnectionController",
+            "doc_token": "`flowersec.NewConnectionController(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewRetryAfterArtifactSourceError",
+            "doc_token": "`flowersec.RetryDisposition`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewRetryableArtifactSourceError",
+            "doc_token": "`flowersec.RetryDisposition`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewTerminalArtifactSourceError",
+            "doc_token": "`flowersec.RetryDisposition`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ConnectionController).Start",
+            "doc_token": "`flowersec.ConnectionController`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ConnectionController).Status",
+            "doc_token": "`flowersec.ConnectionStatus`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ConnectionController).CurrentSession",
+            "doc_token": "`flowersec.ConnectionController`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ConnectionController).WaitForStatusChange",
+            "doc_token": "`flowersec.ConnectionStatus`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ConnectionController).RetryNow",
+            "doc_token": "`flowersec.ConnectionController`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ConnectionController).Close",
+            "doc_token": "`flowersec.ConnectionController`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ConnectError).RetryDisposition",
+            "doc_token": "`flowersec.RetryDisposition`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.SessionError).RetryDisposition",
+            "doc_token": "`flowersec.RetryDisposition`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.RetryDispositionTerminal",
+            "doc_token": "`flowersec.RetryDisposition`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.RetryDispositionRetryable",
+            "doc_token": "`flowersec.RetryDisposition`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.RetryDispositionRetryAfter",
+            "doc_token": "`flowersec.RetryDisposition`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.ConnectionIdle",
+            "doc_token": "`flowersec.ConnectionController`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.ConnectionConnecting",
+            "doc_token": "`flowersec.ConnectionController`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.ConnectionConnected",
+            "doc_token": "`flowersec.ConnectionController`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.ConnectionWaiting",
+            "doc_token": "`flowersec.ConnectionController`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.ConnectionFailed",
+            "doc_token": "`flowersec.ConnectionController`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.ConnectionClosed",
+            "doc_token": "`flowersec.ConnectionController`"
+          },
+          {
+            "kind": "var",
+            "expr": "flowersec.ErrInvalidConnectionController",
+            "doc_token": "`flowersec.ConnectionController`"
+          },
+          {
+            "kind": "var",
+            "expr": "flowersec.ErrConnectionControllerStarted",
+            "doc_token": "`flowersec.ConnectionController`"
           }
         ]
       },
@@ -581,49 +737,221 @@
         "stability_group": "transport_v2",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane`",
         "entries": [
-          { "kind": "var", "expr": "controlplane.ErrInvalidControlPlaneInput", "doc_token": "`controlplane.ErrInvalidControlPlaneInput`" },
-          { "kind": "var", "expr": "controlplane.ErrIssuanceFailed", "doc_token": "`controlplane.ErrIssuanceFailed`" },
-          { "kind": "type", "expr": "controlplane.EndpointSet", "doc_token": "`controlplane.EndpointSet`" },
-          { "kind": "func", "expr": "controlplane.NewEndpointSet", "doc_token": "`controlplane.NewEndpointSet(...)`" },
-          { "kind": "method", "expr": "controlplane.EndpointSet.String", "doc_token": "`controlplane.EndpointSet.String()`" },
-          { "kind": "method", "expr": "controlplane.EndpointSet.GoString", "doc_token": "`controlplane.EndpointSet.GoString()`" },
-          { "kind": "type", "expr": "controlplane.Issuer", "doc_token": "`controlplane.Issuer`" },
-          { "kind": "func", "expr": "controlplane.NewIssuer", "doc_token": "`controlplane.NewIssuer()`" },
-          { "kind": "type", "expr": "controlplane.SessionOptions", "doc_token": "`controlplane.SessionOptions`" },
-          { "kind": "type", "expr": "controlplane.Scope", "doc_token": "`controlplane.Scope`" },
-          { "kind": "type", "expr": "controlplane.ArtifactMetadata", "doc_token": "`controlplane.ArtifactMetadata`" },
-          { "kind": "type", "expr": "controlplane.DirectIssueOptions", "doc_token": "`controlplane.DirectIssueOptions`" },
-          { "kind": "type", "expr": "controlplane.TunnelIssueOptions", "doc_token": "`controlplane.TunnelIssueOptions`" },
-          { "kind": "method", "expr": "(*controlplane.Issuer).IssueDirect", "doc_token": "`controlplane.Issuer.IssueDirect(...)`" },
-          { "kind": "method", "expr": "(*controlplane.Issuer).IssueTunnelPair", "doc_token": "`controlplane.Issuer.IssueTunnelPair(...)`" },
-          { "kind": "type", "expr": "controlplane.IssuedArtifact", "doc_token": "`controlplane.IssuedArtifact`" },
-          { "kind": "type", "expr": "controlplane.IssuedTunnelPair", "doc_token": "`controlplane.IssuedTunnelPair`" },
-          { "kind": "method", "expr": "controlplane.IssuedArtifact.ArtifactJSON", "doc_token": "`controlplane.IssuedArtifact.ArtifactJSON()`" },
-          { "kind": "method", "expr": "controlplane.IssuedArtifact.AuthorizationRecord", "doc_token": "`controlplane.IssuedArtifact.AuthorizationRecord()`" },
-          { "kind": "method", "expr": "controlplane.IssuedArtifact.LookupKey", "doc_token": "`controlplane.IssuedArtifact.LookupKey()`" },
-          { "kind": "method", "expr": "controlplane.IssuedArtifact.String", "doc_token": "`controlplane.IssuedArtifact.String()`" },
-          { "kind": "method", "expr": "controlplane.IssuedArtifact.GoString", "doc_token": "`controlplane.IssuedArtifact.GoString()`" },
-          { "kind": "method", "expr": "controlplane.IssuedArtifact.MarshalJSON", "doc_token": "`controlplane.IssuedArtifact.MarshalJSON()`" },
-          { "kind": "type", "expr": "controlplane.AuthorizationRecord", "doc_token": "`controlplane.AuthorizationRecord`" },
-          { "kind": "func", "expr": "controlplane.ParseAuthorizationRecord", "doc_token": "`controlplane.ParseAuthorizationRecord(...)`" },
-          { "kind": "method", "expr": "controlplane.AuthorizationRecord.Encode", "doc_token": "`controlplane.AuthorizationRecord.Encode()`" },
-          { "kind": "method", "expr": "controlplane.AuthorizationRecord.LookupKey", "doc_token": "`controlplane.AuthorizationRecord.LookupKey()`" },
-          { "kind": "method", "expr": "controlplane.AuthorizationRecord.String", "doc_token": "`controlplane.AuthorizationRecord.String()`" },
-          { "kind": "method", "expr": "controlplane.AuthorizationRecord.GoString", "doc_token": "`controlplane.AuthorizationRecord.GoString()`" },
-          { "kind": "method", "expr": "controlplane.AuthorizationRecord.MarshalJSON", "doc_token": "`controlplane.AuthorizationRecord.MarshalJSON()`" },
-          { "kind": "type", "expr": "controlplane.RuntimeAuthorizationRequest", "doc_token": "`controlplane.RuntimeAuthorizationRequest`" },
-          { "kind": "func", "expr": "controlplane.ParseRuntimeAuthorizationRequest", "doc_token": "`controlplane.ParseRuntimeAuthorizationRequest(...)`" },
-          { "kind": "method", "expr": "controlplane.RuntimeAuthorizationRequest.LookupKey", "doc_token": "`controlplane.RuntimeAuthorizationRequest.LookupKey()`" },
-          { "kind": "method", "expr": "controlplane.RuntimeAuthorizationRequest.String", "doc_token": "`controlplane.RuntimeAuthorizationRequest.String()`" },
-          { "kind": "method", "expr": "controlplane.RuntimeAuthorizationRequest.GoString", "doc_token": "`controlplane.RuntimeAuthorizationRequest.GoString()`" },
-          { "kind": "method", "expr": "controlplane.RuntimeAuthorizationRequest.MarshalJSON", "doc_token": "`controlplane.RuntimeAuthorizationRequest.MarshalJSON()`" },
-          { "kind": "type", "expr": "controlplane.AuthorizationResponse", "doc_token": "`controlplane.AuthorizationResponse`" },
-          { "kind": "func", "expr": "controlplane.AuthorizeRuntime", "doc_token": "`controlplane.AuthorizeRuntime(...)`" },
-          { "kind": "func", "expr": "controlplane.RejectRuntime", "doc_token": "`controlplane.RejectRuntime(...)`" },
-          { "kind": "method", "expr": "controlplane.AuthorizationResponse.JSON", "doc_token": "`controlplane.AuthorizationResponse.JSON()`" },
-          { "kind": "method", "expr": "controlplane.AuthorizationResponse.String", "doc_token": "`controlplane.AuthorizationResponse.String()`" },
-          { "kind": "method", "expr": "controlplane.AuthorizationResponse.GoString", "doc_token": "`controlplane.AuthorizationResponse.GoString()`" },
-          { "kind": "method", "expr": "controlplane.AuthorizationResponse.MarshalJSON", "doc_token": "`controlplane.AuthorizationResponse.MarshalJSON()`" }
+          {
+            "kind": "var",
+            "expr": "controlplane.ErrInvalidControlPlaneInput",
+            "doc_token": "`controlplane.ErrInvalidControlPlaneInput`"
+          },
+          {
+            "kind": "var",
+            "expr": "controlplane.ErrIssuanceFailed",
+            "doc_token": "`controlplane.ErrIssuanceFailed`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.EndpointSet",
+            "doc_token": "`controlplane.EndpointSet`"
+          },
+          {
+            "kind": "func",
+            "expr": "controlplane.NewEndpointSet",
+            "doc_token": "`controlplane.NewEndpointSet(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.EndpointSet.String",
+            "doc_token": "`controlplane.EndpointSet.String()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.EndpointSet.GoString",
+            "doc_token": "`controlplane.EndpointSet.GoString()`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.Issuer",
+            "doc_token": "`controlplane.Issuer`"
+          },
+          {
+            "kind": "func",
+            "expr": "controlplane.NewIssuer",
+            "doc_token": "`controlplane.NewIssuer()`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.SessionOptions",
+            "doc_token": "`controlplane.SessionOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.Scope",
+            "doc_token": "`controlplane.Scope`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.ArtifactMetadata",
+            "doc_token": "`controlplane.ArtifactMetadata`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.DirectIssueOptions",
+            "doc_token": "`controlplane.DirectIssueOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.TunnelIssueOptions",
+            "doc_token": "`controlplane.TunnelIssueOptions`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*controlplane.Issuer).IssueDirect",
+            "doc_token": "`controlplane.Issuer.IssueDirect(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*controlplane.Issuer).IssueTunnelPair",
+            "doc_token": "`controlplane.Issuer.IssueTunnelPair(...)`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.IssuedArtifact",
+            "doc_token": "`controlplane.IssuedArtifact`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.IssuedTunnelPair",
+            "doc_token": "`controlplane.IssuedTunnelPair`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedArtifact.ArtifactJSON",
+            "doc_token": "`controlplane.IssuedArtifact.ArtifactJSON()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedArtifact.AuthorizationRecord",
+            "doc_token": "`controlplane.IssuedArtifact.AuthorizationRecord()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedArtifact.LookupKey",
+            "doc_token": "`controlplane.IssuedArtifact.LookupKey()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedArtifact.String",
+            "doc_token": "`controlplane.IssuedArtifact.String()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedArtifact.GoString",
+            "doc_token": "`controlplane.IssuedArtifact.GoString()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedArtifact.MarshalJSON",
+            "doc_token": "`controlplane.IssuedArtifact.MarshalJSON()`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.AuthorizationRecord",
+            "doc_token": "`controlplane.AuthorizationRecord`"
+          },
+          {
+            "kind": "func",
+            "expr": "controlplane.ParseAuthorizationRecord",
+            "doc_token": "`controlplane.ParseAuthorizationRecord(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.AuthorizationRecord.Encode",
+            "doc_token": "`controlplane.AuthorizationRecord.Encode()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.AuthorizationRecord.LookupKey",
+            "doc_token": "`controlplane.AuthorizationRecord.LookupKey()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.AuthorizationRecord.String",
+            "doc_token": "`controlplane.AuthorizationRecord.String()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.AuthorizationRecord.GoString",
+            "doc_token": "`controlplane.AuthorizationRecord.GoString()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.AuthorizationRecord.MarshalJSON",
+            "doc_token": "`controlplane.AuthorizationRecord.MarshalJSON()`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.RuntimeAuthorizationRequest",
+            "doc_token": "`controlplane.RuntimeAuthorizationRequest`"
+          },
+          {
+            "kind": "func",
+            "expr": "controlplane.ParseRuntimeAuthorizationRequest",
+            "doc_token": "`controlplane.ParseRuntimeAuthorizationRequest(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.RuntimeAuthorizationRequest.LookupKey",
+            "doc_token": "`controlplane.RuntimeAuthorizationRequest.LookupKey()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.RuntimeAuthorizationRequest.String",
+            "doc_token": "`controlplane.RuntimeAuthorizationRequest.String()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.RuntimeAuthorizationRequest.GoString",
+            "doc_token": "`controlplane.RuntimeAuthorizationRequest.GoString()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.RuntimeAuthorizationRequest.MarshalJSON",
+            "doc_token": "`controlplane.RuntimeAuthorizationRequest.MarshalJSON()`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.AuthorizationResponse",
+            "doc_token": "`controlplane.AuthorizationResponse`"
+          },
+          {
+            "kind": "func",
+            "expr": "controlplane.AuthorizeRuntime",
+            "doc_token": "`controlplane.AuthorizeRuntime(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "controlplane.RejectRuntime",
+            "doc_token": "`controlplane.RejectRuntime(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.AuthorizationResponse.JSON",
+            "doc_token": "`controlplane.AuthorizationResponse.JSON()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.AuthorizationResponse.String",
+            "doc_token": "`controlplane.AuthorizationResponse.String()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.AuthorizationResponse.GoString",
+            "doc_token": "`controlplane.AuthorizationResponse.GoString()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.AuthorizationResponse.MarshalJSON",
+            "doc_token": "`controlplane.AuthorizationResponse.MarshalJSON()`"
+          }
         ]
       }
     ]
@@ -639,23 +967,20 @@
           "`ArtifactLease`",
           "`Session`",
           "`UnreliableMessageChannel`",
-          "`classifyConnectError(...)`",
-          "`classifySessionError(...)`",
-          "`ErrorRetryClassification`",
           "`createStreamMetadata(...)`",
           "`StreamMetadata`",
-          "`UnreliableMessageError`"
+          "`UnreliableMessageError`",
+          "`ConnectionController`"
         ],
         "runtime_exports": [
           "Artifact",
           "ArtifactError",
           "ArtifactLeaseError",
           "ConnectError",
+          "ConnectionControllerError",
           "SessionError",
           "StreamMetadataError",
           "UnreliableMessageError",
-          "classifyConnectError",
-          "classifySessionError",
           "createArtifactLease",
           "createStreamMetadata",
           "parseArtifact"
@@ -664,24 +989,30 @@
           "Artifact",
           "ArtifactError",
           "ArtifactErrorCode",
-          "ArtifactLeaseError",
           "ArtifactLease",
+          "ArtifactLeaseError",
+          "ArtifactSource",
+          "ArtifactSourceResult",
           "ByteStream",
           "ConnectError",
           "ConnectErrorCode",
-          "ErrorRetryClassification",
-          "RetryAction",
+          "ConnectionController",
+          "ConnectionControllerFailure",
+          "ConnectionControllerOptions",
+          "ConnectionControllerSnapshot",
+          "ConnectionState",
           "IncomingStream",
           "JsonObject",
           "JsonPrimitive",
           "JsonValue",
           "OperationOptions",
+          "RetryDisposition",
           "RpcPeer",
           "RpcResult",
+          "Session",
           "SessionError",
           "SessionErrorCode",
           "SessionTermination",
-          "Session",
           "StreamMetadata",
           "StreamMetadataError",
           "StreamOpenOptions",
@@ -695,20 +1026,21 @@
         "package_json_export": "./node",
         "doc_tokens": [
           "`@floegence/flowersec-core/node`",
-          "`connectNodeSession(...)`"
+          "`connectNodeSession(...)`",
+          "`ConnectionController`"
         ],
         "runtime_exports": [
           "Artifact",
           "ArtifactError",
           "ArtifactLeaseError",
           "ConnectError",
+          "ConnectionControllerError",
           "SessionError",
           "StreamMetadataError",
           "UnreliableMessageError",
-          "classifyConnectError",
-          "classifySessionError",
           "connectNodeSession",
           "createArtifactLease",
+          "createNodeConnectionController",
           "createStreamMetadata",
           "parseArtifact"
         ],
@@ -716,26 +1048,33 @@
           "Artifact",
           "ArtifactError",
           "ArtifactErrorCode",
-          "ArtifactLeaseError",
           "ArtifactLease",
+          "ArtifactLeaseError",
+          "ArtifactSource",
+          "ArtifactSourceResult",
           "ByteStream",
           "ConnectError",
           "ConnectErrorCode",
-          "ErrorRetryClassification",
-          "RetryAction",
+          "ConnectionController",
+          "ConnectionControllerFailure",
+          "ConnectionControllerOptions",
+          "ConnectionControllerSnapshot",
+          "ConnectionState",
           "IncomingStream",
           "JsonObject",
           "JsonPrimitive",
           "JsonValue",
+          "NodeConnectionControllerOptions",
           "NodeSessionOptions",
           "NodeSessionTLSOptions",
           "OperationOptions",
+          "RetryDisposition",
           "RpcPeer",
           "RpcResult",
+          "Session",
           "SessionError",
           "SessionErrorCode",
           "SessionTermination",
-          "Session",
           "StreamMetadata",
           "StreamMetadataError",
           "StreamOpenOptions",
@@ -749,20 +1088,21 @@
         "package_json_export": "./browser",
         "doc_tokens": [
           "`@floegence/flowersec-core/browser`",
-          "`connectBrowserSession(...)`"
+          "`connectBrowserSession(...)`",
+          "`ConnectionController`"
         ],
         "runtime_exports": [
           "Artifact",
           "ArtifactError",
           "ArtifactLeaseError",
           "ConnectError",
+          "ConnectionControllerError",
           "SessionError",
           "StreamMetadataError",
           "UnreliableMessageError",
-          "classifyConnectError",
-          "classifySessionError",
           "connectBrowserSession",
           "createArtifactLease",
+          "createBrowserConnectionController",
           "createStreamMetadata",
           "parseArtifact"
         ],
@@ -770,58 +1110,38 @@
           "Artifact",
           "ArtifactError",
           "ArtifactErrorCode",
-          "ArtifactLeaseError",
           "ArtifactLease",
+          "ArtifactLeaseError",
+          "ArtifactSource",
+          "ArtifactSourceResult",
+          "BrowserConnectionControllerOptions",
           "BrowserSessionOptions",
           "ByteStream",
           "ConnectError",
           "ConnectErrorCode",
-          "ErrorRetryClassification",
-          "RetryAction",
+          "ConnectionController",
+          "ConnectionControllerFailure",
+          "ConnectionControllerOptions",
+          "ConnectionControllerSnapshot",
+          "ConnectionState",
           "IncomingStream",
           "JsonObject",
           "JsonPrimitive",
           "JsonValue",
           "OperationOptions",
+          "RetryDisposition",
           "RpcPeer",
           "RpcResult",
+          "Session",
           "SessionError",
           "SessionErrorCode",
           "SessionTermination",
-          "Session",
           "StreamMetadata",
           "StreamMetadataError",
           "StreamOpenOptions",
           "UnreliableMessageChannel",
           "UnreliableMessageSendOptions",
           "UnreliableMessageSendResult"
-        ]
-      },
-      {
-        "specifier": "@floegence/flowersec-core/reconnect",
-        "package_json_export": "./reconnect",
-        "doc_tokens": [
-          "`@floegence/flowersec-core/reconnect`",
-          "`createSessionReconnectManager(...)`"
-        ],
-        "runtime_exports": [
-          "ArtifactLeaseError",
-          "createArtifactAcquireContext",
-          "createArtifactLease",
-          "createArtifactResolver",
-          "createSessionReconnectManager"
-        ],
-        "type_exports": [
-          "ArtifactAcquireContext",
-          "ArtifactAcquireContextOptions",
-          "ArtifactLease",
-          "ArtifactLeaseError",
-          "ArtifactSource",
-          "SessionAutoReconnectConfig",
-          "SessionReconnectConfig",
-          "SessionReconnectManager",
-          "SessionReconnectState",
-          "SessionReconnectStatus"
         ]
       },
       {
@@ -865,8 +1185,8 @@
           "ProxyRuntimeLimits",
           "ProxyRuntimeOptions",
           "ProxyRuntimePathPolicy",
-          "ProxyRuntimeScopeLimits",
           "ProxyRuntimeScope",
+          "ProxyRuntimeScopeLimits",
           "ProxyRuntimeServiceWorkerScope",
           "ProxyServiceWorkerInjectHTMLOptions",
           "ProxyServiceWorkerPassthroughOptions",
@@ -900,10 +1220,9 @@
       "`Session`",
       "`ConnectError`",
       "`SessionError`",
-      "`RetryAction`",
-      "`ErrorRetryClassification`",
-      "`classifyConnectError(_:)`",
-      "`classifySessionError(_:)`"
+      "`ConnectionController`",
+      "`ArtifactSource`",
+      "`RetryDisposition`"
     ],
     "symbols": [
       {
@@ -924,11 +1243,6 @@
       {
         "kind": "swift.enum",
         "name": "ConnectError",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum",
-        "name": "RetryAction",
         "doc_token": ""
       },
       {
@@ -988,22 +1302,12 @@
       },
       {
         "kind": "swift.enum.case",
+        "name": "ConnectError.runtimeUnsupported",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
         "name": "ConnectError.timeout",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "RetryAction.refreshArtifact",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "RetryAction.retry",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "RetryAction.stop",
         "doc_token": ""
       },
       {
@@ -1147,16 +1451,6 @@
         "doc_token": ""
       },
       {
-        "kind": "swift.func",
-        "name": "classifyConnectError(_:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.func",
-        "name": "classifySessionError(_:)",
-        "doc_token": ""
-      },
-      {
         "kind": "swift.init",
         "name": "ArtifactLease.init(artifact:commitSpend:)",
         "doc_token": ""
@@ -1164,11 +1458,6 @@
       {
         "kind": "swift.init",
         "name": "ConnectError.init(rawValue:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.init",
-        "name": "RetryAction.init(rawValue:)",
         "doc_token": ""
       },
       {
@@ -1318,21 +1607,6 @@
       },
       {
         "kind": "swift.property",
-        "name": "ErrorRetryClassification.action",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ErrorRetryClassification.callerCanceled",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ErrorRetryClassification.sessionClosed",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
         "name": "IncomingStream.kind",
         "doc_token": ""
       },
@@ -1403,11 +1677,6 @@
       },
       {
         "kind": "swift.struct",
-        "name": "ErrorRetryClassification",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.struct",
         "name": "IncomingStream",
         "doc_token": ""
       },
@@ -1470,6 +1739,276 @@
         "kind": "swift.type.property",
         "name": "StreamMetadata.maximumSafeInteger",
         "doc_token": ""
+      },
+      {
+        "kind": "swift.protocol",
+        "name": "ArtifactSource",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ArtifactSource.acquireArtifact()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "RetryDisposition",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "RetryDisposition.terminal",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "RetryDisposition.retryable",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "RetryDisposition.retryAfter(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectError.retryDisposition",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "SessionError.retryDisposition",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ArtifactSourceFailure",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ArtifactSourceFailure.init(disposition:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ArtifactSourceFailure.disposition",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ConnectionState",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectionState.idle",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectionState.connecting",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectionState.connected",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectionState.waiting",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectionState.failed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectionState.closed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ConnectionState.init(rawValue:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ConnectionAttemptFailure",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectionAttemptFailure.retryDisposition",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectionAttemptFailure.artifactSource(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectionAttemptFailure.unknownArtifactSource",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectionAttemptFailure.connection(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectionAttemptFailure.session(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ConnectionFailure",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectionFailure.terminal(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectionFailure.maximumAttemptsReached(last:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ConnectionRetryPolicy",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ConnectionRetryPolicy.init(initialDelay:multiplier:maximumDelay:maximumAttempts:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectionRetryPolicy.initialDelay",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectionRetryPolicy.multiplier",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectionRetryPolicy.maximumDelay",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectionRetryPolicy.maximumAttempts",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ConnectionSnapshot",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectionSnapshot.state",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectionSnapshot.attempt",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectionSnapshot.nextRetryAt",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectionSnapshot.currentSession",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectionSnapshot.failure",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ConnectionControllerConfigurationError",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectionControllerConfigurationError.invalidRetryPolicy",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.class",
+        "name": "ConnectionController",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectionController.state",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectionController.attempt",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectionController.nextRetryAt",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectionController.currentSession",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectionController.failure",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ConnectionController.init(source:options:retryPolicy:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ConnectionController.start()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ConnectionController.updates()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ConnectionController.snapshot()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ConnectionController.retryNow()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ConnectionController.close()",
+        "doc_token": ""
       }
     ]
   },
@@ -1486,11 +2025,6 @@
       "`AcceptErrorCode::as_str()`",
       "`ConnectError::as_str()`",
       "`ConnectErrorCode::as_str()`",
-      "`ErrorRetryAction`",
-      "`ErrorRetryClassification`",
-      "`ErrorRetryAction::as_str()`",
-      "`classify_connect_error(...)`",
-      "`classify_session_error(...)`",
       "`RpcCallError`",
       "`RpcError`",
       "`RpcPeerExt`",
@@ -1501,7 +2035,18 @@
       "`StreamMetadata`",
       "`StreamMetadataError`",
       "`UnreliableMessageChannel`",
-      "`UnreliableSendOutcome`"
+      "`UnreliableSendOutcome`",
+      "`ConnectionController`",
+      "`ConnectionControllerOptions`",
+      "`ConnectionControllerStartError`",
+      "`ArtifactSource`",
+      "`ArtifactSourceError`",
+      "`ConnectionStatus`",
+      "`ConnectionState`",
+      "`ConnectionFailure`",
+      "`RetryDisposition`",
+      "`RetryPolicy`",
+      "`RetryPolicyError`"
     ],
     "compile_entries": [
       "let _ = std::mem::size_of::<flowersec::AcceptError>()",
@@ -1518,25 +2063,17 @@
       "let _ = std::mem::size_of::<flowersec::ConnectErrorCode>()",
       "let _: fn(&flowersec::ConnectError) -> &'static str = flowersec::ConnectError::as_str",
       "let _ = flowersec::ConnectErrorCode::InvalidInput.as_str()",
-    "let _ = std::mem::size_of::<flowersec::ConnectorOptions>()",
-    "let _ = flowersec::ConnectorOptions::new(vec![vec![1_u8]])",
+      "let _ = std::mem::size_of::<flowersec::ConnectorOptions>()",
+      "let _ = flowersec::ConnectorOptions::new(vec![vec![1_u8]])",
       "let _ = flowersec::connect",
       "let _ = flowersec::connect_with_cancellation",
-      "let _ = std::mem::size_of::<flowersec::ErrorRetryAction>()",
-      "let _ = std::mem::size_of::<flowersec::ErrorRetryClassification>()",
-      "let _ = flowersec::ErrorRetryAction::Retry",
-      "let _ = flowersec::ErrorRetryAction::RefreshArtifact",
-      "let _ = flowersec::ErrorRetryAction::Stop",
-      "let _ = flowersec::ErrorRetryAction::Retry.as_str()",
-      "let _: fn(flowersec::ConnectError) -> flowersec::ErrorRetryClassification = flowersec::classify_connect_error",
-      "let _: fn(flowersec::SessionError) -> flowersec::ErrorRetryClassification = flowersec::classify_session_error",
       "let _ = std::mem::size_of::<flowersec::IncomingStream>()",
       "let _ = std::mem::size_of::<flowersec::JsonObject>()",
       "let _ = std::mem::size_of::<flowersec::RpcCallError>()",
       "let _ = std::mem::size_of::<flowersec::RpcError>()",
-    "let _: Option<&dyn flowersec::RpcPeer> = None",
-    "fn require_rpc_peer_ext<T: flowersec::RpcPeerExt + ?Sized>() {}",
-    "require_rpc_peer_ext::<dyn flowersec::RpcPeer>()",
+      "let _: Option<&dyn flowersec::RpcPeer> = None",
+      "fn require_rpc_peer_ext<T: flowersec::RpcPeerExt + ?Sized>() {}",
+      "require_rpc_peer_ext::<dyn flowersec::RpcPeer>()",
       "let _: Option<&dyn flowersec::Session> = None",
       "let _ = std::mem::size_of::<flowersec::SessionError>()",
       "let _ = std::mem::size_of::<flowersec::SessionTermination>()",
@@ -1557,7 +2094,35 @@
       "let _ = flowersec::UnreliableSendOutcome::Accepted",
       "let _ = flowersec::UnreliableSendOutcome::DroppedExpired",
       "let _ = flowersec::UnreliableSendOutcome::DroppedBudget",
-      "let _ = flowersec::UnreliableSendOutcome::DroppedCarrier"
+      "let _ = flowersec::UnreliableSendOutcome::DroppedCarrier",
+      "let _ = std::mem::size_of::<flowersec::ArtifactSourceError>()",
+      "let _ = flowersec::ArtifactSourceError::terminal",
+      "let _ = flowersec::ArtifactSourceError::retryable",
+      "let _ = flowersec::ArtifactSourceError::retry_after",
+      "let _ = flowersec::ArtifactSourceError::disposition",
+      "let _: Option<&dyn flowersec::ArtifactSource> = None",
+      "let _ = std::mem::size_of::<flowersec::ConnectionController>()",
+      "let _ = flowersec::ConnectionController::new",
+      "let _ = flowersec::ConnectionController::start",
+      "let _ = flowersec::ConnectionController::status",
+      "let _ = flowersec::ConnectionController::current_session",
+      "let _ = flowersec::ConnectionController::wait_for_status_change",
+      "let _ = flowersec::ConnectionController::retry_now",
+      "let _ = flowersec::ConnectionController::close",
+      "let _ = std::mem::size_of::<flowersec::ConnectionControllerOptions>()",
+      "let _ = flowersec::ConnectionControllerOptions::new",
+      "let _ = flowersec::ConnectionControllerOptions::with_retry_policy",
+      "let _ = flowersec::ConnectionControllerOptions::retry_policy",
+      "let _ = std::mem::size_of::<flowersec::ConnectionControllerStartError>()",
+      "let _ = std::mem::size_of::<flowersec::ConnectionFailure>()",
+      "let _ = flowersec::ConnectionFailure::disposition",
+      "let _ = std::mem::size_of::<flowersec::ConnectionState>()",
+      "let _ = std::mem::size_of::<flowersec::ConnectionStatus>()",
+      "let _ = std::mem::size_of::<flowersec::RetryDisposition>()",
+      "let _ = flowersec::RetryPolicy::default()",
+      "let _ = flowersec::RetryPolicy::new",
+      "let _ = flowersec::RetryPolicy::with_max_attempts",
+      "let _ = std::mem::size_of::<flowersec::RetryPolicyError>()"
     ]
   },
   "coverage": {

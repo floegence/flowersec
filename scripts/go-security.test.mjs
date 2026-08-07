@@ -17,16 +17,13 @@ test("manifest and maintained-tree Go module inventories are identical", async (
   const { collectGoModuleDirectories } = await loadChecker();
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-go-inventory-"));
   t.after(() => fs.rmSync(repoRoot, { recursive: true, force: true }));
-  for (const module of ["flowersec-go", "tools/transportcheck"]) {
+  for (const module of ["flowersec-go"]) {
     fs.mkdirSync(path.join(repoRoot, module), { recursive: true });
     fs.writeFileSync(path.join(repoRoot, module, "go.mod"), `module example.com/${module}\n`);
   }
-  const manifest = { modules: ["flowersec-go", "tools/transportcheck"] };
+  const manifest = { modules: ["flowersec-go"] };
   const modules = collectGoModuleDirectories(repoRoot, manifest);
-  assert.deepEqual(modules, [
-    path.join(repoRoot, "flowersec-go"),
-    path.join(repoRoot, "tools/transportcheck"),
-  ]);
+  assert.deepEqual(modules, [path.join(repoRoot, "flowersec-go")]);
   fs.mkdirSync(path.join(repoRoot, "tools/unregistered"), { recursive: true });
   fs.writeFileSync(path.join(repoRoot, "tools/unregistered/go.mod"), "module example.com/unregistered\n");
   assert.throws(
@@ -47,19 +44,13 @@ test("every Go module is downloaded, verified, resolved, and scanned with worksp
     repoRoot: sourceRoot,
     govulncheckVersion: "v1.1.4",
     goToolchain: "go1.26.5",
-    moduleManifest: { modules: ["flowersec-go", "tools/transportcheck"] },
-    discoverModules: () => [
-      path.join(sourceRoot, "flowersec-go"),
-      path.join(sourceRoot, "tools/transportcheck"),
-    ],
+    moduleManifest: { modules: ["flowersec-go"] },
+    discoverModules: () => [path.join(sourceRoot, "flowersec-go")],
     run,
   });
 
-  assert.deepEqual(modules, [
-    path.join(sourceRoot, "flowersec-go"),
-    path.join(sourceRoot, "tools/transportcheck"),
-  ]);
-  assert.equal(calls.length, 8);
+  assert.deepEqual(modules, [path.join(sourceRoot, "flowersec-go")]);
+  assert.equal(calls.length, 4);
   for (const moduleDir of modules) {
     const moduleCalls = calls.filter((call) => call.options.cwd === moduleDir);
     assert.deepEqual(moduleCalls.map((call) => call.args), [

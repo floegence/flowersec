@@ -2,9 +2,8 @@ import { describe, expect, test } from "vitest";
 
 import {
   createMemoryCarrierPairV2,
-  createWebSocketCarrierSessionV2,
-  type WebSocketBinaryTransportV2,
 } from "./carrier.js";
+import { createWebSocketCarrierSessionV2, type WebSocketBinaryTransportV2 } from "../transport/webSocketAdapter.js";
 
 describe("transport v2 carrier contract", () => {
   test("opens independent bidirectional streams with half-close and isolated reset", async () => {

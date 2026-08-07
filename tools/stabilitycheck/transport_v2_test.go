@@ -39,9 +39,10 @@ func TestTransportV2ContractDeclaresSignedSliceZeroRegistry(t *testing.T) {
 	wantRuntimeCarriers := map[string][]string{
 		"go_native":          {"raw_quic", "websocket", "webtransport"},
 		"typescript_browser": {"websocket", "webtransport"},
-		"typescript_node":    {"websocket"},
+		"typescript_node":    {"websocket", "webtransport"},
 		"rust_native":        {"raw_quic"},
 		"swift_ios":          {"websocket"},
+		"swift_linux":        {},
 		"swift_macos":        {"websocket"},
 	}
 	for _, runtime := range contract.Runtimes {
@@ -73,20 +74,20 @@ func TestTransportV2ContractDeclaresSignedSliceZeroRegistry(t *testing.T) {
 	}
 
 	deps := map[string]string{}
-	for _, dependency := range contract.GoSlice0.Dependencies {
+	for _, dependency := range contract.GoDependencies.Dependencies {
 		deps[dependency.Module] = dependency.Version
 	}
 	if deps["github.com/quic-go/quic-go"] != "v0.60.0" || deps["github.com/quic-go/webtransport-go"] != "v0.11.1" {
 		t.Fatalf("unexpected signed Go dependency set: %#v", deps)
 	}
-	if contract.GoSlice0.Toolchain != "1.26.5" || contract.GoSlice0.WebTransportDialer != "quic.DialAddr" {
-		t.Fatalf("unexpected Go Slice 0 contract: %+v", contract.GoSlice0)
+	if contract.GoDependencies.Toolchain != "1.26.5" || contract.GoDependencies.WebTransportDialer != "quic.DialAddr" {
+		t.Fatalf("unexpected Go native dependency contract: %+v", contract.GoDependencies)
 	}
-	if contract.RustSlice0.Status != "signed" || contract.RustSlice0.QuinnVersion != "=0.11.11" || contract.RustSlice0.RCGen != "forbidden" {
-		t.Fatalf("unexpected Rust Slice 0 contract: %+v", contract.RustSlice0)
+	if contract.RustDependencies.QuinnVersion != "=0.11.11" || contract.RustDependencies.RCGen != "forbidden" {
+		t.Fatalf("unexpected Rust native dependency contract: %+v", contract.RustDependencies)
 	}
-	if contract.RustSlice0.QuinnDefaultFeatures != "disabled" || !slices.Equal(contract.RustSlice0.QuinnFeatures, []string{"runtime-tokio", "rustls-ring"}) {
-		t.Fatalf("unexpected signed quinn feature set: %+v", contract.RustSlice0)
+	if contract.RustDependencies.QuinnDefaultFeatures != "disabled" || !slices.Equal(contract.RustDependencies.QuinnFeatures, []string{"runtime-tokio", "rustls-ring"}) {
+		t.Fatalf("unexpected signed quinn feature set: %+v", contract.RustDependencies)
 	}
 
 	assertDocumentContains(t, repoRoot, contract.Docs.Architecture, []string{
@@ -156,10 +157,10 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 		}
 	}
 	for _, exportName := range []string{
-		"ArtifactAcquireContext", "ArtifactSource", "SessionReconnectConfig",
-		"SessionReconnectManager", "SessionReconnectState",
+		"ArtifactSource", "ConnectionController", "ConnectionControllerSnapshot",
+		"RetryDisposition",
 	} {
-		requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/reconnect", exportName)
+		requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", exportName)
 	}
 	requireSwiftManifestSymbol(t, m, "swift.protocol", "Session")
 	requireSwiftManifestSymbol(t, m, "swift.protocol", "ByteStream")
@@ -279,7 +280,7 @@ func TestTransportV2InternalConnectErrorRegistryCoversCancelableStages(t *testin
 		t.Fatalf("connect error registry visibility = %q, want internal", registry.Visibility)
 	}
 
-	requiredStages := []string{"validate", "connect", "attach", "handshake", "reconnect", "close"}
+	requiredStages := []string{"validate", "connect", "attach", "handshake", "close"}
 	for _, code := range []string{"timeout", "canceled"} {
 		var stages []string
 		for _, entry := range registry.Codes {
@@ -583,7 +584,7 @@ func TestTransportV2ContractRejectsInvalidRegistryStates(t *testing.T) {
 		{
 			name: "dependency drift",
 			mutate: func(copy *transportV2Contract) {
-				copy.GoSlice0.Dependencies[0].Version = "v0.59.1"
+				copy.GoDependencies.Dependencies[0].Version = "v0.59.1"
 			},
 			wantErr: "must pin",
 		},
@@ -597,14 +598,14 @@ func TestTransportV2ContractRejectsInvalidRegistryStates(t *testing.T) {
 		{
 			name: "Rust dependency drift",
 			mutate: func(copy *transportV2Contract) {
-				copy.RustSlice0.QuinnVersion = "0.11"
+				copy.RustDependencies.QuinnVersion = "0.11"
 			},
 			wantErr: "quinn =0.11.11",
 		},
 		{
 			name: "Rust rcgen enabled",
 			mutate: func(copy *transportV2Contract) {
-				copy.RustSlice0.RCGen = "allowed"
+				copy.RustDependencies.RCGen = "allowed"
 			},
 			wantErr: "rcgen",
 		},

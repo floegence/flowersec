@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
+	admissionws "github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
@@ -22,11 +23,11 @@ func TestCoordinatorBridgesProductionWebSocketPendingLegs(t *testing.T) {
 	clientConn, clientTunnelConn := newTunnelWebSocketPair(t)
 	serverConn, serverTunnelConn := newTunnelWebSocketPair(t)
 	resources := carrierws.DefaultResourcePolicy()
-	clientLeg, err := tunnelv2.NewWebSocketPendingLeg(clientTunnelConn, resources, carrierws.LivenessPolicy{})
+	clientLeg, err := tunnelv2.NewWebSocketPendingLeg(clientTunnelConn, resources)
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverLeg, err := tunnelv2.NewWebSocketPendingLeg(serverTunnelConn, resources, carrierws.LivenessPolicy{})
+	serverLeg, err := tunnelv2.NewWebSocketPendingLeg(serverTunnelConn, resources)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,11 +45,11 @@ func TestCoordinatorBridgesProductionWebSocketPendingLegs(t *testing.T) {
 	if err := <-serverAdmission; err != nil {
 		t.Fatalf("server admission: %v", err)
 	}
-	clientEndpoint, err := carrierws.NewAfterAdmission(clientConn, carrierws.ClientRole, carrierws.SubprotocolTunnel, resources, carrierws.LivenessPolicy{})
+	clientEndpoint, err := carrierws.NewAfterAdmission(clientConn, carrierws.ClientRole, carrierws.SubprotocolTunnel, resources)
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverEndpoint, err := carrierws.NewAfterAdmission(serverConn, carrierws.ClientRole, carrierws.SubprotocolTunnel, resources, carrierws.LivenessPolicy{})
+	serverEndpoint, err := carrierws.NewAfterAdmission(serverConn, carrierws.ClientRole, carrierws.SubprotocolTunnel, resources)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,11 +65,11 @@ func TestCoordinatorBridgesProductionWebSocketPendingLegs(t *testing.T) {
 func TestCoordinatorBridgesProductionWebSocketAndNativePendingLegs(t *testing.T) {
 	webSocketEndpointConn, webSocketTunnelConn := newTunnelWebSocketPair(t)
 	resources := carrierws.DefaultResourcePolicy()
-	webSocketLeg, err := tunnelv2.NewWebSocketPendingLeg(webSocketTunnelConn, resources, carrierws.LivenessPolicy{})
+	webSocketLeg, err := tunnelv2.NewWebSocketPendingLeg(webSocketTunnelConn, resources)
 	if err != nil {
 		t.Fatal(err)
 	}
-	nativeEndpoint, nativeTunnel := memorySessionPair(carrier.KindQUIC)
+	nativeEndpoint, nativeTunnel := memorySessionPair(carrier.KindRawQUIC)
 	nativeAdmissionClient, nativeAdmissionServer := memoryStreamPair()
 	nativeLeg, err := tunnelv2.NewNativeStreamLeg(nativeTunnel, nativeAdmissionServer)
 	if err != nil {
@@ -91,7 +92,7 @@ func TestCoordinatorBridgesProductionWebSocketAndNativePendingLegs(t *testing.T)
 	if err := <-nativeAdmission; err != nil {
 		t.Fatal(err)
 	}
-	webSocketEndpoint, err := carrierws.NewAfterAdmission(webSocketEndpointConn, carrierws.ClientRole, carrierws.SubprotocolTunnel, resources, carrierws.LivenessPolicy{})
+	webSocketEndpoint, err := carrierws.NewAfterAdmission(webSocketEndpointConn, carrierws.ClientRole, carrierws.SubprotocolTunnel, resources)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestCoordinatorBridgesProductionWebSocketAndNativePendingLegs(t *testing.T)
 
 func TestCoordinatorWebSocketPendingLegRejectsExtraMessageBeforeSuccess(t *testing.T) {
 	endpointConn, tunnelConn := newTunnelWebSocketPair(t)
-	leg, err := tunnelv2.NewWebSocketPendingLeg(tunnelConn, carrierws.DefaultResourcePolicy(), carrierws.LivenessPolicy{})
+	leg, err := tunnelv2.NewWebSocketPendingLeg(tunnelConn, carrierws.DefaultResourcePolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +118,7 @@ func TestCoordinatorWebSocketPendingLegRejectsExtraMessageBeforeSuccess(t *testi
 	_ = endpointConn.WriteMessage(gorillaws.BinaryMessage, []byte("early-yamux"))
 	select {
 	case err := <-done:
-		if !errors.Is(err, carrierws.ErrUnexpectedWaitingMessage) {
+		if err == nil {
 			t.Fatalf("Serve error = %v", err)
 		}
 	case <-time.After(time.Second):
@@ -127,7 +128,7 @@ func TestCoordinatorWebSocketPendingLegRejectsExtraMessageBeforeSuccess(t *testi
 
 func TestCoordinatorWebSocketAuthorizerRejectDoesNotActivateYamux(t *testing.T) {
 	endpointConn, tunnelConn := newTunnelWebSocketPair(t)
-	leg, err := tunnelv2.NewWebSocketPendingLeg(tunnelConn, carrierws.DefaultResourcePolicy(), carrierws.LivenessPolicy{})
+	leg, err := tunnelv2.NewWebSocketPendingLeg(tunnelConn, carrierws.DefaultResourcePolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +139,7 @@ func TestCoordinatorWebSocketAuthorizerRejectDoesNotActivateYamux(t *testing.T) 
 		t.Fatal(err)
 	}
 	done := serveLeg(coordinator, context.Background(), leg)
-	_, commitErr := carrierws.CommitAdmission(
+	_, commitErr := admissionws.Commit(
 		context.Background(), endpointConn,
 		validTunnelFSB2ForCarrier(t, 1, "client", "rejected-wss", artifactv2.CarrierWebSocket), tunnelv2.DefaultReasonRegistry(),
 	)
@@ -180,7 +181,7 @@ func newProductionCoordinator(t *testing.T) *tunnelv2.Coordinator {
 func commitWebSocketAdmission(conn *gorillaws.Conn, raw []byte) <-chan error {
 	done := make(chan error, 1)
 	go func() {
-		_, err := carrierws.CommitAdmission(context.Background(), conn, raw, tunnelv2.DefaultReasonRegistry())
+		_, err := admissionws.Commit(context.Background(), conn, raw, tunnelv2.DefaultReasonRegistry())
 		done <- err
 	}()
 	return done

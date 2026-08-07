@@ -20,12 +20,14 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
+	admissionws "github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/candidatev2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
 	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -41,14 +43,14 @@ func TestWebSocketCarrierDialKeepsAdmissionBehindCommitAndThenStartsYamux(t *tes
 			serverErrors <- err
 			return
 		}
-		if _, err := carrierws.ServeAdmission(context.Background(), conn, reasons, func(context.Context, *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
+		if _, err := admissionws.Serve(context.Background(), conn, reasons, func(context.Context, *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
 			authorized <- struct{}{}
 			return artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, nil
 		}); err != nil {
 			serverErrors <- err
 			return
 		}
-		session, err := carrierws.NewAfterAdmission(conn, carrierws.ServerRole, carrierws.SubprotocolDirect, carrierws.DefaultResourcePolicy(), carrierws.LivenessPolicy{})
+		session, err := carrierws.NewAfterAdmission(conn, carrierws.ServerRole, carrierws.SubprotocolDirect, carrierws.DefaultResourcePolicy())
 		if err != nil {
 			serverErrors <- err
 			return
@@ -59,7 +61,7 @@ func TestWebSocketCarrierDialKeepsAdmissionBehindCommitAndThenStartsYamux(t *tes
 	roots := x509.NewCertPool()
 	roots.AddCert(server.Certificate())
 
-	dial, err := connectv2.NewWebSocketCarrierDial(connectv2.WebSocketDialConfig{
+	dial, err := candidatev2.NewWebSocketCarrierDial(candidatev2.WebSocketDialConfig{
 		Dialer: &gorillaws.Dialer{TLSClientConfig: &tls.Config{
 			MinVersion: tls.VersionTLS13,
 			RootCAs:    roots,
@@ -69,9 +71,9 @@ func TestWebSocketCarrierDialKeepsAdmissionBehindCommitAndThenStartsYamux(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	factory, err := connectv2.NewAdmissionFactory(map[artifactv2.Carrier]connectv2.CarrierDial{
+	factory, err := candidatev2.NewFactory(map[artifactv2.Carrier]candidatev2.Dial{
 		artifactv2.CarrierWebSocket: dial,
-	}, reasons)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +111,7 @@ func TestWebSocketCarrierDialKeepsAdmissionBehindCommitAndThenStartsYamux(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientSession, err := prepared.Commit(context.Background(), fsb2)
+	clientSession, err := prepared.Commit(context.Background(), func(context.Context) error { return nil }, fsb2)
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
@@ -135,14 +137,14 @@ func TestWebSocketCarrierDialKeepsAdmissionBehindCommitAndThenStartsYamux(t *tes
 }
 
 func TestWebSocketCarrierDialRejectsTLSAuthenticationBypass(t *testing.T) {
-	_, err := connectv2.NewWebSocketCarrierDial(connectv2.WebSocketDialConfig{
+	_, err := candidatev2.NewWebSocketCarrierDial(candidatev2.WebSocketDialConfig{
 		Dialer: &gorillaws.Dialer{TLSClientConfig: &tls.Config{
 			MinVersion:         tls.VersionTLS13,
 			InsecureSkipVerify: true,
 		}},
 		Resources: carrierws.DefaultResourcePolicy(),
 	})
-	if !errors.Is(err, connectv2.ErrInvalidCarrierDialConfig) {
+	if !errors.Is(err, candidatev2.ErrInvalidCarrierDialConfig) {
 		t.Fatalf("constructor error = %v, want ErrInvalidCarrierDialConfig", err)
 	}
 }
@@ -174,7 +176,7 @@ func TestWebSocketCarrierDialCancellationClosesInflightUpgrade(t *testing.T) {
 		<-serverDone
 	})
 
-	dial, err := connectv2.NewWebSocketCarrierDial(connectv2.WebSocketDialConfig{
+	dial, err := candidatev2.NewWebSocketCarrierDial(candidatev2.WebSocketDialConfig{
 		Dialer: &gorillaws.Dialer{
 			TLSClientConfig: clientTLS,
 			NetDialContext: func(context.Context, string, string) (net.Conn, error) {
@@ -209,6 +211,103 @@ func TestWebSocketCarrierDialCancellationClosesInflightUpgrade(t *testing.T) {
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("canceled WebSocket upgrade kept the underlying connection open")
+	}
+}
+
+func TestRawQUICAdmissionRecoveryContinuesThroughCommit(t *testing.T) {
+	serverTLS, clientTLS := carrierDialTLSConfigs(t)
+	serverTLS.NextProtos = []string{rawquic.ALPNDirect}
+	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS, quicbase.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	serverSessions := make(chan carrier.Session, 1)
+	serverErrors := make(chan error, 1)
+	go func() {
+		session, acceptErr := listener.Accept(context.Background())
+		if acceptErr != nil {
+			serverErrors <- acceptErr
+			return
+		}
+		serverSessions <- session
+		stream, acceptErr := session.AcceptStream(context.Background())
+		if acceptErr != nil {
+			serverErrors <- acceptErr
+			return
+		}
+		if _, receiveErr := admissionv2.Receive(context.Background(), stream); receiveErr != nil {
+			serverErrors <- receiveErr
+			return
+		}
+		serverErrors <- admissionv2.Respond(
+			context.Background(), stream,
+			artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, nil,
+		)
+	}()
+	dial, err := candidatev2.NewRawQUICCarrierDial(candidatev2.RawQUICDialConfig{
+		TLSConfig: clientTLS,
+		Limits:    quicbase.DefaultLimits(),
+		Dial:      rawquic.Dial,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory, err := candidatev2.NewFactory(map[artifactv2.Carrier]candidatev2.Dial{
+		artifactv2.CarrierRawQUIC: dial,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := validArtifact(t)
+	candidate := artifact.Path.Candidates[1]
+	candidate.URL = "quic://" + listener.Addr().String()
+	candidate.NormalizedURL = ""
+	attempt, err := factory.NewAttempt(candidate, artifact.Session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := attempt.Ready(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prepared.Close(context.Background())
+	var serverSession carrier.Session
+	select {
+	case serverSession = <-serverSessions:
+	case acceptErr := <-serverErrors:
+		t.Fatal(acceptErr)
+	case <-time.After(time.Second):
+		t.Fatal("server did not accept raw QUIC session")
+	}
+	t.Cleanup(func() { _ = serverSession.Close() })
+	request, err := artifactv2.BuildRequest(artifact, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawRequest, err := artifactv2.MarshalRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitCtx, cancelCommit := context.WithTimeout(context.Background(), time.Second)
+	connected, commitErr := prepared.Commit(commitCtx, func(context.Context) error { return nil }, rawRequest)
+	cancelCommit()
+	if commitErr != nil {
+		select {
+		case serverErr := <-serverErrors:
+			t.Fatalf("raw QUIC admission after Ready: %v; server: %v", commitErr, serverErr)
+		case <-time.After(time.Second):
+			t.Fatalf("raw QUIC admission after Ready: %v; server did not terminate", commitErr)
+		}
+	}
+	defer connected.Close()
+	select {
+	case serverErr := <-serverErrors:
+		if serverErr != nil {
+			t.Fatal(serverErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server admission did not terminate")
 	}
 }
 
@@ -338,7 +437,7 @@ func assertPeerInboundLimitOne(t *testing.T, client, server carrier.Session) {
 }
 
 func TestWebSocketCarrierDialRejectsCrossProfileBeforeNetworkUse(t *testing.T) {
-	dial, err := connectv2.NewWebSocketCarrierDial(connectv2.WebSocketDialConfig{
+	dial, err := candidatev2.NewWebSocketCarrierDial(candidatev2.WebSocketDialConfig{
 		Dialer:    &gorillaws.Dialer{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13}},
 		Resources: carrierws.DefaultResourcePolicy(),
 	})
@@ -350,13 +449,13 @@ func TestWebSocketCarrierDialRejectsCrossProfileBeforeNetworkUse(t *testing.T) {
 		ID: "w1", Carrier: artifactv2.CarrierWebSocket,
 		URL: "wss://127.0.0.1:1/flowersec/v2/direct", WireProfile: "flowersec-tunnel/2",
 	}, artifact.Session)
-	if !errors.Is(err, connectv2.ErrInvalidCarrierCandidate) {
+	if !errors.Is(err, candidatev2.ErrInvalidCarrierCandidate) {
 		t.Fatalf("cross-profile error = %v", err)
 	}
 }
 
 func TestCarrierDialsReuseArtifactCanonicalURLValidationBeforeNetworkUse(t *testing.T) {
-	webSocketDial, err := connectv2.NewWebSocketCarrierDial(connectv2.WebSocketDialConfig{
+	webSocketDial, err := candidatev2.NewWebSocketCarrierDial(candidatev2.WebSocketDialConfig{
 		Dialer:    &gorillaws.Dialer{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13}},
 		Resources: carrierws.DefaultResourcePolicy(),
 	})
@@ -364,15 +463,16 @@ func TestCarrierDialsReuseArtifactCanonicalURLValidationBeforeNetworkUse(t *test
 		t.Fatal(err)
 	}
 	_, candidateValidationTLS := carrierDialTLSConfigs(t)
-	rawDial, err := connectv2.NewRawQUICCarrierDial(connectv2.RawQUICDialConfig{
+	rawDial, err := candidatev2.NewRawQUICCarrierDial(candidatev2.RawQUICDialConfig{
 		TLSConfig: candidateValidationTLS,
-		Limits:    rawquic.DefaultLimits(),
+		Limits:    quicbase.DefaultLimits(),
+		Dial:      rawquic.Dial,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name, test := range map[string]struct {
-		dial      connectv2.CarrierDial
+		dial      candidatev2.Dial
 		candidate artifactv2.Candidate
 	}{
 		"websocket": {dial: webSocketDial, candidate: artifactv2.Candidate{
@@ -386,7 +486,7 @@ func TestCarrierDialsReuseArtifactCanonicalURLValidationBeforeNetworkUse(t *test
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := test.dial(context.Background(), test.candidate, validArtifact(t).Session)
-			if !errors.Is(err, connectv2.ErrInvalidCarrierCandidate) {
+			if !errors.Is(err, candidatev2.ErrInvalidCarrierCandidate) {
 				t.Fatalf("invalid canonical URL error = %v", err)
 			}
 		})
@@ -396,36 +496,63 @@ func TestCarrierDialsReuseArtifactCanonicalURLValidationBeforeNetworkUse(t *test
 func TestQUICCarrierDialersRejectTLSAuthenticationBypass(t *testing.T) {
 	for name, build := range map[string]func(*tls.Config) error{
 		"raw_quic": func(config *tls.Config) error {
-			_, err := connectv2.NewRawQUICCarrierDial(connectv2.RawQUICDialConfig{TLSConfig: config, Limits: rawquic.DefaultLimits()})
+			_, err := candidatev2.NewRawQUICCarrierDial(candidatev2.RawQUICDialConfig{TLSConfig: config, Limits: quicbase.DefaultLimits(), Dial: rawquic.Dial})
 			return err
 		},
 		"webtransport": func(config *tls.Config) error {
-			_, err := connectv2.NewWebTransportCarrierDial(connectv2.WebTransportDialConfig{TLSConfig: config, Limits: carrierwt.DefaultLimits()})
+			_, err := candidatev2.NewWebTransportCarrierDial(candidatev2.WebTransportDialConfig{TLSConfig: config, Limits: quicbase.DefaultLimits()})
 			return err
 		},
 	} {
 		t.Run(name+"/missing_roots", func(t *testing.T) {
-			if err := build(&tls.Config{MinVersion: tls.VersionTLS13}); !errors.Is(err, connectv2.ErrInvalidCarrierDialConfig) {
+			if err := build(&tls.Config{MinVersion: tls.VersionTLS13}); !errors.Is(err, candidatev2.ErrInvalidCarrierDialConfig) {
 				t.Fatalf("constructor error = %v, want ErrInvalidCarrierDialConfig", err)
 			}
 		})
 		t.Run(name+"/empty_roots", func(t *testing.T) {
-			if err := build(&tls.Config{MinVersion: tls.VersionTLS13, RootCAs: x509.NewCertPool()}); !errors.Is(err, connectv2.ErrInvalidCarrierDialConfig) {
+			if err := build(&tls.Config{MinVersion: tls.VersionTLS13, RootCAs: x509.NewCertPool()}); !errors.Is(err, candidatev2.ErrInvalidCarrierDialConfig) {
 				t.Fatalf("constructor error = %v, want ErrInvalidCarrierDialConfig", err)
 			}
 		})
 		t.Run(name+"/insecure_skip_verify", func(t *testing.T) {
-			if err := build(&tls.Config{MinVersion: tls.VersionTLS13, RootCAs: x509.NewCertPool(), InsecureSkipVerify: true}); !errors.Is(err, connectv2.ErrInvalidCarrierDialConfig) {
+			if err := build(&tls.Config{MinVersion: tls.VersionTLS13, RootCAs: x509.NewCertPool(), InsecureSkipVerify: true}); !errors.Is(err, candidatev2.ErrInvalidCarrierDialConfig) {
 				t.Fatalf("constructor error = %v, want ErrInvalidCarrierDialConfig", err)
 			}
 		})
 	}
 }
 
+func TestRawQUICCarrierDialUsesConfiguredSocketDialer(t *testing.T) {
+	_, clientTLS := carrierDialTLSConfigs(t)
+	want := errors.New("socket dialer invoked")
+	called := false
+	dial, err := candidatev2.NewRawQUICCarrierDial(candidatev2.RawQUICDialConfig{
+		TLSConfig: clientTLS,
+		Limits:    quicbase.DefaultLimits(),
+		Dial: func(context.Context, string, *tls.Config, quicbase.Limits) (*rawquic.Session, error) {
+			called = true
+			return nil, want
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = dial(context.Background(), artifactv2.Candidate{
+		ID: "q1", Carrier: artifactv2.CarrierRawQUIC,
+		URL: "quic://127.0.0.1:443", WireProfile: rawquic.ALPNTunnel,
+	}, validArtifact(t).Session)
+	if !errors.Is(err, want) {
+		t.Fatalf("dial error = %v, want configured dialer error", err)
+	}
+	if !called {
+		t.Fatal("configured raw QUIC dialer was not called")
+	}
+}
+
 func TestRawQUICCarrierDialKeepsAdmissionBehindCommit(t *testing.T) {
 	serverTLS, clientTLS := carrierDialTLSConfigs(t)
 	serverTLS.NextProtos = []string{rawquic.ALPNDirect}
-	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS, rawquic.DefaultLimits())
+	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,16 +581,17 @@ func TestRawQUICCarrierDialKeepsAdmissionBehindCommit(t *testing.T) {
 		}
 		serverSessions <- session
 	}()
-	dial, err := connectv2.NewRawQUICCarrierDial(connectv2.RawQUICDialConfig{
+	dial, err := candidatev2.NewRawQUICCarrierDial(candidatev2.RawQUICDialConfig{
 		TLSConfig: clientTLS,
-		Limits:    rawquic.DefaultLimits(),
+		Limits:    quicbase.DefaultLimits(),
+		Dial:      rawquic.Dial,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	factory, err := connectv2.NewAdmissionFactory(map[artifactv2.Carrier]connectv2.CarrierDial{
+	factory, err := candidatev2.NewFactory(map[artifactv2.Carrier]candidatev2.Dial{
 		artifactv2.CarrierRawQUIC: dial,
-	}, reasons)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,12 +622,9 @@ func TestRawQUICCarrierDialKeepsAdmissionBehindCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientSession, err := prepared.Commit(context.Background(), fsb2)
+	clientSession, err := prepared.Commit(context.Background(), func(context.Context) error { return nil }, fsb2)
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
-	}
-	if _, ok := clientSession.(carrier.PathMigrator); !ok {
-		t.Fatal("committed raw QUIC session lost its production-internal path migration capability")
 	}
 	t.Cleanup(func() { _ = clientSession.Close() })
 	select {
@@ -524,7 +649,7 @@ func TestRawQUICCarrierDialKeepsAdmissionBehindCommit(t *testing.T) {
 
 func TestWebTransportCarrierDialKeepsAdmissionBehindCommit(t *testing.T) {
 	serverTLS, clientTLS := carrierDialTLSConfigs(t)
-	server, err := carrierwt.NewServer(serverTLS, carrierwt.DefaultLimits(), func(request *http.Request) bool {
+	server, err := carrierwt.NewServer(serverTLS, quicbase.DefaultLimits(), func(request *http.Request) bool {
 		return request.Header.Get("Origin") == "https://client.example"
 	})
 	if err != nil {
@@ -542,7 +667,7 @@ func TestWebTransportCarrierDialKeepsAdmissionBehindCommit(t *testing.T) {
 		}
 		admissionCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		stream, err := admissionv2.ServerStream(admissionCtx, session)
+		stream, err := carrierwt.OpenAdmissionStream(admissionCtx, session)
 		if err != nil {
 			serverErrors <- err
 			return
@@ -571,17 +696,17 @@ func TestWebTransportCarrierDialKeepsAdmissionBehindCommit(t *testing.T) {
 			t.Error("WebTransport server did not stop")
 		}
 	})
-	dial, err := connectv2.NewWebTransportCarrierDial(connectv2.WebTransportDialConfig{
+	dial, err := candidatev2.NewWebTransportCarrierDial(candidatev2.WebTransportDialConfig{
 		TLSConfig: clientTLS,
-		Limits:    carrierwt.DefaultLimits(),
+		Limits:    quicbase.DefaultLimits(),
 		Origin:    "https://client.example",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	factory, err := connectv2.NewAdmissionFactory(map[artifactv2.Carrier]connectv2.CarrierDial{
+	factory, err := candidatev2.NewFactory(map[artifactv2.Carrier]candidatev2.Dial{
 		artifactv2.CarrierWebTransport: dial,
-	}, reasons)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -618,7 +743,7 @@ func TestWebTransportCarrierDialKeepsAdmissionBehindCommit(t *testing.T) {
 	}
 	commitCtx, cancelCommit := context.WithTimeout(context.Background(), time.Second)
 	defer cancelCommit()
-	clientSession, err := prepared.Commit(commitCtx, fsb2)
+	clientSession, err := prepared.Commit(commitCtx, func(context.Context) error { return nil }, fsb2)
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}

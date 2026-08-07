@@ -2,6 +2,7 @@ package tunnelv2
 
 import (
 	"context"
+	"errors"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
@@ -9,16 +10,22 @@ import (
 	gorillaws "github.com/gorilla/websocket"
 )
 
-// WebSocketPendingLeg adapts a deferred server-side tunnel WebSocket to the
+var ErrInvalidWebSocketLeg = errors.New("invalid Flowersec v2 WebSocket tunnel leg")
+
+// WebSocketPendingLeg adapts a pre-Yamux server-side tunnel WebSocket to the
 // carrier-neutral pairing coordinator.
 type WebSocketPendingLeg struct {
-	server *carrierws.DeferredTunnelServer
+	server *carrierws.PendingServer
 }
 
 // NewWebSocketPendingLeg validates TLS/subprotocol and starts the single
 // WebSocket reader pump before FSB2 is received.
-func NewWebSocketPendingLeg(conn *gorillaws.Conn, resources carrierws.ResourcePolicy, liveness carrierws.LivenessPolicy) (*WebSocketPendingLeg, error) {
-	server, err := carrierws.NewDeferredTunnelServer(conn, resources, liveness)
+func NewWebSocketPendingLeg(conn *gorillaws.Conn, resources carrierws.ResourcePolicy) (*WebSocketPendingLeg, error) {
+	server, err := carrierws.NewPendingServer(
+		conn,
+		resources,
+		artifactv2.FSB2HeaderSize+artifactv2.MaxCanonicalFSB2Payload,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -28,11 +35,28 @@ func NewWebSocketPendingLeg(conn *gorillaws.Conn, resources carrierws.ResourcePo
 func (leg *WebSocketPendingLeg) CarrierKind() carrier.Kind { return carrier.KindWebSocket }
 
 func (leg *WebSocketPendingLeg) ReceiveAdmission(ctx context.Context) (*artifactv2.DecodedRequest, error) {
-	return leg.server.ReceiveAdmission(ctx)
+	raw, err := leg.server.ReceiveInitialMessage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	decoded, err := artifactv2.ParseRequest(raw)
+	if err != nil {
+		_ = leg.server.CloseWithErrorContext(ctx, carrier.ApplicationError{Code: 6, Reason: "invalid admission"})
+		return nil, err
+	}
+	if decoded.Request.PathKind != artifactv2.PathTunnel {
+		_ = leg.server.CloseWithErrorContext(ctx, carrier.ApplicationError{Code: 6, Reason: "invalid admission"})
+		return nil, ErrInvalidWebSocketLeg
+	}
+	return decoded, nil
 }
 
 func (leg *WebSocketPendingLeg) SendAdmission(ctx context.Context, response artifactv2.AdmissionResponse, reasons artifactv2.ReasonRegistry) error {
-	return leg.server.SendAdmission(ctx, response, reasons)
+	raw, err := artifactv2.MarshalResponse(response, reasons)
+	if err != nil {
+		return err
+	}
+	return leg.server.SendInitialResponse(ctx, raw, response.Status == artifactv2.AdmissionSuccess)
 }
 
 func (leg *WebSocketPendingLeg) Activate(ctx context.Context) (carrier.Session, error) {

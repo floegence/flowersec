@@ -18,8 +18,10 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
+	admissionws "github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
 	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
@@ -168,19 +170,19 @@ func newProductionWebSocketTunnelLeg(t *testing.T, maxInbound uint16, rawFSB2 []
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, err := tunnelv2.NewWebSocketPendingLeg(tunnelConn, resources, carrierws.LivenessPolicy{})
+	pending, err := tunnelv2.NewWebSocketPendingLeg(tunnelConn, resources)
 	if err != nil {
 		t.Fatal(err)
 	}
 	result := make(chan productionEndpointResult, 1)
 	go func() {
-		_, commitErr := carrierws.CommitAdmission(context.Background(), endpointConn, rawFSB2, tunnelv2.DefaultReasonRegistry())
+		_, commitErr := admissionws.Commit(context.Background(), endpointConn, rawFSB2, tunnelv2.DefaultReasonRegistry())
 		if commitErr != nil {
 			result <- productionEndpointResult{err: commitErr}
 			return
 		}
 		session, sessionErr := carrierws.NewAfterAdmission(
-			endpointConn, carrierws.ClientRole, carrierws.SubprotocolTunnel, resources, carrierws.LivenessPolicy{},
+			endpointConn, carrierws.ClientRole, carrierws.SubprotocolTunnel, resources,
 		)
 		result <- productionEndpointResult{session: session, err: sessionErr}
 	}()
@@ -189,7 +191,7 @@ func newProductionWebSocketTunnelLeg(t *testing.T, maxInbound uint16, rawFSB2 []
 
 func newProductionRawQUICTunnelLeg(t *testing.T, maxInbound uint16, rawFSB2 []byte) productionTunnelLeg {
 	t.Helper()
-	limits, err := rawquic.BindSessionLimits(rawquic.DefaultLimits(), maxInbound)
+	limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), maxInbound)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +230,7 @@ func newProductionRawQUICTunnelLeg(t *testing.T, maxInbound uint16, rawFSB2 []by
 
 func newProductionWebTransportTunnelLeg(t *testing.T, maxInbound uint16, rawFSB2 []byte) productionTunnelLeg {
 	t.Helper()
-	limits, err := carrierwt.BindSessionLimits(carrierwt.DefaultLimits(), maxInbound)
+	limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), maxInbound)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -20,7 +20,7 @@
       "description": "Lease-consuming direct and tunnel connection without exposing carrier credentials",
       "implementations": {
         "go": { "status": "complete", "evidence": ["flowersec-go/connector.go"] },
-        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/node/connectV2.integration.test.ts"] },
+        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/connector/sessionConnector.ts"] },
         "swift": { "status": "complete", "evidence": ["flowersec-swift/Tests/FlowersecTests/ConnectorV2Tests.swift"] },
         "rust": { "status": "complete", "evidence": ["flowersec-rust/src/connector_v2.rs"] }
       }
@@ -59,14 +59,14 @@
       }
     },
     {
-      "id": "error_classification",
+      "id": "connection_controller",
       "layer": "portable_core",
-      "description": "Carrier-neutral public recovery decisions for connection and session errors",
+      "description": "Single-owner long-lived connection lifecycle with fresh artifacts, structured retry, cancellation, and session replacement",
       "implementations": {
-        "go": { "status": "complete", "evidence": ["flowersec-go/error_classification.go"] },
-        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/v2/errorClassification.ts"] },
-        "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/ErrorClassification.swift"] },
-        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/error_classification.rs"] }
+        "go": { "status": "complete", "evidence": ["flowersec-go/connection_controller.go", "flowersec-go/retry_disposition.go"] },
+        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/connectionController.ts", "flowersec-ts/src/v2/retryDisposition.ts"] },
+        "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/ConnectionController.swift", "flowersec-swift/Sources/Flowersec/RetryDisposition.swift"] },
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/connection_controller.rs"] }
       }
     },
     {
@@ -112,7 +112,14 @@
       "layer": "sdk_profile",
       "owner": "typescript",
       "reason": "Browser WebTransport uses browser-owned networking APIs.",
-      "evidence": ["flowersec-ts/src/browser/connectV2.ts"]
+      "evidence": ["flowersec-ts/src/browser/webTransportClient.ts"]
+    },
+    {
+      "id": "node_webtransport",
+      "layer": "sdk_profile",
+      "owner": "typescript",
+      "reason": "Node.js owns native WebTransport client and server adapters over the pinned libquiche runtime.",
+      "evidence": ["flowersec-ts/src/node/webTransportClient.ts", "flowersec-ts/src/node/webTransportServer.ts"]
     },
     {
       "id": "native_raw_quic",
@@ -199,13 +206,13 @@
       }
     },
     {
-      "id": "public_error_classification",
-      "path": "stability/public_error_classification.json",
+      "id": "connection_controller",
+      "path": "testdata/transport_v2/connection_controller_vectors.json",
       "consumers": {
-        "go": ["flowersec-go/error_classification_test.go"],
-        "typescript": ["flowersec-ts/src/v2/errorClassification.test.ts"],
-        "swift": ["flowersec-swift/Tests/FlowersecTests/ErrorClassificationContractTests.swift"],
-        "rust": ["flowersec-rust/src/error_classification_contract.rs"]
+        "go": ["flowersec-go/connection_controller.go"],
+        "typescript": ["flowersec-ts/src/connectionController.test.ts"],
+        "swift": ["flowersec-swift/Tests/FlowersecTests/ConnectionControllerTests.swift"],
+        "rust": ["flowersec-rust/src/connection_controller.rs"]
       }
     },
     {

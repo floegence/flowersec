@@ -2,8 +2,7 @@
 
 The `flowersec` crate is the Tokio-native Rust SDK for Flowersec v2 end-to-end
 encrypted sessions. Its maintained public entrypoints use opaque artifacts, the
-carrier-neutral one-shot `connect(...)` function, and `Session`; the legacy v1 facade has been
-removed.
+carrier-neutral one-shot `connect(...)` function, and `Session`.
 
 The current source is a Flowersec 2.0 release candidate and has not yet been
 published as the coordinated 2.0 crate release. Verify the registry version
@@ -29,22 +28,30 @@ let session = flowersec::connect(&mut lease, options).await?;
 
 ## Transport v2 Support
 
-WebSocket, raw QUIC, and WebTransport are equal carrier candidates. The support below is the native Rust SDK profile, not the portable API.
-
+WebSocket, raw QUIC, and WebTransport are equal carrier candidates.
 Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow control, and migration behavior.
+
+The native Rust runtime implements raw QUIC only. WebSocket and WebTransport
+are explicitly unsupported; parsing their carrier kinds does not advertise a
+runtime implementation. Runtime, carrier, direct/tunnel topology, network
+mode, session role, reliable streams, DATAGRAM, and migration are independent
+capability dimensions.
+
+Raw QUIC preserves native FIN, RESET_STREAM, STOP_SENDING, flow control,
+DATAGRAM, and client-owned active migration behavior.
 
 Rust publishes an opaque Transport v2 connector and a carrier-neutral session
 contract. Transport selection, topology, candidates, wire state, credentials,
 keys, and endpoint identities are unavailable to crate consumers.
 
-The current production connector implements raw QUIC dialing internally. It
+The production runtime adapter implements raw QUIC dialing internally. It
 uses native bidirectional QUIC streams without Yamux, requires caller-provided
 trust material, disables 0-RTT, and is covered by Go interoperability tests.
 Negotiated native DATAGRAM is used only by the separately encrypted,
 carrier-neutral unreliable-message channel. Those implementation details do
 not change the public connector or session contract.
 
-Transport v2 production carrier support: raw QUIC direct client dialing and runtime-owned direct server listening, plus tunnel dialing for both session roles.
+Transport v2 production carrier support: raw QUIC direct client dialing, runtime-owned direct server listening, and tunnel dialing for both session roles. Unsupported carrier artifacts return `runtime_unsupported` before any credential is committed.
 
 Flowersec disables application 0-RTT. Reliable streams never use QUIC DATAGRAM; runtimes with negotiated native DATAGRAM expose it only through carrier-neutral unreliable messages.
 
@@ -56,8 +63,11 @@ The crate root exports only these public categories:
   `ArtifactSpendError`;
 - connection lifecycle: `ConnectorOptions`, `connect(...)`, `ConnectError`, and
   `ConnectErrorCode`;
-- recovery policy: `ErrorRetryAction`, `ErrorRetryClassification`,
-  `classify_connect_error(...)`, and `classify_session_error(...)`;
+- long-lived connection ownership: `ConnectionController`,
+  `ConnectionControllerOptions`, `ConnectionControllerStartError`,
+  `ArtifactSource`, `ArtifactSourceError`, `ConnectionStatus`,
+  `ConnectionState`, `ConnectionFailure`, `RetryDisposition`, `RetryPolicy`,
+  and `RetryPolicyError`;
 - runtime-owned direct acceptance: `AcceptorOptions`, `Acceptor`,
   `AcceptError`, and `AcceptErrorCode`;
 - carrier-neutral session behavior: `Session`, `SessionTermination`, `RpcPeer`, `ByteStream`,
@@ -96,30 +106,52 @@ and `AcceptErrorCode::as_str()` return stable snake_case public code strings.
 its generic display omits the sanitized application message unless the caller
 explicitly requests it. Public errors do not retain peer payloads, carrier
 diagnostics, credentials, or cryptographic material. `SessionError` uses the
-portable terminal-state names consumed by the shared recovery classifier and
-does not retain overlapping generic compatibility variants.
+portable terminal-state names consumed by the connection controller and does
+not retain overlapping generic variants. Controller retry ownership is private:
+public error codes remain stable descriptions and do not authorize credential
+reuse or another connection attempt.
 
-The recovery classifiers distinguish retrying an operation on the current
-session from acquiring a fresh artifact and session. They never authorize reuse
-of a durably committed lease or credential. Pass a `ConnectError` directly to
-`classify_connect_error(...)`; callers do not extract its code first.
+## Long-Lived Connections
+
+`ConnectionController` is the optional single owner of long-lived connection
+intent above the one-shot `connect(...)` API. A refreshable `ArtifactSource`
+returns a new independently spendable `ArtifactLease` for every attempt. The
+controller exposes `idle`, `connecting`, `connected`, `waiting`, `failed`, and
+`closed` states, runs one scheduler and one attempt at a time, and uses only
+structured terminal, retryable, or retry-after decisions. An artifact source
+must explicitly return one of those decisions; unclassified source failures are
+terminal and are never interpreted from error text.
+
+The default deterministic exponential retry policy starts at 250 milliseconds,
+doubles without jitter, caps at 30 seconds, and has no attempt limit. A finite
+attempt limit is available only through explicit `RetryPolicy` configuration.
+`retry_now()` wakes only a waiting controller and never overrides a supplied
+retry-after deadline. `close()` cancels artifact acquisition, connection, and
+waiting, then closes the current session.
+
+Every successful replacement establishes a new `Session` from a fresh artifact.
+A terminated session is removed before retry begins, and the next session is
+published only after it establishes. Old streams, RPCs, and writes fail with
+their old session and are never migrated or replayed by the controller.
 
 ## Capability Layers
 
 The portable core is the same application model used by every Flowersec SDK:
 opaque artifact parsing, a durable single-use lease, one-shot connection,
 carrier-neutral sessions, RPC, reliable streams, redacted public errors, and
-error classifiers. `classify_connect_error(...)` and
-`classify_session_error(...)` return the stable cross-language recovery decision;
-callers should not compare raw Rust error variants with other SDKs.
+structured controller retry decisions. The controller owns the mapping from
+connection and session failures to terminal, retryable, or absolute
+`retry_after` behavior; callers do not infer policy from error text.
 
 Only this portable core is required to align across languages. Complete SDK
 profiles and language conveniences intentionally differ by runtime.
 
 The Rust SDK profile owns native raw QUIC dialing and runtime-owned direct
-acceptance through `Acceptor`. Its language convenience is `RpcPeerExt`, which
-adds typed JSON encoding and decoding over the object-safe RPC core without
-making that exact method shape part of the portable core.
+acceptance through `Acceptor`. Candidate admission is carrier-neutral and
+advances through attempt, ready, winner, admitted, established, and terminated;
+the raw QUIC adapter owns only UDP, TLS/ALPN, native streams, DATAGRAM,
+migration, and transport close. Its language convenience is `RpcPeerExt`,
+which adds typed JSON encoding and decoding over the object-safe RPC core.
 
 ## Runtime Boundaries
 

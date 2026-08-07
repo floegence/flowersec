@@ -279,6 +279,16 @@ func MarshalResponse(response AdmissionResponse, reasons ReasonRegistry) ([]byte
 }
 
 func ReadResponse(reader io.Reader, reasons ReasonRegistry) (AdmissionResponse, error) {
+	return readResponse(reader, reasons, true)
+}
+
+// ReadClientResponse validates a bounded FSA2 response without making
+// deployment-owned rejection reasons part of client runtime configuration.
+func ReadClientResponse(reader io.Reader) (AdmissionResponse, error) {
+	return readResponse(reader, nil, false)
+}
+
+func readResponse(reader io.Reader, reasons ReasonRegistry, requireRegisteredReason bool) (AdmissionResponse, error) {
 	var header [FSA2HeaderSize]byte
 	if _, err := io.ReadFull(reader, header[:]); err != nil {
 		return AdmissionResponse{}, fmt.Errorf("%w: header: %v", ErrInvalidFSA2, err)
@@ -295,7 +305,7 @@ func ReadResponse(reader io.Reader, reasons ReasonRegistry) (AdmissionResponse, 
 		return AdmissionResponse{}, fmt.Errorf("%w: reason: %v", ErrInvalidFSA2, err)
 	}
 	response := AdmissionResponse{Status: AdmissionStatus(header[5]), Reason: string(reason)}
-	if err := validateResponse(response, reasons); err != nil {
+	if err := validateResponseForPeer(response, reasons, requireRegisteredReason); err != nil {
 		return AdmissionResponse{}, err
 	}
 	return response, nil
@@ -313,7 +323,24 @@ func ParseResponse(raw []byte, reasons ReasonRegistry) (AdmissionResponse, error
 	return response, nil
 }
 
+// ParseClientResponse validates one exact client-facing FSA2 message.
+func ParseClientResponse(raw []byte) (AdmissionResponse, error) {
+	reader := bytes.NewReader(raw)
+	response, err := ReadClientResponse(reader)
+	if err != nil {
+		return AdmissionResponse{}, err
+	}
+	if reader.Len() != 0 {
+		return AdmissionResponse{}, fmt.Errorf("%w: bytes after declared reason", ErrInvalidFSA2)
+	}
+	return response, nil
+}
+
 func validateResponse(response AdmissionResponse, reasons ReasonRegistry) error {
+	return validateResponseForPeer(response, reasons, true)
+}
+
+func validateResponseForPeer(response AdmissionResponse, reasons ReasonRegistry, requireRegisteredReason bool) error {
 	switch response.Status {
 	case AdmissionSuccess:
 		if response.Reason != "" {
@@ -324,7 +351,7 @@ func validateResponse(response AdmissionResponse, reasons ReasonRegistry) error 
 		if !validReasonToken(response.Reason) {
 			return ErrInvalidFSA2
 		}
-		if _, ok := reasons[response.Reason]; !ok {
+		if _, ok := reasons[response.Reason]; requireRegisteredReason && !ok {
 			return fmt.Errorf("%w: %s", ErrUnknownAdmissionCode, response.Reason)
 		}
 		return nil

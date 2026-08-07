@@ -50,10 +50,10 @@ raw QUIC 與 WebTransport 保留原生 FIN、RESET_STREAM、STOP_SENDING、流�
 執行 v2 單元測試套件：
 
 ```bash
-make transport-v2-unit
+make test
 ```
 
-如需 Carrier 專項證據，請執行 `make transport-conformance-smoke`、`make transport-browser-smoke` 與 `make transport-interop-smoke`。
+協定、瀏覽器、弱網與互通性專項診斷使用 `make diagnostic`；容量與 soak 工作負載使用 `make performance`。
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>

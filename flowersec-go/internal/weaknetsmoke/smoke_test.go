@@ -4,12 +4,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,44 +15,34 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	admissionws "github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/weaknet"
 	gorillaws "github.com/gorilla/websocket"
 )
 
-type smokeReport struct {
-	SchemaVersion  int         `json:"schema_version"`
-	Classification string      `json:"classification"`
-	EvidenceScope  string      `json:"evidence_scope"`
-	Cases          []smokeCase `json:"cases"`
-}
-
 type smokeCase struct {
-	Profile        string            `json:"profile"`
-	Carrier        string            `json:"carrier"`
-	Classification string            `json:"classification"`
-	Status         string            `json:"status"`
-	Assertions     []string          `json:"assertions"`
-	Counters       []counterEvidence `json:"counters"`
-	EvidenceSHA256 string            `json:"evidence_sha256"`
+	Profile    string
+	Carrier    string
+	Assertions []string
+	Counters   []counterAssertion
 }
 
-type counterEvidence struct {
-	Phase             string                    `json:"phase"`
-	Direction         weaknet.Direction         `json:"direction"`
-	Seed              int64                     `json:"seed"`
-	ExpectedExact     []exactCounterExpectation `json:"expected_exact,omitempty"`
-	ExpectedRelations []relationExpectation     `json:"expected_relations"`
-	Actual            weaknet.Counters          `json:"actual"`
+type counterAssertion struct {
+	Phase             string
+	Direction         weaknet.Direction
+	Seed              int64
+	ExpectedExact     []exactCounterExpectation
+	ExpectedRelations []relationExpectation
+	Actual            weaknet.Counters
 }
 
 type exactCounterExpectation struct {
@@ -73,26 +60,11 @@ func TestWeaknetSmoke(t *testing.T) {
 	if os.Getenv("FLOWERSEC_RUN_WEAKNET_SMOKE") != "1" {
 		t.Skip("run through make weaknet-smoke")
 	}
-	report := smokeReport{
-		SchemaVersion:  1,
-		Classification: "local_smoke",
-		EvidenceScope:  "userspace socket relays only; not system, netem, qlog, PMTUD, migration, or performance SLO evidence",
-		Cases: []smokeCase{
-			runRawQUICSmoke(t),
-			runWebSocketSmoke(t),
-		},
+	for _, result := range []smokeCase{runRawQUICSmoke(t), runWebSocketSmoke(t)} {
+		if err := validateSmokeCase(result); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := validateSmokeReport(report); err != nil {
-		t.Fatal(err)
-	}
-	path := os.Getenv("WEAKNET_SMOKE_REPORT")
-	if path == "" {
-		path = filepath.Join(os.TempDir(), "flowersec-weaknet-smoke.json")
-	}
-	if err := writeReport(path, report); err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("local_smoke report: %s", path)
 }
 
 func runRawQUICSmoke(t *testing.T) smokeCase {
@@ -100,7 +72,7 @@ func runRawQUICSmoke(t *testing.T) smokeCase {
 	serverTLS, clientTLS := testTLS(t)
 	serverTLS.NextProtos = []string{rawquic.ALPNDirect}
 	clientTLS.NextProtos = []string{rawquic.ALPNDirect}
-	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS, rawquic.DefaultLimits())
+	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +133,7 @@ func runRawQUICSmoke(t *testing.T) smokeCase {
 		}
 		serverSessionCh <- session
 	}()
-	clientSession, err := rawquic.Dial(context.Background(), front.LocalAddr().String(), clientTLS, rawquic.DefaultLimits())
+	clientSession, err := rawquic.Dial(context.Background(), front.LocalAddr().String(), clientTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,18 +150,18 @@ func runRawQUICSmoke(t *testing.T) smokeCase {
 	reverseReport := reverseRelay.Report()
 	assertUDPSmokeCounters(t, forwardReport, true)
 	assertUDPSmokeCounters(t, reverseReport, false)
-	return finalizeCase(smokeCase{
-		Profile: rawquic.ALPNDirect, Carrier: "raw_quic", Classification: "local_smoke", Status: "pass",
+	return smokeCase{
+		Profile: rawquic.ALPNDirect, Carrier: "raw_quic",
 		Assertions: []string{"real UDP PacketPump path", "scripted first-packet duplication", "counter conservation", "native reset isolation"},
-		Counters: []counterEvidence{
-			counterFromReport(forwardReport,
+		Counters: []counterAssertion{
+			counterAssertionFromReport(forwardReport,
 				[]exactCounterExpectation{{Counter: "duplicate_units", Value: 1}},
 				[]relationExpectation{
 					{Left: "delay_units", Operator: "eq", Right: "output_units_plus_canceled_units"},
 					{Left: "input_units_plus_duplicate_units", Operator: "eq", Right: "output_units_plus_dropped_units_plus_canceled_units"},
 					{Left: "input_bytes_plus_duplicate_bytes", Operator: "eq", Right: "output_bytes_plus_dropped_bytes_plus_canceled_bytes"},
 				}),
-			counterFromReport(reverseReport,
+			counterAssertionFromReport(reverseReport,
 				[]exactCounterExpectation{{Counter: "duplicate_units", Value: 0}},
 				[]relationExpectation{
 					{Left: "delay_units", Operator: "eq", Right: "output_units_plus_canceled_units"},
@@ -197,7 +169,7 @@ func runRawQUICSmoke(t *testing.T) smokeCase {
 					{Left: "input_bytes_plus_duplicate_bytes", Operator: "eq", Right: "output_bytes_plus_dropped_bytes_plus_canceled_bytes"},
 				}),
 		},
-	})
+	}
 }
 
 func runWebSocketSmoke(t *testing.T) smokeCase {
@@ -211,14 +183,14 @@ func runWebSocketSmoke(t *testing.T) smokeCase {
 			serverErrCh <- err
 			return
 		}
-		_, err = carrierws.ServeAdmission(context.Background(), conn, nil, func(context.Context, *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
+		_, err = admissionws.Serve(context.Background(), conn, nil, func(context.Context, *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
 			return artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, nil
 		})
 		if err != nil {
 			serverErrCh <- err
 			return
 		}
-		session, err := carrierws.NewAfterAdmission(conn, carrierws.ServerRole, carrierws.SubprotocolDirect, carrierws.DefaultResourcePolicy(), carrierws.LivenessPolicy{})
+		session, err := carrierws.NewAfterAdmission(conn, carrierws.ServerRole, carrierws.SubprotocolDirect, carrierws.DefaultResourcePolicy())
 		if err != nil {
 			serverErrCh <- err
 			return
@@ -276,10 +248,10 @@ func runWebSocketSmoke(t *testing.T) smokeCase {
 		t.Fatal(err)
 	}
 	rawFSB2 := validWebSocketFSB2(t)
-	if _, err := carrierws.CommitAdmission(context.Background(), clientConn, rawFSB2, nil); err != nil {
+	if _, err := admissionws.Commit(context.Background(), clientConn, rawFSB2, nil); err != nil {
 		t.Fatal(err)
 	}
-	clientSession, err := carrierws.NewAfterAdmission(clientConn, carrierws.ClientRole, carrierws.SubprotocolDirect, carrierws.DefaultResourcePolicy(), carrierws.LivenessPolicy{})
+	clientSession, err := carrierws.NewAfterAdmission(clientConn, carrierws.ClientRole, carrierws.SubprotocolDirect, carrierws.DefaultResourcePolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,59 +274,51 @@ func runWebSocketSmoke(t *testing.T) smokeCase {
 	serverToClientReport := serverToClientRelay.Report()
 	assertByteSmokeCounters(t, clientToServerReport)
 	assertByteSmokeCounters(t, serverToClientReport)
-	return finalizeCase(smokeCase{
-		Profile: carrierws.SubprotocolDirect, Carrier: "wss", Classification: "local_smoke", Status: "pass",
+	return smokeCase{
+		Profile: carrierws.SubprotocolDirect, Carrier: "wss",
 		Assertions: []string{"real TCP ConnPump path", "TLS 1.3 and WebSocket negotiation", "FSB2/FSA2 admission", "counter conservation", "Yamux reset isolation"},
-		Counters: []counterEvidence{
-			counterFromReport(clientToServerReport, nil, []relationExpectation{
+		Counters: []counterAssertion{
+			counterAssertionFromReport(clientToServerReport, nil, []relationExpectation{
 				{Left: "delay_units", Operator: "eq", Right: "input_units"},
 				{Left: "jitter_units", Operator: "eq", Right: "input_units"},
 				{Left: "input_bytes", Operator: "eq", Right: "output_bytes_plus_canceled_bytes"},
 			}),
-			counterFromReport(serverToClientReport, nil, []relationExpectation{
+			counterAssertionFromReport(serverToClientReport, nil, []relationExpectation{
 				{Left: "delay_units", Operator: "eq", Right: "input_units"},
 				{Left: "jitter_units", Operator: "eq", Right: "input_units"},
 				{Left: "input_bytes", Operator: "eq", Right: "output_bytes_plus_canceled_bytes"},
 			}),
 		},
-	})
+	}
 }
 
-func counterFromReport(report weaknet.Report, exact []exactCounterExpectation, relations []relationExpectation) counterEvidence {
-	return counterEvidence{
+func counterAssertionFromReport(report weaknet.Report, exact []exactCounterExpectation, relations []relationExpectation) counterAssertion {
+	return counterAssertion{
 		Phase: report.Phase, Direction: report.Direction, Seed: report.Seed,
 		ExpectedExact: exact, ExpectedRelations: relations, Actual: report.Actual,
 	}
 }
 
-func validateSmokeReport(report smokeReport) error {
-	if report.SchemaVersion != 1 || report.Classification != "local_smoke" {
-		return errors.New("weak-network smoke report must be schema v1 local_smoke evidence")
+func validateSmokeCase(result smokeCase) error {
+	if result.Profile == "" || result.Carrier == "" || len(result.Assertions) == 0 || len(result.Counters) == 0 {
+		return errors.New("weak-network smoke case is incomplete")
 	}
-	for _, result := range report.Cases {
-		if result.Classification != "local_smoke" || result.Status != "pass" {
-			return fmt.Errorf("smoke case %s has invalid classification or status", result.Carrier)
-		}
-		for _, counters := range result.Counters {
-			if err := validateCounterEvidence(counters); err != nil {
-				return fmt.Errorf("smoke case %s counters: %w", result.Carrier, err)
-			}
-		}
-		if result.EvidenceSHA256 != smokeCaseDigest(result) {
-			return fmt.Errorf("smoke case %s evidence_sha256 does not match its content", result.Carrier)
+	for _, counters := range result.Counters {
+		if err := validateCounterAssertion(counters); err != nil {
+			return fmt.Errorf("smoke case %s counters: %w", result.Carrier, err)
 		}
 	}
 	return nil
 }
 
-func validateCounterEvidence(evidence counterEvidence) error {
-	seenExact := make(map[string]struct{}, len(evidence.ExpectedExact))
-	for _, expected := range evidence.ExpectedExact {
+func validateCounterAssertion(assertion counterAssertion) error {
+	seenExact := make(map[string]struct{}, len(assertion.ExpectedExact))
+	for _, expected := range assertion.ExpectedExact {
 		if _, duplicate := seenExact[expected.Counter]; duplicate {
 			return fmt.Errorf("duplicate exact counter %q", expected.Counter)
 		}
 		seenExact[expected.Counter] = struct{}{}
-		actual, err := counterValue(evidence.Actual, expected.Counter)
+		actual, err := counterValue(assertion.Actual, expected.Counter)
 		if err != nil {
 			return err
 		}
@@ -362,18 +326,18 @@ func validateCounterEvidence(evidence counterEvidence) error {
 			return fmt.Errorf("counter %s = %d, want %d", expected.Counter, actual, expected.Value)
 		}
 	}
-	if len(evidence.ExpectedRelations) == 0 {
+	if len(assertion.ExpectedRelations) == 0 {
 		return errors.New("at least one machine-verifiable counter relation is required")
 	}
-	for _, relation := range evidence.ExpectedRelations {
+	for _, relation := range assertion.ExpectedRelations {
 		if relation.Operator != "eq" {
 			return fmt.Errorf("unsupported counter relation operator %q", relation.Operator)
 		}
-		left, err := counterValue(evidence.Actual, relation.Left)
+		left, err := counterValue(assertion.Actual, relation.Left)
 		if err != nil {
 			return err
 		}
-		right, err := counterValue(evidence.Actual, relation.Right)
+		right, err := counterValue(assertion.Actual, relation.Right)
 		if err != nil {
 			return err
 		}
@@ -623,47 +587,4 @@ func validWebSocketFSB2(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return raw
-}
-
-func finalizeCase(result smokeCase) smokeCase {
-	result.EvidenceSHA256 = smokeCaseDigest(result)
-	return result
-}
-
-func smokeCaseDigest(result smokeCase) string {
-	result.EvidenceSHA256 = ""
-	data, _ := json.Marshal(result)
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
-func writeReport(path string, report smokeReport) error {
-	data, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, data, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(temporary, path); err != nil {
-		return fmt.Errorf("publish smoke report: %w", err)
-	}
-	return nil
-}
-
-func TestSmokeReportClassificationDoesNotClaimSystemEvidence(t *testing.T) {
-	data, err := json.Marshal(smokeReport{Classification: "local_smoke", EvidenceScope: "not system, netem, qlog, PMTUD, migration, or performance SLO evidence"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, forbidden := range []string{`"classification":"system"`, `"performance_pass"`, `"classification":"netem"`} {
-		if strings.Contains(string(data), forbidden) {
-			t.Fatalf("local smoke report contains forbidden claim %s", forbidden)
-		}
-	}
 }

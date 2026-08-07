@@ -5,6 +5,7 @@ import { createMemoryCarrierPairV2 } from "./carrier.js";
 import type { OperationOptionsV2 } from "./contract.js";
 import { CipherSuiteV2 } from "./protocol.js";
 import { establishSessionV2, type SessionConfigV2, type SessionV2 } from "./session.js";
+import { nodeSessionRuntimeV2 } from "../node/sessionRuntime.js";
 
 function config(role: "client" | "server"): SessionConfigV2 {
   return {
@@ -19,6 +20,7 @@ function config(role: "client" | "server"): SessionConfigV2 {
     peerAdmissionBinding: new Uint8Array(32).fill(0x83),
     localEndpointInstanceID: "",
     expectedPeerEndpointInstanceID: "",
+    runtime: nodeSessionRuntimeV2,
   };
 }
 
@@ -172,6 +174,10 @@ class PrefaceCapturingCarrier implements CarrierSessionV2 {
     await this.inner.close(error);
   }
 
+  async waitTermination(): Promise<void> {
+    await this.inner.waitTermination();
+  }
+
   abort(error?: Readonly<{ code: number; reason: string }>): void {
     this.inner.abort(error);
   }
@@ -197,7 +203,9 @@ class SignalCapturingCarrier implements CarrierSessionV2 {
     if (this.opens === 1) return stream;
     return new WriteObservingStream(
       stream,
-      (_data, writeOptions) => this.applicationWriteSignals.push(writeOptions.signal),
+      (_data, writeOptions) => {
+        this.applicationWriteSignals.push(writeOptions.signal);
+      },
       () => { this.applicationReset = true; },
     );
   }
@@ -208,6 +216,10 @@ class SignalCapturingCarrier implements CarrierSessionV2 {
 
   async close(error?: Readonly<{ code: number; reason: string }>): Promise<void> {
     await this.inner.close(error);
+  }
+
+  async waitTermination(): Promise<void> {
+    await this.inner.waitTermination();
   }
 
   abort(error?: Readonly<{ code: number; reason: string }>): void {
@@ -253,6 +265,10 @@ class OrderedResetCarrier implements CarrierSessionV2 {
     await this.inner.close(error);
   }
 
+  async waitTermination(): Promise<void> {
+    await this.inner.waitTermination();
+  }
+
   abort(error?: Readonly<{ code: number; reason: string }>): void {
     this.controlGate.resolve();
     this.inner.abort(error);
@@ -280,6 +296,7 @@ class WriteObservingStream implements CarrierStreamV2 {
 
   async closeWrite(): Promise<void> { await this.inner.closeWrite(); }
   async reset(): Promise<void> { this.onReset(); await this.inner.reset(); }
+  async stopSending(): Promise<void> { await this.inner.stopSending(); }
   abort(error?: Error): void { this.onReset(); this.inner.abort(error); }
 }
 
@@ -309,6 +326,10 @@ class DelayedApplicationAcceptCarrier implements CarrierSessionV2 {
 
   async close(error?: Readonly<{ code: number; reason: string }>): Promise<void> {
     await this.inner.close(error);
+  }
+
+  async waitTermination(): Promise<void> {
+    await this.inner.waitTermination();
   }
 
   abort(error?: Readonly<{ code: number; reason: string }>): void {

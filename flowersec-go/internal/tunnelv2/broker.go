@@ -84,8 +84,8 @@ func Bridge(ctx context.Context, clientLeg, serverLeg carrier.Session, limits Li
 	}()
 
 	tasks.Add(2)
-	go acceptLoop(bridgeContext, cancel, tasks, semaphore, clientLeg, serverLeg, limits.CopyBufferBytes)
-	go acceptLoop(bridgeContext, cancel, tasks, semaphore, serverLeg, clientLeg, limits.CopyBufferBytes)
+	go acceptLoop(bridgeContext, tasks, semaphore, clientLeg, serverLeg, limits.CopyBufferBytes)
+	go acceptLoop(bridgeContext, tasks, semaphore, serverLeg, clientLeg, limits.CopyBufferBytes)
 
 	<-bridgeContext.Done()
 	cause := context.Cause(bridgeContext)
@@ -107,7 +107,6 @@ func Bridge(ctx context.Context, clientLeg, serverLeg carrier.Session, limits Li
 
 func acceptLoop(
 	ctx context.Context,
-	cancel context.CancelCauseFunc,
 	tasks *taskGroup,
 	semaphore chan struct{},
 	source, target carrier.Session,
@@ -117,9 +116,6 @@ func acceptLoop(
 	for {
 		incoming, err := source.AcceptStream(ctx)
 		if err != nil {
-			if ctx.Err() == nil {
-				cancel(err)
-			}
 			return
 		}
 		select {

@@ -51,12 +51,12 @@ func syncDirectory(at directoryURL: URL) throws {
   }
 }
 
-func recoveryActionV2(for error: any Error) -> RetryAction? {
+func retryDispositionV2(for error: any Error) -> RetryDisposition? {
   if let connectError = error as? ConnectError {
-    return classifyConnectError(connectError).action
+    return connectError.retryDisposition
   }
   if let sessionError = error as? SessionError {
-    return classifySessionError(sessionError).action
+    return sessionError.retryDisposition
   }
   return nil
 }
@@ -83,16 +83,16 @@ private enum FlowersecSwiftClientExample {
     do {
       session = try await connect(lease: lease)
     } catch {
-      if let action = recoveryActionV2(for: error) {
-        print("recovery=\(action.rawValue)")
+      if let disposition = retryDispositionV2(for: error) {
+        print("recovery=\(String(describing: disposition))")
       }
       throw error
     }
     do {
       _ = try await session.probeLiveness()
     } catch {
-      if let action = recoveryActionV2(for: error) {
-        print("recovery=\(action.rawValue)")
+      if let disposition = retryDispositionV2(for: error) {
+        print("recovery=\(String(describing: disposition))")
       }
       try? await session.close()
       throw error

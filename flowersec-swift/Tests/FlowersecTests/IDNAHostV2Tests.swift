@@ -21,6 +21,14 @@ struct IDNAHostV2Tests {
     }
   }
 
+  @Test func unicode151DeltaFallbackMatchesFrozenVectors() throws {
+    for vector in try loadFixture().positive where vector.id.hasPrefix("unicode-15-1-extension-i") {
+      #expect(
+        try IDNAHostV2.lookupUnicode151DeltaASCII(vector.input) == vector.ascii,
+        Comment(rawValue: vector.id))
+    }
+  }
+
   private func loadFixture() throws -> IDNAVectorFixture {
     let url = packageRoot().appendingPathComponent("testdata/transport_v2/idna_vectors.json")
     return try JSONDecoder().decode(IDNAVectorFixture.self, from: Data(contentsOf: url))

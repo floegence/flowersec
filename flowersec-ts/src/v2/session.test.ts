@@ -1,8 +1,13 @@
 import { describe, expect, test } from "vitest";
 
-import { createMemoryCarrierPairV2, type CarrierSessionV2 } from "./carrier.js";
+import {
+  createMemoryCarrierPairV2,
+  type CarrierSessionV2,
+  type CarrierStreamV2,
+} from "./carrier.js";
 import { CipherSuiteV2 } from "./protocol.js";
 import { SessionV2, establishSessionV2, type SessionConfigV2 } from "./session.js";
+import { nodeSessionRuntimeV2 } from "../node/sessionRuntime.js";
 
 const bytes = (value: string): Uint8Array => new TextEncoder().encode(value);
 const text = (value: Uint8Array): string => new TextDecoder().decode(value);
@@ -19,6 +24,7 @@ function configs(maxInboundStreams = 8): readonly [SessionConfigV2, SessionConfi
     peerAdmissionBinding: Uint8Array.from({ length: 32 }, (_, index) => 0x40 + index),
     localEndpointInstanceID: "",
     expectedPeerEndpointInstanceID: "",
+    runtime: nodeSessionRuntimeV2,
   };
   return [{ ...common, role: "client" }, { ...common, role: "server" }];
 }
@@ -32,7 +38,66 @@ async function establishPair(maxInboundStreams = 8): Promise<readonly [SessionV2
   ]);
 }
 
+function blockCarrierWritesAfter(inner: CarrierSessionV2, blocked: () => boolean): CarrierSessionV2 {
+  const wrapStream = async (stream: CarrierStreamV2): Promise<CarrierStreamV2> => ({
+    read: (options) => stream.read(options),
+    write: (data, options = {}) => {
+      if (!blocked()) return stream.write(data, options);
+      return new Promise<number>((_resolve, reject) => {
+        if (options.signal?.aborted === true) {
+          reject(options.signal.reason);
+          return;
+        }
+        options.signal?.addEventListener("abort", () => reject(options.signal!.reason), { once: true });
+      });
+    },
+    closeWrite: () => stream.closeWrite(),
+    reset: () => stream.reset(),
+    stopSending: () => stream.stopSending(),
+    abort: (error) => stream.abort(error),
+  });
+  return {
+    kind: inner.kind,
+    path: inner.path,
+    inboundBidirectionalStreamCapacity: inner.inboundBidirectionalStreamCapacity,
+    unreliableDatagrams: inner.unreliableDatagrams,
+    openStream: async (options) => await wrapStream(await inner.openStream(options)),
+    acceptStream: async (options) => await wrapStream(await inner.acceptStream(options)),
+    close: (error) => inner.close(error),
+    abort: (error) => inner.abort(error),
+    waitTermination: () => inner.waitTermination(),
+  };
+}
+
 describe("SessionV2", () => {
+  test("aborts a liveness control write with the operation signal", async () => {
+    const [rawClient, serverCarrier] = createMemoryCarrierPairV2({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 10,
+    });
+    let blocked = false;
+    const [client] = await Promise.all([
+      establishSessionV2(blockCarrierWritesAfter(rawClient, () => blocked), configs()[0]),
+      establishSessionV2(serverCarrier, configs()[1]),
+    ]);
+    blocked = true;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error("liveness deadline")), 20);
+    try {
+      const outcome = await Promise.race([
+        client.probeLiveness({ signal: controller.signal }).then(() => "resolved", (error) => error),
+        new Promise<string>((resolve) => setTimeout(() => resolve("hung"), 100)),
+      ]);
+      expect(outcome).not.toBe("hung");
+      expect(outcome).toBeInstanceOf(Error);
+    } finally {
+      clearTimeout(timer);
+      rawClient.abort({ code: 6, reason: "test cleanup" });
+      serverCarrier.abort({ code: 6, reason: "test cleanup" });
+    }
+  });
+
   test("rejects an N=1 physical-capacity mismatch before opening the control stream", async () => {
     const [inner] = createMemoryCarrierPairV2({
       kind: "webtransport",
@@ -51,6 +116,7 @@ describe("SessionV2", () => {
       acceptStream: async (options) => await inner.acceptStream(options),
       close: async (error) => await inner.close(error),
       abort: (error) => inner.abort(error),
+      waitTermination: () => inner.waitTermination(),
     };
     const [clientConfig] = configs(1);
     await expect(establishSessionV2(mismatched, clientConfig)).rejects.toThrow("capacity mismatch");

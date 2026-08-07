@@ -20,11 +20,14 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/candidatev2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
 	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
@@ -46,6 +49,7 @@ type endpoint struct {
 func main() {
 	pathFlag := flag.String("path", "direct", "carrier path: direct or tunnel")
 	oppositeFlag := flag.String("opposite", "", "mixed tunnel opposite carrier: wss or raw_quic")
+	faultedSessionsFlag := flag.Int("faulted-sessions", 0, "accept this many faulted WebTransport sessions and one stream per session")
 	flag.Parse()
 	tlsConfig, certificateHash, err := testTLSConfig(time.Now())
 	must(err)
@@ -55,7 +59,11 @@ func main() {
 	}
 	connectPath, sessionPath, err := pathConfiguration(*pathFlag)
 	must(err)
-	limits, err := carrierwt.BindSessionLimits(carrierwt.DefaultLimits(), 64)
+	if *faultedSessionsFlag != 0 {
+		must(runFaultedSessionsPeer(tlsConfig, certificateHash, connectPath, *faultedSessionsFlag))
+		return
+	}
+	limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), 64)
 	must(err)
 	server, err := carrierwt.NewServer(tlsConfig, limits, allowedOrigin)
 	must(err)
@@ -86,13 +94,222 @@ func main() {
 	}
 }
 
+func runFaultedSessionsPeer(tlsConfig *tls.Config, certificateHash, connectPath string, count int) error {
+	if count < 1 || count > 32 {
+		return errors.New("faulted session count must be between 1 and 32")
+	}
+	limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), 32)
+	if err != nil {
+		return err
+	}
+	server, err := carrierwt.NewServer(tlsConfig, limits, allowedOrigin)
+	if err != nil {
+		return err
+	}
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	accepted := make(chan error, count)
+	closed := make(chan struct{}, count)
+	server.SetHandler(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		session, upgradeErr := server.Upgrade(writer, request)
+		if upgradeErr != nil {
+			accepted <- upgradeErr
+			return
+		}
+		stream, streamErr := session.AcceptStream(ctx)
+		if streamErr == nil {
+			if written, writeErr := stream.Write([]byte{1}); writeErr != nil || written != 1 {
+				streamErr = errors.Join(writeErr, errors.New("faulted session acceptance acknowledgment failed"))
+			} else if closeErr := stream.CloseWrite(); closeErr != nil {
+				streamErr = fmt.Errorf("faulted session acceptance acknowledgment close: %w", closeErr)
+			}
+		}
+		accepted <- streamErr
+		if streamErr == nil {
+			<-stream.Context().Done()
+			_ = stream.Reset()
+		}
+		closed <- struct{}{}
+	}))
+	packetConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		return err
+	}
+	defer packetConn.Close()
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve(packetConn) }()
+	proxy, err := newBrowserFaultProxy(packetConn.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		return err
+	}
+	defer proxy.Close()
+	address := proxy.LocalAddr().(*net.UDPAddr)
+	if err := json.NewEncoder(os.Stdout).Encode(endpoint{
+		URL:             fmt.Sprintf("https://127.0.0.1:%d%s", address.Port, connectPath),
+		CertificateHash: certificateHash,
+	}); err != nil {
+		return err
+	}
+	for range count {
+		select {
+		case err := <-accepted:
+			if err != nil {
+				return fmt.Errorf("faulted session acceptance: %w", err)
+			}
+		case err := <-serveDone:
+			return fmt.Errorf("faulted session listener before acceptance: %w", err)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	for range count {
+		select {
+		case <-closed:
+		case err := <-serveDone:
+			return fmt.Errorf("faulted session listener during cleanup: %w", err)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+type browserFaultProxy struct {
+	front  *net.UDPConn
+	server *net.UDPAddr
+
+	mu       sync.Mutex
+	closed   bool
+	paths    map[string]*browserFaultPath
+	clientN  uint64
+	serverN  uint64
+	waiters  sync.WaitGroup
+	delivery sync.WaitGroup
+}
+
+type browserFaultPath struct {
+	connection *net.UDPConn
+	client     *net.UDPAddr
+}
+
+func newBrowserFaultProxy(server *net.UDPAddr) (*browserFaultProxy, error) {
+	front, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		return nil, err
+	}
+	proxy := &browserFaultProxy{front: front, server: server, paths: make(map[string]*browserFaultPath)}
+	proxy.waiters.Add(1)
+	go proxy.forwardClientPackets()
+	return proxy, nil
+}
+
+func (proxy *browserFaultProxy) LocalAddr() net.Addr { return proxy.front.LocalAddr() }
+
+func (proxy *browserFaultProxy) forwardClientPackets() {
+	defer proxy.waiters.Done()
+	buffer := make([]byte, 64<<10)
+	for {
+		n, client, err := proxy.front.ReadFromUDP(buffer)
+		if err != nil {
+			return
+		}
+		path, err := proxy.pathFor(client)
+		if err != nil {
+			return
+		}
+		proxy.schedule(path.connection, proxy.server, buffer[:n], true)
+	}
+}
+
+func (proxy *browserFaultProxy) pathFor(client *net.UDPAddr) (*browserFaultPath, error) {
+	proxy.mu.Lock()
+	defer proxy.mu.Unlock()
+	if path := proxy.paths[client.String()]; path != nil {
+		return path, nil
+	}
+	if proxy.closed {
+		return nil, net.ErrClosed
+	}
+	connection, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		return nil, err
+	}
+	path := &browserFaultPath{connection: connection, client: client}
+	proxy.paths[client.String()] = path
+	proxy.waiters.Add(1)
+	go proxy.forwardServerPackets(path)
+	return path, nil
+}
+
+func (proxy *browserFaultProxy) forwardServerPackets(path *browserFaultPath) {
+	defer proxy.waiters.Done()
+	buffer := make([]byte, 64<<10)
+	for {
+		n, _, err := path.connection.ReadFromUDP(buffer)
+		if err != nil {
+			return
+		}
+		proxy.schedule(proxy.front, path.client, buffer[:n], false)
+	}
+}
+
+func (proxy *browserFaultProxy) schedule(connection *net.UDPConn, target *net.UDPAddr, payload []byte, clientToServer bool) {
+	proxy.mu.Lock()
+	ordinal := proxy.serverN + 1
+	if clientToServer {
+		ordinal = proxy.clientN + 1
+		proxy.clientN = ordinal
+	} else {
+		proxy.serverN = ordinal
+	}
+	dropped := proxy.closed || ordinal%50 == 0
+	if !dropped {
+		proxy.delivery.Add(1)
+	}
+	proxy.mu.Unlock()
+	if dropped {
+		return
+	}
+	jitter := [...]int64{0, 8, -4, 12, -8, 4, -2, 6}
+	delay := 60*time.Millisecond + time.Duration(jitter[(ordinal-1)%uint64(len(jitter))])*time.Millisecond
+	packet := append([]byte(nil), payload...)
+	go func() {
+		defer proxy.delivery.Done()
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		<-timer.C
+		_, _ = connection.WriteToUDP(packet, target)
+	}()
+}
+
+func (proxy *browserFaultProxy) Close() {
+	proxy.mu.Lock()
+	if proxy.closed {
+		proxy.mu.Unlock()
+		return
+	}
+	proxy.closed = true
+	paths := make([]*browserFaultPath, 0, len(proxy.paths))
+	for _, path := range proxy.paths {
+		paths = append(paths, path)
+	}
+	proxy.mu.Unlock()
+	_ = proxy.front.Close()
+	for _, path := range paths {
+		_ = path.connection.Close()
+	}
+	proxy.waiters.Wait()
+	proxy.delivery.Wait()
+}
+
 func runMixedPeer(tlsConfig *tls.Config, certificateHash, opposite string) error {
 	if opposite != "wss" && opposite != "raw_quic" {
 		return fmt.Errorf("invalid opposite carrier %q", opposite)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	limits, err := carrierwt.BindSessionLimits(carrierwt.DefaultLimits(), 64)
+	limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), 64)
 	if err != nil {
 		return err
 	}
@@ -117,7 +334,7 @@ func runMixedPeer(tlsConfig *tls.Config, certificateHash, opposite string) error
 			selectSendError(legErrors, upgradeErr)
 			return
 		}
-		go serveNativeCoordinatorLeg(ctx, coordinator, transport, legErrors)
+		go serveWebTransportCoordinatorLeg(ctx, coordinator, transport, legErrors)
 	}))
 	go func() { selectSendError(legErrors, webTransportServer.Serve(packetConn)) }()
 
@@ -194,17 +411,41 @@ type mixedLease struct{}
 
 func (mixedLease) Release() {}
 
-func serveNativeCoordinatorLeg(
+func serveWebTransportCoordinatorLeg(
 	ctx context.Context,
 	coordinator *tunnelv2.Coordinator,
-	transport carrier.Session,
+	transport *carrierwt.Session,
 	errorsCh chan<- error,
 ) {
-	admission, err := admissionv2.ServerStream(ctx, transport)
+	admission, err := carrierwt.OpenAdmissionStream(ctx, transport)
 	if err != nil {
 		selectSendError(errorsCh, err)
 		return
 	}
+	serveNativeCoordinatorLeg(ctx, coordinator, transport, admission, errorsCh)
+}
+
+func serveRawQUICCoordinatorLeg(
+	ctx context.Context,
+	coordinator *tunnelv2.Coordinator,
+	transport *rawquic.Session,
+	errorsCh chan<- error,
+) {
+	admission, err := rawquic.AcceptAdmissionStream(ctx, transport)
+	if err != nil {
+		selectSendError(errorsCh, err)
+		return
+	}
+	serveNativeCoordinatorLeg(ctx, coordinator, transport, admission, errorsCh)
+}
+
+func serveNativeCoordinatorLeg(
+	ctx context.Context,
+	coordinator *tunnelv2.Coordinator,
+	transport carrier.Session,
+	admission carrier.Stream,
+	errorsCh chan<- error,
+) {
 	leg, err := tunnelv2.NewNativeStreamLeg(transport, admission)
 	if err != nil {
 		selectSendError(errorsCh, err)
@@ -237,7 +478,7 @@ func startMixedWSS(
 			selectSendError(errorsCh, upgradeErr)
 			return
 		}
-		leg, legErr := tunnelv2.NewWebSocketPendingLeg(connection, resources, carrierws.LivenessPolicy{})
+		leg, legErr := tunnelv2.NewWebSocketPendingLeg(connection, resources)
 		if legErr != nil {
 			selectSendError(errorsCh, legErr)
 			return
@@ -256,7 +497,7 @@ func startMixedRawQUIC(
 	coordinator *tunnelv2.Coordinator,
 	errorsCh chan<- error,
 ) (string, func() error, error) {
-	limits, err := rawquic.BindSessionLimits(rawquic.DefaultLimits(), 64)
+	limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), 64)
 	if err != nil {
 		return "", nil, err
 	}
@@ -272,7 +513,7 @@ func startMixedRawQUIC(
 			selectSendError(errorsCh, acceptErr)
 			return
 		}
-		serveNativeCoordinatorLeg(ctx, coordinator, transport, errorsCh)
+		serveRawQUICCoordinatorLeg(ctx, coordinator, transport, errorsCh)
 	}()
 	return "quic://" + listener.Addr().String(), listener.Close, nil
 }
@@ -344,32 +585,31 @@ func connectMixedOpposite(
 	roots := x509.NewCertPool()
 	roots.AddCert(certificate)
 	clientTLS := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}
-	var dial connectv2.CarrierDial
-	var policy connectv2.Policy
+	var dial candidatev2.Dial
 	var kind artifactv2.Carrier
 	if opposite == "wss" {
 		webSocketDialer := *websocket.DefaultDialer
 		webSocketDialer.TLSClientConfig = clientTLS
-		dial, err = connectv2.NewWebSocketCarrierDial(connectv2.WebSocketDialConfig{
+		dial, err = candidatev2.NewWebSocketCarrierDial(candidatev2.WebSocketDialConfig{
 			Dialer: &webSocketDialer, Resources: carrierws.DefaultResourcePolicy(),
 		})
-		policy, kind = connectv2.RequireWebSocket, artifactv2.CarrierWebSocket
+		kind = artifactv2.CarrierWebSocket
 	} else {
-		dial, err = connectv2.NewRawQUICCarrierDial(connectv2.RawQUICDialConfig{
-			TLSConfig: clientTLS, Limits: rawquic.DefaultLimits(),
+		dial, err = candidatev2.NewRawQUICCarrierDial(candidatev2.RawQUICDialConfig{
+			TLSConfig: clientTLS, Limits: quicbase.DefaultLimits(), Dial: rawquic.Dial,
 		})
-		policy, kind = connectv2.RequireQUICFamily, artifactv2.CarrierRawQUIC
+		kind = artifactv2.CarrierRawQUIC
 	}
 	if err != nil {
 		return err
 	}
-	factory, err := connectv2.NewAdmissionFactory(map[artifactv2.Carrier]connectv2.CarrierDial{kind: dial}, nil)
+	factory, err := candidatev2.NewFactory(map[artifactv2.Carrier]candidatev2.Dial{kind: dial})
 	if err != nil {
 		return err
 	}
 	connector := connectv2.NewConnector(connectv2.ArtifactLease{
 		Artifact: artifact, CommitSpend: func(context.Context) error { return nil },
-	}, session.GoCapabilities(), policy, factory)
+	}, factory)
 	result, err := connector.Connect(ctx)
 	if err != nil {
 		return err
@@ -440,7 +680,7 @@ func serveSession(
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	admission, err := admissionv2.ServerStream(ctx, transport)
+	admission, err := carrierwt.OpenAdmissionStream(ctx, transport)
 	if err != nil {
 		return err
 	}

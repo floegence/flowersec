@@ -11,8 +11,6 @@ const mainGateGraphFiles = [
   "Makefile",
   ".githooks/pre-push",
   "scripts/check-security-makefile.mjs",
-  "scripts/check-transport-v2-evidence.sh",
-  "scripts/main-gate-receipt.mjs",
   "scripts/push-main.sh",
   "scripts/release.sh",
   "scripts/run-final-lanes.mjs",
@@ -38,10 +36,8 @@ const releasePolicyFixtureFiles = [
   "scripts/run-final-stage.test.mjs",
   "scripts/run-precommit-wave.mjs",
   "scripts/run-precommit-wave.test.mjs",
-  "scripts/check-transport-v2-evidence.sh",
   "scripts/release.sh",
   "scripts/push-main.sh",
-  "scripts/main-gate-receipt.mjs",
   "scripts/release.test.mjs",
 ];
 const repositoryLocalEnvironmentVariables = [
@@ -133,30 +129,6 @@ function executablePath(name) {
   return result.stdout.trim();
 }
 
-function writeMainGateReceipt(repo, evidenceReport, evidenceBase) {
-  const head = runGit(["-C", repo, "rev-parse", "HEAD"]);
-  const result = spawnSync(
-    process.execPath,
-    [
-      "scripts/main-gate-receipt.mjs",
-      "write",
-      "--head",
-      head,
-      "--origin-main",
-      head,
-      "--evidence-report",
-      evidenceReport,
-      "--evidence-base",
-      evidenceBase,
-    ],
-    { cwd: repo, encoding: "utf8", env: isolatedEnvironment() },
-  );
-  if (result.status !== 0) {
-    throw new Error(`could not write fixture main gate receipt:\n${result.stdout}${result.stderr}`);
-  }
-  return path.join(repo, ".git/flowersec/main-gate-receipts", `${head}.json`);
-}
-
 function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-release-script-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -167,7 +139,6 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   const realGit = executablePath("git");
   const realMake = executablePath("make");
   fs.mkdirSync(path.join(repo, "scripts"), { recursive: true });
-  fs.mkdirSync(path.join(repo, "evidence"), { recursive: true });
   fs.mkdirSync(path.join(repo, "flowersec-ts"), { recursive: true });
   fs.mkdirSync(path.join(repo, "flowersec-rust/fuzz"), { recursive: true });
   fs.mkdirSync(path.join(repo, "examples/rust"), { recursive: true });
@@ -198,9 +169,6 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   fs.writeFileSync(path.join(repo, "flowersec-rust/fuzz/Cargo.toml"), "[package]\nname = \"fuzz\"\n");
   fs.writeFileSync(path.join(repo, "examples/rust/Cargo.toml"), "[package]\nname = \"example\"\n");
   fs.writeFileSync(path.join(repo, "tracked.txt"), "clean\n");
-  const evidenceReport = path.join(repo, "evidence/report.json");
-  fs.writeFileSync(path.join(repo, "evidence/artifact.bin"), "signed artifact\n");
-  fs.writeFileSync(evidenceReport, "{}\n");
 
   fs.writeFileSync(
     path.join(bin, "cargo"),
@@ -235,9 +203,7 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   runGit(["-C", repo, "remote", "add", "origin", origin]);
   runGit(["-C", repo, "push", "-u", "origin", "main"]);
 
-  writeMainGateReceipt(repo, evidenceReport, "1".repeat(40));
-
-  return { bin, evidenceReport, gitLog, origin, realGit, realMake, repo };
+  return { bin, gitLog, origin, realGit, realMake, repo };
 }
 
 function runReleaseScript(fixture, env = {}) {
@@ -248,8 +214,6 @@ function runReleaseScript(fixture, env = {}) {
       FLOWERSEC_TEST_GIT_LOG: fixture.gitLog,
       FLOWERSEC_TEST_REAL_GIT: fixture.realGit,
       PATH: `${fixture.bin}:${process.env.PATH}`,
-      TRANSPORT_V2_BASE_SHA: "1".repeat(40),
-      TRANSPORT_V2_EVIDENCE_REPORT: fixture.evidenceReport,
       ...env,
     }),
   });
@@ -403,7 +367,7 @@ test("release gates stay wired into local checks and publication workflows", () 
   assert.match(makefile, /^release-version-check:\n\tnode scripts\/check-release-version-consistency\.mjs$/m);
   assert.match(
     makefile,
-    /^release-test:\n\tnode --test scripts\/check-release-version-consistency\.test\.mjs scripts\/release\.test\.mjs scripts\/transport-v2-runner\.test\.mjs$/m,
+    /^release-test:\n\tnode --test scripts\/check-release-version-consistency\.test\.mjs scripts\/release\.test\.mjs$/m,
   );
   assert.match(makefile, /^release-policy-check:\n(?:\t.*\n)*\t\$\(MAKE\) release-version-check$/m);
   assert.match(makefile, /^release-policy-check:\n(?:\t.*\n)*\t\$\(MAKE\) release-test$/m);
@@ -412,9 +376,9 @@ test("release gates stay wired into local checks and publication workflows", () 
     /^check: security-makefile-check\n\t\$\(MAKE\) release-policy-check$/m,
   );
   assert.match(makefile, /^check: security-makefile-check\n(?:\t.*\n)*\t\$\(MAKE\) final-integration-lanes$/m);
-  assert.match(makefile, /^final-integration-lanes:\n\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 race \$\(MAKE\) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 languages node scripts\/run-final-lanes\.mjs \$\(MAKE\) final-go-check final-ts-check final-swift-check final-rust-check$/m);
-  assert.match(makefile, /^release-check:\n\tnode scripts\/main-gate-receipt\.mjs verify /m);
-  assert.doesNotMatch(makefile, /^release-check:\n(?:\t.*\n)*\t\$\(MAKE\) transport-v2-release-evidence$/m);
+  assert.match(makefile, /^final-integration-lanes:\n\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 race \$\(MAKE\) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 languages node scripts\/run-final-lanes\.mjs \$\(MAKE\) final-go-check final-ts-check final-swift-check final-rust-check\n\tnode scripts\/run-final-stage\.mjs 595 browser \$\(MAKE\) browser-smoke$/m);
+  assert.match(makefile, /^release-check:\n\tnode scripts\/check-release-version-consistency\.mjs$/m);
+  assert.doesNotMatch(makefile, /^release-check:\n(?:\t.*\n)*\t\$\(MAKE\) /m);
   assert.match(
     releaseWorkflow,
     /^\s+RELEASE_VERSION: \$\{\{ steps\.vars\.outputs\.version \}\}\n\s+run: node scripts\/check-release-version-consistency\.mjs "\$RELEASE_VERSION"$/m,
@@ -439,18 +403,18 @@ test("release gates stay wired into local checks and publication workflows", () 
   assert.match(ciWorkflow, /^\s+run: scripts\/check-release-workflow-policy\.sh$/m);
 });
 
-test("daily Go tests select fast transport contracts while final check owns the complete suite", () => {
+test("default and final Go gates use the maintained source and test runner", () => {
   const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
   const goTest = makefile.match(/^go-test:\n((?:\t.*\n)+)/m)?.[1] ?? "";
-  const fast = makefile.match(/^transportcheck-fast:\n((?:\t.*\n)+)/m)?.[1] ?? "";
-  const complete = makefile.match(/^transport-v2-unit:\n((?:\t.*\n)+)/m)?.[1] ?? "";
-  assert.match(goTest, /^\t\$\(MAKE\) transportcheck-fast$/m);
-  assert.doesNotMatch(goTest, /tools\/transportcheck.*go test.*\.\/\.\.\./);
-  assert.match(fast, /go test -timeout=5m -count=1 -run/);
-  assert.match(complete, /run-go-test-race-shards\.sh tools\/transportcheck 6 5m 3 normal/);
+  assert.match(goTest, /\.\.\/scripts\/list-default-go-test-packages\.sh/);
+  assert.doesNotMatch(goTest, /transport-test-runner|transportcheck/);
+  assert.doesNotMatch(makefile, /tools\/transportcheck|transportcheck-diagnostic-contract|transport-v2-unit/);
+  assert.match(makefile, /^test:\n\t\$\(MAKE\) go-test ts-test$/m);
+  assert.match(makefile, /^diagnostic:\n\t\$\(FLOWERSEC_TEST_HOST\) run --suite diagnostic$/m);
+  assert.match(makefile, /^performance:\n\t\$\(FLOWERSEC_TEST_HOST\) run --suite performance$/m);
 });
 
-test("release consumes the exact main gate receipt without rerunning validation", () => {
+test("release stays publication-only while main push owns the complete gate", () => {
   const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
   const releaseRecipe = makefile.match(/^release-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const releaseScript = fs.readFileSync(path.join(sourceRoot, "scripts/release.sh"), "utf8");
@@ -458,151 +422,20 @@ test("release consumes the exact main gate receipt without rerunning validation"
   const prePush = fs.readFileSync(path.join(sourceRoot, ".githooks/pre-push"), "utf8");
 
   assert.doesNotMatch(releaseRecipe, /\$\(MAKE\) check/);
-  assert.doesNotMatch(releaseRecipe, /transport-v2-signed-evidence-check|check-transport-v2-evidence/);
-  assert.match(releaseRecipe, /main-gate-receipt\.mjs verify/);
-  assert.doesNotMatch(releaseScript, /\bmake check\b/);
+  assert.match(releaseRecipe, /check-release-version-consistency\.mjs/);
+  assert.doesNotMatch(releaseRecipe, /transport-v2|receipt|evidence|\$\(MAKE\)/);
+  assert.doesNotMatch(releaseScript, /\bmake\b/);
   assert.doesNotMatch(
     releaseScript,
-    /\b(?:go run|go test|npm|cargo|swift (?:build|test)|transport-v2-release-evidence)\b/,
+    /\b(?:go run|go test|npm|cargo|swift (?:build|test)|transport-v2-(?:release|signed|result))\b/,
   );
-  assert.match(releaseScript, /make release-check/);
   assert.doesNotMatch(prePush, /make(?: -C \"\$repo_root\")? check/);
-  assert.match(prePush, /main-gate-receipt\.mjs"?\s+verify/);
+  assert.match(prePush, /use \.\/scripts\/push-main\.sh/);
 
-  const evidence = pushScript.indexOf("transport-v2-signed-evidence-check");
   const gate = pushScript.indexOf("make check");
-  const receipt = pushScript.indexOf('node "$receipt_script" write');
   const push = pushScript.indexOf("git push origin");
-  assert.ok(evidence >= 0 && evidence < gate, "signed evidence must precede the complete gate");
-  assert.ok(gate < receipt && receipt < push, "the successful gate receipt must precede push");
-});
-
-test("main gate receipt binds the exact SHA, gate graph, and signed evidence", (t) => {
-  const fixture = createReleaseScriptFixture(t);
-  const head = runGit(["-C", fixture.repo, "rev-parse", "HEAD"]);
-  const receipt = path.join(
-    fixture.repo,
-    ".git/flowersec/main-gate-receipts",
-    `${head}.json`,
-  );
-  assert.equal(fs.statSync(receipt).mode & 0o777, 0o400);
-
-  const exact = spawnSync(
-    process.execPath,
-    [
-      "scripts/main-gate-receipt.mjs",
-      "verify",
-      "--head",
-      head,
-      "--remote-main",
-      head,
-      "--evidence-report",
-      fixture.evidenceReport,
-      "--evidence-base",
-      "1".repeat(40),
-    ],
-    { cwd: fixture.repo, encoding: "utf8", env: isolatedEnvironment() },
-  );
-  assert.equal(exact.status, 0, `${exact.stdout}${exact.stderr}`);
-
-  const artifact = path.join(fixture.repo, "evidence/artifact.bin");
-  fs.writeFileSync(artifact, "mutated artifact\n");
-  const mutatedArtifact = spawnSync(
-    process.execPath,
-    [
-      "scripts/main-gate-receipt.mjs",
-      "verify",
-      "--head",
-      head,
-      "--evidence-report",
-      fixture.evidenceReport,
-      "--evidence-base",
-      "1".repeat(40),
-    ],
-    { cwd: fixture.repo, encoding: "utf8", env: isolatedEnvironment() },
-  );
-  assert.notEqual(mutatedArtifact.status, 0, `${mutatedArtifact.stdout}${mutatedArtifact.stderr}`);
-  assert.match(mutatedArtifact.stderr, /evidenceClosureSHA256 mismatch/);
-  fs.writeFileSync(artifact, "signed artifact\n");
-
-  const otherEvidenceDirectory = path.join(path.dirname(fixture.repo), "other-evidence");
-  fs.mkdirSync(otherEvidenceDirectory);
-  const otherEvidence = path.join(otherEvidenceDirectory, "report.json");
-  fs.writeFileSync(otherEvidence, "{\"different\":true}\n");
-  const mismatchedEvidence = spawnSync(
-    process.execPath,
-    [
-      "scripts/main-gate-receipt.mjs",
-      "verify",
-      "--head",
-      head,
-      "--evidence-report",
-      otherEvidence,
-      "--evidence-base",
-      "1".repeat(40),
-    ],
-    { cwd: fixture.repo, encoding: "utf8", env: isolatedEnvironment() },
-  );
-  assert.notEqual(
-    mismatchedEvidence.status,
-    0,
-    `${mismatchedEvidence.stdout}${mismatchedEvidence.stderr}`,
-  );
-  assert.match(mismatchedEvidence.stderr, /evidenceReportSHA256 mismatch/);
-
-  fs.chmodSync(receipt, 0o600);
-  const writable = spawnSync(
-    process.execPath,
-    ["scripts/main-gate-receipt.mjs", "verify", "--head", head],
-    { cwd: fixture.repo, encoding: "utf8", env: isolatedEnvironment() },
-  );
-  assert.notEqual(writable.status, 0, `${writable.stdout}${writable.stderr}`);
-  assert.match(writable.stderr, /read-only regular non-symlink/);
-});
-
-test("local transport evidence mutations use focused validators", () => {
-  const source = fs.readFileSync(
-    path.join(sourceRoot, "tools/transportcheck/main_test.go"),
-    "utf8",
-  );
-  const testBody = (name) => {
-    const start = source.indexOf(`func ${name}(`);
-    assert.notEqual(start, -1, `${name} must exist`);
-    const next = source.indexOf("\nfunc ", start + 1);
-    return source.slice(start, next === -1 ? source.length : next);
-  };
-
-  const caseMutations = testBody("TestTypedRebindAndQUICPMTUDCasesRejectFalseEvidence");
-  assert.doesNotMatch(caseMutations, /checkEvidence\(/);
-  assert.equal(
-    [...caseMutations.matchAll(/checkCaseEvidenceForTest\(/g)].length,
-    4,
-    "each typed case mutation must validate only its affected case",
-  );
-
-  for (const name of [
-    "TestEvidenceRequiresQlogOnlyForQUICFamilyTopologies",
-    "TestEvidenceEnforcesForcedAndAdaptiveSelection",
-  ]) {
-    const body = testBody(name);
-    assert.doesNotMatch(body, /checkEvidence\(/, `${name} must not rescan the full report`);
-    assert.match(body, /checkPerformanceCellForTest\(/, `${name} must validate its affected cell`);
-  }
-});
-
-test("runner source graph keeps stderr draining under exec.Cmd ownership", () => {
-  const source = fs.readFileSync(
-    path.join(sourceRoot, "tools/transportcheck/runner_identity.go"),
-    "utf8",
-  );
-  const start = source.indexOf("func runnerSourceSHA256ForPlatform(");
-  const next = source.indexOf("\nfunc ", start + 1);
-  assert.notEqual(start, -1, "platform-aware runnerSourceSHA256 implementation must exist");
-  const body = source.slice(start, next === -1 ? source.length : next);
-
-  assert.doesNotMatch(body, /StderrPipe\(/, "Wait must not close stderr while a reader is draining it");
-  assert.match(body, /command\.Stderr = &stderr/, "exec.Cmd must own stderr copying through Wait");
-  assert.match(body, /newBoundedOutputBuffer\(1 << 20\)/, "stderr diagnostics must remain bounded");
+  assert.ok(gate >= 0 && gate < push, "the complete gate must precede push");
+  assert.doesNotMatch(pushScript, /evidence|receipt/);
 });
 
 test("release workflows pin actions and pass expressions through fields, not shell source", () => {
@@ -872,37 +705,37 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     assert.match(result.stderr, /Dependabot|reviewed value|fields/i);
   });
 
-  schedulePolicyTest("immutable evidence receipt disconnected from release-check", () => {
+  schedulePolicyTest("release version check disconnected from release-check", () => {
     const root = createReleasePolicyFixture(t);
     const makefilePath = path.join(root, "Makefile");
     const makefile = fs.readFileSync(makefilePath, "utf8");
-    const receiptCheck = "\tnode scripts/main-gate-receipt.mjs verify --head \"$$(git rev-parse HEAD)\" --remote-main \"$$(git rev-parse origin/main)\" --evidence-report \"$(TRANSPORT_V2_EVIDENCE_REPORT)\" --evidence-base \"$(TRANSPORT_V2_BASE_SHA)\"\n";
-    assert.ok(makefile.includes(receiptCheck));
+    const versionCheck = "\tnode scripts/check-release-version-consistency.mjs\n";
+    assert.ok(makefile.includes(versionCheck));
     fs.writeFileSync(
       makefilePath,
-      makefile.replace(receiptCheck, ""),
+      makefile.replace(versionCheck, ""),
     );
     const result = runReleasePolicy(root);
     assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-    assert.match(result.stderr, /release-check|main-gate-receipt/);
+    assert.match(result.stderr, /release-check|version/i);
   });
 
-  schedulePolicyTest("Transport v2 evidence generation cannot re-enter release-check", () => {
+  schedulePolicyTest("complete tests cannot enter release-check", () => {
     const root = createReleasePolicyFixture(t);
     const makefilePath = path.join(root, "Makefile");
     const makefile = fs.readFileSync(makefilePath, "utf8");
-    const receiptCheck = "\tnode scripts/main-gate-receipt.mjs verify --head \"$$(git rev-parse HEAD)\" --remote-main \"$$(git rev-parse origin/main)\" --evidence-report \"$(TRANSPORT_V2_EVIDENCE_REPORT)\" --evidence-base \"$(TRANSPORT_V2_BASE_SHA)\"\n";
-    assert.ok(makefile.includes(receiptCheck));
+    const versionCheck = "\tnode scripts/check-release-version-consistency.mjs\n";
+    assert.ok(makefile.includes(versionCheck));
     fs.writeFileSync(
       makefilePath,
       makefile.replace(
-        receiptCheck,
-        `\t$(MAKE) transport-v2-release-evidence\n${receiptCheck}`,
+        versionCheck,
+        `\t$(MAKE) check\n${versionCheck}`,
       ),
     );
     const result = runReleasePolicy(root);
     assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-    assert.match(result.stderr, /release-check|transport-v2-release-evidence/);
+    assert.match(result.stderr, /release-check|exact recipe|check/i);
   });
 
   schedulePolicyTest("commented unified workflow version check", () => {
@@ -1035,7 +868,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       "policy-decoy-check:",
       "\tcheck:",
       "\t$(MAKE) release-policy-check",
-      "\t$(MAKE) transport-v2-unit",
+      "\t$(MAKE) transport-tool-contract",
       "\t$(MAKE) weaknet-smoke",
       "\t$(MAKE) quic-native-smoke",
     ].join("\n"));
@@ -1047,7 +880,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       "\trelease-check:",
       "\t$(MAKE) check",
       "\t$(MAKE) interop-stress-full",
-      "\t$(MAKE) transport-v2-signed-evidence-check",
+      "\t$(MAKE) transport-v2-result-check",
     ].join("\n"));
     fs.writeFileSync(makefilePath, makefile);
     const result = runReleasePolicy(root);
@@ -1072,7 +905,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       "define policy_decoy_check",
       "check:",
       "\t$(MAKE) release-policy-check",
-      "\t$(MAKE) transport-v2-unit",
+      "\t$(MAKE) transport-tool-contract",
       "\t$(MAKE) weaknet-smoke",
       "\t$(MAKE) quic-native-smoke",
       "endef",
@@ -1084,7 +917,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       "release-check:",
       "\t$(MAKE) check",
       "\t$(MAKE) interop-stress-full",
-      "\t$(MAKE) transport-v2-signed-evidence-check",
+      "\t$(MAKE) transport-v2-result-check",
       "endef",
       "release-check::",
       "\t@:",
@@ -1354,98 +1187,6 @@ test("release validates maintained versions before publication", (t) => {
   assertReleaseDidNotStartPublication(fixture);
 });
 
-test("release requires immutable signed Transport v2 evidence before publication", (t) => {
-  const fixture = createReleaseScriptFixture(t);
-  const result = runReleaseScript(fixture, { TRANSPORT_V2_EVIDENCE_REPORT: "" });
-
-  assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-  assert.match(result.stderr, /TRANSPORT_V2_EVIDENCE_REPORT/);
-  assertReleaseDidNotStartPublication(fixture);
-});
-
-test("release never executes an injected Transport v2 collector", (t) => {
-  const fixture = createReleaseScriptFixture(
-    t,
-    "#!/bin/sh\ntest -z \"${TRANSPORT_V2_RELEASE_RUNNER+x}\"\ntest -z \"${TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT+x}\"\n",
-  );
-  const runnerLog = path.join(path.dirname(fixture.repo), "runner.log");
-  const runner = path.join(path.dirname(fixture.repo), "hostile-runner");
-  fs.writeFileSync(runner, `#!/bin/sh\nprintf invoked > ${JSON.stringify(runnerLog)}\nexit 99\n`);
-  fs.chmodSync(runner, 0o755);
-
-  const result = runReleaseScript(fixture, {
-    TRANSPORT_V2_RELEASE_RUNNER: runner,
-    TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT: path.join(path.dirname(fixture.repo), "unsigned.json"),
-  });
-
-  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
-  assert.equal(fs.existsSync(runnerLog), false, "release invoked the evidence collector");
-});
-
-test("release rejects a signed evidence report changed by the gate", (t) => {
-  const fixture = createReleaseScriptFixture(
-    t,
-    "#!/bin/sh\nprintf tampered >> \"$TRANSPORT_V2_EVIDENCE_REPORT\"\n",
-  );
-  const result = runReleaseScript(fixture);
-
-  assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-  assert.match(result.stderr, /changed the signed Transport v2 evidence report/);
-  assertReleaseDidNotStartPublication(fixture);
-});
-
-test("release stops before git tag or push when release-check dirties the worktree", (t) => {
-  const fixture = createReleaseScriptFixture(
-    t,
-    "#!/bin/sh\nprintf '%s\\n' dirty >> tracked.txt\n",
-  );
-  const result = runReleaseScript(fixture);
-
-  assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-  assert.match(result.stderr, /release-check modified the worktree/);
-  assertReleaseDidNotStartPublication(fixture);
-});
-
-test("release stops before git tag or push when release-check changes HEAD", (t) => {
-  const fixture = createReleaseScriptFixture(
-    t,
-    "#!/bin/sh\nprintf '%s\\n' generated > release-generated.txt\ngit add release-generated.txt\ngit commit -m 'test: release-check commit' >/dev/null\n",
-  );
-  const result = runReleaseScript(fixture);
-
-  assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-  assert.match(result.stderr, /release-check changed HEAD/);
-  assertReleaseDidNotStartPublication(fixture);
-});
-
-test("release make gate ignores hostile inherited make control variables", (t) => {
-  const fixture = createReleaseScriptFixture(t);
-  fs.writeFileSync(
-    path.join(fixture.repo, "Makefile"),
-    ".PHONY: release-check fail\nrelease-check:\n\t$(MAKE) fail\nfail:\n\t@false\n",
-  );
-  fs.writeFileSync(path.join(fixture.repo, "attacker.mk"), "SHELL := /usr/bin/true\n");
-  fs.writeFileSync(
-    path.join(fixture.bin, "make"),
-    `#!/bin/sh\nexec ${JSON.stringify(fixture.realMake)} \"$@\"\n`,
-  );
-  fs.chmodSync(path.join(fixture.bin, "make"), 0o755);
-  runGit(["-C", fixture.repo, "add", "Makefile", "attacker.mk"]);
-  runGit(["-C", fixture.repo, "commit", "-m", "test: add failing release gate"]);
-  runGit(["-C", fixture.repo, "push", "origin", "main"]);
-
-  const result = runReleaseScript(fixture, {
-    MAKE: "true",
-    MAKE_COMMAND: "true",
-    MAKEFILES: "attacker.mk",
-    MAKEFLAGS: "-i",
-    GNUMAKEFLAGS: "-i",
-  });
-
-  assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-  assertReleaseDidNotStartPublication(fixture);
-});
-
 test("release removes all local tags when tag creation fails partway", (t) => {
   const fixture = createReleaseScriptFixture(t);
   const result = runReleaseScript(fixture, { FLOWERSEC_TEST_FAIL_TAG: "0.26.0" });
@@ -1483,7 +1224,7 @@ test("release publishes main and all ecosystem tags atomically", (t) => {
   assert.ok(commands.some((command) => command.startsWith("push --atomic origin ")), commands.join("\n"));
 });
 
-test("pre-push accepts only the complete release tag set for the gated commit", async (t) => {
+test("pre-push accepts only the complete release tag set for the synchronized commit", async (t) => {
   const hook = path.join(sourceRoot, ".githooks/pre-push");
   const verified = "1".repeat(40);
   const other = "2".repeat(40);
@@ -1494,14 +1235,14 @@ test("pre-push accepts only the complete release tag set for the gated commit", 
     tagLine("refs/tags/0.26.0"),
     tagLine("refs/tags/flowersec-rust/v0.26.0"),
   ];
-  const gatedEnv = {
+  const releaseEnv = {
     ...process.env,
-    FLOWERSEC_RELEASE_GATE_COMMIT: verified,
+    FLOWERSEC_RELEASE_PUSH_SHA: verified,
     FLOWERSEC_RELEASE_VERSION: "0.26.0",
   };
   const cases = [
     {
-      name: "missing release gate",
+      name: "missing release entrypoint marker",
       lines: allTags,
       env: process.env,
       status: 1,
@@ -1510,21 +1251,21 @@ test("pre-push accepts only the complete release tag set for the gated commit", 
     {
       name: "missing one ecosystem tag",
       lines: allTags.slice(0, 2),
-      env: gatedEnv,
+      env: releaseEnv,
       status: 1,
       error: /must be pushed together/,
     },
     {
       name: "tag points to another commit",
       lines: [...allTags.slice(0, 2), tagLine("refs/tags/flowersec-rust/v0.26.0", other)],
-      env: gatedEnv,
+      env: releaseEnv,
       status: 1,
-      error: /must point to the locally verified commit/,
+      error: /must point to the synchronized release commit/,
     },
     {
-      name: "complete verified release",
+      name: "complete synchronized release",
       lines: allTags,
-      env: gatedEnv,
+      env: releaseEnv,
       status: 0,
     },
   ];
@@ -1544,7 +1285,7 @@ test("pre-push accepts only the complete release tag set for the gated commit", 
   }
 });
 
-test("pre-push requires the exact receipt and never runs the complete gate", (t) => {
+test("pre-push permits push-main and rejects direct main pushes without running tests", (t) => {
   const marker = path.join(os.tmpdir(), `flowersec-pre-push-make-${process.pid}-${Date.now()}`);
   t.after(() => fs.rmSync(marker, { force: true }));
   const fixture = createReleaseScriptFixture(
@@ -1558,6 +1299,7 @@ test("pre-push requires the exact receipt and never runs the complete gate", (t)
     FLOWERSEC_TEST_GIT_LOG: fixture.gitLog,
     FLOWERSEC_TEST_REAL_GIT: fixture.realGit,
     PATH: `${fixture.bin}${path.delimiter}${process.env.PATH}`,
+    FLOWERSEC_PUSH_MAIN_SHA: head,
   });
 
   const verified = spawnSync("sh", [hook], {
@@ -1569,21 +1311,19 @@ test("pre-push requires the exact receipt and never runs the complete gate", (t)
   assert.equal(verified.status, 0, `${verified.stdout}${verified.stderr}`);
   assert.equal(fs.existsSync(marker), false, "pre-push must not invoke make");
 
-  const receipt = path.join(
-    fixture.repo,
-    ".git/flowersec/main-gate-receipts",
-    `${head}.json`,
-  );
-  fs.unlinkSync(receipt);
-  const missing = spawnSync("sh", [hook], {
+  const direct = spawnSync("sh", [hook], {
     cwd: fixture.repo,
     encoding: "utf8",
-    env,
+    env: isolatedEnvironment({
+      FLOWERSEC_TEST_GIT_LOG: fixture.gitLog,
+      FLOWERSEC_TEST_REAL_GIT: fixture.realGit,
+      PATH: `${fixture.bin}${path.delimiter}${process.env.PATH}`,
+    }),
     input,
   });
-  assert.notEqual(missing.status, 0, `${missing.stdout}${missing.stderr}`);
-  assert.match(missing.stderr, /main gate receipt is missing/);
-  assert.equal(fs.existsSync(marker), false, "missing receipt must fail closed without make");
+  assert.notEqual(direct.status, 0, `${direct.stdout}${direct.stderr}`);
+  assert.match(direct.stderr, /use \.\/scripts\/push-main\.sh/);
+  assert.equal(fs.existsSync(marker), false, "direct push rejection must not invoke make");
 });
 
 test("main push gates the exact SHA before opening the remote transport", () => {
@@ -1595,8 +1335,8 @@ test("main push gates the exact SHA before opening the remote transport", () => 
   assert.notEqual(gate, -1, "main push must run the complete gate");
   assert.notEqual(push, -1, "main push must use normal git push");
   assert.ok(gate < push, "the gate must finish before git opens the push transport");
-  assert.match(source, /main-gate-receipt\.mjs/);
-  assert.doesNotMatch(source, /FLOWERSEC_MAIN_GATE_COMMIT=/);
+  assert.match(source, /FLOWERSEC_PUSH_MAIN_SHA="\$head" git push/);
+  assert.doesNotMatch(source, /receipt|TRANSPORT_V2_EVIDENCE/);
   assert.doesNotMatch(source, /--no-verify/);
 });
 
@@ -1605,13 +1345,9 @@ test("main push passes only the checked HEAD after the gate completes", (t) => {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const bin = path.join(root, "bin");
   const log = path.join(root, "commands.log");
-  const evidenceDirectory = path.join(root, "evidence");
-  const evidenceReport = path.join(evidenceDirectory, "report.json");
   const head = "a".repeat(40);
   const origin = "b".repeat(40);
   fs.mkdirSync(bin);
-  fs.mkdirSync(evidenceDirectory);
-  fs.writeFileSync(evidenceReport, "{}\n");
   fs.writeFileSync(
     path.join(bin, "git"),
     [
@@ -1624,7 +1360,7 @@ test("main push passes only the checked HEAD after the gate completes", (t) => {
       `  'rev-parse origin/main') printf '${origin}\\n' ; exit 0 ;;`,
       "  'fetch origin main') exit 0 ;;",
       "  'merge-base --is-ancestor '*) exit 0 ;;",
-      "  'push origin refs/heads/main:refs/heads/main') exit 0 ;;",
+      `  'push origin refs/heads/main:refs/heads/main') [ "${"$"}{FLOWERSEC_PUSH_MAIN_SHA:-}" = '${head}' ] ; exit ;;`,
       "esac",
       "exit 90",
       "",
@@ -1636,21 +1372,6 @@ test("main push passes only the checked HEAD after the gate completes", (t) => {
     "#!/bin/sh\nprintf 'make %s\\n' \"$*\" >> \"$FLOWERSEC_TEST_COMMAND_LOG\"\n",
     { mode: 0o755 },
   );
-  fs.writeFileSync(
-    path.join(bin, "node"),
-    [
-      "#!/bin/sh",
-      "printf 'node %s\\n' \"$*\" >> \"$FLOWERSEC_TEST_COMMAND_LOG\"",
-      "case \" $* \" in",
-      "  *' verify '*) exit 3 ;;",
-      "  *' write '*) exit 0 ;;",
-      "esac",
-      "exit 91",
-      "",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-
   const result = spawnSync("bash", [path.join(sourceRoot, "scripts/push-main.sh")], {
     cwd: sourceRoot,
     encoding: "utf8",
@@ -1658,125 +1379,18 @@ test("main push passes only the checked HEAD after the gate completes", (t) => {
       ...process.env,
       FLOWERSEC_TEST_COMMAND_LOG: log,
       PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-      TRANSPORT_V2_BASE_SHA: "c".repeat(40),
-      TRANSPORT_V2_EVIDENCE_REPORT: evidenceReport,
     }),
   });
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
   const commands = fs.readFileSync(log, "utf8").trim().split("\n");
-  const evidence = commands.indexOf("make transport-v2-signed-evidence-check");
   const gate = commands.indexOf("make check");
-  const receipt = commands.findIndex((command) => command.startsWith("node ") && command.includes(" write "));
   const push = commands.findIndex((command) => command.startsWith("git push origin "));
-  assert.ok(evidence >= 0 && gate > evidence && receipt > gate && push > receipt, commands.join("\n"));
+  assert.ok(gate >= 0 && push > gate, commands.join("\n"));
+  assert.equal(commands.filter((command) => command === "make check").length, 1, commands.join("\n"));
 });
 
-test("transport browser smoke builds a clean TypeScript checkout before bundle tests", () => {
-  const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
-  const target = makefile.match(/^transport-browser-smoke:\n((?:\t.*\n)+)/m)?.[1];
-  assert.ok(target, "transport-browser-smoke target is missing");
-  const build = target.indexOf("\tcd flowersec-ts && npm run build\n");
-  const bundleTest = target.indexOf("src/v2/browserBundle.test.ts");
-  assert.notEqual(build, -1, "transport-browser-smoke must build the browser package");
-  assert.ok(build < bundleTest, "the browser package must be built before bundle tests");
-});
-
-test("transport release runner rewrites every Ubuntu HTTP endpoint before apt update", () => {
-  const containerfile = fs.readFileSync(
-    path.join(sourceRoot, "tools/transportrelease/Containerfile"),
-    "utf8",
-  );
-  const firstAptUpdate = containerfile.indexOf("apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=10 update");
-  assert.notEqual(firstAptUpdate, -1, "the bootstrap apt update is missing");
-
-  for (const endpoint of [
-    "http://ports.ubuntu.com/ubuntu-ports/",
-    "http://archive.ubuntu.com/ubuntu/",
-    "http://security.ubuntu.com/ubuntu/",
-  ]) {
-    const rewrite = containerfile.indexOf(`s|${endpoint}|http://mirrors.aliyun.com/`);
-    assert.notEqual(rewrite, -1, `missing mirror rewrite for ${endpoint}`);
-    assert.ok(rewrite < firstAptUpdate, `${endpoint} must be rewritten before the first apt update`);
-  }
-
-  const caCertificates = containerfile.indexOf("install --yes --no-install-recommends ca-certificates");
-  const httpsUpdate = containerfile.indexOf("apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=10 update");
-  assert.ok(caCertificates > firstAptUpdate, "CA certificates must be installed after the HTTP bootstrap update");
-  assert.ok(httpsUpdate > caCertificates, "the HTTPS apt update must follow CA certificate installation");
-  for (const mirrorPath of ["ubuntu-ports/", "ubuntu/"]) {
-    const rewrite = containerfile.indexOf(
-      `s|http://mirrors.aliyun.com/${mirrorPath}|https://mirrors.aliyun.com/${mirrorPath}|g`,
-    );
-    assert.ok(rewrite > caCertificates, `${mirrorPath} must switch to HTTPS after CA certificate installation`);
-    assert.ok(rewrite < httpsUpdate, `${mirrorPath} must switch to HTTPS before the HTTPS apt update`);
-  }
-});
-
-test("transport release runner preserves apt downloads across bounded rebuilds", () => {
-  const containerfile = fs.readFileSync(
-    path.join(sourceRoot, "tools/transportrelease/Containerfile"),
-    "utf8",
-  );
-  const runInstructions = containerfile
-    .split(/(?=^RUN )/m)
-    .filter((instruction) => instruction.startsWith("RUN "));
-  const downloadLayer = runInstructions.find((instruction) => instruction.includes("--download-only"));
-  const installLayer = runInstructions.find((instruction) => instruction.includes("--no-download"));
-  assert.ok(downloadLayer, "apt dependencies must be downloaded in a completed cacheable layer");
-  assert.ok(installLayer, "apt dependencies must be installed from the completed download cache");
-  assert.notEqual(downloadLayer, installLayer, "apt download and install must use separate layers");
-
-  for (const mount of [
-    "--mount=type=cache,id=flowersec-release-apt-lists,target=/var/lib/apt/lists,sharing=locked",
-    "--mount=type=cache,id=flowersec-release-apt-archives,target=/var/cache/apt/archives,sharing=locked",
-  ]) {
-    assert.ok(downloadLayer.includes(mount), `${mount} must apply to the apt download layer`);
-    assert.ok(installLayer.includes(mount), `${mount} must apply to the apt install layer`);
-  }
-});
-
-test("transport release runner is pinned and scoped to its dedicated container", () => {
-  const containerfile = fs.readFileSync(
-    path.join(sourceRoot, "tools/transportrelease/Containerfile"),
-    "utf8",
-  );
-  const provision = fs.readFileSync(
-    path.join(sourceRoot, "scripts/provision-transport-release-runner.sh"),
-    "utf8",
-  );
-
-  assert.match(containerfile, /^FROM public\.ecr\.aws\/docker\/library\/golang@sha256:[0-9a-f]{64} AS go_toolchain$/m);
-  assert.match(containerfile, /^FROM public\.ecr\.aws\/docker\/library\/node@sha256:[0-9a-f]{64} AS node_toolchain$/m);
-  assert.match(containerfile, /^FROM public\.ecr\.aws\/docker\/library\/rust@sha256:[0-9a-f]{64} AS rust_toolchain$/m);
-  assert.match(containerfile, /^# rust_toolchain: rustc 1\.88\.0, cargo 1\.88\.0$/m);
-  assert.match(containerfile, /^FROM public\.ecr\.aws\/ubuntu\/ubuntu@sha256:[0-9a-f]{64}$/m);
-  assert.match(
-    containerfile,
-    /^\s+-e 's\|http:\/\/mirrors\.aliyun\.com\/ubuntu-ports\/\|https:\/\/mirrors\.aliyun\.com\/ubuntu-ports\/\|g' \\$/m,
-  );
-  assert.match(containerfile, /install --yes --no-install-recommends ca-certificates/);
-  assert.equal((containerfile.match(/Acquire::Retries=3/g) ?? []).length, 5);
-  assert.equal((containerfile.match(/Acquire::http::Timeout=10/g) ?? []).length, 2);
-  assert.equal((containerfile.match(/Acquire::https::Timeout=10/g) ?? []).length, 3);
-  for (const dependency of ["libnss3", "libgbm1", "fonts-noto-color-emoji"]) {
-    assert.match(containerfile, new RegExp(`^\\s+${dependency} \\\\$`, "m"));
-  }
-  assert.match(containerfile, /^ENV GOPROXY=https:\/\/goproxy\.cn,direct$/m);
-
-  assert.match(provision, /^container_name=flowersec-release-ubuntu24$/m);
-  assert.match(provision, /docker rm --force "\$container_name"/);
-  assert.doesNotMatch(provision, /docker (?:rm|system prune)[^\n]*(?:--all|-a|\*)/);
-  assert.match(provision, /--cgroup-parent flowersec-release\.slice/);
-  assert.doesNotMatch(provision, /--(?:cgroupns|pid) host/);
-  assert.match(provision, /npm ci --audit=false/);
-  assert.match(provision, /npm run build/);
-  assert.match(provision, /npx playwright install chromium/);
-  assert.match(
-    provision,
-    /rustc --version \| grep -Fx "rustc 1\.88\.0 \(6b00bc388 2025-06-23\)"/,
-  );
-  assert.match(
-    provision,
-    /cargo --version \| grep -Fx "cargo 1\.88\.0 \(873a06493 2025-05-10\)"/,
-  );
+test("browser diagnostics remain an explicit registry test", () => {
+  const registry = fs.readFileSync(path.join(sourceRoot, "flowersec-go/internal/cmd/flowersec-test/registry.go"), "utf8");
+  assert.match(registry, /commandEntry\("diagnostic\/browser", "diagnostic"/);
+  assert.match(fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8"), /"test:browser": "npm run ensure:browser && npm run ensure:browser:webkit && npm run build && playwright test"/);
 });

@@ -20,39 +20,40 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
 )
 
 func TestDefaultHandshakeTimeoutCoversArtifactEstablishmentContract(t *testing.T) {
-	if got, want := rawquic.DefaultLimits().HandshakeIdleTimeout, 30*time.Second; got != want {
+	if got, want := quicbase.DefaultLimits().HandshakeIdleTimeout, 30*time.Second; got != want {
 		t.Fatalf("default handshake idle timeout = %s, want %s", got, want)
 	}
 }
 
 func TestLimitsRejectUnboundedOrInconsistentValues(t *testing.T) {
-	tests := []rawquic.Limits{
+	tests := []quicbase.Limits{
 		{MaxInboundStreams: 0},
 		{MaxInboundStreams: 131},
 		{MaxInboundStreams: 1, InitialStreamReceiveWindow: 2, MaxStreamReceiveWindow: 1},
 		{MaxInboundStreams: 1, InitialConnectionReceiveWindow: 2, MaxConnectionReceiveWindow: 1},
 	}
-	for _, mutate := range []func(*rawquic.Limits){
-		func(limits *rawquic.Limits) { limits.InitialStreamReceiveWindow = (6 << 20) + 1 },
-		func(limits *rawquic.Limits) { limits.MaxStreamReceiveWindow = (6 << 20) + 1 },
-		func(limits *rawquic.Limits) { limits.InitialConnectionReceiveWindow = (16 << 20) + 1 },
-		func(limits *rawquic.Limits) { limits.MaxConnectionReceiveWindow = (16 << 20) + 1 },
+	for _, mutate := range []func(*quicbase.Limits){
+		func(limits *quicbase.Limits) { limits.InitialStreamReceiveWindow = (6 << 20) + 1 },
+		func(limits *quicbase.Limits) { limits.MaxStreamReceiveWindow = (6 << 20) + 1 },
+		func(limits *quicbase.Limits) { limits.InitialConnectionReceiveWindow = (16 << 20) + 1 },
+		func(limits *quicbase.Limits) { limits.MaxConnectionReceiveWindow = (16 << 20) + 1 },
 	} {
-		limits := rawquic.DefaultLimits()
+		limits := quicbase.DefaultLimits()
 		mutate(&limits)
 		tests = append(tests, limits)
 	}
 	for _, limits := range tests {
-		if err := limits.Validate(); !errors.Is(err, rawquic.ErrInvalidLimits) {
+		if err := limits.Validate(); !errors.Is(err, quicbase.ErrInvalidLimits) {
 			t.Fatalf("Validate(%+v) error = %v, want ErrInvalidLimits", limits, err)
 		}
 	}
 
-	limits := rawquic.DefaultLimits()
+	limits := quicbase.DefaultLimits()
 	limits.InitialStreamReceiveWindow = 6 << 20
 	limits.MaxStreamReceiveWindow = 6 << 20
 	limits.InitialConnectionReceiveWindow = 16 << 20
@@ -64,7 +65,7 @@ func TestLimitsRejectUnboundedOrInconsistentValues(t *testing.T) {
 
 func TestBindSessionLimitsUsesExactPhysicalCapacity(t *testing.T) {
 	for _, logical := range []uint16{1, 128} {
-		limits, err := rawquic.BindSessionLimits(rawquic.DefaultLimits(), logical)
+		limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), logical)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -72,7 +73,7 @@ func TestBindSessionLimitsUsesExactPhysicalCapacity(t *testing.T) {
 			t.Fatalf("logical %d physical inbound streams = %d, want %d", logical, limits.MaxInboundStreams, want)
 		}
 	}
-	if _, err := rawquic.BindSessionLimits(rawquic.DefaultLimits(), 129); !errors.Is(err, carrier.ErrInvalidStreamCapacity) {
+	if _, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), 129); !errors.Is(err, carrier.ErrInvalidStreamCapacity) {
 		t.Fatalf("invalid logical capacity error = %v", err)
 	}
 }
@@ -85,7 +86,7 @@ func TestCloseWithErrorContextAcceptsNilContext(t *testing.T) {
 func TestDialDerivesServerNameFromDNSAddress(t *testing.T) {
 	serverTLS, clientTLS := testDNSOnlyTLSConfigs(t, "localhost")
 	serverTLS.NextProtos = []string{rawquic.ALPNDirect}
-	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS, rawquic.DefaultLimits())
+	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
@@ -104,7 +105,7 @@ func TestDialDerivesServerNameFromDNSAddress(t *testing.T) {
 
 	clientTLS.NextProtos = []string{rawquic.ALPNDirect}
 	address := net.JoinHostPort("localhost", fmt.Sprint(listener.Addr().(*net.UDPAddr).Port))
-	client, err := rawquic.Dial(context.Background(), address, clientTLS, rawquic.DefaultLimits())
+	client, err := rawquic.Dial(context.Background(), address, clientTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatalf("Dial DNS address: %v", err)
 	}
@@ -126,7 +127,7 @@ func TestDialAndListenRequireExactRegisteredALPN(t *testing.T) {
 		t.Run(profile, func(t *testing.T) {
 			server := serverTLS.Clone()
 			server.NextProtos = []string{profile}
-			listener, err := rawquic.Listen("127.0.0.1:0", server, rawquic.DefaultLimits())
+			listener, err := rawquic.Listen("127.0.0.1:0", server, quicbase.DefaultLimits())
 			if err != nil {
 				t.Fatalf("Listen: %v", err)
 			}
@@ -145,7 +146,7 @@ func TestDialAndListenRequireExactRegisteredALPN(t *testing.T) {
 
 			client := clientTLS.Clone()
 			client.NextProtos = []string{profile}
-			clientSession, err := rawquic.Dial(context.Background(), listener.Addr().String(), client, rawquic.DefaultLimits())
+			clientSession, err := rawquic.Dial(context.Background(), listener.Addr().String(), client, quicbase.DefaultLimits())
 			if err != nil {
 				t.Fatalf("Dial: %v", err)
 			}
@@ -161,7 +162,7 @@ func TestDialAndListenRequireExactRegisteredALPN(t *testing.T) {
 			}
 			defer serverSession.Close()
 
-			if clientSession.Kind() != carrier.KindQUIC || serverSession.Kind() != carrier.KindQUIC {
+			if clientSession.Kind() != carrier.KindRawQUIC || serverSession.Kind() != carrier.KindRawQUIC {
 				t.Fatalf("carrier kind = %q/%q", clientSession.Kind(), serverSession.Kind())
 			}
 			wantPath := carrier.PathDirect
@@ -177,12 +178,12 @@ func TestDialAndListenRequireExactRegisteredALPN(t *testing.T) {
 
 	bad := serverTLS.Clone()
 	bad.NextProtos = []string{"flowersec/2"}
-	if _, err := rawquic.Listen("127.0.0.1:0", bad, rawquic.DefaultLimits()); !errors.Is(err, rawquic.ErrInvalidALPN) {
+	if _, err := rawquic.Listen("127.0.0.1:0", bad, quicbase.DefaultLimits()); !errors.Is(err, rawquic.ErrInvalidALPN) {
 		t.Fatalf("Listen invalid ALPN error = %v", err)
 	}
 	bad = clientTLS.Clone()
 	bad.NextProtos = []string{rawquic.ALPNDirect, rawquic.ALPNTunnel}
-	if _, err := rawquic.Dial(context.Background(), "127.0.0.1:1", bad, rawquic.DefaultLimits()); !errors.Is(err, rawquic.ErrInvalidALPN) {
+	if _, err := rawquic.Dial(context.Background(), "127.0.0.1:1", bad, quicbase.DefaultLimits()); !errors.Is(err, rawquic.ErrInvalidALPN) {
 		t.Fatalf("Dial invalid ALPN error = %v", err)
 	}
 }
@@ -193,30 +194,30 @@ func TestDialAndListenRejectTLSAuthenticationBypass(t *testing.T) {
 	clientTLS.NextProtos = []string{rawquic.ALPNDirect}
 
 	missingCertificate := &tls.Config{MinVersion: tls.VersionTLS13, NextProtos: []string{rawquic.ALPNDirect}}
-	if _, err := rawquic.Listen("127.0.0.1:0", missingCertificate, rawquic.DefaultLimits()); !errors.Is(err, rawquic.ErrInvalidTLS) {
+	if _, err := rawquic.Listen("127.0.0.1:0", missingCertificate, quicbase.DefaultLimits()); !errors.Is(err, rawquic.ErrInvalidTLS) {
 		t.Fatalf("Listen missing certificate error = %v, want ErrInvalidTLS", err)
 	}
 	missingPrivateKey := serverTLS.Clone()
 	missingPrivateKey.Certificates = append([]tls.Certificate(nil), serverTLS.Certificates...)
 	missingPrivateKey.Certificates[0].PrivateKey = nil
-	if _, err := rawquic.Listen("127.0.0.1:0", missingPrivateKey, rawquic.DefaultLimits()); !errors.Is(err, rawquic.ErrInvalidTLS) {
+	if _, err := rawquic.Listen("127.0.0.1:0", missingPrivateKey, quicbase.DefaultLimits()); !errors.Is(err, rawquic.ErrInvalidTLS) {
 		t.Fatalf("Listen missing private key error = %v, want ErrInvalidTLS", err)
 	}
 
 	missingRoots := clientTLS.Clone()
 	missingRoots.RootCAs = nil
-	if _, err := rawquic.Dial(context.Background(), "127.0.0.1:1", missingRoots, rawquic.DefaultLimits()); !errors.Is(err, rawquic.ErrInvalidTLS) {
+	if _, err := rawquic.Dial(context.Background(), "127.0.0.1:1", missingRoots, quicbase.DefaultLimits()); !errors.Is(err, rawquic.ErrInvalidTLS) {
 		t.Fatalf("Dial missing roots error = %v, want ErrInvalidTLS", err)
 	}
 	emptyRoots := clientTLS.Clone()
 	emptyRoots.RootCAs = x509.NewCertPool()
-	if _, err := rawquic.Dial(context.Background(), "127.0.0.1:1", emptyRoots, rawquic.DefaultLimits()); !errors.Is(err, rawquic.ErrInvalidTLS) {
+	if _, err := rawquic.Dial(context.Background(), "127.0.0.1:1", emptyRoots, quicbase.DefaultLimits()); !errors.Is(err, rawquic.ErrInvalidTLS) {
 		t.Fatalf("Dial empty roots error = %v, want ErrInvalidTLS", err)
 	}
 
 	insecure := clientTLS.Clone()
 	insecure.InsecureSkipVerify = true
-	if _, err := rawquic.Dial(context.Background(), "127.0.0.1:1", insecure, rawquic.DefaultLimits()); !errors.Is(err, rawquic.ErrInvalidTLS) {
+	if _, err := rawquic.Dial(context.Background(), "127.0.0.1:1", insecure, quicbase.DefaultLimits()); !errors.Is(err, rawquic.ErrInvalidTLS) {
 		t.Fatalf("Dial insecure verification error = %v, want ErrInvalidTLS", err)
 	}
 }
@@ -224,7 +225,7 @@ func TestDialAndListenRejectTLSAuthenticationBypass(t *testing.T) {
 func TestDialRejectsWrongHostnameAndTrustRoot(t *testing.T) {
 	serverTLS, clientTLS := testTLSConfigs(t)
 	serverTLS.NextProtos = []string{rawquic.ALPNDirect}
-	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS, rawquic.DefaultLimits())
+	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +244,7 @@ func TestDialRejectsWrongHostnameAndTrustRoot(t *testing.T) {
 			mutate(config)
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
-			if session, err := rawquic.Dial(ctx, listener.Addr().String(), config, rawquic.DefaultLimits()); err == nil {
+			if session, err := rawquic.Dial(ctx, listener.Addr().String(), config, quicbase.DefaultLimits()); err == nil {
 				_ = session.Close()
 				t.Fatalf("Dial with %s unexpectedly succeeded", name)
 			}
@@ -254,7 +255,7 @@ func TestDialRejectsWrongHostnameAndTrustRoot(t *testing.T) {
 func TestApplicationCloseReasonIsBoundedBeforeTransportUse(t *testing.T) {
 	serverTLS, _ := testTLSConfigs(t)
 	serverTLS.NextProtos = []string{rawquic.ALPNDirect}
-	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS, rawquic.DefaultLimits())
+	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
@@ -333,7 +334,7 @@ func TestNativeResetIsIsolatedFromSiblingStream(t *testing.T) {
 }
 
 func TestNativeStreamFlowControlStallDoesNotBlockSibling(t *testing.T) {
-	limits := rawquic.DefaultLimits()
+	limits := quicbase.DefaultLimits()
 	limits.InitialStreamReceiveWindow = 16 << 10
 	limits.MaxStreamReceiveWindow = 16 << 10
 	limits.InitialConnectionReceiveWindow = 256 << 10
@@ -551,10 +552,10 @@ func testDNSOnlyTLSConfigs(t *testing.T, serverName string) (*tls.Config, *tls.C
 }
 
 func newRawQUICPair(t *testing.T, profile string) (carrier.Session, carrier.Session) {
-	return newRawQUICPairWithLimits(t, profile, rawquic.DefaultLimits())
+	return newRawQUICPairWithLimits(t, profile, quicbase.DefaultLimits())
 }
 
-func newRawQUICPairWithLimits(t *testing.T, profile string, limits rawquic.Limits) (carrier.Session, carrier.Session) {
+func newRawQUICPairWithLimits(t *testing.T, profile string, limits quicbase.Limits) (carrier.Session, carrier.Session) {
 	t.Helper()
 	serverTLS, clientTLS := testTLSConfigs(t)
 	serverTLS.NextProtos = []string{profile}

@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
 	"github.com/quic-go/quic-go/http3"
 )
 
@@ -26,13 +26,8 @@ func TestTransportManagedPassivePeerRebindingPreservesWebTransportSession(t *tes
 	if _, ok := reflect.TypeOf((*Session)(nil)).MethodByName("Migrate"); ok {
 		t.Fatal("WebTransport must not expose application-managed active migration")
 	}
-	var carrierSession carrier.Session = (*Session)(nil)
-	if _, ok := carrierSession.(carrier.PathMigrator); ok {
-		t.Fatal("WebTransport must not implement the active PathMigrator capability")
-	}
-
 	serverTLS, clientTLS := migrationTLSConfigs(t)
-	server, err := NewServer(serverTLS, DefaultLimits(), func(request *http.Request) bool {
+	server, err := NewServer(serverTLS, quicbase.DefaultLimits(), func(request *http.Request) bool {
 		return request.Header.Get("Origin") == "https://client.example"
 	})
 	if err != nil {
@@ -66,7 +61,7 @@ func TestTransportManagedPassivePeerRebindingPreservesWebTransportSession(t *tes
 
 	proxy := newWebTransportNATProxy(t, serverPacketConn.LocalAddr().(*net.UDPAddr))
 	t.Cleanup(proxy.Close)
-	dialer, err := NewDialer(clientTLS, DefaultLimits())
+	dialer, err := NewDialer(clientTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

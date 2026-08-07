@@ -83,7 +83,7 @@ export type FlowersecErrorCode =
   | "timestamp_out_of_skew"
   | "auth_tag_mismatch"
   | "resolve_failed"
-  | "transport_policy_denied"
+  | "unsupported_capability"
   | "credential_commit_failed"
   | "random_failed"
   | "upgrade_failed"
@@ -194,7 +194,7 @@ function publicCode(code: FlowersecErrorCode): ConnectErrorCode {
     case "dial_failed":
     case "upgrade_failed":
     case "attach_failed":
-    case "transport_policy_denied":
+    case "unsupported_capability":
     case "too_many_connections":
     case "policy_denied":
     case "policy_error":

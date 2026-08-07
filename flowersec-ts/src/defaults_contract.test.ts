@@ -5,7 +5,7 @@ import { SDK_DEFAULTS } from "./defaults.js";
 describe("SDK defaults contract", () => {
   test("matches the shared stability manifest", async () => {
     const path = new URL("../../stability/sdk_defaults.json", import.meta.url);
-    const manifest = JSON.parse(await readFile(path, "utf8")) as Record<string, Record<string, number>>;
+    const manifest = JSON.parse(await readFile(path, "utf8")) as Record<string, Record<string, number | null>>;
 
     expect(SDK_DEFAULTS.transport).toEqual({
       connectTimeoutMs: manifest.transport!.connect_timeout_ms,
@@ -47,12 +47,12 @@ describe("SDK defaults contract", () => {
       defaultTimeoutMs: manifest.proxy!.default_timeout_ms,
       maxTimeoutMs: manifest.proxy!.max_timeout_ms,
     });
-    expect(SDK_DEFAULTS.reconnect).toEqual({
-      maxAttempts: manifest.reconnect!.max_attempts,
-      initialDelayMs: manifest.reconnect!.initial_delay_ms,
-      maxDelayMs: manifest.reconnect!.max_delay_ms,
-      factor: manifest.reconnect!.factor,
-      jitterRatio: manifest.reconnect!.jitter_ratio,
+    expect(SDK_DEFAULTS.connectionController).toEqual({
+      initialDelayMs: manifest.connection_controller!.initial_delay_ms,
+      maxDelayMs: manifest.connection_controller!.max_delay_ms,
+      factor: manifest.connection_controller!.factor,
+      jitterRatio: manifest.connection_controller!.jitter_ratio,
+      defaultAttemptLimit: manifest.connection_controller!.default_attempt_limit,
     });
   });
 });

@@ -17,9 +17,6 @@ import (
 // ErrResourceExhausted indicates a configured multiplexing resource limit was reached.
 var ErrResourceExhausted = errors.New("yamux resource exhausted")
 
-// ErrLivenessTimeout indicates that an automatic acknowledged probe failed.
-var ErrLivenessTimeout = errors.New("yamux liveness timeout")
-
 // ErrStreamReset identifies a Yamux stream terminated by RST.
 var ErrStreamReset = libyamux.ErrStreamReset
 
@@ -46,12 +43,6 @@ type YamuxLimits struct {
 	MaxSessionReceiveBytes      int
 }
 
-// LivenessOptions configures ACK-based session probes. A zero value disables automatic probes.
-type LivenessOptions struct {
-	Interval time.Duration
-	Timeout  time.Duration
-}
-
 // DefaultLimits returns the hardened high-level session limits.
 func DefaultLimits() YamuxLimits {
 	return YamuxLimits{
@@ -75,12 +66,6 @@ type Session struct {
 	inner                    *libyamux.Session
 	maxStreamWriteQueueBytes int
 	writeTracker             *sessionWriteTracker
-	probeMu                  sync.Mutex
-	probe                    *probeCall
-	livenessFailures         chan error
-	livenessMu               sync.Mutex
-	livenessTimer            *time.Timer
-	livenessDone             bool
 }
 
 // Stream is a multiplexed byte stream.
@@ -88,12 +73,6 @@ type Stream struct {
 	inner       *libyamux.Stream
 	writeMu     sync.Mutex
 	writeBudget *streamWriteBudget
-}
-
-type probeCall struct {
-	done chan struct{}
-	rtt  time.Duration
-	err  error
 }
 
 func (s *Stream) Read(p []byte) (int, error) { return s.inner.Read(p) }
@@ -225,67 +204,12 @@ func (t *sessionWriteTracker) release(streamID uint32, size int) {
 	}
 }
 
-// Probe sends a yamux ping and waits for its ACK or context cancellation.
-func (s *Session) Probe(ctx context.Context) (time.Duration, error) {
-	if s == nil || s.inner == nil {
-		return 0, io.ErrClosedPipe
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := ctx.Err(); err != nil {
-		return 0, err
-	}
-	probe := s.sharedProbe()
-	select {
-	case <-ctx.Done():
-		return 0, ctx.Err()
-	case <-probe.done:
-		if errors.Is(probe.err, libyamux.ErrTimeout) {
-			return 0, fmt.Errorf("%w: %v", ErrLivenessTimeout, probe.err)
-		}
-		return probe.rtt, probe.err
-	}
-}
-
-func (s *Session) sharedProbe() *probeCall {
-	s.probeMu.Lock()
-	defer s.probeMu.Unlock()
-	if s.probe != nil {
-		return s.probe
-	}
-	probe := &probeCall{done: make(chan struct{})}
-	s.probe = probe
-	go func() {
-		probe.rtt, probe.err = s.inner.Ping()
-		s.probeMu.Lock()
-		close(probe.done)
-		if s.probe == probe {
-			s.probe = nil
-		}
-		s.probeMu.Unlock()
-	}()
-	return probe
-}
-
-// LivenessFailures reports the first automatic probe failure. The channel closes with the session.
-func (s *Session) LivenessFailures() <-chan error {
-	if s == nil || s.inner == nil || s.livenessFailures == nil {
-		closed := make(chan error)
-		close(closed)
-		return closed
-	}
-	return s.livenessFailures
-}
-
 // Close closes the session and all of its streams.
 func (s *Session) Close() error {
 	if s == nil || s.inner == nil {
 		return nil
 	}
-	err := s.inner.Close()
-	s.finishLiveness(nil)
-	return err
+	return s.inner.Close()
 }
 
 // CloseChan is closed when the session terminates.
@@ -299,16 +223,16 @@ func (s *Session) CloseChan() <-chan struct{} {
 }
 
 // NewClient creates a client-side session.
-func NewClient(conn net.Conn, limits YamuxLimits, liveness LivenessOptions) (*Session, error) {
-	return newSession(conn, limits, liveness, true)
+func NewClient(conn net.Conn, limits YamuxLimits) (*Session, error) {
+	return newSession(conn, limits, true)
 }
 
 // NewServer creates a server-side session.
-func NewServer(conn net.Conn, limits YamuxLimits, liveness LivenessOptions) (*Session, error) {
-	return newSession(conn, limits, liveness, false)
+func NewServer(conn net.Conn, limits YamuxLimits) (*Session, error) {
+	return newSession(conn, limits, false)
 }
 
-func newSession(conn net.Conn, limits YamuxLimits, liveness LivenessOptions, client bool) (*Session, error) {
+func newSession(conn net.Conn, limits YamuxLimits, client bool) (*Session, error) {
 	if conn == nil {
 		return nil, errors.New("yamux connection must be non-nil")
 	}
@@ -316,13 +240,6 @@ func newSession(conn net.Conn, limits YamuxLimits, liveness LivenessOptions, cli
 	if err != nil {
 		return nil, err
 	}
-	if liveness.Interval < 0 || liveness.Timeout < 0 {
-		return nil, errors.New("yamux liveness durations must be >= 0")
-	}
-	if (liveness.Interval == 0) != (liveness.Timeout == 0) {
-		return nil, errors.New("yamux liveness interval and timeout must both be set")
-	}
-
 	cfg := libyamux.DefaultConfig()
 	cfg.LogOutput = io.Discard
 	cfg.AcceptBacklog = int(limits.MaxInboundStreams)
@@ -333,10 +250,6 @@ func newSession(conn net.Conn, limits YamuxLimits, liveness LivenessOptions, cli
 	cfg.EnableKeepAlive = false
 	cfg.MeasureRTTInterval = disabledRTTMeasureInterval
 	cfg.ConnectionWriteTimeout = defaultConnectionWriteTimeout
-	if liveness.Interval > 0 {
-		cfg.ConnectionWriteTimeout = liveness.Timeout
-	}
-
 	manager := newSessionMemoryManager(limits)
 	writeTracker := newSessionWriteTracker()
 	factory := manager.newStream
@@ -359,58 +272,7 @@ func newSession(conn net.Conn, limits YamuxLimits, liveness LivenessOptions, cli
 		maxStreamWriteQueueBytes: limits.MaxStreamWriteQueueBytes,
 		writeTracker:             writeTracker,
 	}
-	if liveness.Interval > 0 {
-		session.livenessFailures = make(chan error, 1)
-		session.scheduleLiveness(liveness)
-	}
 	return session, nil
-}
-
-func (s *Session) scheduleLiveness(options LivenessOptions) {
-	s.livenessMu.Lock()
-	defer s.livenessMu.Unlock()
-	if s.livenessDone {
-		return
-	}
-	s.livenessTimer = time.AfterFunc(options.Interval, func() {
-		s.runLivenessProbe(options)
-	})
-}
-
-func (s *Session) runLivenessProbe(options LivenessOptions) {
-	select {
-	case <-s.inner.CloseChan():
-		s.finishLiveness(nil)
-		return
-	default:
-	}
-	_, err := s.inner.Ping()
-	if err != nil {
-		if errors.Is(err, libyamux.ErrTimeout) {
-			err = fmt.Errorf("%w: %v", ErrLivenessTimeout, err)
-		}
-		s.finishLiveness(fmt.Errorf("%w: %v", ErrLivenessTimeout, err))
-		_ = s.inner.Close()
-		return
-	}
-	s.scheduleLiveness(options)
-}
-
-func (s *Session) finishLiveness(err error) {
-	s.livenessMu.Lock()
-	defer s.livenessMu.Unlock()
-	if s.livenessDone || s.livenessFailures == nil {
-		return
-	}
-	s.livenessDone = true
-	if s.livenessTimer != nil {
-		s.livenessTimer.Stop()
-		s.livenessTimer = nil
-	}
-	if err != nil {
-		s.livenessFailures <- err
-	}
-	close(s.livenessFailures)
 }
 
 func normalizeLimits(limits YamuxLimits) (YamuxLimits, error) {

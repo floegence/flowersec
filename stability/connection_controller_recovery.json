@@ -1,0 +1,99 @@
+{
+  "version": 2,
+  "decisions": {
+    "terminal": {
+      "disposition": "terminal"
+    },
+    "retryable": {
+      "disposition": "retryable"
+    },
+    "retry_after": {
+      "disposition": "retry_after",
+      "absolute_not_before_required": true
+    }
+  },
+  "connect": [
+    {
+      "semantic": "invalid",
+      "decision": "terminal",
+      "codes": {
+        "go": ["invalid_input", "invalid_options"],
+        "typescript": ["invalid_input", "invalid_options"],
+        "swift": ["invalid_options"],
+        "rust": ["invalid_input"]
+      }
+    },
+    {
+      "semantic": "canceled",
+      "decision": "terminal",
+      "codes": {
+        "go": ["canceled"],
+        "typescript": ["canceled"],
+        "swift": ["canceled"],
+        "rust": ["canceled"]
+      }
+    },
+    {
+      "semantic": "expired_artifact",
+      "decision": "retryable",
+      "codes": {
+        "go": ["expired_artifact"],
+        "typescript": ["expired_artifact"],
+        "swift": ["expired_artifact"],
+        "rust": ["expired"]
+      }
+    },
+    {
+      "semantic": "connection_not_established",
+      "decision": "retryable",
+      "codes": {
+        "go": ["timeout", "connection_failed"],
+        "typescript": ["resolve_failed", "credential_spend_failed", "connection_failed", "timeout", "handshake_failed", "rpc_failed", "resource_exhausted", "not_connected"],
+        "swift": ["timeout", "connection_failed"],
+        "rust": ["resolve_failed", "spend_failed", "dial_failed", "timeout", "handshake_failed"]
+      }
+    }
+  ],
+  "session": [
+    {
+      "semantic": "canceled",
+      "decision": "terminal",
+      "codes": {
+        "go": ["canceled"],
+        "typescript": ["canceled"],
+        "swift": ["canceled"],
+        "rust": ["canceled"]
+      }
+    },
+    {
+      "semantic": "closed",
+      "decision": "retryable",
+      "codes": {
+        "go": ["closed", "going_away"],
+        "typescript": ["closed", "going_away"],
+        "swift": ["closed", "going_away"],
+        "rust": ["closed", "going_away"]
+      }
+    },
+    {
+      "semantic": "retryable_operation",
+      "decision": "retryable",
+      "codes": {
+        "go": ["timeout", "resource_exhausted", "stream_reset", "rekey_failed", "liveness_failed"],
+        "typescript": ["timeout", "resource_exhausted", "stream_reset", "rekey_failed", "liveness_failed"],
+        "swift": ["timeout", "resource_exhausted", "stream_reset", "rekey_failed", "liveness_failed"],
+        "rust": ["timeout", "resource_exhausted", "stream_reset", "rekey_failed", "liveness_failed"]
+      }
+    },
+    {
+      "semantic": "terminal_operation",
+      "decision": "terminal",
+      "codes": {
+        "go": ["stream_rejected", "unreliable_unavailable", "unreliable_too_large", "unreliable_dropped", "operation_failed"],
+        "typescript": ["stream_rejected", "unreliable_unavailable", "unreliable_too_large", "unreliable_dropped", "operation_failed"],
+        "swift": ["stream_rejected", "operation_failed"],
+        "rust": ["stream_rejected", "operation_failed"]
+      }
+    }
+  ]
+}

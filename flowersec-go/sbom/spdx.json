@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-go",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-go/367c0c4002063cae4ee16f40893dffe65293c7a4628720995ce86a761b80c023",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-go/77a8ee4af88eb835352bd471cf5745fc3fc0e97e5695f1093e53d02a7b62b190",
   "creationInfo": {
     "created": "1970-01-01T00:00:00Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: 367c0c4002063cae4ee16f40893dffe65293c7a4628720995ce86a761b80c023",
+      "comment": "Flowersec source inventory SHA-256: 77a8ee4af88eb835352bd471cf5745fc3fc0e97e5695f1093e53d02a7b62b190",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",

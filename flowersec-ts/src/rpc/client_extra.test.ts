@@ -32,7 +32,7 @@ class ByteQueue {
 
   private flush(): void {
     while (this.waiters.length > 0) {
-      const next = this.waiters[0];
+      const next = this.waiters[0]!;
       const out = this.tryRead(next.n);
       if (out == null) return;
       this.waiters.shift();
@@ -71,14 +71,9 @@ function decodeEnvelope(frame: Uint8Array): RpcEnvelope {
 }
 
 describe("RpcClient extra behavior", () => {
-  test("abort while waiting records canceled", async () => {
+  test("abort while waiting cancels the call", async () => {
     const q = new ByteQueue();
-    const results: string[] = [];
-    const client = new RpcClient(q.readExactly.bind(q), async () => {}, {
-      observer: {
-        onRpcCall: (r) => results.push(r)
-      }
-    });
+    const client = new RpcClient(q.readExactly.bind(q), async () => {});
 
     const ctrl = new AbortController();
     const p = client.call(1, { ok: true }, ctrl.signal);
@@ -88,24 +83,17 @@ describe("RpcClient extra behavior", () => {
     client.close();
     q.close(new Error("eof"));
 
-    expect(results).toEqual(["canceled"]);
   });
 
-  test("transport write errors are surfaced and recorded", async () => {
+  test("transport write errors are surfaced", async () => {
     const q = new ByteQueue();
-    const results: string[] = [];
     const client = new RpcClient(q.readExactly.bind(q), async () => {
       throw new Error("write failed");
-    }, {
-      observer: {
-        onRpcCall: (r) => results.push(r)
-      }
     });
 
     await expect(client.call(1, { ok: true })).rejects.toThrow(/write failed/);
     client.close();
     q.close(new Error("eof"));
-    expect(results).toEqual(["transport_error"]);
   });
 
   test("request id overflow is rejected", async () => {
@@ -169,9 +157,8 @@ describe("RpcClient extra behavior", () => {
     expect(terminal).toEqual([]);
   });
 
-  test("observer records rpc_error and handler_not_found", async () => {
+  test("returns rpc_error and handler_not_found responses", async () => {
     const q = new ByteQueue();
-    const results: string[] = [];
     const client = new RpcClient(q.readExactly.bind(q), async (frame) => {
       const env = decodeEnvelope(frame);
       if (env.request_id === 0) return;
@@ -183,18 +170,13 @@ describe("RpcClient extra behavior", () => {
         payload: { ok: true },
         error
       });
-    }, {
-      observer: {
-        onRpcCall: (r) => results.push(r)
-      }
     });
 
-    await client.call(2, { ok: false });
-    await client.call(3, { ok: false });
+    await expect(client.call(2, { ok: false })).resolves.toMatchObject({ error: { code: 500 } });
+    await expect(client.call(3, { ok: false })).resolves.toMatchObject({ error: { code: 404 } });
 
     client.close();
     q.close(new Error("eof"));
-    expect(results).toEqual(["rpc_error", "handler_not_found"]);
   });
 
   test("notification handler errors do not stop readLoop", async () => {

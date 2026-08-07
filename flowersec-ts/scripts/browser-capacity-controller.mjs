@@ -11,14 +11,15 @@ import { chromium } from "playwright";
 import {
   capacityStreamAssignments,
   chromiumCapacityLaunchOptions,
+  chromiumExecutablePath,
   createBrowserCapacityCloseBatcher,
   normalizeBrowserCapacityPlan,
-} from "./browser-release-collector-core.mjs";
+} from "./browser-capacity-runner-core.mjs";
 import {
   installWebTransportCertificateHash,
   preloadBrowserSDK,
   startBrowserModuleSite,
-} from "./browser-release-collector.mjs";
+} from "./browser-test-runner.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const launcherPath = path.join(packageRoot, "scripts", "chromium-netns-launcher.sh");
@@ -99,11 +100,11 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
   };
 
   try {
-    await ensureEmptyEvidenceDirectory(plan.evidence_directory);
+    await ensureEmptyOutputDirectory(plan.output_directory);
     site = await startBrowserModuleSite(plan.module_bind_address, plan.module_advertise_host);
     browser = await playwright.launch(chromiumCapacityLaunchOptions(
       plan,
-      playwright.executablePath(),
+      chromiumExecutablePath(playwright),
       launcherPath,
       site.origin,
     ));
@@ -356,7 +357,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
     await quiesce();
     const residualSessions = activeSessions(records);
     recordEvent("controller_shutdown");
-    const evidence = {
+    const output = {
       schema_version: 1,
       classification: "raw_chromium_webtransport_capacity",
       topology: plan.topology,
@@ -380,9 +381,9 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
       events,
       resource_samples: resourceSamples,
     };
-    await writeEvidence(plan.evidence_directory, "controller-result.json", evidence);
-    await writeEvidence(plan.evidence_directory, "controller-config.json", plan);
-    await ensureNonemptyFile(path.join(plan.evidence_directory, "chromium-netlog.json"));
+    await writeOutput(plan.output_directory, "controller-result.json", output);
+    await writeOutput(plan.output_directory, "controller-config.json", plan);
+    await ensureNonemptyFile(path.join(plan.output_directory, "chromium-netlog.json"));
     await closeServer(server);
   }
 
@@ -399,7 +400,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
     const finalChromiumSnapshot = await captureResourceSnapshot(cdp, records, lastChromiumMetrics);
     lastChromiumMetrics = finalChromiumSnapshot.chromium;
     resourceSamples.push(finalChromiumSnapshot);
-    await context.tracing.stop({ path: path.join(plan.evidence_directory, "chromium-trace.zip") });
+    await context.tracing.stop({ path: path.join(plan.output_directory, "chromium-trace.zip") });
     await browser.close();
     browser = undefined;
     cdp = undefined;
@@ -452,12 +453,12 @@ async function captureResourceSnapshot(cdp, records, previousChromium = {}) {
   };
 }
 
-async function ensureEmptyEvidenceDirectory(directory) {
+async function ensureEmptyOutputDirectory(directory) {
   const entries = await fs.readdir(directory);
-  if (entries.length !== 0) throw new Error("browser capacity evidence directory must be empty");
+  if (entries.length !== 0) throw new Error("browser capacity output directory must be empty");
 }
 
-async function writeEvidence(directory, name, value) {
+async function writeOutput(directory, name, value) {
   await fs.writeFile(path.join(directory, name), `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
 }
 

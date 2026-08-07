@@ -26,7 +26,7 @@ func TestDefaultConfigAllows1024ActivePairs(t *testing.T) {
 
 func TestCoordinatorWaitsForBothAuthorizedLegsBeforeSuccess(t *testing.T) {
 	coordinator := newTestCoordinator(t, tunnelv2.Config{})
-	clientEndpoint, clientTunnel := memorySessionPair(carrier.KindQUIC)
+	clientEndpoint, clientTunnel := memorySessionPair(carrier.KindRawQUIC)
 	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindWebTransport)
 	client := newPendingLeg(tunnelRequest(1, "client", "client-token"), clientTunnel)
 	server := newPendingLeg(tunnelRequest(2, "server", "server-token"), serverTunnel)
@@ -73,8 +73,8 @@ func TestCoordinatorRejectsChosenCandidateCarrierMismatch(t *testing.T) {
 
 func TestCoordinatorSuccessWriteFailureClosesBothLegsWithoutActivation(t *testing.T) {
 	coordinator := newTestCoordinator(t, tunnelv2.Config{})
-	_, clientTunnel := memorySessionPair(carrier.KindQUIC)
-	_, serverTunnel := memorySessionPair(carrier.KindQUIC)
+	_, clientTunnel := memorySessionPair(carrier.KindRawQUIC)
+	_, serverTunnel := memorySessionPair(carrier.KindRawQUIC)
 	client := newPendingLeg(tunnelRequest(1, "client", "client-token"), clientTunnel)
 	server := newPendingLeg(tunnelRequest(2, "server", "server-token"), serverTunnel)
 	server.sendErr = io.ErrClosedPipe
@@ -99,7 +99,7 @@ func TestCoordinatorSuccessWriteFailureClosesBothLegsWithoutActivation(t *testin
 
 func TestCoordinatorPairTimeoutUsesEarlierAuthorizationExpiry(t *testing.T) {
 	coordinator := newTestCoordinator(t, tunnelv2.Config{PairTimeout: time.Second})
-	_, tunnel := memorySessionPair(carrier.KindQUIC)
+	_, tunnel := memorySessionPair(carrier.KindRawQUIC)
 	leg := newPendingLeg(tunnelRequest(1, "client", "expiring-token"), tunnel)
 	leg.expiresAt = time.Now().Add(35 * time.Millisecond)
 
@@ -120,7 +120,7 @@ func TestCoordinatorPairTimeoutUsesEarlierAuthorizationExpiry(t *testing.T) {
 
 func TestCoordinatorRejectsWaitingNativeStreams(t *testing.T) {
 	coordinator := newTestCoordinator(t, tunnelv2.Config{})
-	_, tunnel := memorySessionPair(carrier.KindQUIC)
+	_, tunnel := memorySessionPair(carrier.KindRawQUIC)
 	base := newPendingLeg(tunnelRequest(1, "client", "guard-token"), tunnel)
 	leg := &guardedPendingLeg{pendingLeg: base, extras: make(chan carrier.Stream, 1), started: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -138,9 +138,9 @@ func TestCoordinatorRejectsWaitingNativeStreams(t *testing.T) {
 
 func TestCoordinatorCredentialReplayDoesNotReplacePendingLeg(t *testing.T) {
 	coordinator := newTestCoordinator(t, tunnelv2.Config{})
-	clientEndpoint, clientTunnel := memorySessionPair(carrier.KindQUIC)
-	_, replayTunnel := memorySessionPair(carrier.KindQUIC)
-	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindQUIC)
+	clientEndpoint, clientTunnel := memorySessionPair(carrier.KindRawQUIC)
+	_, replayTunnel := memorySessionPair(carrier.KindRawQUIC)
+	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindRawQUIC)
 	client := newPendingLeg(tunnelRequest(1, "client", "one-shot-token"), clientTunnel)
 	replay := newPendingLeg(tunnelRequest(1, "client", "one-shot-token"), replayTunnel)
 	server := newPendingLeg(tunnelRequest(2, "server", "server-token"), serverTunnel)
@@ -176,9 +176,9 @@ func TestCoordinatorCredentialReplayDoesNotReplacePendingLeg(t *testing.T) {
 
 func TestCoordinatorDuplicateRoleReplacesWholePendingGeneration(t *testing.T) {
 	coordinator := newTestCoordinator(t, tunnelv2.Config{})
-	_, oldTunnel := memorySessionPair(carrier.KindQUIC)
-	clientEndpoint, newTunnel := memorySessionPair(carrier.KindQUIC)
-	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindQUIC)
+	_, oldTunnel := memorySessionPair(carrier.KindRawQUIC)
+	clientEndpoint, newTunnel := memorySessionPair(carrier.KindRawQUIC)
+	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindRawQUIC)
 	oldClient := newPendingLeg(tunnelRequest(1, "client", "old-client-token"), oldTunnel)
 	newClient := newPendingLeg(tunnelRequest(1, "client", "new-client-token"), newTunnel)
 	server := newPendingLeg(tunnelRequest(2, "server", "new-server-token"), serverTunnel)
@@ -210,9 +210,9 @@ func TestCoordinatorDuplicateRoleReplacesWholePendingGeneration(t *testing.T) {
 
 func TestCoordinatorReplacementRequiresVerifiedPermission(t *testing.T) {
 	coordinator := newTestCoordinator(t, tunnelv2.Config{})
-	_, oldTunnel := memorySessionPair(carrier.KindQUIC)
-	_, deniedTunnel := memorySessionPair(carrier.KindQUIC)
-	_, serverTunnel := memorySessionPair(carrier.KindQUIC)
+	_, oldTunnel := memorySessionPair(carrier.KindRawQUIC)
+	_, deniedTunnel := memorySessionPair(carrier.KindRawQUIC)
+	_, serverTunnel := memorySessionPair(carrier.KindRawQUIC)
 	oldClient := newPendingLeg(tunnelRequest(1, "client", "protected-client"), oldTunnel)
 	denied := newPendingLeg(tunnelRequest(1, "client", "ordinary-client"), deniedTunnel)
 	denied.allowReplacement = false
@@ -242,7 +242,7 @@ func TestCoordinatorReplacementRequiresVerifiedPermission(t *testing.T) {
 
 func TestCoordinatorPreservesRegisteredAuthorizerResponse(t *testing.T) {
 	coordinator := newTestCoordinator(t, tunnelv2.Config{Reasons: artifactv2.ReasonRegistry{"policy_busy": {}}})
-	_, tunnel := memorySessionPair(carrier.KindQUIC)
+	_, tunnel := memorySessionPair(carrier.KindRawQUIC)
 	leg := newPendingLeg(tunnelRequest(1, "client", "policy-token"), tunnel)
 	leg.authorizeErr = &admissionv2.ResponseError{Status: artifactv2.AdmissionRetryable, Reason: "policy_busy"}
 
@@ -256,7 +256,7 @@ func TestCoordinatorPreservesRegisteredAuthorizerResponse(t *testing.T) {
 
 func TestCoordinatorRejectsClaimsThatDoNotBindFSB2(t *testing.T) {
 	coordinator := newTestCoordinator(t, tunnelv2.Config{})
-	_, tunnel := memorySessionPair(carrier.KindQUIC)
+	_, tunnel := memorySessionPair(carrier.KindRawQUIC)
 	leg := newPendingLeg(tunnelRequest(1, "client", "misbound-token"), tunnel)
 	leg.mutateClaims = func(claims *tunnelv2.VerifiedClaims) { claims.ListenerAudience = "other-listener" }
 
@@ -270,9 +270,9 @@ func TestCoordinatorRejectsClaimsThatDoNotBindFSB2(t *testing.T) {
 
 func TestCoordinatorPairRequiresMirroredEndpointClaims(t *testing.T) {
 	coordinator := newTestCoordinator(t, tunnelv2.Config{})
-	_, clientTunnel := memorySessionPair(carrier.KindQUIC)
-	_, mismatchedTunnel := memorySessionPair(carrier.KindQUIC)
-	_, serverTunnel := memorySessionPair(carrier.KindQUIC)
+	_, clientTunnel := memorySessionPair(carrier.KindRawQUIC)
+	_, mismatchedTunnel := memorySessionPair(carrier.KindRawQUIC)
+	_, serverTunnel := memorySessionPair(carrier.KindRawQUIC)
 	client := newPendingLeg(tunnelRequest(1, "client", "mirror-client"), clientTunnel)
 	mismatched := newPendingLeg(tunnelRequest(2, "server", "mirror-bad-server"), mismatchedTunnel)
 	mismatched.mutateClaims = func(claims *tunnelv2.VerifiedClaims) { claims.ExpectedPeerEndpointInstanceID = "someone-else" }
@@ -303,8 +303,8 @@ func TestCoordinatorPairRequiresMirroredEndpointClaims(t *testing.T) {
 
 func TestCoordinatorScopedChannelRejectsDifferentSessionContract(t *testing.T) {
 	coordinator := newTestCoordinator(t, tunnelv2.Config{})
-	_, clientTunnel := memorySessionPair(carrier.KindQUIC)
-	_, serverTunnel := memorySessionPair(carrier.KindQUIC)
+	_, clientTunnel := memorySessionPair(carrier.KindRawQUIC)
+	_, serverTunnel := memorySessionPair(carrier.KindRawQUIC)
 	client := &guardedPendingLeg{
 		pendingLeg: newPendingLeg(tunnelRequest(1, "client", "contract-client"), clientTunnel),
 		extras:     make(chan carrier.Stream),
@@ -333,9 +333,9 @@ func TestCoordinatorScopedChannelRejectsDifferentSessionContract(t *testing.T) {
 func TestCoordinatorPendingAndActiveQuotaRelease(t *testing.T) {
 	t.Run("pending", func(t *testing.T) {
 		coordinator := newTestCoordinator(t, tunnelv2.Config{MaxPendingLegs: 1})
-		_, firstTunnel := memorySessionPair(carrier.KindQUIC)
-		_, rejectedTunnel := memorySessionPair(carrier.KindQUIC)
-		_, afterReleaseTunnel := memorySessionPair(carrier.KindQUIC)
+		_, firstTunnel := memorySessionPair(carrier.KindRawQUIC)
+		_, rejectedTunnel := memorySessionPair(carrier.KindRawQUIC)
+		_, afterReleaseTunnel := memorySessionPair(carrier.KindRawQUIC)
 		first := newPendingLeg(tunnelRequestForChannel(1, "client", "pending-1", "channel-a"), firstTunnel)
 		rejected := newPendingLeg(tunnelRequestForChannel(1, "client", "pending-2", "channel-b"), rejectedTunnel)
 		afterRelease := newPendingLeg(tunnelRequestForChannel(1, "client", "pending-3", "channel-c"), afterReleaseTunnel)
@@ -365,10 +365,10 @@ func TestCoordinatorPendingAndActiveQuotaRelease(t *testing.T) {
 
 	t.Run("active", func(t *testing.T) {
 		coordinator := newTestCoordinator(t, tunnelv2.Config{MaxActivePairs: 1})
-		_, activeClientTunnel := memorySessionPair(carrier.KindQUIC)
-		_, activeServerTunnel := memorySessionPair(carrier.KindQUIC)
-		_, blockedClientTunnel := memorySessionPair(carrier.KindQUIC)
-		_, blockedServerTunnel := memorySessionPair(carrier.KindQUIC)
+		_, activeClientTunnel := memorySessionPair(carrier.KindRawQUIC)
+		_, activeServerTunnel := memorySessionPair(carrier.KindRawQUIC)
+		_, blockedClientTunnel := memorySessionPair(carrier.KindRawQUIC)
+		_, blockedServerTunnel := memorySessionPair(carrier.KindRawQUIC)
 		activeClient := newPendingLeg(tunnelRequestForChannel(1, "client", "active-c", "channel-a"), activeClientTunnel)
 		activeServer := newPendingLeg(tunnelRequestForChannel(2, "server", "active-s", "channel-a"), activeServerTunnel)
 		blockedClient := newPendingLeg(tunnelRequestForChannel(1, "client", "blocked-c", "channel-b"), blockedClientTunnel)
@@ -396,8 +396,8 @@ func TestCoordinatorPendingAndActiveQuotaRelease(t *testing.T) {
 		assertLeaseReleasedOnce(t, blockedClient)
 		assertLeaseReleasedOnce(t, blockedServer)
 
-		_, nextClientTunnel := memorySessionPair(carrier.KindQUIC)
-		_, nextServerTunnel := memorySessionPair(carrier.KindQUIC)
+		_, nextClientTunnel := memorySessionPair(carrier.KindRawQUIC)
+		_, nextServerTunnel := memorySessionPair(carrier.KindRawQUIC)
 		nextClient := newPendingLeg(tunnelRequestForChannel(1, "client", "next-c", "channel-c"), nextClientTunnel)
 		nextServer := newPendingLeg(tunnelRequestForChannel(2, "server", "next-s", "channel-c"), nextServerTunnel)
 		nextCtx, cancelNext := context.WithCancel(context.Background())
@@ -413,10 +413,10 @@ func TestCoordinatorPendingAndActiveQuotaRelease(t *testing.T) {
 
 func TestCoordinatorNewGenerationClosesActivePairBeforeBecomingAuthoritative(t *testing.T) {
 	coordinator := newTestCoordinator(t, tunnelv2.Config{})
-	_, oldClientTunnel := memorySessionPair(carrier.KindQUIC)
-	_, oldServerTunnel := memorySessionPair(carrier.KindQUIC)
-	_, newClientTunnel := memorySessionPair(carrier.KindQUIC)
-	_, newServerTunnel := memorySessionPair(carrier.KindQUIC)
+	_, oldClientTunnel := memorySessionPair(carrier.KindRawQUIC)
+	_, oldServerTunnel := memorySessionPair(carrier.KindRawQUIC)
+	_, newClientTunnel := memorySessionPair(carrier.KindRawQUIC)
+	_, newServerTunnel := memorySessionPair(carrier.KindRawQUIC)
 	oldClient := newPendingLeg(tunnelRequest(1, "client", "old-active-client"), oldClientTunnel)
 	oldServer := newPendingLeg(tunnelRequest(2, "server", "old-active-server"), oldServerTunnel)
 	newClient := newPendingLeg(tunnelRequest(1, "client", "new-active-client"), newClientTunnel)
@@ -454,7 +454,7 @@ func TestCoordinatorNewGenerationClosesActivePairBeforeBecomingAuthoritative(t *
 func TestCoordinatorCleanupHasSingleWinnerAcrossTimeoutAndCancellation(t *testing.T) {
 	for iteration := range 50 {
 		coordinator := newTestCoordinator(t, tunnelv2.Config{PairTimeout: 5 * time.Millisecond})
-		_, tunnel := memorySessionPair(carrier.KindQUIC)
+		_, tunnel := memorySessionPair(carrier.KindRawQUIC)
 		leg := newPendingLeg(tunnelRequest(1, "client", fmt.Sprintf("race-token-%d", iteration)), tunnel)
 		ctx, cancel := context.WithCancel(context.Background())
 		done := serveLeg(coordinator, ctx, leg)
@@ -475,8 +475,8 @@ func TestCoordinatorCleanupHasSingleWinnerAcrossTimeoutAndCancellation(t *testin
 
 func TestCoordinatorBoundsWaitingGuardShutdown(t *testing.T) {
 	coordinator := newTestCoordinator(t, tunnelv2.Config{GuardStopTimeout: 10 * time.Millisecond})
-	_, clientTunnel := memorySessionPair(carrier.KindQUIC)
-	_, serverTunnel := memorySessionPair(carrier.KindQUIC)
+	_, clientTunnel := memorySessionPair(carrier.KindRawQUIC)
+	_, serverTunnel := memorySessionPair(carrier.KindRawQUIC)
 	base := newPendingLeg(tunnelRequest(1, "client", "stuck-guard-client"), clientTunnel)
 	client := &stuckGuardLeg{pendingLeg: base, started: make(chan struct{}), release: make(chan struct{})}
 	server := newPendingLeg(tunnelRequest(2, "server", "stuck-guard-server"), serverTunnel)
@@ -498,8 +498,8 @@ func TestCoordinatorBoundsWaitingGuardShutdown(t *testing.T) {
 func TestCoordinatorBoundsAdmissionResponseAndActivation(t *testing.T) {
 	t.Run("success response", func(t *testing.T) {
 		coordinator := newTestCoordinator(t, tunnelv2.Config{AdmissionResponseTimeout: 10 * time.Millisecond})
-		_, clientTunnel := memorySessionPair(carrier.KindQUIC)
-		_, serverTunnel := memorySessionPair(carrier.KindQUIC)
+		_, clientTunnel := memorySessionPair(carrier.KindRawQUIC)
+		_, serverTunnel := memorySessionPair(carrier.KindRawQUIC)
 		client := newPendingLeg(tunnelRequest(1, "client", "blocked-success-client"), clientTunnel)
 		server := newPendingLeg(tunnelRequest(2, "server", "blocked-success-server"), serverTunnel)
 		client.blockSend = true
@@ -519,7 +519,7 @@ func TestCoordinatorBoundsAdmissionResponseAndActivation(t *testing.T) {
 		coordinator := newTestCoordinator(t, tunnelv2.Config{
 			PairTimeout: 5 * time.Millisecond, AdmissionResponseTimeout: 10 * time.Millisecond,
 		})
-		_, tunnel := memorySessionPair(carrier.KindQUIC)
+		_, tunnel := memorySessionPair(carrier.KindRawQUIC)
 		leg := newPendingLeg(tunnelRequest(1, "client", "blocked-reject"), tunnel)
 		leg.blockSend = true
 		done := serveLeg(coordinator, context.Background(), leg)
@@ -531,8 +531,8 @@ func TestCoordinatorBoundsAdmissionResponseAndActivation(t *testing.T) {
 
 	t.Run("activation", func(t *testing.T) {
 		coordinator := newTestCoordinator(t, tunnelv2.Config{ActivationTimeout: 10 * time.Millisecond})
-		_, clientTunnel := memorySessionPair(carrier.KindQUIC)
-		_, serverTunnel := memorySessionPair(carrier.KindQUIC)
+		_, clientTunnel := memorySessionPair(carrier.KindRawQUIC)
+		_, serverTunnel := memorySessionPair(carrier.KindRawQUIC)
 		client := newPendingLeg(tunnelRequest(1, "client", "blocked-activate-client"), clientTunnel)
 		server := newPendingLeg(tunnelRequest(2, "server", "blocked-activate-server"), serverTunnel)
 		client.blockActivation = true
@@ -557,8 +557,8 @@ func TestCoordinatorCleanupDeadlineBoundsPendingLegClose(t *testing.T) {
 		CopyBufferBytes:      1024,
 		CleanupTimeout:       20 * time.Millisecond,
 	}})
-	clientEndpoint, clientTunnel := memorySessionPair(carrier.KindQUIC)
-	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindQUIC)
+	clientEndpoint, clientTunnel := memorySessionPair(carrier.KindRawQUIC)
+	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindRawQUIC)
 	release := make(chan struct{})
 	client := newPendingLeg(tunnelRequest(1, "client", "cleanup-client"), clientTunnel)
 	server := newPendingLeg(tunnelRequest(2, "server", "cleanup-server"), serverTunnel)
@@ -780,6 +780,7 @@ func (*resetProbe) Read([]byte) (int, error)       { return 0, io.EOF }
 func (*resetProbe) Write(p []byte) (int, error)    { return len(p), nil }
 func (probe *resetProbe) Context() context.Context { return probe.ctx }
 func (*resetProbe) CloseWrite() error              { return nil }
+func (probe *resetProbe) StopSending() error       { return probe.Reset() }
 func (probe *resetProbe) Reset() error {
 	probe.once.Do(func() {
 		probe.cancel(carrier.ErrStreamReset)

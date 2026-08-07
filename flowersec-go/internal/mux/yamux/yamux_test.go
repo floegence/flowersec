@@ -133,12 +133,12 @@ func TestDefaultLimits(t *testing.T) {
 func TestZeroLivenessWriteDeadlineDoesNotPreemptSessionIdleRecovery(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
 	recorded := &writeDeadlineRecordingConn{Conn: clientConn, deadlines: make(chan time.Time, 8)}
-	server, err := NewServer(serverConn, YamuxLimits{}, LivenessOptions{})
+	server, err := NewServer(serverConn, YamuxLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer server.Close()
-	client, err := NewClient(recorded, YamuxLimits{}, LivenessOptions{})
+	client, err := NewClient(recorded, YamuxLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +296,7 @@ func pendingWriteBytes(budget *streamWriteBudget) int {
 
 func TestStreamWriteBudgetTracksQueuedTransportData(t *testing.T) {
 	local, remote := net.Pipe()
-	client, err := NewClient(local, YamuxLimits{MaxStreamWriteQueueBytes: 8}, LivenessOptions{})
+	client, err := NewClient(local, YamuxLimits{MaxStreamWriteQueueBytes: 8})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,102 +328,9 @@ func TestStreamWriteBudgetTracksQueuedTransportData(t *testing.T) {
 	}
 }
 
-func TestProbeReturnsACKRoundTrip(t *testing.T) {
-	a, b := net.Pipe()
-	server, err := NewServer(a, YamuxLimits{}, LivenessOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	client, err := NewClient(b, YamuxLimits{}, LivenessOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer server.Close()
-	defer client.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if rtt, err := client.Probe(ctx); err != nil {
-		t.Fatalf("Probe() failed: %v", err)
-	} else if rtt < 0 {
-		t.Fatalf("invalid RTT: %v", rtt)
-	}
-}
-
-func TestCanceledProbeCallersShareOneBackgroundPing(t *testing.T) {
-	local, remote := net.Pipe()
-	client, err := NewClient(local, YamuxLimits{}, LivenessOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
-	defer remote.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	firstDone := make(chan error, 1)
-	go func() {
-		_, err := client.Probe(ctx)
-		firstDone <- err
-	}()
-	firstProbe := waitForActiveProbe(t, client)
-	cancel()
-	if err := <-firstDone; !errors.Is(err, context.Canceled) {
-		t.Fatalf("first canceled probe = %v", err)
-	}
-
-	for range 100 {
-		callerCtx, callerCancel := context.WithTimeout(context.Background(), time.Millisecond)
-		_, err := client.Probe(callerCtx)
-		callerCancel()
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("canceled shared probe = %v", err)
-		}
-	}
-	client.probeMu.Lock()
-	activeProbe := client.probe
-	client.probeMu.Unlock()
-	if activeProbe != firstProbe {
-		t.Fatal("canceled callers started another background ping")
-	}
-
-	if err := remote.Close(); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(time.Second)
-	for {
-		client.probeMu.Lock()
-		active := client.probe
-		client.probeMu.Unlock()
-		if active == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("background ping did not finish after transport close")
-		}
-		time.Sleep(time.Millisecond)
-	}
-}
-
-func waitForActiveProbe(t *testing.T, session *Session) *probeCall {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for {
-		session.probeMu.Lock()
-		probe := session.probe
-		session.probeMu.Unlock()
-		if probe != nil {
-			return probe
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("probe did not start")
-		}
-		time.Sleep(time.Millisecond)
-	}
-}
-
 func TestOpenStreamContextCancelsBlockedOpen(t *testing.T) {
 	local, remote := net.Pipe()
-	client, err := NewClient(local, YamuxLimits{MaxActiveStreams: 2, MaxInboundStreams: 1}, LivenessOptions{})
+	client, err := NewClient(local, YamuxLimits{MaxActiveStreams: 2, MaxInboundStreams: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,66 +346,5 @@ func TestOpenStreamContextCancelsBlockedOpen(t *testing.T) {
 	defer cancel()
 	if _, err := client.OpenStreamContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("OpenStreamContext() error = %v, want deadline exceeded", err)
-	}
-}
-
-func TestAutomaticLivenessFailureClosesSession(t *testing.T) {
-	a, b := net.Pipe()
-	defer a.Close()
-	defer b.Close()
-	client, err := NewClient(a, YamuxLimits{}, LivenessOptions{
-		Interval: 10 * time.Millisecond,
-		Timeout:  20 * time.Millisecond,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-client.LivenessFailures():
-		if !errors.Is(err, ErrLivenessTimeout) {
-			t.Fatalf("liveness failure = %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("automatic liveness did not fail")
-	}
-	select {
-	case <-client.CloseChan():
-	case <-time.After(time.Second):
-		t.Fatal("session remained open after liveness failure")
-	}
-}
-
-func TestAutomaticLivenessRemainsHealthyAcrossIntervals(t *testing.T) {
-	a, b := net.Pipe()
-	options := LivenessOptions{Interval: 10 * time.Millisecond, Timeout: 100 * time.Millisecond}
-	server, err := NewServer(a, YamuxLimits{}, options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	client, err := NewClient(b, YamuxLimits{}, options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer server.Close()
-	defer client.Close()
-
-	timer := time.NewTimer(80 * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case err := <-client.LivenessFailures():
-		t.Fatalf("healthy client liveness failed: %v", err)
-	case err := <-server.LivenessFailures():
-		t.Fatalf("healthy server liveness failed: %v", err)
-	case <-timer.C:
-	}
-	select {
-	case <-client.CloseChan():
-		t.Fatal("healthy client closed")
-	default:
-	}
-	select {
-	case <-server.CloseChan():
-		t.Fatal("healthy server closed")
-	default:
 	}
 }

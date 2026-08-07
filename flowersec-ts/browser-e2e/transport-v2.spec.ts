@@ -192,8 +192,8 @@ async function artifactFor(sessionPath: "direct" | "tunnel", candidateID: "w1" |
   return source;
 }
 
-function startPeer(name: string, sessionPath: "direct" | "tunnel"): ReturnType<typeof spawn> {
-  return spawn("go", ["run", `./internal/cmd/${name}`, "--path", sessionPath], {
+function startPeer(name: string, sessionPath: "direct" | "tunnel", ...args: string[]): ReturnType<typeof spawn> {
+  return spawn("go", ["run", `./internal/cmd/${name}`, "--path", sessionPath, ...args], {
     cwd: path.join(repositoryRoot, "flowersec-go"),
     stdio: ["ignore", "pipe", "pipe"],
   });

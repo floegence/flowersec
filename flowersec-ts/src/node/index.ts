@@ -1,6 +1,7 @@
-export { connectNodeSessionV2 as connectNodeSession } from "./connectV2.js";
+export { connectNodeSession, createNodeConnectionController } from "./connectSession.js";
 export type {
-  NodeSessionConnectorV2Options as NodeSessionOptions,
-  NodeSessionTLSOptionsV2 as NodeSessionTLSOptions,
-} from "./connectV2.js";
+  NodeConnectionControllerOptions,
+  NodeSessionOptions,
+  NodeSessionTLSOptions,
+} from "./connectSession.js";
 export * from "../facade.js";

@@ -1,7 +1,4 @@
-import {
-  connectBrowserSessionV2,
-  type BrowserSessionConnectorV2Options,
-} from "../browser/connectV2.js";
+import { connectBrowserSession, type BrowserSessionOptions } from "../browser/connectSession.js";
 import type { ArtifactLeaseV2 } from "../v2/artifactLease.js";
 import type { SessionV2 } from "../v2/contract.js";
 
@@ -14,8 +11,8 @@ import {
   type RegisterProxyControllerWindowOptions,
 } from "./windowBridge.js";
 
-export type ProxyBrowserConnectV2Options = Readonly<{
-  connect?: BrowserSessionConnectorV2Options;
+export type ProxyBrowserConnectOptions = Readonly<{
+  connect?: BrowserSessionOptions;
   runtime?: Omit<ProxyRuntimeOptions, "session">;
   serviceWorker?: Readonly<{
     scriptUrl: string;
@@ -26,17 +23,17 @@ export type ProxyBrowserConnectV2Options = Readonly<{
   }>;
 }>;
 
-export type ProxyBrowserHandleV2 = Readonly<{
+export type ProxyBrowserHandle = Readonly<{
   session: SessionV2;
   runtime: ProxyRuntime;
   dispose(): Promise<void>;
 }>;
 
-export async function connectProxyBrowserV2(
+export async function connectProxyBrowser(
   lease: ArtifactLeaseV2,
-  options: ProxyBrowserConnectV2Options = {},
-): Promise<ProxyBrowserHandleV2> {
-  const session = await connectBrowserSessionV2(lease, options.connect);
+  options: ProxyBrowserConnectOptions = {},
+): Promise<ProxyBrowserHandle> {
+  const session = await connectBrowserSession(lease, options.connect);
   let runtime: ProxyRuntime | undefined;
   try {
     if (options.serviceWorker !== undefined) await registerServiceWorkerAndEnsureControl(options.serviceWorker);
@@ -55,19 +52,19 @@ export async function connectProxyBrowserV2(
     throw error;
   }
 }
-export type ProxyControllerBrowserConnectV2Options = ProxyBrowserConnectV2Options & Readonly<{
+export type ProxyControllerBrowserConnectOptions = ProxyBrowserConnectOptions & Readonly<{
   controller: Omit<RegisterProxyControllerWindowOptions, "runtime">;
 }>;
 
-export type ProxyControllerBrowserHandleV2 = ProxyBrowserHandleV2 & Readonly<{
+export type ProxyControllerBrowserHandle = ProxyBrowserHandle & Readonly<{
   controller: ProxyControllerWindowHandle;
 }>;
 
-export async function connectProxyControllerBrowserV2(
+export async function connectProxyControllerBrowser(
   lease: ArtifactLeaseV2,
-  options: ProxyControllerBrowserConnectV2Options,
-): Promise<ProxyControllerBrowserHandleV2> {
-  const base = await connectProxyBrowserV2(lease, options);
+  options: ProxyControllerBrowserConnectOptions,
+): Promise<ProxyControllerBrowserHandle> {
+  const base = await connectProxyBrowser(lease, options);
   let controller: ProxyControllerWindowHandle | undefined;
   try {
     controller = registerProxyControllerWindow({ runtime: base.runtime, ...options.controller });

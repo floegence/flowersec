@@ -30,19 +30,19 @@ err = handlers.Serve(ctx, session)
 Register inbound RPC and stream handlers before connecting. A valid connection attempt freezes both registration sets; later registrations return `ErrSessionHandlersFrozen`. `NewStreamMetadata(...)` validates and defensively copies metadata before a stream is opened; `EmptyStreamMetadata()` represents the empty value, and incoming streams expose the same `StreamMetadata` type. `SessionHandlers.Serve` owns the session lifecycle, supplies bounded stream metadata to application handlers, and resets unhandled or excess streams. The root package deliberately hides candidate data, carrier implementations, Yamux, wire messages, cryptographic state, keys, endpoint identities, logical stream IDs, and spend-ledger internals. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.
 
 The executable `ExampleConnect` compiles the complete consumer lifecycle,
-including an atomically created and synchronized durable spend receipt. Reusing
-the receipt path fails closed; the receipt contains no artifact or key material.
+including an atomically created and synchronized durable spend record. Reusing
+the record key fails closed; the record contains no artifact or key material.
 
-An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default. `ConnectorOptions.Origin` may be empty when the artifact uses WSS or raw QUIC; a non-empty absolute HTTP(S) origin registers WebTransport eligibility, whose secure dial path still requires HTTPS. Go's native TLS paths require explicit non-empty `ConnectorOptions.TrustRoots`; load the system pool with `x509.SystemCertPool()` when platform trust is intended. Invalid connector inputs and options are returned as `ConnectError` values and can be passed directly to `ClassifyConnectError(...)`. `Session.WaitTermination(...)` is the sole public termination waiting entrypoint and returns a redacted `SessionTermination` with the stable close reason; cancellation of the wait is returned separately. `ClassifyConnectError(...)` and `ClassifySessionError(...)` map public errors to `ErrorRetryClassification`: retry the current operation, acquire a fresh artifact and session, or stop. `ConnectExpired` identifies artifact expiry without exposing artifact contents.
+An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default. `ConnectorOptions.Origin` may be empty when the artifact uses WSS or raw QUIC; a non-empty absolute HTTP(S) origin registers WebTransport eligibility, whose secure dial path still requires HTTPS. Go's native TLS paths require explicit non-empty `ConnectorOptions.TrustRoots`; load the system pool with `x509.SystemCertPool()` when platform trust is intended. Invalid connector inputs and options are returned as `ConnectError` values. `Session.WaitTermination(...)` is the sole public termination waiting entrypoint and returns a redacted `SessionTermination` with the stable close reason; cancellation of the wait is returned separately. A long-lived connection uses `NewConnectionController(...)` with a refreshable `ArtifactSource`; every attempt acquires a fresh lease and establishes a new one-shot `Session`. Its structured decisions are `terminal`, `retryable`, or an absolute `retry_after` deadline. `RetryNow` only wakes the current wait, and streams, RPCs, and writes from a terminated session are never migrated or replayed.
 
 ## Capability Layers
 
 The portable core is the same application model used by every Flowersec SDK:
 opaque artifact parsing, a durable single-use lease, one-shot connection,
 carrier-neutral sessions, RPC, reliable streams, redacted public errors, and
-error classifiers. `ClassifyConnectError(...)` and
-`ClassifySessionError(...)` return the stable cross-language recovery decision;
-callers should not compare raw Go error codes with other SDKs.
+the optional `ConnectionController`. The controller is the only Flowersec
+retry scheduler; applications provide a refreshable artifact source and
+authentication recovery without maintaining a second protocol loop.
 
 Only this portable core is required to align across languages. Complete SDK
 profiles and language conveniences intentionally differ by runtime.

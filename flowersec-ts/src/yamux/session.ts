@@ -11,7 +11,7 @@ import {
   YAMUX_VERSION
 } from "./constants.js";
 import { YamuxStream } from "./stream.js";
-import { YamuxPingTimeoutError, YamuxResourceExhaustedError } from "./errors.js";
+import { YamuxResourceExhaustedError } from "./errors.js";
 import { SDK_DEFAULTS } from "../defaults.js";
 
 export type YamuxDiagnostic = Readonly<{
@@ -96,9 +96,6 @@ export class YamuxSession {
   private readonly sendWindowWaiters = new Map<number, Array<() => void>>();
   private readonly inboundStreams = new Set<number>();
   private sessionReceiveBytes = 0;
-  private nextPingId = 1;
-  private readonly pingWaiters = new Map<number, { startedAt: number; resolve: (rttMs: number) => void; reject: (e: unknown) => void; timer: ReturnType<typeof setTimeout> }>();
-  private activeProbe: Promise<number> | undefined;
 
   constructor(conn: ByteDuplex, opts: YamuxSessionOptions) {
     this.conn = conn;
@@ -161,48 +158,6 @@ export class YamuxSession {
 
   releaseReceiveBytes(bytes: number): void {
     this.sessionReceiveBytes = Math.max(0, this.sessionReceiveBytes - Math.max(0, bytes));
-  }
-
-  // probeLiveness performs a correlated yamux PING SYN/ACK round trip.
-  async probeLiveness(timeoutMs = 10_000): Promise<number> {
-    if (this.activeProbe != null) return await this.activeProbe;
-    const probe = this.startLivenessProbe(timeoutMs);
-    this.activeProbe = probe;
-    try {
-      return await probe;
-    } finally {
-      if (this.activeProbe === probe) this.activeProbe = undefined;
-    }
-  }
-
-  private async startLivenessProbe(timeoutMs: number): Promise<number> {
-    if (this.closed) throw new Error("session closed");
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new RangeError("timeoutMs must be positive");
-    let opaque = this.nextPingId >>> 0;
-    do {
-      opaque = this.nextPingId++ >>> 0;
-      if (this.nextPingId > 0xffffffff) this.nextPingId = 1;
-    } while (opaque === 0 || this.pingWaiters.has(opaque));
-    const startedAt = monotonicMilliseconds();
-    return await new Promise<number>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pingWaiters.delete(opaque);
-        const error = new YamuxPingTimeoutError();
-        reject(error);
-        this.fail(error);
-      }, timeoutMs);
-      (timer as any)?.unref?.();
-      this.pingWaiters.set(opaque, { startedAt, resolve, reject, timer });
-      const hdr = encodeHeader({ type: TYPE_PING, flags: FLAG_SYN, streamId: 0, length: opaque });
-      void this.writeRaw(hdr).catch((err) => {
-        const waiter = this.pingWaiters.get(opaque);
-        if (waiter == null) return;
-        this.pingWaiters.delete(opaque);
-        clearTimeout(waiter.timer);
-        reject(err);
-        this.fail(err);
-      });
-    });
   }
 
   // sendRst sends a reset frame and removes the stream.
@@ -279,11 +234,6 @@ export class YamuxSession {
     this.closed = true;
     this.conn.close();
     this.wakeSendWindowWaiters();
-    for (const waiter of this.pingWaiters.values()) {
-      clearTimeout(waiter.timer);
-      waiter.reject(new Error("session closed"));
-    }
-    this.pingWaiters.clear();
     const streams = Array.from(this.streams.values());
     this.streams.clear();
     for (const s of streams) {
@@ -375,13 +325,8 @@ export class YamuxSession {
       await this.writeRaw(hdr);
       return;
     }
-    if ((flags & FLAG_ACK) !== 0) {
-      const waiter = this.pingWaiters.get(opaque >>> 0);
-      if (waiter == null) return;
-      this.pingWaiters.delete(opaque >>> 0);
-      clearTimeout(waiter.timer);
-      waiter.resolve(Math.max(0, monotonicMilliseconds() - waiter.startedAt));
-    }
+    // Yamux PING ACKs are accepted for protocol interoperability. Active
+    // liveness belongs to the established Flowersec session protocol.
   }
 
   private async handleDataFrame(streamId: number, flags: number, data: Uint8Array): Promise<boolean> {
@@ -510,8 +455,4 @@ function normalizeYamuxLimits(input: Partial<YamuxLimits> | undefined): Resolved
   if (limits.maxStreamReceiveBytes < DEFAULT_YAMUX_LIMITS.maxStreamReceiveBytes) throw new RangeError("maxStreamReceiveBytes must cover the 256 KiB initial stream window");
   if (limits.maxStreamReceiveBytes > limits.maxSessionReceiveBytes) throw new RangeError("maxStreamReceiveBytes must not exceed maxSessionReceiveBytes");
   return Object.freeze(limits);
-}
-
-function monotonicMilliseconds(): number {
-  return typeof performance !== "undefined" ? performance.now() : Date.now();
 }

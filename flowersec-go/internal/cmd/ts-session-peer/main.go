@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	websocketadmission "github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
@@ -85,7 +86,7 @@ func serveSession(
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	decoded, err := carrierws.ServeAdmission(ctx, connection, nil, func(context.Context, *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
+	decoded, err := websocketadmission.Serve(ctx, connection, nil, func(context.Context, *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
 		return artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, nil
 	})
 	if err != nil {
@@ -100,7 +101,6 @@ func serveSession(
 		carrierws.ServerRole,
 		subprotocol,
 		resources,
-		carrierws.LivenessPolicy{},
 	)
 	if err != nil {
 		return err

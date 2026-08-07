@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	capabilityManifestPath        = "stability/language_capabilities.json"
-	defaultsManifestPath          = "stability/sdk_defaults.json"
-	interopMatrixPath             = "stability/interop_matrix.json"
-	publicErrorClassificationPath = "stability/public_error_classification.json"
+	capabilityManifestPath           = "stability/language_capabilities.json"
+	defaultsManifestPath             = "stability/sdk_defaults.json"
+	interopMatrixPath                = "stability/interop_matrix.json"
+	connectionControllerRecoveryPath = "stability/connection_controller_recovery.json"
 )
 
 var requiredPortableCapabilityIDs = []string{
@@ -23,7 +23,7 @@ var requiredPortableCapabilityIDs = []string{
 	"opaque_connector",
 	"secure_session",
 	"rpc_call_notify",
-	"error_classification",
+	"connection_controller",
 	"carrier_contract",
 	"wire_security",
 }
@@ -33,7 +33,7 @@ var requiredSharedFixtureIDs = []string{
 	"crypto_v2",
 	"handshake_v2",
 	"open_unicode_v2",
-	"public_error_classification",
+	"connection_controller",
 	"session_wire_v2",
 }
 
@@ -80,7 +80,6 @@ type defaultsManifest struct {
 	RPC          rpcDefaults          `json:"rpc"`
 	Controlplane controlplaneDefaults `json:"controlplane"`
 	Proxy        proxyDefaults        `json:"proxy"`
-	Reconnect    reconnectDefaults    `json:"reconnect"`
 	Consumers    map[string]string    `json:"consumers"`
 }
 
@@ -129,14 +128,6 @@ type proxyDefaults struct {
 	MaxTimeoutMS      int `json:"max_timeout_ms"`
 }
 
-type reconnectDefaults struct {
-	MaxAttempts    int     `json:"max_attempts"`
-	InitialDelayMS int     `json:"initial_delay_ms"`
-	MaxDelayMS     int     `json:"max_delay_ms"`
-	Factor         float64 `json:"factor"`
-	JitterRatio    float64 `json:"jitter_ratio"`
-}
-
 type interopMatrix struct {
 	Version            int                        `json:"version"`
 	ReferenceLanguage  string                     `json:"reference_language"`
@@ -161,20 +152,19 @@ type interopCoverage struct {
 	Cases    []string `json:"cases"`
 }
 
-type publicErrorClassificationContract struct {
-	Version   int                                        `json:"version"`
-	Decisions map[string]publicErrorClassificationResult `json:"decisions"`
-	Connect   []publicErrorClassificationCase            `json:"connect"`
-	Session   []publicErrorClassificationCase            `json:"session"`
+type connectionControllerRecoveryContract struct {
+	Version   int                                             `json:"version"`
+	Decisions map[string]connectionControllerRecoveryDecision `json:"decisions"`
+	Connect   []connectionControllerRecoveryCase              `json:"connect"`
+	Session   []connectionControllerRecoveryCase              `json:"session"`
 }
 
-type publicErrorClassificationResult struct {
-	Action         string `json:"action"`
-	CallerCanceled bool   `json:"caller_canceled"`
-	SessionClosed  bool   `json:"session_closed"`
+type connectionControllerRecoveryDecision struct {
+	Disposition               string `json:"disposition"`
+	AbsoluteNotBeforeRequired bool   `json:"absolute_not_before_required,omitempty"`
 }
 
-type publicErrorClassificationCase struct {
+type connectionControllerRecoveryCase struct {
 	Semantic string              `json:"semantic"`
 	Decision string              `json:"decision"`
 	Codes    map[string][]string `json:"codes"`
@@ -298,27 +288,27 @@ func verifyParity(repoRoot string) error {
 	if err := verifyInteropMatrix(repoRoot, m); err != nil {
 		return err
 	}
-	if err := verifyPublicErrorClassification(repoRoot); err != nil {
+	if err := verifyConnectionControllerRecovery(repoRoot); err != nil {
 		return err
 	}
 	fmt.Printf("language parity OK: %d capabilities across %d languages; transport v%d has %d runtime registries\n", len(m.PortableCapabilities), len(m.Languages), transport.Version, len(transport.Runtimes))
 	return nil
 }
 
-func verifyPublicErrorClassification(repoRoot string) error {
-	var contract publicErrorClassificationContract
-	if err := decodeStrictJSONFile(filepath.Join(repoRoot, publicErrorClassificationPath), &contract); err != nil {
-		return fmt.Errorf("parse %s: %w", publicErrorClassificationPath, err)
+func verifyConnectionControllerRecovery(repoRoot string) error {
+	var contract connectionControllerRecoveryContract
+	if err := decodeStrictJSONFile(filepath.Join(repoRoot, connectionControllerRecoveryPath), &contract); err != nil {
+		return fmt.Errorf("parse %s: %w", connectionControllerRecoveryPath, err)
 	}
-	if err := validatePublicErrorClassification(contract); err != nil {
-		return fmt.Errorf("validate %s: %w", publicErrorClassificationPath, err)
+	if err := validateConnectionControllerRecovery(contract); err != nil {
+		return fmt.Errorf("validate %s: %w", connectionControllerRecoveryPath, err)
 	}
 	return nil
 }
 
-func validatePublicErrorClassification(contract publicErrorClassificationContract) error {
-	if contract.Version != 1 {
-		return fmt.Errorf("unsupported public error classification version %d", contract.Version)
+func validateConnectionControllerRecovery(contract connectionControllerRecoveryContract) error {
+	if contract.Version != 2 {
+		return fmt.Errorf("unsupported connection controller recovery version %d", contract.Version)
 	}
 	if len(contract.Decisions) == 0 {
 		return errors.New("decisions must not be empty")
@@ -327,66 +317,68 @@ func validatePublicErrorClassification(contract publicErrorClassificationContrac
 		if strings.TrimSpace(name) == "" {
 			return errors.New("decision names must not be empty")
 		}
-		switch decision.Action {
-		case "retry", "refresh_artifact", "stop":
+		switch decision.Disposition {
+		case "terminal", "retryable":
+			if decision.AbsoluteNotBeforeRequired {
+				return fmt.Errorf("decision %s cannot require an absolute retry deadline", name)
+			}
+		case "retry_after":
+			if !decision.AbsoluteNotBeforeRequired {
+				return fmt.Errorf("decision %s must require an absolute retry deadline", name)
+			}
 		default:
-			return fmt.Errorf("decision %s has unsupported action %q", name, decision.Action)
+			return fmt.Errorf("decision %s has unsupported disposition %q", name, decision.Disposition)
 		}
 	}
 
 	usedDecisions := make(map[string]struct{}, len(contract.Decisions))
-	if err := validatePublicErrorClassificationDomain("connect", contract.Connect, contract.Decisions, usedDecisions); err != nil {
+	if err := validateConnectionControllerRecoveryDomain("connect", contract.Connect, contract.Decisions, usedDecisions); err != nil {
 		return err
 	}
-	if err := validatePublicErrorClassificationDomain("session", contract.Session, contract.Decisions, usedDecisions); err != nil {
+	if err := validateConnectionControllerRecoveryDomain("session", contract.Session, contract.Decisions, usedDecisions); err != nil {
 		return err
-	}
-	for decision := range contract.Decisions {
-		if _, ok := usedDecisions[decision]; !ok {
-			return fmt.Errorf("decision %s is not referenced by any case", decision)
-		}
 	}
 	return nil
 }
 
-func validatePublicErrorClassificationDomain(
+func validateConnectionControllerRecoveryDomain(
 	domain string,
-	cases []publicErrorClassificationCase,
-	decisions map[string]publicErrorClassificationResult,
+	cases []connectionControllerRecoveryCase,
+	decisions map[string]connectionControllerRecoveryDecision,
 	usedDecisions map[string]struct{},
 ) error {
 	if len(cases) == 0 {
 		return fmt.Errorf("%s cases must not be empty", domain)
 	}
 	semantics := make([]string, 0, len(cases))
-	codesByLanguage := make(map[string]map[string]struct{}, len(publicErrorClassificationLanguages))
-	for _, language := range publicErrorClassificationLanguages {
+	codesByLanguage := make(map[string]map[string]struct{}, len(connectionControllerRecoveryLanguages))
+	for _, language := range connectionControllerRecoveryLanguages {
 		codesByLanguage[language] = make(map[string]struct{})
 	}
-	for _, classificationCase := range cases {
-		if strings.TrimSpace(classificationCase.Semantic) == "" {
+	for _, recoveryCase := range cases {
+		if strings.TrimSpace(recoveryCase.Semantic) == "" {
 			return fmt.Errorf("%s case semantic must not be empty", domain)
 		}
-		semantics = append(semantics, classificationCase.Semantic)
-		if _, ok := decisions[classificationCase.Decision]; !ok {
-			return fmt.Errorf("%s case %s references unknown decision %q", domain, classificationCase.Semantic, classificationCase.Decision)
+		semantics = append(semantics, recoveryCase.Semantic)
+		if _, ok := decisions[recoveryCase.Decision]; !ok {
+			return fmt.Errorf("%s case %s references unknown decision %q", domain, recoveryCase.Semantic, recoveryCase.Decision)
 		}
-		usedDecisions[classificationCase.Decision] = struct{}{}
-		languages := make([]string, 0, len(classificationCase.Codes))
-		for language := range classificationCase.Codes {
+		usedDecisions[recoveryCase.Decision] = struct{}{}
+		languages := make([]string, 0, len(recoveryCase.Codes))
+		for language := range recoveryCase.Codes {
 			languages = append(languages, language)
 		}
-		if !sameStringSet(languages, publicErrorClassificationLanguages) {
-			return fmt.Errorf("%s case %s languages must contain exactly %s", domain, classificationCase.Semantic, strings.Join(publicErrorClassificationLanguages, ", "))
+		if !sameStringSet(languages, connectionControllerRecoveryLanguages) {
+			return fmt.Errorf("%s case %s languages must contain exactly %s", domain, recoveryCase.Semantic, strings.Join(connectionControllerRecoveryLanguages, ", "))
 		}
-		for _, language := range publicErrorClassificationLanguages {
-			codes := classificationCase.Codes[language]
+		for _, language := range connectionControllerRecoveryLanguages {
+			codes := recoveryCase.Codes[language]
 			if len(codes) == 0 {
-				return fmt.Errorf("%s case %s must contain at least one %s code", domain, classificationCase.Semantic, language)
+				return fmt.Errorf("%s case %s must contain at least one %s code", domain, recoveryCase.Semantic, language)
 			}
 			for _, code := range codes {
 				if strings.TrimSpace(code) == "" {
-					return fmt.Errorf("%s case %s has an empty %s code", domain, classificationCase.Semantic, language)
+					return fmt.Errorf("%s case %s has an empty %s code", domain, recoveryCase.Semantic, language)
 				}
 				if _, exists := codesByLanguage[language][code]; exists {
 					return fmt.Errorf("%s contains duplicate code %q for %s", domain, code, language)
@@ -398,7 +390,7 @@ func validatePublicErrorClassificationDomain(
 	return requireUnique(domain+" semantics", semantics)
 }
 
-var publicErrorClassificationLanguages = []string{"go", "typescript", "swift", "rust"}
+var connectionControllerRecoveryLanguages = []string{"go", "typescript", "swift", "rust"}
 
 func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) error {
 	var matrix interopMatrix
@@ -749,9 +741,6 @@ func verifyDefaults(repoRoot string) error {
 		"proxy.max_ws_frame_bytes":             m.Proxy.MaxWSFrameBytes,
 		"proxy.default_timeout_ms":             m.Proxy.DefaultTimeoutMS,
 		"proxy.max_timeout_ms":                 m.Proxy.MaxTimeoutMS,
-		"reconnect.max_attempts":               m.Reconnect.MaxAttempts,
-		"reconnect.initial_delay_ms":           m.Reconnect.InitialDelayMS,
-		"reconnect.max_delay_ms":               m.Reconnect.MaxDelayMS,
 	}
 	for name, value := range positive {
 		if value <= 0 {
@@ -769,9 +758,6 @@ func verifyDefaults(repoRoot string) error {
 	}
 	if m.Proxy.DefaultTimeoutMS > m.Proxy.MaxTimeoutMS {
 		return errors.New("proxy default timeout exceeds max timeout")
-	}
-	if m.Reconnect.Factor < 1 || m.Reconnect.JitterRatio < 0 || m.Reconnect.JitterRatio > 1 {
-		return errors.New("reconnect factor or jitter ratio is invalid")
 	}
 	for _, language := range []string{"go", "typescript", "swift", "rust"} {
 		consumer := strings.TrimSpace(m.Consumers[language])

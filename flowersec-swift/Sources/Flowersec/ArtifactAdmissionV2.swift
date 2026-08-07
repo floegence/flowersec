@@ -11,7 +11,6 @@ enum AdmissionCodecErrorV2: Error, Equatable, Sendable {
   case invalidCandidate
   case fsb2PayloadTooLarge
   case invalidFSA2
-  case unknownAdmissionReason
 }
 
 enum AdmissionStatusV2: UInt8, Equatable, Sendable {
@@ -119,7 +118,9 @@ enum AdmissionCodecV2 {
     return frame
   }
 
-  static func decodeFSA2(_ frame: Data, reasons: Set<String>) throws -> AdmissionResponseV2 {
+  // Rejection reasons are deployment-owned tokens. SDK clients validate their
+  // bounded wire form but do not carry a deployment reason registry.
+  static func decodeFSA2(_ frame: Data) throws -> AdmissionResponseV2 {
     guard frame.count >= 8, frame.prefix(4) == Data("FSA2".utf8), frame[4] == 2,
       let status = AdmissionStatusV2(rawValue: frame[5])
     else { throw AdmissionCodecErrorV2.invalidFSA2 }
@@ -132,7 +133,6 @@ enum AdmissionCodecV2 {
       guard reason.isEmpty else { throw AdmissionCodecErrorV2.invalidFSA2 }
     case .reject, .retryable:
       guard validReason(reason) else { throw AdmissionCodecErrorV2.invalidFSA2 }
-      guard reasons.contains(reason) else { throw AdmissionCodecErrorV2.unknownAdmissionReason }
     }
     return AdmissionResponseV2(status: status, reason: reason)
   }
@@ -151,13 +151,17 @@ enum AdmissionCodecV2 {
     let scheme = components.scheme?.lowercased()
     let host: String
     if rawHost.contains(":") {
-      let address = rawHost.hasPrefix("[") && rawHost.hasSuffix("]")
+      let address =
+        rawHost.hasPrefix("[") && rawHost.hasSuffix("]")
         ? String(rawHost.dropFirst().dropLast()) : rawHost
-      guard let canonical = canonicalIPv6(address) else { throw AdmissionCodecErrorV2.invalidCandidate }
+      guard let canonical = canonicalIPv6(address) else {
+        throw AdmissionCodecErrorV2.invalidCandidate
+      }
       host = "[\(canonical)]"
     } else {
-      do { host = try IDNAHostV2.lookupASCII(rawHost) }
-      catch { throw AdmissionCodecErrorV2.invalidCandidate }
+      do { host = try IDNAHostV2.lookupASCII(rawHost) } catch {
+        throw AdmissionCodecErrorV2.invalidCandidate
+      }
     }
     let port = components.port == 443 ? nil : components.port
     guard port == nil || (1...65_535).contains(port!) else {
@@ -189,7 +193,9 @@ enum AdmissionCodecV2 {
     var address = in6_addr()
     guard inet_pton(AF_INET6, host, &address) == 1 else { return nil }
     var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
-    guard inet_ntop(AF_INET6, &address, &buffer, socklen_t(INET6_ADDRSTRLEN)) != nil else { return nil }
+    guard inet_ntop(AF_INET6, &address, &buffer, socklen_t(INET6_ADDRSTRLEN)) != nil else {
+      return nil
+    }
     let end = buffer.firstIndex(of: 0) ?? buffer.endIndex
     return String(decoding: buffer[..<end].map(UInt8.init(bitPattern:)), as: UTF8.self)
   }

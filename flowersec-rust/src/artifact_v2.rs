@@ -8,12 +8,15 @@ use serde::{
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, future::Future, pin::Pin, sync::Arc};
 
+use crate::{
+    protocol_v2::CipherSuiteV2,
+    transport_v2::{CarrierKind, PathKind, SessionRole},
+};
+
 const MAX_ARTIFACT_BYTES: usize = 65_536;
 #[allow(dead_code)]
 const MAX_CANONICAL_FSB2_PAYLOAD: usize = 32_768;
 #[allow(dead_code)]
-const MAX_ADMISSION_REASON_BYTES: usize = 64;
-
 /// A validated Transport v2 artifact.
 ///
 /// The wire fields are intentionally not exposed. Consumers pass this handle to
@@ -168,7 +171,7 @@ impl Artifact {
         Ok(EncodedFsb2 { raw, binding })
     }
 
-    pub(crate) fn raw_quic_dial_plan(&self) -> Result<RawQuicDialPlan, ArtifactError> {
+    pub(crate) fn connection_plan(&self) -> Result<ConnectionPlanV2, ConnectionPlanError> {
         let (
             path,
             role,
@@ -177,8 +180,8 @@ impl Artifact {
             candidates,
         ) = match &self.0.wire.path {
             PathWire::Direct { candidates, .. } => (
-                crate::transport_v2::PathKind::Direct,
-                crate::transport_v2::SessionRole::Client,
+                PathKind::Direct,
+                SessionRole::Client,
                 None,
                 None,
                 candidates,
@@ -190,62 +193,58 @@ impl Artifact {
                 candidates,
                 ..
             } => (
-                crate::transport_v2::PathKind::Tunnel,
+                PathKind::Tunnel,
                 if *role == 1 {
-                    crate::transport_v2::SessionRole::Client
+                    SessionRole::Client
                 } else {
-                    crate::transport_v2::SessionRole::Server
+                    SessionRole::Server
                 },
                 Some(local_endpoint_instance_id.clone()),
                 Some(expected_peer_endpoint_instance_id.clone()),
                 candidates,
             ),
         };
-        let raw_quic_candidates = candidates
+        let candidates = candidates
             .iter()
-            .filter(|candidate| matches!(candidate.carrier, CarrierWire::RawQuic))
             .map(|candidate| {
                 let normalized_url = normalize_url(
-                    if path == crate::transport_v2::PathKind::Direct {
+                    if path == PathKind::Direct {
                         "direct"
                     } else {
                         "tunnel"
                     },
                     candidate,
-                )?;
-                let url = url::Url::parse(&normalized_url).map_err(|_| ArtifactError::Invalid)?;
-                Ok(RawQuicCandidatePlan {
+                )
+                .map_err(|_| ConnectionPlanError::Invalid)?;
+                Ok(CandidatePlanV2 {
                     id: candidate.id.clone(),
-                    host: url
-                        .host_str()
-                        .ok_or(ArtifactError::Invalid)?
-                        .trim_start_matches('[')
-                        .trim_end_matches(']')
-                        .to_owned(),
-                    port: url.port().unwrap_or(443),
+                    carrier: match candidate.carrier {
+                        CarrierWire::Websocket => CarrierKind::Wss,
+                        CarrierWire::RawQuic => CarrierKind::RawQuic,
+                        CarrierWire::Webtransport => CarrierKind::WebTransport,
+                    },
+                    normalized_url,
+                    wire_profile: candidate.wire_profile.clone(),
                 })
             })
-            .collect::<Result<Vec<_>, ArtifactError>>()?;
-        if raw_quic_candidates.is_empty() {
-            return Err(ArtifactError::Invalid);
-        }
+            .collect::<Result<Vec<_>, ConnectionPlanError>>()?;
         let session = &self.0.wire.session;
-        let psk = decode32(&session.e2ee_psk_b64u).ok_or(ArtifactError::Invalid)?;
-        let contract_hash = decode32(&session.contract_hash_b64u).ok_or(ArtifactError::Invalid)?;
+        let psk = decode32(&session.e2ee_psk_b64u).ok_or(ConnectionPlanError::Invalid)?;
+        let contract_hash =
+            decode32(&session.contract_hash_b64u).ok_or(ConnectionPlanError::Invalid)?;
         let suite = match session.default_suite {
-            1 => crate::protocol_v2::CipherSuiteV2::ChaCha20Poly1305,
-            2 => crate::protocol_v2::CipherSuiteV2::Aes256Gcm,
-            _ => return Err(ArtifactError::Invalid),
+            1 => CipherSuiteV2::ChaCha20Poly1305,
+            2 => CipherSuiteV2::Aes256Gcm,
+            _ => return Err(ConnectionPlanError::Invalid),
         };
-        Ok(RawQuicDialPlan {
-            candidates: raw_quic_candidates,
+        Ok(ConnectionPlanV2 {
+            candidates,
             path,
+            role,
             local_endpoint_instance_id,
             expected_peer_endpoint_instance_id,
             expires_at_unix_seconds: session.init_expire_at_unix_s,
-            session_config: crate::session_v2::SessionConfigV2 {
-                role,
-                path,
+            session: SessionParametersV2 {
                 channel_id: session.channel_id.clone(),
                 session_contract_hash: contract_hash,
                 suite,
@@ -254,99 +253,56 @@ impl Artifact {
                 idle_timeout: std::time::Duration::from_secs(u64::from(
                     session.idle_timeout_seconds,
                 )),
-                local_admission_binding: [0; 32],
-                peer_admission_binding: None,
-                local_endpoint_instance_id: None,
-                expected_peer_endpoint_instance_id: None,
-                rpc_handler: None,
-                deadlines: crate::session_v2::SessionDeadlinesV2 {
-                    establish: std::time::Duration::from_secs(u64::from(
-                        session.establish_timeout_seconds,
-                    )),
-                    rekey_prepare: std::time::Duration::from_secs(u64::from(
-                        session.rekey_prepare_timeout_seconds,
-                    )),
-                    rekey_completion: std::time::Duration::from_secs(u64::from(
-                        session.rekey_completion_timeout_seconds,
-                    )),
-                    ..Default::default()
-                },
-            },
-            session_contract: crate::raw_quic_v2::SessionContractV2 {
-                channel_id: session.channel_id.clone(),
-                idle_timeout_seconds: u64::from(session.idle_timeout_seconds),
-                establish_timeout_seconds: u64::from(session.establish_timeout_seconds),
-                rekey_prepare_timeout_seconds: u64::from(session.rekey_prepare_timeout_seconds),
-                rekey_completion_timeout_seconds: u64::from(
+                establish_timeout: std::time::Duration::from_secs(u64::from(
+                    session.establish_timeout_seconds,
+                )),
+                rekey_prepare_timeout: std::time::Duration::from_secs(u64::from(
+                    session.rekey_prepare_timeout_seconds,
+                )),
+                rekey_completion_timeout: std::time::Duration::from_secs(u64::from(
                     session.rekey_completion_timeout_seconds,
-                ),
-                max_inbound_streams: session.max_inbound_streams,
-                psk,
-                allowed_suites: session.allowed_suites.clone(),
-                default_suite: session.default_suite,
-                selected_features: session.selected_features,
-                contract_hash,
+                )),
             },
         })
     }
-
-    pub(crate) fn raw_quic_accept_plan(&self) -> Result<RawQuicAcceptPlan, ArtifactError> {
-        let mut dial = self.raw_quic_dial_plan()?;
-        if dial.path != crate::transport_v2::PathKind::Direct {
-            return Err(ArtifactError::Invalid);
-        }
-        let expected_fsb2 = dial
-            .candidates
-            .iter()
-            .map(|candidate| self.encode_fsb2(&candidate.id).map(|encoded| encoded.raw))
-            .collect::<Result<Vec<_>, ArtifactError>>()?;
-        let registration_id = hash_acceptor_admissions(&expected_fsb2);
-        dial.session_config.role = crate::transport_v2::SessionRole::Server;
-        Ok(RawQuicAcceptPlan {
-            expected_fsb2,
-            expires_at_unix_seconds: dial.expires_at_unix_seconds,
-            session_config: dial.session_config,
-            session_contract: dial.session_contract,
-            registration_id,
-        })
-    }
 }
 
-fn hash_acceptor_admissions(admissions: &[Vec<u8>]) -> [u8; 32] {
-    let mut preimage = b"flowersec-v2-acceptor-admissions\0".to_vec();
-    for admission in admissions {
-        preimage.extend_from_slice(&(admission.len() as u32).to_be_bytes());
-        preimage.extend_from_slice(admission);
-    }
-    Sha256::digest(preimage).into()
-}
-
-pub(crate) struct RawQuicDialPlan {
-    pub(crate) candidates: Vec<RawQuicCandidatePlan>,
-    pub(crate) path: crate::transport_v2::PathKind,
+pub(crate) struct ConnectionPlanV2 {
+    pub(crate) candidates: Vec<CandidatePlanV2>,
+    pub(crate) path: PathKind,
+    pub(crate) role: SessionRole,
     pub(crate) local_endpoint_instance_id: Option<String>,
     pub(crate) expected_peer_endpoint_instance_id: Option<String>,
     pub(crate) expires_at_unix_seconds: i64,
-    pub(crate) session_config: crate::session_v2::SessionConfigV2,
-    pub(crate) session_contract: crate::raw_quic_v2::SessionContractV2,
+    pub(crate) session: SessionParametersV2,
 }
 
-pub(crate) struct RawQuicAcceptPlan {
-    pub(crate) expected_fsb2: Vec<Vec<u8>>,
-    pub(crate) expires_at_unix_seconds: i64,
-    pub(crate) session_config: crate::session_v2::SessionConfigV2,
-    pub(crate) session_contract: crate::raw_quic_v2::SessionContractV2,
-    pub(crate) registration_id: [u8; 32],
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ConnectionPlanError {
+    Invalid,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct RawQuicCandidatePlan {
+pub(crate) struct CandidatePlanV2 {
     pub(crate) id: String,
-    pub(crate) host: String,
-    pub(crate) port: u16,
+    pub(crate) carrier: CarrierKind,
+    pub(crate) normalized_url: String,
+    pub(crate) wire_profile: String,
 }
 
-#[allow(dead_code)]
+pub(crate) struct SessionParametersV2 {
+    pub(crate) channel_id: String,
+    pub(crate) session_contract_hash: [u8; 32],
+    pub(crate) suite: CipherSuiteV2,
+    pub(crate) psk: [u8; 32],
+    pub(crate) max_inbound_streams: u16,
+    pub(crate) idle_timeout: std::time::Duration,
+    pub(crate) establish_timeout: std::time::Duration,
+    pub(crate) rekey_prepare_timeout: std::time::Duration,
+    pub(crate) rekey_completion_timeout: std::time::Duration,
+}
+
+#[derive(Clone)]
 pub(crate) struct EncodedFsb2 {
     pub(crate) raw: Vec<u8>,
     pub(crate) binding: [u8; 32],
@@ -421,69 +377,10 @@ fn hash_canonical(domain: &[u8], canonical: &[u8]) -> [u8; 32] {
     Sha256::digest(preimage).into()
 }
 
-#[allow(dead_code)]
 fn hash_admission(raw: &[u8]) -> [u8; 32] {
     let mut preimage = b"flowersec-v2-admission\0".to_vec();
     preimage.extend_from_slice(raw);
     Sha256::digest(preimage).into()
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(dead_code)]
-pub(crate) enum AdmissionStatus {
-    Success,
-    Reject,
-    Retryable,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-#[allow(dead_code)]
-pub(crate) struct AdmissionResponse {
-    pub(crate) status: AdmissionStatus,
-    pub(crate) reason: String,
-}
-
-#[allow(dead_code)]
-pub(crate) fn decode_fsa2(
-    raw: &[u8],
-    reasons: &[&str],
-) -> Result<AdmissionResponse, ArtifactError> {
-    if raw.len() < 8 || &raw[..4] != b"FSA2" || raw[4] != 2 {
-        return Err(ArtifactError::Invalid);
-    }
-    let reason_len = u16::from_be_bytes([raw[6], raw[7]]) as usize;
-    if reason_len > MAX_ADMISSION_REASON_BYTES || raw.len() != 8 + reason_len {
-        return Err(ArtifactError::Invalid);
-    }
-    let reason = std::str::from_utf8(&raw[8..]).map_err(|_| ArtifactError::Invalid)?;
-    let status = match raw[5] {
-        0 if reason.is_empty() => AdmissionStatus::Success,
-        1 | 2 if valid_reason(reason) => {
-            if !reasons.contains(&reason) {
-                return Err(ArtifactError::Invalid);
-            }
-            if raw[5] == 1 {
-                AdmissionStatus::Reject
-            } else {
-                AdmissionStatus::Retryable
-            }
-        }
-        _ => return Err(ArtifactError::Invalid),
-    };
-    Ok(AdmissionResponse {
-        status,
-        reason: reason.to_owned(),
-    })
-}
-
-#[allow(dead_code)]
-fn valid_reason(reason: &str) -> bool {
-    !reason.is_empty()
-        && reason.len() <= MAX_ADMISSION_REASON_BYTES
-        && reason.as_bytes()[0].is_ascii_lowercase()
-        && reason
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
 fn reject_duplicate_json_keys(input: &[u8]) -> Result<(), ArtifactError> {
@@ -981,68 +878,23 @@ mod tests {
     }
 
     #[test]
-    fn raw_quic_plan_stays_internal_and_matches_signed_artifact() {
+    fn connection_plan_stays_carrier_neutral_and_matches_signed_artifact() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
             "../../testdata/transport_v2/artifact_vectors.json"
         ))
         .unwrap();
         for vector in fixture["positive"].as_array().unwrap() {
             let artifact = Artifact::parse(vector["artifact_json"].as_str().unwrap()).unwrap();
-            let plan = artifact.raw_quic_dial_plan().unwrap();
-            assert_eq!(plan.candidates[0].id, "q1");
-            assert!(!plan.candidates[0].host.starts_with('['));
-            assert_eq!(plan.candidates[0].port, 443);
-            assert_eq!(
-                plan.session_contract.contract_hash,
-                plan.session_config.session_contract_hash
-            );
-            assert_eq!(plan.session_contract.psk, plan.session_config.psk);
-            assert_eq!(
-                plan.session_contract.canonical_hash(),
-                plan.session_contract.contract_hash
-            );
+            let plan = artifact.connection_plan().unwrap();
+            let raw_quic = plan
+                .candidates
+                .iter()
+                .find(|candidate| candidate.carrier == CarrierKind::RawQuic)
+                .unwrap();
+            assert_eq!(raw_quic.id, "q1");
+            assert!(raw_quic.normalized_url.starts_with("quic://"));
+            assert_ne!(plan.session.session_contract_hash, [0; 32]);
         }
-    }
-
-    #[test]
-    fn fsa2_strict_decode_matches_shared_positive_and_negative_vectors() {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../testdata/transport_v2/artifact_vectors.json"
-        ))
-        .unwrap();
-        let reasons = ["invalid_token", "capacity"];
-        for vector in fixture["fsa2"].as_array().unwrap() {
-            let decoded =
-                decode_fsa2(&decode_hex(vector["frame_hex"].as_str().unwrap()), &reasons).unwrap();
-            let expected_status = match vector["status"].as_u64().unwrap() {
-                0 => AdmissionStatus::Success,
-                1 => AdmissionStatus::Reject,
-                2 => AdmissionStatus::Retryable,
-                _ => unreachable!(),
-            };
-            assert_eq!(decoded.status, expected_status);
-            assert_eq!(decoded.reason, vector["reason"].as_str().unwrap());
-        }
-        for vector in fixture["negative"].as_array().unwrap() {
-            if vector["kind"] != "fsa2_hex" {
-                continue;
-            }
-            let error =
-                decode_fsa2(&decode_hex(vector["value"].as_str().unwrap()), &reasons).unwrap_err();
-            match vector["error_code"].as_str().unwrap() {
-                "invalid_fsa2" => assert!(matches!(error, ArtifactError::Invalid)),
-                "unknown_admission_reason" => {
-                    assert!(matches!(error, ArtifactError::Invalid))
-                }
-                code => panic!("unexpected shared error code {code}"),
-            }
-        }
-        let mut trailing = decode_hex(fixture["fsa2"][0]["frame_hex"].as_str().unwrap());
-        trailing.push(0);
-        assert!(matches!(
-            decode_fsa2(&trailing, &reasons),
-            Err(ArtifactError::Invalid)
-        ));
     }
 
     #[tokio::test]

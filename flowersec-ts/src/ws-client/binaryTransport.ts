@@ -1,4 +1,3 @@
-import { emitObserverDiagnostic, normalizeObserver, type ClientObserver, type ClientObserverLike, type WsErrorReason } from "../observability/observer.js";
 import { AbortError, TimeoutError, throwIfAborted } from "../utils/errors.js";
 
 export class WsCloseError extends Error {
@@ -51,7 +50,6 @@ export const DEFAULT_WEB_SOCKET_LIMITS: WebSocketLimits = Object.freeze({
 
 export type WebSocketBinaryTransportOptions = Readonly<{
   webSocketLimits?: Partial<WebSocketLimits>;
-  observer?: ClientObserverLike;
 }>;
 
 type ReadWaiter = {
@@ -65,8 +63,6 @@ type ReadWaiter = {
 export class WebSocketBinaryTransport {
   // Underlying WebSocket instance (browser or polyfill).
   private readonly ws: WebSocketLike;
-  // Observer for websocket-level errors.
-  private readonly observer: ClientObserver;
   // Buffered inbound frames when no reader is waiting.
   private readonly queue: Uint8Array[] = [];
   // Read cursor for queue to avoid Array.shift() O(n).
@@ -96,7 +92,6 @@ export class WebSocketBinaryTransport {
     opts: WebSocketBinaryTransportOptions = {}
   ) {
     this.ws = ws;
-    this.observer = normalizeObserver(opts.observer);
     this.limits = normalizeWebSocketLimits(opts.webSocketLimits);
     this.ws.binaryType = "arraybuffer";
     this.ws.addEventListener("message", this.onMessage);
@@ -166,7 +161,7 @@ export class WebSocketBinaryTransport {
     if (frame.byteLength > this.limits.outboundHardLimitBytes ||
         this.pendingOutboundBytes + this.ws.bufferedAmount + frame.byteLength > this.limits.outboundHardLimitBytes) {
       const err = new Error("ws send queue exceeds hard limit");
-      this.failAndClose(err, "send_buffer_exceeded");
+      this.failAndClose(err);
       throw err;
     }
     this.pendingOutboundBytes += frame.byteLength;
@@ -189,7 +184,6 @@ export class WebSocketBinaryTransport {
   close(): void {
     if (!this.localCloseRequested) {
       this.localCloseRequested = true;
-      if (this.error == null) this.observer.onWsClose("local");
     }
     this.fail(new Error("websocket closed"));
     this.ws.removeEventListener("message", this.onMessage);
@@ -205,7 +199,7 @@ export class WebSocketBinaryTransport {
   private async handleMessage(data: unknown): Promise<void> {
     if (this.error != null) return;
     if (typeof data === "string") {
-      this.fail(new Error("unexpected text frame"), "unexpected_text_frame");
+      this.fail(new Error("unexpected text frame"));
       return;
     }
     if (data instanceof Uint8Array) {
@@ -214,9 +208,8 @@ export class WebSocketBinaryTransport {
     }
     if (data instanceof ArrayBuffer) {
       if (this.queueBytes + data.byteLength > this.limits.maxInboundQueuedBytes) {
-        this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
+        this.fail(new Error("ws recv buffer exceeded"));
         this.localCloseRequested = true;
-        this.observer.onWsClose("local");
         this.ws.close();
         return;
       }
@@ -226,9 +219,8 @@ export class WebSocketBinaryTransport {
     if (ArrayBuffer.isView(data)) {
       const view = data as ArrayBufferView;
       if (this.queueBytes + view.byteLength > this.limits.maxInboundQueuedBytes) {
-        this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
+        this.fail(new Error("ws recv buffer exceeded"));
         this.localCloseRequested = true;
-        this.observer.onWsClose("local");
         this.ws.close();
         return;
       }
@@ -237,9 +229,8 @@ export class WebSocketBinaryTransport {
     }
     if (typeof Blob !== "undefined" && data instanceof Blob) {
       if (this.queueBytes + data.size > this.limits.maxInboundQueuedBytes) {
-        this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
+        this.fail(new Error("ws recv buffer exceeded"));
         this.localCloseRequested = true;
-        this.observer.onWsClose("local");
         this.ws.close();
         return;
       }
@@ -248,26 +239,25 @@ export class WebSocketBinaryTransport {
       this.push(new Uint8Array(ab));
       return;
     }
-    this.fail(new Error("unexpected message type"), "unexpected_message_type");
+    this.fail(new Error("unexpected message type"));
   }
 
   private readonly onMessage = (ev: any): void => {
     const data = ev.data;
     this.messageChain = this.messageChain.then(() => this.handleMessage(data)).catch((err) => {
       const e = err instanceof Error ? err : new Error(String(err));
-      this.fail(e, "error");
+      this.fail(e);
     });
   };
 
   private readonly onError = (): void => {
-    this.fail(new Error("websocket error"), "error");
+    this.fail(new Error("websocket error"));
   };
 
   private readonly onClose = (ev: any): void => {
     if (!this.localCloseRequested) {
       const code = typeof ev?.code === "number" ? ev.code : undefined;
       const reason = typeof ev?.reason === "string" ? ev.reason : undefined;
-      this.observer.onWsClose("peer_or_error", code);
       this.fail(new WsCloseError(code, reason));
       return;
     }
@@ -286,9 +276,8 @@ export class WebSocketBinaryTransport {
       return;
     }
     if (this.queueBytes + b.length > this.limits.maxInboundQueuedBytes) {
-      this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
+      this.fail(new Error("ws recv buffer exceeded"));
       this.localCloseRequested = true;
-      this.observer.onWsClose("local");
       this.ws.close();
       return;
     }
@@ -301,7 +290,7 @@ export class WebSocketBinaryTransport {
     if (this.error != null) throw this.error;
     if (frame.byteLength > this.limits.outboundHardLimitBytes) {
       const err = new Error("ws send frame exceeds hard limit");
-      this.failAndClose(err, "send_buffer_exceeded");
+      this.failAndClose(err);
       throw err;
     }
 
@@ -314,7 +303,7 @@ export class WebSocketBinaryTransport {
       if (this.error != null) throw this.error;
       if (Date.now() - startedAt >= this.limits.outboundDrainTimeoutMs) {
         const err = new TimeoutError("ws send buffer drain timeout");
-        this.failAndClose(err, "send_buffer_timeout");
+        this.failAndClose(err);
         throw err;
       }
       await new Promise<void>((resolve) => setTimeout(resolve, 10));
@@ -328,25 +317,15 @@ export class WebSocketBinaryTransport {
     onHandedToWebSocket();
     if (this.ws.bufferedAmount > this.limits.outboundHardLimitBytes) {
       const err = new Error("ws send buffer exceeded");
-      this.failAndClose(err, "send_buffer_exceeded");
+      this.failAndClose(err);
       throw err;
     }
   }
 
-  private failAndClose(err: Error, reason: WsErrorReason): void {
-    emitObserverDiagnostic(this.observer, {
-      stage: "transport",
-      code_domain: "event",
-      code: reason === "send_buffer_timeout" ? "queue_pressure" : "resource_limit_reached",
-      result: "fail",
-      resource: "websocket_outbound_bytes",
-      current: this.ws.bufferedAmount + this.pendingOutboundBytes,
-      limit: this.limits.outboundHardLimitBytes,
-    });
-    this.fail(err, reason);
+  private failAndClose(err: Error): void {
+    this.fail(err);
     if (!this.localCloseRequested) {
       this.localCloseRequested = true;
-      this.observer.onWsClose("local");
       this.ws.close();
     }
   }
@@ -402,12 +381,9 @@ export class WebSocketBinaryTransport {
   }
 
   // fail transitions the transport into a permanent error state.
-  private fail(err: unknown, reason?: WsErrorReason): void {
+  private fail(err: unknown): void {
     if (this.error != null) return;
     this.error = err;
-    if (reason != null) {
-      this.observer.onWsError(reason);
-    }
     const ws = this.waiters;
     const start = this.waitersHead;
     this.waiters = [];

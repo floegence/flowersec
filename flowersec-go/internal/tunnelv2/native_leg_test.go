@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,8 +13,38 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
 )
 
+func markNativeLegReady(t *testing.T, leg *tunnelv2.NativeStreamLeg, admissionClient carrier.Stream) {
+	t.Helper()
+	raw := validTunnelFSB2(t, 1, "client", "recovery-token")
+	writeDone := make(chan error, 1)
+	go func() {
+		_, writeErr := admissionClient.Write(raw)
+		writeDone <- errors.Join(writeErr, admissionClient.CloseWrite())
+	}()
+	if _, err := leg.ReceiveAdmission(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatal(err)
+	}
+	responseDone := make(chan error, 1)
+	go func() {
+		response, readErr := artifactv2.ReadResponse(admissionClient, tunnelv2.DefaultReasonRegistry())
+		if readErr == nil && response.Status != artifactv2.AdmissionSuccess {
+			readErr = errors.New("unexpected admission response")
+		}
+		responseDone <- readErr
+	}()
+	if err := leg.SendAdmission(context.Background(), artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, tunnelv2.DefaultReasonRegistry()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-responseDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestNativeStreamLegDelaysResponseAndRejectsExtraStreams(t *testing.T) {
-	endpoint, tunnelSession := memorySessionPair(carrier.KindQUIC)
+	endpoint, tunnelSession := memorySessionPair(carrier.KindRawQUIC)
 	admissionClient, admissionServer := memoryStreamPair()
 	leg, err := tunnelv2.NewNativeStreamLeg(tunnelSession, admissionServer)
 	if err != nil {
@@ -85,6 +116,56 @@ func TestNativeStreamLegDelaysResponseAndRejectsExtraStreams(t *testing.T) {
 	if err != nil || session != tunnelSession {
 		t.Fatalf("Activate = %T/%v", session, err)
 	}
+}
+
+func TestNativeStreamLegPreservesStreamDequeuedAfterGuardCancellation(t *testing.T) {
+	_, base := memorySessionPair(carrier.KindWebTransport)
+	admissionClient, admissionServer := memoryStreamPair()
+	control := newResetProbe()
+	session := &cancelledAcceptSession{Session: base, stream: control}
+	leg, err := tunnelv2.NewNativeStreamLeg(session, admissionServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	guardCtx, cancelGuard := context.WithCancel(context.Background())
+	cancelGuard()
+	if err := leg.RejectWaitingStreams(guardCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("RejectWaitingStreams error = %v", err)
+	}
+	select {
+	case <-control.reset:
+		t.Fatal("control stream was reset after guard cancellation")
+	default:
+	}
+
+	markNativeLegReady(t, leg, admissionClient)
+	activated, err := leg.Activate(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := activated.AcceptStream(context.Background())
+	if err != nil {
+		t.Fatalf("activated AcceptStream: %v", err)
+	}
+	if got != control {
+		t.Fatalf("activated stream = %T, want preserved control stream", got)
+	}
+}
+
+type cancelledAcceptSession struct {
+	carrier.Session
+	stream carrier.Stream
+	once   sync.Once
+}
+
+func (session *cancelledAcceptSession) AcceptStream(context.Context) (carrier.Stream, error) {
+	var stream carrier.Stream
+	session.once.Do(func() { stream = session.stream })
+	if stream != nil {
+		return stream, nil
+	}
+	return nil, context.Canceled
 }
 
 func validTunnelFSB2(t *testing.T, role uint8, endpoint, token string) []byte {

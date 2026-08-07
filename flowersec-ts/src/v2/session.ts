@@ -11,7 +11,7 @@ import type {
   InternalStreamOpenOptionsV2,
   UnreliableMessageChannelV2,
 } from "./contract.js";
-import { CarrierV2Error, type CarrierSessionV2, type CarrierStreamV2 } from "./carrier.js";
+import { CarrierError, type CarrierSessionV2, type CarrierStreamV2 } from "./carrier.js";
 import type { SessionContractV2 } from "./artifact.js";
 import {
   computeClientConfirmV2,
@@ -92,6 +92,8 @@ const DEFAULT_CLOSE_TIMEOUT_MS = 2_000;
 
 type SessionTerminationV2 = Readonly<{ error: Error }>;
 
+type SessionLifecycle = "opening" | "open" | "closing" | "closed";
+
 export type SessionRoleV2 = "client" | "server";
 
 export type SessionDeadlinePhaseV2 = "establish" | "rekey_prepare" | "rekey_completion";
@@ -132,6 +134,12 @@ export type SessionConfigV2 = Readonly<{
   deadlines?: SessionDeadlinesV2;
   idleTimeoutMs?: number;
   closeTimeoutMs?: number;
+  runtime: SessionProtocolRuntimeV2;
+}>;
+
+export type SessionProtocolRuntimeV2 = Readonly<{
+  entropy(length: number): Uint8Array;
+  monotonicMilliseconds(): number;
 }>;
 
 export class SessionV2Error extends Error {
@@ -220,7 +228,7 @@ export class SessionV2 implements SessionV2Contract {
   private sentGoAwayLastAccepted = 0n;
   private sentGoAwayReason = 0;
   private closePromise: Promise<void> | undefined;
-  private closing = false;
+  private lifecycle: SessionLifecycle = "opening";
   private sentSessionClose = false;
   private sessionCloseCommitted = false;
   private readonly peerSessionClose = deferred<void>();
@@ -329,17 +337,18 @@ export class SessionV2 implements SessionV2Contract {
     const nonce = this.nextPing++;
     const pending = deferred<void>();
     this.pings.set(nonce, pending);
-    const started = performance.now();
+    const started = this.config.runtime.monotonicMilliseconds();
     try {
-      await this.sendControl(InnerTypeV2.Ping, u64(nonce));
+      await this.sendControl(InnerTypeV2.Ping, u64(nonce), options.signal);
       await raceAbort(pending.promise, options.signal);
-      return performance.now() - started;
+      return Math.max(0, this.config.runtime.monotonicMilliseconds() - started);
     } finally {
       this.pings.delete(nonce);
     }
   }
 
   async rekey(options: OperationOptionsV2 = {}): Promise<void> {
+    this.assertOpen();
     throwIfAborted(options.signal);
     const task = this.rekeyTail.then(async () => {
       throwIfAborted(options.signal);
@@ -351,16 +360,22 @@ export class SessionV2 implements SessionV2Contract {
 
   close(): Promise<void> {
     if (this.closePromise === undefined) {
-      this.closing = true;
+      this.beginClosing();
       this.closePromise = this.closeOnce();
     }
     return this.closePromise;
   }
 
   start(): void {
+    if (this.lifecycle !== "opening") return;
+    this.lifecycle = "open";
     this.startIdleWatchdog();
     void this.controlLoop();
     void this.acceptCarrierLoop();
+    void this.carrier.waitTermination().then(
+      () => this.fail(new CarrierError("closed", "carrier session terminated"), false),
+      (error) => this.fail(asError(error), false),
+    );
   }
 
   rootForSend(epoch: number): EpochRootsV2 {
@@ -401,6 +416,7 @@ export class SessionV2 implements SessionV2Contract {
     payload: Uint8Array,
     signal?: AbortSignal,
   ): Promise<void> {
+    this.assertOpen();
     const inner = encodeInnerRecordV2(type, payload);
     const roots = this.rootForSend(stream.sendEpoch);
     const material = deriveStreamMaterial(roots.streamRoot, this.h3, stream.id, this.sendDirection, stream.sendEpoch);
@@ -562,7 +578,7 @@ export class SessionV2 implements SessionV2Contract {
 
   private async acceptCarrierLoop(): Promise<void> {
     try {
-      while (this.terminalError === undefined) {
+      while (this.lifecycle === "open") {
         const carrierStream = await this.carrier.acceptStream();
         void this.acceptCarrierStream(carrierStream).catch((error) => {
           void carrierStream.reset();
@@ -572,7 +588,7 @@ export class SessionV2 implements SessionV2Contract {
         });
       }
     } catch (error) {
-      if (this.terminalError === undefined) this.fail(asError(error));
+      if (this.lifecycle !== "closed") this.fail(asError(error));
     }
   }
 
@@ -580,6 +596,7 @@ export class SessionV2 implements SessionV2Contract {
     let responderHeld = false;
     let ledgerID: bigint | undefined;
     try {
+      this.assertOpen();
       await this.enterInboundResponder();
       responderHeld = true;
       const reader = new ExactReader(carrierStream);
@@ -626,6 +643,7 @@ export class SessionV2 implements SessionV2Contract {
     prefaceRaw: Uint8Array,
     preface: ReturnType<typeof decodeSetupPrefaceV2>,
   ): Promise<void> {
+    this.assertOpen();
     const temporary = new EncryptedStreamV2(
       this,
       carrierStream,
@@ -666,6 +684,7 @@ export class SessionV2 implements SessionV2Contract {
       releasePermit,
       reader,
     );
+    this.assertOpen();
     stream.receiveSequence = temporary.receiveSequence;
     this.streams.set(stream.id, stream);
     await stream.send(InnerTypeV2.OpenACK, encodeOpenACKV2(computeOpenHashV2(first.payload)));
@@ -688,7 +707,7 @@ export class SessionV2 implements SessionV2Contract {
         close: () => { void stream.reset(); },
       }, this.config.rpcServerOptions, this.config.rpcRouter ?? new RpcRouter());
       void server.serve().catch((error) => {
-        if (this.terminalError === undefined) this.fail(asError(error));
+        if (this.lifecycle !== "closed") this.fail(asError(error));
       });
       return;
     }
@@ -710,9 +729,9 @@ export class SessionV2 implements SessionV2Contract {
     }
   }
 
-  private async sendControl(type: InnerTypeV2, payload: Uint8Array): Promise<void> {
+  private async sendControl(type: InnerTypeV2, payload: Uint8Array, signal?: AbortSignal): Promise<void> {
     const task = this.controlWriteTail.then(async () => {
-      if (this.terminalError !== undefined) throw this.terminalError;
+      if (this.lifecycle === "closed") throw this.terminalError ?? new SessionV2Error("closed", "Flowersec v2 session closed");
       const inner = encodeInnerRecordV2(type, payload);
       const roots = this.rootForSend(this.controlSendEpoch);
       const material = deriveControlMaterial(
@@ -728,7 +747,7 @@ export class SessionV2 implements SessionV2Contract {
       };
       const ciphertext = sealRecord(this.config.suite, material, this.h3, 0n, this.sendDirection, header, inner);
       this.controlSendSequence += 1n;
-      await writeAll(this.control, concat(encodeRecordHeader(header), ciphertext));
+      await writeAll(this.control, concat(encodeRecordHeader(header), ciphertext), signal);
       this.markAuthenticatedActivity();
     });
     this.controlWriteTail = task.catch(() => undefined);
@@ -767,7 +786,7 @@ export class SessionV2 implements SessionV2Contract {
 
   private async controlLoop(): Promise<void> {
     try {
-      while (this.terminalError === undefined) {
+      while (this.lifecycle !== "closed") {
         const record = await this.readControl();
         switch (record.type) {
           case InnerTypeV2.Ping:
@@ -809,12 +828,12 @@ export class SessionV2 implements SessionV2Contract {
         }
       }
     } catch (error) {
-      if (this.terminalError === undefined) this.fail(asError(error));
+      if (this.lifecycle !== "closed") this.fail(asError(error));
     }
   }
 
   private async closeOnce(): Promise<void> {
-    if (this.terminalError !== undefined) return;
+    if (this.lifecycle === "closed") return;
     const closed = new SessionV2Error("closed", "Flowersec v2 session closed");
     const work = (async () => {
       try {
@@ -1145,7 +1164,7 @@ export class SessionV2 implements SessionV2Contract {
   }
 
   private markAuthenticatedActivity(): void {
-    if (!this.idleWatchdogStarted || this.terminalError !== undefined) return;
+    if (!this.idleWatchdogStarted || this.lifecycle !== "open") return;
     const timeoutMs = sessionIdleTimeoutMs(this.config);
     if (timeoutMs === 0) return;
     if (this.idleTimer !== undefined) clearTimeout(this.idleTimer);
@@ -1156,10 +1175,12 @@ export class SessionV2 implements SessionV2Contract {
   }
 
   private fail(error: Error, abortCarrier = true): void {
-    if (this.terminalError !== undefined) return;
-    const normalPeerCarrierClose = this.closing && this.sessionCloseCommitted && error instanceof CarrierV2Error && error.code === "closed";
+    if (this.lifecycle === "closed") return;
+    this.beginClosing();
+    const normalPeerCarrierClose = this.sessionCloseCommitted && error instanceof CarrierError && error.code === "closed";
     if (normalPeerCarrierClose) this.peerSessionClose.resolve();
     this.terminalError = error;
+    this.lifecycle = "closed";
     this.terminationState.resolve({ error });
     if (this.idleTimer !== undefined) {
       clearTimeout(this.idleTimer);
@@ -1179,8 +1200,13 @@ export class SessionV2 implements SessionV2Contract {
   }
 
   private assertOpen(): void {
-    if (this.closing) throw new SessionV2Error("closed", "Flowersec v2 session closed");
+    if (this.lifecycle === "open") return;
     if (this.terminalError !== undefined) throw this.terminalError;
+    throw new SessionV2Error("closed", "Flowersec v2 session closed");
+  }
+
+  private beginClosing(): void {
+    if (this.lifecycle === "opening" || this.lifecycle === "open") this.lifecycle = "closing";
   }
 }
 
@@ -1503,7 +1529,7 @@ async function clientHandshake(
   offeredFeatures: number,
   signal?: AbortSignal,
 ): Promise<HandshakeMaterial> {
-  const key = generateEphemeralKeyV2(config.suite);
+  const key = generateEphemeralKeyV2(config.suite, config.runtime.entropy);
   const fsc2 = encodeControlPrefaceV2();
   const initRaw = encodeClientInitV2({
     profile: "flowersec/2",
@@ -1512,7 +1538,7 @@ async function clientHandshake(
     clientRole: 1,
     suite: config.suite,
     clientEphemeralPublic: key.publicKey,
-    nonceC: randomBytes(32),
+    nonceC: sessionRandomBytes(config, 32),
     selectedFeatures: offeredFeatures,
     maxInboundStreams: config.maxInboundStreams,
     clientAdmissionBinding: config.localAdmissionBinding,
@@ -1560,14 +1586,14 @@ async function serverHandshake(
   const clientRaw = await readHandshakeFrame(reader, signal);
   const client = decodeClientInitV2(clientRaw);
   validateClientInitV2(client, expectations(config, true));
-  const key = generateEphemeralKeyV2(config.suite);
+  const key = generateEphemeralKeyV2(config.suite, config.runtime.entropy);
   const shared = computeSharedSecretV2(config.suite, key.privateKey, client.clientEphemeralPublic);
   const handshakePRK = deriveHandshakePRKV2(config.psk, shared);
   const core = {
     suite: config.suite,
-    handshakeID: randomBytes(16),
+    handshakeID: sessionRandomBytes(config, 16),
     serverEphemeralPublic: key.publicKey,
-    nonceS: randomBytes(32),
+    nonceS: sessionRandomBytes(config, 32),
     sessionContractHash: config.sessionContractHash,
     selectedFeatures: client.selectedFeatures & localFeatures,
     maxInboundStreams: config.maxInboundStreams,
@@ -1623,7 +1649,7 @@ class ExactReader {
   private offset = 0;
   private bytes = 0;
 
-  constructor(private readonly stream: CarrierStreamV2) {}
+  constructor(private readonly stream: Pick<CarrierStreamV2, "read">) {}
 
   async readExactly(length: number, signal?: AbortSignal): Promise<Uint8Array> {
     while (this.bytes < length) {
@@ -1860,6 +1886,13 @@ function deferred<T>(): Deferred<T> {
 }
 
 function validateConfig(carrier: CarrierSessionV2, config: SessionConfigV2): void {
+  if (
+    config.runtime === undefined ||
+    typeof config.runtime.entropy !== "function" ||
+    typeof config.runtime.monotonicMilliseconds !== "function"
+  ) {
+    throw new SessionV2Error("handshake", "session protocol runtime is required");
+  }
   if (carrier.path !== config.path || (config.role !== "client" && config.role !== "server")) {
     throw new SessionV2Error("handshake", "invalid session carrier/config binding");
   }
@@ -1957,10 +1990,12 @@ function sessionCloseTimeoutMs(config: SessionConfigV2): number {
   return timeoutMs;
 }
 
-function randomBytes(length: number): Uint8Array {
-  const out = new Uint8Array(length);
-  globalThis.crypto.getRandomValues(out);
-  return out;
+function sessionRandomBytes(config: SessionConfigV2, length: number): Uint8Array {
+  const output = config.runtime.entropy(length);
+  if (!(output instanceof Uint8Array) || output.length !== length) {
+    throw new SessionV2Error("handshake", `session entropy must return exactly ${length} bytes`);
+  }
+  return output.slice();
 }
 
 function idReason(id: bigint, reason: number): Uint8Array {

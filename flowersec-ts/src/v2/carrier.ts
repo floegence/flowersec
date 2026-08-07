@@ -1,11 +1,37 @@
 import type { CarrierKind, OperationOptionsV2, PathKind } from "./contract.js";
-import { YamuxSession, type ByteDuplex } from "../yamux/session.js";
-import type { YamuxStream } from "../yamux/stream.js";
+
+export type CarrierErrorCode =
+  | "aborted"
+  | "closed"
+  | "reset"
+  | "stop_sending"
+  | "stop_sending_unavailable"
+  | "write_closed"
+  | "datagram_unavailable";
+
+export class CarrierError extends Error {
+  constructor(readonly code: CarrierErrorCode, message: string, readonly cause?: unknown) {
+    super(message);
+    this.name = "CarrierError";
+  }
+}
+
+type Deferred<T> = Readonly<{
+  promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+}>;
+
+function deferred<T>(): Deferred<T> {
+  let resolvePromise!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolve) => { resolvePromise = resolve; });
+  return { promise, resolve: (value) => resolvePromise(value) };
+}
 
 export interface CarrierStreamV2 {
   read(options?: OperationOptionsV2): Promise<Uint8Array | null>;
   write(data: Uint8Array, options?: OperationOptionsV2): Promise<number>;
   closeWrite(): Promise<void>;
+  stopSending(): Promise<void>;
   reset(): Promise<void>;
   /**
    * Synchronously initiates idempotent forced teardown. Pending and future
@@ -30,6 +56,7 @@ export interface CarrierSessionV2 {
   readonly unreliableDatagrams?: CarrierUnreliableDatagramsV2 | undefined;
   openStream(options?: OperationOptionsV2): Promise<CarrierStreamV2>;
   acceptStream(options?: OperationOptionsV2): Promise<CarrierStreamV2>;
+  waitTermination(): Promise<void>;
   close(error?: Readonly<{ code: number; reason: string }>): Promise<void>;
   /**
    * Synchronously initiates idempotent forced teardown. Pending and future
@@ -38,23 +65,11 @@ export interface CarrierSessionV2 {
   abort(error?: Readonly<{ code: number; reason: string }>): void;
 }
 
-export class CarrierV2Error extends Error {
-  constructor(readonly code: "aborted" | "closed" | "reset" | "write_closed", message: string) {
-    super(message);
-    this.name = "CarrierV2Error";
-  }
-}
-
-export type WebSocketBinaryTransportV2 = Readonly<{
-  readBinary(options?: Readonly<{ signal?: AbortSignal; timeoutMs?: number }>): Promise<Uint8Array>;
-  writeBinary(data: Uint8Array, options?: OperationOptionsV2): Promise<void>;
-  close(): void;
-}>;
-
 export type NativeCarrierStreamV2 = Readonly<{
   read(): Promise<Uint8Array | null>;
   write(data: Uint8Array): Promise<number>;
   closeWrite(): Promise<void>;
+  stopSending(): Promise<void>;
   reset(): Promise<void>;
   /** See {@link CarrierStreamV2.abort}. */
   abort(error?: Error): void;
@@ -67,31 +82,11 @@ export type NativeCarrierSessionV2 = Readonly<{
   unreliableDatagrams?: CarrierUnreliableDatagramsV2 | undefined;
   openStream(options?: OperationOptionsV2): Promise<NativeCarrierStreamV2>;
   acceptStream(options?: OperationOptionsV2): Promise<NativeCarrierStreamV2>;
+  waitTermination(): Promise<void>;
   close(): Promise<void>;
   /** See {@link CarrierSessionV2.abort}. */
   abort(error?: Readonly<{ code: number; reason: string }>): void;
 }>;
-
-export type WebSocketResourcePolicyV2 = Readonly<{
-  maxConcurrentStreams?: number;
-  maxFrameBytes?: number;
-  preferredWriteBytes?: number;
-  maxStreamWriteQueueBytes?: number;
-  maxStreamReceiveBytes?: number;
-  maxSessionReceiveBytes?: number;
-}>;
-
-export function createWebSocketCarrierSessionV2(
-  transport: WebSocketBinaryTransportV2,
-  options: Readonly<{
-    path: PathKind;
-    client: boolean;
-    inboundBidirectionalStreamCapacity: number;
-    resourcePolicy?: WebSocketResourcePolicyV2;
-  }>,
-): CarrierSessionV2 {
-  return new WebSocketYamuxCarrierSession(transport, options);
-}
 
 export function adaptNativeCarrierSessionV2(native: NativeCarrierSessionV2): CarrierSessionV2 {
   return new NativeCarrierSessionAdapter(native);
@@ -129,8 +124,9 @@ class MemoryCarrierLink {
   readonly maxPendingStreams: number;
 
   private sessions: readonly [MemoryCarrierSession, MemoryCarrierSession] | undefined;
-  private closedError: CarrierV2Error | undefined;
+  private closedError: CarrierError | undefined;
   private readonly streams = new Set<MemoryCarrierStream>();
+  private readonly termination = deferred<void>();
 
   constructor(
     kind: CarrierKind,
@@ -158,7 +154,7 @@ class MemoryCarrierLink {
     if (sessions === undefined) throw new Error("memory carrier is not attached");
     const peer = sessions[side === 0 ? 1 : 0];
     if (peer.pendingCount() >= this.maxPendingStreams) {
-      throw new CarrierV2Error("closed", "carrier incoming stream queue exhausted");
+      throw new CarrierError("closed", "carrier incoming stream queue exhausted");
     }
     const state = new MemoryStreamState(() => {
       this.streams.delete(local);
@@ -174,10 +170,15 @@ class MemoryCarrierLink {
 
   close(): void {
     if (this.closedError !== undefined) return;
-    this.closedError = new CarrierV2Error("closed", "carrier session closed");
+    this.closedError = new CarrierError("closed", "carrier session closed");
     for (const stream of [...this.streams]) stream.failFromSession(this.closedError);
     this.streams.clear();
     for (const session of this.sessions ?? []) session.fail(this.closedError);
+    this.termination.resolve();
+  }
+
+  waitTermination(): Promise<void> {
+    return this.termination.promise;
   }
 }
 
@@ -211,6 +212,10 @@ class MemoryCarrierSession implements CarrierSessionV2 {
     this.link.close();
   }
 
+  async waitTermination(): Promise<void> {
+    await this.link.waitTermination();
+  }
+
   abort(): void {
     this.link.close();
   }
@@ -227,14 +232,14 @@ class MemoryCarrierSession implements CarrierSessionV2 {
     return this.incoming.size;
   }
 
-  fail(error: CarrierV2Error): void {
+  fail(error: CarrierError): void {
     if (this.closed) return;
     this.closed = true;
     this.incoming.fail(error);
   }
 
   private assertOpen(): void {
-    if (this.closed) throw new CarrierV2Error("closed", "carrier session closed");
+    if (this.closed) throw new CarrierError("closed", "carrier session closed");
     this.link.assertOpen();
   }
 }
@@ -242,7 +247,8 @@ class MemoryCarrierSession implements CarrierSessionV2 {
 class MemoryStreamState {
   readonly inbound = [new AsyncQueue<Uint8Array | null>(), new AsyncQueue<Uint8Array | null>()] as const;
   readonly writeClosed = [false, false];
-  terminalError: CarrierV2Error | undefined;
+  readonly readStopped = [false, false];
+  terminalError: CarrierError | undefined;
   private cleaned = false;
 
   constructor(private readonly onClean: () => void) {}
@@ -256,7 +262,7 @@ class MemoryStreamState {
 
   reset(): void {
     if (this.terminalError !== undefined) return;
-    this.terminalError = new CarrierV2Error("reset", "carrier stream reset");
+    this.terminalError = new CarrierError("reset", "carrier stream reset");
     this.inbound[0].fail(this.terminalError);
     this.inbound[1].fail(this.terminalError);
     if (!this.cleaned) {
@@ -265,7 +271,13 @@ class MemoryStreamState {
     }
   }
 
-  fail(error: CarrierV2Error): void {
+  stopSending(side: 0 | 1): void {
+    if (this.terminalError !== undefined || this.readStopped[side]) return;
+    this.readStopped[side] = true;
+    this.inbound[side].fail(new CarrierError("stop_sending", "carrier stream receive side stopped"));
+  }
+
+  fail(error: CarrierError): void {
     if (this.terminalError !== undefined) return;
     this.terminalError = error;
     this.inbound[0].fail(error);
@@ -286,9 +298,12 @@ class MemoryCarrierStream implements CarrierStreamV2 {
     this.assertNotTerminal();
     if (!(data instanceof Uint8Array)) throw new TypeError("carrier stream write requires Uint8Array");
     if (this.state.writeClosed[this.side]) {
-      throw new CarrierV2Error("write_closed", "carrier stream write side is closed");
+      throw new CarrierError("write_closed", "carrier stream write side is closed");
     }
     const peer = this.side === 0 ? 1 : 0;
+    if (this.state.readStopped[peer]) {
+      throw new CarrierError("stop_sending", "carrier peer stopped receiving this stream");
+    }
     this.state.inbound[peer].push(data.slice());
     return data.length;
   }
@@ -306,11 +321,15 @@ class MemoryCarrierStream implements CarrierStreamV2 {
     this.state.reset();
   }
 
+  async stopSending(): Promise<void> {
+    this.state.stopSending(this.side);
+  }
+
   abort(): void {
     this.state.reset();
   }
 
-  failFromSession(error: CarrierV2Error): void {
+  failFromSession(error: CarrierError): void {
     this.state.fail(error);
   }
 
@@ -399,115 +418,8 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted === true) throw abortedError();
 }
 
-function abortedError(): CarrierV2Error {
-  return new CarrierV2Error("aborted", "carrier operation aborted");
-}
-
-class WebSocketYamuxCarrierSession implements CarrierSessionV2 {
-  readonly kind = "websocket" as const;
-  readonly path: PathKind;
-  readonly inboundBidirectionalStreamCapacity: number;
-  readonly unreliableDatagrams = undefined;
-
-  private readonly incoming = new AsyncQueue<CarrierStreamV2>();
-  private readonly yamux: YamuxSession;
-  private terminalError: Error | undefined;
-
-  constructor(
-    transport: WebSocketBinaryTransportV2,
-    options: Readonly<{
-      path: PathKind;
-      client: boolean;
-      inboundBidirectionalStreamCapacity: number;
-      resourcePolicy?: WebSocketResourcePolicyV2;
-    }>,
-  ) {
-    requireInboundBidirectionalStreamCapacity(options.inboundBidirectionalStreamCapacity);
-    this.path = options.path;
-    this.inboundBidirectionalStreamCapacity = options.inboundBidirectionalStreamCapacity;
-    const duplex: ByteDuplex = {
-      read: async () => await transport.readBinary(),
-      write: async (chunk) => await transport.writeBinary(chunk),
-      close: () => transport.close(),
-    };
-    const policy = options.resourcePolicy ?? {};
-    this.yamux = new YamuxSession(duplex, {
-      client: options.client,
-      limits: {
-        maxActiveStreams: Math.max(
-          policy.maxConcurrentStreams ?? this.inboundBidirectionalStreamCapacity,
-          this.inboundBidirectionalStreamCapacity,
-        ),
-        maxInboundStreams: this.inboundBidirectionalStreamCapacity,
-        ...(policy.maxFrameBytes === undefined ? {} : { maxFrameBytes: policy.maxFrameBytes }),
-        ...(policy.preferredWriteBytes === undefined
-          ? {}
-          : { preferredOutboundFrameBytes: policy.preferredWriteBytes }),
-        ...(policy.maxStreamWriteQueueBytes === undefined
-          ? {}
-          : { maxStreamWriteQueueBytes: policy.maxStreamWriteQueueBytes }),
-        ...(policy.maxStreamReceiveBytes === undefined
-          ? {}
-          : { maxStreamReceiveBytes: policy.maxStreamReceiveBytes }),
-        ...(policy.maxSessionReceiveBytes === undefined
-          ? {}
-          : { maxSessionReceiveBytes: policy.maxSessionReceiveBytes }),
-      },
-      onIncomingStream: (stream) => this.incoming.push(new YamuxCarrierStreamAdapter(stream)),
-      onTerminal: (error) => {
-        this.terminalError = error;
-        this.incoming.fail(error);
-      },
-    });
-  }
-
-  async openStream(options: OperationOptionsV2 = {}): Promise<CarrierStreamV2> {
-    this.assertOpen();
-    return new YamuxCarrierStreamAdapter(await this.yamux.openStream(options));
-  }
-
-  async acceptStream(options: OperationOptionsV2 = {}): Promise<CarrierStreamV2> {
-    this.assertOpen();
-    return await this.incoming.shift(options.signal);
-  }
-
-  async close(): Promise<void> {
-    this.yamux.close();
-  }
-
-  abort(): void {
-    this.yamux.close();
-  }
-
-  private assertOpen(): void {
-    if (this.terminalError !== undefined) throw this.terminalError;
-  }
-}
-
-class YamuxCarrierStreamAdapter implements CarrierStreamV2 {
-  constructor(private readonly stream: YamuxStream) {}
-
-  async read(options: OperationOptionsV2 = {}): Promise<Uint8Array | null> {
-    return await abortable(this.stream.read(), options.signal, () => this.stream.abort());
-  }
-
-  async write(data: Uint8Array, options: OperationOptionsV2 = {}): Promise<number> {
-    throwIfAborted(options.signal);
-    await abortable(this.stream.write(data), options.signal, () => this.stream.abort());
-    return data.length;
-  }
-
-  async closeWrite(): Promise<void> {
-    await this.stream.close();
-  }
-
-  async reset(): Promise<void> {
-    await this.stream.reset();
-  }
-
-  abort(error?: Error): void {
-    this.stream.abort(error);
-  }
+function abortedError(): CarrierError {
+  return new CarrierError("aborted", "carrier operation aborted");
 }
 
 class NativeCarrierSessionAdapter implements CarrierSessionV2 {
@@ -529,6 +441,10 @@ class NativeCarrierSessionAdapter implements CarrierSessionV2 {
 
   async acceptStream(options: OperationOptionsV2 = {}): Promise<CarrierStreamV2> {
     return new NativeCarrierStreamAdapter(await this.native.acceptStream(options));
+  }
+
+  async waitTermination(): Promise<void> {
+    await this.native.waitTermination();
   }
 
   async close(): Promise<void> {
@@ -564,6 +480,10 @@ class NativeCarrierStreamAdapter implements CarrierStreamV2 {
 
   async reset(): Promise<void> {
     await this.native.reset();
+  }
+
+  async stopSending(): Promise<void> {
+    await this.native.stopSending();
   }
 
   abort(error?: Error): void {

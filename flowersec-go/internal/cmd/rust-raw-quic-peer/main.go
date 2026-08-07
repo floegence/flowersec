@@ -14,6 +14,7 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
@@ -56,7 +57,7 @@ func main() {
 }
 
 func runSessionServer(profile string) {
-	limits := rawquic.DefaultLimits()
+	limits := quicbase.DefaultLimits()
 	limits.MaxInboundStreams = 6
 	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS(profile), limits)
 	if err != nil {
@@ -190,7 +191,7 @@ func runSessionServer(profile string) {
 func runClient(address, profile string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	session, err := rawquic.Dial(ctx, address, clientTLS(profile), rawquic.DefaultLimits())
+	session, err := rawquic.Dial(ctx, address, clientTLS(profile), quicbase.DefaultLimits())
 	if err != nil {
 		fatalf("dial Rust server: %v", err)
 	}
@@ -210,7 +211,7 @@ func runClient(address, profile string) {
 }
 
 func runServer(profile string) {
-	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS(profile), rawquic.DefaultLimits())
+	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS(profile), quicbase.DefaultLimits())
 	if err != nil {
 		fatalf("listen: %v", err)
 	}

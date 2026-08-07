@@ -4,6 +4,13 @@ import Foundation
 
 let openRejectResourceExhaustedReasonV2: UInt16 = 2
 
+private enum TransportV2SessionLifecycle: Equatable, Sendable {
+  case opening
+  case open
+  case closing
+  case closed
+}
+
 actor TransportV2Session {
   nonisolated let path: PathKind
   nonisolated let endpointInstanceID: String?
@@ -71,8 +78,9 @@ actor TransportV2Session {
   private var closeWorkTask: Task<Void, Never>?
   private var closeGeneration: UInt64 = 0
   private var closeSignal: TransportV2CloseSignal?
-  private var closing = false
-  private var closed = false
+  private var lifecycle = TransportV2SessionLifecycle.opening
+  private var closing: Bool { lifecycle == .closing }
+  private var closed: Bool { lifecycle == .closed }
 
   private init(
     carrier: any TransportV2CarrierSession,
@@ -161,7 +169,13 @@ actor TransportV2Session {
     )
     rpcReference.bind(session)
     await session.startLoops()
+    await session.markOpen()
     return session
+  }
+
+  private func markOpen() {
+    guard lifecycle == .opening else { return }
+    lifecycle = .open
   }
 
   func openStream(
@@ -623,6 +637,10 @@ actor TransportV2Session {
     do {
       while !closed {
         let stream = try await carrier.acceptStream()
+        guard !closing, !closed else {
+          await stream.reset(code: 6)
+          continue
+        }
         Task { [weak self] in await self?.acceptCarrierStream(stream) }
       }
     } catch {
@@ -1318,7 +1336,7 @@ actor TransportV2Session {
     terminalError: TransportV2SessionError
   ) -> TransportV2CloseSignal {
     if let closeSignal { return closeSignal }
-    closing = true
+    lifecycle = .closing
     idleTask?.cancel()
     idleTask = nil
     closeGeneration &+= 1
@@ -1405,7 +1423,7 @@ actor TransportV2Session {
   }
 
   private func expireClose(generation: UInt64, code: UInt16, reason: String) async {
-    guard closing, closeGeneration == generation, closeSignal != nil else { return }
+    guard closeGeneration == generation, closeSignal != nil, closeWorkTask != nil else { return }
     closeDeadlineTask = nil
     carrier.abort(code: code, reason: reason)
   }
@@ -1448,8 +1466,7 @@ actor TransportV2Session {
     reason: String
   ) async {
     guard !closed else { return }
-    closing = true
-    closed = true
+    lifecycle = .closed
     terminationError = error
     let waiters = terminationWaiters
     terminationWaiters.removeAll()

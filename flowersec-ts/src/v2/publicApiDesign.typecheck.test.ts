@@ -14,10 +14,6 @@ import {
   parseArtifact,
 } from "../node/index.js";
 import { expect, test } from "vitest";
-import * as publicAPI from "../node/index.js";
-
-// @ts-expect-error Application-level v2 suffixes are not public package exports.
-import type { SessionV2 } from "../node/index.js";
 
 type PingRequest = Readonly<{ nonce: string }>;
 type PingResponse = Readonly<{ acknowledged: boolean }>;
@@ -66,10 +62,7 @@ function typecheckPublicAPI(
 
 test("exposes the unversioned typed public API", () => {
   expect(typecheckPublicAPI).toBeTypeOf("function");
-  expect("connectNodeSessionV2" in publicAPI).toBe(false);
   expect(ArtifactError).toBeTypeOf("function");
-  const legacySession: SessionV2 | undefined = undefined;
-  expect(legacySession).toBeUndefined();
 });
 
 test("projects artifact parsing failures to the stable public error", () => {

@@ -21,7 +21,6 @@ type transportV2Contract struct {
 	SessionProfile     string                         `json:"session_profile"`
 	Docs               transportV2Docs                `json:"docs"`
 	CapabilityCodec    transportV2CapabilityCodec     `json:"capability_codec"`
-	EndpointSetCodec   transportV2EndpointSetCodec    `json:"endpoint_set_codec"`
 	WireFixtures       []transportV2WireFixture       `json:"wire_fixtures"`
 	WireUnsupported    []transportV2UnsupportedReason `json:"wire_fixture_unsupported_reasons"`
 	Policies           transportV2Policies            `json:"policies"`
@@ -29,8 +28,61 @@ type transportV2Contract struct {
 	Paths              []transportV2Path              `json:"paths"`
 	UnsupportedReasons []transportV2UnsupportedReason `json:"unsupported_reasons"`
 	Runtimes           []transportV2Runtime           `json:"runtimes"`
-	GoSlice0           transportV2GoSlice0            `json:"go_slice_0"`
-	RustSlice0         transportV2RustSlice0          `json:"rust_slice_0"`
+	Lifecycles         transportV2Lifecycles          `json:"lifecycles"`
+	Ownership          transportV2Ownership           `json:"ownership"`
+	CarrierContract    transportV2CarrierContract     `json:"carrier_contract"`
+	ControllerContract transportV2ControllerContract  `json:"connection_controller_contract"`
+	GoDependencies     transportV2GoDependencies      `json:"go_native_dependencies"`
+	RustDependencies   transportV2RustDependencies    `json:"rust_native_dependencies"`
+}
+
+type transportV2Lifecycles struct {
+	CandidateAdmission   []string `json:"candidate_admission"`
+	Session              []string `json:"session"`
+	ConnectionController []string `json:"connection_controller"`
+}
+
+type transportV2Ownership struct {
+	DependencyOrder          []string                            `json:"dependency_order"`
+	AdmissionCommit          string                              `json:"admission_commit"`
+	AdmissionRejectionReason transportV2AdmissionRejectionReason `json:"admission_rejection_reason"`
+	RuntimeAdapter           []string                            `json:"runtime_adapter"`
+	SessionEngine            []string                            `json:"session_engine"`
+	ConnectionController     []string                            `json:"connection_controller"`
+	ErrorBoundaries          transportV2ErrorBoundaries          `json:"error_boundaries"`
+}
+
+type transportV2AdmissionRejectionReason struct {
+	Server      string `json:"server"`
+	SDKClient   string `json:"sdk_client"`
+	PublicError string `json:"public_error"`
+}
+
+type transportV2ControllerContract struct {
+	Vectors              string   `json:"vectors"`
+	RetryDispositions    []string `json:"retry_dispositions"`
+	ArtifactSource       string   `json:"artifact_source"`
+	ArtifactConsumption  string   `json:"artifact_consumption"`
+	RetryNow             string   `json:"retry_now"`
+	DefaultAttemptLimit  string   `json:"default_attempt_limit"`
+	ExplicitAttemptLimit string   `json:"explicit_attempt_limit"`
+	BackoffReset         string   `json:"backoff_reset"`
+	SessionReplacement   string   `json:"session_replacement"`
+	RequestReplay        string   `json:"request_replay"`
+	StreamMigration      string   `json:"stream_migration"`
+	RPCReplay            string   `json:"rpc_replay"`
+}
+
+type transportV2ErrorBoundaries struct {
+	Runtime []string `json:"runtime"`
+	Carrier []string `json:"carrier"`
+	Session []string `json:"session"`
+}
+
+type transportV2CarrierContract struct {
+	Stream      []string `json:"stream"`
+	Datagram    []string `json:"datagram"`
+	Termination []string `json:"termination"`
 }
 
 type transportV2CapabilityCodec struct {
@@ -40,20 +92,6 @@ type transportV2CapabilityCodec struct {
 	UnsupportedFields []string `json:"unsupported_fields"`
 	DigestLabel       string   `json:"digest_label"`
 	Vectors           string   `json:"vectors"`
-}
-
-type transportV2EndpointSetCodec struct {
-	SchemaVersion           int      `json:"schema_version"`
-	Profile                 string   `json:"profile"`
-	MaxFreshnessAgeSeconds  int      `json:"max_freshness_age_seconds"`
-	ListenSessionRole       string   `json:"listen_session_role"`
-	ListenCapabilityMapping string   `json:"listen_capability_mapping"`
-	TopLevelFields          []string `json:"top_level_fields"`
-	ListenerTupleFields     []string `json:"listener_tuple_fields"`
-	CertificateFields       []string `json:"certificate_fields"`
-	AudienceFields          []string `json:"audience_fields"`
-	FreshnessFields         []string `json:"freshness_fields"`
-	Vectors                 string   `json:"vectors"`
 }
 
 type transportV2Docs struct {
@@ -127,10 +165,13 @@ type transportV2Runtime struct {
 }
 
 type transportV2RuntimeTuple struct {
-	Carrier     string `json:"carrier"`
-	NetworkMode string `json:"network_mode"`
-	Path        string `json:"path"`
-	SessionRole string `json:"session_role"`
+	Carrier         string `json:"carrier"`
+	NetworkMode     string `json:"network_mode"`
+	Path            string `json:"path"`
+	SessionRole     string `json:"session_role"`
+	ReliableStreams bool   `json:"reliable_streams"`
+	Datagrams       bool   `json:"datagrams"`
+	Migration       bool   `json:"migration"`
 }
 
 type transportV2Unsupported struct {
@@ -159,10 +200,13 @@ type capabilityDescriptorVector struct {
 }
 
 type capabilityTupleVector struct {
-	Carrier     string `json:"carrier"`
-	NetworkMode string `json:"networkMode"`
-	Path        string `json:"path"`
-	SessionRole string `json:"sessionRole"`
+	Carrier         string `json:"carrier"`
+	Datagrams       bool   `json:"datagrams"`
+	Migration       bool   `json:"migration"`
+	NetworkMode     string `json:"networkMode"`
+	Path            string `json:"path"`
+	ReliableStreams bool   `json:"reliableStreams"`
+	SessionRole     string `json:"sessionRole"`
 }
 
 type capabilityUnsupportedVector struct {
@@ -170,8 +214,7 @@ type capabilityUnsupportedVector struct {
 	Reason  string `json:"reason"`
 }
 
-type transportV2GoSlice0 struct {
-	Status                           string                  `json:"status"`
+type transportV2GoDependencies struct {
 	Toolchain                        string                  `json:"toolchain"`
 	WebTransportDialer               string                  `json:"webtransport_dialer"`
 	WebTransportRequiredQUICSettings []string                `json:"webtransport_required_quic_settings"`
@@ -185,8 +228,7 @@ type transportV2Dependency struct {
 	License         string `json:"license"`
 }
 
-type transportV2RustSlice0 struct {
-	Status               string   `json:"status"`
+type transportV2RustDependencies struct {
 	QuinnVersion         string   `json:"quinn_version"`
 	QuinnDefaultFeatures string   `json:"quinn_default_features"`
 	QuinnFeatures        []string `json:"quinn_features"`
@@ -225,9 +267,10 @@ var transportV2CarrierExpectations = map[string]transportV2CarrierExpectation{
 var transportV2RuntimeCarrierExpectations = map[string][]string{
 	"go_native":          {"raw_quic", "websocket", "webtransport"},
 	"typescript_browser": {"websocket", "webtransport"},
-	"typescript_node":    {"websocket"},
+	"typescript_node":    {"websocket", "webtransport"},
 	"rust_native":        {"raw_quic"},
 	"swift_ios":          {"websocket"},
+	"swift_linux":        {},
 	"swift_macos":        {"websocket"},
 }
 
@@ -237,6 +280,7 @@ var transportV2RuntimeExpectations = map[string]transportV2RuntimeExpectation{
 	"typescript_node":    {Language: "typescript", Environment: "node"},
 	"rust_native":        {Language: "rust", Environment: "native"},
 	"swift_ios":          {Language: "swift", Environment: "ios"},
+	"swift_linux":        {Language: "swift", Environment: "linux"},
 	"swift_macos":        {Language: "swift", Environment: "macos"},
 }
 
@@ -247,12 +291,12 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"go_native":          {Source: "flowersec-go/internal/artifactv2/shared_vectors_test.go", Tokens: []string{"DecodeArtifactJSON", "MarshalRequest", "ParseResponse"}},
 			"typescript_browser": {Source: "flowersec-ts/src/v2/artifact.test.ts", Tokens: []string{"decodeArtifactV2JSON", "buildFSB2RequestV2", "decodeFSA2ResponseV2"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/artifact.test.ts", Tokens: []string{"decodeArtifactV2JSON", "buildFSB2RequestV2", "decodeFSA2ResponseV2"}},
+			"rust_native":        {Source: "flowersec-rust/tests/artifact_v2_vectors.rs", Tokens: []string{"Artifact::parse", "artifact_v2_shared_vectors", "artifact_v2_rejects_nested_duplicate_and_unknown_fields"}},
 			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift", Tokens: []string{"parseArtifact", "encodeFSB2", "decodeFSA2"}},
+			"swift_linux":        {Source: "flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift", Tokens: []string{"parseArtifact", "encodeFSB2", "decodeFSA2"}},
 			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift", Tokens: []string{"parseArtifact", "encodeFSB2", "decodeFSA2"}},
 		},
-		Unsupported: map[string]string{
-			"rust_native": "artifact_v2_codec_not_implemented",
-		},
+		Unsupported: map[string]string{},
 	},
 	"capability": {
 		Path: "testdata/transport_v2/capability_vectors.json",
@@ -262,6 +306,7 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"typescript_node":    {Source: "flowersec-ts/src/v2/capability.test.ts", Tokens: []string{"encodeRuntimeCapabilityDescriptorV2", "decodeRuntimeCapabilityDescriptorV2", "runtimeCapabilityDigestHexV2"}},
 			"rust_native":        {Source: "flowersec-rust/src/transport_v2.rs", Tokens: []string{"encode_runtime_capability_descriptor_v2", "decode_runtime_capability_descriptor_v2", "runtime_capability_digest_hex_v2"}},
 			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift", Tokens: []string{"canonicalJSON", "decodeCanonicalJSON", "digestHex"}},
+			"swift_linux":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift", Tokens: []string{"canonicalJSON", "decodeCanonicalJSON", "digestHex"}},
 			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift", Tokens: []string{"canonicalJSON", "decodeCanonicalJSON", "digestHex"}},
 		},
 		Unsupported: map[string]string{},
@@ -274,6 +319,7 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"typescript_node":    {Source: "flowersec-ts/src/v2/protocol.test.ts", Tokens: []string{"deriveEpochZero", "sealRecord", "openRecord"}},
 			"rust_native":        {Source: "flowersec-rust/src/transport_v2_crypto_integration_tests.rs", Tokens: []string{"derive_epoch_zero_v2", "seal_record_v2", "open_record_v2"}},
 			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift", Tokens: []string{"deriveEpochZero", "sealRecord", "openRecord"}},
+			"swift_linux":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift", Tokens: []string{"deriveEpochZero", "sealRecord", "openRecord"}},
 			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift", Tokens: []string{"deriveEpochZero", "sealRecord", "openRecord"}},
 		},
 		Unsupported: map[string]string{},
@@ -288,20 +334,8 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 		},
 		Unsupported: map[string]string{
 			"swift_ios":   "unreliable_message_channel_not_supported",
+			"swift_linux": "unreliable_message_channel_not_supported",
 			"swift_macos": "unreliable_message_channel_not_supported",
-		},
-	},
-	"endpoint_set": {
-		Path: "testdata/transport_v2/endpoint_set_vectors.json",
-		Consumers: map[string]transportV2WireConsumerExpectation{
-			"go_native": {Source: "flowersec-go/internal/endpointsetv2/shared_vectors_test.go", Tokens: []string{"DecodeJSON", "MarshalJSON"}},
-		},
-		Unsupported: map[string]string{
-			"typescript_browser": "endpoint_set_v2_codec_not_implemented",
-			"typescript_node":    "endpoint_set_v2_codec_not_implemented",
-			"rust_native":        "endpoint_set_v2_codec_not_implemented",
-			"swift_ios":          "endpoint_set_v2_codec_not_implemented",
-			"swift_macos":        "endpoint_set_v2_codec_not_implemented",
 		},
 	},
 	"handshake": {
@@ -312,6 +346,7 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"typescript_node":    {Source: "flowersec-ts/src/v2/handshake.test.ts", Tokens: []string{"computeSharedSecretV2", "computeHandshakeH0V2", "deriveSessionPRKV2"}},
 			"rust_native":        {Source: "flowersec-rust/src/session_v2.rs", Tokens: []string{"derive_shared_secret", "canonical_handshake_v2", "hkdf_extract_v2"}},
 			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2HandshakeVectorTests.swift", Tokens: []string{"verifyVectorForTesting", "TransportV2HandshakeVectorInput"}},
+			"swift_linux":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2HandshakeVectorTests.swift", Tokens: []string{"verifyVectorForTesting", "TransportV2HandshakeVectorInput"}},
 			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2HandshakeVectorTests.swift", Tokens: []string{"verifyVectorForTesting", "TransportV2HandshakeVectorInput"}},
 		},
 		Unsupported: map[string]string{},
@@ -324,6 +359,7 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"typescript_node":    {Source: "flowersec-ts/src/v2/artifact.test.ts", Tokens: []string{"canonicalizeCandidatesV2", "idnaFixture"}},
 			"rust_native":        {Source: "flowersec-rust/src/idna_v2_integration_tests.rs", Tokens: []string{"lookup_ascii", "UNICODE_VERSION"}},
 			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/IDNAHostV2Tests.swift", Tokens: []string{"lookupASCII", "unicodeVersion"}},
+			"swift_linux":        {Source: "flowersec-swift/Tests/FlowersecTests/IDNAHostV2Tests.swift", Tokens: []string{"lookupASCII", "unicodeVersion"}},
 			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/IDNAHostV2Tests.swift", Tokens: []string{"lookupASCII", "unicodeVersion"}},
 		},
 		Unsupported: map[string]string{},
@@ -336,6 +372,7 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"typescript_node":    {Source: "flowersec-ts/src/v2/open.test.ts", Tokens: []string{"encodeOpenPayload", "decodeOpenPayload"}},
 			"rust_native":        {Source: "flowersec-rust/src/open_v2_integration_tests.rs", Tokens: []string{"encode_open_payload_v2", "decode_open_payload_v2"}},
 			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift", Tokens: []string{"OpenPayloadV2", "encoded", "decode"}},
+			"swift_linux":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift", Tokens: []string{"OpenPayloadV2", "encoded", "decode"}},
 			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift", Tokens: []string{"OpenPayloadV2", "encoded", "decode"}},
 		},
 		Unsupported: map[string]string{},
@@ -348,6 +385,7 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"typescript_node":    {Source: "flowersec-ts/src/v2/session_wire.test.ts", Tokens: []string{"encodeStreamKeyUpdateACKV2", "decodeStreamKeyUpdateACKV2"}},
 			"rust_native":        {Source: "flowersec-rust/src/session_v2.rs", Tokens: []string{"encode_stream_key_update_ack_v2", "decode_stream_key_update_ack_v2"}},
 			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2SessionTests.swift", Tokens: []string{"StreamKeyUpdateACKPayloadV2", "encoded"}},
+			"swift_linux":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2SessionTests.swift", Tokens: []string{"StreamKeyUpdateACKPayloadV2", "encoded"}},
 			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2SessionTests.swift", Tokens: []string{"StreamKeyUpdateACKPayloadV2", "encoded"}},
 		},
 		Unsupported: map[string]string{},
@@ -360,20 +398,24 @@ var transportV2UnsupportedExpectations = map[string]map[string]string{
 		"raw_quic": "browser_no_raw_udp",
 	},
 	"typescript_node": {
-		"raw_quic":     "no_production_grade_node_quic_runtime",
-		"webtransport": "no_production_grade_node_quic_runtime",
+		"raw_quic": "raw_quic_adapter_not_implemented",
 	},
 	"rust_native": {
-		"websocket":    "transport_v2_websocket_adapter_not_committed",
-		"webtransport": "rust_webtransport_not_committed",
+		"websocket":    "unsupported_websocket_runtime",
+		"webtransport": "unsupported_webtransport_runtime",
 	},
 	"swift_ios": {
-		"raw_quic":     "network_framework_quic_contract_incomplete_on_supported_targets",
-		"webtransport": "network_framework_quic_contract_incomplete_on_supported_targets",
+		"raw_quic":     "raw_quic_adapter_not_implemented",
+		"webtransport": "webtransport_adapter_not_implemented",
+	},
+	"swift_linux": {
+		"raw_quic":     "raw_quic_adapter_not_implemented",
+		"websocket":    "websocket_adapter_not_supported_on_linux",
+		"webtransport": "webtransport_adapter_not_implemented",
 	},
 	"swift_macos": {
-		"raw_quic":     "network_framework_quic_contract_incomplete_on_supported_targets",
-		"webtransport": "network_framework_quic_contract_incomplete_on_supported_targets",
+		"raw_quic":     "raw_quic_adapter_not_implemented",
+		"webtransport": "webtransport_adapter_not_implemented",
 	},
 }
 
@@ -408,45 +450,73 @@ func validateTransportV2Contract(repoRoot string, contract *transportV2Contract)
 	if err := validateTransportV2Runtimes(contract.Runtimes, reasons); err != nil {
 		return err
 	}
-	if err := validateTransportV2CapabilityCodec(repoRoot, contract); err != nil {
+	if err := validateTransportV2Architecture(contract.Lifecycles, contract.Ownership, contract.CarrierContract); err != nil {
 		return err
 	}
-	if err := validateTransportV2EndpointSetCodec(repoRoot, contract.EndpointSetCodec); err != nil {
+	if err := validateTransportV2ControllerContract(repoRoot, contract.ControllerContract); err != nil {
+		return err
+	}
+	if err := validateTransportV2CapabilityCodec(repoRoot, contract); err != nil {
 		return err
 	}
 	if err := validateTransportV2WireFixtures(repoRoot, contract); err != nil {
 		return err
 	}
-	if err := validateTransportV2GoSlice0(contract.GoSlice0); err != nil {
+	if err := validateTransportV2GoDependencies(contract.GoDependencies); err != nil {
 		return err
 	}
-	if err := validateTransportV2RustSlice0(contract.RustSlice0); err != nil {
+	if err := validateTransportV2RustDependencies(contract.RustDependencies); err != nil {
 		return err
 	}
 	return validateTransportV2Docs(repoRoot, contract.Docs)
 }
 
-func validateTransportV2EndpointSetCodec(repoRoot string, codec transportV2EndpointSetCodec) error {
-	if codec.SchemaVersion != 2 || codec.Profile != "flowersec-tunnel-endpoint-set/2" || codec.MaxFreshnessAgeSeconds != 300 ||
-		codec.ListenSessionRole != "accepted_dialing_peer" || codec.ListenCapabilityMapping != "dial_preserve_session_role" ||
-		!slices.Equal(codec.TopLevelFields, []string{"v", "profile", "rendezvous_group_id", "endpoint_instance_id", "listeners", "certificate", "audience", "freshness"}) ||
-		!slices.Equal(codec.ListenerTupleFields, []string{"carrier", "network_mode", "path", "session_role", "url", "advertised_url", "bind_endpoint", "wire_profile"}) ||
-		!slices.Equal(codec.CertificateFields, []string{"ready", "not_after_unix_s", "verified_server_names"}) ||
-		!slices.Equal(codec.AudienceFields, []string{"ready", "listener_audience"}) ||
-		!slices.Equal(codec.FreshnessFields, []string{"issued_at_unix_s", "expires_at_unix_s"}) ||
-		codec.Vectors != "testdata/transport_v2/endpoint_set_vectors.json" {
-		return errors.New("transport endpoint-set codec contract is not the frozen v2 tunnel schema")
+func validateTransportV2Architecture(
+	lifecycles transportV2Lifecycles,
+	ownership transportV2Ownership,
+	carrier transportV2CarrierContract,
+) error {
+	if !slices.Equal(lifecycles.CandidateAdmission, []string{"attempt", "ready", "winner", "admitted", "established", "terminated"}) ||
+		!slices.Equal(lifecycles.Session, []string{"opening", "open", "closing", "closed"}) ||
+		!slices.Equal(lifecycles.ConnectionController, []string{"idle", "connecting", "connected", "waiting", "failed", "closed"}) {
+		return errors.New("transport v2 candidate and session lifecycles do not match the frozen architecture")
 	}
-	var fixture struct {
-		Version int               `json:"version"`
-		Valid   []json.RawMessage `json:"valid"`
-		Invalid []json.RawMessage `json:"invalid"`
+	if !slices.Equal(ownership.DependencyOrder, []string{"application_api", "connection_controller", "artifact_source", "one_shot_connector", "session_engine", "carrier_contract", "runtime_adapter"}) ||
+		ownership.AdmissionCommit != "durable_spend_then_single_credential_write" ||
+		ownership.AdmissionRejectionReason.Server != "registered_deployment_token" ||
+		ownership.AdmissionRejectionReason.SDKClient != "bounded_wire_token_only" ||
+		ownership.AdmissionRejectionReason.PublicError != "redacted_admission_failure" ||
+		!slices.Equal(ownership.RuntimeAdapter, []string{"native_resources", "stream_mapping", "datagram_mapping", "close", "abort"}) ||
+		!slices.Equal(ownership.SessionEngine, []string{"handshake", "rpc", "logical_streams", "rekey", "liveness", "termination"}) ||
+		!slices.Equal(ownership.ConnectionController, []string{"single_scheduler", "single_in_flight_attempt", "artifact_refresh", "retry_disposition", "backoff", "current_session_replacement", "cancellation"}) ||
+		!slices.Equal(ownership.ErrorBoundaries.Runtime, []string{"runtime_unavailable", "native_library", "tls", "http3"}) ||
+		!slices.Equal(ownership.ErrorBoundaries.Carrier, []string{"stream", "datagram", "fin", "reset", "stop_sending", "close", "abort"}) ||
+		!slices.Equal(ownership.ErrorBoundaries.Session, []string{"handshake", "rpc", "liveness", "protocol_state"}) {
+		return errors.New("transport v2 ownership and error boundaries do not match the frozen architecture")
 	}
-	if err := decodeStrictJSONFile(filepath.Join(repoRoot, codec.Vectors), &fixture); err != nil {
-		return fmt.Errorf("parse endpoint-set vectors: %w", err)
+	if !slices.Equal(carrier.Stream, []string{"read", "write", "fin", "reset", "stop_sending"}) ||
+		!slices.Equal(carrier.Datagram, []string{"accepted", "oversize", "expired", "budget", "unavailable"}) ||
+		!slices.Equal(carrier.Termination, []string{"graceful_close", "peer_close", "abort"}) {
+		return errors.New("transport v2 carrier operation contract does not match the frozen architecture")
 	}
-	if fixture.Version != 1 || len(fixture.Valid) == 0 || len(fixture.Invalid) == 0 {
-		return errors.New("endpoint-set vectors must contain valid and invalid cases")
+	return nil
+}
+
+func validateTransportV2ControllerContract(repoRoot string, contract transportV2ControllerContract) error {
+	if contract.Vectors != "testdata/transport_v2/connection_controller_vectors.json" ||
+		!slices.Equal(contract.RetryDispositions, []string{"terminal", "retryable", "retry_after"}) ||
+		contract.ArtifactSource != "refreshable_only" ||
+		contract.ArtifactConsumption != "one_fresh_lease_per_attempt" ||
+		contract.RetryNow != "wake_current_wait_only" ||
+		contract.DefaultAttemptLimit != "unbounded" ||
+		contract.ExplicitAttemptLimit != "consecutive_attempts_until_connected" ||
+		contract.BackoffReset != "after_connected" ||
+		contract.SessionReplacement != "new_session_only" ||
+		contract.RequestReplay != "forbidden" || contract.StreamMigration != "forbidden" || contract.RPCReplay != "forbidden" {
+		return errors.New("connection controller contract does not match the frozen architecture")
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, contract.Vectors)); err != nil {
+		return fmt.Errorf("connection controller vectors: %w", err)
 	}
 	return nil
 }
@@ -543,7 +613,7 @@ func validateTransportV2CapabilityCodec(repoRoot string, contract *transportV2Co
 	codec := contract.CapabilityCodec
 	if codec.SchemaVersion != 2 || codec.DigestLabel != "flowersec-v2-runtime-capability\x00" ||
 		!slices.Equal(codec.DescriptorFields, []string{"language", "runtime", "schemaVersion", "tuples", "unsupported"}) ||
-		!slices.Equal(codec.TupleFields, []string{"carrier", "networkMode", "path", "sessionRole"}) ||
+		!slices.Equal(codec.TupleFields, []string{"carrier", "datagrams", "migration", "networkMode", "path", "reliableStreams", "sessionRole"}) ||
 		!slices.Equal(codec.UnsupportedFields, []string{"carrier", "reason"}) {
 		return errors.New("transport capability codec contract is not the frozen v2 flat schema")
 	}
@@ -583,8 +653,9 @@ func validateTransportV2CapabilityCodec(repoRoot string, contract *transportV2Co
 		wantTuples := make([]capabilityTupleVector, 0, len(runtime.Tuples))
 		for _, tuple := range runtime.Tuples {
 			wantTuples = append(wantTuples, capabilityTupleVector{
-				Carrier: tuple.Carrier, NetworkMode: tuple.NetworkMode,
-				Path: tuple.Path, SessionRole: tuple.SessionRole,
+				Carrier: tuple.Carrier, Datagrams: tuple.Datagrams, Migration: tuple.Migration,
+				NetworkMode: tuple.NetworkMode, Path: tuple.Path,
+				ReliableStreams: tuple.ReliableStreams, SessionRole: tuple.SessionRole,
 			})
 		}
 		wantUnsupported := make([]capabilityUnsupportedVector, 0, len(runtime.Unsupported))
@@ -618,7 +689,7 @@ func validateTransportV2WireFixtures(repoRoot string, contract *transportV2Contr
 		}
 		wireReasons[reason.ID] = struct{}{}
 	}
-	for _, required := range []string{"artifact_v2_codec_not_implemented", "endpoint_set_v2_codec_not_implemented"} {
+	for _, required := range []string{"unreliable_message_channel_not_supported"} {
 		if _, ok := wireReasons[required]; !ok {
 			return fmt.Errorf("transport v2 wire fixture unsupported reason registry must define %s", required)
 		}
@@ -626,7 +697,7 @@ func validateTransportV2WireFixtures(repoRoot string, contract *transportV2Contr
 	if len(contract.WireFixtures) != len(transportV2WireFixtureExpectations) {
 		return fmt.Errorf("transport v2 normative wire fixture count = %d, want %d", len(contract.WireFixtures), len(transportV2WireFixtureExpectations))
 	}
-	runtimeOrder := []string{"go_native", "typescript_browser", "typescript_node", "rust_native", "swift_ios", "swift_macos"}
+	runtimeOrder := []string{"go_native", "typescript_browser", "typescript_node", "rust_native", "swift_ios", "swift_linux", "swift_macos"}
 	fixtureIDs := make([]string, 0, len(contract.WireFixtures))
 	for _, fixture := range contract.WireFixtures {
 		fixtureIDs = append(fixtureIDs, fixture.ID)
@@ -718,13 +789,15 @@ func validateTransportV2Reasons(reasons []transportV2UnsupportedReason) (map[str
 		return nil, err
 	}
 	expected := []string{
+		"adapter_not_composed",
 		"browser_no_raw_udp",
 		"browser_websocket_api_unavailable",
 		"browser_webtransport_api_unavailable",
-		"network_framework_quic_contract_incomplete_on_supported_targets",
-		"no_production_grade_node_quic_runtime",
-		"rust_webtransport_not_committed",
-		"transport_v2_websocket_adapter_not_committed",
+		"raw_quic_adapter_not_implemented",
+		"unsupported_websocket_runtime",
+		"unsupported_webtransport_runtime",
+		"websocket_adapter_not_supported_on_linux",
+		"webtransport_adapter_not_implemented",
 	}
 	slices.Sort(ids)
 	if !slices.Equal(ids, expected) {
@@ -756,7 +829,7 @@ func validateTransportV2Runtimes(runtimes []transportV2Runtime, reasons map[stri
 		return err
 	}
 	slices.Sort(runtimeIDs)
-	wantRuntimeIDs := []string{"go_native", "rust_native", "swift_ios", "swift_macos", "typescript_browser", "typescript_node"}
+	wantRuntimeIDs := []string{"go_native", "rust_native", "swift_ios", "swift_linux", "swift_macos", "typescript_browser", "typescript_node"}
 	if !slices.Equal(runtimeIDs, wantRuntimeIDs) {
 		return fmt.Errorf("transport runtime registry = %#v, want %#v", runtimeIDs, wantRuntimeIDs)
 	}
@@ -771,6 +844,9 @@ func validateTransportV2RuntimeTuples(runtime transportV2Runtime, wantCarriers [
 		}
 		if !validTransportV2Tuple(tuple) {
 			return fmt.Errorf("invalid runtime tuple %s/%s/%s/%s", tuple.Carrier, tuple.NetworkMode, tuple.SessionRole, tuple.Path)
+		}
+		if !validTransportV2TupleFeatures(runtime.ID, tuple) {
+			return fmt.Errorf("runtime %s tuple %s/%s/%s/%s declares invalid stream, DATAGRAM, or migration capability", runtime.ID, tuple.Carrier, tuple.NetworkMode, tuple.SessionRole, tuple.Path)
 		}
 		gotTupleKeys = append(gotTupleKeys, transportV2TupleKey(tuple))
 	}
@@ -801,6 +877,15 @@ func transportV2TupleKey(tuple transportV2RuntimeTuple) string {
 	return tuple.Carrier + "|" + tuple.NetworkMode + "|" + tuple.SessionRole + "|" + tuple.Path
 }
 
+func validTransportV2TupleFeatures(runtimeID string, tuple transportV2RuntimeTuple) bool {
+	if !tuple.ReliableStreams || tuple.Datagrams != (tuple.Carrier != "websocket") {
+		return false
+	}
+	wantMigration := tuple.Carrier == "raw_quic" && tuple.NetworkMode == "dial" &&
+		(runtimeID == "go_native" || runtimeID == "rust_native")
+	return tuple.Migration == wantMigration
+}
+
 func expectedTransportV2TupleKeys(runtimeID string, carriers []string) []string {
 	keys := make([]string, 0, len(carriers)*4)
 	for _, carrier := range carriers {
@@ -809,7 +894,7 @@ func expectedTransportV2TupleKeys(runtimeID string, carriers []string) []string 
 			carrier+"|dial|client|tunnel",
 			carrier+"|dial|server|tunnel",
 		)
-		if runtimeID != "typescript_browser" && runtimeID != "typescript_node" && runtimeID != "swift_ios" && runtimeID != "swift_macos" {
+		if runtimeID == "go_native" || runtimeID == "rust_native" || runtimeID == "typescript_node" && carrier == "webtransport" {
 			keys = append(keys, carrier+"|listen|server|direct")
 		}
 	}
@@ -859,7 +944,7 @@ func validateTransportV2Unsupported(runtime transportV2Runtime, reasons map[stri
 	}
 	want := transportV2UnsupportedExpectations[runtime.ID]
 	if len(unsupported) != len(want) {
-		return fmt.Errorf("runtime %s must classify every carrier with the signed Slice 0 reason", runtime.ID)
+		return fmt.Errorf("runtime %s must classify every carrier with its canonical unsupported reason", runtime.ID)
 	}
 	for carrier, reason := range want {
 		if unsupported[carrier] != reason {
@@ -869,44 +954,44 @@ func validateTransportV2Unsupported(runtime transportV2Runtime, reasons map[stri
 	return nil
 }
 
-func validateTransportV2GoSlice0(slice transportV2GoSlice0) error {
-	if slice.Status != "signed" || slice.Toolchain != "1.26.5" || slice.WebTransportDialer != "quic.DialAddr" {
-		return errors.New("Go Slice 0 must be signed for toolchain 1.26.5 and force the non-early quic.DialAddr WebTransport dialer")
+func validateTransportV2GoDependencies(dependencies transportV2GoDependencies) error {
+	if dependencies.Toolchain != "1.26.5" || dependencies.WebTransportDialer != "quic.DialAddr" {
+		return errors.New("Go native dependencies must use toolchain 1.26.5 and the non-early quic.DialAddr WebTransport dialer")
 	}
 	wantSettings := []string{"EnableDatagrams=true", "EnableStreamResetPartialDelivery=true"}
-	if !slices.Equal(slice.WebTransportRequiredQUICSettings, wantSettings) {
-		return fmt.Errorf("Go Slice 0 WebTransport QUIC settings = %#v, want %#v", slice.WebTransportRequiredQUICSettings, wantSettings)
+	if !slices.Equal(dependencies.WebTransportRequiredQUICSettings, wantSettings) {
+		return fmt.Errorf("Go native WebTransport QUIC settings = %#v, want %#v", dependencies.WebTransportRequiredQUICSettings, wantSettings)
 	}
-	if len(slice.Dependencies) != 2 {
-		return errors.New("Go Slice 0 must pin exactly two QUIC dependencies")
+	if len(dependencies.Dependencies) != 2 {
+		return errors.New("Go native runtime must pin exactly two QUIC dependencies")
 	}
 	want := map[string]string{
 		"github.com/quic-go/quic-go":         "v0.60.0",
 		"github.com/quic-go/webtransport-go": "v0.11.1",
 	}
-	seen := make([]string, 0, len(slice.Dependencies))
-	for _, dependency := range slice.Dependencies {
+	seen := make([]string, 0, len(dependencies.Dependencies))
+	for _, dependency := range dependencies.Dependencies {
 		version, ok := want[dependency.Module]
 		if !ok || dependency.Version != version {
-			return fmt.Errorf("Go Slice 0 dependency %s must pin %s", dependency.Module, version)
+			return fmt.Errorf("Go native dependency %s must pin %s", dependency.Module, version)
 		}
 		if dependency.GoModuleMinimum != "1.25.0" || dependency.License != "MIT" {
-			return fmt.Errorf("Go Slice 0 dependency %s metadata is invalid", dependency.Module)
+			return fmt.Errorf("Go native dependency %s metadata is invalid", dependency.Module)
 		}
 		seen = append(seen, dependency.Module)
 	}
-	return requireUnique("Go Slice 0 dependency modules", seen)
+	return requireUnique("Go native dependency modules", seen)
 }
 
-func validateTransportV2RustSlice0(slice transportV2RustSlice0) error {
-	if slice.Status != "signed" || slice.QuinnVersion != "=0.11.11" {
-		return errors.New("Rust Slice 0 must be signed and pin quinn =0.11.11")
+func validateTransportV2RustDependencies(dependencies transportV2RustDependencies) error {
+	if dependencies.QuinnVersion != "=0.11.11" {
+		return errors.New("Rust native runtime must pin quinn =0.11.11")
 	}
-	if slice.QuinnDefaultFeatures != "disabled" || !slices.Equal(slice.QuinnFeatures, []string{"runtime-tokio", "rustls-ring"}) {
-		return errors.New("Rust Slice 0 quinn must disable default features and enable only runtime-tokio and rustls-ring")
+	if dependencies.QuinnDefaultFeatures != "disabled" || !slices.Equal(dependencies.QuinnFeatures, []string{"runtime-tokio", "rustls-ring"}) {
+		return errors.New("Rust native quinn must disable default features and enable only runtime-tokio and rustls-ring")
 	}
-	if slice.RCGen != "forbidden" {
-		return errors.New("Rust Slice 0 must keep rcgen forbidden and require caller-provided production certificates")
+	if dependencies.RCGen != "forbidden" {
+		return errors.New("Rust native runtime must keep rcgen forbidden and require caller-provided production certificates")
 	}
 	return nil
 }

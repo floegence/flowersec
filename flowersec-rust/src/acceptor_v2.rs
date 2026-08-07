@@ -8,13 +8,17 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use sha2::{Digest, Sha256};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    artifact_v2::Artifact,
+    admission_v2::{CandidateAttemptV2, ServerAdmissionV2},
+    artifact_v2::{Artifact, ConnectionPlanError, ConnectionPlanV2, EncodedFsb2},
+    connector_v2::session_config,
     raw_quic_v2::{RawQuicLimits, RawQuicListener, RawQuicPathProfile, RawQuicServerConfig},
-    transport_v2::SessionV2,
+    session_v2::establish_session_v2,
+    transport_v2::{CarrierKind, CarrierSessionV2, PathKind, SessionRole, SessionV2},
 };
 
 /// Runtime-owned bind, TLS, and resource policy for direct session acceptance.
@@ -43,6 +47,7 @@ impl std::fmt::Debug for AcceptorOptions {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AcceptErrorCode {
     InvalidInput,
+    RuntimeUnsupported,
     Expired,
     AlreadyRegistered,
     Busy,
@@ -58,6 +63,7 @@ impl AcceptErrorCode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::InvalidInput => "invalid_input",
+            Self::RuntimeUnsupported => "runtime_unsupported",
             Self::Expired => "expired_artifact",
             Self::AlreadyRegistered => "already_registered",
             Self::Busy => "busy",
@@ -136,10 +142,8 @@ impl Acceptor {
         artifact: &Artifact,
         cancellation: CancellationToken,
     ) -> Result<std::sync::Arc<dyn SessionV2>, AcceptError> {
-        let plan = artifact
-            .raw_quic_accept_plan()
-            .map_err(|_| error(AcceptErrorCode::InvalidInput))?;
-        if plan.session_config.max_inbound_streams != self.max_inbound_streams {
+        let plan = accept_plan(artifact)?;
+        if plan.connection.session.max_inbound_streams != self.max_inbound_streams {
             return Err(error(AcceptErrorCode::InvalidInput));
         }
         let now = SystemTime::now()
@@ -196,7 +200,7 @@ impl Acceptor {
 
     async fn accept_registered(
         &self,
-        plan: crate::artifact_v2::RawQuicAcceptPlan,
+        plan: AcceptPlanV2,
         cancellation: CancellationToken,
         deadline: tokio::time::Instant,
     ) -> Result<std::sync::Arc<dyn SessionV2>, AcceptError> {
@@ -210,25 +214,41 @@ impl Acceptor {
                 },
             };
             let cancel_raw = raw.clone();
-            let established = tokio::select! {
+            let admitted = tokio::select! {
                 _ = cancellation.cancelled() => {
                     cancel_raw.close();
                     return Err(error(AcceptErrorCode::Canceled));
                 }
                 result = tokio::time::timeout_at(
                     deadline,
-                    raw.accept_admission_and_establish_v2(
+                    ServerAdmissionV2::new(
+                        CandidateAttemptV2::attempt()
+                            .ready(std::sync::Arc::new(raw) as std::sync::Arc<dyn CarrierSessionV2>)
+                            .select_winner(),
                         &plan.expected_fsb2,
-                        plan.session_config.clone(),
-                        plan.session_contract.clone(),
-                    ),
+                        plan.connection.session.max_inbound_streams,
+                    ).commit(),
                 ) => match result {
                     Err(_) => return Err(error(AcceptErrorCode::Timeout)),
                     Ok(Err(_)) => return Err(error(AcceptErrorCode::HandshakeFailed)),
                     Ok(Ok(value)) => value,
                 },
             };
-            if let Some(session) = established {
+            if let Some(admitted) = admitted {
+                let mut config = session_config(&plan.connection, admitted.binding(), None);
+                config.peer_admission_binding = Some(admitted.binding());
+                let session = tokio::select! {
+                    _ = cancellation.cancelled() => return Err(error(AcceptErrorCode::Canceled)),
+                    result = tokio::time::timeout_at(
+                        deadline,
+                        establish_session_v2(admitted.carrier(), config),
+                    ) => match result {
+                        Err(_) => return Err(error(AcceptErrorCode::Timeout)),
+                        Ok(Err(_)) => return Err(error(AcceptErrorCode::HandshakeFailed)),
+                        Ok(Ok(session)) => session,
+                    },
+                };
+                admitted.mark_established();
                 return Ok(session);
             }
         }
@@ -245,6 +265,52 @@ const fn error(code: AcceptErrorCode) -> AcceptError {
     AcceptError { code }
 }
 
+struct AcceptPlanV2 {
+    connection: ConnectionPlanV2,
+    expected_fsb2: Vec<EncodedFsb2>,
+    registration_id: [u8; 32],
+    expires_at_unix_seconds: i64,
+}
+
+fn accept_plan(artifact: &Artifact) -> Result<AcceptPlanV2, AcceptError> {
+    let mut connection = artifact
+        .connection_plan()
+        .map_err(|ConnectionPlanError::Invalid| error(AcceptErrorCode::InvalidInput))?;
+    if connection.path != PathKind::Direct {
+        return Err(error(AcceptErrorCode::InvalidInput));
+    }
+    let expected_fsb2 = connection
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.carrier == CarrierKind::RawQuic)
+        .map(|candidate| {
+            artifact
+                .encode_fsb2(&candidate.id)
+                .map_err(|_| error(AcceptErrorCode::InvalidInput))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if expected_fsb2.is_empty() {
+        return Err(error(AcceptErrorCode::RuntimeUnsupported));
+    }
+    connection.role = SessionRole::Server;
+    let registration_id = hash_acceptor_admissions(&expected_fsb2);
+    Ok(AcceptPlanV2 {
+        expires_at_unix_seconds: connection.expires_at_unix_seconds,
+        connection,
+        expected_fsb2,
+        registration_id,
+    })
+}
+
+fn hash_acceptor_admissions(admissions: &[EncodedFsb2]) -> [u8; 32] {
+    let mut preimage = b"flowersec-v2-acceptor-admissions\0".to_vec();
+    for admission in admissions {
+        preimage.extend_from_slice(&(admission.raw.len() as u32).to_be_bytes());
+        preimage.extend_from_slice(&admission.raw);
+    }
+    Sha256::digest(preimage).into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,6 +318,10 @@ mod tests {
     #[test]
     fn public_accept_error_uses_canonical_code_strings() {
         assert_eq!(AcceptErrorCode::InvalidInput.as_str(), "invalid_input");
+        assert_eq!(
+            AcceptErrorCode::RuntimeUnsupported.as_str(),
+            "runtime_unsupported"
+        );
         assert_eq!(AcceptErrorCode::Expired.as_str(), "expired_artifact");
         assert_eq!(
             AcceptErrorCode::AlreadyRegistered.as_str(),

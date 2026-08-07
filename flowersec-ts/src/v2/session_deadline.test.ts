@@ -10,6 +10,7 @@ import {
   type SessionDeadlineFactoryV2,
   type SessionDeadlinePhaseV2,
 } from "./session.js";
+import { nodeSessionRuntimeV2 } from "../node/sessionRuntime.js";
 
 function config(role: "client" | "server", factory?: SessionDeadlineFactoryV2): SessionConfigV2 {
   return {
@@ -24,6 +25,7 @@ function config(role: "client" | "server", factory?: SessionDeadlineFactoryV2): 
     peerAdmissionBinding: new Uint8Array(32).fill(0x73),
     localEndpointInstanceID: "",
     expectedPeerEndpointInstanceID: "",
+    runtime: nodeSessionRuntimeV2,
     ...(factory === undefined ? {} : {
       deadlines: {
         establishTimeoutMs: 30_000,
@@ -141,6 +143,10 @@ class DelayedApplicationAcceptCarrier implements CarrierSessionV2 {
 
   async close(error?: Readonly<{ code: number; reason: string }>): Promise<void> {
     await this.inner.close(error);
+  }
+
+  async waitTermination(): Promise<void> {
+    await this.inner.waitTermination();
   }
 
   abort(error?: Readonly<{ code: number; reason: string }>): void {

@@ -49,13 +49,13 @@ Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow 
 
 ## Try It Locally
 
-Run the v2 unit suites:
+Run the default acceptance suite:
 
 ```bash
-make transport-v2-unit
+make test
 ```
 
-For carrier-specific evidence, run `make transport-conformance-smoke`, `make transport-browser-smoke`, and `make transport-interop-smoke`.
+Use `make diagnostic` for explicit protocol, browser, weak-network, and interoperability diagnostics, and `make performance` for capacity and soak workloads.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
@@ -78,19 +78,19 @@ The [cookbook index](examples/README.md) contains only v2 examples and verificat
 
 ## Portable Contract
 
-Flowersec keeps three compatibility layers explicit. The portable core is the shared artifact, lease, connector, session, RPC, stream, and error-classification model available in every SDK. Each SDK profile records runtime-owned carrier support, listener support, or platform constraints. A language convenience is syntax or orchestration that fits one language ecosystem without becoming a required cross-language capability. The stable cross-language recovery decision is the classifier output, not byte-for-byte matching raw error codes.
+Flowersec keeps three contract layers explicit. The portable core is the shared artifact, lease, one-shot connector, session, RPC, stream, and optional single-owner connection controller available in every SDK. Each SDK profile records runtime-owned carrier support, listener support, or platform constraints. A language convenience is syntax or orchestration that fits one language ecosystem without becoming a required cross-language capability. The stable cross-language recovery contract is the controller's structured disposition, not byte-for-byte matching raw error codes.
 
 | Capability | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
 | Opaque artifact, connector, session, RPC, and byte streams | Yes | Yes | Yes | Yes |
-| Public error recovery classification | Yes | Yes | Yes | Yes |
+| Single-owner connection controller | Yes | Yes | Yes | Yes |
 | Negotiated unreliable message channel | Yes | Yes | No | Yes |
 | RPC notification subscription | No | Yes | No | No |
 | Inbound RPC request handlers | Yes | No | No | No |
 | Production WebSocket dialing | Yes | Browser and Node.js | macOS and iOS | No |
 | Production raw QUIC dialing | Yes | No | No | Yes |
-| Production WebTransport dialing | Yes | Browser | No | No |
-| Listener support | Go library APIs | Browser runtime constraints | Not advertised | Runtime-owned raw QUIC |
+| Production WebTransport dialing | Yes | Browser and Node.js | No | No |
+| Listener support | Go library APIs | Node.js WebTransport server | Not advertised | Runtime-owned raw QUIC |
 
 Each support row is backed by production connector code and end-to-end tests. Unsupported carriers fail closed; they are never silent fallbacks. Capability descriptors and carrier selection remain internal.
 
@@ -102,7 +102,7 @@ Each support row is backed by production connector code and end-to-end tests. Un
 - Artifacts are opaque, bounded, single-use handles. Durable spend completes before the first credential byte is sent.
 - QUIC-family carriers require TLS 1.3, exact ALPN, explicit trust roots, and disabled early data.
 - Public errors are redacted and bounded; candidate, wire, key, and ledger details remain internal.
-- Public error classifiers distinguish retrying the current session from acquiring a fresh artifact without authorizing credential reuse.
+- Structured controller dispositions authorize only a fresh-artifact attempt; they never reuse credentials or replay work from a terminated session.
 - Session cancellation, deadlines, FIN, reset, liveness, rekey, and cleanup have bounded behavior.
 
 See the [Transport v2 architecture](docs/TRANSPORT_V2_ARCHITECTURE.md) and [threat model](docs/THREAT_MODEL.md).
@@ -112,7 +112,7 @@ See the [Transport v2 architecture](docs/TRANSPORT_V2_ARCHITECTURE.md) and [thre
 
 ## Deploy and Develop
 
-The Flowersec runtime owns the production listener implementations for WebSocket, raw QUIC, and WebTransport. Application SDKs receive only opaque artifacts and sessions; no removed compatibility CLI is part of the v2 contract.
+The Flowersec runtime owns the production listener implementations for WebSocket, raw QUIC, and WebTransport. Application SDKs receive only opaque artifacts and sessions; runtime CLI tools compose the same connector and acceptor implementations.
 
 Install repository hooks and run the authoritative gate before integration:
 

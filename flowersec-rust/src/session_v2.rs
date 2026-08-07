@@ -1,11 +1,11 @@
-//! Production Flowersec v2 session actor shared by WSS/Yamux and native QUIC.
+//! Carrier-neutral Flowersec v2 handshake and session engine.
 
 use std::{
     collections::{HashMap, VecDeque},
     io,
     sync::{
         Arc, Mutex as StdMutex, OnceLock, Weak,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -476,7 +476,7 @@ pub struct EncryptedSessionV2 {
     next_ping: AtomicU64,
     activity_generation: AtomicU64,
     activity_changed: Notify,
-    closed: AtomicBool,
+    lifecycle: AtomicU8,
     canceled: CancellationToken,
     terminal: StdMutex<Option<TerminalCauseV2>>,
     rpc: SessionRpcPeerV2,
@@ -487,6 +487,49 @@ pub struct EncryptedSessionV2 {
     unreliable_receive_lock: Mutex<()>,
     unreliable_replay: StdMutex<HashMap<u32, ReplayWindowV2>>,
     self_weak: OnceLock<Weak<SelfSession>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+enum SessionLifecycleV2 {
+    Opening = 0,
+    Open = 1,
+    Closing = 2,
+    Closed = 3,
+}
+
+impl EncryptedSessionV2 {
+    fn lifecycle(&self) -> SessionLifecycleV2 {
+        match self.lifecycle.load(Ordering::Acquire) {
+            0 => SessionLifecycleV2::Opening,
+            1 => SessionLifecycleV2::Open,
+            2 => SessionLifecycleV2::Closing,
+            _ => SessionLifecycleV2::Closed,
+        }
+    }
+
+    fn is_closed(&self) -> bool {
+        matches!(
+            self.lifecycle(),
+            SessionLifecycleV2::Closing | SessionLifecycleV2::Closed
+        )
+    }
+
+    fn begin_closing(&self) -> bool {
+        self.lifecycle
+            .compare_exchange(
+                SessionLifecycleV2::Open as u8,
+                SessionLifecycleV2::Closing as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    fn finish_closed(&self) {
+        self.lifecycle
+            .store(SessionLifecycleV2::Closed as u8, Ordering::Release);
+    }
 }
 
 impl std::fmt::Debug for EncryptedSessionV2 {
@@ -614,7 +657,7 @@ async fn establish_session_v2_inner(
         next_ping: AtomicU64::new(1),
         activity_generation: AtomicU64::new(0),
         activity_changed: Notify::new(),
-        closed: AtomicBool::new(false),
+        lifecycle: AtomicU8::new(SessionLifecycleV2::Opening as u8),
         canceled: CancellationToken::new(),
         terminal: StdMutex::new(None),
         rpc: SessionRpcPeerV2 {
@@ -648,6 +691,9 @@ async fn establish_session_v2_inner(
         .session
         .set(Arc::downgrade(&session))
         .expect("unreliable message session reference is initialized once");
+    session
+        .lifecycle
+        .store(SessionLifecycleV2::Open as u8, Ordering::Release);
     let accept_session = session.clone();
     tokio::spawn(async move { accept_carrier_loop_v2(accept_session).await });
     let control_session = session.clone();
@@ -900,7 +946,7 @@ async fn send_unreliable_message_v2(
     if expires_at_unix_ms <= unix_millis(SystemTime::now())? {
         return Ok(UnreliableSendOutcome::DroppedExpired);
     }
-    if session.closed.load(Ordering::Acquire) {
+    if session.is_closed() {
         return Err(UnreliableMessageError::Closed);
     }
     let Ok(_send_permit) = session.unreliable_send_budget.try_acquire() else {
@@ -1614,7 +1660,7 @@ async fn control_loop_v2(session: Arc<SelfSession>) {
 }
 
 async fn probe_v2(session: &EncryptedSessionV2) -> io::Result<Duration> {
-    if session.closed.load(Ordering::Acquire) {
+    if session.is_closed() {
         return Err(closed());
     }
     let nonce = session.next_ping.fetch_add(1, Ordering::Relaxed);
@@ -1703,7 +1749,7 @@ impl Drop for RekeyActivityGuardV2 {
 async fn prepare_rekey_v2(session: &Arc<SelfSession>) -> io::Result<PreparedRekeyV2> {
     let rekey_lock = session.rekey_lock.clone().lock_owned().await;
     let open_lock = session.open_lock.clone().lock_owned().await;
-    if session.closed.load(Ordering::Acquire) {
+    if session.is_closed() {
         return Err(terminal_error_v2(session));
     }
     let activity = RekeyActivityGuardV2::new(session.clone());
@@ -2076,7 +2122,7 @@ async fn send_goaway_v2(session: &EncryptedSessionV2, reason: u16) -> io::Result
 }
 
 async fn close_session_v2(session: &EncryptedSessionV2) -> io::Result<()> {
-    if !session.closed.swap(true, Ordering::AcqRel) {
+    if session.begin_closing() {
         record_terminal_v2(session, &closed());
         session.canceled.cancel();
         let deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
@@ -2105,6 +2151,7 @@ async fn close_session_v2(session: &EncryptedSessionV2) -> io::Result<()> {
                 "Flowersec v2 carrier close timeout",
             )),
         };
+        session.finish_closed();
         flush?;
         carrier?;
     }
@@ -2145,7 +2192,7 @@ async fn idle_watchdog_v2(session: Arc<SelfSession>) {
                     observed = session.activity_generation.load(Ordering::Acquire);
                     continue;
                 }
-                if !session.closed.swap(true, Ordering::AcqRel) {
+                if session.begin_closing() {
                     record_terminal_v2(
                         &session,
                         &io::Error::new(
@@ -2164,6 +2211,7 @@ async fn idle_watchdog_v2(session: Arc<SelfSession>) {
                         session.carrier.close(),
                     )
                     .await;
+                    session.finish_closed();
                 }
                 return;
             }
@@ -2172,14 +2220,11 @@ async fn idle_watchdog_v2(session: Arc<SelfSession>) {
 }
 
 fn fail_session_v2(session: &EncryptedSessionV2, error: io::Error) {
-    if !session.closed.swap(true, Ordering::AcqRel) {
+    if session.begin_closing() {
         record_terminal_v2(session, &error);
         session.canceled.cancel();
-        let carrier = session.carrier.clone();
-        let close_timeout = session.config.deadlines.close_flush;
-        tokio::spawn(async move {
-            let _ = tokio::time::timeout(close_timeout, carrier.close()).await;
-        });
+        session.carrier.abort();
+        session.finish_closed();
     }
 }
 
@@ -2255,7 +2300,7 @@ async fn commit_outbound_abandonment_v2(
     payload[..8].copy_from_slice(&id.to_be_bytes());
     payload[8..].copy_from_slice(&6_u16.to_be_bytes());
     if let Err(error) = send_control_v2(&session, InnerRecordTypeV2::StreamReset, &payload).await {
-        if !session.closed.load(Ordering::Acquire) {
+        if !session.is_closed() {
             fail_session_v2(&session, error);
         }
         return;
@@ -2316,7 +2361,7 @@ async fn open_stream_with_capacity_v2(
     metadata: JsonObjectV2,
     counts_toward_data_limit: bool,
 ) -> io::Result<Box<dyn ByteStreamV2>> {
-    if session.closed.load(Ordering::Acquire) {
+    if session.is_closed() {
         return Err(closed());
     }
     let permit = if counts_toward_data_limit {
@@ -2344,7 +2389,7 @@ async fn open_stream_with_capacity_v2(
             () = &mut changed => {}
         }
     }
-    if session.closed.load(Ordering::Acquire) {
+    if session.is_closed() {
         return Err(terminal_error_v2(session));
     }
     if session.received_goaway.load(Ordering::Acquire) {
@@ -2995,7 +3040,7 @@ async fn accept_carrier_loop_v2(session: Arc<SelfSession>) {
                     let session = session.clone();
                     tokio::spawn(async move {
                         if let Err(error) = accept_one_stream_v2(session.clone(), carrier).await {
-                            if !session.closed.load(Ordering::Acquire) { fail_session_v2(&session, error); }
+                            if !session.is_closed() { fail_session_v2(&session, error); }
                         }
                     });
                 }
@@ -3658,6 +3703,9 @@ impl CarrierSessionV2 for MemoryCarrierSessionV2 {
         self.canceled.cancel();
         Ok(())
     }
+    fn abort(&self) {
+        self.canceled.cancel();
+    }
 }
 
 #[cfg(test)]
@@ -3665,6 +3713,7 @@ struct MemoryCarrierStreamV2 {
     read: Mutex<ReadHalf<tokio::io::DuplexStream>>,
     write: Mutex<WriteHalf<tokio::io::DuplexStream>>,
     canceled: CancellationToken,
+    read_stopped: CancellationToken,
     finished: AtomicBool,
 }
 
@@ -3676,6 +3725,7 @@ impl MemoryCarrierStreamV2 {
             read: Mutex::new(read),
             write: Mutex::new(write),
             canceled: CancellationToken::new(),
+            read_stopped: CancellationToken::new(),
             finished: AtomicBool::new(false),
         }
     }
@@ -3695,6 +3745,7 @@ impl CarrierStreamV2 for MemoryCarrierStreamV2 {
         let mut read = self.read.lock().await;
         tokio::select! {
             _ = self.canceled.cancelled() => Err(closed()),
+            _ = self.read_stopped.cancelled() => Err(closed()),
             value = read.read(payload) => value,
         }
     }
@@ -3715,6 +3766,10 @@ impl CarrierStreamV2 for MemoryCarrierStreamV2 {
         if !self.finished.swap(true, Ordering::AcqRel) {
             self.write.lock().await.shutdown().await?;
         }
+        Ok(())
+    }
+    async fn stop_sending(&self) -> io::Result<()> {
+        self.read_stopped.cancel();
         Ok(())
     }
     async fn reset(&self) -> io::Result<()> {

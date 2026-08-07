@@ -46,12 +46,4 @@ internal enum FlowersecSDKDefaults {
     internal static let maxTimeoutMilliseconds = 300_000
     internal static let maxConcurrentStreams = 64
   }
-
-  internal enum Reconnect {
-    internal static let maxAttempts = 5
-    internal static let initialDelayMilliseconds = 500
-    internal static let maxDelayMilliseconds = 10_000
-    internal static let factor = 1.8
-    internal static let jitterRatio = 0.2
-  }
 }

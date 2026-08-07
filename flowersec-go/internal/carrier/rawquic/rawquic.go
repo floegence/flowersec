@@ -8,108 +8,42 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"sync"
 	"syscall"
-	"time"
 	"unicode/utf8"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	carrierlife "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/internal/lifecycle"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
 	quic "github.com/quic-go/quic-go"
-	"github.com/quic-go/quic-go/qlog"
-	"github.com/quic-go/quic-go/qlogwriter"
 )
-
-const MinimumInitialPacketSize uint16 = 1200
 
 const (
 	ALPNDirect = "flowersec-direct/2"
 	ALPNTunnel = "flowersec-tunnel/2"
 
-	streamResetCode            quic.StreamErrorCode      = 0xf502
-	closeCode                  quic.ApplicationErrorCode = 0xf500
-	maxQUICApplicationCode                               = 1<<62 - 1
-	connectionIDLength                                   = 8
-	maxStreamReceiveWindow                               = 6 << 20
-	maxConnectionReceiveWindow                           = 16 << 20
+	streamResetCode        quic.StreamErrorCode      = 0xf502
+	closeCode              quic.ApplicationErrorCode = 0xf500
+	maxQUICApplicationCode                           = 1<<62 - 1
+	connectionIDLength                               = 8
 )
 
 var (
-	ErrInvalidLimits           = errors.New("invalid raw QUIC limits")
 	ErrInvalidALPN             = errors.New("invalid raw QUIC ALPN")
 	ErrInvalidTLS              = errors.New("invalid raw QUIC TLS configuration")
 	ErrInvalidApplicationError = errors.New("invalid raw QUIC application error")
 	ErrEarlyData               = errors.New("raw QUIC application early data is forbidden")
 )
 
-// Limits bounds QUIC stream counts, buffering, and handshake liveness. Every
-// field is required; callers can start from DefaultLimits and tune explicitly.
-type Limits struct {
-	MaxInboundStreams              int64
-	InitialStreamReceiveWindow     uint64
-	MaxStreamReceiveWindow         uint64
-	InitialConnectionReceiveWindow uint64
-	MaxConnectionReceiveWindow     uint64
-	HandshakeIdleTimeout           time.Duration
-	MaxIdleTimeout                 time.Duration
-	KeepAlivePeriod                time.Duration
-}
-
-func DefaultLimits() Limits {
-	return Limits{
-		MaxInboundStreams:              carrier.MaxLogicalIncomingStreams + carrier.ReservedSessionStreams,
-		InitialStreamReceiveWindow:     512 << 10,
-		MaxStreamReceiveWindow:         6 << 20,
-		InitialConnectionReceiveWindow: 1 << 20,
-		MaxConnectionReceiveWindow:     16 << 20,
-		HandshakeIdleTimeout:           30 * time.Second,
-		MaxIdleTimeout:                 60 * time.Second,
-		KeepAlivePeriod:                20 * time.Second,
-	}
-}
-
-// BindSessionLimits reserves one native stream for control, one for RPC, and
-// exactly maxLogical native streams for application data.
-func BindSessionLimits(limits Limits, maxLogical uint16) (Limits, error) {
-	physical, err := carrier.RequiredIncomingStreams(maxLogical)
-	if err != nil {
-		return Limits{}, err
-	}
-	limits.MaxInboundStreams = int64(physical)
-	if err := limits.Validate(); err != nil {
-		return Limits{}, err
-	}
-	return limits, nil
-}
-
-// Validate rejects limits that exceed Flowersec's bounded resource policy.
-func (limits Limits) Validate() error {
-	if limits.MaxInboundStreams < 1 || limits.MaxInboundStreams > 130 ||
-		limits.InitialStreamReceiveWindow == 0 ||
-		limits.InitialStreamReceiveWindow > maxStreamReceiveWindow ||
-		limits.MaxStreamReceiveWindow > maxStreamReceiveWindow ||
-		limits.InitialStreamReceiveWindow > limits.MaxStreamReceiveWindow ||
-		limits.InitialConnectionReceiveWindow == 0 ||
-		limits.InitialConnectionReceiveWindow > maxConnectionReceiveWindow ||
-		limits.MaxConnectionReceiveWindow > maxConnectionReceiveWindow ||
-		limits.InitialConnectionReceiveWindow > limits.MaxConnectionReceiveWindow ||
-		limits.HandshakeIdleTimeout <= 0 || limits.MaxIdleTimeout <= 0 ||
-		limits.KeepAlivePeriod < 0 || limits.KeepAlivePeriod >= limits.MaxIdleTimeout {
-		return ErrInvalidLimits
-	}
-	return nil
-}
-
 // newConfig builds the non-early QUIC policy shared by clients and servers.
 // Unidirectional application streams stay disabled; unreliable messages use
 // native RFC 9221 DATAGRAM frames when the Flowersec handshake selects them.
-func newConfig(limits Limits) (*quic.Config, error) {
+func newConfig(limits quicbase.Limits) (*quic.Config, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
 	return &quic.Config{
-		InitialPacketSize:                MinimumInitialPacketSize,
+		InitialPacketSize:                quicbase.MinimumInitialPacketSize,
 		HandshakeIdleTimeout:             limits.HandshakeIdleTimeout,
 		MaxIdleTimeout:                   limits.MaxIdleTimeout,
 		InitialStreamReceiveWindow:       limits.InitialStreamReceiveWindow,
@@ -122,15 +56,7 @@ func newConfig(limits Limits) (*quic.Config, error) {
 		Allow0RTT:                        false,
 		EnableDatagrams:                  true,
 		EnableStreamResetPartialDelivery: true,
-		Tracer:                           releaseEvidenceTracer,
 	}, nil
-}
-
-func releaseEvidenceTracer(ctx context.Context, isClient bool, connID quic.ConnectionID) qlogwriter.Trace {
-	if os.Getenv("FLOWERSEC_TRANSPORT_RELEASE_EVIDENCE") != "1" {
-		return nil
-	}
-	return qlog.DefaultConnectionTracer(ctx, isClient, connID)
 }
 
 type tunablePacketConn interface {
@@ -155,7 +81,7 @@ func stabilizePacketConn(packetConn net.PacketConn) net.PacketConn {
 	return packetConn
 }
 
-func Dial(ctx context.Context, address string, tlsConfig *tls.Config, limits Limits) (*Session, error) {
+func Dial(ctx context.Context, address string, tlsConfig *tls.Config, limits quicbase.Limits) (*Session, error) {
 	preparedTLS, err := prepareTLS(tlsConfig, false)
 	if err != nil {
 		return nil, err
@@ -222,7 +148,7 @@ type Listener struct {
 	closeErr   error
 }
 
-func Listen(address string, tlsConfig *tls.Config, limits Limits) (*Listener, error) {
+func Listen(address string, tlsConfig *tls.Config, limits quicbase.Limits) (*Listener, error) {
 	preparedTLS, err := prepareTLS(tlsConfig, true)
 	if err != nil {
 		return nil, err
@@ -314,20 +240,17 @@ func newSession(conn *quic.Conn, transport *quic.Transport, packetConn net.Packe
 	return &Session{conn: conn, transport: transport, packetConn: packetConn, path: path, capacity: capacity}, nil
 }
 
-func (*Session) Kind() carrier.Kind                 { return carrier.KindQUIC }
-func (session *Session) Path() carrier.Path         { return session.path }
-func (session *Session) MaxIncomingStreams() uint16 { return session.capacity }
+func (*Session) Kind() carrier.Kind                   { return carrier.KindRawQUIC }
+func (session *Session) Path() carrier.Path           { return session.path }
+func (session *Session) MaxIncomingStreams() uint16   { return session.capacity }
+func (session *Session) Termination() <-chan struct{} { return session.conn.Context().Done() }
 
-// LocalAddr and RemoteAddr are internal release-evidence observations of the
+// LocalAddr and RemoteAddr are internal transport observations of the
 // active QUIC path. They are intentionally absent from carrier.Session.
 func (session *Session) LocalAddr() net.Addr  { return session.conn.LocalAddr() }
 func (session *Session) RemoteAddr() net.Addr { return session.conn.RemoteAddr() }
 
 func (*Session) UnreliableAvailable() bool { return true }
-
-func (session *Session) ProbeEstablishment() error {
-	return session.SendUnreliable([]byte{0})
-}
 
 func (session *Session) SendUnreliable(payload []byte) error {
 	if len(payload) == 0 || len(payload) > carrier.MaxUnreliableWireBytes {
@@ -370,8 +293,30 @@ func (session *Session) AcceptStream(ctx context.Context) (carrier.Stream, error
 	return &Stream{stream: stream, lifecycle: carrierlife.NewStream(session.conn.Context())}, nil
 }
 
+// OpenAdmissionStream creates the client-owned native stream for the FSB2/FSA2
+// exchange. Admission framing remains transport-neutral in admissionv2.
+func OpenAdmissionStream(ctx context.Context, session *Session) (carrier.Stream, error) {
+	if session == nil {
+		return nil, net.ErrClosed
+	}
+	return session.OpenStream(ctx)
+}
+
+// AcceptAdmissionStream accepts the client-owned native stream for the
+// FSB2/FSA2 exchange.
+func AcceptAdmissionStream(ctx context.Context, session *Session) (carrier.Stream, error) {
+	if session == nil {
+		return nil, net.ErrClosed
+	}
+	return session.AcceptStream(ctx)
+}
+
 func (session *Session) CloseWithError(applicationError carrier.ApplicationError) error {
 	return session.CloseWithErrorContext(context.Background(), applicationError)
+}
+
+func (session *Session) Abort(applicationError carrier.ApplicationError) error {
+	return session.CloseWithError(applicationError)
 }
 
 func (session *Session) CloseWithErrorContext(ctx context.Context, applicationError carrier.ApplicationError) error {
@@ -475,11 +420,14 @@ type Stream struct {
 	lifecycle      *carrierlife.Stream
 	closeWriteOnce sync.Once
 	closeWriteErr  error
+	stopOnce       sync.Once
+	stopErr        error
 	resetOnce      sync.Once
+	resetErr       error
 }
 
 // NativeStreamID exposes the QUIC bidirectional stream identity to internal
-// release evidence collectors. It is not part of the carrier or public SDK
+// test output producers. It is not part of the carrier or public SDK
 // contracts.
 func (stream *Stream) NativeStreamID() int64 {
 	if stream == nil || stream.stream == nil {
@@ -508,13 +456,21 @@ func (stream *Stream) CloseWrite() error {
 	return stream.closeWriteErr
 }
 
+func (stream *Stream) StopSending() error {
+	stream.stopOnce.Do(func() {
+		stream.stream.CancelRead(streamResetCode)
+		stream.lifecycle.StopSendingResult(nil)
+	})
+	return stream.stopErr
+}
+
 func (stream *Stream) Reset() error {
 	stream.resetOnce.Do(func() {
-		stream.stream.CancelRead(streamResetCode)
+		stream.resetErr = stream.StopSending()
 		stream.stream.CancelWrite(streamResetCode)
 		stream.lifecycle.Terminate(carrier.ErrStreamReset)
 	})
-	return nil
+	return stream.resetErr
 }
 
 func (stream *Stream) Close() error { return stream.Reset() }
@@ -555,6 +511,4 @@ func validALPN(value string) bool { return value == ALPNDirect || value == ALPNT
 
 var _ carrier.Session = (*Session)(nil)
 var _ carrier.UnreliableTransport = (*Session)(nil)
-var _ carrier.EstablishmentProber = (*Session)(nil)
-var _ carrier.PathMigrator = (*Session)(nil)
 var _ carrier.Stream = (*Stream)(nil)

@@ -50,10 +50,10 @@ raw QUIC와 WebTransport는 네이티브 FIN, RESET_STREAM, STOP_SENDING, 흐름
 v2 단위 테스트 모음을 실행합니다.
 
 ```bash
-make transport-v2-unit
+make test
 ```
 
-캐리어별 증거는 `make transport-conformance-smoke`, `make transport-browser-smoke`, `make transport-interop-smoke`를 실행해 확인합니다.
+프로토콜, 브라우저, 약한 네트워크 및 상호 운용성 진단에는 `make diagnostic`을, 용량 및 soak 워크로드에는 `make performance`를 사용합니다.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>

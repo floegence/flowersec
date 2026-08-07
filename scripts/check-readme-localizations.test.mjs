@@ -50,19 +50,14 @@ test("Transport v2 README contract rejects overstated SDK support", (t) => {
   assert.match(validateTransportV2Readmes(root).join("\n"), /flowersec-rust\/README\.md.*production carrier support/);
 });
 
-test("SDK README capability layers use public classifier names", () => {
+test("SDK README capability layers describe the final recovery owner", () => {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   for (const file of ["flowersec-ts/README.md", "flowersec-swift/README.md"]) {
     const content = fs.readFileSync(path.join(repoRoot, file), "utf8");
-    assert.doesNotMatch(
-      content,
-      /classify(?:Connect|Session)ErrorV2\(/u,
-      `${file} should describe public classifier names`,
-    );
     assert.match(
       content,
-      /classify(?:Connect|Session)Error/u,
-      `${file} should mention public classifier names`,
+      /ConnectionController|RetryDisposition/u,
+      `${file} should describe structured recovery ownership`,
     );
   }
 });

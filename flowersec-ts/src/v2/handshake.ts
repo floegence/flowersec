@@ -253,16 +253,29 @@ export function decodeClientFinishedV2(raw: Uint8Array): ClientFinishedV2 {
   return message;
 }
 
-export function generateEphemeralKeyV2(suite: CipherSuiteV2): Readonly<{
+export function generateEphemeralKeyV2(
+  suite: CipherSuiteV2,
+  entropy: (length: number) => Uint8Array,
+): Readonly<{
   privateKey: Uint8Array;
   publicKey: Uint8Array;
 }> {
-  const privateKey = suite === CipherSuiteV2.ChaCha20Poly1305
-    ? x25519.utils.randomPrivateKey()
-    : suite === CipherSuiteV2.AES256GCM
-      ? p256.utils.randomPrivateKey()
-      : invalidSuite();
+  let privateKey: Uint8Array;
+  if (suite === CipherSuiteV2.ChaCha20Poly1305) {
+    privateKey = requireEntropy(entropy, 32);
+  } else if (suite === CipherSuiteV2.AES256GCM) {
+    do privateKey = requireEntropy(entropy, 32);
+    while (!p256.utils.isValidPrivateKey(privateKey));
+  } else {
+    return invalidSuite();
+  }
   return { privateKey, publicKey: ephemeralPublicKeyV2(suite, privateKey) };
+}
+
+function requireEntropy(entropy: (length: number) => Uint8Array, length: number): Uint8Array {
+  const output = entropy(length);
+  assertBytes("session entropy", output, length);
+  return output.slice();
 }
 
 export function ephemeralPublicKeyV2(suite: CipherSuiteV2, privateKey: Uint8Array): Uint8Array {

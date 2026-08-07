@@ -12,7 +12,7 @@ Flowersec 2.x maintains one carrier-neutral public contract across Go, TypeScrip
 - `stability/language_capabilities.json`
 - `stability/transport_v2_contract.json`
 - `stability/sdk_defaults.json`
-- `stability/public_error_classification.json`
+- `stability/connection_controller_recovery.json`
 - `testdata/transport_v2/`
 
 The API manifest drives Go compile probes, packed TypeScript exports, Swift symbol checks, Rust compile probes, documentation tokens, and coverage thresholds. The language and Transport v2 manifests record portable behavior, internal runtime support facts, and executable evidence.
@@ -21,7 +21,7 @@ The API manifest drives Go compile probes, packed TypeScript exports, Swift symb
 
 Applications receive only opaque artifacts and leases, one-shot connection functions, carrier-neutral sessions, bounded session-handler registries, RPC peers, byte streams, metadata, stable redacted errors, and bounded recovery decisions. Go session handlers freeze inbound RPC and stream registrations together for a valid connection attempt and dispatch application streams with bounded metadata without exposing the carrier. Go server control planes additionally receive opaque endpoint sets, issued artifacts, authorization records, runtime requests, and runtime responses through the dedicated v2 control-plane package. The TypeScript proxy entrypoint may compose an opaque lease into a `Session` runtime and browser bridge, but must not expose transport objects, raw artifact scopes, proxy wire frames, or `proxy.runtime@1`. Candidate selection, carrier adapters, Yamux, wire messages, FSB2 payloads, cryptographic state, keys, and durable spend-ledger details are implementation boundaries.
 
-Portable RPC means outbound call and notification support. Notification subscriptions and inbound request-handler registration are separate runtime-specific capabilities and must not be implied by the portable RPC capability. Public recovery decisions must continue to match `stability/public_error_classification.json` in every language.
+Portable RPC means outbound call and notification support. Notification subscriptions and inbound request-handler registration are separate runtime-specific capabilities and must not be implied by the portable RPC capability. Controller recovery dispositions must continue to match `stability/connection_controller_recovery.json` in every language.
 
 Every public API change requires:
 

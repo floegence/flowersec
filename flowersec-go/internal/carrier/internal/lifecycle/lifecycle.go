@@ -62,6 +62,20 @@ func (stream *Stream) CloseWriteResult(err error) {
 	}
 }
 
+func (stream *Stream) StopSendingResult(err error) {
+	if err != nil {
+		stream.cancel(err)
+		return
+	}
+	stream.mu.Lock()
+	stream.recvClosed = true
+	finished := stream.sendClosed
+	stream.mu.Unlock()
+	if finished {
+		stream.cancel(io.EOF)
+	}
+}
+
 func (stream *Stream) Terminate(err error) {
 	if err == nil {
 		err = io.ErrClosedPipe

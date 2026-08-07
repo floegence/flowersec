@@ -21,21 +21,23 @@ var (
 // stream while the coordinator is waiting for the peer leg.
 type NativeStreamLeg struct {
 	session   carrier.Session
+	activated carrier.Session
 	admission carrier.Stream
 
 	mu        sync.Mutex
 	received  bool
 	responded bool
+	pending   carrier.Stream
 }
 
 // NewNativeStreamLeg binds a dedicated admission stream to a native session.
 func NewNativeStreamLeg(session carrier.Session, admission carrier.Stream) (*NativeStreamLeg, error) {
 	if session == nil || admission == nil ||
-		(session.Kind() != carrier.KindQUIC && session.Kind() != carrier.KindWebTransport) ||
+		(session.Kind() != carrier.KindRawQUIC && session.Kind() != carrier.KindWebTransport) ||
 		session.Path() != carrier.PathTunnel {
 		return nil, ErrInvalidNativeLeg
 	}
-	return &NativeStreamLeg{session: session, admission: admission}, nil
+	return &NativeStreamLeg{session: session, activated: session, admission: admission}, nil
 }
 
 func (leg *NativeStreamLeg) CarrierKind() carrier.Kind { return leg.session.Kind() }
@@ -73,11 +75,17 @@ func (leg *NativeStreamLeg) SendAdmission(ctx context.Context, response artifact
 func (leg *NativeStreamLeg) Activate(context.Context) (carrier.Session, error) {
 	leg.mu.Lock()
 	ready := leg.received && leg.responded
-	leg.mu.Unlock()
 	if !ready {
+		leg.mu.Unlock()
 		return nil, ErrAdmissionState
 	}
-	return leg.session, nil
+	pending := leg.pending
+	leg.pending = nil
+	leg.mu.Unlock()
+	if pending != nil {
+		return &nativeStreamHandoffSession{Session: leg.activated, first: pending}, nil
+	}
+	return leg.activated, nil
 }
 
 func (leg *NativeStreamLeg) RejectWaitingStreams(ctx context.Context) error {
@@ -92,15 +100,42 @@ func (leg *NativeStreamLeg) RejectWaitingStreams(ctx context.Context) error {
 			}
 			return err
 		}
+		if ctx.Err() != nil {
+			leg.mu.Lock()
+			if leg.pending == nil {
+				leg.pending = stream
+			} else {
+				_ = stream.Reset()
+			}
+			leg.mu.Unlock()
+			return ctx.Err()
+		}
 		_ = stream.Reset()
 	}
+}
+
+type nativeStreamHandoffSession struct {
+	carrier.Session
+	mu    sync.Mutex
+	first carrier.Stream
+}
+
+func (session *nativeStreamHandoffSession) AcceptStream(ctx context.Context) (carrier.Stream, error) {
+	session.mu.Lock()
+	first := session.first
+	session.first = nil
+	session.mu.Unlock()
+	if first != nil {
+		return first, nil
+	}
+	return session.Session.AcceptStream(ctx)
 }
 
 func (leg *NativeStreamLeg) CloseWithError(ctx context.Context, applicationError carrier.ApplicationError) error {
 	if leg == nil {
 		return io.ErrClosedPipe
 	}
-	return leg.session.CloseWithErrorContext(ctx, applicationError)
+	return leg.activated.CloseWithErrorContext(ctx, applicationError)
 }
 
 var _ PendingLeg = (*NativeStreamLeg)(nil)

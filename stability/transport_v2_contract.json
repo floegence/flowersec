@@ -8,23 +8,10 @@
   "capability_codec": {
     "schema_version": 2,
     "descriptor_fields": ["language", "runtime", "schemaVersion", "tuples", "unsupported"],
-    "tuple_fields": ["carrier", "networkMode", "path", "sessionRole"],
+    "tuple_fields": ["carrier", "datagrams", "migration", "networkMode", "path", "reliableStreams", "sessionRole"],
     "unsupported_fields": ["carrier", "reason"],
     "digest_label": "flowersec-v2-runtime-capability\u0000",
     "vectors": "testdata/transport_v2/capability_vectors.json"
-  },
-  "endpoint_set_codec": {
-    "schema_version": 2,
-    "profile": "flowersec-tunnel-endpoint-set/2",
-    "max_freshness_age_seconds": 300,
-    "listen_session_role": "accepted_dialing_peer",
-    "listen_capability_mapping": "dial_preserve_session_role",
-    "top_level_fields": ["v", "profile", "rendezvous_group_id", "endpoint_instance_id", "listeners", "certificate", "audience", "freshness"],
-    "listener_tuple_fields": ["carrier", "network_mode", "path", "session_role", "url", "advertised_url", "bind_endpoint", "wire_profile"],
-    "certificate_fields": ["ready", "not_after_unix_s", "verified_server_names"],
-    "audience_fields": ["ready", "listener_audience"],
-    "freshness_fields": ["issued_at_unix_s", "expires_at_unix_s"],
-    "vectors": "testdata/transport_v2/endpoint_set_vectors.json"
   },
   "wire_fixtures": [
     {
@@ -34,8 +21,9 @@
         { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/internal/artifactv2/shared_vectors_test.go" },
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/artifact.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/artifact.test.ts" },
-        { "runtime": "rust_native", "applicability": "unsupported", "unsupported_reason": "artifact_v2_codec_not_implemented" },
+        { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/tests/artifact_v2_vectors.rs" },
         { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift" },
+        { "runtime": "swift_linux", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift" },
         { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift" }
       ]
     },
@@ -48,6 +36,7 @@
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/capability.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/transport_v2.rs" },
         { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift" },
+        { "runtime": "swift_linux", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift" },
         { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift" }
       ]
     },
@@ -60,6 +49,7 @@
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/protocol.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/transport_v2_crypto_integration_tests.rs" },
         { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift" },
+        { "runtime": "swift_linux", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift" },
         { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift" }
       ]
     },
@@ -72,19 +62,8 @@
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/unreliableMessage.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/protocol_v2.rs" },
         { "runtime": "swift_ios", "applicability": "unsupported", "unsupported_reason": "unreliable_message_channel_not_supported" },
+        { "runtime": "swift_linux", "applicability": "unsupported", "unsupported_reason": "unreliable_message_channel_not_supported" },
         { "runtime": "swift_macos", "applicability": "unsupported", "unsupported_reason": "unreliable_message_channel_not_supported" }
-      ]
-    },
-    {
-      "id": "endpoint_set",
-      "path": "testdata/transport_v2/endpoint_set_vectors.json",
-      "runtime_consumers": [
-        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/internal/endpointsetv2/shared_vectors_test.go" },
-        { "runtime": "typescript_browser", "applicability": "unsupported", "unsupported_reason": "endpoint_set_v2_codec_not_implemented" },
-        { "runtime": "typescript_node", "applicability": "unsupported", "unsupported_reason": "endpoint_set_v2_codec_not_implemented" },
-        { "runtime": "rust_native", "applicability": "unsupported", "unsupported_reason": "endpoint_set_v2_codec_not_implemented" },
-        { "runtime": "swift_ios", "applicability": "unsupported", "unsupported_reason": "endpoint_set_v2_codec_not_implemented" },
-        { "runtime": "swift_macos", "applicability": "unsupported", "unsupported_reason": "endpoint_set_v2_codec_not_implemented" }
       ]
     },
     {
@@ -96,6 +75,7 @@
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/handshake.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/session_v2.rs" },
         { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2HandshakeVectorTests.swift" },
+        { "runtime": "swift_linux", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2HandshakeVectorTests.swift" },
         { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2HandshakeVectorTests.swift" }
       ]
     },
@@ -108,6 +88,7 @@
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/artifact.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/idna_v2_integration_tests.rs" },
         { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/IDNAHostV2Tests.swift" },
+        { "runtime": "swift_linux", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/IDNAHostV2Tests.swift" },
         { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/IDNAHostV2Tests.swift" }
       ]
     },
@@ -120,6 +101,7 @@
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/open.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/open_v2_integration_tests.rs" },
         { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift" },
+        { "runtime": "swift_linux", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift" },
         { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift" }
       ]
     },
@@ -132,19 +114,12 @@
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/session_wire.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/session_v2.rs" },
         { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2SessionTests.swift" },
+        { "runtime": "swift_linux", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2SessionTests.swift" },
         { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2SessionTests.swift" }
       ]
     }
   ],
   "wire_fixture_unsupported_reasons": [
-    {
-      "id": "artifact_v2_codec_not_implemented",
-      "description": "This runtime has no production ArtifactV2, FSB2, or FSA2 codec and must not claim conformance by parsing the fixture as generic JSON."
-    },
-    {
-      "id": "endpoint_set_v2_codec_not_implemented",
-      "description": "This runtime does not expose the deployment-facing custom tunnel endpoint-set v2 codec and must not claim conformance by parsing the fixture as generic JSON."
-    },
     {
       "id": "unreliable_message_channel_not_supported",
       "description": "This runtime has no production native DATAGRAM carrier and must not claim FSD2 support by parsing the fixture as generic bytes."
@@ -158,6 +133,47 @@
     "reliable_payload_datagrams": "forbidden",
     "public_datagram_api": "optional_unreliable_message_channel",
     "webtransport_datagram_support": "native_required_when_negotiated"
+  },
+  "lifecycles": {
+    "candidate_admission": ["attempt", "ready", "winner", "admitted", "established", "terminated"],
+    "session": ["opening", "open", "closing", "closed"],
+    "connection_controller": ["idle", "connecting", "connected", "waiting", "failed", "closed"]
+  },
+  "ownership": {
+    "dependency_order": ["application_api", "connection_controller", "artifact_source", "one_shot_connector", "session_engine", "carrier_contract", "runtime_adapter"],
+    "admission_commit": "durable_spend_then_single_credential_write",
+    "admission_rejection_reason": {
+      "server": "registered_deployment_token",
+      "sdk_client": "bounded_wire_token_only",
+      "public_error": "redacted_admission_failure"
+    },
+    "runtime_adapter": ["native_resources", "stream_mapping", "datagram_mapping", "close", "abort"],
+    "session_engine": ["handshake", "rpc", "logical_streams", "rekey", "liveness", "termination"],
+    "connection_controller": ["single_scheduler", "single_in_flight_attempt", "artifact_refresh", "retry_disposition", "backoff", "current_session_replacement", "cancellation"],
+    "error_boundaries": {
+      "runtime": ["runtime_unavailable", "native_library", "tls", "http3"],
+      "carrier": ["stream", "datagram", "fin", "reset", "stop_sending", "close", "abort"],
+      "session": ["handshake", "rpc", "liveness", "protocol_state"]
+    }
+  },
+  "carrier_contract": {
+    "stream": ["read", "write", "fin", "reset", "stop_sending"],
+    "datagram": ["accepted", "oversize", "expired", "budget", "unavailable"],
+    "termination": ["graceful_close", "peer_close", "abort"]
+  },
+  "connection_controller_contract": {
+    "vectors": "testdata/transport_v2/connection_controller_vectors.json",
+    "retry_dispositions": ["terminal", "retryable", "retry_after"],
+    "artifact_source": "refreshable_only",
+    "artifact_consumption": "one_fresh_lease_per_attempt",
+    "retry_now": "wake_current_wait_only",
+    "default_attempt_limit": "unbounded",
+    "explicit_attempt_limit": "consecutive_attempts_until_connected",
+    "backoff_reset": "after_connected",
+    "session_replacement": "new_session_only",
+    "request_replay": "forbidden",
+    "stream_migration": "forbidden",
+    "rpc_replay": "forbidden"
   },
   "carriers": [
     {
@@ -214,6 +230,10 @@
   ],
   "unsupported_reasons": [
     {
+      "id": "adapter_not_composed",
+      "description": "The current runtime composition does not include this otherwise implemented carrier adapter."
+    },
+    {
       "id": "browser_no_raw_udp",
       "description": "Browser runtimes do not expose raw UDP sockets for raw QUIC."
     },
@@ -226,20 +246,24 @@
       "description": "The current browser runtime does not expose the WebTransport API required by the Transport v2 carrier."
     },
     {
-      "id": "no_production_grade_node_quic_runtime",
-      "description": "The supported Node.js runtime has no production-grade QUIC or WebTransport API accepted by the Slice 0 dependency gate."
+      "id": "raw_quic_adapter_not_implemented",
+      "description": "This runtime does not implement the raw QUIC carrier adapter."
     },
     {
-      "id": "rust_webtransport_not_committed",
-      "description": "Rust WebTransport is not part of the signed Slice 0 native carrier matrix."
+      "id": "unsupported_websocket_runtime",
+      "description": "The Rust native runtime does not implement the WebSocket carrier adapter."
     },
     {
-      "id": "network_framework_quic_contract_incomplete_on_supported_targets",
-      "description": "Network.framework does not yet satisfy the complete raw QUIC and WebTransport contract on every supported Apple deployment target."
+      "id": "unsupported_webtransport_runtime",
+      "description": "The Rust native runtime does not implement the WebTransport carrier adapter."
     },
     {
-      "id": "transport_v2_websocket_adapter_not_committed",
-      "description": "The runtime has portable Transport v2 protocol support but no committed production path-specific WebSocket admission and carrier adapter."
+      "id": "websocket_adapter_not_supported_on_linux",
+      "description": "The Swift Linux runtime does not implement the Apple WebSocket carrier adapter."
+    },
+    {
+      "id": "webtransport_adapter_not_implemented",
+      "description": "This runtime does not implement the WebTransport carrier adapter."
     }
   ],
   "runtimes": [
@@ -248,18 +272,18 @@
       "language": "go",
       "environment": "native",
       "tuples": [
-        { "carrier": "raw_quic", "network_mode": "dial", "path": "direct", "session_role": "client" },
-        { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "client" },
-        { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "server" },
-        { "carrier": "raw_quic", "network_mode": "listen", "path": "direct", "session_role": "server" },
-        { "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client" },
-        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client" },
-        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server" },
-        { "carrier": "websocket", "network_mode": "listen", "path": "direct", "session_role": "server" },
-        { "carrier": "webtransport", "network_mode": "dial", "path": "direct", "session_role": "client" },
-        { "carrier": "webtransport", "network_mode": "dial", "path": "tunnel", "session_role": "client" },
-        { "carrier": "webtransport", "network_mode": "dial", "path": "tunnel", "session_role": "server" },
-        { "carrier": "webtransport", "network_mode": "listen", "path": "direct", "session_role": "server" }
+        { "carrier": "raw_quic", "network_mode": "dial", "path": "direct", "session_role": "client", "reliable_streams": true, "datagrams": true, "migration": true },
+        { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": true, "migration": true },
+        { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": true, "migration": true },
+        { "carrier": "raw_quic", "network_mode": "listen", "path": "direct", "session_role": "server", "reliable_streams": true, "datagrams": true, "migration": false },
+        { "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": false, "migration": false },
+        { "carrier": "websocket", "network_mode": "listen", "path": "direct", "session_role": "server", "reliable_streams": true, "datagrams": false, "migration": false },
+        { "carrier": "webtransport", "network_mode": "dial", "path": "direct", "session_role": "client", "reliable_streams": true, "datagrams": true, "migration": false },
+        { "carrier": "webtransport", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": true, "migration": false },
+        { "carrier": "webtransport", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": true, "migration": false },
+        { "carrier": "webtransport", "network_mode": "listen", "path": "direct", "session_role": "server", "reliable_streams": true, "datagrams": true, "migration": false }
       ],
       "unsupported": []
     },
@@ -268,12 +292,12 @@
       "language": "typescript",
       "environment": "browser",
       "tuples": [
-        { "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client" },
-        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client" },
-        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server" },
-        { "carrier": "webtransport", "network_mode": "dial", "path": "direct", "session_role": "client" },
-        { "carrier": "webtransport", "network_mode": "dial", "path": "tunnel", "session_role": "client" },
-        { "carrier": "webtransport", "network_mode": "dial", "path": "tunnel", "session_role": "server" }
+        { "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": false, "migration": false },
+        { "carrier": "webtransport", "network_mode": "dial", "path": "direct", "session_role": "client", "reliable_streams": true, "datagrams": true, "migration": false },
+        { "carrier": "webtransport", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": true, "migration": false },
+        { "carrier": "webtransport", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": true, "migration": false }
       ],
       "unsupported": [
         { "carrier": "raw_quic", "reason": "browser_no_raw_udp" }
@@ -284,13 +308,16 @@
       "language": "typescript",
       "environment": "node",
       "tuples": [
-        { "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client" },
-        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client" },
-        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server" }
+        { "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": false, "migration": false },
+        { "carrier": "webtransport", "network_mode": "dial", "path": "direct", "session_role": "client", "reliable_streams": true, "datagrams": true, "migration": false },
+        { "carrier": "webtransport", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": true, "migration": false },
+        { "carrier": "webtransport", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": true, "migration": false },
+        { "carrier": "webtransport", "network_mode": "listen", "path": "direct", "session_role": "server", "reliable_streams": true, "datagrams": true, "migration": false }
       ],
       "unsupported": [
-        { "carrier": "raw_quic", "reason": "no_production_grade_node_quic_runtime" },
-        { "carrier": "webtransport", "reason": "no_production_grade_node_quic_runtime" }
+        { "carrier": "raw_quic", "reason": "raw_quic_adapter_not_implemented" }
       ]
     },
     {
@@ -298,14 +325,14 @@
       "language": "rust",
       "environment": "native",
       "tuples": [
-        { "carrier": "raw_quic", "network_mode": "dial", "path": "direct", "session_role": "client" },
-        { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "client" },
-        { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "server" },
-        { "carrier": "raw_quic", "network_mode": "listen", "path": "direct", "session_role": "server" }
+        { "carrier": "raw_quic", "network_mode": "dial", "path": "direct", "session_role": "client", "reliable_streams": true, "datagrams": true, "migration": true },
+        { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": true, "migration": true },
+        { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": true, "migration": true },
+        { "carrier": "raw_quic", "network_mode": "listen", "path": "direct", "session_role": "server", "reliable_streams": true, "datagrams": true, "migration": false }
       ],
       "unsupported": [
-        { "carrier": "websocket", "reason": "transport_v2_websocket_adapter_not_committed" },
-        { "carrier": "webtransport", "reason": "rust_webtransport_not_committed" }
+        { "carrier": "websocket", "reason": "unsupported_websocket_runtime" },
+        { "carrier": "webtransport", "reason": "unsupported_webtransport_runtime" }
       ]
     },
     {
@@ -313,13 +340,24 @@
       "language": "swift",
       "environment": "ios",
       "tuples": [
-        { "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client" },
-        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client" },
-        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server" }
+        { "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": false, "migration": false }
       ],
       "unsupported": [
-        { "carrier": "raw_quic", "reason": "network_framework_quic_contract_incomplete_on_supported_targets" },
-        { "carrier": "webtransport", "reason": "network_framework_quic_contract_incomplete_on_supported_targets" }
+        { "carrier": "raw_quic", "reason": "raw_quic_adapter_not_implemented" },
+        { "carrier": "webtransport", "reason": "webtransport_adapter_not_implemented" }
+      ]
+    },
+    {
+      "id": "swift_linux",
+      "language": "swift",
+      "environment": "linux",
+      "tuples": [],
+      "unsupported": [
+        { "carrier": "raw_quic", "reason": "raw_quic_adapter_not_implemented" },
+        { "carrier": "websocket", "reason": "websocket_adapter_not_supported_on_linux" },
+        { "carrier": "webtransport", "reason": "webtransport_adapter_not_implemented" }
       ]
     },
     {
@@ -327,18 +365,17 @@
       "language": "swift",
       "environment": "macos",
       "tuples": [
-        { "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client" },
-        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client" },
-        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server" }
+        { "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": false, "migration": false }
       ],
       "unsupported": [
-        { "carrier": "raw_quic", "reason": "network_framework_quic_contract_incomplete_on_supported_targets" },
-        { "carrier": "webtransport", "reason": "network_framework_quic_contract_incomplete_on_supported_targets" }
+        { "carrier": "raw_quic", "reason": "raw_quic_adapter_not_implemented" },
+        { "carrier": "webtransport", "reason": "webtransport_adapter_not_implemented" }
       ]
     }
   ],
-  "go_slice_0": {
-    "status": "signed",
+  "go_native_dependencies": {
     "toolchain": "1.26.5",
     "webtransport_dialer": "quic.DialAddr",
     "webtransport_required_quic_settings": [
@@ -360,8 +397,7 @@
       }
     ]
   },
-  "rust_slice_0": {
-    "status": "signed",
+  "rust_native_dependencies": {
     "quinn_version": "=0.11.11",
     "quinn_default_features": "disabled",
     "quinn_features": [

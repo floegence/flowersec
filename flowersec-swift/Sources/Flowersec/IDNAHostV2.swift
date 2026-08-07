@@ -37,13 +37,146 @@ enum IDNAHostV2 {
     }
     defer { icu.close(processor) }
 
-    let ascii = try transform(
-      host,
-      processor: processor,
-      maximumOutputBytes: 253,
-      operation: icu.toASCII
-    )
+    do {
+      let ascii = try transform(
+        host,
+        processor: processor,
+        maximumOutputBytes: 253,
+        operation: icu.toASCII
+      )
+      let unicode = try transform(
+        ascii,
+        processor: processor,
+        maximumOutputBytes: 1_024,
+        operation: icu.toUnicode
+      )
+      try requireUnicode151(unicode)
+      return try validateASCII(ascii)
+    } catch {
+      return try lookupUnicode151DeltaASCII(host, icu: icu, processor: processor)
+    }
+  }
 
+  static func lookupUnicode151DeltaASCII(_ host: String) throws -> String {
+    guard !host.isEmpty, !host.hasSuffix("."), host.utf8.count <= Int(Int32.max) else {
+      throw IDNAHostErrorV2.invalidHost
+    }
+    try requireUnicode151(host)
+
+    guard let icu = FlowersecICU.load() else {
+      throw IDNAHostErrorV2.invalidHost
+    }
+    defer { icu.unload() }
+
+    var errorCode: Int32 = 0
+    guard let processor = icu.open(profileOptions, &errorCode), errorCode <= 0 else {
+      throw IDNAHostErrorV2.invalidHost
+    }
+    defer { icu.close(processor) }
+
+    return try lookupUnicode151DeltaASCII(host, icu: icu, processor: processor)
+  }
+
+  private static func lookupUnicode151DeltaASCII(
+    _ host: String,
+    icu: FlowersecICU,
+    processor: OpaquePointer
+  ) throws -> String {
+    var decodedLabels =
+      host
+      .split(separator: ".", omittingEmptySubsequences: false)
+      .map(String.init)
+    var originalALabels: [Int: String] = [:]
+    var deltaCount = 0
+
+    for index in decodedLabels.indices {
+      let lowercased = decodedLabels[index].lowercased()
+      if lowercased.hasPrefix("xn--") {
+        let payload = String(lowercased.dropFirst(4))
+        guard !payload.isEmpty, payload.utf8.allSatisfy({ $0 < 0x80 }) else {
+          throw IDNAHostErrorV2.invalidHost
+        }
+        decodedLabels[index] = try punycodeTransform(payload, operation: icu.fromPunycode)
+        originalALabels[index] = lowercased
+      }
+      deltaCount += decodedLabels[index].unicodeScalars.filter(isUnicode151Delta).count
+    }
+    guard deltaCount > 0 else {
+      throw IDNAHostErrorV2.invalidHost
+    }
+
+    let decoded = decodedLabels.joined(separator: ".")
+    guard let placeholder = choosePlaceholder(decoded) else {
+      throw IDNAHostErrorV2.invalidHost
+    }
+    var originalDelta: [Unicode.Scalar] = []
+    var substituted = ""
+    for scalar in decoded.unicodeScalars {
+      if isUnicode151Delta(scalar) {
+        originalDelta.append(scalar)
+        substituted.unicodeScalars.append(placeholder)
+      } else {
+        substituted.unicodeScalars.append(scalar)
+      }
+    }
+
+    let mapped = try transform(
+      substituted,
+      processor: processor,
+      maximumOutputBytes: 1_024,
+      operation: icu.toUnicode
+    )
+    guard mapped.unicodeScalars.filter({ $0 == placeholder }).count == originalDelta.count else {
+      throw IDNAHostErrorV2.invalidHost
+    }
+
+    var restored = ""
+    var deltaIndex = 0
+    for scalar in mapped.unicodeScalars {
+      if scalar == placeholder {
+        restored.unicodeScalars.append(originalDelta[deltaIndex])
+        deltaIndex += 1
+      } else {
+        restored.unicodeScalars.append(scalar)
+      }
+    }
+    guard deltaIndex == originalDelta.count else {
+      throw IDNAHostErrorV2.invalidHost
+    }
+    try requireUnicode151(restored)
+
+    let labels = restored.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+    guard labels.count == decodedLabels.count else {
+      throw IDNAHostErrorV2.invalidHost
+    }
+    var asciiLabels: [String] = []
+    asciiLabels.reserveCapacity(labels.count)
+    for (index, label) in labels.enumerated() {
+      guard !label.isEmpty else {
+        throw IDNAHostErrorV2.invalidHost
+      }
+      let asciiLabel: String
+      if label.utf8.allSatisfy({ $0 < 0x80 }) {
+        asciiLabel = label.lowercased()
+      } else {
+        let payload = try punycodeTransform(label, operation: icu.toPunycode).lowercased()
+        guard !payload.isEmpty, payload.utf8.allSatisfy({ $0 < 0x80 }) else {
+          throw IDNAHostErrorV2.invalidHost
+        }
+        asciiLabel = "xn--" + payload
+      }
+      guard !asciiLabel.isEmpty, asciiLabel.utf8.count <= 63 else {
+        throw IDNAHostErrorV2.invalidHost
+      }
+      if let original = originalALabels[index], original != asciiLabel {
+        throw IDNAHostErrorV2.invalidHost
+      }
+      asciiLabels.append(asciiLabel)
+    }
+    return try validateASCII(asciiLabels.joined(separator: "."))
+  }
+
+  private static func validateASCII(_ ascii: String) throws -> String {
     let bytes = Array(ascii.utf8)
     guard
       !bytes.isEmpty,
@@ -56,14 +189,6 @@ enum IDNAHostV2 {
     else {
       throw IDNAHostErrorV2.invalidHost
     }
-
-    let unicode = try transform(
-      ascii,
-      processor: processor,
-      maximumOutputBytes: 1_024,
-      operation: icu.toUnicode
-    )
-    try requireUnicode151(unicode)
     return String(decoding: bytes.map(asciiLowercase), as: UTF8.self)
   }
 
@@ -73,6 +198,20 @@ enum IDNAHostV2 {
     | 0x08  // UIDNA_CHECK_CONTEXTJ
     | 0x10  // UIDNA_NONTRANSITIONAL_TO_ASCII
     | 0x20  // UIDNA_NONTRANSITIONAL_TO_UNICODE
+
+  private static func isUnicode151Delta(_ scalar: Unicode.Scalar) -> Bool {
+    scalar.value >= 0x2EBF0 && scalar.value <= 0x2EE5D
+  }
+
+  private static func choosePlaceholder(_ value: String) -> Unicode.Scalar? {
+    let existing = Set(value.unicodeScalars.map(\.value))
+    for rawValue in UInt32(0x4E00)...UInt32(0x9FFF) where !existing.contains(rawValue) {
+      if let scalar = Unicode.Scalar(rawValue) {
+        return scalar
+      }
+    }
+    return nil
+  }
 
   private static func requireUnicode151(_ value: String) throws {
     for scalar in value.unicodeScalars {
@@ -145,6 +284,46 @@ enum IDNAHostV2 {
     return String(
       decoding: destination.prefix(Int(written)).map(UInt8.init(bitPattern:)), as: UTF8.self)
   }
+
+  private static func punycodeTransform(
+    _ input: String,
+    operation: FlowersecPunycodeTransform
+  ) throws -> String {
+    let source = Array(input.utf16)
+    var preflightError: Int32 = 0
+    let required = source.withUnsafeBufferPointer { sourceBuffer in
+      operation(
+        sourceBuffer.baseAddress,
+        Int32(sourceBuffer.count),
+        nil,
+        0,
+        nil,
+        &preflightError
+      )
+    }
+    guard required >= 0, required <= 1_024, preflightError <= 0 || preflightError == 15 else {
+      throw IDNAHostErrorV2.invalidHost
+    }
+
+    var destination = [UInt16](repeating: 0, count: Int(required) + 1)
+    var errorCode: Int32 = 0
+    let written = source.withUnsafeBufferPointer { sourceBuffer in
+      destination.withUnsafeMutableBufferPointer { destinationBuffer in
+        operation(
+          sourceBuffer.baseAddress,
+          Int32(sourceBuffer.count),
+          destinationBuffer.baseAddress,
+          Int32(destinationBuffer.count),
+          nil,
+          &errorCode
+        )
+      }
+    }
+    guard errorCode <= 0, written == required else {
+      throw IDNAHostErrorV2.invalidHost
+    }
+    return String(decoding: destination.prefix(Int(written)), as: UTF16.self)
+  }
 }
 
 private struct FlowersecUIDNAInfo {
@@ -175,12 +354,24 @@ private typealias FlowersecUIDNATransform =
     UnsafeMutablePointer<Int32>?
   ) -> Int32
 
+private typealias FlowersecPunycodeTransform =
+  @convention(c) (
+    UnsafePointer<UInt16>?,
+    Int32,
+    UnsafeMutablePointer<UInt16>?,
+    Int32,
+    UnsafePointer<Int8>?,
+    UnsafeMutablePointer<Int32>?
+  ) -> Int32
+
 private struct FlowersecICU {
   let handle: UnsafeMutableRawPointer
   let open: FlowersecUIDNAOpen
   let close: FlowersecUIDNAClose
   let toASCII: FlowersecUIDNATransform
   let toUnicode: FlowersecUIDNATransform
+  let toPunycode: FlowersecPunycodeTransform
+  let fromPunycode: FlowersecPunycodeTransform
 
   static func load() -> FlowersecICU? {
     for libraryName in libraryNames {
@@ -201,7 +392,9 @@ private struct FlowersecICU {
         let openSymbol = dlsym(handle, "uidna_openUTS46\(suffix)"),
         let closeSymbol = dlsym(handle, "uidna_close\(suffix)"),
         let toASCIISymbol = dlsym(handle, "uidna_nameToASCII_UTF8\(suffix)"),
-        let toUnicodeSymbol = dlsym(handle, "uidna_nameToUnicodeUTF8\(suffix)")
+        let toUnicodeSymbol = dlsym(handle, "uidna_nameToUnicodeUTF8\(suffix)"),
+        let toPunycodeSymbol = dlsym(handle, "u_strToPunycode\(suffix)"),
+        let fromPunycodeSymbol = dlsym(handle, "u_strFromPunycode\(suffix)")
       else {
         continue
       }
@@ -210,7 +403,9 @@ private struct FlowersecICU {
         open: unsafeBitCast(openSymbol, to: FlowersecUIDNAOpen.self),
         close: unsafeBitCast(closeSymbol, to: FlowersecUIDNAClose.self),
         toASCII: unsafeBitCast(toASCIISymbol, to: FlowersecUIDNATransform.self),
-        toUnicode: unsafeBitCast(toUnicodeSymbol, to: FlowersecUIDNATransform.self)
+        toUnicode: unsafeBitCast(toUnicodeSymbol, to: FlowersecUIDNATransform.self),
+        toPunycode: unsafeBitCast(toPunycodeSymbol, to: FlowersecPunycodeTransform.self),
+        fromPunycode: unsafeBitCast(fromPunycodeSymbol, to: FlowersecPunycodeTransform.self)
       )
     }
     return nil

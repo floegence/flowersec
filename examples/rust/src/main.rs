@@ -1,7 +1,4 @@
-use flowersec::{
-    Artifact, ArtifactLease, ArtifactSpendError, ConnectorOptions, classify_connect_error,
-    classify_session_error, connect,
-};
+use flowersec::{Artifact, ArtifactLease, ArtifactSpendError, ConnectorOptions, connect};
 use std::{
     env,
     error::Error,
@@ -60,10 +57,7 @@ async fn connect_opaque_artifact(
     let session = match connect(&mut lease, options).await {
         Ok(session) => session,
         Err(error) => {
-            eprintln!(
-                "recovery={}",
-                classify_connect_error(error).action.as_str()
-            );
+            eprintln!("connection_error={}", error.as_str());
             return Err(error.to_string().into());
         }
     };
@@ -71,7 +65,7 @@ async fn connect_opaque_artifact(
     match session.probe_liveness().await {
         Ok(round_trip) => println!("liveness={round_trip:?}"),
         Err(error) => {
-            eprintln!("recovery={}", classify_session_error(error).action.as_str());
+            eprintln!("session_error={}", error.as_str());
             return Err(error.to_string().into());
         }
     }

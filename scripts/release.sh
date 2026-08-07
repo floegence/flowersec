@@ -22,18 +22,6 @@ if [[ "$branch" != "main" ]]; then
   exit 1
 fi
 
-evidence_report=${TRANSPORT_V2_EVIDENCE_REPORT:-}
-evidence_base_sha=${TRANSPORT_V2_BASE_SHA:-}
-if [[ "$evidence_report" != /* || ! -f "$evidence_report" || -L "$evidence_report" || "${evidence_report##*/}" != report.json ]]; then
-  echo "release requires TRANSPORT_V2_EVIDENCE_REPORT to name an absolute, regular, non-symlink report.json" >&2
-  exit 2
-fi
-if [[ ! "$evidence_base_sha" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "release requires TRANSPORT_V2_BASE_SHA to be a full lowercase Git SHA" >&2
-  exit 2
-fi
-evidence_report_sha=$(openssl dgst -sha256 -r "$evidence_report" | awk '{print $1}')
-
 git fetch origin main --tags
 head=$(git rev-parse HEAD)
 origin_main=$(git rev-parse origin/main)
@@ -69,22 +57,6 @@ for tag in "${tags[@]}"; do
   fi
 done
 
-env -u MAKE -u MAKE_COMMAND -u MAKEFLAGS -u GNUMAKEFLAGS -u MFLAGS -u MAKEFILES -u MAKEFILE_LIST -u MAKEOVERRIDES -u MAKELEVEL -u MAKE_RESTARTS -u MAKECMDGOALS -u TRANSPORT_V2_RELEASE_RUNNER -u TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT TRANSPORT_V2_EVIDENCE_REPORT="$evidence_report" TRANSPORT_V2_BASE_SHA="$evidence_base_sha" make release-check
-
-if [[ ! -f "$evidence_report" || -L "$evidence_report" || "$(openssl dgst -sha256 -r "$evidence_report" | awk '{print $1}')" != "$evidence_report_sha" ]]; then
-  echo "release-check changed the signed Transport v2 evidence report" >&2
-  exit 1
-fi
-
-if [[ -n "$(git status --short)" ]]; then
-  echo "release-check modified the worktree" >&2
-  exit 1
-fi
-if [[ "$(git rev-parse HEAD)" != "$head" ]]; then
-  echo "release-check changed HEAD" >&2
-  exit 1
-fi
-
 created_tags=()
 cleanup_tags() {
   if [[ ${#created_tags[@]} -gt 0 ]]; then
@@ -98,7 +70,7 @@ for tag in "${tags[@]}"; do
   created_tags+=("$tag")
 done
 
-FLOWERSEC_RELEASE_GATE_COMMIT="$head" \
+FLOWERSEC_RELEASE_PUSH_SHA="$head" \
 FLOWERSEC_RELEASE_VERSION="$version" \
 git push --atomic origin \
   "refs/heads/main:refs/heads/main" \

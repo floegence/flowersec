@@ -2,7 +2,6 @@ package flowersec
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -14,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/fserrors"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
@@ -142,23 +140,6 @@ func TestConnectorAllowsEmptyOriginForNonWebTransportProfiles(t *testing.T) {
 	}
 	if _, err := newConnector(lease, ConnectorOptions{TrustRoots: trustRoots, Origin: "http://client.example"}); err != nil {
 		t.Fatalf("newConnector() HTTP Origin error = %v", err)
-	}
-	dialers, err := newCarrierDialers(&tls.Config{MinVersion: tls.VersionTLS13, RootCAs: trustRoots}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(dialers) != 2 || dialers[artifactv2.CarrierWebSocket] == nil || dialers[artifactv2.CarrierRawQUIC] == nil {
-		t.Fatalf("empty-Origin dialers = %#v, want WSS and raw QUIC", dialers)
-	}
-	if dialers[artifactv2.CarrierWebTransport] != nil {
-		t.Fatal("empty-Origin dialers unexpectedly include WebTransport")
-	}
-	dialers, err = newCarrierDialers(&tls.Config{MinVersion: tls.VersionTLS13, RootCAs: trustRoots}, "https://client.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dialers[artifactv2.CarrierWebTransport] == nil {
-		t.Fatal("non-empty-Origin dialers do not include WebTransport")
 	}
 }
 

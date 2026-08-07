@@ -4,6 +4,7 @@ import { RpcRouter } from "../rpc/server.js";
 import { createMemoryCarrierPairV2 } from "./carrier.js";
 import { CipherSuiteV2 } from "./protocol.js";
 import { establishSessionV2, type SessionConfigV2 } from "./session.js";
+import { nodeSessionRuntimeV2 } from "../node/sessionRuntime.js";
 
 function config(role: "client" | "server", rpcRouter: RpcRouter, maxInboundStreams = 4): SessionConfigV2 {
   return {
@@ -19,6 +20,7 @@ function config(role: "client" | "server", rpcRouter: RpcRouter, maxInboundStrea
     localEndpointInstanceID: "",
     expectedPeerEndpointInstanceID: "",
     rpcRouter,
+    runtime: nodeSessionRuntimeV2,
   };
 }
 

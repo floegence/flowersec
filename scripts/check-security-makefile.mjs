@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -14,596 +12,127 @@ const requiredSecurityTests = [
   "scripts/run-final-stage.test.mjs",
   "scripts/run-final-lanes.test.mjs",
   "scripts/run-precommit-wave.test.mjs",
+  "scripts/test-architecture-contract.mjs",
 ];
 
-const protectedMakeControlVariables = new Set([
-  ".RECIPEPREFIX",
-  ".SHELLFLAGS",
-  "GNUMAKEFLAGS",
-  "MAKE",
-  "MAKE_COMMAND",
-  "MAKECMDGOALS",
-  "MAKEFILE_LIST",
-  "MAKEFILES",
-  "MAKEFLAGS",
-  "MAKELEVEL",
-  "MAKEOVERRIDES",
-  "MAKE_RESTARTS",
-  "MFLAGS",
-  "PATH",
-  "SHELL",
+const protectedVariables = new Set([
+  ".RECIPEPREFIX", ".SHELLFLAGS", "GNUMAKEFLAGS", "MAKE", "MAKE_COMMAND",
+  "MAKECMDGOALS", "MAKEFILE_LIST", "MAKEFILES", "MAKEFLAGS", "MAKELEVEL",
+  "MAKEOVERRIDES", "MAKE_RESTARTS", "MFLAGS", "PATH", "SHELL",
 ]);
 
-const expectedSecurityConfiguration = new Map([
-  ["CHECK_INTEROP", "1"],
-  ["YAMUX_INTEROP", "1"],
-  ["YAMUX_INTEROP_STRESS", "0"],
-  ["YAMUX_INTEROP_CLIENT_RST", "0"],
-  ["YAMUX_INTEROP_DEBUG", "0"],
-  ["SWIFT_SOURCE_GUARD_PATTERN", "Redeven|redeven|RedevenFlowersec|RedevenRPCClient|FlowersecDirectClient|FlowersecDirectSession|FlowersecDirectError|RuntimeFS|RuntimeGit|RuntimeTerminal|RuntimeFlower|RuntimeTypedRPC|RuntimeJSONValue|RuntimeRPCPayload|FlowerMessage|TerminalSession|MonitorSnapshot|direct runtime"],
-  ["SWIFT_SOURCE_GUARD_PATHS", "flowersec-swift/Sources Package.swift README.md flowersec-swift/README.md docs examples .github"],
-  ["SWIFT_SOURCE_GUARD_PRUNE", ".build .git .swiftpm dist node_modules"],
-  ["SWIFT_SOURCE_GUARD_FILE_GLOBS", "-name '*.go' -o -name '*.json' -o -name '*.md' -o -name '*.mjs' -o -name '*.swift' -o -name '*.ts' -o -name '*.tsx' -o -name '*.txt' -o -name '*.yaml' -o -name '*.yml'"],
-]);
-
-const expectedSwiftSourceGuardRecipe = [
-  "\t@status=1; \\",
-  "\tif command -v rg >/dev/null 2>&1; then \\",
-  "\tif rg -n --glob '!.build/**' --glob '!.git/**' --glob '!.swiftpm/**' --glob '!dist/**' --glob '!node_modules/**' '$(SWIFT_SOURCE_GUARD_PATTERN)' $(SWIFT_SOURCE_GUARD_PATHS); then \\",
-  "\tstatus=0; \\",
-  "\telse \\",
-  "\tstatus=$$?; \\",
-  "\tfi; \\",
-  "\telse \\",
-  "\tmatches=$$(find $(SWIFT_SOURCE_GUARD_PATHS) $$(printf ' -name %s -o' $(SWIFT_SOURCE_GUARD_PRUNE) | sed 's/ -o$$//') -prune -o -type f \\( $(SWIFT_SOURCE_GUARD_FILE_GLOBS) \\) -exec grep -InE '$(SWIFT_SOURCE_GUARD_PATTERN)' {} +); \\",
-  "\tif [ -n \"$$matches\" ]; then \\",
-  "\tprintf \"%s\\n\" \"$$matches\"; \\",
-  "\tstatus=0; \\",
-  "\telse \\",
-  "\tstatus=1; \\",
-  "\tfi; \\",
-  "\tfi; \\",
-  "\tif [ \"$$status\" = \"0\" ]; then \\",
-  "\techo \"Swift SDK contains downstream product semantics\"; \\",
-  "\texit 1; \\",
-  "\tfi; \\",
-  "\tif [ \"$$status\" != \"1\" ]; then \\",
-  "\techo \"Swift source guard scan failed\"; \\",
-  "\texit \"$$status\"; \\",
-  "\tfi",
+const protectedTargets = [
+  "test", "browser-smoke", "precommit", "precommit-source",
+  "diagnostic", "performance", "security-makefile-check", "security-dependency-check",
+  "security-package-check", "release-policy-check", "release-version-check", "release-test",
+  "release-check", "check", "final-network-preflight", "final-offline-contracts",
+  "final-package-validation", "final-integration-lanes", "final-post-validation",
+  "final-go-check", "final-race-check", "final-ts-check", "final-swift-check",
+  "final-rust-check", "go-test-race", "go-vulncheck", "ts-audit",
+  "swift-security-check", "swift-source-guard", "rust-audit",
 ];
-
-function runMake(makefile, args) {
-  return spawnSync("make", ["--no-print-directory", ...args, "-f", makefile], {
-    cwd: path.dirname(makefile),
-    encoding: "utf8",
-    maxBuffer: 16 * 1024 * 1024,
-  });
-}
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function targetDefinitionCount(source, target) {
-  const expression = new RegExp(`^${escapeRegExp(target)}\\s*:`, "gm");
-  return [...source.matchAll(expression)].length;
+function targetBlock(source, target) {
+  const match = new RegExp(`^${escapeRegExp(target)}:([^\\n]*)\\n((?:\\t.*\\n)*)`, "m").exec(source);
+  if (!match) throw new Error(`Makefile target ${target} is missing`);
+  return {
+    prerequisites: match[1].trim().split(/\s+/).filter(Boolean),
+    recipe: match[2].trimEnd().split("\n").filter(Boolean),
+  };
 }
 
-function effectiveVariable(database, name) {
-  const expression = new RegExp(`^${escapeRegExp(name)}[ \\t]*(?::=|=) ([^\\n]*)$`, "gm");
-  const matches = [...database.matchAll(expression)];
-  if (matches.length !== 1) {
-    throw new Error(`effective Make configuration variable ${name} has ${matches.length} definitions`);
+function exactRecipe(source, target, expected) {
+  const actual = targetBlock(source, target).recipe;
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${target} recipe must be ${JSON.stringify(expected)}; got ${JSON.stringify(actual)}`);
   }
-  return matches[0][1];
 }
 
-function validateMakefileSource(source, protectedTargets) {
-  if (/\$[({](?:eval|file|shell)\b/.test(source) || /\$[({]\s*call(?:[\s,})]|$)/.test(source)) {
+function validateSource(source) {
+  if (/\$[({](?:eval|file|shell)\b|\$[({]\s*call(?:[\s,})]|$)/.test(source)) {
     throw new Error("Makefile must not generate or rewrite Make syntax dynamically");
   }
-
-  let inDefine = false;
+  if (/^(?:-?include|sinclude|load|ifeq|ifneq|ifdef|ifndef|else|endif)(?:\s|$)/m.test(source)) {
+    throw new Error("Makefile must not load or conditionally replace the audited graph");
+  }
+  if (/^\.(?:IGNORE|ONESHELL)\s*:/m.test(source)) {
+    throw new Error("Makefile must not suppress recipe failures");
+  }
   for (const [index, line] of source.split("\n").entries()) {
-    if (line.startsWith("\t")) continue;
-    const trimmed = line.trim();
-    if (inDefine) {
-      if (/^endef(?:\s|$)/.test(trimmed)) inDefine = false;
-      continue;
+    if (line.startsWith("\t") || line.trim() === "" || line.trimStart().startsWith("#")) continue;
+    if (/\\$/.test(line)) throw new Error(`Makefile line ${index + 1} uses a non-recipe continuation`);
+    const assignment = /^(?:override\s+|export\s+|private\s+)*([^:=+?!\s]+)\s*(?::=|\?=|\+=|!=|=)/.exec(line.trim());
+    if (assignment && (assignment[0].includes("!=") || protectedVariables.has(assignment[1]) || assignment[1].includes("$"))) {
+      throw new Error(`Makefile line ${index + 1} assigns a protected control variable`);
     }
-    if (/\\$/.test(line)) {
-      throw new Error(`Makefile line ${index + 1} must not use non-recipe backslash continuation`);
-    }
-    if (/^(?:(?:override|export|private)\s+)*define(?:\s|$)/.test(trimmed)) {
-      const name = trimmed.replace(/^(?:(?:override|export|private)\s+)*define\s*/, "").trim();
-      if (name.includes("$") || protectedMakeControlVariables.has(name)) {
-        throw new Error(`Makefile line ${index + 1} must not define a dynamic or protected Make control variable`);
-      }
-      inDefine = true;
-      continue;
-    }
-    if (/^(?:-?include|sinclude|load)(?:\s|$)/.test(trimmed)) {
-      throw new Error(`Makefile line ${index + 1} must not load external Make syntax`);
-    }
-    if (/^(?:ifeq|ifneq|ifdef|ifndef|else|endif)(?:\s|$)/.test(trimmed)) {
-      throw new Error(`Makefile line ${index + 1} must not conditionally redefine the audited Make graph`);
-    }
-    if (/^\$[({]/.test(trimmed)) {
-      throw new Error(`Makefile line ${index + 1} must not expand dynamic Make syntax`);
-    }
-
-    const assignmentText = trimmed.replace(/^(?:(?:override|export|private)\s+)*/, "");
-    const assignmentOperator = /(?:::=|::?=|\+=|\?=|!=|=)/.exec(assignmentText);
-    const ruleSeparator = /:(?![:=])/.exec(assignmentText);
-    if (assignmentOperator?.[0] === "!=") {
-      throw new Error(`Makefile line ${index + 1} must not execute a shell assignment`);
-    }
-    if (assignmentOperator && (!ruleSeparator || assignmentOperator.index < ruleSeparator.index)) {
-      const name = assignmentText.slice(0, assignmentOperator.index).trim();
-      if (name.includes("$") || protectedMakeControlVariables.has(name)) {
-        throw new Error(`Makefile line ${index + 1} must not assign a dynamic or protected Make control variable: ${name}`);
-      }
-      continue;
-    }
-
-    if (ruleSeparator) {
-      const targets = assignmentText.slice(0, ruleSeparator.index).trim().split(/\s+/).filter(Boolean);
-      const ruleBody = assignmentText.slice(ruleSeparator.index + 1).trim();
-      if (targets.some((target) => target.includes("$"))) {
-        throw new Error(`Makefile line ${index + 1} must not declare a dynamically named target`);
-      }
-      const targetAssignment = /^(?:(?:override|export|private)\s+)*(.+?)\s*(?:::=|::?=|\+=|\?=|!=|=)/.exec(ruleBody);
-      if (targetAssignment) {
-        const name = targetAssignment[1].trim();
-        const protectedTarget = targets.find((target) => protectedTargets.includes(target));
-        const patternTarget = targets.find((target) => target.includes("%"));
-        if (protectedMakeControlVariables.has(name) || expectedSecurityConfiguration.has(name) || name.includes("$") || protectedTarget || patternTarget) {
-          const scope = protectedTarget
-            ? ` on ${protectedTarget}`
-            : patternTarget
-              ? ` on pattern target ${patternTarget}`
-              : "";
-          throw new Error(`Makefile line ${index + 1} must not assign a target-specific control variable${scope}: ${name}`);
-        }
-        continue;
-      }
+    if (/^[^:]*\$[({][^:]*:/.test(line)) throw new Error(`Makefile line ${index + 1} declares a dynamic target`);
+    const targetAssignment = /^([^:]+):[^\n]*(?:override\s+|export\s+|private\s+)*(\S+)\s*(?::=|\?=|\+=|!=|=)/.exec(line);
+    if (targetAssignment && (protectedVariables.has(targetAssignment[2]) || protectedTargets.some((target) => targetAssignment[1].trim().split(/\s+/).includes(target)))) {
+      throw new Error(`Makefile line ${index + 1} assigns target-specific control state`);
     }
   }
-  if (inDefine) throw new Error("Makefile contains an unterminated define block");
-}
-
-function effectivePrerequisites(database, target) {
-  database = makeFilesDatabase(database);
-  const expression = new RegExp(`^${escapeRegExp(target)}:([^\\n]*)$`, "m");
-  const match = expression.exec(database);
-  if (!match) throw new Error(`effective Make graph has no ${target} target`);
-  return match[1].trim().split(/\s+/).filter(Boolean);
-}
-
-function effectiveTargetBlock(database, target) {
-  database = makeFilesDatabase(database);
-  const expression = new RegExp(`^${escapeRegExp(target)}:[^\\n]*$`, "m");
-  const match = expression.exec(database);
-  if (!match) throw new Error(`effective Make graph has no ${target} target`);
-  const end = database.indexOf("\n\n", match.index);
-  return database.slice(match.index, end < 0 ? database.length : end);
-}
-
-function makeFilesDatabase(database) {
-  const startMarker = "# Files\n";
-  const endMarker = "# files hash-table stats:";
-  const end = database.lastIndexOf(endMarker);
-  const start = end < 0 ? -1 : database.lastIndexOf(startMarker, end);
-  if (start < 0 || end < start + startMarker.length) {
-    throw new Error("cannot locate the final effective Make files database");
+  for (const target of protectedTargets) {
+    const count = [...source.matchAll(new RegExp(`^${escapeRegExp(target)}\\s*:`, "gm"))].length;
+    if (count !== 1) throw new Error(`Makefile target ${target} has ${count} definitions`);
+    if (!new RegExp(`^\\.PHONY:.*(?:^|\\s)${escapeRegExp(target)}(?:\\s|$)`, "m").test(source)) {
+      throw new Error(`${target} must be phony`);
+    }
   }
-  return database.slice(start + startMarker.length, end);
 }
 
-function effectiveRecipe(database, target) {
-  const block = effectiveTargetBlock(database, target);
-  const lines = block.split("\n");
-  const marker = lines.findIndex((line) => /^#\s+(?:commands|recipe) to execute/.test(line));
-  if (marker < 0) return [];
-  return lines
-    .slice(marker + 1)
-    .filter((line) => line.startsWith("\t") && line.trim() !== "")
-    .map((line) => line.replace(/^\t[ \t]*/, "\t"));
+function verifyGraph(source) {
+  exactRecipe(source, "test", ["\t$(MAKE) go-test ts-test"]);
+  exactRecipe(source, "browser-smoke", ["\t$(FLOWERSEC_TEST_HOST) run --suite browser-smoke"]);
+  exactRecipe(source, "precommit", ["\t$(MAKE) precommit-source"]);
+  exactRecipe(source, "diagnostic", ["\t$(FLOWERSEC_TEST_HOST) run --suite diagnostic"]);
+  exactRecipe(source, "performance", ["\t$(FLOWERSEC_TEST_HOST) run --suite performance"]);
+  exactRecipe(source, "security-makefile-check", ["\tnode scripts/check-security-makefile.mjs Makefile"]);
+  exactRecipe(source, "security-dependency-check", [
+    `\tnode --test ${requiredSecurityTests.join(" ")}`,
+    "\tnode scripts/generate-source-inventory.mjs --check",
+  ]);
+  exactRecipe(source, "release-policy-check", [
+    "\t./scripts/check-release-workflow-policy.sh",
+    "\t$(MAKE) release-version-check",
+    "\t$(MAKE) release-test",
+  ]);
+  exactRecipe(source, "release-version-check", ["\tnode scripts/check-release-version-consistency.mjs"]);
+  exactRecipe(source, "release-test", ["\tnode --test scripts/check-release-version-consistency.test.mjs scripts/release.test.mjs"]);
+  exactRecipe(source, "release-check", ["\tnode scripts/check-release-version-consistency.mjs"]);
+  exactRecipe(source, "final-post-validation", ["\t$(MAKE) example-check"]);
+  exactRecipe(source, "final-race-check", ["\t$(MAKE) go-test-race"]);
+
+  const check = targetBlock(source, "check");
+  if (JSON.stringify(check.prerequisites) !== JSON.stringify(["security-makefile-check"])) {
+    throw new Error("check must have only security-makefile-check as its prerequisite");
+  }
+  for (const token of ["release-policy-check", "final-network-preflight", "final-offline-contracts", "final-package-validation", "final-integration-lanes", "final-post-validation"]) {
+    if (!check.recipe.some((line) => line.includes(token))) throw new Error(`check is missing ${token}`);
+  }
+  const order = ["final-network-preflight", "final-offline-contracts", "final-package-validation", "final-integration-lanes", "final-post-validation"]
+    .map((token) => check.recipe.findIndex((line) => line.includes(token)));
+  if (order.some((value, index) => value < 0 || index > 0 && value <= order[index - 1])) throw new Error("check phase order is invalid");
+
+  if (/transportcheck|transport-test-runner|ubuntu-test-runner|run-transport-v2|flowersec-test-helper|CHECK_INTEROP/.test(source)) {
+    throw new Error("Makefile retains retired test orchestration");
+  }
+
 }
 
 export function verifySecurityMakefile(makefile) {
   const source = fs.readFileSync(makefile, "utf8").replace(/\r\n?/g, "\n");
-  const protectedTargets = [
-    "security-makefile-check",
-    "security-dependency-check",
-    "security-package-check",
-    "ts-ensure-deps",
-    "ts-build",
-    "ts-test-short",
-    "go-test-race",
-    "go-cover-check-short",
-    "go-cover-check",
-    "go-vulncheck",
-    "ts-audit",
-    "ts-package-cache-preflight",
-    "swift-security-check",
-    "swift-source-guard",
-    "swift-check",
-    "swift-final-check",
-    "rust-fetch",
-    "rust-package-check",
-    "rust-publish-preflight",
-    "rust-package-offline-check",
-    "rust-audit",
-    "rust-audit-offline",
-    "rust-release-check",
-    "rust-final-check",
-    "rust-test-short",
-    "release-policy-check",
-    "release-version-check",
-    "release-test",
-    "release-check",
-    "example-source-check",
-    "example-check",
-    "precommit",
-    "check",
-    "final-network-preflight",
-    "final-go-preflight",
-    "final-ts-preflight",
-    "final-swift-preflight",
-    "final-rust-preflight",
-    "final-offline-contracts",
-    "final-package-validation",
-    "final-integration-lanes",
-    "final-post-validation",
-    "final-go-check",
-    "final-ts-check",
-    "final-swift-check",
-    "final-rust-check",
-    "stability-swift-check",
-    "stability-rust-check",
-  ];
-  validateMakefileSource(source, protectedTargets);
-  for (const target of protectedTargets) {
-    const count = targetDefinitionCount(source, target);
-    if (count !== 1) throw new Error(`Makefile target ${target} has ${count} definitions; duplicate or override recipes are forbidden`);
-  }
-
-  const database = runMake(makefile, ["-pRrq"]);
-  if (![0, 1].includes(database.status) || database.error) {
-    throw new Error(`cannot parse effective Make graph: ${database.error?.message ?? database.stderr}`);
-  }
-  if (database.stderr.trim() !== "") {
-    throw new Error(`Make reported a duplicate or overridden recipe: ${database.stderr.trim()}`);
-  }
-  for (const [name, expected] of expectedSecurityConfiguration) {
-    const actual = effectiveVariable(database.stdout, name);
-    if (actual !== expected) {
-      throw new Error(`effective Make configuration variable ${name} must equal ${JSON.stringify(expected)}; got ${JSON.stringify(actual)}`);
-    }
-  }
-
-  const failureCriticalTargets = new Set([
-    ...protectedTargets,
-    "precommit-go",
-    "precommit-ts",
-    "precommit-swift",
-    "precommit-rust",
-  ]);
-  const ignore = /^\.IGNORE:([^\n]*)$/m.exec(database.stdout);
-  if (ignore) {
-    const ignoredTargets = ignore[1].trim().split(/\s+/).filter(Boolean);
-    if (ignoredTargets.length === 0) {
-      throw new Error("global .IGNORE suppresses every security failure");
-    }
-    const protectedIgnored = ignoredTargets.filter((target) => failureCriticalTargets.has(target));
-    if (protectedIgnored.length > 0) {
-      throw new Error(`.IGNORE suppresses security targets: ${protectedIgnored.join(", ")}`);
-    }
-  }
-  if (/^\.ONESHELL:/m.test(database.stdout)) {
-    throw new Error(".ONESHELL can suppress an earlier security recipe failure");
-  }
-
-  for (const target of protectedTargets) {
-    if (!/#\s+Phony target\b/.test(effectiveTargetBlock(database.stdout, target))) {
-      throw new Error(`${target} must remain an effective phony target`);
-    }
-  }
-
-  if (effectivePrerequisites(database.stdout, "precommit").length !== 0) {
-    throw new Error("Makefile target precommit must schedule its ordered waves from the recipe");
-  }
-  const checkPrerequisites = effectivePrerequisites(database.stdout, "check");
-  if (checkPrerequisites.length !== 1 || checkPrerequisites[0] !== "security-makefile-check") {
-    throw new Error("Makefile target check must have only the dependency-free security-makefile-check prerequisite");
-  }
-  if (effectivePrerequisites(database.stdout, "security-dependency-check").length !== 0) {
-    throw new Error("security-dependency-check must not run dependency installation before final-network-preflight");
-  }
-  if (!effectivePrerequisites(database.stdout, "security-package-check").includes("ts-build")) {
-    throw new Error("security-package-check effective graph is missing ts-build");
-  }
-  if (!effectivePrerequisites(database.stdout, "ts-build").includes("ts-ensure-deps")) {
-    throw new Error("ts-build effective graph is missing ts-ensure-deps");
-  }
-
-  const exactTestCommand = `\tnode --test ${requiredSecurityTests.join(" ")}`;
-  const expectedRecipes = new Map([
-    ["security-makefile-check", ["\tnode scripts/check-security-makefile.mjs Makefile"]],
-    ["security-dependency-check", [
-      exactTestCommand,
-      "\tnode scripts/generate-source-inventory.mjs --check",
-    ]],
-    ["security-package-check", ["\tnode --test scripts/source-inventory.test.mjs"]],
-    ["example-source-check", [
-      "\tnode --test scripts/sdk-examples.test.mjs",
-      "\tfind examples/ts -type f -name '*.mjs' -print0 | xargs -0 -n1 node --check",
-    ]],
-    ["example-check", [
-      "\tcd flowersec-go && go test -run '^$$' .",
-      "\trustup run 1.88.0 cargo check --locked --offline --manifest-path examples/rust/Cargo.toml",
-      "\tswift test --package-path examples/swift --cache-path \"$(SWIFTPM_CACHE_PATH)\" --skip-update --only-use-versions-from-resolved-file",
-    ]],
-    ["ts-build", ["\tcd flowersec-ts && rm -rf dist && npm run build"]],
-    ["ts-test-short", [
-      "\tcd flowersec-ts && npx vitest run --exclude 'src/**/*.integration.test.ts' --exclude 'src/v2/session_go_interop.test.ts' --exclude 'src/v2/browserBundle.test.ts'",
-      "\tnode --test flowersec-ts/scripts/browser-release-collector-core.node-test.mjs",
-    ]],
-    ["go-test-race", [
-      "\tcd flowersec-go && go test -race -timeout=5m ./...",
-      "\tcd tools/idlgen && go test -race -timeout=5m ./...",
-      "\tcd tools/releasenotes && go test -race -timeout=5m ./...",
-      "\tcd tools/stabilitycheck && go test -race -timeout=5m ./...",
-      "\t./scripts/run-go-test-race-shards.sh tools/transportcheck auto 5m auto race 1",
-    ]],
-    ["go-vulncheck", ["\tnode scripts/check-go-security.mjs"]],
-    ["ts-audit", ["\tcd flowersec-ts && npm audit --audit-level=info --include=prod --include=dev --include=optional --include=peer"]],
-    ["ts-package-cache-preflight", ["\tnode scripts/prepare-ts-package-cache.mjs"]],
-    ["swift-security-check", ["\tnode scripts/check-swift-security.mjs"]],
-    ["swift-source-guard", expectedSwiftSourceGuardRecipe],
-    ["rust-audit", ["\tnode scripts/check-rust-security.mjs"]],
-    ["rust-audit-offline", ["\tnode scripts/check-rust-security.mjs --offline"]],
-    ["rust-fetch", [
-      "\tcd flowersec-rust && rustup run 1.88.0 cargo fetch --locked",
-      "\tcd flowersec-rust && rustup run 1.88.0 cargo fetch --locked --manifest-path fuzz/Cargo.toml",
-      "\trustup run 1.88.0 cargo fetch --locked --manifest-path examples/rust/Cargo.toml",
-    ]],
-    ["rust-package-check", [
-      "\tcd flowersec-rust && rustup run 1.88.0 cargo package --allow-dirty",
-      "\tcd flowersec-rust && rustup run 1.88.0 cargo publish --dry-run --allow-dirty",
-    ]],
-    ["rust-publish-preflight", [
-      "\tcd flowersec-rust && rustup run 1.88.0 cargo publish --dry-run --allow-dirty --no-verify",
-    ]],
-    ["rust-package-offline-check", [
-      "\tcd flowersec-rust && rustup run 1.88.0 cargo package --allow-dirty --offline",
-    ]],
-    ["release-policy-check", [
-      "\t./scripts/check-release-workflow-policy.sh",
-      "\t$(MAKE) release-version-check",
-      "\t$(MAKE) release-test",
-    ]],
-    ["release-version-check", ["\tnode scripts/check-release-version-consistency.mjs"]],
-    ["release-test", ["\tnode --test scripts/check-release-version-consistency.test.mjs scripts/release.test.mjs scripts/transport-v2-runner.test.mjs"]],
-    ["release-check", [
-      "\tnode scripts/main-gate-receipt.mjs verify --head \"$$(git rev-parse HEAD)\" --remote-main \"$$(git rev-parse origin/main)\" --evidence-report \"$(TRANSPORT_V2_EVIDENCE_REPORT)\" --evidence-base \"$(TRANSPORT_V2_BASE_SHA)\"",
-    ]],
-    ["final-network-preflight", [
-      "\tnode scripts/run-final-lanes.mjs $(MAKE) final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight",
-    ]],
-    ["final-go-preflight", [
-      "\t$(MAKE) go-vulncheck",
-      "\tnode scripts/check-go-security.mjs --prepare-offline-toolchain",
-    ]],
-    ["final-ts-preflight", [
-      "\t$(MAKE) ts-ci",
-      "\t$(MAKE) ts-audit",
-      "\t$(MAKE) ts-package-cache-preflight",
-      "\t$(MAKE) ts-browser-ensure",
-    ]],
-    ["final-swift-preflight", [
-      "\t$(MAKE) swift-security-check",
-    ]],
-    ["final-rust-preflight", [
-      "\t$(MAKE) rust-fetch",
-      "\t$(MAKE) rust-audit",
-      "\t$(MAKE) rust-publish-preflight",
-    ]],
-    ["final-offline-contracts", [
-      "\t$(MAKE) security-dependency-check",
-      "\t$(MAKE) gen-check",
-      "\t$(MAKE) stability-source-check",
-    ]],
-    ["final-package-validation", [
-      "\t$(MAKE) security-package-check",
-      "\t$(MAKE) ts-package-check",
-      "\t$(MAKE) swift-package-check",
-      "\t$(MAKE) rust-package-offline-check",
-    ]],
-    ["final-integration-lanes", [
-      "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check",
-      "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check final-rust-check",
-    ]],
-    ["final-post-validation", [
-      "\t$(MAKE) example-check",
-      "\t@if [ \"$(CHECK_INTEROP)\" = \"1\" ]; then $(MAKE) transport-interop-smoke; fi",
-    ]],
-    ["final-go-check", [
-      "\t$(MAKE) transport-v2-unit",
-      "\t$(MAKE) weaknet-smoke",
-      "\t$(MAKE) quic-native-smoke",
-      "\t$(MAKE) go-vet",
-      "\t$(MAKE) go-test",
-      "\t$(MAKE) go-cover-check",
-    ]],
-    ["final-race-check", ["\t$(MAKE) go-test-race"]],
-    ["final-ts-check", [
-      "\t$(MAKE) ts-lint",
-      "\t$(MAKE) ts-build",
-      "\t$(MAKE) ts-browser-e2e",
-      "\t$(MAKE) ts-test",
-      "\t$(MAKE) ts-cover-check",
-    ]],
-    ["swift-check", [
-      "\t$(MAKE) swift-package-check",
-      "\t$(MAKE) swift-security-check",
-      "\t$(MAKE) swift-source-guard",
-      "\t$(MAKE) swift-build",
-      "\t$(MAKE) swift-test",
-      "\t$(MAKE) swift-cover-check",
-    ]],
-    ["swift-final-check", [
-      "\t$(MAKE) swift-source-guard",
-      "\tswift build --cache-path \"$(SWIFTPM_CACHE_PATH)\" --skip-update --only-use-versions-from-resolved-file",
-      "\t@# Xcode 26.4 can retain a stale test-bundle resource seal after swift-build.",
-      "\t@if [ \"$$(uname -s)\" = \"Darwin\" ]; then swift package --cache-path \"$(SWIFTPM_CACHE_PATH)\" --skip-update --only-use-versions-from-resolved-file clean; fi",
-      "\tswift test --cache-path \"$(SWIFTPM_CACHE_PATH)\" --skip-update --only-use-versions-from-resolved-file --enable-code-coverage",
-      "\t@coverage_path=$$(swift test --cache-path \"$(SWIFTPM_CACHE_PATH)\" --skip-update --only-use-versions-from-resolved-file --show-codecov-path); \\",
-      "\tnode scripts/check-swift-coverage.mjs \"$$coverage_path\" 79 80",
-    ]],
-    ["final-swift-check", [
-      "\t$(MAKE) swift-final-check",
-      "\t$(MAKE) stability-swift-check",
-    ]],
-    ["final-rust-check", [
-      "\tCARGO_NET_OFFLINE=true $(MAKE) rust-final-check",
-      "\tCARGO_NET_OFFLINE=true $(MAKE) stability-rust-check",
-    ]],
-    ["stability-swift-check", ["\tcd tools/stabilitycheck && go run . verify-swift"]],
-    ["stability-rust-check", ["\tcd tools/stabilitycheck && go run . verify-rust"]],
-    ["rust-test-short", ["\tcd flowersec-rust && rustup run 1.88.0 cargo test --all-features --lib"]],
-    ["precommit-go", [
-      "\t$(MAKE) fmt-check",
-      "\t$(MAKE) go-vet",
-      "\t$(MAKE) go-test-short",
-      "\t$(MAKE) go-cover-check-short",
-    ]],
-    ["go-cover-check-short", ["\tcd tools/stabilitycheck && go run . verify-go-coverage-short"]],
-    ["go-cover-check", ["\tcd tools/stabilitycheck && go run . verify-go-coverage"]],
-    ["precommit-ts", [
-      "\t$(MAKE) ts-ensure-deps",
-      "\t$(MAKE) ts-lint",
-      "\t$(MAKE) ts-test-short",
-    ]],
-    ["precommit-swift", [
-      "\t$(MAKE) swift-package-check",
-      "\t$(MAKE) swift-security-check",
-      "\t$(MAKE) swift-source-guard",
-    ]],
-    ["precommit-rust", [
-      "\t$(MAKE) rust-fmt-check",
-      "\t$(MAKE) rust-clippy",
-      "\t$(MAKE) rust-test-short",
-    ]],
-  ]);
-  for (const [target, expected] of expectedRecipes) {
-    const actual = effectiveRecipe(database.stdout, target);
-    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-      throw new Error(`${target} effective recipe must use ${JSON.stringify(expected)} exactly; got ${JSON.stringify(actual)}`);
-    }
-  }
-
-  for (const [target, requiredCalls] of [
-    ["check", ["release-policy-check", "readme-localization-check", "example-source-check", "final-integration-lanes"]],
-  ]) {
-    const recipe = effectiveRecipe(database.stdout, target);
-    for (const required of requiredCalls) {
-      const exactCall = `\t$(MAKE) ${required}`;
-      if (recipe.filter((line) => line === exactCall).length !== 1) {
-        throw new Error(`${target} must call ${required} with one exact, unsuppressed recipe line`);
-      }
-    }
-  }
-  const expectedPrecommitRecipe = [
-    "\tnode scripts/run-precommit-wave.mjs generate $(MAKE) gen-check",
-    "\tnode scripts/run-precommit-wave.mjs dependencies $(MAKE) ts-ensure-deps",
-    "\tnode scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check example-source-check",
-    "\tnode scripts/run-precommit-wave.mjs languages $(MAKE) precommit-go precommit-ts precommit-swift precommit-rust",
-  ];
-  const precommitRecipe = effectiveRecipe(database.stdout, "precommit");
-  if (JSON.stringify(precommitRecipe) !== JSON.stringify(expectedPrecommitRecipe)) {
-    throw new Error(`precommit must preserve the bounded phase recipe exactly; got ${JSON.stringify(precommitRecipe)}`);
-  }
-  const checkRecipe = effectiveRecipe(database.stdout, "check");
-  const exampleSourceIndex = checkRecipe.indexOf("\t$(MAKE) example-source-check");
-  const preflightCall = "\tnode scripts/run-final-stage.mjs 595 preflight $(MAKE) final-network-preflight";
-  const preflightIndex = checkRecipe.indexOf(preflightCall);
-  const contractsCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 300 contracts $(MAKE) final-offline-contracts";
-  const contractsIndex = checkRecipe.indexOf(contractsCall);
-  const packageCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation";
-  const packageIndex = checkRecipe.indexOf(packageCall);
-  const lanesIndex = checkRecipe.indexOf("\t$(MAKE) final-integration-lanes");
-  const postCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 post $(MAKE) final-post-validation";
-  const postIndex = checkRecipe.indexOf(postCall);
-  if (exampleSourceIndex < 0 || preflightIndex <= exampleSourceIndex || checkRecipe.lastIndexOf(preflightCall) !== preflightIndex
-    || contractsIndex <= preflightIndex || checkRecipe.lastIndexOf(contractsCall) !== contractsIndex
-    || packageIndex <= contractsIndex || checkRecipe.lastIndexOf(packageCall) !== packageIndex
-    || lanesIndex <= packageIndex || postIndex <= lanesIndex || checkRecipe.lastIndexOf(postCall) !== postIndex) {
-    throw new Error("check must preserve source, preflight, offline contracts, packages, lanes, and post-validation order");
-  }
-
-  const precommitDryRun = runMake(makefile, ["-n", "precommit"]);
-  const finalDryRun = runMake(makefile, ["-n", "check"]);
-  for (const [label, result] of [["precommit", precommitDryRun], ["check", finalDryRun]]) {
-    if (result.status !== 0 || result.error || result.stderr.trim() !== "") {
-      throw new Error(`cannot inspect ${label} Make graph: ${result.error?.message ?? result.stderr}`);
-    }
-  }
-  const finalOnlyCommands = [
-    "cd flowersec-go && go test -timeout=5m ./...",
-    "npm run test:coverage",
-    "npm run verify:package",
-    "swift build",
-    "--enable-code-coverage",
-    "go run . verify-swift",
-    "go run . verify-rust",
-    "cargo package --allow-dirty",
-    "cargo publish --dry-run --allow-dirty",
-  ];
-  for (const command of finalOnlyCommands) {
-    if (precommitDryRun.stdout.includes(command)) {
-      throw new Error(`precommit must not reach final-only command: ${command}`);
-    }
-    if (!finalDryRun.stdout.includes(command)) {
-      throw new Error(`check must retain final-only command: ${command}`);
-    }
-  }
-
-  for (const [target, requiredPrerequisite] of [
-    ["rust-release-check", "rust-audit"],
-  ]) {
-    if (!effectivePrerequisites(database.stdout, target).includes(requiredPrerequisite)) {
-      throw new Error(`${target} effective graph is missing ${requiredPrerequisite}`);
-    }
-  }
-
-  const dryRun = runMake(makefile, ["-n", "security-dependency-check"]);
-  if (dryRun.status !== 0 || dryRun.error || dryRun.stderr.trim() !== "") {
-    throw new Error(`cannot inspect effective security-dependency-check recipe: ${dryRun.error?.message ?? dryRun.stderr}`);
-  }
-  const commands = dryRun.stdout.trim().split("\n").map((line) => line.trim()).filter(Boolean);
-  const testCommand = commands.find((line) => line.startsWith("node --test "));
-  if (!testCommand) throw new Error("effective security-dependency-check has no Node test command");
-  for (const requiredTest of requiredSecurityTests) {
-    if (!testCommand.split(/\s+/).includes(requiredTest)) {
-      throw new Error(`effective security-dependency-check omits ${requiredTest}`);
-    }
-  }
-  if (!commands.includes("node scripts/generate-source-inventory.mjs --check")) {
-    throw new Error("effective security-dependency-check must enforce source inventory freshness with --check");
-  }
-}
-
-function main() {
-  if (process.argv.length !== 3) throw new Error("usage: check-security-makefile.mjs <Makefile>");
-  verifySecurityMakefile(path.resolve(process.argv[2]));
-  process.stdout.write("verified effective security Make graph\n");
+  validateSource(source);
+  verifyGraph(source);
 }
 
 try {
-  main();
+  if (process.argv.length !== 3) throw new Error("usage: check-security-makefile.mjs <Makefile>");
+  verifySecurityMakefile(path.resolve(process.argv[2]));
+  process.stdout.write("verified effective security Make graph\n");
 } catch (error) {
   process.stderr.write(`${error.message}\n`);
   process.exitCode = 1;

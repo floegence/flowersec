@@ -164,6 +164,8 @@ func (s *engineSession) flushControl(ctx context.Context) error {
 	select {
 	case <-idle:
 		return nil
+	case <-s.peerSessionClose:
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-s.ctx.Done():

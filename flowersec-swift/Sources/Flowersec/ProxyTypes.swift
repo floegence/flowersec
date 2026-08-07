@@ -225,7 +225,9 @@ internal struct ProxyWebSocketFrame: Equatable, Sendable {
   internal static func close(code: UInt16? = nil, reason: String = "") throws
     -> ProxyWebSocketFrame
   {
-    guard reason.utf8.count <= 123 else { throw ProxyError.invalidMetadata("close reason is too long") }
+    guard reason.utf8.count <= 123 else {
+      throw ProxyError.invalidMetadata("close reason is too long")
+    }
     var payload = Data()
     if let code {
       payload.appendUInt16BE(code)
@@ -326,7 +328,8 @@ internal enum ProxyError: LocalizedError, Equatable, Sendable {
     case .invalidMetadata(let message): return "Invalid proxy metadata: \(message)"
     case .frameTooLarge: return "The proxy frame exceeds the configured limit."
     case .bodyTooLarge: return "The proxy body exceeds the configured limit."
-    case .invalidWebSocketOperation(let operation): return "Invalid WebSocket operation \(operation)."
+    case .invalidWebSocketOperation(let operation):
+      return "Invalid WebSocket operation \(operation)."
     case .remote(let code, let message): return "The proxy peer returned \(code): \(message)"
     case .stream(let message): return "The proxy stream failed: \(message)"
     case .upstream(let message): return "The proxy upstream failed: \(message)"
@@ -394,7 +397,8 @@ internal struct ProxyHeaderPolicy: Sendable {
 
   internal init(options: ProxyContractOptions = ProxyContractOptions()) throws {
     requestHeaders = Self.requestHeaders.union(try proxyHeaderNameSet(options.extraRequestHeaders))
-    responseHeaders = Self.responseHeaders.union(try proxyHeaderNameSet(options.extraResponseHeaders))
+    responseHeaders = Self.responseHeaders.union(
+      try proxyHeaderNameSet(options.extraResponseHeaders))
     blockedResponseHeaders = try proxyHeaderNameSet(options.blockedResponseHeaders)
     webSocketHeaders = Self.webSocketHeaders.union(
       try proxyHeaderNameSet(options.extraWebSocketHeaders)
@@ -424,7 +428,8 @@ internal struct ProxyHeaderPolicy: Sendable {
       let allowed: Bool
       switch direction {
       case .request:
-        allowed = name == "cookie"
+        allowed =
+          name == "cookie"
           || (name != "host" && name != "authorization" && requestHeaders.contains(name))
       case .response:
         allowed = responseHeaders.contains(name) && !blockedResponseHeaders.contains(name)
@@ -469,21 +474,28 @@ internal struct ProxyCookieJar: Sendable {
         let separator = first.firstIndex(of: "=")
       else { continue }
       let name = first[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
-      let value = first[first.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
+      let value = first[first.index(after: separator)...].trimmingCharacters(
+        in: .whitespacesAndNewlines)
       guard !name.isEmpty else { continue }
       var path = defaultPath
       var delete = value.isEmpty
       for rawAttribute in parts.dropFirst() {
         let attribute = rawAttribute.trimmingCharacters(in: .whitespacesAndNewlines)
-        let components = attribute.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        let components = attribute.split(
+          separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
         let attributeName = components[0].lowercased()
         let attributeValue = components.count == 2 ? String(components[1]) : ""
         if attributeName == "path", attributeValue.hasPrefix("/") { path = attributeValue }
-        if attributeName == "max-age", Int64(attributeValue).map({ $0 <= 0 }) == true { delete = true }
+        if attributeName == "max-age", Int64(attributeValue).map({ $0 <= 0 }) == true {
+          delete = true
+        }
       }
       let key = "\(name)\u{0}\(path)"
-      if delete { cookies.removeValue(forKey: key) }
-      else { cookies[key] = Cookie(name: name, value: value, path: path) }
+      if delete {
+        cookies.removeValue(forKey: key)
+      } else {
+        cookies[key] = Cookie(name: name, value: value, path: path)
+      }
     }
   }
 
@@ -528,8 +540,9 @@ enum ProxyFraming {
     guard length <= maxBytes else { throw ProxyError.frameTooLarge }
     let payload = try await stream.readExact(length)
     guard payload.count == length else { throw ProxyError.stream("truncated JSON frame") }
-    do { return try JSONDecoder().decode(type, from: payload) }
-    catch { throw ProxyError.invalidMetadata(error.localizedDescription) }
+    do { return try JSONDecoder().decode(type, from: payload) } catch {
+      throw ProxyError.invalidMetadata(error.localizedDescription)
+    }
   }
 
   static func writeBody(
@@ -631,7 +644,9 @@ func proxyValidatePath(_ path: String) throws {
 }
 
 func proxyNormalizedOrigin(_ rawValue: String) throws -> String {
-  guard var components = URLComponents(string: rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+  guard
+    var components = URLComponents(
+      string: rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
     let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
     components.host != nil, components.user == nil, components.password == nil,
     components.query == nil, components.fragment == nil,
@@ -648,7 +663,8 @@ func proxyNormalizedOrigin(_ rawValue: String) throws -> String {
 func proxyDurationMilliseconds(_ duration: Duration) throws -> Int64 {
   guard duration >= .zero else { throw ProxyError.invalidMetadata("timeout must be non-negative") }
   let components = duration.components
-  let milliseconds = Double(components.seconds) * 1_000
+  let milliseconds =
+    Double(components.seconds) * 1_000
     + Double(components.attoseconds) / 1_000_000_000_000_000
   guard milliseconds <= Double(Int64.max) else {
     throw ProxyError.invalidMetadata("timeout is too large")
@@ -657,13 +673,14 @@ func proxyDurationMilliseconds(_ duration: Duration) throws -> Int64 {
 }
 
 private func proxyHeaderNameSet(_ names: [String]) throws -> Set<String> {
-  Set(try names.map { name in
-    let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    guard proxyValidHeaderName(normalized) else {
-      throw ProxyError.invalidConfiguration("invalid header name")
-    }
-    return normalized
-  })
+  Set(
+    try names.map { name in
+      let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      guard proxyValidHeaderName(normalized) else {
+        throw ProxyError.invalidConfiguration("invalid header name")
+      }
+      return normalized
+    })
 }
 
 private func proxyNonemptyNameSet(_ names: [String]) throws -> Set<String> {

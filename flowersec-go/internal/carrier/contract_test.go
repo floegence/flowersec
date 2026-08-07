@@ -14,13 +14,14 @@ type testStream struct{}
 func (testStream) Read([]byte) (int, error)    { return 0, io.EOF }
 func (testStream) Write(p []byte) (int, error) { return len(p), nil }
 func (testStream) CloseWrite() error           { return nil }
+func (testStream) StopSending() error          { return nil }
 func (testStream) Reset() error                { return nil }
 func (testStream) Close() error                { return nil }
 func (testStream) Context() context.Context    { return context.Background() }
 
 type testSession struct{}
 
-func (testSession) Kind() carrier.Kind         { return carrier.KindQUIC }
+func (testSession) Kind() carrier.Kind         { return carrier.KindRawQUIC }
 func (testSession) Path() carrier.Path         { return carrier.PathDirect }
 func (testSession) MaxIncomingStreams() uint16 { return 130 }
 func (testSession) OpenStream(context.Context) (carrier.Stream, error) {
@@ -29,7 +30,13 @@ func (testSession) OpenStream(context.Context) (carrier.Stream, error) {
 func (testSession) AcceptStream(context.Context) (carrier.Stream, error) {
 	return testStream{}, nil
 }
+func (testSession) Termination() <-chan struct{} {
+	terminated := make(chan struct{})
+	close(terminated)
+	return terminated
+}
 func (testSession) CloseWithError(carrier.ApplicationError) error { return nil }
+func (testSession) Abort(carrier.ApplicationError) error          { return nil }
 func (testSession) CloseWithErrorContext(context.Context, carrier.ApplicationError) error {
 	return nil
 }
@@ -41,7 +48,7 @@ func TestCarrierContractIsTransportNeutral(t *testing.T) {
 
 	for _, kind := range []carrier.Kind{
 		carrier.KindWebSocket,
-		carrier.KindQUIC,
+		carrier.KindRawQUIC,
 		carrier.KindWebTransport,
 	} {
 		if err := kind.Validate(); err != nil {

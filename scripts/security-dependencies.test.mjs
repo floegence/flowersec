@@ -79,8 +79,6 @@ function assertPatchedJsYaml(actual, label) {
 
 test("security-sensitive Go modules stay at patched versions", () => {
   const flowersecGo = path.join(sourceRoot, "flowersec-go");
-  const transportCheck = path.join(sourceRoot, "tools/transportcheck");
-
   assertVersionAtLeast(
     readGoModuleVersion(flowersecGo, "golang.org/x/crypto", "golang.org/x/crypto"),
     "0.52.0",
@@ -95,11 +93,6 @@ test("security-sensitive Go modules stay at patched versions", () => {
     readGoModuleVersion(flowersecGo, "golang.org/x/sys", "golang.org/x/sys"),
     "0.46.0",
     "golang.org/x/sys",
-  );
-  assertVersionAtLeast(
-    readGoModuleVersion(transportCheck, "filippo.io/edwards25519", "filippo.io/edwards25519"),
-    "1.1.1",
-    "filippo.io/edwards25519",
   );
 });
 
@@ -151,8 +144,9 @@ test("security dependency checks stay wired into local gates", () => {
   );
   assert.match(
     makefile,
-    /^precommit:\n(?:\tnode scripts\/run-precommit-wave\.mjs .*\n){4}$/m,
+    /^precommit:\n\t\$\(MAKE\) precommit-source$/m,
   );
+  assert.match(makefile, /^precommit-source:\n(?:\tnode scripts\/run-precommit-wave\.mjs .*\n){4}$/m);
   assert.match(makefile, /^\tnode scripts\/run-precommit-wave\.mjs static \$\(MAKE\) security-makefile-check security-dependency-check /m);
   assert.match(
     makefile,

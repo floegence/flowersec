@@ -35,14 +35,14 @@ export { installWebSocketPatch } from "./wsPatch.js";
 export type { WebSocketPatchOptions } from "./wsPatch.js";
 export { disableUpstreamServiceWorkerRegister } from "./disableUpstreamServiceWorkerRegister.js";
 export {
-  connectProxyBrowserV2 as connectProxyBrowser,
-  connectProxyControllerBrowserV2 as connectProxyControllerBrowser,
+  connectProxyBrowser,
+  connectProxyControllerBrowser,
 } from "./integration.js";
 export type {
-  ProxyBrowserConnectV2Options as ProxyBrowserConnectOptions,
-  ProxyBrowserHandleV2 as ProxyBrowserHandle,
-  ProxyControllerBrowserConnectV2Options as ProxyControllerBrowserConnectOptions,
-  ProxyControllerBrowserHandleV2 as ProxyControllerBrowserHandle,
+  ProxyBrowserConnectOptions,
+  ProxyBrowserHandle,
+  ProxyControllerBrowserConnectOptions,
+  ProxyControllerBrowserHandle,
 } from "./integration.js";
 export type {
   ProxyFetchRequestV2 as ProxyFetchRequest,

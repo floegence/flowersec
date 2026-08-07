@@ -9,11 +9,9 @@ import (
 	"io"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/framing/jsonframe"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/observability"
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
 )
 
@@ -74,11 +72,10 @@ func (r *Router) handle(ctx context.Context, typeID uint32, payload json.RawMess
 
 // Server reads RPC envelopes and dispatches them through a Router.
 type Server struct {
-	r       io.ReadWriteCloser        // Underlying stream for framed JSON.
-	router  *Router                   // Handler registry for incoming requests.
-	maxLen  int                       // Max frame size for jsonframe.ReadJSONFrame.
-	writeMu sync.Mutex                // Serializes writes on the stream.
-	obs     observability.RPCObserver // Metrics observer.
+	r       io.ReadWriteCloser // Underlying stream for framed JSON.
+	router  *Router            // Handler registry for incoming requests.
+	maxLen  int                // Max frame size for jsonframe.ReadJSONFrame.
+	writeMu sync.Mutex         // Serializes writes on the stream.
 	options ServerOptions
 }
 
@@ -112,7 +109,6 @@ func NewServerWithOptions(rwc io.ReadWriteCloser, router *Router, options Server
 		r:       rwc,
 		router:  router,
 		maxLen:  jsonframe.DefaultMaxJSONFrameBytes,
-		obs:     observability.NoopRPCObserver,
 		options: options,
 	}, nil
 }
@@ -133,14 +129,6 @@ func (s *Server) SetMaxFrameBytes(n int) error {
 	return nil
 }
 
-// SetObserver replaces the RPC observer; nil resets to no-op.
-func (s *Server) SetObserver(obs observability.RPCObserver) {
-	if obs == nil {
-		obs = observability.NoopRPCObserver
-	}
-	s.obs = obs
-}
-
 // Notify sends a one-way notification to the peer.
 func (s *Server) Notify(typeID uint32, payload json.RawMessage) error {
 	env := rpcv1.RpcEnvelope{
@@ -151,11 +139,7 @@ func (s *Server) Notify(typeID uint32, payload json.RawMessage) error {
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	err := jsonframe.WriteJSONFrame(s.r, env)
-	if err != nil {
-		s.obs.ServerFrameError(observability.RPCFrameWrite)
-	}
-	return err
+	return jsonframe.WriteJSONFrame(s.r, env)
 }
 
 // Serve runs the request loop until the context ends or the stream fails.
@@ -199,8 +183,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			case <-workerCtx.Done():
 				return
 			case env := <-notifications:
-				_, rpcErr := s.router.handle(workerCtx, env.TypeId, env.Payload)
-				s.obs.ServerRequest(rpcResultFromError(rpcErr))
+				_, _ = s.router.handle(workerCtx, env.TypeId, env.Payload)
 			}
 		}
 	}()
@@ -213,7 +196,6 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 		b, err := jsonframe.ReadJSONFrame(s.r, s.maxLen)
 		if err != nil {
-			s.obs.ServerFrameError(observability.RPCFrameRead)
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -223,7 +205,6 @@ func (s *Server) Serve(ctx context.Context) error {
 		if err != nil {
 			invalidJSONFrames++
 			if invalidJSONFrames >= maxInvalidJSONFrames {
-				s.obs.ServerFrameError(observability.RPCFrameRead)
 				_ = s.r.Close()
 				return errors.New("rpc invalid json frame")
 			}
@@ -239,14 +220,12 @@ func (s *Server) Serve(ctx context.Context) error {
 			select {
 			case notifications <- &notification:
 			default:
-				s.obs.ServerRequest(observability.RPCResultResourceExhausted)
 				_ = s.r.Close()
 				return errors.New("rpc notification queue exhausted")
 			}
 			continue
 		}
 		if !requestScheduler.Submit(env) {
-			s.obs.ServerRequest(observability.RPCResultResourceExhausted)
 			s.writeResponse(rpcv1.RpcEnvelope{
 				TypeId:     env.TypeId,
 				ResponseTo: env.RequestId,
@@ -258,7 +237,6 @@ func (s *Server) Serve(ctx context.Context) error {
 
 func (s *Server) handleRequest(ctx context.Context, env rpcv1.RpcEnvelope) {
 	respPayload, rpcErr := s.router.handle(ctx, env.TypeId, env.Payload)
-	s.obs.ServerRequest(rpcResultFromError(rpcErr))
 	s.writeResponse(rpcv1.RpcEnvelope{
 		TypeId:     env.TypeId,
 		ResponseTo: env.RequestId,
@@ -269,9 +247,7 @@ func (s *Server) handleRequest(ctx context.Context, env rpcv1.RpcEnvelope) {
 
 func (s *Server) writeResponse(resp rpcv1.RpcEnvelope) {
 	s.writeMu.Lock()
-	if err := jsonframe.WriteJSONFrame(s.r, resp); err != nil {
-		s.obs.ServerFrameError(observability.RPCFrameWrite)
-	}
+	_ = jsonframe.WriteJSONFrame(s.r, resp)
 	s.writeMu.Unlock()
 }
 
@@ -288,7 +264,6 @@ type Client struct {
 	notify  map[uint32]map[*notifyHandler]struct{} // Notification handlers by type ID.
 	closed  bool                                   // Closed flag for read/write paths.
 	lastErr error                                  // Sticky error from read loop.
-	obs     observability.RPCObserver              // Metrics observer.
 }
 
 // NewClient creates an RPC client and starts its read loop.
@@ -299,7 +274,6 @@ func NewClient(rwc io.ReadWriteCloser) *Client {
 		nextID:  1,
 		pending: make(map[uint64]chan rpcv1.RpcEnvelope),
 		notify:  make(map[uint32]map[*notifyHandler]struct{}),
-		obs:     observability.NoopRPCObserver,
 	}
 	go c.readLoop()
 	return c
@@ -319,14 +293,6 @@ func (c *Client) SetMaxFrameBytes(n int) error {
 	}
 	c.maxLen = n
 	return nil
-}
-
-// SetObserver replaces the RPC observer; nil resets to no-op.
-func (c *Client) SetObserver(obs observability.RPCObserver) {
-	if obs == nil {
-		obs = observability.NoopRPCObserver
-	}
-	c.obs = obs
 }
 
 type notifyHandler struct {
@@ -366,11 +332,7 @@ func (c *Client) Notify(typeID uint32, payload json.RawMessage) error {
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	err := jsonframe.WriteJSONFrame(c.r, env)
-	if err != nil {
-		c.obs.ClientFrameError(observability.RPCFrameWrite)
-	}
-	return err
+	return jsonframe.WriteJSONFrame(c.r, env)
 }
 
 // Call sends an RPC request and waits for its response or context cancellation.
@@ -378,13 +340,8 @@ func (c *Client) Call(ctx context.Context, typeID uint32, payload json.RawMessag
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	start := time.Now()
-	record := func(result observability.RPCResult) {
-		c.obs.ClientCall(result, time.Since(start))
-	}
 	reqID, ch, err := c.reserve()
 	if err != nil {
-		record(observability.RPCResultTransportError)
 		return nil, nil, err
 	}
 	defer c.release(reqID)
@@ -399,20 +356,15 @@ func (c *Client) Call(ctx context.Context, typeID uint32, payload json.RawMessag
 	err = jsonframe.WriteJSONFrame(c.r, env)
 	c.writeMu.Unlock()
 	if err != nil {
-		c.obs.ClientFrameError(observability.RPCFrameWrite)
-		record(observability.RPCResultTransportError)
 		return nil, nil, err
 	}
 	select {
 	case <-ctx.Done():
-		record(observability.RPCResultCanceled)
 		return nil, nil, ctx.Err()
 	case resp, ok := <-ch:
 		if !ok {
-			record(observability.RPCResultTransportError)
 			return nil, nil, c.closedErr()
 		}
-		record(rpcResultFromError(resp.Error))
 		return resp.Payload, resp.Error, nil
 	}
 }
@@ -449,7 +401,6 @@ func (c *Client) readLoop() {
 	for {
 		b, err := jsonframe.ReadJSONFrame(c.r, c.maxLen)
 		if err != nil {
-			c.obs.ClientFrameError(observability.RPCFrameRead)
 			c.closeAll(err)
 			return
 		}
@@ -457,7 +408,6 @@ func (c *Client) readLoop() {
 		if err != nil {
 			invalidJSONFrames++
 			if invalidJSONFrames >= maxInvalidJSONFrames {
-				c.obs.ClientFrameError(observability.RPCFrameRead)
 				_ = c.r.Close()
 				c.closeAll(errors.New("rpc invalid json frame"))
 				return
@@ -468,7 +418,6 @@ func (c *Client) readLoop() {
 		if env.ResponseTo == 0 {
 			if env.RequestId == 0 {
 				// Notification: fan out to registered handlers.
-				c.obs.ClientNotify()
 				c.mu.Lock()
 				m := c.notify[env.TypeId]
 				handlers := make([]*notifyHandler, 0, len(m))
@@ -563,19 +512,6 @@ func (c *Client) Close() error {
 }
 
 func strPtr(s string) *string { return &s }
-
-func rpcResultFromError(err *rpcv1.RpcError) observability.RPCResult {
-	if err == nil {
-		return observability.RPCResultOK
-	}
-	if err.Code == 404 {
-		return observability.RPCResultHandlerNotFound
-	}
-	if err.Code == 429 {
-		return observability.RPCResultResourceExhausted
-	}
-	return observability.RPCResultRPCError
-}
 
 func (c *Client) closedErr() error {
 	c.mu.Lock()

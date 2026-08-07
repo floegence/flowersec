@@ -47,13 +47,13 @@ raw QUIC 与 WebTransport 保留原生 FIN、RESET_STREAM、STOP_SENDING、流�
 
 ## 本地试用
 
-运行 v2 单元测试：
+运行默认验收测试：
 
 ```bash
-make transport-v2-unit
+make test
 ```
 
-如需验证特定 Carrier，请运行 `make transport-conformance-smoke`、`make transport-browser-smoke` 和 `make transport-interop-smoke`。
+协议、浏览器、弱网和互操作专项诊断使用 `make diagnostic`；容量和 soak 工作负载使用 `make performance`。
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>

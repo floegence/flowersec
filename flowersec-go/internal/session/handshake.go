@@ -23,7 +23,7 @@ func performHandshake(ctx context.Context, carrierSession carrier.Session, confi
 	if config.Role == RoleClient {
 		control, err := carrierSession.OpenStream(ctx)
 		if err != nil {
-			return nil, handshakeMaterial{}, err
+			return nil, handshakeMaterial{}, handshakeIOError("client", "open control", err)
 		}
 		stopWatch := watchStreamContext(ctx, control)
 		material, err := performClientHandshake(control, config, availableFeatures)
@@ -32,7 +32,7 @@ func performHandshake(ctx context.Context, carrierSession carrier.Session, confi
 	}
 	control, err := carrierSession.AcceptStream(ctx)
 	if err != nil {
-		return nil, handshakeMaterial{}, err
+		return nil, handshakeMaterial{}, handshakeIOError("server", "accept control", err)
 	}
 	stopWatch := watchStreamContext(ctx, control)
 	material, err := performServerHandshake(control, config, availableFeatures)
@@ -81,15 +81,15 @@ func performClientHandshake(control carrier.Stream, config Config, availableFeat
 		return handshakeMaterial{}, err
 	}
 	if err := writeAll(control, fsc2); err != nil {
-		return handshakeMaterial{}, err
+		return handshakeMaterial{}, handshakeIOError("client", "write control preface", err)
 	}
 	if err := writeAll(control, initRaw); err != nil {
-		return handshakeMaterial{}, err
+		return handshakeMaterial{}, handshakeIOError("client", "write client init", err)
 	}
 
 	serverFrame, err := protocolv2.ReadHandshakeFrame(control)
 	if err != nil {
-		return handshakeMaterial{}, err
+		return handshakeMaterial{}, handshakeIOError("client", "read server finished", err)
 	}
 	serverFinished, err := protocolv2.ParseServerFinished(serverFrame.Raw, config.Suite)
 	if err != nil {
@@ -141,7 +141,7 @@ func performClientHandshake(control carrier.Stream, config Config, availableFeat
 		return handshakeMaterial{}, err
 	}
 	if err := writeAll(control, clientRaw); err != nil {
-		return handshakeMaterial{}, err
+		return handshakeMaterial{}, handshakeIOError("client", "write client finished", err)
 	}
 	h3, err := protocolv2.ComputeHandshakeH3(h2, clientRaw)
 	if err != nil {
@@ -153,14 +153,14 @@ func performClientHandshake(control carrier.Stream, config Config, availableFeat
 func performServerHandshake(control carrier.Stream, config Config, availableFeatures uint32) (handshakeMaterial, error) {
 	fsc2 := make([]byte, protocolv2.ControlPrefaceSize)
 	if _, err := io.ReadFull(control, fsc2); err != nil {
-		return handshakeMaterial{}, err
+		return handshakeMaterial{}, handshakeIOError("server", "read control preface", err)
 	}
 	if err := protocolv2.ParseControlPreface(fsc2); err != nil {
 		return handshakeMaterial{}, err
 	}
 	clientFrame, err := protocolv2.ReadHandshakeFrame(control)
 	if err != nil {
-		return handshakeMaterial{}, err
+		return handshakeMaterial{}, handshakeIOError("server", "read client init", err)
 	}
 	clientInit, err := protocolv2.ParseClientInit(clientFrame.Raw)
 	if err != nil {
@@ -218,12 +218,12 @@ func performServerHandshake(control carrier.Stream, config Config, availableFeat
 		return handshakeMaterial{}, err
 	}
 	if err := writeAll(control, serverRaw); err != nil {
-		return handshakeMaterial{}, err
+		return handshakeMaterial{}, handshakeIOError("server", "write server finished", err)
 	}
 
 	clientFinishedFrame, err := protocolv2.ReadHandshakeFrame(control)
 	if err != nil {
-		return handshakeMaterial{}, err
+		return handshakeMaterial{}, handshakeIOError("server", "read client finished", err)
 	}
 	clientFinished, err := protocolv2.ParseClientFinished(clientFinishedFrame.Raw)
 	if err != nil {
@@ -248,6 +248,10 @@ func performServerHandshake(control carrier.Stream, config Config, availableFeat
 		return handshakeMaterial{}, err
 	}
 	return handshakeMaterial{h3: h3, sessionPRK: protocolv2.DeriveSessionPRK(h3, handshakePRK), selectedFeatures: server.Core.SelectedFeatures}, nil
+}
+
+func handshakeIOError(role, operation string, err error) error {
+	return fmt.Errorf("%s handshake %s: %w", role, operation, err)
 }
 
 func handshakeExpectations(config Config, peerIsClient bool, availableFeatures uint32) protocolv2.HandshakeExpectations {

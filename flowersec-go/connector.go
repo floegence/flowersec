@@ -2,7 +2,6 @@ package flowersec
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"io"
@@ -10,17 +9,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
-	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/candidatev2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/fserrors"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
 	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
-	gorillaws "github.com/gorilla/websocket"
 )
 
 var (
@@ -237,19 +232,13 @@ func newConnector(lease ArtifactLease, options ConnectorOptions) (*connector, er
 	if lease.artifact.value == nil || lease.state == nil || lease.state.commitSpend == nil {
 		return nil, &ConnectError{code: ConnectInvalidInput}
 	}
-	if options.TrustRoots == nil || len(options.TrustRoots.Subjects()) == 0 ||
-		options.ConnectTimeout < 0 || !validOrigin(options.Origin) {
+	if !validConnectorOptions(options) {
 		return nil, &ConnectError{code: ConnectInvalidOptions}
 	}
-	if options.Handlers != nil && !options.Handlers.valid() {
-		return nil, &ConnectError{code: ConnectInvalidOptions}
-	}
-	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: options.TrustRoots.Clone()}
-	dialers, err := newCarrierDialers(tlsConfig, options.Origin)
-	if err != nil {
-		return nil, &ConnectError{code: ConnectInvalidOptions}
-	}
-	factory, err := connectv2.NewAdmissionFactory(dialers, artifactv2.ReasonRegistry{})
+	factory, err := candidatev2.NewGoNativeFactory(candidatev2.GoNativeConfig{
+		TrustRoots: options.TrustRoots,
+		Origin:     options.Origin,
+	})
 	if err != nil {
 		return nil, &ConnectError{code: ConnectInvalidOptions}
 	}
@@ -260,40 +249,14 @@ func newConnector(lease ArtifactLease, options ConnectorOptions) (*connector, er
 	}
 	inner := connectv2.NewConnector(connectv2.ArtifactLease{
 		Artifact: *lease.artifact.value, CommitSpend: lease.commitSpend,
-	}, session.GoCapabilities(), connectv2.Adaptive, factory, connectorOptions...)
+	}, factory, connectorOptions...)
 	return &connector{inner: inner, timeout: options.ConnectTimeout}, nil
 }
 
-func newCarrierDialers(tlsConfig *tls.Config, origin string) (map[artifactv2.Carrier]connectv2.CarrierDial, error) {
-	webSocketClient := *gorillaws.DefaultDialer
-	webSocketClient.TLSClientConfig = tlsConfig.Clone()
-	webSocketDial, err := connectv2.NewWebSocketCarrierDial(connectv2.WebSocketDialConfig{
-		Dialer:    &webSocketClient,
-		Resources: carrierws.DefaultResourcePolicy(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	rawQUICDial, err := connectv2.NewRawQUICCarrierDial(connectv2.RawQUICDialConfig{
-		TLSConfig: tlsConfig.Clone(), Limits: rawquic.DefaultLimits(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	dialers := map[artifactv2.Carrier]connectv2.CarrierDial{
-		artifactv2.CarrierWebSocket: webSocketDial,
-		artifactv2.CarrierRawQUIC:   rawQUICDial,
-	}
-	if origin != "" {
-		webTransportDial, err := connectv2.NewWebTransportCarrierDial(connectv2.WebTransportDialConfig{
-			TLSConfig: tlsConfig.Clone(), Limits: carrierwt.DefaultLimits(), Origin: origin,
-		})
-		if err != nil {
-			return nil, err
-		}
-		dialers[artifactv2.CarrierWebTransport] = webTransportDial
-	}
-	return dialers, nil
+func validConnectorOptions(options ConnectorOptions) bool {
+	return options.TrustRoots != nil && len(options.TrustRoots.Subjects()) != 0 &&
+		options.ConnectTimeout >= 0 && validOrigin(options.Origin) &&
+		(options.Handlers == nil || options.Handlers.valid())
 }
 
 func validOrigin(value string) bool {

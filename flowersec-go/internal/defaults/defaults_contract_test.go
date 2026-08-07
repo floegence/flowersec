@@ -28,7 +28,7 @@ func TestDefaultsMatchStabilityContract(t *testing.T) {
 		RPC          map[string]float64 `json:"rpc"`
 		Controlplane map[string]float64 `json:"controlplane"`
 		Proxy        map[string]float64 `json:"proxy"`
-		Reconnect    map[string]float64 `json:"reconnect"`
+		Controller   map[string]float64 `json:"connection_controller"`
 	}
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatal(err)
@@ -62,11 +62,10 @@ func TestDefaultsMatchStabilityContract(t *testing.T) {
 	assertInt(t, defaults.ProxyMaxWSFrameBytes, manifest.Proxy["max_ws_frame_bytes"])
 	assertDurationMS(t, defaults.ProxyDefaultTimeout, manifest.Proxy["default_timeout_ms"])
 	assertDurationMS(t, defaults.ProxyMaxTimeout, manifest.Proxy["max_timeout_ms"])
-	assertInt(t, defaults.ReconnectMaxAttempts, manifest.Reconnect["max_attempts"])
-	assertDurationMS(t, defaults.ReconnectInitialDelay, manifest.Reconnect["initial_delay_ms"])
-	assertDurationMS(t, defaults.ReconnectMaxDelay, manifest.Reconnect["max_delay_ms"])
-	if defaults.ReconnectFactor != manifest.Reconnect["factor"] || defaults.ReconnectJitterRatio != manifest.Reconnect["jitter_ratio"] {
-		t.Fatal("reconnect floating-point defaults do not match stability contract")
+	assertDurationMS(t, defaults.ConnectionControllerInitialDelay, manifest.Controller["initial_delay_ms"])
+	assertDurationMS(t, defaults.ConnectionControllerMaxDelay, manifest.Controller["max_delay_ms"])
+	if float64(defaults.ConnectionControllerBackoffFactor) != manifest.Controller["factor"] || manifest.Controller["jitter_ratio"] != 0 {
+		t.Fatal("connection controller defaults do not match stability contract")
 	}
 }
 

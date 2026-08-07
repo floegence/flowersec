@@ -30,11 +30,14 @@ export { Artifact, ArtifactError, parseArtifact } from "./v2/opaqueArtifact.js";
 export type { ArtifactErrorCode } from "./v2/opaqueArtifact.js";
 export type { ConnectErrorCode } from "./utils/errors.js";
 export { ConnectError } from "./utils/errors.js";
-export {
-  classifyConnectErrorV2 as classifyConnectError,
-  classifySessionErrorV2 as classifySessionError,
-} from "./v2/errorClassification.js";
+export { ConnectionControllerError } from "./connectionController.js";
 export type {
-  FlowersecErrorRetryClassificationV2 as ErrorRetryClassification,
-  FlowersecRetryActionV2 as RetryAction,
-} from "./v2/errorClassification.js";
+  ArtifactSource,
+  ArtifactSourceResult,
+  ConnectionController,
+  ConnectionControllerFailure,
+  ConnectionControllerOptions,
+  ConnectionControllerSnapshot,
+  ConnectionState,
+  RetryDisposition,
+} from "./connectionController.js";

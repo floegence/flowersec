@@ -30,16 +30,13 @@ const (
 	ProxyMaxChunkBytes        = 256 * 1024
 	ProxyMaxBodyBytes         = 64 * 1024 * 1024
 	ProxyMaxWSFrameBytes      = 1024 * 1024
-
-	ReconnectMaxAttempts = 5
 )
 
 const (
 	ProxyDefaultTimeout = 30 * time.Second
 	ProxyMaxTimeout     = 5 * time.Minute
 
-	ReconnectInitialDelay = 500 * time.Millisecond
-	ReconnectMaxDelay     = 10 * time.Second
-	ReconnectFactor       = 1.8
-	ReconnectJitterRatio  = 0.2
+	ConnectionControllerInitialDelay         = 250 * time.Millisecond
+	ConnectionControllerMaxDelay             = 30 * time.Second
+	ConnectionControllerBackoffFactor uint64 = 2
 )

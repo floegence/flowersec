@@ -1,8 +1,6 @@
 import { open, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
-  classifyConnectError,
-  classifySessionError,
   connectNodeSession,
   ConnectError,
   createArtifactLease,
@@ -61,8 +59,8 @@ try {
 
 function reportRecovery(error) {
   if (error instanceof ConnectError) {
-    console.error(`recovery=${classifyConnectError(error).action}`);
+    console.error(`connection_error=${error.code}`);
   } else if (error instanceof SessionError) {
-    console.error(`recovery=${classifySessionError(error).action}`);
+    console.error(`session_error=${error.code}`);
   }
 }

@@ -1,28 +1,38 @@
 # Transport v2 Architecture
 
-Transport v2 is the signed and implemented architecture contract for adding raw QUIC and WebTransport without moving product or provider business logic into Flowersec. The machine-readable source of truth is `stability/transport_v2_contract.json`.
+Transport v2 is the implemented architecture contract for adding raw QUIC and WebTransport without moving product or provider business logic into Flowersec. The machine-readable source of truth is `stability/transport_v2_contract.json`.
 
-The implementation is test-driven and split by explicit runtime capability tuples. A runtime may advertise only the carrier, network-mode, role, and path combinations backed by its production adapter and conformance tests. Missing tuples remain unsupported and must never be converted into an implicit WebSocket preference.
+The implementation is split by explicit runtime capability tuples. A runtime may advertise only the carrier, network-mode, role, path, reliable-stream, DATAGRAM, and migration combinations backed by its production adapter. Missing tuples remain unsupported and must never be converted into an implicit WebSocket preference.
 
-Local unit and smoke gates prove deterministic contract behavior but do not count as release evidence. A release additionally requires a clean-final-SHA signed evidence report covering the registered real-browser, qlog, common-kernel weak-network, migration, capacity, and 15-run performance cases. `make release-check` fails closed when that report or its audited base SHA is absent.
+Local unit and smoke gates prove deterministic contract behavior. External workloads run natively on one capability-compatible Ubuntu host and are judged only by protocol assertions and process exit status. Release checks only repository state, versions, and tags before performing publication work.
 
-The operational trust bootstrap, required environment, audited runner responsibilities, and exact release sequence are documented in `docs/TRANSPORT_V2_RELEASE_EVIDENCE.md`. The checked-in production signer public key does not authorize collection by itself; placeholder runner hashes intentionally prevent publication until the exact final runner policy is installed by a reviewed change.
+The operational runner, required environment, and cleanup contract are documented in `docs/UBUNTU_TEST_RUNNER.md`.
 
 ## Boundaries
 
 Flowersec owns transport-neutral secure sessions, transport adapters, protocol validation, resource limits, and interoperability contracts. It does not own environment selection, tenant routing, provider authorization, rollout cohorts, billing policy, or other business logic. Those decisions remain in the downstream control plane and applications.
 
-All upper layers depend on a `CarrierSession` that opens and accepts bounded `CarrierStream` instances. RPC, proxy, and custom streams must not branch on WebSocket, raw QUIC, or WebTransport.
+The dependency direction is application API -> connection controller -> artifact source -> one-shot connector -> session engine -> carrier contract -> runtime adapter. All upper layers depend on a `CarrierSession` that opens and accepts bounded `CarrierStream` instances. RPC, proxy, handshake, liveness, and custom streams must not branch on WebSocket, raw QUIC, WebTransport, browser, Node.js, or a native library.
+
+The session lifecycle is `opening -> open -> closing -> closed`. Candidate admission is `attempt -> ready -> winner -> admitted -> established -> terminated`: runtime adapters create and close carriers, the connector selects one winner, durable spend precedes the single credential write, and only the session engine performs the Flowersec handshake. Control-plane artifact issuance, direct/tunnel topology, carrier selection, and runtime resources remain separate ownership boundaries.
+
+Admission rejection reasons are deployment-owned tokens. Servers validate them against their configured registry before emitting FSA2. SDK clients validate only the bounded token syntax and project every non-success response to the stable redacted admission failure; deployment reason registries are not connector configuration.
+
+Internal errors follow the same ownership: runtime startup, native libraries,
+TLS, and HTTP/3 are runtime errors; stream, DATAGRAM, reset, and carrier close
+are carrier errors; Flowersec handshake, RPC, liveness, and protocol state are
+session errors. Adapters map native failures into the first two classes and
+must never manufacture a Flowersec handshake result.
 
 ## Equal Carriers
 
-WebSocket, raw QUIC, and WebTransport are equal carrier candidates. Adaptive selection has no permanent primary carrier and does not interpret registry order as preference.
+WebSocket, raw QUIC, and WebTransport are equal carrier candidates. The connector races the exact candidates authorized by an artifact and does not interpret registry order as preference.
 
-The signed performance matrix keeps the same forced coverage for every adverse
+The performance matrix keeps the same forced coverage for every adverse
 network profile: direct WebSocket, direct raw QUIC, direct WebTransport,
 WebTransport over a WSS tunnel, and WebTransport over a QUIC tunnel are all
-separate cells. Native adaptive selection races WSS against raw QUIC, while
-browser adaptive selection races WSS against WebTransport. Capacity evidence
+separate cells. A native runtime can race WSS against raw QUIC, while a browser
+runtime can race WSS against WebTransport. Capacity coverage
 also includes direct WebTransport and both WebTransport tunnel directions; a
 mixed bridge is covered by the browser tunnel cells and the native mixed-leg
 conformance cases.
@@ -50,7 +60,8 @@ Cartesian product from independent capability lists.
 
 Every SDK encodes the same strict descriptor shape:
 `language`, `runtime`, `schemaVersion`, `tuples`, and `unsupported`. Tuple
-fields are `carrier`, `networkMode`, `path`, and `sessionRole`. Keys and arrays
+fields are `carrier`, `datagrams`, `migration`, `networkMode`, `path`,
+`reliableStreams`, and `sessionRole`. Keys and arrays
 use the frozen canonical order in
 `testdata/transport_v2/capability_vectors.json`; unknown fields, duplicate or
 unsorted tuples, non-canonical JSON, and a carrier that is neither supported
@@ -70,7 +81,7 @@ never fall back to a reliable stream. Its payloads use an independent,
 directional, epoch-bound AEAD domain; admission, handshake, control, Artifact,
 and credential values are not valid channel payload types.
 
-Every QUIC-family logical stream maps to a native bidirectional stream and uses native FIN, RESET_STREAM, STOP_SENDING, stream limits, and stream/connection flow control. Structural tests use qlog and a Yamux factory spy because the public WebTransport stream wrapper does not expose its underlying QUIC stream ID.
+Every QUIC-family logical stream maps to a native bidirectional stream and uses native FIN, RESET_STREAM, STOP_SENDING, stream limits, and stream/connection flow control. Native adapter contracts verify these mappings directly; qlog and pcap are optional diagnostic inputs and never part of ordinary acceptance.
 
 The Flowersec carrier-facing inbound bidirectional-stream capacity is exactly
 `N + 2`: one lifetime control stream, one persistent reserved RPC stream, and
@@ -92,79 +103,30 @@ before writing FSC2/FSH2. Native TypeScript admission validates it before FSB2
 credential bytes. `N = 1` therefore requires exactly three Flowersec-visible
 physical bidirectional streams in every SDK.
 
-The complete release evidence is checked with
-`make transport-v2-signed-evidence-check`. The command requires an explicit
-report and audited base SHA and rejects dirty repositories, missing 15-run
-performance cells, missing required case IDs, absent qlog/pcap/resource
-artifacts, inconclusive thresholds, and artifact digest mismatches. Capacity
-evidence includes 1,000 concurrent direct WSS, raw QUIC, and WebTransport
-sessions, plus 1,000 sessions for each WW, QQ, WQ, QW, WebTransport-over-WSS,
-and WebTransport-over-QUIC tunnel topology. The signed manifest freezes a
-30-second ramp, 60-second hold, 30-second cleanup, 120-second watchdog, and
-RSS, CPU, file-descriptor, goroutine, and task ceilings. Each capacity case
-must report attempted, succeeded, and failed sessions; prove a unique active
-peak of exactly 1,000 with no hold disconnect; record ramp/hold/cleanup
-resource samples; and finish with zero watchdogs and zero residual sessions.
-The three browser stream-capacity cases additionally prove 100 production
-sessions with 128 simultaneously live bidirectional streams per session. They
-use a 60-second ramp and a dedicated 32,768 aggregate process-tree descriptor
-ceiling plus a 240 CPU-second aggregate ceiling. Those ceilings preserve
-measured headroom over the Ubuntu 24 Chromium calibration of 26,554
-descriptors and 165.25 CPU-seconds through the complete hold; the 1,000-session
-browser cases remain at 12,288 descriptors and non-browser capacity cases
-remain at 8,192.
-Linux system evidence includes netns/tc,
-eBPF counters, common-kernel behavior, real path migration, and IPv4/IPv6 PMTUD.
-Every performance phase records the exact profile ID, phase, manifest digest,
-canonical effective network JSON, its SHA-256, and the audited tc/eBPF config
-SHA-256. The checker recomputes these values from the frozen manifest and
-rejects a configured-but-unobserved UDP queue overflow. Ratio samples use the
-frozen `transport-ratio-v1` operand graph rather than report-supplied summary
-fields. Each operand binds its exact cell, run, variant, profile, phase, kind,
-field, and artifact digest, including clean revision, QUIC-to-WSS, adverse-to-
-clean topology, adaptive-stage, and native interactive-to-idle comparisons.
+The complete Transport v2 workload is executed by the single-host runner and is judged by protocol assertions and process exit status. Successful runs retain no output; a failure retains only the bounded first-failure diagnostic.
 
-Migration captures must show an ordered local `AddrPort` change on one UDP
-remote path; a same-address source-port rebind is valid, while unrelated UDP
-flows are not. The qlog old/new/remote paths must match that pcap 5-tuple and
-carry the same connection ID. The path validation event must name the new
-local and remote path, and the first RPC completion must follow validation.
-Rebind and outage schedules are frozen in effective config and reproduced as
-strictly monotonic raw trace events. The checker recomputes their counters and
-durations from those events and requires config, metrics, trace, qlog, and pcap
-evidence to identify the same connection where applicable.
-QUIC PMTUD captures must show an oversized datagram followed by a constrained
-datagram on the same connection ID and tuple. Kernel cases require an IPv4 or
-IPv6 ICMP PTB whose quoted transport tuple is the oversized flow; the parser
-accepts the standards-minimum quoted IP header plus eight transport bytes.
-The PMTUD qlog must order packet-too-large, recovery metrics, and a successful
-post-recovery RPC on that same connection ID.
-WSS recovery cases apply the same quoted-tuple rule to TCP and bind the PTB
-between monotonically increasing TCP_INFO observations for one socket tuple and
-socket cookie. Runner trust is pinned to an exact kernel release and exact
-effective tc/eBPF config digest, not a kernel-family prefix.
-The checked-in `flowersec-release-linux-2026-01` entry is the production
-Ed25519 public key for this release evidence authority. Its PKCS#8 private key
-is retained only in the repository-external release key directory with owner-only
-permissions. Evidence remains fail-closed until an audited repository change
-also installs the matching exact final runner executable, source, and argv hashes.
+Capacity tests include 1,000 concurrent direct WSS, raw QUIC, and WebTransport sessions, plus 1,000 sessions for each WW, QQ, WQ, QW, WebTransport-over-WSS, and WebTransport-over-QUIC tunnel topology. The performance package freezes a 30-second ramp, 60-second hold, 30-second cleanup, 120-second watchdog, and RSS, CPU, file-descriptor, goroutine, and task ceilings. Each capacity case counts attempted, succeeded, and failed sessions; proves a unique active peak of exactly 1,000 with no hold disconnect; records ramp/hold/cleanup resource samples; and finishes with zero watchdogs and zero residual sessions.
 
-## Signed Go Slice 0
+The three browser stream-capacity cases additionally prove 100 production sessions with 128 simultaneously live bidirectional streams per session. They use a 60-second ramp and a dedicated 32,768 aggregate process-tree descriptor ceiling plus a 240 CPU-second aggregate ceiling. Those ceilings preserve measured headroom over the Chromium calibration; the 1,000-session browser cases remain at 12,288 descriptors and non-browser capacity cases remain at 8,192.
 
-Go 1.26.5 signed the following exact pair:
+Linux system tests include netns/tc, eBPF counters, common-kernel behavior, real path migration, and IPv4/IPv6 PMTUD. The default diagnostic path asserts observed fault counters and protocol behavior directly. Qlog and pcap are optional troubleshooting inputs for an explicitly selected diagnostic; they are not required outputs and do not decide whether an ordinary run is GREEN. Capacity, soak, resource-growth, and A-B metrics remain confined to explicit performance targets.
+
+## Go Native Adapters
+
+Go 1.26.5 validated the following exact pair:
 
 - `github.com/quic-go/quic-go v0.60.0`
 - `github.com/quic-go/webtransport-go v0.11.1`
 
-Both modules declare Go 1.25.0 and use the MIT license. The spike proved raw QUIC dial/listen, native bidirectional streams, FIN, reset/stop, limits, configurable flow windows, TLS 1.3 and ALPN state, non-0-RTT establishment, application close, active path migration, NAT rebinding, and WebTransport dial/listen with bidirectional streams.
+Both modules declare Go 1.25.0 and use the MIT license. The native adapters implement raw QUIC dial/listen, bidirectional streams, FIN, reset/stop, limits, configurable flow windows, TLS 1.3 and ALPN state, non-0-RTT establishment, application close, active path migration, NAT rebinding, and WebTransport dial/listen with bidirectional streams.
 
 Go raw QUIC and WebTransport fail closed before network use: clients must provide a non-empty explicit root pool and cannot set `InsecureSkipVerify`; servers must provide a certificate and private key or a dynamic certificate callback. Hostname and chain verification remain mandatory during the TLS 1.3 handshake.
 
-The WebTransport dependency implements draft-ietf-webtrans-http3-15. Production readiness still requires the registered real-browser interoperability matrix; Slice 0 dependency compilation alone is not browser sign-off.
+The WebTransport dependency implements draft-ietf-webtrans-http3-15. Browser support remains a separate runtime-adapter smoke contract and is not inferred from native Go support.
 
-## Signed Rust Slice 0
+## Rust Native Adapter
 
-Rust pins `quinn =0.11.11` with default features disabled and only `runtime-tokio` plus `rustls-ring` enabled. The retained raw QUIC adapter requires caller-provided certificates and keys; `rcgen` is forbidden as a runtime dependency so self-signed certificate generation cannot become an implicit path. This dependency slice does not advertise a production runtime capability tuple by itself.
+Rust pins `quinn =0.11.11` with default features disabled and only `runtime-tokio` plus `rustls-ring` enabled. The raw QUIC adapter requires caller-provided certificates and keys; `rcgen` is forbidden as a runtime dependency so self-signed certificate generation cannot become an implicit path. Runtime capabilities are declared only by the complete adapter, connector, and acceptor path.
 
 ## Runtime Capability Decisions
 
@@ -172,9 +134,10 @@ Rust pins `quinn =0.11.11` with default features disabled and only `runtime-toki
 - TypeScript browser: WebSocket and WebTransport when their constructors are
   present; `detectBrowserRuntimeCapabilityV2(...)` removes unavailable APIs at
   runtime. Raw UDP is unavailable.
-- TypeScript Node.js: WebSocket direct client dialing and tunnel dialing for
-  both session roles. Raw QUIC and WebTransport remain unavailable until a
-  production-grade runtime API passes the dependency gate.
+- TypeScript Node.js: WebSocket and WebTransport direct client dialing and
+  tunnel dialing for both session roles, plus direct WebTransport listening.
+  WebTransport uses the pinned native libquiche adapter; raw QUIC remains
+  unsupported.
 - Rust native: raw QUIC direct client dialing and runtime-owned direct server
   listening, plus tunnel dialing for both session roles. The one-shot
   connection path owns opaque artifact acquisition, equal-candidate race, durable spend, and client
@@ -183,37 +146,10 @@ Rust pins `quinn =0.11.11` with default features disabled and only `runtime-toki
 - Swift macOS and iOS: WebSocket direct client dialing and tunnel dialing for
   both session roles. Raw QUIC, WebTransport, DATAGRAM, and migration remain
   unavailable across the supported deployment targets.
+- Swift Linux: every carrier is explicitly unsupported; the SDK does not infer
+  runtime support from the availability of the Swift toolchain.
 
 Unsupported states carry registered reason tokens. Missing tuples are unsupported; they must not be inferred by combining other modes or roles.
-
-## Custom Tunnel Endpoint Sets
-
-Custom tunnel discovery uses the versioned, business-neutral
-`flowersec-tunnel-endpoint-set/2` contract implemented by Go `endpointsetv2`.
-It binds one rendezvous group and tunnel endpoint instance to an exact,
-canonically sorted listener tuple set. Every tuple names carrier, network mode,
-tunnel path, accepted dialing-peer session role, wire profile, and either a dial
-URL or a listen bind endpoint. The session role is independent of the network
-acceptor role: one physical tunnel listener publishes distinct tuples when it
-accepts both client-role and server-role peers. Listen tuples also carry a canonical public
-`advertised_url`, so the control plane can issue a reachable candidate without
-deriving public routing from a local bind address.
-
-The codec rejects unknown or duplicate JSON fields, duplicate or unsorted
-tuples, direct/tunnel cross-path values, non-canonical URLs and bind endpoints,
-and carrier/profile mismatches. A registration is usable only while its
-issued/expires freshness window is current and its issue time is no more than
-`endpointsetv2.MaxFreshnessAgeSeconds` old, its listener audience is ready, and
-its certificate readiness covers every dial or advertised URL hostname through
-a canonically sorted verified-server-name set. Raw QUIC and WebTransport listen
-tuples bind UDP; WebSocket listen tuples bind TCP. The schema and shared vectors
-are frozen in `stability/transport_v2_contract.json` and
-`testdata/transport_v2/endpoint_set_vectors.json`.
-
-Requester intersection maps a listen tuple to the requester's dial network mode
-without changing its session role. A role-specific tunnel endpoint therefore
-cannot be issued to the opposite role, and an endpoint that accepts both roles
-must register both tuples explicitly.
 
 ## Artifact and Session Lifecycle
 
@@ -226,12 +162,14 @@ Session termination is observable independently of the carrier. Go exposes
 `WaitTermination(ctx)`; TypeScript exposes `Session.waitTermination()`; Rust exposes
 `Session::wait_termination()`; Swift exposes `Session.waitTermination()`. Each returns
 the same stable `SessionTermination` concept, while Go reports cancellation of the wait
-separately through its context error. The TypeScript reconnect manager requires refreshable artifacts
-for automatic reconnect, acquires a new lease for every attempt, and treats a
-serialized one-time artifact as consumed across subsequent connect calls. Its
-artifact acquisition context always carries the exact version policy, runtime
-descriptor, and verified capability digest; a mismatch fails before invoking
-the downstream source callback.
+separately through its context error. Establishing another session always
+requires a distinct lease; the one-shot connector never retries with a
+credential whose durable spend may have committed. A refreshable
+`ArtifactSource` feeds the single `ConnectionController`, whose lifecycle is
+`idle -> connecting -> connected -> waiting -> failed -> closed`. The
+controller alone owns structured `terminal`, `retryable`, and absolute
+`retry_after` decisions, deterministic backoff, cancellation, and current
+session replacement. It never migrates streams or replays RPCs and writes.
 
 Graceful carrier close is bounded by the caller's cleanup deadline. Go carrier
 sessions implement `CloseWithErrorContext(...)` and must become locally unable

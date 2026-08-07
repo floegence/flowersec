@@ -50,10 +50,10 @@ Raw QUIC и WebTransport сохраняют нативное поведение 
 Запустите наборы модульных тестов v2:
 
 ```bash
-make transport-v2-unit
+make test
 ```
 
-Для проверки отдельных транспортов выполните `make transport-conformance-smoke`, `make transport-browser-smoke` и `make transport-interop-smoke`.
+Для явной диагностики протокола, браузера, слабой сети и совместимости используйте `make diagnostic`, а для capacity и soak — `make performance`.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>

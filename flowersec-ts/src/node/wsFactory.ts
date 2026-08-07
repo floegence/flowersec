@@ -24,7 +24,7 @@ export type NodeWsFactoryOptions = Readonly<{
   ca?: string | Uint8Array;
 }>;
 
-// createNodeWsFactory returns a wsFactory compatible with connectTunnel/connectDirect in Node.js.
+// createNodeWsFactory adapts the Node WebSocket runtime for candidate dialing.
 //
 // It uses the "ws" package to set the Origin header explicitly (browsers set Origin automatically).
 export function createNodeWsFactory(opts: NodeWsFactoryOptions = {}): (url: string, origin: string, subprotocol?: string) => WebSocketLike {

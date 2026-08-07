@@ -19,7 +19,8 @@ func unversionedOneShotPublicAPICompiles() async throws {
     try await connect(lease: lease, options: options)
   }
   let rpcCall: @Sendable (any RPCPeer) async throws -> PublicResponse = { peer in
-    try await peer.call(7, PublicRequest(value: "request"), as: PublicResponse.self, timeout: .seconds(1))
+    try await peer.call(
+      7, PublicRequest(value: "request"), as: PublicResponse.self, timeout: .seconds(1))
   }
 
   _ = parse
@@ -28,14 +29,12 @@ func unversionedOneShotPublicAPICompiles() async throws {
 }
 
 @Test
-func recoveryActionNamesMatchPortableContract() {
-  #expect(RetryAction.retry.rawValue == "retry")
-  #expect(RetryAction.refreshArtifact.rawValue == "refresh_artifact")
-  #expect(RetryAction.stop.rawValue == "stop")
-  let classification = classifySessionError(.closed)
-  #expect(classification.action == .refreshArtifact)
-  #expect(classification.sessionClosed)
-  #expect(Mirror(reflecting: classification).children.compactMap(\.label) == [
-    "action", "callerCanceled", "sessionClosed",
-  ])
+func retryDispositionsMatchPortableContract() {
+  #expect(ConnectError.invalidOptions.retryDisposition == .terminal)
+  #expect(ConnectError.expiredArtifact.retryDisposition == .retryable)
+  #expect(SessionError.canceled.retryDisposition == .terminal)
+  #expect(SessionError.closed.retryDisposition == .retryable)
+
+  let deadline = Date(timeIntervalSince1970: 1_234)
+  #expect(RetryDisposition.retryAfter(deadline) == .retryAfter(deadline))
 }

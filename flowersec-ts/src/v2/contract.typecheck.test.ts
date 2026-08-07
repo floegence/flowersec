@@ -12,9 +12,8 @@ import type {
   CarrierStreamV2,
   NativeCarrierSessionV2,
   NativeCarrierStreamV2,
-  WebSocketBinaryTransportV2,
-  WebSocketResourcePolicyV2,
 } from "./carrier.js";
+import type { WebSocketBinaryTransportV2, WebSocketResourcePolicyV2 } from "../transport/webSocketAdapter.js";
 import { expect, test } from "vitest";
 
 type Assert<T extends true> = T;

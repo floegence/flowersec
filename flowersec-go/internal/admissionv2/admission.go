@@ -37,53 +37,53 @@ func (err *ResponseError) Unwrap() error {
 
 type Authorize func(context.Context, *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error)
 
-// ClientStream returns the native admission stream used by a carrier dialer.
-// WebTransport listeners open the stream so browser clients never need to race
-// Chromium session teardown with the first native CreateStream call.
-func ClientStream(ctx context.Context, session carrier.Session) (carrier.Stream, error) {
-	if session == nil {
-		return nil, io.ErrClosedPipe
-	}
-	switch session.Kind() {
-	case carrier.KindWebTransport:
-		return session.AcceptStream(ctx)
-	case carrier.KindQUIC:
-		return session.OpenStream(ctx)
-	default:
-		return nil, fmt.Errorf("%w: admission client stream", carrier.ErrInvalidKind)
-	}
+// ClientExchange owns the Flowersec admission protocol over a credential-free
+// runtime transport. Runtime adapters expose this boundary but never parse or
+// emit FSB2/FSA2 themselves.
+type ClientExchange interface {
+	Commit(context.Context, []byte) error
 }
 
-// ServerStream returns the native admission stream used by a carrier listener.
-func ServerStream(ctx context.Context, session carrier.Session) (carrier.Stream, error) {
-	if session == nil {
-		return nil, io.ErrClosedPipe
+type streamClientExchange struct {
+	stream carrier.Stream
+	path   artifactv2.PathKind
+}
+
+// NewStreamClientExchange binds the admission protocol to one native stream.
+func NewStreamClientExchange(stream carrier.Stream, path artifactv2.PathKind) ClientExchange {
+	return &streamClientExchange{stream: stream, path: path}
+}
+
+func (exchange *streamClientExchange) Commit(ctx context.Context, rawFSB2 []byte) error {
+	if exchange == nil || exchange.stream == nil {
+		return io.ErrClosedPipe
 	}
-	switch session.Kind() {
-	case carrier.KindWebTransport:
-		stream, err := session.OpenStream(ctx)
-		if err != nil {
-			return nil, err
-		}
-		written, err := stream.Write(nil)
-		if err != nil || written != 0 {
-			_ = stream.Reset()
-			if err != nil {
-				return nil, err
-			}
-			return nil, io.ErrShortWrite
-		}
-		return stream, nil
-	case carrier.KindQUIC:
-		return session.AcceptStream(ctx)
-	default:
-		return nil, fmt.Errorf("%w: admission server stream", carrier.ErrInvalidKind)
+	decoded, err := artifactv2.ParseRequest(rawFSB2)
+	if err != nil {
+		return err
 	}
+	if decoded.Request.PathKind != exchange.path {
+		return fmt.Errorf("admission path %q does not match carrier path %q", decoded.Request.PathKind, exchange.path)
+	}
+	_, err = CommitClient(ctx, exchange.stream, rawFSB2)
+	return err
+}
+
+// CommitClient writes the one-shot credential and accepts any syntactically
+// valid bounded rejection reason without making it runtime configuration.
+func CommitClient(ctx context.Context, stream carrier.Stream, rawFSB2 []byte) (response artifactv2.AdmissionResponse, err error) {
+	return commit(ctx, stream, rawFSB2, artifactv2.ReadClientResponse)
 }
 
 // Commit writes the one-shot credential frame and reads an exact FSA2 response.
 // Callers must mark the artifact spent before invoking this function.
 func Commit(ctx context.Context, stream carrier.Stream, rawFSB2 []byte, reasons artifactv2.ReasonRegistry) (response artifactv2.AdmissionResponse, err error) {
+	return commit(ctx, stream, rawFSB2, func(reader io.Reader) (artifactv2.AdmissionResponse, error) {
+		return artifactv2.ReadResponse(reader, reasons)
+	})
+}
+
+func commit(ctx context.Context, stream carrier.Stream, rawFSB2 []byte, readResponse func(io.Reader) (artifactv2.AdmissionResponse, error)) (response artifactv2.AdmissionResponse, err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -107,7 +107,7 @@ func Commit(ctx context.Context, stream carrier.Stream, rawFSB2 []byte, reasons 
 	if err := stream.CloseWrite(); err != nil {
 		return response, preferContextError(ctx, err)
 	}
-	response, err = artifactv2.ReadResponse(stream, reasons)
+	response, err = readResponse(stream)
 	if err != nil {
 		return response, preferContextError(ctx, err)
 	}

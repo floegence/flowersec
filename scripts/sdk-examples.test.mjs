@@ -59,33 +59,33 @@ test("consumer examples stay on opaque public SDK entrypoints", () => {
   assert.doesNotMatch(go, /\/internal\//);
 });
 
-test("consumer examples classify public connection and session failures", () => {
+test("consumer examples expose structured connection and session recovery", () => {
   const examples = [
     {
       name: "Go",
       source: read("flowersec-go/example_client_test.go"),
-      classifiers: [/flowersec\.ClassifyConnectError/, /flowersec\.ClassifySessionError/],
+      classifiers: [/RetryDisposition\(\)/],
     },
     {
       name: "TypeScript",
       source: read("examples/ts/node-client.mjs"),
-      classifiers: [/classifyConnectError/, /classifySessionError/],
+      classifiers: [/ConnectError/, /SessionError/],
     },
     {
       name: "Swift",
       source: read("examples/swift/Sources/FlowersecSwiftClientExample/main.swift"),
-      classifiers: [/classifyConnectError/, /classifySessionError/],
+      classifiers: [/retryDispositionV2/],
     },
     {
       name: "Rust",
       source: read("examples/rust/src/main.rs"),
-      classifiers: [/classify_connect_error/, /classify_session_error/],
+      classifiers: [/connection_error=/, /session_error=/],
     },
   ];
 
   for (const example of examples) {
     for (const classifier of example.classifiers) {
-      assert.match(example.source, classifier, `${example.name} example must show public recovery classification`);
+      assert.match(example.source, classifier, `${example.name} example must show structured recovery`);
     }
   }
 

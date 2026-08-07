@@ -133,8 +133,7 @@ export type ArtifactV2ErrorCode =
   | "invalid_candidate"
   | "invalid_fsa2"
   | "invalid_fsb2"
-  | "noncanonical_fsb2"
-  | "unknown_admission_reason";
+  | "noncanonical_fsb2";
 
 export class ArtifactV2Error extends Error {
   readonly code: ArtifactV2ErrorCode;
@@ -397,11 +396,10 @@ export function admissionBindingV2(rawFSB2: Uint8Array): Uint8Array {
   return sha256(concatBytes([encoder.encode("flowersec-v2-admission\0"), rawFSB2]));
 }
 
-export function encodeFSA2ResponseV2(
-  response: AdmissionResponseV2,
-  reasons: ReadonlySet<string>,
-): Uint8Array {
-  validateFSA2Response(response, reasons);
+// The server authorizer selects rejection reasons; the codec enforces only the
+// bounded canonical token required by the FSA2 wire contract.
+export function encodeFSA2ResponseV2(response: AdmissionResponseV2): Uint8Array {
+  validateFSA2Response(response);
   const reason = encoder.encode(response.reason);
   const out = new Uint8Array(FSA2_HEADER_BYTES + reason.length);
   out.set(encoder.encode("FSA2"), 0);
@@ -412,10 +410,9 @@ export function encodeFSA2ResponseV2(
   return out;
 }
 
-export function decodeFSA2ResponseV2(
-  raw: Uint8Array,
-  reasons: ReadonlySet<string>,
-): AdmissionResponseV2 {
+// Clients accept any canonical bounded rejection token. Deployment policy is
+// server-owned and is not duplicated as a client-side reason registry.
+export function decodeFSA2ResponseV2(raw: Uint8Array): AdmissionResponseV2 {
   if (raw.length < FSA2_HEADER_BYTES) throw invalidFSA2("truncated header");
   if (raw[0] !== 0x46 || raw[1] !== 0x53 || raw[2] !== 0x41 || raw[3] !== 0x32 || raw[4] !== 2) {
     throw invalidFSA2("header");
@@ -431,7 +428,7 @@ export function decodeFSA2ResponseV2(
     throw invalidFSA2("reason encoding");
   }
   const response = { status: raw[5]! as AdmissionStatusV2, reason };
-  validateFSA2Response(response, reasons);
+  validateFSA2Response(response);
   return response;
 }
 
@@ -1027,7 +1024,7 @@ function candidateWire(candidate: ArtifactCandidateV2): Record<string, unknown> 
   };
 }
 
-function validateFSA2Response(response: AdmissionResponseV2, reasons: ReadonlySet<string>): void {
+function validateFSA2Response(response: AdmissionResponseV2): void {
   switch (response.status) {
     case AdmissionStatusV2.Success:
       if (response.reason !== "") throw invalidFSA2("success reason");
@@ -1036,9 +1033,6 @@ function validateFSA2Response(response: AdmissionResponseV2, reasons: ReadonlySe
     case AdmissionStatusV2.Retryable:
       if (!/^[a-z][a-z0-9_]*$/.test(response.reason) || utf8Length(response.reason) > MAX_ADMISSION_REASON_BYTES) {
         throw invalidFSA2("reason token");
-      }
-      if (!reasons.has(response.reason)) {
-        throw new ArtifactV2Error("unknown_admission_reason", `unknown FSA2 reason ${response.reason}`);
       }
       return;
     default:

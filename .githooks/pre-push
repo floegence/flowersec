@@ -20,23 +20,22 @@ if [ -n "$main_line" ]; then
   main_sha=$(printf '%s\n' "$main_line" | awk '{ print $2 }')
   repo_root=$(git rev-parse --show-toplevel)
   head_sha=$(git -C "$repo_root" rev-parse HEAD)
-  remote_main=$(printf '%s\n' "$main_line" | awk '{ print $4 }')
   if [ "$main_sha" != "$head_sha" ]; then
-    printf '%s\n' '[flowersec] main pre-push gate must verify the exact checked-out HEAD.' >&2
+    printf '%s\n' '[flowersec] main push must use the exact checked-out HEAD.' >&2
     exit 1
   fi
-  printf '%s\n' '[flowersec] verifying the immutable exact-SHA main gate receipt'
-  node "$repo_root/scripts/main-gate-receipt.mjs" verify \
-    --head "$main_sha" \
-    --remote-main "$remote_main"
+  if [ "${FLOWERSEC_PUSH_MAIN_SHA:-}" != "$main_sha" ] && [ "${FLOWERSEC_RELEASE_PUSH_SHA:-}" != "$main_sha" ]; then
+    printf '%s\n' '[flowersec] direct main pushes are unsupported; use ./scripts/push-main.sh.' >&2
+    exit 1
+  fi
 fi
 
 if [ ! -s "$release_lines" ]; then
   exit 0
 fi
 
-if [ -z "${FLOWERSEC_RELEASE_GATE_COMMIT:-}" ]; then
-  printf '%s\n' '[flowersec] release tags must be pushed with scripts/release.sh after the local release gate passes.' >&2
+if [ -z "${FLOWERSEC_RELEASE_PUSH_SHA:-}" ]; then
+  printf '%s\n' '[flowersec] release tags must be pushed with scripts/release.sh from synchronized main.' >&2
   exit 1
 fi
 
@@ -57,9 +56,9 @@ if [ "$actual_refs" != "$expected_refs_sorted" ]; then
   exit 1
 fi
 
-if awk -v expected="$FLOWERSEC_RELEASE_GATE_COMMIT" '$2 != expected { exit 1 }' "$release_lines"; then
+if awk -v expected="$FLOWERSEC_RELEASE_PUSH_SHA" '$2 != expected { exit 1 }' "$release_lines"; then
   exit 0
 fi
 
-printf '%s\n' '[flowersec] every release tag must point to the locally verified commit.' >&2
+printf '%s\n' '[flowersec] every release tag must point to the synchronized release commit.' >&2
 exit 1

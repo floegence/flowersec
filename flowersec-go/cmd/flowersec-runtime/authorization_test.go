@@ -49,7 +49,7 @@ func TestAuthorizeDirectBindsContractAndUpstream(t *testing.T) {
 			PathKind: artifactv2.PathDirect, ChannelID: "channel-a", SessionContractHash: contract.ContractHash,
 		},
 	}
-	ctx := withAuthorizationContext(context.Background(), authorizationContext{carrier: carrier.KindQUIC})
+	ctx := withAuthorizationContext(context.Background(), authorizationContext{carrier: carrier.KindRawQUIC})
 	response, authorization, err := authorizeDirect(ctx, provider, decoded, runtimeReasons(), 32)
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestAuthorizeDirectBindsContractAndUpstream(t *testing.T) {
 	if response.Status != artifactv2.AdmissionSuccess || authorization == nil || authorization.Upstream.Address != "127.0.0.1:9000" {
 		t.Fatalf("unexpected authorization: %+v %+v", response, authorization)
 	}
-	if len(provider.requests) != 1 || provider.requests[0].Carrier != string(carrier.KindQUIC) || provider.requests[0].RemoteAddress != "" {
+	if len(provider.requests) != 1 || provider.requests[0].Carrier != string(carrier.KindRawQUIC) || provider.requests[0].RemoteAddress != "" {
 		t.Fatalf("unexpected request: %+v", provider.requests)
 	}
 	authorization.Release()

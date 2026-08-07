@@ -19,7 +19,8 @@
     "MPL-2.0",
     "Python-2.0",
     "Unicode-3.0",
-    "Unlicense"
+    "Unlicense",
+    "WTFPL"
   ],
   "denied": [
     "AGPL-3.0-only",
@@ -95,8 +96,8 @@
   },
   "reviewAuthority": {
     "reviewer": "flowersec-security-license-review",
-    "reviewedAt": "2026-07-22",
-    "policyRevision": "source-license-policy-v2"
+    "reviewedAt": "2026-08-07",
+    "policyRevision": "source-license-policy-v3"
   },
   "expressionDecisions": {
     "(Apache-2.0 OR MIT) AND Unicode-3.0": {
@@ -147,6 +148,10 @@
       "decision": "approved",
       "concludedExpression": "MIT"
     },
+    "BSD-2-Clause OR MIT OR Apache-2.0": {
+      "decision": "approved",
+      "concludedExpression": "MIT"
+    },
     "BSD-3-Clause": {
       "decision": "approved",
       "concludedExpression": "BSD-3-Clause"
@@ -176,6 +181,10 @@
       "concludedExpression": "ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)"
     },
     "MIT": {
+      "decision": "approved",
+      "concludedExpression": "MIT"
+    },
+    "MIT OR WTFPL": {
       "decision": "approved",
       "concludedExpression": "MIT"
     },

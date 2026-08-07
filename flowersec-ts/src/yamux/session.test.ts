@@ -77,33 +77,6 @@ describe("YamuxSession", () => {
     session.close();
   });
 
-  test("probeLiveness correlates ACK and returns RTT", async () => {
-    const conn = new QueueConn();
-    const session = new YamuxSession(conn, { client: true });
-    const probe = session.probeLiveness(1000);
-    await tick();
-    const sent = decodeHeader(conn.writes[0]!, 0);
-    expect(sent.type).toBe(TYPE_PING);
-    expect(sent.flags & FLAG_SYN).toBe(FLAG_SYN);
-    conn.enqueue(encodeHeader({ type: TYPE_PING, flags: FLAG_ACK, streamId: 0, length: sent.length }));
-    await expect(probe).resolves.toBeGreaterThanOrEqual(0);
-    session.close();
-  });
-
-  test("concurrent liveness callers share one outstanding ping", async () => {
-    const conn = new QueueConn();
-    const session = new YamuxSession(conn, { client: true });
-    const first = session.probeLiveness(1000);
-    const second = session.probeLiveness(1000);
-    await tick();
-    expect(conn.writes).toHaveLength(1);
-    const sent = decodeHeader(conn.writes[0]!, 0);
-    conn.enqueue(encodeHeader({ type: TYPE_PING, flags: FLAG_ACK, streamId: 0, length: sent.length }));
-    const [a, b] = await Promise.all([first, second]);
-    expect(a).toBe(b);
-    session.close();
-  });
-
   test("rejects local streams at the active stream limit", async () => {
     const conn = new QueueConn();
     const session = new YamuxSession(conn, { client: true, limits: { maxActiveStreams: 1, maxInboundStreams: 1 } });

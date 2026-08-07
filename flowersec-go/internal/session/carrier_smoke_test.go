@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
 	gorillaws "github.com/gorilla/websocket"
@@ -26,7 +27,7 @@ func TestEngineRawQUICCarrierConformanceSmoke(t *testing.T) {
 	serverTLS, clientTLS := engineTestTLS(t)
 	serverTLS.NextProtos = []string{rawquic.ALPNDirect}
 	clientTLS.NextProtos = []string{rawquic.ALPNDirect}
-	limits, err := rawquic.BindSessionLimits(rawquic.DefaultLimits(), 4)
+	limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +90,7 @@ func assertCarrierEngineSmoke(t *testing.T, client, server *engineSession) {
 		}
 		accepted <- incoming
 	}()
-	opened, err := client.OpenStream(ctx, "carrier-smoke", Metadata{"carrier": string(client.ChosenCarrier())})
+	opened, err := client.OpenStream(ctx, "carrier-smoke", Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,14 +197,14 @@ func newEngineWebSocketCarrierPair(t *testing.T) (carrier.Session, carrier.Sessi
 	serverCarrierCh := make(chan carrier.Session, 1)
 	serverCarrierErr := make(chan error, 1)
 	go func() {
-		session, err := carrierws.NewAfterAdmission(serverConn, carrierws.ServerRole, carrierws.SubprotocolDirect, resources, carrierws.LivenessPolicy{})
+		session, err := carrierws.NewAfterAdmission(serverConn, carrierws.ServerRole, carrierws.SubprotocolDirect, resources)
 		if err != nil {
 			serverCarrierErr <- err
 			return
 		}
 		serverCarrierCh <- session
 	}()
-	clientCarrier, err := carrierws.NewAfterAdmission(clientConn, carrierws.ClientRole, carrierws.SubprotocolDirect, resources, carrierws.LivenessPolicy{})
+	clientCarrier, err := carrierws.NewAfterAdmission(clientConn, carrierws.ClientRole, carrierws.SubprotocolDirect, resources)
 	if err != nil {
 		t.Fatal(err)
 	}

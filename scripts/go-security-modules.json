@@ -4,7 +4,6 @@
     "flowersec-go",
     "tools/idlgen",
     "tools/releasenotes",
-    "tools/stabilitycheck",
-    "tools/transportcheck"
+    "tools/stabilitycheck"
   ]
 }

@@ -27,6 +27,9 @@ struct RuntimeCapabilityTupleV2: Codable, Equatable, Sendable {
   let networkMode: NetworkModeV2
   let path: PathKind
   let sessionRole: SessionRoleV2
+  let reliableStreams: Bool
+  let datagrams: Bool
+  let migration: Bool
 }
 
 struct UnsupportedRuntimeCarrierV2: Codable, Equatable, Sendable {
@@ -53,6 +56,9 @@ struct RuntimeCapabilityDescriptorV2: Codable, Equatable, Sendable {
           "networkMode": tuple.networkMode.rawValue,
           "path": tuple.path.rawValue,
           "sessionRole": tuple.sessionRole.rawValue,
+          "reliableStreams": tuple.reliableStreams,
+          "datagrams": tuple.datagrams,
+          "migration": tuple.migration,
         ]
       },
       "unsupported": unsupported.map { value in
@@ -79,7 +85,13 @@ struct RuntimeCapabilityDescriptorV2: Codable, Equatable, Sendable {
       let unsupportedObjects = object["unsupported"] as? [[String: Any]]
     else { throw RuntimeCapabilityCodecErrorV2.invalid }
     let tuples = try tupleObjects.map { value in
-      try requireExactKeys(value, ["carrier", "networkMode", "path", "sessionRole"])
+      try requireExactKeys(
+        value,
+        [
+          "carrier", "networkMode", "path", "sessionRole", "reliableStreams", "datagrams",
+          "migration",
+        ]
+      )
       guard
         let carrierRaw = value["carrier"] as? String,
         let carrier = CarrierKind(rawValue: carrierRaw),
@@ -88,13 +100,19 @@ struct RuntimeCapabilityDescriptorV2: Codable, Equatable, Sendable {
         let pathRaw = value["path"] as? String,
         let path = PathKind(rawValue: pathRaw),
         let roleRaw = value["sessionRole"] as? String,
-        let sessionRole = SessionRoleV2(rawValue: roleRaw)
+        let sessionRole = SessionRoleV2(rawValue: roleRaw),
+        let reliableStreams = value["reliableStreams"] as? Bool,
+        let datagrams = value["datagrams"] as? Bool,
+        let migration = value["migration"] as? Bool
       else { throw RuntimeCapabilityCodecErrorV2.invalid }
       return RuntimeCapabilityTupleV2(
         carrier: carrier,
         networkMode: networkMode,
         path: path,
-        sessionRole: sessionRole
+        sessionRole: sessionRole,
+        reliableStreams: reliableStreams,
+        datagrams: datagrams,
+        migration: migration
       )
     }
     let unsupported = try unsupportedObjects.map { value in
@@ -164,7 +182,11 @@ struct RuntimeCapabilityDescriptorV2: Codable, Equatable, Sendable {
   }
 
   private static func valid(_ tuple: RuntimeCapabilityTupleV2) -> Bool {
-    switch (tuple.networkMode, tuple.sessionRole, tuple.path) {
+    guard tuple.reliableStreams else { return false }
+    guard tuple.carrier != .webSocket || (!tuple.datagrams && !tuple.migration) else {
+      return false
+    }
+    return switch (tuple.networkMode, tuple.sessionRole, tuple.path) {
     case (.dial, .client, .direct), (.listen, .server, .direct),
       (.dial, .client, .tunnel), (.dial, .server, .tunnel):
       true
@@ -209,6 +231,26 @@ enum RuntimeCapabilityCodecErrorV2: Error, Equatable, Sendable {
 enum RuntimeCapabilitiesV2 {
   static let macOS = appleWebSocket(runtime: "macos")
   static let iOS = appleWebSocket(runtime: "ios")
+  static let linux = RuntimeCapabilityDescriptorV2(
+    schemaVersion: 2,
+    language: "swift",
+    runtime: "linux",
+    tuples: [],
+    unsupported: [
+      UnsupportedRuntimeCarrierV2(
+        carrier: .rawQUIC,
+        reason: "raw_quic_adapter_not_implemented"
+      ),
+      UnsupportedRuntimeCarrierV2(
+        carrier: .webSocket,
+        reason: "websocket_adapter_not_supported_on_linux"
+      ),
+      UnsupportedRuntimeCarrierV2(
+        carrier: .webTransport,
+        reason: "webtransport_adapter_not_implemented"
+      ),
+    ]
+  )
 
   private static func appleWebSocket(runtime: String) -> RuntimeCapabilityDescriptorV2 {
     RuntimeCapabilityDescriptorV2(
@@ -217,20 +259,23 @@ enum RuntimeCapabilitiesV2 {
       runtime: runtime,
       tuples: [
         RuntimeCapabilityTupleV2(
-          carrier: .webSocket, networkMode: .dial, path: .direct, sessionRole: .client),
+          carrier: .webSocket, networkMode: .dial, path: .direct, sessionRole: .client,
+          reliableStreams: true, datagrams: false, migration: false),
         RuntimeCapabilityTupleV2(
-          carrier: .webSocket, networkMode: .dial, path: .tunnel, sessionRole: .client),
+          carrier: .webSocket, networkMode: .dial, path: .tunnel, sessionRole: .client,
+          reliableStreams: true, datagrams: false, migration: false),
         RuntimeCapabilityTupleV2(
-          carrier: .webSocket, networkMode: .dial, path: .tunnel, sessionRole: .server),
+          carrier: .webSocket, networkMode: .dial, path: .tunnel, sessionRole: .server,
+          reliableStreams: true, datagrams: false, migration: false),
       ],
       unsupported: [
         UnsupportedRuntimeCarrierV2(
           carrier: .rawQUIC,
-          reason: "network_framework_quic_contract_incomplete_on_supported_targets"
+          reason: "raw_quic_adapter_not_implemented"
         ),
         UnsupportedRuntimeCarrierV2(
           carrier: .webTransport,
-          reason: "network_framework_quic_contract_incomplete_on_supported_targets"
+          reason: "webtransport_adapter_not_implemented"
         ),
       ]
     )

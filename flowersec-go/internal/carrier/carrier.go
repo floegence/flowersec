@@ -6,9 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"sync"
-	"time"
 )
 
 // Kind identifies a v2 carrier without exposing its implementation type.
@@ -16,7 +13,7 @@ type Kind string
 
 const (
 	KindWebSocket    Kind = "websocket"
-	KindQUIC         Kind = "raw_quic"
+	KindRawQUIC      Kind = "raw_quic"
 	KindWebTransport Kind = "webtransport"
 )
 
@@ -29,19 +26,19 @@ const (
 )
 
 var (
-	ErrInvalidKind           = errors.New("invalid carrier kind")
-	ErrInvalidPath           = errors.New("invalid carrier path")
-	ErrInvalidStreamCapacity = errors.New("invalid carrier stream capacity")
-	ErrStreamReset           = errors.New("carrier stream reset")
-	ErrUnreliableUnavailable = errors.New("carrier unreliable messages unavailable")
-	ErrUnreliableTooLarge    = errors.New("carrier unreliable message too large")
+	ErrInvalidKind            = errors.New("invalid carrier kind")
+	ErrInvalidPath            = errors.New("invalid carrier path")
+	ErrInvalidStreamCapacity  = errors.New("invalid carrier stream capacity")
+	ErrStreamReset            = errors.New("carrier stream reset")
+	ErrStopSendingUnavailable = errors.New("carrier STOP_SENDING unavailable")
+	ErrUnreliableUnavailable  = errors.New("carrier unreliable messages unavailable")
+	ErrUnreliableTooLarge     = errors.New("carrier unreliable message too large")
 )
 
 const (
-	MaxLogicalIncomingStreams  = 128
-	ReservedSessionStreams     = 2
-	MaxUnreliableWireBytes     = 1_024
-	EstablishmentProbeInterval = 250 * time.Millisecond
+	MaxLogicalIncomingStreams = 128
+	ReservedSessionStreams    = 2
+	MaxUnreliableWireBytes    = 1_024
 )
 
 // RequiredIncomingStreams returns the physical bidirectional stream budget for
@@ -57,7 +54,7 @@ func RequiredIncomingStreams(maxLogical uint16) (uint16, error) {
 // Validate rejects unregistered carrier strings.
 func (k Kind) Validate() error {
 	switch k {
-	case KindWebSocket, KindQUIC, KindWebTransport:
+	case KindWebSocket, KindRawQUIC, KindWebTransport:
 		return nil
 	default:
 		return fmt.Errorf("%w: %q", ErrInvalidKind, k)
@@ -89,6 +86,7 @@ type Stream interface {
 	io.Writer
 	io.Closer
 	CloseWrite() error
+	StopSending() error
 	Reset() error
 	Context() context.Context
 }
@@ -102,12 +100,15 @@ type Session interface {
 	MaxIncomingStreams() uint16
 	OpenStream(context.Context) (Stream, error)
 	AcceptStream(context.Context) (Stream, error)
+	// Termination closes when the native carrier can no longer perform work.
+	Termination() <-chan struct{}
 	// CloseWithErrorContext performs bounded carrier-owned teardown. It must
 	// make the session locally unable to open or write before returning, even
 	// when ctx expires while graceful shutdown is in progress. A nil ctx is
 	// treated as context.Background().
 	CloseWithErrorContext(context.Context, ApplicationError) error
 	CloseWithError(ApplicationError) error
+	Abort(ApplicationError) error
 	Close() error
 }
 
@@ -118,52 +119,4 @@ type UnreliableTransport interface {
 	UnreliableAvailable() bool
 	SendUnreliable([]byte) error
 	ReceiveUnreliable(context.Context) ([]byte, error)
-}
-
-// EstablishmentProber emits one transport-native, credential-free,
-// acknowledgement-eliciting probe while a session is still establishing.
-type EstablishmentProber interface {
-	ProbeEstablishment() error
-}
-
-// StartEstablishmentProbes emits bounded recovery traffic until stop is
-// called or ctx ends. The returned stop function is idempotent and waits for
-// the active probe to finish.
-func StartEstablishmentProbes(ctx context.Context, candidate any, interval time.Duration) func() {
-	prober, ok := candidate.(EstablishmentProber)
-	if !ok || interval <= 0 {
-		return func() {}
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	probeCtx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			_ = prober.ProbeEstablishment()
-			select {
-			case <-probeCtx.Done():
-				return
-			case <-ticker.C:
-			}
-		}
-	}()
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			cancel()
-			<-done
-		})
-	}
-}
-
-// PathMigrator is an optional production-internal capability for transports
-// that can validate and activate a caller-provided local network path. It is
-// deliberately absent from Flowersec's public session contract.
-type PathMigrator interface {
-	Migrate(context.Context, net.PacketConn) error
 }

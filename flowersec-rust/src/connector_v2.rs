@@ -1,8 +1,7 @@
-//! Carrier-neutral production connector for opaque Flowersec v2 artifacts.
+//! Carrier-neutral candidate selection, admission, and session establishment.
 
 use std::{
-    fmt, io,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    fmt,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -12,67 +11,17 @@ use futures_util::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnord
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    artifact_v2::{ArtifactLease, ArtifactSpendError, RawQuicCandidatePlan},
-    raw_quic_v2::{RawQuicClientConfig, RawQuicLimits, RawQuicPathProfile, RawQuicSession},
-    transport_v2::{PathKind, SessionV2},
+    admission_v2::{AdmissionCommitErrorV2, AdmissionCommitV2, CandidateAttemptV2},
+    artifact_v2::{ArtifactLease, CandidatePlanV2, ConnectionPlanError, ConnectionPlanV2},
+    session_v2::{SessionConfigV2, SessionDeadlinesV2, establish_session_v2},
+    transport_v2::{CarrierSessionV2, PathKind, SessionRole, SessionV2},
 };
-
-/// Carrier-neutral trust and lifecycle policy.
-#[derive(Clone, Debug)]
-pub struct ConnectorOptions {
-    trust_roots_der: Vec<Vec<u8>>,
-    connect_timeout: Duration,
-    close_flush_timeout: Option<Duration>,
-}
-
-impl ConnectorOptions {
-    /// Creates valid client options with explicit DER trust roots and the shared
-    /// ten-second connection timeout.
-    pub fn new(trust_roots_der: Vec<Vec<u8>>) -> Result<Self, ConnectError> {
-        if trust_roots_der.is_empty() || trust_roots_der.iter().any(Vec::is_empty) {
-            return Err(error(PathKind::Direct, ConnectErrorCode::InvalidInput));
-        }
-        Ok(Self {
-            trust_roots_der,
-            connect_timeout: Duration::from_secs(10),
-            close_flush_timeout: None,
-        })
-    }
-
-    /// Overrides the complete connection-attempt deadline.
-    pub fn with_connect_timeout(mut self, connect_timeout: Duration) -> Result<Self, ConnectError> {
-        if connect_timeout.is_zero() {
-            return Err(error(PathKind::Direct, ConnectErrorCode::InvalidInput));
-        }
-        self.connect_timeout = connect_timeout;
-        Ok(self)
-    }
-
-    /// Overrides the bounded session close-control delivery deadline.
-    pub fn with_close_flush_timeout(
-        mut self,
-        close_flush_timeout: Duration,
-    ) -> Result<Self, ConnectError> {
-        if close_flush_timeout.is_zero() {
-            return Err(error(PathKind::Direct, ConnectErrorCode::InvalidInput));
-        }
-        self.close_flush_timeout = Some(close_flush_timeout);
-        Ok(self)
-    }
-
-    pub fn trust_roots_der(&self) -> &[Vec<u8>] {
-        &self.trust_roots_der
-    }
-
-    pub const fn connect_timeout(&self) -> Duration {
-        self.connect_timeout
-    }
-}
 
 /// Stable, redacted connection failure category.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConnectErrorCode {
     InvalidInput,
+    RuntimeUnsupported,
     Expired,
     ResolveFailed,
     SpendFailed,
@@ -87,6 +36,7 @@ impl ConnectErrorCode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::InvalidInput => "invalid_input",
+            Self::RuntimeUnsupported => "runtime_unsupported",
             Self::Expired => "expired_artifact",
             Self::ResolveFailed => "resolve_failed",
             Self::SpendFailed => "credential_spend_failed",
@@ -109,16 +59,20 @@ impl fmt::Display for ConnectErrorCode {
 #[error("Flowersec connection failed (code={code})")]
 pub struct ConnectError {
     code: ConnectErrorCode,
+    controller_retryable: bool,
 }
 
 impl ConnectError {
-    #[cfg(test)]
-    pub(crate) const fn from_code(code: ConnectErrorCode) -> Self {
-        Self { code }
-    }
-
     pub const fn code(&self) -> ConnectErrorCode {
         self.code
+    }
+
+    pub(crate) const fn from_runtime_code(code: ConnectErrorCode) -> Self {
+        error(code)
+    }
+
+    pub(crate) const fn controller_retryable(&self) -> bool {
+        self.controller_retryable
     }
 
     /// Returns the stable public code string for this redacted connection failure.
@@ -127,108 +81,58 @@ impl ConnectError {
     }
 }
 
-/// Establishes a v2 session without exposing candidates or carrier configuration.
-#[derive(Debug)]
-pub(crate) struct Connector {
-    options: ConnectorOptions,
-    backend: Arc<dyn DialBackend>,
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SessionConnectorOptionsV2 {
+    pub(crate) connect_timeout: Duration,
+    pub(crate) close_flush_timeout: Option<Duration>,
 }
 
-impl std::fmt::Debug for dyn DialBackend {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("DialBackend")
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RuntimeFailureV2 {
+    Resolve,
+    Start,
+    Canceled,
+    Timeout,
+}
+
+/// Runtime composition point used by the carrier-neutral connector.
+#[async_trait]
+pub(crate) trait CandidateAttemptFactoryV2: fmt::Debug + Send + Sync {
+    fn supports(&self, candidate: &CandidatePlanV2, path: PathKind, role: SessionRole) -> bool;
+
+    async fn prepare(
+        &self,
+        candidate: CandidatePlanV2,
+        max_inbound_streams: u16,
+        deadline: tokio::time::Instant,
+        cancellation: CancellationToken,
+    ) -> Result<Arc<dyn CarrierSessionV2>, RuntimeFailureV2>;
+}
+
+pub(crate) struct SessionConnectorV2 {
+    options: SessionConnectorOptionsV2,
+    runtime: Arc<dyn CandidateAttemptFactoryV2>,
+}
+
+impl fmt::Debug for SessionConnectorV2 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SessionConnectorV2")
+            .field("options", &self.options)
+            .field("runtime", &self.runtime)
+            .finish()
     }
 }
 
-#[async_trait]
-trait DialBackend: Send + Sync {
-    async fn dial(
-        &self,
-        candidate: RawQuicCandidatePlan,
-        config: RawQuicClientConfig,
-    ) -> Result<Box<dyn ReadyCarrier>, ()>;
-}
-
-#[async_trait]
-trait ReadyCarrier: Send + Sync {
-    async fn establish(
-        &self,
-        raw_fsb2: &[u8],
-        config: crate::session_v2::SessionConfigV2,
-        contract: crate::raw_quic_v2::SessionContractV2,
-    ) -> io::Result<Arc<dyn SessionV2>>;
-    fn close(&self);
-}
-
-type DialResult = (RawQuicCandidatePlan, Result<Box<dyn ReadyCarrier>, ()>);
-
-struct ProductionDialBackend;
-struct ProductionReadyCarrier(RawQuicSession);
-
-#[async_trait]
-impl DialBackend for ProductionDialBackend {
-    async fn dial(
-        &self,
-        candidate: RawQuicCandidatePlan,
-        config: RawQuicClientConfig,
-    ) -> Result<Box<dyn ReadyCarrier>, ()> {
-        let addresses = tokio::net::lookup_host((candidate.host.as_str(), candidate.port))
-            .await
-            .map_err(|_| ())?
-            .collect::<Vec<_>>();
-        if addresses.is_empty() {
-            return Err(());
+impl SessionConnectorV2 {
+    pub(crate) fn new(
+        options: SessionConnectorOptionsV2,
+        runtime: Arc<dyn CandidateAttemptFactoryV2>,
+    ) -> Result<Self, ConnectError> {
+        if options.connect_timeout.is_zero() {
+            return Err(error(ConnectErrorCode::InvalidInput));
         }
-        let mut attempts = FuturesUnordered::new();
-        for address in addresses {
-            let local = if address.is_ipv4() {
-                SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))
-            } else {
-                SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))
-            };
-            attempts.push(RawQuicSession::dial(
-                local,
-                address,
-                &candidate.host,
-                config.clone(),
-            ));
-        }
-        while let Some(result) = attempts.next().await {
-            if let Ok(session) = result {
-                return Ok(Box::new(ProductionReadyCarrier(session)));
-            }
-        }
-        Err(())
-    }
-}
-
-#[async_trait]
-impl ReadyCarrier for ProductionReadyCarrier {
-    async fn establish(
-        &self,
-        raw_fsb2: &[u8],
-        config: crate::session_v2::SessionConfigV2,
-        contract: crate::raw_quic_v2::SessionContractV2,
-    ) -> io::Result<Arc<dyn SessionV2>> {
-        self.0
-            .clone()
-            .commit_admission_and_establish_v2(raw_fsb2, config, contract)
-            .await
-    }
-    fn close(&self) {
-        self.0.close();
-    }
-}
-
-impl Connector {
-    pub(crate) fn new(options: ConnectorOptions) -> Result<Self, ConnectError> {
-        if options.trust_roots_der.is_empty() || options.connect_timeout.is_zero() {
-            return Err(error(PathKind::Direct, ConnectErrorCode::InvalidInput));
-        }
-        Ok(Self {
-            options,
-            backend: Arc::new(ProductionDialBackend),
-        })
+        Ok(Self { options, runtime })
     }
 
     pub(crate) async fn connect(
@@ -239,348 +143,316 @@ impl Connector {
         let deadline = tokio::time::Instant::now() + self.options.connect_timeout;
         let plan = lease
             .artifact()
-            .raw_quic_dial_plan()
-            .map_err(|_| error(PathKind::Direct, ConnectErrorCode::InvalidInput))?;
-        let path = plan.path;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        if u64::try_from(plan.expires_at_unix_seconds).map_or(true, |expiry| expiry <= now) {
-            return Err(error(path, ConnectErrorCode::Expired));
+            .connection_plan()
+            .map_err(|ConnectionPlanError::Invalid| error(ConnectErrorCode::InvalidInput))?;
+        require_unexpired(&plan)?;
+
+        let candidates = plan
+            .candidates
+            .iter()
+            .filter(|candidate| self.runtime.supports(candidate, plan.path, plan.role))
+            .cloned()
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            return Err(error(ConnectErrorCode::RuntimeUnsupported));
         }
-        let mut config = plan.session_config;
-        config.local_endpoint_instance_id = plan.local_endpoint_instance_id;
-        config.expected_peer_endpoint_instance_id = plan.expected_peer_endpoint_instance_id;
-        if let Some(close_flush_timeout) = self.options.close_flush_timeout {
-            config.deadlines.close_flush = close_flush_timeout;
-        }
-        let limits =
-            RawQuicLimits::for_session_v2(config.max_inbound_streams, self.options.connect_timeout)
-                .map_err(|_| error(path, ConnectErrorCode::InvalidInput))?;
-        let profile = if path == PathKind::Direct {
-            RawQuicPathProfile::Direct
-        } else {
-            RawQuicPathProfile::Tunnel
-        };
-        let client =
-            RawQuicClientConfig::new(profile, self.options.trust_roots_der.clone(), limits)
-                .map_err(|_| error(path, ConnectErrorCode::InvalidInput))?;
+
         let dials: FuturesUnordered<BoxFuture<'static, DialResult>> = FuturesUnordered::new();
-        for candidate in plan.candidates.iter().cloned() {
-            let backend = self.backend.clone();
-            let config = client.clone();
+        for candidate in candidates {
+            let runtime = self.runtime.clone();
+            let max_inbound_streams = plan.session.max_inbound_streams;
+            let cancellation = cancellation.clone();
             dials.push(
-                async move { (candidate.clone(), backend.dial(candidate, config).await) }.boxed(),
+                async move {
+                    let id = candidate.id.clone();
+                    let attempt = CandidateAttemptV2::attempt();
+                    let prepared = runtime
+                        .prepare(candidate, max_inbound_streams, deadline, cancellation)
+                        .await
+                        .map(|carrier| attempt.ready(carrier));
+                    (id, prepared)
+                }
+                .boxed(),
             );
         }
-        let (winner, carrier) = select_winner(dials, deadline, &cancellation, path).await?;
+        let (winner_id, attempt) = select_winner(dials, deadline, &cancellation).await?;
+        let encoded = lease
+            .artifact()
+            .encode_fsb2(&winner_id)
+            .map_err(|_| error(ConnectErrorCode::InvalidInput))?;
 
-        // Once durable commit begins it is authoritative and must not be canceled midway.
-        lease
-            .commit_spend()
-            .await
-            .map_err(|failure| match failure {
-                ArtifactSpendError::AlreadyCommitted | ArtifactSpendError::CommitFailed => {
-                    carrier.close();
-                    error(path, ConnectErrorCode::SpendFailed)
+        require_active(deadline, &cancellation)?;
+        let admitted =
+            AdmissionCommitV2::new(attempt, lease, encoded, plan.session.max_inbound_streams)
+                .commit(deadline, &cancellation)
+                .await
+                .map_err(|failure| match failure {
+                    AdmissionCommitErrorV2::Spend => error(ConnectErrorCode::SpendFailed),
+                    AdmissionCommitErrorV2::Canceled => error(ConnectErrorCode::Canceled),
+                    AdmissionCommitErrorV2::Timeout => error(ConnectErrorCode::Timeout),
+                    AdmissionCommitErrorV2::Rejected => {
+                        terminal_error(ConnectErrorCode::DialFailed)
+                    }
+                    AdmissionCommitErrorV2::Retryable => error(ConnectErrorCode::DialFailed),
+                    AdmissionCommitErrorV2::Carrier => error(ConnectErrorCode::DialFailed),
+                })?;
+
+        let mut config =
+            session_config(&plan, admitted.binding(), self.options.close_flush_timeout);
+        if plan.path == PathKind::Direct {
+            config.peer_admission_binding = Some(admitted.binding());
+        }
+        let session = tokio::select! {
+            _ = cancellation.cancelled() => return Err(error(ConnectErrorCode::Canceled)),
+            result = tokio::time::timeout_at(
+                deadline,
+                establish_session_v2(admitted.carrier(), config),
+            ) => match result {
+                Err(_) => return Err(error(ConnectErrorCode::Timeout)),
+                Ok(Err(failure)) if failure.kind() == std::io::ErrorKind::TimedOut => {
+                    return Err(error(ConnectErrorCode::Timeout));
                 }
-            })?;
-        if cancellation.is_cancelled() {
-            carrier.close();
-            return Err(error(path, ConnectErrorCode::Canceled));
-        }
-        if tokio::time::Instant::now() >= deadline {
-            carrier.close();
-            return Err(error(path, ConnectErrorCode::Timeout));
-        }
-        let encoded = lease.artifact().encode_fsb2(&winner.id).map_err(|_| {
-            carrier.close();
-            error(path, ConnectErrorCode::InvalidInput)
-        })?;
-        if path == PathKind::Direct {
-            config.peer_admission_binding = Some(encoded.binding);
-        }
-        finish_establish(
-            carrier,
-            &encoded.raw,
-            config,
-            plan.session_contract,
-            deadline,
-            &cancellation,
-            path,
-        )
-        .await
+                Ok(Err(_)) => return Err(error(ConnectErrorCode::HandshakeFailed)),
+                Ok(Ok(session)) => session,
+            },
+        };
+        admitted.mark_established();
+        Ok(session)
     }
 }
 
-/// Establishes one carrier-neutral session from a single-use artifact lease.
-pub async fn connect(
-    lease: &mut ArtifactLease,
-    options: ConnectorOptions,
-) -> Result<Arc<dyn SessionV2>, ConnectError> {
-    connect_with_cancellation(lease, options, CancellationToken::new()).await
-}
-
-/// Establishes one carrier-neutral session with explicit external cancellation.
-pub async fn connect_with_cancellation(
-    lease: &mut ArtifactLease,
-    options: ConnectorOptions,
-    cancellation: CancellationToken,
-) -> Result<Arc<dyn SessionV2>, ConnectError> {
-    Connector::new(options)?.connect(lease, cancellation).await
-}
+type DialResult = (String, Result<CandidateAttemptV2, RuntimeFailureV2>);
 
 async fn select_winner(
     mut dials: FuturesUnordered<BoxFuture<'static, DialResult>>,
     deadline: tokio::time::Instant,
     cancellation: &CancellationToken,
-    path: PathKind,
-) -> Result<(RawQuicCandidatePlan, Box<dyn ReadyCarrier>), ConnectError> {
-    let winner = tokio::select! {
-        _ = cancellation.cancelled() => return Err(error(path, ConnectErrorCode::Canceled)),
+) -> Result<(String, CandidateAttemptV2), ConnectError> {
+    let mut saw_runtime_failure = false;
+    tokio::select! {
+        _ = cancellation.cancelled() => Err(error(ConnectErrorCode::Canceled)),
         result = tokio::time::timeout_at(deadline, async {
-            while let Some((candidate, result)) = dials.next().await {
-                if let Ok(carrier) = result { return Some((candidate, carrier)); }
+            while let Some((candidate_id, result)) = dials.next().await {
+                match result {
+                    Ok(attempt) => return Ok(Some((candidate_id, attempt.select_winner()))),
+                    Err(RuntimeFailureV2::Start) => saw_runtime_failure = true,
+                    Err(RuntimeFailureV2::Resolve) => {}
+                    Err(RuntimeFailureV2::Canceled) => {
+                        return Err(error(ConnectErrorCode::Canceled));
+                    }
+                    Err(RuntimeFailureV2::Timeout) => {
+                        return Err(error(ConnectErrorCode::Timeout));
+                    }
+                }
             }
-            None
+            Ok(None)
         }) => match result {
-            Err(_) => return Err(error(path, ConnectErrorCode::Timeout)),
-            Ok(None) => return Err(error(path, ConnectErrorCode::DialFailed)),
-            Ok(Some(value)) => value,
-        }
-    };
-    while let Some(Some((_candidate, result))) = dials.next().now_or_never() {
-        if let Ok(loser) = result {
-            loser.close();
-        }
+            Err(_) => Err(error(ConnectErrorCode::Timeout)),
+            Ok(Err(error)) => Err(error),
+            Ok(Ok(None)) if saw_runtime_failure => Err(error(ConnectErrorCode::DialFailed)),
+            Ok(Ok(None)) => Err(error(ConnectErrorCode::ResolveFailed)),
+            Ok(Ok(Some(winner))) => Ok(winner),
+        },
     }
-    Ok(winner)
 }
 
-async fn finish_establish(
-    carrier: Box<dyn ReadyCarrier>,
-    raw: &[u8],
-    config: crate::session_v2::SessionConfigV2,
-    contract: crate::raw_quic_v2::SessionContractV2,
+pub(crate) fn session_config(
+    plan: &ConnectionPlanV2,
+    admission_binding: [u8; 32],
+    close_flush_timeout: Option<Duration>,
+) -> SessionConfigV2 {
+    let mut deadlines = SessionDeadlinesV2 {
+        establish: plan.session.establish_timeout,
+        rekey_prepare: plan.session.rekey_prepare_timeout,
+        rekey_completion: plan.session.rekey_completion_timeout,
+        ..Default::default()
+    };
+    if let Some(close_flush) = close_flush_timeout {
+        deadlines.close_flush = close_flush;
+    }
+    SessionConfigV2 {
+        role: plan.role,
+        path: plan.path,
+        channel_id: plan.session.channel_id.clone(),
+        session_contract_hash: plan.session.session_contract_hash,
+        suite: plan.session.suite,
+        psk: plan.session.psk,
+        max_inbound_streams: plan.session.max_inbound_streams,
+        idle_timeout: plan.session.idle_timeout,
+        local_admission_binding: admission_binding,
+        peer_admission_binding: None,
+        local_endpoint_instance_id: plan.local_endpoint_instance_id.clone(),
+        expected_peer_endpoint_instance_id: plan.expected_peer_endpoint_instance_id.clone(),
+        rpc_handler: None,
+        deadlines,
+    }
+}
+
+fn require_unexpired(plan: &ConnectionPlanV2) -> Result<(), ConnectError> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    if u64::try_from(plan.expires_at_unix_seconds).map_or(true, |expiry| expiry <= now) {
+        return Err(error(ConnectErrorCode::Expired));
+    }
+    Ok(())
+}
+
+fn require_active(
     deadline: tokio::time::Instant,
     cancellation: &CancellationToken,
-    path: PathKind,
-) -> Result<Arc<dyn SessionV2>, ConnectError> {
-    let establish = carrier.establish(raw, config, contract);
-    tokio::select! {
-            _ = cancellation.cancelled() => { carrier.close(); Err(error(path, ConnectErrorCode::Canceled)) },
-            result = tokio::time::timeout_at(deadline, establish) => match result {
-                Err(_) => { carrier.close(); Err(error(path, ConnectErrorCode::Timeout)) },
-                Ok(Err(failure)) if failure.kind() == io::ErrorKind::TimedOut => { carrier.close(); Err(error(path, ConnectErrorCode::Timeout)) },
-                Ok(Err(_)) => { carrier.close(); Err(error(path, ConnectErrorCode::HandshakeFailed)) },
-                Ok(Ok(session)) => Ok(session),
-            },
+) -> Result<(), ConnectError> {
+    if cancellation.is_cancelled() {
+        return Err(error(ConnectErrorCode::Canceled));
+    }
+    if tokio::time::Instant::now() >= deadline {
+        return Err(error(ConnectErrorCode::Timeout));
+    }
+    Ok(())
+}
+
+const fn error(code: ConnectErrorCode) -> ConnectError {
+    ConnectError {
+        code,
+        controller_retryable: !matches!(
+            code,
+            ConnectErrorCode::InvalidInput
+                | ConnectErrorCode::RuntimeUnsupported
+                | ConnectErrorCode::Canceled
+        ),
     }
 }
 
-const fn error(path: PathKind, code: ConnectErrorCode) -> ConnectError {
-    let _ = path;
-    ConnectError { code }
+const fn terminal_error(code: ConnectErrorCode) -> ConnectError {
+    ConnectError {
+        code,
+        controller_retryable: false,
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        io,
+        sync::atomic::{AtomicBool, Ordering},
+    };
+
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use crate::{
+        session_v2::memory_carrier_pair_v2_with_capacity,
+        transport_v2::{CarrierKind, CarrierStreamV2},
+    };
 
-    struct FailingReadyCarrier(Arc<AtomicBool>);
-    struct HangingReadyCarrier(Arc<AtomicBool>);
-
-    #[async_trait]
-    impl ReadyCarrier for FailingReadyCarrier {
-        async fn establish(
-            &self,
-            _: &[u8],
-            _: crate::session_v2::SessionConfigV2,
-            _: crate::raw_quic_v2::SessionContractV2,
-        ) -> io::Result<Arc<dyn SessionV2>> {
-            Err(io::Error::other("sensitive candidate failure"))
-        }
-        fn close(&self) {
-            self.0.store(true, Ordering::SeqCst);
-        }
+    #[derive(Debug)]
+    struct AbortProbeCarrier {
+        inner: Arc<dyn CarrierSessionV2>,
+        aborted: Arc<AtomicBool>,
     }
 
     #[async_trait]
-    impl ReadyCarrier for HangingReadyCarrier {
-        async fn establish(
-            &self,
-            _: &[u8],
-            _: crate::session_v2::SessionConfigV2,
-            _: crate::raw_quic_v2::SessionContractV2,
-        ) -> io::Result<Arc<dyn SessionV2>> {
-            std::future::pending().await
+    impl CarrierSessionV2 for AbortProbeCarrier {
+        fn kind(&self) -> CarrierKind {
+            self.inner.kind()
         }
-        fn close(&self) {
-            self.0.store(true, Ordering::SeqCst);
+
+        fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+            self.inner.inbound_bidirectional_stream_capacity()
+        }
+
+        async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+            self.inner.open_stream().await
+        }
+
+        async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+            self.inner.accept_stream().await
+        }
+
+        async fn close(&self) -> io::Result<()> {
+            self.inner.close().await
+        }
+
+        fn abort(&self) {
+            self.aborted.store(true, Ordering::SeqCst);
+            self.inner.abort();
         }
     }
 
     #[test]
-    fn public_error_is_redacted() {
-        let failure = error(PathKind::Tunnel, ConnectErrorCode::DialFailed);
-        let text = failure.to_string().to_ascii_lowercase();
-        assert_eq!(failure.code(), ConnectErrorCode::DialFailed);
-        assert_eq!(ConnectErrorCode::InvalidInput.as_str(), "invalid_input");
-        assert_eq!(ConnectErrorCode::Expired.as_str(), "expired_artifact");
-        assert_eq!(ConnectErrorCode::ResolveFailed.as_str(), "resolve_failed");
+    fn public_errors_are_redacted_and_controller_disposition_is_structured() {
+        let retryable = error(ConnectErrorCode::DialFailed);
+        assert_eq!(retryable.code(), ConnectErrorCode::DialFailed);
+        assert!(retryable.controller_retryable());
         assert_eq!(
-            ConnectErrorCode::SpendFailed.as_str(),
-            "credential_spend_failed"
+            retryable.to_string(),
+            "Flowersec connection failed (code=connection_failed)"
         );
-        assert_eq!(ConnectErrorCode::DialFailed.as_str(), "connection_failed");
-        assert_eq!(ConnectErrorCode::Timeout.as_str(), "timeout");
-        assert_eq!(ConnectErrorCode::Canceled.as_str(), "canceled");
-        assert_eq!(
-            ConnectErrorCode::HandshakeFailed.as_str(),
-            "handshake_failed"
-        );
-        assert_eq!(text, "flowersec connection failed (code=connection_failed)");
         for forbidden in ["candidate", "carrier", "quic://", "token", "certificate"] {
-            assert!(!text.contains(forbidden));
+            assert!(!retryable.to_string().contains(forbidden));
         }
-    }
 
-    #[test]
-    fn connector_rejects_empty_trust_or_lifecycle_deadline() {
-        assert_eq!(
-            ConnectorOptions::new(vec![]).unwrap_err().code(),
-            ConnectErrorCode::InvalidInput
-        );
-        assert_eq!(
-            ConnectorOptions::new(vec![vec![1]])
-                .unwrap()
-                .with_connect_timeout(Duration::ZERO)
-                .unwrap_err()
-                .code(),
-            ConnectErrorCode::InvalidInput
-        );
-        assert_eq!(
-            ConnectorOptions::new(vec![vec![1]])
-                .unwrap()
-                .with_close_flush_timeout(Duration::ZERO)
-                .unwrap_err()
-                .code(),
-            ConnectErrorCode::InvalidInput
-        );
-        assert_eq!(
-            ConnectorOptions::new(vec![vec![1]])
-                .unwrap()
-                .with_close_flush_timeout(Duration::from_secs(12))
-                .unwrap()
-                .close_flush_timeout,
-            Some(Duration::from_secs(12))
-        );
+        assert!(!error(ConnectErrorCode::RuntimeUnsupported).controller_retryable());
+        assert!(!error(ConnectErrorCode::Canceled).controller_retryable());
+        assert!(!terminal_error(ConnectErrorCode::DialFailed).controller_retryable());
     }
 
     #[tokio::test]
-    async fn establish_error_explicitly_closes_winner() {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../testdata/transport_v2/artifact_vectors.json"
-        ))
-        .unwrap();
-        let artifact = crate::artifact_v2::Artifact::parse(
-            fixture["positive"][0]["artifact_json"].as_str().unwrap(),
-        )
-        .unwrap();
-        let plan = artifact.raw_quic_dial_plan().unwrap();
-        let closed = Arc::new(AtomicBool::new(false));
-        let failure = finish_establish(
-            Box::new(FailingReadyCarrier(closed.clone())),
-            b"FSB2",
-            plan.session_config,
-            plan.session_contract,
-            tokio::time::Instant::now() + Duration::from_secs(1),
-            &CancellationToken::new(),
-            PathKind::Direct,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(failure.code(), ConnectErrorCode::HandshakeFailed);
-        assert!(closed.load(Ordering::SeqCst));
-        assert!(!failure.to_string().contains("sensitive"));
-    }
-
-    #[tokio::test]
-    async fn establish_cancel_and_timeout_explicitly_close_winner() {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../testdata/transport_v2/artifact_vectors.json"
-        ))
-        .unwrap();
-        let artifact = crate::artifact_v2::Artifact::parse(
-            fixture["positive"][0]["artifact_json"].as_str().unwrap(),
-        )
-        .unwrap();
-        for canceled in [true, false] {
-            let plan = artifact.raw_quic_dial_plan().unwrap();
-            let closed = Arc::new(AtomicBool::new(false));
-            let cancellation = CancellationToken::new();
-            if canceled {
-                cancellation.cancel();
-            }
-            let failure = finish_establish(
-                Box::new(HangingReadyCarrier(closed.clone())),
-                b"FSB2",
-                plan.session_config,
-                plan.session_contract,
-                tokio::time::Instant::now() + Duration::from_millis(1),
-                &cancellation,
-                PathKind::Direct,
-            )
-            .await
-            .unwrap_err();
-            assert_eq!(
-                failure.code(),
-                if canceled {
-                    ConnectErrorCode::Canceled
-                } else {
-                    ConnectErrorCode::Timeout
-                }
-            );
-            assert!(closed.load(Ordering::SeqCst));
-        }
-    }
-
-    #[tokio::test]
-    async fn concurrent_ready_candidates_close_every_non_winner() {
-        let first = Arc::new(AtomicBool::new(false));
-        let second = Arc::new(AtomicBool::new(false));
+    async fn candidate_selection_aborts_every_non_established_carrier() {
+        let mut aborted = Vec::new();
         let dials: FuturesUnordered<BoxFuture<'static, DialResult>> = FuturesUnordered::new();
-        for (id, closed) in [("q1", first.clone()), ("q2", second.clone())] {
-            let candidate = RawQuicCandidatePlan {
-                id: id.into(),
-                host: "localhost".into(),
-                port: 443,
-            };
-            dials.push(
-                async move {
-                    (
-                        candidate,
-                        Ok(Box::new(FailingReadyCarrier(closed)) as Box<dyn ReadyCarrier>),
-                    )
-                }
-                .boxed(),
-            );
+        for id in ["q1", "q2"] {
+            let (inner, _peer) = memory_carrier_pair_v2_with_capacity(3);
+            let flag = Arc::new(AtomicBool::new(false));
+            aborted.push(flag.clone());
+            let carrier: Arc<dyn CarrierSessionV2> = Arc::new(AbortProbeCarrier {
+                inner,
+                aborted: flag,
+            });
+            let attempt = CandidateAttemptV2::attempt().ready(carrier);
+            dials.push(async move { (id.to_owned(), Ok(attempt)) }.boxed());
         }
-        let (_winner, carrier) = select_winner(
+
+        let (_winner, attempt) = select_winner(
             dials,
             tokio::time::Instant::now() + Duration::from_secs(1),
             &CancellationToken::new(),
-            PathKind::Direct,
         )
         .await
-        .unwrap();
+        .expect("one candidate wins");
         assert_eq!(
-            u8::from(first.load(Ordering::SeqCst)) + u8::from(second.load(Ordering::SeqCst)),
-            1
+            aborted
+                .iter()
+                .filter(|flag| flag.load(Ordering::SeqCst))
+                .count(),
+            1,
+            "selection must abort exactly the ready loser"
         );
-        carrier.close();
-        assert!(first.load(Ordering::SeqCst) && second.load(Ordering::SeqCst));
+
+        drop(attempt);
+        assert!(
+            aborted.iter().all(|flag| flag.load(Ordering::SeqCst)),
+            "a winner that never reaches admission must also abort"
+        );
+    }
+
+    #[tokio::test]
+    async fn candidate_failures_map_without_carrier_or_text_fallbacks() {
+        for (failure, expected) in [
+            (RuntimeFailureV2::Resolve, ConnectErrorCode::ResolveFailed),
+            (RuntimeFailureV2::Start, ConnectErrorCode::DialFailed),
+            (RuntimeFailureV2::Canceled, ConnectErrorCode::Canceled),
+            (RuntimeFailureV2::Timeout, ConnectErrorCode::Timeout),
+        ] {
+            let dials: FuturesUnordered<BoxFuture<'static, DialResult>> = FuturesUnordered::new();
+            dials.push(async move { ("q1".to_owned(), Err(failure)) }.boxed());
+            let error = select_winner(
+                dials,
+                tokio::time::Instant::now() + Duration::from_secs(1),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect_err("candidate preparation fails");
+            assert_eq!(error.code(), expected);
+        }
     }
 }

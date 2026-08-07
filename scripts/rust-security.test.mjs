@@ -105,10 +105,11 @@ test("non-published Rust roots remain licensed and version their local Flowersec
   assert.match(policy, /^  "NCSA",$/m);
 });
 
-test("Rust raw QUIC trust policy has no inactive root-store or WebSocket features", () => {
+test("Rust native runtime owns raw QUIC trust without inactive root-store or WebSocket features", () => {
   const manifest = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/Cargo.toml"), "utf8");
   const readme = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/README.md"), "utf8");
   const connector = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/connector_v2.rs"), "utf8");
+  const runtime = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/native_runtime_v2.rs"), "utf8");
 
   assert.doesNotMatch(manifest, /^\[features\]$/m);
   assert.doesNotMatch(manifest, /rustls-(?:native|webpki)-roots/u);
@@ -116,15 +117,16 @@ test("Rust raw QUIC trust policy has no inactive root-store or WebSocket feature
   assert.match(readme, /requires explicit DER trust roots/u);
   assert.match(readme, /rejects empty roots/u);
   assert.doesNotMatch(connector, /impl Default for ConnectorOptions/u);
-  assert.match(connector, /pub fn new\(trust_roots_der: Vec<Vec<u8>>\)/u);
+  assert.doesNotMatch(connector, /trust_roots_der/u);
+  assert.match(runtime, /pub fn new\(trust_roots_der: Vec<Vec<u8>>\)/u);
 });
 
-test("GHSA-7gcf-g7xr-8hxj is patched without drifting the published MSRV", async () => {
+test("serde_with is absent or patched for GHSA-7gcf-g7xr-8hxj without drifting the published MSRV", async () => {
   const { rustSecurityContexts } = await loadChecker();
   for (const { lockfile } of rustSecurityContexts(sourceRoot)) {
     const lock = fs.readFileSync(lockfile, "utf8");
     const match = lock.match(/\[\[package\]\]\nname = "serde_with"\nversion = "(\d+)\.(\d+)\.(\d+)"/u);
-    assert.ok(match, `${path.relative(sourceRoot, lockfile)} must lock serde_with`);
+    if (match == null) continue;
     const version = match.slice(1).map(Number);
     assert.ok(
       version[0] > 3 || (version[0] === 3 && (version[1] > 21 || (version[1] === 21 && version[2] >= 0))),

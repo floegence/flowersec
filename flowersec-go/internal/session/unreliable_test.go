@@ -11,7 +11,7 @@ import (
 )
 
 func TestUnreliableMessagesRequireNegotiationAndNeverOpenReliableStreams(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
 	defer client.Close()
 	defer server.Close()
 
@@ -85,7 +85,7 @@ func TestUnreliableMessagesAreUnavailableWithoutHandshakeFeature(t *testing.T) {
 }
 
 func TestUnreliableHandshakeNegotiatesIntersection(t *testing.T) {
-	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
 	serverCarrier.unreliableDisabled = true
 	clientConfig, serverConfig := testEngineConfigs(1)
 	client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
@@ -99,7 +99,7 @@ func TestUnreliableHandshakeNegotiatesIntersection(t *testing.T) {
 }
 
 func TestUnreliableSendBudgetDropsWithoutBlockingOrFallback(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 1)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 1)
 	defer client.Close()
 	defer server.Close()
 	channel, err := client.UnreliableMessages()
@@ -139,7 +139,7 @@ func TestUnreliableSendBudgetDropsWithoutBlockingOrFallback(t *testing.T) {
 }
 
 func TestUnreliableReceiveDropsReplayAndExpiredFrames(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 1)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 1)
 	defer client.Close()
 	defer server.Close()
 	clientChannel, err := client.UnreliableMessages()
@@ -186,7 +186,7 @@ func TestUnreliableReceiveDropsReplayAndExpiredFrames(t *testing.T) {
 }
 
 func TestUnreliableReceiveWakesOnCancellationAndSessionClose(t *testing.T) {
-	client, server := establishMemoryPair(t, carrier.KindQUIC, 1)
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 1)
 	defer server.Close()
 	channel, err := client.UnreliableMessages()
 	if err != nil {

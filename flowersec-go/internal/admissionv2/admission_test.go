@@ -238,6 +238,7 @@ func (stream *memoryStream) Read(payload []byte) (int, error)  { return stream.r
 func (stream *memoryStream) Write(payload []byte) (int, error) { return stream.writer.Write(payload) }
 func (stream *memoryStream) Context() context.Context          { return stream.ctx }
 func (stream *memoryStream) CloseWrite() error                 { return stream.writer.Close() }
+func (stream *memoryStream) StopSending() error                { return nil }
 func (stream *memoryStream) Reset() error                      { return stream.Close() }
 func (stream *memoryStream) Close() error {
 	stream.once.Do(func() {

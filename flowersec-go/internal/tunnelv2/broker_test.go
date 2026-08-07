@@ -20,9 +20,9 @@ func TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers(t *testi
 		server carrier.Kind
 	}{
 		{name: "WW", client: carrier.KindWebSocket, server: carrier.KindWebSocket},
-		{name: "QQ", client: carrier.KindQUIC, server: carrier.KindQUIC},
-		{name: "WQ", client: carrier.KindWebSocket, server: carrier.KindQUIC},
-		{name: "QW", client: carrier.KindQUIC, server: carrier.KindWebSocket},
+		{name: "QQ", client: carrier.KindRawQUIC, server: carrier.KindRawQUIC},
+		{name: "WQ", client: carrier.KindWebSocket, server: carrier.KindRawQUIC},
+		{name: "QW", client: carrier.KindRawQUIC, server: carrier.KindWebSocket},
 	}
 	for _, topology := range kinds {
 		t.Run(topology.name, func(t *testing.T) {
@@ -64,7 +64,7 @@ func TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers(t *testi
 
 func TestBrokerResetIsIsolatedFromSiblingStream(t *testing.T) {
 	clientEndpoint, clientTunnel := memorySessionPair(carrier.KindWebSocket)
-	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindQUIC)
+	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindRawQUIC)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = tunnelv2.Bridge(ctx, clientTunnel, serverTunnel, tunnelv2.DefaultLimits()) }()
@@ -89,7 +89,7 @@ func TestBrokerResetIsIsolatedFromSiblingStream(t *testing.T) {
 
 func TestBrokerTargetOpenFailureIsIsolatedFromSiblingStream(t *testing.T) {
 	clientEndpoint, clientTunnel := memorySessionPair(carrier.KindWebSocket)
-	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindQUIC)
+	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindRawQUIC)
 	failingTarget := &failOpenSession{Session: serverTunnel, failOnCall: 2}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -116,7 +116,7 @@ func TestBrokerTargetOpenFailureIsIsolatedFromSiblingStream(t *testing.T) {
 
 func TestBrokerPreservesControlFINUntilPeerReplyCloses(t *testing.T) {
 	clientEndpoint, clientTunnel := memorySessionPair(carrier.KindWebSocket)
-	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindQUIC)
+	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindRawQUIC)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	bridgeDone := make(chan error, 1)
@@ -160,7 +160,7 @@ func TestBrokerPreservesControlFINUntilPeerReplyCloses(t *testing.T) {
 
 func TestBrokerCleanupDeadlineOwnsCarrierCloseAndLeavesNoCloseTask(t *testing.T) {
 	clientEndpoint, clientTunnel := memorySessionPair(carrier.KindWebSocket)
-	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindQUIC)
+	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindRawQUIC)
 	release := make(chan struct{})
 	client := newDeadlineCloseSession(clientTunnel, release)
 	server := newDeadlineCloseSession(serverTunnel, release)
@@ -386,6 +386,8 @@ func (session *memorySession) CloseWithError(carrier.ApplicationError) error { r
 func (session *memorySession) CloseWithErrorContext(context.Context, carrier.ApplicationError) error {
 	return session.Close()
 }
+func (session *memorySession) Termination() <-chan struct{}         { return session.ctx.Done() }
+func (session *memorySession) Abort(carrier.ApplicationError) error { return session.Close() }
 func (session *memorySession) Close() error {
 	session.closeOnce.Do(func() { session.cancel(io.ErrClosedPipe) })
 	return nil
@@ -412,6 +414,7 @@ func (stream *memoryStream) Read(payload []byte) (int, error)  { return stream.r
 func (stream *memoryStream) Write(payload []byte) (int, error) { return stream.writer.Write(payload) }
 func (stream *memoryStream) Context() context.Context          { return stream.ctx }
 func (stream *memoryStream) CloseWrite() error                 { return stream.writer.Close() }
+func (stream *memoryStream) StopSending() error                { return stream.Reset() }
 func (stream *memoryStream) Reset() error                      { return stream.closeWithError(carrier.ErrStreamReset) }
 func (stream *memoryStream) Close() error                      { return stream.Reset() }
 func (stream *memoryStream) closeWithError(err error) error {

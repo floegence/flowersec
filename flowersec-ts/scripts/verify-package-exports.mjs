@@ -31,7 +31,6 @@ const removedLegacyRuntimeExports = new Set([
   'createBrowserReconnectConfig', 'createTunnelBrowserReconnectConfig', 'createDirectBrowserReconnectConfig',
   'connectNode', 'connectTunnelNode', 'connectDirectNode', 'createNodeWsFactory',
   'createNodeReconnectConfig', 'createTunnelNodeReconnectConfig', 'createDirectNodeReconnectConfig',
-  'BrowserSessionConnectorV2',
   'requestChannelGrant',
   'requestEntryChannelGrant',
   'establishSessionV2',
@@ -73,8 +72,8 @@ const removedImplementationSubpaths = [
   'v2/artifact',
   'v2/protocol',
   'v2/session',
-  'browser/connectV2',
-  'node/connectV2',
+  'browser/connectSession',
+  'node/connectSession',
   'utils/errors',
 ];
 
@@ -218,7 +217,6 @@ ${checks}
     assert.equal(root.createArtifactLease(artifact, async () => {}).artifact, artifact);
     assert.equal(Object.prototype.hasOwnProperty.call(browser, 'requestConnectArtifact'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(browser, 'requestEntryConnectArtifact'), false);
-    assert.equal(Object.prototype.hasOwnProperty.call(browser, 'createBrowserWebTransportCarrierInternalStage'), false);
     assert.equal(browser.BROWSER_RUNTIME_CAPABILITY_V2, undefined);
     assert.equal(browser.NODE_RUNTIME_CAPABILITY_V2, undefined);
     assert.equal(browser.detectBrowserRuntimeCapabilityV2, undefined);
@@ -281,11 +279,6 @@ function verifyTransportV2Types() {
   parseArtifact,
 } from '@floegence/flowersec-core';
 import {
-  createArtifactAcquireContext,
-  createArtifactResolver,
-  createSessionReconnectManager,
-} from '@floegence/flowersec-core/reconnect';
-import {
   createArtifactLease as createBrowserArtifactLease,
   ConnectError as BrowserConnectError,
 } from '@floegence/flowersec-core/browser';
@@ -313,12 +306,6 @@ import type { WebSocketResourcePolicyV2 as BrowserWebSocketResourcePolicyV2 } fr
 import type { FlowersecCandidateDiagnostic as BrowserFlowersecCandidateDiagnostic } from '@floegence/flowersec-core/browser';
 // @ts-expect-error session key material and handshake configuration are package-internal.
 import type { SessionConfigV2 as BrowserSessionConfigV2 } from '@floegence/flowersec-core/browser';
-// @ts-expect-error low-level carrier attempt factories must remain package-internal.
-import type { BrowserCandidateAttemptFactoryV2 } from '@floegence/flowersec-core/browser';
-// @ts-expect-error low-level carrier attempts must remain package-internal.
-import type { BrowserCandidateAttemptV2 } from '@floegence/flowersec-core/browser';
-// @ts-expect-error prepared carrier candidates must remain package-internal.
-import type { BrowserPreparedCandidateV2 } from '@floegence/flowersec-core/browser';
 import type {
   JsonPrimitive as NodeJsonPrimitive,
   JsonValue as NodeJsonValue,
@@ -346,11 +333,6 @@ import type {
   Session,
   StreamOpenOptions,
 } from '@floegence/flowersec-core';
-import type {
-  ArtifactAcquireContext,
-  ArtifactSource,
-  SessionReconnectConfig,
-} from '@floegence/flowersec-core/reconnect';
 // @ts-expect-error capability descriptors are runtime-internal.
 import type { RuntimeCapabilityDescriptorV2 } from '@floegence/flowersec-core';
 // @ts-expect-error raw artifacts must remain package-internal.
@@ -419,15 +401,8 @@ void stream.id;
 void incoming.id;
 const accepted: ByteStream = incoming.stream;
 const lease: ArtifactLease = createArtifactLease(artifact, commitSpend);
-const source: ArtifactSource = { kind: 'once', artifact, commitSpend };
 // @ts-expect-error lease construction accepts opaque Artifact handles only.
 createArtifactLease(rawArtifact, commitSpend);
-// @ts-expect-error one-time sources accept opaque Artifact handles only.
-const rawSource: ArtifactSource = { kind: 'once', artifact: rawArtifact, commitSpend };
-const resolveArtifact = createArtifactResolver(source);
-const acquireContext: ArtifactAcquireContext = createArtifactAcquireContext({ traceId: 'trace-1' });
-const reconnectManager = createSessionReconnectManager();
-declare const reconnectConfig: SessionReconnectConfig;
 declare const termination: SessionTermination;
 declare const browserTypes: readonly [BrowserJsonPrimitive, BrowserJsonValue, BrowserOperationOptions, BrowserSessionTermination, BrowserSessionError, BrowserRuntimeCapabilityDescriptorV2];
 declare const nodeTypes: readonly [NodeJsonPrimitive, NodeJsonValue, NodeOperationOptions, NodeSessionTermination, NodeSessionError, NodeRuntimeCapabilityDescriptorV2];
@@ -459,11 +434,8 @@ void ConnectError;
 void BrowserConnectError;
 void NodeConnectError;
 void FlowersecError;
-void rawSource;
 void (undefined as unknown as RuntimeCapabilityDescriptorV2);
 void accepted;
-void resolveArtifact(acquireContext);
-void reconnectManager.connectIfNeeded(reconnectConfig);
 void termination;
 void browserTypes;
 void nodeTypes;

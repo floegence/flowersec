@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	admissionws "github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
@@ -82,10 +83,10 @@ func TestWSSDirectListenerTerminatesV2AndBridgesAuthorizedTCP(t *testing.T) {
 		}
 		t.Fatal(err)
 	}
-	if _, err := carrierws.CommitAdmission(context.Background(), connection, rawFSB2, runtime.reasons); err != nil {
+	if _, err := admissionws.Commit(context.Background(), connection, rawFSB2, runtime.reasons); err != nil {
 		t.Fatal(err)
 	}
-	carrierSession, err := carrierws.NewAfterAdmission(connection, carrierws.ClientRole, carrierws.SubprotocolDirect, resources, carrierws.LivenessPolicy{})
+	carrierSession, err := carrierws.NewAfterAdmission(connection, carrierws.ClientRole, carrierws.SubprotocolDirect, resources)
 	if err != nil {
 		t.Fatal(err)
 	}

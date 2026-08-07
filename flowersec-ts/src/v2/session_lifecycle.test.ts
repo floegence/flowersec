@@ -4,6 +4,7 @@ import { createMemoryCarrierPairV2, type CarrierSessionV2, type CarrierStreamV2 
 import type { OperationOptionsV2 } from "./contract.js";
 import { CipherSuiteV2 } from "./protocol.js";
 import { establishSessionV2, type SessionConfigV2, type SessionV2 } from "./session.js";
+import { nodeSessionRuntimeV2 } from "../node/sessionRuntime.js";
 
 function config(
   role: "client" | "server",
@@ -21,6 +22,7 @@ function config(
     peerAdmissionBinding: new Uint8Array(32).fill(0x73),
     localEndpointInstanceID: "",
     expectedPeerEndpointInstanceID: "",
+    runtime: nodeSessionRuntimeV2,
     idleTimeoutMs: options.idleTimeoutMs,
     ...(options.closeTimeoutMs === undefined ? {} : { closeTimeoutMs: options.closeTimeoutMs }),
   };
@@ -212,6 +214,10 @@ class HangingCloseCarrier implements CarrierSessionV2 {
     this.activeCloses--;
   }
 
+  async waitTermination(): Promise<void> {
+    await this.inner.waitTermination();
+  }
+
   abort(error?: Readonly<{ code: number; reason: string }>): void {
     this.aborts++;
     this.closeRelease.resolve();
@@ -241,6 +247,10 @@ class UnsettledCloseAfterAbortCarrier implements CarrierSessionV2 {
 
   async close(): Promise<void> {
     await new Promise<void>(() => undefined);
+  }
+
+  async waitTermination(): Promise<void> {
+    await this.inner.waitTermination();
   }
 
   abort(error?: Readonly<{ code: number; reason: string }>): void {
@@ -277,6 +287,10 @@ class DelayedReadCarrier implements CarrierSessionV2 {
     await this.inner.close(error);
   }
 
+  async waitTermination(): Promise<void> {
+    await this.inner.waitTermination();
+  }
+
   abort(error?: Readonly<{ code: number; reason: string }>): void {
     this.aborts++;
     this.inner.abort(error);
@@ -311,6 +325,10 @@ class CloseWriteFlushingCarrier implements CarrierSessionV2 {
     await this.inner.close(error);
   }
 
+  async waitTermination(): Promise<void> {
+    await this.inner.waitTermination();
+  }
+
   abort(error?: Readonly<{ code: number; reason: string }>): void {
     this.aborts++;
     this.inner.abort(error);
@@ -342,6 +360,10 @@ class CloseWriteFlushingStream implements CarrierStreamV2 {
     await this.inner.reset();
   }
 
+  async stopSending(): Promise<void> {
+    await this.inner.stopSending();
+  }
+
   abort(error?: Error): void {
     this.inner.abort(error);
   }
@@ -365,6 +387,10 @@ class DelayedReadStream implements CarrierStreamV2 {
 
   async reset(): Promise<void> {
     await this.inner.reset();
+  }
+
+  async stopSending(): Promise<void> {
+    await this.inner.stopSending();
   }
 
   abort(error?: Error): void {

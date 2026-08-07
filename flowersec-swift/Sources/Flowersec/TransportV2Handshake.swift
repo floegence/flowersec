@@ -7,6 +7,8 @@ protocol TransportV2CarrierStream: Sendable {
   func read(maxBytes: Int) async throws -> Data?
   func write(_ data: Data) async throws -> Int
   func closeWrite() async throws
+  /// Stops delivery from the peer without closing the local write direction.
+  func stopSending(code: UInt16) async throws
   func reset(code: UInt16) async
   /// Synchronously initiates idempotent forced teardown. Pending and future
   /// stream operations must finish, but this call does not await cleanup.
@@ -16,16 +18,32 @@ protocol TransportV2CarrierStream: Sendable {
 
 protocol TransportV2CarrierSession: Sendable {
   var chosenCarrier: CarrierKind { get }
+  var capabilities: CarrierCapabilitiesV2 { get }
   /// Exact peer-initiated physical bidirectional-stream capacity available to
   /// Flowersec after admission. It includes control, RPC, and application slots.
   var inboundBidirectionalStreamCapacity: UInt16 { get }
 
   func openStream() async throws -> any TransportV2CarrierStream
   func acceptStream() async throws -> any TransportV2CarrierStream
+  func sendDatagram(_ data: Data) async throws
+  func receiveDatagram(maxBytes: Int) async throws -> Data
   func close(code: UInt16, reason: String) async
   /// Synchronously initiates idempotent forced teardown. Pending and future
   /// session and stream operations must finish, but this call does not await cleanup.
   nonisolated func abort(code: UInt16, reason: String)
+}
+
+struct CarrierCapabilitiesV2: Equatable, Sendable {
+  let reliableStreams: Bool
+  let datagrams: Bool
+  let migration: Bool
+}
+
+enum TransportV2CarrierError: Error, Equatable, Sendable {
+  case datagramsUnavailable
+  case stopSendingUnsupported
+  case streamReset
+  case closed
 }
 
 enum TransportV2SessionError: Error, Equatable, Sendable {
@@ -291,6 +309,7 @@ enum TransportV2Handshake {
       config.sessionContractHash.count == 32,
       config.psk.count == 32,
       (1...128).contains(config.maxInboundStreams),
+      carrier.capabilities.reliableStreams,
       carrier.inboundBidirectionalStreamCapacity == config.maxInboundStreams + 2,
       config.localAdmissionBinding.count == 32,
       config.peerAdmissionBinding.count == 32,
