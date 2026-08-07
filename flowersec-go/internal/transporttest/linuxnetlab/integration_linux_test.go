@@ -127,7 +127,7 @@ func TestPrivilegedExactFaultSchedules(t *testing.T) {
 		t.Skip("set FLOWERSEC_BPF_OBJECT to the verifier-loaded classifier object")
 	}
 	profiles := map[string]FaultProfile{
-		"mobile": {
+		"periodic-loss": {
 			BPFObject: bpfObject, BaseDelay: 60 * time.Millisecond,
 			Jitter:   []time.Duration{0, 8 * time.Millisecond, -4 * time.Millisecond, 12 * time.Millisecond, -8 * time.Millisecond, 4 * time.Millisecond, -2 * time.Millisecond, 6 * time.Millisecond},
 			LossMode: LossPeriodic, EveryNth: 50, RateBitsPerSecond: 5_000_000,

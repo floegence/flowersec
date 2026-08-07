@@ -109,7 +109,7 @@ Flowersec Runtime が、WebSocket、raw QUIC、WebTransport の本番用 Listene
 
 ```bash
 make install-hooks
-make check
+make precommit
 ```
 
 Flowersec は [MIT License](LICENSE) で提供されます。リリース成果物は [GitHub Releases](https://github.com/floegence/flowersec/releases) で公開されます。

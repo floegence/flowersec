@@ -109,7 +109,7 @@ make test
 
 ```bash
 make install-hooks
-make check
+make precommit
 ```
 
 Flowersec распространяется по [лицензии MIT](LICENSE). Артефакты релизов публикуются через [GitHub Releases](https://github.com/floegence/flowersec/releases).

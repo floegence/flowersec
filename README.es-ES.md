@@ -109,7 +109,7 @@ Instala los hooks del repositorio y ejecuta la validación obligatoria antes de 
 
 ```bash
 make install-hooks
-make check
+make precommit
 ```
 
 Flowersec está disponible bajo la [licencia MIT](LICENSE). Los artefactos de cada versión se publican mediante [GitHub Releases](https://github.com/floegence/flowersec/releases).

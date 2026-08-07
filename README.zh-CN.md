@@ -109,7 +109,7 @@ Flowersec 运行时负责 WebSocket、raw QUIC 和 WebTransport 的生产级监�
 
 ```bash
 make install-hooks
-make check
+make precommit
 ```
 
 Flowersec 采用 [MIT License](LICENSE)。发布制品通过 [GitHub Releases](https://github.com/floegence/flowersec/releases) 提供。

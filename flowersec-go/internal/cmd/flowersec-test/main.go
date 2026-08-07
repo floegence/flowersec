@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -45,6 +46,8 @@ type registeredTest struct {
 
 type progress struct {
 	Plan      string   `json:"plan"`
+	SourceSHA string   `json:"source_sha"`
+	Suite     string   `json:"suite"`
 	Completed []string `json:"completed"`
 }
 
@@ -75,26 +78,36 @@ func runCLI(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateExecutionEnvironment(runtime.GOOS, os.Geteuid(), os.Getenv("HOME"), os.Getenv("PATH"), os.Getenv("TMPDIR"), os.Getenv("FLOWERSEC_TEST_STATE_DIR"), workingDirectory); err != nil {
+	if err := validateExecutionEnvironment(*suite, runtime.GOOS, os.Geteuid(), os.Getenv("HOME"), os.Getenv("PATH"), os.Getenv("TMPDIR"), os.Getenv("FLOWERSEC_TEST_STATE_DIR"), workingDirectory); err != nil {
 		return err
 	}
-	stateDir := filepath.Join(externalHostRoot, "state")
-	path := filepath.Join(stateDir, safeName(*suite), "test-progress.json")
-	if action == "status" {
-		return printStatus(os.Stdout, path, tests)
+	stateDir, err := testStateDirectory(*suite)
+	if err != nil {
+		return err
 	}
+	path := filepath.Join(stateDir, safeName(*suite), "test-progress.json")
 	root, err := repositoryRoot()
 	if err != nil {
 		return err
 	}
+	sha, err := repositorySourceSHA(root)
+	if err != nil {
+		return err
+	}
+	if action == "status" {
+		return printStatus(os.Stdout, path, tests, *suite, sha)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return executeSuite(ctx, os.Stdout, os.Stderr, action, path, root, tests, *debug)
+	return executeSuite(ctx, os.Stdout, os.Stderr, action, path, root, *suite, sha, tests, *debug)
 }
 
-func validateExecutionEnvironment(goos string, euid int, home, path, temporary, state, workingDirectory string) error {
+func validateExecutionEnvironment(suite, goos string, euid int, home, path, temporary, state, workingDirectory string) error {
+	if suite != "diagnostic" && suite != "performance" {
+		return nil
+	}
 	if goos != "linux" || euid != 0 {
-		return errors.New("external test suites require a dedicated Linux host with root access")
+		return errors.New("privileged test suites require a dedicated Linux host with root access")
 	}
 	wantHome := filepath.Join(externalHostRoot, "home")
 	wantPath := externalHostPath
@@ -102,27 +115,70 @@ func validateExecutionEnvironment(goos string, euid int, home, path, temporary, 
 	wantState := filepath.Join(externalHostRoot, "state")
 	wantWorkspace := filepath.Join(externalHostRoot, "workspace")
 	if home != wantHome || path != wantPath || temporary != wantTemporary || state != wantState || (workingDirectory != wantWorkspace && !strings.HasPrefix(workingDirectory, wantWorkspace+string(os.PathSeparator))) {
-		return errors.New("external test suite environment is not the fixed root context")
+		return errors.New("privileged test suite environment is not the fixed root context")
 	}
 	return nil
 }
 
-func executeSuite(ctx context.Context, stdout, stderr io.Writer, action, path, root string, tests []registeredTest, debug bool) error {
+func testStateDirectory(suite string) (string, error) {
+	if suite == "diagnostic" || suite == "performance" {
+		return filepath.Join(externalHostRoot, "state"), nil
+	}
+	if configured := os.Getenv("FLOWERSEC_TEST_STATE_DIR"); configured != "" {
+		return filepath.Abs(configured)
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user cache directory: %w", err)
+	}
+	return filepath.Join(cache, "flowersec-test", "state"), nil
+}
+
+func repositorySourceSHA(root string) (string, error) {
+	command := exec.Command("git", "-C", root, "rev-parse", "HEAD")
+	output, err := command.Output()
+	if err != nil {
+		return "", fmt.Errorf("resolve repository source SHA: %w", err)
+	}
+	sha := strings.TrimSpace(string(output))
+	if !validSourceSHA(sha) {
+		return "", errors.New("repository source SHA is invalid")
+	}
+	return sha, nil
+}
+
+func validSourceSHA(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' && character < 'a' || character > 'f' {
+			return false
+		}
+	}
+	return true
+}
+
+func executeSuite(ctx context.Context, stdout, stderr io.Writer, action, path, root, suite, sourceSHA string, tests []registeredTest, debug bool) error {
 	progressLock, err := lockProgress(path)
 	if err != nil {
 		return err
 	}
 	defer progressLock.Close()
-	current := progress{Plan: planName, Completed: []string{}}
+	current := progress{Plan: planName, SourceSHA: sourceSHA, Suite: suite, Completed: []string{}}
 	if action == "run" {
 		if err := os.RemoveAll(filepath.Join(filepath.Dir(path), "failures")); err != nil {
 			return fmt.Errorf("clear stale failure logs: %w", err)
 		}
 	}
 	if action == "resume" {
-		loaded, err := readProgress(path, tests)
+		loaded, err := readProgress(path, tests, suite)
 		if err == nil {
-			current = loaded
+			if loaded.SourceSHA == sourceSHA {
+				current = loaded
+			} else if err := os.RemoveAll(filepath.Join(filepath.Dir(path), "failures")); err != nil {
+				return fmt.Errorf("clear stale failure logs: %w", err)
+			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -273,7 +329,7 @@ func lockProgress(path string) (*os.File, error) {
 	return lock, nil
 }
 
-func readProgress(path string, tests []registeredTest) (progress, error) {
+func readProgress(path string, tests []registeredTest, suite string) (progress, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return progress{}, err
@@ -285,14 +341,14 @@ func readProgress(path string, tests []registeredTest) (progress, error) {
 	if err := decoder.Decode(&value); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
 		return progress{}, errors.New("test progress is not strict JSON")
 	}
-	if err := validateProgress(value, tests); err != nil {
+	if err := validateProgress(value, tests, suite); err != nil {
 		return progress{}, err
 	}
 	return value, nil
 }
 
-func validateProgress(value progress, tests []registeredTest) error {
-	if value.Plan != planName || value.Completed == nil {
+func validateProgress(value progress, tests []registeredTest, suite string) error {
+	if value.Plan != planName || !validSourceSHA(value.SourceSHA) || value.Suite != suite || value.Completed == nil {
 		return errors.New("test progress plan is invalid; start a fresh run")
 	}
 	known := make(map[string]struct{}, len(tests))
@@ -324,7 +380,7 @@ func clearProgress(path string) error {
 }
 
 func writeProgress(path string, value progress, tests []registeredTest) error {
-	if err := validateProgress(value, tests); err != nil {
+	if err := validateProgress(value, tests, value.Suite); err != nil {
 		return err
 	}
 	var raw bytes.Buffer
@@ -385,10 +441,10 @@ func firstIncomplete(tests []registeredTest, completed []string) *registeredTest
 	return nil
 }
 
-func printStatus(output io.Writer, path string, tests []registeredTest) error {
-	current, err := readProgress(path, tests)
+func printStatus(output io.Writer, path string, tests []registeredTest, suite, sourceSHA string) error {
+	current, err := readProgress(path, tests, suite)
 	if errors.Is(err, os.ErrNotExist) {
-		current = progress{Plan: planName, Completed: []string{}}
+		current = progress{Plan: planName, SourceSHA: sourceSHA, Suite: suite, Completed: []string{}}
 	} else if err != nil {
 		return err
 	}
@@ -397,7 +453,7 @@ func printStatus(output io.Writer, path string, tests []registeredTest) error {
 	if next != nil {
 		nextID = next.ID
 	}
-	return json.NewEncoder(output).Encode(map[string]any{"plan": current.Plan, "completed": current.Completed, "next": nextID})
+	return json.NewEncoder(output).Encode(map[string]any{"plan": current.Plan, "source_sha": current.SourceSHA, "suite": current.Suite, "completed": current.Completed, "next": nextID})
 }
 
 func newRunID(testID string) (string, error) {

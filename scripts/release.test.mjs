@@ -409,12 +409,14 @@ test("default and final Go gates use the maintained source and test runner", () 
   assert.match(goTest, /\.\.\/scripts\/list-default-go-test-packages\.sh/);
   assert.doesNotMatch(goTest, /transport-test-runner|transportcheck/);
   assert.doesNotMatch(makefile, /tools\/transportcheck|transportcheck-diagnostic-contract|transport-v2-unit/);
-  assert.match(makefile, /^test:\n\t\$\(MAKE\) go-test ts-test$/m);
+  assert.match(makefile, /^test:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite acceptance$/m);
+  assert.match(makefile, /^test-resume:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test resume --suite acceptance$/m);
+  assert.match(makefile, /^browser-smoke:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite browser-smoke$/m);
   assert.match(makefile, /^diagnostic:\n\t\$\(FLOWERSEC_TEST_HOST\) run --suite diagnostic$/m);
   assert.match(makefile, /^performance:\n\t\$\(FLOWERSEC_TEST_HOST\) run --suite performance$/m);
 });
 
-test("release stays publication-only while main push owns the complete gate", () => {
+test("release stays publication-only while main push owns fast acceptance", () => {
   const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
   const releaseRecipe = makefile.match(/^release-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const releaseScript = fs.readFileSync(path.join(sourceRoot, "scripts/release.sh"), "utf8");
@@ -432,9 +434,10 @@ test("release stays publication-only while main push owns the complete gate", ()
   assert.doesNotMatch(prePush, /make(?: -C \"\$repo_root\")? check/);
   assert.match(prePush, /use \.\/scripts\/push-main\.sh/);
 
-  const gate = pushScript.indexOf("make check");
+  const gate = pushScript.indexOf("make test");
   const push = pushScript.indexOf("git push origin");
-  assert.ok(gate >= 0 && gate < push, "the complete gate must precede push");
+  assert.ok(gate >= 0 && gate < push, "fast acceptance must precede push");
+  assert.doesNotMatch(pushScript, /make (?:precommit|check)/);
   assert.doesNotMatch(pushScript, /evidence|receipt/);
 });
 
@@ -1326,16 +1329,17 @@ test("pre-push permits push-main and rejects direct main pushes without running 
   assert.equal(fs.existsSync(marker), false, "direct push rejection must not invoke make");
 });
 
-test("main push gates the exact SHA before opening the remote transport", () => {
+test("main push gates the exact SHA with fast acceptance before opening the remote transport", () => {
   const script = path.join(sourceRoot, "scripts/push-main.sh");
   assert.equal(fs.existsSync(script), true, "scripts/push-main.sh is missing");
   const source = fs.readFileSync(script, "utf8");
-  const gate = source.indexOf("make check");
+  const gate = source.indexOf("make test");
   const push = source.indexOf("git push origin");
-  assert.notEqual(gate, -1, "main push must run the complete gate");
+  assert.notEqual(gate, -1, "main push must run fast acceptance");
   assert.notEqual(push, -1, "main push must use normal git push");
   assert.ok(gate < push, "the gate must finish before git opens the push transport");
   assert.match(source, /FLOWERSEC_PUSH_MAIN_SHA="\$head" git push/);
+  assert.doesNotMatch(source, /make (?:precommit|check)/);
   assert.doesNotMatch(source, /receipt|TRANSPORT_V2_EVIDENCE/);
   assert.doesNotMatch(source, /--no-verify/);
 });
@@ -1383,14 +1387,17 @@ test("main push passes only the checked HEAD after the gate completes", (t) => {
   });
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
   const commands = fs.readFileSync(log, "utf8").trim().split("\n");
-  const gate = commands.indexOf("make check");
+  const gate = commands.indexOf("make test");
   const push = commands.findIndex((command) => command.startsWith("git push origin "));
   assert.ok(gate >= 0 && push > gate, commands.join("\n"));
-  assert.equal(commands.filter((command) => command === "make check").length, 1, commands.join("\n"));
+  assert.equal(commands.filter((command) => command === "make test").length, 1, commands.join("\n"));
 });
 
 test("browser diagnostics remain an explicit registry test", () => {
   const registry = fs.readFileSync(path.join(sourceRoot, "flowersec-go/internal/cmd/flowersec-test/registry.go"), "utf8");
   assert.match(registry, /commandEntry\("diagnostic\/browser", "diagnostic"/);
-  assert.match(fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8"), /"test:browser": "npm run ensure:browser && npm run ensure:browser:webkit && npm run build && playwright test"/);
+  const packageManifest = fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8");
+  assert.match(packageManifest, /"test:browser": "npm run test:browser:chromium"/);
+  assert.match(packageManifest, /"test:browser:chromium": "npm run ensure:browser && npm run build && playwright test --project=chromium"/);
+  assert.match(packageManifest, /"test:browser:webkit": "npm run ensure:browser:webkit && npm run build && playwright test --project=webkit-smoke"/);
 });

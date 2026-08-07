@@ -17,28 +17,39 @@ const retiredPaths = [
   "scripts/run-transport-v2-diagnostic.sh", "scripts/run-transport-performance.sh",
   "scripts/run-go-test-race-shards.sh", "tools/transportcheck",
   "flowersec-go/internal/cmd/transport-acceptance-runner",
+  "flowersec-go/internal/transporttest/acceptance",
   "flowersec-rust/examples/transport_test_runner.rs",
+  "flowersec-ts/scripts/browser-acceptance-core.node-test.mjs",
 ];
 for (const relative of retiredPaths) assert.equal(fs.existsSync(path.join(root, relative)), false, `retired path remains: ${relative}`);
 
 const forbidden = /transportcheck|transport-test-runner|transport-acceptance-runner|flowersec-test-helper|ubuntu-test-runner|run-transport-v2|execution[_ -]request|final_command|gate receipt|raw_transport_execution|performance_manifest|case_registry|runner ABI/i;
 assert.doesNotMatch(makefile, forbidden);
-assert.match(makefile, /^test:\n\t\$\(MAKE\) go-test ts-test$/m);
+assert.match(makefile, /^test:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite acceptance$/m);
+assert.match(makefile, /^test-resume:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test resume --suite acceptance$/m);
 assert.match(makefile, /^precommit:\n\t\$\(MAKE\) precommit-source$/m);
-for (const target of ["browser-smoke", "diagnostic", "performance"]) {
+{
+  const recipe = makefile.match(/^browser-smoke:[^\n]*\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.match(recipe, /flowersec-test run --suite browser-smoke/);
+  assert.doesNotMatch(recipe, /FLOWERSEC_TEST_HOST/);
+}
+for (const target of ["diagnostic", "performance"]) {
   const recipe = makefile.match(new RegExp(`^${target}:[^\\n]*\\n((?:\\t.*\\n)+)` , "m"))?.[1] ?? "";
   assert.match(recipe, /FLOWERSEC_TEST_HOST/);
 }
 const releaseCheckRecipe = makefile.match(/^release-check:[^\n]*\n((?:\t.*\n)+)/m)?.[1] ?? "";
 assert.doesNotMatch(releaseCheckRecipe, /flowersec-test|test-host-init|make check|evidence|receipt/i);
 assert.doesNotMatch(read("scripts/release.sh"), /\bmake\b|flowersec-test|test-host-init|evidence|receipt/i);
+const pushMain = read("scripts/push-main.sh");
+assert.equal((pushMain.match(/^make test$/gm) ?? []).length, 1);
+assert.doesNotMatch(pushMain, /^make (?:precommit|check)$/m);
+assert.match(pushMain, /FLOWERSEC_PUSH_MAIN_SHA="\$head" git push origin "refs\/heads\/main:refs\/heads\/main"/);
 
 const main = read("flowersec-go/internal/cmd/flowersec-test/main.go");
 const registry = read("flowersec-go/internal/cmd/flowersec-test/registry.go");
 const browserCarrier = read("flowersec-ts/src/browser/webTransportClient.ts") + read("flowersec-ts/src/transport/webTransportAdapter.ts");
 const browserCarrierTests = read("flowersec-ts/src/transport/webTransportAdapter.test.ts");
 const browserAcceptanceRunner = read("flowersec-ts/scripts/browser-test-runner-core.mjs") + read("flowersec-ts/playwright.config.ts");
-const browserAcceptanceSource = read("flowersec-go/internal/transporttest/acceptance/browser_source.go");
 const browserAcceptanceWorker = read("flowersec-ts/scripts/browser-test-runner.mjs");
 const stripComments = (source) => source
   .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -50,22 +61,30 @@ for (const source of [browserCarrier, browserCarrierTests].map(stripComments)) {
 }
 assert.match(browserCarrier, /new Constructor\(parsed\.href\)/);
 assert.doesNotMatch(browserAcceptanceRunner, /ExtendQuicHandshakeTimeout|QuicHandshakeTimeout|MaxIdleTimeBeforeCryptoHandshake|force-fieldtrial|quic-client-connection-options/i);
-assert.match(browserAcceptanceSource, /case "acquire"[\s\S]*case "start"[\s\S]*case "spend"/);
-assert.doesNotMatch(browserAcceptanceSource, /case "cancel"|cancelArtifact|cancelled|expected_failure/);
 assert.doesNotMatch(browserAcceptanceWorker, /__flowersecCancelArtifact|expected_failure|assertFullyResolved|resolved\s*=\s*new Set/);
-assert.match(main, /type progress struct \{\n\s*Plan\s+string\s+`json:"plan"`\n\s*Completed\s+\[\]string\s+`json:"completed"`/);
+assert.match(main, /type progress struct \{\n\s*Plan\s+string\s+`json:"plan"`\n\s*SourceSHA\s+string\s+`json:"source_sha"`\n\s*Suite\s+string\s+`json:"suite"`\n\s*Completed\s+\[\]string\s+`json:"completed"`/);
 assert.match(main, /filepath\.Join\(stateDir, safeName\(\*suite\), "test-progress\.json"\)/);
 assert.doesNotMatch(main, /namespace|bpftool|Chromium|QLOG|pcap|fault|shard|stage|base_sha|final_sha|config_digest/i);
 assert.match(main, /atomicWrite|firstIncomplete|context\.WithTimeout|signal\.NotifyContext/);
 assert.match(main, /externalHostRoot = "\/var\/lib\/flowersec-test"/);
 assert.doesNotMatch(main, /\bsudo\b|runuser|SUDO_USER|reexec/i);
 assert.match(registry, /func registry\(\) \[\]registeredTest/);
-assert.match(registry, /"protocol\/ts-node-webtransport"[\s\S]*webTransport\.integration\.test\.ts/);
+for (const id of [
+  "controller/go", "controller/typescript", "controller/rust", "controller/rust-raw-quic",
+  "protocol/go", "protocol/typescript", "protocol/rust",
+  "carrier/go-direct", "carrier/go-tunnel",
+  "integration/typescript/node-webtransport",
+  "interop/typescript-go/wss/direct", "interop/typescript-go/wss/tunnel",
+  "interop/typescript-go/webtransport/direct", "interop/typescript-go/webtransport/tunnel",
+  "interop/rust-go/raw-quic/direct", "interop/rust-go/raw-quic/tunnel",
+  "interop/swift-go/wss/direct", "interop/swift-go/wss/tunnel",
+]) assert.match(registry, new RegExp(`"${escapeRegex(id)}"`));
+assert.match(registry, /"interop\/typescript-go\/webtransport\/direct"[\s\S]*webTransport\.integration\.test\.ts/);
 assert.match(registry, /if runtime\.GOOS ===? "darwin"/);
 const acceptanceRegistry = registry.match(/func registry\(\)[\s\S]*?func browserSmokeEntry/)?.[0] ?? "";
 assert.doesNotMatch(acceptanceRegistry, /commandEntry\("browser\/[^"]+",\s*"acceptance"/);
-assert.match(registry, /browserSmokeEntry\("browser\/chromium-direct"/);
-assert.match(registry, /func browserSmokeEntry[\s\S]*Suite: "browser-smoke"/);
+assert.match(registry, /browserSmokeEntry\("browser\/chromium\/webtransport\/direct"/);
+assert.match(registry, /func browserSmokeEntry[\s\S]*commandEntry\(id, "browser-smoke"/);
 assert.doesNotMatch(acceptanceRegistry, /--report|--artifact-dir|performance_manifest|case_registry|raw_execution/i);
 assert.match(registry, /"diagnostic\/kernel-outage"[\s\S]*?FLOWERSEC_LINUX_NETLAB_INTEGRATION[\s\S]*?TestPrivilegedReorderDuplicateAndOutage/);
 
@@ -135,9 +154,6 @@ assert.match(hostInit, /\(cd "\$host_home" && "\$swiftly" install 6\.1/);
 assert.match(hostInit, /\.swift-version/);
 assert.match(registry, /runtime\.GOOS == "darwin" \|\| runtime\.GOOS == "linux"/);
 
-const acceptance = read("flowersec-go/internal/transporttest/acceptance/execute.go") + read("flowersec-go/internal/transporttest/acceptance/browser_worker.go");
-assert.doesNotMatch(acceptance, /performance_manifest|case_registry|artifact[-_]dir|raw_execution|report publication|base[-_]sha|final[-_]sha/i);
-assert.match(acceptance, /RecoverOwnedStaleResources|lab\.Close/);
 const performance = fs.readdirSync(path.join(root, "flowersec-go/internal/transporttest/performance"))
   .filter((name) => name.endsWith(".go") && !name.endsWith("_test.go"))
   .map((name) => read(`flowersec-go/internal/transporttest/performance/${name}`)).join("\n");
@@ -146,10 +162,12 @@ assert.doesNotMatch(performance, /raw_execution|manifest digest|report publicati
 for (const testName of [
   "TestRedDoesNotAdvanceAndResumeRunsTheFirstIncompleteTest",
   "TestResumeStopsAfterTheFirstIncompleteTest",
-  "TestRunAlwaysStartsFreshAndProgressHasOnlyPlanAndCompleted",
+  "TestRunAlwaysStartsFreshAndProgressHasOnlyIdentityAndCompleted",
+  "TestResumeStartsFreshWhenSourceSHAChanges",
   "TestTimedOutTestReceivesCancellationAndFinishesTeardown",
   "TestFreshRunClearsOldFailureLogs",
-  "TestRunnerRequiresFixedRootEnvironment",
+  "TestPrivilegedSuitesRequireFixedRootEnvironment",
+  "TestLocalSuitesDoNotRequireRoot",
 ]) assert.match(read("flowersec-go/internal/cmd/flowersec-test/main_test.go"), new RegExp(`func ${testName}`));
 
 for (const target of ["test", "precommit", "browser-smoke", "diagnostic", "performance", "check", "release-check"]) {
@@ -160,6 +178,7 @@ for (const target of ["test", "precommit", "browser-smoke", "diagnostic", "perfo
 }
 const finalGraph = spawnSync("make", ["--no-print-directory", "-n", "final-integration-lanes"], { cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
 assert.equal(finalGraph.status, 0, finalGraph.stderr);
-assert.match(finalGraph.stdout, /run --suite browser-smoke/);
+assert.match(finalGraph.stdout, /flowersec-test run --suite browser-smoke/);
+assert.doesNotMatch(finalGraph.stdout, /FLOWERSEC_TEST_HOST|scripts\/test-host\.sh/);
 
 process.stdout.write("test architecture contract is GREEN\n");

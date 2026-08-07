@@ -109,7 +109,7 @@ Flowersec runtime은 WebSocket, raw QUIC 및 WebTransport의 프로덕션 Listen
 
 ```bash
 make install-hooks
-make check
+make precommit
 ```
 
 Flowersec은 [MIT License](LICENSE)로 제공됩니다. Release artifact는 [GitHub Releases](https://github.com/floegence/flowersec/releases)를 통해 게시됩니다.

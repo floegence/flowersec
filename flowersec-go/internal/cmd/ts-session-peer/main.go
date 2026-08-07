@@ -35,7 +35,9 @@ func main() {
 	subprotocol, sessionPath, endpointPath, err := pathConfiguration(*pathFlag)
 	must(err)
 	result := make(chan error, 1)
+	connected := make(chan struct{}, 1)
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		connected <- struct{}{}
 		result <- serveSession(writer, request, subprotocol, sessionPath, endpointPath)
 	}))
 	server.EnableHTTP2 = false
@@ -57,10 +59,10 @@ func main() {
 	must(json.NewEncoder(os.Stdout).Encode(address))
 
 	select {
-	case err := <-result:
-		must(err)
+	case <-connected:
+		must(<-result)
 	case <-time.After(20 * time.Second):
-		must(errors.New("WSS interop peer timed out"))
+		must(errors.New("WSS interop peer did not receive a connection"))
 	}
 }
 
@@ -80,7 +82,7 @@ func serveSession(
 	}
 	connection, err := upgrader.Upgrade(writer, request, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("upgrade WebSocket: %w", err)
 	}
 	defer connection.Close()
 
@@ -90,7 +92,7 @@ func serveSession(
 		return artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, nil
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("serve admission: %w", err)
 	}
 	resources, err := carrierws.BindSessionResourcePolicy(carrierws.DefaultResourcePolicy(), 64)
 	if err != nil {
@@ -103,7 +105,7 @@ func serveSession(
 		resources,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("activate WebSocket carrier: %w", err)
 	}
 	var psk [32]byte
 	for index := range psk {
@@ -131,34 +133,34 @@ func serveSession(
 		ExpectedPeerEndpointInstanceID: expectedPeerEndpointInstanceID,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("establish session: %w", err)
 	}
 	defer established.Close()
 
 	incoming, err := established.AcceptStream(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("accept application stream: %w", err)
 	}
 	buffer := make([]byte, 64)
 	n, err := incoming.Stream.Read(buffer)
 	if err != nil {
-		return err
+		return fmt.Errorf("read initial application payload: %w", err)
 	}
 	if string(buffer[:n]) != "hello-go" {
 		return fmt.Errorf("unexpected first payload %q", buffer[:n])
 	}
 	if _, err := incoming.Stream.Write([]byte("hello-ts")); err != nil {
-		return err
+		return fmt.Errorf("write initial application response: %w", err)
 	}
 	if err := established.Rekey(ctx); err != nil {
-		return err
+		return fmt.Errorf("rekey session: %w", err)
 	}
 	if _, err := incoming.Stream.Write([]byte("go-rekey-ok")); err != nil {
-		return err
+		return fmt.Errorf("write rekey response: %w", err)
 	}
 	n, err = incoming.Stream.Read(buffer)
 	if err != nil {
-		return err
+		return fmt.Errorf("read post-rekey payload: %w", err)
 	}
 	if string(buffer[:n]) != "ts-rekey-ok" {
 		return fmt.Errorf("unexpected rekey payload %q", buffer[:n])

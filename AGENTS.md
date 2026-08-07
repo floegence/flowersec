@@ -94,16 +94,18 @@
 
 ## 3. External Linux test hosts
 
-- External acceptance tests run only on dedicated Ubuntu 22.04+ amd64/x86_64/aarch64 hosts with non-interactive root access. Hosts without direct root or `sudo -n` capability are unsupported.
-- Host initialization and all external tests run as root in one fixed environment rooted at `/var/lib/flowersec-test`. Never run root tests in a user's checkout or cache.
-- Do not implement root/non-root fallback, per-suite privilege switching, cache ownership repair, or host-specific execution paths.
-- `test-host-init.sh` idempotently prepares and validates only host-wide prerequisites. `flowersec-test` records only the plan and completed test IDs.
+- Local acceptance and Chromium smoke tests run as an ordinary user. External hosts are reserved for explicit privileged diagnostics and performance work.
+- Privileged suites run only on dedicated Ubuntu 22.04+ amd64/x86_64/aarch64 hosts with non-interactive root access in the fixed `/var/lib/flowersec-test` environment. Never run root tests in a user's checkout or cache.
+- Do not implement root/non-root fallback, per-suite privilege switching, cache ownership repair, or host-specific execution paths. `test-host-init.sh` prepares only host-wide prerequisites.
+- `flowersec-test` records only the source SHA, suite, plan, and completed test IDs. Each test owns setup, privileged resources, cancellation, and cleanup and returns GREEN or RED with minimal first-failure output.
 - Chromium does not support a WebTransport pooling option; each browser carrier is an independent native connection.
-- The mobile cold phase requires every independent carrier to meet the existing deadline. A `dial_failed` result is RED and must not be hidden by pooling, retry, or timeout relaxation.
-- Each test owns its setup, privileged resources, cancellation, and cleanup, and returns only GREEN or RED with minimal first-failure output.
-- macOS fast precommit remains a local ordinary-user check and does not require an external host or root.
 
-## 4. Release / tag policy
+## 4. Test and push gates
+
+- Feature commits run the fast `make precommit` gate. `scripts/push-main.sh` runs the bounded local `make test` acceptance suite once and does not repeat precommit.
+- `make check`, nightly, diagnostic, and performance targets are explicit engineering workflows outside the main push path. Release runs no tests.
+
+## 5. Release / tag policy
 
 - A version release uses matching Go `flowersec-go/v<version>`, SwiftPM
   `<version>`, and Rust `flowersec-rust/v<version>` tags.

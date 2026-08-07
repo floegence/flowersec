@@ -9,130 +9,58 @@ import { startBrowserModuleSite } from "./browser-module-site.js";
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = path.resolve(packageRoot, "..");
 
-test("real browser exposes only opaque Transport v2 artifacts and connector entrypoints", async ({ page }) => {
-  const fixture = JSON.parse(await readFile(
-    path.join(repositoryRoot, "testdata", "transport_v2", "artifact_vectors.json"),
-    "utf8",
-  )) as { positive: Array<{ artifact_json: string }> };
+test("Chromium runs the direct WebTransport topology", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "Chromium is the blocking browser runtime");
+  test.setTimeout(45_000);
+  const source = await artifactFor("direct", "t1");
+  const peer = startPeer("browser-webtransport-peer", "direct");
+  const stderr = captureStderr(peer);
   const site = await startBrowserModuleSite();
   try {
+    const endpoint = JSON.parse(await firstLine(peer.stdout)) as { url: string; certificate_hash: string };
+    source.path.candidates[0]!.url = endpoint.url;
+    await installWebTransportCertificateHash(page, endpoint.certificate_hash);
     await page.goto(site.origin, { waitUntil: "networkidle" });
     const result = await page.evaluate(async (artifactJSON) => {
       const sdk = await import("/dist/browser/index.js");
       const artifact = sdk.parseArtifact(artifactJSON);
-      return {
-        artifactKeys: Object.keys(artifact),
-        artifactJSON: JSON.stringify(artifact),
-        frozen: Object.isFrozen(artifact),
-        connectorType: typeof sdk.connectBrowserSession,
-        capabilityExported: "detectBrowserRuntimeCapabilityV2" in sdk,
-      };
-    }, fixture.positive[0]!.artifact_json);
+      const lease = sdk.createArtifactLease(artifact, async () => undefined);
+      const session = await sdk.connectBrowserSession(lease);
+      if (session.unreliableMessages === undefined) throw new Error("WebTransport DATAGRAM was not negotiated");
+      const sent = await session.unreliableMessages.send(
+        new TextEncoder().encode("browser-datagram"),
+        { expiresAtUnixMs: Date.now() + 5_000 },
+      );
+      const received = new TextDecoder().decode(await session.unreliableMessages.receive());
+      const liveness = await session.probeLiveness();
+      const stream = await session.openStream("interop.echo");
+      await stream.write(new TextEncoder().encode("hello-go"));
+      const first = new TextDecoder().decode(await stream.read());
+      const afterGoRekey = new TextDecoder().decode(await stream.read());
+      await session.rekey();
+      await stream.write(new TextEncoder().encode("ts-rekey-ok"));
+      await stream.closeWrite();
+      const done = new TextDecoder().decode(await stream.read());
+      const eof = await stream.read();
+      await session.close();
+      return { sent, received, liveness, first, afterGoRekey, done, eof };
+    }, JSON.stringify(source)).catch((error: unknown) => {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\nGo WebTransport peer:\n${stderr.join("")}`);
+    });
 
-    expect(result.artifactKeys).toEqual([]);
-    expect(result.artifactJSON).toBe("{}");
-    expect(result.frozen).toBe(true);
-    expect(result.connectorType).toBe("function");
-    expect(result.capabilityExported).toBe(false);
+    expect(result.sent).toBe("accepted");
+    expect(result.received).toBe("go-datagram");
+    expect(result.liveness).toBeGreaterThanOrEqual(0);
+    expect(result.first).toBe("hello-ts");
+    expect(result.afterGoRekey).toBe("go-rekey-ok");
+    expect(result.done).toBe("done");
+    expect(result.eof).toBeNull();
+    expect(await processExit(peer), stderr.join("")).toBe(0);
   } finally {
     await site.close();
+    if (peer.exitCode === null) peer.kill("SIGKILL");
   }
 });
-
-for (const sessionPath of ["direct", "tunnel"] as const) {
-  test(`real browser runs a complete public SessionV2 over production Go WSS (${sessionPath})`, async ({ page }) => {
-    test.setTimeout(45_000);
-    const source = await artifactFor(sessionPath, "w1");
-    const peer = startPeer("ts-session-peer", sessionPath);
-    const stderr = captureStderr(peer);
-    const site = await startBrowserModuleSite();
-    try {
-      const endpoint = JSON.parse(await firstLine(peer.stdout)) as { url: string };
-      source.path.candidates[0]!.url = endpoint.url;
-      await page.goto(site.origin, { waitUntil: "networkidle" });
-      const result = await page.evaluate(async (artifactJSON) => {
-        const sdk = await import("/dist/browser/index.js");
-        const artifact = sdk.parseArtifact(artifactJSON);
-        const lease = sdk.createArtifactLease(artifact, async () => undefined);
-        const session = await sdk.connectBrowserSession(lease);
-        const liveness = await session.probeLiveness();
-        const stream = await session.openStream("interop.echo");
-        await stream.write(new TextEncoder().encode("hello-go"));
-        const first = new TextDecoder().decode(await stream.read());
-        const afterGoRekey = new TextDecoder().decode(await stream.read());
-        await session.rekey();
-        await stream.write(new TextEncoder().encode("ts-rekey-ok"));
-        await stream.closeWrite();
-        const done = new TextDecoder().decode(await stream.read());
-        const eof = await stream.read();
-        await session.close();
-        return { liveness, first, afterGoRekey, done, eof };
-      }, JSON.stringify(source));
-
-      expect(result.liveness).toBeGreaterThanOrEqual(0);
-      expect(result.first).toBe("hello-ts");
-      expect(result.afterGoRekey).toBe("go-rekey-ok");
-      expect(result.done).toBe("done");
-      expect(result.eof).toBeNull();
-      expect(await processExit(peer), stderr.join("")).toBe(0);
-    } finally {
-      await site.close();
-      if (peer.exitCode === null) peer.kill("SIGKILL");
-    }
-  });
-
-  test(`Chromium runs native DATAGRAM and SessionV2 over production Go WebTransport (${sessionPath})`, async ({ page, browserName }) => {
-    test.skip(browserName !== "chromium", "WebKit has no production WebTransport capability");
-    test.setTimeout(45_000);
-    const source = await artifactFor(sessionPath, "t1");
-    const peer = startPeer("browser-webtransport-peer", sessionPath);
-    const stderr = captureStderr(peer);
-    const site = await startBrowserModuleSite();
-    try {
-      const endpoint = JSON.parse(await firstLine(peer.stdout)) as { url: string; certificate_hash: string };
-      source.path.candidates[0]!.url = endpoint.url;
-      await installWebTransportCertificateHash(page, endpoint.certificate_hash);
-      await page.goto(site.origin, { waitUntil: "networkidle" });
-      const result = await page.evaluate(async (artifactJSON) => {
-        const sdk = await import("/dist/browser/index.js");
-        const artifact = sdk.parseArtifact(artifactJSON);
-        const lease = sdk.createArtifactLease(artifact, async () => undefined);
-        const session = await sdk.connectBrowserSession(lease);
-        if (session.unreliableMessages === undefined) throw new Error("WebTransport DATAGRAM was not negotiated");
-        const sent = await session.unreliableMessages.send(
-          new TextEncoder().encode("browser-datagram"),
-          { expiresAtUnixMs: Date.now() + 5_000 },
-        );
-        const received = new TextDecoder().decode(await session.unreliableMessages.receive());
-        const liveness = await session.probeLiveness();
-        const stream = await session.openStream("interop.echo");
-        await stream.write(new TextEncoder().encode("hello-go"));
-        const first = new TextDecoder().decode(await stream.read());
-        const afterGoRekey = new TextDecoder().decode(await stream.read());
-        await session.rekey();
-        await stream.write(new TextEncoder().encode("ts-rekey-ok"));
-        await stream.closeWrite();
-        const done = new TextDecoder().decode(await stream.read());
-        const eof = await stream.read();
-        await session.close();
-        return { sent, received, liveness, first, afterGoRekey, done, eof };
-      }, JSON.stringify(source)).catch((error: unknown) => {
-        throw new Error(`${error instanceof Error ? error.message : String(error)}\nGo WebTransport peer:\n${stderr.join("")}`);
-      });
-
-      expect(result.sent).toBe("accepted");
-      expect(result.received).toBe("go-datagram");
-      expect(result.first).toBe("hello-ts");
-      expect(result.afterGoRekey).toBe("go-rekey-ok");
-      expect(result.done).toBe("done");
-      expect(result.eof).toBeNull();
-      expect(await processExit(peer), stderr.join("")).toBe(0);
-    } finally {
-      await site.close();
-      if (peer.exitCode === null) peer.kill("SIGKILL");
-    }
-  });
-}
 
 for (const opposite of ["wss", "raw_quic"] as const) {
   test(`Chromium WebTransport tunnel bridges to production Go ${opposite}`, async ({ page, browserName }) => {

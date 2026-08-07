@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func mobileFaultProfile(t *testing.T) FaultProfile {
+func periodicLossFaultProfile(t *testing.T) FaultProfile {
 	t.Helper()
 	object := filepath.Join(t.TempDir(), "packet_fault.o")
 	if err := os.WriteFile(object, []byte("test object"), 0o600); err != nil {
@@ -28,7 +28,7 @@ func mobileFaultProfile(t *testing.T) FaultProfile {
 }
 
 func TestEncodeFaultConfigMatchesBPFLayout(t *testing.T) {
-	encoded, err := encodeFaultConfig(mobileFaultProfile(t), 321)
+	encoded, err := encodeFaultConfig(periodicLossFaultProfile(t), 321)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,9 +58,9 @@ func TestEncodeFaultConfigMatchesBPFLayout(t *testing.T) {
 	}
 }
 
-func TestEncodeFaultConfigSupportsFrozenMobileAndEdgeMatrix(t *testing.T) {
+func TestEncodeFaultConfigSupportsPeriodicLossAndEdgeMatrix(t *testing.T) {
 	for _, percent := range []int{1, 2} {
-		profile := mobileFaultProfile(t)
+		profile := periodicLossFaultProfile(t)
 		profile.ReorderPercent = percent
 		profile.DuplicatePercent = percent
 		encoded, err := encodeFaultConfig(profile, 400+percent)
@@ -99,7 +99,7 @@ func TestReadVerifiedBPFObjectRejectsSymlinkAndReturnsOpenedBytes(t *testing.T) 
 }
 
 func TestApplyFaultProfileBuildsTwoIsolatedKernelDirections(t *testing.T) {
-	config, err := ConfigForCell("mobile-01", 1, 1280, FrozenFirewall)
+	config, err := ConfigForCell("periodic-loss-01", 1, 1280, FrozenFirewall)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestApplyFaultProfileBuildsTwoIsolatedKernelDirections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := lab.ApplyFaultProfile(context.Background(), mobileFaultProfile(t)); err != nil {
+	if err := lab.ApplyFaultProfile(context.Background(), periodicLossFaultProfile(t)); err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(runner.commands, "\n")
@@ -135,7 +135,7 @@ func TestApplyFaultProfileBuildsTwoIsolatedKernelDirections(t *testing.T) {
 	}{{config.ClientNamespace, config.ClientInterface}, {config.ServerNamespace, config.ServerInterface}} {
 		ifbUp := strings.Index(joined, "--net=/var/run/netns/"+side.namespace+" -- ip link set dev "+side.device+"i mtu 1280 up")
 		resolved := strings.Index(joined, "ifindex ["+side.namespace+" "+side.device+"i]")
-		encoded, err := encodeFaultConfig(mobileFaultProfile(t), 321+index)
+		encoded, err := encodeFaultConfig(periodicLossFaultProfile(t), 321+index)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -173,12 +173,12 @@ func TestResetFaultObservationRearmsBothDirectionsAtTheWorkloadBoundary(t *testi
 }
 
 func TestFaultProfileRejectsNonFrozenBounds(t *testing.T) {
-	profile := mobileFaultProfile(t)
+	profile := periodicLossFaultProfile(t)
 	profile.Jitter = profile.Jitter[:7]
 	if _, err := encodeFaultConfig(profile, 321); err == nil {
 		t.Fatal("accepted a non-eight-value jitter cycle")
 	}
-	profile = mobileFaultProfile(t)
+	profile = periodicLossFaultProfile(t)
 	profile.QueueBytes = profile.TokenBurstBytes - 1
 	if _, err := encodeFaultConfig(profile, 321); err == nil {
 		t.Fatal("accepted queue smaller than token burst")
@@ -195,14 +195,14 @@ func TestFaultProfileRejectsUnfrozenPacketFaultMatrix(t *testing.T) {
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
-			profile := mobileFaultProfile(t)
+			profile := periodicLossFaultProfile(t)
 			mutate(&profile)
 			if _, err := encodeFaultConfig(profile, 321); err == nil {
 				t.Fatal("accepted an unfrozen fault matrix")
 			}
 		})
 	}
-	profile := mobileFaultProfile(t)
+	profile := periodicLossFaultProfile(t)
 	if _, err := encodeFaultConfig(profile, 0); err == nil {
 		t.Fatal("accepted duplicate injection without a target IFB")
 	}
@@ -218,7 +218,7 @@ func TestApplyFaultProfileRollsBackPartialBPFLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile := mobileFaultProfile(t)
+	profile := periodicLossFaultProfile(t)
 	if err := lab.ApplyFaultProfile(context.Background(), profile); err == nil {
 		t.Fatal("partial BPF load succeeded")
 	}

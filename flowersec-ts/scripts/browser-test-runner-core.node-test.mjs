@@ -425,7 +425,7 @@ test("adaptive_web accepts cold-only stages and rejects forced payload phases", 
     policy: "adaptive",
     stages: [
       { profile_id: "clean-v1", cold: forcedPlan.cold, cleanup_deadline_ms: 5_000 },
-      { profile_id: "mobile-v1", cold: { ...forcedPlan.cold, phase_deadline_ms: 150_000 }, cleanup_deadline_ms: 5_000 },
+      { profile_id: "periodic-loss-v1", cold: { ...forcedPlan.cold, phase_deadline_ms: 150_000 }, cleanup_deadline_ms: 5_000 },
     ],
     rpc: undefined,
     bulk: undefined,

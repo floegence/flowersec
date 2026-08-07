@@ -7,34 +7,48 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest/acceptance"
 )
 
 func registry() []registeredTest {
 	tests := []registeredTest{
+		commandEntry("controller/go", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestConnectionControllerSharedLifecycleVectors$", "."),
+		vitestEntry("controller/typescript", "acceptance", "src/connectionController.vectors.test.ts", ""),
+		commandEntry("controller/rust", "acceptance", 5*time.Minute, "rustup", "run", "1.88.0", "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--all-features", "--lib", "connection_controller::tests"),
+		commandEntry("controller/rust-raw-quic", "acceptance", 5*time.Minute, "rustup", "run", "1.88.0", "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--all-features", "--lib", "connection_controller_replaces_terminated_raw_quic_session_without_replay"),
 		commandEntry("protocol/go", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "./internal/protocolv2", "./internal/artifactv2", "./internal/admissionv2", "./internal/session"),
 		commandEntry("protocol/typescript", "acceptance", 5*time.Minute, "npm", "--prefix", "flowersec-ts", "test", "--", "--run", "src/v2"),
-		commandEntry("protocol/ts-node-webtransport", "acceptance", 5*time.Minute, "npm", "--prefix", "flowersec-ts", "exec", "--", "vitest", "run", "src/node/webTransport.integration.test.ts"),
-		commandEntry("protocol/rust", "acceptance", 5*time.Minute, "rustup", "run", "1.88.0", "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--all-features", "--lib", "--test", "transport_v2_contract"),
-		commandEntry("protocol/interop-typescript-go", "acceptance", 5*time.Minute, "npm", "--prefix", "flowersec-ts", "exec", "--", "vitest", "run", "src/interop/goSession.integration.test.ts"),
-		commandEntry("protocol/interop-rust-go", "acceptance", 5*time.Minute, "rustup", "run", "1.88.0", "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--all-features", "--lib", "rust_and_go_run_full_session_v2_over_raw_quic_direct_and_tunnel"),
-		browserSmokeEntry("browser/chromium-direct", acceptance.BrowserDirectTopology),
-		browserSmokeEntry("browser/chromium-tunnel-wt-wss", acceptance.BrowserTunnelWTWSS),
-		browserSmokeEntry("browser/chromium-tunnel-wt-quic", acceptance.BrowserTunnelWTQUIC),
+		commandEntry("protocol/rust", "acceptance", 5*time.Minute, "rustup", "run", "1.88.0", "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--all-features", "--test", "transport_v2_contract"),
+		commandEntry("carrier/go-direct", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestProductDirectCarriersUsePublicConnectorAndAdmission$", "./internal/transporttest"),
+		commandEntry("carrier/go-tunnel", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestProductionTunnelCarrierCartesianMatrixCarriesEncryptedSessions$", "./internal/tunnelv2"),
+		vitestEntry("integration/typescript/node-webtransport", "acceptance", "src/node/webTransport.integration.test.ts", "carries native stream FIN and DATAGRAM without a browser"),
+		vitestEntry("interop/typescript-go/wss/direct", "acceptance", "src/interop/goSession.integration.test.ts", "runs direct admission and Session semantics over WSS"),
+		vitestEntry("interop/typescript-go/wss/tunnel", "acceptance", "src/interop/goSession.integration.test.ts", "runs tunnel admission and Session semantics over WSS"),
+		vitestEntry("interop/typescript-go/webtransport/direct", "acceptance", "src/node/webTransport.integration.test.ts", "runs direct Go admission and Session semantics over WebTransport"),
+		vitestEntry("interop/typescript-go/webtransport/tunnel", "acceptance", "src/node/webTransport.integration.test.ts", "runs tunnel Go admission and Session semantics over WebTransport"),
+		commandEntry("interop/rust-go/raw-quic/direct", "acceptance", 5*time.Minute, "rustup", "run", "1.88.0", "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--all-features", "--lib", "rust_and_go_run_full_session_v2_over_raw_quic_direct", "--", "--exact"),
+		commandEntry("interop/rust-go/raw-quic/tunnel", "acceptance", 5*time.Minute, "rustup", "run", "1.88.0", "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--all-features", "--lib", "rust_and_go_run_full_session_v2_over_raw_quic_tunnel", "--", "--exact"),
+		browserSmokeEntry("browser/chromium/webtransport/direct", "Chromium runs the direct WebTransport topology"),
+		browserSmokeEntry("browser/chromium-tunnel-wt-wss", "Chromium WebTransport tunnel bridges to production Go wss"),
+		browserSmokeEntry("browser/chromium-tunnel-wt-quic", "Chromium WebTransport tunnel bridges to production Go raw_quic"),
 		commandEntry("diagnostic/protocol", "diagnostic", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "./internal/protocolv2", "./internal/artifactv2", "./internal/admissionv2", "./internal/session", "./internal/transporttest"),
 		commandEntry("diagnostic/browser", "diagnostic", 10*time.Minute, "npm", "--prefix", "flowersec-ts", "run", "test:browser"),
-		commandEntry("diagnostic/interop", "diagnostic", 5*time.Minute, "npm", "--prefix", "flowersec-ts", "exec", "--", "vitest", "run", "src/interop/goSession.integration.test.ts"),
+		vitestEntry("diagnostic/interop", "diagnostic", "src/interop/goSession.integration.test.ts", ""),
 		commandEntryWithEnvironment("diagnostic/weaknet", "diagnostic", 5*time.Minute, []string{"FLOWERSEC_RUN_WEAKNET_SMOKE=1"}, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "./internal/weaknet", "./internal/weaknetsmoke"),
 		commandEntryWithEnvironment("diagnostic/kernel-outage", "diagnostic", 5*time.Minute, []string{"FLOWERSEC_LINUX_NETLAB_INTEGRATION=1"}, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestPrivilegedReorderDuplicateAndOutage$", "./internal/transporttest/linuxnetlab"),
 		commandEntry("diagnostic/quic", "diagnostic", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "./internal/carrier/rawquic", "./internal/tunnelv2"),
 	}
 	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
-		tests = append(tests, commandEntry("protocol/swift", "acceptance", 5*time.Minute, "swift", "test", "--filter", "TransportV2|IDNAHostV2"))
+		tests = append(tests,
+			commandEntry("controller/swift", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectionController"),
+			commandEntry("protocol/swift", "acceptance", 5*time.Minute, "swift", "test", "--filter", "TransportV2|IDNAHostV2"),
+			commandEntry("interop/swift-go/wss/direct", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectorV2Tests/testRealGoWSSDirectEndToEnd"),
+			commandEntry("interop/swift-go/wss/tunnel", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectorV2Tests/testRealGoWSSTunnelEndToEnd"),
+		)
 	}
 	for _, id := range []string{
 		"CAP-DIRECT-WSS-1000", "CAP-DIRECT-QUIC-1000", "CAP-DIRECT-WT-1000",
@@ -49,10 +63,24 @@ func registry() []registeredTest {
 	return tests
 }
 
-func browserSmokeEntry(id, topology string) registeredTest {
-	return registeredTest{ID: id, Suite: "browser-smoke", Timeout: 10 * time.Minute, Run: func(ctx context.Context, run runContext) error {
-		return acceptance.RunTest(ctx, acceptance.RunContext{RunID: run.RunID, TempDir: run.TempDir, Root: run.Root, Debug: run.Debug}, topology)
-	}}
+func browserSmokeEntry(id, title string) registeredTest {
+	return commandEntry(id, "browser-smoke", 5*time.Minute, "npm", "--prefix", "flowersec-ts", "run", "test:browser:chromium", "--", "--grep", exactTitle(title))
+}
+
+func vitestEntry(id, suite, file, title string) registeredTest {
+	return commandEntry(id, suite, 5*time.Minute, "npm", vitestArguments(file, title)...)
+}
+
+func vitestArguments(file, title string) []string {
+	arguments := []string{"--prefix", "flowersec-ts", "exec", "--", "vitest", "run", "--config", "flowersec-ts/vitest.config.ts", "flowersec-ts/" + file}
+	if title != "" {
+		arguments = append(arguments, "-t", exactTitle(title))
+	}
+	return arguments
+}
+
+func exactTitle(title string) string {
+	return "^" + regexp.QuoteMeta(title) + "$"
 }
 
 func commandEntry(id, suite string, timeout time.Duration, command string, arguments ...string) registeredTest {

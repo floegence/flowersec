@@ -11,8 +11,67 @@ import XCTest
 @testable import Flowersec
 
 final class ConnectorV2Tests: XCTestCase {
+  func testConnectionControllerReplacesTerminatedGoWSSSessionWithoutReplay() async throws {
+    let scenario = try connectionControllerScenario(named: "connect_and_replace_after_termination")
+    XCTAssertEqual(scenario.sessions, ["session-1", "session-2"])
+    XCTAssertEqual(scenario.replay, [])
+    let firstPeer = try GoWSSPeer.start(path: "direct")
+    defer { firstPeer.stop() }
+    let secondPeer = try GoWSSPeer.start(path: "direct")
+    defer { secondPeer.stop() }
+    let firstArtifact = try goWSSArtifact(endpoint: firstPeer.endpoint, vectorIndex: 0)
+    let secondArtifact = try goWSSArtifact(endpoint: secondPeer.endpoint, vectorIndex: 0)
+    let source = ControllerGoWSSArtifactSource(artifacts: [firstArtifact, secondArtifact])
+    let controller = try ConnectionController(
+      source: source,
+      options: ConnectorOptions(
+        origin: "https://client.example",
+        connectTimeout: .seconds(5),
+        trustRootsPEM: [
+          Data(firstPeer.endpoint.caPEM.utf8), Data(secondPeer.endpoint.caPEM.utf8),
+        ]
+      ),
+      retryPolicy: ConnectionRetryPolicy(
+        initialDelay: .milliseconds(1), maximumDelay: .milliseconds(1))
+    )
+
+    await controller.start()
+    let firstSession = try await waitForControllerSession(
+      controller,
+      source: source,
+      afterAcquisitions: 1
+    )
+    try await exerciseGoSession(firstSession)
+    let firstResult = firstPeer.finish()
+    XCTAssertEqual(firstResult.status, 0, firstResult.stderr)
+    _ = await firstSession.waitTermination()
+    let secondSession = try await waitForControllerSession(
+      controller,
+      source: source,
+      afterAcquisitions: 2
+    )
+
+    await XCTAssertThrowsErrorAsync(try await firstSession.openStream(kind: "must-not-migrate"))
+    await XCTAssertThrowsErrorAsync(try await firstSession.rpc.notify(90, "must-not-replay"))
+    try await exerciseGoSession(secondSession)
+    await controller.close()
+    let secondResult = secondPeer.finish()
+    XCTAssertEqual(secondResult.status, 0, secondResult.stderr)
+    let sourceCounts = await source.counts()
+    XCTAssertEqual(sourceCounts.acquisitions, 2)
+    XCTAssertEqual(sourceCounts.spends, 2)
+  }
+
   func testRealLocalWSSDirectEndToEnd() async throws {
     try await exerciseRealWSS(vectorIndex: 0)
+  }
+
+  func testRealGoWSSDirectEndToEnd() async throws {
+    try await exerciseGoWSS(path: "direct", vectorIndex: 0)
+  }
+
+  func testRealGoWSSTunnelEndToEnd() async throws {
+    try await exerciseGoWSS(path: "tunnel", vectorIndex: 1)
   }
 
   func testRealLocalWSSTunnelBridgesTwoAdmittedLegsEndToEnd() async throws {
@@ -273,6 +332,170 @@ final class ConnectorV2Tests: XCTestCase {
     let positive = root["positive"] as! [[String: Any]]
     return positive[index]["artifact_json"] as! String
   }
+
+  private func exerciseGoWSS(path: String, vectorIndex: Int) async throws {
+    let process = Process()
+    let output = Pipe()
+    let errors = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["go", "run", "./internal/cmd/ts-session-peer", "--path", path]
+    process.currentDirectoryURL = packageRoot().appendingPathComponent("flowersec-go")
+    process.standardOutput = output
+    process.standardError = errors
+    try process.run()
+    defer {
+      if process.isRunning {
+        process.terminate()
+        process.waitUntilExit()
+      }
+    }
+
+    let endpoint = try JSONDecoder().decode(
+      GoWSSEndpoint.self,
+      from: readFirstLine(output.fileHandleForReading)
+    )
+    let source = try loadArtifactJSON(index: vectorIndex)
+    var wire = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(source.utf8)) as? [String: Any])
+    var pathObject = try XCTUnwrap(wire["path"] as? [String: Any])
+    let candidates = try XCTUnwrap(pathObject["candidates"] as? [[String: Any]])
+    var webSocket = try XCTUnwrap(candidates.first(where: { $0["id"] as? String == "w1" }))
+    webSocket["url"] = endpoint.url
+    pathObject["candidates"] = [webSocket]
+    wire["path"] = pathObject
+    let artifact = try parseArtifact(
+      JSONSerialization.data(
+        withJSONObject: wire, options: [.sortedKeys, .withoutEscapingSlashes])
+    )
+    let candidateSet = try AdmissionCodecV2.canonicalizeCandidates(artifact)
+    XCTAssertEqual(candidateSet.candidates.map(\.normalizedURL), [endpoint.url])
+    let clientStarted = ContinuousClock.now
+    var clientOperation = "connect"
+    do {
+      let session = try await connect(
+        lease: ArtifactLease(artifact: artifact) {},
+        options: ConnectorOptions(
+          origin: "https://client.example",
+          connectTimeout: .seconds(5),
+          trustRootsPEM: [Data(endpoint.caPEM.utf8)]
+        )
+      )
+
+      clientOperation = "liveness"
+      _ = try await session.probeLiveness()
+      clientOperation = "open stream"
+      let stream = try await session.openStream(kind: "interop.echo")
+      clientOperation = "write initial payload"
+      _ = try await stream.write(Data("hello-go".utf8))
+      clientOperation = "read peer payloads"
+      let greeting = try await readMessage(stream)
+      let serverRekey = try await readMessage(stream)
+      XCTAssertEqual(greeting, Data("hello-ts".utf8))
+      XCTAssertEqual(serverRekey, Data("go-rekey-ok".utf8))
+      clientOperation = "rekey"
+      try await session.rekey()
+      clientOperation = "write post-rekey payload"
+      _ = try await stream.write(Data("ts-rekey-ok".utf8))
+      clientOperation = "finish stream"
+      try await stream.closeWrite()
+      clientOperation = "read stream finish"
+      let done = try await readMessage(stream)
+      let eof = try await stream.read(maxBytes: 1)
+      XCTAssertEqual(done, Data("done".utf8))
+      XCTAssertNil(eof)
+      try await session.close()
+    } catch {
+      process.waitUntilExit()
+      let peerError = errors.fileHandleForReading.readDataToEndOfFile()
+      throw GoWSSInteropError(
+        client: error,
+        clientDuration: clientStarted.duration(to: .now),
+        clientOperation: clientOperation,
+        peer: String(decoding: peerError, as: UTF8.self),
+        peerExit: process.terminationStatus
+      )
+    }
+
+    process.waitUntilExit()
+    let peerError = errors.fileHandleForReading.readDataToEndOfFile()
+    XCTAssertEqual(process.terminationStatus, 0, String(decoding: peerError, as: UTF8.self))
+  }
+
+  private func goWSSArtifact(endpoint: GoWSSEndpoint, vectorIndex: Int) throws -> Artifact {
+    let source = try loadArtifactJSON(index: vectorIndex)
+    var wire = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(source.utf8)) as? [String: Any])
+    var pathObject = try XCTUnwrap(wire["path"] as? [String: Any])
+    let candidates = try XCTUnwrap(pathObject["candidates"] as? [[String: Any]])
+    var webSocket = try XCTUnwrap(candidates.first(where: { $0["id"] as? String == "w1" }))
+    webSocket["url"] = endpoint.url
+    pathObject["candidates"] = [webSocket]
+    wire["path"] = pathObject
+    return try parseArtifact(
+      JSONSerialization.data(
+        withJSONObject: wire, options: [.sortedKeys, .withoutEscapingSlashes])
+    )
+  }
+
+  private func exerciseGoSession(_ session: any Session) async throws {
+    _ = try await session.probeLiveness()
+    let stream = try await session.openStream(kind: "interop.echo")
+    _ = try await stream.write(Data("hello-go".utf8))
+    let greeting = try await readMessage(stream)
+    let serverRekey = try await readMessage(stream)
+    XCTAssertEqual(greeting, Data("hello-ts".utf8))
+    XCTAssertEqual(serverRekey, Data("go-rekey-ok".utf8))
+    try await session.rekey()
+    _ = try await stream.write(Data("ts-rekey-ok".utf8))
+    try await stream.closeWrite()
+    let done = try await readMessage(stream)
+    let eof = try await stream.read(maxBytes: 1)
+    XCTAssertEqual(done, Data("done".utf8))
+    XCTAssertNil(eof)
+  }
+
+  private func waitForControllerSession(
+    _ controller: ConnectionController,
+    source: ControllerGoWSSArtifactSource,
+    afterAcquisitions minimumAcquisitions: Int
+  ) async throws -> any Session {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while ContinuousClock.now < deadline {
+      let snapshot = await controller.snapshot()
+      if snapshot.state == .failed { throw ControllerGoWSSTestError.failed }
+      let counts = await source.counts()
+      if counts.acquisitions >= minimumAcquisitions,
+        snapshot.state == .connected,
+        let session = snapshot.currentSession
+      {
+        return session
+      }
+      try await Task.sleep(for: .milliseconds(1))
+    }
+    let snapshot = await controller.snapshot()
+    let counts = await source.counts()
+    throw ControllerGoWSSTestError.timeout(
+      state: snapshot.state,
+      attempt: snapshot.attempt,
+      hasCurrentSession: snapshot.currentSession != nil,
+      acquisitions: counts.acquisitions
+    )
+  }
+
+  private func readMessage(_ stream: any ByteStream) async throws -> Data {
+    let value = try await stream.read(maxBytes: 64)
+    return try XCTUnwrap(value)
+  }
+
+  private func readFirstLine(_ handle: FileHandle) throws -> Data {
+    var buffered = Data()
+    while true {
+      let chunk = try handle.read(upToCount: 1) ?? Data()
+      guard !chunk.isEmpty else { throw ConnectorQueueError.closed }
+      buffered.append(chunk)
+      if chunk[0] == 0x0a { return buffered.dropLast() }
+    }
+  }
 }
 
 private struct ConnectorBinaryPair {
@@ -356,6 +579,132 @@ private actor ConnectorSpendCounter {
   private var count = 0
   func commit() { count += 1 }
   func value() -> Int { count }
+}
+
+private struct GoWSSEndpoint: Decodable {
+  let url: String
+  let caPEM: String
+
+  enum CodingKeys: String, CodingKey {
+    case url
+    case caPEM = "ca_pem"
+  }
+}
+
+private final class GoWSSPeer: @unchecked Sendable {
+  let endpoint: GoWSSEndpoint
+  private let process: Process
+  private let errors: Pipe
+  private var result: (status: Int32, stderr: String)?
+
+  private init(process: Process, errors: Pipe, endpoint: GoWSSEndpoint) {
+    self.process = process
+    self.errors = errors
+    self.endpoint = endpoint
+  }
+
+  static func start(path: String) throws -> GoWSSPeer {
+    let process = Process()
+    let output = Pipe()
+    let errors = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["go", "run", "./internal/cmd/ts-session-peer", "--path", path]
+    process.currentDirectoryURL = packageRoot().appendingPathComponent("flowersec-go")
+    process.standardOutput = output
+    process.standardError = errors
+    try process.run()
+    do {
+      let endpoint = try JSONDecoder().decode(
+        GoWSSEndpoint.self,
+        from: readEndpointLine(output.fileHandleForReading)
+      )
+      return GoWSSPeer(process: process, errors: errors, endpoint: endpoint)
+    } catch {
+      if process.isRunning {
+        process.terminate()
+        process.waitUntilExit()
+      }
+      throw error
+    }
+  }
+
+  func finish() -> (status: Int32, stderr: String) {
+    if let result { return result }
+    process.waitUntilExit()
+    let value = (
+      status: process.terminationStatus,
+      stderr: String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    )
+    result = value
+    return value
+  }
+
+  func stop() {
+    if process.isRunning {
+      process.terminate()
+      process.waitUntilExit()
+    }
+  }
+
+  private static func readEndpointLine(_ handle: FileHandle) throws -> Data {
+    var buffered = Data()
+    while true {
+      let chunk = try handle.read(upToCount: 1) ?? Data()
+      guard !chunk.isEmpty else { throw ControllerGoWSSTestError.peerClosed }
+      if chunk[0] == 0x0a { return buffered }
+      buffered.append(chunk)
+    }
+  }
+}
+
+private actor ControllerGoWSSArtifactSource: ArtifactSource {
+  private var artifacts: [Artifact]
+  private var acquisitions = 0
+  private var spends = 0
+
+  init(artifacts: [Artifact]) {
+    self.artifacts = artifacts
+  }
+
+  func acquireArtifact() throws -> ArtifactLease {
+    guard !artifacts.isEmpty else {
+      throw ArtifactSourceFailure(disposition: .terminal)
+    }
+    acquisitions += 1
+    let artifact = artifacts.removeFirst()
+    return ArtifactLease(artifact: artifact) { await self.recordSpend() }
+  }
+
+  func counts() -> (acquisitions: Int, spends: Int) {
+    (acquisitions, spends)
+  }
+
+  private func recordSpend() {
+    spends += 1
+  }
+}
+
+private enum ControllerGoWSSTestError: Error {
+  case failed
+  case peerClosed
+  case timeout(
+    state: ConnectionState,
+    attempt: UInt64,
+    hasCurrentSession: Bool,
+    acquisitions: Int
+  )
+}
+
+private struct GoWSSInteropError: LocalizedError {
+  let client: any Error
+  let clientDuration: Duration
+  let clientOperation: String
+  let peer: String
+  let peerExit: Int32
+
+  var errorDescription: String? {
+    "Swift client \(clientOperation) failed after \(clientDuration): \(client); Go peer exit \(peerExit): \(peer.trimmingCharacters(in: .whitespacesAndNewlines))"
+  }
 }
 
 private struct ConnectorTestTLS {

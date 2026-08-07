@@ -1063,7 +1063,11 @@ func goVerifierUsesQualifier(m *manifest, qualifier string) bool {
 var coverageLine = regexp.MustCompile(`^(?:ok|\?)\s+(\S+)\s+.*coverage:\s+([0-9.]+)% of statements$`)
 
 func verifyGoCoverage(repoRoot string, m *manifest, short bool) error {
-	cmd := goCoverageCommand(short)
+	packages, err := defaultGoTestPackages(repoRoot)
+	if err != nil {
+		return err
+	}
+	cmd := goCoverageCommand(short, packages)
 	cmd.Dir = filepath.Join(repoRoot, "flowersec-go")
 	cmd.Env = withRepoGoToolchain()
 	var out bytes.Buffer
@@ -1094,12 +1098,32 @@ func verifyGoCoverage(repoRoot string, m *manifest, short bool) error {
 	return nil
 }
 
-func goCoverageCommand(short bool) *exec.Cmd {
+func defaultGoTestPackages(repoRoot string) ([]string, error) {
+	absoluteRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repository root: %w", err)
+	}
+	cmd := exec.Command(filepath.Join(absoluteRoot, "scripts", "list-default-go-test-packages.sh"))
+	cmd.Dir = filepath.Join(absoluteRoot, "flowersec-go")
+	cmd.Env = withRepoGoToolchain()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("list default Go test packages: %w:\n%s", err, output)
+	}
+	packages := strings.Fields(string(output))
+	if len(packages) == 0 {
+		return nil, errors.New("default Go test package list is empty")
+	}
+	return packages, nil
+}
+
+func goCoverageCommand(short bool, packages []string) *exec.Cmd {
 	args := []string{"test", "-p=1"}
 	if short {
 		args = append(args, "-short")
 	}
-	args = append(args, "-count=1", "-cover", "./...")
+	args = append(args, "-count=1", "-cover")
+	args = append(args, packages...)
 	return exec.Command("go", args...)
 }
 

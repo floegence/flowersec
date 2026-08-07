@@ -86,7 +86,7 @@ Browser applications receive a ready `Session` from `connectBrowserSession(...)`
 
 Chromium does not support a WebTransport pooling option; each carrier creates an independent native WebTransport connection.
 
-The mobile cold-connection acceptance phase requires every independent carrier to meet the existing deadline. A `dial_failed` result remains a test failure and is not hidden by pooling, retry, or timeout relaxation.
+Cold-connection diagnostics require every independent carrier to meet the declared deadline. A `dial_failed` result remains a test failure and is not hidden by pooling, retry, or timeout relaxation.
 
 Node.js applications receive the same `Session` contract from `connectNodeSession(...)`. The Node.js connector supports WSS and WebTransport production connections for direct and tunnel artifacts. It requires an absolute HTTP(S) `origin`; a custom certificate authority can be supplied through `tls.ca`. Invalid origin and TLS options fail as `ConnectError` with `invalid_options` and are terminal to the optional connection controller.
 

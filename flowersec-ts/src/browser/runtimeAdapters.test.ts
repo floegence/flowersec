@@ -27,6 +27,7 @@ describe("browser runtime adapters", () => {
     );
     expect(transport.instances).toHaveLength(1);
     expect(transport.instances[0]!.url).toContain("/flowersec/webtransport/v2/direct");
+    expect(transport.instances[0]!.constructorArgumentCount).toBe(1);
     expect(carrier.kind).toBe("webtransport");
     carrier.abort({ code: 6, reason: "test" });
     expect(transport.instances[0]!.close).toHaveBeenCalledWith({ closeCode: 6, reason: "test" });
@@ -101,7 +102,11 @@ describe("browser runtime adapters", () => {
 });
 
 function webTransportRuntime(startFailure?: Error, pendingReady?: Promise<void>) {
-  const instances: Array<Readonly<{ url: string; close: ReturnType<typeof vi.fn> }>> = [];
+  const instances: Array<Readonly<{
+    url: string;
+    constructorArgumentCount: number;
+    close: ReturnType<typeof vi.fn>;
+  }>> = [];
   class Constructor {
     readonly ready: Promise<void>;
     readonly closed: Promise<void>;
@@ -115,7 +120,11 @@ function webTransportRuntime(startFailure?: Error, pendingReady?: Promise<void>)
     constructor(readonly url: string) {
       this.ready = pendingReady ?? (startFailure === undefined ? Promise.resolve() : Promise.reject(startFailure));
       this.closed = new Promise(() => undefined);
-      instances.push(this);
+      instances.push({
+        url: this.url,
+        constructorArgumentCount: arguments.length,
+        close: this.close,
+      });
     }
     createBidirectionalStream(): Promise<never> { return new Promise(() => undefined); }
   }

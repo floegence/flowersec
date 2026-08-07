@@ -5,22 +5,49 @@
   "cases": ["session", "streams", "rpc", "rekey", "fin", "reset"],
   "cells": [
     {
-      "id": "go_to_go",
+      "id": "go_to_go_direct",
       "client": "go",
       "server": "go",
       "carriers": ["websocket", "raw_quic", "webtransport"],
-      "paths": ["direct", "tunnel"],
+      "paths": ["direct"],
       "cases": ["session", "streams", "rpc", "rekey", "fin", "reset"],
-      "evidence": "flowersec-go/internal/session/carrier_smoke_test.go"
+      "evidence": "flowersec-go/internal/transporttest/direct_test.go"
+    },
+    {
+      "id": "go_to_go_tunnel",
+      "client": "go",
+      "server": "go",
+      "carriers": ["websocket", "raw_quic", "webtransport"],
+      "paths": ["tunnel"],
+      "cases": ["session", "streams", "rpc", "rekey", "fin", "reset"],
+      "evidence": "flowersec-go/internal/tunnelv2/production_matrix_e2e_test.go"
     },
     {
       "id": "typescript_to_go",
       "client": "typescript",
       "server": "go",
       "carriers": ["websocket"],
-      "paths": ["direct"],
-      "cases": ["session", "streams", "rpc", "rekey", "fin"],
+      "paths": ["direct", "tunnel"],
+      "cases": ["session", "streams", "rekey", "fin"],
       "evidence": "flowersec-ts/src/interop/goSession.integration.test.ts"
+    },
+    {
+      "id": "typescript_node_webtransport_to_go",
+      "client": "typescript",
+      "server": "go",
+      "carriers": ["webtransport"],
+      "paths": ["direct", "tunnel"],
+      "cases": ["session", "streams", "rekey", "fin"],
+      "evidence": "flowersec-ts/src/node/webTransport.integration.test.ts"
+    },
+    {
+      "id": "swift_to_go",
+      "client": "swift",
+      "server": "go",
+      "carriers": ["websocket"],
+      "paths": ["direct", "tunnel"],
+      "cases": ["session", "streams", "rekey", "fin"],
+      "evidence": "flowersec-swift/Tests/FlowersecTests/ConnectorV2Tests.swift"
     },
     {
       "id": "rust_to_go",

@@ -200,6 +200,20 @@ func TestYamuxResetIsIsolatedFromSiblingStream(t *testing.T) {
 	}
 }
 
+func TestYamuxStopSendingIsExplicitlyUnavailable(t *testing.T) {
+	client, _ := newCarrierPair(t, SubprotocolDirect)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := client.OpenStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	if err := stream.StopSending(); !errors.Is(err, carrier.ErrStopSendingUnavailable) {
+		t.Fatalf("StopSending error = %v, want ErrStopSendingUnavailable", err)
+	}
+}
+
 func TestExactSubprotocolAndTLS13AreRequired(t *testing.T) {
 	_, server := newUpgradedPair(t, SubprotocolDirect)
 	resources := DefaultResourcePolicy()

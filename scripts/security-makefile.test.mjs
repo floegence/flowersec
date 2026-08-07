@@ -30,21 +30,25 @@ test("current Make graph satisfies the security contract", () => {
 });
 
 test("local and external test targets remain separated", () => {
+  const browserRecipe = canonical.match(/^browser-smoke:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.equal(browserRecipe.trim(), "go -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-smoke");
   for (const [target, action, suite] of [
-    ["browser-smoke", "run", "browser-smoke"],
     ["diagnostic", "run", "diagnostic"],
     ["performance", "run", "performance"],
   ]) {
     const recipe = canonical.match(new RegExp(`^${target}:\\n((?:\\t.*\\n)+)`, "m"))?.[1] ?? "";
     assert.equal(recipe.trim(), `$(FLOWERSEC_TEST_HOST) ${action} --suite ${suite}`);
   }
-  assert.match(canonical, /^test:\n\t\$\(MAKE\) go-test ts-test$/m);
+  assert.match(canonical, /^test:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite acceptance$/m);
+  assert.match(canonical, /^test-resume:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test resume --suite acceptance$/m);
   assert.match(canonical, /^precommit:\n\t\$\(MAKE\) precommit-source$/m);
   const ordinary = dryRun("test");
+  const resume = dryRun("test-resume");
   const precommit = dryRun("precommit");
   assert.equal(ordinary.status, 0, ordinary.stderr);
+  assert.equal(resume.status, 0, resume.stderr);
   assert.equal(precommit.status, 0, precommit.stderr);
-  assert.doesNotMatch(ordinary.stdout + precommit.stdout, /capacity|soak|pcap|qlog|transportcheck|artifact-dir|report/i);
+  assert.doesNotMatch(ordinary.stdout + resume.stdout + precommit.stdout, /capacity|soak|pcap|qlog|transportcheck|artifact-dir|report/i);
 });
 
 test("complete gate preserves bounded ordered phases", () => {
@@ -58,7 +62,7 @@ test("complete gate preserves bounded ordered phases", () => {
   assert.match(result.stdout, /npm run test:coverage/);
   assert.match(result.stdout, /--enable-code-coverage/);
   assert.match(result.stdout, /cargo llvm-cov/);
-  assert.doesNotMatch(result.stdout, /transportcheck|test evidence|receipt/i);
+  assert.doesNotMatch(result.stdout, /transportcheck|test evidence|receipt|FLOWERSEC_TEST_HOST|run --suite diagnostic|run --suite performance/i);
 });
 
 test("release and publication gates stay source-only", () => {
@@ -70,8 +74,9 @@ test("release and publication gates stay source-only", () => {
 
 test("protected recipes and definitions cannot be replaced", () => {
   for (const mutation of [
-    canonical.replace("test:\n\t$(MAKE) go-test ts-test", "test:\n\t@true"),
-    canonical.replace("browser-smoke:\n\t$(FLOWERSEC_TEST_HOST) run --suite browser-smoke", "browser-smoke:\n\t@true"),
+    canonical.replace("test:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite acceptance", "test:\n\t@true"),
+    canonical.replace("test-resume:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test resume --suite acceptance", "test-resume:\n\t@true"),
+    canonical.replace("browser-smoke:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-smoke", "browser-smoke:\n\t@true"),
     canonical.replace("precommit:\n\t$(MAKE) precommit-source", "precommit:\n\t$(MAKE) check"),
     canonical.replace("final-race-check:\n\t$(MAKE) go-test-race", "final-race-check:\n\t@true"),
     `${canonical}\nsecurity-dependency-check:\n\t@true\n`,

@@ -680,7 +680,87 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 mod tests {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+    use serde::Deserialize;
+
     use super::*;
+
+    #[derive(Debug, Deserialize)]
+    struct ControllerVectors {
+        version: u64,
+        states: Vec<String>,
+        retry_dispositions: Vec<String>,
+        defaults: ControllerDefaults,
+        backoff_vectors: Vec<ControllerBackoffVector>,
+        scenarios: Vec<ControllerScenario>,
+        invariants: ControllerInvariants,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct ControllerDefaults {
+        initial_delay_ms: u64,
+        max_delay_ms: u64,
+        factor: u32,
+        jitter_ratio: u64,
+        attempt_limit: Option<u64>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct ControllerBackoffVector {
+        consecutive_failure: u64,
+        delay_ms: u64,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct ControllerInvariants {
+        one_shot_artifact_controller: String,
+        fresh_artifact_per_attempt: bool,
+        single_scheduler: bool,
+        single_in_flight_attempt: bool,
+        retry_now_outside_waiting: bool,
+        old_stream_migration: bool,
+        rpc_replay: bool,
+        write_replay: bool,
+        cross_session_exactly_once: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct ControllerScenarioPolicy {
+        max_attempts: u64,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct ControllerScenario {
+        name: String,
+        events: Vec<String>,
+        states: Vec<String>,
+        #[serde(default)]
+        sessions: Vec<String>,
+        #[serde(default)]
+        replay: Vec<String>,
+        #[serde(default)]
+        clock_start_unix_ms: Option<u64>,
+        #[serde(default)]
+        artifact_acquisitions: Option<u64>,
+        #[serde(default)]
+        scheduler_count: Option<u64>,
+        #[serde(default)]
+        max_in_flight_attempts: Option<u64>,
+        #[serde(default)]
+        retry_at_unix_ms: Option<u64>,
+        #[serde(default)]
+        policy: Option<ControllerScenarioPolicy>,
+    }
+
+    fn scenario(name: &str) -> ControllerScenario {
+        serde_json::from_str::<ControllerVectors>(include_str!(
+            "../../testdata/transport_v2/connection_controller_vectors.json"
+        ))
+        .expect("parse shared connection-controller vectors")
+        .scenarios
+        .into_iter()
+        .find(|scenario| scenario.name == name)
+        .unwrap_or_else(|| panic!("missing controller scenario {name}"))
+    }
 
     #[derive(Debug)]
     struct PendingSource {
@@ -710,6 +790,26 @@ mod tests {
     struct FailingSource {
         attempts: AtomicU64,
         error: ArtifactSourceError,
+    }
+
+    #[derive(Debug)]
+    struct RetryThenPendingSource {
+        attempts: AtomicU64,
+        pending_future_dropped: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl ArtifactSource for RetryThenPendingSource {
+        async fn acquire(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<ArtifactLease, ArtifactSourceError> {
+            if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(ArtifactSourceError::retryable());
+            }
+            let _drop_signal = DropSignal(self.pending_future_dropped.clone());
+            std::future::pending().await
+        }
     }
 
     #[async_trait]
@@ -757,8 +857,66 @@ mod tests {
         assert!(RetryPolicy::new(Duration::from_secs(1), 0, Duration::from_secs(1)).is_err());
     }
 
+    #[test]
+    fn shared_controller_defaults_backoff_and_invariants_match_the_implementation() {
+        let vectors = serde_json::from_str::<ControllerVectors>(include_str!(
+            "../../testdata/transport_v2/connection_controller_vectors.json"
+        ))
+        .expect("parse shared connection-controller vectors");
+        assert_eq!(vectors.version, 1);
+        assert_eq!(
+            vectors.states,
+            [
+                "idle",
+                "connecting",
+                "connected",
+                "waiting",
+                "failed",
+                "closed"
+            ]
+        );
+        assert_eq!(
+            vectors.retry_dispositions,
+            ["terminal", "retryable", "retry_after"]
+        );
+        let retry = RetryPolicy::default();
+        assert_eq!(
+            retry.initial_delay(),
+            Duration::from_millis(vectors.defaults.initial_delay_ms)
+        );
+        assert_eq!(
+            retry.max_delay(),
+            Duration::from_millis(vectors.defaults.max_delay_ms)
+        );
+        assert_eq!(retry.factor(), vectors.defaults.factor);
+        assert_eq!(vectors.defaults.jitter_ratio, 0);
+        assert_eq!(
+            retry.max_attempts().map(NonZeroU64::get),
+            vectors.defaults.attempt_limit
+        );
+        for vector in vectors.backoff_vectors {
+            assert_eq!(
+                retry.delay(vector.consecutive_failure - 1),
+                Duration::from_millis(vector.delay_ms)
+            );
+        }
+        let invariants = vectors.invariants;
+        assert_eq!(invariants.one_shot_artifact_controller, "forbidden");
+        assert!(invariants.fresh_artifact_per_attempt);
+        assert!(invariants.single_scheduler);
+        assert!(invariants.single_in_flight_attempt);
+        assert!(!invariants.retry_now_outside_waiting);
+        assert!(!invariants.old_stream_migration);
+        assert!(!invariants.rpc_replay);
+        assert!(!invariants.write_replay);
+        assert!(!invariants.cross_session_exactly_once);
+    }
+
     #[tokio::test]
     async fn close_cancels_the_owned_artifact_acquisition() {
+        let scenario = scenario("close_cancels_single_attempt");
+        assert_eq!(scenario.max_in_flight_attempts, Some(1));
+        assert_eq!(scenario.states, ["idle", "connecting", "closed"]);
         let future_dropped = Arc::new(AtomicBool::new(false));
         let controller = ConnectionController::new(
             Arc::new(PendingSource {
@@ -779,6 +937,8 @@ mod tests {
 
     #[tokio::test]
     async fn structured_retryable_source_failure_obeys_attempt_limit() {
+        let scenario = scenario("explicit_attempt_exhaustion");
+        assert_eq!(scenario.artifact_acquisitions, Some(2));
         let source = Arc::new(FailingSource {
             attempts: AtomicU64::new(0),
             error: ArtifactSourceError::retryable(),
@@ -804,5 +964,130 @@ mod tests {
         );
 
         controller.close().await;
+    }
+
+    #[tokio::test]
+    async fn terminal_source_failure_stops_after_one_attempt() {
+        let scenario = scenario("terminal_failure");
+        assert_eq!(scenario.artifact_acquisitions, Some(1));
+        let source = Arc::new(FailingSource {
+            attempts: AtomicU64::new(0),
+            error: ArtifactSourceError::terminal(),
+        });
+        let controller = ConnectionController::new(source.clone(), options(RetryPolicy::default()));
+        controller.start().expect("controller starts");
+
+        let status = wait_for_state(&controller, ConnectionState::Failed).await;
+        assert_eq!(status.attempt, 1);
+        assert_eq!(source.attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            status.last_failure,
+            Some(ConnectionFailure::ArtifactSource(
+                ArtifactSourceError::terminal()
+            ))
+        );
+        controller.close().await;
+    }
+
+    #[tokio::test]
+    async fn retry_now_wakes_only_the_existing_scheduler_and_attempt() {
+        let scenario = scenario("retry_now_wakes_existing_wait");
+        assert_eq!(scenario.scheduler_count, Some(1));
+        assert_eq!(scenario.max_in_flight_attempts, Some(1));
+        let pending_future_dropped = Arc::new(AtomicBool::new(false));
+        let source = Arc::new(RetryThenPendingSource {
+            attempts: AtomicU64::new(0),
+            pending_future_dropped: pending_future_dropped.clone(),
+        });
+        let retry = RetryPolicy::new(Duration::from_secs(30), 1, Duration::from_secs(30))
+            .expect("valid retry policy");
+        let controller = ConnectionController::new(source.clone(), options(retry));
+        controller.start().expect("controller starts");
+        wait_for_state(&controller, ConnectionState::Waiting).await;
+
+        assert!(controller.retry_now());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while source.attempts.load(Ordering::SeqCst) != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("existing scheduler starts the second attempt");
+        assert_eq!(controller.status().state, ConnectionState::Connecting);
+        assert_eq!(source.attempts.load(Ordering::SeqCst), 2);
+        assert!(!controller.retry_now());
+
+        controller.close().await;
+        assert!(pending_future_dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn retry_now_cannot_bypass_retry_after() {
+        let scenario = scenario("retry_after_is_authoritative");
+        assert_eq!(scenario.retry_at_unix_ms, Some(1_004_000));
+        let source = Arc::new(FailingSource {
+            attempts: AtomicU64::new(0),
+            error: ArtifactSourceError::retry_after(SystemTime::now() + Duration::from_millis(200)),
+        });
+        let retry = RetryPolicy::new(Duration::from_millis(1), 1, Duration::from_millis(1))
+            .expect("valid retry policy");
+        let controller = ConnectionController::new(source.clone(), options(retry));
+        controller.start().expect("controller starts");
+        wait_for_state(&controller, ConnectionState::Waiting).await;
+
+        assert!(controller.retry_now());
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        assert_eq!(source.attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(controller.status().state, ConnectionState::Waiting);
+        controller.close().await;
+    }
+
+    #[test]
+    fn shared_controller_vector_inventory_has_one_owning_test_per_scenario() {
+        let vectors = serde_json::from_str::<ControllerVectors>(include_str!(
+            "../../testdata/transport_v2/connection_controller_vectors.json"
+        ))
+        .expect("parse shared connection-controller vectors");
+        for scenario in &vectors.scenarios {
+            assert!(
+                !scenario.events.is_empty(),
+                "{} has no executable events",
+                scenario.name
+            );
+            match scenario.name.as_str() {
+                "connect_and_replace_after_termination" => {
+                    assert_eq!(scenario.sessions, ["session-1", "session-2"]);
+                    assert!(scenario.replay.is_empty());
+                }
+                "retry_after_is_authoritative" => {
+                    assert_eq!(scenario.clock_start_unix_ms, Some(1_000_000));
+                    assert_eq!(scenario.retry_at_unix_ms, Some(1_004_000));
+                }
+                "explicit_attempt_exhaustion" => {
+                    assert_eq!(
+                        scenario.policy.as_ref().map(|policy| policy.max_attempts),
+                        Some(2)
+                    );
+                }
+                _ => {}
+            }
+        }
+        let mut names = vectors
+            .scenarios
+            .into_iter()
+            .map(|scenario| scenario.name)
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "close_cancels_single_attempt",
+                "connect_and_replace_after_termination",
+                "explicit_attempt_exhaustion",
+                "retry_after_is_authoritative",
+                "retry_now_wakes_existing_wait",
+                "terminal_failure",
+            ]
+        );
     }
 }

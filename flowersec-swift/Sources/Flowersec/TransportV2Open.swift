@@ -1,4 +1,5 @@
 import CoreFoundation
+import Crypto
 import Foundation
 
 enum OpenPayloadErrorV2: Error, Equatable, Sendable {
@@ -107,6 +108,15 @@ struct OpenPayloadV2: Equatable, Sendable {
     }
     return value
   }
+}
+
+func computeOpenHashV2(_ rawOpenPayload: Data) throws -> Data {
+  _ = try OpenPayloadV2.decode(rawOpenPayload)
+  guard rawOpenPayload.count <= UInt32.max else { throw OpenPayloadErrorV2.invalidPayload }
+  var preimage = Data("flowersec-v2-open\0".utf8)
+  preimage.appendUInt32BE(UInt32(rawOpenPayload.count))
+  preimage.append(rawOpenPayload)
+  return Data(SHA256.hash(data: preimage))
 }
 
 private enum OpenMetadataCanonicalizerV2 {

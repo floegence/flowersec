@@ -95,8 +95,12 @@
             tls.minimumTLSVersion = .tlsv13
             if let trustRoots { tls.trustRoots = .certificates(trustRoots) }
             let context = try NIOSSLContext(configuration: tls)
+            let ipAddress = try? SocketAddress(ipAddress: host, port: port)
             try channel.pipeline.syncOperations.addHandler(
-              NIOSSLClientHandler(context: context, serverHostname: host)
+              NIOSSLClientHandler(
+                context: context,
+                serverHostname: ipAddress == nil ? host : nil
+              )
             )
           }
           try channel.pipeline.syncOperations.addHTTPClientHandlers(
@@ -106,6 +110,7 @@
           try channel.pipeline.syncOperations.addHandler(requestHandlerBox.value)
           return channel.eventLoop.makeSucceededVoidFuture()
         } catch {
+          connection.fail(error)
           return channel.eventLoop.makeFailedFuture(error)
         }
       }
@@ -114,11 +119,16 @@
       do {
         channel = try await bootstrap.connect(host: host, port: port).get()
       } catch let error as ChannelError {
+        connection.fail(error)
         if case .connectTimeout = error {
           throw ProxyUpstreamFailure(.timeout, error)
         }
         throw ProxyUpstreamFailure(.dial, error)
+      } catch let error as NIOConnectionError {
+        connection.fail(error)
+        throw ProxyUpstreamFailure(.dial, message: error.description)
       } catch {
+        connection.fail(error)
         throw ProxyUpstreamFailure(.dial, error)
       }
       let scheduledTimeout = timeoutMilliseconds.map { milliseconds in

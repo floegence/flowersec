@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test browser-smoke precommit diagnostic performance go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-package-cache-preflight ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-publish-preflight rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-source-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-source precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check flowersec-test-contract go-cover-check-short go-cover-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test test-resume browser-smoke precommit diagnostic performance go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-package-cache-preflight ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-publish-preflight rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-source-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-source precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check flowersec-test-contract go-cover-check-short go-cover-check nightly-check
 
 FLOWERSEC_TEST_HOST ?= ./scripts/test-host.sh
 SWIFTPM_CACHE_PATH := $(CURDIR)/.flowersec/swiftpm-cache
@@ -35,10 +35,13 @@ gen-examples:
 	cd flowersec-go && gofmt -w internal/testgen
 
 test:
-	$(MAKE) go-test ts-test
+	go -C flowersec-go run ./internal/cmd/flowersec-test run --suite acceptance
+
+test-resume:
+	go -C flowersec-go run ./internal/cmd/flowersec-test resume --suite acceptance
 
 browser-smoke:
-	$(FLOWERSEC_TEST_HOST) run --suite browser-smoke
+	go -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-smoke
 
 diagnostic:
 	$(FLOWERSEC_TEST_HOST) run --suite diagnostic
@@ -75,17 +78,15 @@ go-vulncheck:
 
 ts-test:
 	cd flowersec-ts && npm test
-	node --test flowersec-ts/scripts/browser-acceptance-core.node-test.mjs
 
 ts-test-short: ts-ensure-deps
 	cd flowersec-ts && npx vitest run --exclude 'src/**/*.integration.test.ts' --exclude 'src/v2/browserBundle.test.ts'
-	node --test flowersec-ts/scripts/browser-acceptance-core.node-test.mjs
 
 ts-browser-ensure:
 	cd flowersec-ts && npm run ensure:browser
 
 ts-browser-e2e:
-	cd flowersec-ts && npm run test:browser
+	cd flowersec-ts && npm run test:browser:chromium
 
 ts-cover-check:
 	cd flowersec-ts && npm run test:coverage
@@ -343,7 +344,7 @@ stability-rust-check:
 stability-check: stability-source-check stability-swift-check stability-rust-check
 
 flowersec-test-contract:
-	cd flowersec-go && go test -timeout=5m ./internal/cmd/flowersec-test ./internal/transporttest/acceptance ./internal/transporttest/linuxnetlab
+	cd flowersec-go && go test -timeout=5m ./internal/cmd/flowersec-test ./internal/transporttest/linuxnetlab
 	cd flowersec-go && go test -timeout=5m -run '^(TestCapacityCoordinatorConfigHoldsExactReleaseSessionCount|TestStreamCapacityWebSocketResourcesCoverAllPhysicalStreams|TestStreamCapacityUsesTightBridgeCopyBufferOnly)$$' ./internal/transporttest/tunnelworkload
 
 go-cover-check-short:
@@ -421,7 +422,6 @@ final-race-check:
 final-ts-check:
 	$(MAKE) ts-lint
 	$(MAKE) ts-build
-	$(MAKE) ts-browser-e2e
 	$(MAKE) ts-test
 	$(MAKE) ts-cover-check
 

@@ -22,7 +22,7 @@ if ! git merge-base --is-ancestor "$origin_main" "$head"; then
   exit 1
 fi
 
-make check
+make test
 
 if [[ -n "$(git status --short)" || "$(git rev-parse HEAD)" != "$head" ]]; then
   echo "main gate changed the worktree or HEAD" >&2

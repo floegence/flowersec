@@ -13,7 +13,8 @@ use crate::raw_quic_v2::{
     RawQuicListener, RawQuicPathProfile, RawQuicServerConfig, RawQuicSession, RawQuicStream,
 };
 use crate::{
-    Acceptor, AcceptorOptions, ConnectorOptions,
+    Acceptor, AcceptorOptions, ArtifactSource, ArtifactSourceError, ConnectionController,
+    ConnectionControllerOptions, ConnectionState, ConnectorOptions, RetryPolicy,
     admission_v2::{AdmissionCommitErrorV2, AdmissionCommitV2, CandidateAttemptV2},
     artifact_v2::{Artifact, ArtifactLease},
     connect,
@@ -26,6 +27,7 @@ use crate::{
         StreamMetadata,
     },
 };
+use async_trait::async_trait;
 use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
@@ -352,6 +354,223 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
         session.close().await.expect("close facade client");
         server.close().await.expect("close facade server");
     }
+}
+
+#[derive(Debug)]
+struct FreshRawQuicArtifactSource {
+    address: SocketAddr,
+    acquisitions: Arc<AtomicUsize>,
+    spends: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl ArtifactSource for FreshRawQuicArtifactSource {
+    async fn acquire(
+        &self,
+        _cancellation: CancellationToken,
+    ) -> Result<ArtifactLease, ArtifactSourceError> {
+        let ordinal = self.acquisitions.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut artifact: serde_json::Value = serde_json::from_slice(&public_connector_artifact(
+            self.address,
+            RawQuicPathProfile::Direct,
+            1,
+        ))
+        .expect("decode controller artifact");
+        artifact["correlation"]["tags"] = serde_json::json!([{
+            "key": "controller-attempt",
+            "value": ordinal.to_string(),
+        }]);
+        let artifact = Artifact::parse(
+            serde_json::to_vec(&artifact).expect("encode fresh controller artifact"),
+        )
+        .expect("parse fresh controller artifact");
+        let spends = self.spends.clone();
+        Ok(ArtifactLease::new(artifact, move || {
+            let spends = spends.clone();
+            async move {
+                spends.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }))
+    }
+}
+
+#[tokio::test]
+async fn connection_controller_replaces_terminated_raw_quic_session_without_replay() {
+    let vectors: serde_json::Value = serde_json::from_str(include_str!(
+        "../../testdata/transport_v2/connection_controller_vectors.json"
+    ))
+    .expect("parse shared controller vectors");
+    let scenario = vectors["scenarios"]
+        .as_array()
+        .expect("controller scenarios")
+        .iter()
+        .find(|scenario| scenario["name"] == "connect_and_replace_after_termination")
+        .expect("replacement scenario");
+    assert_eq!(
+        scenario["sessions"],
+        serde_json::json!(["session-1", "session-2"])
+    );
+    assert_eq!(scenario["replay"], serde_json::json!([]));
+
+    let profile = RawQuicPathProfile::Direct;
+    let listener = Arc::new(
+        RawQuicListener::bind(
+            loopback_ephemeral(),
+            server_config(profile, session_limits(1)),
+        )
+        .expect("bind controller listener"),
+    );
+    let address = listener.local_addr().expect("controller listener address");
+    let acquisitions = Arc::new(AtomicUsize::new(0));
+    let spends = Arc::new(AtomicUsize::new(0));
+    let source = Arc::new(FreshRawQuicArtifactSource {
+        address,
+        acquisitions: acquisitions.clone(),
+        spends: spends.clone(),
+    });
+    let connector =
+        ConnectorOptions::new(vec![test_cert_der()]).expect("create controller connector options");
+    let retry = RetryPolicy::new(Duration::from_millis(1), 1, Duration::from_millis(1))
+        .expect("create controller retry policy");
+    let controller = ConnectionController::new(
+        source,
+        ConnectionControllerOptions::new(connector).with_retry_policy(retry),
+    );
+
+    let first_accept = tokio::spawn(establish_controller_server(listener.clone()));
+    controller.start().expect("start controller");
+    let first_client = wait_for_controller_session(&controller, None).await;
+    let first_server = first_accept.await.expect("join first accept");
+    let old_stream = first_client
+        .open_stream("old-session", StreamMetadata::empty())
+        .await
+        .expect("open first-session stream");
+    let old_peer = first_server
+        .accept_stream()
+        .await
+        .expect("accept first-session stream");
+    assert_eq!(old_peer.kind(), "old-session");
+    old_stream
+        .write(Bytes::from_static(b"before-termination"))
+        .await
+        .expect("write before termination");
+    assert_eq!(
+        old_peer
+            .stream()
+            .read()
+            .await
+            .expect("read before termination"),
+        Some(Bytes::from_static(b"before-termination"))
+    );
+
+    let second_accept = tokio::spawn(establish_controller_server(listener.clone()));
+    first_server
+        .close()
+        .await
+        .expect("terminate first server session");
+    let _ = first_client.wait_termination().await;
+    let second_client = wait_for_controller_session(&controller, Some(&first_client)).await;
+    let second_server = second_accept.await.expect("join second accept");
+
+    assert_eq!(
+        old_stream
+            .write(Bytes::from_static(b"must-not-migrate"))
+            .await,
+        Err(SessionError::Closed)
+    );
+    assert!(
+        first_client
+            .rpc()
+            .notify(90, serde_json::json!({"value":"must-not-replay"}))
+            .await
+            .is_err()
+    );
+    let fresh_stream = second_client
+        .open_stream("fresh-session", StreamMetadata::empty())
+        .await
+        .expect("open replacement stream");
+    let fresh_peer = second_server
+        .accept_stream()
+        .await
+        .expect("accept replacement stream");
+    assert_eq!(fresh_peer.kind(), "fresh-session");
+    fresh_stream
+        .write(Bytes::from_static(b"fresh"))
+        .await
+        .expect("write replacement payload");
+    assert_eq!(
+        fresh_peer
+            .stream()
+            .read()
+            .await
+            .expect("read replacement payload"),
+        Some(Bytes::from_static(b"fresh"))
+    );
+    assert_eq!(acquisitions.load(Ordering::SeqCst), 2);
+    assert_eq!(spends.load(Ordering::SeqCst), 2);
+
+    controller.close().await;
+    second_server
+        .close()
+        .await
+        .expect("close replacement server");
+}
+
+async fn wait_for_controller_session(
+    controller: &ConnectionController,
+    previous: Option<&Arc<dyn crate::Session>>,
+) -> Arc<dyn crate::Session> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let status = controller.status();
+            assert_ne!(
+                status.state,
+                ConnectionState::Failed,
+                "controller failed: {status:?}"
+            );
+            if let Some(session) = controller.current_session()
+                && previous.is_none_or(|previous| !Arc::ptr_eq(previous, &session))
+            {
+                return session;
+            }
+            controller.wait_for_status_change(status.revision).await;
+        }
+    })
+    .await
+    .expect("controller publishes a session")
+}
+
+async fn establish_controller_server(listener: Arc<RawQuicListener>) -> Arc<dyn crate::Session> {
+    let raw = listener.accept().await.expect("accept controller QUIC");
+    let admission = raw
+        .accept_stream()
+        .await
+        .expect("accept controller admission");
+    let fsb2 = read_to_end(&admission).await;
+    admission
+        .write_all(&admission_success_fixture())
+        .await
+        .expect("write controller admission response");
+    admission
+        .close_write()
+        .await
+        .expect("finish controller admission response");
+    let binding = fsb2_binding(&fsb2);
+    establish_session_v2(
+        Arc::new(raw),
+        raw_session_config(
+            SessionRole::Server,
+            PathKind::Direct,
+            binding,
+            Some(binding),
+            None,
+            None,
+            Duration::from_secs(30),
+        ),
+    )
+    .await
+    .expect("establish controller server session")
 }
 
 #[tokio::test]
@@ -1378,143 +1597,150 @@ impl RpcHandlerV2 for InteropRpc {
 }
 
 #[tokio::test]
-async fn rust_and_go_run_full_session_v2_over_raw_quic_direct_and_tunnel() {
-    for profile in [RawQuicPathProfile::Direct, RawQuicPathProfile::Tunnel] {
-        let mut child = go_peer_command("session-server", None, profile)
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("start Go SessionV2 server");
-        let stdout = child.stdout.take().expect("Go server stdout");
-        let (mut reader, ready) = tokio::task::spawn_blocking(move || {
-            let mut reader = BufReader::new(stdout);
-            let mut ready = String::new();
-            reader.read_line(&mut ready).expect("read Go READY");
-            (reader, ready)
-        })
-        .await
-        .expect("join READY reader");
-        let address = ready
-            .trim()
-            .strip_prefix("READY ")
-            .expect("READY prefix")
-            .parse::<SocketAddr>()
-            .expect("Go address");
-        let raw = RawQuicSession::dial(
-            loopback_ephemeral(),
-            address,
-            "localhost",
-            client_config(profile, session_limits(4)),
-        )
-        .await
-        .expect("dial Go SessionV2 server");
-        let contract_hash = session_contract_hash(4, 30);
-        let raw_fsb2 = admission_request_fixture_with_contract(profile, contract_hash);
-        let (local_endpoint, peer_endpoint) = match profile {
-            RawQuicPathProfile::Direct => (None, None),
-            RawQuicPathProfile::Tunnel => (
-                Some("endpoint-client".to_owned()),
-                Some("endpoint-server".to_owned()),
-            ),
-        };
-        let session = admit_test_client(
-            raw,
-            raw_fsb2.clone(),
-            SessionConfigV2 {
-                role: SessionRole::Client,
-                path: match profile {
-                    RawQuicPathProfile::Direct => PathKind::Direct,
-                    RawQuicPathProfile::Tunnel => PathKind::Tunnel,
-                },
-                channel_id: "channel-1".into(),
-                session_contract_hash: contract_hash,
-                suite: CipherSuiteV2::ChaCha20Poly1305,
-                psk: [0x42; 32],
-                max_inbound_streams: 4,
-                idle_timeout: Duration::from_secs(60),
-                local_admission_binding: [0; 32],
-                peer_admission_binding: (profile == RawQuicPathProfile::Direct)
-                    .then(|| fsb2_binding(&raw_fsb2)),
-                local_endpoint_instance_id: local_endpoint,
-                expected_peer_endpoint_instance_id: peer_endpoint,
-                rpc_handler: Some(Arc::new(InteropRpc)),
-                deadlines: Default::default(),
+async fn rust_and_go_run_full_session_v2_over_raw_quic_direct() {
+    run_rust_and_go_full_session_v2_over_raw_quic(RawQuicPathProfile::Direct).await;
+}
+
+#[tokio::test]
+async fn rust_and_go_run_full_session_v2_over_raw_quic_tunnel() {
+    run_rust_and_go_full_session_v2_over_raw_quic(RawQuicPathProfile::Tunnel).await;
+}
+
+async fn run_rust_and_go_full_session_v2_over_raw_quic(profile: RawQuicPathProfile) {
+    let mut child = go_peer_command("session-server", None, profile)
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("start Go SessionV2 server");
+    let stdout = child.stdout.take().expect("Go server stdout");
+    let (mut reader, ready) = tokio::task::spawn_blocking(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut ready = String::new();
+        reader.read_line(&mut ready).expect("read Go READY");
+        (reader, ready)
+    })
+    .await
+    .expect("join READY reader");
+    let address = ready
+        .trim()
+        .strip_prefix("READY ")
+        .expect("READY prefix")
+        .parse::<SocketAddr>()
+        .expect("Go address");
+    let raw = RawQuicSession::dial(
+        loopback_ephemeral(),
+        address,
+        "localhost",
+        client_config(profile, session_limits(4)),
+    )
+    .await
+    .expect("dial Go SessionV2 server");
+    let contract_hash = session_contract_hash(4, 30);
+    let raw_fsb2 = admission_request_fixture_with_contract(profile, contract_hash);
+    let (local_endpoint, peer_endpoint) = match profile {
+        RawQuicPathProfile::Direct => (None, None),
+        RawQuicPathProfile::Tunnel => (
+            Some("endpoint-client".to_owned()),
+            Some("endpoint-server".to_owned()),
+        ),
+    };
+    let session = admit_test_client(
+        raw,
+        raw_fsb2.clone(),
+        SessionConfigV2 {
+            role: SessionRole::Client,
+            path: match profile {
+                RawQuicPathProfile::Direct => PathKind::Direct,
+                RawQuicPathProfile::Tunnel => PathKind::Tunnel,
             },
-        )
+            channel_id: "channel-1".into(),
+            session_contract_hash: contract_hash,
+            suite: CipherSuiteV2::ChaCha20Poly1305,
+            psk: [0x42; 32],
+            max_inbound_streams: 4,
+            idle_timeout: Duration::from_secs(60),
+            local_admission_binding: [0; 32],
+            peer_admission_binding: (profile == RawQuicPathProfile::Direct)
+                .then(|| fsb2_binding(&raw_fsb2)),
+            local_endpoint_instance_id: local_endpoint,
+            expected_peer_endpoint_instance_id: peer_endpoint,
+            rpc_handler: Some(Arc::new(InteropRpc)),
+            deadlines: Default::default(),
+        },
+    )
+    .await
+    .expect("admit and establish Rust SessionV2");
+
+    let stream = session
+        .open_stream("rust-open", StreamMetadata::empty())
         .await
-        .expect("admit and establish Rust SessionV2");
-
-        let stream = session
-            .open_stream("rust-open", StreamMetadata::empty())
-            .await
-            .expect("Rust opens logical stream");
-        stream
-            .write(Bytes::from_static(b"rust-app"))
-            .await
-            .expect("write Rust app payload");
-        stream.close_write().await.expect("Rust app FIN");
-        let incoming = session.accept_stream().await.expect("accept Go stream");
-        assert_eq!(incoming.kind(), "go-open");
-        assert_eq!(
-            incoming.stream().read().await.expect("read Go app stream"),
-            Some(Bytes::from_static(b"from-go"))
-        );
-        assert_eq!(
-            incoming.stream().read().await.expect("read Go stream FIN"),
-            None
-        );
-        incoming
-            .stream()
-            .close_write()
-            .await
-            .expect("close reverse Go stream direction");
-
-        let response = session
-            .rpc()
-            .call(22, serde_json::json!({"from": "rust"}))
-            .await
-            .expect("Rust to Go RPC");
-        assert_eq!(response["from"], "rust");
-        session.rekey().await.expect("Rust/Go SessionV2 rekey");
-        let response = session
-            .rpc()
-            .call(22, serde_json::json!({"epoch": 1}))
-            .await
-            .expect("Rust to Go RPC after rekey");
-        assert_eq!(response["epoch"], 1);
-        let done = session
-            .open_stream("done", StreamMetadata::empty())
-            .await
-            .expect("open done stream");
-        let response = session
-            .rpc()
-            .call(23, serde_json::json!({"open_acknowledged": true}))
-            .await
-            .expect("synchronize accepted done stream");
-        assert_eq!(response["open_acknowledged"], true);
-        let receipt = Bytes::from_static(b"rpc-response-observed");
-        let written = done
-            .write(receipt.clone())
-            .await
-            .expect("confirm RPC response receipt");
-        assert_eq!(written, receipt.len());
-        done.close_write()
-            .await
-            .expect("finish RPC response receipt");
-
-        let (status, remainder) = tokio::task::spawn_blocking(move || {
-            let status = child.wait().expect("wait Go SessionV2 server");
-            let mut remainder = String::new();
-            reader
-                .read_to_string(&mut remainder)
-                .expect("read Go output");
-            (status, remainder)
-        })
+        .expect("Rust opens logical stream");
+    stream
+        .write(Bytes::from_static(b"rust-app"))
         .await
-        .expect("join Go server wait");
-        assert!(status.success(), "Go SessionV2 failed: {remainder}");
-        assert!(remainder.contains("OK"), "Go output: {remainder}");
-        session.close().await.expect("close Rust SessionV2");
-    }
+        .expect("write Rust app payload");
+    stream.close_write().await.expect("Rust app FIN");
+    let incoming = session.accept_stream().await.expect("accept Go stream");
+    assert_eq!(incoming.kind(), "go-open");
+    assert_eq!(
+        incoming.stream().read().await.expect("read Go app stream"),
+        Some(Bytes::from_static(b"from-go"))
+    );
+    assert_eq!(
+        incoming.stream().read().await.expect("read Go stream FIN"),
+        None
+    );
+    incoming
+        .stream()
+        .close_write()
+        .await
+        .expect("close reverse Go stream direction");
+
+    let response = session
+        .rpc()
+        .call(22, serde_json::json!({"from": "rust"}))
+        .await
+        .expect("Rust to Go RPC");
+    assert_eq!(response["from"], "rust");
+    session.rekey().await.expect("Rust/Go SessionV2 rekey");
+    let response = session
+        .rpc()
+        .call(22, serde_json::json!({"epoch": 1}))
+        .await
+        .expect("Rust to Go RPC after rekey");
+    assert_eq!(response["epoch"], 1);
+    let done = session
+        .open_stream("done", StreamMetadata::empty())
+        .await
+        .expect("open done stream");
+    let response = session
+        .rpc()
+        .call(23, serde_json::json!({"open_acknowledged": true}))
+        .await
+        .expect("synchronize accepted done stream");
+    assert_eq!(response["open_acknowledged"], true);
+    let acknowledgement = Bytes::from_static(b"rpc-response-observed");
+    let written = done
+        .write(acknowledgement.clone())
+        .await
+        .expect("confirm RPC response acknowledgement");
+    assert_eq!(written, acknowledgement.len());
+    done.close_write()
+        .await
+        .expect("finish RPC response acknowledgement");
+
+    let (status, remainder) = tokio::task::spawn_blocking(move || {
+        let status = child.wait().expect("wait Go SessionV2 server");
+        let mut remainder = String::new();
+        reader
+            .read_to_string(&mut remainder)
+            .expect("read Go output");
+        (status, remainder)
+    })
+    .await
+    .expect("join Go server wait");
+    assert!(status.success(), "Go SessionV2 failed: {remainder}");
+    assert!(remainder.contains("OK"), "Go output: {remainder}");
+    session.close().await.expect("close Rust SessionV2");
 }
 
 #[tokio::test]

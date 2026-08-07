@@ -45,15 +45,29 @@ func TestCoverageQualityGates(t *testing.T) {
 }
 
 func TestGoCoverageSerializesPackageExecution(t *testing.T) {
+	packages := []string{"./...", "./controlplane"}
 	for name, test := range map[string]struct {
 		short bool
 		want  []string
 	}{
-		"short": {short: true, want: []string{"go", "test", "-p=1", "-short", "-count=1", "-cover", "./..."}},
-		"full":  {short: false, want: []string{"go", "test", "-p=1", "-count=1", "-cover", "./..."}},
+		"short": {short: true, want: []string{"go", "test", "-p=1", "-short", "-count=1", "-cover", "./...", "./controlplane"}},
+		"full":  {short: false, want: []string{"go", "test", "-p=1", "-count=1", "-cover", "./...", "./controlplane"}},
 	} {
-		if got := goCoverageCommand(test.short).Args; !reflect.DeepEqual(got, test.want) {
+		if got := goCoverageCommand(test.short, packages).Args; !reflect.DeepEqual(got, test.want) {
 			t.Fatalf("Go %s coverage command = %v, want %v", name, got, test.want)
+		}
+	}
+}
+
+func TestDefaultGoCoveragePackagesExcludeExplicitWorkloads(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	packages, err := defaultGoTestPackages(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, packagePath := range packages {
+		if regexp.MustCompile(`/internal/transporttest/(performance|tunnelworkload)$`).MatchString(packagePath) {
+			t.Fatalf("default coverage includes explicit workload package %q", packagePath)
 		}
 	}
 }

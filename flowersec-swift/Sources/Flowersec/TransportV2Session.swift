@@ -560,7 +560,7 @@ actor TransportV2Session {
         streams[id] = stream
         try await stream.sendOpen(openRaw)
         let rejection = try await stream.receiveOpenResponse(
-          expectedOpenHash: Data(SHA256.hash(data: openRaw))
+          expectedOpenHash: try computeOpenHashV2(openRaw)
         )
         try outboundLedger.validOpen(id)
         if let rejection {
@@ -728,7 +728,7 @@ actor TransportV2Session {
         receiveSequence: 1
       )
       streams[preface.logicalStreamID] = stream
-      try await stream.sendOpenACK(Data(SHA256.hash(data: openRaw)))
+      try await stream.sendOpenACK(computeOpenHashV2(openRaw))
       guard await stream.isUsableAfterOpenACK() else { return }
       guard acceptsPeerStreamAfterGoAway(preface.logicalStreamID) else {
         try? await stream.reset()
@@ -790,7 +790,7 @@ actor TransportV2Session {
       sendSequence: 0,
       receiveSequence: 1
     )
-    var payload = Data(SHA256.hash(data: openRaw))
+    var payload = try computeOpenHashV2(openRaw)
     payload.appendUInt16BE(reason)
     try await stream.sendOpenReject(payload)
     await carrierStream.close()

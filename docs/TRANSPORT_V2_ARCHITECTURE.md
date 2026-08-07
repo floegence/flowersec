@@ -103,7 +103,11 @@ before writing FSC2/FSH2. Native TypeScript admission validates it before FSB2
 credential bytes. `N = 1` therefore requires exactly three Flowersec-visible
 physical bidirectional streams in every SDK.
 
-The complete Transport v2 workload is executed by the single-host runner and is judged by protocol assertions and process exit status. Successful runs retain no output; a failure retains only the bounded first-failure diagnostic.
+Ordinary protocol acceptance and the three Chromium smoke topologies run on the
+local development host. Privileged kernel diagnostics and performance workloads
+use the single-host runner. Every layer is judged by assertions and process exit
+status: success retains no output, while failure retains only a bounded
+first-failure diagnostic.
 
 Capacity tests include 1,000 concurrent direct WSS, raw QUIC, and WebTransport sessions, plus 1,000 sessions for each WW, QQ, WQ, QW, WebTransport-over-WSS, and WebTransport-over-QUIC tunnel topology. The performance package freezes a 30-second ramp, 60-second hold, 30-second cleanup, 120-second watchdog, and RSS, CPU, file-descriptor, goroutine, and task ceilings. Each capacity case counts attempted, succeeded, and failed sessions; proves a unique active peak of exactly 1,000 with no hold disconnect; records ramp/hold/cleanup resource samples; and finishes with zero watchdogs and zero residual sessions.
 

@@ -2,16 +2,6 @@ package transporttest
 
 import "time"
 
-// TestPlan is the executable workload selected by diagnostic and performance
-// tooling. Default acceptance defines its small fixed plan independently.
-type TestPlan struct {
-	RunCount int
-	Clean    ProfilePlan
-	Mobile   ProfilePlan
-	Edge     ProfilePlan
-	Adaptive AdaptivePlan
-}
-
 type AdaptivePlan struct {
 	ID                  string
 	Stages              []AdaptiveStagePlan

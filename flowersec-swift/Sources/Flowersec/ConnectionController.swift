@@ -257,7 +257,6 @@ public actor ConnectionController {
         publish()
 
         let termination = await session.waitTermination()
-        try? await session.close()
         guard state != .closed, !Task.isCancelled else { return }
         currentSession = nil
         let sessionFailure = ConnectionAttemptFailure.session(termination.error)

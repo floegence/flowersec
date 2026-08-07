@@ -109,7 +109,7 @@ Flowersec Runtime 擁有 WebSocket、raw QUIC 與 WebTransport 的生產級 List
 
 ```bash
 make install-hooks
-make check
+make precommit
 ```
 
 Flowersec 採用 [MIT License](LICENSE)。Release Artifact 透過 [GitHub Releases](https://github.com/floegence/flowersec/releases) 發布。

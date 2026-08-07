@@ -22,7 +22,7 @@ const protectedVariables = new Set([
 ]);
 
 const protectedTargets = [
-  "test", "browser-smoke", "precommit", "precommit-source",
+  "test", "test-resume", "browser-smoke", "precommit", "precommit-source",
   "diagnostic", "performance", "security-makefile-check", "security-dependency-check",
   "security-package-check", "release-policy-check", "release-version-check", "release-test",
   "release-check", "check", "final-network-preflight", "final-offline-contracts",
@@ -85,8 +85,9 @@ function validateSource(source) {
 }
 
 function verifyGraph(source) {
-  exactRecipe(source, "test", ["\t$(MAKE) go-test ts-test"]);
-  exactRecipe(source, "browser-smoke", ["\t$(FLOWERSEC_TEST_HOST) run --suite browser-smoke"]);
+  exactRecipe(source, "test", ["\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite acceptance"]);
+  exactRecipe(source, "test-resume", ["\tgo -C flowersec-go run ./internal/cmd/flowersec-test resume --suite acceptance"]);
+  exactRecipe(source, "browser-smoke", ["\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-smoke"]);
   exactRecipe(source, "precommit", ["\t$(MAKE) precommit-source"]);
   exactRecipe(source, "diagnostic", ["\t$(FLOWERSEC_TEST_HOST) run --suite diagnostic"]);
   exactRecipe(source, "performance", ["\t$(FLOWERSEC_TEST_HOST) run --suite performance"]);

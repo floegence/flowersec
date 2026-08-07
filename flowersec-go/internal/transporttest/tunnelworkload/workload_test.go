@@ -572,7 +572,7 @@ func TestProductionTunnelTopologiesRunColdRPCBulkAndCleanup(t *testing.T) {
 	}
 }
 
-func TestMobileQWColdPairingAtFrozenConcurrency(t *testing.T) {
+func TestPeriodicLossQWColdPairingAtFrozenConcurrency(t *testing.T) {
 	plan := transporttest.ProfilePlan{
 		Cold: transporttest.ColdPlan{
 			Operations: 30, MaxInflight: 30, StartRatePerSecond: 15,
@@ -591,7 +591,7 @@ func TestMobileQWColdPairingAtFrozenConcurrency(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.Topology != TopologyQW || len(result.Cold) != plan.Cold.Operations {
-		t.Fatalf("mobile QW cold operations = %d, want %d", len(result.Cold), plan.Cold.Operations)
+		t.Fatalf("periodic-loss QW cold operations = %d, want %d", len(result.Cold), plan.Cold.Operations)
 	}
 	if len(result.RPC) != 0 || len(result.Bulk.Directions) != 0 || result.Bulk.BytesPerDirection != 0 || result.CleanupDuration <= 0 {
 		t.Fatalf("cold diagnostic entered later phases or skipped cleanup: %+v", result)

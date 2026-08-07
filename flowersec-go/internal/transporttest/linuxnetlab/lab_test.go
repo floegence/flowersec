@@ -47,15 +47,15 @@ func TestConfigForCellHandlesFinalAddressSlot(t *testing.T) {
 }
 
 func TestConfigForCellIsStableAndIsolated(t *testing.T) {
-	first, err := ConfigForCell("mobile-01", 1, 1280, FrozenFirewall)
+	first, err := ConfigForCell("periodic-loss-01", 1, 1280, FrozenFirewall)
 	if err != nil {
 		t.Fatal(err)
 	}
-	repeated, err := ConfigForCell("mobile-01", 1, 1280, FrozenFirewall)
+	repeated, err := ConfigForCell("periodic-loss-01", 1, 1280, FrozenFirewall)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := ConfigForCell("mobile-01", 2, 1280, FrozenFirewall)
+	second, err := ConfigForCell("periodic-loss-01", 2, 1280, FrozenFirewall)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestOpenBuildsKernelTopologyAndCloseIsIdempotent(t *testing.T) {
 }
 
 func TestOpenRollsBackPartialTopology(t *testing.T) {
-	config, err := ConfigForCell("mobile-02", 3, 1280, FrozenFirewall)
+	config, err := ConfigForCell("periodic-loss-02", 3, 1280, FrozenFirewall)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestOpenRollsBackPartialTopology(t *testing.T) {
 }
 
 func TestOpenReturnsRetryableHandleWhenRollbackCannotFinish(t *testing.T) {
-	config, err := ConfigForCell("mobile-02", 4, 1280, FrozenFirewall)
+	config, err := ConfigForCell("periodic-loss-02", 4, 1280, FrozenFirewall)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestCloseRetriesOnlyFailedCleanup(t *testing.T) {
 }
 
 func TestOpenRejectsUnfrozenFirewall(t *testing.T) {
-	config, err := ConfigForCell("mobile-01", 1, 1280, "accept-all")
+	config, err := ConfigForCell("periodic-loss-01", 1, 1280, "accept-all")
 	if err != nil {
 		t.Fatal(err)
 	}

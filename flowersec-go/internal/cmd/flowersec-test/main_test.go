@@ -6,11 +6,42 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+const testSourceSHA = "0123456789abcdef0123456789abcdef01234567"
+
+func TestExactTitleMatchesOnlyTheCompleteTitle(t *testing.T) {
+	title := "runs direct admission and Session semantics over WSS"
+	pattern := regexp.MustCompile(exactTitle(title))
+	if !pattern.MatchString(title) {
+		t.Fatal("exact title did not match itself")
+	}
+	for _, value := range []string{"prefix " + title, title + " suffix"} {
+		if pattern.MatchString(value) {
+			t.Fatalf("exact title matched %q", value)
+		}
+	}
+}
+
+func TestVitestEntryUsesRepositoryConfigFromTheRunnerRoot(t *testing.T) {
+	entry := vitestEntry("test/typescript", "acceptance", "src/example.test.ts", "exact title")
+	if entry.ID != "test/typescript" || entry.Suite != "acceptance" || entry.Timeout != 5*time.Minute {
+		t.Fatalf("entry identity = %+v", entry)
+	}
+	want := []string{"--prefix", "flowersec-ts", "exec", "--", "vitest", "run", "--config", "flowersec-ts/vitest.config.ts", "flowersec-ts/src/example.test.ts", "-t", "^exact title$"}
+	if got := vitestArguments("src/example.test.ts", "exact title"); strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("vitest arguments = %q, want %q", got, want)
+	}
+}
+
+func acceptanceProgress(completed ...string) progress {
+	return progress{Plan: planName, SourceSHA: testSourceSHA, Suite: "acceptance", Completed: completed}
+}
 
 func testRegistry(runA, runB func(context.Context, runContext) error) []registeredTest {
 	return []registeredTest{
@@ -33,20 +64,23 @@ func TestRedDoesNotAdvanceAndResumeRunsTheFirstIncompleteTest(t *testing.T) {
 		},
 	)
 	var stdout, stderr bytes.Buffer
-	if err := executeSuite(context.Background(), &stdout, &stderr, "run", progressPath, t.TempDir(), tests, false); err == nil {
+	if err := executeSuite(context.Background(), &stdout, &stderr, "run", progressPath, t.TempDir(), "acceptance", testSourceSHA, tests, false); err == nil {
 		t.Fatal("RED suite returned success")
 	}
-	current, err := readProgress(progressPath, tests)
+	current, err := readProgress(progressPath, tests, "acceptance")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(current.Completed, ","); got != "test/a" {
 		t.Fatalf("completed after RED = %q", got)
 	}
+	if current.SourceSHA != testSourceSHA || current.Suite != "acceptance" {
+		t.Fatalf("progress identity = %q/%q", current.SourceSHA, current.Suite)
+	}
 	if next := firstIncomplete(tests, current.Completed); next == nil || next.ID != "test/b" {
 		t.Fatalf("next after RED = %+v", next)
 	}
-	if err := executeSuite(context.Background(), &stdout, &stderr, "resume", progressPath, t.TempDir(), tests, false); err != nil {
+	if err := executeSuite(context.Background(), &stdout, &stderr, "resume", progressPath, t.TempDir(), "acceptance", testSourceSHA, tests, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(progressPath); !errors.Is(err, os.ErrNotExist) || aRuns.Load() != 1 || bRuns.Load() != 2 {
@@ -63,13 +97,13 @@ func TestResumeStopsAfterTheFirstIncompleteTest(t *testing.T) {
 		{ID: "test/b", Suite: "acceptance", Timeout: time.Second, Run: func(context.Context, runContext) error { bRuns.Add(1); return nil }},
 		{ID: "test/c", Suite: "acceptance", Timeout: time.Second, Run: func(context.Context, runContext) error { cRuns.Add(1); return nil }},
 	}
-	if err := writeProgress(progressPath, progress{Plan: planName, Completed: []string{"test/a"}}, tests); err != nil {
+	if err := writeProgress(progressPath, acceptanceProgress("test/a"), tests); err != nil {
 		t.Fatal(err)
 	}
-	if err := executeSuite(context.Background(), ioDiscard{}, ioDiscard{}, "resume", progressPath, t.TempDir(), tests, false); err != nil {
+	if err := executeSuite(context.Background(), ioDiscard{}, ioDiscard{}, "resume", progressPath, t.TempDir(), "acceptance", testSourceSHA, tests, false); err != nil {
 		t.Fatal(err)
 	}
-	current, err := readProgress(progressPath, tests)
+	current, err := readProgress(progressPath, tests, "acceptance")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +115,7 @@ func TestResumeStopsAfterTheFirstIncompleteTest(t *testing.T) {
 	}
 }
 
-func TestRunAlwaysStartsFreshAndProgressHasOnlyPlanAndCompleted(t *testing.T) {
+func TestRunAlwaysStartsFreshAndProgressHasOnlyIdentityAndCompleted(t *testing.T) {
 	state := t.TempDir()
 	progressPath := filepath.Join(state, "acceptance.json")
 	var runs atomic.Int32
@@ -89,10 +123,10 @@ func TestRunAlwaysStartsFreshAndProgressHasOnlyPlanAndCompleted(t *testing.T) {
 		func(context.Context, runContext) error { runs.Add(1); return nil },
 		func(context.Context, runContext) error { runs.Add(1); return nil },
 	)
-	if err := writeProgress(progressPath, progress{Plan: planName, Completed: []string{"test/a", "test/b"}}, tests); err != nil {
+	if err := writeProgress(progressPath, acceptanceProgress("test/a", "test/b"), tests); err != nil {
 		t.Fatal(err)
 	}
-	if err := executeSuite(context.Background(), ioDiscard{}, ioDiscard{}, "run", progressPath, t.TempDir(), tests, false); err != nil {
+	if err := executeSuite(context.Background(), ioDiscard{}, ioDiscard{}, "run", progressPath, t.TempDir(), "acceptance", testSourceSHA, tests, false); err != nil {
 		t.Fatal(err)
 	}
 	if runs.Load() != 2 {
@@ -100,6 +134,38 @@ func TestRunAlwaysStartsFreshAndProgressHasOnlyPlanAndCompleted(t *testing.T) {
 	}
 	if _, err := os.Stat(progressPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("completed progress remains: %v", err)
+	}
+}
+
+func TestResumeStartsFreshWhenSourceSHAChanges(t *testing.T) {
+	state := t.TempDir()
+	progressPath := filepath.Join(state, "acceptance.json")
+	var firstRuns atomic.Int32
+	tests := testRegistry(
+		func(context.Context, runContext) error { firstRuns.Add(1); return nil },
+		func(context.Context, runContext) error { return errors.New("current source failure") },
+	)
+	old := acceptanceProgress("test/a")
+	old.SourceSHA = "abcdef0123456789abcdef0123456789abcdef01"
+	if err := writeProgress(progressPath, old, tests); err != nil {
+		t.Fatal(err)
+	}
+	stale := failurePath(progressPath, "test/a")
+	if err := atomicWrite(stale, []byte("old source failure\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := executeSuite(context.Background(), ioDiscard{}, ioDiscard{}, "resume", progressPath, t.TempDir(), "acceptance", testSourceSHA, tests, false); err != nil {
+		t.Fatal(err)
+	}
+	current, err := readProgress(progressPath, tests, "acceptance")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.SourceSHA != testSourceSHA || strings.Join(current.Completed, ",") != "test/a" || firstRuns.Load() != 1 {
+		t.Fatalf("resumed progress = %+v", current)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("resume retained old-source failure log: %v", err)
 	}
 }
 
@@ -114,7 +180,7 @@ func TestSuccessfulRunRemovesTempDirectoryAndFailureLog(t *testing.T) {
 	if err := atomicWrite(failurePath(progressPath, tests[0].ID), []byte("old failure\n")); err != nil {
 		t.Fatal(err)
 	}
-	if err := executeSuite(context.Background(), ioDiscard{}, ioDiscard{}, "run", progressPath, t.TempDir(), tests, false); err != nil {
+	if err := executeSuite(context.Background(), ioDiscard{}, ioDiscard{}, "run", progressPath, t.TempDir(), "acceptance", testSourceSHA, tests, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(created); !errors.Is(err, os.ErrNotExist) {
@@ -174,7 +240,7 @@ func TestFreshRunClearsOldFailureLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	tests := testRegistry(func(context.Context, runContext) error { return errors.New("current failure") }, func(context.Context, runContext) error { return nil })
-	_ = executeSuite(context.Background(), ioDiscard{}, ioDiscard{}, "run", progressPath, t.TempDir(), tests, false)
+	_ = executeSuite(context.Background(), ioDiscard{}, ioDiscard{}, "run", progressPath, t.TempDir(), "acceptance", testSourceSHA, tests, false)
 	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("fresh run retained stale failure log: %v", err)
 	}
@@ -190,7 +256,7 @@ func TestCancelledSuiteDoesNotScheduleAnotherTest(t *testing.T) {
 		func(context.Context, runContext) error { cancel(); return nil },
 		func(context.Context, runContext) error { secondRuns.Add(1); return nil },
 	)
-	if err := executeSuite(ctx, ioDiscard{}, ioDiscard{}, "run", progressPath, t.TempDir(), tests, false); !errors.Is(err, context.Canceled) {
+	if err := executeSuite(ctx, ioDiscard{}, ioDiscard{}, "run", progressPath, t.TempDir(), "acceptance", testSourceSHA, tests, false); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled suite = %v", err)
 	}
 	if secondRuns.Load() != 0 {
@@ -198,15 +264,23 @@ func TestCancelledSuiteDoesNotScheduleAnotherTest(t *testing.T) {
 	}
 }
 
-func TestRunnerRequiresFixedRootEnvironment(t *testing.T) {
-	if err := validateExecutionEnvironment("linux", 1000, "/var/lib/flowersec-test/home", externalHostPath, "/var/lib/flowersec-test/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace"); err == nil {
+func TestPrivilegedSuitesRequireFixedRootEnvironment(t *testing.T) {
+	if err := validateExecutionEnvironment("diagnostic", "linux", 1000, "/var/lib/flowersec-test/home", externalHostPath, "/var/lib/flowersec-test/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace"); err == nil {
 		t.Fatal("non-root external suite was accepted")
 	}
-	if err := validateExecutionEnvironment("linux", 0, "/home/user", externalHostPath, "/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace"); err == nil {
+	if err := validateExecutionEnvironment("performance", "linux", 0, "/home/user", externalHostPath, "/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace"); err == nil {
 		t.Fatal("wrong root environment was accepted")
 	}
-	if err := validateExecutionEnvironment("linux", 0, "/var/lib/flowersec-test/home", externalHostPath, "/var/lib/flowersec-test/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace/flowersec"); err != nil {
+	if err := validateExecutionEnvironment("diagnostic", "linux", 0, "/var/lib/flowersec-test/home", externalHostPath, "/var/lib/flowersec-test/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace/flowersec"); err != nil {
 		t.Fatalf("fixed root environment rejected: %v", err)
+	}
+}
+
+func TestLocalSuitesDoNotRequireRoot(t *testing.T) {
+	for _, suite := range []string{"acceptance", "browser-smoke"} {
+		if err := validateExecutionEnvironment(suite, "darwin", 501, "/Users/test", "/usr/bin:/bin", "/tmp", "", "/repo"); err != nil {
+			t.Fatalf("local suite %q rejected ordinary user: %v", suite, err)
+		}
 	}
 }
 

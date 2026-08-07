@@ -55,7 +55,12 @@ Run the default acceptance suite:
 make test
 ```
 
-Use `make diagnostic` for explicit protocol, browser, weak-network, and interoperability diagnostics, and `make performance` for capacity and soak workloads.
+After fixing a failure, use `make test-resume` to run the first incomplete test
+for the same source commit.
+
+Use `make browser-smoke` for the three local Chromium topologies. Use
+`make diagnostic` for explicit privileged browser, weak-network, and kernel
+diagnostics, and `make performance` for capacity and soak workloads.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
@@ -114,11 +119,16 @@ See the [Transport v2 architecture](docs/TRANSPORT_V2_ARCHITECTURE.md) and [thre
 
 The Flowersec runtime owns the production listener implementations for WebSocket, raw QUIC, and WebTransport. Application SDKs receive only opaque artifacts and sessions; runtime CLI tools compose the same connector and acceptor implementations.
 
-Install repository hooks and run the authoritative gate before integration:
+Install repository hooks and run the fast feature gate before integration:
 
 ```bash
 make install-hooks
-make check
+make precommit
 ```
+
+`scripts/push-main.sh` runs the bounded local acceptance suite before pushing
+the exact main SHA. Run the complete engineering check and the explicit
+nightly, diagnostic, and performance workflows for their compatibility,
+privileged, and load-testing scopes; release itself runs no tests.
 
 Flowersec is available under the [MIT License](LICENSE). Release artifacts are published through [GitHub Releases](https://github.com/floegence/flowersec/releases).
