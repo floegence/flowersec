@@ -105,6 +105,14 @@ func TestBrowserStreamCapacityContractIsFrozen(t *testing.T) {
 	}
 }
 
+func TestCapacityConnectScheduleReservesCompletionWindow(t *testing.T) {
+	sessionRamp := capacitySessionRamp(productionCapacityContract())
+	scheduleWindow := capacityConnectScheduleWindow(sessionRamp)
+	if scheduleWindow != 22500*time.Millisecond || sessionRamp-scheduleWindow != 7500*time.Millisecond {
+		t.Fatalf("capacity connect schedule/completion windows = %v/%v, want 22.5s/7.5s", scheduleWindow, sessionRamp-scheduleWindow)
+	}
+}
+
 func TestBrowserWSSStreamCapacityRecordsTightYamuxResources(t *testing.T) {
 	definition, ok := lookupCapacityCase("CAP-STREAM-WT-WSS-100X128")
 	if !ok {

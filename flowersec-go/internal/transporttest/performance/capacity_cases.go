@@ -96,6 +96,10 @@ func capacitySessionRamp(contract capacityContract) time.Duration {
 	return contract.Ramp
 }
 
+func capacityConnectScheduleWindow(sessionRamp time.Duration) time.Duration {
+	return sessionRamp * 3 / 4
+}
+
 type capacityCaseKind uint8
 
 const (
@@ -277,8 +281,9 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 	rampEnd := started.Add(contract.Ramp)
 	sessionRamp := capacitySessionRamp(contract)
 	sessionRampEnd := started.Add(sessionRamp)
+	connectScheduleWindow := capacityConnectScheduleWindow(sessionRamp)
 	for ordinal := range contract.Sessions {
-		due := started.Add(time.Duration(int64(sessionRamp) * int64(ordinal) / int64(contract.Sessions)))
+		due := started.Add(time.Duration(int64(connectScheduleWindow) * int64(ordinal) / int64(contract.Sessions)))
 		rampWG.Add(1)
 		go func() {
 			defer rampWG.Done()
