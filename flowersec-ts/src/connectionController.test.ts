@@ -165,6 +165,93 @@ describe("ConnectionController", () => {
     expect(calls).toBe(1);
     await controller.close();
   });
+
+  test("stops immediately on a terminal artifact result", async () => {
+    const controller = createConnectionControllerV2(
+      source(async () => ({
+        kind: "failure",
+        code: "unsupported",
+        disposition: { kind: "terminal" },
+      })),
+      async () => session().value,
+    );
+    controller.start();
+    await flush();
+    expect(controller.state).toBe("failed");
+    await expect(controller.waitForSession()).rejects.toMatchObject({ code: "failed" });
+    await controller.close();
+  });
+
+  test("normalizes malformed artifact source results to a terminal failure", async () => {
+    const controller = createConnectionControllerV2(
+      source(async () => null as never),
+      async () => session().value,
+    );
+    controller.start();
+    await flush();
+    expect(controller.failure).toEqual({ phase: "artifact", code: "artifact_source_failed" });
+    expect(controller.state).toBe("failed");
+    await controller.close();
+  });
+
+  test("does not accept a malformed one-shot session", async () => {
+    const controller = createConnectionControllerV2(
+      source(async () => ({ kind: "lease", lease: lease() })),
+      async () => ({ close: vi.fn() } as never),
+    );
+    controller.start();
+    await flush();
+    expect(controller.state).toBe("failed");
+    expect(controller.failure).toEqual({ phase: "connect", code: "connection_failed" });
+    await controller.close();
+  });
+
+  test("cancels a waiter without changing controller lifecycle", async () => {
+    let resolveAcquire!: (result: ArtifactSourceResult) => void;
+    const controller = createConnectionControllerV2(
+      source(async () => await new Promise<ArtifactSourceResult>((resolve) => { resolveAcquire = resolve; })),
+      async () => session().value,
+    );
+    controller.start();
+    const waiter = new AbortController();
+    const waiting = controller.waitForSession({ signal: waiter.signal });
+    waiter.abort(new Error("caller canceled"));
+    await expect(waiting).rejects.toMatchObject({ code: "canceled" });
+    resolveAcquire({ kind: "failure", code: "canceled", disposition: { kind: "terminal" } });
+    await controller.close();
+  });
+
+  test("marks a terminal session error failed instead of scheduling a replacement", async () => {
+    vi.useFakeTimers();
+    const connected = session();
+    connected.termination = Promise.resolve({ error: new SessionError("operation_failed") });
+    const acquire = vi.fn(async () => ({ kind: "lease" as const, lease: lease() }));
+    const controller = createConnectionControllerV2({ acquire }, async () => connected.value);
+    controller.start();
+    await flush();
+    await flush();
+    expect(controller.state).toBe("failed");
+    expect(acquire).toHaveBeenCalledOnce();
+    await controller.close();
+  });
+
+  test("isolates subscriber failures from connection lifecycle", async () => {
+    const connected = session();
+    const controller = createConnectionControllerV2(
+      source(async () => ({ kind: "lease", lease: lease() })),
+      async () => connected.value,
+    );
+    let notifications = 0;
+    const unsubscribe = controller.subscribe(() => {
+      notifications += 1;
+      if (notifications > 1) throw new Error("observer failed");
+    });
+    controller.start();
+    await expect(controller.waitForSession()).resolves.toBe(connected.value);
+    expect(controller.state).toBe("connected");
+    unsubscribe();
+    await controller.close();
+  });
 });
 
 function source(acquire: ArtifactSource["acquire"]): ArtifactSource {
