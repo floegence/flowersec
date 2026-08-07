@@ -98,7 +98,7 @@ func TestCapabilityManifestRequiresPortableContractsAndSharedFixtures(t *testing
 	})
 }
 
-func TestInteropMatrixContainsOnlyV2Evidence(t *testing.T) {
+func TestInteropMatrixContainsOnlyStableTestIDs(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
 		t.Fatal(err)

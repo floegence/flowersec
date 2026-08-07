@@ -212,68 +212,16 @@ bpftool feature probe kernel >/dev/null || { echo "missing host capability: kern
 [[ -e /sys/fs/cgroup/cgroup.controllers ]] || { echo "missing host capability: cgroup v2" >&2; exit 1; }
 mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf || { echo "missing host capability: BPF filesystem" >&2; exit 1; }
 
-# Exercise the same pinned BPF object and Linux network primitives used by
-# acceptance and performance tests. Every resource is task-owned and removed
-# by one trap before init can return.
-probe_token=$$
-probe_netns="fsn${probe_token}"
-probe_host_if="fsh${probe_token}"
-probe_peer_if="fsp${probe_token}"
-probe_ifb="fsi${probe_token}"
-probe_pin="$host_tmp/bpf-${probe_token}"
-probe_object="$host_tmp/packet-fault-${probe_token}.o"
-cleanup_probe() {
-  if ip netns list 2>/dev/null | grep -Eq "^${probe_netns}( |$)"; then
-    ip netns exec "$probe_netns" tc qdisc del dev "$probe_peer_if" clsact >/dev/null 2>&1 || true
-    ip netns exec "$probe_netns" tc qdisc del dev "$probe_ifb" root >/dev/null 2>&1 || true
-    ip netns exec "$probe_netns" tc qdisc del dev "$probe_peer_if" root >/dev/null 2>&1 || true
-    ip netns exec "$probe_netns" ip link delete dev "$probe_ifb" >/dev/null 2>&1 || true
-    ip netns delete "$probe_netns" >/dev/null 2>&1 || true
-  fi
-  ip netns delete "$probe_netns" >/dev/null 2>&1 || true
-  ip link delete dev "$probe_host_if" >/dev/null 2>&1 || true
-  umount "$probe_pin" >/dev/null 2>&1 || umount -l "$probe_pin" >/dev/null 2>&1 || true
-  for _ in {1..10}; do
-    rm -rf -- "$probe_pin" "$probe_object" >/dev/null 2>&1 || true
-    [[ ! -e $probe_pin && ! -e $probe_object ]] && break
-    umount -l "$probe_pin" >/dev/null 2>&1 || true
-    sleep 0.1
-  done
-  [[ ! -e $probe_pin && ! -e $probe_object ]] || { echo "host capability canary cleanup left resources" >&2; return 1; }
-}
-trap 'cleanup_probe; finalize_init_temps' EXIT
-[[ ${#probe_netns} -le 15 && ${#probe_host_if} -le 15 && ${#probe_peer_if} -le 15 && ${#probe_ifb} -le 15 ]] || { echo "missing host capability: IFNAMSIZ-safe canary names" >&2; exit 1; }
-ip netns add "$probe_netns" || { echo "missing host capability: network namespaces" >&2; exit 1; }
-ip link add name "$probe_host_if" type veth peer name "$probe_peer_if" || { echo "missing host capability: veth" >&2; exit 1; }
-ip link set dev "$probe_peer_if" netns "$probe_netns"
-ip link set dev "$probe_host_if" up
-ip -n "$probe_netns" link set dev lo up
-ip -n "$probe_netns" link set dev "$probe_peer_if" mtu 1280 up
-mtu=$(ip -n "$probe_netns" -j link show dev "$probe_peer_if" | jq -r '.[0].mtu')
-[[ $mtu == 1280 ]] || { echo "missing host capability: veth MTU" >&2; exit 1; }
-nsenter --net="/var/run/netns/$probe_netns" -- true
+# Network namespaces, veth/IFB links, qdiscs, firewall rules, and project BPF
+# objects are diagnostic-test resources. The self-contained linuxnetlab tests
+# create and clean them; host initialization only verifies host-wide tooling
+# and kernel support so it remains side-effect free for test resources.
+ip netns list >/dev/null
+tc qdisc help >/dev/null 2>&1
+nft --version >/dev/null
+iptables --version >/dev/null
+ethtool --version >/dev/null 2>&1
 sysctl -q net.ipv4.ip_forward
-ethtool -k "$probe_host_if" >/dev/null
-ip netns exec "$probe_netns" tc qdisc add dev "$probe_peer_if" root handle 1: tbf rate 5mbit burst 32kb limit 256kb
-ip -n "$probe_netns" link add name "$probe_ifb" type ifb
-ip -n "$probe_netns" link set dev "$probe_ifb" mtu 1280 up
-ip netns exec "$probe_netns" tc qdisc add dev "$probe_ifb" root handle 20: fq nopacing limit 65535 flow_limit 65535
-ip netns exec "$probe_netns" tc qdisc add dev "$probe_peer_if" clsact
-ip netns exec "$probe_netns" tc filter add dev "$probe_peer_if" ingress pref 10 matchall action mirred egress redirect dev "$probe_ifb"
-ip netns exec "$probe_netns" nft add table inet flowersec_init
-ip netns exec "$probe_netns" nft add chain inet flowersec_init input '{ type filter hook input priority 0; policy accept; }'
-ip netns exec "$probe_netns" nft delete table inet flowersec_init
-ip netns exec "$probe_netns" iptables -t filter -N FLOWERSEC_INIT
-ip netns exec "$probe_netns" iptables -t filter -X FLOWERSEC_INIT
-clang -target bpf -I "/usr/include/$(gcc -print-multiarch)" -O2 -g -c "$source_root/flowersec-go/internal/transporttest/linuxnetlab/bpf/packet_fault.c" -o "$probe_object" || { echo "missing host capability: project BPF compile" >&2; exit 1; }
-install -d -m 0700 "$probe_pin/maps"
-bpftool prog load "$probe_object" "$probe_pin/program" type classifier pinmaps "$probe_pin/maps" || { echo "missing host capability: BPF verifier load" >&2; exit 1; }
-bpftool -j map show | jq -e . >/dev/null
-bpftool -j map dump pinned "$probe_pin/maps/flowersec_fault_stats" | jq -e . >/dev/null
-ip netns exec "$probe_netns" tc filter add dev "$probe_peer_if" ingress pref 20 protocol all bpf direct-action object-pinned "$probe_pin/program"
-cleanup_probe
-trap - EXIT
-trap finalize_init_temps EXIT
 df -Pk "$host_root" | awk 'NR == 2 && $4 >= 10485760 { ok=1 } END { exit(ok ? 0 : 1) }' || { echo "missing host capacity: 10 GiB free disk" >&2; exit 1; }
 free -m | awk 'NR == 2 && $7 >= 2048 { ok=1 } END { exit(ok ? 0 : 1) }' || { echo "missing host capacity: 2 GiB available memory" >&2; exit 1; }
 fd_hard=$(ulimit -Hn)

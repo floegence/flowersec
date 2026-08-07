@@ -1474,40 +1474,47 @@ async fn raw_quic_unreliable_receive_stops_when_connection_closes() {
 }
 
 #[tokio::test]
-async fn go_client_to_rust_server_runs_admission_over_native_quic() {
-    for profile in [RawQuicPathProfile::Direct, RawQuicPathProfile::Tunnel] {
-        let listener = RawQuicListener::bind(
-            loopback_ephemeral(),
-            server_config(profile, default_limits()),
-        )
-        .expect("bind Rust raw QUIC server");
-        let address = listener.local_addr().expect("listener address").to_string();
-        let go = tokio::task::spawn_blocking(move || go_peer("client", Some(&address), profile));
+async fn go_client_to_rust_server_runs_admission_over_native_quic_direct() {
+    go_client_to_rust_server_runs_admission(RawQuicPathProfile::Direct).await;
+}
 
-        let session = listener.accept().await.expect("accept Go client");
-        let stream = session
-            .accept_stream()
-            .await
-            .expect("accept admission stream");
-        let expected_request = admission_request_vector_fixture(profile);
-        assert_eq!(read_to_end(&stream).await, expected_request);
-        stream
-            .write_all(&admission_success_fixture())
-            .await
-            .expect("write FSA2 success");
-        stream
-            .close_write()
-            .await
-            .expect("finish admission response");
+#[tokio::test]
+async fn go_client_to_rust_server_runs_admission_over_native_quic_tunnel() {
+    go_client_to_rust_server_runs_admission(RawQuicPathProfile::Tunnel).await;
+}
 
-        let output = go.await.expect("join Go client");
-        assert!(
-            output.status.success(),
-            "Go client failed for {profile:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(String::from_utf8_lossy(&output.stdout).contains("OK"));
-    }
+async fn go_client_to_rust_server_runs_admission(profile: RawQuicPathProfile) {
+    let listener = RawQuicListener::bind(
+        loopback_ephemeral(),
+        server_config(profile, default_limits()),
+    )
+    .expect("bind Rust raw QUIC server");
+    let address = listener.local_addr().expect("listener address").to_string();
+    let go = tokio::task::spawn_blocking(move || go_peer("client", Some(&address), profile));
+
+    let session = listener.accept().await.expect("accept Go client");
+    let stream = session
+        .accept_stream()
+        .await
+        .expect("accept admission stream");
+    let expected_request = admission_request_vector_fixture(profile);
+    assert_eq!(read_to_end(&stream).await, expected_request);
+    stream
+        .write_all(&admission_success_fixture())
+        .await
+        .expect("write FSA2 success");
+    stream
+        .close_write()
+        .await
+        .expect("finish admission response");
+
+    let output = go.await.expect("join Go client");
+    assert!(
+        output.status.success(),
+        "Go client failed for {profile:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("OK"));
 }
 
 #[tokio::test]

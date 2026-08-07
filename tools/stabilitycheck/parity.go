@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -54,16 +55,16 @@ type portableCapability struct {
 }
 
 type capabilityImplementation struct {
-	Status   string   `json:"status"`
-	Evidence []string `json:"evidence"`
+	Status  string   `json:"status"`
+	TestIDs []string `json:"test_ids"`
 }
 
 type runtimeSpecificCapability struct {
-	ID       string   `json:"id"`
-	Layer    string   `json:"layer"`
-	Owner    string   `json:"owner"`
-	Reason   string   `json:"reason"`
-	Evidence []string `json:"evidence,omitempty"`
+	ID      string   `json:"id"`
+	Layer   string   `json:"layer"`
+	Owner   string   `json:"owner"`
+	Reason  string   `json:"reason"`
+	TestIDs []string `json:"test_ids,omitempty"`
 }
 
 type sharedFixture struct {
@@ -144,7 +145,7 @@ type interopCell struct {
 	Carriers []string `json:"carriers"`
 	Paths    []string `json:"paths"`
 	Cases    []string `json:"cases"`
-	Evidence string   `json:"evidence"`
+	TestIDs  []string `json:"test_ids"`
 }
 
 type interopCoverage struct {
@@ -247,6 +248,10 @@ func verifyParity(repoRoot string) error {
 	if err != nil {
 		return err
 	}
+	registryIDs, err := loadRegistryIDs(repoRoot)
+	if err != nil {
+		return err
+	}
 	var incomplete []string
 	for _, capability := range m.PortableCapabilities {
 		for _, language := range m.Languages {
@@ -255,18 +260,16 @@ func verifyParity(repoRoot string) error {
 				incomplete = append(incomplete, capability.ID+":"+language+"="+implementation.Status)
 				continue
 			}
-			for _, evidence := range implementation.Evidence {
-				if _, err := os.Stat(filepath.Join(repoRoot, evidence)); err != nil {
-					return fmt.Errorf("capability %s language %s evidence %q: %w", capability.ID, language, evidence, err)
+			if implementation.Status == "complete" {
+				if err := requireRegistryConsumers(registryIDs, "capability "+capability.ID+" language "+language, implementation.TestIDs); err != nil {
+					return err
 				}
 			}
 		}
 	}
 	for _, capability := range m.RuntimeSpecificCapabilities {
-		for _, evidence := range capability.Evidence {
-			if err := requireFile(repoRoot, "runtime-specific capability "+capability.ID, evidence); err != nil {
-				return err
-			}
+		if err := requireRegistryConsumers(registryIDs, "runtime-specific capability "+capability.ID, capability.TestIDs); err != nil {
+			return err
 		}
 	}
 	for _, fixture := range m.SharedFixtures {
@@ -275,8 +278,8 @@ func verifyParity(repoRoot string) error {
 		}
 		for _, language := range m.Languages {
 			for _, consumer := range fixture.Consumers[language] {
-				if _, err := os.Stat(filepath.Join(repoRoot, consumer)); err != nil {
-					return fmt.Errorf("shared fixture %s language %s consumer %q: %w", fixture.ID, language, consumer, err)
+				if err := requireRegistryConsumers(registryIDs, "shared fixture "+fixture.ID+" language "+language, []string{consumer}); err != nil {
+					return err
 				}
 			}
 		}
@@ -292,6 +295,35 @@ func verifyParity(repoRoot string) error {
 		return err
 	}
 	fmt.Printf("language parity OK: %d capabilities across %d languages; transport v%d has %d runtime registries\n", len(m.PortableCapabilities), len(m.Languages), transport.Version, len(transport.Runtimes))
+	return nil
+}
+
+func loadRegistryIDs(repoRoot string) (map[string]struct{}, error) {
+	source, err := os.ReadFile(filepath.Join(repoRoot, "flowersec-go/internal/cmd/flowersec-test/registry.go"))
+	if err != nil {
+		return nil, fmt.Errorf("read test registry: %w", err)
+	}
+	ids := make(map[string]struct{})
+	pattern := regexp.MustCompile(`(?:commandEntry|commandEntryWithEnvironment|vitestEntry|browserSmokeEntry|browserCompatibilityEntry|performanceCapacityEntry|privilegedGoTestEntry)\("([^"]+)"`)
+	for _, match := range pattern.FindAllStringSubmatch(string(source), -1) {
+		ids[match[1]] = struct{}{}
+	}
+	if len(ids) == 0 {
+		return nil, errors.New("test registry has no stable IDs")
+	}
+	return ids, nil
+}
+
+func requireRegistryConsumers(registryIDs map[string]struct{}, owner string, consumers []string) error {
+	if len(consumers) != 1 {
+		return fmt.Errorf("%s must name exactly one stable test_id", owner)
+	}
+	if strings.TrimSpace(consumers[0]) == "" {
+		return fmt.Errorf("%s has an empty test_id", owner)
+	}
+	if _, ok := registryIDs[consumers[0]]; !ok {
+		return fmt.Errorf("%s references unknown registry test_id %q", owner, consumers[0])
+	}
 	return nil
 }
 
@@ -412,7 +444,12 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	if len(matrix.Cells) == 0 {
 		return errors.New("interop matrix must contain executable v2 cells")
 	}
+	registryIDs, err := loadRegistryIDs(repoRoot)
+	if err != nil {
+		return err
+	}
 	cellIDs := make([]string, 0, len(matrix.Cells))
+	usedTestIDs := make(map[string]string)
 	for _, cell := range matrix.Cells {
 		cellIDs = append(cellIDs, cell.ID)
 		if cell.Client != "go" && cell.Server != "go" {
@@ -429,8 +466,17 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 				return fmt.Errorf("interop cell %s references unknown case %s", cell.ID, caseID)
 			}
 		}
-		if err := requireFile(repoRoot, "interop cell "+cell.ID, cell.Evidence); err != nil {
-			return err
+		if len(cell.TestIDs) == 0 {
+			return fmt.Errorf("interop cell %s must declare stable test_ids", cell.ID)
+		}
+		for _, testID := range cell.TestIDs {
+			if _, ok := registryIDs[testID]; !ok {
+				return fmt.Errorf("interop cell %s references unknown registry test_id %q", cell.ID, testID)
+			}
+			if previous, ok := usedTestIDs[testID]; ok {
+				return fmt.Errorf("registry test_id %q is consumed by both interop cells %s and %s", testID, previous, cell.ID)
+			}
+			usedTestIDs[testID] = cell.ID
 		}
 	}
 	if err := requireUnique("interop cell ids", cellIDs); err != nil {
@@ -459,7 +505,7 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	if len(matrix.CapabilityCoverage) != len(requiredPortableCapabilityIDs) {
 		return errors.New("interop capability coverage must contain every portable capability exactly once")
 	}
-	fmt.Printf("Go-reference Transport v2 interop matrix OK: %d evidenced cells, %d cases\n", len(matrix.Cells), len(matrix.Cases))
+	fmt.Printf("Go-reference Transport v2 interop matrix OK: %d executable cells, %d cases\n", len(matrix.Cells), len(matrix.Cases))
 	return nil
 }
 
@@ -628,8 +674,8 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 			}
 			switch implementation.Status {
 			case "complete":
-				if len(implementation.Evidence) == 0 {
-					return nil, fmt.Errorf("capability %s language %s complete status requires evidence", capability.ID, language)
+				if len(implementation.TestIDs) != 1 {
+					return nil, fmt.Errorf("capability %s language %s complete status requires exactly one test_id", capability.ID, language)
 				}
 			case "planned", "blocked":
 			default:
@@ -662,6 +708,9 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 		if _, ok := knownLanguages[capability.Owner]; !ok {
 			return nil, fmt.Errorf("runtime-specific capability %s has unknown owner %s", capability.ID, capability.Owner)
 		}
+		if len(capability.TestIDs) != 1 {
+			return nil, fmt.Errorf("runtime-specific capability %s requires exactly one test_id", capability.ID)
+		}
 	}
 	if err := requireUnique("runtime-specific capability ids", runtimeIDs); err != nil {
 		return nil, err
@@ -677,8 +726,8 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 		fixtureIDs = append(fixtureIDs, fixture.ID)
 		for _, language := range m.Languages {
 			consumers, ok := fixture.Consumers[language]
-			if !ok || len(consumers) == 0 {
-				return nil, fmt.Errorf("shared fixture %s is missing consumer evidence for %s", fixture.ID, language)
+			if !ok || len(consumers) != 1 {
+				return nil, fmt.Errorf("shared fixture %s must name exactly one test_id consumer for %s", fixture.ID, language)
 			}
 			if err := requireUnique("shared fixture consumers ("+fixture.ID+":"+language+")", consumers); err != nil {
 				return nil, err

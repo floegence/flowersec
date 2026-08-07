@@ -42,9 +42,13 @@ final class ConnectorV2Tests: XCTestCase {
       afterAcquisitions: 1
     )
     try await exerciseGoSession(firstSession)
+    let staleStream = try await firstSession.openStream(kind: "must-not-migrate")
     let firstResult = firstPeer.finish()
     XCTAssertEqual(firstResult.status, 0, firstResult.stderr)
     _ = await firstSession.waitTermination()
+
+    await XCTAssertThrowsErrorAsync(
+      try await staleStream.write(Data("must-not-replay".utf8)))
     let secondSession = try await waitForControllerSession(
       controller,
       source: source,

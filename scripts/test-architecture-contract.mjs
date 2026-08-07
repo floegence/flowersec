@@ -70,14 +70,16 @@ assert.match(main, /externalHostRoot = "\/var\/lib\/flowersec-test"/);
 assert.doesNotMatch(main, /\bsudo\b|runuser|SUDO_USER|reexec/i);
 assert.match(registry, /func registry\(\) \[\]registeredTest/);
 for (const id of [
-  "controller/go", "controller/typescript", "controller/rust", "controller/rust-raw-quic",
+  "controller/go", "controller/go-real-network-restart", "controller/typescript", "controller/typescript-real-network-restart", "controller/rust", "controller/rust-raw-quic",
   "protocol/go", "protocol/typescript", "protocol/rust",
   "carrier/go-direct", "carrier/go-tunnel",
   "integration/typescript/node-webtransport",
   "interop/typescript-go/wss/direct", "interop/typescript-go/wss/tunnel",
   "interop/typescript-go/webtransport/direct", "interop/typescript-go/webtransport/tunnel",
   "interop/rust-go/raw-quic/direct", "interop/rust-go/raw-quic/tunnel",
+  "interop/go-rust/raw-quic/direct", "interop/go-rust/raw-quic/tunnel",
   "interop/swift-go/wss/direct", "interop/swift-go/wss/tunnel",
+  "controller/swift-real-network-restart",
 ]) assert.match(registry, new RegExp(`"${escapeRegex(id)}"`));
 assert.match(registry, /"interop\/typescript-go\/webtransport\/direct"[\s\S]*webTransport\.integration\.test\.ts/);
 assert.match(registry, /if runtime\.GOOS ===? "darwin"/);
@@ -99,6 +101,35 @@ assert.doesNotMatch(registry, /"diagnostic\/(?:protocol|browser|interop|weaknet|
 
 const hostInit = read("scripts/test-host-init.sh");
 const hostEntry = read("scripts/test-host.sh");
+const interopMatrix = JSON.parse(read("stability/interop_matrix.json"));
+const capabilityManifest = JSON.parse(read("stability/language_capabilities.json"));
+const registryIDs = new Set([...registry.matchAll(/(?:commandEntry|commandEntryWithEnvironment|vitestEntry|browserSmokeEntry|browserCompatibilityEntry|performanceCapacityEntry|privilegedGoTestEntry)\("([^"]+)"/g)].map((match) => match[1]));
+assert.equal(interopMatrix.version, 2);
+assert.ok(interopMatrix.cells.length > 0);
+for (const cell of interopMatrix.cells) {
+  assert.ok(Array.isArray(cell.test_ids) && cell.test_ids.length > 0, `interop cell ${cell.id} must use test_ids`);
+  assert.equal("evidence" in cell, false, `interop cell ${cell.id} retains source evidence`);
+  for (const id of cell.test_ids) assert.ok(registryIDs.has(id), `interop cell ${cell.id} references unknown test_id ${id}`);
+}
+for (const capability of capabilityManifest.portable_capabilities) {
+  for (const implementation of Object.values(capability.implementations)) {
+    if (implementation.status === "complete") {
+      assert.equal(implementation.test_ids?.length, 1, `${capability.id} complete implementation must have one test_id`);
+      assert.ok(registryIDs.has(implementation.test_ids[0]), `${capability.id} references unknown test_id ${implementation.test_ids[0]}`);
+    }
+  }
+}
+for (const capability of capabilityManifest.runtime_specific_capabilities) {
+  assert.equal(capability.test_ids?.length, 1, `${capability.id} must have one test_id`);
+  assert.ok(registryIDs.has(capability.test_ids[0]), `${capability.id} references unknown test_id ${capability.test_ids[0]}`);
+}
+for (const fixture of capabilityManifest.shared_fixtures) {
+  for (const consumers of Object.values(fixture.consumers)) {
+    assert.equal(consumers.length, 1, `${fixture.id} must have one consumer per language`);
+    assert.ok(registryIDs.has(consumers[0]), `${fixture.id} references unknown consumer ${consumers[0]}`);
+  }
+}
+assert.doesNotMatch(read("stability/interop_matrix.json") + read("stability/language_capabilities.json"), /"evidence"/);
 const browserEnsure = read("flowersec-ts/scripts/ensure-playwright-browsers.mjs");
 const packageManifest = read("flowersec-ts/package.json");
 assert.match(hostInit, /VERSION_ID/);
@@ -128,18 +159,14 @@ for (const executable of ["go", "make", "node", "npm", "rustup", "cargo", "rustc
   const boundary = /^[A-Za-z0-9_]+$/.test(executable) ? `\\b${escapeRegex(executable)}\\b` : escapeRegex(executable);
   assert.match(hostInit, new RegExp(boundary), `host init must check ${executable}`);
 }
-assert.match(hostInit, /bpftool prog load/);
-assert.match(hostInit, /tc.*clsact|clsact.*tc/);
-assert.match(hostInit, /nft add table/);
-assert.match(hostInit, /iptables/);
+assert.match(hostInit, /bpftool feature probe kernel/);
+assert.match(hostInit, /ip netns list/);
+assert.doesNotMatch(hostInit, /ip netns add|ip link add name .* type veth|tc qdisc add|bpftool prog load|nft add table|iptables -t filter -N/);
+assert.match(read("flowersec-go/internal/transporttest/linuxnetlab/integration_linux_test.go"), /t\.Cleanup|ApplyFaultProfile/);
 assert.match(hostInit, /flowersec-swift-canary[\s\S]*swiftc/);
 assert.doesNotMatch(hostInit, /swift test|TransportV2|IDNAHostV2/);
 assert.match(hostInit, /clang\+\+ -std=c\+\+17 -x c\+\+ -fsyntax-only/);
-assert.match(hostInit, /trap 'cleanup_probe; finalize_init_temps' EXIT/);
-assert.match(hostInit, /cleanup_probe\ntrap - EXIT/);
-assert.match(hostInit, /host capability canary cleanup left resources/);
-assert.match(hostInit, /BPF verifier load/);
-assert.match(hostInit, /network namespaces/);
+assert.match(hostInit, /ip netns list/);
 assert.match(hostInit, /rm -f -- \/etc\/profile\.d\/flowersec-mainland-sources\.sh/);
 assert.doesNotMatch(hostInit, /test[-_ ]id|progress/i);
 assert.doesNotMatch(hostInit + hostEntry, /SUDO_USER|runuser|chown|\/home\/tang|--runner-user/);

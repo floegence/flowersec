@@ -11,7 +11,7 @@
       "carriers": ["websocket", "raw_quic", "webtransport"],
       "paths": ["direct"],
       "cases": ["session", "streams", "rpc", "rekey", "fin", "reset"],
-      "evidence": "flowersec-go/internal/transporttest/direct_test.go"
+      "test_ids": ["carrier/go-direct"]
     },
     {
       "id": "go_to_go_tunnel",
@@ -20,7 +20,7 @@
       "carriers": ["websocket", "raw_quic", "webtransport"],
       "paths": ["tunnel"],
       "cases": ["session", "streams", "rpc", "rekey", "fin", "reset"],
-      "evidence": "flowersec-go/internal/tunnelv2/production_matrix_e2e_test.go"
+      "test_ids": ["carrier/go-tunnel"]
     },
     {
       "id": "typescript_to_go",
@@ -29,7 +29,7 @@
       "carriers": ["websocket"],
       "paths": ["direct", "tunnel"],
       "cases": ["session", "streams", "rekey", "fin"],
-      "evidence": "flowersec-ts/src/interop/goSession.integration.test.ts"
+      "test_ids": ["interop/typescript-go/wss/direct", "interop/typescript-go/wss/tunnel"]
     },
     {
       "id": "typescript_node_webtransport_to_go",
@@ -38,7 +38,7 @@
       "carriers": ["webtransport"],
       "paths": ["direct", "tunnel"],
       "cases": ["session", "streams", "rekey", "fin"],
-      "evidence": "flowersec-ts/src/node/webTransport.integration.test.ts"
+      "test_ids": ["interop/typescript-go/webtransport/direct", "interop/typescript-go/webtransport/tunnel"]
     },
     {
       "id": "swift_to_go",
@@ -47,7 +47,7 @@
       "carriers": ["websocket"],
       "paths": ["direct", "tunnel"],
       "cases": ["session", "streams", "rekey", "fin"],
-      "evidence": "flowersec-swift/Tests/FlowersecTests/ConnectorV2Tests.swift"
+      "test_ids": ["interop/swift-go/wss/direct", "interop/swift-go/wss/tunnel"]
     },
     {
       "id": "rust_to_go",
@@ -56,7 +56,7 @@
       "carriers": ["raw_quic"],
       "paths": ["direct", "tunnel"],
       "cases": ["session", "streams", "rpc", "rekey", "fin", "reset"],
-      "evidence": "flowersec-rust/src/raw_quic_v2_integration_tests.rs"
+      "test_ids": ["interop/rust-go/raw-quic/direct", "interop/rust-go/raw-quic/tunnel"]
     },
     {
       "id": "go_to_rust",
@@ -65,7 +65,7 @@
       "carriers": ["raw_quic"],
       "paths": ["direct", "tunnel"],
       "cases": ["session", "streams", "rpc", "rekey", "fin", "reset"],
-      "evidence": "flowersec-rust/src/raw_quic_v2_integration_tests.rs"
+      "test_ids": ["interop/go-rust/raw-quic/direct", "interop/go-rust/raw-quic/tunnel"]
     }
   ],
   "capability_coverage": {
