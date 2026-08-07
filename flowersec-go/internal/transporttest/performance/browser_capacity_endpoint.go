@@ -174,7 +174,7 @@ func openProductionBrowserCapacityEndpoint(ctx context.Context, config browserCa
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	allowedOrigin := "http://" + config.ServerAddress
+	allowedOrigin := browserCapacityAllowedOrigin(config.ServerAddress)
 	var issue func() (browserCapacityArtifact, error)
 	var certificate func() (string, error)
 	var cleanupOwner func(context.Context) error
@@ -237,6 +237,10 @@ func openProductionBrowserCapacityEndpoint(ctx context.Context, config browserCa
 		resourceOutput: filepath.Join(config.OutputDirectory, "producer-resource.json"), heldStreams: make(map[string][]flowersession.ByteStream),
 		quiesceDone: make(chan struct{}), closeDone: make(chan struct{}),
 	}, nil
+}
+
+func browserCapacityAllowedOrigin(serverAddress string) string {
+	return "https://" + serverAddress
 }
 
 func captureBrowserCapacityResourcePreflight(maxOpenFDs int) (browserCapacityResourcePreflight, error) {

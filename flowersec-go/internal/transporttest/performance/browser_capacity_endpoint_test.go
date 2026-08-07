@@ -66,6 +66,12 @@ func TestBrowserCapacityArtifactBrokerSpendsExactlyOnceAndAuthenticatesTerminati
 	}
 }
 
+func TestBrowserCapacityAllowedOriginMatchesSecureModuleSite(t *testing.T) {
+	if got := browserCapacityAllowedOrigin("192.0.2.10"); got != "https://192.0.2.10" {
+		t.Fatalf("browser capacity allowed origin = %q", got)
+	}
+}
+
 func TestBrowserCapacityEndpointHoldsUniqueProductionSessionsUntilCleanup(t *testing.T) {
 	var issued int
 	broker, err := newBrowserCapacityArtifactBroker(func() (browserCapacityArtifact, error) {
