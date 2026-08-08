@@ -364,6 +364,39 @@ fn valid_admission_reason_token(reason: &[u8]) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_')
 }
 
+#[cfg(test)]
+pub(crate) fn security_accepts(kind: &str, raw: &[u8]) -> bool {
+    match kind {
+        "fsa2_hex" => {
+            if raw.len() < FSA2_HEADER_BYTES || &raw[..4] != b"FSA2" || raw[4] != 2 {
+                return false;
+            }
+            let reason = u16::from_be_bytes(raw[6..8].try_into().unwrap()) as usize;
+            reason <= MAX_FSA2_REASON_BYTES
+                && raw.len() == FSA2_HEADER_BYTES + reason
+                && match raw[5] {
+                    0 => reason == 0,
+                    1 | 2 => reason > 0 && valid_admission_reason_token(&raw[8..]),
+                    _ => false,
+                }
+        }
+        _ => false,
+    }
+}
+
+pub fn fuzz_parse(raw: &[u8]) {
+    if raw.len() >= FSB2_HEADER_BYTES && &raw[..4] == b"FSB2" {
+        let payload = u32::from_be_bytes(raw[8..12].try_into().unwrap_or([0; 4])) as usize;
+        let _ = payload
+            .checked_add(FSB2_HEADER_BYTES)
+            .filter(|length| *length <= raw.len());
+    }
+    if raw.len() >= FSA2_HEADER_BYTES && &raw[..4] == b"FSA2" {
+        let reason = u16::from_be_bytes(raw[6..8].try_into().unwrap_or([0; 2])) as usize;
+        let _ = reason <= MAX_FSA2_REASON_BYTES && FSA2_HEADER_BYTES + reason <= raw.len();
+    }
+}
+
 async fn read_exact(stream: &dyn CarrierStreamV2, mut payload: &mut [u8]) -> io::Result<()> {
     while !payload.is_empty() {
         let read = stream.read(payload).await?;

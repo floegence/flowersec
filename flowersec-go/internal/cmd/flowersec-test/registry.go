@@ -57,7 +57,7 @@ func registry() []registeredTest {
 		tests = append(tests,
 			commandEntry("controller/swift", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectionController"),
 			commandEntry("controller/swift-real-network-restart", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectorV2Tests/testConnectionControllerReplacesTerminatedGoWSSessionWithoutReplay"),
-			commandEntry("protocol/swift", "acceptance", 5*time.Minute, "swift", "test", "--filter", "TransportV2|IDNAHostV2"),
+			commandEntry("protocol/swift", "acceptance", 5*time.Minute, "swift", "test", "--filter", "TransportV2|IDNAHostV2|SecurityNegativeVectors"),
 			commandEntry("interop/swift-go/wss/direct", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectorV2Tests/testRealGoWSSDirectEndToEnd"),
 			commandEntry("interop/swift-go/wss/tunnel", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectorV2Tests/testRealGoWSSTunnelEndToEnd"),
 		)
@@ -71,6 +71,10 @@ func registry() []registeredTest {
 		tests = append(tests, performanceCapacityEntry("performance/capacity/"+strings.ToLower(id), id))
 	}
 	tests = append(tests, commandEntryWithEnvironment("performance/soak", "performance", 10*time.Minute, []string{"FLOWERSEC_TEST_SOAK=1"}, "go", "-C", "flowersec-go", "test", "-timeout=10m", "-count=1", "-run", "^TestFocusedProductionSoakCase$", "./internal/transporttest/performance"))
+	tests = append(tests,
+		carrierSoakEntry("performance/soak/wss", "websocket"),
+		carrierSoakEntry("performance/soak/webtransport", "webtransport"),
+	)
 	return tests
 }
 
@@ -82,6 +86,12 @@ func performanceCapacityEntry(id, caseID string) registeredTest {
 
 func performanceCapacityEnvironment(caseID string) []string {
 	return []string{"FLOWERSEC_TEST_CAPACITY_CASE=" + caseID}
+}
+
+func carrierSoakEntry(id, kind string) registeredTest {
+	return commandEntryWithEnvironment(id, "performance", 10*time.Minute,
+		[]string{"FLOWERSEC_TEST_SOAK=1", "FLOWERSEC_TEST_SOAK_CARRIER=" + kind},
+		"go", "-C", "flowersec-go", "test", "-timeout=10m", "-count=1", "-run", "^TestFocusedProductionCarrierSoakCase$", "./internal/transporttest/performance")
 }
 
 func withRunID(environment []string, runID string) []string {

@@ -7,6 +7,7 @@ instances, namespaces, faults, and temporary files that they create.
 | Product semantics | Owning test layer |
 | --- | --- |
 | Artifact parsing, admission binding, wire vectors, and error vectors | Shared machine-readable vectors executed by Go, Rust, Swift, and TypeScript contract tests |
+| Security-negative parser rejection and bounded malformed-input handling | `testdata/transport_v2/security_negative_vectors.json`, consumed by `protocol/{go,typescript,swift,rust}` |
 | One-shot session lifecycle, stream FIN/reset/STOP_SENDING, DATAGRAM, close, and abort | Per-language memory carrier and native carrier contract tests |
 | ConnectionController scheduling, fresh artifact per attempt, retry disposition, cancellation, and no replay | Shared controller vectors executed by all four SDKs |
 | Go WebSocket, raw QUIC, and WebTransport in direct and tunnel topologies | Go native carrier and self-contained Go interoperability tests |
@@ -25,7 +26,7 @@ The expensive inventory has four groups and no second manifest:
 | Coverage and race | `coverage/{go,typescript,rust,swift}`, `race/go` |
 | Local real browsers | Three `browser/chromium/*` topology IDs plus `browser/{firefox,webkit}/webtransport-capability` |
 | Privileged Linux diagnostics | `diagnostic/weaknet/{raw-quic,websocket}/direct` and four `diagnostic/kernel/*` lifecycle IDs |
-| Performance | Twelve `performance/capacity/*` IDs and `performance/soak` |
+| Performance | Twelve `performance/capacity/*` IDs, raw QUIC migration soak, and production WSS/WebTransport soak IDs |
 
 Coverage and race run with `make coverage-race`. Browser compatibility uses
 real native connections: Firefox currently rejects the connection before

@@ -224,6 +224,16 @@
         "swift": ["protocol/swift"],
         "rust": ["protocol/rust"]
       }
+    },
+    {
+      "id": "security_negative_v2",
+      "path": "testdata/transport_v2/security_negative_vectors.json",
+      "consumers": {
+        "go": ["protocol/go"],
+        "typescript": ["protocol/typescript"],
+        "swift": ["protocol/swift"],
+        "rust": ["protocol/rust"]
+      }
     }
   ]
 }

@@ -49,6 +49,19 @@ mod raw_quic_v2;
 mod session_v2;
 mod transport_v2;
 
+pub mod fuzzing {
+    /// Exercise the final admission parser bounds without exposing wire types.
+    pub fn parse_admission(data: &[u8]) {
+        crate::admission_v2::fuzz_parse(data);
+    }
+
+    /// Exercise the final handshake, control-record, encrypted-header, and
+    /// unreliable-message parsers without exposing their wire types.
+    pub fn parse_protocol(data: &[u8]) {
+        crate::protocol_v2::fuzz_parse(data);
+    }
+}
+
 #[cfg(test)]
 mod defaults_contract;
 pub use acceptor_v2::{AcceptError, AcceptErrorCode, Acceptor, AcceptorOptions};
@@ -87,3 +100,6 @@ mod session_v2_integration_tests;
 #[cfg(test)]
 #[path = "transport_v2_crypto_integration_tests.rs"]
 mod transport_v2_crypto_integration_tests;
+
+#[cfg(test)]
+mod security_negative_vectors;

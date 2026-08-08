@@ -113,6 +113,38 @@ func TestCapacityConnectScheduleReservesCompletionWindow(t *testing.T) {
 	}
 }
 
+func TestCapacityLatencyAndThroughputBudgetsFailClosed(t *testing.T) {
+	if got := percentileDuration([]time.Duration{9, 1, 5, 3, 7}, 50); got != 5 {
+		t.Fatalf("p50 = %s, want 5ns", got)
+	}
+	if got := percentileDuration([]time.Duration{9, 1, 5, 3, 7}, 99); got != 9 {
+		t.Fatalf("p99 = %s, want 9ns", got)
+	}
+	result := capacityCaseResult{
+		ConnectP50: 2 * time.Millisecond, ConnectP95: 4 * time.Millisecond, ConnectP99: 6 * time.Millisecond,
+		ConnectsPerSecond: 20, LivenessP99: 3 * time.Millisecond, LivenessOpsPerSecond: 12,
+	}
+	contract := capacityContract{
+		MaxConnectP50: 3 * time.Millisecond, MaxConnectP95: 5 * time.Millisecond, MaxConnectP99: 7 * time.Millisecond,
+		MaxLivenessP99: 4 * time.Millisecond, MinConnectsPerSecond: 10, MinLivenessOpsPerSecond: 10,
+	}
+	if err := assertCapacityLatencyBudget(contract, result); err != nil {
+		t.Fatalf("accepted within-budget latency: %v", err)
+	}
+	if err := assertCapacityLivenessBudget(contract, result); err != nil {
+		t.Fatalf("accepted within-budget liveness: %v", err)
+	}
+	result.ConnectP99 = 8 * time.Millisecond
+	if err := assertCapacityLatencyBudget(contract, result); err == nil {
+		t.Fatal("accepted connect p99 above budget")
+	}
+	result.ConnectP99 = 6 * time.Millisecond
+	result.LivenessOpsPerSecond = 9
+	if err := assertCapacityLivenessBudget(contract, result); err == nil {
+		t.Fatal("accepted liveness throughput below budget")
+	}
+}
+
 func TestBrowserWSSStreamCapacityRecordsTightYamuxResources(t *testing.T) {
 	definition, ok := lookupCapacityCase("CAP-STREAM-WT-WSS-100X128")
 	if !ok {

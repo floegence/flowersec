@@ -805,6 +805,23 @@ pub fn decode_inner_record_v2(raw: &[u8]) -> Result<(InnerRecordTypeV2, &[u8]), 
     Ok((record_type, &raw[INNER_HEADER_V2_SIZE..]))
 }
 
+#[cfg(test)]
+pub(crate) fn security_accepts(kind: &str, raw: &[u8]) -> bool {
+    match kind {
+        "fsr2_hex" => RecordHeaderV2::decode(raw).is_ok(),
+        "open_hex" => decode_open_payload_v2(raw).is_ok(),
+        _ => false,
+    }
+}
+
+pub fn fuzz_parse(raw: &[u8]) {
+    let _ = SetupPrefaceV2::decode(raw);
+    let _ = RecordHeaderV2::decode(raw);
+    let _ = UnreliableHeaderV2::decode(raw);
+    let _ = decode_inner_record_v2(raw);
+    let _ = decode_open_payload_v2(raw);
+}
+
 fn validate_inner_payload(
     record_type: InnerRecordTypeV2,
     payload_length: usize,

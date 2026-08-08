@@ -18,3 +18,17 @@ path = "fuzz_targets/artifact.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "admission"
+path = "fuzz_targets/admission.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol"
+path = "fuzz_targets/protocol.rs"
+test = false
+doc = false
+bench = false

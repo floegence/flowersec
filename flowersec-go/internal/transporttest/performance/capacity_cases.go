@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -41,6 +42,13 @@ type capacityContract struct {
 	MaxOpenFDs                  int
 	MaxGoroutines               int
 	MaxTasks                    int
+	MaxConnectP50               time.Duration
+	MaxConnectP95               time.Duration
+	MaxConnectP99               time.Duration
+	MaxLivenessP99              time.Duration
+	MinConnectsPerSecond        float64
+	MinStreamsPerSecond         float64
+	MinLivenessOpsPerSecond     float64
 	ResourceScope               string
 	CalibrationRSS              uint64
 	CalibrationOpenFDs          int
@@ -55,6 +63,8 @@ func productionCapacityContract() capacityContract {
 		Sessions: 1000, Ramp: 30 * time.Second, Hold: 60 * time.Second, Cleanup: 30 * time.Second,
 		Watchdog: 120 * time.Second, MaxRSS: 1 << 30, MaxCPU: 120 * time.Second,
 		MaxOpenFDs: 8192, MaxGoroutines: 40960, MaxTasks: 8192,
+		MaxConnectP50: 5 * time.Second, MaxConnectP95: 15 * time.Second, MaxConnectP99: 25 * time.Second,
+		MaxLivenessP99: 5 * time.Second, MinConnectsPerSecond: 10, MinLivenessOpsPerSecond: 1,
 		ResourceScope: "go_runner",
 	}
 }
@@ -77,6 +87,7 @@ func productionBrowserStreamCapacityContract() capacityContract {
 	contract.MaxCPU = 240 * time.Second
 	contract.MaxOpenFDs = 32768
 	contract.Watchdog = contract.Ramp + contract.Hold + contract.Cleanup
+	contract.MinStreamsPerSecond = 50
 	contract.CalibrationRSS = 0
 	contract.CalibrationOpenFDs = 0
 	return contract
@@ -171,23 +182,32 @@ type capacityQuiescingEndpoint interface {
 type resourceSnapshotFunc func() (transporttest.ResourceSnapshot, error)
 
 type capacityCaseResult struct {
-	Attempted          int
-	Succeeded          int
-	Failed             int
-	UniqueActivePeak   int
-	HoldDisconnects    int
-	CleanupDisconnects int
-	ResidualSessions   int
-	CompletedStreams   int
-	ActiveStreamPeak   int
-	ResidualStreams    int
-	LivenessSweeps     int
-	LivenessFailures   int
-	WatchdogTimeouts   int
-	Timeline           []capacityTraceRecord
-	Metrics            metrics
-	Config             configuration
-	Resources          []caseResourceRecord
+	Attempted            int
+	Succeeded            int
+	Failed               int
+	UniqueActivePeak     int
+	HoldDisconnects      int
+	CleanupDisconnects   int
+	ResidualSessions     int
+	CompletedStreams     int
+	ActiveStreamPeak     int
+	ResidualStreams      int
+	LivenessSweeps       int
+	LivenessFailures     int
+	ConnectP50           time.Duration
+	ConnectP95           time.Duration
+	ConnectP99           time.Duration
+	LivenessP50          time.Duration
+	LivenessP95          time.Duration
+	LivenessP99          time.Duration
+	LivenessOpsPerSecond float64
+	ConnectsPerSecond    float64
+	StreamsPerSecond     float64
+	WatchdogTimeouts     int
+	Timeline             []capacityTraceRecord
+	Metrics              metrics
+	Config               configuration
+	Resources            []caseResourceRecord
 }
 
 type capacityTraceRecord struct {
@@ -264,6 +284,9 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 		err     error
 	}
 	connected := make(chan connectResult, contract.Sessions)
+	connectLatencies := make([]time.Duration, 0, contract.Sessions)
+	livenessLatencies := make([]time.Duration, 0, 5)
+	var connectLatencyMu sync.Mutex
 	rampCtx, cancelRamp := context.WithCancelCause(ctx)
 	var rampWG sync.WaitGroup
 	defer func() {
@@ -293,7 +316,11 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 			}
 			connectCtx, cancel := context.WithDeadline(rampCtx, sessionRampEnd)
 			defer cancel()
+			connectStarted := time.Now()
 			session, connectErr := endpoint.Connect(connectCtx)
+			connectLatencyMu.Lock()
+			connectLatencies = append(connectLatencies, time.Since(connectStarted))
+			connectLatencyMu.Unlock()
 			connected <- connectResult{session: session, err: connectErr}
 		}()
 	}
@@ -333,6 +360,15 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 	}
 	cancelRamp(context.Canceled)
 	rampWG.Wait()
+	connectLatencyMu.Lock()
+	result.ConnectP50 = percentileDuration(connectLatencies, 50)
+	result.ConnectP95 = percentileDuration(connectLatencies, 95)
+	result.ConnectP99 = percentileDuration(connectLatencies, 99)
+	result.ConnectsPerSecond = float64(result.Succeeded) / maxSeconds(time.Since(started))
+	connectLatencyMu.Unlock()
+	if err := assertCapacityLatencyBudget(contract, result); err != nil {
+		return result, err
+	}
 	if err := waitCapacityUntil(ctx, sessionRampEnd, watchdogAt); err != nil {
 		return result, err
 	}
@@ -350,6 +386,10 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 		}
 		result.CompletedStreams = contract.Sessions * contract.StreamsPerSession
 		result.ActiveStreamPeak = result.CompletedStreams
+		result.StreamsPerSecond = float64(result.CompletedStreams) / maxSeconds(time.Since(started))
+		if contract.MinStreamsPerSecond > 0 && result.StreamsPerSecond < contract.MinStreamsPerSecond {
+			return result, fmt.Errorf("capacity stream throughput %.2f/s is below budget %.2f/s", result.StreamsPerSecond, contract.MinStreamsPerSecond)
+		}
 	}
 	if err := waitCapacityUntil(ctx, rampEnd, watchdogAt); err != nil {
 		return result, err
@@ -380,9 +420,12 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 		case <-liveness.C:
 			probeTimeout := minDuration(5*time.Second, contract.Hold/10)
 			probeCtx, cancelProbe := context.WithTimeout(ctx, probeTimeout)
+			probeStarted := time.Now()
 			probeErr := probeCapacitySessions(probeCtx, sessions)
+			probeLatency := time.Since(probeStarted)
 			cancelProbe()
 			result.LivenessSweeps++
+			livenessLatencies = append(livenessLatencies, probeLatency)
 			if probeErr != nil {
 				result.LivenessFailures++
 				stopTimer(timer)
@@ -394,6 +437,13 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 			stopTimer(timer)
 			return result, context.Cause(ctx)
 		}
+	}
+	result.LivenessP50 = percentileDuration(livenessLatencies, 50)
+	result.LivenessP95 = percentileDuration(livenessLatencies, 95)
+	result.LivenessP99 = percentileDuration(livenessLatencies, 99)
+	result.LivenessOpsPerSecond = float64(result.LivenessSweeps*result.Succeeded) / maxSeconds(contract.Hold)
+	if err := assertCapacityLivenessBudget(contract, result); err != nil {
+		return result, err
 	}
 	holdSnapshot, err := captureCapacityResource(capture, base, contract, "hold", contract.Ramp+contract.Hold, contract.Sessions, contract.Sessions)
 	if err != nil {
@@ -506,6 +556,12 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 		{Name: "hold_disconnects", Value: float64(result.HoldDisconnects), Unit: "count"},
 		{Name: "liveness_sweeps", Value: float64(result.LivenessSweeps), Unit: "count"},
 		{Name: "liveness_failures", Value: float64(result.LivenessFailures), Unit: "count"},
+		{Name: "connect_p50_ns", Value: float64(result.ConnectP50.Nanoseconds()), Unit: "nanoseconds"},
+		{Name: "connect_p95_ns", Value: float64(result.ConnectP95.Nanoseconds()), Unit: "nanoseconds"},
+		{Name: "connect_p99_ns", Value: float64(result.ConnectP99.Nanoseconds()), Unit: "nanoseconds"},
+		{Name: "connects_per_second", Value: result.ConnectsPerSecond, Unit: "operations_per_second"},
+		{Name: "liveness_p99_ns", Value: float64(result.LivenessP99.Nanoseconds()), Unit: "nanoseconds"},
+		{Name: "liveness_operations_per_second", Value: result.LivenessOpsPerSecond, Unit: "operations_per_second"},
 		{Name: "cleanup_disconnects", Value: float64(result.CleanupDisconnects), Unit: "count"},
 		{Name: "watchdog_timeouts", Value: float64(result.WatchdogTimeouts), Unit: "count"},
 		{Name: "cleanup_residual_sessions", Value: float64(result.ResidualSessions), Unit: "count"},
@@ -595,6 +651,52 @@ func validateCapacityContract(contract capacityContract) error {
 		return errors.New("capacity contract is incomplete or has a non-exact watchdog timeline")
 	}
 	return nil
+}
+
+func assertCapacityLatencyBudget(contract capacityContract, result capacityCaseResult) error {
+	if contract.MaxConnectP50 > 0 && result.ConnectP50 > contract.MaxConnectP50 {
+		return fmt.Errorf("capacity connect p50 %s exceeds budget %s", result.ConnectP50, contract.MaxConnectP50)
+	}
+	if contract.MaxConnectP95 > 0 && result.ConnectP95 > contract.MaxConnectP95 {
+		return fmt.Errorf("capacity connect p95 %s exceeds budget %s", result.ConnectP95, contract.MaxConnectP95)
+	}
+	if contract.MaxConnectP99 > 0 && result.ConnectP99 > contract.MaxConnectP99 {
+		return fmt.Errorf("capacity connect p99 %s exceeds budget %s", result.ConnectP99, contract.MaxConnectP99)
+	}
+	if contract.MinConnectsPerSecond > 0 && result.ConnectsPerSecond < contract.MinConnectsPerSecond {
+		return fmt.Errorf("capacity connect throughput %.2f/s is below budget %.2f/s", result.ConnectsPerSecond, contract.MinConnectsPerSecond)
+	}
+	return nil
+}
+
+func assertCapacityLivenessBudget(contract capacityContract, result capacityCaseResult) error {
+	if contract.MaxLivenessP99 > 0 && result.LivenessP99 > contract.MaxLivenessP99 {
+		return fmt.Errorf("capacity liveness p99 %s exceeds budget %s", result.LivenessP99, contract.MaxLivenessP99)
+	}
+	if contract.MinLivenessOpsPerSecond > 0 && result.LivenessOpsPerSecond < contract.MinLivenessOpsPerSecond {
+		return fmt.Errorf("capacity liveness throughput %.2f/s is below budget %.2f/s", result.LivenessOpsPerSecond, contract.MinLivenessOpsPerSecond)
+	}
+	return nil
+}
+
+func percentileDuration(values []time.Duration, percentile int) time.Duration {
+	if len(values) == 0 || percentile < 0 || percentile > 100 {
+		return 0
+	}
+	ordered := append([]time.Duration(nil), values...)
+	slices.Sort(ordered)
+	index := (len(ordered)*percentile + 99) / 100
+	if index < 1 {
+		index = 1
+	}
+	return ordered[index-1]
+}
+
+func maxSeconds(value time.Duration) float64 {
+	if value <= 0 {
+		return 1
+	}
+	return value.Seconds()
 }
 
 func captureCapacityResource(capture resourceSnapshotFunc, base transporttest.ResourceSnapshot, contract capacityContract, phase string, at time.Duration, active, unique int) (caseResourceRecord, error) {
