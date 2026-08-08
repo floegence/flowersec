@@ -126,7 +126,12 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
     await page.exposeBinding("__flowersecCapacityTerminated", async (_source, value) => {
       await notifyTermination(value);
     });
-    await installWebTransportCertificateHash(page, plan.certificate_hash);
+    await installWebTransportCertificateHash(
+      page,
+      plan.certificate_hash,
+      "chromium",
+      plan.topology === "browser_tunnel_wt_wss",
+    );
     await page.goto(site.origin, { waitUntil: "networkidle" });
     await preloadBrowserSDK(page);
     cdp = await context.newCDPSession(page);

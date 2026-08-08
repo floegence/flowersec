@@ -846,15 +846,16 @@ function browserPage() {
 </head><body></body></html>`;
 }
 
-export async function installWebTransportCertificateHash(page, encodedHash, browser = "chromium") {
+export async function installWebTransportCertificateHash(page, encodedHash, browser = "chromium", removeWebSocket = false) {
   if (browser === "firefox") return;
   if (browser !== "chromium") throw new TypeError("unsupported browser certificate adapter");
   await page.addInitScript((value) => {
+    const encoded = typeof value === "string" ? value : value.encodedHash;
     const NativeWebTransport = globalThis.WebTransport;
     if (typeof NativeWebTransport !== "function") {
       throw new Error("Chromium WebTransport capability is unavailable");
     }
-    const standard = value.replaceAll("-", "+").replaceAll("_", "/");
+    const standard = encoded.replaceAll("-", "+").replaceAll("_", "/");
     const padded = standard + "=".repeat((4 - (standard.length % 4)) % 4);
     const hash = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
     globalThis.WebTransport = class extends NativeWebTransport {
@@ -862,7 +863,10 @@ export async function installWebTransportCertificateHash(page, encodedHash, brow
         super(url, { ...options, serverCertificateHashes: [{ algorithm: "sha-256", value: hash.slice() }] });
       }
     };
-  }, encodedHash);
+    if (typeof value !== "string" && value.removeWebSocket) {
+      Object.defineProperty(globalThis, "WebSocket", { value: undefined, configurable: true });
+    }
+  }, removeWebSocket ? { encodedHash, removeWebSocket: true } : encodedHash);
 }
 
 function withTimeout(promise, milliseconds, name) {

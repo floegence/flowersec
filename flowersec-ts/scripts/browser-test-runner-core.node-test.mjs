@@ -554,6 +554,37 @@ test("gives every WebTransport constructor an independent certificate hash buffe
   }
 });
 
+test("can disable the competing WebSocket candidate for pinned WT-WSS capacity", async () => {
+  let initScript;
+  let initValue;
+  await installWebTransportCertificateHash({
+    addInitScript: async (script, value) => {
+      initScript = script;
+      initValue = value;
+    },
+  }, forcedPlan.certificate_hash, "chromium", true);
+
+  const originalWebTransport = globalThis.WebTransport;
+  const originalWebSocket = globalThis.WebSocket;
+  class NativeWebTransport {
+    constructor(_url, options) {
+      assert.equal(options.serverCertificateHashes[0].algorithm, "sha-256");
+    }
+  }
+  try {
+    globalThis.WebTransport = NativeWebTransport;
+    globalThis.WebSocket = class WebSocket {};
+    initScript(initValue);
+    assert.equal(globalThis.WebSocket, undefined);
+    new globalThis.WebTransport("https://198.18.0.1:443", {});
+  } finally {
+    if (originalWebTransport === undefined) delete globalThis.WebTransport;
+    else globalThis.WebTransport = originalWebTransport;
+    if (originalWebSocket === undefined) delete globalThis.WebSocket;
+    else globalThis.WebSocket = originalWebSocket;
+  }
+});
+
 test("Firefox keeps the native WebTransport constructor", async () => {
   let initScripts = 0;
   await installWebTransportCertificateHash({
