@@ -4,6 +4,12 @@ import * as browser from "./browser/index.js";
 import * as node from "./node/index.js";
 
 describe("final public SDK names", () => {
+  test("declaration closure does not check file access before reading", async () => {
+    const fs = await import("node:fs/promises");
+    const source = await fs.readFile(new URL("./publicApiRefinement.test.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(/await expect\(fs\.access\(file\)\)/u);
+  });
+
   test("browser and node subpaths expose environment-neutral operations", () => {
     expect(typeof browser.connect).toBe("function");
     expect(typeof browser.createConnectionController).toBe("function");
@@ -36,13 +42,22 @@ describe("final public SDK names", () => {
       ];
       return candidates.find((candidate) => candidate.startsWith(`${root}${path.sep}`) && candidate.endsWith(".d.ts"));
     };
+    const readDeclaration = async (file: string): Promise<string> => {
+      try {
+        return await fs.readFile(file, "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          throw new Error(`missing public declaration ${file}`, { cause: error });
+        }
+        throw error;
+      }
+    };
     while (pending.length > 0) {
       const file = pending.pop();
       if (file === undefined || retained.has(file)) continue;
       expect(file.startsWith(`${root}${path.sep}`)).toBe(true);
-      await expect(fs.access(file)).resolves.toBeUndefined();
+      const source = await readDeclaration(file);
       retained.add(file);
-      const source = await fs.readFile(file, "utf8");
       const parsed = ts.preProcessFile(source, true, true);
       for (const imported of parsed.importedFiles) {
         if (!imported.fileName.startsWith(".")) continue;
