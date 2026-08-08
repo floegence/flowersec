@@ -67,6 +67,33 @@ func TestIssuerCreatesOpaqueDirectArtifactAndBoundRuntimeAuthorization(t *testin
 	}
 }
 
+func TestIssuerAcceptsLoopbackPlainWebSocketOnlyForDirectArtifacts(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	issuer := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x52}, 128)), now)
+	loopback, err := NewEndpointSet("ws://127.0.0.1:23998/flowersec/v2/direct")
+	if err != nil {
+		t.Fatalf("NewEndpointSet loopback ws: %v", err)
+	}
+	if _, err := issuer.IssueDirect(DirectIssueOptions{
+		Session:   SessionOptions{ChannelID: "loopback", ExpiresAt: now.Add(time.Minute)},
+		Endpoints: loopback, RendezvousGroupID: "group", ListenerAudience: "audience",
+		UpstreamAddress: "127.0.0.1:23998",
+	}); err != nil {
+		t.Fatalf("loopback ws direct issuance: %v", err)
+	}
+	nonLoopback, err := NewEndpointSet("ws://edge.example:23998/flowersec/v2/direct")
+	if err != nil {
+		t.Fatalf("NewEndpointSet non-loopback ws: %v", err)
+	}
+	if _, err := issuer.IssueDirect(DirectIssueOptions{
+		Session:   SessionOptions{ChannelID: "non-loopback", ExpiresAt: now.Add(time.Minute)},
+		Endpoints: nonLoopback, RendezvousGroupID: "group", ListenerAudience: "audience",
+		UpstreamAddress: "127.0.0.1:23998",
+	}); err == nil {
+		t.Fatal("non-loopback plain ws direct issuance unexpectedly succeeded")
+	}
+}
+
 func TestControlPlaneBoundariesFailClosedAndRedactOpaqueValues(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	issuer := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x31}, 128)), now)

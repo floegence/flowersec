@@ -46,7 +46,7 @@ func NewEndpointSet(urls ...string) (EndpointSet, error) {
 		}
 		var carrier artifactv2.Carrier
 		switch strings.ToLower(scheme) {
-		case "wss":
+		case "ws", "wss":
 			carrier = artifactv2.CarrierWebSocket
 		case "quic":
 			carrier = artifactv2.CarrierRawQUIC
