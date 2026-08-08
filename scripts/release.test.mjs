@@ -136,6 +136,7 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   const origin = path.join(root, "origin.git");
   const bin = path.join(root, "bin");
   const gitLog = path.join(root, "git.log");
+  const goLog = path.join(root, "go.log");
   const realGit = executablePath("git");
   const realMake = executablePath("make");
   fs.mkdirSync(path.join(repo, "scripts"), { recursive: true });
@@ -178,6 +179,23 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   fs.writeFileSync(path.join(bin, "make"), makeScript);
   fs.chmodSync(path.join(bin, "make"), 0o755);
   fs.writeFileSync(
+    path.join(bin, "go"),
+    [
+      "#!/bin/sh",
+      "printf '%s\\n' \"$*\" >> \"$FLOWERSEC_TEST_GO_LOG\"",
+      "if [ \"${FLOWERSEC_TEST_FAIL_NOTES:-0}\" = 1 ]; then exit 88; fi",
+      "output=''",
+      "previous=''",
+      "for argument in \"$@\"; do",
+      "  if [ \"$previous\" = --output ]; then output=\"$argument\"; fi",
+      "  previous=\"$argument\"",
+      "done",
+      "[ -n \"$output\" ] && printf '%s\\n' '# release notes' > \"$output\"",
+      "",
+    ].join("\n"),
+  );
+  fs.chmodSync(path.join(bin, "go"), 0o755);
+  fs.writeFileSync(
     path.join(bin, "git"),
     [
       "#!/bin/sh",
@@ -203,7 +221,7 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   runGit(["-C", repo, "remote", "add", "origin", origin]);
   runGit(["-C", repo, "push", "-u", "origin", "main"]);
 
-  return { bin, gitLog, origin, realGit, realMake, repo };
+  return { bin, gitLog, goLog, origin, realGit, realMake, repo };
 }
 
 function runReleaseScript(fixture, env = {}) {
@@ -212,6 +230,7 @@ function runReleaseScript(fixture, env = {}) {
     encoding: "utf8",
     env: isolatedEnvironment({
       FLOWERSEC_TEST_GIT_LOG: fixture.gitLog,
+      FLOWERSEC_TEST_GO_LOG: fixture.goLog,
       FLOWERSEC_TEST_REAL_GIT: fixture.realGit,
       PATH: `${fixture.bin}:${process.env.PATH}`,
       ...env,
@@ -396,6 +415,16 @@ test("release gates stay wired into local checks and publication workflows", () 
     path.join(sourceRoot, "scripts/release.sh"),
     "utf8",
   );
+  assert.match(
+    releaseWorkflow,
+    /go -C tools\/releasenotes run \. \\[\r\n]+\s*--repo \.\.\/\.\./,
+    "release workflow must run release notes from its Go module",
+  );
+  assert.doesNotMatch(
+    releaseWorkflow,
+    /go run \.\/tools\/releasenotes/,
+    "release workflow must not assume a root Go module",
+  );
   for (const required of [releaseScript, releaseWorkflow, rustWorkflow]) {
     assert.match(required, /check-release-version-consistency\.mjs/);
   }
@@ -431,6 +460,8 @@ test("release stays publication-only while main push owns fast acceptance", () =
     releaseScript,
     /\b(?:go run|go test|npm|cargo|swift (?:build|test)|transport-v2-(?:release|signed|result))\b/,
   );
+  assert.match(releaseScript, /go -C tools\/releasenotes run \. \\[\r\n]+\s*--repo \.\.\/\.\./);
+  assert.doesNotMatch(releaseScript, /go run \.\/tools\/releasenotes/);
   assert.doesNotMatch(prePush, /make(?: -C \"\$repo_root\")? check/);
   assert.match(prePush, /use \.\/scripts\/push-main\.sh/);
 
@@ -1210,6 +1241,33 @@ test("release removes all local tags when atomic push fails", (t) => {
   assertNoReleaseTags(fixture);
   const commands = gitCommands(fixture);
   assert.ok(commands.some((command) => command.startsWith("push --atomic origin ")), commands.join("\n"));
+});
+
+test("release notes preflight rejects generator failure and removes local tags", (t) => {
+  const fixture = createReleaseScriptFixture(t);
+  const result = runReleaseScript(fixture, { FLOWERSEC_TEST_FAIL_NOTES: "1" });
+
+  assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+  assert.match(result.stderr, /release notes preflight failed/);
+  assertNoReleaseTags(fixture);
+  const commands = gitCommands(fixture);
+  assert.equal(commands.some((command) => command.startsWith("push ")), false, commands.join("\n"));
+  assert.match(fs.readFileSync(fixture.goLog, "utf8"), /-C tools\/releasenotes run \. --repo \.\.\/\./);
+});
+
+test("release can retry after an atomic push failure without moving tags", (t) => {
+  const fixture = createReleaseScriptFixture(t);
+  const failed = runReleaseScript(fixture, { FLOWERSEC_TEST_FAIL_PUSH: "1" });
+  assert.notEqual(failed.status, 0, `${failed.stdout}${failed.stderr}`);
+  assertNoReleaseTags(fixture);
+
+  const retried = runReleaseScript(fixture);
+  assert.equal(retried.status, 0, `${retried.stdout}${retried.stderr}`);
+  assert.deepEqual(runGit(["--git-dir", fixture.origin, "tag", "--list"]).split("\n"), [
+    "0.26.0",
+    "flowersec-go/v0.26.0",
+    "flowersec-rust/v0.26.0",
+  ]);
 });
 
 test("release publishes main and all ecosystem tags atomically", (t) => {

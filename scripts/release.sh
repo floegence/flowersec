@@ -58,17 +58,38 @@ for tag in "${tags[@]}"; do
 done
 
 created_tags=()
-cleanup_tags() {
-  if [[ ${#created_tags[@]} -gt 0 ]]; then
-    git tag -d "${created_tags[@]}" >/dev/null
+notes_tmp_dir=""
+cleanup_on_exit() {
+  local status=$?
+  if (( status != 0 )) && [[ ${#created_tags[@]} -gt 0 ]]; then
+    git tag -d "${created_tags[@]}" >/dev/null || true
   fi
+  if [[ -n "$notes_tmp_dir" && -d "$notes_tmp_dir" ]]; then
+    rm -rf "$notes_tmp_dir"
+  fi
+  return "$status"
 }
-trap cleanup_tags ERR INT TERM
+trap cleanup_on_exit EXIT INT TERM
 
 for tag in "${tags[@]}"; do
   git tag "$tag" "$head"
   created_tags+=("$tag")
 done
+
+notes_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/flowersec-release-notes.XXXXXX")
+notes_file="$notes_tmp_dir/release-notes.md"
+if ! go -C tools/releasenotes run . \
+  --repo ../.. \
+  --current-tag "flowersec-go/v$version" \
+  --current-ref "$head" \
+  --output "$notes_file"; then
+  echo "release notes preflight failed" >&2
+  exit 1
+fi
+if [[ ! -s "$notes_file" ]]; then
+  echo "release notes preflight produced an empty file" >&2
+  exit 1
+fi
 
 FLOWERSEC_RELEASE_PUSH_SHA="$head" \
 FLOWERSEC_RELEASE_VERSION="$version" \
@@ -79,5 +100,6 @@ git push --atomic origin \
   "refs/tags/${tags[2]}"
 
 created_tags=()
-trap - ERR INT TERM
+trap - EXIT INT TERM
+rm -rf "$notes_tmp_dir"
 echo "released Flowersec $version from $head"
