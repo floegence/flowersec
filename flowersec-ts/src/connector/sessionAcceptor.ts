@@ -1,6 +1,8 @@
 import {
   AdmissionStatusV2,
+  buildFSB2RequestV2,
   decodeFSB2RequestV2,
+  encodeFSB2RequestV2,
   encodeFSA2ResponseV2,
   type ArtifactV2,
   type DecodedFSB2RequestV2,
@@ -10,6 +12,7 @@ import type { SessionProtocolRuntimeV2, SessionV2 as InternalSessionV2 } from ".
 import { establishSessionV2 } from "../v2/session.js";
 import { AdmissionSessionV2Error } from "../v2/admissionError.js";
 import { sessionConfigFromArtifactV2 } from "./sessionConfig.js";
+import type { RpcRouter } from "../rpc/server.js";
 
 export type AdmissionDecisionV2 =
   | Readonly<{ accepted: true; artifact: ArtifactV2 }>
@@ -27,7 +30,7 @@ export type AdmissionAuthorizerV2 = (
 export async function acceptNativeSessionV2(
   carrier: NativeCarrierSessionV2,
   authorize: AdmissionAuthorizerV2,
-  options: Readonly<{ runtime: SessionProtocolRuntimeV2; signal?: AbortSignal }>,
+  options: Readonly<{ runtime: SessionProtocolRuntimeV2; rpcRouter?: RpcRouter; signal?: AbortSignal }>,
 ): Promise<InternalSessionV2> {
   const admission = carrier.kind === "webtransport"
     ? await carrier.openStream(signalOptions(options.signal))
@@ -36,6 +39,12 @@ export async function acceptNativeSessionV2(
     const rawFSB2 = await readFSB2(admission, options.signal);
     const decoded = decodeFSB2RequestV2(rawFSB2);
     const decision = await authorize(decoded, options.signal);
+    if (decision.accepted) {
+      const expected = encodeFSB2RequestV2(
+        buildFSB2RequestV2(decision.artifact, decoded.request.chosen_candidate_id),
+      );
+      if (!equalBytes(expected, rawFSB2)) throw new Error("authorized artifact does not match admission");
+    }
     const response = decision.accepted
       ? { status: AdmissionStatusV2.Success, reason: "" }
       : { status: decision.status, reason: decision.reason };
@@ -48,9 +57,10 @@ export async function acceptNativeSessionV2(
     if (!decision.accepted) {
       throw new AdmissionSessionV2Error(decision.reason, `Flowersec v2 admission rejected: ${decision.reason}`);
     }
+    const config = sessionConfigFromArtifactV2(decision.artifact, rawFSB2, options.runtime, undefined, "server");
     return await establishSessionV2(
       adaptNativeCarrierSessionV2(carrier),
-      sessionConfigFromArtifactV2(decision.artifact, rawFSB2, options.runtime, undefined, "server"),
+      options.rpcRouter === undefined ? config : { ...config, rpcRouter: options.rpcRouter },
       signalOptions(options.signal),
     );
   } catch (error) {
@@ -58,6 +68,13 @@ export async function acceptNativeSessionV2(
     carrier.abort({ code: 6, reason: "admission failed" });
     throw error;
   }
+}
+
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) difference |= left[index]! ^ right[index]!;
+  return difference === 0;
 }
 
 async function readFSB2(stream: NativeCarrierStreamV2, signal?: AbortSignal): Promise<Uint8Array> {

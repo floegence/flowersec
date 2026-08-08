@@ -21,6 +21,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
 	gorillaws "github.com/gorilla/websocket"
@@ -42,7 +43,11 @@ type AcceptorOptions struct {
 	MaxDirectSessions uint16
 	Authorize         func(context.Context, controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error)
 	Release           func(context.Context, string)
-	OnSession         func(context.Context, Session, string) error
+	// ResolveHandlers snapshots application handlers after authorization and
+	// before session establishment. The same callback is used for direct and
+	// tunnel admissions; returning nil installs an empty application router.
+	ResolveHandlers func(context.Context, controlplane.RuntimeAuthorizationRequest) (*SessionHandlers, error)
+	OnSession       func(context.Context, Session, string) error
 }
 
 type Acceptor struct {
@@ -116,15 +121,13 @@ func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http
 	var decoded *artifactv2.DecodedRequest
 	var response controlplane.AuthorizationResponse
 	var leaseID string
+	var router *internalrpc.Router
+	var serveHandlers func(context.Context, session.SessionV2) error
 	decoded, err = websocketadmission.Serve(ctx, connection, acceptor.reasons(), func(authCtx context.Context, candidate *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
 		if candidate == nil || candidate.Request.PathKind != artifactv2.PathDirect {
 			return artifactv2.AdmissionResponse{}, ErrInvalidAcceptor
 		}
-		requestBody, marshalErr := artifactv2.MarshalRequest(candidate.Request)
-		if marshalErr != nil {
-			return artifactv2.AdmissionResponse{}, marshalErr
-		}
-		authRequest, parseErr := controlplane.ParseRuntimeAuthorizationRequest(requestBody)
+		authRequest, parseErr := runtimeAuthorizationRequest(candidate, "websocket", request.RemoteAddr)
 		if parseErr != nil {
 			return artifactv2.AdmissionResponse{}, parseErr
 		}
@@ -140,6 +143,13 @@ func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http
 			leaseID, parseErr = responseLeaseID(response)
 			if parseErr != nil {
 				return artifactv2.AdmissionResponse{}, parseErr
+			}
+			if acceptor.options.ResolveHandlers != nil {
+				handlers, handlerErr := acceptor.options.ResolveHandlers(authCtx, authRequest)
+				if handlerErr != nil {
+					return artifactv2.AdmissionResponse{}, handlerErr
+				}
+				router, serveHandlers = acceptedHandlerSnapshot(handlers)
 			}
 		}
 		return responseAdmission(response)
@@ -163,9 +173,9 @@ func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http
 		_ = connection.Close()
 		return
 	}
-	accepted, err := establishAcceptedSession(ctx, carrierSession, contract, session.PathDirect, session.RoleServer, decoded.LocalAdmissionBinding, decoded.LocalAdmissionBinding)
+	accepted, err := establishAcceptedSession(ctx, carrierSession, contract, session.PathDirect, session.RoleServer, "", "", decoded.LocalAdmissionBinding, decoded.LocalAdmissionBinding, router)
 	if err == nil {
-		err = acceptor.options.OnSession(request.Context(), &opaqueSession{inner: accepted}, wire.Session.ChannelID)
+		err = acceptor.runAcceptedSession(request.Context(), accepted, wire.Session.ChannelID, serveHandlers)
 	}
 	if accepted != nil {
 		_ = accepted.Close()
@@ -187,7 +197,8 @@ func (acceptor *Acceptor) handleTunnel(writer http.ResponseWriter, request *http
 		_ = connection.Close()
 		return
 	}
-	if err := acceptor.coordinator.Serve(request.Context(), leg); err != nil {
+	ctx := context.WithValue(request.Context(), acceptorTransportContextKey{}, acceptorTransportContext{carrier: "websocket", remoteAddress: request.RemoteAddr})
+	if err := acceptor.coordinator.Serve(ctx, leg); err != nil {
 		_ = connection.Close()
 	}
 }
@@ -196,11 +207,11 @@ func (acceptor *Acceptor) authorizeTunnel(ctx context.Context, decoded *artifact
 	if decoded == nil {
 		return tunnelv2.Authorization{}, ErrInvalidAcceptor
 	}
-	raw, err := artifactv2.MarshalRequest(decoded.Request)
-	if err != nil {
-		return tunnelv2.Authorization{}, err
+	transport, ok := ctx.Value(acceptorTransportContextKey{}).(acceptorTransportContext)
+	if !ok {
+		return tunnelv2.Authorization{}, ErrInvalidAcceptor
 	}
-	request, err := controlplane.ParseRuntimeAuthorizationRequest(raw)
+	request, err := runtimeAuthorizationRequest(decoded, transport.carrier, transport.remoteAddress)
 	if err != nil {
 		return tunnelv2.Authorization{}, err
 	}
@@ -222,8 +233,18 @@ func (acceptor *Acceptor) authorizeTunnel(ctx context.Context, decoded *artifact
 	if err != nil {
 		return tunnelv2.Authorization{}, err
 	}
+	var router *internalrpc.Router
+	var serveHandlers func(context.Context, session.SessionV2) error
+	if acceptor.options.ResolveHandlers != nil {
+		handlers, handlerErr := acceptor.options.ResolveHandlers(ctx, request)
+		if handlerErr != nil {
+			return tunnelv2.Authorization{}, handlerErr
+		}
+		router, serveHandlers = acceptedHandlerSnapshot(handlers)
+	}
 	return tunnelv2.Authorization{
 		Claims:    tunnelv2.VerifiedClaims{CredentialID: wire.CredentialID, ChannelID: decoded.Request.ChannelID, Profile: decoded.Request.Profile, RendezvousGroupID: decoded.Request.RendezvousGroupID, SessionContractHash: decoded.Request.SessionContractHash, CandidateSetHash: decoded.Request.CandidateSetHash, ListenerAudience: decoded.Request.ListenerAudience, Role: decoded.Request.Role, EndpointInstanceID: decoded.Request.EndpointInstanceID, ExpectedPeerEndpointInstanceID: wire.ExpectedPeerEndpointInstanceID, AllowReplacement: wire.AllowReplacement},
+		RPCRouter: router, ServeHandlers: serveHandlers,
 		ExpiresAt: wire.ExpiresAt, Lease: acceptor.lease(wire.LeaseID), Session: contract, AdmissionBinding: decoded.LocalAdmissionBinding,
 	}, nil
 }
@@ -236,14 +257,14 @@ func (acceptor *Acceptor) onTunnelPair(ctx context.Context, client, server carri
 		auth    tunnelv2.Authorization
 		role    session.SessionRole
 		peer    [32]byte
-	}{{client, clientAuth, session.RoleClient, serverAuth.AdmissionBinding}, {server, serverAuth, session.RoleServer, clientAuth.AdmissionBinding}} {
+	}{{client, clientAuth, session.RoleServer, serverAuth.AdmissionBinding}, {server, serverAuth, session.RoleClient, clientAuth.AdmissionBinding}} {
 		item := item
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			inner, err := establishAcceptedSession(ctx, item.carrier, item.auth.Session, session.PathTunnel, item.role, item.auth.AdmissionBinding, item.peer)
+			inner, err := establishAcceptedSession(ctx, item.carrier, item.auth.Session, session.PathTunnel, item.role, item.auth.Claims.ExpectedPeerEndpointInstanceID, item.auth.Claims.EndpointInstanceID, item.peer, item.auth.AdmissionBinding, item.auth.RPCRouter)
 			if err == nil {
-				err = acceptor.options.OnSession(ctx, &opaqueSession{inner: inner}, item.auth.Claims.EndpointInstanceID)
+				err = acceptor.runAcceptedSession(ctx, inner, item.auth.Claims.EndpointInstanceID, item.auth.ServeHandlers)
 				_ = inner.Close()
 			}
 			if err != nil {
@@ -263,8 +284,40 @@ func (acceptor *Acceptor) onTunnelPair(ctx context.Context, client, server carri
 	return err
 }
 
-func establishAcceptedSession(ctx context.Context, carrierSession carrier.Session, contract artifactv2.SessionContract, path session.PathKind, role session.SessionRole, local, peer [32]byte) (session.SessionV2, error) {
-	config := session.Config{Role: role, Path: path, ChannelID: contract.ChannelID, SessionContractHash: contract.ContractHash, Suite: protocolv2.Suite(contract.DefaultSuite), PSK: contract.E2EEPSK, MaxInboundStreams: contract.MaxInboundStreams, IdleTimeout: time.Duration(contract.IdleTimeoutSeconds) * time.Second, EstablishTimeout: time.Duration(contract.EstablishTimeoutSeconds) * time.Second, RekeyPrepareTimeout: time.Duration(contract.RekeyPrepareTimeoutSeconds) * time.Second, RekeyCompletionTimeout: time.Duration(contract.RekeyCompletionTimeoutSeconds) * time.Second, LocalAdmissionBinding: local, PeerAdmissionBinding: peer}
+func acceptedHandlerSnapshot(handlers *SessionHandlers) (*internalrpc.Router, func(context.Context, session.SessionV2) error) {
+	if handlers == nil {
+		return internalrpc.NewRouter(), nil
+	}
+	router := handlers.routerForAcceptedSession()
+	return router, func(ctx context.Context, current session.SessionV2) error {
+		return handlers.Serve(ctx, &opaqueSession{inner: current})
+	}
+}
+
+func (acceptor *Acceptor) runAcceptedSession(ctx context.Context, current session.SessionV2, endpointID string, serveHandlers func(context.Context, session.SessionV2) error) error {
+	if serveHandlers == nil {
+		return acceptor.options.OnSession(ctx, &opaqueSession{inner: current}, endpointID)
+	}
+	onSessionDone := make(chan error, 1)
+	handlersDone := make(chan error, 1)
+	go func() { onSessionDone <- acceptor.options.OnSession(ctx, &opaqueSession{inner: current}, endpointID) }()
+	go func() { handlersDone <- serveHandlers(ctx, current) }()
+	var first error
+	select {
+	case first = <-onSessionDone:
+		_ = current.Close()
+		<-handlersDone
+	case first = <-handlersDone:
+		_ = current.Close()
+		if callbackErr := <-onSessionDone; callbackErr != nil {
+			first = errors.Join(first, callbackErr)
+		}
+	}
+	return first
+}
+
+func establishAcceptedSession(ctx context.Context, carrierSession carrier.Session, contract artifactv2.SessionContract, path session.PathKind, role session.SessionRole, localEndpointID, expectedPeerEndpointID string, local, peer [32]byte, router *internalrpc.Router) (session.SessionV2, error) {
+	config := session.Config{Role: role, Path: path, ChannelID: contract.ChannelID, SessionContractHash: contract.ContractHash, Suite: protocolv2.Suite(contract.DefaultSuite), PSK: contract.E2EEPSK, MaxInboundStreams: contract.MaxInboundStreams, IdleTimeout: time.Duration(contract.IdleTimeoutSeconds) * time.Second, EstablishTimeout: time.Duration(contract.EstablishTimeoutSeconds) * time.Second, RekeyPrepareTimeout: time.Duration(contract.RekeyPrepareTimeoutSeconds) * time.Second, RekeyCompletionTimeout: time.Duration(contract.RekeyCompletionTimeoutSeconds) * time.Second, LocalEndpointInstanceID: localEndpointID, ExpectedPeerEndpointInstanceID: expectedPeerEndpointID, LocalAdmissionBinding: local, PeerAdmissionBinding: peer, RPCRouter: router}
 	return session.Establish(ctx, carrierSession, config)
 }
 
@@ -289,6 +342,32 @@ func (acceptor *Acceptor) reasons() artifactv2.ReasonRegistry {
 	return artifactv2.ReasonRegistry{"authorization_denied": {}, "authorization_unavailable": {}, tunnelv2.ReasonCapacity: {}, tunnelv2.ReasonCredentialReplay: {}, tunnelv2.ReasonPairMismatch: {}, tunnelv2.ReasonPairTimeout: {}, tunnelv2.ReasonReplaced: {}, tunnelv2.ReasonReplacementDenied: {}}
 }
 
+type acceptorTransportContext struct {
+	carrier       string
+	remoteAddress string
+}
+
+type acceptorTransportContextKey struct{}
+
+func runtimeAuthorizationRequest(decoded *artifactv2.DecodedRequest, observedCarrier, remoteAddress string) (controlplane.RuntimeAuthorizationRequest, error) {
+	if decoded == nil || len(decoded.Raw) == 0 || observedCarrier == "" || remoteAddress == "" {
+		return controlplane.RuntimeAuthorizationRequest{}, ErrInvalidAcceptor
+	}
+	encoded, err := json.Marshal(struct {
+		FSB2Base64URL string `json:"fsb2_base64url"`
+		Carrier       string `json:"carrier"`
+		RemoteAddress string `json:"remote_address"`
+	}{
+		FSB2Base64URL: base64.RawURLEncoding.EncodeToString(decoded.Raw),
+		Carrier:       observedCarrier,
+		RemoteAddress: remoteAddress,
+	})
+	if err != nil {
+		return controlplane.RuntimeAuthorizationRequest{}, ErrInvalidAcceptor
+	}
+	return controlplane.ParseRuntimeAuthorizationRequest(encoded)
+}
+
 type acceptorLease struct {
 	once    sync.Once
 	release func()
@@ -297,12 +376,15 @@ type acceptorLease struct {
 func (lease *acceptorLease) Release() { lease.once.Do(lease.release) }
 
 type acceptorAuthorizationWire struct {
-	Decision, Reason, CredentialID, LeaseID string
-	ExpiresAt                               time.Time
-	ExpectedPeerEndpointInstanceID          string
-	AllowReplacement                        bool
-	Session                                 acceptorSessionWire `json:"session"`
-	Direct                                  *struct {
+	Decision                       string              `json:"decision"`
+	Reason                         string              `json:"reason"`
+	CredentialID                   string              `json:"credential_id"`
+	LeaseID                        string              `json:"lease_id"`
+	ExpiresAt                      time.Time           `json:"expires_at"`
+	ExpectedPeerEndpointInstanceID string              `json:"expected_peer_endpoint_instance_id"`
+	AllowReplacement               bool                `json:"allow_replacement"`
+	Session                        acceptorSessionWire `json:"session"`
+	Direct                         *struct {
 		Session acceptorSessionWire `json:"session"`
 	} `json:"direct"`
 }

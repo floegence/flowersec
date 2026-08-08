@@ -2,19 +2,19 @@
 
 `@floegence/flowersec-core` is the ESM-only Flowersec v2 SDK for browsers and Node.js. Its public package surface is limited to the root, `/browser`, `/node`, and `/proxy` entrypoints.
 
-Flowersec 2.1.0 is the coordinated TypeScript SDK release.
+Flowersec 2.2.0 is the coordinated TypeScript SDK release.
 
 ## Install
 
 ```bash
-npm install @floegence/flowersec-core@2.1.0
+npm install @floegence/flowersec-core@2.2.0
 ```
 
 ## Public API
 
 - `@floegence/flowersec-core` exports the portable artifact, lease, session, stream, RPC, stream-metadata, and connection-controller API, plus profile-owned unreliable messages when negotiated.
 - `@floegence/flowersec-core/browser` adds `connect(...)`, `createConnectionController(...)`, and their options.
-- `@floegence/flowersec-core/node` adds `connect(...)`, `createConnectionController(...)`, and their options.
+- `@floegence/flowersec-core/node` adds `connect(...)`, `createConnectionController(...)`, `createAcceptor(...)`, `SessionHandlers`, and `AcceptedSession`.
 - `@floegence/flowersec-core/proxy` adds the `Session`-based HTTP/WebSocket runtime, Service Worker and controller/app-window bridges, strict `proxy.runtime@2` validation, and `connectProxyBrowser(...)` composition.
 
 The root type exports are:
@@ -52,8 +52,10 @@ carrier-neutral sessions, RPC, reliable streams, redacted public errors, and
 the optional single-owner `ConnectionController`. Callers should not compare
 raw TypeScript error-code strings with other SDKs.
 
-Only this portable core is required to align across languages. Complete SDK
-profiles and language conveniences intentionally differ by runtime.
+Portable core, connection control, session/RPC/stream lifecycle, accepted-session
+workflows, and published consumer workflows align across every applicable SDK.
+Platform-limited profiles are unsupported only with an explicit alternative
+boundary and executable test ID in `stability/language_capabilities.json`.
 
 The TypeScript SDK profile is split by entrypoint: browsers own WebSocket and
 WebTransport dialing, while Node.js owns WebSocket and WebTransport dialing through

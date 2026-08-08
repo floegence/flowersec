@@ -620,7 +620,12 @@ func (endpoint *ProductDirectEndpoint) startWebSocket(serverTLS *tls.Config) err
 	if err != nil {
 		return err
 	}
-	upgrader := gorillaws.Upgrader{Subprotocols: []string{carrierws.SubprotocolDirect}}
+	upgrader := gorillaws.Upgrader{
+		Subprotocols: []string{carrierws.SubprotocolDirect},
+		CheckOrigin: func(request *http.Request) bool {
+			return browserOriginAllowed(request.Header.Get("Origin"), endpoint.allowedOrigin)
+		},
+	}
 	httpServer := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		conn, upgradeErr := upgrader.Upgrade(writer, request, nil)
 		if upgradeErr != nil {

@@ -2,14 +2,14 @@
 
 The native Swift SDK for Flowersec v2 end-to-end encrypted sessions on Apple platforms.
 
-Flowersec 2.1.0 is the coordinated SwiftPM release.
+Flowersec 2.2.0 is the coordinated SwiftPM release.
 
 ## Install
 
 The repository root exposes the Swift package through the following version range:
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "2.1.0")
+.package(url: "https://github.com/floegence/flowersec.git", from: "2.2.0")
 ```
 
 Use the `Flowersec` library product.
@@ -33,8 +33,10 @@ carrier-neutral sessions, RPC, reliable streams, redacted public errors, and
 structured retry dispositions. Callers should not compare raw Swift error cases with
 other SDKs.
 
-Only this portable core is required to align across languages. Complete SDK
-profiles and language conveniences intentionally differ by runtime.
+Portable core, connection control, session/RPC/stream lifecycle, accepted-session
+workflows, and published consumer workflows align across every applicable SDK.
+Platform-limited profiles are unsupported only with an explicit alternative
+boundary and executable test ID in `stability/language_capabilities.json`.
 
 The Swift SDK profile is Apple-platform WebSocket dialing. Runtime, carrier,
 direct/tunnel topology, network mode, and client/server session role are independent

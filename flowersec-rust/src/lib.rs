@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_debug_implementations)]
 
-//! Native Rust support for Flowersec v2 secure direct and tunneled sessions.
+//! Native Rust support for Flowersec v2.2 secure direct and tunneled sessions.
 //!
 //! Maintained callers use the opaque [`Artifact`], one-shot [`connect`],
 //! optional long-lived [`ConnectionController`], and carrier-neutral
@@ -12,6 +12,38 @@
 //!
 //! ```compile_fail
 //! use flowersec::framing;
+//! ```
+//!
+//! ```compile_fail
+//! use flowersec::client;
+//! ```
+//!
+//! ```compile_fail
+//! use flowersec::endpoint;
+//! ```
+//!
+//! ```compile_fail
+//! use flowersec::proxy;
+//! ```
+//!
+//! ```compile_fail
+//! use flowersec::origin;
+//! ```
+//!
+//! ```compile_fail
+//! use flowersec::rpc;
+//! ```
+//!
+//! ```compile_fail
+//! use flowersec::stream;
+//! ```
+//!
+//! ```compile_fail
+//! use flowersec::protocolio;
+//! ```
+//!
+//! ```compile_fail
+//! use flowersec::gen::flowersec::v1;
 //! ```
 //!
 //! Carrier and wire implementation modules are intentionally inaccessible.
@@ -46,6 +78,7 @@ mod idna_v2;
 mod native_runtime_v2;
 mod protocol_v2;
 mod raw_quic_v2;
+mod session_handlers;
 mod session_v2;
 mod transport_v2;
 
@@ -74,6 +107,10 @@ pub use connection_controller::{
 };
 pub use connector_v2::{ConnectError, ConnectErrorCode};
 pub use native_runtime_v2::{ConnectorOptions, connect, connect_with_cancellation};
+pub use session_handlers::{
+    AcceptedSession, HandlerRegistrationError, RpcHandler, SessionHandlerOptions, SessionHandlers,
+    StreamHandler,
+};
 pub use transport_v2::{
     ByteStream, IncomingStream, JsonObject, RpcCallError, RpcError, RpcPeer, RpcPeerExt, Session,
     SessionError, SessionTermination, StreamMetadata, StreamMetadataError,

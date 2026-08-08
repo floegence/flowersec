@@ -15,7 +15,8 @@ use crate::{
     },
     transport_v2::{
         CarrierKind, CarrierSessionV2, CarrierStreamV2, CarrierUnreliableMessageErrorV2, PathKind,
-        RpcCallError, Session, SessionError, SessionRole, StreamMetadata, UnreliableMessageError,
+        RpcCallError, RpcError, Session, SessionError, SessionRole, StreamMetadata,
+        UnreliableMessageError,
     },
 };
 use bytes::Bytes;
@@ -755,10 +756,10 @@ impl RpcHandlerV2 for EchoRpc {
         &self,
         type_id: u32,
         request: serde_json::Value,
-    ) -> io::Result<serde_json::Value> {
+    ) -> Result<serde_json::Value, RpcError> {
         Ok(serde_json::json!({"type_id": type_id, "request": request}))
     }
-    async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> io::Result<()> {
+    async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> Result<(), RpcError> {
         Ok(())
     }
 }
@@ -889,11 +890,11 @@ impl RpcHandlerV2 for SensitiveRpcFailure {
         &self,
         _type_id: u32,
         _request: serde_json::Value,
-    ) -> io::Result<serde_json::Value> {
-        Err(io::Error::other("secret endpoint and credential"))
+    ) -> Result<serde_json::Value, RpcError> {
+        Err(RpcError::new(500, Some("handler failed".into())).expect("valid RPC error"))
     }
 
-    async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> io::Result<()> {
+    async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> Result<(), RpcError> {
         Ok(())
     }
 }

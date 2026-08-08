@@ -14,7 +14,8 @@ use crate::raw_quic_v2::{
 };
 use crate::{
     Acceptor, AcceptorOptions, ArtifactSource, ArtifactSourceError, ConnectionController,
-    ConnectionControllerOptions, ConnectionState, ConnectorOptions,
+    ConnectionControllerOptions, ConnectionState, ConnectorOptions, IncomingStream, RpcHandler,
+    SessionHandlerOptions, SessionHandlers, StreamHandler,
     admission_v2::{AdmissionCommitErrorV2, AdmissionCommitV2, CandidateAttemptV2},
     artifact_v2::{Artifact, ArtifactLease},
     connect,
@@ -23,8 +24,8 @@ use crate::{
     protocol_v2::CipherSuiteV2,
     session_v2::{RpcHandlerV2, SessionConfigV2, establish_session_v2},
     transport_v2::{
-        CarrierSessionV2, CarrierUnreliableMessageErrorV2, PathKind, SessionError, SessionRole,
-        StreamMetadata,
+        CarrierSessionV2, CarrierUnreliableMessageErrorV2, PathKind, RpcError, SessionError,
+        SessionRole, StreamMetadata,
     },
 };
 use async_trait::async_trait;
@@ -675,6 +676,122 @@ async fn public_acceptor_establishes_opaque_direct_session() {
         .expect("join public server close observer");
     assert_eq!(termination.error, SessionError::Closed);
     server.close().await.expect("close public server");
+}
+
+#[derive(Debug)]
+struct PublicEchoRpc;
+
+#[async_trait]
+impl RpcHandler for PublicEchoRpc {
+    async fn call(
+        &self,
+        type_id: u32,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcError> {
+        Ok(serde_json::json!({"type_id": type_id, "request": request}))
+    }
+
+    async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> Result<(), RpcError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct PublicStreamHandler(tokio::sync::mpsc::UnboundedSender<Bytes>);
+
+#[async_trait]
+impl StreamHandler for PublicStreamHandler {
+    async fn handle(
+        &self,
+        incoming: &IncomingStream,
+        _cancellation: CancellationToken,
+    ) -> Result<(), SessionError> {
+        if let Some(payload) = incoming.stream().read().await? {
+            let _ = self.0.send(payload);
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn public_acceptor_freezes_rpc_and_stream_handlers_before_establishment() {
+    let acceptor = Acceptor::bind(AcceptorOptions {
+        bind_address: loopback_ephemeral(),
+        certificate_chain_der: vec![test_cert_der()],
+        private_key_der: test_key_der(),
+        max_inbound_streams: 1,
+        accept_timeout: Duration::from_secs(10),
+    })
+    .expect("bind handler acceptor");
+    let address = acceptor.local_address().expect("read handler address");
+    let artifact = Artifact::parse(public_connector_artifact(
+        address,
+        RawQuicPathProfile::Direct,
+        1,
+    ))
+    .expect("parse handler artifact");
+    let (stream_sent, mut stream_received) = tokio::sync::mpsc::unbounded_channel();
+    let mut handlers = SessionHandlers::new(SessionHandlerOptions {
+        max_concurrent_streams: 2,
+    })
+    .expect("create handlers");
+    handlers
+        .handle_rpc(17, Arc::new(PublicEchoRpc))
+        .expect("register RPC handler");
+    handlers
+        .handle_stream(
+            "accepted-handler",
+            Arc::new(PublicStreamHandler(stream_sent)),
+        )
+        .expect("register stream handler");
+
+    let server_artifact = artifact.clone();
+    let server = tokio::spawn(async move {
+        let accepted = acceptor
+            .accept_with_handlers(&server_artifact, handlers, CancellationToken::new())
+            .await
+            .expect("accept with handlers");
+        accepted.serve(CancellationToken::new()).await
+    });
+    let mut lease = ArtifactLease::new(artifact, || async { Ok(()) });
+    let options =
+        ConnectorOptions::new(vec![test_cert_der()]).expect("create public connector options");
+    let client = connect(&mut lease, options)
+        .await
+        .expect("connect handler client");
+
+    assert_eq!(
+        client
+            .rpc()
+            .call(17, serde_json::json!({"value": "rpc"}))
+            .await
+            .expect("call accepted RPC"),
+        serde_json::json!({"type_id": 17, "request": {"value": "rpc"}})
+    );
+    let stream = client
+        .open_stream("accepted-handler", StreamMetadata::empty())
+        .await
+        .expect("open accepted stream");
+    stream
+        .write(Bytes::from_static(b"handled"))
+        .await
+        .expect("write accepted stream");
+    stream.close_write().await.expect("finish accepted stream");
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), stream_received.recv())
+            .await
+            .expect("stream handler timed out"),
+        Some(Bytes::from_static(b"handled"))
+    );
+    client.close().await.expect("close handler client");
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), server)
+            .await
+            .expect("handler server did not stop")
+            .expect("join handler server")
+            .expect_err("peer close must stop handler serving"),
+        SessionError::Closed
+    );
 }
 
 #[tokio::test]
@@ -1589,11 +1706,11 @@ impl RpcHandlerV2 for InteropRpc {
         &self,
         _type_id: u32,
         request: serde_json::Value,
-    ) -> std::io::Result<serde_json::Value> {
+    ) -> Result<serde_json::Value, RpcError> {
         Ok(request)
     }
 
-    async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> std::io::Result<()> {
+    async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> Result<(), RpcError> {
         Ok(())
     }
 }

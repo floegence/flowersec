@@ -645,12 +645,18 @@ pub struct SessionTermination {
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("Flowersec RPC application error (code={code})")]
 pub struct RpcError {
-    code: u32,
-    message: Option<String>,
+    pub(crate) code: u32,
+    pub(crate) message: Option<String>,
 }
 
 impl RpcError {
     pub(crate) const MAX_MESSAGE_BYTES: usize = 1_024;
+
+    /// Creates a bounded application RPC failure suitable for returning from
+    /// an accepted-session handler.
+    pub fn new(code: u32, message: Option<String>) -> Result<Self, SessionError> {
+        Self::from_wire(code, message)
+    }
 
     pub(crate) fn from_wire(code: u32, message: Option<String>) -> Result<Self, SessionError> {
         if code == 0

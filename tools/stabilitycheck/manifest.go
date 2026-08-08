@@ -43,8 +43,9 @@ type docsManifest struct {
 }
 
 type goManifest struct {
-	ModulePath     string            `json:"module_path"`
-	CompileTargets []goCompileTarget `json:"compile_targets"`
+	ModulePath        string            `json:"module_path"`
+	CompileTargets    []goCompileTarget `json:"compile_targets"`
+	ForbiddenPackages []string          `json:"forbidden_packages"`
 }
 
 type goCompileTarget struct {
@@ -166,6 +167,17 @@ func validateManifest(repoRoot string, m *manifest) error {
 	}
 	if len(m.Go.CompileTargets) == 0 {
 		return errors.New("go.compile_targets must not be empty")
+	}
+	if len(m.Go.ForbiddenPackages) == 0 {
+		return errors.New("go.forbidden_packages must not be empty")
+	}
+	if err := requireUnique("go.forbidden_packages", m.Go.ForbiddenPackages); err != nil {
+		return err
+	}
+	for _, packagePath := range m.Go.ForbiddenPackages {
+		if !strings.HasPrefix(packagePath, m.Go.ModulePath+"/") {
+			return fmt.Errorf("go.forbidden_packages entry %q must be below module %q", packagePath, m.Go.ModulePath)
+		}
 	}
 
 	packages := make([]string, 0, len(m.Go.CompileTargets))

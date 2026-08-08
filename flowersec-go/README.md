@@ -2,12 +2,12 @@
 
 The Go 2.x module exposes Flowersec's carrier-neutral v2 consumer API. Applications parse an opaque artifact, attach a durable single-use spend callback, connect, and use only the returned session, RPC, and byte-stream contracts.
 
-Flowersec 2.1.0 is the published coordinated Go module release.
+Flowersec 2.2.0 is the published coordinated Go module release.
 
 ## Install
 
 ```bash
-go get github.com/floegence/flowersec/flowersec-go/v2@v2.1.0
+go get github.com/floegence/flowersec/flowersec-go/v2@v2.2.0
 ```
 
 Repository tags for this module use the `flowersec-go/v2.x.y` prefix.
@@ -51,8 +51,10 @@ the optional `ConnectionController`. The controller is the only Flowersec
 retry scheduler; applications provide a refreshable artifact source and
 authentication recovery without maintaining a second protocol loop.
 
-Only this portable core is required to align across languages. Complete SDK
-profiles and language conveniences intentionally differ by runtime.
+Portable core, connection control, session/RPC/stream lifecycle, accepted-session
+workflows, and published consumer workflows align across every applicable SDK.
+Platform-limited profiles are unsupported only with an explicit alternative
+boundary and executable test ID in `stability/language_capabilities.json`.
 
 The Go SDK profile supports WebSocket, raw QUIC, and WebTransport production
 dialing. Its language convenience is `SessionHandlers`, which registers inbound

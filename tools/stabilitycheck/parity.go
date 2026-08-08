@@ -55,10 +55,11 @@ type portableCapability struct {
 }
 
 type capabilityImplementation struct {
-	Status     string   `json:"status"`
-	Entrypoint string   `json:"entrypoint,omitempty"`
-	Reason     string   `json:"reason,omitempty"`
-	TestIDs    []string `json:"test_ids"`
+	Status              string   `json:"status"`
+	Entrypoint          string   `json:"entrypoint,omitempty"`
+	Reason              string   `json:"reason,omitempty"`
+	AlternativeBoundary string   `json:"alternative_boundary,omitempty"`
+	TestIDs             []string `json:"test_ids"`
 }
 
 type runtimeSpecificCapability struct {
@@ -686,9 +687,15 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 				if len(implementation.TestIDs) != 1 {
 					return nil, fmt.Errorf("capability %s language %s complete status requires exactly one test_id", capability.ID, language)
 				}
+				if capability.Layer != "portable_core" && strings.TrimSpace(implementation.Entrypoint) == "" {
+					return nil, fmt.Errorf("capability %s language %s complete status requires an entrypoint", capability.ID, language)
+				}
+				if implementation.Reason != "" || implementation.AlternativeBoundary != "" {
+					return nil, fmt.Errorf("capability %s language %s complete status must not declare unsupported metadata", capability.ID, language)
+				}
 			case "unsupported":
-				if strings.TrimSpace(implementation.Reason) == "" || len(implementation.TestIDs) != 1 {
-					return nil, fmt.Errorf("capability %s language %s unsupported status requires reason and exactly one test_id", capability.ID, language)
+				if strings.TrimSpace(implementation.Reason) == "" || strings.TrimSpace(implementation.AlternativeBoundary) == "" || len(implementation.TestIDs) != 1 {
+					return nil, fmt.Errorf("capability %s language %s unsupported status requires reason, alternative_boundary, and exactly one test_id", capability.ID, language)
 				}
 			case "planned", "blocked":
 			default:

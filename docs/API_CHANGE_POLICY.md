@@ -1,6 +1,6 @@
 # Flowersec API Change Policy
 
-Flowersec 2.x maintains one carrier-neutral public contract across Go, TypeScript, Swift, and Rust. Flowersec 2.0.0 is the immutable coordinated baseline; Flowersec 2.1.0 adds the reviewed server acceptor boundary without moving or replacing any 2.0.0 tag or artifact. There is no maintained v1 tier or in-process compatibility surface.
+Flowersec 2.x maintains one carrier-neutral public contract across Go, TypeScript, Swift, and Rust. Flowersec 2.0.0 is the immutable coordinated baseline; Flowersec 2.1.0 adds the reviewed server acceptor boundary, and 2.2.0 adds accepted-session handler resolution plus the Go server counterpart to the published TypeScript proxy runtime. Earlier tags and artifacts are never moved or replaced. There is no maintained v1 tier or in-process compatibility surface.
 
 ## Sources of Truth
 
@@ -21,7 +21,7 @@ The API manifest drives Go compile probes, packed TypeScript exports, Swift symb
 
 Applications receive only opaque artifacts and leases, one-shot connection functions, carrier-neutral sessions, bounded session-handler registries, RPC peers, byte streams, metadata, stable redacted errors, and bounded recovery decisions. Go session handlers freeze inbound RPC and stream registrations together for a valid connection attempt and dispatch application streams with bounded metadata without exposing the carrier. Go server control planes additionally receive opaque endpoint sets, issued artifacts, authorization records, runtime requests, and runtime responses through the dedicated v2 control-plane package. The TypeScript proxy entrypoint may compose an opaque lease into a `Session` runtime and browser bridge, but must not expose transport objects, raw artifact scopes, proxy wire frames, or `proxy.runtime@1`. Candidate selection, carrier adapters, Yamux, wire messages, FSB2 payloads, cryptographic state, keys, and durable spend-ledger details are implementation boundaries.
 
-Portable RPC means outbound call and notification support. Notification subscriptions and inbound request-handler registration are separate runtime-specific capabilities and must not be implied by the portable RPC capability. Server admission, accepted sessions, and control-plane issuance/authorization used by a published consumer must be represented by same-semantic public entries in each applicable SDK. Genuine platform limitations are marked `unsupported` with a reason and test ID in `stability/language_capabilities.json`. Controller recovery dispositions must continue to match `stability/connection_controller_recovery.json` in every language.
+Portable RPC means outbound call and notification support. Notification subscriptions and inbound request-handler registration are separate capabilities and must not be implied by the portable RPC capability. Portable core, server admission, accepted sessions, control-plane issuance/authorization, connection control, RPC/stream lifecycle, and published consumer workflows must have same-semantic public entries in every applicable SDK. Genuine platform limitations alone may be marked `unsupported`; every unsupported entry requires a concrete reason, an alternative public boundary, and a test ID in `stability/language_capabilities.json`. Controller recovery dispositions must continue to match `stability/connection_controller_recovery.json` in every language.
 
 Every public API change requires:
 
@@ -31,7 +31,7 @@ Every public API change requires:
 - cross-language fixture updates when serialization or wire behavior changes;
 - package, symbol, SemVer, and full integration gates before release.
 
-Adding a public `Acceptor`, server admission, or control-plane symbol is a SemVer minor capability unless the change is strictly documentation or an internal fix. Such additions must be evaluated as `2.1.0` (or a later minor), never assumed to be `2.0.1`; the already published `2.0.0` tags and artifacts are immutable.
+Adding a public `Acceptor`, server admission, handler resolver, proxy server, or control-plane symbol is a SemVer minor capability unless the change is strictly documentation or an internal fix. The 2.2.0 handler/proxy additions therefore cannot be published as 2.1.1; all already published tags and artifacts remain immutable.
 
 Removed v1 symbols, generated packages, package subpaths, and CLIs remain on negative package/source guards. A manifest change must not silently restore them.
 

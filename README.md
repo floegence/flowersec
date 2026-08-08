@@ -20,7 +20,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
-Flowersec 2.1.0 is the coordinated release for the Go, TypeScript, Swift, and Rust SDKs. It adds the reviewed carrier-neutral server acceptor boundary without changing the immutable 2.0.0 release. Production consumers should pin the published package versions and matching release tags.
+Flowersec 2.2.0 is the coordinated release for the Go, TypeScript, Swift, and Rust SDKs. It adds accepted-session handler resolution and native server application boundaries without changing immutable 2.0.0 or 2.1.0 releases. Production consumers should pin the published package versions and matching release tags.
 
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
@@ -84,9 +84,9 @@ The [cookbook index](examples/README.md) contains only v2 examples and verificat
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
 
-## Portable Contract
+## Portable Core and SDK Profiles
 
-Flowersec keeps its contract layers explicit. The portable core is the shared artifact, lease, one-shot connector, session, RPC, stream, and optional single-owner connection controller available in every SDK. Each SDK profile and its server integration/control-plane capabilities are recorded separately with a public entrypoint, an explicit unsupported reason where a platform profile cannot provide them, and a test ID. A language convenience is syntax or orchestration that fits one language ecosystem without becoming a required cross-language capability. The stable cross-language recovery contract is the controller's structured disposition, not byte-for-byte matching raw error codes.
+Flowersec keeps its contract layers explicit. The portable core, connection control, session/RPC/stream lifecycle, accepted-session workflows, and every published consumer workflow use same-semantic public entries in every applicable SDK. Each SDK profile declares its runtime and platform-specific carrier boundary. A platform limitation may be unsupported only with an explicit reason, alternative public boundary, and executable test ID in `stability/language_capabilities.json`. Control-plane persistence is a service boundary: clients call the authenticated service that uses `flowersec-go/v2/controlplane`; they do not embed a second issuer or datastore. A language convenience is syntax or orchestration that fits one language ecosystem without changing these contracts. The stable cross-language recovery contract is the controller's structured disposition, not byte-for-byte matching raw error codes.
 
 | Capability | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
@@ -98,7 +98,7 @@ Flowersec keeps its contract layers explicit. The portable core is the shared ar
 | Production WebSocket dialing | Yes | Browser and Node.js | macOS and iOS | No |
 | Production raw QUIC dialing | Yes | No | No | Yes |
 | Production WebTransport dialing | Yes | Browser and Node.js | No | No |
-| Server acceptor / accepted Session | `NewAcceptor` | Unsupported in the published Node package; CLI runtime only | Unsupported on Apple listener profile | `Acceptor::bind` |
+| Server acceptor / accepted Session | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Unsupported on Apple listener profile | `Acceptor::bind` / `accept_with_handlers` |
 | Control-plane issue / authorize | `flowersec-go/v2/controlplane` | Unsupported; application-owned service boundary | Unsupported; application-owned service boundary | Unsupported; application-owned service boundary |
 
 Unsupported carriers fail closed; they are never silent fallbacks. Each support row is backed by production connector code and an explicit test ID in `stability/language_capabilities.json`. Unsupported capabilities include a reason and fail closed; they are never silently treated as complete. Capability descriptors and carrier selection remain internal.

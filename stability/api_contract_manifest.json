@@ -16,6 +16,18 @@
   },
   "go": {
     "module_path": "github.com/floegence/flowersec/flowersec-go/v2",
+    "forbidden_packages": [
+      "github.com/floegence/flowersec/flowersec-go/v2/client",
+      "github.com/floegence/flowersec/flowersec-go/v2/endpoint",
+      "github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve",
+      "github.com/floegence/flowersec/flowersec-go/v2/rpc",
+      "github.com/floegence/flowersec/flowersec-go/v2/stream",
+      "github.com/floegence/flowersec/flowersec-go/v2/protocolio",
+      "github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe",
+      "github.com/floegence/flowersec/flowersec-go/v2/proxy",
+      "github.com/floegence/flowersec/flowersec-go/v2/origin",
+      "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/v1"
+    ],
     "compile_targets": [
       {
         "package": "github.com/floegence/flowersec/flowersec-go/v2",
@@ -575,6 +587,36 @@
           },
           {
             "kind": "type",
+            "expr": "flowersec.ProxyServerOptions",
+            "doc_token": "`flowersec.ProxyServerOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.ProxyServer",
+            "doc_token": "`flowersec.ProxyServer`"
+          },
+          {
+            "kind": "var",
+            "expr": "flowersec.ErrInvalidProxyServer",
+            "doc_token": "`flowersec.ErrInvalidProxyServer`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewProxyServer",
+            "doc_token": "`flowersec.NewProxyServer(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ProxyServer).Register",
+            "doc_token": "`flowersec.ProxyServer.Register(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ProxyServer).Close",
+            "doc_token": "`flowersec.ProxyServer.Close()`"
+          },
+          {
+            "kind": "type",
             "expr": "flowersec.ArtifactSource",
             "doc_token": "`flowersec.ArtifactSource`"
           },
@@ -1064,7 +1106,10 @@
         "doc_tokens": [
           "`@floegence/flowersec-core/node`",
           "`connect(...)`",
-          "`ConnectionController`"
+          "`ConnectionController`",
+          "`createAcceptor(...)`",
+          "`SessionHandlers`",
+          "`AcceptedSession`"
         ],
         "runtime_exports": [
           "Artifact",
@@ -1072,10 +1117,16 @@
           "ArtifactLeaseError",
           "ConnectError",
           "ConnectionControllerError",
+          "AcceptedSession",
+          "Acceptor",
+          "RuntimeAuthorizationRequest",
           "SessionError",
+          "SessionHandlers",
+          "SessionHandlersError",
           "StreamMetadataError",
           "UnreliableMessageError",
           "connect",
+          "createAcceptor",
           "createArtifactLease",
           "createConnectionController",
           "createStreamMetadata",
@@ -1089,6 +1140,8 @@
           "ArtifactLeaseError",
           "ArtifactSource",
           "ArtifactSourceResult",
+          "AcceptorOptions",
+          "AuthorizationDecision",
           "ByteStream",
           "ConnectError",
           "ConnectErrorCode",
@@ -1106,14 +1159,18 @@
           "OperationOptions",
           "RetryDisposition",
           "RpcPeer",
+          "RPCHandler",
+          "RPCHandlerResult",
           "RpcResult",
           "Session",
           "SessionError",
           "SessionErrorCode",
+          "SessionHandlerOptions",
           "SessionTermination",
           "StreamMetadata",
           "StreamMetadataError",
           "StreamOpenOptions",
+          "StreamHandler",
           "UnreliableMessageChannel",
           "UnreliableMessageSendOptions",
           "UnreliableMessageSendResult"
@@ -1904,6 +1961,12 @@
       "`flowersec`",
       "`Acceptor`",
       "`AcceptorOptions`",
+      "`AcceptedSession`",
+      "`SessionHandlers`",
+      "`SessionHandlerOptions`",
+      "`RpcHandler`",
+      "`StreamHandler`",
+      "`HandlerRegistrationError`",
       "`ConnectorOptions`",
       "`connect(...)`",
       "`connect_with_cancellation(...)`",
@@ -1937,6 +2000,18 @@
       "let _ = flowersec::AcceptErrorCode::InvalidInput.as_str()",
       "let _ = std::mem::size_of::<flowersec::Acceptor>()",
       "let _ = std::mem::size_of::<flowersec::AcceptorOptions>()",
+      "let _ = flowersec::Acceptor::accept_with_handlers",
+      "let _ = std::mem::size_of::<flowersec::AcceptedSession>()",
+      "let _ = flowersec::AcceptedSession::session",
+      "let _ = flowersec::AcceptedSession::serve",
+      "let _ = std::mem::size_of::<flowersec::SessionHandlers>()",
+      "let _ = std::mem::size_of::<flowersec::SessionHandlerOptions>()",
+      "let _ = flowersec::SessionHandlers::new",
+      "let _ = flowersec::SessionHandlers::handle_rpc",
+      "let _ = flowersec::SessionHandlers::handle_stream::<String>",
+      "let _: Option<&dyn flowersec::RpcHandler> = None",
+      "let _: Option<&dyn flowersec::StreamHandler> = None",
+      "let _ = std::mem::size_of::<flowersec::HandlerRegistrationError>()",
       "let _ = std::mem::size_of::<flowersec::Artifact>()",
       "let _ = std::mem::size_of::<flowersec::ArtifactError>()",
       "let _ = std::mem::size_of::<flowersec::ArtifactLease>()",
@@ -1954,6 +2029,7 @@
       "let _ = std::mem::size_of::<flowersec::JsonObject>()",
       "let _ = std::mem::size_of::<flowersec::RpcCallError>()",
       "let _ = std::mem::size_of::<flowersec::RpcError>()",
+      "let _ = flowersec::RpcError::new",
       "let _: Option<&dyn flowersec::RpcPeer> = None",
       "fn require_rpc_peer_ext<T: flowersec::RpcPeerExt + ?Sized>() {}",
       "require_rpc_peer_ext::<dyn flowersec::RpcPeer>()",

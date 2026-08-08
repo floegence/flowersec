@@ -72,12 +72,23 @@
     {
       "id": "server_acceptor_session",
       "layer": "server_integration",
-      "description": "Carrier-neutral server admission establishes the same public Session contract and delegates session handlers without exposing carrier or wire state.",
+      "description": "Carrier-neutral server admission establishes the same public Session contract without exposing carrier or wire state; each runtime profile declares its exact listener support.",
       "implementations": {
-        "go": { "status": "complete", "entrypoint": "flowersec.NewAcceptor/Acceptor.Handler/SessionHandlers", "test_ids": ["protocol/go"] },
-        "typescript": { "status": "unsupported", "entrypoint": "@floegence/flowersec-core/node", "reason": "The published Node SDK is client-only; server admission remains an executable runtime boundary until a stable carrier-neutral Node listener contract is added.", "test_ids": ["protocol/typescript"] },
-        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "Apple SDKs do not provide a deployable listener/runtime surface; server admission is outside the platform profile and must fail closed.", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "complete", "entrypoint": "flowersec::Acceptor", "test_ids": ["protocol/rust"] }
+        "go": { "status": "complete", "entrypoint": "flowersec.NewAcceptor/Acceptor.Handler/AcceptorOptions.ResolveHandlers/SessionHandlers", "test_ids": ["server/go-acceptor"] },
+        "typescript": { "status": "complete", "entrypoint": "@floegence/flowersec-core/node createAcceptor/Acceptor.accept -> AcceptedSession", "test_ids": ["server/typescript-acceptor"] },
+        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "Apple application processes do not provide the deployable listener profile required by this boundary.", "alternative_boundary": "Deploy flowersec-runtime and keep the Apple process on the Swift client Session boundary.", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "complete", "entrypoint": "flowersec::Acceptor::accept/accept_with_handlers -> Session/AcceptedSession", "test_ids": ["server/rust-acceptor"] }
+      }
+    },
+    {
+      "id": "server_session_handlers",
+      "layer": "server_integration",
+      "description": "Accepted sessions bind inbound RPC and application stream handlers before encrypted session establishment and keep one lifecycle owner.",
+      "implementations": {
+        "go": { "status": "complete", "entrypoint": "AcceptorOptions.ResolveHandlers/NewSessionHandlers/SessionHandlers.HandleRPC/SessionHandlers.HandleStream", "test_ids": ["server/go-acceptor"] },
+        "typescript": { "status": "complete", "entrypoint": "createAcceptor/SessionHandlers.handleRPC/SessionHandlers.handleStream/AcceptedSession.serve", "test_ids": ["server/typescript-acceptor"] },
+        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "The Apple listener profile is unsupported, so it cannot own pre-establishment inbound handlers.", "alternative_boundary": "Register handlers in flowersec-runtime and use the Swift client Session for outbound RPC and streams.", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "complete", "entrypoint": "flowersec::Acceptor::accept_with_handlers/SessionHandlers/RpcHandler/StreamHandler/AcceptedSession::serve", "test_ids": ["server/rust-acceptor-handlers"] }
       }
     },
     {
@@ -85,21 +96,32 @@
       "layer": "control_plane",
       "description": "Opaque artifact issuance, durable authorization records, and runtime admission authorization.",
       "implementations": {
-        "go": { "status": "complete", "entrypoint": "flowersec-go/v2/controlplane", "test_ids": ["protocol/go"] },
-        "typescript": { "status": "unsupported", "entrypoint": "@floegence/flowersec-core", "reason": "Control-plane persistence and tenant policy are application-owned; TypeScript consumes opaque artifacts and has no service issuer contract.", "test_ids": ["protocol/typescript"] },
-        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "Control-plane persistence and tenant policy are application-owned and outside the Apple SDK profile.", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "unsupported", "entrypoint": "flowersec", "reason": "Control-plane persistence and tenant policy are application-owned; the Rust crate consumes opaque artifacts.", "test_ids": ["protocol/rust"] }
+        "go": { "status": "complete", "entrypoint": "flowersec-go/v2/controlplane", "test_ids": ["server/go-controlplane"] },
+        "typescript": { "status": "unsupported", "entrypoint": "@floegence/flowersec-core", "reason": "Control-plane persistence and atomic authorization require the service datastore boundary absent from the client SDK.", "alternative_boundary": "Call an application service built on flowersec-go/v2/controlplane and consume only its opaque artifact response.", "test_ids": ["protocol/typescript"] },
+        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "Control-plane persistence and atomic authorization are outside the Apple client SDK profile.", "alternative_boundary": "Call an application service built on flowersec-go/v2/controlplane and consume its opaque artifact response.", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "unsupported", "entrypoint": "flowersec", "reason": "The native crate is a session runtime and does not own an application control-plane datastore.", "alternative_boundary": "Call flowersec-go/v2/controlplane through the application's authenticated service HTTP boundary.", "test_ids": ["protocol/rust"] }
       }
     },
     {
       "id": "server_admission_paths",
       "layer": "server_integration",
-      "description": "Direct and tunnel admission over WSS, raw QUIC, and WebTransport with authorization binding and bounded cleanup.",
+      "description": "Exact runtime-profile direct and tunnel admission paths with authorization binding and bounded cleanup; a complete status never implies carriers absent from the named entrypoint.",
       "implementations": {
-        "go": { "status": "complete", "entrypoint": "flowersec.Acceptor", "test_ids": ["protocol/go"] },
-        "typescript": { "status": "unsupported", "entrypoint": "@floegence/flowersec-core/node", "reason": "Node server carrier adapters are runtime-owned and not a published carrier-neutral listener API.", "test_ids": ["protocol/typescript"] },
-        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "Apple platforms do not provide a deployable listener profile.", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "complete", "entrypoint": "flowersec::Acceptor", "test_ids": ["protocol/rust"] }
+        "go": { "status": "complete", "entrypoint": "flowersec.Acceptor.Handler: WSS direct+tunnel; flowersec-runtime: WSS/raw QUIC/WebTransport direct+tunnel", "test_ids": ["server/go-acceptor"] },
+        "typescript": { "status": "complete", "entrypoint": "@floegence/flowersec-core/node createAcceptor: WebTransport direct", "test_ids": ["server/typescript-acceptor"] },
+        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "Apple platforms do not provide the deployable listener profile used by Flowersec servers.", "alternative_boundary": "Deploy flowersec-runtime and connect through the public Swift Session API.", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "complete", "entrypoint": "flowersec::Acceptor: raw QUIC direct", "test_ids": ["server/rust-acceptor"] }
+      }
+    },
+    {
+      "id": "browser_proxy_runtime",
+      "layer": "server_integration",
+      "description": "The TypeScript browser proxy runtime and Go server ProxyServer share one bounded Session/ByteStream application protocol for HTTP and WebSocket forwarding.",
+      "implementations": {
+        "go": { "status": "complete", "entrypoint": "flowersec.NewProxyServer/ProxyServer.Register(SessionHandlers)", "test_ids": ["server/go-proxy"] },
+        "typescript": { "status": "complete", "entrypoint": "@floegence/flowersec-core/proxy createProxyRuntime", "test_ids": ["server/typescript-proxy"] },
+        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "The browser Service Worker and MessagePort APIs do not exist on the Apple SDK profile.", "alternative_boundary": "Use the public Swift Session stream API and deploy the Go ProxyServer for browser peers.", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "unsupported", "entrypoint": "flowersec", "reason": "The browser Service Worker proxy application is not part of the native Rust profile.", "alternative_boundary": "Deploy the Go ProxyServer and use public Rust Session streams for native applications.", "test_ids": ["protocol/rust"] }
       }
     },
     {

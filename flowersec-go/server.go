@@ -100,6 +100,29 @@ func (handlers *SessionHandlers) HandleStream(kind string, handler StreamHandler
 	return nil
 }
 
+func (handlers *SessionHandlers) handleStreams(registrations map[string]StreamHandler) error {
+	if handlers == nil || len(registrations) == 0 {
+		return ErrInvalidSessionHandlers
+	}
+	handlers.mu.Lock()
+	defer handlers.mu.Unlock()
+	if handlers.frozen {
+		return ErrSessionHandlersFrozen
+	}
+	for kind, handler := range registrations {
+		if kind == "" || handler == nil {
+			return ErrInvalidSessionHandlers
+		}
+		if _, exists := handlers.streamHandlers[kind]; exists {
+			return ErrHandlerAlreadyExists
+		}
+	}
+	for kind, handler := range registrations {
+		handlers.streamHandlers[kind] = handler
+	}
+	return nil
+}
+
 // HandleRPC registers one nonzero RPC type ID. Connector snapshots these
 // registrations before session establishment.
 func (handlers *SessionHandlers) HandleRPC(typeID uint32, handler RPCHandler) error {
@@ -153,6 +176,18 @@ func (handlers *SessionHandlers) rpcRouter() *internalrpc.Router {
 		})
 	}
 	return router
+}
+
+// routerForAcceptedSession snapshots the same immutable registrations used by
+// Connect. It is intentionally package-private: Acceptor is the only owner of
+// carrier admission and may inject the snapshot before a server Session is
+// established.
+func (handlers *SessionHandlers) routerForAcceptedSession() *internalrpc.Router {
+	if handlers == nil {
+		return internalrpc.NewRouter()
+	}
+	handlers.freeze()
+	return handlers.rpcRouter()
 }
 
 var _ json.Marshaler = (*SessionHandlers)(nil)

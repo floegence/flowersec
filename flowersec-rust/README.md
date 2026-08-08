@@ -4,7 +4,7 @@ The `flowersec` crate is the Tokio-native Rust SDK for Flowersec v2 end-to-end
 encrypted sessions. Its maintained public entrypoints use opaque artifacts, the
 carrier-neutral one-shot `connect(...)` function, and `Session`.
 
-Flowersec 2.1.0 is the coordinated Rust crate release.
+Flowersec 2.2.0 is the coordinated Rust crate release.
 
 The crate targets Rust 1.88 or newer on Linux, macOS, and Windows, uses rustls
 by default, and contains no Flowersec-authored `unsafe`.
@@ -12,7 +12,7 @@ by default, and contains no Flowersec-authored `unsafe`.
 ## Install
 
 ```bash
-cargo add flowersec@2.1.0
+cargo add flowersec@2.2.0
 ```
 
 The production raw QUIC connection profile requires explicit DER trust roots.
@@ -66,7 +66,9 @@ The crate root exports only these public categories:
   `ConnectionState`, `ConnectionFailure`, `ConnectionSnapshot`, and
   `RetryDisposition`;
 - runtime-owned direct acceptance: `AcceptorOptions`, `Acceptor`,
-  `AcceptError`, and `AcceptErrorCode`;
+  `AcceptError`, `AcceptErrorCode`, `AcceptedSession`, `SessionHandlers`,
+  `SessionHandlerOptions`, `RpcHandler`, `StreamHandler`, and
+  `HandlerRegistrationError`;
 - carrier-neutral session behavior: `Session`, `SessionTermination`, `RpcPeer`, `ByteStream`,
   `IncomingStream`, `JsonObject`, `StreamMetadata`, and `StreamMetadataError`;
 - negotiated unreliable messages: `UnreliableMessageChannel`,
@@ -82,7 +84,10 @@ use `StreamMetadata::empty()`; invalid values fail before `Session::open_stream`
 The lease deliberately exposes no connector-owned committed-state accessor.
 Native server runtimes bind `Acceptor` with explicit TLS and resource policy,
 then pass an opaque `Artifact` to `accept`; successful acceptance returns the
-same carrier-neutral `Session` interface. Duplicate concurrent registration of
+same carrier-neutral `Session` interface. Applications that own inbound RPC and
+stream dispatch use `accept_with_handlers(...)`; it consumes the registry before
+establishment and returns an `AcceptedSession` whose `serve(...)` method owns
+bounded dispatch and cleanup. Duplicate concurrent registration of
 one artifact fails closed, and cancellation and artifact expiry bound the
 complete accept operation. One `Acceptor` admits one pending artifact at a
 time; runtimes use independent acceptors when sessions must wait concurrently.
@@ -140,8 +145,10 @@ structured controller retry decisions. The controller owns the mapping from
 connection and session failures to terminal, retryable, or absolute
 `retry_after` behavior; callers do not infer policy from error text.
 
-Only this portable core is required to align across languages. Complete SDK
-profiles and language conveniences intentionally differ by runtime.
+Portable core, connection control, session/RPC/stream lifecycle, accepted-session
+workflows, and published consumer workflows align across every applicable SDK.
+Platform-limited profiles are unsupported only with an explicit alternative
+boundary and executable test ID in `stability/language_capabilities.json`.
 
 The Rust SDK profile owns native raw QUIC dialing and runtime-owned direct
 acceptance through `Acceptor`. Candidate admission is carrier-neutral and

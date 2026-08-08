@@ -17,7 +17,8 @@ use crate::{
     artifact_v2::{Artifact, ConnectionPlanError, ConnectionPlanV2, EncodedFsb2},
     connector_v2::session_config,
     raw_quic_v2::{RawQuicLimits, RawQuicListener, RawQuicPathProfile, RawQuicServerConfig},
-    session_v2::establish_session_v2,
+    session_handlers::{AcceptedSession, SessionHandlers},
+    session_v2::{RpcHandlerV2, establish_session_v2},
     transport_v2::{CarrierKind, CarrierSessionV2, PathKind, Session, SessionRole},
 };
 
@@ -142,6 +143,30 @@ impl Acceptor {
         artifact: &Artifact,
         cancellation: CancellationToken,
     ) -> Result<std::sync::Arc<dyn Session>, AcceptError> {
+        self.accept_session(artifact, cancellation, None).await
+    }
+
+    /// Accepts one session after freezing its application RPC and stream
+    /// handlers before encrypted session establishment.
+    pub async fn accept_with_handlers(
+        &self,
+        artifact: &Artifact,
+        handlers: SessionHandlers,
+        cancellation: CancellationToken,
+    ) -> Result<AcceptedSession, AcceptError> {
+        let rpc_handler = handlers.rpc_handler();
+        let session = self
+            .accept_session(artifact, cancellation, Some(rpc_handler))
+            .await?;
+        Ok(AcceptedSession::new(session, handlers))
+    }
+
+    async fn accept_session(
+        &self,
+        artifact: &Artifact,
+        cancellation: CancellationToken,
+        rpc_handler: Option<std::sync::Arc<dyn RpcHandlerV2>>,
+    ) -> Result<std::sync::Arc<dyn Session>, AcceptError> {
         let plan = accept_plan(artifact)?;
         if plan.connection.session.max_inbound_streams != self.max_inbound_streams {
             return Err(error(AcceptErrorCode::InvalidInput));
@@ -183,7 +208,10 @@ impl Acceptor {
             }
         };
         let result = match gate {
-            Ok(_gate) => self.accept_registered(plan, cancellation, deadline).await,
+            Ok(_gate) => {
+                self.accept_registered(plan, cancellation, deadline, rpc_handler)
+                    .await
+            }
             Err(failure) => Err(failure),
         };
         let mut registrations = self
@@ -203,6 +231,7 @@ impl Acceptor {
         plan: AcceptPlanV2,
         cancellation: CancellationToken,
         deadline: tokio::time::Instant,
+        rpc_handler: Option<std::sync::Arc<dyn RpcHandlerV2>>,
     ) -> Result<std::sync::Arc<dyn Session>, AcceptError> {
         loop {
             let raw = tokio::select! {
@@ -237,6 +266,7 @@ impl Acceptor {
             if let Some(admitted) = admitted {
                 let mut config = session_config(&plan.connection, admitted.binding(), None);
                 config.peer_admission_binding = Some(admitted.binding());
+                config.rpc_handler = rpc_handler.clone();
                 let session = tokio::select! {
                     _ = cancellation.cancelled() => return Err(error(AcceptErrorCode::Canceled)),
                     result = tokio::time::timeout_at(

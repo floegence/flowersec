@@ -32,7 +32,8 @@ func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 			TransportV2Tokens: []string{"`CarrierSession`"},
 		},
 		Go: goManifest{
-			ModulePath: "github.com/floegence/flowersec/flowersec-go/v2",
+			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v2",
+			ForbiddenPackages: []string{"github.com/floegence/flowersec/flowersec-go/v2/legacy"},
 			CompileTargets: []goCompileTarget{
 				{
 					Package:         "github.com/floegence/flowersec/flowersec-go/v2/client",
@@ -189,7 +190,8 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 			TransportV2Tokens: []string{"`CarrierSession`"},
 		},
 		Go: goManifest{
-			ModulePath: "github.com/floegence/flowersec/flowersec-go/v2",
+			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v2",
+			ForbiddenPackages: []string{"github.com/floegence/flowersec/flowersec-go/v2/legacy"},
 			CompileTargets: []goCompileTarget{{
 				Package:         "github.com/floegence/flowersec/flowersec-go/v2/client",
 				Alias:           "client",

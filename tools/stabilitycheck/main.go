@@ -838,10 +838,40 @@ func verifyGo(repoRoot string, m *manifest) error {
 			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
 			continue
 		}
-		fmt.Printf("go symbols OK: %d targets verified\n", len(m.Go.CompileTargets))
+		if err := verifyForbiddenGoPackages(tmpDir, m, commandEnvironment); err != nil {
+			return err
+		}
+		fmt.Printf("go symbols OK: %d targets and %d forbidden packages verified\n", len(m.Go.CompileTargets), len(m.Go.ForbiddenPackages))
 		return nil
 	}
 	return errors.New("verify-go exhausted its retry contract")
+}
+
+func verifyForbiddenGoPackages(tmpDir string, m *manifest, environment []string) error {
+	for index, packagePath := range m.Go.ForbiddenPackages {
+		probeDir := filepath.Join(tmpDir, fmt.Sprintf("negative-%d", index))
+		if err := os.MkdirAll(probeDir, 0o755); err != nil {
+			return err
+		}
+		goMod := fmt.Sprintf("module flowersec-negative-probe\n\ngo %s\n\nrequire %s %s\n", strings.TrimPrefix(repoGoToolchain, "go"), m.Go.ModulePath, goVerifierModuleVersion(m.Go.ModulePath))
+		if err := os.WriteFile(filepath.Join(probeDir, "go.mod"), []byte(goMod), 0o644); err != nil {
+			return err
+		}
+		cmd := exec.Command("go", "list", "-mod=mod", packagePath)
+		cmd.Dir = probeDir
+		cmd.Env = environment
+		var output bytes.Buffer
+		cmd.Stdout = &output
+		cmd.Stderr = &output
+		if err := cmd.Run(); err == nil {
+			return fmt.Errorf("forbidden Go package %s remains importable", packagePath)
+		}
+		text := output.String()
+		if !strings.Contains(text, "does not contain package "+packagePath) && !strings.Contains(text, "no required module provides package "+packagePath) {
+			return fmt.Errorf("forbidden Go package probe %s failed for an unrelated reason:\n%s", packagePath, text)
+		}
+	}
+	return nil
 }
 
 func resolveGoModuleCache() (string, error) {

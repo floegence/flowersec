@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"net"
+	"net/http"
 	"net/url"
 	"sync"
 	"time"
@@ -31,6 +32,7 @@ var (
 type WebSocketDialConfig struct {
 	Dialer    *gorillaws.Dialer
 	Resources carrierws.ResourcePolicy
+	Origin    string
 }
 
 type RawQUICDialConfig struct {
@@ -64,6 +66,7 @@ func NewGoNativeFactory(config GoNativeConfig) (*Factory, error) {
 	webSocketDial, err := NewWebSocketCarrierDial(WebSocketDialConfig{
 		Dialer:    &webSocketClient,
 		Resources: carrierws.DefaultResourcePolicy(),
+		Origin:    config.Origin,
 	})
 	if err != nil {
 		return nil, err
@@ -265,7 +268,11 @@ func NewWebSocketCarrierDial(config WebSocketDialConfig) (Dial, error) {
 			stopDialCancellation = context.AfterFunc(ctx, func() { _ = conn.Close() })
 			return conn, nil
 		}
-		conn, _, err := attemptDialer.DialContext(ctx, dialURL, nil)
+		headers := http.Header{}
+		if config.Origin != "" {
+			headers.Set("Origin", config.Origin)
+		}
+		conn, _, err := attemptDialer.DialContext(ctx, dialURL, headers)
 		if stopDialCancellation != nil {
 			stopDialCancellation()
 		}

@@ -180,9 +180,12 @@ struct HandshakeMaterialV2 {
 /// `flowersec.rpc.v2` logical stream kind.
 #[async_trait]
 pub trait RpcHandlerV2: std::fmt::Debug + Send + Sync + 'static {
-    async fn call(&self, type_id: u32, request: serde_json::Value)
-    -> io::Result<serde_json::Value>;
-    async fn notify(&self, type_id: u32, request: serde_json::Value) -> io::Result<()>;
+    async fn call(
+        &self,
+        type_id: u32,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcError>;
+    async fn notify(&self, type_id: u32, request: serde_json::Value) -> Result<(), RpcError>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -3423,18 +3426,21 @@ async fn serve_rpc_stream_v2(session: &SelfSession, stream: StreamHandleV2) -> i
         let handler = session.config.rpc_handler.as_ref();
         if request.request_id == 0 {
             if let Some(handler) = handler {
-                handler.notify(request.type_id, request.payload).await?;
+                handler
+                    .notify(request.type_id, request.payload)
+                    .await
+                    .map_err(|_| io::Error::other("RPC notification handler failed"))?;
             }
             continue;
         }
         let (payload, error) = match handler {
             Some(handler) => match handler.call(request.type_id, request.payload).await {
                 Ok(payload) => (payload, None),
-                Err(_) => (
+                Err(error) => (
                     serde_json::Value::Null,
                     Some(RpcErrorWireV2 {
-                        code: 500,
-                        message: Some("handler failed".into()),
+                        code: error.code,
+                        message: error.message,
                     }),
                 ),
             },

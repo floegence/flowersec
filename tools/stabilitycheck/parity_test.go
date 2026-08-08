@@ -99,6 +99,39 @@ func TestCapabilityManifestRequiresPortableContractsAndSharedFixtures(t *testing
 	})
 }
 
+func TestCapabilityManifestRejectsUnverifiableServerClaims(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := loadCapabilityManifest(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("complete server capability without entrypoint", func(t *testing.T) {
+		copy := cloneCapabilityManifest(t, manifest)
+		implementation := copy.PortableCapabilities[6].Implementations["go"]
+		implementation.Entrypoint = ""
+		copy.PortableCapabilities[6].Implementations["go"] = implementation
+		_, err := loadCapabilityManifest(writeCapabilityManifest(t, &copy))
+		if err == nil || !strings.Contains(err.Error(), "requires an entrypoint") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("unsupported server capability without alternative", func(t *testing.T) {
+		copy := cloneCapabilityManifest(t, manifest)
+		implementation := copy.PortableCapabilities[6].Implementations["swift"]
+		implementation.AlternativeBoundary = ""
+		copy.PortableCapabilities[6].Implementations["swift"] = implementation
+		_, err := loadCapabilityManifest(writeCapabilityManifest(t, &copy))
+		if err == nil || !strings.Contains(err.Error(), "alternative_boundary") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
 func TestInteropMatrixContainsOnlyStableTestIDs(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {

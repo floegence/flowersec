@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:de993ad3-a257-5591-82f2-ca98a083de19",
+  "serialNumber": "urn:uuid:eb785e25-e5fb-59fc-88ce-06459f58d115",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "Flowersec",
-      "version": "2.1.0",
-      "purl": "pkg:swift/Flowersec@2.1.0",
-      "bom-ref": "pkg:swift/Flowersec@2.1.0"
+      "version": "2.2.0",
+      "purl": "pkg:swift/Flowersec@2.2.0",
+      "bom-ref": "pkg:swift/Flowersec@2.2.0"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "212330df6f0cfcf64ebc4710f73833ffa6d31e4701a246e8b1f4a6a6f74418f8"
+        "value": "230e833276df3ab620d06a6d76b6db45f0dd7ad16f5085e9bc60fba0384c5313"
       }
     ]
   },
@@ -638,7 +638,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:swift/Flowersec@2.1.0",
+      "ref": "pkg:swift/Flowersec@2.2.0",
       "dependsOn": [
         "pkg:swift/async-http-client@1.35.0",
         "pkg:swift/swift-crypto@4.5.1",

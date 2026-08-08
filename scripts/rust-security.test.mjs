@@ -89,6 +89,13 @@ test("Rust security policy has no advisory suppression and is wired to release c
 });
 
 test("non-published Rust roots remain licensed and version their local Flowersec edge", () => {
+  const publishedManifest = fs.readFileSync(
+    path.join(sourceRoot, "flowersec-rust/Cargo.toml"),
+    "utf8",
+  );
+  const publishedVersion = publishedManifest.match(/^version = "(\d+\.\d+\.\d+)"$/m)?.[1];
+  assert.ok(publishedVersion, "flowersec-rust/Cargo.toml must declare a release version");
+  const escapedVersion = publishedVersion.replaceAll(".", "\\.");
   for (const manifestPath of [
     "flowersec-rust/fuzz/Cargo.toml",
     "examples/rust/Cargo.toml",
@@ -97,7 +104,10 @@ test("non-published Rust roots remain licensed and version their local Flowersec
     assert.match(manifest, /^license = "MIT"$/m, `${manifestPath} must declare its license`);
     assert.match(
       manifest,
-      /^flowersec = \{ version = "=2\.1\.0", path = "[^"]+"(?:, features = \["__flowersec_internal_fuzzing"\])? \}$/m,
+      new RegExp(
+        `^flowersec = \\{ version = "=${escapedVersion}", path = "[^"]+"(?:, features = \\["__flowersec_internal_fuzzing"\\])? \\}$`,
+        "m",
+      ),
       `${manifestPath} must not use a wildcard local dependency`,
     );
   }
