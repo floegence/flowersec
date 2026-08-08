@@ -88,6 +88,7 @@ func productionBrowserStreamCapacityContract() capacityContract {
 	contract.MaxCPU = 240 * time.Second
 	contract.MaxOpenFDs = 32768
 	contract.Watchdog = contract.Ramp + contract.Hold + contract.Cleanup
+	contract.MinConnectsPerSecond = 0
 	contract.MinStreamsPerSecond = 50
 	contract.CalibrationRSS = 0
 	contract.CalibrationOpenFDs = 0

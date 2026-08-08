@@ -91,7 +91,7 @@ func TestBrowserCapacityContractUsesFullProcessTreeCalibration(t *testing.T) {
 
 func TestBrowserStreamCapacityContractIsFrozen(t *testing.T) {
 	contract := productionBrowserStreamCapacityContract()
-	if contract.Sessions != 100 || contract.StreamsPerSession != 128 || contract.MaxRSS != 3<<30 || contract.MaxCPU != 240*time.Second || contract.MaxOpenFDs != 32768 ||
+	if contract.Sessions != 100 || contract.StreamsPerSession != 128 || contract.MaxRSS != 3<<30 || contract.MaxCPU != 240*time.Second || contract.MaxOpenFDs != 32768 || contract.MinConnectsPerSecond != 0 ||
 		contract.CalibrationRSS != 0 || contract.CalibrationOpenFDs != 0 || capacitySessionRamp(contract) != 15*time.Second {
 		t.Fatalf("browser stream capacity contract = %+v", contract)
 	}
