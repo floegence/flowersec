@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createConnectionControllerV2 } from "./connectionController.js";
 import type { ArtifactSource, ArtifactSourceResult } from "./connectionController.js";
-import { ConnectError } from "./utils/errors.js";
+import { ConnectError } from "./public/connectError.js";
 import type { ArtifactLeaseV2 } from "./v2/artifactLease.js";
 import { SessionError } from "./v2/contract.js";
 import type { SessionV2 } from "./v2/contract.js";
@@ -21,7 +21,7 @@ describe("ConnectionController", () => {
         if (acquisition === 1) throw new ConnectError("connection_failed");
         return connected.value;
       }),
-      { maxAttempts: 2 },
+      { maximumAttempts: 2 },
     );
 
     controller.start();
@@ -95,7 +95,7 @@ describe("ConnectionController", () => {
 
     controller.start();
     await flush();
-    expect(controller.retryNow()).toBe(true);
+    expect(controller.retryNow()).toBe(false);
     await vi.advanceTimersByTimeAsync(999);
     expect(acquisition).toBe(1);
     await vi.advanceTimersByTimeAsync(1);
@@ -153,7 +153,7 @@ describe("ConnectionController", () => {
         calls += 1;
         throw new ConnectError("connection_failed");
       },
-      { maxAttempts: 2 },
+      { maximumAttempts: 2 },
     );
 
     controller.start();

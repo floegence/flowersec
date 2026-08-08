@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { createBrowserConnectionController } from "./connectSession.js";
+import { createConnectionController } from "./connectSession.js";
 import { detectBrowserRuntimeCapabilityV2 } from "./runtimeCapability.js";
 import { browserSessionRuntimeV2 } from "./sessionRuntime.js";
 import { createBrowserWebTransportClientV2 } from "./webTransportClient.js";
@@ -94,7 +94,7 @@ describe("browser runtime adapters", () => {
 
   test("constructs the browser controller without starting an artifact attempt", () => {
     const acquire = vi.fn(async () => ({ kind: "failure" as const, code: "none", disposition: { kind: "terminal" as const } }));
-    const controller = createBrowserConnectionController({ acquire }, { maxAttempts: 1 });
+    const controller = createConnectionController({ acquire }, { maximumAttempts: 1 });
     expect(controller.state).toBe("idle");
     expect(acquire).not.toHaveBeenCalled();
   });

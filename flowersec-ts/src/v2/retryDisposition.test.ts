@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { ConnectError } from "../utils/errors.js";
+import { ConnectError } from "../public/connectError.js";
 import { SessionError } from "./contract.js";
 import {
   retryDispositionForConnectError,

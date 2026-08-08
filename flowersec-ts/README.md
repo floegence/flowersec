@@ -13,8 +13,8 @@ npm install @floegence/flowersec-core
 ## Public API
 
 - `@floegence/flowersec-core` exports the portable artifact, lease, session, stream, RPC, stream-metadata, and connection-controller API, plus profile-owned unreliable messages when negotiated.
-- `@floegence/flowersec-core/browser` adds `connectBrowserSession(...)`, `createBrowserConnectionController(...)`, and their options.
-- `@floegence/flowersec-core/node` adds `connectNodeSession(...)`, `createNodeConnectionController(...)`, and their options.
+- `@floegence/flowersec-core/browser` adds `connect(...)`, `createConnectionController(...)`, and their options.
+- `@floegence/flowersec-core/node` adds `connect(...)`, `createConnectionController(...)`, and their options.
 - `@floegence/flowersec-core/proxy` adds the `Session`-based HTTP/WebSocket runtime, Service Worker and controller/app-window bridges, strict `proxy.runtime@2` validation, and `connectProxyBrowser(...)` composition.
 
 The root type exports are:
@@ -24,7 +24,7 @@ The root type exports are:
 - Unreliable messages: `UnreliableMessageChannel`, `UnreliableMessageSendOptions`, and `UnreliableMessageSendResult`.
 - JSON values: `JsonPrimitive`, `JsonValue`, and `JsonObject`.
 - Errors: `ConnectErrorCode`, `SessionErrorCode`, and structured `RetryDisposition`.
-- Connection lifecycle: `ArtifactSource`, `ArtifactSourceResult`, `ConnectionController`, `ConnectionState`, `ConnectionControllerSnapshot`, `ConnectionControllerFailure`, `ConnectionControllerError`, and `RetryDisposition`.
+- Connection lifecycle: `ArtifactSource`, `ArtifactSourceResult`, `ConnectionController`, `ConnectionState`, `ConnectionSnapshot`, `ConnectionControllerFailure`, `ConnectionControllerError`, and `RetryDisposition`.
 
 Retry ownership belongs to `ConnectionController`; applications do not classify error text or run a parallel retry scheduler. Public failures remain redacted and reveal no carrier, candidate, URL, credential, stage, key, or diagnostic details.
 
@@ -34,11 +34,11 @@ When connector options omit a connection timeout, browser and Node.js connectors
 
 ## Connection Lifecycle
 
-`connectBrowserSession(...)` and `connectNodeSession(...)` are one-shot operations and never reconnect. Long-lived applications can create the runtime-specific `ConnectionController` with a refreshable `ArtifactSource`. Every attempt must return a fresh `ArtifactLease`; a one-time artifact or lease is not a controller source.
+The Browser and Node `connect(...)` operations are one-shot and never reconnect. Long-lived applications can create the runtime-specific `ConnectionController` with a refreshable `ArtifactSource`. Every attempt must return a fresh `ArtifactLease`; a one-time artifact or lease is not a controller source.
 
 The controller has one scheduler and one in-flight attempt. Its states are `idle`, `connecting`, `connected`, `waiting`, `failed`, and `closed`; snapshots expose the current structured `retryDisposition` while waiting. Call `start()` once, observe immutable snapshots with `subscribe(...)`, await an established session with `waitForSession(...)`, and use `retryNow()` only to wake a `waiting` controller. `close()` cancels acquisition, connection, and waiting before closing the current session.
 
-Source failures return a structured `terminal`, `retryable`, or `retry_after` disposition. Thrown or malformed source failures are terminal. Retry delay is deterministic exponential backoff from 250 ms, doubling to a 30-second maximum with no jitter; `retry_after` is never attempted before its specified Unix-millisecond boundary. Attempts are unlimited unless `maxAttempts` is explicitly set.
+Source failures return a structured `terminal`, `retryable`, or `retry_after` disposition. Thrown or malformed source failures are terminal. Retry delay is deterministic exponential backoff from 250 ms, doubling to a 30-second maximum with no jitter; `retry_after` is never attempted before its specified Unix-millisecond boundary. Attempts are unlimited unless `maximumAttempts` is explicitly set.
 
 A newly established session replaces `currentSession` atomically. The controller never migrates or replays streams, RPC calls, or writes from a terminated session; callers start new application operations on the new session.
 
@@ -82,13 +82,13 @@ Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow 
 
 WebSocket uses Yamux only inside its carrier adapter. Yamux has no independent STOP_SENDING primitive, so that operation is explicitly unavailable rather than emulated with a full stream reset.
 
-Browser applications receive a ready `Session` from `connectBrowserSession(...)`. The browser connector supports WSS and WebTransport production connections. WebTransport uses native HTTP/3 bidirectional streams and does not use Yamux.
+Browser applications receive a ready `Session` from `connect(...)`. The browser connector supports WSS and WebTransport production connections. WebTransport uses native HTTP/3 bidirectional streams and does not use Yamux.
 
 Chromium does not support a WebTransport pooling option; each carrier creates an independent native WebTransport connection.
 
 Cold-connection diagnostics require every independent carrier to meet the declared deadline. A `dial_failed` result remains a test failure and is not hidden by pooling, retry, or timeout relaxation.
 
-Node.js applications receive the same `Session` contract from `connectNodeSession(...)`. The Node.js connector supports WSS and WebTransport production connections for direct and tunnel artifacts. It requires an absolute HTTP(S) `origin`; a custom certificate authority can be supplied through `tls.ca`. Invalid origin and TLS options fail as `ConnectError` with `invalid_options` and are terminal to the optional connection controller.
+Node.js applications receive the same `Session` contract from `connect(...)`. The Node.js connector supports WSS and WebTransport production connections for direct and tunnel artifacts. It requires an absolute HTTP(S) `origin`; a custom certificate authority can be supplied through `tls.ca`. Invalid origin and TLS options fail as `ConnectError` with `invalid_options` and are terminal to the optional connection controller.
 
 The Node WebTransport direct listener/server is owned by the Node runtime and the `flowersec-ts-cli` server path. It uses the same native carrier acceptor and session engine as the client connector; it is not a second protocol implementation.
 

@@ -1,11 +1,11 @@
 import type {
-  ProxyRuntimeControllerBridgeScopeV2,
-  ProxyRuntimeScopeLimitsV2,
-  ProxyRuntimeScopeV2,
-  ProxyRuntimeServiceWorkerScopeV2,
+  ProxyRuntimeControllerBridgeScope,
+  ProxyRuntimeScopeLimits,
+  ProxyRuntimeScope,
+  ProxyRuntimeServiceWorkerScope,
 } from "./types.js";
 
-export const PROXY_RUNTIME_SCOPE_V2 = Object.freeze({ name: "proxy.runtime", version: 2 as const });
+export const PROXY_RUNTIME_SCOPE = Object.freeze({ name: "proxy.runtime", version: 2 as const });
 
 const MAX_PAYLOAD_BYTES = 8 * 1024;
 const MAX_FIELDS = 48;
@@ -46,7 +46,7 @@ function positiveInt(name: string, value: unknown): number {
   return value as number;
 }
 
-function optionalLimits(value: unknown): ProxyRuntimeScopeLimitsV2 | undefined {
+function optionalLimits(value: unknown): ProxyRuntimeScopeLimits | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) reject("limits");
   exactFields(value, ["timeoutMs", "maxJsonFrameBytes", "maxChunkBytes", "maxBodyBytes", "maxWsFrameBytes"], "limits");
@@ -54,7 +54,7 @@ function optionalLimits(value: unknown): ProxyRuntimeScopeLimitsV2 | undefined {
   for (const key of ["timeoutMs", "maxJsonFrameBytes", "maxChunkBytes", "maxBodyBytes", "maxWsFrameBytes"] as const) {
     if (value[key] !== undefined) result[key] = positiveInt(`limits.${key}`, value[key]);
   }
-  return Object.freeze(result) as ProxyRuntimeScopeLimitsV2;
+  return Object.freeze(result) as ProxyRuntimeScopeLimits;
 }
 
 function optionalAppBasePath(value: unknown): string | undefined {
@@ -84,7 +84,7 @@ function allowedOrigins(value: unknown): readonly string[] {
   return Object.freeze(result);
 }
 
-export function assertProxyRuntimeScopeV2(payload: unknown): ProxyRuntimeScopeV2 {
+export function assertProxyRuntimeScope(payload: unknown): ProxyRuntimeScope {
   if (!isRecord(payload)) reject("payload");
   let encoded: string;
   try {
@@ -103,7 +103,7 @@ export function assertProxyRuntimeScopeV2(payload: unknown): ProxyRuntimeScopeV2
   if (payload.mode === "service_worker") {
     if (!isRecord(payload.serviceWorker) || payload.controllerBridge !== undefined) reject("serviceWorker");
     exactFields(payload.serviceWorker, ["scriptUrl", "scope"], "serviceWorker");
-    const result: ProxyRuntimeServiceWorkerScopeV2 = {
+    const result: ProxyRuntimeServiceWorkerScope = {
       mode: "service_worker",
       ...(appBasePath === undefined ? {} : { appBasePath }),
       serviceWorker: Object.freeze({
@@ -117,7 +117,7 @@ export function assertProxyRuntimeScopeV2(payload: unknown): ProxyRuntimeScopeV2
   if (payload.mode === "controller_bridge") {
     if (!isRecord(payload.controllerBridge) || payload.serviceWorker !== undefined) reject("controllerBridge");
     exactFields(payload.controllerBridge, ["allowedOrigins"], "controllerBridge");
-    const result: ProxyRuntimeControllerBridgeScopeV2 = {
+    const result: ProxyRuntimeControllerBridgeScope = {
       mode: "controller_bridge",
       ...(appBasePath === undefined ? {} : { appBasePath }),
       controllerBridge: Object.freeze({ allowedOrigins: allowedOrigins(payload.controllerBridge.allowedOrigins) }),

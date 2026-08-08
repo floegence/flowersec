@@ -576,6 +576,23 @@
           },
           {
             "kind": "type",
+            "expr": "flowersec.ConnectionControllerOptions",
+            "doc_token": "`flowersec.ConnectionControllerOptions`"
+          },
+          {
+            "kind": "field",
+          "expr": "(flowersec.ConnectionControllerOptions{}).Connector",
+            "signature": "flowersec.ConnectorOptions",
+            "doc_token": "`flowersec.ConnectionControllerOptions`"
+          },
+          {
+            "kind": "field",
+          "expr": "(flowersec.ConnectionControllerOptions{}).MaximumAttempts",
+            "signature": "uint64",
+            "doc_token": "`flowersec.ConnectionControllerOptions`"
+          },
+          {
+            "kind": "type",
             "expr": "flowersec.ConnectionFailure",
             "doc_token": "`flowersec.ConnectionFailure`"
           },
@@ -586,13 +603,8 @@
           },
           {
             "kind": "type",
-            "expr": "flowersec.ConnectionStatus",
-            "doc_token": "`flowersec.ConnectionStatus`"
-          },
-          {
-            "kind": "method",
-            "expr": "flowersec.ConnectionStatus.String",
-            "doc_token": "`flowersec.ConnectionStatus`"
+            "expr": "flowersec.ConnectionSnapshot",
+            "doc_token": "`flowersec.ConnectionSnapshot`"
           },
           {
             "kind": "type",
@@ -603,16 +615,6 @@
             "kind": "type",
             "expr": "flowersec.RetryDispositionKind",
             "doc_token": "`flowersec.RetryDisposition`"
-          },
-          {
-            "kind": "type",
-            "expr": "flowersec.RetryPolicy",
-            "doc_token": "`flowersec.RetryPolicy`"
-          },
-          {
-            "kind": "func",
-            "expr": "flowersec.DefaultRetryPolicy",
-            "doc_token": "`flowersec.RetryPolicy`"
           },
           {
             "kind": "func",
@@ -641,8 +643,8 @@
           },
           {
             "kind": "method",
-            "expr": "(*flowersec.ConnectionController).Status",
-            "doc_token": "`flowersec.ConnectionStatus`"
+            "expr": "(*flowersec.ConnectionController).Snapshot",
+            "doc_token": "`flowersec.ConnectionSnapshot`"
           },
           {
             "kind": "method",
@@ -651,8 +653,8 @@
           },
           {
             "kind": "method",
-            "expr": "(*flowersec.ConnectionController).WaitForStatusChange",
-            "doc_token": "`flowersec.ConnectionStatus`"
+            "expr": "(*flowersec.ConnectionController).WaitForSnapshotChange",
+            "doc_token": "`flowersec.ConnectionSnapshot`"
           },
           {
             "kind": "method",
@@ -663,6 +665,11 @@
             "kind": "method",
             "expr": "(*flowersec.ConnectionController).Close",
             "doc_token": "`flowersec.ConnectionController`"
+          },
+          {
+            "kind": "method",
+            "expr": "flowersec.ConnectionSnapshot.String",
+            "doc_token": "`flowersec.ConnectionSnapshot`"
           },
           {
             "kind": "method",
@@ -722,11 +729,6 @@
           {
             "kind": "var",
             "expr": "flowersec.ErrInvalidConnectionController",
-            "doc_token": "`flowersec.ConnectionController`"
-          },
-          {
-            "kind": "var",
-            "expr": "flowersec.ErrConnectionControllerStarted",
             "doc_token": "`flowersec.ConnectionController`"
           }
         ]
@@ -999,7 +1001,7 @@
           "ConnectionController",
           "ConnectionControllerFailure",
           "ConnectionControllerOptions",
-          "ConnectionControllerSnapshot",
+          "ConnectionSnapshot",
           "ConnectionState",
           "IncomingStream",
           "JsonObject",
@@ -1026,7 +1028,7 @@
         "package_json_export": "./node",
         "doc_tokens": [
           "`@floegence/flowersec-core/node`",
-          "`connectNodeSession(...)`",
+          "`connect(...)`",
           "`ConnectionController`"
         ],
         "runtime_exports": [
@@ -1038,9 +1040,9 @@
           "SessionError",
           "StreamMetadataError",
           "UnreliableMessageError",
-          "connectNodeSession",
+          "connect",
           "createArtifactLease",
-          "createNodeConnectionController",
+          "createConnectionController",
           "createStreamMetadata",
           "parseArtifact"
         ],
@@ -1058,15 +1060,14 @@
           "ConnectionController",
           "ConnectionControllerFailure",
           "ConnectionControllerOptions",
-          "ConnectionControllerSnapshot",
+          "ConnectionSnapshot",
           "ConnectionState",
           "IncomingStream",
           "JsonObject",
           "JsonPrimitive",
           "JsonValue",
-          "NodeConnectionControllerOptions",
-          "NodeSessionOptions",
-          "NodeSessionTLSOptions",
+          "SessionOptions",
+          "SessionTLSOptions",
           "OperationOptions",
           "RetryDisposition",
           "RpcPeer",
@@ -1088,7 +1089,7 @@
         "package_json_export": "./browser",
         "doc_tokens": [
           "`@floegence/flowersec-core/browser`",
-          "`connectBrowserSession(...)`",
+          "`connect(...)`",
           "`ConnectionController`"
         ],
         "runtime_exports": [
@@ -1100,9 +1101,9 @@
           "SessionError",
           "StreamMetadataError",
           "UnreliableMessageError",
-          "connectBrowserSession",
+          "connect",
           "createArtifactLease",
-          "createBrowserConnectionController",
+          "createConnectionController",
           "createStreamMetadata",
           "parseArtifact"
         ],
@@ -1114,15 +1115,14 @@
           "ArtifactLeaseError",
           "ArtifactSource",
           "ArtifactSourceResult",
-          "BrowserConnectionControllerOptions",
-          "BrowserSessionOptions",
+          "SessionOptions",
           "ByteStream",
           "ConnectError",
           "ConnectErrorCode",
           "ConnectionController",
           "ConnectionControllerFailure",
           "ConnectionControllerOptions",
-          "ConnectionControllerSnapshot",
+          "ConnectionSnapshot",
           "ConnectionState",
           "IncomingStream",
           "JsonObject",
@@ -1151,11 +1151,11 @@
           "`@floegence/flowersec-core/proxy`",
           "`connectProxyBrowser(...)`",
           "`createProxyRuntime(...)`",
-          "`PROXY_RUNTIME_SCOPE_V2`"
+          "`PROXY_RUNTIME_SCOPE`"
         ],
         "runtime_exports": [
-          "PROXY_RUNTIME_SCOPE_V2",
-          "assertProxyRuntimeScopeV2",
+          "PROXY_RUNTIME_SCOPE",
+          "assertProxyRuntimeScope",
           "connectProxyBrowser",
           "connectProxyControllerBrowser",
           "createProxyRuntime",
@@ -1882,36 +1882,6 @@
       },
       {
         "kind": "swift.struct",
-        "name": "ConnectionRetryPolicy",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.init",
-        "name": "ConnectionRetryPolicy.init(initialDelay:multiplier:maximumDelay:maximumAttempts:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectionRetryPolicy.initialDelay",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectionRetryPolicy.multiplier",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectionRetryPolicy.maximumDelay",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectionRetryPolicy.maximumAttempts",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.struct",
         "name": "ConnectionSnapshot",
         "doc_token": ""
       },
@@ -1923,11 +1893,6 @@
       {
         "kind": "swift.property",
         "name": "ConnectionSnapshot.attempt",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectionSnapshot.nextRetryAt",
         "doc_token": ""
       },
       {
@@ -1947,7 +1912,7 @@
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectionControllerConfigurationError.invalidRetryPolicy",
+        "name": "ConnectionControllerConfigurationError.invalidMaximumAttempts",
         "doc_token": ""
       },
       {
@@ -1967,11 +1932,6 @@
       },
       {
         "kind": "swift.property",
-        "name": "ConnectionController.nextRetryAt",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
         "name": "ConnectionController.currentSession",
         "doc_token": ""
       },
@@ -1982,7 +1942,7 @@
       },
       {
         "kind": "swift.init",
-        "name": "ConnectionController.init(source:options:retryPolicy:)",
+        "name": "ConnectionController.init(source:options:maximumAttempts:)",
         "doc_token": ""
       },
       {
@@ -2038,15 +1998,12 @@
       "`UnreliableSendOutcome`",
       "`ConnectionController`",
       "`ConnectionControllerOptions`",
-      "`ConnectionControllerStartError`",
       "`ArtifactSource`",
       "`ArtifactSourceError`",
-      "`ConnectionStatus`",
+      "`ConnectionSnapshot`",
       "`ConnectionState`",
       "`ConnectionFailure`",
-      "`RetryDisposition`",
-      "`RetryPolicy`",
-      "`RetryPolicyError`"
+      "`RetryDisposition`"
     ],
     "compile_entries": [
       "let _ = std::mem::size_of::<flowersec::AcceptError>()",
@@ -2104,25 +2061,19 @@
       "let _ = std::mem::size_of::<flowersec::ConnectionController>()",
       "let _ = flowersec::ConnectionController::new",
       "let _ = flowersec::ConnectionController::start",
-      "let _ = flowersec::ConnectionController::status",
+      "let _ = flowersec::ConnectionController::snapshot",
       "let _ = flowersec::ConnectionController::current_session",
-      "let _ = flowersec::ConnectionController::wait_for_status_change",
       "let _ = flowersec::ConnectionController::retry_now",
       "let _ = flowersec::ConnectionController::close",
       "let _ = std::mem::size_of::<flowersec::ConnectionControllerOptions>()",
       "let _ = flowersec::ConnectionControllerOptions::new",
-      "let _ = flowersec::ConnectionControllerOptions::with_retry_policy",
-      "let _ = flowersec::ConnectionControllerOptions::retry_policy",
-      "let _ = std::mem::size_of::<flowersec::ConnectionControllerStartError>()",
+      "let _ = flowersec::ConnectionControllerOptions::with_maximum_attempts",
+      "let _ = flowersec::ConnectionControllerOptions::maximum_attempts",
       "let _ = std::mem::size_of::<flowersec::ConnectionFailure>()",
       "let _ = flowersec::ConnectionFailure::disposition",
       "let _ = std::mem::size_of::<flowersec::ConnectionState>()",
-      "let _ = std::mem::size_of::<flowersec::ConnectionStatus>()",
-      "let _ = std::mem::size_of::<flowersec::RetryDisposition>()",
-      "let _ = flowersec::RetryPolicy::default()",
-      "let _ = flowersec::RetryPolicy::new",
-      "let _ = flowersec::RetryPolicy::with_max_attempts",
-      "let _ = std::mem::size_of::<flowersec::RetryPolicyError>()"
+      "let _ = std::mem::size_of::<flowersec::ConnectionSnapshot>()",
+      "let _ = std::mem::size_of::<flowersec::RetryDisposition>()"
     ]
   },
   "coverage": {

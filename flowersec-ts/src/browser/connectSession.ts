@@ -1,12 +1,12 @@
 import {
   composeCandidateAttemptFactoryV2,
   SessionConnectorV2,
-  type ConnectorArtifactLeaseV2,
 } from "../connector/sessionConnector.js";
+import type { ArtifactLease } from "../public/artifactLease.js";
 import { createWebSocketCandidateFactoryV2 } from "../connector/adapters/webSocketCandidate.js";
 import { createWebTransportCandidateFactoryV2 } from "../connector/adapters/webTransportCandidate.js";
 import { detectBrowserRuntimeCapabilityV2 } from "./runtimeCapability.js";
-import type { SessionV2 } from "../v2/contract.js";
+import type { Session } from "../public/contract.js";
 import { projectSessionV2 } from "../v2/publicSession.js";
 import { createBrowserWebTransportClientV2 } from "./webTransportClient.js";
 import type { WebSocketLike } from "../ws-client/binaryTransport.js";
@@ -15,29 +15,29 @@ import {
   createConnectionControllerV2,
   type ArtifactSource,
   type ConnectionController,
-  type ConnectionControllerOptions,
+  type ConnectionControllerOptions as CoreConnectionControllerOptions,
 } from "../connectionController.js";
 
-export type BrowserSessionOptions = Readonly<{
+export type SessionOptions = Readonly<{
   signal?: AbortSignal;
   connectTimeoutMs?: number;
 }>;
 
-export type BrowserConnectionControllerOptions = Readonly<{
+export type ConnectionControllerOptions = Readonly<{
   connectTimeoutMs?: number;
-  maxAttempts?: number;
+  maximumAttempts?: number;
 }>;
 
-export function createBrowserConnectionController(
+export function createConnectionController(
   source: ArtifactSource,
-  options: BrowserConnectionControllerOptions = {},
+  options: ConnectionControllerOptions = {},
 ): ConnectionController {
-  const controllerOptions: ConnectionControllerOptions = options.maxAttempts === undefined
+  const controllerOptions: CoreConnectionControllerOptions = options.maximumAttempts === undefined
     ? {}
-    : { maxAttempts: options.maxAttempts };
+    : { maximumAttempts: options.maximumAttempts };
   return createConnectionControllerV2(
     source,
-    async (lease, signal) => await connectBrowserSession(lease, {
+    async (lease, signal) => await connect(lease, {
       signal,
       ...(options.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: options.connectTimeoutMs }),
     }),
@@ -45,10 +45,10 @@ export function createBrowserConnectionController(
   );
 }
 
-export async function connectBrowserSession(
-  lease: ConnectorArtifactLeaseV2,
-  options: BrowserSessionOptions = {},
-): Promise<SessionV2> {
+export async function connect(
+  lease: ArtifactLease,
+  options: SessionOptions = {},
+): Promise<Session> {
   const { signal, ...connectorOptions } = options;
   const connector = new SessionConnectorV2(
     lease,

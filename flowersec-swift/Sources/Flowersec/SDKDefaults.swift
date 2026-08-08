@@ -46,4 +46,10 @@ internal enum FlowersecSDKDefaults {
     internal static let maxTimeoutMilliseconds = 300_000
     internal static let maxConcurrentStreams = 64
   }
+
+  internal enum ConnectionController {
+    internal static let initialDelay: Duration = .milliseconds(250)
+    internal static let maximumDelay: Duration = .seconds(30)
+    internal static let multiplier: UInt64 = 2
+  }
 }

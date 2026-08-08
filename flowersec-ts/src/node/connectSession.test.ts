@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import type { ArtifactSource } from "../connectionController.js";
 import type { ArtifactLeaseV2 } from "../v2/artifactLease.js";
-import { connectNodeSession, createNodeConnectionController } from "./connectSession.js";
+import { connect, createConnectionController } from "./connectSession.js";
 
 describe("Node session facade", () => {
   test.each([
@@ -10,7 +10,7 @@ describe("Node session facade", () => {
     "ftp://app.example",
     "not a URL",
   ])("rejects invalid origin %s before dialing", async (origin) => {
-    await expect(connectNodeSession({} as ArtifactLeaseV2, { origin }))
+    await expect(connect({} as ArtifactLeaseV2, { origin }))
       .rejects.toMatchObject({ name: "ConnectError", code: "invalid_options" });
   });
 
@@ -22,9 +22,9 @@ describe("Node session facade", () => {
         return { kind: "failure", code: "unused", disposition: { kind: "terminal" } };
       },
     };
-    const controller = createNodeConnectionController(source, {
+    const controller = createConnectionController(source, {
       origin: "https://app.example",
-      maxAttempts: 3,
+      maximumAttempts: 3,
     });
 
     expect(controller.state).toBe("idle");

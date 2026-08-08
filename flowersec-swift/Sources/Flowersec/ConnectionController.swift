@@ -55,39 +55,15 @@ public enum ConnectionFailure: Error, Equatable, Sendable {
   case maximumAttemptsReached(last: ConnectionAttemptFailure)
 }
 
-/// Retry policy for one ``ConnectionController`` lifecycle.
-///
-/// Backoff is the cross-language deterministic sequence: 250 ms initial delay,
-/// multiplier 2, 30 s maximum, and no jitter. The default attempt count is unbounded.
-public struct ConnectionRetryPolicy: Equatable, Sendable {
-  public let initialDelay: Duration
-  public let multiplier: UInt64
-  public let maximumDelay: Duration
-  public let maximumAttempts: UInt64?
-
-  public init(
-    initialDelay: Duration = .milliseconds(250),
-    multiplier: UInt64 = 2,
-    maximumDelay: Duration = .seconds(30),
-    maximumAttempts: UInt64? = nil
-  ) {
-    self.initialDelay = initialDelay
-    self.multiplier = multiplier
-    self.maximumDelay = maximumDelay
-    self.maximumAttempts = maximumAttempts
-  }
-}
-
 public struct ConnectionSnapshot: Sendable {
   public let state: ConnectionState
   public let attempt: UInt64
-  public let nextRetryAt: Date?
   public let currentSession: (any Session)?
   public let failure: ConnectionFailure?
 }
 
 public enum ConnectionControllerConfigurationError: Error, Equatable, Sendable {
-  case invalidRetryPolicy
+  case invalidMaximumAttempts
 }
 
 /// Owns the complete reconnect lifecycle above the one-shot Flowersec connector.
@@ -97,33 +73,52 @@ public enum ConnectionControllerConfigurationError: Error, Equatable, Sendable {
 public actor ConnectionController {
   public private(set) var state: ConnectionState = .idle
   public private(set) var attempt: UInt64 = 0
-  public private(set) var nextRetryAt: Date?
   public private(set) var currentSession: (any Session)?
   public private(set) var failure: ConnectionFailure?
 
   private let source: any ArtifactSource
   private let options: ConnectorOptions
-  private let retryPolicy: ConnectionRetryPolicy
+  private let maximumAttempts: UInt64?
+  private let connectOneShot: @Sendable (ArtifactLease, ConnectorOptions) async throws -> any Session
   private var scheduler: Task<Void, Never>?
   private var inFlightAttempt: Task<any Session, Error>?
   private var retryGate: ConnectionRetryGate?
   private var retryTimer: Task<Void, Never>?
   private var retryNotBefore: RetryNotBefore?
   private var observers: [UUID: AsyncStream<ConnectionSnapshot>.Continuation] = [:]
+  private var closeTask: Task<Void, Never>?
 
   public init(
     source: any ArtifactSource,
     options: ConnectorOptions = ConnectorOptions(),
-    retryPolicy: ConnectionRetryPolicy = ConnectionRetryPolicy()
+    maximumAttempts: UInt64? = nil
   ) throws {
-    if retryPolicy.initialDelay <= .zero || retryPolicy.multiplier == 0
-      || retryPolicy.maximumDelay < retryPolicy.initialDelay || retryPolicy.maximumAttempts == 0
-    {
-      throw ConnectionControllerConfigurationError.invalidRetryPolicy
-    }
+    try Self.validate(maximumAttempts: maximumAttempts)
     self.source = source
     self.options = options
-    self.retryPolicy = retryPolicy
+    self.maximumAttempts = maximumAttempts
+    self.connectOneShot = { lease, options in
+      try await connect(lease: lease, options: options)
+    }
+  }
+
+  init(
+    source: any ArtifactSource,
+    options: ConnectorOptions = ConnectorOptions(),
+    maximumAttempts: UInt64? = nil,
+    connectOneShot: @escaping @Sendable (ArtifactLease, ConnectorOptions) async throws -> any Session
+  ) throws {
+    try Self.validate(maximumAttempts: maximumAttempts)
+    self.source = source
+    self.options = options
+    self.maximumAttempts = maximumAttempts
+    self.connectOneShot = connectOneShot
+  }
+
+  private static func validate(maximumAttempts: UInt64?) throws {
+    if maximumAttempts == 0 {
+      throw ConnectionControllerConfigurationError.invalidMaximumAttempts
+    }
   }
 
   /// Starts the single scheduler. Calls outside the idle state have no effect.
@@ -150,7 +145,6 @@ public actor ConnectionController {
     ConnectionSnapshot(
       state: state,
       attempt: attempt,
-      nextRetryAt: nextRetryAt,
       currentSession: currentSession,
       failure: failure
     )
@@ -158,31 +152,27 @@ public actor ConnectionController {
 
   /// Wakes only the scheduler's current wait. It never starts a second scheduler or attempt.
   /// An explicit ``RetryDisposition/retryAfter(_:)`` deadline remains authoritative.
-  public func retryNow() async {
-    guard state == .waiting, let retryGate else { return }
+  public func retryNow() async -> Bool {
+    guard state == .waiting, let retryGate else { return false }
     let now = ContinuousClock.now
-    let notBefore = retryNotBefore
-    let wakeAt = maxInstant(now, notBefore?.instant)
-    nextRetryAt = notBefore.map { $0.instant > now ? $0.date : Date() } ?? Date()
-    publish()
+    if let notBefore = retryNotBefore, notBefore.instant > now { return false }
     retryTimer?.cancel()
-    if wakeAt <= now {
-      await retryGate.wake()
-    } else {
-      retryTimer = makeRetryTimer(deadline: wakeAt, gate: retryGate)
-    }
+    await retryGate.wake()
+    return true
   }
 
   /// Permanently closes this controller and its current one-shot session.
   public func close() async {
-    guard state != .closed else { return }
+    if let closeTask {
+      await closeTask.value
+      return
+    }
     let activeScheduler = scheduler
     let activeAttempt = inFlightAttempt
     let activeGate = retryGate
     let activeSession = currentSession
 
     state = .closed
-    nextRetryAt = nil
     currentSession = nil
     failure = nil
     scheduler = nil
@@ -196,9 +186,13 @@ public actor ConnectionController {
     publish()
     finishObservers()
 
-    if let activeGate { await activeGate.wake() }
-    try? await activeSession?.close()
-    await activeScheduler?.value
+    let cleanup = Task {
+      if let activeGate { await activeGate.wake() }
+      try? await activeSession?.close()
+      await activeScheduler?.value
+    }
+    closeTask = cleanup
+    await cleanup.value
   }
 
   private func run() async {
@@ -206,7 +200,6 @@ public actor ConnectionController {
     var attemptsSinceConnected: UInt64 = 0
     while state != .closed {
       state = .connecting
-      nextRetryAt = nil
       failure = nil
       attempt = incrementingWithoutOverflow(attempt)
       attemptsSinceConnected = incrementingWithoutOverflow(attemptsSinceConnected)
@@ -214,6 +207,7 @@ public actor ConnectionController {
 
       let source = self.source
       let options = self.options
+      let connectOneShot = self.connectOneShot
       let task = Task<any Session, Error> {
         let lease: ArtifactLease
         do {
@@ -232,7 +226,7 @@ public actor ConnectionController {
         }
         try Task.checkCancellation()
         do {
-          return try await connect(lease: lease, options: options)
+          return try await connectOneShot(lease, options)
         } catch let error as ConnectError {
           throw ConnectionAttemptFailure.connection(error)
         } catch is CancellationError {
@@ -307,7 +301,7 @@ public actor ConnectionController {
       fail(.terminal(attemptFailure))
       return false
     }
-    if let maximumAttempts = retryPolicy.maximumAttempts,
+    if let maximumAttempts,
       attemptsSinceConnected >= maximumAttempts
     {
       fail(.maximumAttemptsReached(last: attemptFailure))
@@ -319,7 +313,6 @@ public actor ConnectionController {
     let wallNow = Date()
     let delay = backoff(failure: failures)
     let backoffDeadline = monotonicNow.advanced(by: delay)
-    let backoffDate = wallNow.addingTimeInterval(timeInterval(for: delay))
     let mandatoryDeadline: RetryNotBefore?
     switch disposition {
     case .terminal:
@@ -332,30 +325,25 @@ public actor ConnectionController {
         return false
       }
       mandatoryDeadline = RetryNotBefore(
-        date: deadline,
         instant: monotonicNow.advanced(
           by: .seconds(max(0, deadline.timeIntervalSince(wallNow)))
         )
       )
     }
     let scheduled = maxInstant(backoffDeadline, mandatoryDeadline?.instant)
-    let scheduledDate = maxDate(backoffDate, mandatoryDeadline?.date)
     return await waitForRetry(
       until: scheduled,
-      scheduledAt: scheduledDate,
       notBefore: mandatoryDeadline
     )
   }
 
   private func waitForRetry(
     until deadline: ContinuousClock.Instant,
-    scheduledAt: Date,
     notBefore: RetryNotBefore?
   ) async -> Bool {
     let gate = ConnectionRetryGate()
     retryGate = gate
     retryNotBefore = notBefore
-    nextRetryAt = scheduledAt
     state = .waiting
     retryTimer = makeRetryTimer(deadline: deadline, gate: gate)
     publish()
@@ -365,7 +353,6 @@ public actor ConnectionController {
     retryTimer = nil
     retryGate = nil
     retryNotBefore = nil
-    nextRetryAt = nil
     return state != .closed && !Task.isCancelled
   }
 
@@ -384,12 +371,14 @@ public actor ConnectionController {
   }
 
   private func backoff(failure: UInt64) -> Duration {
-    var delay = retryPolicy.initialDelay
+    let maximumDelay = FlowersecSDKDefaults.ConnectionController.maximumDelay
+    let multiplier = FlowersecSDKDefaults.ConnectionController.multiplier
+    var delay = FlowersecSDKDefaults.ConnectionController.initialDelay
     var remainingMultiplications = failure > 0 ? failure - 1 : 0
-    while remainingMultiplications > 0, delay < retryPolicy.maximumDelay {
-      let factor = Double(retryPolicy.multiplier)
-      if delay >= retryPolicy.maximumDelay / factor {
-        return retryPolicy.maximumDelay
+    while remainingMultiplications > 0, delay < maximumDelay {
+      let factor = Double(multiplier)
+      if delay >= maximumDelay / factor {
+        return maximumDelay
       }
       delay = delay * factor
       remainingMultiplications -= 1
@@ -400,7 +389,6 @@ public actor ConnectionController {
   private func fail(_ connectionFailure: ConnectionFailure) {
     guard state != .closed else { return }
     currentSession = nil
-    nextRetryAt = nil
     failure = connectionFailure
     state = .failed
     scheduler = nil
@@ -433,23 +421,12 @@ public actor ConnectionController {
     return instant < other ? other : instant
   }
 
-  private func maxDate(_ date: Date, _ other: Date?) -> Date {
-    guard let other else { return date }
-    return date < other ? other : date
-  }
-
-  private func timeInterval(for duration: Duration) -> TimeInterval {
-    let components = duration.components
-    return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
-  }
-
   private func incrementingWithoutOverflow(_ value: UInt64) -> UInt64 {
     value == .max ? .max : value + 1
   }
 }
 
 private struct RetryNotBefore {
-  let date: Date
   let instant: ContinuousClock.Instant
 }
 

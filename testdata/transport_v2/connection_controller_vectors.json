@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "states": ["idle", "connecting", "connected", "waiting", "failed", "closed"],
   "retry_dispositions": ["terminal", "retryable", "retry_after"],
   "defaults": {
@@ -32,11 +32,32 @@
       "max_in_flight_attempts": 1
     },
     {
+      "name": "repeated_start_is_idempotent",
+      "events": ["start", "start", "acquire:pending"],
+      "states": ["idle", "connecting"],
+      "scheduler_count": 1,
+      "max_in_flight_attempts": 1
+    },
+    {
+      "name": "start_after_close_stays_closed",
+      "events": ["close", "start"],
+      "states": ["idle", "closed"],
+      "artifact_acquisitions": 0,
+      "scheduler_count": 0
+    },
+    {
+      "name": "retry_now_outside_waiting_returns_false",
+      "events": ["retry_now", "start", "acquire:pending", "retry_now", "close", "retry_now"],
+      "states": ["idle", "connecting", "closed"],
+      "retry_now_results": [false, false, false]
+    },
+    {
       "name": "retry_after_is_authoritative",
       "clock_start_unix_ms": 1000000,
-      "events": ["start", "acquire:error:retry_after:1004000", "timer:1004000", "acquire:artifact-1", "connect:session-1"],
+      "events": ["start", "acquire:error:retry_after:1004000", "retry_now", "timer:1004000", "acquire:artifact-1", "connect:session-1"],
       "states": ["idle", "connecting", "waiting", "connecting", "connected"],
-      "retry_at_unix_ms": 1004000
+      "retry_at_unix_ms": 1004000,
+      "retry_now_results": [false]
     },
     {
       "name": "terminal_failure",
@@ -56,6 +77,25 @@
       "events": ["start", "acquire:pending", "close"],
       "states": ["idle", "connecting", "closed"],
       "max_in_flight_attempts": 1
+    },
+    {
+      "name": "repeated_close_is_idempotent",
+      "events": ["start", "acquire:pending", "close", "close"],
+      "states": ["idle", "connecting", "closed"],
+      "close_calls": 2,
+      "cleanup_calls": 1
+    },
+    {
+      "name": "close_waits_for_owned_cleanup",
+      "events": ["start", "acquire:artifact-1", "connect:pending", "close", "connect:session-1", "close:complete"],
+      "states": ["idle", "connecting", "closed"],
+      "cleanup_calls": 1
+    },
+    {
+      "name": "subordinate_close_failure_is_ignored",
+      "events": ["start", "acquire:artifact-1", "connect:session-1", "close", "session_close:error", "close:complete"],
+      "states": ["idle", "connecting", "connected", "closed"],
+      "cleanup_calls": 1
     }
   ],
   "invariants": {
@@ -63,7 +103,12 @@
     "fresh_artifact_per_attempt": true,
     "single_scheduler": true,
     "single_in_flight_attempt": true,
+    "start_idempotent": true,
+    "close_idempotent": true,
     "retry_now_outside_waiting": false,
+    "retry_after_bypass": false,
+    "subordinate_close_failure_propagates": false,
+    "public_retry_configuration": ["maximum_attempts"],
     "old_stream_migration": false,
     "rpc_replay": false,
     "write_replay": false,

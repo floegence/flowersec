@@ -2,13 +2,13 @@ import { expect, test } from "vitest";
 
 import {
   ConnectError,
-  createBrowserConnectionController,
+  createConnectionController as createBrowserConnectionController,
   type ArtifactSource as BrowserArtifactSource,
   type BrowserConnectionControllerOptions,
   type ConnectionController as BrowserConnectionController,
 } from "../browser/index.js";
 import {
-  createNodeConnectionController,
+  createConnectionController as createNodeConnectionController,
   type ArtifactSource as NodeArtifactSource,
   type ConnectionController as NodeConnectionController,
   type NodeConnectionControllerOptions,

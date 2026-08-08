@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 
 import {
-  connectNodeSession,
+  connect,
   createArtifactLease,
   parseArtifact,
 } from "../node/index.js";
@@ -48,7 +48,7 @@ async function runGoWSSSession(sessionPath: "direct" | "tunnel"): Promise<void> 
     raw.path.candidates = [webSocket];
 
     phase = "connect";
-    const session = await connectNodeSession(
+    const session = await connect(
       createArtifactLease(parseArtifact(JSON.stringify(raw)), async () => undefined),
       { origin: "https://client.example", tls: { ca: endpoint.ca_pem } },
     );

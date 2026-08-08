@@ -1,6 +1,6 @@
-import { connectBrowserSession, type BrowserSessionOptions } from "../browser/connectSession.js";
-import type { ArtifactLeaseV2 } from "../v2/artifactLease.js";
-import type { SessionV2 } from "../v2/contract.js";
+import { connect, type SessionOptions } from "../browser/connectSession.js";
+import type { ArtifactLease } from "../public/artifactLease.js";
+import type { Session } from "../public/contract.js";
 
 import { createProxyRuntime } from "./runtime.js";
 import { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";
@@ -12,7 +12,7 @@ import {
 } from "./windowBridge.js";
 
 export type ProxyBrowserConnectOptions = Readonly<{
-  connect?: BrowserSessionOptions;
+  connect?: SessionOptions;
   runtime?: Omit<ProxyRuntimeOptions, "session">;
   serviceWorker?: Readonly<{
     scriptUrl: string;
@@ -24,16 +24,16 @@ export type ProxyBrowserConnectOptions = Readonly<{
 }>;
 
 export type ProxyBrowserHandle = Readonly<{
-  session: SessionV2;
+  session: Session;
   runtime: ProxyRuntime;
   dispose(): Promise<void>;
 }>;
 
 export async function connectProxyBrowser(
-  lease: ArtifactLeaseV2,
+  lease: ArtifactLease,
   options: ProxyBrowserConnectOptions = {},
 ): Promise<ProxyBrowserHandle> {
-  const session = await connectBrowserSession(lease, options.connect);
+  const session = await connect(lease, options.connect);
   let runtime: ProxyRuntime | undefined;
   try {
     if (options.serviceWorker !== undefined) await registerServiceWorkerAndEnsureControl(options.serviceWorker);
@@ -61,7 +61,7 @@ export type ProxyControllerBrowserHandle = ProxyBrowserHandle & Readonly<{
 }>;
 
 export async function connectProxyControllerBrowser(
-  lease: ArtifactLeaseV2,
+  lease: ArtifactLease,
   options: ProxyControllerBrowserConnectOptions,
 ): Promise<ProxyControllerBrowserHandle> {
   const base = await connectProxyBrowser(lease, options);

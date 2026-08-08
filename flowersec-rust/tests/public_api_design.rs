@@ -1,10 +1,10 @@
 use flowersec::{
     ArtifactLease, ArtifactSource, ArtifactSourceError, ConnectionController,
-    ConnectionControllerOptions, ConnectorOptions, RetryDisposition, RetryPolicy, RpcPeer,
-    RpcPeerExt, SessionError, SessionTermination, StreamMetadata, StreamMetadataError, connect,
+    ConnectionControllerOptions, ConnectorOptions, RetryDisposition, RpcPeer, RpcPeerExt,
+    SessionError, SessionTermination, StreamMetadata, StreamMetadataError, connect,
 };
 use serde::{Deserialize, Serialize};
-use std::{sync::Arc, time::Duration};
+use std::{fs, num::NonZeroU64, process::Command, sync::Arc};
 
 #[derive(Serialize)]
 struct TypedRequest {
@@ -41,11 +41,10 @@ fn exposes_explicit_options_and_typed_rpc() {
 fn connection_controller_requires_a_refreshable_artifact_source() {
     fn compile_controller(source: Arc<dyn ArtifactSource>) -> ConnectionController {
         let connector = ConnectorOptions::new(vec![vec![1]]).expect("explicit trust roots");
-        let retry = RetryPolicy::new(Duration::from_millis(1), 2, Duration::from_secs(1))
-            .expect("retry policy");
         ConnectionController::new(
             source,
-            ConnectionControllerOptions::new(connector).with_retry_policy(retry),
+            ConnectionControllerOptions::new(connector)
+                .with_maximum_attempts(NonZeroU64::new(2).expect("nonzero")),
         )
     }
     let _ = compile_controller;
@@ -105,4 +104,41 @@ fn session_error_names_cover_portable_session_states() {
     assert_eq!(SessionError::StreamReset.as_str(), "stream_reset");
     assert_eq!(SessionError::RekeyFailed.as_str(), "rekey_failed");
     assert_eq!(SessionError::LivenessFailed.as_str(), "liveness_failed");
+}
+
+#[test]
+fn default_public_api_does_not_expose_fuzzing() {
+    let fixture = tempfile::tempdir().expect("create default API probe directory");
+    let crate_path = env!("CARGO_MANIFEST_DIR").replace('\\', "\\\\");
+    fs::write(
+        fixture.path().join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"flowersec-default-api-probe\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nflowersec = {{ path = \"{crate_path}\" }}\n"
+        ),
+    )
+    .expect("write default API probe manifest");
+    fs::create_dir(fixture.path().join("src")).expect("create default API probe source directory");
+    fs::write(
+        fixture.path().join("src/main.rs"),
+        "use flowersec::fuzzing;\n\nfn main() { let _ = fuzzing::parse_protocol; }\n",
+    )
+    .expect("write default API probe source");
+
+    let output = Command::new("cargo")
+        .args(["check", "--offline", "--quiet"])
+        .current_dir(fixture.path())
+        .env("CARGO_TARGET_DIR", fixture.path().join("target"))
+        .output()
+        .expect("run default API probe");
+
+    assert!(
+        !output.status.success(),
+        "default crate unexpectedly exposes fuzzing:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("fuzzing"),
+        "default API probe failed for an unrelated reason:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+    );
 }

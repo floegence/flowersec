@@ -1,6 +1,6 @@
-import type { ArtifactLeaseV2 } from "../v2/artifactLease.js";
+import type { ArtifactLease } from "../public/artifactLease.js";
 import { NODE_RUNTIME_CAPABILITY_V2 } from "./runtimeCapability.js";
-import type { SessionV2 } from "../v2/contract.js";
+import type { Session } from "../public/contract.js";
 import {
   composeCandidateAttemptFactoryV2,
   SessionConnectorV2,
@@ -10,44 +10,44 @@ import { createWebTransportCandidateFactoryV2 } from "../connector/adapters/webT
 import { createNodeWsFactory } from "./wsFactory.js";
 import { createNodeWebTransportClientV2 } from "./webTransportClient.js";
 import { projectSessionV2 } from "../v2/publicSession.js";
-import { ConnectError } from "../utils/errors.js";
+import { ConnectError } from "../public/connectError.js";
 import { nodeSessionRuntimeV2 } from "./sessionRuntime.js";
 import {
   createConnectionControllerV2,
   type ArtifactSource,
   type ConnectionController,
-  type ConnectionControllerOptions,
+  type ConnectionControllerOptions as CoreConnectionControllerOptions,
 } from "../connectionController.js";
 
-export type NodeSessionTLSOptions = Readonly<{
+export type SessionTLSOptions = Readonly<{
   ca?: string | Uint8Array;
   serverCertificateHash?: Uint8Array;
 }>;
 
-export type NodeSessionOptions = Readonly<{
+export type SessionOptions = Readonly<{
   origin: string;
   signal?: AbortSignal;
   connectTimeoutMs?: number;
-  tls?: NodeSessionTLSOptions;
+  tls?: SessionTLSOptions;
 }>;
 
-export type NodeConnectionControllerOptions = Readonly<{
+export type ConnectionControllerOptions = Readonly<{
   origin: string;
   connectTimeoutMs?: number;
-  tls?: NodeSessionTLSOptions;
-  maxAttempts?: number;
+  tls?: SessionTLSOptions;
+  maximumAttempts?: number;
 }>;
 
-export function createNodeConnectionController(
+export function createConnectionController(
   source: ArtifactSource,
-  options: NodeConnectionControllerOptions,
+  options: ConnectionControllerOptions,
 ): ConnectionController {
-  const controllerOptions: ConnectionControllerOptions = options.maxAttempts === undefined
+  const controllerOptions: CoreConnectionControllerOptions = options.maximumAttempts === undefined
     ? {}
-    : { maxAttempts: options.maxAttempts };
+    : { maximumAttempts: options.maximumAttempts };
   return createConnectionControllerV2(
     source,
-    async (lease, signal) => await connectNodeSession(lease, {
+    async (lease, signal) => await connect(lease, {
       origin: options.origin,
       signal,
       ...(options.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: options.connectTimeoutMs }),
@@ -57,10 +57,10 @@ export function createNodeConnectionController(
   );
 }
 
-export async function connectNodeSession(
-  lease: ArtifactLeaseV2,
-  options: NodeSessionOptions,
-): Promise<SessionV2> {
+export async function connect(
+  lease: ArtifactLease,
+  options: SessionOptions,
+): Promise<Session> {
   let origin: string;
   let wsFactory: ReturnType<typeof createNodeWsFactory>;
   try {

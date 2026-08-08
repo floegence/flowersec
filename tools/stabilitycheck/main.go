@@ -171,6 +171,7 @@ type tsPackageExport struct {
 
 type tsPackageJSON struct {
 	Exports map[string]tsPackageExport `json:"exports"`
+	Scripts map[string]string          `json:"scripts"`
 }
 
 func verifyTS(repoRoot string, m *manifest) error {

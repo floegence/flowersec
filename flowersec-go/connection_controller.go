@@ -12,7 +12,6 @@ import (
 
 var (
 	ErrInvalidConnectionController = errors.New("invalid Flowersec connection controller")
-	ErrConnectionControllerStarted = errors.New("Flowersec connection controller already started")
 )
 
 // ConnectionState is the complete lifecycle of a long-lived connection
@@ -28,33 +27,11 @@ const (
 	ConnectionClosed     ConnectionState = "closed"
 )
 
-// RetryPolicy configures deterministic exponential backoff. MaxAttempts is
-// the optional number of consecutive connection attempts before failure;
-// zero means unbounded and a successful connection resets the count.
-type RetryPolicy struct {
-	InitialDelay time.Duration
-	MaxDelay     time.Duration
-	Factor       uint64
-	MaxAttempts  uint64
-}
-
-// DefaultRetryPolicy returns the shared unbounded controller policy.
-func DefaultRetryPolicy() RetryPolicy {
-	return RetryPolicy{
-		InitialDelay: defaults.ConnectionControllerInitialDelay,
-		MaxDelay:     defaults.ConnectionControllerMaxDelay,
-		Factor:       defaults.ConnectionControllerBackoffFactor,
-	}
-}
-
-func (policy RetryPolicy) normalized() (RetryPolicy, bool) {
-	if policy == (RetryPolicy{}) {
-		return DefaultRetryPolicy(), true
-	}
-	if policy.InitialDelay <= 0 || policy.MaxDelay < policy.InitialDelay || policy.Factor < 1 {
-		return RetryPolicy{}, false
-	}
-	return policy, true
+// ConnectionControllerOptions configures the one-shot connector and the only
+// portable retry limit. Backoff timing is fixed by the Flowersec contract.
+type ConnectionControllerOptions struct {
+	Connector       ConnectorOptions
+	MaximumAttempts uint64
 }
 
 // ArtifactSource supplies one fresh, single-use lease for every controller
@@ -124,15 +101,13 @@ type ConnectionFailure struct {
 	Disposition RetryDisposition
 }
 
-// ConnectionStatus is an immutable controller snapshot. Revision can be
-// passed to WaitForStatusChange without polling.
-type ConnectionStatus struct {
-	State       ConnectionState
-	Revision    uint64
-	Attempt     uint64
-	Session     Session
-	NextRetryAt time.Time
-	Failure     *ConnectionFailure
+// ConnectionSnapshot is an immutable controller snapshot.
+type ConnectionSnapshot struct {
+	State          ConnectionState
+	Attempt        uint64
+	CurrentSession Session
+	Failure        *ConnectionFailure
+	revision       uint64
 }
 
 type connectionAttempt func(context.Context, ArtifactLease, ConnectorOptions) (Session, error)
@@ -140,99 +115,95 @@ type connectionAttempt func(context.Context, ArtifactLease, ConnectorOptions) (S
 // ConnectionController is the sole Flowersec session reconnect scheduler. It
 // never migrates streams or replays RPC calls, writes, or application work.
 type ConnectionController struct {
-	source  ArtifactSource
-	options ConnectorOptions
-	policy  RetryPolicy
-	connect connectionAttempt
+	source          ArtifactSource
+	options         ConnectorOptions
+	maximumAttempts uint64
+	connect         connectionAttempt
 
-	mu         sync.Mutex
-	status     ConnectionStatus
-	changed    chan struct{}
-	retry      chan struct{}
-	cancel     context.CancelFunc
-	done       chan struct{}
-	started    bool
-	doneClosed bool
+	mu             sync.Mutex
+	snapshot       ConnectionSnapshot
+	changed        chan struct{}
+	retry          chan struct{}
+	retryNotBefore time.Time
+	cancel         context.CancelFunc
+	done           chan struct{}
+	started        bool
+	doneClosed     bool
 }
 
 // NewConnectionController creates an idle controller over a refreshable
-// ArtifactSource. Call Start exactly once.
-func NewConnectionController(source ArtifactSource, options ConnectorOptions, policy RetryPolicy) (*ConnectionController, error) {
-	if source == nil || !validConnectorOptions(options) {
+// ArtifactSource.
+func NewConnectionController(source ArtifactSource, options ConnectionControllerOptions) (*ConnectionController, error) {
+	if source == nil || !validConnectorOptions(options.Connector) {
 		return nil, ErrInvalidConnectionController
 	}
-	normalized, ok := policy.normalized()
-	if !ok {
-		return nil, ErrInvalidConnectionController
-	}
-	if options.Handlers != nil {
-		options.Handlers.freeze()
+	if options.Connector.Handlers != nil {
+		options.Connector.Handlers.freeze()
 	}
 	return &ConnectionController{
-		source: source, options: options, policy: normalized, connect: Connect,
-		status:  ConnectionStatus{State: ConnectionIdle},
-		changed: make(chan struct{}), retry: make(chan struct{}, 1), done: make(chan struct{}),
+		source: source, options: options.Connector, maximumAttempts: options.MaximumAttempts, connect: Connect,
+		snapshot: ConnectionSnapshot{State: ConnectionIdle},
+		changed:  make(chan struct{}), retry: make(chan struct{}, 1), done: make(chan struct{}),
 	}, nil
 }
 
 // Start launches the controller's single scheduler. Canceling ctx closes the
 // controller and its current session.
-func (controller *ConnectionController) Start(ctx context.Context) error {
+func (controller *ConnectionController) Start(ctx context.Context) {
 	if controller == nil {
-		return ErrInvalidConnectionController
+		return
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	controller.mu.Lock()
-	if controller.started || controller.status.State != ConnectionIdle {
+	if controller.started || controller.snapshot.State != ConnectionIdle {
 		controller.mu.Unlock()
-		return ErrConnectionControllerStarted
+		return
 	}
 	controller.started = true
 	lifecycle, cancel := context.WithCancel(ctx)
 	controller.cancel = cancel
-	controller.setStatusLocked(ConnectionStatus{State: ConnectionConnecting, Attempt: 1})
+	controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionConnecting, Attempt: 1})
 	controller.mu.Unlock()
 	go controller.run(lifecycle)
-	return nil
 }
 
-// Status returns the current immutable snapshot.
-func (controller *ConnectionController) Status() ConnectionStatus {
+// Snapshot returns the current immutable snapshot.
+func (controller *ConnectionController) Snapshot() ConnectionSnapshot {
 	if controller == nil {
-		return ConnectionStatus{State: ConnectionClosed}
+		return ConnectionSnapshot{State: ConnectionClosed}
 	}
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
-	return copyConnectionStatus(controller.status)
+	return copyConnectionSnapshot(controller.snapshot)
 }
 
 // CurrentSession returns the currently established one-shot Session, or nil.
 func (controller *ConnectionController) CurrentSession() Session {
-	return controller.Status().Session
+	return controller.Snapshot().CurrentSession
 }
 
-// WaitForStatusChange blocks until the snapshot revision differs from after.
-func (controller *ConnectionController) WaitForStatusChange(ctx context.Context, after uint64) (ConnectionStatus, error) {
+// WaitForSnapshotChange blocks until the controller advances beyond after.
+func (controller *ConnectionController) WaitForSnapshotChange(ctx context.Context, after ConnectionSnapshot) (ConnectionSnapshot, error) {
 	if controller == nil {
-		return ConnectionStatus{}, ErrInvalidConnectionController
+		return ConnectionSnapshot{}, ErrInvalidConnectionController
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	for {
 		controller.mu.Lock()
-		if controller.status.Revision != after {
-			status := copyConnectionStatus(controller.status)
+		if controller.snapshot.revision != after.revision {
+			snapshot := copyConnectionSnapshot(controller.snapshot)
 			controller.mu.Unlock()
-			return status, nil
+			return snapshot, nil
 		}
 		changed := controller.changed
 		controller.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			return ConnectionStatus{}, ctx.Err()
+			return ConnectionSnapshot{}, ctx.Err()
 		case <-changed:
 		}
 	}
@@ -245,7 +216,8 @@ func (controller *ConnectionController) RetryNow() bool {
 		return false
 	}
 	controller.mu.Lock()
-	waiting := controller.status.State == ConnectionWaiting
+	waiting := controller.snapshot.State == ConnectionWaiting &&
+		(controller.retryNotBefore.IsZero() || !time.Now().Before(controller.retryNotBefore))
 	if waiting {
 		select {
 		case controller.retry <- struct{}{}:
@@ -267,8 +239,8 @@ func (controller *ConnectionController) Close(ctx context.Context) error {
 	}
 	controller.mu.Lock()
 	if !controller.started {
-		if controller.status.State != ConnectionClosed {
-			controller.setStatusLocked(ConnectionStatus{State: ConnectionClosed, Attempt: controller.status.Attempt})
+		if controller.snapshot.State != ConnectionClosed {
+			controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionClosed, Attempt: controller.snapshot.Attempt})
 		}
 		controller.closeDoneLocked()
 		controller.mu.Unlock()
@@ -283,8 +255,8 @@ func (controller *ConnectionController) Close(ctx context.Context) error {
 	select {
 	case <-done:
 		controller.mu.Lock()
-		if controller.status.State != ConnectionClosed {
-			controller.setStatusLocked(ConnectionStatus{State: ConnectionClosed, Attempt: controller.status.Attempt})
+		if controller.snapshot.State != ConnectionClosed {
+			controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionClosed, Attempt: controller.snapshot.Attempt})
 		}
 		controller.mu.Unlock()
 		return nil
@@ -358,7 +330,6 @@ func (controller *ConnectionController) run(ctx context.Context) {
 		controller.publishConnected(session)
 		termination, waitErr := session.WaitTermination(ctx)
 		if ctx.Err() != nil {
-			_ = session.Close()
 			controller.finishClosed()
 			return
 		}
@@ -392,12 +363,12 @@ func (controller *ConnectionController) handleFailure(
 		disposition = terminalDisposition()
 	}
 	if disposition.Kind == RetryDispositionTerminal ||
-		(controller.policy.MaxAttempts != 0 && attemptsSinceConnected >= controller.policy.MaxAttempts) {
+		(controller.maximumAttempts != 0 && attemptsSinceConnected >= controller.maximumAttempts) {
 		controller.fail(err, disposition)
 		return false
 	}
 	now := time.Now()
-	retryAt := now.Add(controller.policy.backoff(failureOrdinal))
+	retryAt := now.Add(connectionControllerBackoff(failureOrdinal))
 	var notBefore time.Time
 	if disposition.Kind == RetryDispositionRetryAfter {
 		notBefore = disposition.RetryAt
@@ -416,16 +387,16 @@ func (controller *ConnectionController) handleFailure(
 	return true
 }
 
-func (policy RetryPolicy) backoff(failureOrdinal uint64) time.Duration {
-	delay := policy.InitialDelay
-	for ordinal := uint64(1); ordinal < failureOrdinal && delay < policy.MaxDelay; ordinal++ {
-		if delay > policy.MaxDelay/time.Duration(policy.Factor) {
-			return policy.MaxDelay
+func connectionControllerBackoff(failureOrdinal uint64) time.Duration {
+	delay := defaults.ConnectionControllerInitialDelay
+	for ordinal := uint64(1); ordinal < failureOrdinal && delay < defaults.ConnectionControllerMaxDelay; ordinal++ {
+		if delay > defaults.ConnectionControllerMaxDelay/time.Duration(defaults.ConnectionControllerBackoffFactor) {
+			return defaults.ConnectionControllerMaxDelay
 		}
-		delay *= time.Duration(policy.Factor)
+		delay *= time.Duration(defaults.ConnectionControllerBackoffFactor)
 	}
-	if delay > policy.MaxDelay {
-		return policy.MaxDelay
+	if delay > defaults.ConnectionControllerMaxDelay {
+		return defaults.ConnectionControllerMaxDelay
 	}
 	return delay
 }
@@ -447,9 +418,10 @@ func (controller *ConnectionController) wait(
 	}
 drained:
 	controller.mu.Lock()
-	controller.setStatusLocked(ConnectionStatus{
-		State: ConnectionWaiting, Attempt: controller.status.Attempt,
-		NextRetryAt: retryAt, Failure: connectionFailure(err, disposition),
+	controller.retryNotBefore = notBefore
+	controller.setSnapshotLocked(ConnectionSnapshot{
+		State: ConnectionWaiting, Attempt: controller.snapshot.Attempt,
+		Failure: connectionFailure(err, disposition),
 	})
 	controller.mu.Unlock()
 	for {
@@ -468,40 +440,32 @@ drained:
 			if delay < 0 {
 				delay = 0
 			}
-			controller.updateWaitingDeadline(retryAt)
 		case <-timer.C:
+			controller.mu.Lock()
+			controller.retryNotBefore = time.Time{}
+			controller.mu.Unlock()
 			return true
 		}
 	}
 }
 
-func (controller *ConnectionController) updateWaitingDeadline(retryAt time.Time) {
-	controller.mu.Lock()
-	defer controller.mu.Unlock()
-	if controller.status.State != ConnectionWaiting {
-		return
-	}
-	status := copyConnectionStatus(controller.status)
-	status.NextRetryAt = retryAt
-	controller.setStatusLocked(status)
-}
-
 func (controller *ConnectionController) beginNextAttempt(attempt uint64) {
 	controller.mu.Lock()
-	controller.setStatusLocked(ConnectionStatus{State: ConnectionConnecting, Attempt: attempt})
+	controller.retryNotBefore = time.Time{}
+	controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionConnecting, Attempt: attempt})
 	controller.mu.Unlock()
 }
 
 func (controller *ConnectionController) publishConnected(session Session) {
 	controller.mu.Lock()
-	controller.setStatusLocked(ConnectionStatus{State: ConnectionConnected, Attempt: controller.status.Attempt, Session: session})
+	controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionConnected, Attempt: controller.snapshot.Attempt, CurrentSession: session})
 	controller.mu.Unlock()
 }
 
 func (controller *ConnectionController) fail(err error, disposition RetryDisposition) {
 	controller.mu.Lock()
-	controller.setStatusLocked(ConnectionStatus{
-		State: ConnectionFailed, Attempt: controller.status.Attempt,
+	controller.setSnapshotLocked(ConnectionSnapshot{
+		State: ConnectionFailed, Attempt: controller.snapshot.Attempt,
 		Failure: connectionFailure(err, disposition),
 	})
 	controller.mu.Unlock()
@@ -509,17 +473,18 @@ func (controller *ConnectionController) fail(err error, disposition RetryDisposi
 
 func (controller *ConnectionController) finishClosed() {
 	controller.mu.Lock()
-	current := controller.status.Session
-	controller.setStatusLocked(ConnectionStatus{State: ConnectionClosed, Attempt: controller.status.Attempt})
+	current := controller.snapshot.CurrentSession
+	controller.retryNotBefore = time.Time{}
+	controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionClosed, Attempt: controller.snapshot.Attempt})
 	controller.mu.Unlock()
 	if current != nil {
 		_ = current.Close()
 	}
 }
 
-func (controller *ConnectionController) setStatusLocked(status ConnectionStatus) {
-	status.Revision = controller.status.Revision + 1
-	controller.status = status
+func (controller *ConnectionController) setSnapshotLocked(snapshot ConnectionSnapshot) {
+	snapshot.revision = controller.snapshot.revision + 1
+	controller.snapshot = snapshot
 	close(controller.changed)
 	controller.changed = make(chan struct{})
 }
@@ -531,10 +496,10 @@ func (controller *ConnectionController) closeDoneLocked() {
 	}
 }
 
-func copyConnectionStatus(status ConnectionStatus) ConnectionStatus {
-	copy := status
-	if status.Failure != nil {
-		failure := *status.Failure
+func copyConnectionSnapshot(snapshot ConnectionSnapshot) ConnectionSnapshot {
+	copy := snapshot
+	if snapshot.Failure != nil {
+		failure := *snapshot.Failure
 		copy.Failure = &failure
 	}
 	return copy
@@ -563,6 +528,6 @@ func sessionErrorDisposition(err error) RetryDisposition {
 	return terminalDisposition()
 }
 
-func (status ConnectionStatus) String() string {
-	return fmt.Sprintf("Flowersec.ConnectionStatus(state=%s, attempt=%d)", status.State, status.Attempt)
+func (snapshot ConnectionSnapshot) String() string {
+	return fmt.Sprintf("Flowersec.ConnectionSnapshot(state=%s, attempt=%d)", snapshot.State, snapshot.Attempt)
 }

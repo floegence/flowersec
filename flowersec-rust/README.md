@@ -64,10 +64,9 @@ The crate root exports only these public categories:
 - connection lifecycle: `ConnectorOptions`, `connect(...)`, `ConnectError`, and
   `ConnectErrorCode`;
 - long-lived connection ownership: `ConnectionController`,
-  `ConnectionControllerOptions`, `ConnectionControllerStartError`,
-  `ArtifactSource`, `ArtifactSourceError`, `ConnectionStatus`,
-  `ConnectionState`, `ConnectionFailure`, `RetryDisposition`, `RetryPolicy`,
-  and `RetryPolicyError`;
+  `ConnectionControllerOptions`, `ArtifactSource`, `ArtifactSourceError`,
+  `ConnectionState`, `ConnectionFailure`, `ConnectionSnapshot`, and
+  `RetryDisposition`;
 - runtime-owned direct acceptance: `AcceptorOptions`, `Acceptor`,
   `AcceptError`, and `AcceptErrorCode`;
 - carrier-neutral session behavior: `Session`, `SessionTermination`, `RpcPeer`, `ByteStream`,
@@ -124,7 +123,7 @@ terminal and are never interpreted from error text.
 
 The default deterministic exponential retry policy starts at 250 milliseconds,
 doubles without jitter, caps at 30 seconds, and has no attempt limit. A finite
-attempt limit is available only through explicit `RetryPolicy` configuration.
+attempt limit is available only through `ConnectionControllerOptions::with_maximum_attempts`.
 `retry_now()` wakes only a waiting controller and never overrides a supplied
 retry-after deadline. `close()` cancels artifact acquisition, connection, and
 waiting, then closes the current session.

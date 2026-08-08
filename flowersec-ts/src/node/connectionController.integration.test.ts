@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 import { afterAll, describe, expect, test } from "vitest";
 import type * as WS from "ws";
 
-import { createNodeConnectionController } from "./connectSession.js";
+import { createConnectionController } from "./connectSession.js";
 import { createArtifactLeaseV2 } from "../v2/artifactLease.js";
 import {
   AdmissionStatusV2,
@@ -71,7 +71,7 @@ describe("Node ConnectionController real-network replacement", () => {
         };
       },
     };
-    const controller = createNodeConnectionController(source, {
+  const controller = createConnectionController(source, {
       origin: "https://client.example",
       tls: { ca: certificate },
     });

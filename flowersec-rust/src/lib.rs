@@ -35,7 +35,7 @@
 //! ```compile_fail
 //! use flowersec::artifact_v2::Artifact;
 //! ```
-
+//!
 mod acceptor_v2;
 mod admission_v2;
 mod artifact_v2;
@@ -49,6 +49,8 @@ mod raw_quic_v2;
 mod session_v2;
 mod transport_v2;
 
+#[cfg(feature = "__flowersec_internal_fuzzing")]
+#[doc(hidden)]
 pub mod fuzzing {
     /// Exercise the final admission parser bounds without exposing wire types.
     pub fn parse_admission(data: &[u8]) {
@@ -68,8 +70,7 @@ pub use acceptor_v2::{AcceptError, AcceptErrorCode, Acceptor, AcceptorOptions};
 pub use artifact_v2::{Artifact, ArtifactError, ArtifactLease, ArtifactSpendError};
 pub use connection_controller::{
     ArtifactSource, ArtifactSourceError, ConnectionController, ConnectionControllerOptions,
-    ConnectionControllerStartError, ConnectionFailure, ConnectionState, ConnectionStatus,
-    RetryDisposition, RetryPolicy, RetryPolicyError,
+    ConnectionFailure, ConnectionSnapshot, ConnectionState, RetryDisposition,
 };
 pub use connector_v2::{ConnectError, ConnectErrorCode};
 pub use native_runtime_v2::{ConnectorOptions, connect, connect_with_cancellation};

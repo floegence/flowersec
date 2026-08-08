@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { ByteStreamV2 } from "../v2/contract.js";
-import type { ProxyFetchRequestV2, ProxyRuntime } from "./types.js";
+import type { ByteStream } from "../public/contract.js";
+import type { ProxyFetchRequest, ProxyRuntime } from "./types.js";
 import {
   MessagePortByteStream,
   registerProxyAppWindow,
@@ -31,7 +31,7 @@ class BridgeTarget {
   }
 }
 
-class DuplexStream implements ByteStreamV2 {
+class DuplexStream implements ByteStream {
   readonly kind = "proxy";
   terminalError = undefined;
   readonly written: Uint8Array[] = [];
@@ -52,7 +52,7 @@ describe("proxy controller/app window bridge", () => {
     const controllerOrigin = "https://controller.example";
     const appOrigin = "https://app.example";
     const stream = new DuplexStream();
-    let fetchRequest: ProxyFetchRequestV2 | undefined;
+    let fetchRequest: ProxyFetchRequest | undefined;
     const runtime: ProxyRuntime = {
       limits: {
         maxJsonFrameBytes: 1, maxChunkBytes: 1, maxBodyBytes: 1,

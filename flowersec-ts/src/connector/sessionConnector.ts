@@ -16,9 +16,9 @@ import {
 } from "../v2/session.js";
 import type { ArtifactLeaseV2 } from "../v2/artifactLease.js";
 import { unwrapArtifact } from "../v2/opaqueArtifact.js";
+import { ConnectError } from "../public/connectError.js";
 import {
   AbortError,
-  ConnectError,
   TimeoutError,
   connectErrorDetailsInternal,
   createConnectErrorInternal,

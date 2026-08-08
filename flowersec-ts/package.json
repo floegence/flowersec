@@ -53,7 +53,7 @@
     "postcss": "^8.5.23"
   },
   "scripts": {
-    "build": "node ./scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node ./scripts/build-browser-vendor.mjs && node ./scripts/prune-dist.mjs",
+    "build": "node ./scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node ./scripts/build-browser-vendor.mjs",
     "bench": "vitest bench --run",
     "test": "npm run build && vitest run --exclude 'src/**/*.integration.test.ts'",
     "test:browser": "npm run test:browser:chromium",

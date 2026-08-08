@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import type * as WS from "ws";
 
-import { connectNodeSession } from "./connectSession.js";
+import { connect } from "./connectSession.js";
 import { createArtifactLeaseV2 } from "../v2/artifactLease.js";
 import {
   AdmissionStatusV2,
@@ -97,7 +97,7 @@ describe("Node Transport v2 WSS production connector", () => {
 
     let spendCount = 0;
     const lease = createArtifactLeaseV2(parseArtifact(localArtifact.raw), async () => { spendCount++; });
-    const clientSessionPromise = connectNodeSession(lease, {
+    const clientSessionPromise = connect(lease, {
       origin: "https://app.example",
       tls: { ca: certificate },
     });

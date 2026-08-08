@@ -218,7 +218,7 @@ export async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs, pol
                 sdk.parseArtifact(item.artifact_json),
                 async () => await globalThis.__flowersecCommitArtifactSpend(item.spend_token),
               );
-              session = await sdk.connectBrowserSession(lease, {
+              session = await sdk.connect(lease, {
                 signal: controller.signal,
                 connectTimeoutMs: connectDeadlineMs,
                 policy,
@@ -318,7 +318,7 @@ export async function runSessionWorkload(page, artifact, plan) {
     let session;
     try {
       session = await withSignalDeadline(
-        (signal) => sdk.connectBrowserSession(lease, { signal, connectTimeoutMs: connectDeadlineMs, policy }),
+        (signal) => sdk.connect(lease, { signal, connectTimeoutMs: connectDeadlineMs, policy }),
         connectDeadlineMs,
         "session connect deadline exceeded",
       );

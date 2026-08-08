@@ -14,7 +14,7 @@ use crate::raw_quic_v2::{
 };
 use crate::{
     Acceptor, AcceptorOptions, ArtifactSource, ArtifactSourceError, ConnectionController,
-    ConnectionControllerOptions, ConnectionState, ConnectorOptions, RetryPolicy,
+    ConnectionControllerOptions, ConnectionState, ConnectorOptions,
     admission_v2::{AdmissionCommitErrorV2, AdmissionCommitV2, CandidateAttemptV2},
     artifact_v2::{Artifact, ArtifactLease},
     connect,
@@ -431,15 +431,10 @@ async fn connection_controller_replaces_terminated_raw_quic_session_without_repl
     });
     let connector =
         ConnectorOptions::new(vec![test_cert_der()]).expect("create controller connector options");
-    let retry = RetryPolicy::new(Duration::from_millis(1), 1, Duration::from_millis(1))
-        .expect("create controller retry policy");
-    let controller = ConnectionController::new(
-        source,
-        ConnectionControllerOptions::new(connector).with_retry_policy(retry),
-    );
+    let controller = ConnectionController::new(source, ConnectionControllerOptions::new(connector));
 
     let first_accept = tokio::spawn(establish_controller_server(listener.clone()));
-    controller.start().expect("start controller");
+    controller.start();
     let first_client = wait_for_controller_session(&controller, None).await;
     let first_server = first_accept.await.expect("join first accept");
     let old_stream = first_client

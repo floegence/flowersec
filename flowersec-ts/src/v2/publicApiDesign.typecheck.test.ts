@@ -8,7 +8,7 @@ import type {
 } from "../node/index.js";
 import {
   ArtifactError,
-  connectNodeSession,
+  connect,
   createArtifactLease,
   createStreamMetadata,
   parseArtifact,
@@ -45,8 +45,8 @@ function typecheckPublicAPI(
   void result;
   void session.openStream("typed", { metadata });
   void stream.kind;
-  void connectNodeSession(lease, { origin: "https://client.example" });
-  void connectNodeSession(lease, { origin: "https://client.example", connectTimeoutMs: 2_500 });
+  void connect(lease, { origin: "https://client.example" });
+  void connect(lease, { origin: "https://client.example", connectTimeoutMs: 2_500 });
   void createArtifactLease(parseArtifact("{}"), async () => {});
   void createStreamMetadata({ purpose: "typed", attempt: 1 });
   // @ts-expect-error stream metadata must be constructed and validated first.

@@ -30,9 +30,7 @@ final class ConnectorV2Tests: XCTestCase {
         trustRootsPEM: [
           Data(firstPeer.endpoint.caPEM.utf8), Data(secondPeer.endpoint.caPEM.utf8),
         ]
-      ),
-      retryPolicy: ConnectionRetryPolicy(
-        initialDelay: .milliseconds(1), maximumDelay: .milliseconds(1))
+      )
     )
 
     await controller.start()

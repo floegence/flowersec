@@ -40,8 +40,8 @@ func TestVerifyTSIsSourceOnly(t *testing.T) {
 	}
 }
 
-func TestPruneDistRetainsEveryPublicEntrypoint(t *testing.T) {
-	packageRoot := filepath.Join("..", "..", "flowersec-ts")
+func TestTypeScriptBuildDoesNotPostProcessDeclarations(t *testing.T) {
+	packageRoot := "../../flowersec-ts"
 	packageData, err := os.ReadFile(filepath.Join(packageRoot, "package.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -50,17 +50,16 @@ func TestPruneDistRetainsEveryPublicEntrypoint(t *testing.T) {
 	if err := json.Unmarshal(packageData, &packageJSON); err != nil {
 		t.Fatal(err)
 	}
-	pruneData, err := os.ReadFile(filepath.Join(packageRoot, "scripts", "prune-dist.mjs"))
-	if err != nil {
-		t.Fatal(err)
+	build, ok := packageJSON.Scripts["build"]
+	if !ok {
+		t.Fatal("TypeScript package build script is missing")
 	}
-	pruneSource := string(pruneData)
-	for packageExport, exported := range packageJSON.Exports {
-		for _, entrypoint := range []string{exported.Default, exported.Types} {
-			entrypoint = strings.TrimPrefix(entrypoint, "./dist/")
-			if !strings.Contains(pruneSource, `"`+entrypoint+`"`) {
-				t.Errorf("prune-dist does not retain %s entrypoint %s", packageExport, entrypoint)
-			}
+	if strings.Contains(build, "prune-dist") || strings.Contains(build, "sanitize-public-declarations") {
+		t.Fatalf("TypeScript build must not post-process compiler declarations: %s", build)
+	}
+	for _, script := range []string{"scripts/prune-dist.mjs", "scripts/sanitize-public-declarations.mjs"} {
+		if _, err := os.Stat(packageRoot + "/" + script); !os.IsNotExist(err) {
+			t.Fatalf("obsolete TypeScript declaration postprocessor remains: %s", script)
 		}
 	}
 }

@@ -146,7 +146,7 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 	}
 	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", "Session")
 	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", "UnreliableMessageChannel")
-	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/browser", "BrowserSessionOptions")
+	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/browser", "SessionOptions")
 	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/node", "ByteStream")
 	for _, specifier := range []string{"@floegence/flowersec-core/browser", "@floegence/flowersec-core/node"} {
 		for _, exportName := range []string{
@@ -157,7 +157,7 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 		}
 	}
 	for _, exportName := range []string{
-		"ArtifactSource", "ConnectionController", "ConnectionControllerSnapshot",
+		"ArtifactSource", "ConnectionController", "ConnectionSnapshot",
 		"RetryDisposition",
 	} {
 		requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", exportName)

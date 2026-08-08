@@ -1,5 +1,5 @@
 import type { SessionErrorCode } from "./contract.js";
-import type { ConnectErrorCode } from "../utils/errors.js";
+import type { ConnectErrorCode } from "../public/connectError.js";
 
 export type RetryDisposition =
   | Readonly<{ kind: "terminal" }>

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { assertProxyRuntimeScopeV2 } from "./scope.js";
+import { assertProxyRuntimeScope } from "./scope.js";
 
 describe("proxy.runtime@2 scope", () => {
   it("normalizes and freezes service-worker configuration", () => {
-    const scope = assertProxyRuntimeScopeV2({
+    const scope = assertProxyRuntimeScope({
       version: 2,
       mode: "service_worker",
       appBasePath: "/app/",
@@ -30,6 +30,6 @@ describe("proxy.runtime@2 scope", () => {
     { mode: "service_worker", serviceWorker: { scriptUrl: "/sw.js", scope: "/" }, unknown: true },
     { mode: "service_worker", serviceWorker: { scriptUrl: "/sw.js", scope: "/" }, limits: { maxBodyBytes: 0 } },
   ])("rejects invalid or legacy payload %#", (payload) => {
-    expect(() => assertProxyRuntimeScopeV2(payload)).toThrow(/proxy\.runtime@2/u);
+    expect(() => assertProxyRuntimeScope(payload)).toThrow(/proxy\.runtime@2/u);
   });
 });

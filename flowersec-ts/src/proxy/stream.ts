@@ -1,11 +1,11 @@
-import type { ByteStreamV2, OperationOptionsV2 } from "../v2/contract.js";
+import type { ByteStream, OperationOptions } from "../public/contract.js";
 
 export class ProxyByteReader {
   private buffered: Uint8Array<ArrayBufferLike> = new Uint8Array();
 
   constructor(
-    private readonly stream: ByteStreamV2,
-    private readonly options: OperationOptionsV2 = {},
+    private readonly stream: ByteStream,
+    private readonly options: OperationOptions = {},
   ) {}
 
   async readExactly(length: number): Promise<Uint8Array> {
@@ -29,9 +29,9 @@ export class ProxyByteReader {
 }
 
 export async function writeAll(
-  stream: ByteStreamV2,
+  stream: ByteStream,
   input: Uint8Array,
-  options: OperationOptionsV2 = {},
+  options: OperationOptions = {},
 ): Promise<void> {
   let offset = 0;
   while (offset < input.length) {

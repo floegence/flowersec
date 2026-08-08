@@ -172,7 +172,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
               );
               let session;
               try {
-                session = await sdk.connectBrowserSession(lease);
+                session = await sdk.connect(lease);
                 globalThis.__flowersecCapacitySessions.set(id, { session, token: spendToken });
                 void session.waitClosed().then(async () => {
                   await globalThis.__flowersecCapacityTerminated({ session_id: id, token: spendToken });

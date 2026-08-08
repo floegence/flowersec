@@ -168,7 +168,7 @@ test("binds held-session establishment to the cold phase deadline", async () => 
   assert.equal(payload.policy, "require_quic_family");
   assert.match(
     evaluatorSource,
-    /connectBrowserSession\(lease, \{ signal, connectTimeoutMs: connectDeadlineMs, policy \}\)/,
+    /connect\(lease, \{ signal, connectTimeoutMs: connectDeadlineMs, policy \}\)/,
   );
 });
 
@@ -196,12 +196,12 @@ test("binds every cold connection to its operation deadline", async () => {
   assert.equal(payload.policy, "require_quic_family");
   const timerIndex = evaluatorSource.indexOf("const timer = setTimeout");
   const peerReadyIndex = evaluatorSource.indexOf("await Promise.race([peerStart, peerStartDeadline])");
-  const connectIndex = evaluatorSource.indexOf("sdk.connectBrowserSession");
+  const connectIndex = evaluatorSource.indexOf("sdk.connect");
   assert.ok(timerIndex >= 0 && timerIndex < peerReadyIndex, "peer start must consume the operation deadline");
   assert.ok(peerReadyIndex < connectIndex, "the paired leg must be ready before the browser candidate connects");
   assert.match(
     evaluatorSource,
-    /connectBrowserSession\(lease, \{\s*signal: controller\.signal,\s*connectTimeoutMs: connectDeadlineMs,\s*policy,?\s*\}\)/,
+    /connect\(lease, \{\s*signal: controller\.signal,\s*connectTimeoutMs: connectDeadlineMs,\s*policy,?\s*\}\)/,
   );
 });
 

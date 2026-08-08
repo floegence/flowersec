@@ -384,6 +384,7 @@ pub(crate) fn security_accepts(kind: &str, raw: &[u8]) -> bool {
     }
 }
 
+#[cfg(feature = "__flowersec_internal_fuzzing")]
 pub fn fuzz_parse(raw: &[u8]) {
     if raw.len() >= FSB2_HEADER_BYTES && &raw[..4] == b"FSB2" {
         let payload = u32::from_be_bytes(raw[8..12].try_into().unwrap_or([0; 4])) as usize;

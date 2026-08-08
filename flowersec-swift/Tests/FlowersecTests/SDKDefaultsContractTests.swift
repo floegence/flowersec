@@ -55,10 +55,11 @@ struct SDKDefaultsContractTests {
       "proxy.default_timeout_ms": Double(FlowersecSDKDefaults.Proxy.defaultTimeoutMilliseconds),
       "proxy.max_timeout_ms": Double(FlowersecSDKDefaults.Proxy.maxTimeoutMilliseconds),
       "connection_controller.initial_delay_ms": Double(
-        milliseconds(ConnectionRetryPolicy().initialDelay)),
+        milliseconds(FlowersecSDKDefaults.ConnectionController.initialDelay)),
       "connection_controller.max_delay_ms": Double(
-        milliseconds(ConnectionRetryPolicy().maximumDelay)),
-      "connection_controller.factor": Double(ConnectionRetryPolicy().multiplier),
+        milliseconds(FlowersecSDKDefaults.ConnectionController.maximumDelay)),
+      "connection_controller.factor": Double(
+        FlowersecSDKDefaults.ConnectionController.multiplier),
       "connection_controller.jitter_ratio": 0,
     ]
     let expected = try runtimeLeaves(document)

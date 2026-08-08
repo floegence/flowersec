@@ -1,115 +1,41 @@
 import type { RpcClient } from "../rpc/client.js";
-import type { StreamMetadataV2 } from "./streamMetadata.js";
-export type { StreamMetadataV2 } from "./streamMetadata.js";
+import type {
+  ByteStream,
+  CarrierKind as PublicCarrierKind,
+  IncomingStream,
+  JsonObject,
+  JsonPrimitive,
+  JsonValue,
+  OperationOptions,
+  PathKind as PublicPathKind,
+  RpcPeer,
+  RpcResult,
+  Session,
+  SessionTermination,
+  StreamOpenOptions,
+  UnreliableMessageChannel,
+  UnreliableMessageSendOptions,
+  UnreliableMessageSendResult,
+} from "../public/contract.js";
+/** @internal */ export { SessionError } from "../public/contract.js";
+/** @internal */ export type { SessionErrorCode } from "../public/contract.js";
+/** @internal */ export type CarrierKind = PublicCarrierKind;
+/** @internal */ export type PathKind = PublicPathKind;
 
-export type CarrierKind = "websocket" | "raw_quic" | "webtransport";
-
-export type PathKind = "direct" | "tunnel";
-
-export type JsonPrimitiveV2 = null | boolean | number | string;
-
-export type JsonValueV2 = JsonPrimitiveV2 | JsonObjectV2 | readonly JsonValueV2[];
-
-export type JsonObjectV2 = Readonly<{ [key: string]: JsonValueV2 }>;
-
-export type OperationOptionsV2 = Readonly<{
-  signal?: AbortSignal;
-}>;
-
-export type UnreliableMessageSendOptionsV2 = OperationOptionsV2 & Readonly<{
-  expiresAtUnixMs: number;
-}>;
-
-export type UnreliableMessageSendResultV2 =
-  | "accepted"
-  | "dropped_budget"
-  | "dropped_expired"
-  | "dropped_carrier";
-
-export interface UnreliableMessageChannelV2 {
-  readonly maxMessageSize: 976;
-  send(
-    message: Uint8Array,
-    options: UnreliableMessageSendOptionsV2,
-  ): Promise<UnreliableMessageSendResultV2>;
-  receive(options?: OperationOptionsV2): Promise<Uint8Array>;
-}
-
-export type StreamOpenOptionsV2 = OperationOptionsV2 &
-  Readonly<{
-    metadata?: StreamMetadataV2;
-  }>;
-
-export type SessionErrorCode =
-  | "canceled"
-  | "timeout"
-  | "closed"
-  | "going_away"
-  | "resource_exhausted"
-  | "stream_rejected"
-  | "stream_reset"
-  | "rekey_failed"
-  | "liveness_failed"
-  | "unreliable_unavailable"
-  | "unreliable_too_large"
-  | "unreliable_dropped"
-  | "operation_failed";
-
-/** A closed, carrier-neutral session failure with no internal cause or peer detail. */
-export class SessionError extends Error {
-  constructor(readonly code: SessionErrorCode) {
-    super(`Flowersec session failed (code=${code})`);
-    this.name = "SessionError";
-  }
-}
-
-export type RpcResultV2<Response = unknown> =
-  | Readonly<{ ok: true; payload: Response }>
-  | Readonly<{ ok: false; error: Readonly<{ code: number; message?: string }> }>;
-
-export interface RpcPeerV2 {
-  call<Request = unknown, Response = unknown>(
-    typeId: number,
-    payload: Request,
-    decodeResponse: (payload: JsonValueV2) => Response,
-    signal?: AbortSignal,
-  ): Promise<RpcResultV2<Response>>;
-  notify<Payload = unknown>(typeId: number, payload: Payload): Promise<void>;
-  onNotify<Payload = unknown>(typeId: number, handler: (payload: Payload) => void): () => void;
-}
-
-export interface ByteStreamV2 {
-  readonly kind: string;
-  readonly terminalError: SessionError | undefined;
-
-  read(options?: OperationOptionsV2): Promise<Uint8Array | null>;
-  write(data: Uint8Array, options?: OperationOptionsV2): Promise<number>;
-  closeWrite(): Promise<void>;
-  reset(): Promise<void>;
-  close(): Promise<void>;
-}
-
-export interface IncomingStreamV2 {
-  readonly kind: string;
-  readonly metadata: StreamMetadataV2;
-  readonly stream: ByteStreamV2;
-}
-
-export type SessionTerminationV2 = Readonly<{
-  error: SessionError;
-}>;
-
-export interface SessionV2 {
-  readonly rpc: RpcPeerV2;
-  readonly unreliableMessages?: UnreliableMessageChannelV2;
-
-  openStream(kind: string, options?: StreamOpenOptionsV2): Promise<ByteStreamV2>;
-  acceptStream(options?: OperationOptionsV2): Promise<IncomingStreamV2>;
-  rekey(options?: OperationOptionsV2): Promise<void>;
-  probeLiveness(options?: OperationOptionsV2): Promise<number>;
-  waitTermination(): Promise<SessionTerminationV2>;
-  close(): Promise<void>;
-}
+/** @internal */ export type JsonPrimitiveV2 = JsonPrimitive;
+/** @internal */ export type JsonValueV2 = JsonValue;
+/** @internal */ export type JsonObjectV2 = JsonObject;
+/** @internal */ export type OperationOptionsV2 = OperationOptions;
+/** @internal */ export type UnreliableMessageSendOptionsV2 = UnreliableMessageSendOptions;
+/** @internal */ export type UnreliableMessageSendResultV2 = UnreliableMessageSendResult;
+/** @internal */ export type UnreliableMessageChannelV2 = UnreliableMessageChannel;
+/** @internal */ export type StreamOpenOptionsV2 = StreamOpenOptions;
+/** @internal */ export type RpcResultV2<Response = unknown> = RpcResult<Response>;
+/** @internal */ export type RpcPeerV2 = RpcPeer;
+/** @internal */ export type ByteStreamV2 = ByteStream;
+/** @internal */ export type IncomingStreamV2 = IncomingStream;
+/** @internal */ export type SessionTerminationV2 = SessionTermination;
+/** @internal */ export type SessionV2 = Session;
 
 export interface InternalByteStreamV2 {
   readonly id: bigint;

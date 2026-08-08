@@ -9,7 +9,7 @@ import { describe, expect, test } from "vitest";
 
 import { createArtifactLeaseV2 } from "../v2/artifactLease.js";
 import { parseArtifact } from "../v2/opaqueArtifact.js";
-import { connectNodeSession } from "./connectSession.js";
+import { connect } from "./connectSession.js";
 import { createNodeWebTransportClientV2 } from "./webTransportClient.js";
 import { startNodeWebTransportServerV2 } from "./webTransportServer.js";
 
@@ -111,7 +111,7 @@ async function runGoWebTransportSession(sessionPath: "direct" | "tunnel"): Promi
     raw.path.candidates = [candidate];
 
     phase = "admission-and-handshake";
-    const session = await connectNodeSession(
+    const session = await connect(
       createArtifactLeaseV2(parseArtifact(JSON.stringify(raw)), async () => undefined),
       {
         origin: "http://127.0.0.1:1",

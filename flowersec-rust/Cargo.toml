@@ -45,6 +45,10 @@ subtle = "2"
 proptest = "1"
 tempfile = "3"
 
+[features]
+default = []
+__flowersec_internal_fuzzing = []
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

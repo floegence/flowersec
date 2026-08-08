@@ -1,4 +1,4 @@
-export { PROXY_RUNTIME_SCOPE_V2, assertProxyRuntimeScopeV2 } from "./scope.js";
+export { PROXY_RUNTIME_SCOPE, assertProxyRuntimeScope } from "./scope.js";
 export { createProxyRuntime, ensureServiceWorkerRuntimeRegistered } from "./runtime.js";
 export type { EnsureServiceWorkerRuntimeRegisteredOptions } from "./runtime.js";
 export { createProxyServiceWorkerScript } from "./serviceWorker.js";
@@ -45,14 +45,14 @@ export type {
   ProxyControllerBrowserHandle,
 } from "./integration.js";
 export type {
-  ProxyFetchRequestV2 as ProxyFetchRequest,
+  ProxyFetchRequest,
   ProxyHeader,
   ProxyRuntime,
-  ProxyRuntimeControllerBridgeScopeV2 as ProxyRuntimeControllerBridgeScope,
+  ProxyRuntimeControllerBridgeScope,
   ProxyRuntimeLimits,
   ProxyRuntimeOptions,
   ProxyRuntimePathPolicy,
-  ProxyRuntimeScopeLimitsV2 as ProxyRuntimeScopeLimits,
-  ProxyRuntimeScopeV2 as ProxyRuntimeScope,
-  ProxyRuntimeServiceWorkerScopeV2 as ProxyRuntimeServiceWorkerScope,
+  ProxyRuntimeScopeLimits,
+  ProxyRuntimeScope,
+  ProxyRuntimeServiceWorkerScope,
 } from "./types.js";

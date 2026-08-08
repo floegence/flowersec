@@ -2,12 +2,12 @@ import { SDK_DEFAULTS } from "../defaults.js";
 import { readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
 import { base64urlEncode } from "../utils/base64url.js";
 import { readU32be, u32be } from "../utils/bin.js";
-import { SessionError, type ByteStreamV2 } from "../v2/contract.js";
-import { createStreamMetadataV2 } from "../v2/streamMetadata.js";
+import { SessionError, type ByteStream } from "../public/contract.js";
+import { createStreamMetadata } from "../public/streamMetadata.js";
 
 import { ProxyByteReader, writeAll } from "./stream.js";
 import type {
-  ProxyFetchRequestV2,
+  ProxyFetchRequest,
   ProxyHeader,
   ProxyRuntime,
   ProxyRuntimeOptions,
@@ -182,7 +182,7 @@ function filterHeaders(
   return result;
 }
 
-function parseRuntimeRequest(raw: RuntimeFetchMessage["req"]): ProxyFetchRequestV2 {
+function parseRuntimeRequest(raw: RuntimeFetchMessage["req"]): ProxyFetchRequest {
   const headers = Array.isArray(raw.headers) ? raw.headers.filter((entry): entry is ProxyHeader =>
     typeof entry === "object" && entry !== null && typeof (entry as ProxyHeader).name === "string" && typeof (entry as ProxyHeader).value === "string") : [];
   const body = raw.body instanceof ArrayBuffer ? raw.body : undefined;
@@ -275,7 +275,7 @@ class StreamAdmission {
   }
 }
 
-async function writeChunks(stream: ByteStreamV2, body: Uint8Array, chunkBytes: number, maxBodyBytes: number, signal: AbortSignal): Promise<void> {
+async function writeChunks(stream: ByteStream, body: Uint8Array, chunkBytes: number, maxBodyBytes: number, signal: AbortSignal): Promise<void> {
   if (body.length > maxBodyBytes) throw new SessionError("resource_exhausted");
   for (let offset = 0; offset < body.length; offset += chunkBytes) {
     const chunk = body.subarray(offset, Math.min(body.length, offset + chunkBytes));
@@ -307,7 +307,7 @@ function publicFailure(error: unknown): Readonly<{ status: number; code: string;
 
 export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
   if (options.session === null || typeof options.session !== "object" || typeof options.session.openStream !== "function") {
-    throw new TypeError("proxy runtime requires a SessionV2");
+    throw new TypeError("proxy runtime requires a Session");
   }
   const maxJsonFrameBytes = positiveLimit("maxJsonFrameBytes", options.maxJsonFrameBytes, SDK_DEFAULTS.proxy.maxJsonFrameBytes);
   const maxChunkBytes = positiveLimit("maxChunkBytes", options.maxChunkBytes, SDK_DEFAULTS.proxy.maxChunkBytes);
@@ -343,9 +343,9 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
   serviceWorker?.addEventListener("controllerchange", register);
   register();
 
-  function dispatchFetch(request: ProxyFetchRequestV2, port: MessagePort): void {
+  function dispatchFetch(request: ProxyFetchRequest, port: MessagePort): void {
     const controller = new AbortController();
-    let stream: ByteStreamV2 | undefined;
+    let stream: ByteStream | undefined;
     let release: (() => void) | undefined;
     let credit = request.responseFlowControl !== "chunk_credit_v2";
     let creditWake: (() => void) | undefined;
@@ -376,7 +376,7 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
         release = await admission.acquire(body.length, controller.signal);
         stream = await options.session.openStream(PROXY_HTTP_STREAM_KIND, {
           signal: controller.signal,
-          metadata: createStreamMetadataV2({ protocol: "flowersec.proxy.http", version: 2 }),
+          metadata: createStreamMetadata({ protocol: "flowersec.proxy.http", version: 2 }),
         });
         const reader = new ProxyByteReader(stream, { signal: controller.signal });
         const requestID = request.id.trim() === "" ? randomID() : request.id;
@@ -420,13 +420,13 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
   async function openWebSocketStream(
     input: string,
     openOptions: Readonly<{ protocols?: readonly string[]; signal?: AbortSignal }> = {},
-  ): Promise<Readonly<{ stream: ByteStreamV2; protocol: string }>> {
+  ): Promise<Readonly<{ stream: ByteStream; protocol: string }>> {
     if (disposed) throw new SessionError("closed");
     const path = normalizePath(input);
     enforcePathPolicy("websocket", path, pathPolicy);
     const stream = await options.session.openStream(PROXY_WEBSOCKET_STREAM_KIND, {
       ...(openOptions.signal === undefined ? {} : { signal: openOptions.signal }),
-      metadata: createStreamMetadataV2({ protocol: "flowersec.proxy.websocket", version: 2 }),
+      metadata: createStreamMetadata({ protocol: "flowersec.proxy.websocket", version: 2 }),
     });
     try {
       const protocols = (openOptions.protocols ?? []).filter((value) => value.trim() !== "" && value === value.trim());

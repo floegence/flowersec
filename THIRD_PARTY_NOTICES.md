@@ -376,7 +376,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - mkdirp-classic 0.5.3 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/mkdirp-classic/-/mkdirp-classic-0.5.3.tgz)
 - moo 0.5.3 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://registry.npmjs.org/moo/-/moo-0.5.3.tgz)
 - ms 2.1.3 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/ms/-/ms-2.1.3.tgz)
-- nanoid 3.3.16 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/nanoid/-/nanoid-3.3.16.tgz)
+- nanoid 3.3.18 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/nanoid/-/nanoid-3.3.18.tgz)
 - napi-build-utils 2.0.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/napi-build-utils/-/napi-build-utils-2.0.0.tgz)
 - natural-compare 1.4.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/natural-compare/-/natural-compare-1.4.0.tgz)
 - nearley 2.20.1 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/nearley/-/nearley-2.20.1.tgz)

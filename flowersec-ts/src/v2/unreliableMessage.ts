@@ -12,6 +12,7 @@ import type {
 } from "./contract.js";
 import { CipherSuiteV2 } from "./protocol.js";
 import type { DirectionV2 } from "./protocol.js";
+import { UnreliableMessageError } from "../public/contract.js";
 
 export const UNRELIABLE_MESSAGES_FEATURE_V2 = 0x00000001;
 export const UNRELIABLE_MESSAGE_MAX_PLAINTEXT_BYTES_V2 = 976 as const;
@@ -23,12 +24,7 @@ const MAX_PENDING_SENDS = 64;
 const MAX_UINT64 = (1n << 64n) - 1n;
 const encoder = new TextEncoder();
 
-export class UnreliableMessageError extends Error {
-  constructor(readonly code: "invalid_message" | "closed" | "operation_failed") {
-    super(`Flowersec unreliable message failed (code=${code})`);
-    this.name = "UnreliableMessageError";
-  }
-}
+/** @internal */ export { UnreliableMessageError } from "../public/contract.js";
 
 export type InternalUnreliableMessageChannelV2Options = Readonly<{
   transport: CarrierUnreliableDatagramsV2;

@@ -1,4 +1,4 @@
-import type { ByteStreamV2, SessionV2 } from "../v2/contract.js";
+import type { ByteStream, Session } from "../public/contract.js";
 
 export type ProxyHeader = Readonly<{ name: string; value: string }>;
 
@@ -21,7 +21,7 @@ export type ProxyRuntimePathPolicy = Readonly<{
 }>;
 
 export type ProxyRuntimeOptions = Readonly<{
-  session: SessionV2;
+  session: Session;
   maxJsonFrameBytes?: number;
   maxChunkBytes?: number;
   maxBodyBytes?: number;
@@ -39,7 +39,7 @@ export type ProxyRuntimeOptions = Readonly<{
   runtimeRegistrationToken?: string;
 }>;
 
-export type ProxyFetchRequestV2 = Readonly<{
+export type ProxyFetchRequest = Readonly<{
   id: string;
   method: string;
   path: string;
@@ -51,15 +51,15 @@ export type ProxyFetchRequestV2 = Readonly<{
 
 export type ProxyRuntime = Readonly<{
   limits: ProxyRuntimeLimits;
-  dispatchFetch(request: ProxyFetchRequestV2, port: MessagePort): void;
+  dispatchFetch(request: ProxyFetchRequest, port: MessagePort): void;
   openWebSocketStream(
     path: string,
     options?: Readonly<{ protocols?: readonly string[]; signal?: AbortSignal }>,
-  ): Promise<Readonly<{ stream: ByteStreamV2; protocol: string }>>;
+  ): Promise<Readonly<{ stream: ByteStream; protocol: string }>>;
   dispose(): void;
 }>;
 
-export type ProxyRuntimeScopeLimitsV2 = Readonly<{
+export type ProxyRuntimeScopeLimits = Readonly<{
   timeoutMs?: number;
   maxJsonFrameBytes?: number;
   maxChunkBytes?: number;
@@ -67,19 +67,19 @@ export type ProxyRuntimeScopeLimitsV2 = Readonly<{
   maxWsFrameBytes?: number;
 }>;
 
-type ProxyRuntimeScopeBaseV2 = Readonly<{
+type ProxyRuntimeScopeBase = Readonly<{
   appBasePath?: string;
-  limits?: ProxyRuntimeScopeLimitsV2;
+  limits?: ProxyRuntimeScopeLimits;
 }>;
 
-export type ProxyRuntimeServiceWorkerScopeV2 = ProxyRuntimeScopeBaseV2 & Readonly<{
+export type ProxyRuntimeServiceWorkerScope = ProxyRuntimeScopeBase & Readonly<{
   mode: "service_worker";
   serviceWorker: Readonly<{ scriptUrl: string; scope: string }>;
 }>;
 
-export type ProxyRuntimeControllerBridgeScopeV2 = ProxyRuntimeScopeBaseV2 & Readonly<{
+export type ProxyRuntimeControllerBridgeScope = ProxyRuntimeScopeBase & Readonly<{
   mode: "controller_bridge";
   controllerBridge: Readonly<{ allowedOrigins: readonly string[] }>;
 }>;
 
-export type ProxyRuntimeScopeV2 = ProxyRuntimeServiceWorkerScopeV2 | ProxyRuntimeControllerBridgeScopeV2;
+export type ProxyRuntimeScope = ProxyRuntimeServiceWorkerScope | ProxyRuntimeControllerBridgeScope;

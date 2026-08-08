@@ -3,7 +3,7 @@ import { closeSync, existsSync, fsyncSync, openSync, readFileSync } from "node:f
 import { createArtifactLeaseV2 } from "./v2/artifactLease.js";
 import { buildFSB2RequestV2, encodeFSB2RequestV2 } from "./v2/artifact.js";
 import { parseArtifact, unwrapArtifact } from "./v2/opaqueArtifact.js";
-import { connectNodeSession } from "./node/connectSession.js";
+import { connect } from "./node/connectSession.js";
 import { startNodeWebTransportServerV2 } from "./node/webTransportServer.js";
 import { acceptNativeSessionV2 } from "./connector/sessionAcceptor.js";
 import type { SessionV2 as PublicSessionV2, InternalSessionV2 } from "./v2/contract.js";
@@ -24,7 +24,7 @@ async function runClient(values: Readonly<Record<string, string>>): Promise<void
   let session: PublicSessionV2 | undefined;
   const lease = createArtifactLeaseV2(artifact, async () => claimSpendMarker(spendMarker));
   try {
-    session = await connectNodeSession(lease, {
+    session = await connect(lease, {
       origin,
       ...(values["certificate-hash"] === undefined ? {} : {
         tls: { serverCertificateHash: decodeHash(values["certificate-hash"]!) },

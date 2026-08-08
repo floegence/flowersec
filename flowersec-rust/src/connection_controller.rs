@@ -77,109 +77,29 @@ pub trait ArtifactSource: fmt::Debug + Send + Sync + 'static {
     ) -> Result<ArtifactLease, ArtifactSourceError>;
 }
 
-/// Deterministic exponential retry policy for one connection cycle.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RetryPolicy {
-    initial_delay: Duration,
-    factor: u32,
-    max_delay: Duration,
-    max_attempts: Option<NonZeroU64>,
-}
-
-impl Default for RetryPolicy {
-    fn default() -> Self {
-        Self {
-            initial_delay: DEFAULT_INITIAL_RETRY_DELAY,
-            factor: DEFAULT_RETRY_FACTOR,
-            max_delay: DEFAULT_MAX_RETRY_DELAY,
-            max_attempts: None,
-        }
-    }
-}
-
-impl RetryPolicy {
-    pub fn new(
-        initial_delay: Duration,
-        factor: u32,
-        max_delay: Duration,
-    ) -> Result<Self, RetryPolicyError> {
-        if initial_delay.is_zero()
-            || factor == 0
-            || max_delay < initial_delay
-            || SystemTime::now().checked_add(max_delay).is_none()
-        {
-            return Err(RetryPolicyError::Invalid);
-        }
-        Ok(Self {
-            initial_delay,
-            factor,
-            max_delay,
-            max_attempts: None,
-        })
-    }
-
-    pub const fn with_max_attempts(mut self, max_attempts: NonZeroU64) -> Self {
-        self.max_attempts = Some(max_attempts);
-        self
-    }
-
-    pub const fn initial_delay(self) -> Duration {
-        self.initial_delay
-    }
-
-    pub const fn factor(self) -> u32 {
-        self.factor
-    }
-
-    pub const fn max_delay(self) -> Duration {
-        self.max_delay
-    }
-
-    pub const fn max_attempts(self) -> Option<NonZeroU64> {
-        self.max_attempts
-    }
-
-    fn delay(self, retry_index: u64) -> Duration {
-        let mut delay = self.initial_delay;
-        for _ in 0..retry_index {
-            delay = delay.saturating_mul(self.factor).min(self.max_delay);
-            if delay == self.max_delay {
-                break;
-            }
-        }
-        delay
-    }
-}
-
-/// Complete native connector and retry configuration.
+/// Complete native connector configuration and the only portable retry limit.
 #[derive(Clone, Debug)]
 pub struct ConnectionControllerOptions {
     connector: ConnectorOptions,
-    retry: RetryPolicy,
+    maximum_attempts: Option<NonZeroU64>,
 }
 
 impl ConnectionControllerOptions {
     pub fn new(connector: ConnectorOptions) -> Self {
         Self {
             connector,
-            retry: RetryPolicy::default(),
+            maximum_attempts: None,
         }
     }
 
-    pub const fn with_retry_policy(mut self, retry: RetryPolicy) -> Self {
-        self.retry = retry;
+    pub const fn with_maximum_attempts(mut self, maximum_attempts: NonZeroU64) -> Self {
+        self.maximum_attempts = Some(maximum_attempts);
         self
     }
 
-    pub const fn retry_policy(&self) -> RetryPolicy {
-        self.retry
+    pub const fn maximum_attempts(&self) -> Option<NonZeroU64> {
+        self.maximum_attempts
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum RetryPolicyError {
-    #[error("invalid Flowersec connection retry policy")]
-    Invalid,
 }
 
 /// Observable long-lived connection state.
@@ -216,31 +136,27 @@ impl ConnectionFailure {
     }
 }
 
-/// An immutable controller snapshot.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ConnectionStatus {
+/// An immutable controller snapshot over the portable lifecycle fields.
+#[derive(Clone, Debug)]
+pub struct ConnectionSnapshot {
     pub state: ConnectionState,
-    /// The 1-based attempt ordinal for the current connection cycle. Idle is
-    /// zero; waiting after termination retains the completed cycle's ordinal,
-    /// and the replacement cycle starts at one when it enters connecting.
     pub attempt: u64,
-    pub next_retry_at: Option<SystemTime>,
-    pub last_failure: Option<ConnectionFailure>,
-    pub revision: u64,
+    pub current_session: Option<Arc<dyn SessionV2>>,
+    pub failure: Option<ConnectionFailure>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum ConnectionControllerStartError {
-    #[error("Flowersec connection controller is already started")]
-    AlreadyStarted,
-    #[error("Flowersec connection controller is closed")]
-    Closed,
-    #[error("Flowersec connection controller requires a Tokio runtime")]
-    RuntimeUnavailable,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ControllerStatus {
+    pub(crate) state: ConnectionState,
+    pub(crate) attempt: u64,
+    pub(crate) next_retry_at: Option<SystemTime>,
+    pub(crate) retry_not_before: Option<SystemTime>,
+    pub(crate) last_failure: Option<ConnectionFailure>,
+    pub(crate) revision: u64,
 }
 
 struct ControllerState {
-    status: ConnectionStatus,
+    status: ControllerStatus,
     current: Option<Arc<dyn SessionV2>>,
 }
 
@@ -260,7 +176,7 @@ impl fmt::Debug for ControllerInner {
             .debug_struct("ControllerInner")
             .field("source", &self.source)
             .field("options", &self.options)
-            .field("status", &self.status())
+            .field("snapshot", &self.snapshot())
             .finish_non_exhaustive()
     }
 }
@@ -275,7 +191,7 @@ impl fmt::Debug for ConnectionController {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ConnectionController")
-            .field("status", &self.status())
+            .field("snapshot", &self.snapshot())
             .finish_non_exhaustive()
     }
 }
@@ -291,10 +207,11 @@ impl ConnectionController {
                 retry_revision: AtomicU64::new(0),
                 changed: Notify::new(),
                 state: Mutex::new(ControllerState {
-                    status: ConnectionStatus {
+                    status: ControllerStatus {
                         state: ConnectionState::Idle,
                         attempt: 0,
                         next_retry_at: None,
+                        retry_not_before: None,
                         last_failure: None,
                         revision: 0,
                     },
@@ -306,22 +223,34 @@ impl ConnectionController {
     }
 
     /// Starts the controller's only scheduler.
-    pub fn start(&self) -> Result<(), ConnectionControllerStartError> {
-        let runtime = tokio::runtime::Handle::try_current()
-            .map_err(|_| ConnectionControllerStartError::RuntimeUnavailable)?;
+    pub fn start(&self) {
+        let runtime = tokio::runtime::Handle::current();
         let mut task = lock(&self.task);
-        if task.is_some() {
-            return Err(ConnectionControllerStartError::AlreadyStarted);
-        }
-        if self.status().state == ConnectionState::Closed {
-            return Err(ConnectionControllerStartError::Closed);
+        if task.is_some() || self.inner.status().state == ConnectionState::Closed {
+            return;
         }
         *task = Some(runtime.spawn(run_controller(self.inner.clone())));
-        Ok(())
     }
 
-    pub fn status(&self) -> ConnectionStatus {
+    pub fn snapshot(&self) -> ConnectionSnapshot {
+        self.inner.snapshot()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn status(&self) -> ControllerStatus {
         self.inner.status()
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn wait_for_status_change(&self, revision: u64) -> ControllerStatus {
+        loop {
+            let changed = self.inner.changed.notified();
+            let status = self.inner.status();
+            if status.revision != revision {
+                return status;
+            }
+            changed.await;
+        }
     }
 
     /// Returns the current established session. A terminated session is
@@ -331,24 +260,17 @@ impl ConnectionController {
         lock(&self.inner.state).current.clone()
     }
 
-    /// Waits until the controller advances beyond `revision`.
-    pub async fn wait_for_status_change(&self, revision: u64) -> ConnectionStatus {
-        loop {
-            let changed = self.inner.changed.notified();
-            let status = self.status();
-            if status.revision != revision {
-                return status;
-            }
-            changed.await;
-        }
-    }
-
     /// Wakes the sole scheduler only while it is waiting. A server-supplied
     /// retry-after deadline remains authoritative.
     pub fn retry_now(&self) -> bool {
         let revision = {
             let state = lock(&self.inner.state);
-            if state.status.state != ConnectionState::Waiting {
+            if state.status.state != ConnectionState::Waiting
+                || state
+                    .status
+                    .retry_not_before
+                    .is_some_and(|deadline| SystemTime::now() < deadline)
+            {
                 return false;
             }
             state.status.revision
@@ -364,7 +286,7 @@ impl ConnectionController {
         self.inner.cancellation.cancel();
         self.inner.retry_wake.notify_waiters();
         if let Some(session) = self.inner.finish_closed() {
-            let _ = session.close().await;
+            ignore_subordinate_close_result(session.close().await);
         }
         let task = lock(&self.task).take();
         if let Some(task) = task {
@@ -381,8 +303,18 @@ impl Drop for ConnectionController {
 }
 
 impl ControllerInner {
-    fn status(&self) -> ConnectionStatus {
+    fn status(&self) -> ControllerStatus {
         lock(&self.state).status
+    }
+
+    fn snapshot(&self) -> ConnectionSnapshot {
+        let state = lock(&self.state);
+        ConnectionSnapshot {
+            state: state.status.state,
+            attempt: state.status.attempt,
+            current_session: state.current.clone(),
+            failure: state.status.last_failure,
+        }
     }
 
     fn set_connecting(&self, attempt: u64) -> bool {
@@ -390,6 +322,7 @@ impl ControllerInner {
             state.status.state = ConnectionState::Connecting;
             state.status.attempt = attempt;
             state.status.next_retry_at = None;
+            state.status.retry_not_before = None;
             state.status.last_failure = None;
         })
     }
@@ -400,6 +333,7 @@ impl ControllerInner {
             state.status.state = ConnectionState::Connected;
             state.status.attempt = attempt;
             state.status.next_retry_at = None;
+            state.status.retry_not_before = None;
             state.status.last_failure = None;
         })
     }
@@ -408,6 +342,7 @@ impl ControllerInner {
         &self,
         attempt: u64,
         next_retry_at: SystemTime,
+        retry_not_before: Option<SystemTime>,
         failure: ConnectionFailure,
         clear_current: bool,
     ) -> Option<u64> {
@@ -418,6 +353,7 @@ impl ControllerInner {
             state.status.state = ConnectionState::Waiting;
             state.status.attempt = attempt;
             state.status.next_retry_at = Some(next_retry_at);
+            state.status.retry_not_before = retry_not_before;
             state.status.last_failure = Some(failure);
         }) {
             return None;
@@ -433,6 +369,7 @@ impl ControllerInner {
             state.status.state = ConnectionState::Failed;
             state.status.attempt = attempt;
             state.status.next_retry_at = None;
+            state.status.retry_not_before = None;
             state.status.last_failure = Some(failure);
         })
     }
@@ -458,6 +395,7 @@ impl ControllerInner {
             }
             state.status.state = ConnectionState::Closed;
             state.status.next_retry_at = None;
+            state.status.retry_not_before = None;
             state.status.revision = state.status.revision.saturating_add(1);
             state.current.take()
         };
@@ -513,7 +451,7 @@ async fn run_controller(inner: Arc<ControllerInner>) {
         .await;
         if inner.cancellation.is_cancelled() {
             if let Ok(session) = result {
-                let _ = session.close().await;
+                ignore_subordinate_close_result(session.close().await);
             }
             close_inner(&inner).await;
             return;
@@ -535,7 +473,7 @@ async fn run_controller(inner: Arc<ControllerInner>) {
         };
 
         if !inner.set_connected(attempt, session.clone()) {
-            let _ = session.close().await;
+            ignore_subordinate_close_result(session.close().await);
             return;
         }
         let termination = tokio::select! {
@@ -553,7 +491,7 @@ async fn run_controller(inner: Arc<ControllerInner>) {
         // A terminated session is never reused or migrated into its replacement.
         // Close it before entering retry scheduling so every controller-owned
         // carrier is retired before a fresh artifact can establish a session.
-        let _ = session.close().await;
+        ignore_subordinate_close_result(session.close().await);
         if !schedule_retry(&inner, attempt, 0, retry_index, failure).await {
             return;
         }
@@ -574,26 +512,42 @@ async fn schedule_retry(
     if disposition == RetryDisposition::Terminal
         || inner
             .options
-            .retry
-            .max_attempts
+            .maximum_attempts
             .is_some_and(|maximum| attempts_in_cycle >= maximum.get())
     {
         inner.set_failed(status_attempt, failure, clear_current);
         return false;
     }
     let now = SystemTime::now();
-    let backoff_at = now + inner.options.retry.delay(retry_index);
+    let backoff_at = now + retry_delay(retry_index);
     let not_before = match disposition {
         RetryDisposition::RetryAfter(deadline) => Some(deadline),
         RetryDisposition::Terminal | RetryDisposition::Retryable => None,
     };
     let next_retry_at = not_before.map_or(backoff_at, |deadline| deadline.max(backoff_at));
-    let Some(waiting_revision) =
-        inner.set_waiting(status_attempt, next_retry_at, failure, clear_current)
-    else {
+    let Some(waiting_revision) = inner.set_waiting(
+        status_attempt,
+        next_retry_at,
+        not_before,
+        failure,
+        clear_current,
+    ) else {
         return false;
     };
     wait_for_retry(inner, next_retry_at, not_before, waiting_revision).await
+}
+
+fn retry_delay(retry_index: u64) -> Duration {
+    let mut delay = DEFAULT_INITIAL_RETRY_DELAY;
+    for _ in 0..retry_index {
+        delay = delay
+            .saturating_mul(DEFAULT_RETRY_FACTOR)
+            .min(DEFAULT_MAX_RETRY_DELAY);
+        if delay == DEFAULT_MAX_RETRY_DELAY {
+            break;
+        }
+    }
+    delay
 }
 
 async fn wait_for_retry(
@@ -643,9 +597,11 @@ async fn wait_until(inner: &ControllerInner, deadline: SystemTime) -> bool {
 
 async fn close_inner(inner: &ControllerInner) {
     if let Some(session) = inner.finish_closed() {
-        let _ = session.close().await;
+        ignore_subordinate_close_result(session.close().await);
     }
 }
+
+fn ignore_subordinate_close_result(_result: Result<(), SessionError>) {}
 
 fn connect_disposition(error: ConnectError) -> RetryDisposition {
     if error.controller_retryable() {
@@ -716,7 +672,12 @@ mod tests {
         fresh_artifact_per_attempt: bool,
         single_scheduler: bool,
         single_in_flight_attempt: bool,
+        start_idempotent: bool,
+        close_idempotent: bool,
         retry_now_outside_waiting: bool,
+        retry_after_bypass: bool,
+        subordinate_close_failure_propagates: bool,
+        public_retry_configuration: Vec<String>,
         old_stream_migration: bool,
         rpc_replay: bool,
         write_replay: bool,
@@ -748,6 +709,12 @@ mod tests {
         #[serde(default)]
         retry_at_unix_ms: Option<u64>,
         #[serde(default)]
+        retry_now_results: Vec<bool>,
+        #[serde(default)]
+        close_calls: Option<u64>,
+        #[serde(default)]
+        cleanup_calls: Option<u64>,
+        #[serde(default)]
         policy: Option<ControllerScenarioPolicy>,
     }
 
@@ -765,6 +732,7 @@ mod tests {
     #[derive(Debug)]
     struct PendingSource {
         future_dropped: Arc<AtomicBool>,
+        attempts: Arc<AtomicU64>,
     }
 
     struct DropSignal(Arc<AtomicBool>);
@@ -781,6 +749,7 @@ mod tests {
             &self,
             _cancellation: CancellationToken,
         ) -> Result<ArtifactLease, ArtifactSourceError> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
             let _drop_signal = DropSignal(self.future_dropped.clone());
             std::future::pending().await
         }
@@ -823,15 +792,15 @@ mod tests {
         }
     }
 
-    fn options(retry: RetryPolicy) -> ConnectionControllerOptions {
+    fn options() -> ConnectionControllerOptions {
         let connector = ConnectorOptions::new(vec![vec![1]]).expect("valid test trust root");
-        ConnectionControllerOptions::new(connector).with_retry_policy(retry)
+        ConnectionControllerOptions::new(connector)
     }
 
     async fn wait_for_state(
         controller: &ConnectionController,
         expected: ConnectionState,
-    ) -> ConnectionStatus {
+    ) -> ControllerStatus {
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
                 let status = controller.status();
@@ -846,15 +815,11 @@ mod tests {
     }
 
     #[test]
-    fn retry_policy_is_bounded_without_compatibility_defaults() {
-        let retry = RetryPolicy::new(Duration::from_millis(2), 3, Duration::from_millis(10))
-            .expect("valid retry policy");
-        assert_eq!(retry.delay(0), Duration::from_millis(2));
-        assert_eq!(retry.delay(1), Duration::from_millis(6));
-        assert_eq!(retry.delay(2), Duration::from_millis(10));
-        assert_eq!(retry.delay(u64::MAX), Duration::from_millis(10));
-        assert!(RetryPolicy::new(Duration::ZERO, 2, Duration::from_secs(1)).is_err());
-        assert!(RetryPolicy::new(Duration::from_secs(1), 0, Duration::from_secs(1)).is_err());
+    fn retry_backoff_is_fixed_by_the_portable_contract() {
+        assert_eq!(retry_delay(0), Duration::from_millis(250));
+        assert_eq!(retry_delay(1), Duration::from_millis(500));
+        assert_eq!(retry_delay(2), Duration::from_secs(1));
+        assert_eq!(retry_delay(u64::MAX), Duration::from_secs(30));
     }
 
     #[test]
@@ -863,7 +828,7 @@ mod tests {
             "../../testdata/transport_v2/connection_controller_vectors.json"
         ))
         .expect("parse shared connection-controller vectors");
-        assert_eq!(vectors.version, 1);
+        assert_eq!(vectors.version, 2);
         assert_eq!(
             vectors.states,
             [
@@ -879,24 +844,20 @@ mod tests {
             vectors.retry_dispositions,
             ["terminal", "retryable", "retry_after"]
         );
-        let retry = RetryPolicy::default();
         assert_eq!(
-            retry.initial_delay(),
+            DEFAULT_INITIAL_RETRY_DELAY,
             Duration::from_millis(vectors.defaults.initial_delay_ms)
         );
         assert_eq!(
-            retry.max_delay(),
+            DEFAULT_MAX_RETRY_DELAY,
             Duration::from_millis(vectors.defaults.max_delay_ms)
         );
-        assert_eq!(retry.factor(), vectors.defaults.factor);
+        assert_eq!(DEFAULT_RETRY_FACTOR, vectors.defaults.factor);
         assert_eq!(vectors.defaults.jitter_ratio, 0);
-        assert_eq!(
-            retry.max_attempts().map(NonZeroU64::get),
-            vectors.defaults.attempt_limit
-        );
+        assert_eq!(vectors.defaults.attempt_limit, None);
         for vector in vectors.backoff_vectors {
             assert_eq!(
-                retry.delay(vector.consecutive_failure - 1),
+                retry_delay(vector.consecutive_failure - 1),
                 Duration::from_millis(vector.delay_ms)
             );
         }
@@ -905,7 +866,12 @@ mod tests {
         assert!(invariants.fresh_artifact_per_attempt);
         assert!(invariants.single_scheduler);
         assert!(invariants.single_in_flight_attempt);
+        assert!(invariants.start_idempotent);
+        assert!(invariants.close_idempotent);
         assert!(!invariants.retry_now_outside_waiting);
+        assert!(!invariants.retry_after_bypass);
+        assert!(!invariants.subordinate_close_failure_propagates);
+        assert_eq!(invariants.public_retry_configuration, ["maximum_attempts"]);
         assert!(!invariants.old_stream_migration);
         assert!(!invariants.rpc_replay);
         assert!(!invariants.write_replay);
@@ -918,13 +884,15 @@ mod tests {
         assert_eq!(scenario.max_in_flight_attempts, Some(1));
         assert_eq!(scenario.states, ["idle", "connecting", "closed"]);
         let future_dropped = Arc::new(AtomicBool::new(false));
+        let attempts = Arc::new(AtomicU64::new(0));
         let controller = ConnectionController::new(
             Arc::new(PendingSource {
                 future_dropped: future_dropped.clone(),
+                attempts,
             }),
-            options(RetryPolicy::default()),
+            options(),
         );
-        controller.start().expect("controller starts");
+        controller.start();
         wait_for_state(&controller, ConnectionState::Connecting).await;
 
         controller.close().await;
@@ -936,6 +904,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn repeated_start_and_close_are_idempotent() {
+        let start_scenario = scenario("repeated_start_is_idempotent");
+        let close_scenario = scenario("repeated_close_is_idempotent");
+        let future_dropped = Arc::new(AtomicBool::new(false));
+        let attempts = Arc::new(AtomicU64::new(0));
+        let controller = ConnectionController::new(
+            Arc::new(PendingSource {
+                future_dropped: future_dropped.clone(),
+                attempts: attempts.clone(),
+            }),
+            options(),
+        );
+        controller.start();
+        controller.start();
+        wait_for_state(&controller, ConnectionState::Connecting).await;
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            start_scenario.max_in_flight_attempts.unwrap()
+        );
+        controller.close().await;
+        controller.close().await;
+        assert_eq!(close_scenario.close_calls, Some(2));
+        assert!(future_dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn start_after_close_stays_closed_and_retry_now_is_state_bounded() {
+        let close_scenario = scenario("start_after_close_stays_closed");
+        let retry_scenario = scenario("retry_now_outside_waiting_returns_false");
+        let attempts = Arc::new(AtomicU64::new(0));
+        let controller = ConnectionController::new(
+            Arc::new(PendingSource {
+                future_dropped: Arc::new(AtomicBool::new(false)),
+                attempts: attempts.clone(),
+            }),
+            options(),
+        );
+        assert!(!controller.retry_now());
+        controller.close().await;
+        controller.start();
+        assert_eq!(controller.snapshot().state, ConnectionState::Closed);
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            close_scenario.artifact_acquisitions.unwrap()
+        );
+        assert_eq!(retry_scenario.retry_now_results, [false, false, false]);
+        assert!(!controller.retry_now());
+    }
+
+    #[test]
+    fn subordinate_close_failure_does_not_escape_controller_cleanup() {
+        let scenario = scenario("subordinate_close_failure_is_ignored");
+        ignore_subordinate_close_result(Err(SessionError::OperationFailed));
+        assert_eq!(scenario.cleanup_calls, Some(1));
+    }
+
+    #[tokio::test]
     async fn structured_retryable_source_failure_obeys_attempt_limit() {
         let scenario = scenario("explicit_attempt_exhaustion");
         assert_eq!(scenario.artifact_acquisitions, Some(2));
@@ -943,11 +968,9 @@ mod tests {
             attempts: AtomicU64::new(0),
             error: ArtifactSourceError::retryable(),
         });
-        let retry = RetryPolicy::new(Duration::from_millis(1), 1, Duration::from_millis(1))
-            .expect("valid retry policy")
-            .with_max_attempts(NonZeroU64::new(2).expect("nonzero"));
-        let controller = ConnectionController::new(source.clone(), options(retry));
-        controller.start().expect("controller starts");
+        let options = options().with_maximum_attempts(NonZeroU64::new(2).expect("nonzero"));
+        let controller = ConnectionController::new(source.clone(), options);
+        controller.start();
 
         let status = wait_for_state(&controller, ConnectionState::Failed).await;
         assert_eq!(status.attempt, 2);
@@ -974,8 +997,8 @@ mod tests {
             attempts: AtomicU64::new(0),
             error: ArtifactSourceError::terminal(),
         });
-        let controller = ConnectionController::new(source.clone(), options(RetryPolicy::default()));
-        controller.start().expect("controller starts");
+        let controller = ConnectionController::new(source.clone(), options());
+        controller.start();
 
         let status = wait_for_state(&controller, ConnectionState::Failed).await;
         assert_eq!(status.attempt, 1);
@@ -999,10 +1022,8 @@ mod tests {
             attempts: AtomicU64::new(0),
             pending_future_dropped: pending_future_dropped.clone(),
         });
-        let retry = RetryPolicy::new(Duration::from_secs(30), 1, Duration::from_secs(30))
-            .expect("valid retry policy");
-        let controller = ConnectionController::new(source.clone(), options(retry));
-        controller.start().expect("controller starts");
+        let controller = ConnectionController::new(source.clone(), options());
+        controller.start();
         wait_for_state(&controller, ConnectionState::Waiting).await;
 
         assert!(controller.retry_now());
@@ -1029,13 +1050,11 @@ mod tests {
             attempts: AtomicU64::new(0),
             error: ArtifactSourceError::retry_after(SystemTime::now() + Duration::from_millis(200)),
         });
-        let retry = RetryPolicy::new(Duration::from_millis(1), 1, Duration::from_millis(1))
-            .expect("valid retry policy");
-        let controller = ConnectionController::new(source.clone(), options(retry));
-        controller.start().expect("controller starts");
+        let controller = ConnectionController::new(source.clone(), options());
+        controller.start();
         wait_for_state(&controller, ConnectionState::Waiting).await;
 
-        assert!(controller.retry_now());
+        assert!(!controller.retry_now());
         tokio::time::sleep(Duration::from_millis(25)).await;
         assert_eq!(source.attempts.load(Ordering::SeqCst), 1);
         assert_eq!(controller.status().state, ConnectionState::Waiting);
@@ -1082,10 +1101,16 @@ mod tests {
             names,
             [
                 "close_cancels_single_attempt",
+                "close_waits_for_owned_cleanup",
                 "connect_and_replace_after_termination",
                 "explicit_attempt_exhaustion",
+                "repeated_close_is_idempotent",
+                "repeated_start_is_idempotent",
                 "retry_after_is_authoritative",
+                "retry_now_outside_waiting_returns_false",
                 "retry_now_wakes_existing_wait",
+                "start_after_close_stays_closed",
+                "subordinate_close_failure_is_ignored",
                 "terminal_failure",
             ]
         );

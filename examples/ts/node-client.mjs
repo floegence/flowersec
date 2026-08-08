@@ -1,7 +1,7 @@
 import { open, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
-  connectNodeSession,
+  connect,
   ConnectError,
   createArtifactLease,
   parseArtifact,
@@ -35,7 +35,7 @@ const signal = AbortSignal.timeout(15_000);
 const tls = trustRootPath === undefined ? undefined : { ca: await readFile(trustRootPath) };
 let session;
 try {
-  session = await connectNodeSession(lease, {
+  session = await connect(lease, {
     origin,
     signal,
     ...(tls === undefined ? {} : { tls }),

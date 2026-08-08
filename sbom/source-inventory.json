@@ -7121,11 +7121,11 @@
         {
           "ecosystem": "npm",
           "name": "nanoid",
-          "version": "3.3.16",
+          "version": "3.3.18",
           "declaredLicense": "MIT",
           "concludedLicense": "MIT",
-          "source": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.16.tgz",
-          "purl": "pkg:npm/nanoid@3.3.16",
+          "source": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.18.tgz",
+          "purl": "pkg:npm/nanoid@3.3.18",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -7135,9 +7135,9 @@
             "reviewedAt": "2026-08-07",
             "policyRevision": "source-license-policy-v3",
             "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-bzlKTyNJ7+LdGIIwy8ijFpIqEQIvafahV7eYykJ8Cvh42EdJeODoJ6gUJXpQJvej1BddH8OqTXZNE/KfbWAu8Q==",
-            "sourceEvidenceSha256": "db56881541cce3f7bed7acd728f31714d65480bc666ee6695c61a57abb4e17f6",
-            "expressionEvidenceSha256": "5f4b2ee5ce3779f92682f9a3081578b5dcfbc007d2b952ef7495594628031de1",
+            "sourceEvidenceValue": "sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==",
+            "sourceEvidenceSha256": "a3aa33c9167654f0dd32e1340c375e377b83ae01d42342f826c6881c419d94b6",
+            "expressionEvidenceSha256": "3a87b9d8eec11cb800f00261f8fe8db6c53759811b9b92cbac307ef24e251a6b",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -11328,7 +11328,7 @@
         },
         {
           "from": "pkg:npm/postcss@8.5.23",
-          "to": "pkg:npm/nanoid@3.3.16",
+          "to": "pkg:npm/nanoid@3.3.18",
           "kind": "runtime"
         },
         {
@@ -47112,11 +47112,11 @@
     {
       "ecosystem": "npm",
       "name": "nanoid",
-      "version": "3.3.16",
+      "version": "3.3.18",
       "declaredLicense": "MIT",
       "concludedLicense": "MIT",
-      "source": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.16.tgz",
-      "purl": "pkg:npm/nanoid@3.3.16",
+      "source": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.18.tgz",
+      "purl": "pkg:npm/nanoid@3.3.18",
       "sourceOfferRequired": false,
       "review": {
         "decision": "approved",
@@ -47126,9 +47126,9 @@
         "reviewedAt": "2026-08-07",
         "policyRevision": "source-license-policy-v3",
         "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-bzlKTyNJ7+LdGIIwy8ijFpIqEQIvafahV7eYykJ8Cvh42EdJeODoJ6gUJXpQJvej1BddH8OqTXZNE/KfbWAu8Q==",
-        "sourceEvidenceSha256": "db56881541cce3f7bed7acd728f31714d65480bc666ee6695c61a57abb4e17f6",
-        "expressionEvidenceSha256": "5f4b2ee5ce3779f92682f9a3081578b5dcfbc007d2b952ef7495594628031de1",
+        "sourceEvidenceValue": "sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==",
+        "sourceEvidenceSha256": "a3aa33c9167654f0dd32e1340c375e377b83ae01d42342f826c6881c419d94b6",
+        "expressionEvidenceSha256": "3a87b9d8eec11cb800f00261f8fe8db6c53759811b9b92cbac307ef24e251a6b",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -54092,7 +54092,7 @@
     },
     {
       "from": "pkg:npm/postcss@8.5.23",
-      "to": "pkg:npm/nanoid@3.3.16",
+      "to": "pkg:npm/nanoid@3.3.18",
       "kind": "runtime"
     },
     {

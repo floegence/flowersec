@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-source",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-source/77a8ee4af88eb835352bd471cf5745fc3fc0e97e5695f1093e53d02a7b62b190",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-source/8e1c5673ab64553703133c22ea9e0e5eb59081bbd21a3c557105b24b63d232ff",
   "creationInfo": {
     "created": "1970-01-01T00:00:00Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: 77a8ee4af88eb835352bd471cf5745fc3fc0e97e5695f1093e53d02a7b62b190",
+      "comment": "Flowersec source inventory SHA-256: 8e1c5673ab64553703133c22ea9e0e5eb59081bbd21a3c557105b24b63d232ff",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -6372,9 +6372,9 @@
     },
     {
       "name": "nanoid",
-      "SPDXID": "SPDXRef-Package-03d3e084d50a88329516",
-      "versionInfo": "3.3.16",
-      "downloadLocation": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.16.tgz",
+      "SPDXID": "SPDXRef-Package-1f219f9b24237e45a4dd",
+      "versionInfo": "3.3.18",
+      "downloadLocation": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.18.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -6383,7 +6383,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/nanoid@3.3.16"
+          "referenceLocator": "pkg:npm/nanoid@3.3.18"
         }
       ]
     },
@@ -11586,7 +11586,7 @@
     {
       "spdxElementId": "SPDXRef-Package-e0500813aa09c9528346",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-03d3e084d50a88329516"
+      "relatedSpdxElement": "SPDXRef-Package-1f219f9b24237e45a4dd"
     },
     {
       "spdxElementId": "SPDXRef-Package-e0500813aa09c9528346",

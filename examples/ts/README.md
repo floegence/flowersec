@@ -6,8 +6,8 @@ Install the ESM package and use the runtime-specific opaque session connector:
 npm install @floegence/flowersec-core
 ```
 
-- Browsers: `connectBrowserSession(...)` from `@floegence/flowersec-core/browser`
-- Node.js: `connectNodeSession(...)` from `@floegence/flowersec-core/node`
+- Browsers: `connect(...)` from `@floegence/flowersec-core/browser`
+- Node.js: `connect(...)` from `@floegence/flowersec-core/node`
 
 Both connectors consume a durable opaque `ArtifactLease` and return a
 carrier-neutral `Session`. Transport candidates, wire contracts, key

@@ -814,6 +814,7 @@ pub(crate) fn security_accepts(kind: &str, raw: &[u8]) -> bool {
     }
 }
 
+#[cfg(feature = "__flowersec_internal_fuzzing")]
 pub fn fuzz_parse(raw: &[u8]) {
     let _ = SetupPrefaceV2::decode(raw);
     let _ = RecordHeaderV2::decode(raw);

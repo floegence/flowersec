@@ -97,7 +97,7 @@ test("non-published Rust roots remain licensed and version their local Flowersec
     assert.match(manifest, /^license = "MIT"$/m, `${manifestPath} must declare its license`);
     assert.match(
       manifest,
-      /^flowersec = \{ version = "=2\.0\.0", path = "[^"]+" \}$/m,
+      /^flowersec = \{ version = "=2\.0\.0", path = "[^"]+"(?:, features = \["__flowersec_internal_fuzzing"\])? \}$/m,
       `${manifestPath} must not use a wildcard local dependency`,
     );
   }
@@ -110,8 +110,15 @@ test("Rust native runtime owns raw QUIC trust without inactive root-store or Web
   const readme = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/README.md"), "utf8");
   const connector = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/connector_v2.rs"), "utf8");
   const runtime = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/native_runtime_v2.rs"), "utf8");
+  const crateRoot = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/lib.rs"), "utf8");
+  const fuzzManifest = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/fuzz/Cargo.toml"), "utf8");
 
-  assert.doesNotMatch(manifest, /^\[features\]$/m);
+  assert.match(
+    manifest,
+    /^\[features\]\ndefault = \[\]\n__flowersec_internal_fuzzing = \[\]$/m,
+  );
+  assert.match(crateRoot, /#\[cfg\(feature = "__flowersec_internal_fuzzing"\)\]\n#\[doc\(hidden\)\]\npub mod fuzzing/u);
+  assert.match(fuzzManifest, /features = \["__flowersec_internal_fuzzing"\]/u);
   assert.doesNotMatch(manifest, /rustls-(?:native|webpki)-roots/u);
   assert.doesNotMatch(manifest, /tokio-tungstenite/u);
   assert.match(readme, /requires explicit DER trust roots/u);

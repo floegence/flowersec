@@ -1,6 +1,6 @@
 export * from "../facade.js";
-export { connectBrowserSession, createBrowserConnectionController } from "./connectSession.js";
+export { connect, createConnectionController } from "./connectSession.js";
 export type {
-  BrowserConnectionControllerOptions,
-  BrowserSessionOptions,
+  ConnectionControllerOptions,
+  SessionOptions,
 } from "./connectSession.js";

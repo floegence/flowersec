@@ -35,16 +35,13 @@ import (
 func TestConnectionControllerRealNetworkRestartReconnect(t *testing.T) {
 	serverTLS, trustRoots := controllerNetworkTLS(t)
 	source := &networkRestartSource{serverTLS: serverTLS}
-	controller, err := NewConnectionController(source, ConnectorOptions{
-		TrustRoots:     trustRoots,
-		ConnectTimeout: 5 * time.Second,
-	}, RetryPolicy{InitialDelay: 10 * time.Millisecond, MaxDelay: 50 * time.Millisecond, Factor: 2})
+	controller, err := NewConnectionController(source, ConnectionControllerOptions{Connector: ConnectorOptions{
+		TrustRoots: trustRoots, ConnectTimeout: 5 * time.Second,
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := controller.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	controller.Start(context.Background())
 	t.Cleanup(func() {
 		closeController(t, controller)
 		source.stopAll()
@@ -95,13 +92,13 @@ func waitControllerSessionNetwork(t *testing.T, controller *ConnectionController
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		status := controller.Status()
-		if status.State == ConnectionConnected && status.Session != nil {
-			return status.Session
+		snapshot := controller.Snapshot()
+		if snapshot.State == ConnectionConnected && snapshot.CurrentSession != nil {
+			return snapshot.CurrentSession
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("controller did not connect: %s; server errors: %s", controller.Status(), source.failureSummary())
+	t.Fatalf("controller did not connect: %s; server errors: %s", controller.Snapshot(), source.failureSummary())
 	return nil
 }
 
@@ -109,14 +106,14 @@ func waitForReplacementSession(t *testing.T, controller *ConnectionController, p
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		status := controller.Status()
-		if status.State == ConnectionConnected && status.Session != nil && status.Session != previous {
-			return status.Session
+		snapshot := controller.Snapshot()
+		if snapshot.State == ConnectionConnected && snapshot.CurrentSession != nil && snapshot.CurrentSession != previous {
+			return snapshot.CurrentSession
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	status := controller.Status()
-	t.Fatalf("controller did not replace session: %s failure=%v", status, status.Failure)
+	snapshot := controller.Snapshot()
+	t.Fatalf("controller did not replace session: %s failure=%v", snapshot, snapshot.Failure)
 	return nil
 }
 

@@ -49,7 +49,7 @@ async function runDirectWebTransport(page: Page): Promise<void> {
       const sdk = await import("/dist/browser/index.js");
       const artifact = sdk.parseArtifact(artifactJSON);
       const lease = sdk.createArtifactLease(artifact, async () => undefined);
-      const session = await sdk.connectBrowserSession(lease).catch(async (error: unknown) => {
+      const session = await sdk.connect(lease).catch(async (error: unknown) => {
         const internal = await import("/dist/utils/errors.js");
         if (!(error instanceof internal.ConnectError)) throw error;
         const details = internal.connectErrorDetailsInternal(error);
@@ -115,7 +115,7 @@ async function runTunnelWebTransport(page: Page, opposite: "wss" | "raw_quic"): 
       const sdk = await import("/dist/browser/index.js");
       const artifact = sdk.parseArtifact(artifactJSON);
       const lease = sdk.createArtifactLease(artifact, async () => undefined);
-      const session = await sdk.connectBrowserSession(lease).catch(async (error: unknown) => {
+      const session = await sdk.connect(lease).catch(async (error: unknown) => {
         const internal = await import("/dist/utils/errors.js");
         if (!(error instanceof internal.ConnectError)) throw error;
         const details = internal.connectErrorDetailsInternal(error);

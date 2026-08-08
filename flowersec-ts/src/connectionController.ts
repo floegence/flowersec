@@ -1,20 +1,19 @@
-import type { ArtifactLeaseV2 } from "./v2/artifactLease.js";
-import type { SessionError, SessionErrorCode, SessionV2 } from "./v2/contract.js";
-import type { ConnectErrorCode } from "./utils/errors.js";
-import { ConnectError } from "./utils/errors.js";
+import type { ArtifactLease } from "./public/artifactLease.js";
+import type { RetryDisposition, Session, SessionError, SessionErrorCode } from "./public/contract.js";
+import type { ConnectErrorCode } from "./public/connectError.js";
+import { ConnectError } from "./public/connectError.js";
 import {
   retryDispositionForConnectError,
   retryDispositionForSessionError,
-  type RetryDisposition as ErrorRetryDisposition,
 } from "./v2/retryDisposition.js";
 import { SDK_DEFAULTS } from "./defaults.js";
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
-export type RetryDisposition = ErrorRetryDisposition;
+export type { RetryDisposition } from "./public/contract.js";
 
 export type ArtifactSourceResult =
-  | Readonly<{ kind: "lease"; lease: ArtifactLeaseV2 }>
+  | Readonly<{ kind: "lease"; lease: ArtifactLease }>
   | Readonly<{ kind: "failure"; code: string; disposition: RetryDisposition }>;
 
 export type ArtifactSource = Readonly<{
@@ -34,28 +33,26 @@ export type ConnectionControllerFailure =
   | Readonly<{ phase: "connect"; code: ConnectErrorCode }>
   | Readonly<{ phase: "session"; code: SessionErrorCode }>;
 
-export type ConnectionControllerSnapshot = Readonly<{
+export type ConnectionSnapshot = Readonly<{
   state: ConnectionState;
   attempt: number;
-  currentSession?: SessionV2;
+  currentSession?: Session;
   failure?: ConnectionControllerFailure;
-  retryDisposition?: RetryDisposition;
 }>;
 
 export type ConnectionControllerOptions = Readonly<{
-  maxAttempts?: number;
+  maximumAttempts?: number;
 }>;
 
 export interface ConnectionController {
   readonly state: ConnectionState;
-  readonly currentSession: SessionV2 | undefined;
+  readonly currentSession: Session | undefined;
   readonly failure: ConnectionControllerFailure | undefined;
-  readonly retryDisposition: RetryDisposition | undefined;
 
   start(): void;
   retryNow(): boolean;
-  waitForSession(options?: Readonly<{ signal?: AbortSignal }>): Promise<SessionV2>;
-  subscribe(listener: (snapshot: ConnectionControllerSnapshot) => void): () => void;
+  waitForSession(options?: Readonly<{ signal?: AbortSignal }>): Promise<Session>;
+  subscribe(listener: (snapshot: ConnectionSnapshot) => void): () => void;
   close(): Promise<void>;
 }
 
@@ -69,7 +66,7 @@ export class ConnectionControllerError extends Error {
   }
 }
 
-type ConnectOneShot = (lease: ArtifactLeaseV2, signal: AbortSignal) => Promise<SessionV2>;
+type ConnectOneShot = (lease: ArtifactLease, signal: AbortSignal) => Promise<Session>;
 
 /** @internal Runtime facades supply the only runtime-specific operation: one one-shot connection attempt. */
 export function createConnectionControllerV2(
@@ -82,14 +79,14 @@ export function createConnectionControllerV2(
 
 class ConnectionControllerV2Impl implements ConnectionController {
   private controllerState: ConnectionState = "idle";
-  private session: SessionV2 | undefined;
+  private session: Session | undefined;
   private lastFailure: ConnectionControllerFailure | undefined;
   private currentRetryDisposition: RetryDisposition | undefined;
   private attempt = 0;
   private consecutiveFailures = 0;
   private resetAttemptOnRetry = false;
   private readonly lifetime = new AbortController();
-  private readonly listeners = new Set<(snapshot: ConnectionControllerSnapshot) => void>();
+  private readonly listeners = new Set<(snapshot: ConnectionSnapshot) => void>();
   private readonly issuedLeases = new WeakSet<object>();
   private readonly issuedSessions = new WeakSet<object>();
   private readonly maxAttempts: number | undefined;
@@ -99,6 +96,7 @@ class ConnectionControllerV2Impl implements ConnectionController {
   private pendingAcquisitionCleanup: Promise<void> | undefined;
   private waitingWake: (() => void) | undefined;
   private manualRetryRequested = false;
+  private retryNotBefore = 0;
 
   constructor(
     private readonly source: ArtifactSource,
@@ -109,17 +107,16 @@ class ConnectionControllerV2Impl implements ConnectionController {
       throw new TypeError("artifact source must provide acquire()");
     }
     if (typeof connectOneShot !== "function") throw new TypeError("one-shot connector is required");
-    if (options.maxAttempts !== undefined &&
-      (!Number.isSafeInteger(options.maxAttempts) || options.maxAttempts < 1)) {
-      throw new TypeError("maxAttempts must be a positive safe integer");
+    if (options.maximumAttempts !== undefined &&
+      (!Number.isSafeInteger(options.maximumAttempts) || options.maximumAttempts < 1)) {
+      throw new TypeError("maximumAttempts must be a positive safe integer");
     }
-    this.maxAttempts = options.maxAttempts;
+    this.maxAttempts = options.maximumAttempts;
   }
 
   get state(): ConnectionState { return this.controllerState; }
-  get currentSession(): SessionV2 | undefined { return this.connectedSession(); }
+  get currentSession(): Session | undefined { return this.connectedSession(); }
   get failure(): ConnectionControllerFailure | undefined { return this.lastFailure; }
-  get retryDisposition(): RetryDisposition | undefined { return this.currentRetryDisposition; }
 
   start(): void {
     if (this.controllerState !== "idle") return;
@@ -127,27 +124,27 @@ class ConnectionControllerV2Impl implements ConnectionController {
   }
 
   retryNow(): boolean {
-    if (this.controllerState !== "waiting") return false;
+    if (this.controllerState !== "waiting" || Date.now() < this.retryNotBefore) return false;
     this.manualRetryRequested = true;
     this.waitingWake?.();
     return true;
   }
 
-  async waitForSession(options: Readonly<{ signal?: AbortSignal }> = {}): Promise<SessionV2> {
+  async waitForSession(options: Readonly<{ signal?: AbortSignal }> = {}): Promise<Session> {
     const ready = this.connectedSession();
     if (ready !== undefined) return ready;
     if (this.controllerState === "failed") throw new ConnectionControllerError("failed", this.lastFailure);
     if (this.controllerState === "closed") throw new ConnectionControllerError("closed", this.lastFailure);
     if (options.signal?.aborted === true) throw new ConnectionControllerError("canceled");
 
-    return await new Promise<SessionV2>((resolve, reject) => {
-      const finish = (result: Readonly<{ session?: SessionV2; error?: ConnectionControllerError }>) => {
+    return await new Promise<Session>((resolve, reject) => {
+      const finish = (result: Readonly<{ session?: Session; error?: ConnectionControllerError }>) => {
         this.listeners.delete(listener);
         options.signal?.removeEventListener("abort", canceled);
         if (result.session !== undefined) resolve(result.session);
         else reject(result.error ?? new ConnectionControllerError("failed", this.lastFailure));
       };
-      const listener = (snapshot: ConnectionControllerSnapshot) => {
+      const listener = (snapshot: ConnectionSnapshot) => {
         if (snapshot.state === "connected" && snapshot.currentSession !== undefined) {
           finish({ session: snapshot.currentSession });
         } else if (snapshot.state === "failed") {
@@ -162,7 +159,7 @@ class ConnectionControllerV2Impl implements ConnectionController {
     });
   }
 
-  subscribe(listener: (snapshot: ConnectionControllerSnapshot) => void): () => void {
+  subscribe(listener: (snapshot: ConnectionSnapshot) => void): () => void {
     if (typeof listener !== "function") throw new TypeError("connection listener must be a function");
     this.listeners.add(listener);
     try {
@@ -177,34 +174,30 @@ class ConnectionControllerV2Impl implements ConnectionController {
   close(): Promise<void> {
     if (this.closeOperation !== undefined) return this.closeOperation;
     let resolveClose!: () => void;
-    let rejectClose!: (error: unknown) => void;
-    this.closeOperation = new Promise<void>((resolve, reject) => {
+    this.closeOperation = new Promise<void>((resolve) => {
       resolveClose = resolve;
-      rejectClose = reject;
     });
     const active = this.session;
     // A closed controller must never advertise a session that it has just retired.
     this.session = undefined;
     this.lifetime.abort(new ConnectionControllerError("closed", this.lastFailure));
     this.transition("closed");
-    void this.finishClose(active).then(resolveClose, rejectClose);
+    void this.finishClose(active).then(resolveClose);
     return this.closeOperation;
   }
 
-  private async finishClose(active: SessionV2 | undefined): Promise<void> {
+  private async finishClose(active: Session | undefined): Promise<void> {
     this.waitingWake?.();
     const activeClose = active === undefined
       ? Promise.resolve()
       : active.close();
-    const lifecycle = await Promise.allSettled([this.scheduler ?? Promise.resolve(), activeClose]);
+    await Promise.allSettled([this.scheduler ?? Promise.resolve(), activeClose]);
     const pendingCleanup = this.pendingConnectCleanup;
     const acquisitionCleanup = this.pendingAcquisitionCleanup;
-    const late = await Promise.allSettled([
+    await Promise.allSettled([
       ...(pendingCleanup === undefined ? [] : [pendingCleanup]),
       ...(acquisitionCleanup === undefined ? [] : [acquisitionCleanup]),
     ]);
-    const failure = [...lifecycle, ...late].find((result) => result.status === "rejected");
-    if (failure?.status === "rejected") throw failure.reason;
   }
 
   private async run(): Promise<void> {
@@ -236,7 +229,7 @@ class ConnectionControllerV2Impl implements ConnectionController {
         continue;
       }
 
-      let connected: SessionV2;
+      let connected: Session;
       try {
         connected = await this.connect(acquisition.lease);
       } catch (error) {
@@ -319,7 +312,7 @@ class ConnectionControllerV2Impl implements ConnectionController {
     }
   }
 
-  private async connect(lease: ArtifactLeaseV2): Promise<SessionV2> {
+  private async connect(lease: ArtifactLease): Promise<Session> {
     const pending = this.connectOneShot(lease, this.lifetime.signal);
     try {
       const session = await raceAbort(pending, this.lifetime.signal);
@@ -359,6 +352,7 @@ class ConnectionControllerV2Impl implements ConnectionController {
     const hardDeadline = disposition.kind === "retry_after"
       ? disposition.notBeforeUnixMilliseconds
       : 0;
+    this.retryNotBefore = hardDeadline;
     this.manualRetryRequested = false;
     this.transition("waiting");
     while (!this.lifetime.signal.aborted) {
@@ -368,6 +362,7 @@ class ConnectionControllerV2Impl implements ConnectionController {
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
         this.waitingWake = undefined;
+        this.retryNotBefore = 0;
         if (this.resetAttemptOnRetry) {
           this.attempt = 0;
           this.resetAttemptOnRetry = false;
@@ -377,6 +372,7 @@ class ConnectionControllerV2Impl implements ConnectionController {
       await this.wait(Math.min(remaining, MAX_TIMER_DELAY_MS));
     }
     this.waitingWake = undefined;
+    this.retryNotBefore = 0;
     return false;
   }
 
@@ -397,7 +393,7 @@ class ConnectionControllerV2Impl implements ConnectionController {
     });
   }
 
-  private connectedSession(): SessionV2 | undefined {
+  private connectedSession(): Session | undefined {
     return this.controllerState === "connected" ? this.session : undefined;
   }
 
@@ -409,14 +405,13 @@ class ConnectionControllerV2Impl implements ConnectionController {
     }
   }
 
-  private snapshot(): ConnectionControllerSnapshot {
+  private snapshot(): ConnectionSnapshot {
     const currentSession = this.connectedSession();
     return Object.freeze({
       state: this.controllerState,
       attempt: this.attempt,
       ...(currentSession === undefined ? {} : { currentSession }),
       ...(this.lastFailure === undefined ? {} : { failure: this.lastFailure }),
-      ...(this.currentRetryDisposition === undefined ? {} : { retryDisposition: this.currentRetryDisposition }),
     });
   }
 }
@@ -500,7 +495,7 @@ async function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T
 }
 
 async function raceTermination(
-  session: SessionV2,
+  session: Session,
   signal: AbortSignal,
 ): Promise<Readonly<{ error: SessionError }> | undefined> {
   try {

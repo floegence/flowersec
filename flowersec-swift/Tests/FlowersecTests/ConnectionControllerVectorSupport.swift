@@ -47,7 +47,12 @@ struct ConnectionControllerVectorInvariants: Decodable {
   let freshArtifactPerAttempt: Bool
   let singleScheduler: Bool
   let singleInFlightAttempt: Bool
+  let startIdempotent: Bool
+  let closeIdempotent: Bool
   let retryNowOutsideWaiting: Bool
+  let retryAfterBypass: Bool
+  let subordinateCloseFailurePropagates: Bool
+  let publicRetryConfiguration: [String]
   let oldStreamMigration: Bool
   let rpcReplay: Bool
   let writeReplay: Bool
@@ -58,7 +63,12 @@ struct ConnectionControllerVectorInvariants: Decodable {
     case freshArtifactPerAttempt = "fresh_artifact_per_attempt"
     case singleScheduler = "single_scheduler"
     case singleInFlightAttempt = "single_in_flight_attempt"
+    case startIdempotent = "start_idempotent"
+    case closeIdempotent = "close_idempotent"
     case retryNowOutsideWaiting = "retry_now_outside_waiting"
+    case retryAfterBypass = "retry_after_bypass"
+    case subordinateCloseFailurePropagates = "subordinate_close_failure_propagates"
+    case publicRetryConfiguration = "public_retry_configuration"
     case oldStreamMigration = "old_stream_migration"
     case rpcReplay = "rpc_replay"
     case writeReplay = "write_replay"
@@ -78,6 +88,9 @@ struct ConnectionControllerVectorScenario: Decodable {
   let sessions: [String]?
   let replay: [String]?
   let policy: ConnectionControllerVectorPolicy?
+  let retryNowResults: [Bool]?
+  let closeCalls: Int?
+  let cleanupCalls: Int?
 
   enum CodingKeys: String, CodingKey {
     case name, events, states, sessions, replay, policy
@@ -86,6 +99,9 @@ struct ConnectionControllerVectorScenario: Decodable {
     case maxInFlightAttempts = "max_in_flight_attempts"
     case retryAtUnixMilliseconds = "retry_at_unix_ms"
     case clockStartUnixMilliseconds = "clock_start_unix_ms"
+    case retryNowResults = "retry_now_results"
+    case closeCalls = "close_calls"
+    case cleanupCalls = "cleanup_calls"
   }
 }
 

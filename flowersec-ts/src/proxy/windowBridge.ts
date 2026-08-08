@@ -1,5 +1,5 @@
 import { SDK_DEFAULTS } from "../defaults.js";
-import { SessionError, type ByteStreamV2, type OperationOptionsV2 } from "../v2/contract.js";
+import { SessionError, type ByteStream, type OperationOptions } from "../public/contract.js";
 
 import {
   createServiceWorkerControllerGuard,
@@ -8,7 +8,7 @@ import {
   type ServiceWorkerControllerGuardRepairOptions,
 } from "./controllerGuard.js";
 import { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";
-import type { ProxyFetchRequestV2, ProxyRuntime, ProxyRuntimeLimits } from "./types.js";
+import type { ProxyFetchRequest, ProxyRuntime, ProxyRuntimeLimits } from "./types.js";
 
 const FETCH_MESSAGE = "flowersec-proxy:window_fetch_v2";
 const WEBSOCKET_OPEN_MESSAGE = "flowersec-proxy:window_ws_open_v2";
@@ -22,7 +22,7 @@ type BridgeMessage = Readonly<{
   data?: ArrayBuffer;
 }>;
 
-export class MessagePortByteStream implements ByteStreamV2 {
+export class MessagePortByteStream implements ByteStream {
   readonly kind = "flowersec.proxy.window.v2";
   terminalError: SessionError | undefined;
   private readonly reads: Uint8Array[] = [];
@@ -40,7 +40,7 @@ export class MessagePortByteStream implements ByteStreamV2 {
     port.start();
   }
 
-  async read(options: OperationOptionsV2 = {}): Promise<Uint8Array | null> {
+  async read(options: OperationOptions = {}): Promise<Uint8Array | null> {
     if (options.signal?.aborted === true) throw new SessionError("canceled");
     const queued = this.reads.shift();
     if (queued !== undefined) {
@@ -61,7 +61,7 @@ export class MessagePortByteStream implements ByteStreamV2 {
     });
   }
 
-  async write(data: Uint8Array, options: OperationOptionsV2 = {}): Promise<number> {
+  async write(data: Uint8Array, options: OperationOptions = {}): Promise<number> {
     if (this.closed || this.terminalError !== undefined) throw this.terminalError ?? new SessionError("closed");
     if (options.signal?.aborted === true) throw new SessionError("canceled");
     if (data.length === 0) return 0;
@@ -220,7 +220,7 @@ export function registerProxyAppWindow(options: RegisterProxyAppWindowOptions): 
   const limits = bridgeLimits(options.maxWsFrameBytes, options.maxWsBufferedAmountBytes);
   let disposed = false;
 
-  const dispatchFetch = (request: ProxyFetchRequestV2, port: MessagePort) => {
+  const dispatchFetch = (request: ProxyFetchRequest, port: MessagePort) => {
     if (disposed) {
       port.postMessage({ type: "flowersec-proxy:response_error", status: 503, code: "closed", message: "proxy service unavailable" });
       port.close();
@@ -235,7 +235,7 @@ export function registerProxyAppWindow(options: RegisterProxyAppWindowOptions): 
     openWebSocketStream: async (path, openOptions = {}) => {
       if (disposed) throw new SessionError("closed");
       const channel = new MessageChannel();
-      const response = new Promise<Readonly<{ stream: ByteStreamV2; protocol: string }>>((resolve, reject) => {
+      const response = new Promise<Readonly<{ stream: ByteStream; protocol: string }>>((resolve, reject) => {
         const timer = setTimeout(() => { channel.port1.close(); reject(new SessionError("timeout")); }, 10_000);
         channel.port1.onmessage = (event) => {
           if (event.data?.type !== WEBSOCKET_ACK_MESSAGE) return;
@@ -279,7 +279,7 @@ export type RegisterProxyControllerWindowOptions = Readonly<{
 
 export type ProxyControllerWindowHandle = Readonly<{ dispose(): void }>;
 
-async function bridgeStreams(runtimeStream: ByteStreamV2, port: MessagePort): Promise<void> {
+async function bridgeStreams(runtimeStream: ByteStream, port: MessagePort): Promise<void> {
   const bridge = new MessagePortByteStream(port);
   const left = (async () => {
     while (true) {
@@ -315,7 +315,7 @@ export function registerProxyControllerWindow(options: RegisterProxyControllerWi
     const port = event.ports?.[0];
     if (port === undefined) return;
     if (event.data?.type === FETCH_MESSAGE && event.data.version === 2) {
-      options.runtime.dispatchFetch(event.data.request as ProxyFetchRequestV2, port);
+      options.runtime.dispatchFetch(event.data.request as ProxyFetchRequest, port);
       return;
     }
     if (event.data?.type === WEBSOCKET_OPEN_MESSAGE && event.data.version === 2) {

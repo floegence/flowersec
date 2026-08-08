@@ -1,5 +1,5 @@
 import { readU32be, u16be, u32be } from "../utils/bin.js";
-import type { ByteStreamV2 } from "../v2/contract.js";
+import type { ByteStream } from "../public/contract.js";
 
 import { ProxyByteReader, writeAll } from "./stream.js";
 import type { ProxyRuntime, ProxyRuntimeLimits } from "./types.js";
@@ -17,7 +17,7 @@ function readU16(input: Uint8Array): number {
   return ((input[0]! << 8) | input[1]!) >>> 0;
 }
 
-async function writeFrame(stream: ByteStreamV2, opcode: number, payload: Uint8Array, maximum: number): Promise<void> {
+async function writeFrame(stream: ByteStream, opcode: number, payload: Uint8Array, maximum: number): Promise<void> {
   if (payload.length > maximum) throw new Error("WebSocket frame exceeds the proxy limit");
   const header = new Uint8Array(5);
   header[0] = opcode;
@@ -106,7 +106,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
 
     private readonly listeners = new EventListeners();
     private readonly abort = new AbortController();
-    private stream: ByteStreamV2 | undefined;
+    private stream: ByteStream | undefined;
     private writes: Promise<void> = Promise.resolve();
 
     constructor(input: string | URL, protocols?: string | string[]) {
@@ -179,7 +179,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
       }
     }
 
-    private async readLoop(stream: ByteStreamV2): Promise<void> {
+    private async readLoop(stream: ByteStream): Promise<void> {
       const reader = new ProxyByteReader(stream, { signal: this.abort.signal });
       while (this.readyState !== ProxyWebSocket.CLOSED) {
         const frame = await readFrame(reader, maxFrameBytes);
