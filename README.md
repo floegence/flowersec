@@ -20,7 +20,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
-The `main` branch currently contains the Flowersec 2.0 release candidate. It has not yet been published as the coordinated 2.0 SDK release; use an existing release tag for production dependencies.
+Flowersec 2.0.0 is the coordinated release for the Go, TypeScript, Swift, and Rust SDKs. Production consumers should pin the published package versions and matching release tags.
 
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>

@@ -2,7 +2,7 @@
 
 Flowersec exposes opaque artifacts, carrier-neutral one-shot connection functions, sessions, RPC, byte streams, and an optional `ConnectionController` for long-lived connections. Applications cannot inspect candidates, selected carriers, Yamux, QUIC handles, wire frames, credentials, keys, endpoint identities, logical stream IDs, or spend ledgers.
 
-The source tree currently describes the Flowersec 2.0 release candidate. It is not evidence that a 2.0 package or tag has been published; consumers must use an existing release tag until the coordinated Go, TypeScript, Swift, and Rust 2.0 release is available.
+The source tree describes the published Flowersec 2.0.0 contract. Consumers should use the coordinated Go, TypeScript, Swift, and Rust 2.0.0 packages and matching release tags.
 
 Across all four SDKs, an omitted public connection timeout uses the shared ten-second default from `stability/sdk_defaults.json`. The portable core is artifact/lease lifecycle, one-shot connection, authenticated sessions and reliable streams with construction-validated metadata, outbound RPC call/notify, redacted connection/session errors, and the optional single-owner `ConnectionController`. SDK profiles add runtime and carrier capabilities; language conveniences improve syntax and typing without changing wire semantics.
 

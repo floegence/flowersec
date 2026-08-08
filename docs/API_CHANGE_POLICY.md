@@ -1,6 +1,6 @@
 # Flowersec API Change Policy
 
-Flowersec 2.x maintains one carrier-neutral public contract across Go, TypeScript, Swift, and Rust. The maintained source is currently a 2.0 release candidate, not proof of a published 2.0 package or tag. There is no maintained v1 tier or in-process compatibility surface.
+Flowersec 2.x maintains one carrier-neutral public contract across Go, TypeScript, Swift, and Rust. Flowersec 2.0.0 is the coordinated published SDK baseline. There is no maintained v1 tier or in-process compatibility surface.
 
 ## Sources of Truth
 

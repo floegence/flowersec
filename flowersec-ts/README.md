@@ -2,12 +2,12 @@
 
 `@floegence/flowersec-core` is the ESM-only Flowersec v2 SDK for browsers and Node.js. Its public package surface is limited to the root, `/browser`, `/node`, and `/proxy` entrypoints.
 
-The current source is a Flowersec 2.0 release candidate and has not yet been published as the coordinated 2.0 SDK release. The install command below refers to the registry package; verify its published version before depending on source-only 2.0 APIs.
+Flowersec 2.0.0 is the published coordinated TypeScript SDK release.
 
 ## Install
 
 ```bash
-npm install @floegence/flowersec-core
+npm install @floegence/flowersec-core@2.0.0
 ```
 
 ## Public API

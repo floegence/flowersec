@@ -4,9 +4,7 @@ The `flowersec` crate is the Tokio-native Rust SDK for Flowersec v2 end-to-end
 encrypted sessions. Its maintained public entrypoints use opaque artifacts, the
 carrier-neutral one-shot `connect(...)` function, and `Session`.
 
-The current source is a Flowersec 2.0 release candidate and has not yet been
-published as the coordinated 2.0 crate release. Verify the registry version
-before depending on source-only 2.0 APIs.
+Flowersec 2.0.0 is the published coordinated Rust crate release.
 
 The crate targets Rust 1.88 or newer on Linux, macOS, and Windows, uses rustls
 by default, and contains no Flowersec-authored `unsafe`.
@@ -14,7 +12,7 @@ by default, and contains no Flowersec-authored `unsafe`.
 ## Install
 
 ```bash
-cargo add flowersec
+cargo add flowersec@2.0.0
 ```
 
 The production raw QUIC connection profile requires explicit DER trust roots.

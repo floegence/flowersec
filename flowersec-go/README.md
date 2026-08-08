@@ -2,12 +2,12 @@
 
 The Go 2.x module exposes Flowersec's carrier-neutral v2 consumer API. Applications parse an opaque artifact, attach a durable single-use spend callback, connect, and use only the returned session, RPC, and byte-stream contracts.
 
-The current source is a Flowersec 2.0 release candidate and has not yet been published as a 2.0 module tag. The install command below applies after the coordinated 2.0 release; use an existing release tag for production until then.
+Flowersec 2.0.0 is the published coordinated Go module release.
 
 ## Install
 
 ```bash
-go get github.com/floegence/flowersec/flowersec-go/v2@latest
+go get github.com/floegence/flowersec/flowersec-go/v2@v2.0.0
 ```
 
 Repository tags for this module use the `flowersec-go/v2.x.y` prefix.
