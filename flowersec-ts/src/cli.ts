@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { closeSync, existsSync, fsyncSync, openSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { createArtifactLeaseV2 } from "./v2/artifactLease.js";
 import { buildFSB2RequestV2, encodeFSB2RequestV2 } from "./v2/artifact.js";
 import { parseArtifact, unwrapArtifact } from "./v2/opaqueArtifact.js";
@@ -8,6 +8,7 @@ import { startNodeWebTransportServerV2 } from "./node/webTransportServer.js";
 import { acceptNativeSessionV2 } from "./connector/sessionAcceptor.js";
 import type { SessionV2 as PublicSessionV2, InternalSessionV2 } from "./v2/contract.js";
 import { nodeSessionRuntimeV2 } from "./node/sessionRuntime.js";
+import { claimSpendMarker } from "./cliSpendMarker.js";
 
 type Arguments = Readonly<{ mode: "client" | "server"; values: Readonly<Record<string, string>> }>;
 
@@ -109,16 +110,6 @@ function required(values: Readonly<Record<string, string>>, name: string): strin
   const value = values[name];
   if (value === undefined || value === "") throw new Error(`missing --${name}`);
   return value;
-}
-
-function claimSpendMarker(path: string): void {
-  if (existsSync(path)) throw new Error(`spend marker already exists: ${path}`);
-  const descriptor = openSync(path, "wx", 0o600);
-  try {
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
 }
 
 function decodeHash(value: string): Uint8Array {

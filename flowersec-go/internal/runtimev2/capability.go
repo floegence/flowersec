@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
 	"slices"
 
@@ -222,13 +223,26 @@ func CapabilityDescriptorDigest(descriptor CapabilityDescriptor) ([32]byte, erro
 	if err != nil {
 		return [32]byte{}, err
 	}
-	preimage := make([]byte, 0, len(capabilityDigestLabel)+4+len(canonical))
-	preimage = append(preimage, capabilityDigestLabel...)
-	var length [4]byte
-	binary.BigEndian.PutUint32(length[:], uint32(len(canonical)))
-	preimage = append(preimage, length[:]...)
-	preimage = append(preimage, canonical...)
-	return sha256.Sum256(preimage), nil
+	length, err := capabilityDigestLength(uint64(len(canonical)))
+	if err != nil {
+		return [32]byte{}, err
+	}
+	digest := sha256.New()
+	_, _ = digest.Write([]byte(capabilityDigestLabel))
+	_, _ = digest.Write(length[:])
+	_, _ = digest.Write(canonical)
+	var result [sha256.Size]byte
+	digest.Sum(result[:0])
+	return result, nil
+}
+
+func capabilityDigestLength(length uint64) ([4]byte, error) {
+	if length > math.MaxUint32 {
+		return [4]byte{}, fmt.Errorf("%w: canonical descriptor exceeds uint32 length", ErrInvalidCapability)
+	}
+	var encoded [4]byte
+	binary.BigEndian.PutUint32(encoded[:], uint32(length))
+	return encoded, nil
 }
 
 func validateCapabilityDescriptorShape(descriptor CapabilityDescriptor) error {

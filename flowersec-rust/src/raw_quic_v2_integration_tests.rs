@@ -1609,10 +1609,12 @@ async fn rust_and_go_run_full_session_v2_over_raw_quic_tunnel() {
 }
 
 async fn run_rust_and_go_full_session_v2_over_raw_quic(profile: RawQuicPathProfile) {
-    let mut child = go_peer_command("session-server", None, profile)
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("start Go SessionV2 server");
+    let psk = rand::random::<[u8; 32]>();
+    let mut command = go_peer_command("session-server", None, profile);
+    command
+        .env("FLOWERSEC_INTEROP_SESSION_PSK_B64", STANDARD.encode(psk))
+        .stdout(Stdio::piped());
+    let mut child = command.spawn().expect("start Go SessionV2 server");
     let stdout = child.stdout.take().expect("Go server stdout");
     let (mut reader, ready) = tokio::task::spawn_blocking(move || {
         let mut reader = BufReader::new(stdout);
@@ -1657,7 +1659,7 @@ async fn run_rust_and_go_full_session_v2_over_raw_quic(profile: RawQuicPathProfi
             channel_id: "channel-1".into(),
             session_contract_hash: contract_hash,
             suite: CipherSuiteV2::ChaCha20Poly1305,
-            psk: [0x42; 32],
+            psk,
             max_inbound_streams: 4,
             idle_timeout: Duration::from_secs(60),
             local_admission_binding: [0; 32],

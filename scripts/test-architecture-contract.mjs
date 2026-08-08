@@ -171,7 +171,7 @@ assert.match(hostInit, /rm -f -- \/etc\/profile\.d\/flowersec-mainland-sources\.
 assert.doesNotMatch(hostInit, /test[-_ ]id|progress/i);
 assert.doesNotMatch(hostInit + hostEntry, /SUDO_USER|runuser|chown|\/home\/tang|--runner-user/);
 assert.match(hostEntry, /sudo -n true/);
-assert.match(hostEntry, /https:\/\/ghfast\.top\/https:\/\/github\.com/);
+assert.ok(hostEntry.split("\n").includes("    https://ghfast.top/https://github.com/*) printf '%s\\n' \"$1\" ;;"));
 assert.match(hostEntry, /HOME="\$host_home" PATH="\$host_path" TMPDIR="\$host_tmp"/);
 assert.match(hostEntry, /git -C "\$host_workspace" checkout --detach --force "\$source_sha"/);
 assert.match(hostEntry, /status --porcelain --untracked-files=all/);

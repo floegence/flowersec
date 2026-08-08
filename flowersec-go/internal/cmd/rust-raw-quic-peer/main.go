@@ -25,6 +25,7 @@ const testCertDERBase64 = "MIIBjzCCAUGgAwIBAgIUW8hQEpQsUJN9a6qqF2g6hsNpSm8wBQYDK
 const testKeyDERBase64 = "MC4CAQAwBQYDK2VwBCIEICxYUWHqGoh0CBBohsaNg/NThm1n3UeWCzYuq6jS+Qi6"
 
 const (
+	interopSessionPSKEnvironment        = "FLOWERSEC_INTEROP_SESSION_PSK_B64"
 	sessionServerEstablishTimeout       = 30 * time.Second
 	sessionServerRekeyPrepareTimeout    = 10 * time.Second
 	sessionServerRekeyCompletionTimeout = 30 * time.Second
@@ -89,9 +90,9 @@ func runSessionServer(profile string) {
 		localEndpoint = "endpoint-server"
 		peerEndpoint = decoded.Request.EndpointInstanceID
 	}
-	var psk [32]byte
-	for index := range psk {
-		psk[index] = 0x42
+	psk, err := parseSessionPSK(os.Getenv(interopSessionPSKEnvironment))
+	if err != nil {
+		fatalf("session PSK: %v", err)
 	}
 	router := rpc.NewRouter()
 	postRekey := make(chan struct{}, 1)
@@ -186,6 +187,16 @@ func runSessionServer(profile string) {
 		fatalf("finish Rust RPC receipt: %v", err)
 	}
 	fmt.Println("OK")
+}
+
+func parseSessionPSK(encoded string) ([32]byte, error) {
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(decoded) != 32 {
+		return [32]byte{}, fmt.Errorf("%s must contain exactly 32 base64-encoded bytes", interopSessionPSKEnvironment)
+	}
+	var psk [32]byte
+	copy(psk[:], decoded)
+	return psk, nil
 }
 
 func runClient(address, profile string) {
