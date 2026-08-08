@@ -123,7 +123,7 @@ func TestRedDoesNotAdvanceAndResumeRunsTheFirstIncompleteTest(t *testing.T) {
 	}
 }
 
-func TestResumeStopsAfterTheFirstIncompleteTest(t *testing.T) {
+func TestResumeContinuesThroughAllIncompleteTests(t *testing.T) {
 	state := t.TempDir()
 	progressPath := filepath.Join(state, "acceptance.json")
 	var aRuns, bRuns, cRuns atomic.Int32
@@ -138,14 +138,10 @@ func TestResumeStopsAfterTheFirstIncompleteTest(t *testing.T) {
 	if err := executeSuite(context.Background(), ioDiscard{}, ioDiscard{}, "resume", progressPath, t.TempDir(), "acceptance", testSourceSHA, tests, false); err != nil {
 		t.Fatal(err)
 	}
-	current, err := readProgress(progressPath, tests, "acceptance")
-	if err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(progressPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("completed progress remains: %v", err)
 	}
-	if got := strings.Join(current.Completed, ","); got != "test/a,test/b" {
-		t.Fatalf("completed after resume = %q", got)
-	}
-	if aRuns.Load() != 0 || bRuns.Load() != 1 || cRuns.Load() != 0 {
+	if aRuns.Load() != 0 || bRuns.Load() != 1 || cRuns.Load() != 1 {
 		t.Fatalf("resume runs=%d/%d/%d", aRuns.Load(), bRuns.Load(), cRuns.Load())
 	}
 }

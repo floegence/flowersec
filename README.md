@@ -55,8 +55,9 @@ Run the default acceptance suite:
 make test
 ```
 
-After fixing a failure, use `make test-resume` to run the first incomplete test
-for the same source commit.
+After fixing a failure, use `make test-resume` to continue from the first
+incomplete test until the next failure or `ALL GREEN`. Completed IDs remain
+valid when the source commit changes.
 
 Use `make coverage-race` for the four language coverage lanes and exclusive Go
 race. Use `make browser-smoke` for the three local Chromium topologies and

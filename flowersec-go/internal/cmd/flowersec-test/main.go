@@ -241,16 +241,6 @@ func executeSuite(ctx context.Context, stdout, stderr io.Writer, action, path, r
 			return err
 		}
 		fmt.Fprintf(stdout, "[PASS] %s %s\n", next.ID, duration)
-		if action == "resume" {
-			if firstIncomplete(tests, current.Completed) == nil {
-				if err := clearProgress(path); err != nil {
-					return err
-				}
-				_, err := fmt.Fprintln(stdout, "ALL GREEN")
-				return err
-			}
-			return nil
-		}
 	}
 }
 

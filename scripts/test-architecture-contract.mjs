@@ -203,7 +203,7 @@ assert.doesNotMatch(performance, /raw_execution|manifest digest|report publicati
 
 for (const testName of [
   "TestRedDoesNotAdvanceAndResumeRunsTheFirstIncompleteTest",
-  "TestResumeStopsAfterTheFirstIncompleteTest",
+  "TestResumeContinuesThroughAllIncompleteTests",
   "TestRunAlwaysStartsFreshAndProgressHasOnlyIdentityAndCompleted",
   "TestResumeStartsFreshWhenSourceSHAChanges",
   "TestTimedOutTestReceivesCancellationAndFinishesTeardown",

@@ -39,9 +39,10 @@ requires browsers, root, or an external host. `make check` remains an explicit
 complete engineering check, while nightly, diagnostic, and performance work
 stay outside the push path. Release publishes validated source and runs no tests.
 
-`flowersec-test` reads one suite plan, runs the first incomplete test ID, and
-records only the source SHA, suite, plan, and completed IDs. A GREEN test leaves
-no output artifact. A RED test stops scheduling and retains only bounded output
-needed to locate the first failure. `make test` starts a fresh local acceptance
-plan, while `make test-resume` advances only its first incomplete ID. A source
-SHA change always starts a new plan.
+`flowersec-test` reads one suite plan, starts at the first incomplete test ID,
+and records only the source SHA, suite, plan, and completed IDs. A GREEN test
+leaves no output artifact. A RED test stops scheduling and retains only bounded
+output needed to locate the first failure. `make test` starts a fresh local
+acceptance plan, while `make test-resume` continues through the incomplete tail
+until the next RED or `ALL GREEN`. When the source SHA changes, resume updates
+the SHA, clears stale failure output, and preserves the completed prefix.
