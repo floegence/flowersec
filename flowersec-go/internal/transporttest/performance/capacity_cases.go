@@ -72,6 +72,7 @@ func productionCapacityContract() capacityContract {
 func productionBrowserCapacityContract() capacityContract {
 	contract := productionCapacityContract()
 	contract.MaxRSS = 3 << 30
+	contract.MaxCPU = 150 * time.Second
 	contract.MaxOpenFDs = 12288
 	contract.ResourceScope = "go_runner_plus_chromium_process_tree"
 	contract.CalibrationRSS = 2162716672

@@ -83,7 +83,7 @@ func TestProductionCapacityContractAndRegistryAreFrozen(t *testing.T) {
 
 func TestBrowserCapacityContractUsesFullProcessTreeCalibration(t *testing.T) {
 	contract := productionBrowserCapacityContract()
-	if contract.MaxRSS != 3<<30 || contract.MaxOpenFDs != 12288 || contract.MaxGoroutines != 40960 || contract.MaxTasks != 8192 ||
+	if contract.MaxRSS != 3<<30 || contract.MaxCPU != 150*time.Second || contract.MaxOpenFDs != 12288 || contract.MaxGoroutines != 40960 || contract.MaxTasks != 8192 ||
 		contract.ResourceScope != "go_runner_plus_chromium_process_tree" || contract.CalibrationRSS != 2162716672 || contract.CalibrationOpenFDs != 9350 {
 		t.Fatalf("browser capacity contract = %+v", contract)
 	}

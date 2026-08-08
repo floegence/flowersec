@@ -648,8 +648,9 @@ func (endpoint *browserCapacityEndpoint) CaptureResourceSnapshot() (transporttes
 	if snapshot.RSSBytes > contract.MaxRSS || snapshot.CPUNanoseconds > uint64(contract.MaxCPU) ||
 		snapshot.OpenFDs > contract.MaxOpenFDs || snapshot.Goroutines > contract.MaxGoroutines || snapshot.Tasks > contract.MaxTasks {
 		return transporttest.ResourceSnapshot{}, fmt.Errorf(
-			"Chromium capacity resource limit exceeded: rss=%d cpu_ns=%d open_fds=%d goroutines=%d tasks=%d",
-			snapshot.RSSBytes, snapshot.CPUNanoseconds, snapshot.OpenFDs, snapshot.Goroutines, snapshot.Tasks,
+			"Chromium capacity resource limit exceeded: rss=%d/%d cpu_ns=%d/%d open_fds=%d/%d goroutines=%d/%d tasks=%d/%d",
+			snapshot.RSSBytes, contract.MaxRSS, snapshot.CPUNanoseconds, contract.MaxCPU.Nanoseconds(), snapshot.OpenFDs, contract.MaxOpenFDs,
+			snapshot.Goroutines, contract.MaxGoroutines, snapshot.Tasks, contract.MaxTasks,
 		)
 	}
 	endpoint.resourceMu.Lock()
