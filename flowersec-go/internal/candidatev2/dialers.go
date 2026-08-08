@@ -9,7 +9,9 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -251,6 +253,13 @@ func NewWebSocketCarrierDial(config WebSocketDialConfig) (Dial, error) {
 			return nil, err
 		}
 		attemptDialer := dialer
+		if strings.HasPrefix(dialURL, "ws://") {
+			kind, ok := kindFromCandidate(candidate)
+			if !ok || !loopbackWebSocketURL(dialURL) || kind != artifactv2.PathDirect {
+				return nil, ErrInvalidCarrierCandidate
+			}
+			attemptDialer.TLSClientConfig = nil
+		}
 		attemptDialer.Subprotocols = []string{subprotocol}
 		if ctx == nil {
 			ctx = context.Background()
@@ -296,6 +305,27 @@ func NewWebSocketCarrierDial(config WebSocketDialConfig) (Dial, error) {
 		}
 		return handle, nil
 	}, nil
+}
+
+func kindFromCandidate(candidate artifactv2.Candidate) (artifactv2.PathKind, bool) {
+	switch candidate.WireProfile {
+	case "flowersec-direct/2":
+		return artifactv2.PathDirect, true
+	case "flowersec-tunnel/2":
+		return artifactv2.PathTunnel, true
+	default:
+		return "", false
+	}
+}
+
+func loopbackWebSocketURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "ws" || parsed.Path != "/flowersec/v2/direct" || parsed.User != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	address, err := netip.ParseAddr(host)
+	return err == nil && address.IsLoopback()
 }
 
 type ownedCarrierSession struct {

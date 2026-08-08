@@ -2,7 +2,7 @@
 
 Flowersec exposes opaque artifacts, carrier-neutral one-shot connection functions, sessions, RPC, byte streams, and an optional `ConnectionController` for long-lived connections. Applications cannot inspect candidates, selected carriers, Yamux, QUIC handles, wire frames, credentials, keys, endpoint identities, logical stream IDs, or spend ledgers.
 
-The source tree defines the Flowersec 2.2.0 coordinated contract. Flowersec 2.0.0 and 2.1.0 tags and artifacts remain immutable; 2.2.0 is a SemVer minor release because it adds public accepted-session handler resolution and the Go server proxy application boundary.
+The source tree defines the Flowersec 2.3.0 coordinated contract. Flowersec 2.0.0 through 2.2.0 tags and artifacts remain immutable; 2.3.0 is a SemVer minor release because it adds the restricted loopback plaintext WebSocket profile (`ws://127.0.0.1` or `ws://[::1]`, direct path only) for local development. Network-facing WebSocket candidates remain WSS-only.
 
 Across all four SDKs, an omitted public connection timeout uses the shared ten-second default from `stability/sdk_defaults.json`. The portable core is artifact/lease lifecycle, one-shot connection, authenticated sessions and reliable streams with construction-validated metadata, outbound RPC call/notify, redacted connection/session errors, and the optional single-owner `ConnectionController`. SDK profiles add runtime and carrier capabilities; language conveniences improve syntax and typing without changing wire semantics.
 

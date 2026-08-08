@@ -49,6 +49,30 @@ func TestCanonicalCandidatesUseRegistryValuesAndStableOrdering(t *testing.T) {
 	}
 }
 
+func TestCanonicalCandidatesAllowOnlyLoopbackPlaintextDirectWebSocket(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{"ws://127.0.0.1:23998/flowersec/v2/direct", "ws://127.0.0.1:23998/flowersec/v2/direct"},
+		{"ws://[::1]:23998/flowersec/v2/direct", "ws://[::1]:23998/flowersec/v2/direct"},
+	}
+	for _, tc := range cases {
+		got, _, _, err := CanonicalizeCandidates(PathDirect, []Candidate{{ID: "w1", Carrier: CarrierWebSocket, URL: tc.raw, WireProfile: "flowersec-direct/2"}})
+		if err != nil {
+			t.Fatalf("CanonicalizeCandidates(%q): %v", tc.raw, err)
+		}
+		if got[0].NormalizedURL != tc.want {
+			t.Fatalf("normalized = %q, want %q", got[0].NormalizedURL, tc.want)
+		}
+	}
+	for _, raw := range []string{"ws://0.0.0.0:23998/flowersec/v2/direct", "ws://example.test/flowersec/v2/direct", "ws://127.0.0.1:23998/flowersec/v2/tunnel"} {
+		if _, _, _, err := CanonicalizeCandidates(PathDirect, []Candidate{{ID: "w1", Carrier: CarrierWebSocket, URL: raw, WireProfile: "flowersec-direct/2"}}); err == nil {
+			t.Fatalf("plaintext non-loopback/cross-path candidate %q accepted", raw)
+		}
+	}
+}
+
 func TestArtifactJSONRoundTripDirectAndTunnel(t *testing.T) {
 	for _, kind := range []PathKind{PathDirect, PathTunnel} {
 		t.Run(string(kind), func(t *testing.T) {

@@ -1,6 +1,6 @@
 # Flowersec API Change Policy
 
-Flowersec 2.x maintains one carrier-neutral public contract across Go, TypeScript, Swift, and Rust. Flowersec 2.0.0 is the immutable coordinated baseline; Flowersec 2.1.0 adds the reviewed server acceptor boundary, and 2.2.0 adds accepted-session handler resolution plus the Go server counterpart to the published TypeScript proxy runtime. Earlier tags and artifacts are never moved or replaced. There is no maintained v1 tier or in-process compatibility surface.
+Flowersec 2.x maintains one carrier-neutral public contract across Go, TypeScript, Swift, and Rust. Flowersec 2.0.0 is the immutable coordinated baseline; Flowersec 2.1.0 adds the reviewed server acceptor boundary, 2.2.0 adds accepted-session handler resolution plus the Go server counterpart to the published TypeScript proxy runtime, and 2.3.0 adds the restricted loopback plaintext WebSocket direct profile. Earlier tags and artifacts are never moved or replaced. There is no maintained v1 tier or in-process compatibility surface.
 
 ## Sources of Truth
 
@@ -32,6 +32,8 @@ Every public API change requires:
 - package, symbol, SemVer, and full integration gates before release.
 
 Adding a public `Acceptor`, server admission, handler resolver, proxy server, or control-plane symbol is a SemVer minor capability unless the change is strictly documentation or an internal fix. The 2.2.0 handler/proxy additions therefore cannot be published as 2.1.1; all already published tags and artifacts remain immutable.
+
+The loopback plaintext WebSocket profile is likewise an explicit SDK profile capability, not a relaxed production transport rule. Only direct candidates addressed to `127.0.0.1` or `::1` may use `ws://`; tunnel candidates and all non-loopback hosts must use WSS and are rejected otherwise.
 
 Removed v1 symbols, generated packages, package subpaths, and CLIs remain on negative package/source guards. A manifest change must not silently restore them.
 

@@ -125,6 +125,17 @@
       }
     },
     {
+      "id": "loopback_plaintext_websocket_direct",
+      "layer": "portable_core",
+      "description": "Restricted plaintext WebSocket direct profile for local loopback development only; network-facing and tunnel plaintext candidates are rejected.",
+      "implementations": {
+        "go": { "status": "complete", "entrypoint": "flowersec-go/v2 artifact parser and WebSocket connector", "test_ids": ["protocol/go"] },
+        "typescript": { "status": "complete", "entrypoint": "@floegence/flowersec-core artifact parser", "test_ids": ["protocol/typescript"] },
+        "swift": { "status": "complete", "entrypoint": "Flowersec artifact parser", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "complete", "entrypoint": "flowersec artifact parser", "test_ids": ["protocol/rust"] }
+      }
+    },
+    {
       "id": "carrier_contract",
       "layer": "portable_core",
       "description": "Carrier-neutral stream semantics with WSS, raw QUIC, and WebTransport capability reporting",

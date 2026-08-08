@@ -617,9 +617,15 @@ function normalizeCandidateURL(
     default:
       throw invalidCandidate("carrier registry");
   }
-  if (scheme !== expectedScheme) throw invalidCandidate("carrier scheme");
+  const loopbackPlaintext = carrier === "websocket" && scheme === "ws" && kind === "direct" && isLoopbackHost(normalizedAuthority);
+  if (scheme !== expectedScheme && !loopbackPlaintext) throw invalidCandidate("carrier scheme");
   if (carrier !== "raw_quic" && path !== expectedPath) throw invalidCandidate("carrier URL path");
   return `${scheme}://${normalizedAuthority}${path}`;
+}
+
+function isLoopbackHost(authority: string): boolean {
+  const host = authority.startsWith("[") ? authority.slice(1, authority.indexOf("]")) : authority.split(":")[0];
+  return host === "127.0.0.1" || host === "::1";
 }
 
 function normalizeAuthority(authority: string): string {

@@ -198,7 +198,8 @@ func normalizeCandidateURL(kind PathKind, carrier Carrier, raw string) (string, 
 	default:
 		return "", fmt.Errorf("%w: carrier %q", ErrInvalidCandidate, carrier)
 	}
-	if scheme != wantScheme {
+	loopbackWS := carrier == CarrierWebSocket && scheme == "ws" && kind == PathDirect && loopbackHost(host)
+	if scheme != wantScheme && !loopbackWS {
 		return "", fmt.Errorf("%w: carrier scheme", ErrInvalidCandidate)
 	}
 	if carrier != CarrierRawQUIC && path != wantPath {
@@ -208,6 +209,19 @@ func normalizeCandidateURL(kind PathKind, carrier Carrier, raw string) (string, 
 		host += ":" + port
 	}
 	return scheme + "://" + host + path, nil
+}
+
+func loopbackHost(authority string) bool {
+	host := authority
+	if strings.HasPrefix(host, "[") {
+		if end := strings.IndexByte(host, ']'); end >= 0 {
+			host = host[1:end]
+		}
+	} else if colon := strings.LastIndexByte(host, ':'); colon > 0 && strings.Count(host, ":") == 1 {
+		host = host[:colon]
+	}
+	address, err := netip.ParseAddr(host)
+	return err == nil && address.IsLoopback()
 }
 
 func normalizeAuthority(authority string) (string, string, error) {

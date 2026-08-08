@@ -766,7 +766,11 @@ fn normalize_url(kind: &str, c: &CandidateWire) -> Result<String, ArtifactError>
         CarrierWire::RawQuic => ("quic", String::new()),
         CarrierWire::Webtransport => ("https", format!("/flowersec/webtransport/v2/{kind}")),
     };
-    if url.scheme() != scheme
+    let loopback_plaintext = matches!(c.carrier, CarrierWire::Websocket)
+        && url.scheme() == "ws"
+        && kind == "direct"
+        && url.host_str().map(is_loopback_host).unwrap_or(false);
+    if url.scheme() != scheme && !loopback_plaintext
         || (matches!(c.carrier, CarrierWire::RawQuic) && !matches!(url.path(), "" | "/"))
         || (!matches!(c.carrier, CarrierWire::RawQuic) && url.path() != path)
         || url.query().is_some()
@@ -782,6 +786,10 @@ fn normalize_url(kind: &str, c: &CandidateWire) -> Result<String, ArtifactError>
     url.set_fragment(None);
     let text = url.to_string();
     Ok(text.strip_suffix('/').unwrap_or(&text).to_string())
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    host == "127.0.0.1" || host == "::1"
 }
 
 fn decode32(value: &str) -> Option<[u8; 32]> {

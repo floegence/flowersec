@@ -148,7 +148,9 @@ enum AdmissionCodecV2 {
       let components = URLComponents(string: raw), components.user == nil,
       components.password == nil, let rawHost = components.host, !rawHost.isEmpty
     else { throw AdmissionCodecErrorV2.invalidCandidate }
-    let scheme = components.scheme?.lowercased()
+    guard let scheme = components.scheme?.lowercased(), !scheme.isEmpty else {
+      throw AdmissionCodecErrorV2.invalidCandidate
+    }
     let host: String
     if rawHost.contains(":") {
       let address =
@@ -170,10 +172,11 @@ enum AdmissionCodecV2 {
     let authority = host + (port.map { ":\($0)" } ?? "")
     switch carrier {
     case "websocket":
-      guard scheme == "wss", components.path == "/flowersec/v2/\(kind)" else {
+      let loopbackPlaintext = scheme == "ws" && kind == "direct" && (host == "127.0.0.1" || host == "[::1]")
+      guard (scheme == "wss" || loopbackPlaintext), components.path == "/flowersec/v2/\(kind)" else {
         throw AdmissionCodecErrorV2.invalidCandidate
       }
-      return "wss://\(authority)\(components.path)"
+      return "\(scheme)://\(authority)\(components.path)"
     case "raw_quic":
       guard scheme == "quic", components.path.isEmpty || components.path == "/" else {
         throw AdmissionCodecErrorV2.invalidCandidate

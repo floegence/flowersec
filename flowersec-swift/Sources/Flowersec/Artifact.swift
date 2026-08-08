@@ -281,7 +281,9 @@ private enum ArtifactCodecV2 {
     else { return false }
     let scheme = components.scheme?.lowercased()
     switch candidate.carrier {
-    case "websocket": return scheme == "wss" && components.path == "/flowersec/v2/\(kind)"
+    case "websocket":
+      let loopbackPlaintext = scheme == "ws" && kind == "direct" && (components.host == "127.0.0.1" || components.host == "::1")
+      return (scheme == "wss" || loopbackPlaintext) && components.path == "/flowersec/v2/\(kind)"
     case "raw_quic": return scheme == "quic" && (components.path.isEmpty || components.path == "/")
     case "webtransport":
       return scheme == "https" && components.path == "/flowersec/webtransport/v2/\(kind)"
