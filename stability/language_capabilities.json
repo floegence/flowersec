@@ -1,7 +1,7 @@
 {
   "version": 2,
   "languages": ["go", "typescript", "swift", "rust"],
-  "capability_layers": ["portable_core", "sdk_profile", "language_convenience"],
+  "capability_layers": ["portable_core", "server_integration", "control_plane", "sdk_profile", "language_convenience"],
   "portable_capabilities": [
     {
       "id": "opaque_artifact",
@@ -67,6 +67,39 @@
         "typescript": { "status": "complete", "test_ids": ["controller/typescript"] },
         "swift": { "status": "complete", "test_ids": ["controller/swift"] },
         "rust": { "status": "complete", "test_ids": ["controller/rust"] }
+      }
+    },
+    {
+      "id": "server_acceptor_session",
+      "layer": "server_integration",
+      "description": "Carrier-neutral server admission establishes the same public Session contract and delegates session handlers without exposing carrier or wire state.",
+      "implementations": {
+        "go": { "status": "complete", "entrypoint": "flowersec.NewAcceptor/Acceptor.Handler/SessionHandlers", "test_ids": ["protocol/go"] },
+        "typescript": { "status": "unsupported", "entrypoint": "@floegence/flowersec-core/node", "reason": "The published Node SDK is client-only; server admission remains an executable runtime boundary until a stable carrier-neutral Node listener contract is added.", "test_ids": ["protocol/typescript"] },
+        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "Apple SDKs do not provide a deployable listener/runtime surface; server admission is outside the platform profile and must fail closed.", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "complete", "entrypoint": "flowersec::Acceptor", "test_ids": ["protocol/rust"] }
+      }
+    },
+    {
+      "id": "controlplane_issue_authorize",
+      "layer": "control_plane",
+      "description": "Opaque artifact issuance, durable authorization records, and runtime admission authorization.",
+      "implementations": {
+        "go": { "status": "complete", "entrypoint": "flowersec-go/v2/controlplane", "test_ids": ["protocol/go"] },
+        "typescript": { "status": "unsupported", "entrypoint": "@floegence/flowersec-core", "reason": "Control-plane persistence and tenant policy are application-owned; TypeScript consumes opaque artifacts and has no service issuer contract.", "test_ids": ["protocol/typescript"] },
+        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "Control-plane persistence and tenant policy are application-owned and outside the Apple SDK profile.", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "unsupported", "entrypoint": "flowersec", "reason": "Control-plane persistence and tenant policy are application-owned; the Rust crate consumes opaque artifacts.", "test_ids": ["protocol/rust"] }
+      }
+    },
+    {
+      "id": "server_admission_paths",
+      "layer": "server_integration",
+      "description": "Direct and tunnel admission over WSS, raw QUIC, and WebTransport with authorization binding and bounded cleanup.",
+      "implementations": {
+        "go": { "status": "complete", "entrypoint": "flowersec.Acceptor", "test_ids": ["protocol/go"] },
+        "typescript": { "status": "unsupported", "entrypoint": "@floegence/flowersec-core/node", "reason": "Node server carrier adapters are runtime-owned and not a published carrier-neutral listener API.", "test_ids": ["protocol/typescript"] },
+        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "Apple platforms do not provide a deployable listener profile.", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "complete", "entrypoint": "flowersec::Acceptor", "test_ids": ["protocol/rust"] }
       }
     },
     {

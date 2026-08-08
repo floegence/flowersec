@@ -78,9 +78,11 @@ type VerifiedClaims struct {
 
 // Authorization binds verified claims and their lifetime to one acquired lease.
 type Authorization struct {
-	Claims    VerifiedClaims
-	ExpiresAt time.Time
-	Lease     Lease
+	Claims           VerifiedClaims
+	ExpiresAt        time.Time
+	Lease            Lease
+	Session          artifactv2.SessionContract
+	AdmissionBinding [32]byte
 }
 
 // Authorize verifies one independently received FSB2 credential.
@@ -98,6 +100,9 @@ type Config struct {
 	GuardStopTimeout         time.Duration
 	AdmissionResponseTimeout time.Duration
 	ActivationTimeout        time.Duration
+	// OnPair receives both carrier sessions after authenticated tunnel pairing.
+	// When nil, the coordinator keeps the runtime bridge behavior.
+	OnPair func(context.Context, carrier.Session, carrier.Session, Authorization, Authorization) error
 }
 
 // DefaultConfig returns the production tunnel coordinator limits.
@@ -510,6 +515,12 @@ func (coordinator *Coordinator) activate(generation *pairGeneration) {
 			activationErr = io.ErrClosedPipe
 		}
 		coordinator.finish(generation, activationErr)
+		return
+	}
+	left := generation.roles[1].authorization
+	right := generation.roles[2].authorization
+	if coordinator.config.OnPair != nil {
+		coordinator.finish(generation, coordinator.config.OnPair(generation.ctx, client, server, left, right))
 		return
 	}
 	coordinator.finish(generation, Bridge(generation.ctx, client, server, coordinator.config.BridgeLimits))

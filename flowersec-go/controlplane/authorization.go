@@ -228,6 +228,7 @@ type runtimeAuthorizationResponseWire struct {
 	ExpiresAt                      time.Time                `json:"expires_at"`
 	ExpectedPeerEndpointInstanceID string                   `json:"expected_peer_endpoint_instance_id"`
 	AllowReplacement               bool                     `json:"allow_replacement"`
+	Session                        authorizedSessionWire    `json:"session"`
 	Direct                         *directAuthorizationWire `json:"direct"`
 }
 
@@ -261,6 +262,7 @@ func AuthorizeRuntime(request RuntimeAuthorizationRequest, record AuthorizationR
 		direct.Upstream.Address = record.directUpstream
 		wire.Direct = direct
 	} else {
+		wire.Session = sessionWire(artifact.Session)
 		wire.ExpectedPeerEndpointInstanceID = artifact.Path.ExpectedPeerEndpointInstanceID
 		wire.AllowReplacement = record.allowReplacement
 	}

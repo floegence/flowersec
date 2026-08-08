@@ -540,6 +540,41 @@
           },
           {
             "kind": "type",
+            "expr": "flowersec.AcceptorOptions",
+            "doc_token": "`flowersec.AcceptorOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.Acceptor",
+            "doc_token": "`flowersec.Acceptor`"
+          },
+          {
+            "kind": "var",
+            "expr": "flowersec.ErrInvalidAcceptor",
+            "doc_token": "`flowersec.ErrInvalidAcceptor`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewAcceptor",
+            "doc_token": "`flowersec.NewAcceptor(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.Acceptor).Handler",
+            "doc_token": "`flowersec.Acceptor.Handler()`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.WebSocketDirectPath",
+            "doc_token": "`flowersec.WebSocketDirectPath`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.WebSocketTunnelPath",
+            "doc_token": "`flowersec.WebSocketTunnelPath`"
+          },
+          {
+            "kind": "type",
             "expr": "flowersec.ArtifactSource",
             "doc_token": "`flowersec.ArtifactSource`"
           },

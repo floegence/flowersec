@@ -55,8 +55,10 @@ type portableCapability struct {
 }
 
 type capabilityImplementation struct {
-	Status  string   `json:"status"`
-	TestIDs []string `json:"test_ids"`
+	Status     string   `json:"status"`
+	Entrypoint string   `json:"entrypoint,omitempty"`
+	Reason     string   `json:"reason,omitempty"`
+	TestIDs    []string `json:"test_ids"`
 }
 
 type runtimeSpecificCapability struct {
@@ -257,7 +259,14 @@ func verifyParity(repoRoot string) error {
 		for _, language := range m.Languages {
 			implementation := capability.Implementations[language]
 			if implementation.Status != "complete" {
-				incomplete = append(incomplete, capability.ID+":"+language+"="+implementation.Status)
+				if capability.Layer == "portable_core" {
+					incomplete = append(incomplete, capability.ID+":"+language+"="+implementation.Status)
+				}
+				if implementation.Status == "unsupported" {
+					if err := requireRegistryConsumers(registryIDs, "capability "+capability.ID+" language "+language, implementation.TestIDs); err != nil {
+						return err
+					}
+				}
 				continue
 			}
 			if implementation.Status == "complete" {
@@ -645,8 +654,8 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 	if m.Version != 2 {
 		return nil, fmt.Errorf("unsupported capability manifest version %d", m.Version)
 	}
-	if !slices.Equal(m.CapabilityLayers, []string{"portable_core", "sdk_profile", "language_convenience"}) {
-		return nil, fmt.Errorf("capability_layers must be [portable_core sdk_profile language_convenience]")
+	if !slices.Equal(m.CapabilityLayers, []string{"portable_core", "server_integration", "control_plane", "sdk_profile", "language_convenience"}) {
+		return nil, fmt.Errorf("capability_layers must be [portable_core server_integration control_plane sdk_profile language_convenience]")
 	}
 	if len(m.Languages) == 0 || len(m.PortableCapabilities) == 0 {
 		return nil, errors.New("capability manifest languages and portable_capabilities must not be empty")
@@ -660,8 +669,8 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 	}
 	capabilityIDs := make([]string, 0, len(m.PortableCapabilities))
 	for _, capability := range m.PortableCapabilities {
-		if capability.Layer != "portable_core" {
-			return nil, fmt.Errorf("portable capability %s must use layer portable_core", capability.ID)
+		if capability.Layer != "portable_core" && capability.Layer != "server_integration" && capability.Layer != "control_plane" {
+			return nil, fmt.Errorf("public capability %s has unsupported layer %q", capability.ID, capability.Layer)
 		}
 		if strings.TrimSpace(capability.ID) == "" || strings.TrimSpace(capability.Description) == "" {
 			return nil, errors.New("portable capability id and description must not be empty")
@@ -676,6 +685,10 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 			case "complete":
 				if len(implementation.TestIDs) != 1 {
 					return nil, fmt.Errorf("capability %s language %s complete status requires exactly one test_id", capability.ID, language)
+				}
+			case "unsupported":
+				if strings.TrimSpace(implementation.Reason) == "" || len(implementation.TestIDs) != 1 {
+					return nil, fmt.Errorf("capability %s language %s unsupported status requires reason and exactly one test_id", capability.ID, language)
 				}
 			case "planned", "blocked":
 			default:
@@ -699,7 +712,7 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 	runtimeIDs := make([]string, 0, len(m.RuntimeSpecificCapabilities))
 	for _, capability := range m.RuntimeSpecificCapabilities {
 		runtimeIDs = append(runtimeIDs, capability.ID)
-		if capability.Layer != "sdk_profile" && capability.Layer != "language_convenience" {
+		if capability.Layer != "server_integration" && capability.Layer != "control_plane" && capability.Layer != "sdk_profile" && capability.Layer != "language_convenience" {
 			return nil, fmt.Errorf("runtime-specific capability %s has unsupported layer %q", capability.ID, capability.Layer)
 		}
 		if strings.TrimSpace(capability.ID) == "" || strings.TrimSpace(capability.Reason) == "" {

@@ -2,12 +2,12 @@
 
 The Go 2.x module exposes Flowersec's carrier-neutral v2 consumer API. Applications parse an opaque artifact, attach a durable single-use spend callback, connect, and use only the returned session, RPC, and byte-stream contracts.
 
-Flowersec 2.0.0 is the published coordinated Go module release.
+Flowersec 2.1.0 is the published coordinated Go module release.
 
 ## Install
 
 ```bash
-go get github.com/floegence/flowersec/flowersec-go/v2@v2.0.0
+go get github.com/floegence/flowersec/flowersec-go/v2@v2.1.0
 ```
 
 Repository tags for this module use the `flowersec-go/v2.x.y` prefix.
@@ -25,6 +25,13 @@ session, err := flowersec.Connect(ctx, lease, options)
 metadata, err := flowersec.NewStreamMetadata(map[string]any{"request_id": "req-1"})
 stream, err := session.OpenStream(ctx, "example", metadata)
 err = handlers.Serve(ctx, session)
+
+acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
+    AllowedOrigins: []string{"https://app.example"},
+    Authorize: authorizeRuntime,
+    OnSession: serveSession,
+})
+httpServer.Handler = acceptor.Handler()
 ```
 
 Register inbound RPC and stream handlers before connecting. A valid connection attempt freezes both registration sets; later registrations return `ErrSessionHandlersFrozen`. `NewStreamMetadata(...)` validates and defensively copies metadata before a stream is opened; `EmptyStreamMetadata()` represents the empty value, and incoming streams expose the same `StreamMetadata` type. `SessionHandlers.Serve` owns the session lifecycle, supplies bounded stream metadata to application handlers, and resets unhandled or excess streams. The root package deliberately hides candidate data, carrier implementations, Yamux, wire messages, cryptographic state, keys, endpoint identities, logical stream IDs, and spend-ledger internals. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.

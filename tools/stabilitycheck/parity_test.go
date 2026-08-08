@@ -32,16 +32,17 @@ func TestLanguageCapabilitiesDeclareContractLayers(t *testing.T) {
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"portable_core", "sdk_profile", "language_convenience"}
+	want := []string{"portable_core", "server_integration", "control_plane", "sdk_profile", "language_convenience"}
 	if !slices.Equal(document.CapabilityLayers, want) {
 		t.Fatalf("capability_layers = %v, want %v", document.CapabilityLayers, want)
 	}
+	allowedLayers := map[string]bool{"portable_core": true, "server_integration": true, "control_plane": true}
 	for _, capability := range document.PortableCapabilities {
-		if capability.Layer != "portable_core" {
-			t.Errorf("portable capability %s layer = %q, want portable_core", capability.ID, capability.Layer)
+		if !allowedLayers[capability.Layer] {
+			t.Errorf("public capability %s has invalid layer %q", capability.ID, capability.Layer)
 		}
 	}
-	allowedProfiles := map[string]bool{"sdk_profile": true, "language_convenience": true}
+	allowedProfiles := map[string]bool{"server_integration": true, "control_plane": true, "sdk_profile": true, "language_convenience": true}
 	for _, capability := range document.RuntimeSpecificCapabilities {
 		if !allowedProfiles[capability.Layer] {
 			t.Errorf("runtime capability %s has invalid layer %q", capability.ID, capability.Layer)

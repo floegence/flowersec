@@ -81,6 +81,7 @@ func TestTunnelAuthorizerBindsClaimsAndReleasesLeaseOnce(t *testing.T) {
 	provider := &fakeAuthorizationProvider{response: authorizationResponse{
 		Decision: "allow", CredentialID: "credential-a", LeaseID: "lease-a",
 		ExpiresAt: time.Now().Add(time.Minute), ExpectedPeerEndpointInstanceID: "peer-b",
+		Session: validAuthorizedSession(t, "channel-a", 32),
 	}}
 	decoded := &artifactv2.DecodedRequest{Raw: []byte("FSB2 fixture"), Request: artifactv2.Request{
 		PathKind: artifactv2.PathTunnel, Profile: artifactv2.Profile, ChannelID: "channel-a",

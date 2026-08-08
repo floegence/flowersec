@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 )
 
@@ -36,7 +35,7 @@ func TestIssuerCreatesOpaqueDirectArtifactAndBoundRuntimeAuthorization(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := flowersec.ParseArtifact(issued.ArtifactJSON()); err != nil {
+	if _, err := artifactv2.DecodeArtifactJSON(bytes.NewReader(issued.ArtifactJSON())); err != nil {
 		t.Fatalf("public artifact parse failed: %v", err)
 	}
 	encodedRecord, err := issued.AuthorizationRecord().Encode()
@@ -223,12 +222,22 @@ func TestIssuerCreatesTunnelPairAndRejectsCrossRecordAuthorization(t *testing.T)
 		Decision                       string `json:"decision"`
 		ExpectedPeerEndpointInstanceID string `json:"expected_peer_endpoint_instance_id"`
 		AllowReplacement               bool   `json:"allow_replacement"`
+		LeaseID                        string `json:"lease_id"`
+		Session                        struct {
+			ChannelID         string `json:"channel_id"`
+			E2EEPSKBase64URL  string `json:"e2ee_psk_base64url"`
+			MaxInboundStreams uint16 `json:"max_inbound_streams"`
+			DefaultSuite      uint16 `json:"default_suite"`
+		} `json:"session"`
 	}
 	if err := json.Unmarshal(response.JSON(), &wire); err != nil {
 		t.Fatal(err)
 	}
-	if wire.Decision != "allow" || wire.ExpectedPeerEndpointInstanceID != "endpoint-b" || !wire.AllowReplacement {
+	if wire.Decision != "allow" || wire.ExpectedPeerEndpointInstanceID != "endpoint-b" || !wire.AllowReplacement || wire.LeaseID != "lease-first" {
 		t.Fatalf("unexpected tunnel authorization: %+v", wire)
+	}
+	if wire.Session.ChannelID != "channel-tunnel" || wire.Session.E2EEPSKBase64URL == "" || wire.Session.MaxInboundStreams == 0 || wire.Session.DefaultSuite == 0 {
+		t.Fatalf("tunnel authorization omitted session contract: %+v", wire.Session)
 	}
 }
 
