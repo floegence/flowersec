@@ -204,7 +204,14 @@ require_exact_value(codeql_workflow["permissions"], {
   "contents" => "read",
   "security-events" => "write",
 }, "CodeQL permissions")
-require_exact_value(release_workflow[true], { "push" => { "tags" => ["flowersec-go/v*"] } }, "unified release triggers")
+require_exact_value(release_workflow[true], {
+  "push" => { "tags" => ["flowersec-go/v*"] },
+  "workflow_dispatch" => { "inputs" => { "version" => {
+    "description" => "Existing coordinated release version to recover",
+    "required" => true,
+    "type" => "string",
+  } } },
+}, "unified release triggers")
 require_exact_value(release_workflow["permissions"], {
   "contents" => "write",
   "packages" => "write",
@@ -299,8 +306,18 @@ codeql_plan_steps = require_steps(codeql_plan_job, "the CodeQL plan job")
 prepare_steps = require_steps(prepare_job, "the unified release workflow prepare job")
 
 checkout = { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262", "with" => { "fetch-depth" => 0 } }
+release_checkout = {
+  "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+  "with" => {
+    "fetch-depth" => 0,
+    "ref" => "refs/tags/flowersec-go/v${{ needs.prepare.outputs.version }}",
+  },
+}
 validate_step_contracts(prepare_steps, [
-  { name: "Resolve release version", keys: ["name", "id", "run"], values: { "id" => "version" }, run_sha256: "adc448b028b8291fd461c54609cf5419d805b8fccae767e0ad031d9103663b36" },
+  { name: "Resolve release version", keys: ["name", "id", "env", "run"], values: {
+    "id" => "version",
+    "env" => { "RELEASE_VERSION_INPUT" => "${{ inputs.version }}" },
+  }, run_sha256: "18ecf5a6ceec68c881d49600a824f4417ea61699070f34b37458c3248920be66" },
 ], "the unified release workflow prepare job")
 validate_step_contracts(ci_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
@@ -329,17 +346,34 @@ validate_step_contracts(codeql_plan_steps, [
   }, run_sha256: "6a94dacb488f0128af696fe2a8ae43f23b78c31b4132f409ea72cfbc20297ce6" },
 ], "the CodeQL plan job")
 validate_step_contracts(release_steps, [
-  { name: nil, keys: ["uses", "with"], values: checkout },
-  { name: "Compute version vars", keys: ["name", "id", "run"], values: { "id" => "vars" }, run_sha256: "308142f97577687f8076c19a3f65c4de19c48196c1d9ab76349c9a2d7f3a08bd" },
+  { name: nil, keys: ["uses", "with"], values: release_checkout },
+  { name: "Compute version vars", keys: ["name", "id", "env", "run"], values: {
+    "id" => "vars",
+    "env" => { "RELEASE_VERSION_INPUT" => "${{ needs.prepare.outputs.version }}" },
+  }, run_sha256: "1e2b49d667841468c895f18da4398191530b1ae1796ea1108ffdc3e4b4deadec" },
   { name: "Setup Go", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff", "with" => { "go-version-file" => "flowersec-go/go.mod", "cache" => true, "cache-dependency-path" => "flowersec-go/go.sum" } } },
   { name: "Setup Node", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", "with" => { "node-version" => "24", "registry-url" => "https://registry.npmjs.org", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" } } },
   { name: "Ensure npm supports trusted publishing (OIDC)", keys: ["name", "run"], run_sha256: "fb7f479c6c90ad6363c5368e126e136be6cb4808b20328f2476fea0230aeea0e" },
   { name: "Setup Rust", keys: ["name", "uses"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4" } },
   { name: "Validate release version facts", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}" } }, run_sha256: "9431ce4342dcd8f8af90607321f1ceb9e6e61c13f455b06acd242d96f53e0087" },
-  { name: "Verify all language tags point to this commit", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}" } }, run_sha256: "2e0b0a8195cac9968212ce6f5ad6aca14b46ecfb40ac4b6fad1e09cba78b4e60" },
-  { name: "Build release artifacts", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_DATE" => "${{ steps.vars.outputs.date }}", "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}" } }, run_sha256: "6cc25228e0df686a9aca9d2cc231a4a41d08b96be6d4c3f7e27d60a1c86dd15e" },
-  { name: "Generate release notes", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_TAG" => "${{ steps.vars.outputs.tag }}" } }, run_sha256: "4def773734f95ee6a5f05876f4355923b9a3604bee521b26ce04ac77108086ad" },
-  { name: "Publish GitHub Release", keys: ["name", "uses", "with"], values: { "uses" => "softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228", "with" => { "files" => "dist/*\n", "body_path" => "release-notes.md" } } },
+  { name: "Verify all language tags point to this commit", keys: ["name", "env", "run"], values: { "env" => {
+    "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
+    "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
+  } }, run_sha256: "2dc2aa66b184f05c334e60ef6d1ca9421fc40c42ace1a5e74f6236355f3b8613" },
+  { name: "Build release artifacts", keys: ["name", "env", "run"], values: { "env" => {
+    "RELEASE_DATE" => "${{ steps.vars.outputs.date }}",
+    "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
+    "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
+  } }, run_sha256: "6e0b1c56675b7b3f85696669bb68d33d69535b28c839c9f944217c9e1743e36b" },
+  { name: "Generate release notes", keys: ["name", "env", "run"], values: { "env" => {
+    "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
+    "RELEASE_TAG" => "${{ steps.vars.outputs.tag }}",
+  } }, run_sha256: "1bd88ea62d5cfa76a864986943ea296ec1def96e507dcdb60077ac446e1f2658" },
+  { name: "Publish GitHub Release", keys: ["name", "uses", "with"], values: { "uses" => "softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228", "with" => {
+    "files" => "dist/*\n",
+    "body_path" => "release-notes.md",
+    "tag_name" => "${{ steps.vars.outputs.tag }}",
+  } } },
   { name: "Setup Docker Buildx", keys: ["name", "uses", "with"], values: { "uses" => "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c", "with" => { "driver-opts" => "image=moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec" } } },
   { name: "Login to GHCR", keys: ["name", "uses", "with"], values: { "uses" => "docker/login-action@dbcb813823bdd20940b903addbd779551569679f", "with" => { "registry" => "ghcr.io", "username" => "${{ github.actor }}", "password" => "${{ secrets.GITHUB_TOKEN }}" } } },
   { name: "Build and push runtime image", keys: ["name", "uses", "with"], values: { "uses" => "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8", "with" => {
@@ -349,7 +383,7 @@ validate_step_contracts(release_steps, [
     "push" => true,
     "sbom" => true,
     "tags" => "ghcr.io/${{ github.repository_owner }}/flowersec-runtime:${{ steps.vars.outputs.version }}\nghcr.io/${{ github.repository_owner }}/flowersec-runtime:latest\n",
-    "build-args" => "VERSION=v${{ steps.vars.outputs.version }}\nCOMMIT=${{ github.sha }}\nDATE=${{ steps.vars.outputs.date }}\n",
+    "build-args" => "VERSION=v${{ steps.vars.outputs.version }}\nCOMMIT=${{ steps.vars.outputs.sha }}\nDATE=${{ steps.vars.outputs.date }}\n",
   } } },
   { name: "Publish npm package", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}" } }, run_sha256: "c2cec9670487797dad340e84b95b5b39b22a1bae2394463ba4c3b7aa74b20f50" },
 ], "the unified release workflow release job")
@@ -372,7 +406,7 @@ release_version, release_version_index = require_named_step(release_steps, "Vali
 release_tags, release_tags_index = require_named_step(release_steps, "Verify all language tags point to this commit", "the unified release workflow")
 require_step_field(release_setup, "uses", "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4", "the unified release workflow Setup Rust step")
 require_step_field(release_version, "run", 'node scripts/check-release-version-consistency.mjs "$RELEASE_VERSION"', "the unified release workflow version facts step")
-require_step_field(release_tags, "run", 'scripts/verify-release-tags.sh "$RELEASE_VERSION" "$GITHUB_SHA"', "the unified release workflow tag verification step")
+require_step_field(release_tags, "run", 'scripts/verify-release-tags.sh "$RELEASE_VERSION" "$RELEASE_SHA"', "the unified release workflow tag verification step")
 [release_setup, release_version, release_tags].each_with_index do |step, index|
   require_unconditional(step, "the unified release workflow validation step #{index + 1}")
 end

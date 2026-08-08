@@ -1131,7 +1131,8 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       "      - name: Verify all language tags point to this commit",
       "        env:",
       "          RELEASE_VERSION: ${{ steps.vars.outputs.version }}",
-      '        run: scripts/verify-release-tags.sh "$RELEASE_VERSION" "$GITHUB_SHA"',
+      "          RELEASE_SHA: ${{ steps.vars.outputs.sha }}",
+      '        run: scripts/verify-release-tags.sh "$RELEASE_VERSION" "$RELEASE_SHA"',
       "",
     ].join("\n");
     assert.ok(workflow.includes(verificationStep));
