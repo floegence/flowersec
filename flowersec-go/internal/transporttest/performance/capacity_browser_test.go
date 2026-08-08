@@ -87,12 +87,35 @@ func runFocusedBrowserCapacityCase(t *testing.T, ctx context.Context, definition
 		t.Fatalf("browser capacity worker: %v: %s", err, browserCapacityFailureText(outputDirectory, browserCapacityWorkerFailureOutput(stdout.String(), stderr.String())))
 	}
 	var result browserCapacityWorkerResult
-	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || result.Status != "passed" || result.CaseID != definition.ID {
+	if err := decodeBrowserCapacityWorkerResult(stdout.Bytes(), &result); err != nil || result.Status != "passed" || result.CaseID != definition.ID {
 		t.Fatalf("browser capacity result is invalid: %v: %s", err, browserCapacityFailureText(outputDirectory, stdout.String()))
 	}
 	contract := capacityContractForDefinition(definition)
 	if result.Result.Succeeded != contract.Sessions || result.Result.ResidualSessions != 0 || result.Result.ResidualStreams != 0 {
 		t.Fatalf("browser capacity result does not satisfy the frozen workload: %+v", result.Result)
+	}
+}
+
+func decodeBrowserCapacityWorkerResult(data []byte, result *browserCapacityWorkerResult) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(result); err != nil {
+		return err
+	}
+	trailing := strings.TrimSpace(string(data[decoder.InputOffset():]))
+	if trailing != "" && trailing != "PASS" {
+		return fmt.Errorf("browser capacity worker emitted unexpected trailing output %q", trailing)
+	}
+	return nil
+}
+
+func TestDecodeBrowserCapacityWorkerResultAcceptsGoTestSuccessMarker(t *testing.T) {
+	data := []byte("{\"schema_version\":1,\"status\":\"passed\",\"case_id\":\"CAP-TUNNEL-WT-WSS-1000\"}\nPASS\n")
+	var result browserCapacityWorkerResult
+	if err := decodeBrowserCapacityWorkerResult(data, &result); err != nil || result.Status != "passed" {
+		t.Fatalf("decode browser capacity worker result = %+v, %v", result, err)
+	}
+	if err := decodeBrowserCapacityWorkerResult(append(data[:len(data)-5], []byte("FAIL\n")...), &result); err == nil {
+		t.Fatal("browser capacity worker accepted an unexpected failure marker")
 	}
 }
 
