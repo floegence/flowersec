@@ -2,14 +2,14 @@
 
 The native Swift SDK for Flowersec v2 end-to-end encrypted sessions on Apple platforms.
 
-Flowersec 2.3.0 is the coordinated SwiftPM release.
+Flowersec 2.3.1 is the coordinated SwiftPM patch release.
 
 ## Install
 
 The repository root exposes the Swift package through the following version range:
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "2.3.0")
+.package(url: "https://github.com/floegence/flowersec.git", from: "2.3.1")
 ```
 
 Use the `Flowersec` library product.
