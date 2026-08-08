@@ -84,7 +84,7 @@ func runFocusedBrowserCapacityCase(t *testing.T, ctx context.Context, definition
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	if err := command.Run(); err != nil {
-		t.Fatalf("browser capacity worker: %v: %s", err, browserCapacityFailureText(outputDirectory, stderr.String()))
+		t.Fatalf("browser capacity worker: %v: %s", err, browserCapacityFailureText(outputDirectory, browserCapacityWorkerFailureOutput(stdout.String(), stderr.String())))
 	}
 	var result browserCapacityWorkerResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || result.Status != "passed" || result.CaseID != definition.ID {
@@ -93,6 +93,17 @@ func runFocusedBrowserCapacityCase(t *testing.T, ctx context.Context, definition
 	contract := capacityContractForDefinition(definition)
 	if result.Result.Succeeded != contract.Sessions || result.Result.ResidualSessions != 0 || result.Result.ResidualStreams != 0 {
 		t.Fatalf("browser capacity result does not satisfy the frozen workload: %+v", result.Result)
+	}
+}
+
+func browserCapacityWorkerFailureOutput(stdout, stderr string) string {
+	return strings.TrimSpace(strings.Join([]string{stdout, stderr}, "\n"))
+}
+
+func TestBrowserCapacityWorkerFailureOutputPreservesBothStreams(t *testing.T) {
+	got := browserCapacityWorkerFailureOutput("worker failure\n", "controller failure\n")
+	if got != "worker failure\n\ncontroller failure" {
+		t.Fatalf("browser capacity worker failure output = %q", got)
 	}
 }
 
