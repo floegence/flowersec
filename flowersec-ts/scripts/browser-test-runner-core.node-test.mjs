@@ -392,6 +392,8 @@ test("constructs opaque stream metadata through the public browser API", async (
     capacitySource,
     /sdk\.createStreamMetadata\(\{ session_index: sessionIndex, stream_index: streamIndex \}\)/,
   );
+  assert.match(capacitySource, /__flowersecCapacityRecordDiagnostic/);
+  assert.match(capacitySource, /browserDiagnostics/);
   assert.doesNotMatch(capacitySource, /openStream\([^\n]+\{ metadata: \{/);
 });
 

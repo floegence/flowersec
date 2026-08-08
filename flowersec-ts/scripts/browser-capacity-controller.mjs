@@ -34,6 +34,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
   const events = [];
   const records = new Map();
   const resourceSamples = [];
+  const browserDiagnostics = [];
   let connected = 0;
   let terminated = 0;
   let closedSessions = 0;
@@ -68,6 +69,11 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
       event,
       ...(sessionID === "" ? {} : { session_id: sessionID }),
     });
+  };
+
+  const recordBrowserDiagnostic = (value) => {
+    if (typeof value !== "string" || browserDiagnostics.length >= 32) return;
+    browserDiagnostics.push(value.slice(0, 1024));
   };
 
   const notifyTermination = async (value) => {
@@ -115,6 +121,16 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
     context = await browser.newContext({ ignoreHTTPSErrors: true });
     await context.tracing.start({ screenshots: false, snapshots: false, sources: false });
     page = await context.newPage();
+    page.on("requestfailed", (request) => recordBrowserDiagnostic(
+      `request failed: ${request.url()} ${request.failure()?.errorText ?? "unknown"}`,
+    ));
+    page.on("response", (response) => {
+      if (response.status() >= 400) recordBrowserDiagnostic(`response ${response.status()}: ${response.url()}`);
+    });
+    page.on("pageerror", (error) => recordBrowserDiagnostic(`page error: ${error.message}`));
+    page.on("console", (message) => {
+      if (message.type() === "error") recordBrowserDiagnostic(`console error: ${message.text()}`);
+    });
     await page.exposeBinding("__flowersecCapacitySpend", async (_source, token) => {
       const response = await fetchImpl(plan.event_sink_url, {
         method: "POST",
@@ -125,6 +141,9 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
     });
     await page.exposeBinding("__flowersecCapacityTerminated", async (_source, value) => {
       await notifyTermination(value);
+    });
+    await page.exposeBinding("__flowersecCapacityRecordDiagnostic", async (_source, value) => {
+      recordBrowserDiagnostic(value);
     });
     await installWebTransportCertificateHash(
       page,
@@ -184,6 +203,26 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
                 });
                 await session.probeLiveness();
               } catch (error) {
+                try {
+                  const internal = await import("/dist/utils/errors.js");
+                  if (error instanceof internal.ConnectError) {
+                    const details = internal.connectErrorDetailsInternal(error);
+                    await globalThis.__flowersecCapacityRecordDiagnostic(JSON.stringify({
+                      type: "connect",
+                      public_code: error.code,
+                      internal_code: details.code,
+                      stage: details.stage,
+                      candidates: details.diagnostics.slice(0, 4).map((diagnostic) => ({
+                        carrier: diagnostic.carrier,
+                        stage: diagnostic.stage,
+                        code: diagnostic.code,
+                        message: diagnostic.message.slice(0, 256),
+                      })),
+                    }));
+                  }
+                } catch {
+                  // Internal diagnostics must never replace the public connection failure.
+                }
                 globalThis.__flowersecCapacitySessions.delete(id);
                 if (session !== undefined) await session.close().catch(() => undefined);
                 throw error;
@@ -370,7 +409,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
       classification: "raw_chromium_webtransport_capacity",
       topology: plan.topology,
       profile_id: plan.profile_id,
-      browser: { engine: "chromium", version: browserVersion },
+      browser: { engine: "chromium", version: browserVersion, diagnostics: browserDiagnostics },
       started_at: startedAt.toISOString(),
       finished_at: new Date().toISOString(),
       connected_sessions: connected,
