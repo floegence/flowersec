@@ -10,12 +10,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// Canonical JSON metadata attached to a logical v2 stream.
-pub type JsonObjectV2 = serde_json::Map<String, serde_json::Value>;
+pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
 /// A validated immutable value accepted as application stream metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StreamMetadata {
-    values: JsonObjectV2,
+    values: JsonObject,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -27,15 +27,15 @@ pub enum StreamMetadataError {
 impl StreamMetadata {
     pub fn empty() -> Self {
         Self {
-            values: JsonObjectV2::new(),
+            values: JsonObject::new(),
         }
     }
 
-    pub fn values(&self) -> &JsonObjectV2 {
+    pub fn values(&self) -> &JsonObject {
         &self.values
     }
 
-    pub(crate) fn from_validated(values: JsonObjectV2) -> Self {
+    pub(crate) fn from_validated(values: JsonObject) -> Self {
         Self { values }
     }
 }
@@ -53,10 +53,10 @@ impl TryFrom<serde_json::Value> for StreamMetadata {
     }
 }
 
-impl TryFrom<JsonObjectV2> for StreamMetadata {
+impl TryFrom<JsonObject> for StreamMetadata {
     type Error = StreamMetadataError;
 
-    fn try_from(values: JsonObjectV2) -> Result<Self, Self::Error> {
+    fn try_from(values: JsonObject) -> Result<Self, Self::Error> {
         Self::try_from(serde_json::Value::Object(values))
     }
 }
@@ -137,10 +137,10 @@ pub(crate) enum CarrierUnreliableMessageErrorV2 {
     Closed,
 }
 
-/// Maximum logical application streams accepted from one peer in SessionV2.
+/// Maximum logical application streams accepted from one peer in Session.
 pub const MAX_LOGICAL_INBOUND_STREAMS_V2: u16 = 128;
 
-/// Describes why a logical SessionV2 limit cannot be mapped to its carrier.
+/// Describes why a logical Session limit cannot be mapped to its carrier.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum CarrierStreamLimitErrorV2 {
     #[error("logical max inbound streams must be in 1..=128, got {0}")]
@@ -153,7 +153,7 @@ pub enum CarrierStreamLimitErrorV2 {
 ///
 /// The two additional peer-initiated bidirectional streams are reserved for
 /// the lifetime control stream and the persistent RPC stream. Admission has
-/// completed and released its stream before SessionV2 establishes them.
+/// completed and released its stream before Session establishes them.
 pub fn carrier_inbound_stream_limit_v2(logical_max: u16) -> Result<u32, CarrierStreamLimitErrorV2> {
     if !(1..=MAX_LOGICAL_INBOUND_STREAMS_V2).contains(&logical_max) {
         return Err(CarrierStreamLimitErrorV2::InvalidLogicalLimit(logical_max));
@@ -722,7 +722,7 @@ pub enum UnreliableSendOutcome {
 
 /// Opaque, carrier-neutral unreliable message access owned by a session.
 #[async_trait]
-pub trait UnreliableMessageChannelV2: fmt::Debug + Send + Sync + 'static {
+pub trait UnreliableMessageChannel: fmt::Debug + Send + Sync + 'static {
     /// Maximum plaintext size accepted on this channel.
     fn max_message_size(&self) -> usize;
     /// Authenticates and submits one message with an absolute expiration time.
@@ -793,7 +793,7 @@ impl From<SessionError> for io::Error {
 
 /// A reliable encrypted logical byte stream independent of the active carrier.
 #[async_trait]
-pub trait ByteStreamV2: fmt::Debug + Send + Sync + 'static {
+pub trait ByteStream: fmt::Debug + Send + Sync + 'static {
     #[cfg(test)]
     fn internal_test_id(&self) -> u64;
     /// Application stream kind negotiated by the Flowersec v2 stream setup.
@@ -814,18 +814,18 @@ pub trait ByteStreamV2: fmt::Debug + Send + Sync + 'static {
 }
 
 /// One accepted logical stream and its authenticated setup metadata.
-pub struct IncomingStreamV2 {
+pub struct IncomingStream {
     kind: String,
     metadata: StreamMetadata,
-    stream: Box<dyn ByteStreamV2>,
+    stream: Box<dyn ByteStream>,
 }
 
-impl IncomingStreamV2 {
+impl IncomingStream {
     /// Wraps an accepted stream after its v2 setup metadata has been authenticated.
     pub fn new(
         kind: impl Into<String>,
         metadata: StreamMetadata,
-        stream: Box<dyn ByteStreamV2>,
+        stream: Box<dyn ByteStream>,
     ) -> Self {
         Self {
             kind: kind.into(),
@@ -850,20 +850,20 @@ impl IncomingStreamV2 {
     }
 
     /// Borrows the carrier-neutral byte stream.
-    pub fn stream(&self) -> &dyn ByteStreamV2 {
+    pub fn stream(&self) -> &dyn ByteStream {
         self.stream.as_ref()
     }
 
     /// Consumes the incoming record and returns its byte stream.
-    pub fn into_stream(self) -> Box<dyn ByteStreamV2> {
+    pub fn into_stream(self) -> Box<dyn ByteStream> {
         self.stream
     }
 }
 
-impl fmt::Debug for IncomingStreamV2 {
+impl fmt::Debug for IncomingStream {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("IncomingStreamV2")
+            .debug_struct("IncomingStream")
             .field("kind", &self.kind)
             .field("metadata", &self.metadata)
             .finish_non_exhaustive()
@@ -872,7 +872,7 @@ impl fmt::Debug for IncomingStreamV2 {
 
 /// Carrier-neutral RPC access owned by a v2 session.
 #[async_trait]
-pub trait RpcPeerV2: fmt::Debug + Send + Sync + 'static {
+pub trait RpcPeer: fmt::Debug + Send + Sync + 'static {
     /// Performs one request-response call using a canonical JSON payload.
     async fn call(
         &self,
@@ -899,7 +899,7 @@ pub trait RpcPeerExt {
 #[async_trait]
 impl<T> RpcPeerExt for T
 where
-    T: RpcPeerV2 + ?Sized,
+    T: RpcPeer + ?Sized,
 {
     async fn call_typed<Request, Response>(
         &self,
@@ -920,13 +920,11 @@ where
 
 /// Public Flowersec v2 session contract shared by WSS and raw QUIC.
 #[async_trait]
-pub trait SessionV2: fmt::Debug + Send + Sync + 'static {
+pub trait Session: fmt::Debug + Send + Sync + 'static {
     /// Borrows the session's carrier-neutral RPC peer.
-    fn rpc(&self) -> &dyn RpcPeerV2;
+    fn rpc(&self) -> &dyn RpcPeer;
     /// Borrows unreliable message access after FSH2 negotiation and READY.
-    fn unreliable_messages(
-        &self,
-    ) -> Result<&dyn UnreliableMessageChannelV2, UnreliableMessageError> {
+    fn unreliable_messages(&self) -> Result<&dyn UnreliableMessageChannel, UnreliableMessageError> {
         Err(UnreliableMessageError::Unavailable)
     }
     /// Opens an encrypted logical stream with canonical setup metadata.
@@ -934,9 +932,9 @@ pub trait SessionV2: fmt::Debug + Send + Sync + 'static {
         &self,
         kind: &str,
         metadata: StreamMetadata,
-    ) -> Result<Box<dyn ByteStreamV2>, SessionError>;
+    ) -> Result<Box<dyn ByteStream>, SessionError>;
     /// Accepts the next authenticated logical stream.
-    async fn accept_stream(&self) -> Result<IncomingStreamV2, SessionError>;
+    async fn accept_stream(&self) -> Result<IncomingStream, SessionError>;
     /// Advances the session key epoch.
     async fn rekey(&self) -> Result<(), SessionError>;
     /// Performs a carrier-neutral liveness probe and returns its round-trip time.
@@ -960,7 +958,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl RpcPeerV2 for TypedRpcPeer {
+    impl RpcPeer for TypedRpcPeer {
         async fn call(
             &self,
             type_id: u32,

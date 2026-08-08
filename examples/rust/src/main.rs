@@ -38,8 +38,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 fn inspect_opaque_artifact(artifact_path: &Path) -> Result<(), Box<dyn Error>> {
     let artifact = Artifact::parse(std::fs::read(artifact_path)?)?;
-    let lease = ArtifactLease::new(artifact, || async { Ok(()) });
-    println!("artifact={:?}", lease.artifact());
+    println!("artifact={artifact:?}");
+    let _lease = ArtifactLease::new(artifact, || async { Ok(()) });
     Ok(())
 }
 

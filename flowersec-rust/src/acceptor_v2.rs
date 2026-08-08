@@ -18,7 +18,7 @@ use crate::{
     connector_v2::session_config,
     raw_quic_v2::{RawQuicLimits, RawQuicListener, RawQuicPathProfile, RawQuicServerConfig},
     session_v2::establish_session_v2,
-    transport_v2::{CarrierKind, CarrierSessionV2, PathKind, SessionRole, SessionV2},
+    transport_v2::{CarrierKind, CarrierSessionV2, PathKind, Session, SessionRole},
 };
 
 /// Runtime-owned bind, TLS, and resource policy for direct session acceptance.
@@ -141,7 +141,7 @@ impl Acceptor {
         &self,
         artifact: &Artifact,
         cancellation: CancellationToken,
-    ) -> Result<std::sync::Arc<dyn SessionV2>, AcceptError> {
+    ) -> Result<std::sync::Arc<dyn Session>, AcceptError> {
         let plan = accept_plan(artifact)?;
         if plan.connection.session.max_inbound_streams != self.max_inbound_streams {
             return Err(error(AcceptErrorCode::InvalidInput));
@@ -203,7 +203,7 @@ impl Acceptor {
         plan: AcceptPlanV2,
         cancellation: CancellationToken,
         deadline: tokio::time::Instant,
-    ) -> Result<std::sync::Arc<dyn SessionV2>, AcceptError> {
+    ) -> Result<std::sync::Arc<dyn Session>, AcceptError> {
         loop {
             let raw = tokio::select! {
                 _ = cancellation.cancelled() => return Err(error(AcceptErrorCode::Canceled)),

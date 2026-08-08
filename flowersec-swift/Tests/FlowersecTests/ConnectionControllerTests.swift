@@ -133,7 +133,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(snapshot.attempt, 1)
     XCTAssertEqual(
       snapshot.failure,
-      .terminal(.artifactSource(ArtifactSourceFailure(disposition: .terminal)))
+      .artifactSource(ArtifactSourceFailure(disposition: .terminal))
     )
     await controller.close()
   }
@@ -158,8 +158,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(snapshot.attempt, UInt64(try XCTUnwrap(scenario.artifactAcquisitions)))
     XCTAssertEqual(
       snapshot.failure,
-      .maximumAttemptsReached(
-        last: .artifactSource(ArtifactSourceFailure(disposition: .retryable)))
+      .artifactSource(ArtifactSourceFailure(disposition: .retryable))
     )
     await controller.close()
   }

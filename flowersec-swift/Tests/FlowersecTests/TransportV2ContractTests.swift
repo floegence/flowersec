@@ -48,27 +48,27 @@ struct TransportV2ContractTests {
     ])
 
     #expect(metadata.values["request"] == .string("hello"))
-    #expect(metadata.encodedByteCount <= StreamMetadata.maxEncodedBytes)
+    #expect(metadata.values["nested"] != nil)
   }
 
   @Test func metadataRejectsUnsafeIntegersAndOversizedStrings() {
-    #expect(throws: StreamMetadataError.unsafeInteger) {
+    #expect(throws: StreamMetadataError.invalidValue) {
       try StreamMetadata(["value": .integer(9_007_199_254_740_992)])
     }
-    #expect(throws: StreamMetadataError.stringTooLong) {
+    #expect(throws: StreamMetadataError.invalidValue) {
       try StreamMetadata(["value": .string(String(repeating: "a", count: 513))])
     }
   }
 
   @Test func metadataRejectsDepthNodeAndArrayLimitViolations() {
     let tooDeep: JSONValue = .array([.array([.array([.array([.array([.null])])])])])
-    #expect(throws: StreamMetadataError.depthExceeded) {
+    #expect(throws: StreamMetadataError.invalidValue) {
       try StreamMetadata(["value": tooDeep])
     }
-    #expect(throws: StreamMetadataError.arrayTooLong) {
+    #expect(throws: StreamMetadataError.invalidValue) {
       try StreamMetadata(["value": .array(Array(repeating: .null, count: 33))])
     }
-    #expect(throws: StreamMetadataError.nodeLimitExceeded) {
+    #expect(throws: StreamMetadataError.invalidValue) {
       try StreamMetadata([
         "a": .array(Array(repeating: .null, count: 32)),
         "b": .array(Array(repeating: .null, count: 32)),

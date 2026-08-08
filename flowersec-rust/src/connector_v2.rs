@@ -14,7 +14,7 @@ use crate::{
     admission_v2::{AdmissionCommitErrorV2, AdmissionCommitV2, CandidateAttemptV2},
     artifact_v2::{ArtifactLease, CandidatePlanV2, ConnectionPlanError, ConnectionPlanV2},
     session_v2::{SessionConfigV2, SessionDeadlinesV2, establish_session_v2},
-    transport_v2::{CarrierSessionV2, PathKind, SessionRole, SessionV2},
+    transport_v2::{CarrierSessionV2, PathKind, Session, SessionRole},
 };
 
 /// Stable, redacted connection failure category.
@@ -139,10 +139,10 @@ impl SessionConnectorV2 {
         &self,
         lease: &mut ArtifactLease,
         cancellation: CancellationToken,
-    ) -> Result<Arc<dyn SessionV2>, ConnectError> {
+    ) -> Result<Arc<dyn Session>, ConnectError> {
         let deadline = tokio::time::Instant::now() + self.options.connect_timeout;
         let plan = lease
-            .artifact()
+            .artifact_for_connector()
             .connection_plan()
             .map_err(|ConnectionPlanError::Invalid| error(ConnectErrorCode::InvalidInput))?;
         require_unexpired(&plan)?;
@@ -177,7 +177,7 @@ impl SessionConnectorV2 {
         }
         let (winner_id, attempt) = select_winner(dials, deadline, &cancellation).await?;
         let encoded = lease
-            .artifact()
+            .artifact_for_connector()
             .encode_fsb2(&winner_id)
             .map_err(|_| error(ConnectErrorCode::InvalidInput))?;
 

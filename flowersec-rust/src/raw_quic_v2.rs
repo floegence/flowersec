@@ -92,7 +92,7 @@ impl RawQuicLimits {
         .with_session_v2_logical_stream_limit(logical_max)
     }
 
-    /// Applies the exact SessionV2 carrier stream limit while preserving the
+    /// Applies the exact Session carrier stream limit while preserving the
     /// remaining QUIC transport policy.
     pub fn with_session_v2_logical_stream_limit(
         mut self,

@@ -4,7 +4,7 @@ use flowersec::{
     SessionError, SessionTermination, StreamMetadata, StreamMetadataError, connect,
 };
 use serde::{Deserialize, Serialize};
-use std::{fs, num::NonZeroU64, process::Command, sync::Arc};
+use std::{fs, num::NonZeroU64, path::Path, process::Command, sync::Arc};
 
 #[derive(Serialize)]
 struct TypedRequest {
@@ -87,6 +87,106 @@ fn stream_metadata_is_validated_before_opening_a_stream() {
 fn artifact_lease_does_not_expose_spend_state() {
     let source = include_str!("../src/artifact_v2.rs");
     assert!(!source.contains("pub fn is_committed"));
+}
+
+#[test]
+fn artifact_lease_does_not_expose_its_artifact() {
+    let fixture = tempfile::tempdir().expect("create lease API probe directory");
+    let crate_path = env!("CARGO_MANIFEST_DIR").replace('\\', "\\\\");
+    fs::write(
+        fixture.path().join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"flowersec-lease-opacity-probe\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nflowersec = {{ path = \"{crate_path}\" }}\n"
+        ),
+    )
+    .expect("write lease API probe manifest");
+    fs::create_dir(fixture.path().join("src")).expect("create lease API probe source directory");
+    fs::write(
+        fixture.path().join("src/main.rs"),
+        "use flowersec::ArtifactLease;\n\nfn inspect(lease: &ArtifactLease) { let _ = lease.artifact(); }\nfn main() {}\n",
+    )
+    .expect("write lease API probe source");
+
+    let output = Command::new("rustup")
+        .args(["run", "1.88.0", "cargo", "check", "--offline", "--quiet"])
+        .current_dir(fixture.path())
+        .env("CARGO_TARGET_DIR", fixture.path().join("target"))
+        .output()
+        .expect("run lease API probe");
+    assert!(
+        !output.status.success(),
+        "ArtifactLease unexpectedly exposes its artifact"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("artifact"),
+        "lease opacity probe failed for an unrelated reason:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[test]
+fn rustdoc_uses_real_unversioned_portable_types() {
+    let fixture = tempfile::tempdir().expect("create rustdoc target directory");
+    let output = Command::new("rustup")
+        .args([
+            "run",
+            "1.88.0",
+            "cargo",
+            "doc",
+            "--no-deps",
+            "--quiet",
+            "--target-dir",
+        ])
+        .arg(fixture.path())
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("generate public rustdoc");
+    assert!(
+        output.status.success(),
+        "cargo doc failed:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let mut pages = Vec::new();
+    collect_html(&fixture.path().join("doc/flowersec"), &mut pages);
+    assert!(!pages.is_empty(), "cargo doc produced no Flowersec pages");
+    for page in pages {
+        if matches!(
+            page.file_name().and_then(|name| name.to_str()),
+            Some("index.html" | "all.html" | "sidebar-items.js")
+        ) {
+            continue;
+        }
+        let source = fs::read_to_string(&page).expect("read rustdoc page");
+        for name in [
+            "SessionV2",
+            "ByteStreamV2",
+            "IncomingStreamV2",
+            "RpcPeerV2",
+            "UnreliableMessageChannelV2",
+            "JsonObjectV2",
+        ] {
+            assert!(
+                !source.contains(name),
+                "public rustdoc {} leaked {name}",
+                page.display(),
+            );
+        }
+    }
+}
+
+fn collect_html(directory: &Path, pages: &mut Vec<std::path::PathBuf>) {
+    for entry in fs::read_dir(directory).expect("read rustdoc directory") {
+        let path = entry.expect("read rustdoc entry").path();
+        if path.is_dir() {
+            collect_html(&path, pages);
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension == "html")
+        {
+            pages.push(path);
+        }
+    }
 }
 
 #[test]

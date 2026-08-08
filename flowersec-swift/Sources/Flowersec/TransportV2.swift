@@ -292,16 +292,7 @@ public indirect enum JSONValue: Equatable, Sendable {
 }
 
 public enum StreamMetadataError: Error, Equatable, Sendable {
-  case emptyKey
-  case keyTooLong
-  case keyNotNormalized
-  case stringTooLong
-  case unsafeInteger
-  case arrayTooLong
-  case objectTooLarge
-  case depthExceeded
-  case nodeLimitExceeded
-  case encodedTooLarge
+  case invalidValue
 }
 
 /// Stable, carrier-neutral failures returned by session and byte-stream operations.
@@ -345,19 +336,19 @@ public struct RPCError: Error, Equatable, Sendable {
 }
 
 public struct StreamMetadata: Equatable, Sendable {
-  public static let maxEncodedBytes = 4_096
-  public static let maxDepth = 4
-  public static let maxNodes = 64
-  public static let maxObjectKeys = 64
-  public static let maxArrayItems = 32
-  public static let maxKeyBytes = 64
-  public static let maxStringBytes = 512
-  public static let maximumSafeInteger: Int64 = 9_007_199_254_740_991
+  private static let maxEncodedBytes = 4_096
+  private static let maxDepth = 4
+  private static let maxNodes = 64
+  private static let maxObjectKeys = 64
+  private static let maxArrayItems = 32
+  private static let maxKeyBytes = 64
+  private static let maxStringBytes = 512
+  private static let maximumSafeInteger: Int64 = 9_007_199_254_740_991
 
   public static let empty = StreamMetadata(values: [:], encodedByteCount: 2)
 
   public let values: [String: JSONValue]
-  public let encodedByteCount: Int
+  private let encodedByteCount: Int
 
   public init(_ values: [String: JSONValue]) throws {
     var nodeCount = 1
@@ -367,7 +358,7 @@ public struct StreamMetadata: Equatable, Sendable {
       options: [.sortedKeys, .withoutEscapingSlashes]
     )
     guard encoded.count <= Self.maxEncodedBytes else {
-      throw StreamMetadataError.encodedTooLarge
+      throw StreamMetadataError.invalidValue
     }
     self.init(values: values, encodedByteCount: encoded.count)
   }
@@ -382,13 +373,13 @@ public struct StreamMetadata: Equatable, Sendable {
     depth: Int,
     nodeCount: inout Int
   ) throws {
-    guard depth <= maxDepth else { throw StreamMetadataError.depthExceeded }
-    guard object.count <= maxObjectKeys else { throw StreamMetadataError.objectTooLarge }
+    guard depth <= maxDepth else { throw StreamMetadataError.invalidValue }
+    guard object.count <= maxObjectKeys else { throw StreamMetadataError.invalidValue }
     for (key, value) in object {
-      guard !key.isEmpty else { throw StreamMetadataError.emptyKey }
-      guard key.utf8.count <= maxKeyBytes else { throw StreamMetadataError.keyTooLong }
+      guard !key.isEmpty else { throw StreamMetadataError.invalidValue }
+      guard key.utf8.count <= maxKeyBytes else { throw StreamMetadataError.invalidValue }
       guard key == key.precomposedStringWithCanonicalMapping else {
-        throw StreamMetadataError.keyNotNormalized
+        throw StreamMetadataError.invalidValue
       }
       try validate(value, depth: depth + 1, nodeCount: &nodeCount)
     }
@@ -399,22 +390,22 @@ public struct StreamMetadata: Equatable, Sendable {
     depth: Int,
     nodeCount: inout Int
   ) throws {
-    guard depth <= maxDepth else { throw StreamMetadataError.depthExceeded }
+    guard depth <= maxDepth else { throw StreamMetadataError.invalidValue }
     nodeCount += 1
-    guard nodeCount <= maxNodes else { throw StreamMetadataError.nodeLimitExceeded }
+    guard nodeCount <= maxNodes else { throw StreamMetadataError.invalidValue }
     switch value {
     case .null, .bool:
       return
     case .integer(let integer):
       guard absSafe(integer) <= maximumSafeInteger else {
-        throw StreamMetadataError.unsafeInteger
+        throw StreamMetadataError.invalidValue
       }
     case .string(let string):
       guard string.utf8.count <= maxStringBytes else {
-        throw StreamMetadataError.stringTooLong
+        throw StreamMetadataError.invalidValue
       }
     case .array(let array):
-      guard array.count <= maxArrayItems else { throw StreamMetadataError.arrayTooLong }
+      guard array.count <= maxArrayItems else { throw StreamMetadataError.invalidValue }
       for item in array {
         try validate(item, depth: depth + 1, nodeCount: &nodeCount)
       }

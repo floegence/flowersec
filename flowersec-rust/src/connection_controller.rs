@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     ArtifactLease, ConnectError, ConnectErrorCode, ConnectorOptions, SessionError,
-    connect_with_cancellation, transport_v2::SessionV2,
+    connect_with_cancellation, transport_v2::Session,
 };
 
 const DEFAULT_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
@@ -141,8 +141,9 @@ impl ConnectionFailure {
 pub struct ConnectionSnapshot {
     pub state: ConnectionState,
     pub attempt: u64,
-    pub current_session: Option<Arc<dyn SessionV2>>,
+    pub current_session: Option<Arc<dyn Session>>,
     pub failure: Option<ConnectionFailure>,
+    revision: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -157,7 +158,7 @@ pub(crate) struct ControllerStatus {
 
 struct ControllerState {
     status: ControllerStatus,
-    current: Option<Arc<dyn SessionV2>>,
+    current: Option<Arc<dyn Session>>,
 }
 
 struct ControllerInner {
@@ -236,6 +237,21 @@ impl ConnectionController {
         self.inner.snapshot()
     }
 
+    /// Waits until the controller publishes a newer snapshot.
+    ///
+    /// Dropping the returned future cancels only this wait. Closing the
+    /// controller publishes a closed snapshot and wakes every waiter.
+    pub async fn wait_for_snapshot_change(&self, after: &ConnectionSnapshot) -> ConnectionSnapshot {
+        loop {
+            let changed = self.inner.changed.notified();
+            let status = self.inner.status();
+            if status.revision != after.revision {
+                return self.inner.snapshot();
+            }
+            changed.await;
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn status(&self) -> ControllerStatus {
         self.inner.status()
@@ -256,7 +272,7 @@ impl ConnectionController {
     /// Returns the current established session. A terminated session is
     /// removed before retry begins, and a replacement is published only after
     /// it has fully established.
-    pub fn current_session(&self) -> Option<Arc<dyn SessionV2>> {
+    pub fn current_session(&self) -> Option<Arc<dyn Session>> {
         lock(&self.inner.state).current.clone()
     }
 
@@ -314,6 +330,7 @@ impl ControllerInner {
             attempt: state.status.attempt,
             current_session: state.current.clone(),
             failure: state.status.last_failure,
+            revision: state.status.revision,
         }
     }
 
@@ -327,7 +344,7 @@ impl ControllerInner {
         })
     }
 
-    fn set_connected(&self, attempt: u64, session: Arc<dyn SessionV2>) -> bool {
+    fn set_connected(&self, attempt: u64, session: Arc<dyn Session>) -> bool {
         self.update(|state| {
             state.current = Some(session);
             state.status.state = ConnectionState::Connected;
@@ -387,7 +404,7 @@ impl ControllerInner {
         true
     }
 
-    fn finish_closed(&self) -> Option<Arc<dyn SessionV2>> {
+    fn finish_closed(&self) -> Option<Arc<dyn Session>> {
         let current = {
             let mut state = lock(&self.state);
             if state.status.state == ConnectionState::Closed {
@@ -812,6 +829,87 @@ mod tests {
         })
         .await
         .expect("controller reaches expected state")
+    }
+
+    #[tokio::test]
+    async fn public_snapshot_wait_returns_on_change_and_for_stale_snapshot() {
+        let controller = ConnectionController::new(
+            Arc::new(PendingSource {
+                future_dropped: Arc::new(AtomicBool::new(false)),
+                attempts: Arc::new(AtomicU64::new(0)),
+            }),
+            options(),
+        );
+        let idle = controller.snapshot();
+        controller.start();
+
+        let connecting = tokio::time::timeout(
+            Duration::from_secs(1),
+            controller.wait_for_snapshot_change(&idle),
+        )
+        .await
+        .expect("snapshot waiter observes connecting");
+        assert_eq!(connecting.state, ConnectionState::Connecting);
+
+        let stale = tokio::time::timeout(
+            Duration::from_millis(50),
+            controller.wait_for_snapshot_change(&idle),
+        )
+        .await
+        .expect("stale snapshot returns immediately");
+        assert_eq!(stale.state, ConnectionState::Connecting);
+        controller.close().await;
+    }
+
+    #[tokio::test]
+    async fn close_wakes_all_public_snapshot_waiters() {
+        let controller = Arc::new(ConnectionController::new(
+            Arc::new(PendingSource {
+                future_dropped: Arc::new(AtomicBool::new(false)),
+                attempts: Arc::new(AtomicU64::new(0)),
+            }),
+            options(),
+        ));
+        let idle = controller.snapshot();
+        let first = {
+            let controller = controller.clone();
+            let idle = idle.clone();
+            tokio::spawn(async move { controller.wait_for_snapshot_change(&idle).await })
+        };
+        let second = {
+            let controller = controller.clone();
+            let idle = idle.clone();
+            tokio::spawn(async move { controller.wait_for_snapshot_change(&idle).await })
+        };
+        tokio::task::yield_now().await;
+        controller.close().await;
+
+        for waiter in [first, second] {
+            let snapshot = tokio::time::timeout(Duration::from_secs(1), waiter)
+                .await
+                .expect("close wakes waiter")
+                .expect("waiter task succeeds");
+            assert_eq!(snapshot.state, ConnectionState::Closed);
+        }
+    }
+
+    #[tokio::test]
+    async fn dropping_snapshot_wait_does_not_change_controller_ownership() {
+        let attempts = Arc::new(AtomicU64::new(0));
+        let controller = ConnectionController::new(
+            Arc::new(PendingSource {
+                future_dropped: Arc::new(AtomicBool::new(false)),
+                attempts: attempts.clone(),
+            }),
+            options(),
+        );
+        let snapshot = controller.snapshot();
+        let wait = controller.wait_for_snapshot_change(&snapshot);
+        drop(wait);
+        controller.start();
+        wait_for_state(&controller, ConnectionState::Connecting).await;
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        controller.close().await;
     }
 
     #[test]

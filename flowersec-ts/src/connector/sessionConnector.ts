@@ -16,6 +16,7 @@ import {
 } from "../v2/session.js";
 import type { ArtifactLeaseV2 } from "../v2/artifactLease.js";
 import { unwrapArtifact } from "../v2/opaqueArtifact.js";
+import { artifactLeaseArtifact } from "../public/artifactLease.js";
 import { ConnectError } from "../public/connectError.js";
 import {
   AbortError,
@@ -99,7 +100,7 @@ export class SessionConnectorV2 {
     private readonly attemptFactory: CandidateAttemptFactoryV2,
     private readonly options: SessionConnectorInternalOptionsV2,
   ) {
-    this.artifact = unwrapArtifact(lease.artifact);
+    this.artifact = unwrapArtifact(artifactLeaseArtifact(lease));
   }
 
   async connect(options: Readonly<{ signal?: AbortSignal }> = {}): Promise<SessionConnectResultV2> {

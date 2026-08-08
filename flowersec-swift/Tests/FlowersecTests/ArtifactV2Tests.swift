@@ -243,13 +243,13 @@ private struct ArtifactVectorsV2: Decodable {
 
 extension Data {
   fileprivate init(hexV2: String) throws {
-    guard hexV2.count.isMultiple(of: 2) else { throw ArtifactCodecError.invalidArtifact }
+    guard hexV2.count.isMultiple(of: 2) else { throw ArtifactError.invalidArtifact }
     self.init()
     var index = hexV2.startIndex
     while index < hexV2.endIndex {
       let next = hexV2.index(index, offsetBy: 2)
       guard let byte = UInt8(hexV2[index..<next], radix: 16) else {
-        throw ArtifactCodecError.invalidArtifact
+        throw ArtifactError.invalidArtifact
       }
       append(byte)
       index = next

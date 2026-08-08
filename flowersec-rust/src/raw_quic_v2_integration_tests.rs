@@ -1294,8 +1294,8 @@ async fn raw_quic_control_and_rpc_slots_preserve_one_data_stream_capacity() {
         establish_session_v2(client_carrier, client_config),
         establish_session_v2(server_carrier, server_config),
     );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
     let rpc = client
         .rpc()
         .call(1, serde_json::json!({"capacity": "reserved"}))
@@ -1316,7 +1316,7 @@ async fn raw_quic_control_and_rpc_slots_preserve_one_data_stream_capacity() {
         )
         .await
         .is_err(),
-        "second logical stream bypassed the SessionV2 semaphore"
+        "second logical stream bypassed the Session semaphore"
     );
 
     first.reset().await.expect("reset first logical stream");
@@ -1614,7 +1614,7 @@ async fn run_rust_and_go_full_session_v2_over_raw_quic(profile: RawQuicPathProfi
     command
         .env("FLOWERSEC_INTEROP_SESSION_PSK_B64", STANDARD.encode(psk))
         .stdout(Stdio::piped());
-    let mut child = command.spawn().expect("start Go SessionV2 server");
+    let mut child = command.spawn().expect("start Go Session server");
     let stdout = child.stdout.take().expect("Go server stdout");
     let (mut reader, ready) = tokio::task::spawn_blocking(move || {
         let mut reader = BufReader::new(stdout);
@@ -1637,7 +1637,7 @@ async fn run_rust_and_go_full_session_v2_over_raw_quic(profile: RawQuicPathProfi
         client_config(profile, session_limits(4)),
     )
     .await
-    .expect("dial Go SessionV2 server");
+    .expect("dial Go Session server");
     let contract_hash = session_contract_hash(4, 30);
     let raw_fsb2 = admission_request_fixture_with_contract(profile, contract_hash);
     let (local_endpoint, peer_endpoint) = match profile {
@@ -1672,7 +1672,7 @@ async fn run_rust_and_go_full_session_v2_over_raw_quic(profile: RawQuicPathProfi
         },
     )
     .await
-    .expect("admit and establish Rust SessionV2");
+    .expect("admit and establish Rust Session");
 
     let stream = session
         .open_stream("rust-open", StreamMetadata::empty())
@@ -1705,7 +1705,7 @@ async fn run_rust_and_go_full_session_v2_over_raw_quic(profile: RawQuicPathProfi
         .await
         .expect("Rust to Go RPC");
     assert_eq!(response["from"], "rust");
-    session.rekey().await.expect("Rust/Go SessionV2 rekey");
+    session.rekey().await.expect("Rust/Go Session rekey");
     let response = session
         .rpc()
         .call(22, serde_json::json!({"epoch": 1}))
@@ -1733,7 +1733,7 @@ async fn run_rust_and_go_full_session_v2_over_raw_quic(profile: RawQuicPathProfi
         .expect("finish RPC response acknowledgement");
 
     let (status, remainder) = tokio::task::spawn_blocking(move || {
-        let status = child.wait().expect("wait Go SessionV2 server");
+        let status = child.wait().expect("wait Go Session server");
         let mut remainder = String::new();
         reader
             .read_to_string(&mut remainder)
@@ -1742,9 +1742,9 @@ async fn run_rust_and_go_full_session_v2_over_raw_quic(profile: RawQuicPathProfi
     })
     .await
     .expect("join Go server wait");
-    assert!(status.success(), "Go SessionV2 failed: {remainder}");
+    assert!(status.success(), "Go Session failed: {remainder}");
     assert!(remainder.contains("OK"), "Go output: {remainder}");
-    session.close().await.expect("close Rust SessionV2");
+    session.close().await.expect("close Rust Session");
 }
 
 #[tokio::test]
@@ -1875,7 +1875,7 @@ async fn admit_test_client(
     );
     let mut lease = ArtifactLease::new(artifact, || async { Ok(()) });
     let credential = lease
-        .artifact()
+        .artifact_for_connector()
         .encode_fsb2("q1")
         .expect("encode fixture admission credential");
     assert_eq!(credential.raw, raw_fsb2, "fixture admission credential");
@@ -2000,7 +2000,7 @@ fn default_limits() -> RawQuicLimits {
 fn session_limits(logical_max: u16) -> RawQuicLimits {
     RawQuicLimits::default()
         .with_session_v2_logical_stream_limit(logical_max)
-        .expect("SessionV2 raw QUIC limits")
+        .expect("Session raw QUIC limits")
 }
 
 fn raw_session_config(

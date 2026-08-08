@@ -18,7 +18,7 @@ use crate::{
         SessionConnectorV2,
     },
     raw_quic_v2::{RawQuicClientConfig, RawQuicLimits, RawQuicPathProfile, RawQuicSession},
-    transport_v2::{CarrierKind, CarrierSessionV2, PathKind, SessionRole, SessionV2},
+    transport_v2::{CarrierKind, CarrierSessionV2, PathKind, Session, SessionRole},
 };
 
 const RESOLVED_ADDRESS_PROBE_DELAY: Duration = Duration::from_millis(250);
@@ -99,7 +99,7 @@ impl ConnectorOptions {
 pub async fn connect(
     lease: &mut ArtifactLease,
     options: ConnectorOptions,
-) -> Result<Arc<dyn SessionV2>, ConnectError> {
+) -> Result<Arc<dyn Session>, ConnectError> {
     connect_with_cancellation(lease, options, CancellationToken::new()).await
 }
 
@@ -108,7 +108,7 @@ pub async fn connect_with_cancellation(
     lease: &mut ArtifactLease,
     options: ConnectorOptions,
     cancellation: CancellationToken,
-) -> Result<Arc<dyn SessionV2>, ConnectError> {
+) -> Result<Arc<dyn Session>, ConnectError> {
     let connector_options = SessionConnectorOptionsV2 {
         connect_timeout: options.connect_timeout,
         close_flush_timeout: options.close_flush_timeout,

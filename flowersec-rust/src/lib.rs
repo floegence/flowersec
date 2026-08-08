@@ -75,11 +75,9 @@ pub use connection_controller::{
 pub use connector_v2::{ConnectError, ConnectErrorCode};
 pub use native_runtime_v2::{ConnectorOptions, connect, connect_with_cancellation};
 pub use transport_v2::{
-    ByteStreamV2 as ByteStream, IncomingStreamV2 as IncomingStream, JsonObjectV2 as JsonObject,
-    RpcCallError, RpcError, RpcPeerExt, RpcPeerV2 as RpcPeer, SessionError, SessionTermination,
-    SessionV2 as Session, StreamMetadata, StreamMetadataError,
-    UnreliableMessageChannelV2 as UnreliableMessageChannel, UnreliableMessageError,
-    UnreliableSendOutcome,
+    ByteStream, IncomingStream, JsonObject, RpcCallError, RpcError, RpcPeer, RpcPeerExt, Session,
+    SessionError, SessionTermination, StreamMetadata, StreamMetadataError,
+    UnreliableMessageChannel, UnreliableMessageError, UnreliableSendOutcome,
 };
 
 #[cfg(test)]

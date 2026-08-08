@@ -15,7 +15,7 @@ use crate::{
     },
     transport_v2::{
         CarrierKind, CarrierSessionV2, CarrierStreamV2, CarrierUnreliableMessageErrorV2, PathKind,
-        RpcCallError, SessionError, SessionRole, SessionV2, StreamMetadata, UnreliableMessageError,
+        RpcCallError, Session, SessionError, SessionRole, StreamMetadata, UnreliableMessageError,
     },
 };
 use bytes::Bytes;
@@ -55,8 +55,8 @@ async fn exact_handshake_and_ready_boundary_establish_a_memory_pair() {
         establish_session_v2(client_carrier, client),
         establish_session_v2(server_carrier, server),
     );
-    let client: Arc<dyn SessionV2> = client_result.expect("client session");
-    let server: Arc<dyn SessionV2> = server_result.expect("server session");
+    let client: Arc<dyn Session> = client_result.expect("client session");
+    let server: Arc<dyn Session> = server_result.expect("server session");
     assert_eq!(
         client.unreliable_messages().unwrap_err(),
         UnreliableMessageError::Unavailable,
@@ -948,7 +948,7 @@ async fn rpc_handler_failure_is_sanitized_before_crossing_the_session() {
     server.close().await.expect("close server");
 }
 
-async fn establish_pair() -> (Arc<dyn SessionV2>, Arc<dyn SessionV2>) {
+async fn establish_pair() -> (Arc<dyn Session>, Arc<dyn Session>) {
     let (client_carrier, server_carrier) = memory_carrier_pair_v2();
     let client = SessionConfigV2 {
         role: SessionRole::Client,
@@ -1393,8 +1393,8 @@ async fn failed_outbound_carrier_open_commits_abandonment_before_later_rekey() {
         establish_session_v2(client_carrier, client_config),
         establish_session_v2(server_carrier, server_config),
     );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
     assert!(
         client
             .open_stream("fails-before-fss2", StreamMetadata::empty())
@@ -1457,8 +1457,8 @@ async fn canceled_outbound_setup_commits_reset_before_later_rekey() {
         establish_session_v2(client_carrier, client_config),
         establish_session_v2(server_carrier, server_config),
     );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
     gate.store(true, Ordering::Release);
     let opening = {
         let client = client.clone();
@@ -1541,8 +1541,8 @@ async fn canceled_abandonment_finishes_the_in_flight_reset_record() {
         establish_session_v2(client_carrier, client_config),
         establish_session_v2(server_carrier, server_config),
     );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
 
     writes.store(0, Ordering::Release);
     enabled.store(true, Ordering::Release);
@@ -1632,8 +1632,8 @@ async fn goaway_boundary_tightening_rejects_an_already_allocated_open() {
         establish_session_v2(client_carrier, client_config),
         establish_session_v2(server_carrier, server_config),
     );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
 
     client_gate.store(true, Ordering::Release);
     let opening = {
@@ -1713,8 +1713,8 @@ async fn close_flush_is_bounded_when_the_control_stream_stalls() {
         establish_session_v2(client_carrier, client_config),
         establish_session_v2(server_carrier, server_config),
     );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
     gate.store(true, Ordering::Release);
     let error = tokio::time::timeout(Duration::from_millis(250), client.close())
         .await
@@ -1743,8 +1743,8 @@ async fn close_finishes_control_stream_before_carrier_shutdown() {
         establish_session_v2(client_carrier, client_config),
         establish_session_v2(server_carrier, server_config),
     );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
 
     client.close().await.expect("close client");
     let finish_order = control_finish_order.load(Ordering::Acquire);
@@ -1789,8 +1789,8 @@ async fn signed_idle_timeout_is_refreshed_by_protocol_activity() {
         establish_session_v2(client_carrier, client_config),
         establish_session_v2(server_carrier, server_config),
     );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
     tokio::time::sleep(Duration::from_millis(50)).await;
     client
         .probe_liveness()
@@ -1961,8 +1961,8 @@ async fn protocol_failure_closes_carrier_and_wakes_blocked_accept() {
             regression_config(SessionRole::Server, "failure-cleanup", 1, None),
         ),
     );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
     let accepting = {
         let client = client.clone();
         tokio::spawn(async move { client.accept_stream().await })
@@ -2007,8 +2007,8 @@ async fn stalled_fss2_does_not_block_later_authenticated_streams() {
             regression_config(SessionRole::Server, "stalled-fss2", 2, None),
         ),
     );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
 
     let stalled = raw_client_carrier
         .open_stream()
@@ -2058,8 +2058,8 @@ async fn queued_data_open_does_not_starve_reserved_rpc_capacity() {
             ),
         ),
     );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
     let (first, first_incoming) = tokio::join!(
         client.open_stream("capacity-owner", StreamMetadata::empty()),
         server.accept_stream(),
@@ -2118,8 +2118,8 @@ async fn peer_initiated_rekey_is_bounded_by_the_receivers_completion_deadline() 
         establish_session_v2(client_carrier, client_config),
         establish_session_v2(server_carrier, server_config),
     );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
     let (stream, incoming) = tokio::join!(
         client.open_stream("peer-rekey-deadline", StreamMetadata::empty()),
         server.accept_stream(),
@@ -2162,8 +2162,8 @@ async fn close_flush_deadline_also_bounds_carrier_close() {
         establish_session_v2(client_carrier, client_config),
         establish_session_v2(server_carrier, server_config),
     );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
 
     let error = tokio::time::timeout(Duration::from_millis(250), client.close())
         .await
@@ -2190,8 +2190,8 @@ async fn idle_timeout_drops_a_hanging_carrier_close_future() {
         establish_session_v2(client_carrier, client_config),
         establish_session_v2(server_carrier, server_config),
     );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
 
     let termination = tokio::time::timeout(Duration::from_millis(250), client.wait_termination())
         .await
@@ -2227,8 +2227,8 @@ async fn local_rekey_waits_for_an_in_flight_inbound_open_responder() {
         establish_session_v2(client_carrier, client_config),
         establish_session_v2(server_carrier, server_config),
     );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
 
     enabled.store(true, Ordering::Release);
     let opening = {

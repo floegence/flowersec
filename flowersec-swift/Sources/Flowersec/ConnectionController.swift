@@ -50,16 +50,11 @@ public enum ConnectionAttemptFailure: Error, Equatable, Sendable {
   }
 }
 
-public enum ConnectionFailure: Error, Equatable, Sendable {
-  case terminal(ConnectionAttemptFailure)
-  case maximumAttemptsReached(last: ConnectionAttemptFailure)
-}
-
 public struct ConnectionSnapshot: Sendable {
   public let state: ConnectionState
   public let attempt: UInt64
   public let currentSession: (any Session)?
-  public let failure: ConnectionFailure?
+  public let failure: ConnectionAttemptFailure?
 }
 
 public enum ConnectionControllerConfigurationError: Error, Equatable, Sendable {
@@ -74,7 +69,7 @@ public actor ConnectionController {
   public private(set) var state: ConnectionState = .idle
   public private(set) var attempt: UInt64 = 0
   public private(set) var currentSession: (any Session)?
-  public private(set) var failure: ConnectionFailure?
+  public private(set) var failure: ConnectionAttemptFailure?
 
   private let source: any ArtifactSource
   private let options: ConnectorOptions
@@ -267,7 +262,7 @@ public actor ConnectionController {
       } catch is CancellationError {
         inFlightAttempt = nil
         if state != .closed {
-          fail(.terminal(.connection(.canceled)))
+          fail(.connection(.canceled))
         }
         return
       } catch let attemptFailure as ConnectionAttemptFailure {
@@ -285,7 +280,7 @@ public actor ConnectionController {
       } catch {
         inFlightAttempt = nil
         guard state != .closed, !Task.isCancelled else { return }
-        fail(.terminal(.connection(.connectionFailed)))
+        fail(.connection(.connectionFailed))
         return
       }
     }
@@ -298,13 +293,13 @@ public actor ConnectionController {
   ) async -> Bool {
     let disposition = attemptFailure.retryDisposition
     guard disposition != .terminal else {
-      fail(.terminal(attemptFailure))
+      fail(attemptFailure)
       return false
     }
     if let maximumAttempts,
       attemptsSinceConnected >= maximumAttempts
     {
-      fail(.maximumAttemptsReached(last: attemptFailure))
+      fail(attemptFailure)
       return false
     }
 
@@ -321,7 +316,7 @@ public actor ConnectionController {
       mandatoryDeadline = nil
     case .retryAfter(let deadline):
       guard deadline.timeIntervalSinceReferenceDate.isFinite else {
-        fail(.terminal(attemptFailure))
+        fail(attemptFailure)
         return false
       }
       mandatoryDeadline = RetryNotBefore(
@@ -386,7 +381,7 @@ public actor ConnectionController {
     return delay
   }
 
-  private func fail(_ connectionFailure: ConnectionFailure) {
+  private func fail(_ connectionFailure: ConnectionAttemptFailure) {
     guard state != .closed else { return }
     currentSession = nil
     failure = connectionFailure

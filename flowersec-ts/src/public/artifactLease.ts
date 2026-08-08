@@ -12,20 +12,19 @@ export class ArtifactLeaseError extends Error {
 
 export class ArtifactLease {
   readonly #artifactLeaseBrand = undefined;
-  readonly artifact: Artifact;
 
-  private constructor(artifact: Artifact) {
-    this.artifact = artifact;
+  private constructor() {
     Object.freeze(this);
   }
 
   /** @internal */
-  static create(artifact: Artifact): ArtifactLease {
-    return new ArtifactLease(artifact);
+  static create(): ArtifactLease {
+    return new ArtifactLease();
   }
 }
 
 type ArtifactLeaseState = {
+  readonly artifact: Artifact;
   state: "idle" | "spending" | "consumed";
   readonly commitSpend: (signal?: AbortSignal) => Promise<void>;
 };
@@ -37,9 +36,16 @@ export function createArtifactLease(
   commitSpend: (signal?: AbortSignal) => Promise<void>,
 ): ArtifactLease {
   validateArtifactV2(unwrapArtifact(artifact));
-  const lease = ArtifactLease.create(artifact);
-  artifactLeaseStates.set(lease, { state: "idle", commitSpend });
+  const lease = ArtifactLease.create();
+  artifactLeaseStates.set(lease, { artifact, state: "idle", commitSpend });
   return lease;
+}
+
+/** @internal Connector-owned access to validated lease material. */
+export function artifactLeaseArtifact(lease: ArtifactLease): Artifact {
+  const leaseState = artifactLeaseStates.get(lease);
+  if (leaseState === undefined) throw new ArtifactLeaseError();
+  return leaseState.artifact;
 }
 
 /** @internal Connector-owned durable spend transition. */

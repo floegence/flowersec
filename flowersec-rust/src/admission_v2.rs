@@ -1,4 +1,4 @@
-//! Carrier-neutral candidate admission between a runtime adapter and SessionV2.
+//! Carrier-neutral candidate admission between a runtime adapter and Session.
 
 use std::{io, sync::Arc};
 

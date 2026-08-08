@@ -1232,7 +1232,7 @@
       },
       {
         "kind": "swift.enum",
-        "name": "ArtifactCodecError",
+        "name": "ArtifactError",
         "doc_token": ""
       },
       {
@@ -1262,17 +1262,17 @@
       },
       {
         "kind": "swift.enum.case",
-        "name": "ArtifactCodecError.artifactTooLarge",
+        "name": "ArtifactError.artifactTooLarge",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ArtifactCodecError.invalidArtifact",
+        "name": "ArtifactError.invalidArtifact",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ArtifactCodecError.invalidCandidate",
+        "name": "ArtifactError.invalidCandidate",
         "doc_token": ""
       },
       {
@@ -1392,52 +1392,7 @@
       },
       {
         "kind": "swift.enum.case",
-        "name": "StreamMetadataError.arrayTooLong",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "StreamMetadataError.depthExceeded",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "StreamMetadataError.emptyKey",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "StreamMetadataError.encodedTooLarge",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "StreamMetadataError.keyNotNormalized",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "StreamMetadataError.keyTooLong",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "StreamMetadataError.nodeLimitExceeded",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "StreamMetadataError.objectTooLarge",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "StreamMetadataError.stringTooLong",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "StreamMetadataError.unsafeInteger",
+        "name": "StreamMetadataError.invalidValue",
         "doc_token": ""
       },
       {
@@ -1567,11 +1522,6 @@
       },
       {
         "kind": "swift.property",
-        "name": "ArtifactLease.artifact",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
         "name": "Artifact.customMirror",
         "doc_token": ""
       },
@@ -1642,11 +1592,6 @@
       },
       {
         "kind": "swift.property",
-        "name": "StreamMetadata.encodedByteCount",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
         "name": "StreamMetadata.values",
         "doc_token": ""
       },
@@ -1698,46 +1643,6 @@
       {
         "kind": "swift.type.property",
         "name": "StreamMetadata.empty",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.type.property",
-        "name": "StreamMetadata.maxArrayItems",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.type.property",
-        "name": "StreamMetadata.maxDepth",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.type.property",
-        "name": "StreamMetadata.maxEncodedBytes",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.type.property",
-        "name": "StreamMetadata.maxKeyBytes",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.type.property",
-        "name": "StreamMetadata.maxNodes",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.type.property",
-        "name": "StreamMetadata.maxObjectKeys",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.type.property",
-        "name": "StreamMetadata.maxStringBytes",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.type.property",
-        "name": "StreamMetadata.maximumSafeInteger",
         "doc_token": ""
       },
       {
@@ -1866,21 +1771,6 @@
         "doc_token": ""
       },
       {
-        "kind": "swift.enum",
-        "name": "ConnectionFailure",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectionFailure.terminal(_:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectionFailure.maximumAttemptsReached(last:)",
-        "doc_token": ""
-      },
-      {
         "kind": "swift.struct",
         "name": "ConnectionSnapshot",
         "doc_token": ""
@@ -2001,6 +1891,7 @@
       "`ArtifactSource`",
       "`ArtifactSourceError`",
       "`ConnectionSnapshot`",
+      "`ConnectionController::wait_for_snapshot_change(...)`",
       "`ConnectionState`",
       "`ConnectionFailure`",
       "`RetryDisposition`"
@@ -2062,6 +1953,7 @@
       "let _ = flowersec::ConnectionController::new",
       "let _ = flowersec::ConnectionController::start",
       "let _ = flowersec::ConnectionController::snapshot",
+      "let _ = flowersec::ConnectionController::wait_for_snapshot_change",
       "let _ = flowersec::ConnectionController::current_session",
       "let _ = flowersec::ConnectionController::retry_now",
       "let _ = flowersec::ConnectionController::close",

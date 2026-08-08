@@ -6,7 +6,7 @@ import {
   commitArtifactLeaseSpendV2,
   type ArtifactLeaseError,
 } from "./artifactLease.js";
-import { parseArtifact, unwrapArtifact } from "./opaqueArtifact.js";
+import { parseArtifact } from "./opaqueArtifact.js";
 
 const fixture = JSON.parse(
   readFileSync(new URL("../../../testdata/transport_v2/artifact_vectors.json", import.meta.url), "utf8"),
@@ -22,9 +22,8 @@ describe("ArtifactV2 acquisition and durable spend leases", () => {
       if (signal !== undefined) spends.push(signal);
     });
 
-    expect(Object.keys(lease.artifact)).toEqual([]);
-    expect(JSON.stringify(lease.artifact)).toBe("{}");
-    expect(unwrapArtifact(lease.artifact).profile).toBe("flowersec/2");
+    expect(Object.prototype.hasOwnProperty.call(lease, "artifact")).toBe(false);
+    expect(JSON.stringify(lease)).toBe("{}");
     await commitArtifactLeaseSpendV2(lease, controller.signal);
     expect(spends).toEqual([controller.signal]);
   });

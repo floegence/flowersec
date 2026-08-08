@@ -519,7 +519,7 @@ impl ArtifactLease {
         }
     }
 
-    pub fn artifact(&self) -> &Artifact {
+    pub(crate) fn artifact_for_connector(&self) -> &Artifact {
         &self.artifact
     }
 

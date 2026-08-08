@@ -262,7 +262,11 @@ ${checks}
     assert.deepEqual(Object.keys(artifact), []);
     assert.equal(JSON.stringify(artifact), '{}');
     assert.throws(() => root.createArtifactLease({}, async () => {}), /invalid Flowersec artifact handle/);
-    assert.equal(root.createArtifactLease(artifact, async () => {}).artifact, artifact);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(root.createArtifactLease(artifact, async () => {}), 'artifact'),
+      false,
+      'ArtifactLease must not expose its artifact',
+    );
     assert.equal(Object.prototype.hasOwnProperty.call(browser, 'requestConnectArtifact'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(browser, 'requestEntryConnectArtifact'), false);
     assert.equal(browser.BROWSER_RUNTIME_CAPABILITY_V2, undefined);
@@ -505,6 +509,8 @@ void stream.id;
 void incoming.id;
 const accepted: ByteStream = incoming.stream;
 const lease: ArtifactLease = createArtifactLease(artifact, commitSpend);
+// @ts-expect-error ArtifactLease is an opaque spend boundary, not an artifact container.
+void lease.artifact;
 // @ts-expect-error ArtifactLease has no public constructor.
 new ArtifactLease(artifact);
 // @ts-expect-error lease construction accepts opaque Artifact handles only.

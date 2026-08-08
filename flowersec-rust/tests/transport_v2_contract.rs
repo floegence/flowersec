@@ -129,7 +129,7 @@ fn v2_contract_is_object_safe_and_carrier_neutral() {
         assert_terminal_error_is_closed(incoming.stream().terminal_error()),
         Some(SessionError::StreamReset)
     );
-    assert!(format!("{incoming:?}").contains("IncomingStreamV2"));
+    assert!(format!("{incoming:?}").contains("IncomingStream"));
     let _stream: Box<dyn ByteStream> = incoming.into_stream();
 
     let public_contract = include_str!("../src/transport_v2.rs");

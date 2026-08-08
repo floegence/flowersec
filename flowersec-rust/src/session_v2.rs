@@ -40,9 +40,9 @@ use crate::{
         verify_setup_mac_v2,
     },
     transport_v2::{
-        ByteStreamV2, CarrierSessionV2, CarrierStreamV2, CarrierUnreliableMessageErrorV2,
-        IncomingStreamV2, JsonObjectV2, PathKind, RpcCallError, RpcError, RpcPeerV2, SessionError,
-        SessionRole, SessionTermination, SessionV2, StreamMetadata, UnreliableMessageChannelV2,
+        ByteStream, CarrierSessionV2, CarrierStreamV2, CarrierUnreliableMessageErrorV2,
+        IncomingStream, JsonObject, PathKind, RpcCallError, RpcError, RpcPeer, Session,
+        SessionError, SessionRole, SessionTermination, StreamMetadata, UnreliableMessageChannel,
         UnreliableMessageError, UnreliableSendOutcome, carrier_inbound_stream_limit_v2,
     },
 };
@@ -464,8 +464,8 @@ pub struct EncryptedSessionV2 {
     sent_goaway_last: AtomicU64,
     received_goaway: AtomicBool,
     received_goaway_last: AtomicU64,
-    incoming_rx: Mutex<mpsc::Receiver<IncomingStreamV2>>,
-    incoming_tx: mpsc::Sender<IncomingStreamV2>,
+    incoming_rx: Mutex<mpsc::Receiver<IncomingStream>>,
+    incoming_tx: mpsc::Sender<IncomingStream>,
     outbound_permits: Arc<Semaphore>,
     inbound_permits: Arc<Semaphore>,
     inbound_rpc_opened: AtomicBool,
@@ -543,14 +543,14 @@ impl std::fmt::Debug for EncryptedSessionV2 {
 pub async fn establish_session_v2(
     carrier: Arc<dyn CarrierSessionV2>,
     config: SessionConfigV2,
-) -> io::Result<Arc<dyn SessionV2>> {
+) -> io::Result<Arc<dyn Session>> {
     config.validate()?;
     let expected_carrier_limit =
         carrier_inbound_stream_limit_v2(config.max_inbound_streams).map_err(io::Error::other)?;
     if carrier.inbound_bidirectional_stream_capacity() != expected_carrier_limit {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "carrier stream limit does not match SessionV2 logical limit",
+            "carrier stream limit does not match Session logical limit",
         ));
     }
     let deadline = config.deadlines.establish;
@@ -562,7 +562,7 @@ pub async fn establish_session_v2(
 async fn establish_session_v2_inner(
     carrier: Arc<dyn CarrierSessionV2>,
     config: SessionConfigV2,
-) -> io::Result<Arc<dyn SessionV2>> {
+) -> io::Result<Arc<dyn Session>> {
     let locally_supported_features = if carrier
         .unreliable_message_max_size()
         .is_some_and(|maximum| maximum >= MAX_UNRELIABLE_WIRE_V2_BYTES)
@@ -729,7 +729,7 @@ impl std::fmt::Debug for SelfSession {
 struct SessionRpcPeerV2 {
     session: OnceLock<Weak<SelfSession>>,
     serial: Mutex<()>,
-    stream: Mutex<Option<Box<dyn ByteStreamV2>>>,
+    stream: Mutex<Option<Box<dyn ByteStream>>>,
     read_buffer: Mutex<VecDeque<u8>>,
     next_request_id: AtomicU64,
 }
@@ -819,7 +819,7 @@ impl std::fmt::Debug for SessionRpcPeerV2 {
 }
 
 #[async_trait]
-impl RpcPeerV2 for SessionRpcPeerV2 {
+impl RpcPeer for SessionRpcPeerV2 {
     async fn call(
         &self,
         type_id: u32,
@@ -835,7 +835,7 @@ impl RpcPeerV2 for SessionRpcPeerV2 {
 }
 
 #[async_trait]
-impl UnreliableMessageChannelV2 for SessionUnreliableMessageChannelV2 {
+impl UnreliableMessageChannel for SessionUnreliableMessageChannelV2 {
     fn max_message_size(&self) -> usize {
         MAX_UNRELIABLE_PLAINTEXT_V2_BYTES
     }
@@ -864,13 +864,11 @@ impl UnreliableMessageChannelV2 for SessionUnreliableMessageChannelV2 {
 }
 
 #[async_trait]
-impl SessionV2 for SelfSession {
-    fn rpc(&self) -> &dyn RpcPeerV2 {
+impl Session for SelfSession {
+    fn rpc(&self) -> &dyn RpcPeer {
         &self.rpc
     }
-    fn unreliable_messages(
-        &self,
-    ) -> Result<&dyn UnreliableMessageChannelV2, UnreliableMessageError> {
+    fn unreliable_messages(&self) -> Result<&dyn UnreliableMessageChannel, UnreliableMessageError> {
         if self.negotiated_features & UNRELIABLE_MESSAGES_FEATURE_V1 == 0 {
             return Err(UnreliableMessageError::Unavailable);
         }
@@ -880,7 +878,7 @@ impl SessionV2 for SelfSession {
         &self,
         kind: &str,
         metadata: StreamMetadata,
-    ) -> Result<Box<dyn ByteStreamV2>, SessionError> {
+    ) -> Result<Box<dyn ByteStream>, SessionError> {
         if kind == RESERVED_RPC_KIND {
             return Err(SessionError::OperationFailed);
         }
@@ -888,7 +886,7 @@ impl SessionV2 for SelfSession {
             .await
             .map_err(|error| SessionError::from_io(&error))
     }
-    async fn accept_stream(&self) -> Result<IncomingStreamV2, SessionError> {
+    async fn accept_stream(&self) -> Result<IncomingStream, SessionError> {
         let mut incoming = self.incoming_rx.lock().await;
         tokio::select! {
             biased;
@@ -2346,21 +2344,21 @@ impl std::fmt::Debug for EncryptedStreamV2 {
 async fn open_stream_v2(
     session: &SelfSession,
     kind: &str,
-    metadata: JsonObjectV2,
-) -> io::Result<Box<dyn ByteStreamV2>> {
+    metadata: JsonObject,
+) -> io::Result<Box<dyn ByteStream>> {
     open_stream_with_capacity_v2(session, kind, metadata, true).await
 }
 
-async fn open_reserved_rpc_stream_v2(session: &SelfSession) -> io::Result<Box<dyn ByteStreamV2>> {
-    open_stream_with_capacity_v2(session, RESERVED_RPC_KIND, JsonObjectV2::new(), false).await
+async fn open_reserved_rpc_stream_v2(session: &SelfSession) -> io::Result<Box<dyn ByteStream>> {
+    open_stream_with_capacity_v2(session, RESERVED_RPC_KIND, JsonObject::new(), false).await
 }
 
 async fn open_stream_with_capacity_v2(
     session: &SelfSession,
     kind: &str,
-    metadata: JsonObjectV2,
+    metadata: JsonObject,
     counts_toward_data_limit: bool,
-) -> io::Result<Box<dyn ByteStreamV2>> {
+) -> io::Result<Box<dyn ByteStream>> {
     if session.is_closed() {
         return Err(closed());
     }
@@ -2640,7 +2638,7 @@ fn validate_open_reject_payload_v2(
 }
 
 #[async_trait]
-impl ByteStreamV2 for StreamHandleV2 {
+impl ByteStream for StreamHandleV2 {
     #[cfg(test)]
     fn internal_test_id(&self) -> u64 {
         self.0.id
@@ -3118,7 +3116,7 @@ async fn accept_one_stream_v2(
     if open.logical_stream_id() != id || open.fss2_hash() != &fss2_hash {
         return Err(invalid("OPEN does not bind FSS2"));
     }
-    let metadata: JsonObjectV2 = serde_json::from_slice(open.metadata()).map_err(proto)?;
+    let metadata: JsonObject = serde_json::from_slice(open.metadata()).map_err(proto)?;
     let reserved_rpc = open.kind() == RESERVED_RPC_KIND;
     let permit = if reserved_rpc {
         if session
@@ -3186,7 +3184,7 @@ async fn accept_one_stream_v2(
     }
     session
         .incoming_tx
-        .send(IncomingStreamV2::new(
+        .send(IncomingStream::new(
             open.kind(),
             StreamMetadata::from_validated(metadata),
             Box::new(StreamHandleV2(stream)),
@@ -3463,7 +3461,7 @@ async fn serve_rpc_stream_v2(session: &SelfSession, stream: StreamHandleV2) -> i
 }
 
 async fn write_rpc_frame_v2(
-    stream: &dyn ByteStreamV2,
+    stream: &dyn ByteStream,
     envelope: &RpcEnvelopeWireV2,
 ) -> io::Result<()> {
     let json = serde_json::to_vec(envelope).map_err(proto)?;
@@ -3488,7 +3486,7 @@ async fn write_rpc_frame_v2(
 }
 
 async fn read_rpc_frame_v2(
-    stream: &dyn ByteStreamV2,
+    stream: &dyn ByteStream,
     buffer: &Mutex<VecDeque<u8>>,
 ) -> io::Result<RpcEnvelopeWireV2> {
     fill_rpc_bytes_v2(stream, buffer, 4).await?;
@@ -3514,7 +3512,7 @@ async fn read_rpc_frame_v2(
 }
 
 async fn fill_rpc_bytes_v2(
-    stream: &dyn ByteStreamV2,
+    stream: &dyn ByteStream,
     buffer: &Mutex<VecDeque<u8>>,
     needed: usize,
 ) -> io::Result<()> {

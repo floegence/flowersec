@@ -21,8 +21,9 @@ cargo run --locked --manifest-path examples/rust/Cargo.toml -- \
   artifact-v2 /secure/path/artifact.json
 ```
 
-The command validates the artifact and prints only `Artifact { <opaque> }` plus
-the unspent lease state. It never prints or serializes artifact fields.
+The command validates the artifact, prints only `Artifact { <opaque> }`, and
+moves it into an unspent lease. It never reads the artifact back from the lease
+or prints or serializes artifact fields.
 
 ## Establish a Session
 
