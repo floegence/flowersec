@@ -311,10 +311,10 @@ validate_step_contracts(ci_steps, [
 validate_step_contracts(codeql_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" } },
   { name: "Prepare Swift build cache", keys: ["name", "if", "run"], values: { "if" => "matrix.language == 'swift'", "run" => "swift package --skip-update --only-use-versions-from-resolved-file resolve\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
-  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
+  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@d1ba80a13dd99fba24a470575428917156a28b43", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
   { name: "Build Swift library", keys: ["name", "if", "run"], values: { "if" => "matrix.language == 'swift'", "run" => "find flowersec-swift/Sources/Flowersec -type f -name '*.swift' -exec touch {} +\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
-  { name: "Autobuild Go", keys: ["name", "if", "uses"], values: { "if" => "matrix.language == 'go'", "uses" => "github/codeql-action/autobuild@f205ea1c3313d32999d8d6a48b4f6530d4437b38" } },
-  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38" } },
+  { name: "Autobuild Go", keys: ["name", "if", "uses"], values: { "if" => "matrix.language == 'go'", "uses" => "github/codeql-action/autobuild@d1ba80a13dd99fba24a470575428917156a28b43" } },
+  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@d1ba80a13dd99fba24a470575428917156a28b43" } },
 ], "the CodeQL analyze job")
 validate_step_contracts(codeql_plan_steps, [
   { name: "Check for new main commits", keys: ["name", "id", "env", "run"], values: {
