@@ -204,6 +204,11 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
                 await session.probeLiveness();
               } catch (error) {
                 try {
+                  await globalThis.__flowersecCapacityRecordDiagnostic(JSON.stringify({
+                    type: "connect_error",
+                    name: error instanceof Error ? error.name : "Error",
+                    message: error instanceof Error ? error.message : String(error),
+                  }));
                   const internal = await import("/dist/utils/errors.js");
                   if (error instanceof internal.ConnectError) {
                     const details = internal.connectErrorDetailsInternal(error);
@@ -230,6 +235,12 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
             }, { id: sessionID, spendToken: token, rawArtifact: artifactJSON }), plan.operation_deadline_ms, "browser session connect");
           } catch (error) {
             records.delete(sessionID);
+            recordBrowserDiagnostic(JSON.stringify({
+              type: "controller_connect_error",
+              session_id: sessionID,
+              name: error instanceof Error ? error.name : "Error",
+              message: error instanceof Error ? error.message : String(error),
+            }));
             recordEvent("connect_failed", sessionID);
             throw error;
           }
