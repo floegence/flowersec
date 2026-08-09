@@ -33,6 +33,7 @@ type endpoint struct {
 
 func main() {
 	pathFlag := flag.String("path", "direct", "carrier path: direct or tunnel")
+	serverNotify := flag.Bool("server-notify", false, "exercise peer notification delivery")
 	flag.Parse()
 	subprotocol, sessionPath, endpointPath, err := pathConfiguration(*pathFlag)
 	must(err)
@@ -40,7 +41,7 @@ func main() {
 	connected := make(chan struct{}, 1)
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		connected <- struct{}{}
-		result <- serveSession(writer, request, subprotocol, sessionPath, endpointPath)
+		result <- serveSession(writer, request, subprotocol, sessionPath, endpointPath, *serverNotify)
 	}))
 	server.EnableHTTP2 = false
 	server.TLS = &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13}
@@ -74,6 +75,7 @@ func serveSession(
 	subprotocol string,
 	sessionPath session.PathKind,
 	endpointPath string,
+	serverNotify bool,
 ) error {
 	if request.URL.Path != endpointPath {
 		return fmt.Errorf("unexpected WebSocket path %q", request.URL.Path)
@@ -121,22 +123,26 @@ func serveSession(
 		localEndpointInstanceID = "endpoint-server"
 		expectedPeerEndpointInstanceID = "endpoint-client"
 	}
-	clientReady := make(chan struct{}, 1)
-	rpcRouter := internalrpc.NewRouter()
-	rpcRouter.Register(9_001, func(_ context.Context, payload json.RawMessage) (json.RawMessage, *rpcwire.RpcError) {
-		var request struct {
-			State string `json:"state"`
-		}
-		if err := json.Unmarshal(payload, &request); err != nil || request.State != "ready" {
-			message := "invalid readiness notification"
-			return nil, &rpcwire.RpcError{Code: 400, Message: &message}
-		}
-		select {
-		case clientReady <- struct{}{}:
-		default:
-		}
-		return nil, nil
-	})
+	var clientReady chan struct{}
+	var rpcRouter *internalrpc.Router
+	if serverNotify {
+		clientReady = make(chan struct{}, 1)
+		rpcRouter = internalrpc.NewRouter()
+		rpcRouter.Register(9_001, func(_ context.Context, payload json.RawMessage) (json.RawMessage, *rpcwire.RpcError) {
+			var request struct {
+				State string `json:"state"`
+			}
+			if err := json.Unmarshal(payload, &request); err != nil || request.State != "ready" {
+				message := "invalid readiness notification"
+				return nil, &rpcwire.RpcError{Code: 400, Message: &message}
+			}
+			select {
+			case clientReady <- struct{}{}:
+			default:
+			}
+			return nil, nil
+		})
+	}
 	established, err := session.Establish(ctx, transport, session.Config{
 		Role:                           session.RoleServer,
 		Path:                           sessionPath,
@@ -156,13 +162,15 @@ func serveSession(
 	}
 	defer established.Close()
 
-	select {
-	case <-clientReady:
-		if err := established.RPC().Notify(ctx, 9_002, map[string]string{"state": "accepted"}); err != nil {
-			return fmt.Errorf("notify TypeScript client: %w", err)
+	if serverNotify {
+		select {
+		case <-clientReady:
+			if err := established.RPC().Notify(ctx, 9_002, map[string]string{"state": "accepted"}); err != nil {
+				return fmt.Errorf("notify TypeScript client: %w", err)
+			}
+		case <-ctx.Done():
+			return fmt.Errorf("wait for TypeScript client readiness: %w", ctx.Err())
 		}
-	case <-ctx.Done():
-		return fmt.Errorf("wait for TypeScript client readiness: %w", ctx.Err())
 	}
 
 	incoming, err := established.AcceptStream(ctx)

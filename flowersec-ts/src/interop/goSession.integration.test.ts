@@ -27,7 +27,9 @@ describe("TypeScript-Go session interoperability", () => {
 
 async function runGoWSSSession(sessionPath: "direct" | "tunnel"): Promise<void> {
   const goRoot = fileURLToPath(new URL("../../../flowersec-go", import.meta.url));
-  const peer = spawn("go", ["run", "./internal/cmd/ts-session-peer", "--path", sessionPath], {
+  const peer = spawn("go", [
+    "run", "./internal/cmd/ts-session-peer", "--path", sessionPath, "--server-notify",
+  ], {
     cwd: goRoot,
     stdio: ["ignore", "pipe", "pipe"],
   });
