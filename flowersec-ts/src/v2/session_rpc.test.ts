@@ -84,6 +84,30 @@ describe("SessionV2 reserved RPC stream", () => {
     await client.close();
   });
 
+  test("delivers peer outbound notifications to the local RPC subscription", async () => {
+    const clientRouter = new RpcRouter();
+    const serverRouter = new RpcRouter();
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV2({
+      kind: "websocket",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 6,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV2(clientCarrier, config("client", clientRouter)),
+      establishSessionV2(serverCarrier, config("server", serverRouter)),
+    ]);
+    const received = new Promise<unknown>((resolve) => {
+      const unsubscribe = client.rpc.onNotify(10, (payload) => {
+        unsubscribe();
+        resolve(payload);
+      });
+    });
+
+    await server.rpc.notify(10, { side: "server" });
+    await expect(received).resolves.toEqual({ side: "server" });
+    await client.close();
+  });
+
   test("keeps the role-owned control slot and both RPC directions usable when N=1", async () => {
     const clientRouter = new RpcRouter();
     const serverRouter = new RpcRouter();

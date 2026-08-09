@@ -174,7 +174,7 @@
       "id": "typescript_rpc_notification_subscription",
       "layer": "language_convenience",
       "owner": "typescript",
-      "reason": "TypeScript exposes application notification subscriptions on its public RPC peer.",
+      "reason": "TypeScript RpcPeer.onNotify receives peer outbound notifications through the local Session's inbound reserved RPC stream.",
       "test_ids": ["protocol/typescript"]
     },
     {

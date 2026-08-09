@@ -2,12 +2,12 @@
 
 `@floegence/flowersec-core` is the ESM-only Flowersec v2 SDK for browsers and Node.js. Its public package surface is limited to the root, `/browser`, `/node`, and `/proxy` entrypoints.
 
-Flowersec 2.3.4 is the published TypeScript SDK release.
+Flowersec 2.3.5 is the published TypeScript SDK release.
 
 ## Install
 
 ```bash
-npm install @floegence/flowersec-core@2.3.4
+npm install @floegence/flowersec-core@2.3.5
 ```
 
 ## Public API
@@ -28,7 +28,7 @@ The root type exports are:
 
 Retry ownership belongs to `ConnectionController`; applications do not classify error text or run a parallel retry scheduler. Public failures remain redacted and reveal no carrier, candidate, URL, credential, stage, key, or diagnostic details.
 
-`RpcResult<Response>` is a discriminated union. `RpcPeer.call(...)` requires a decoder for successful payloads, so the typed success value has passed application validation before it is returned. Check `result.ok` before reading either the typed success `payload` or bounded application `error`; a result cannot contain both. RPC call and notify are portable across SDKs, while `RpcPeer.onNotify(...)` is a TypeScript-specific subscription convenience.
+`RpcResult<Response>` is a discriminated union. `RpcPeer.call(...)` requires a decoder for successful payloads, so the typed success value has passed application validation before it is returned. Check `result.ok` before reading either the typed success `payload` or bounded application `error`; a result cannot contain both. RPC call and notify are portable across SDKs. TypeScript `RpcPeer.onNotify(...)` receives peer outbound notifications through the local Session's inbound reserved RPC stream.
 
 When connector options omit a connection timeout, browser and Node.js connectors use the shared ten-second default.
 

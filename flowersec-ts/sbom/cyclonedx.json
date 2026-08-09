@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:18b319f4-70e9-5eeb-8c78-bef4b24f17df",
+  "serialNumber": "urn:uuid:3400c69b-8cbe-5509-8b3e-e52a56f2135d",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "@floegence/flowersec-core",
-      "version": "2.3.4",
-      "purl": "pkg:npm/%40floegence/flowersec-core@2.3.4",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-core@2.3.4"
+      "version": "2.3.5",
+      "purl": "pkg:npm/%40floegence/flowersec-core@2.3.5",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-core@2.3.5"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "f3aeaa2c6078eba1bb7639afd68c54ab56b1d7685901e2210988a66356e9ab39"
+        "value": "0ab98241dfe33a677cf1e6726296a7db34a9f0a77e1eb4c9d21784b4581fccd1"
       }
     ]
   },
@@ -2290,7 +2290,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:npm/%40floegence/flowersec-core@2.3.4",
+      "ref": "pkg:npm/%40floegence/flowersec-core@2.3.5",
       "dependsOn": [
         "pkg:npm/%40fails-components/webtransport-transport-http3-quiche@1.6.7",
         "pkg:npm/%40fails-components/webtransport@1.6.7",

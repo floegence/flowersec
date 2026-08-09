@@ -4,6 +4,7 @@ import { RpcRouter, RpcServer, type RpcServerOptions } from "../rpc/server.js";
 import type {
   InternalByteStreamV2 as ByteStreamV2,
   InternalIncomingStreamV2 as IncomingStreamV2,
+  InternalRpcPeerV2,
   InternalSessionV2 as SessionV2Contract,
   JsonObjectV2,
   OperationOptionsV2,
@@ -160,6 +161,29 @@ export class SessionV2Error extends Error {
   }
 }
 
+class SessionRpcPeerV2 implements InternalRpcPeerV2 {
+  constructor(
+    private readonly outbound: RpcClient,
+    private readonly inbound: RpcRouter,
+  ) {}
+
+  call(typeId: number, payload: unknown, signal?: AbortSignal) {
+    return this.outbound.call(typeId, payload, signal);
+  }
+
+  notify(typeId: number, payload: unknown): Promise<void> {
+    return this.outbound.notify(typeId, payload);
+  }
+
+  onNotify(typeId: number, handler: (payload: unknown) => void): () => void {
+    return this.inbound.onNotify(typeId, handler);
+  }
+
+  close(): void {
+    this.outbound.close();
+  }
+}
+
 type HandshakeMaterial = Readonly<{
   h3: Uint8Array;
   sessionPRK: Uint8Array;
@@ -202,7 +226,7 @@ export async function establishSessionV2(
 export class SessionV2 implements SessionV2Contract {
   readonly path: PathKind;
   readonly endpointInstanceId: string | undefined;
-  readonly rpc: RpcClient;
+  readonly rpc: SessionRpcPeerV2;
   readonly termination: Promise<SessionTerminationV2>;
   readonly unreliableMessages: UnreliableMessageChannelV2 | undefined;
   terminalError: Error | undefined;
@@ -265,6 +289,7 @@ export class SessionV2 implements SessionV2Contract {
   private idleWatchdogStarted = false;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly terminationState = deferred<SessionTerminationV2>();
+  private readonly rpcRouter: RpcRouter;
 
   constructor(
     private readonly carrier: CarrierSessionV2,
@@ -304,8 +329,9 @@ export class SessionV2 implements SessionV2Contract {
       : undefined;
     this.outboundPermits = new AsyncSemaphore(config.maxInboundStreams);
     this.inboundPermits = new AsyncSemaphore(config.maxInboundStreams);
+    this.rpcRouter = config.rpcRouter ?? new RpcRouter();
     const rpcReadState = { reader: undefined as ExactReader | undefined };
-    this.rpc = new RpcClient(
+    const rpcClient = new RpcClient(
       async (length) => {
         await this.rpcActivation.promise;
         const stream = await this.ensureRPCStream();
@@ -319,6 +345,7 @@ export class SessionV2 implements SessionV2Contract {
       },
       { onTerminal: (error) => this.fail(error) },
     );
+    this.rpc = new SessionRpcPeerV2(rpcClient, this.rpcRouter);
   }
 
   async openStream(kind: string, options: InternalStreamOpenOptionsV2 = {}): Promise<ByteStreamV2> {
@@ -705,7 +732,7 @@ export class SessionV2 implements SessionV2Contract {
         readExactly: async (length) => await rpcReader.readExactly(length),
         write: async (payload) => { await stream.write(payload); },
         close: () => { void stream.reset(); },
-      }, this.config.rpcServerOptions, this.config.rpcRouter ?? new RpcRouter());
+      }, this.config.rpcServerOptions, this.rpcRouter);
       void server.serve().catch((error) => {
         if (this.lifecycle !== "closed") this.fail(asError(error));
       });

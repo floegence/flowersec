@@ -55,6 +55,19 @@ async function runGoWSSSession(sessionPath: "direct" | "tunnel"): Promise<void> 
     phase = "liveness";
     expect(await session.probeLiveness()).toBeGreaterThanOrEqual(0);
 
+    phase = "server-notify";
+    const serverNotification = new Promise<unknown>((resolve) => {
+      const unsubscribe = session.rpc.onNotify(9_002, (payload) => {
+        unsubscribe();
+        resolve(payload);
+      });
+    });
+    await session.rpc.notify(9_001, { state: "ready" });
+    expect(await Promise.race([
+      serverNotification,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Go server notification timed out")), 5_000)),
+    ])).toEqual({ state: "accepted" });
+
     const stream = await session.openStream("interop.echo");
     phase = "first-data";
     await stream.write(new TextEncoder().encode("hello-go"));

@@ -20,6 +20,8 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
+	rpcwire "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 	"github.com/gorilla/websocket"
 )
@@ -119,6 +121,22 @@ func serveSession(
 		localEndpointInstanceID = "endpoint-server"
 		expectedPeerEndpointInstanceID = "endpoint-client"
 	}
+	clientReady := make(chan struct{}, 1)
+	rpcRouter := internalrpc.NewRouter()
+	rpcRouter.Register(9_001, func(_ context.Context, payload json.RawMessage) (json.RawMessage, *rpcwire.RpcError) {
+		var request struct {
+			State string `json:"state"`
+		}
+		if err := json.Unmarshal(payload, &request); err != nil || request.State != "ready" {
+			message := "invalid readiness notification"
+			return nil, &rpcwire.RpcError{Code: 400, Message: &message}
+		}
+		select {
+		case clientReady <- struct{}{}:
+		default:
+		}
+		return nil, nil
+	})
 	established, err := session.Establish(ctx, transport, session.Config{
 		Role:                           session.RoleServer,
 		Path:                           sessionPath,
@@ -131,11 +149,21 @@ func serveSession(
 		PeerAdmissionBinding:           peerBinding,
 		LocalEndpointInstanceID:        localEndpointInstanceID,
 		ExpectedPeerEndpointInstanceID: expectedPeerEndpointInstanceID,
+		RPCRouter:                      rpcRouter,
 	})
 	if err != nil {
 		return fmt.Errorf("establish session: %w", err)
 	}
 	defer established.Close()
+
+	select {
+	case <-clientReady:
+		if err := established.RPC().Notify(ctx, 9_002, map[string]string{"state": "accepted"}); err != nil {
+			return fmt.Errorf("notify TypeScript client: %w", err)
+		}
+	case <-ctx.Done():
+		return fmt.Errorf("wait for TypeScript client readiness: %w", ctx.Err())
+	}
 
 	incoming, err := established.AcceptStream(ctx)
 	if err != nil {

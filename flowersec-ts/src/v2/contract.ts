@@ -1,4 +1,4 @@
-import type { RpcClient } from "../rpc/client.js";
+import type { RpcError } from "../rpc/wire.js";
 import type {
   ByteStream,
   CarrierKind as PublicCarrierKind,
@@ -59,7 +59,7 @@ export interface InternalIncomingStreamV2 {
 export interface InternalSessionV2 {
   readonly path: PathKind;
   readonly endpointInstanceId: string | undefined;
-  readonly rpc: RpcClient;
+  readonly rpc: InternalRpcPeerV2;
   readonly termination: Promise<Readonly<{ error: Error }>>;
   readonly unreliableMessages?: UnreliableMessageChannelV2 | undefined;
 
@@ -69,6 +69,13 @@ export interface InternalSessionV2 {
   probeLiveness(options?: OperationOptionsV2): Promise<number>;
   waitTermination(): Promise<Readonly<{ error: Error }>>;
   close(): Promise<void>;
+}
+
+export interface InternalRpcPeerV2 {
+  call(typeId: number, payload: unknown, signal?: AbortSignal): Promise<{ payload: unknown; error?: RpcError }>;
+  notify(typeId: number, payload: unknown): Promise<void>;
+  onNotify(typeId: number, handler: (payload: unknown) => void): () => void;
+  close(): void;
 }
 
 export type InternalStreamOpenOptionsV2 = OperationOptionsV2 & Readonly<{

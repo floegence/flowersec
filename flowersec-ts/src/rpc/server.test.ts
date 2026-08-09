@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import type { RpcEnvelope } from "./wire.js";
 import { writeJsonFrame } from "../framing/jsonframe.js";
-import { RpcServer, type RpcServerTransport } from "./server.js";
+import { RpcRouter, RpcServer, type RpcServerTransport } from "./server.js";
 import { readU32be } from "../utils/bin.js";
 
 class ByteQueue {
@@ -114,6 +114,19 @@ function makeTransport(
 }
 
 describe("RpcServer", () => {
+  test("isolates inbound notification subscribers and honors unsubscribe", async () => {
+    const router = new RpcRouter();
+    const observed: unknown[] = [];
+    router.onNotify(7, () => { throw new Error("subscriber failure"); });
+    const unsubscribe = router.onNotify(7, (payload) => { observed.push(payload); });
+
+    await router.dispatchNotification(7, { sequence: 1 });
+    unsubscribe();
+    await router.dispatchNotification(7, { sequence: 2 });
+
+    expect(observed).toEqual([{ sequence: 1 }]);
+  });
+
   test("sends server notifications through the serialized response writer", async () => {
     const q = new ByteQueue();
     const writes: Uint8Array[] = [];

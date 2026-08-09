@@ -1,6 +1,6 @@
 [package]
 name = "flowersec"
-version = "2.3.4"
+version = "2.3.5"
 edition = "2024"
 rust-version = "1.88"
 description = "Native Rust SDK for Flowersec secure direct and tunneled sessions"

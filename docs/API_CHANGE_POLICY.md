@@ -1,6 +1,6 @@
 # Flowersec API Change Policy
 
-Flowersec 2.3.4 maintains one carrier-neutral public contract across Go, TypeScript, Swift, and Rust. Public symbols, module paths, wire identifiers, and published artifacts follow the SemVer and immutable-tag rules.
+Flowersec 2.3.5 maintains one carrier-neutral public contract across Go, TypeScript, Swift, and Rust. Public symbols, module paths, wire identifiers, and published artifacts follow the SemVer and immutable-tag rules.
 
 ## Sources of Truth
 
@@ -21,7 +21,7 @@ The API manifest drives Go compile probes, packed TypeScript exports, Swift symb
 
 Applications receive only opaque artifacts and leases, one-shot connection functions, carrier-neutral sessions, bounded session-handler registries, RPC peers, byte streams, metadata, stable redacted errors, and bounded recovery decisions. Go session handlers freeze inbound RPC and stream registrations together for a valid connection attempt and dispatch application streams with bounded metadata without exposing the carrier. Go server control planes additionally receive opaque endpoint sets, issued artifacts, authorization records, runtime requests, and runtime responses through the dedicated v2 control-plane package. The TypeScript proxy entrypoint may compose an opaque lease into a `Session` runtime and browser bridge, but must not expose transport objects, raw artifact scopes, proxy wire frames, or `proxy.runtime@1`. Candidate selection, carrier adapters, Yamux, wire messages, FSB2 payloads, cryptographic state, keys, and durable spend-ledger details are implementation boundaries.
 
-Portable RPC means outbound call and notification support. Notification subscriptions and inbound request-handler registration are separate capabilities and must not be implied by the portable RPC capability. Portable core, server admission, accepted sessions, control-plane issuance/authorization, connection control, RPC/stream lifecycle, and published consumer workflows must have same-semantic public entries in every applicable SDK. Genuine platform limitations alone may be marked `unsupported`; every unsupported entry requires a concrete reason, an alternative public boundary, and a test ID in `stability/language_capabilities.json`. Controller recovery dispositions must continue to match `stability/connection_controller_recovery.json` in every language.
+Portable RPC means outbound call and notification support. Notification subscriptions and inbound request-handler registration are separate capabilities and must not be implied by the portable RPC capability. TypeScript `RpcPeer.onNotify(...)` receives peer outbound notifications through the local Session's inbound reserved RPC stream; it does not subscribe to the local outbound stream. Portable core, server admission, accepted sessions, control-plane issuance/authorization, connection control, RPC/stream lifecycle, and published consumer workflows must have same-semantic public entries in every applicable SDK. Genuine platform limitations alone may be marked `unsupported`; every unsupported entry requires a concrete reason, an alternative public boundary, and a test ID in `stability/language_capabilities.json`. Controller recovery dispositions must continue to match `stability/connection_controller_recovery.json` in every language.
 
 Every public API change requires:
 
@@ -33,7 +33,7 @@ Every public API change requires:
 
 Adding a public `Acceptor`, server admission, handler resolver, proxy server, or control-plane symbol is a SemVer minor capability. Documentation and internal fixes are patch changes. Published tags and artifacts are immutable.
 
-The loopback plaintext WebSocket profile is an explicit SDK capability. Only direct candidates addressed to `127.0.0.1` or `::1` may use `ws://`; tunnel candidates and non-loopback hosts use WSS and fail closed. Flowersec 2.3.4 enforces this profile during Go connector and Acceptor carrier readiness.
+The loopback plaintext WebSocket profile is an explicit SDK capability. Only direct candidates addressed to `127.0.0.1` or `::1` may use `ws://`; tunnel candidates and non-loopback hosts use WSS and fail closed. Flowersec 2.3.5 enforces this profile during Go connector and Acceptor carrier readiness.
 
 The public surface is defined by `stability/api_contract_manifest.json`; package and source guards reject symbols outside that manifest.
 

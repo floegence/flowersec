@@ -28,6 +28,7 @@ type Work = Readonly<{ envelope: RpcEnvelope }>;
 
 export class RpcRouter {
   private readonly handlers = new Map<number, RpcHandler>();
+  private readonly notifyHandlers = new Map<number, Set<(payload: unknown) => void>>();
 
   register(typeId: number, handler: RpcHandler): void {
     this.handlers.set(typeId >>> 0, handler);
@@ -35,6 +36,30 @@ export class RpcRouter {
 
   handler(typeId: number): RpcHandler | undefined {
     return this.handlers.get(typeId >>> 0);
+  }
+
+  onNotify(typeId: number, handler: (payload: unknown) => void): () => void {
+    const normalized = typeId >>> 0;
+    const handlers = this.notifyHandlers.get(normalized) ?? new Set();
+    handlers.add(handler);
+    this.notifyHandlers.set(normalized, handlers);
+    return () => {
+      handlers.delete(handler);
+      if (handlers.size === 0) this.notifyHandlers.delete(normalized);
+    };
+  }
+
+  async dispatchNotification(typeId: number, payload: unknown): Promise<void> {
+    const normalized = typeId >>> 0;
+    const requestHandler = this.handlers.get(normalized);
+    if (requestHandler !== undefined) await requestHandler(payload);
+    for (const handler of [...(this.notifyHandlers.get(normalized) ?? [])]) {
+      try {
+        handler(payload);
+      } catch {
+        // Application subscribers cannot stop RPC serving.
+      }
+    }
   }
 }
 
@@ -185,9 +210,7 @@ export class RpcServer {
       const work = await this.nextWork(this.notifications, this.notificationWaiters);
       if (work == null) return;
       const v = work.envelope;
-      const h = this.router.handler(v.type_id);
-      if (h == null) continue;
-      await h(v.payload);
+      await this.router.dispatchNotification(v.type_id, v.payload);
     }
   }
 

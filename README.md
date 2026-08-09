@@ -20,7 +20,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
-Flowersec 2.3.4 provides the Go, TypeScript, Swift, and Rust SDKs. It supports the restricted loopback plaintext WebSocket direct profile and requires WSS for network-facing WebSocket candidates. Pin the published package versions and matching release tags.
+Flowersec 2.3.5 provides the Go, TypeScript, Swift, and Rust SDKs. It supports the restricted loopback plaintext WebSocket direct profile and requires WSS for network-facing WebSocket candidates. Pin the published package versions and matching release tags.
 
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
