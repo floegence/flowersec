@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:7085f19c-b9d1-5ad4-8466-7e27d4317d53",
+  "serialNumber": "urn:uuid:e383ebaf-813b-5966-8529-d9c988df8d9b",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "flowersec-source",
-      "version": "2.3.1",
-      "purl": "pkg:generic/flowersec-source@2.3.1",
-      "bom-ref": "pkg:generic/flowersec-source@2.3.1"
+      "version": "2.3.2",
+      "purl": "pkg:generic/flowersec-source@2.3.2",
+      "bom-ref": "pkg:generic/flowersec-source@2.3.2"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "0464b8df2727e54d5144bf941d437872349d0caebd4b237bb1a9bd915bdd4d36"
+        "value": "744d2befc150a64d41634528928d7e3e0fa04fa3dc9a943b30291239aab475d5"
       }
     ]
   },
@@ -11110,9 +11110,9 @@
     {
       "type": "library",
       "name": "punycode",
-      "version": "2.3.1",
-      "purl": "pkg:npm/punycode@2.3.1",
-      "bom-ref": "pkg:npm/punycode@2.3.1",
+      "version": "2.3.2",
+      "purl": "pkg:npm/punycode@2.3.2",
+      "bom-ref": "pkg:npm/punycode@2.3.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -11121,7 +11121,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz"
+          "url": "https://registry.npmjs.org/punycode/-/punycode-2.3.2.tgz"
         }
       ],
       "properties": [
@@ -13350,7 +13350,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/flowersec-source@2.3.1",
+      "ref": "pkg:generic/flowersec-source@2.3.2",
       "dependsOn": [
         "pkg:cargo/aes-gcm@0.10.3",
         "pkg:cargo/async-trait@0.1.91",
@@ -15124,7 +15124,7 @@
       "ref": "pkg:npm/ajv-formats-draft2019@1.6.1",
       "dependsOn": [
         "pkg:npm/ajv@8.20.0",
-        "pkg:npm/punycode@2.3.1",
+        "pkg:npm/punycode@2.3.2",
         "pkg:npm/schemes@1.4.0",
         "pkg:npm/smtp-address-parser@1.1.0",
         "pkg:npm/uri-js@4.4.1"
@@ -15855,7 +15855,7 @@
       ]
     },
     {
-      "ref": "pkg:npm/punycode@2.3.1",
+      "ref": "pkg:npm/punycode@2.3.2",
       "dependsOn": []
     },
     {
@@ -16059,7 +16059,7 @@
     {
       "ref": "pkg:npm/tr46@5.0.0",
       "dependsOn": [
-        "pkg:npm/punycode@2.3.1"
+        "pkg:npm/punycode@2.3.2"
       ]
     },
     {
@@ -16099,7 +16099,7 @@
     {
       "ref": "pkg:npm/uri-js@4.4.1",
       "dependsOn": [
-        "pkg:npm/punycode@2.3.1"
+        "pkg:npm/punycode@2.3.2"
       ]
     },
     {

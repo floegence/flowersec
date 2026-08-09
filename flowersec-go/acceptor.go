@@ -175,7 +175,7 @@ func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http
 	}
 	accepted, err := establishAcceptedSession(ctx, carrierSession, contract, session.PathDirect, session.RoleServer, "", "", decoded.LocalAdmissionBinding, decoded.LocalAdmissionBinding, router)
 	if err == nil {
-		err = acceptor.runAcceptedSession(request.Context(), accepted, wire.Session.ChannelID, serveHandlers)
+		err = acceptor.runAcceptedSession(request.Context(), accepted, wire.Direct.Session.ChannelID, serveHandlers)
 	}
 	if accepted != nil {
 		_ = accepted.Close()

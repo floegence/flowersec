@@ -33,7 +33,7 @@
   ],
   "licenseRefs": {},
   "bundledNotices": {
-    "pkg:npm/punycode@2.3.1": {
+    "pkg:npm/punycode@2.3.2": {
       "copyright": "Copyright Mathias Bynens <https://mathiasbynens.be/>",
       "license": "MIT",
       "licenseTextLines": [

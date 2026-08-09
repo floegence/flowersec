@@ -36,7 +36,10 @@ func TestAcceptorResolvesHandlersBeforeDirectSessionEstablishment(t *testing.T) 
 			return handlers, nil
 		},
 		Release: func(context.Context, string) { released.Add(1) },
-		OnSession: func(context.Context, flowersec.Session, string) error {
+		OnSession: func(_ context.Context, _ flowersec.Session, channelID string) error {
+			if channelID != "direct-handler" {
+				return fmt.Errorf("accepted direct channel = %q, want direct-handler", channelID)
+			}
 			close(sessionStarted)
 			<-releaseSession
 			return nil
