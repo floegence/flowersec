@@ -399,7 +399,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - prebuild-install 7.1.3 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/prebuild-install/-/prebuild-install-7.1.3.tgz)
 - prelude-ls 1.2.1 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/prelude-ls/-/prelude-ls-1.2.1.tgz)
 - pump 3.0.4 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/pump/-/pump-3.0.4.tgz)
-- punycode 2.3.2 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/punycode/-/punycode-2.3.2.tgz)
+- punycode 2.3.1 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz)
 - railroad-diagrams 1.0.0 (Declared: CC0-1.0; selected: CC0-1.0; source: https://registry.npmjs.org/railroad-diagrams/-/railroad-diagrams-1.0.0.tgz)
 - randexp 0.4.6 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/randexp/-/randexp-0.4.6.tgz)
 - rc 1.2.8 (Declared: BSD-2-Clause OR MIT OR Apache-2.0; selected: MIT; source: https://registry.npmjs.org/rc/-/rc-1.2.8.tgz)
@@ -484,7 +484,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 The following dependencies are incorporated into distributed Flowersec files or binaries.
 Their reviewed upstream license, notice, copyright, and patent materials are reproduced below.
 
-### punycode 2.3.2
+### punycode 2.3.1
 
 #### Reviewed bundled license text
 

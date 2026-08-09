@@ -20,7 +20,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
-Flowersec 2.3.2 is the coordinated patch release for the Go, TypeScript, Swift, and Rust SDKs. It preserves the restricted loopback plaintext WebSocket direct profile while keeping network-facing WebSocket candidates WSS-only. Earlier coordinated releases remain immutable. Production consumers should pin the published package versions and matching release tags.
+Flowersec 2.3.3 is the coordinated patch release for the Go, TypeScript, Swift, and Rust SDKs. It preserves the restricted loopback plaintext WebSocket direct profile while keeping network-facing WebSocket candidates WSS-only. Earlier coordinated releases remain immutable. Production consumers should pin the published package versions and matching release tags.
 
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
