@@ -1,6 +1,6 @@
 # Flowersec API Change Policy
 
-Flowersec 2.x maintains one carrier-neutral public contract across Go, TypeScript, Swift, and Rust. Flowersec 2.0.0 is the immutable coordinated baseline; Flowersec 2.1.0 adds the reviewed server acceptor boundary, 2.2.0 adds accepted-session handler resolution plus the Go server counterpart to the published TypeScript proxy runtime, and 2.3.0 adds the restricted loopback plaintext WebSocket direct profile. Earlier tags and artifacts are never moved or replaced. There is no maintained v1 tier or in-process compatibility surface.
+Flowersec 2.3.4 maintains one carrier-neutral public contract across Go, TypeScript, Swift, and Rust. Public symbols, module paths, wire identifiers, and published artifacts follow the SemVer and immutable-tag rules.
 
 ## Sources of Truth
 
@@ -31,17 +31,17 @@ Every public API change requires:
 - cross-language fixture updates when serialization or wire behavior changes;
 - package, symbol, SemVer, and full integration gates before release.
 
-Adding a public `Acceptor`, server admission, handler resolver, proxy server, or control-plane symbol is a SemVer minor capability unless the change is strictly documentation or an internal fix. The 2.2.0 handler/proxy additions therefore cannot be published as 2.1.1; all already published tags and artifacts remain immutable.
+Adding a public `Acceptor`, server admission, handler resolver, proxy server, or control-plane symbol is a SemVer minor capability. Documentation and internal fixes are patch changes. Published tags and artifacts are immutable.
 
-The loopback plaintext WebSocket profile is likewise an explicit SDK profile capability, not a relaxed production transport rule. Only direct candidates addressed to `127.0.0.1` or `::1` may use `ws://`; tunnel candidates and all non-loopback hosts must use WSS and are rejected otherwise.
+The loopback plaintext WebSocket profile is an explicit SDK capability. Only direct candidates addressed to `127.0.0.1` or `::1` may use `ws://`; tunnel candidates and non-loopback hosts use WSS and fail closed. Flowersec 2.3.4 enforces this profile during Go connector and Acceptor carrier readiness.
 
-Removed v1 symbols, generated packages, package subpaths, and CLIs remain on negative package/source guards. A manifest change must not silently restore them.
+The public surface is defined by `stability/api_contract_manifest.json`; package and source guards reject symbols outside that manifest.
 
 ## Transport Behavior
 
 WebSocket, raw QUIC, and WebTransport are equal candidate classes. WebSocket may use hop-local Yamux internally; raw QUIC and WebTransport use native bidirectional streams and preserve native FIN, reset, stop-sending, flow-control, and migration behavior. Application 0-RTT is disabled. Reliable streams never use QUIC DATAGRAM; a negotiated native DATAGRAM path is available only through the carrier-neutral unreliable-message contract.
 
-Internal runtime support facts may contain only exact tuples backed by production connector/listener code and end-to-end evidence. Capability descriptors and carrier selection are not public SDK contracts. Unsupported carriers fail closed and are not fallbacks.
+Internal runtime support facts may contain only exact tuples backed by production connector/listener code and end-to-end evidence. Capability descriptors and carrier selection are not public SDK contracts. Only declared carrier tuples are accepted; unsupported tuples fail closed.
 
 ## Required Review
 

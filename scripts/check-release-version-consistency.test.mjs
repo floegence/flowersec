@@ -18,6 +18,7 @@ const sourceLabels = [
   "flowersec-rust/fuzz/Cargo.lock",
   "examples/rust/Cargo.lock",
 ];
+const repositoryRoot = path.resolve(import.meta.dirname, "..");
 
 function matchingVersions(version = "0.26.0") {
   return sourceLabels.map((label) => ({ label, version }));
@@ -89,6 +90,23 @@ function replaceFlowersecLockVersion(lockPath) {
 
 test("accepts one version across every release source", () => {
   assert.equal(validateReleaseVersions(matchingVersions(), "0.26.0"), "0.26.0");
+});
+
+test("coordinated release fields do not rewrite third-party lookalike versions", () => {
+  const npmLock = JSON.parse(fs.readFileSync(
+    path.join(repositoryRoot, "flowersec-ts/package-lock.json"), "utf8",
+  ));
+  assert.equal(npmLock.packages["node_modules/fsevents"].version, "2.3.3");
+  assert.equal(npmLock.packages["node_modules/punycode"].version, "2.3.1");
+
+  for (const relative of [
+    "flowersec-rust/Cargo.lock",
+    "flowersec-rust/fuzz/Cargo.lock",
+    "examples/rust/Cargo.lock",
+  ]) {
+    const lock = fs.readFileSync(path.join(repositoryRoot, relative), "utf8");
+    assert.match(lock, /\[\[package\]\]\nname = "percent-encoding"\nversion = "2\.3\.2"/);
+  }
 });
 
 test("rejects non-canonical numeric semantic versions", () => {

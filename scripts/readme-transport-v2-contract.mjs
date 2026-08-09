@@ -8,12 +8,12 @@ export const transportV2CommonReadmeLiterals = Object.freeze([
 ]);
 
 export const transportV2ReadmeContracts = Object.freeze({
-  "README.md": "Unsupported carriers fail closed; they are never silent fallbacks.",
+  "README.md": "Only declared carrier tuples are accepted; unsupported tuples fail closed.",
   "flowersec-go/README.md": "Transport v2 production carrier support: WebSocket, raw QUIC, and WebTransport.",
   "flowersec-ts/README.md": "Transport v2 production carrier support: browsers support WebSocket and WebTransport; Node.js supports WebSocket and WebTransport dialing for direct clients and both tunnel roles.",
   "flowersec-rust/README.md": "Transport v2 production carrier support: raw QUIC direct client dialing, runtime-owned direct server listening, and tunnel dialing for both session roles.",
   "flowersec-swift/README.md": "Transport v2 production carrier support: macOS and iOS support WebSocket direct and tunnel dial sessions.",
-  "examples/README.md": "Every maintained cookbook is v2-only.",
+  "examples/README.md": "Every maintained cookbook uses opaque artifacts and carrier-neutral sessions.",
 });
 
 export function validateTransportV2Readmes(repoRoot) {

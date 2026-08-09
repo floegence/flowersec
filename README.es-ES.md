@@ -67,7 +67,7 @@ Usa `make diagnostic` para diagnosticos explicitos de protocolo, navegador, red 
 | Swift | Producto SwiftPM `Flowersec` | `Artifact`, `connect`, `Session` |
 | Rust | crate `flowersec` | `Artifact`, `connect`, `Session` |
 
-Los planos de control de servicios en Go usan el paquete separado `github.com/floegence/flowersec/flowersec-go/v2/controlplane` para emitir artifacts opacos y responder a los callbacks de autorización de `flowersec-runtime`. Esto no restaura ninguna superficie v1 de issuer, token, channel-init ni DTO generados.
+Los planos de control de servicios en Go usan el paquete separado `github.com/floegence/flowersec/flowersec-go/v2/controlplane` para emitir artifacts opacos y responder a los callbacks de autorización de `flowersec-runtime`.
 
 El [índice de guías prácticas](examples/README.md) contiene únicamente ejemplos v2 y comandos de verificación.
 
@@ -103,7 +103,7 @@ Consulta la [arquitectura de Transport v2](docs/TRANSPORT_V2_ARCHITECTURE.md) y 
 
 ## Desplegar y desarrollar
 
-El runtime de Flowersec proporciona implementaciones de listeners de producción para WebSocket, raw QUIC y WebTransport. Los SDK de aplicación reciben únicamente artefactos y sesiones opacos; ninguna CLI de compatibilidad eliminada forma parte del contrato v2.
+El runtime de Flowersec proporciona implementaciones de listeners de producción para WebSocket, raw QUIC y WebTransport. Los SDK de aplicación reciben únicamente artefactos y sesiones opacos; las CLI del runtime componen las mismas implementaciones de connector y acceptor.
 
 Instala los hooks del repositorio y ejecuta la validación obligatoria antes de integrar:
 

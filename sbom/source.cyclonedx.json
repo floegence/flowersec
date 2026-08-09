@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:aa0b0657-45a9-56e5-8aed-71ec83bac2f8",
+  "serialNumber": "urn:uuid:b52575ba-482b-5c28-8a58-22159bec899e",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "flowersec-source",
-      "version": "2.3.3",
-      "purl": "pkg:generic/flowersec-source@2.3.3",
-      "bom-ref": "pkg:generic/flowersec-source@2.3.3"
+      "version": "2.3.4",
+      "purl": "pkg:generic/flowersec-source@2.3.4",
+      "bom-ref": "pkg:generic/flowersec-source@2.3.4"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "fcd6271d40c202e8e93bf5d7f79a228360688ae574e876f9c0616d6efe5ef8ca"
+        "value": "f3aeaa2c6078eba1bb7639afd68c54ab56b1d7685901e2210988a66356e9ab39"
       }
     ]
   },
@@ -13350,7 +13350,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/flowersec-source@2.3.3",
+      "ref": "pkg:generic/flowersec-source@2.3.4",
       "dependsOn": [
         "pkg:cargo/aes-gcm@0.10.3",
         "pkg:cargo/async-trait@0.1.91",

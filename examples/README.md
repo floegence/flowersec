@@ -1,6 +1,6 @@
 # Flowersec v2 Cookbooks
 
-Every maintained cookbook is v2-only. Examples use opaque artifacts and carrier-neutral sessions; removed v1 controlplane, endpoint, tunnel, proxy, and manual wire-stack demos are not maintained product surfaces.
+Every maintained cookbook uses opaque artifacts and carrier-neutral sessions. Examples cover the public control-plane, endpoint, tunnel, proxy, and session workflows.
 
 | Language | Cookbook | Runnable evidence |
 | --- | --- | --- |

@@ -134,7 +134,7 @@ type ConnectionController struct {
 // NewConnectionController creates an idle controller over a refreshable
 // ArtifactSource.
 func NewConnectionController(source ArtifactSource, options ConnectionControllerOptions) (*ConnectionController, error) {
-	if source == nil || !validConnectorOptions(options.Connector) {
+	if source == nil || !validConnectorPolicy(options.Connector) {
 		return nil, ErrInvalidConnectionController
 	}
 	if options.Connector.Handlers != nil {

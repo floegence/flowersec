@@ -67,7 +67,7 @@ make test
 | Swift | SwiftPM 产品 `Flowersec` | `Artifact`、`connect`、`Session` |
 | Rust | crate `flowersec` | `Artifact`、`Connector`、`Session` |
 
-Go 服务控制面使用独立的 `github.com/floegence/flowersec/flowersec-go/v2/controlplane` 包签发 opaque artifact，并响应 `flowersec-runtime` 的授权回调。该入口不会恢复任何 v1 issuer、token、channel-init 或 generated DTO 产品面。
+Go 服务控制面使用独立的 `github.com/floegence/flowersec/flowersec-go/v2/controlplane` 包签发 opaque artifact，并响应 `flowersec-runtime` 的授权回调。
 
 [Cookbook 索引](examples/README.md)仅包含 v2 示例和验证命令。
 
@@ -103,7 +103,7 @@ Go 服务控制面使用独立的 `github.com/floegence/flowersec/flowersec-go/v
 
 ## 部署与开发
 
-Flowersec 运行时负责 WebSocket、raw QUIC 和 WebTransport 的生产级监听器实现。应用 SDK 只接收不透明的 Artifact 和 Session；任何已移除的兼容 CLI 都不属于 v2 契约。
+Flowersec 运行时负责 WebSocket、raw QUIC 和 WebTransport 的生产级监听器实现。应用 SDK 只接收不透明的 Artifact 和 Session；运行时 CLI 使用相同的 Connector 与 Acceptor 实现。
 
 安装仓库 Hook，并在集成前运行权威门禁：
 

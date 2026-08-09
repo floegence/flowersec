@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -77,6 +78,115 @@ func TestAcceptorResolvesHandlersBeforeDirectSessionEstablishment(t *testing.T) 
 	}
 	if released.Load() != 1 {
 		t.Fatalf("lease release count = %d, want 1", released.Load())
+	}
+}
+
+func TestAcceptorEstablishesPlaintextLoopbackDirectSession(t *testing.T) {
+	var record controlplane.AuthorizationRecord
+	origins := []string{"pending"}
+	handlers := echoHandlers(t, "loopback")
+	streamPayload := make(chan []byte, 1)
+	if err := handlers.HandleStream("loopback-echo", func(_ context.Context, incoming flowersec.IncomingStream) {
+		payload, err := io.ReadAll(incoming.Stream)
+		if err == nil {
+			streamPayload <- payload
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sessionStarted := make(chan struct{})
+	releaseSession := make(chan struct{})
+	sessionFinished := make(chan struct{})
+	var released atomic.Int32
+	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
+		AllowedOrigins: origins,
+		Authorize: func(_ context.Context, request controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
+			return controlplane.AuthorizeRuntime(request, record, "lease-loopback")
+		},
+		ResolveHandlers: func(context.Context, controlplane.RuntimeAuthorizationRequest) (*flowersec.SessionHandlers, error) {
+			return handlers, nil
+		},
+		OnSession: func(context.Context, flowersec.Session, string) error {
+			close(sessionStarted)
+			<-releaseSession
+			close(sessionFinished)
+			return nil
+		},
+		Release: func(context.Context, string) { released.Add(1) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(acceptor.Handler())
+	defer server.Close()
+	origins[0] = server.URL
+
+	issued, err := controlplane.NewIssuer().IssueDirect(controlplane.DirectIssueOptions{
+		Session:           controlplane.SessionOptions{ChannelID: "loopback-direct", ExpiresAt: time.Now().Add(time.Minute)},
+		Endpoints:         mustEndpointSet(t, "ws"+strings.TrimPrefix(server.URL, "http")+flowersec.WebSocketDirectPath),
+		RendezvousGroupID: "loopback-direct",
+		ListenerAudience:  "test",
+		UpstreamAddress:   server.Listener.Addr().String(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record = issued.AuthorizationRecord()
+
+	artifact, err := flowersec.ParseArtifact(issued.ArtifactJSON())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := flowersec.NewArtifactLease(artifact, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	session, err := flowersec.Connect(ctx, lease, flowersec.ConnectorOptions{Origin: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	select {
+	case <-sessionStarted:
+	case <-ctx.Done():
+		t.Fatal("plaintext loopback accepted session did not start")
+	}
+	assertEchoRPC(t, session, "loopback")
+	if _, err := session.ProbeLiveness(ctx); err != nil {
+		t.Fatalf("plaintext loopback ProbeLiveness() error = %v", err)
+	}
+	stream, err := session.OpenStream(ctx, "loopback-echo", flowersec.EmptyStreamMetadata())
+	if err != nil {
+		t.Fatalf("plaintext loopback OpenStream() error = %v", err)
+	}
+	if _, err := stream.Write([]byte("loopback-stream")); err != nil {
+		t.Fatalf("plaintext loopback stream Write() error = %v", err)
+	}
+	if err := stream.CloseWrite(); err != nil {
+		t.Fatalf("plaintext loopback stream CloseWrite() error = %v", err)
+	}
+	select {
+	case payload := <-streamPayload:
+		if string(payload) != "loopback-stream" {
+			t.Fatalf("plaintext loopback stream payload = %q", payload)
+		}
+	case <-ctx.Done():
+		t.Fatal("plaintext loopback stream handler did not receive payload")
+	}
+	_ = stream.Close()
+	close(releaseSession)
+	select {
+	case <-sessionFinished:
+	case <-ctx.Done():
+		t.Fatal("plaintext loopback accepted session did not finish")
+	}
+	for deadline := time.Now().Add(time.Second); released.Load() != 1 && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if released.Load() != 1 {
+		t.Fatalf("plaintext loopback release count = %d, want 1", released.Load())
 	}
 }
 

@@ -4,7 +4,7 @@ The `flowersec` crate is the Tokio-native Rust SDK for Flowersec v2 end-to-end
 encrypted sessions. Its maintained public entrypoints use opaque artifacts, the
 carrier-neutral one-shot `connect(...)` function, and `Session`.
 
-Flowersec 2.3.3 is the coordinated Rust crate patch release.
+Flowersec 2.3.4 is the published Rust crate release.
 
 The crate targets Rust 1.88 or newer on Linux, macOS, and Windows, uses rustls
 by default, and contains no Flowersec-authored `unsafe`.
@@ -12,7 +12,7 @@ by default, and contains no Flowersec-authored `unsafe`.
 ## Install
 
 ```bash
-cargo add flowersec@2.3.3
+cargo add flowersec@2.3.4
 ```
 
 The production raw QUIC connection profile requires explicit DER trust roots.
@@ -132,7 +132,7 @@ retry-after deadline. `close()` cancels artifact acquisition, connection, and
 waiting, then closes the current session.
 
 Every successful replacement establishes a new `Session` from a fresh artifact.
-A terminated session is removed before retry begins, and the next session is
+A terminated session is closed before retry begins, and the next session is
 published only after it establishes. Old streams, RPCs, and writes fail with
 their old session and are never migrated or replayed by the controller.
 

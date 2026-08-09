@@ -2,7 +2,7 @@
 
 Privileged diagnostics and performance tests run natively as root on one
 dedicated Ubuntu 22.04 or later amd64 or arm64 host. The host must support
-direct root access or non-interactive `sudo -n`; there is no non-root fallback.
+direct root access or non-interactive `sudo -n`; the required host profile is fixed.
 
 Use one entrypoint from a clean checkout whose exact commit is available from
 `origin`:

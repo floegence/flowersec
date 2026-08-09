@@ -67,7 +67,7 @@ make test
 | Swift | SwiftPM プロダクト `Flowersec` | `Artifact`、`connect`、`Session` |
 | Rust | crate `flowersec` | `Artifact`、`Connector`、`Session` |
 
-Go サービスのコントロールプレーンは、opaque artifact の発行と `flowersec-runtime` の認可コールバックへの応答に、独立した `github.com/floegence/flowersec/flowersec-go/v2/controlplane` パッケージを使用します。v1 の issuer、token、channel-init、生成 DTO のサーフェスは復元されません。
+Go サービスのコントロールプレーンは、opaque artifact の発行と `flowersec-runtime` の認可コールバックへの応答に、独立した `github.com/floegence/flowersec/flowersec-go/v2/controlplane` パッケージを使用します。
 
 [Cookbook インデックス](examples/README.md)には、v2 の例と検証コマンドだけが含まれます。
 
@@ -103,7 +103,7 @@ Go サービスのコントロールプレーンは、opaque artifact の発行�
 
 ## デプロイと開発
 
-Flowersec Runtime が、WebSocket、raw QUIC、WebTransport の本番用 Listener 実装を担います。アプリケーション SDK に渡されるのは不透明な Artifact と Session だけであり、削除済みの互換 CLI は v2 契約に含まれません。
+Flowersec Runtime が、WebSocket、raw QUIC、WebTransport の本番用 Listener 実装を担います。アプリケーション SDK に渡されるのは不透明な Artifact と Session だけであり、Runtime CLI は同じ Connector と Acceptor 実装を構成します。
 
 リポジトリの Hook をインストールし、統合前に正式な品質ゲートを実行します。
 

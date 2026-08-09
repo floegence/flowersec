@@ -1,5 +1,7 @@
-// Package websocket adapts a TLS WebSocket connection and hop-local Yamux to
-// Flowersec's transport-neutral carrier contract.
+// Package websocket adapts a WebSocket connection and hop-local Yamux to
+// Flowersec's transport-neutral carrier contract. Network-facing and tunnel
+// connections require TLS 1.3; plaintext direct connections are restricted to
+// TCP loopback at both ends.
 package websocket
 
 import (
@@ -161,7 +163,8 @@ func newSessionWithByteConn(conn *gorillaws.Conn, byteConn net.Conn, role Role, 
 }
 
 // ValidateReady checks the credential-free WebSocket carrier-ready boundary:
-// TLS 1.3 and one exact registered v2 subprotocol are already negotiated.
+// one exact registered v2 subprotocol and either TLS 1.3 or the restricted
+// plaintext loopback direct profile are already negotiated.
 func ValidateReady(conn *gorillaws.Conn, subprotocol string) error {
 	if conn == nil {
 		return net.ErrClosed
@@ -169,7 +172,7 @@ func ValidateReady(conn *gorillaws.Conn, subprotocol string) error {
 	if !validSubprotocol(subprotocol) || conn.Subprotocol() != subprotocol {
 		return ErrInvalidSubprotocol
 	}
-	return validateTLS13(conn)
+	return validateTransportSecurity(conn, subprotocol)
 }
 
 type Session struct {
@@ -447,12 +450,27 @@ func (conn *binaryByteConn) SetWriteDeadline(deadline time.Time) error {
 	return conn.conn.SetWriteDeadline(deadline)
 }
 
-func validateTLS13(conn *gorillaws.Conn) error {
-	tlsConn, ok := conn.UnderlyingConn().(*tls.Conn)
-	if !ok || tlsConn.ConnectionState().Version != tls.VersionTLS13 {
+func validateTransportSecurity(conn *gorillaws.Conn, subprotocol string) error {
+	underlying := conn.UnderlyingConn()
+	if tlsConn, ok := underlying.(*tls.Conn); ok {
+		if tlsConn.ConnectionState().Version == tls.VersionTLS13 {
+			return nil
+		}
+		return ErrTLS13Required
+	}
+	return validatePlaintextLoopback(underlying, subprotocol)
+}
+
+func validatePlaintextLoopback(conn net.Conn, subprotocol string) error {
+	if conn == nil || subprotocol != SubprotocolDirect || !loopbackTCPAddress(conn.LocalAddr()) || !loopbackTCPAddress(conn.RemoteAddr()) {
 		return ErrTLS13Required
 	}
 	return nil
+}
+
+func loopbackTCPAddress(address net.Addr) bool {
+	tcpAddress, ok := address.(*net.TCPAddr)
+	return ok && tcpAddress != nil && tcpAddress.IP != nil && tcpAddress.IP.IsLoopback()
 }
 
 func validateApplicationError(applicationError carrier.ApplicationError) error {

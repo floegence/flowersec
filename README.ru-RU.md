@@ -67,7 +67,7 @@ make test
 | Swift | Продукт SwiftPM `Flowersec` | `Artifact`, `connect`, `Session` |
 | Rust | crate `flowersec` | `Artifact`, `connect`, `Session` |
 
-Сервисные control plane на Go используют отдельный пакет `github.com/floegence/flowersec/flowersec-go/v2/controlplane` для выпуска непрозрачных artifacts и обработки authorization callback от `flowersec-runtime`. Это не восстанавливает v1-поверхности issuer, token, channel-init или сгенерированных DTO.
+Сервисные control plane на Go используют отдельный пакет `github.com/floegence/flowersec/flowersec-go/v2/controlplane` для выпуска непрозрачных artifacts и обработки authorization callback от `flowersec-runtime`.
 
 [Указатель практических примеров](examples/README.md) содержит только примеры v2 и команды проверки.
 

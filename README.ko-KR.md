@@ -67,7 +67,7 @@ make test
 | Swift | SwiftPM 제품 `Flowersec` | `Artifact`, `connect`, `Session` |
 | Rust | crate `flowersec` | `Artifact`, `connect`, `Session` |
 
-Go 서비스 control plane은 별도의 `github.com/floegence/flowersec/flowersec-go/v2/controlplane` 패키지를 사용해 opaque artifact를 발급하고 `flowersec-runtime` authorization callback에 응답합니다. v1 issuer, token, channel-init 또는 generated DTO surface를 복원하지 않습니다.
+Go 서비스 control plane은 별도의 `github.com/floegence/flowersec/flowersec-go/v2/controlplane` 패키지를 사용해 opaque artifact를 발급하고 `flowersec-runtime` authorization callback에 응답합니다.
 
 [Cookbook 색인](examples/README.md)에는 v2 예제와 검증 명령만 포함됩니다.
 
@@ -84,7 +84,7 @@ Go 서비스 control plane은 별도의 `github.com/floegence/flowersec/flowerse
 | 프로덕션 WebTransport dial | 지원 | Browser | 미지원 | 미지원 |
 | Listener 지원 | Go 라이브러리 API | Browser runtime 제약 | 공개하지 않음 | 공개하지 않음 |
 
-각 지원 항목은 프로덕션 Connector 코드와 종단 간 테스트로 검증됩니다. 지원하지 않는 캐리어는 fail closed하며, 암묵적인 fallback으로 사용되지 않습니다. Capability descriptor와 캐리어 선택은 내부에만 유지됩니다.
+각 지원 항목은 프로덕션 Connector 코드와 종단 간 테스트로 검증됩니다. 지원하지 않는 캐리어는 fail closed합니다. Capability descriptor와 캐리어 선택은 내부에만 유지됩니다.
 
 <!-- readme-section:security -->
 <a id="security"></a>
@@ -103,7 +103,7 @@ Go 서비스 control plane은 별도의 `github.com/floegence/flowersec/flowerse
 
 ## 배포 및 개발
 
-Flowersec runtime은 WebSocket, raw QUIC 및 WebTransport의 프로덕션 Listener 구현을 담당합니다. 애플리케이션 SDK에는 불투명 Artifact와 Session만 제공되며, 제거된 호환성 CLI는 v2 계약에 포함되지 않습니다.
+Flowersec runtime은 WebSocket, raw QUIC 및 WebTransport의 프로덕션 Listener 구현을 담당합니다. 애플리케이션 SDK에는 불투명 Artifact와 Session만 제공되며, runtime CLI는 동일한 Connector와 Acceptor 구현을 구성합니다.
 
 통합 전에 저장소 hook을 설치하고 authoritative gate를 실행합니다.
 

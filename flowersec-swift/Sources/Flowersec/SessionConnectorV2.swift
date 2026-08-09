@@ -148,7 +148,7 @@ struct SessionConnectorV2: Sendable {
     options: ConnectorOptions,
     runtime: any RuntimeCarrierAdapterV2
   ) throws {
-    try Self.validate(options)
+    try Self.validate(options, artifact: lease.artifact.value)
     do {
       try runtime.validate(options: options)
     } catch {
@@ -303,13 +303,27 @@ struct SessionConnectorV2: Sendable {
     }
   }
 
-  private static func validate(_ options: ConnectorOptions) throws {
+  private static func validate(_ options: ConnectorOptions, artifact: ArtifactWireV2) throws {
     guard options.connectTimeout > .zero else { throw ConnectError.invalidOptions }
     if let origin = options.origin {
-      guard let value = URLComponents(string: origin), value.scheme == "https",
+      guard let value = URLComponents(string: origin),
         value.host != nil, value.user == nil, value.password == nil,
         value.path.isEmpty || value.path == "/", value.query == nil, value.fragment == nil
       else { throw ConnectError.invalidOptions }
+      let secureOrigin = value.scheme == "https"
+      let loopbackPlaintextOrigin = value.scheme == "http"
+        && (value.host == "127.0.0.1" || value.host == "::1")
+        && rootlessLoopbackDirectOnly(artifact)
+      guard secureOrigin || loopbackPlaintextOrigin else { throw ConnectError.invalidOptions }
+    }
+  }
+
+  private static func rootlessLoopbackDirectOnly(_ artifact: ArtifactWireV2) -> Bool {
+    guard artifact.path.kind == "direct", !artifact.path.candidates.isEmpty else { return false }
+    return artifact.path.candidates.allSatisfy { candidate in
+      guard candidate.carrier == "websocket", let value = URLComponents(string: candidate.url)
+      else { return false }
+      return value.scheme == "ws" && (value.host == "127.0.0.1" || value.host == "::1")
     }
   }
 

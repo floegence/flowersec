@@ -67,7 +67,7 @@ Explizite Protokoll-, Browser-, Schwachnetz- und Interoperabilitaetsdiagnosen la
 | Swift | SwiftPM-Produkt `Flowersec` | `Artifact`, `connect`, `Session` |
 | Rust | Crate `flowersec` | `Artifact`, `connect`, `Session` |
 
-Go-Service-Control-Planes verwenden das separate Paket `github.com/floegence/flowersec/flowersec-go/v2/controlplane`, um opake Artefakte auszustellen und Autorisierungs-Callbacks von `flowersec-runtime` zu beantworten. Dadurch wird keine v1-Oberfläche für Issuer, Token, Channel-Init oder generierte DTOs wiederhergestellt.
+Go-Service-Control-Planes verwenden das separate Paket `github.com/floegence/flowersec/flowersec-go/v2/controlplane`, um opake Artefakte auszustellen und Autorisierungs-Callbacks von `flowersec-runtime` zu beantworten.
 
 Der [Cookbook-Index](examples/README.md) enthält ausschließlich v2-Beispiele und Verifikationsbefehle.
 
@@ -84,7 +84,7 @@ Der [Cookbook-Index](examples/README.md) enthält ausschließlich v2-Beispiele u
 | WebTransport-Dialing für den Produktionseinsatz | Ja | Browser | Nein | Nein |
 | Listener-Unterstützung | Go-Bibliotheks-APIs | Einschränkungen der Browser-Runtime | Nicht ausgewiesen | Nicht ausgewiesen |
 
-Jede Zeile zur Unterstützung ist durch produktiven Connector-Code und Ende-zu-Ende-Tests belegt. Nicht unterstützte Carrier werden sicher abgelehnt und dienen niemals als stiller Fallback. Capability-Deskriptoren und die Carrier-Auswahl bleiben intern.
+Jede Zeile zur Unterstützung ist durch produktiven Connector-Code und Ende-zu-Ende-Tests belegt. Nicht unterstützte Carrier werden sicher abgelehnt. Capability-Deskriptoren und die Carrier-Auswahl bleiben intern.
 
 <!-- readme-section:security -->
 <a id="security"></a>

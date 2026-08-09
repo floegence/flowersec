@@ -9,7 +9,7 @@ Flowersec protects artifact credentials, endpoint identity, session keys, RPC pa
 - Applications own artifact acquisition and the durable pending-to-spent transition.
 - Endpoints terminate Flowersec session encryption.
 - Tunnel relays coordinate and forward encrypted carrier streams; they do not terminate application encryption.
-- WebSocket uses TLS plus hop-local Yamux. Raw QUIC and WebTransport use TLS 1.3 and native bidirectional streams without Yamux.
+- WebSocket uses hop-local Yamux. Network-facing WebSocket uses TLS 1.3; plaintext WebSocket is restricted to exact direct subprotocol connections whose local and remote TCP addresses are both loopback. Raw QUIC and WebTransport use TLS 1.3 and native bidirectional streams without Yamux.
 
 ## Admission
 
@@ -23,7 +23,7 @@ The authenticated session handshake derives independent directional and epoch ke
 
 ## Carrier Security
 
-- WSS requires authenticated TLS outside explicit local test fixtures and accepts binary frames only.
+- WSS requires authenticated TLS 1.3 and accepts binary frames only. Plaintext WebSocket accepts only the direct subprotocol with resolvable loopback TCP addresses at both ends; tunnel, non-loopback, missing-address, and wrong-subprotocol connections fail closed.
 - Raw QUIC and WebTransport require exact ALPN, explicit trust roots, TLS 1.3, and disabled early data.
 - QUIC native FIN, RESET_STREAM, STOP_SENDING, flow control, and path migration remain visible to the carrier implementation but not to applications.
 - Application streams remain reliable and never fall back to QUIC DATAGRAM. Raw QUIC and WebTransport may expose negotiated native DATAGRAM only through the carrier-neutral, separately encrypted unreliable-message channel.
@@ -34,4 +34,4 @@ Flowersec does not protect a compromised endpoint process, malicious application
 
 ## Failure Policy
 
-There is no legacy fallback or downgrade path. Unsupported carrier tuples, missing trust roots, ambiguous admission outcomes, protocol violations, and cleanup deadline failures are terminal and return bounded public errors.
+Only declared carrier tuples are accepted. Unsupported tuples, missing trust roots, ambiguous admission outcomes, protocol violations, and cleanup deadline failures are terminal and return bounded public errors.

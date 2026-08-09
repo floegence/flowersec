@@ -2,12 +2,12 @@
 
 The Go 2.x module exposes Flowersec's carrier-neutral v2 consumer API. Applications parse an opaque artifact, attach a durable single-use spend callback, connect, and use only the returned session, RPC, and byte-stream contracts.
 
-Flowersec 2.3.3 is the published coordinated Go module release.
+Flowersec 2.3.4 is the published Go module release.
 
 ## Install
 
 ```bash
-go get github.com/floegence/flowersec/flowersec-go/v2@v2.3.3
+go get github.com/floegence/flowersec/flowersec-go/v2@v2.3.4
 ```
 
 Repository tags for this module use the `flowersec-go/v2.x.y` prefix.
@@ -40,7 +40,7 @@ The executable `ExampleConnect` compiles the complete consumer lifecycle,
 including an atomically created and synchronized durable spend record. Reusing
 the record key fails closed; the record contains no artifact or key material.
 
-An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default. `ConnectorOptions.Origin` may be empty when the artifact uses WSS or raw QUIC; a non-empty absolute HTTP(S) origin registers WebTransport eligibility, whose secure dial path still requires HTTPS. Go's native TLS paths require explicit non-empty `ConnectorOptions.TrustRoots`; load the system pool with `x509.SystemCertPool()` when platform trust is intended. Invalid connector inputs and options are returned as `ConnectError` values. `Session.WaitTermination(...)` is the sole public termination waiting entrypoint and returns a redacted `SessionTermination` with the stable close reason; cancellation of the wait is returned separately. A long-lived connection uses `NewConnectionController(...)` with a refreshable `ArtifactSource`; every attempt acquires a fresh lease and establishes a new one-shot `Session`. Its structured decisions are `terminal`, `retryable`, or an absolute `retry_after` deadline. `RetryNow` only wakes the current wait, and streams, RPCs, and writes from a terminated session are never migrated or replayed.
+An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default. `ConnectorOptions.Origin` may be empty when the artifact uses WSS or raw QUIC; a non-empty absolute HTTP(S) origin registers WebTransport eligibility, whose secure dial path still requires HTTPS. Go's native TLS paths require explicit non-empty `ConnectorOptions.TrustRoots`; load the system pool with `x509.SystemCertPool()` when platform trust is intended. Trust roots may be omitted only when every artifact candidate is a plaintext WebSocket direct candidate on exact loopback; secure or mixed candidate sets still require them. Invalid connector inputs and options are returned as `ConnectError` values. `Session.WaitTermination(...)` is the sole public termination waiting entrypoint and returns a redacted `SessionTermination` with the stable close reason; cancellation of the wait is returned separately. A long-lived connection uses `NewConnectionController(...)` with a refreshable `ArtifactSource`; every attempt acquires a fresh lease and establishes a new one-shot `Session`. Its structured decisions are `terminal`, `retryable`, or an absolute `retry_after` deadline. `RetryNow` only wakes the current wait, and streams, RPCs, and writes from a terminated session are never migrated or replayed.
 
 ## Capability Layers
 
@@ -65,7 +65,7 @@ part of the portable core.
 
 Go service control planes use `github.com/floegence/flowersec/flowersec-go/v2/controlplane` to issue direct artifacts or complementary tunnel pairs and to validate `flowersec-runtime` authorization callbacks. Endpoint sets, issued artifacts, authorization records, runtime requests, and responses are opaque. Artifact and record bytes cross only explicit serialization methods; the caller owns permissions, placement, durable one-time lease state, and upstream selection.
 
-See the executable `controlplane.ExampleIssuer_IssueTunnelPair` example for artifact delivery and authorization-record persistence. The package is v2-only and does not restore removed issuer keys, signed grants, generated DTOs, or channel-init APIs.
+See the executable `controlplane.ExampleIssuer_IssueTunnelPair` example for artifact delivery and authorization-record persistence. The package exposes opaque endpoint, issuance, authorization-record, and runtime callback types.
 
 ## Transport v2 Support
 

@@ -232,12 +232,14 @@ func newConnector(lease ArtifactLease, options ConnectorOptions) (*connector, er
 	if lease.artifact.value == nil || lease.state == nil || lease.state.commitSpend == nil {
 		return nil, &ConnectError{code: ConnectInvalidInput}
 	}
-	if !validConnectorOptions(options) {
+	rootlessLoopbackDirectOnly := candidatev2.RootlessLoopbackDirectOnly(*lease.artifact.value)
+	if !validConnectorOptions(options, rootlessLoopbackDirectOnly) {
 		return nil, &ConnectError{code: ConnectInvalidOptions}
 	}
 	factory, err := candidatev2.NewGoNativeFactory(candidatev2.GoNativeConfig{
-		TrustRoots: options.TrustRoots,
-		Origin:     options.Origin,
+		TrustRoots:                 options.TrustRoots,
+		Origin:                     options.Origin,
+		RootlessLoopbackDirectOnly: rootlessLoopbackDirectOnly && options.TrustRoots == nil,
 	})
 	if err != nil {
 		return nil, &ConnectError{code: ConnectInvalidOptions}
@@ -253,8 +255,13 @@ func newConnector(lease ArtifactLease, options ConnectorOptions) (*connector, er
 	return &connector{inner: inner, timeout: options.ConnectTimeout}, nil
 }
 
-func validConnectorOptions(options ConnectorOptions) bool {
-	return options.TrustRoots != nil && len(options.TrustRoots.Subjects()) != 0 &&
+func validConnectorOptions(options ConnectorOptions, rootlessLoopbackDirectOnly bool) bool {
+	validTrust := options.TrustRoots != nil && len(options.TrustRoots.Subjects()) != 0
+	return validConnectorPolicy(options) && (validTrust || (rootlessLoopbackDirectOnly && options.TrustRoots == nil))
+}
+
+func validConnectorPolicy(options ConnectorOptions) bool {
+	return (options.TrustRoots == nil || len(options.TrustRoots.Subjects()) != 0) &&
 		options.ConnectTimeout >= 0 && validOrigin(options.Origin) &&
 		(options.Handlers == nil || options.Handlers.valid())
 }

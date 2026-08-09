@@ -32,9 +32,10 @@ var (
 )
 
 type WebSocketDialConfig struct {
-	Dialer    *gorillaws.Dialer
-	Resources carrierws.ResourcePolicy
-	Origin    string
+	Dialer                      *gorillaws.Dialer
+	Resources                   carrierws.ResourcePolicy
+	Origin                      string
+	PlaintextLoopbackDirectOnly bool
 }
 
 type RawQUICDialConfig struct {
@@ -52,40 +53,48 @@ type WebTransportDialConfig struct {
 // GoNativeConfig contains the runtime inputs shared by the production Go
 // WebSocket, raw QUIC, and WebTransport adapters.
 type GoNativeConfig struct {
-	TrustRoots *x509.CertPool
-	Origin     string
+	TrustRoots                 *x509.CertPool
+	Origin                     string
+	RootlessLoopbackDirectOnly bool
 }
 
 // NewGoNativeFactory composes the production adapters available in one Go
 // runtime. WebTransport is present only when its required origin is present.
 func NewGoNativeFactory(config GoNativeConfig) (*Factory, error) {
-	if config.TrustRoots == nil || len(config.TrustRoots.Subjects()) == 0 {
+	hasTrustRoots := config.TrustRoots != nil && len(config.TrustRoots.Subjects()) != 0
+	if !hasTrustRoots && !config.RootlessLoopbackDirectOnly {
 		return nil, ErrInvalidCarrierDialConfig
 	}
-	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: config.TrustRoots.Clone()}
 	webSocketClient := *gorillaws.DefaultDialer
-	webSocketClient.TLSClientConfig = tlsConfig.Clone()
-	webSocketDial, err := NewWebSocketCarrierDial(WebSocketDialConfig{
-		Dialer:    &webSocketClient,
-		Resources: carrierws.DefaultResourcePolicy(),
-		Origin:    config.Origin,
-	})
-	if err != nil {
-		return nil, err
+	if hasTrustRoots {
+		webSocketClient.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: config.TrustRoots.Clone()}
 	}
-	rawQUICDial, err := NewRawQUICCarrierDial(RawQUICDialConfig{
-		TLSConfig: tlsConfig.Clone(),
-		Limits:    quicbase.DefaultLimits(),
-		Dial:      rawquic.Dial,
+	webSocketDial, err := NewWebSocketCarrierDial(WebSocketDialConfig{
+		Dialer:                      &webSocketClient,
+		Resources:                   carrierws.DefaultResourcePolicy(),
+		Origin:                      config.Origin,
+		PlaintextLoopbackDirectOnly: config.RootlessLoopbackDirectOnly,
 	})
 	if err != nil {
 		return nil, err
 	}
 	dialers := map[artifactv2.Carrier]Dial{
 		artifactv2.CarrierWebSocket: webSocketDial,
-		artifactv2.CarrierRawQUIC:   rawQUICDial,
 	}
-	if config.Origin != "" {
+	if hasTrustRoots {
+		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: config.TrustRoots.Clone()}
+		rawQUICDial, err := NewRawQUICCarrierDial(RawQUICDialConfig{
+			TLSConfig: tlsConfig.Clone(),
+			Limits:    quicbase.DefaultLimits(),
+			Dial:      rawquic.Dial,
+		})
+		if err != nil {
+			return nil, err
+		}
+		dialers[artifactv2.CarrierRawQUIC] = rawQUICDial
+	}
+	if hasTrustRoots && config.Origin != "" {
+		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: config.TrustRoots.Clone()}
 		webTransportDial, err := NewWebTransportCarrierDial(WebTransportDialConfig{
 			TLSConfig: tlsConfig.Clone(),
 			Limits:    quicbase.DefaultLimits(),
@@ -97,6 +106,22 @@ func NewGoNativeFactory(config GoNativeConfig) (*Factory, error) {
 		dialers[artifactv2.CarrierWebTransport] = webTransportDial
 	}
 	return NewFactory(dialers)
+}
+
+// RootlessLoopbackDirectOnly reports whether every candidate belongs to the
+// restricted plaintext loopback direct profile. A mixed or secure candidate
+// set always requires explicit trust roots.
+func RootlessLoopbackDirectOnly(artifact artifactv2.Artifact) bool {
+	if artifact.Path.Kind != artifactv2.PathDirect || len(artifact.Path.Candidates) == 0 {
+		return false
+	}
+	for _, candidate := range artifact.Path.Candidates {
+		subprotocol, dialURL, err := validateWebSocketCandidate(candidate)
+		if err != nil || subprotocol != carrierws.SubprotocolDirect || !strings.HasPrefix(dialURL, "ws://") || !loopbackWebSocketURL(dialURL) {
+			return false
+		}
+	}
+	return true
 }
 
 // NewWebTransportCarrierDial completes HTTP/3 CONNECT and opens one native
@@ -251,6 +276,9 @@ func NewWebSocketCarrierDial(config WebSocketDialConfig) (Dial, error) {
 		subprotocol, dialURL, err := validateWebSocketCandidate(candidate)
 		if err != nil {
 			return nil, err
+		}
+		if config.PlaintextLoopbackDirectOnly && (subprotocol != carrierws.SubprotocolDirect || !strings.HasPrefix(dialURL, "ws://") || !loopbackWebSocketURL(dialURL)) {
+			return nil, ErrInvalidCarrierCandidate
 		}
 		attemptDialer := dialer
 		if strings.HasPrefix(dialURL, "ws://") {

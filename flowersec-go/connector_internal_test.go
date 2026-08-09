@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/fserrors"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
@@ -140,6 +141,44 @@ func TestConnectorAllowsEmptyOriginForNonWebTransportProfiles(t *testing.T) {
 	}
 	if _, err := newConnector(lease, ConnectorOptions{TrustRoots: trustRoots, Origin: "http://client.example"}); err != nil {
 		t.Fatalf("newConnector() HTTP Origin error = %v", err)
+	}
+}
+
+func TestConnectorRequiresTrustRootsForEverySecureOrMixedCandidateSet(t *testing.T) {
+	secure := mustParseInternalFixtureArtifact(t)
+	secureLease, err := NewArtifactLease(secure, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newConnector(secureLease, ConnectorOptions{}); !errors.Is(err, ErrInvalidConnectorOptions) {
+		t.Fatalf("secure rootless newConnector() error = %v, want invalid options", err)
+	}
+
+	plain := mustParseInternalFixtureArtifact(t)
+	plain.value.Path.Kind = artifactv2.PathDirect
+	plain.value.Path.Candidates = []artifactv2.Candidate{{
+		ID: "loopback", Carrier: artifactv2.CarrierWebSocket,
+		URL: "ws://127.0.0.1:23998/flowersec/v2/direct", WireProfile: "flowersec-direct/2",
+		NormalizedURL: "ws://127.0.0.1:23998/flowersec/v2/direct",
+	}}
+	plainLease, err := NewArtifactLease(plain, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newConnector(plainLease, ConnectorOptions{}); err != nil {
+		t.Fatalf("plaintext loopback rootless newConnector() error = %v", err)
+	}
+
+	mixed := mustParseInternalFixtureArtifact(t)
+	secureCandidate := mixed.value.Path.Candidates[0]
+	mixed.value.Path.Kind = artifactv2.PathDirect
+	mixed.value.Path.Candidates = []artifactv2.Candidate{plain.value.Path.Candidates[0], secureCandidate}
+	mixedLease, err := NewArtifactLease(mixed, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newConnector(mixedLease, ConnectorOptions{}); !errors.Is(err, ErrInvalidConnectorOptions) {
+		t.Fatalf("mixed rootless newConnector() error = %v, want invalid options", err)
 	}
 }
 

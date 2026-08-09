@@ -9,6 +9,29 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), "utf8");
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const makefile = read("Makefile");
 
+const trackedMarkdown = spawnSync(
+  "git", ["ls-files", "-z", "--", "*.md"],
+  { cwd: root, encoding: "utf8" },
+);
+assert.equal(trackedMarkdown.status, 0, trackedMarkdown.stderr);
+const maintainedDocumentation = trackedMarkdown.stdout.split("\0").filter((relative) => (
+  relative !== "" && relative !== "AGENTS.md"
+  && !relative.endsWith("THIRD_PARTY_NOTICES.md")
+  && !relative.endsWith("SBOM_SCOPE.md")
+));
+const releaseEvolution = /\b(?:earlier coordinated releases?|coordinated (?:patch )?release|introduced in \d|completed (?:for .* )?in \d|legacy fallback|earlier-version|older .* deployments?)\b|does not restore|not a restored|removed (?:artifact-first )?v1|compatibility (?:alias|CLI)/i;
+const staleFlowersecVersion = /Flowersec 2\.3\.[0-3]\b|@floegence\/flowersec-core@2\.3\.[0-3]\b|flowersec-go\/v2\.3\.[0-3]\b|flowersec@2\.3\.[0-3]\b/;
+for (const relative of maintainedDocumentation) {
+  const contents = read(relative);
+  assert.doesNotMatch(contents, releaseEvolution, `${relative} contains release evolution or compatibility history`);
+  assert.doesNotMatch(contents, staleFlowersecVersion, `${relative} contains a stale Flowersec release version`);
+}
+const currentDocumentation = maintainedDocumentation.map(read).join("\n");
+for (const token of [
+  "ConnectionController", "NewAcceptor", "SessionHandlers",
+  "loopback plaintext WebSocket", "stability/language_capabilities.json",
+]) assert.match(currentDocumentation, new RegExp(escapeRegex(token)), `documentation misses current token ${token}`);
+
 const retiredPaths = [
   "scripts/transport-v2-runner.sh", "scripts/transport-v2-runner-host.py",
   "scripts/transport-v2-runner-agent.sh", "scripts/transport-v2-runner-kvm.py",

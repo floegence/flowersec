@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -76,6 +77,81 @@ func TestSessionPathMatchesExactSubprotocol(t *testing.T) {
 		t.Fatalf("carrier path = %q/%q, want tunnel", client.Path(), server.Path())
 	}
 }
+
+func TestValidateReadyAllowsPlaintextOnlyForLoopbackDirect(t *testing.T) {
+	client, server := newPlainUpgradedPair(t, SubprotocolDirect)
+	defer client.Close()
+	defer server.Close()
+	if err := ValidateReady(client, SubprotocolDirect); err != nil {
+		t.Fatalf("loopback direct client ValidateReady() error = %v", err)
+	}
+	if err := ValidateReady(server, SubprotocolDirect); err != nil {
+		t.Fatalf("loopback direct server ValidateReady() error = %v", err)
+	}
+
+	tunnelClient, tunnelServer := newPlainUpgradedPair(t, SubprotocolTunnel)
+	defer tunnelClient.Close()
+	defer tunnelServer.Close()
+	if err := ValidateReady(tunnelClient, SubprotocolTunnel); !errors.Is(err, ErrTLS13Required) {
+		t.Fatalf("plaintext tunnel client error = %v, want ErrTLS13Required", err)
+	}
+	if err := ValidateReady(tunnelServer, SubprotocolTunnel); !errors.Is(err, ErrTLS13Required) {
+		t.Fatalf("plaintext tunnel server error = %v, want ErrTLS13Required", err)
+	}
+
+	tls12Client, tls12Server := newTLS12UpgradedPair(t, SubprotocolDirect)
+	defer tls12Client.Close()
+	defer tls12Server.Close()
+	if err := ValidateReady(tls12Client, SubprotocolDirect); !errors.Is(err, ErrTLS13Required) {
+		t.Fatalf("TLS 1.2 loopback client error = %v, want ErrTLS13Required", err)
+	}
+	if err := ValidateReady(tls12Server, SubprotocolDirect); !errors.Is(err, ErrTLS13Required) {
+		t.Fatalf("TLS 1.2 loopback server error = %v, want ErrTLS13Required", err)
+	}
+
+	for _, address := range []net.Addr{
+		&net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 443},
+		&net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 443},
+		nil,
+	} {
+		if loopbackTCPAddress(address) {
+			t.Fatalf("non-loopback TCP boundary accepted address %#v", address)
+		}
+	}
+
+	loopback := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 23998}
+	nonLoopback := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 443}
+	for name, conn := range map[string]net.Conn{
+		"local non-loopback":  addressConn{local: nonLoopback, remote: loopback},
+		"remote non-loopback": addressConn{local: loopback, remote: nonLoopback},
+		"missing local":       addressConn{remote: loopback},
+		"missing remote":      addressConn{local: loopback},
+		"non-TCP local":       addressConn{local: &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 23998}, remote: loopback},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validatePlaintextLoopback(conn, SubprotocolDirect); !errors.Is(err, ErrTLS13Required) {
+				t.Fatalf("validatePlaintextLoopback() error = %v, want ErrTLS13Required", err)
+			}
+		})
+	}
+	if err := validatePlaintextLoopback(addressConn{local: loopback, remote: loopback}, SubprotocolTunnel); !errors.Is(err, ErrTLS13Required) {
+		t.Fatalf("tunnel validatePlaintextLoopback() error = %v, want ErrTLS13Required", err)
+	}
+}
+
+type addressConn struct {
+	local  net.Addr
+	remote net.Addr
+}
+
+func (conn addressConn) Read([]byte) (int, error)         { return 0, net.ErrClosed }
+func (conn addressConn) Write([]byte) (int, error)        { return 0, net.ErrClosed }
+func (conn addressConn) Close() error                     { return nil }
+func (conn addressConn) LocalAddr() net.Addr              { return conn.local }
+func (conn addressConn) RemoteAddr() net.Addr             { return conn.remote }
+func (conn addressConn) SetDeadline(time.Time) error      { return nil }
+func (conn addressConn) SetReadDeadline(time.Time) error  { return nil }
+func (conn addressConn) SetWriteDeadline(time.Time) error { return nil }
 
 func TestBindSessionResourcePolicyUsesExactPhysicalCapacity(t *testing.T) {
 	for _, logical := range []uint16{1, 128} {
@@ -214,11 +290,16 @@ func TestYamuxStopSendingIsExplicitlyUnavailable(t *testing.T) {
 	}
 }
 
-func TestExactSubprotocolAndTLS13AreRequired(t *testing.T) {
-	_, server := newUpgradedPair(t, SubprotocolDirect)
+func TestExactSubprotocolIsRequired(t *testing.T) {
+	client, server := newUpgradedPair(t, SubprotocolDirect)
+	t.Cleanup(func() { _ = client.Close() })
+	t.Cleanup(func() { _ = server.Close() })
 	resources := DefaultResourcePolicy()
 	if _, err := NewAfterAdmission(server, ServerRole, SubprotocolTunnel, resources); !errors.Is(err, ErrInvalidSubprotocol) {
 		t.Fatalf("NewAfterAdmission subprotocol error = %v", err)
+	}
+	if err := ValidateReady(server, ""); !errors.Is(err, ErrInvalidSubprotocol) {
+		t.Fatalf("ValidateReady missing subprotocol error = %v", err)
 	}
 }
 
@@ -306,6 +387,65 @@ func newUpgradedPair(t *testing.T, subprotocol string) (*gorillaws.Conn, *gorill
 		return client, accepted
 	case <-time.After(5 * time.Second):
 		t.Fatal("upgrade timed out")
+		return nil, nil
+	}
+}
+
+func newPlainUpgradedPair(t *testing.T, subprotocol string) (*gorillaws.Conn, *gorillaws.Conn) {
+	t.Helper()
+	serverConn := make(chan *gorillaws.Conn, 1)
+	upgrader := gorillaws.Upgrader{Subprotocols: []string{subprotocol}}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		conn, err := upgrader.Upgrade(writer, request, nil)
+		if err == nil {
+			serverConn <- conn
+		}
+	}))
+	t.Cleanup(server.Close)
+	dialer := gorillaws.Dialer{Subprotocols: []string{subprotocol}}
+	client, _, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("plaintext Dial: %v", err)
+	}
+	select {
+	case accepted := <-serverConn:
+		return client, accepted
+	case <-time.After(5 * time.Second):
+		t.Fatal("plaintext upgrade timed out")
+		return nil, nil
+	}
+}
+
+func newTLS12UpgradedPair(t *testing.T, subprotocol string) (*gorillaws.Conn, *gorillaws.Conn) {
+	t.Helper()
+	serverConn := make(chan *gorillaws.Conn, 1)
+	upgrader := gorillaws.Upgrader{Subprotocols: []string{subprotocol}}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		conn, err := upgrader.Upgrade(writer, request, nil)
+		if err == nil {
+			serverConn <- conn
+		}
+	}))
+	server.TLS = &tls.Config{MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	dialer := gorillaws.Dialer{
+		Subprotocols: []string{subprotocol},
+		TLSClientConfig: &tls.Config{
+			MinVersion:         tls.VersionTLS12,
+			MaxVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: true, // test server only
+		},
+	}
+	client, _, err := dialer.Dial("wss"+strings.TrimPrefix(server.URL, "https"), nil)
+	if err != nil {
+		t.Fatalf("TLS 1.2 Dial: %v", err)
+	}
+	select {
+	case accepted := <-serverConn:
+		return client, accepted
+	case <-time.After(5 * time.Second):
+		t.Fatal("TLS 1.2 upgrade timed out")
 		return nil, nil
 	}
 }

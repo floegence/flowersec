@@ -2,12 +2,12 @@
 
 `@floegence/flowersec-core` is the ESM-only Flowersec v2 SDK for browsers and Node.js. Its public package surface is limited to the root, `/browser`, `/node`, and `/proxy` entrypoints.
 
-Flowersec 2.3.3 is the coordinated TypeScript SDK patch release.
+Flowersec 2.3.4 is the published TypeScript SDK release.
 
 ## Install
 
 ```bash
-npm install @floegence/flowersec-core@2.3.3
+npm install @floegence/flowersec-core@2.3.4
 ```
 
 ## Public API
@@ -84,13 +84,13 @@ Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow 
 
 WebSocket uses Yamux only inside its carrier adapter. Yamux has no independent STOP_SENDING primitive, so that operation is explicitly unavailable rather than emulated with a full stream reset.
 
-Browser applications receive a ready `Session` from `connect(...)`. The browser connector supports WSS and WebTransport production connections. WebTransport uses native HTTP/3 bidirectional streams and does not use Yamux.
+Browser applications receive a ready `Session` from `connect(...)`. The browser connector supports WSS, restricted plaintext loopback WebSocket direct connections, and WebTransport. WebTransport uses native HTTP/3 bidirectional streams and does not use Yamux.
 
 Chromium does not support a WebTransport pooling option; each carrier creates an independent native WebTransport connection.
 
 Cold-connection diagnostics require every independent carrier to meet the declared deadline. A `dial_failed` result remains a test failure and is not hidden by pooling, retry, or timeout relaxation.
 
-Node.js applications receive the same `Session` contract from `connect(...)`. The Node.js connector supports WSS and WebTransport production connections for direct and tunnel artifacts. It requires an absolute HTTP(S) `origin`; a custom certificate authority can be supplied through `tls.ca`. Invalid origin and TLS options fail as `ConnectError` with `invalid_options` and are terminal to the optional connection controller.
+Node.js applications receive the same `Session` contract from `connect(...)`. The Node.js connector supports WSS and WebTransport for direct and tunnel artifacts, plus restricted plaintext loopback WebSocket direct connections. It requires an absolute HTTP(S) `origin`; a custom certificate authority can be supplied through `tls.ca`. Invalid origin and TLS options fail as `ConnectError` with `invalid_options` and are terminal to the optional connection controller.
 
 The Node WebTransport direct listener/server is owned by the Node runtime and the `flowersec-ts-cli` server path. It uses the same native carrier acceptor and session engine as the client connector; it is not a second protocol implementation.
 

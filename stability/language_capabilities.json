@@ -127,12 +127,23 @@
     {
       "id": "loopback_plaintext_websocket_direct",
       "layer": "portable_core",
-      "description": "Restricted plaintext WebSocket direct profile for local loopback development only; network-facing and tunnel plaintext candidates are rejected.",
+      "description": "Canonical artifact profile for restricted plaintext WebSocket direct candidates on exact loopback only; this entry records parsing semantics, not runtime carrier availability.",
       "implementations": {
-        "go": { "status": "complete", "entrypoint": "flowersec-go/v2 artifact parser and WebSocket connector", "test_ids": ["protocol/go"] },
-        "typescript": { "status": "complete", "entrypoint": "@floegence/flowersec-core artifact parser", "test_ids": ["protocol/typescript"] },
-        "swift": { "status": "complete", "entrypoint": "Flowersec artifact parser", "test_ids": ["protocol/swift"] },
+        "go": { "status": "complete", "entrypoint": "flowersec.ParseArtifact", "test_ids": ["protocol/go"] },
+        "typescript": { "status": "complete", "entrypoint": "@floegence/flowersec-core parseArtifact", "test_ids": ["protocol/typescript"] },
+        "swift": { "status": "complete", "entrypoint": "Flowersec Artifact parser", "test_ids": ["protocol/swift"] },
         "rust": { "status": "complete", "entrypoint": "flowersec artifact parser", "test_ids": ["protocol/rust"] }
+      }
+    },
+    {
+      "id": "loopback_plaintext_websocket_direct_runtime",
+      "layer": "server_integration",
+      "description": "Runtime connection profile that permits plaintext only for the exact direct subprotocol when the underlying TCP local and remote addresses are both loopback; tunnel, non-loopback, missing-address, and wrong-subprotocol connections fail closed.",
+      "implementations": {
+        "go": { "status": "complete", "entrypoint": "flowersec.Connect and flowersec.Acceptor.Handler", "test_ids": ["carrier/go-loopback-plaintext-direct"] },
+        "typescript": { "status": "complete", "entrypoint": "@floegence/flowersec-core/node connect and browser WebSocket connector", "test_ids": ["carrier/typescript-loopback-plaintext-direct"] },
+        "swift": { "status": "complete", "entrypoint": "Flowersec Apple WebSocket connector", "test_ids": ["carrier/swift-loopback-plaintext-direct"] },
+        "rust": { "status": "unsupported", "entrypoint": "flowersec native runtime", "reason": "The published Rust native runtime has no WebSocket carrier adapter and exposes raw QUIC only.", "alternative_boundary": "Use the public Rust raw QUIC direct profile or connect through a deployed Go Flowersec endpoint.", "test_ids": ["carrier/rust-loopback-plaintext-unsupported"] }
       }
     },
     {

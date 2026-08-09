@@ -73,6 +73,7 @@
   - scripts and examples
   - release notes and operational instructions
 - Multilingual test fixtures and samples are allowed only when they are necessary to validate language-sensitive behavior, and they must stay minimal and well-explained in English context.
+- Maintained documentation describes only the current architecture, behavior, and supported workflows. Do not retain migration history, superseded designs, legacy compatibility notes, or release evolution in repository docs; Git history and GitHub Releases carry historical context.
 
 ## 2. Temporary working docs (must stay out of the repo)
 

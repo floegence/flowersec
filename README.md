@@ -20,7 +20,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
-Flowersec 2.3.3 is the coordinated patch release for the Go, TypeScript, Swift, and Rust SDKs. It preserves the restricted loopback plaintext WebSocket direct profile while keeping network-facing WebSocket candidates WSS-only. Earlier coordinated releases remain immutable. Production consumers should pin the published package versions and matching release tags.
+Flowersec 2.3.4 provides the Go, TypeScript, Swift, and Rust SDKs. It supports the restricted loopback plaintext WebSocket direct profile and requires WSS for network-facing WebSocket candidates. Pin the published package versions and matching release tags.
 
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
@@ -77,7 +77,7 @@ use `make performance`.
 | Swift | SwiftPM product `Flowersec` | `Artifact`, `connect`, `Session` |
 | Rust | crate `flowersec` | `Artifact`, `connect`, `Session` |
 
-Go service control planes use the separate `github.com/floegence/flowersec/flowersec-go/v2/controlplane` package to issue opaque artifacts and answer `flowersec-runtime` authorization callbacks. It does not restore any v1 issuer, token, channel-init, or generated DTO surface.
+Go service control planes use the separate `github.com/floegence/flowersec/flowersec-go/v2/controlplane` package to issue opaque artifacts and answer `flowersec-runtime` authorization callbacks.
 
 The [cookbook index](examples/README.md) contains only v2 examples and verification commands.
 
@@ -101,7 +101,7 @@ Flowersec keeps its contract layers explicit. The portable core, connection cont
 | Server acceptor / accepted Session | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Unsupported on Apple listener profile | `Acceptor::bind` / `accept_with_handlers` |
 | Control-plane issue / authorize | `flowersec-go/v2/controlplane` | Unsupported; application-owned service boundary | Unsupported; application-owned service boundary | Unsupported; application-owned service boundary |
 
-Unsupported carriers fail closed; they are never silent fallbacks. Each support row is backed by production connector code and an explicit test ID in `stability/language_capabilities.json`. Unsupported capabilities include a reason and fail closed; they are never silently treated as complete. Capability descriptors and carrier selection remain internal.
+Only declared carrier tuples are accepted; unsupported tuples fail closed. Each support row is backed by production connector code and an explicit test ID in `stability/language_capabilities.json`; unsupported capabilities include a reason and an alternative boundary. Capability descriptors and carrier selection remain internal.
 
 <!-- readme-section:security -->
 <a id="security"></a>

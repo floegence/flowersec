@@ -33,6 +33,9 @@ func registry() []registeredTest {
 		commandEntry("server/rust-acceptor", "acceptance", 5*time.Minute, "rustup", "run", "1.88.0", "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--all-features", "--lib", "public_acceptor_establishes_opaque_direct_session"),
 		commandEntry("server/rust-acceptor-handlers", "acceptance", 5*time.Minute, "rustup", "run", "1.88.0", "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--all-features", "--lib", "public_acceptor_freezes_rpc_and_stream_handlers_before_establishment"),
 		commandEntry("carrier/go-direct", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestProductDirectCarriersUsePublicConnectorAndAdmission$", "./internal/transporttest"),
+		commandEntry("carrier/go-loopback-plaintext-direct", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^(TestAcceptorEstablishesPlaintextLoopbackDirectSession|TestValidateReadyAllowsPlaintextOnlyForLoopbackDirect)$", ".", "./internal/carrier/websocket"),
+		vitestEntry("carrier/typescript-loopback-plaintext-direct", "acceptance", "src/node/connectSession.integration.test.ts", "establishes a complete direct session over plaintext loopback"),
+		commandEntry("carrier/rust-loopback-plaintext-unsupported", "acceptance", 5*time.Minute, "rustup", "run", "1.88.0", "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--all-features", "--lib", "transport_v2::tests::native_capabilities_match_the_strict_shared_vector", "--", "--exact"),
 		commandEntry("carrier/go-tunnel", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestProductionTunnelCarrierCartesianMatrixCarriesEncryptedSessions$", "./internal/tunnelv2"),
 		vitestEntry("integration/typescript/node-webtransport", "acceptance", "src/node/webTransport.integration.test.ts", "carries native stream FIN and DATAGRAM without a browser"),
 		vitestEntry("interop/typescript-go/wss/direct", "acceptance", "src/interop/goSession.integration.test.ts", "runs direct admission and Session semantics over WSS"),
@@ -67,6 +70,7 @@ func registry() []registeredTest {
 			commandEntry("protocol/swift", "acceptance", 5*time.Minute, "swift", "test", "--filter", "TransportV2|IDNAHostV2|SecurityNegativeVectors"),
 			commandEntry("interop/swift-go/wss/direct", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectorV2Tests/testRealGoWSSDirectEndToEnd"),
 			commandEntry("interop/swift-go/wss/tunnel", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectorV2Tests/testRealGoWSSTunnelEndToEnd"),
+			commandEntry("carrier/swift-loopback-plaintext-direct", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectorV2Tests/testLoopbackPlaintextDirectRuntimeContract"),
 		)
 	}
 	for _, id := range []string{

@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer as createHTTPServer } from "node:http";
 import { createServer } from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -126,6 +127,63 @@ describe("Node Transport v2 WSS production connector", () => {
     expect(spendCount).toBe(1);
     await new Promise<void>((resolve) => wss.close(() => resolve()));
     await new Promise<void>((resolve) => httpsServer.close(() => resolve()));
+  }, 20_000);
+
+  test("establishes a complete direct session over plaintext loopback", async () => {
+    const source = fixture.positive.find((entry) => entry.path_kind === "direct");
+    if (source === undefined) throw new Error("missing direct artifact fixture");
+    const protocol = "flowersec.direct.v2";
+    const httpServer = createHTTPServer();
+    const wss = new WebSocketServer({
+      server: httpServer,
+      perMessageDeflate: false,
+      handleProtocols(protocols) { return protocols.has(protocol) ? protocol : false; },
+    });
+    httpServer.listen(0, "127.0.0.1");
+    await once(httpServer, "listening");
+    const address = httpServer.address();
+    if (typeof address !== "object" || address === null) throw new Error("loopback server did not bind TCP");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const localArtifact = withLocalWSS(source.artifact_json, `ws://127.0.0.1:${address.port}/flowersec/v2/direct`);
+    const artifact = localArtifact.artifact;
+
+    const serverSessionPromise = new Promise<SessionV2>((resolve, reject) => {
+      wss.once("connection", (socket) => {
+        void (async () => {
+          expect(socket.protocol).toBe(protocol);
+          const transport = new WebSocketBinaryTransport(socket as never);
+          const rawFSB2 = await transport.readBinary();
+          const fsb2 = decodeFSB2RequestV2(rawFSB2);
+          expect(fsb2.request.pathKind).toBe("direct");
+          await transport.writeBinary(encodeFSA2ResponseV2({ status: AdmissionStatusV2.Success, reason: "" }));
+          const carrier = createWebSocketCarrierSessionV2(transport, {
+            path: "direct",
+            client: false,
+            inboundBidirectionalStreamCapacity: artifact.session.max_inbound_streams + 2,
+          });
+          resolve(await establishSessionV2(carrier, serverConfig(artifact, fsb2)));
+        })().catch(reject);
+      });
+    });
+
+    let spendCount = 0;
+    const lease = createArtifactLeaseV2(parseArtifact(localArtifact.raw), async () => { spendCount++; });
+    const [client, server] = await Promise.all([
+      connect(lease, { origin }),
+      serverSessionPromise,
+    ]);
+    expect(spendCount).toBe(1);
+    const clientOpening = client.openStream("loopback-direct");
+    const incoming = await server.acceptStream();
+    const stream = await clientOpening;
+    await stream.write(Uint8Array.of(7, 8, 9));
+    await stream.closeWrite();
+    expect(await incoming.stream.read()).toEqual(Uint8Array.of(7, 8, 9));
+    expect(await incoming.stream.read()).toBeNull();
+    await client.close();
+    await server.close();
+    await new Promise<void>((resolve) => wss.close(() => resolve()));
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
   }, 20_000);
 });
 

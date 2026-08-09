@@ -67,7 +67,7 @@ Use `make diagnostic` para diagnosticos explicitos de protocolo, navegador, rede
 | Swift | Produto SwiftPM `Flowersec` | `Artifact`, `connect`, `Session` |
 | Rust | crate `flowersec` | `Artifact`, `connect`, `Session` |
 
-Os control planes de serviços Go usam o pacote separado `github.com/floegence/flowersec/flowersec-go/v2/controlplane` para emitir artifacts opacos e responder aos callbacks de autorização do `flowersec-runtime`. Isso não restaura nenhuma superfície v1 de issuer, token, channel-init ou DTOs gerados.
+Os control planes de serviços Go usam o pacote separado `github.com/floegence/flowersec/flowersec-go/v2/controlplane` para emitir artifacts opacos e responder aos callbacks de autorização do `flowersec-runtime`.
 
 O [índice de Cookbooks](examples/README.md) contém somente exemplos v2 e comandos de verificação.
 
@@ -84,7 +84,7 @@ O [índice de Cookbooks](examples/README.md) contém somente exemplos v2 e coman
 | Discagem WebTransport em produção | Sim | Browser | Não | Não |
 | Suporte a listener | APIs da biblioteca Go | Restrições do ambiente de execução do navegador | Não anunciado | Não anunciado |
 
-Cada linha de suporte é respaldada por código de connector de produção e testes de ponta a ponta. Carriers sem suporte falham de forma fechada; nunca funcionam como fallbacks silenciosos. Os descritores de capacidade e a seleção de carrier permanecem internos.
+Cada linha de suporte é respaldada por código de connector de produção e testes de ponta a ponta. Carriers sem suporte falham de forma fechada. Os descritores de capacidade e a seleção de carrier permanecem internos.
 
 <!-- readme-section:security -->
 <a id="security"></a>
@@ -103,7 +103,7 @@ Consulte a [arquitetura do Transport v2](docs/TRANSPORT_V2_ARCHITECTURE.md) e o 
 
 ## Implantação e desenvolvimento
 
-O runtime do Flowersec fornece as implementações dos listeners de produção para WebSocket, raw QUIC e WebTransport. Os SDKs de aplicação recebem apenas artifacts e sessões opacos; nenhuma CLI de compatibilidade removida faz parte do contrato v2.
+O runtime do Flowersec fornece as implementações dos listeners de produção para WebSocket, raw QUIC e WebTransport. Os SDKs de aplicação recebem apenas artifacts e sessões opacos; as CLIs do runtime compõem as mesmas implementações de connector e acceptor.
 
 Instale os hooks do repositório e execute a verificação oficial antes da integração:
 

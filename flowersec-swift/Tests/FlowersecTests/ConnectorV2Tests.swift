@@ -68,6 +68,59 @@ final class ConnectorV2Tests: XCTestCase {
     try await exerciseRealWSS(vectorIndex: 0)
   }
 
+  func testLoopbackPlaintextDirectRuntimeContract() async throws {
+    let accepted = ConnectorAcceptedTransport()
+    let raw = try loadArtifactJSON(index: 0)
+    let original = try parseArtifact(Data(raw.utf8)).value
+    let candidateURL = try XCTUnwrap(
+      original.path.candidates.first(where: { $0.carrier == "websocket" })?.url)
+    let server = try await ConnectorWSSServer.startPlaintext(
+      selectedProtocol: "flowersec.direct.v2", accepted: accepted)
+    let rewritten = try singleWebSocketArtifactJSON(
+      raw: raw,
+      candidateURL: candidateURL,
+      replacementURL: "ws://127.0.0.1:\(server.port)/flowersec/v2/direct"
+    )
+    let artifact = try parseArtifact(Data(rewritten.utf8))
+    let spend = ConnectorSpendCounter()
+    let lease = ArtifactLease(artifact: artifact) { await spend.commit() }
+    async let serverSession = Self.establishServerSession(artifact: artifact, accepted: accepted)
+    async let clientSession = connect(
+      lease: lease,
+      options: ConnectorOptions(origin: "http://127.0.0.1:\(server.port)", connectTimeout: .seconds(5))
+    )
+    let (client, serverPeer) = try await (clientSession, serverSession)
+
+    _ = try await client.probeLiveness()
+    let outbound = try await client.openStream(kind: "loopback-direct")
+    let inbound = try await serverPeer.acceptStream()
+    _ = try await outbound.write(Data("client".utf8))
+    let received = try await inbound.stream.read(maxBytes: 32)
+    XCTAssertEqual(received, Data("client".utf8))
+    try await outbound.closeWrite()
+    let eof = try await inbound.stream.read(maxBytes: 1)
+    XCTAssertNil(eof)
+    try await client.close()
+    try await serverPeer.close()
+    let spendCount = await spend.value()
+    let selectedProtocol = await accepted.protocolValue()
+    XCTAssertEqual(spendCount, 1)
+    XCTAssertEqual(selectedProtocol, "flowersec.direct.v2")
+    await server.close()
+
+    let tunnelRaw = try loadArtifactJSON(index: 1)
+    let tunnel = try parseArtifact(Data(tunnelRaw.utf8)).value
+    let tunnelCandidateURL = try XCTUnwrap(
+      tunnel.path.candidates.first(where: { $0.carrier == "websocket" })?.url)
+    let plaintextTunnel = try singleWebSocketArtifactJSON(
+      raw: tunnelRaw,
+      candidateURL: tunnelCandidateURL,
+      replacementURL: "ws://127.0.0.1:\(server.port)/flowersec/v2/tunnel")
+    XCTAssertThrowsError(try parseArtifact(Data(plaintextTunnel.utf8)))
+    let nonLoopback = rewritten.replacingOccurrences(of: "127.0.0.1", with: "192.0.2.10")
+    XCTAssertThrowsError(try parseArtifact(Data(nonLoopback.utf8)))
+  }
+
   func testRealGoWSSDirectEndToEnd() async throws {
     try await exerciseGoWSS(path: "direct", vectorIndex: 0)
   }
@@ -333,6 +386,27 @@ final class ConnectorV2Tests: XCTestCase {
     let root = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
     let positive = root["positive"] as! [[String: Any]]
     return positive[index]["artifact_json"] as! String
+  }
+
+  private func singleWebSocketArtifactJSON(
+    raw: String,
+    candidateURL: String,
+    replacementURL: String
+  ) throws -> String {
+    var wire = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+    var path = try XCTUnwrap(wire["path"] as? [String: Any])
+    var candidates = try XCTUnwrap(path["candidates"] as? [[String: Any]])
+    var candidate = try XCTUnwrap(candidates.first(where: { $0["url"] as? String == candidateURL }))
+    candidate["url"] = replacementURL
+    candidates = [candidate]
+    path["candidates"] = candidates
+    wire["path"] = path
+    return String(
+      data: try JSONSerialization.data(
+        withJSONObject: wire, options: [.sortedKeys, .withoutEscapingSlashes]),
+      encoding: .utf8
+    )!
   }
 
   private func exerciseGoWSS(path: String, vectorIndex: Int) async throws {
@@ -768,12 +842,32 @@ private final class ConnectorWSSServer: @unchecked Sendable {
     selectedProtocol: String,
     accepted: ConnectorAcceptedTransport
   ) async throws -> ConnectorWSSServer {
+    try await startServer(tls: material, selectedProtocol: selectedProtocol, accepted: accepted)
+  }
+
+  static func startPlaintext(
+    selectedProtocol: String,
+    accepted: ConnectorAcceptedTransport
+  ) async throws -> ConnectorWSSServer {
+    try await startServer(tls: nil, selectedProtocol: selectedProtocol, accepted: accepted)
+  }
+
+  private static func startServer(
+    tls material: ConnectorTestTLS?,
+    selectedProtocol: String,
+    accepted: ConnectorAcceptedTransport
+  ) async throws -> ConnectorWSSServer {
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-    var tls = TLSConfiguration.makeServerConfiguration(
-      certificateChain: [.certificate(material.certificate)],
-      privateKey: .privateKey(material.privateKey))
-    tls.minimumTLSVersion = .tlsv13
-    let context = try NIOSSLContext(configuration: tls)
+    let context: NIOSSLContext?
+    if let material {
+      var tls = TLSConfiguration.makeServerConfiguration(
+        certificateChain: [.certificate(material.certificate)],
+        privateKey: .privateKey(material.privateKey))
+      tls.minimumTLSVersion = .tlsv13
+      context = try NIOSSLContext(configuration: tls)
+    } else {
+      context = nil
+    }
     let channel = try await ServerBootstrap(group: group)
       .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
       .childChannelInitializer { channel in
@@ -807,7 +901,9 @@ private final class ConnectorWSSServer: @unchecked Sendable {
           upgraders: [upgrader], completionHandler: { _ in }
         )
         do {
-          try channel.pipeline.syncOperations.addHandler(NIOSSLServerHandler(context: context))
+          if let context {
+            try channel.pipeline.syncOperations.addHandler(NIOSSLServerHandler(context: context))
+          }
           return channel.pipeline.configureHTTPServerPipeline(withServerUpgrade: upgrade)
         } catch { return channel.eventLoop.makeFailedFuture(error) }
       }.bind(host: "127.0.0.1", port: 0).get()
