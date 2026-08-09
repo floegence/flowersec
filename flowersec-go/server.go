@@ -24,9 +24,9 @@ var (
 	ErrSessionHandlersFrozen  = errors.New("Flowersec session handlers are frozen")
 )
 
-// StreamHandler processes one accepted application stream. The stream is
-// closed after the handler returns.
-type StreamHandler func(context.Context, IncomingStream)
+// StreamHandler processes one accepted application stream. A non-nil error
+// resets that stream; the framework closes the stream after every return.
+type StreamHandler func(context.Context, IncomingStream) error
 
 // RPCHandler processes one bounded JSON RPC payload. Returning RPCError sends
 // an application-level rejection without exposing transport or session state.
@@ -85,7 +85,7 @@ func (handlers *SessionHandlers) valid() bool {
 // HandleStream registers one application stream kind. Registrations are
 // immutable by name so an accidental duplicate cannot replace live policy.
 func (handlers *SessionHandlers) HandleStream(kind string, handler StreamHandler) error {
-	if handlers == nil || kind == "" || handler == nil {
+	if handlers == nil || !validStreamHandler(kind, handler) {
 		return ErrInvalidSessionHandlers
 	}
 	handlers.mu.Lock()
@@ -110,7 +110,7 @@ func (handlers *SessionHandlers) handleStreams(registrations map[string]StreamHa
 		return ErrSessionHandlersFrozen
 	}
 	for kind, handler := range registrations {
-		if kind == "" || handler == nil {
+		if !validStreamHandler(kind, handler) {
 			return ErrInvalidSessionHandlers
 		}
 		if _, exists := handlers.streamHandlers[kind]; exists {
@@ -121,6 +121,10 @@ func (handlers *SessionHandlers) handleStreams(registrations map[string]StreamHa
 		handlers.streamHandlers[kind] = handler
 	}
 	return nil
+}
+
+func validStreamHandler(kind string, handler StreamHandler) bool {
+	return handler != nil && utf8.ValidString(kind) && len(kind) >= 1 && len(kind) <= 255 && kind != "flowersec.rpc.v2"
 }
 
 // HandleRPC registers one nonzero RPC type ID. Connector snapshots these
@@ -249,10 +253,13 @@ func (handlers *SessionHandlers) Serve(ctx context.Context, current Session) err
 				defer incoming.Stream.Close()
 				defer func() {
 					if recover() != nil {
+						_ = incoming.Stream.Reset()
 						handlers.reportError(&SessionError{code: SessionOperationFailed})
 					}
 				}()
-				handler(serveCtx, incoming)
+				if err := handler(serveCtx, incoming); err != nil {
+					_ = incoming.Stream.Reset()
+				}
 			}()
 		default:
 			rejectIncoming(incoming)

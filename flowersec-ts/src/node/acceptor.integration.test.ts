@@ -93,4 +93,83 @@ describe("Node Acceptor", () => {
       rmSync(temporary, { recursive: true, force: true });
     }
   }, 30_000);
+
+  test("resets only a rejected handler stream and continues serving", async () => {
+    const temporary = mkdtempSync(path.join(os.tmpdir(), "flowersec-node-handler-failure-"));
+    const certificate = path.join(temporary, "certificate.pem");
+    const privateKey = path.join(temporary, "private-key.pem");
+    const certificateDER = path.join(temporary, "certificate.der");
+    execFileSync("openssl", [
+      "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+      "-nodes", "-days", "1", "-sha256", "-subj", "/CN=127.0.0.1",
+      "-addext", "subjectAltName=IP:127.0.0.1", "-keyout", privateKey, "-out", certificate,
+    ], { stdio: "ignore" });
+    execFileSync("openssl", ["x509", "-in", certificate, "-outform", "DER", "-out", certificateDER]);
+    const certificateHash = createHash("sha256").update(readFileSync(certificateDER)).digest();
+    const fixture = JSON.parse(readFileSync(
+      path.join(repositoryRoot, "testdata/transport_v2/artifact_vectors.json"),
+      "utf8",
+    )) as Readonly<{ positive: readonly Readonly<{ id: string; artifact_json: string }>[] }>;
+    const source = fixture.positive.find((entry) => entry.id === "direct-three-carriers");
+    if (source === undefined) throw new Error("missing direct artifact fixture");
+    const raw = JSON.parse(source.artifact_json) as {
+      session: { max_inbound_streams: number };
+      path: { candidates: Array<{ id: string; carrier: string; url: string }> };
+    };
+    raw.path.candidates = raw.path.candidates.filter((candidate) => candidate.id === "t1");
+    let calls = 0;
+    let resolveSecond!: (payload: string) => void;
+    const secondHandled = new Promise<string>((resolve) => { resolveSecond = resolve; });
+    const acceptor = await createAcceptor({
+      host: "127.0.0.1",
+      port: 0,
+      path: "/flowersec/webtransport/v2/direct",
+      certificate: readFileSync(certificate, "utf8"),
+      privateKey: readFileSync(privateKey, "utf8"),
+      maxInboundStreams: raw.session.max_inbound_streams,
+      authorize: async () => ({ decision: "allow" as const, artifact: parseArtifact(JSON.stringify(raw)) }),
+      resolveHandlers: () => {
+        const handlers = new SessionHandlers({ maxConcurrentStreams: 1 });
+        handlers.handleStream("handler-failure", async (incoming) => {
+          const payload = new TextDecoder().decode(await incoming.stream.read());
+          calls += 1;
+          if (calls === 1) throw new Error("application handler failed");
+          resolveSecond(payload);
+        });
+        return handlers;
+      },
+    });
+    const address = acceptor.address();
+    raw.path.candidates[0]!.url = `https://127.0.0.1:${address.port}/flowersec/webtransport/v2/direct`;
+    const lease = createArtifactLeaseV2(parseArtifact(JSON.stringify(raw)), async () => undefined);
+    let accepted;
+    try {
+      const acceptedPromise = acceptor.accept();
+      const client = await connect(lease, {
+        origin: "https://app.example",
+        tls: { serverCertificateHash: certificateHash },
+      });
+      accepted = await acceptedPromise;
+      const serving = accepted.serve().then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+
+      const failed = await client.openStream("handler-failure");
+      await failed.write(new TextEncoder().encode("failed"));
+      await failed.closeWrite();
+      await expect(failed.read()).rejects.toMatchObject({ code: "stream_reset" });
+
+      const succeeded = await client.openStream("handler-failure");
+      await succeeded.write(new TextEncoder().encode("succeeded"));
+      await succeeded.closeWrite();
+      await expect(secondHandled).resolves.toBe("succeeded");
+      await client.close();
+      await expect(serving).resolves.toMatchObject({ code: "closed" });
+    } finally {
+      await accepted?.close().catch(() => undefined);
+      await acceptor.close();
+      rmSync(temporary, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

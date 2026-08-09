@@ -123,7 +123,7 @@ func TestConnectorFreezesHandlersOnlyAfterLocalValidation(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("newConnector() error = %v", err)
 	}
-	if err := handlers.HandleStream("late", func(context.Context, IncomingStream) {}); !errors.Is(err, ErrSessionHandlersFrozen) {
+	if err := handlers.HandleStream("late", func(context.Context, IncomingStream) error { return nil }); !errors.Is(err, ErrSessionHandlersFrozen) {
 		t.Fatalf("HandleStream() after valid connector = %v, want frozen", err)
 	}
 }

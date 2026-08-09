@@ -713,6 +713,34 @@ impl StreamHandler for PublicStreamHandler {
     }
 }
 
+#[derive(Debug)]
+struct FailingThenSuccessfulStreamHandler {
+    handled: tokio::sync::mpsc::UnboundedSender<Bytes>,
+    release_failure: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait]
+impl StreamHandler for FailingThenSuccessfulStreamHandler {
+    async fn handle(
+        &self,
+        incoming: &IncomingStream,
+        _cancellation: CancellationToken,
+    ) -> Result<(), SessionError> {
+        let payload = incoming
+            .stream()
+            .read()
+            .await?
+            .ok_or(SessionError::OperationFailed)?;
+        if payload == Bytes::from_static(b"failed") {
+            self.release_failure.notified().await;
+            return Err(SessionError::OperationFailed);
+        }
+        let _ = self.handled.send(payload);
+        self.release_failure.notify_one();
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn public_acceptor_freezes_rpc_and_stream_handlers_before_establishment() {
     let acceptor = Acceptor::bind(AcceptorOptions {
@@ -783,6 +811,98 @@ async fn public_acceptor_freezes_rpc_and_stream_handlers_before_establishment() 
             .expect("stream handler timed out"),
         Some(Bytes::from_static(b"handled"))
     );
+    client.close().await.expect("close handler client");
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), server)
+            .await
+            .expect("handler server did not stop")
+            .expect("join handler server")
+            .expect_err("peer close must stop handler serving"),
+        SessionError::Closed
+    );
+}
+
+#[tokio::test]
+async fn public_acceptor_resets_only_failed_handler_stream_and_continues_serving() {
+    let acceptor = Acceptor::bind(AcceptorOptions {
+        bind_address: loopback_ephemeral(),
+        certificate_chain_der: vec![test_cert_der()],
+        private_key_der: test_key_der(),
+        max_inbound_streams: 2,
+        accept_timeout: Duration::from_secs(10),
+    })
+    .expect("bind handler acceptor");
+    let address = acceptor.local_address().expect("read handler address");
+    let artifact = Artifact::parse(public_connector_artifact_with_streams(
+        address,
+        RawQuicPathProfile::Direct,
+        1,
+        2,
+    ))
+    .expect("parse handler artifact");
+    let (handled_send, mut handled_receive) = tokio::sync::mpsc::unbounded_channel();
+    let mut handlers = SessionHandlers::new(SessionHandlerOptions {
+        max_concurrent_streams: 2,
+    })
+    .expect("create handlers");
+    let release_failure = Arc::new(tokio::sync::Notify::new());
+    handlers
+        .handle_stream(
+            "handler-failure",
+            Arc::new(FailingThenSuccessfulStreamHandler {
+                handled: handled_send,
+                release_failure,
+            }),
+        )
+        .expect("register stream handler");
+
+    let server_artifact = artifact.clone();
+    let server = tokio::spawn(async move {
+        let accepted = acceptor
+            .accept_with_handlers(&server_artifact, handlers, CancellationToken::new())
+            .await
+            .expect("accept with handlers");
+        accepted.serve(CancellationToken::new()).await
+    });
+    let mut lease = ArtifactLease::new(artifact, || async { Ok(()) });
+    let options =
+        ConnectorOptions::new(vec![test_cert_der()]).expect("create public connector options");
+    let client = connect(&mut lease, options)
+        .await
+        .expect("connect handler client");
+
+    let failed = client
+        .open_stream("handler-failure", StreamMetadata::empty())
+        .await
+        .expect("open failed handler stream");
+    failed
+        .write(Bytes::from_static(b"failed"))
+        .await
+        .expect("write failed handler stream");
+    failed
+        .close_write()
+        .await
+        .expect("finish failed handler stream");
+    let succeeded = client
+        .open_stream("handler-failure", StreamMetadata::empty())
+        .await
+        .expect("open successful handler stream");
+    succeeded
+        .write(Bytes::from_static(b"succeeded"))
+        .await
+        .expect("write successful handler stream");
+    succeeded
+        .close_write()
+        .await
+        .expect("finish successful handler stream");
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), handled_receive.recv())
+            .await
+            .expect("successful handler timed out"),
+        Some(Bytes::from_static(b"succeeded"))
+    );
+    assert_eq!(failed.read().await, Err(SessionError::StreamReset));
+
     client.close().await.expect("close handler client");
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(1), server)
@@ -870,7 +990,16 @@ fn public_connector_artifact(
     profile: RawQuicPathProfile,
     tunnel_role: u8,
 ) -> Vec<u8> {
-    let contract_hash = session_contract_hash(1, 30);
+    public_connector_artifact_with_streams(address, profile, tunnel_role, 1)
+}
+
+fn public_connector_artifact_with_streams(
+    address: SocketAddr,
+    profile: RawQuicPathProfile,
+    tunnel_role: u8,
+    max_inbound_streams: u16,
+) -> Vec<u8> {
+    let contract_hash = session_contract_hash(max_inbound_streams, 30);
     let candidate = serde_json::json!({
         "id":"q1", "carrier":"raw_quic", "url":format!("quic://localhost:{}", address.port()),
         "wire_profile":format!("flowersec-{}/2", profile_name(profile)),
@@ -890,7 +1019,7 @@ fn public_connector_artifact(
     };
     serde_json::to_vec(&serde_json::json!({
         "v":2,"profile":"flowersec/2",
-        "session":{"channel_id":"channel-1","init_expire_at_unix_s":2000000000_i64,"idle_timeout_seconds":60,"establish_timeout_seconds":30,"rekey_prepare_timeout_seconds":10,"rekey_completion_timeout_seconds":30,"max_inbound_streams":1,"e2ee_psk_b64u":URL_SAFE_NO_PAD.encode([0x92;32]),"allowed_suites":[1,2],"default_suite":1,"selected_features":0,"contract_hash_b64u":URL_SAFE_NO_PAD.encode(contract_hash)},
+        "session":{"channel_id":"channel-1","init_expire_at_unix_s":2000000000_i64,"idle_timeout_seconds":60,"establish_timeout_seconds":30,"rekey_prepare_timeout_seconds":10,"rekey_completion_timeout_seconds":30,"max_inbound_streams":max_inbound_streams,"e2ee_psk_b64u":URL_SAFE_NO_PAD.encode([0x92;32]),"allowed_suites":[1,2],"default_suite":1,"selected_features":0,"contract_hash_b64u":URL_SAFE_NO_PAD.encode(contract_hash)},
         "path":path,"scoped":[],"correlation":{"v":2,"tags":[]}
     })).expect("encode facade artifact")
 }

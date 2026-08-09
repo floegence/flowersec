@@ -1049,7 +1049,8 @@
           "`createStreamMetadata(...)`",
           "`StreamMetadata`",
           "`UnreliableMessageError`",
-          "`ConnectionController`"
+          "`ConnectionController`",
+          "`ConnectionSnapshot.retryDisposition`"
         ],
         "runtime_exports": [
           "Artifact",

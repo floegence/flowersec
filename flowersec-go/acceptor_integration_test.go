@@ -86,11 +86,12 @@ func TestAcceptorEstablishesPlaintextLoopbackDirectSession(t *testing.T) {
 	origins := []string{"pending"}
 	handlers := echoHandlers(t, "loopback")
 	streamPayload := make(chan []byte, 1)
-	if err := handlers.HandleStream("loopback-echo", func(_ context.Context, incoming flowersec.IncomingStream) {
+	if err := handlers.HandleStream("loopback-echo", func(_ context.Context, incoming flowersec.IncomingStream) error {
 		payload, err := io.ReadAll(incoming.Stream)
 		if err == nil {
 			streamPayload <- payload
 		}
+		return err
 	}); err != nil {
 		t.Fatal(err)
 	}

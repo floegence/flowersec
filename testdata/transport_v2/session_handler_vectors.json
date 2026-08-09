@@ -1,0 +1,13 @@
+{
+  "stream_kinds": [
+    { "id": "empty", "unit": "", "repeat": 0, "suffix": "", "valid": false },
+    { "id": "one-byte", "unit": "a", "repeat": 1, "suffix": "", "valid": true },
+    { "id": "255-ascii-bytes", "unit": "a", "repeat": 255, "suffix": "", "valid": true },
+    { "id": "256-ascii-bytes", "unit": "a", "repeat": 256, "suffix": "", "valid": false },
+    { "id": "255-multibyte-utf8-bytes", "unit": "\u00e9", "repeat": 127, "suffix": "a", "valid": true },
+    { "id": "256-multibyte-utf8-bytes", "unit": "\u00e9", "repeat": 128, "suffix": "", "valid": false },
+    { "id": "reserved-rpc-kind", "unit": "flowersec.rpc.v2", "repeat": 1, "suffix": "", "valid": false },
+    { "id": "application-kind", "unit": "files/read", "repeat": 1, "suffix": "", "valid": true }
+  ],
+  "duplicate_kind": "files/read"
+}

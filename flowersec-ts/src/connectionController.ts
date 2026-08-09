@@ -38,6 +38,7 @@ export type ConnectionSnapshot = Readonly<{
   attempt: number;
   currentSession?: Session;
   failure?: ConnectionControllerFailure;
+  retryDisposition?: RetryDisposition;
 }>;
 
 export type ConnectionControllerOptions = Readonly<{
@@ -180,6 +181,7 @@ class ConnectionControllerV2Impl implements ConnectionController {
     const active = this.session;
     // A closed controller must never advertise a session that it has just retired.
     this.session = undefined;
+    this.currentRetryDisposition = undefined;
     this.lifetime.abort(new ConnectionControllerError("closed", this.lastFailure));
     this.transition("closed");
     void this.finishClose(active).then(resolveClose);
@@ -213,6 +215,7 @@ class ConnectionControllerV2Impl implements ConnectionController {
         return;
       }
 
+      this.currentRetryDisposition = undefined;
       this.attempt += 1;
       this.transition("connecting");
       const acquisition = await this.acquireLease();
@@ -412,6 +415,7 @@ class ConnectionControllerV2Impl implements ConnectionController {
       attempt: this.attempt,
       ...(currentSession === undefined ? {} : { currentSession }),
       ...(this.lastFailure === undefined ? {} : { failure: this.lastFailure }),
+      ...(this.currentRetryDisposition === undefined ? {} : { retryDisposition: this.currentRetryDisposition }),
     });
   }
 }

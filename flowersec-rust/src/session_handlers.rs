@@ -181,7 +181,13 @@ impl AcceptedSession {
             let handler_cancellation = cancellation.child_token();
             tasks.spawn(async move {
                 let _permit = permit;
-                let _ = handler.handle(&incoming, handler_cancellation).await;
+                if handler
+                    .handle(&incoming, handler_cancellation)
+                    .await
+                    .is_err()
+                {
+                    let _ = incoming.stream().reset().await;
+                }
                 let _ = incoming.stream().close().await;
             });
         };
@@ -195,5 +201,75 @@ impl AcceptedSession {
 impl fmt::Debug for AcceptedSession {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("AcceptedSession { <opaque> }")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::PathBuf};
+
+    use super::*;
+
+    #[derive(Debug)]
+    struct NoopStreamHandler;
+
+    #[async_trait]
+    impl StreamHandler for NoopStreamHandler {
+        async fn handle(
+            &self,
+            _stream: &IncomingStream,
+            _cancellation: CancellationToken,
+        ) -> Result<(), SessionError> {
+            Ok(())
+        }
+    }
+
+    #[derive(serde::Deserialize)]
+    struct StreamKindVectors {
+        stream_kinds: Vec<StreamKindVector>,
+        duplicate_kind: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct StreamKindVector {
+        id: String,
+        unit: String,
+        repeat: usize,
+        suffix: String,
+        valid: bool,
+    }
+
+    #[test]
+    fn enforces_shared_utf8_stream_kind_contract() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../testdata/transport_v2/session_handler_vectors.json");
+        let vectors: StreamKindVectors =
+            serde_json::from_slice(&fs::read(path).expect("read session handler vectors"))
+                .expect("decode session handler vectors");
+        for vector in vectors.stream_kinds {
+            let mut handlers =
+                SessionHandlers::new(SessionHandlerOptions::default()).expect("create handlers");
+            let kind = format!("{}{}", vector.unit.repeat(vector.repeat), vector.suffix);
+            let result = handlers.handle_stream(kind, Arc::new(NoopStreamHandler));
+            assert_eq!(
+                result.is_ok(),
+                vector.valid,
+                "stream kind vector {}",
+                vector.id
+            );
+            if !vector.valid {
+                assert_eq!(result, Err(HandlerRegistrationError::Invalid));
+            }
+        }
+
+        let mut handlers =
+            SessionHandlers::new(SessionHandlerOptions::default()).expect("create handlers");
+        handlers
+            .handle_stream(vectors.duplicate_kind.clone(), Arc::new(NoopStreamHandler))
+            .expect("register stream handler");
+        assert_eq!(
+            handlers.handle_stream(vectors.duplicate_kind, Arc::new(NoopStreamHandler)),
+            Err(HandlerRegistrationError::AlreadyRegistered)
+        );
     }
 }

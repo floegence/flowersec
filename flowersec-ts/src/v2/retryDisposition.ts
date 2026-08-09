@@ -17,9 +17,9 @@ export function retryDispositionForConnectError(error: Readonly<{ code: ConnectE
     case "rpc_failed":
     case "resource_exhausted":
     case "not_connected":
-      return { kind: "retryable" };
+      return Object.freeze({ kind: "retryable" });
     default:
-      return { kind: "terminal" };
+      return Object.freeze({ kind: "terminal" });
   }
 }
 
@@ -32,8 +32,8 @@ export function retryDispositionForSessionError(error: Readonly<{ code: SessionE
     case "stream_reset":
     case "rekey_failed":
     case "liveness_failed":
-      return { kind: "retryable" };
+      return Object.freeze({ kind: "retryable" });
     default:
-      return { kind: "terminal" };
+      return Object.freeze({ kind: "terminal" });
   }
 }

@@ -107,8 +107,14 @@ func (server *ProxyServer) Register(handlers *SessionHandlers) error {
 		return ErrInvalidProxyServer
 	}
 	err := handlers.handleStreams(map[string]StreamHandler{
-		proxyHTTPStreamKind: server.limit(server.serveHTTP),
-		proxyWSStreamKind:   server.limit(server.serveWebSocket),
+		proxyHTTPStreamKind: server.limit(func(ctx context.Context, incoming IncomingStream) error {
+			server.serveHTTP(ctx, incoming)
+			return nil
+		}),
+		proxyWSStreamKind: server.limit(func(ctx context.Context, incoming IncomingStream) error {
+			server.serveWebSocket(ctx, incoming)
+			return nil
+		}),
 	})
 	if err != nil {
 		return fmt.Errorf("%w: handler registration rejected", ErrInvalidProxyServer)
@@ -131,16 +137,17 @@ func (server *ProxyServer) Close() error {
 }
 
 func (server *ProxyServer) limit(handler StreamHandler) StreamHandler {
-	return func(ctx context.Context, incoming IncomingStream) {
+	return func(ctx context.Context, incoming IncomingStream) error {
 		select {
 		case server.permits <- struct{}{}:
 			defer func() { <-server.permits }()
-			handler(ctx, incoming)
+			return handler(ctx, incoming)
 		default:
 			if incoming.Stream != nil {
 				_ = incoming.Stream.Reset()
 			}
 			server.report(ErrInvalidProxyServer)
+			return nil
 		}
 	}
 }

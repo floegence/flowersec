@@ -83,7 +83,7 @@
     {
       "id": "server_session_handlers",
       "layer": "server_integration",
-      "description": "Accepted sessions bind inbound RPC and application stream handlers before encrypted session establishment and keep one lifecycle owner.",
+      "description": "Accepted sessions bind inbound RPC and application stream handlers before encrypted session establishment, validate application stream kinds as 1 through 255 UTF-8 bytes outside the reserved RPC kind, and reset then close only the stream whose handler fails while keeping one session lifecycle owner.",
       "implementations": {
         "go": { "status": "complete", "entrypoint": "AcceptorOptions.ResolveHandlers/NewSessionHandlers/SessionHandlers.HandleRPC/SessionHandlers.HandleStream", "test_ids": ["server/go-acceptor"] },
         "typescript": { "status": "complete", "entrypoint": "createAcceptor/SessionHandlers.handleRPC/SessionHandlers.handleStream/AcceptedSession.serve", "test_ids": ["server/typescript-acceptor"] },

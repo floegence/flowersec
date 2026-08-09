@@ -164,8 +164,15 @@ export class AcceptedSession {
           await incoming.stream.reset();
           continue;
         }
-        const task = handler(incoming, options)
-          .finally(() => incoming.stream.close())
+        const task = (async () => {
+          try {
+            await handler(incoming, options);
+          } catch {
+            await incoming.stream.reset().catch(() => undefined);
+          } finally {
+            await incoming.stream.close().catch(() => undefined);
+          }
+        })()
           .finally(() => active.delete(task));
         active.add(task);
       }

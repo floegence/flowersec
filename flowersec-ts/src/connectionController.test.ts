@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createConnectionControllerV2 } from "./connectionController.js";
-import type { ArtifactSource, ArtifactSourceResult } from "./connectionController.js";
+import type { ArtifactSource, ArtifactSourceResult, ConnectionSnapshot } from "./connectionController.js";
 import { ConnectError } from "./public/connectError.js";
 import type { ArtifactLeaseV2 } from "./v2/artifactLease.js";
 import { SessionError } from "./v2/contract.js";
@@ -10,6 +10,78 @@ import type { SessionV2 } from "./v2/contract.js";
 afterEach(() => vi.useRealTimers());
 
 describe("ConnectionController", () => {
+  test("publishes immutable retryable and absolute retry dispositions only while applicable", async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const retryableSnapshots: ConnectionSnapshot[] = [];
+    const retryable = createConnectionControllerV2(
+      source(async () => ({ kind: "lease", lease: lease() })),
+      async () => { throw new ConnectError("connection_failed"); },
+      { maximumAttempts: 2 },
+    );
+    retryable.subscribe((snapshot) => retryableSnapshots.push(snapshot));
+    retryable.start();
+    await flush();
+
+    const retryableWaiting = retryableSnapshots.find((snapshot) => snapshot.state === "waiting");
+    expect(retryableWaiting?.retryDisposition).toEqual({ kind: "retryable" });
+    expect(Object.isFrozen(retryableWaiting)).toBe(true);
+    expect(Object.isFrozen(retryableWaiting?.retryDisposition)).toBe(true);
+    await retryable.close();
+
+    const retryAt = 5_000;
+    const absoluteSnapshots: ConnectionSnapshot[] = [];
+    const absolute = createConnectionControllerV2(
+      source(async () => ({
+        kind: "failure",
+        code: "rate_limited",
+        disposition: { kind: "retry_after", notBeforeUnixMilliseconds: retryAt },
+      })),
+      async () => session().value,
+    );
+    absolute.subscribe((snapshot) => absoluteSnapshots.push(snapshot));
+    absolute.start();
+    await flush();
+
+    const absoluteWaiting = absoluteSnapshots.find((snapshot) => snapshot.state === "waiting");
+    expect(absoluteWaiting?.retryDisposition).toEqual({
+      kind: "retry_after",
+      notBeforeUnixMilliseconds: retryAt,
+    });
+    expect(Object.isFrozen(absoluteWaiting?.retryDisposition)).toBe(true);
+    await absolute.close();
+  });
+
+  test("clears retry disposition for a new attempt, connected session, and closed controller", async () => {
+    vi.useFakeTimers();
+    const snapshots: ConnectionSnapshot[] = [];
+    let acquisition = 0;
+    const connected = session();
+    const controller = createConnectionControllerV2(
+      source(async () => {
+        acquisition += 1;
+        return acquisition === 1
+          ? { kind: "failure", code: "temporary", disposition: { kind: "retryable" } }
+          : { kind: "lease", lease: lease() };
+      }),
+      async () => connected.value,
+    );
+    controller.subscribe((snapshot) => snapshots.push(snapshot));
+    controller.start();
+    await flush();
+    expect(snapshots.find((snapshot) => snapshot.state === "waiting")?.retryDisposition).toEqual({ kind: "retryable" });
+
+    await vi.advanceTimersByTimeAsync(250);
+    await expect(controller.waitForSession()).resolves.toBe(connected.value);
+    const connecting = snapshots.filter((snapshot) => snapshot.state === "connecting");
+    expect(connecting).toHaveLength(2);
+    expect(connecting[1]?.retryDisposition).toBeUndefined();
+    expect(snapshots.find((snapshot) => snapshot.state === "connected")?.retryDisposition).toBeUndefined();
+
+    await controller.close();
+    expect(snapshots.at(-1)?.state).toBe("closed");
+    expect(snapshots.at(-1)?.retryDisposition).toBeUndefined();
+  });
+
   test("uses a fresh lease and a new one-shot session for every attempt", async () => {
     vi.useFakeTimers();
     const leases = [lease(), lease()];

@@ -87,7 +87,10 @@ then pass an opaque `Artifact` to `accept`; successful acceptance returns the
 same carrier-neutral `Session` interface. Applications that own inbound RPC and
 stream dispatch use `accept_with_handlers(...)`; it consumes the registry before
 establishment and returns an `AcceptedSession` whose `serve(...)` method owns
-bounded dispatch and cleanup. Duplicate concurrent registration of
+bounded dispatch and cleanup. Stream kinds contain 1 through 255 UTF-8 bytes,
+and `flowersec.rpc.v2` is reserved. A stream handler `Err` resets then closes
+only that stream; successful handlers close their stream, and the accept loop
+continues serving unrelated streams. Duplicate concurrent registration of
 one artifact fails closed, and cancellation and artifact expiry bound the
 complete accept operation. One `Acceptor` admits one pending artifact at a
 time; runtimes use independent acceptors when sessions must wait concurrently.
