@@ -19,7 +19,7 @@ async-trait = "0.1"
 base64 = "0.22"
 bytes = "1"
 futures-util = { version = "0.3", features = ["sink", "std"] }
-hkdf = "0.12"
+hkdf = "0.13"
 hmac = "0.12"
 idna = { version = "=1.1.0", default-features = false, features = ["std", "compiled_data"] }
 idna_adapter = { version = "=1.1.0", features = ["compiled_data"] }
