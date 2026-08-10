@@ -16,7 +16,7 @@ include = ["src/**", "README.md", "LICENSE", "Cargo.toml", "THIRD_PARTY_NOTICES.
 [dependencies]
 aes-gcm = "0.10"
 async-trait = "0.1"
-base64 = "0.22"
+base64 = "0.23"
 bytes = "1"
 futures-util = { version = "0.3", features = ["sink", "std"] }
 hkdf = "0.13"
