@@ -75,7 +75,7 @@
     "@noble/ciphers": "^2.2.0",
     "@noble/curves": "^1.9.0",
     "@noble/hashes": "^2.3.0",
-    "tr46": "5.0.0",
+    "tr46": "6.0.0",
     "ws": "^8.21.2"
   },
   "devDependencies": {
