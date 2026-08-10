@@ -100,3 +100,38 @@ test("README localization contract detects changed API literals", () => {
     extractInlineCodeLiterals(source.replace("`flowersec.Connect`", "`flowersec.LegacyConnect`")),
   );
 });
+
+test("README localization contract ignores multiline HTML comments", () => {
+  const source = [
+    "# Flowersec",
+    "Visible paragraph.",
+    "<!--",
+    "## Hidden heading",
+    "- Hidden list item with `hidden.API`",
+    "-->",
+    "## Visible section",
+    "Visible `flowersec.Connect` API.",
+  ].join("\n");
+
+  assert.deepEqual(extractMarkdownShape(source), [
+    "heading:1",
+    "paragraph",
+    "heading:2",
+    "paragraph",
+  ]);
+  assert.deepEqual(extractInlineCodeLiterals(source), ["flowersec.Connect"]);
+});
+
+test("README localization contract preserves text around inline comments", () => {
+  const source = "Visible <!-- hidden `hidden.API` --> paragraph with `public.API`.";
+
+  assert.deepEqual(extractMarkdownShape(source), ["paragraph"]);
+  assert.deepEqual(extractInlineCodeLiterals(source), ["public.API"]);
+});
+
+test("README localization contract ignores unterminated HTML comments", () => {
+  const source = "# Flowersec\n<!-- hidden\n## Hidden heading\n`hidden.API`";
+
+  assert.deepEqual(extractMarkdownShape(source), ["heading:1"]);
+  assert.deepEqual(extractInlineCodeLiterals(source), []);
+});

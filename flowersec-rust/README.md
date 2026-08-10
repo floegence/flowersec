@@ -12,7 +12,7 @@ by default, and contains no Flowersec-authored `unsafe`.
 cargo add flowersec
 ```
 
-Raw QUIC connections require explicit DER trust roots:
+The raw QUIC connection profile requires explicit DER trust roots and rejects empty roots:
 
 ```rust
 let options = flowersec::ConnectorOptions::new(vec![root_der])?;

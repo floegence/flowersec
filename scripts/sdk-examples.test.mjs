@@ -112,7 +112,7 @@ test("portable contract documents unreliable messages as an explicit SDK profile
   const readme = read("README.md");
   const apiContract = read("docs/API_CONTRACT.md");
 
-  assert.match(readme, /\| Negotiated unreliable message channel \| Yes \| Yes \| No \| Yes \|/u);
+  assert.match(readme, /\| Unreliable messages when available \| Yes \| Yes \| No \| Yes \|/u);
   assert.match(apiContract, /Unreliable messages are an SDK-profile capability/u);
   assert.match(apiContract, /Swift currently exposes no public unreliable-message channel/u);
 });

@@ -50,23 +50,40 @@ func TestLanguageCapabilitiesDeclareContractLayers(t *testing.T) {
 	}
 }
 
-func TestSDKReadmesDescribeCapabilityLayers(t *testing.T) {
+func TestSDKReadmesDescribePublicCapabilities(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{
-		"README.md",
-		"flowersec-go/README.md",
-		"flowersec-ts/README.md",
-		"flowersec-swift/README.md",
-		"flowersec-rust/README.md",
-	} {
-		assertDocumentContains(t, repoRoot, path, []string{
-			"portable core",
-			"SDK profile",
-			"language convenience",
-		})
+	documents := map[string][]string{
+		"README.md": {
+			"What Your App Can Do",
+			"Long-lived connection recovery",
+			"Server-side session acceptance",
+		},
+		"flowersec-go/README.md": {
+			"flowersec.Connect",
+			"NewConnectionController",
+			"Supported Connections",
+		},
+		"flowersec-ts/README.md": {
+			"connect(...)",
+			"ConnectionController",
+			"Supported Connections",
+		},
+		"flowersec-swift/README.md": {
+			"connect(lease:options:)",
+			"ConnectionController",
+			"Supported Connections",
+		},
+		"flowersec-rust/README.md": {
+			"connect(...)",
+			"ConnectionController",
+			"Supported Connections",
+		},
+	}
+	for path, tokens := range documents {
+		assertDocumentContains(t, repoRoot, path, tokens)
 	}
 }
 
