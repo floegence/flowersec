@@ -104,6 +104,19 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Resolve Swift cache key
+        if: matrix.language == 'swift'
+        id: swift-cache-key
+        run: |
+          swift --version | shasum -a 256 | awk '{ print "toolchain=" $1 }' >> "$GITHUB_OUTPUT"
+
+      - name: Restore Swift build cache
+        if: matrix.language == 'swift'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .build
+          key: swift-codeql-${{ runner.os }}-${{ steps.swift-cache-key.outputs.toolchain }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+
       - name: Prepare Swift build cache
         if: matrix.language == 'swift'
         run: |

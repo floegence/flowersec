@@ -454,6 +454,8 @@ validate_step_contracts(dependency_review_steps, [
 ], "the hosted CI dependency review job")
 validate_step_contracts(codeql_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" } },
+  { name: "Resolve Swift cache key", keys: ["name", "if", "id", "run"], values: { "if" => "matrix.language == 'swift'", "id" => "swift-cache-key", "run" => "swift --version | shasum -a 256 | awk '{ print \"toolchain=\" $1 }' >> \"$GITHUB_OUTPUT\"\n" } },
+  { name: "Restore Swift build cache", keys: ["name", "if", "uses", "with"], values: { "if" => "matrix.language == 'swift'", "uses" => "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830", "with" => { "path" => ".build", "key" => "swift-codeql-${{ runner.os }}-${{ steps.swift-cache-key.outputs.toolchain }}-${{ hashFiles('Package.swift', 'Package.resolved') }}" } } },
   { name: "Prepare Swift build cache", keys: ["name", "if", "run"], values: { "if" => "matrix.language == 'swift'", "run" => "swift package --skip-update --only-use-versions-from-resolved-file resolve\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
   { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
   { name: "Build Swift library", keys: ["name", "if", "run"], values: { "if" => "matrix.language == 'swift'", "run" => "find flowersec-swift/Sources/Flowersec -type f -name '*.swift' -exec touch {} +\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },

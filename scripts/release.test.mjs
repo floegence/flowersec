@@ -571,9 +571,14 @@ test("CodeQL scans every language on changes and does not hide Swift failures", 
   assert.match(workflow, /^          - language: swift\n            build-mode: manual\n            runner: macos-26$/m);
   assert.match(workflow, /^        uses: github\/codeql-action\/init@[0-9a-f]{40} # v4(?:\.[0-9]+)*$/m);
   assert.match(workflow, /^          languages: \$\{\{ matrix\.language \}\}\n          build-mode: \$\{\{ matrix\.build-mode \}\}\n          queries: security-extended$/m);
+  assert.match(workflow, /^      - name: Resolve Swift cache key\n        if: matrix\.language == 'swift'\n        id: swift-cache-key\n        run: \|\n          swift --version \| shasum -a 256 \| awk '\{ print "toolchain=" \$1 \}' >> "\$GITHUB_OUTPUT"$/m);
+  assert.match(workflow, /^      - name: Restore Swift build cache\n        if: matrix\.language == 'swift'\n        uses: actions\/cache@[0-9a-f]{40} # v4(?:\.[0-9]+)*\n        with:\n          path: \.build\n          key: swift-codeql-\$\{\{ runner\.os \}\}-\$\{\{ steps\.swift-cache-key\.outputs\.toolchain \}\}-\$\{\{ hashFiles\('Package\.swift', 'Package\.resolved'\) \}\}$/m);
   const prepareSwift = workflow.indexOf("      - name: Prepare Swift build cache");
+  const restoreSwift = workflow.indexOf("      - name: Restore Swift build cache");
   const initializeCodeQL = workflow.indexOf("      - name: Initialize CodeQL");
+  assert.notEqual(restoreSwift, -1, "Swift dependency artifacts must be restored across runs");
   assert.notEqual(prepareSwift, -1, "Swift dependencies must be built outside CodeQL tracing");
+  assert.ok(restoreSwift < prepareSwift, "the Swift build cache must be restored before dependency preparation");
   assert.ok(prepareSwift < initializeCodeQL, "Swift dependencies must be built before CodeQL initialization");
   assert.match(workflow, /^        run: \|\n          swift package --skip-update --only-use-versions-from-resolved-file resolve\n          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8$/m);
   assert.match(workflow, /^      - name: Build Swift library\n        if: matrix\.language == 'swift'\n        run: \|\n          find flowersec-swift\/Sources\/Flowersec -type f -name '\*\.swift' -exec touch \{\} \+\n          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8$/m);
