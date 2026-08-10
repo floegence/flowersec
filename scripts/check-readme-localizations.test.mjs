@@ -10,6 +10,11 @@ import {
   transportV2ReadmeContracts,
   validateTransportV2Readmes,
 } from "./readme-transport-v2-contract.mjs";
+import {
+  extractInlineCodeLiterals,
+  extractMarkdownShape,
+  extractProductVersion,
+} from "./readme-localization-contract.mjs";
 
 function createTransportReadmeFixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-readme-contract-"));
@@ -60,4 +65,45 @@ test("SDK README capability layers describe the final recovery owner", () => {
       `${file} should describe structured recovery ownership`,
     );
   }
+});
+
+test("README localization contract captures structure, literals, and version", () => {
+  const source = [
+    "# Flowersec",
+    "Flowersec 2.3.6 provides SDKs.",
+    "## Section",
+    "- One",
+    "- Two",
+    "| A | B |",
+    "| --- | --- |",
+    "| x | y |",
+    "```bash",
+    "make test",
+    "```",
+    "`flowersec.Connect`",
+  ].join("\n");
+  assert.deepEqual(extractMarkdownShape(source), [
+    "heading:1",
+    "paragraph",
+    "heading:2",
+    "list-item",
+    "list-item",
+    "table-row:2",
+    "table-row:2",
+    "table-row:2",
+    "code:bash",
+    "paragraph",
+  ]);
+  assert.deepEqual(extractInlineCodeLiterals(source), ["flowersec.Connect"]);
+  assert.equal(extractProductVersion(source), "2.3.6");
+});
+
+test("README localization contract detects missing API literals and stale versions", () => {
+  const source = "# Flowersec\nFlowersec 2.3.6\n`flowersec.Connect`\n";
+  assert.notDeepEqual(
+    extractInlineCodeLiterals(source),
+    extractInlineCodeLiterals(source.replace("`flowersec.Connect`", "`flowersec.LegacyConnect`")),
+  );
+  assert.notEqual(extractProductVersion(source), extractProductVersion(source.replace("2.3.6", "2.3.5")));
+  assert.equal(extractProductVersion(source.replace("Flowersec 2.3.6", "Flowersec SDKs")), null);
 });

@@ -20,6 +20,8 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
+Flowersec 2.3.6 fournit les SDK Go, TypeScript, Swift et Rust. Il prend en charge le profil WebSocket direct en clair limité au bouclage et impose WSS aux candidats WebSocket exposés au réseau. Épinglez les versions publiées des packages et les tags de version correspondants.
+
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
 
@@ -40,20 +42,22 @@
 | Direct | Le client se connecte à un point de terminaison à l'aide d'une option compatible | WebSocket utilise Yamux localement sur chaque tronçon ; les transports de la famille QUIC utilisent des flux bidirectionnels natifs |
 | Tunnel | Les branches cliente et serveur se rejoignent par l'intermédiaire de transports compatibles choisis indépendamment | Le tunnel fait correspondre les flux chiffrés entre les deux branches sans désigner de transport principal |
 
-Raw QUIC et WebTransport préservent le comportement natif de FIN, RESET_STREAM, STOP_SENDING, du contrôle de flux et de la migration. Flowersec désactive le 0-RTT applicatif et n'utilise pas QUIC DATAGRAM.
+Raw QUIC et WebTransport préservent le comportement natif de FIN, RESET_STREAM, STOP_SENDING, du contrôle de flux et de la migration. Flowersec désactive le 0-RTT applicatif. Les flux fiables n'utilisent jamais QUIC DATAGRAM ; les runtimes ayant négocié DATAGRAM natif ne l'exposent que par des messages non fiables indépendants du transport.
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
 
 ## Essai local
 
-Exécutez les suites de tests unitaires v2 :
+Exécutez la suite d'acceptation par défaut :
 
 ```bash
 make test
 ```
 
-Utilisez `make diagnostic` pour les diagnostics explicites de protocole, navigateur, reseau degrade et interoperabilite, et `make performance` pour la capacite et le soak.
+Après avoir corrigé un échec, utilisez `make test-resume` pour reprendre au premier test incomplet jusqu'au prochain échec ou jusqu'à `ALL GREEN`. Les ID terminés restent valides lorsque le commit source change.
+
+Utilisez `make coverage-race` pour les quatre lanes de couverture et le test race Go exclusif. `make browser-smoke` couvre les trois topologies Chromium locales et `make browser-compat` vérifie explicitement les capacités Firefox/WebKit. Les diagnostics privilégiés de réseau dégradé et du kernel utilisent `make diagnostic` ; les tests de capacité et de soak utilisent `make performance`.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
@@ -62,7 +66,7 @@ Utilisez `make diagnostic` pour les diagnostics explicites de protocole, navigat
 
 | Langage | Paquet | Point d'entrée public |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewSessionHandlers` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewConnectionController`, `flowersec.NewAcceptor` |
 | TypeScript | `@floegence/flowersec-core` | points d'entrée v2 opaques à la racine, sous `/browser`, sous `/node` et sous `/proxy` |
 | Swift | Produit SwiftPM `Flowersec` | `Artifact`, `connect`, `Session` |
 | Rust | crate `flowersec` | `Artifact`, `connect`, `Session` |
@@ -74,17 +78,24 @@ L'[index des guides pratiques](examples/README.md) contient uniquement des exemp
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
 
-## Contrat portable
+## Cœur portable et profils SDK
+
+Flowersec sépare explicitement les couches de son contrat. Le cœur portable, le contrôle des connexions, le cycle de vie des sessions, RPC et flux, les workflows de sessions acceptées et chaque workflow consommateur publié utilisent des points d'entrée publics de même sémantique dans tous les SDK concernés. Chaque profil SDK déclare sa frontière propre au runtime et à la plateforme. Une limitation de plateforme ne peut être déclarée non prise en charge que si `stability/language_capabilities.json` en indique la raison, une frontière publique alternative et un ID de test exécutable. La persistance du control plane est une frontière de service : les clients appellent le service authentifié qui utilise `flowersec-go/v2/controlplane` ; ils n'intègrent ni second émetteur ni datastore. Une commodité propre à un langage adapte la syntaxe ou l'orchestration à son écosystème sans modifier ces contrats. Le contrat stable de reprise entre langages est la disposition structurée du contrôleur, pas l'égalité octet par octet des codes d'erreur bruts.
 
 | Capacité | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
 | Artefact, connecteur, session, RPC et flux d'octets opaques | Oui | Oui | Oui | Oui |
-| Connexion WebSocket en production | Oui | Navigateur et Node.js | macOS | Non |
+| Contrôleur de connexion à propriétaire unique | Oui | Oui | Oui | Oui |
+| Canal négocié de messages non fiables | Oui | Oui | Non | Oui |
+| Abonnement aux notifications RPC | Non | Oui | Non | Non |
+| Handlers de requêtes RPC entrantes | Oui | Non | Non | Non |
+| Connexion WebSocket en production | Oui | Navigateur et Node.js | macOS et iOS | Non |
 | Connexion raw QUIC en production | Oui | Non | Non | Oui |
-| Connexion WebTransport en production | Oui | Navigateur | Non | Non |
-| Prise en charge de l'écoute | API de bibliothèque Go | Contraintes de l'environnement d'exécution du navigateur | Non annoncée | Non annoncée |
+| Connexion WebTransport en production | Oui | Navigateur et Node.js | Non | Non |
+| Accepteur serveur / session acceptée | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Non pris en charge par le profil listener Apple | `Acceptor::bind` / `accept_with_handlers` |
+| Émission / autorisation du control plane | `flowersec-go/v2/controlplane` | Non pris en charge ; frontière du service applicatif | Non pris en charge ; frontière du service applicatif | Non pris en charge ; frontière du service applicatif |
 
-Chaque ligne de prise en charge repose sur du code de connexion destiné à la production et sur des tests de bout en bout. Les transports non pris en charge échouent en mode fermé ; ils ne servent jamais de solution de repli silencieuse. Les descripteurs de capacité et la sélection du transport restent internes.
+Seuls les tuples de transport déclarés sont acceptés ; les tuples non pris en charge échouent en mode fermé. Chaque ligne repose sur du code de connexion destiné à la production et sur un ID de test explicite dans `stability/language_capabilities.json`. Les capacités non prises en charge indiquent une raison et une frontière alternative. Les descripteurs de capacité et la sélection du transport restent internes.
 
 <!-- readme-section:security -->
 <a id="security"></a>
@@ -94,6 +105,7 @@ Chaque ligne de prise en charge repose sur du code de connexion destiné à la p
 - Les artefacts sont des références opaques, de taille limitée et à usage unique. Leur consommation est enregistrée durablement avant l'envoi du premier octet de données d'authentification.
 - Les transports de la famille QUIC exigent TLS 1.3, un ALPN exact, des racines de confiance explicites et la désactivation des données anticipées.
 - Les erreurs publiques sont expurgées et de taille limitée ; les détails relatifs aux options candidates, au protocole filaire, aux clés et au journal de consommation restent internes.
+- Les dispositions structurées du contrôleur n'autorisent qu'une nouvelle tentative avec un artefact neuf ; elles ne réutilisent jamais les identifiants et ne rejouent aucun travail d'une session terminée.
 - L'annulation des sessions, les délais d'expiration, FIN, les réinitialisations, la vérification d'activité, le renouvellement des clés et le nettoyage sont encadrés par des limites explicites.
 
 Consultez l'[architecture Transport v2](docs/TRANSPORT_V2_ARCHITECTURE.md) et le [modèle de menace](docs/THREAT_MODEL.md).
@@ -111,5 +123,7 @@ Installez les hooks du dépôt et exécutez la vérification de référence avan
 make install-hooks
 make precommit
 ```
+
+`scripts/push-main.sh` exécute la suite d'acceptation locale bornée avant de pousser le SHA main exact. La vérification d'ingénierie complète et les workflows explicites nightly, diagnostic et performance couvrent respectivement la compatibilité, les diagnostics privilégiés et les tests de charge ; la publication elle-même n'exécute aucun test.
 
 Flowersec est disponible sous [licence MIT](LICENSE). Les artefacts de publication sont distribués par l'intermédiaire des [versions GitHub](https://github.com/floegence/flowersec/releases).

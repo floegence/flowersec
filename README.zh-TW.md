@@ -20,6 +20,8 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
+Flowersec 2.3.6 提供 Go、TypeScript、Swift 與 Rust SDK。它支援受限的迴環位址明文 WebSocket Direct 設定，並要求所有面向網路的 WebSocket 候選項目使用 WSS。請鎖定已發布的套件版本與對應的 Release Tag。
+
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
 
@@ -40,7 +42,7 @@
 | Direct | Client 使用相容的候選項目連線至 Endpoint | WebSocket 使用 Hop-local Yamux；QUIC 系 Carrier 使用原生雙向 Stream |
 | Tunnel | Client 與 Server 兩端各自選擇相容的 Carrier 接入 | Tunnel 在兩端之間對應加密 Stream，不指定主要 Carrier |
 
-raw QUIC 與 WebTransport 保留原生 FIN、RESET_STREAM、STOP_SENDING、流量控制及遷移行為。Flowersec 會停用應用層 0-RTT，且不使用 QUIC DATAGRAM。
+raw QUIC 與 WebTransport 保留原生 FIN、RESET_STREAM、STOP_SENDING、流量控制及遷移行為。Flowersec 會停用應用層 0-RTT。可靠 Stream 絕不使用 QUIC DATAGRAM；Runtime 僅在協商出原生 DATAGRAM 支援後，才透過 Carrier 中立的不可靠訊息公開此能力。
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
@@ -53,7 +55,9 @@ raw QUIC 與 WebTransport 保留原生 FIN、RESET_STREAM、STOP_SENDING、流�
 make test
 ```
 
-協定、瀏覽器、弱網與互通性專項診斷使用 `make diagnostic`；容量與 soak 工作負載使用 `make performance`。
+修正失敗後，使用 `make test-resume` 從第一個未完成的測試繼續執行，直到下一次失敗或顯示 `ALL GREEN`。即使原始碼 Commit 改變，已完成的測試 ID 仍然有效。
+
+使用 `make coverage-race` 執行四種語言的覆蓋率工作以及獨占的 Go race 測試。使用 `make browser-smoke` 驗證三種本機 Chromium 拓撲，使用 `make browser-compat` 明確檢查 Firefox/WebKit 能力。需要特殊權限的弱網與 Kernel 診斷使用 `make diagnostic`；容量與 soak 測試使用 `make performance`。
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
@@ -62,10 +66,10 @@ make test
 
 | 語言 | Package | 公開入口 |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewSessionHandlers` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewConnectionController`, `flowersec.NewAcceptor` |
 | TypeScript | `@floegence/flowersec-core` | Root、`/browser`、`/node` 與 `/proxy` 的不透明 v2 入口 |
 | Swift | SwiftPM Product `Flowersec` | `Artifact`、`connect`、`Session` |
-| Rust | Crate `flowersec` | `Artifact`、`Connector`、`Session` |
+| Rust | Crate `flowersec` | `Artifact`、`connect`、`Session` |
 
 Go 服務控制面使用獨立的 `github.com/floegence/flowersec/flowersec-go/v2/controlplane` 套件簽發 opaque artifact，並回應 `flowersec-runtime` 的授權 callback。
 
@@ -74,17 +78,24 @@ Go 服務控制面使用獨立的 `github.com/floegence/flowersec/flowersec-go/v
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
 
-## 可攜式契約
+## 可攜式核心與 SDK Profile
+
+Flowersec 明確區分各個契約層。可攜式核心、連線控制、Session/RPC/Stream 生命週期、已接受 Session 工作流程，以及每一條已發布的 Consumer 工作流程，在所有適用 SDK 中都透過語意一致的公開入口提供。每個 SDK Profile 都會宣告其 Runtime 與平台特有的 Carrier 邊界。平台限制只有在 `stability/language_capabilities.json` 中記錄明確原因、替代公開邊界與可執行測試 ID 後，才能標示為不支援。Control Plane 持久化屬於服務邊界：Client 呼叫使用 `flowersec-go/v2/controlplane` 的已驗證服務，而不是內嵌第二套簽發器或資料儲存。語言便利能力只能配合特定語言生態的語法或編排方式，不得變更這些契約。穩定的跨語言復原契約是 Controller 的結構化處置結果，而不是逐 Byte 相符的原始錯誤碼。
 
 | 能力 | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
-| 不透明 Artifact、Connector、Session、RPC 與位元組串流 | 支援 | 支援 | 支援 | 支援 |
-| 生產級 WebSocket 撥號 | 支援 | Browser 與 Node.js | macOS | 不支援 |
-| 生產級 raw QUIC 撥號 | 支援 | 不支援 | 不支援 | 支援 |
-| 生產級 WebTransport 撥號 | 支援 | Browser | 不支援 | 不支援 |
-| Listener 支援 | Go Library API | 受 Browser Runtime 限制 | 不宣告支援 | 不宣告支援 |
+| 不透明 Artifact、Connector、Session、RPC 與位元組 Stream | 是 | 是 | 是 | 是 |
+| 單一 Owner 的連線 Controller | 是 | 是 | 是 | 是 |
+| 經協商的不可靠訊息 Channel | 是 | 是 | 否 | 是 |
+| RPC 通知訂閱 | 否 | 是 | 否 | 否 |
+| Inbound RPC Request Handler | 是 | 否 | 否 | 否 |
+| 生產級 WebSocket 撥號 | 是 | Browser 與 Node.js | macOS 與 iOS | 否 |
+| 生產級 raw QUIC 撥號 | 是 | 否 | 否 | 是 |
+| 生產級 WebTransport 撥號 | 是 | Browser 與 Node.js | 否 | 否 |
+| Server Acceptor / 已接受 Session | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Apple Listener Profile 不支援 | `Acceptor::bind` / `accept_with_handlers` |
+| Control Plane 簽發 / 授權 | `flowersec-go/v2/controlplane` | 不支援；由應用服務負責 | 不支援；由應用服務負責 | 不支援；由應用服務負責 |
 
-每一列支援項目都有生產級 Connector 程式碼與端對端測試作為佐證。不支援的 Carrier 會 Fail Closed，絕不會成為靜默回退。Capability Descriptor 與 Carrier 選擇機制均維持內部可見。
+僅接受已宣告的 Carrier 組合；不支援的組合會 Fail Closed。每一列支援狀態都有生產級 Connector 程式碼和 `stability/language_capabilities.json` 中的明確測試 ID 作為依據；不支援的能力會提供原因與替代邊界。Capability Descriptor 與 Carrier 選擇機制均維持內部可見。
 
 <!-- readme-section:security -->
 <a id="security"></a>
@@ -94,6 +105,7 @@ Go 服務控制面使用獨立的 `github.com/floegence/flowersec/flowersec-go/v
 - Artifact 是不透明、有界且僅供單次使用的 Handle。Durable Spend 必須在傳送第一個 Credential Byte 前完成。
 - QUIC 系 Carrier 要求 TLS 1.3、精確的 ALPN、明確的 Trust Root，並停用 Early Data。
 - 公開錯誤會遮蔽敏感資訊且內容有界；Candidate、Wire、Key 與 Ledger 細節維持內部可見。
+- 結構化 Controller 處置結果只允許使用全新 Artifact 再次嘗試；它絕不會重複使用 Credential，也不會重播已終止 Session 中的工作。
 - Session 的取消、Deadline、FIN、Reset、Liveness、Rekey 與 Cleanup 行為均有明確邊界。
 
 請參閱 [Transport v2 架構](docs/TRANSPORT_V2_ARCHITECTURE.md)與[威脅模型](docs/THREAT_MODEL.md)。
@@ -111,5 +123,7 @@ Flowersec Runtime 擁有 WebSocket、raw QUIC 與 WebTransport 的生產級 List
 make install-hooks
 make precommit
 ```
+
+`scripts/push-main.sh` 會先執行有界的本機驗收測試，再推送正確的 main SHA。完整工程檢查及明確的 nightly、diagnostic 與 performance 工作流程分別涵蓋相容性、特權診斷與負載測試；Release 本身不執行測試。
 
 Flowersec 採用 [MIT License](LICENSE)。Release Artifact 透過 [GitHub Releases](https://github.com/floegence/flowersec/releases) 發布。

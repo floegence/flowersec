@@ -20,6 +20,8 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
+Flowersec 2.3.6 stellt SDKs für Go, TypeScript, Swift und Rust bereit. Es unterstützt das eingeschränkte direkte Klartext-WebSocket-Profil für Loopback-Verbindungen und verlangt WSS für netzwerkseitig erreichbare WebSocket-Kandidaten. Verwende feste Versionen der veröffentlichten Pakete und der zugehörigen Release-Tags.
+
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
 
@@ -40,20 +42,22 @@
 | Direct | Der Client verbindet sich über einen kompatiblen Kandidaten mit einem Endpoint | WebSocket verwendet hop-lokales Yamux; Carrier der QUIC-Familie verwenden native bidirektionale Streams |
 | Tunnel | Client- und Server-Leg treten über unabhängig ausgewählte kompatible Carrier bei | Der Tunnel ordnet verschlüsselte Streams zwischen den Legs zu, ohne einen primären Carrier festzulegen |
 
-raw QUIC und WebTransport bewahren das native Verhalten von FIN, RESET_STREAM, STOP_SENDING, Flusskontrolle und Migration. Flowersec deaktiviert 0-RTT auf Anwendungsebene und verwendet QUIC DATAGRAM nicht.
+raw QUIC und WebTransport bewahren das native Verhalten von FIN, RESET_STREAM, STOP_SENDING, Flusskontrolle und Migration. Flowersec deaktiviert 0-RTT auf Anwendungsebene. Zuverlässige Streams verwenden niemals QUIC DATAGRAM; Runtimes mit ausgehandeltem nativem DATAGRAM stellen es ausschließlich über Carrier-neutrale unzuverlässige Nachrichten bereit.
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
 
 ## Lokal ausprobieren
 
-Führe die v2-Unit-Suites aus:
+Führe die standardmäßige Abnahmetestsuite aus:
 
 ```bash
 make test
 ```
 
-Explizite Protokoll-, Browser-, Schwachnetz- und Interoperabilitaetsdiagnosen laufen mit `make diagnostic`; Kapazitaets- und Soak-Tests mit `make performance`.
+Verwende nach der Behebung eines Fehlers `make test-resume`, um beim ersten unvollständigen Test fortzufahren, bis der nächste Fehler oder `ALL GREEN` erreicht ist. Abgeschlossene IDs bleiben auch bei einer Änderung des Quell-Commits gültig.
+
+Verwende `make coverage-race` für die Coverage-Lanes aller vier Sprachen und den exklusiven Go-Race-Test. `make browser-smoke` prüft die drei lokalen Chromium-Topologien, `make browser-compat` die expliziten Firefox-/WebKit-Fähigkeiten. Privilegierte Schwachnetz- und Kernel-Diagnosen laufen mit `make diagnostic`; Kapazitäts- und Soak-Tests mit `make performance`.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
@@ -62,7 +66,7 @@ Explizite Protokoll-, Browser-, Schwachnetz- und Interoperabilitaetsdiagnosen la
 
 | Sprache | Paket | Öffentlicher Einstieg |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewSessionHandlers` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewConnectionController`, `flowersec.NewAcceptor` |
 | TypeScript | `@floegence/flowersec-core` | opake v2-Einstiege im Root sowie unter `/browser`, `/node` und `/proxy` |
 | Swift | SwiftPM-Produkt `Flowersec` | `Artifact`, `connect`, `Session` |
 | Rust | Crate `flowersec` | `Artifact`, `connect`, `Session` |
@@ -74,17 +78,24 @@ Der [Cookbook-Index](examples/README.md) enthält ausschließlich v2-Beispiele u
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
 
-## Portabler Vertrag
+## Portabler Kern und SDK-Profile
+
+Flowersec trennt seine Vertragsebenen ausdrücklich. Der portable Kern, die Verbindungssteuerung, die Lebenszyklen von Sitzung, RPC und Streams, Abläufe für angenommene Sitzungen sowie jeder veröffentlichte Consumer-Ablauf verwenden in allen relevanten SDKs öffentliche Einstiegspunkte mit derselben Semantik. Jedes SDK-Profil deklariert seine Runtime- und plattformspezifische Carrier-Grenze. Eine Plattformbeschränkung darf nur dann als nicht unterstützt gelten, wenn `stability/language_capabilities.json` einen eindeutigen Grund, eine alternative öffentliche Grenze und eine ausführbare Test-ID enthält. Die Persistenz der Control Plane ist eine Servicegrenze: Clients rufen den authentifizierten Service auf, der `flowersec-go/v2/controlplane` verwendet, statt einen zweiten Issuer oder Datastore einzubetten. Sprachspezifischer Komfort darf Syntax oder Orchestrierung an ein Ökosystem anpassen, ohne diese Verträge zu ändern. Der stabile sprachübergreifende Wiederherstellungsvertrag ist die strukturierte Disposition des Controllers, nicht die bytegenaue Übereinstimmung roher Fehlercodes.
 
 | Fähigkeit | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
 | Opakes Artifact, Connector, Sitzung, RPC und Byte-Streams | Ja | Ja | Ja | Ja |
-| WebSocket-Dialing für den Produktionseinsatz | Ja | Browser und Node.js | macOS | Nein |
+| Connection Controller mit einem Owner | Ja | Ja | Ja | Ja |
+| Ausgehandelter Kanal für unzuverlässige Nachrichten | Ja | Ja | Nein | Ja |
+| Abonnement von RPC-Benachrichtigungen | Nein | Ja | Nein | Nein |
+| Handler für eingehende RPC-Anfragen | Ja | Nein | Nein | Nein |
+| WebSocket-Dialing für den Produktionseinsatz | Ja | Browser und Node.js | macOS und iOS | Nein |
 | raw-QUIC-Dialing für den Produktionseinsatz | Ja | Nein | Nein | Ja |
-| WebTransport-Dialing für den Produktionseinsatz | Ja | Browser | Nein | Nein |
-| Listener-Unterstützung | Go-Bibliotheks-APIs | Einschränkungen der Browser-Runtime | Nicht ausgewiesen | Nicht ausgewiesen |
+| WebTransport-Dialing für den Produktionseinsatz | Ja | Browser und Node.js | Nein | Nein |
+| Server-Acceptor / angenommene Sitzung | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Im Apple-Listener-Profil nicht unterstützt | `Acceptor::bind` / `accept_with_handlers` |
+| Control-Plane-Ausstellung / -Autorisierung | `flowersec-go/v2/controlplane` | Nicht unterstützt; Servicegrenze der Anwendung | Nicht unterstützt; Servicegrenze der Anwendung | Nicht unterstützt; Servicegrenze der Anwendung |
 
-Jede Zeile zur Unterstützung ist durch produktiven Connector-Code und Ende-zu-Ende-Tests belegt. Nicht unterstützte Carrier werden sicher abgelehnt. Capability-Deskriptoren und die Carrier-Auswahl bleiben intern.
+Nur deklarierte Carrier-Tupel werden akzeptiert; nicht unterstützte Tupel werden sicher abgelehnt. Jede Unterstützungszeile ist durch produktiven Connector-Code und eine explizite Test-ID in `stability/language_capabilities.json` belegt. Nicht unterstützte Fähigkeiten nennen einen Grund und eine alternative Grenze. Capability-Deskriptoren und die Carrier-Auswahl bleiben intern.
 
 <!-- readme-section:security -->
 <a id="security"></a>
@@ -94,6 +105,7 @@ Jede Zeile zur Unterstützung ist durch produktiven Connector-Code und Ende-zu-E
 - Artifacts sind opake, begrenzte Einweg-Handles. Der dauerhafte Verbrauch ist abgeschlossen, bevor das erste Credential-Byte gesendet wird.
 - Carrier der QUIC-Familie erfordern TLS 1.3, exaktes ALPN, explizite Trust Roots und deaktivierte Early Data.
 - Öffentliche Fehler sind redigiert und begrenzt; Details zu Kandidaten, Wire, Keys und Ledger bleiben intern.
+- Strukturierte Controller-Dispositionen erlauben nur einen Versuch mit einem neuen Artifact; sie verwenden keine Zugangsdaten erneut und spielen keine Arbeit aus einer beendeten Sitzung ab.
 - Sitzungsabbruch, Deadlines, FIN, Reset, Liveness, Rekey und Bereinigung verhalten sich innerhalb definierter Grenzen.
 
 Siehe die [Transport-v2-Architektur](docs/TRANSPORT_V2_ARCHITECTURE.md) und das [Bedrohungsmodell](docs/THREAT_MODEL.md).
@@ -103,7 +115,7 @@ Siehe die [Transport-v2-Architektur](docs/TRANSPORT_V2_ARCHITECTURE.md) und das 
 
 ## Bereitstellung und Entwicklung
 
-Die Flowersec-Runtime stellt die produktiven Listener-Implementierungen für WebSocket, raw QUIC und WebTransport bereit. Anwendungs-SDKs erhalten ausschließlich opake Artifacts und Sitzungen; ausgemusterte Kompatibilitäts-CLIs gehören nicht zum v2-Vertrag.
+Die Flowersec-Runtime stellt die produktiven Listener-Implementierungen für WebSocket, raw QUIC und WebTransport bereit. Anwendungs-SDKs erhalten ausschließlich opake Artifacts und Sitzungen; die Runtime-CLIs kombinieren dieselben Connector- und Acceptor-Implementierungen.
 
 Installiere die Repository-Hooks und führe vor der Integration das maßgebliche Gate aus:
 
@@ -111,5 +123,7 @@ Installiere die Repository-Hooks und führe vor der Integration das maßgebliche
 make install-hooks
 make precommit
 ```
+
+`scripts/push-main.sh` führt die begrenzte lokale Abnahmetestsuite aus, bevor der exakte main-SHA gepusht wird. Der vollständige Engineering-Check und die expliziten Workflows für nightly, diagnostic und performance decken Kompatibilität, privilegierte Diagnosen und Lasttests ab; der Release selbst führt keine Tests aus.
 
 Flowersec ist unter der [MIT License](LICENSE) verfügbar. Release-Artefakte werden über [GitHub Releases](https://github.com/floegence/flowersec/releases) veröffentlicht.

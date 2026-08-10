@@ -20,6 +20,8 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
+Flowersec 2.3.6 提供 Go、TypeScript、Swift 和 Rust SDK。它支持受限的回环地址明文 WebSocket 直连配置，并要求所有面向网络的 WebSocket 候选项使用 WSS。请锁定已发布的软件包版本和对应的发布标签。
+
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
 
@@ -40,7 +42,7 @@
 | Direct | 客户端通过兼容候选项连接端点 | WebSocket 使用单跳本地 Yamux；QUIC 系列 Carrier 使用原生双向数据流 |
 | Tunnel | 客户端与服务端链路分别通过兼容 Carrier 接入 | Tunnel 在两条链路之间映射加密数据流，不选择主 Carrier |
 
-raw QUIC 与 WebTransport 保留原生 FIN、RESET_STREAM、STOP_SENDING、流控和迁移语义。Flowersec 禁用应用层 0-RTT，且不使用 QUIC DATAGRAM。
+raw QUIC 与 WebTransport 保留原生 FIN、RESET_STREAM、STOP_SENDING、流控和迁移语义。Flowersec 禁用应用层 0-RTT。可靠流绝不使用 QUIC DATAGRAM；运行时仅在协商出原生 DATAGRAM 支持后，才通过 Carrier 中立的不可靠消息公开该能力。
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
@@ -53,7 +55,9 @@ raw QUIC 与 WebTransport 保留原生 FIN、RESET_STREAM、STOP_SENDING、流�
 make test
 ```
 
-协议、浏览器、弱网和互操作专项诊断使用 `make diagnostic`；容量和 soak 工作负载使用 `make performance`。
+修复失败后，使用 `make test-resume` 从首个未完成测试继续运行，直到下一次失败或显示 `ALL GREEN`。即使源代码提交发生变化，已完成的测试 ID 仍然有效。
+
+使用 `make coverage-race` 运行四种语言的覆盖率任务以及独占的 Go race 测试。使用 `make browser-smoke` 验证三种本地 Chromium 拓扑，使用 `make browser-compat` 显式检查 Firefox/WebKit 能力。需要特权的弱网和内核诊断使用 `make diagnostic`；容量与 soak 测试使用 `make performance`。
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
@@ -62,10 +66,10 @@ make test
 
 | 语言 | 软件包 | 公共入口 |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewSessionHandlers` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewConnectionController`, `flowersec.NewAcceptor` |
 | TypeScript | `@floegence/flowersec-core` | 根入口、`/browser`、`/node` 和 `/proxy` 不透明 v2 入口 |
 | Swift | SwiftPM 产品 `Flowersec` | `Artifact`、`connect`、`Session` |
-| Rust | crate `flowersec` | `Artifact`、`Connector`、`Session` |
+| Rust | crate `flowersec` | `Artifact`、`connect`、`Session` |
 
 Go 服务控制面使用独立的 `github.com/floegence/flowersec/flowersec-go/v2/controlplane` 包签发 opaque artifact，并响应 `flowersec-runtime` 的授权回调。
 
@@ -74,17 +78,24 @@ Go 服务控制面使用独立的 `github.com/floegence/flowersec/flowersec-go/v
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
 
-## 可移植契约
+## 可移植核心与 SDK 配置
+
+Flowersec 明确区分不同契约层。可移植核心、连接控制、Session/RPC/Stream 生命周期、已接收 Session 工作流，以及每一条已发布的消费方工作流，在所有适用 SDK 中都通过语义一致的公共入口提供。每个 SDK 配置都会声明其运行时和平台特有的 Carrier 边界。平台限制只有在 `stability/language_capabilities.json` 中记录明确原因、替代公共边界和可执行测试 ID 后，才能标记为不支持。控制面持久化属于服务边界：客户端调用使用 `flowersec-go/v2/controlplane` 的认证服务，而不是嵌入第二套签发器或数据存储。语言便利能力只能适配某一语言生态的语法或编排方式，不得改变这些契约。稳定的跨语言恢复契约是控制器的结构化处置结果，而不是逐字节一致的原始错误码。
 
 | 能力 | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
-| 不透明 Artifact、Connector、Session、RPC 与字节流 | 支持 | 支持 | 支持 | 支持 |
-| 生产级 WebSocket 拨号 | 支持 | 浏览器与 Node.js | macOS | 不支持 |
-| 生产级 raw QUIC 拨号 | 支持 | 不支持 | 不支持 | 支持 |
-| 生产级 WebTransport 拨号 | 支持 | 浏览器 | 不支持 | 不支持 |
-| 监听器支持 | Go 库 API | 受浏览器运行时限制 | 不对外声明 | 不对外声明 |
+| 不透明 Artifact、Connector、Session、RPC 与字节流 | 是 | 是 | 是 | 是 |
+| 单一所有者连接控制器 | 是 | 是 | 是 | 是 |
+| 协商式不可靠消息通道 | 是 | 是 | 否 | 是 |
+| RPC 通知订阅 | 否 | 是 | 否 | 否 |
+| 入站 RPC 请求处理器 | 是 | 否 | 否 | 否 |
+| 生产级 WebSocket 拨号 | 是 | 浏览器与 Node.js | macOS 与 iOS | 否 |
+| 生产级 raw QUIC 拨号 | 是 | 否 | 否 | 是 |
+| 生产级 WebTransport 拨号 | 是 | 浏览器与 Node.js | 否 | 否 |
+| 服务端 Acceptor / 已接收 Session | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Apple Listener 配置不支持 | `Acceptor::bind` / `accept_with_handlers` |
+| 控制面签发 / 授权 | `flowersec-go/v2/controlplane` | 不支持；由应用服务负责 | 不支持；由应用服务负责 | 不支持；由应用服务负责 |
 
-表中每项支持均由生产级 Connector 代码和端到端测试提供证据。不支持的 Carrier 会失败关闭，绝不会成为静默回退；能力描述符和 Carrier 选择逻辑均为内部实现细节。
+只接受已声明的 Carrier 组合；不支持的组合会失败关闭。每一行支持状态都有生产级 Connector 代码和 `stability/language_capabilities.json` 中的显式测试 ID 作为依据；不支持的能力会给出原因和替代边界。能力描述符和 Carrier 选择逻辑始终属于内部实现。
 
 <!-- readme-section:security -->
 <a id="security"></a>
@@ -94,6 +105,7 @@ Go 服务控制面使用独立的 `github.com/floegence/flowersec/flowersec-go/v
 - Artifact 是不透明、有界且单次使用的句柄。持久化核销必须在发送第一个凭据字节前完成。
 - QUIC 系列 Carrier 要求 TLS 1.3、精确 ALPN、显式信任根，并禁用提前数据。
 - 公共错误经过脱敏且有界；Candidate、Wire、Key 与 Ledger 细节保持内部可见。
+- 结构化控制器处置结果只允许使用全新 Artifact 再次尝试；它绝不会复用凭据，也不会重放已终止 Session 中的工作。
 - Session 的取消、截止时间、FIN、重置、活性检测、密钥轮换和资源清理均有明确边界。
 
 请参阅 [Transport v2 架构](docs/TRANSPORT_V2_ARCHITECTURE.md)和[威胁模型](docs/THREAT_MODEL.md)。
@@ -111,5 +123,7 @@ Flowersec 运行时负责 WebSocket、raw QUIC 和 WebTransport 的生产级监�
 make install-hooks
 make precommit
 ```
+
+`scripts/push-main.sh` 会先运行有界的本地验收测试，再推送准确的 main SHA。完整工程检查以及显式的 nightly、diagnostic 和 performance 工作流分别覆盖兼容性、特权诊断和负载测试；发布流程本身不运行测试。
 
 Flowersec 采用 [MIT License](LICENSE)。发布制品通过 [GitHub Releases](https://github.com/floegence/flowersec/releases) 提供。

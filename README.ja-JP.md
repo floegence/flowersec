@@ -20,6 +20,8 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
+Flowersec 2.3.6 は Go、TypeScript、Swift、Rust SDK を提供します。制限付きのループバック平文 WebSocket Direct プロファイルをサポートし、ネットワーク向けの WebSocket 候補には WSS を必須とします。公開済みパッケージのバージョンと対応するリリースタグを固定してください。
+
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
 
@@ -40,20 +42,22 @@
 | Direct | Client が互換性のある候補を使用して Endpoint に接続 | WebSocket は Hop-local Yamux、QUIC 系 Carrier はネイティブの双方向 Stream を使用 |
 | Tunnel | Client Leg と Server Leg がそれぞれ独立に選択した互換性のある Carrier を介して接続 | Tunnel は主 Carrier を選ばず、Leg 間で暗号化 Stream を対応付け |
 
-raw QUIC と WebTransport は、ネイティブの FIN、RESET_STREAM、STOP_SENDING、フロー制御、マイグレーション動作を維持します。Flowersec はアプリケーション 0-RTT を無効化し、QUIC DATAGRAM を使用しません。
+raw QUIC と WebTransport は、ネイティブの FIN、RESET_STREAM、STOP_SENDING、フロー制御、マイグレーション動作を維持します。Flowersec はアプリケーション 0-RTT を無効化します。Reliable Stream は QUIC DATAGRAM を使用しません。ネイティブ DATAGRAM がネゴシエートされた Runtime のみが、Carrier に依存しない Unreliable Message として公開します。
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
 
 ## ローカルで試す
 
-v2 ユニットスイートを実行します。
+デフォルトの Acceptance Suite を実行します。
 
 ```bash
 make test
 ```
 
-プロトコル、ブラウザ、弱いネットワーク、相互運用性の明示的な診断には `make diagnostic`、容量と soak には `make performance` を使用します。
+失敗を修正した後は、`make test-resume` を使用して最初の未完了テストから次の失敗または `ALL GREEN` まで再開します。ソース Commit が変わっても、完了済み ID は有効です。
+
+4 言語の Coverage Lane と排他的な Go race には `make coverage-race` を使用します。3 つのローカル Chromium Topology には `make browser-smoke`、明示的な Firefox/WebKit Capability Check には `make browser-compat` を使用します。特権が必要な弱いネットワークおよび Kernel 診断には `make diagnostic`、Capacity と Soak には `make performance` を使用します。
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
@@ -62,10 +66,10 @@ make test
 
 | 言語 | パッケージ | 公開エントリ |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewSessionHandlers` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewConnectionController`, `flowersec.NewAcceptor` |
 | TypeScript | `@floegence/flowersec-core` | ルート、`/browser`、`/node`、`/proxy` の不透明な v2 エントリポイント |
 | Swift | SwiftPM プロダクト `Flowersec` | `Artifact`、`connect`、`Session` |
-| Rust | crate `flowersec` | `Artifact`、`Connector`、`Session` |
+| Rust | crate `flowersec` | `Artifact`、`connect`、`Session` |
 
 Go サービスのコントロールプレーンは、opaque artifact の発行と `flowersec-runtime` の認可コールバックへの応答に、独立した `github.com/floegence/flowersec/flowersec-go/v2/controlplane` パッケージを使用します。
 
@@ -74,17 +78,24 @@ Go サービスのコントロールプレーンは、opaque artifact の発行�
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
 
-## ポータブル契約
+## ポータブルコアと SDK プロファイル
+
+Flowersec は契約レイヤーを明確に分離します。ポータブルコア、接続制御、Session/RPC/Stream のライフサイクル、Accepted Session のワークフロー、および公開されるすべての Consumer Workflow は、該当する各 SDK で同じ意味を持つ Public Entry を使用します。各 SDK プロファイルは、Runtime と Platform 固有の Carrier 境界を宣言します。Platform の制約を未対応とできるのは、明確な理由、代替の Public Boundary、実行可能な Test ID が `stability/language_capabilities.json` に記録されている場合だけです。Control Plane の永続化はサービス境界です。Client は `flowersec-go/v2/controlplane` を使用する認証済み Service を呼び出し、第 2 の Issuer や Datastore を組み込みません。言語固有の Convenience は、契約を変えずに各言語エコシステムへ構文や Orchestration を適合させるものです。安定した言語間 Recovery 契約は Controller の構造化 Disposition であり、生の Error Code の Byte 単位の一致ではありません。
 
 | 機能 | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
-| 不透明な Artifact、Connector、Session、RPC、バイトストリーム | 対応 | 対応 | 対応 | 対応 |
-| 本番 WebSocket Dial | 対応 | Browser と Node.js | macOS | 非対応 |
+| 不透明な Artifact、Connector、Session、RPC、Byte Stream | 対応 | 対応 | 対応 | 対応 |
+| Single-owner Connection Controller | 対応 | 対応 | 対応 | 対応 |
+| ネゴシエートされる Unreliable Message Channel | 対応 | 対応 | 非対応 | 対応 |
+| RPC Notification Subscription | 非対応 | 対応 | 非対応 | 非対応 |
+| Inbound RPC Request Handler | 対応 | 非対応 | 非対応 | 非対応 |
+| 本番 WebSocket Dial | 対応 | Browser と Node.js | macOS と iOS | 非対応 |
 | 本番 raw QUIC Dial | 対応 | 非対応 | 非対応 | 対応 |
-| 本番 WebTransport Dial | 対応 | Browser | 非対応 | 非対応 |
-| Listener 対応 | Go ライブラリ API | Browser Runtime の制約あり | 非公開 | 非公開 |
+| 本番 WebTransport Dial | 対応 | Browser と Node.js | 非対応 | 非対応 |
+| Server Acceptor / Accepted Session | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Apple Listener プロファイルでは非対応 | `Acceptor::bind` / `accept_with_handlers` |
+| Control Plane の Issue / Authorize | `flowersec-go/v2/controlplane` | 非対応。Application 所有の Service Boundary | 非対応。Application 所有の Service Boundary | 非対応。Application 所有の Service Boundary |
 
-各対応項目は、本番用 Connector コードとエンドツーエンドテストによって裏付けられています。非対応の Carrier は Fail Closed となり、暗黙のフォールバックにはなりません。Capability Descriptor と Carrier の選択は内部に留まります。
+宣言済みの Carrier Tuple だけを受け入れ、未対応の Tuple は Fail Closed になります。各対応行は、本番用 Connector コードと `stability/language_capabilities.json` の明示的な Test ID によって裏付けられています。未対応 Capability には理由と代替 Boundary が記載されています。Capability Descriptor と Carrier の選択は内部に留まります。
 
 <!-- readme-section:security -->
 <a id="security"></a>
@@ -94,6 +105,7 @@ Go サービスのコントロールプレーンは、opaque artifact の発行�
 - Artifact は不透明でサイズ制限があり、1 回だけ使える Handle です。認証情報の最初のバイトを送信する前に Durable Spend を完了します。
 - QUIC 系 Carrier は TLS 1.3、完全一致する ALPN、明示的な Trust Root、Early Data の無効化を必須とします。
 - 公開エラーは秘匿化され、サイズも制限されます。Candidate、Wire、Key、Ledger の詳細は内部に留まります。
+- 構造化された Controller Disposition が許可するのは、新しい Artifact を使った再試行だけです。Credential の再利用や、終了した Session の処理の Replay は行いません。
 - Session のキャンセル、Deadline、FIN、Reset、Liveness、Rekey、Cleanup はすべて境界が定義されています。
 
 [Transport v2 アーキテクチャ](docs/TRANSPORT_V2_ARCHITECTURE.md)と[脅威モデル](docs/THREAT_MODEL.md)を参照してください。
@@ -111,5 +123,7 @@ Flowersec Runtime が、WebSocket、raw QUIC、WebTransport の本番用 Listene
 make install-hooks
 make precommit
 ```
+
+`scripts/push-main.sh` は、境界が定められたローカル Acceptance Suite を実行してから、正確な main SHA を Push します。完全な Engineering Check と明示的な nightly、diagnostic、performance Workflow は、それぞれ Compatibility、特権診断、Load Test を対象とします。Release 自体は Test を実行しません。
 
 Flowersec は [MIT License](LICENSE) で提供されます。リリース成果物は [GitHub Releases](https://github.com/floegence/flowersec/releases) で公開されます。

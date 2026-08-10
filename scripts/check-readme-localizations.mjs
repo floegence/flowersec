@@ -5,6 +5,11 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { validateTransportV2Readmes } from "./readme-transport-v2-contract.mjs";
+import {
+  extractInlineCodeLiterals,
+  extractMarkdownShape,
+  extractProductVersion,
+} from "./readme-localization-contract.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
@@ -80,8 +85,12 @@ const sourcePath = resolve(repoRoot, manifest.source.file);
 const source = readFileSync(sourcePath, "utf8");
 const sourceCodeBlocks = JSON.stringify(extractCodeBlocks(source));
 const sourceLinks = JSON.stringify(extractLinkTargets(source));
+const sourceInlineCode = JSON.stringify(extractInlineCodeLiterals(source));
+const sourceMarkdownShape = JSON.stringify(extractMarkdownShape(source));
+const sourceVersion = extractProductVersion(source);
 const expectedHeadingLevels = JSON.stringify([1, ...manifest.sections.map((section) => section.level)]);
 const errors = validateTransportV2Readmes(repoRoot);
+if (sourceVersion === null) errors.push(`${manifest.source.locale}: README.md is missing the product version`);
 
 const expectedRootReadmes = manifest.locales.map((locale) => locale.file).sort();
 const actualRootReadmes = readdirSync(repoRoot).filter((name) => /^README(?:\.[A-Za-z-]+)?\.md$/.test(name)).sort();
@@ -126,6 +135,15 @@ for (const locale of manifest.locales) {
   }
   if (JSON.stringify(extractCodeBlocks(content)) !== sourceCodeBlocks) {
     errors.push(`${locale.locale}: executable code blocks differ from README.md`);
+  }
+  if (JSON.stringify(extractInlineCodeLiterals(content)) !== sourceInlineCode) {
+    errors.push(`${locale.locale}: inline API, package, path, and command literals differ from README.md`);
+  }
+  if (JSON.stringify(extractMarkdownShape(content)) !== sourceMarkdownShape) {
+    errors.push(`${locale.locale}: Markdown structure differs from README.md`);
+  }
+  if (extractProductVersion(content) !== sourceVersion) {
+    errors.push(`${locale.locale}: product version differs from README.md (${sourceVersion})`);
   }
   if (JSON.stringify(extractLinkTargets(content)) !== sourceLinks) {
     errors.push(`${locale.locale}: link or image targets differ from README.md`);
