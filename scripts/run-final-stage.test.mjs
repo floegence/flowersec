@@ -15,6 +15,7 @@ if (helperMode === "descendant") {
   setTimeout(() => fs.writeFileSync(process.argv[3], "late"), Number(process.argv[4]));
 } else if (helperMode === "parent") {
   spawn(process.execPath, [import.meta.filename, "descendant", process.argv[3], process.argv[4]], { stdio: "ignore" });
+  process.stderr.write("final-stage-helper-ready\n");
   setInterval(() => {}, 1_000);
 } else {
 
@@ -147,14 +148,23 @@ test("final stage wrapper forwards external termination to descendants", async (
     const child = spawn(process.execPath, [runner, "5", "languages", process.execPath, import.meta.filename, "parent", marker, "700"], {
       stdio: ["ignore", "ignore", "pipe"],
     });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    child.kill("SIGTERM");
-    const result = await new Promise((resolve) => {
-      let stderr = "";
+    let stderr = "";
+    let readyTimer;
+    const ready = new Promise((resolve, reject) => {
+      readyTimer = setTimeout(() => reject(new Error(`final stage helper did not become ready\n${stderr}`)), 5_000);
       child.stderr.setEncoding("utf8");
-      child.stderr.on("data", (chunk) => { stderr += chunk; });
-      child.on("exit", (code, signal) => resolve({ code, signal, stderr }));
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk;
+        if (stderr.includes("final-stage-helper-ready\n")) resolve();
+      });
     });
+    const exited = new Promise((resolve) => {
+      child.on("exit", (code, signal) => resolve({ code, signal }));
+    });
+    await ready;
+    clearTimeout(readyTimer);
+    assert.equal(child.kill("SIGTERM"), true);
+    const result = { ...await exited, stderr };
     assert.equal(result.signal, null);
     assert.equal(result.code, 143, result.stderr);
     await new Promise((resolve) => setTimeout(resolve, 800));
