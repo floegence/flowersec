@@ -526,7 +526,11 @@ test("release workflows pin actions and pass expressions through fields, not she
       new RegExp(`  - package-ecosystem: ${ecosystem}\\n    directory: ${escapedDirectory}\\n    schedule:\\n      interval: weekly`),
     );
   }
-  assert.doesNotMatch(dependabot, /open-pull-requests-limit:|\bgroups:/);
+  assert.doesNotMatch(dependabot, /open-pull-requests-limit:/);
+  assert.match(
+    dependabot,
+    /^    groups:\n      codeql-action:\n        patterns:\n          - github\/codeql-action$/m,
+  );
 });
 
 test("CodeQL scans every language on changes and does not hide Swift failures", () => {
@@ -549,7 +553,7 @@ test("CodeQL scans every language on changes and does not hide Swift failures", 
   assert.match(workflow, /^          - language: c-cpp\n            build-mode: none$/m);
   assert.match(workflow, /^          - language: rust\n            build-mode: none$/m);
   assert.match(workflow, /^          - language: swift\n            build-mode: manual\n            runner: macos-26$/m);
-  assert.match(workflow, /^        uses: github\/codeql-action\/init@[0-9a-f]{40} # v4$/m);
+  assert.match(workflow, /^        uses: github\/codeql-action\/init@[0-9a-f]{40} # v4(?:\.[0-9]+)*$/m);
   assert.match(workflow, /^          languages: \$\{\{ matrix\.language \}\}\n          build-mode: \$\{\{ matrix\.build-mode \}\}\n          queries: security-extended$/m);
   const prepareSwift = workflow.indexOf("      - name: Prepare Swift build cache");
   const initializeCodeQL = workflow.indexOf("      - name: Initialize CodeQL");
@@ -557,8 +561,8 @@ test("CodeQL scans every language on changes and does not hide Swift failures", 
   assert.ok(prepareSwift < initializeCodeQL, "Swift dependencies must be built before CodeQL initialization");
   assert.match(workflow, /^        run: \|\n          swift package --skip-update --only-use-versions-from-resolved-file resolve\n          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8$/m);
   assert.match(workflow, /^      - name: Build Swift library\n        if: matrix\.language == 'swift'\n        run: \|\n          find flowersec-swift\/Sources\/Flowersec -type f -name '\*\.swift' -exec touch \{\} \+\n          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8$/m);
-  assert.match(workflow, /^        if: matrix\.language == 'go'\n        uses: github\/codeql-action\/autobuild@[0-9a-f]{40} # v4$/m);
-  assert.match(workflow, /^        uses: github\/codeql-action\/analyze@[0-9a-f]{40} # v4$/m);
+  assert.match(workflow, /^        if: matrix\.language == 'go'\n        uses: github\/codeql-action\/autobuild@[0-9a-f]{40} # v4(?:\.[0-9]+)*$/m);
+  assert.match(workflow, /^        uses: github\/codeql-action\/analyze@[0-9a-f]{40} # v4(?:\.[0-9]+)*$/m);
 });
 
 test("release workflow parser passes filenames compatibly across Psych versions", () => {
