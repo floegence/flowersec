@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:193cab98-aa88-5b86-82b7-ef43e082f6d2",
+  "serialNumber": "urn:uuid:6b1e4913-ef7d-5efa-8696-846a3ab19dbe",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "c612c3925559c0ab69e608d4bdc3c71869c955d60e5bc8b040de1dbdb92ab18b"
+        "value": "93c53e9c4638dc2e41c9a6ee74be92a707e8447099da937df3d62d234ff8fc20"
       }
     ]
   },
@@ -134,9 +134,9 @@
     {
       "type": "library",
       "name": "@noble/curves",
-      "version": "1.9.7",
-      "purl": "pkg:npm/%40noble/curves@1.9.7",
-      "bom-ref": "pkg:npm/%40noble/curves@1.9.7",
+      "version": "2.3.0",
+      "purl": "pkg:npm/%40noble/curves@2.3.0",
+      "bom-ref": "pkg:npm/%40noble/curves@2.3.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -145,35 +145,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@noble/curves/-/curves-1.9.7.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@noble/hashes",
-      "version": "1.8.0",
-      "purl": "pkg:npm/%40noble/hashes@1.8.0",
-      "bom-ref": "pkg:npm/%40noble/hashes@1.8.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@noble/hashes/-/hashes-1.8.0.tgz"
+          "url": "https://registry.npmjs.org/@noble/curves/-/curves-2.3.0.tgz"
         }
       ],
       "properties": [
@@ -2323,7 +2295,7 @@
         "pkg:npm/%40fails-components/webtransport-transport-http3-quiche@1.6.7",
         "pkg:npm/%40fails-components/webtransport@1.6.7",
         "pkg:npm/%40noble/ciphers@2.3.0",
-        "pkg:npm/%40noble/curves@1.9.7",
+        "pkg:npm/%40noble/curves@2.3.0",
         "pkg:npm/%40noble/hashes@2.3.0",
         "pkg:npm/tr46@5.0.0",
         "pkg:npm/ws@8.21.3"
@@ -2359,14 +2331,10 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40noble/curves@1.9.7",
+      "ref": "pkg:npm/%40noble/curves@2.3.0",
       "dependsOn": [
-        "pkg:npm/%40noble/hashes@1.8.0"
+        "pkg:npm/%40noble/hashes@2.3.0"
       ]
-    },
-    {
-      "ref": "pkg:npm/%40noble/hashes@1.8.0",
-      "dependsOn": []
     },
     {
       "ref": "pkg:npm/%40noble/hashes@2.3.0",

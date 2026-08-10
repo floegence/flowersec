@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:48dfbde3-e3cc-5ccf-8107-bec9ac43cb87",
+  "serialNumber": "urn:uuid:aedaf4d5-0a42-5db7-8852-9cea51d341f3",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "c612c3925559c0ab69e608d4bdc3c71869c955d60e5bc8b040de1dbdb92ab18b"
+        "value": "93c53e9c4638dc2e41c9a6ee74be92a707e8447099da937df3d62d234ff8fc20"
       }
     ]
   },
@@ -5229,90 +5229,6 @@
     },
     {
       "type": "library",
-      "name": "@emnapi/core",
-      "version": "1.10.0",
-      "purl": "pkg:npm/%40emnapi/core@1.10.0",
-      "bom-ref": "pkg:npm/%40emnapi/core@1.10.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@emnapi/core/-/core-1.10.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@emnapi/runtime",
-      "version": "1.10.0",
-      "purl": "pkg:npm/%40emnapi/runtime@1.10.0",
-      "bom-ref": "pkg:npm/%40emnapi/runtime@1.10.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.10.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@emnapi/wasi-threads",
-      "version": "1.2.1",
-      "purl": "pkg:npm/%40emnapi/wasi-threads@1.2.1",
-      "bom-ref": "pkg:npm/%40emnapi/wasi-threads@1.2.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@emnapi/wasi-threads/-/wasi-threads-1.2.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "@eslint-community/eslint-utils",
       "version": "4.9.1",
       "purl": "pkg:npm/%40eslint-community/eslint-utils@4.9.1",
@@ -5789,34 +5705,6 @@
     },
     {
       "type": "library",
-      "name": "@napi-rs/wasm-runtime",
-      "version": "1.1.5",
-      "purl": "pkg:npm/%40napi-rs/wasm-runtime@1.1.5",
-      "bom-ref": "pkg:npm/%40napi-rs/wasm-runtime@1.1.5",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@napi-rs/wasm-runtime/-/wasm-runtime-1.1.5.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "@noble/ciphers",
       "version": "2.3.0",
       "purl": "pkg:npm/%40noble/ciphers@2.3.0",
@@ -5846,9 +5734,9 @@
     {
       "type": "library",
       "name": "@noble/curves",
-      "version": "1.9.7",
-      "purl": "pkg:npm/%40noble/curves@1.9.7",
-      "bom-ref": "pkg:npm/%40noble/curves@1.9.7",
+      "version": "2.3.0",
+      "purl": "pkg:npm/%40noble/curves@2.3.0",
+      "bom-ref": "pkg:npm/%40noble/curves@2.3.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -5857,35 +5745,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@noble/curves/-/curves-1.9.7.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@noble/hashes",
-      "version": "1.8.0",
-      "purl": "pkg:npm/%40noble/hashes@1.8.0",
-      "bom-ref": "pkg:npm/%40noble/hashes@1.8.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@noble/hashes/-/hashes-1.8.0.tgz"
+          "url": "https://registry.npmjs.org/@noble/curves/-/curves-2.3.0.tgz"
         }
       ],
       "properties": [
@@ -5930,9 +5790,9 @@
     {
       "type": "library",
       "name": "@oxc-project/types",
-      "version": "0.133.0",
-      "purl": "pkg:npm/%40oxc-project/types@0.133.0",
-      "bom-ref": "pkg:npm/%40oxc-project/types@0.133.0",
+      "version": "0.143.0",
+      "purl": "pkg:npm/%40oxc-project/types@0.143.0",
+      "bom-ref": "pkg:npm/%40oxc-project/types@0.143.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -5941,7 +5801,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@oxc-project/types/-/types-0.133.0.tgz"
+          "url": "https://registry.npmjs.org/@oxc-project/types/-/types-0.143.0.tgz"
         }
       ],
       "properties": [
@@ -5958,9 +5818,9 @@
     {
       "type": "library",
       "name": "@playwright/test",
-      "version": "1.62.0",
-      "purl": "pkg:npm/%40playwright/test@1.62.0",
-      "bom-ref": "pkg:npm/%40playwright/test@1.62.0",
+      "version": "1.62.1",
+      "purl": "pkg:npm/%40playwright/test@1.62.1",
+      "bom-ref": "pkg:npm/%40playwright/test@1.62.1",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -5969,7 +5829,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@playwright/test/-/test-1.62.0.tgz"
+          "url": "https://registry.npmjs.org/@playwright/test/-/test-1.62.1.tgz"
         }
       ],
       "properties": [
@@ -5986,9 +5846,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-android-arm64",
-      "version": "1.0.3",
-      "purl": "pkg:npm/%40rolldown/binding-android-arm64@1.0.3",
-      "bom-ref": "pkg:npm/%40rolldown/binding-android-arm64@1.0.3",
+      "version": "1.2.3",
+      "purl": "pkg:npm/%40rolldown/binding-android-arm64@1.2.3",
+      "bom-ref": "pkg:npm/%40rolldown/binding-android-arm64@1.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -5997,7 +5857,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-android-arm64/-/binding-android-arm64-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-android-arm64/-/binding-android-arm64-1.2.3.tgz"
         }
       ],
       "properties": [
@@ -6014,9 +5874,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-darwin-arm64",
-      "version": "1.0.3",
-      "purl": "pkg:npm/%40rolldown/binding-darwin-arm64@1.0.3",
-      "bom-ref": "pkg:npm/%40rolldown/binding-darwin-arm64@1.0.3",
+      "version": "1.2.3",
+      "purl": "pkg:npm/%40rolldown/binding-darwin-arm64@1.2.3",
+      "bom-ref": "pkg:npm/%40rolldown/binding-darwin-arm64@1.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -6025,7 +5885,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-darwin-arm64/-/binding-darwin-arm64-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-darwin-arm64/-/binding-darwin-arm64-1.2.3.tgz"
         }
       ],
       "properties": [
@@ -6042,9 +5902,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-darwin-x64",
-      "version": "1.0.3",
-      "purl": "pkg:npm/%40rolldown/binding-darwin-x64@1.0.3",
-      "bom-ref": "pkg:npm/%40rolldown/binding-darwin-x64@1.0.3",
+      "version": "1.2.3",
+      "purl": "pkg:npm/%40rolldown/binding-darwin-x64@1.2.3",
+      "bom-ref": "pkg:npm/%40rolldown/binding-darwin-x64@1.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -6053,7 +5913,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-darwin-x64/-/binding-darwin-x64-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-darwin-x64/-/binding-darwin-x64-1.2.3.tgz"
         }
       ],
       "properties": [
@@ -6070,9 +5930,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-freebsd-x64",
-      "version": "1.0.3",
-      "purl": "pkg:npm/%40rolldown/binding-freebsd-x64@1.0.3",
-      "bom-ref": "pkg:npm/%40rolldown/binding-freebsd-x64@1.0.3",
+      "version": "1.2.3",
+      "purl": "pkg:npm/%40rolldown/binding-freebsd-x64@1.2.3",
+      "bom-ref": "pkg:npm/%40rolldown/binding-freebsd-x64@1.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -6081,7 +5941,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-freebsd-x64/-/binding-freebsd-x64-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-freebsd-x64/-/binding-freebsd-x64-1.2.3.tgz"
         }
       ],
       "properties": [
@@ -6098,9 +5958,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-linux-arm-gnueabihf",
-      "version": "1.0.3",
-      "purl": "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.0.3",
-      "bom-ref": "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.0.3",
+      "version": "1.2.3",
+      "purl": "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.2.3",
+      "bom-ref": "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -6109,7 +5969,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-linux-arm-gnueabihf/-/binding-linux-arm-gnueabihf-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-linux-arm-gnueabihf/-/binding-linux-arm-gnueabihf-1.2.3.tgz"
         }
       ],
       "properties": [
@@ -6126,9 +5986,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-linux-arm64-gnu",
-      "version": "1.0.3",
-      "purl": "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.0.3",
-      "bom-ref": "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.0.3",
+      "version": "1.2.3",
+      "purl": "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.2.3",
+      "bom-ref": "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -6137,7 +5997,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-gnu/-/binding-linux-arm64-gnu-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-gnu/-/binding-linux-arm64-gnu-1.2.3.tgz"
         }
       ],
       "properties": [
@@ -6154,9 +6014,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-linux-arm64-musl",
-      "version": "1.0.3",
-      "purl": "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.0.3",
-      "bom-ref": "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.0.3",
+      "version": "1.2.3",
+      "purl": "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.2.3",
+      "bom-ref": "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -6165,7 +6025,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-musl/-/binding-linux-arm64-musl-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-musl/-/binding-linux-arm64-musl-1.2.3.tgz"
         }
       ],
       "properties": [
@@ -6182,9 +6042,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-linux-ppc64-gnu",
-      "version": "1.0.3",
-      "purl": "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.0.3",
-      "bom-ref": "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.0.3",
+      "version": "1.2.3",
+      "purl": "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.2.3",
+      "bom-ref": "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -6193,7 +6053,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-linux-ppc64-gnu/-/binding-linux-ppc64-gnu-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-linux-ppc64-gnu/-/binding-linux-ppc64-gnu-1.2.3.tgz"
         }
       ],
       "properties": [
@@ -6210,9 +6070,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-linux-s390x-gnu",
-      "version": "1.0.3",
-      "purl": "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.0.3",
-      "bom-ref": "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.0.3",
+      "version": "1.2.3",
+      "purl": "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.2.3",
+      "bom-ref": "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -6221,7 +6081,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-linux-s390x-gnu/-/binding-linux-s390x-gnu-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-linux-s390x-gnu/-/binding-linux-s390x-gnu-1.2.3.tgz"
         }
       ],
       "properties": [
@@ -6238,9 +6098,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-linux-x64-gnu",
-      "version": "1.0.3",
-      "purl": "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.0.3",
-      "bom-ref": "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.0.3",
+      "version": "1.2.3",
+      "purl": "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.2.3",
+      "bom-ref": "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -6249,7 +6109,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-linux-x64-gnu/-/binding-linux-x64-gnu-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-linux-x64-gnu/-/binding-linux-x64-gnu-1.2.3.tgz"
         }
       ],
       "properties": [
@@ -6266,9 +6126,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-linux-x64-musl",
-      "version": "1.0.3",
-      "purl": "pkg:npm/%40rolldown/binding-linux-x64-musl@1.0.3",
-      "bom-ref": "pkg:npm/%40rolldown/binding-linux-x64-musl@1.0.3",
+      "version": "1.2.3",
+      "purl": "pkg:npm/%40rolldown/binding-linux-x64-musl@1.2.3",
+      "bom-ref": "pkg:npm/%40rolldown/binding-linux-x64-musl@1.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -6277,7 +6137,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-linux-x64-musl/-/binding-linux-x64-musl-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-linux-x64-musl/-/binding-linux-x64-musl-1.2.3.tgz"
         }
       ],
       "properties": [
@@ -6294,9 +6154,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-openharmony-arm64",
-      "version": "1.0.3",
-      "purl": "pkg:npm/%40rolldown/binding-openharmony-arm64@1.0.3",
-      "bom-ref": "pkg:npm/%40rolldown/binding-openharmony-arm64@1.0.3",
+      "version": "1.2.3",
+      "purl": "pkg:npm/%40rolldown/binding-openharmony-arm64@1.2.3",
+      "bom-ref": "pkg:npm/%40rolldown/binding-openharmony-arm64@1.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -6305,35 +6165,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-openharmony-arm64/-/binding-openharmony-arm64-1.0.3.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@rolldown/binding-wasm32-wasi",
-      "version": "1.0.3",
-      "purl": "pkg:npm/%40rolldown/binding-wasm32-wasi@1.0.3",
-      "bom-ref": "pkg:npm/%40rolldown/binding-wasm32-wasi@1.0.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-wasm32-wasi/-/binding-wasm32-wasi-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-openharmony-arm64/-/binding-openharmony-arm64-1.2.3.tgz"
         }
       ],
       "properties": [
@@ -6350,9 +6182,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-win32-arm64-msvc",
-      "version": "1.0.3",
-      "purl": "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.0.3",
-      "bom-ref": "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.0.3",
+      "version": "1.2.3",
+      "purl": "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.2.3",
+      "bom-ref": "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -6361,7 +6193,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-win32-arm64-msvc/-/binding-win32-arm64-msvc-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-win32-arm64-msvc/-/binding-win32-arm64-msvc-1.2.3.tgz"
         }
       ],
       "properties": [
@@ -6378,9 +6210,9 @@
     {
       "type": "library",
       "name": "@rolldown/binding-win32-x64-msvc",
-      "version": "1.0.3",
-      "purl": "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.0.3",
-      "bom-ref": "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.0.3",
+      "version": "1.2.3",
+      "purl": "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.2.3",
+      "bom-ref": "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -6389,7 +6221,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@rolldown/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/@rolldown/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.2.3.tgz"
         }
       ],
       "properties": [
@@ -6446,34 +6278,6 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/@standard-schema/spec/-/spec-1.1.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@tybys/wasm-util",
-      "version": "0.10.2",
-      "purl": "pkg:npm/%40tybys/wasm-util@0.10.2",
-      "bom-ref": "pkg:npm/%40tybys/wasm-util@0.10.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@tybys/wasm-util/-/wasm-util-0.10.2.tgz"
         }
       ],
       "properties": [
@@ -7050,9 +6854,9 @@
     {
       "type": "library",
       "name": "@vitest/expect",
-      "version": "4.1.0",
-      "purl": "pkg:npm/%40vitest/expect@4.1.0",
-      "bom-ref": "pkg:npm/%40vitest/expect@4.1.0",
+      "version": "4.1.10",
+      "purl": "pkg:npm/%40vitest/expect@4.1.10",
+      "bom-ref": "pkg:npm/%40vitest/expect@4.1.10",
       "licenses": [
         {
           "expression": "MIT"
@@ -7061,7 +6865,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/expect/-/expect-4.1.0.tgz"
+          "url": "https://registry.npmjs.org/@vitest/expect/-/expect-4.1.10.tgz"
         }
       ],
       "properties": [
@@ -7078,9 +6882,9 @@
     {
       "type": "library",
       "name": "@vitest/mocker",
-      "version": "4.1.0",
-      "purl": "pkg:npm/%40vitest/mocker@4.1.0",
-      "bom-ref": "pkg:npm/%40vitest/mocker@4.1.0",
+      "version": "4.1.10",
+      "purl": "pkg:npm/%40vitest/mocker@4.1.10",
+      "bom-ref": "pkg:npm/%40vitest/mocker@4.1.10",
       "licenses": [
         {
           "expression": "MIT"
@@ -7089,35 +6893,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/mocker/-/mocker-4.1.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@vitest/pretty-format",
-      "version": "4.1.0",
-      "purl": "pkg:npm/%40vitest/pretty-format@4.1.0",
-      "bom-ref": "pkg:npm/%40vitest/pretty-format@4.1.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/pretty-format/-/pretty-format-4.1.0.tgz"
+          "url": "https://registry.npmjs.org/@vitest/mocker/-/mocker-4.1.10.tgz"
         }
       ],
       "properties": [
@@ -7162,9 +6938,9 @@
     {
       "type": "library",
       "name": "@vitest/runner",
-      "version": "4.1.0",
-      "purl": "pkg:npm/%40vitest/runner@4.1.0",
-      "bom-ref": "pkg:npm/%40vitest/runner@4.1.0",
+      "version": "4.1.10",
+      "purl": "pkg:npm/%40vitest/runner@4.1.10",
+      "bom-ref": "pkg:npm/%40vitest/runner@4.1.10",
       "licenses": [
         {
           "expression": "MIT"
@@ -7173,7 +6949,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/runner/-/runner-4.1.0.tgz"
+          "url": "https://registry.npmjs.org/@vitest/runner/-/runner-4.1.10.tgz"
         }
       ],
       "properties": [
@@ -7190,9 +6966,9 @@
     {
       "type": "library",
       "name": "@vitest/snapshot",
-      "version": "4.1.0",
-      "purl": "pkg:npm/%40vitest/snapshot@4.1.0",
-      "bom-ref": "pkg:npm/%40vitest/snapshot@4.1.0",
+      "version": "4.1.10",
+      "purl": "pkg:npm/%40vitest/snapshot@4.1.10",
+      "bom-ref": "pkg:npm/%40vitest/snapshot@4.1.10",
       "licenses": [
         {
           "expression": "MIT"
@@ -7201,7 +6977,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-4.1.0.tgz"
+          "url": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-4.1.10.tgz"
         }
       ],
       "properties": [
@@ -7218,9 +6994,9 @@
     {
       "type": "library",
       "name": "@vitest/spy",
-      "version": "4.1.0",
-      "purl": "pkg:npm/%40vitest/spy@4.1.0",
-      "bom-ref": "pkg:npm/%40vitest/spy@4.1.0",
+      "version": "4.1.10",
+      "purl": "pkg:npm/%40vitest/spy@4.1.10",
+      "bom-ref": "pkg:npm/%40vitest/spy@4.1.10",
       "licenses": [
         {
           "expression": "MIT"
@@ -7229,35 +7005,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/spy/-/spy-4.1.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@vitest/utils",
-      "version": "4.1.0",
-      "purl": "pkg:npm/%40vitest/utils@4.1.0",
-      "bom-ref": "pkg:npm/%40vitest/utils@4.1.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/utils/-/utils-4.1.0.tgz"
+          "url": "https://registry.npmjs.org/@vitest/spy/-/spy-4.1.10.tgz"
         }
       ],
       "properties": [
@@ -9878,9 +9626,9 @@
     {
       "type": "library",
       "name": "lightningcss",
-      "version": "1.32.0",
-      "purl": "pkg:npm/lightningcss@1.32.0",
-      "bom-ref": "pkg:npm/lightningcss@1.32.0",
+      "version": "1.33.0",
+      "purl": "pkg:npm/lightningcss@1.33.0",
+      "bom-ref": "pkg:npm/lightningcss@1.33.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
@@ -9889,7 +9637,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.32.0.tgz"
+          "url": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.33.0.tgz"
         }
       ],
       "properties": [
@@ -9906,9 +9654,9 @@
     {
       "type": "library",
       "name": "lightningcss-android-arm64",
-      "version": "1.32.0",
-      "purl": "pkg:npm/lightningcss-android-arm64@1.32.0",
-      "bom-ref": "pkg:npm/lightningcss-android-arm64@1.32.0",
+      "version": "1.33.0",
+      "purl": "pkg:npm/lightningcss-android-arm64@1.33.0",
+      "bom-ref": "pkg:npm/lightningcss-android-arm64@1.33.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
@@ -9917,7 +9665,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/lightningcss-android-arm64/-/lightningcss-android-arm64-1.32.0.tgz"
+          "url": "https://registry.npmjs.org/lightningcss-android-arm64/-/lightningcss-android-arm64-1.33.0.tgz"
         }
       ],
       "properties": [
@@ -9934,9 +9682,9 @@
     {
       "type": "library",
       "name": "lightningcss-darwin-arm64",
-      "version": "1.32.0",
-      "purl": "pkg:npm/lightningcss-darwin-arm64@1.32.0",
-      "bom-ref": "pkg:npm/lightningcss-darwin-arm64@1.32.0",
+      "version": "1.33.0",
+      "purl": "pkg:npm/lightningcss-darwin-arm64@1.33.0",
+      "bom-ref": "pkg:npm/lightningcss-darwin-arm64@1.33.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
@@ -9945,7 +9693,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/lightningcss-darwin-arm64/-/lightningcss-darwin-arm64-1.32.0.tgz"
+          "url": "https://registry.npmjs.org/lightningcss-darwin-arm64/-/lightningcss-darwin-arm64-1.33.0.tgz"
         }
       ],
       "properties": [
@@ -9962,9 +9710,9 @@
     {
       "type": "library",
       "name": "lightningcss-darwin-x64",
-      "version": "1.32.0",
-      "purl": "pkg:npm/lightningcss-darwin-x64@1.32.0",
-      "bom-ref": "pkg:npm/lightningcss-darwin-x64@1.32.0",
+      "version": "1.33.0",
+      "purl": "pkg:npm/lightningcss-darwin-x64@1.33.0",
+      "bom-ref": "pkg:npm/lightningcss-darwin-x64@1.33.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
@@ -9973,7 +9721,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/lightningcss-darwin-x64/-/lightningcss-darwin-x64-1.32.0.tgz"
+          "url": "https://registry.npmjs.org/lightningcss-darwin-x64/-/lightningcss-darwin-x64-1.33.0.tgz"
         }
       ],
       "properties": [
@@ -9990,9 +9738,9 @@
     {
       "type": "library",
       "name": "lightningcss-freebsd-x64",
-      "version": "1.32.0",
-      "purl": "pkg:npm/lightningcss-freebsd-x64@1.32.0",
-      "bom-ref": "pkg:npm/lightningcss-freebsd-x64@1.32.0",
+      "version": "1.33.0",
+      "purl": "pkg:npm/lightningcss-freebsd-x64@1.33.0",
+      "bom-ref": "pkg:npm/lightningcss-freebsd-x64@1.33.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
@@ -10001,7 +9749,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/lightningcss-freebsd-x64/-/lightningcss-freebsd-x64-1.32.0.tgz"
+          "url": "https://registry.npmjs.org/lightningcss-freebsd-x64/-/lightningcss-freebsd-x64-1.33.0.tgz"
         }
       ],
       "properties": [
@@ -10018,9 +9766,9 @@
     {
       "type": "library",
       "name": "lightningcss-linux-arm-gnueabihf",
-      "version": "1.32.0",
-      "purl": "pkg:npm/lightningcss-linux-arm-gnueabihf@1.32.0",
-      "bom-ref": "pkg:npm/lightningcss-linux-arm-gnueabihf@1.32.0",
+      "version": "1.33.0",
+      "purl": "pkg:npm/lightningcss-linux-arm-gnueabihf@1.33.0",
+      "bom-ref": "pkg:npm/lightningcss-linux-arm-gnueabihf@1.33.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
@@ -10029,7 +9777,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/lightningcss-linux-arm-gnueabihf/-/lightningcss-linux-arm-gnueabihf-1.32.0.tgz"
+          "url": "https://registry.npmjs.org/lightningcss-linux-arm-gnueabihf/-/lightningcss-linux-arm-gnueabihf-1.33.0.tgz"
         }
       ],
       "properties": [
@@ -10046,9 +9794,9 @@
     {
       "type": "library",
       "name": "lightningcss-linux-arm64-gnu",
-      "version": "1.32.0",
-      "purl": "pkg:npm/lightningcss-linux-arm64-gnu@1.32.0",
-      "bom-ref": "pkg:npm/lightningcss-linux-arm64-gnu@1.32.0",
+      "version": "1.33.0",
+      "purl": "pkg:npm/lightningcss-linux-arm64-gnu@1.33.0",
+      "bom-ref": "pkg:npm/lightningcss-linux-arm64-gnu@1.33.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
@@ -10057,7 +9805,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/lightningcss-linux-arm64-gnu/-/lightningcss-linux-arm64-gnu-1.32.0.tgz"
+          "url": "https://registry.npmjs.org/lightningcss-linux-arm64-gnu/-/lightningcss-linux-arm64-gnu-1.33.0.tgz"
         }
       ],
       "properties": [
@@ -10074,9 +9822,9 @@
     {
       "type": "library",
       "name": "lightningcss-linux-arm64-musl",
-      "version": "1.32.0",
-      "purl": "pkg:npm/lightningcss-linux-arm64-musl@1.32.0",
-      "bom-ref": "pkg:npm/lightningcss-linux-arm64-musl@1.32.0",
+      "version": "1.33.0",
+      "purl": "pkg:npm/lightningcss-linux-arm64-musl@1.33.0",
+      "bom-ref": "pkg:npm/lightningcss-linux-arm64-musl@1.33.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
@@ -10085,7 +9833,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/lightningcss-linux-arm64-musl/-/lightningcss-linux-arm64-musl-1.32.0.tgz"
+          "url": "https://registry.npmjs.org/lightningcss-linux-arm64-musl/-/lightningcss-linux-arm64-musl-1.33.0.tgz"
         }
       ],
       "properties": [
@@ -10102,9 +9850,9 @@
     {
       "type": "library",
       "name": "lightningcss-linux-x64-gnu",
-      "version": "1.32.0",
-      "purl": "pkg:npm/lightningcss-linux-x64-gnu@1.32.0",
-      "bom-ref": "pkg:npm/lightningcss-linux-x64-gnu@1.32.0",
+      "version": "1.33.0",
+      "purl": "pkg:npm/lightningcss-linux-x64-gnu@1.33.0",
+      "bom-ref": "pkg:npm/lightningcss-linux-x64-gnu@1.33.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
@@ -10113,7 +9861,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/lightningcss-linux-x64-gnu/-/lightningcss-linux-x64-gnu-1.32.0.tgz"
+          "url": "https://registry.npmjs.org/lightningcss-linux-x64-gnu/-/lightningcss-linux-x64-gnu-1.33.0.tgz"
         }
       ],
       "properties": [
@@ -10130,9 +9878,9 @@
     {
       "type": "library",
       "name": "lightningcss-linux-x64-musl",
-      "version": "1.32.0",
-      "purl": "pkg:npm/lightningcss-linux-x64-musl@1.32.0",
-      "bom-ref": "pkg:npm/lightningcss-linux-x64-musl@1.32.0",
+      "version": "1.33.0",
+      "purl": "pkg:npm/lightningcss-linux-x64-musl@1.33.0",
+      "bom-ref": "pkg:npm/lightningcss-linux-x64-musl@1.33.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
@@ -10141,7 +9889,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/lightningcss-linux-x64-musl/-/lightningcss-linux-x64-musl-1.32.0.tgz"
+          "url": "https://registry.npmjs.org/lightningcss-linux-x64-musl/-/lightningcss-linux-x64-musl-1.33.0.tgz"
         }
       ],
       "properties": [
@@ -10158,9 +9906,9 @@
     {
       "type": "library",
       "name": "lightningcss-win32-arm64-msvc",
-      "version": "1.32.0",
-      "purl": "pkg:npm/lightningcss-win32-arm64-msvc@1.32.0",
-      "bom-ref": "pkg:npm/lightningcss-win32-arm64-msvc@1.32.0",
+      "version": "1.33.0",
+      "purl": "pkg:npm/lightningcss-win32-arm64-msvc@1.33.0",
+      "bom-ref": "pkg:npm/lightningcss-win32-arm64-msvc@1.33.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
@@ -10169,7 +9917,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/lightningcss-win32-arm64-msvc/-/lightningcss-win32-arm64-msvc-1.32.0.tgz"
+          "url": "https://registry.npmjs.org/lightningcss-win32-arm64-msvc/-/lightningcss-win32-arm64-msvc-1.33.0.tgz"
         }
       ],
       "properties": [
@@ -10186,9 +9934,9 @@
     {
       "type": "library",
       "name": "lightningcss-win32-x64-msvc",
-      "version": "1.32.0",
-      "purl": "pkg:npm/lightningcss-win32-x64-msvc@1.32.0",
-      "bom-ref": "pkg:npm/lightningcss-win32-x64-msvc@1.32.0",
+      "version": "1.33.0",
+      "purl": "pkg:npm/lightningcss-win32-x64-msvc@1.33.0",
+      "bom-ref": "pkg:npm/lightningcss-win32-x64-msvc@1.33.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
@@ -10197,7 +9945,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/lightningcss-win32-x64-msvc/-/lightningcss-win32-x64-msvc-1.32.0.tgz"
+          "url": "https://registry.npmjs.org/lightningcss-win32-x64-msvc/-/lightningcss-win32-x64-msvc-1.33.0.tgz"
         }
       ],
       "properties": [
@@ -10998,9 +10746,9 @@
     {
       "type": "library",
       "name": "picomatch",
-      "version": "4.0.4",
-      "purl": "pkg:npm/picomatch@4.0.4",
-      "bom-ref": "pkg:npm/picomatch@4.0.4",
+      "version": "4.0.5",
+      "purl": "pkg:npm/picomatch@4.0.5",
+      "bom-ref": "pkg:npm/picomatch@4.0.5",
       "licenses": [
         {
           "expression": "MIT"
@@ -11009,7 +10757,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.4.tgz"
+          "url": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.5.tgz"
         }
       ],
       "properties": [
@@ -11026,9 +10774,9 @@
     {
       "type": "library",
       "name": "playwright",
-      "version": "1.62.0",
-      "purl": "pkg:npm/playwright@1.62.0",
-      "bom-ref": "pkg:npm/playwright@1.62.0",
+      "version": "1.62.1",
+      "purl": "pkg:npm/playwright@1.62.1",
+      "bom-ref": "pkg:npm/playwright@1.62.1",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -11037,7 +10785,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/playwright/-/playwright-1.62.0.tgz"
+          "url": "https://registry.npmjs.org/playwright/-/playwright-1.62.1.tgz"
         }
       ],
       "properties": [
@@ -11054,9 +10802,9 @@
     {
       "type": "library",
       "name": "playwright-core",
-      "version": "1.62.0",
-      "purl": "pkg:npm/playwright-core@1.62.0",
-      "bom-ref": "pkg:npm/playwright-core@1.62.0",
+      "version": "1.62.1",
+      "purl": "pkg:npm/playwright-core@1.62.1",
+      "bom-ref": "pkg:npm/playwright-core@1.62.1",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -11065,7 +10813,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.62.0.tgz"
+          "url": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.62.1.tgz"
         }
       ],
       "properties": [
@@ -11418,9 +11166,9 @@
     {
       "type": "library",
       "name": "rolldown",
-      "version": "1.0.3",
-      "purl": "pkg:npm/rolldown@1.0.3",
-      "bom-ref": "pkg:npm/rolldown@1.0.3",
+      "version": "1.2.3",
+      "purl": "pkg:npm/rolldown@1.2.3",
+      "bom-ref": "pkg:npm/rolldown@1.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -11429,7 +11177,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/rolldown/-/rolldown-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/rolldown/-/rolldown-1.2.3.tgz"
         }
       ],
       "properties": [
@@ -12173,34 +11921,6 @@
     },
     {
       "type": "library",
-      "name": "tslib",
-      "version": "2.8.1",
-      "purl": "pkg:npm/tslib@2.8.1",
-      "bom-ref": "pkg:npm/tslib@2.8.1",
-      "licenses": [
-        {
-          "expression": "0BSD"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "0BSD"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "tunnel-agent",
       "version": "0.6.0",
       "purl": "pkg:npm/tunnel-agent@0.6.0",
@@ -12426,9 +12146,9 @@
     {
       "type": "library",
       "name": "vite",
-      "version": "8.0.16",
-      "purl": "pkg:npm/vite@8.0.16",
-      "bom-ref": "pkg:npm/vite@8.0.16",
+      "version": "8.2.1",
+      "purl": "pkg:npm/vite@8.2.1",
+      "bom-ref": "pkg:npm/vite@8.2.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -12437,7 +12157,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/vite/-/vite-8.0.16.tgz"
+          "url": "https://registry.npmjs.org/vite/-/vite-8.2.1.tgz"
         }
       ],
       "properties": [
@@ -12454,9 +12174,9 @@
     {
       "type": "library",
       "name": "vitest",
-      "version": "4.1.0",
-      "purl": "pkg:npm/vitest@4.1.0",
-      "bom-ref": "pkg:npm/vitest@4.1.0",
+      "version": "4.1.10",
+      "purl": "pkg:npm/vitest@4.1.10",
+      "bom-ref": "pkg:npm/vitest@4.1.10",
       "licenses": [
         {
           "expression": "MIT"
@@ -12465,7 +12185,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/vitest/-/vitest-4.1.0.tgz"
+          "url": "https://registry.npmjs.org/vitest/-/vitest-4.1.10.tgz"
         }
       ],
       "properties": [
@@ -13507,9 +13227,9 @@
         "pkg:npm/%40fails-components/webtransport-transport-http3-quiche@1.6.7",
         "pkg:npm/%40fails-components/webtransport@1.6.7",
         "pkg:npm/%40noble/ciphers@2.3.0",
-        "pkg:npm/%40noble/curves@1.9.7",
+        "pkg:npm/%40noble/curves@2.3.0",
         "pkg:npm/%40noble/hashes@2.3.0",
-        "pkg:npm/%40playwright/test@1.62.0",
+        "pkg:npm/%40playwright/test@1.62.1",
         "pkg:npm/%40types/node@26.2.0",
         "pkg:npm/%40types/ws@8.18.1",
         "pkg:npm/%40typescript-eslint/eslint-plugin@8.66.0",
@@ -13521,8 +13241,8 @@
         "pkg:npm/eslint@10.8.0",
         "pkg:npm/tr46@5.0.0",
         "pkg:npm/typescript@5.9.3",
-        "pkg:npm/vite@8.0.16",
-        "pkg:npm/vitest@4.1.0",
+        "pkg:npm/vite@8.2.1",
+        "pkg:npm/vitest@4.1.10",
         "pkg:npm/ws@8.21.3",
         "pkg:swift/async-http-client@1.35.0",
         "pkg:swift/async-http-client@1.36.0",
@@ -14771,25 +14491,6 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40emnapi/core@1.10.0",
-      "dependsOn": [
-        "pkg:npm/%40emnapi/wasi-threads@1.2.1",
-        "pkg:npm/tslib@2.8.1"
-      ]
-    },
-    {
-      "ref": "pkg:npm/%40emnapi/runtime@1.10.0",
-      "dependsOn": [
-        "pkg:npm/tslib@2.8.1"
-      ]
-    },
-    {
-      "ref": "pkg:npm/%40emnapi/wasi-threads@1.2.1",
-      "dependsOn": [
-        "pkg:npm/tslib@2.8.1"
-      ]
-    },
-    {
       "ref": "pkg:npm/%40eslint-community/eslint-utils@4.9.1",
       "dependsOn": [
         "pkg:npm/eslint-visitor-keys@3.4.3",
@@ -14891,103 +14592,83 @@
       ]
     },
     {
-      "ref": "pkg:npm/%40napi-rs/wasm-runtime@1.1.5",
-      "dependsOn": [
-        "pkg:npm/%40emnapi/core@1.10.0",
-        "pkg:npm/%40emnapi/runtime@1.10.0",
-        "pkg:npm/%40tybys/wasm-util@0.10.2"
-      ]
-    },
-    {
       "ref": "pkg:npm/%40noble/ciphers@2.3.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40noble/curves@1.9.7",
+      "ref": "pkg:npm/%40noble/curves@2.3.0",
       "dependsOn": [
-        "pkg:npm/%40noble/hashes@1.8.0"
+        "pkg:npm/%40noble/hashes@2.3.0"
       ]
-    },
-    {
-      "ref": "pkg:npm/%40noble/hashes@1.8.0",
-      "dependsOn": []
     },
     {
       "ref": "pkg:npm/%40noble/hashes@2.3.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40oxc-project/types@0.133.0",
+      "ref": "pkg:npm/%40oxc-project/types@0.143.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40playwright/test@1.62.0",
+      "ref": "pkg:npm/%40playwright/test@1.62.1",
       "dependsOn": [
-        "pkg:npm/playwright@1.62.0"
+        "pkg:npm/playwright@1.62.1"
       ]
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-android-arm64@1.0.3",
+      "ref": "pkg:npm/%40rolldown/binding-android-arm64@1.2.3",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-darwin-arm64@1.0.3",
+      "ref": "pkg:npm/%40rolldown/binding-darwin-arm64@1.2.3",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-darwin-x64@1.0.3",
+      "ref": "pkg:npm/%40rolldown/binding-darwin-x64@1.2.3",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-freebsd-x64@1.0.3",
+      "ref": "pkg:npm/%40rolldown/binding-freebsd-x64@1.2.3",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.0.3",
+      "ref": "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.2.3",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.0.3",
+      "ref": "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.2.3",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.0.3",
+      "ref": "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.2.3",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.0.3",
+      "ref": "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.2.3",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.0.3",
+      "ref": "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.2.3",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.0.3",
+      "ref": "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.2.3",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-linux-x64-musl@1.0.3",
+      "ref": "pkg:npm/%40rolldown/binding-linux-x64-musl@1.2.3",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-openharmony-arm64@1.0.3",
+      "ref": "pkg:npm/%40rolldown/binding-openharmony-arm64@1.2.3",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-wasm32-wasi@1.0.3",
-      "dependsOn": [
-        "pkg:npm/%40emnapi/core@1.10.0",
-        "pkg:npm/%40emnapi/runtime@1.10.0",
-        "pkg:npm/%40napi-rs/wasm-runtime@1.1.5"
-      ]
-    },
-    {
-      "ref": "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.0.3",
+      "ref": "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.2.3",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.0.3",
+      "ref": "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.2.3",
       "dependsOn": []
     },
     {
@@ -14997,12 +14678,6 @@
     {
       "ref": "pkg:npm/%40standard-schema/spec@1.1.0",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/%40tybys/wasm-util@0.10.2",
-      "dependsOn": [
-        "pkg:npm/tslib@2.8.1"
-      ]
     },
     {
       "ref": "pkg:npm/%40types/chai@5.2.3",
@@ -15161,33 +14836,27 @@
         "pkg:npm/obug@2.1.1",
         "pkg:npm/std-env@4.1.0",
         "pkg:npm/tinyrainbow@3.1.0",
-        "pkg:npm/vitest@4.1.0"
+        "pkg:npm/vitest@4.1.10"
       ]
     },
     {
-      "ref": "pkg:npm/%40vitest/expect@4.1.0",
+      "ref": "pkg:npm/%40vitest/expect@4.1.10",
       "dependsOn": [
         "pkg:npm/%40standard-schema/spec@1.1.0",
         "pkg:npm/%40types/chai@5.2.3",
-        "pkg:npm/%40vitest/spy@4.1.0",
-        "pkg:npm/%40vitest/utils@4.1.0",
+        "pkg:npm/%40vitest/spy@4.1.10",
+        "pkg:npm/%40vitest/utils@4.1.10",
         "pkg:npm/chai@6.2.2",
         "pkg:npm/tinyrainbow@3.1.0"
       ]
     },
     {
-      "ref": "pkg:npm/%40vitest/mocker@4.1.0",
+      "ref": "pkg:npm/%40vitest/mocker@4.1.10",
       "dependsOn": [
-        "pkg:npm/%40vitest/spy@4.1.0",
+        "pkg:npm/%40vitest/spy@4.1.10",
         "pkg:npm/estree-walker@3.0.3",
         "pkg:npm/magic-string@0.30.21",
-        "pkg:npm/vite@8.0.16"
-      ]
-    },
-    {
-      "ref": "pkg:npm/%40vitest/pretty-format@4.1.0",
-      "dependsOn": [
-        "pkg:npm/tinyrainbow@3.1.0"
+        "pkg:npm/vite@8.2.1"
       ]
     },
     {
@@ -15197,32 +14866,24 @@
       ]
     },
     {
-      "ref": "pkg:npm/%40vitest/runner@4.1.0",
+      "ref": "pkg:npm/%40vitest/runner@4.1.10",
       "dependsOn": [
-        "pkg:npm/%40vitest/utils@4.1.0",
+        "pkg:npm/%40vitest/utils@4.1.10",
         "pkg:npm/pathe@2.0.3"
       ]
     },
     {
-      "ref": "pkg:npm/%40vitest/snapshot@4.1.0",
+      "ref": "pkg:npm/%40vitest/snapshot@4.1.10",
       "dependsOn": [
-        "pkg:npm/%40vitest/pretty-format@4.1.0",
-        "pkg:npm/%40vitest/utils@4.1.0",
+        "pkg:npm/%40vitest/pretty-format@4.1.10",
+        "pkg:npm/%40vitest/utils@4.1.10",
         "pkg:npm/magic-string@0.30.21",
         "pkg:npm/pathe@2.0.3"
       ]
     },
     {
-      "ref": "pkg:npm/%40vitest/spy@4.1.0",
+      "ref": "pkg:npm/%40vitest/spy@4.1.10",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/%40vitest/utils@4.1.0",
-      "dependsOn": [
-        "pkg:npm/%40vitest/pretty-format@4.1.0",
-        "pkg:npm/convert-source-map@2.0.0",
-        "pkg:npm/tinyrainbow@3.1.0"
-      ]
     },
     {
       "ref": "pkg:npm/%40vitest/utils@4.1.10",
@@ -15560,7 +15221,7 @@
     {
       "ref": "pkg:npm/fdir@6.5.0",
       "dependsOn": [
-        "pkg:npm/picomatch@4.0.4"
+        "pkg:npm/picomatch@4.0.5"
       ]
     },
     {
@@ -15743,64 +15404,64 @@
       ]
     },
     {
-      "ref": "pkg:npm/lightningcss@1.32.0",
+      "ref": "pkg:npm/lightningcss@1.33.0",
       "dependsOn": [
         "pkg:npm/detect-libc@2.1.2",
-        "pkg:npm/lightningcss-android-arm64@1.32.0",
-        "pkg:npm/lightningcss-darwin-arm64@1.32.0",
-        "pkg:npm/lightningcss-darwin-x64@1.32.0",
-        "pkg:npm/lightningcss-freebsd-x64@1.32.0",
-        "pkg:npm/lightningcss-linux-arm-gnueabihf@1.32.0",
-        "pkg:npm/lightningcss-linux-arm64-gnu@1.32.0",
-        "pkg:npm/lightningcss-linux-arm64-musl@1.32.0",
-        "pkg:npm/lightningcss-linux-x64-gnu@1.32.0",
-        "pkg:npm/lightningcss-linux-x64-musl@1.32.0",
-        "pkg:npm/lightningcss-win32-arm64-msvc@1.32.0",
-        "pkg:npm/lightningcss-win32-x64-msvc@1.32.0"
+        "pkg:npm/lightningcss-android-arm64@1.33.0",
+        "pkg:npm/lightningcss-darwin-arm64@1.33.0",
+        "pkg:npm/lightningcss-darwin-x64@1.33.0",
+        "pkg:npm/lightningcss-freebsd-x64@1.33.0",
+        "pkg:npm/lightningcss-linux-arm-gnueabihf@1.33.0",
+        "pkg:npm/lightningcss-linux-arm64-gnu@1.33.0",
+        "pkg:npm/lightningcss-linux-arm64-musl@1.33.0",
+        "pkg:npm/lightningcss-linux-x64-gnu@1.33.0",
+        "pkg:npm/lightningcss-linux-x64-musl@1.33.0",
+        "pkg:npm/lightningcss-win32-arm64-msvc@1.33.0",
+        "pkg:npm/lightningcss-win32-x64-msvc@1.33.0"
       ]
     },
     {
-      "ref": "pkg:npm/lightningcss-android-arm64@1.32.0",
+      "ref": "pkg:npm/lightningcss-android-arm64@1.33.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/lightningcss-darwin-arm64@1.32.0",
+      "ref": "pkg:npm/lightningcss-darwin-arm64@1.33.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/lightningcss-darwin-x64@1.32.0",
+      "ref": "pkg:npm/lightningcss-darwin-x64@1.33.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/lightningcss-freebsd-x64@1.32.0",
+      "ref": "pkg:npm/lightningcss-freebsd-x64@1.33.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/lightningcss-linux-arm-gnueabihf@1.32.0",
+      "ref": "pkg:npm/lightningcss-linux-arm-gnueabihf@1.33.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/lightningcss-linux-arm64-gnu@1.32.0",
+      "ref": "pkg:npm/lightningcss-linux-arm64-gnu@1.33.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/lightningcss-linux-arm64-musl@1.32.0",
+      "ref": "pkg:npm/lightningcss-linux-arm64-musl@1.33.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/lightningcss-linux-x64-gnu@1.32.0",
+      "ref": "pkg:npm/lightningcss-linux-x64-gnu@1.33.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/lightningcss-linux-x64-musl@1.32.0",
+      "ref": "pkg:npm/lightningcss-linux-x64-musl@1.33.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/lightningcss-win32-arm64-msvc@1.32.0",
+      "ref": "pkg:npm/lightningcss-win32-arm64-msvc@1.33.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/lightningcss-win32-x64-msvc@1.32.0",
+      "ref": "pkg:npm/lightningcss-win32-x64-msvc@1.33.0",
       "dependsOn": []
     },
     {
@@ -15950,18 +15611,18 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/picomatch@4.0.4",
+      "ref": "pkg:npm/picomatch@4.0.5",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/playwright@1.62.0",
+      "ref": "pkg:npm/playwright@1.62.1",
       "dependsOn": [
         "pkg:npm/fsevents@2.3.2",
-        "pkg:npm/playwright-core@1.62.0"
+        "pkg:npm/playwright-core@1.62.1"
       ]
     },
     {
-      "ref": "pkg:npm/playwright-core@1.62.0",
+      "ref": "pkg:npm/playwright-core@1.62.1",
       "dependsOn": []
     },
     {
@@ -16045,24 +15706,23 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/rolldown@1.0.3",
+      "ref": "pkg:npm/rolldown@1.2.3",
       "dependsOn": [
-        "pkg:npm/%40oxc-project/types@0.133.0",
-        "pkg:npm/%40rolldown/binding-android-arm64@1.0.3",
-        "pkg:npm/%40rolldown/binding-darwin-arm64@1.0.3",
-        "pkg:npm/%40rolldown/binding-darwin-x64@1.0.3",
-        "pkg:npm/%40rolldown/binding-freebsd-x64@1.0.3",
-        "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.0.3",
-        "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.0.3",
-        "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.0.3",
-        "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.0.3",
-        "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.0.3",
-        "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.0.3",
-        "pkg:npm/%40rolldown/binding-linux-x64-musl@1.0.3",
-        "pkg:npm/%40rolldown/binding-openharmony-arm64@1.0.3",
-        "pkg:npm/%40rolldown/binding-wasm32-wasi@1.0.3",
-        "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.0.3",
-        "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.0.3",
+        "pkg:npm/%40oxc-project/types@0.143.0",
+        "pkg:npm/%40rolldown/binding-android-arm64@1.2.3",
+        "pkg:npm/%40rolldown/binding-darwin-arm64@1.2.3",
+        "pkg:npm/%40rolldown/binding-darwin-x64@1.2.3",
+        "pkg:npm/%40rolldown/binding-freebsd-x64@1.2.3",
+        "pkg:npm/%40rolldown/binding-linux-arm-gnueabihf@1.2.3",
+        "pkg:npm/%40rolldown/binding-linux-arm64-gnu@1.2.3",
+        "pkg:npm/%40rolldown/binding-linux-arm64-musl@1.2.3",
+        "pkg:npm/%40rolldown/binding-linux-ppc64-gnu@1.2.3",
+        "pkg:npm/%40rolldown/binding-linux-s390x-gnu@1.2.3",
+        "pkg:npm/%40rolldown/binding-linux-x64-gnu@1.2.3",
+        "pkg:npm/%40rolldown/binding-linux-x64-musl@1.2.3",
+        "pkg:npm/%40rolldown/binding-openharmony-arm64@1.2.3",
+        "pkg:npm/%40rolldown/binding-win32-arm64-msvc@1.2.3",
+        "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.2.3",
         "pkg:npm/%40rolldown/pluginutils@1.0.1"
       ]
     },
@@ -16195,7 +15855,7 @@
       "ref": "pkg:npm/tinyglobby@0.2.17",
       "dependsOn": [
         "pkg:npm/fdir@6.5.0",
-        "pkg:npm/picomatch@4.0.4"
+        "pkg:npm/picomatch@4.0.5"
       ]
     },
     {
@@ -16213,10 +15873,6 @@
       "dependsOn": [
         "pkg:npm/typescript@5.9.3"
       ]
-    },
-    {
-      "ref": "pkg:npm/tslib@2.8.1",
-      "dependsOn": []
     },
     {
       "ref": "pkg:npm/tunnel-agent@0.6.0",
@@ -16257,40 +15913,41 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/vite@8.0.16",
+      "ref": "pkg:npm/vite@8.2.1",
       "dependsOn": [
         "pkg:npm/%40types/node@26.2.0",
         "pkg:npm/fsevents@2.3.3",
-        "pkg:npm/lightningcss@1.32.0",
-        "pkg:npm/picomatch@4.0.4",
+        "pkg:npm/lightningcss@1.33.0",
+        "pkg:npm/picomatch@4.0.5",
         "pkg:npm/postcss@8.5.23",
-        "pkg:npm/rolldown@1.0.3",
+        "pkg:npm/rolldown@1.2.3",
         "pkg:npm/tinyglobby@0.2.17"
       ]
     },
     {
-      "ref": "pkg:npm/vitest@4.1.0",
+      "ref": "pkg:npm/vitest@4.1.10",
       "dependsOn": [
         "pkg:npm/%40types/node@26.2.0",
-        "pkg:npm/%40vitest/expect@4.1.0",
-        "pkg:npm/%40vitest/mocker@4.1.0",
-        "pkg:npm/%40vitest/pretty-format@4.1.0",
-        "pkg:npm/%40vitest/runner@4.1.0",
-        "pkg:npm/%40vitest/snapshot@4.1.0",
-        "pkg:npm/%40vitest/spy@4.1.0",
-        "pkg:npm/%40vitest/utils@4.1.0",
+        "pkg:npm/%40vitest/coverage-v8@4.1.10",
+        "pkg:npm/%40vitest/expect@4.1.10",
+        "pkg:npm/%40vitest/mocker@4.1.10",
+        "pkg:npm/%40vitest/pretty-format@4.1.10",
+        "pkg:npm/%40vitest/runner@4.1.10",
+        "pkg:npm/%40vitest/snapshot@4.1.10",
+        "pkg:npm/%40vitest/spy@4.1.10",
+        "pkg:npm/%40vitest/utils@4.1.10",
         "pkg:npm/es-module-lexer@2.1.0",
         "pkg:npm/expect-type@1.3.0",
         "pkg:npm/magic-string@0.30.21",
         "pkg:npm/obug@2.1.1",
         "pkg:npm/pathe@2.0.3",
-        "pkg:npm/picomatch@4.0.4",
+        "pkg:npm/picomatch@4.0.5",
         "pkg:npm/std-env@4.1.0",
         "pkg:npm/tinybench@2.9.0",
         "pkg:npm/tinyexec@1.0.2",
         "pkg:npm/tinyglobby@0.2.17",
         "pkg:npm/tinyrainbow@3.1.0",
-        "pkg:npm/vite@8.0.16",
+        "pkg:npm/vite@8.2.1",
         "pkg:npm/why-is-node-running@2.3.0"
       ]
     },

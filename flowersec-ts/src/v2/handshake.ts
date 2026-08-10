@@ -1,5 +1,5 @@
-import { x25519 } from "@noble/curves/ed25519";
-import { p256 } from "@noble/curves/p256";
+import { x25519 } from "@noble/curves/ed25519.js";
+import { p256 } from "@noble/curves/nist.js";
 import { expand, extract } from "@noble/hashes/hkdf.js";
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -265,7 +265,7 @@ export function generateEphemeralKeyV2(
     privateKey = requireEntropy(entropy, 32);
   } else if (suite === CipherSuiteV2.AES256GCM) {
     do privateKey = requireEntropy(entropy, 32);
-    while (!p256.utils.isValidPrivateKey(privateKey));
+    while (!p256.utils.isValidSecretKey(privateKey));
   } else {
     return invalidSuite();
   }
@@ -453,7 +453,7 @@ function validateEphemeralPublic(suite: CipherSuiteV2, value: Uint8Array): void 
     }
     if (suite === CipherSuiteV2.AES256GCM) {
       if (value.length !== 65 || value[0] !== 4) throw new Error("invalid P-256 public key");
-      p256.ProjectivePoint.fromHex(value);
+      p256.Point.fromBytes(value);
       return;
     }
   } catch {

@@ -101,17 +101,9 @@ function browserPage(): string {
     <script type="importmap">
       {
         "imports": {
-          "@noble/ciphers/aes": "/node_modules/@noble/ciphers/esm/aes.js",
-          "@noble/ciphers/crypto": "/node_modules/@noble/ciphers/esm/crypto.js",
-          "@noble/ciphers/": "/node_modules/@noble/ciphers/esm/",
-          "@noble/curves/ed25519": "/node_modules/@noble/curves/esm/ed25519.js",
-          "@noble/curves/p256": "/node_modules/@noble/curves/esm/p256.js",
-          "@noble/curves/": "/node_modules/@noble/curves/esm/",
-          "@noble/hashes/hkdf": "/node_modules/@noble/hashes/esm/hkdf.js",
-          "@noble/hashes/hmac": "/node_modules/@noble/hashes/esm/hmac.js",
-          "@noble/hashes/sha256": "/node_modules/@noble/hashes/esm/sha256.js",
-          "@noble/hashes/utils": "/node_modules/@noble/hashes/esm/utils.js",
-          "@noble/hashes/": "/node_modules/@noble/hashes/esm/"
+          "@noble/ciphers/": "/node_modules/@noble/ciphers/",
+          "@noble/curves/": "/node_modules/@noble/curves/",
+          "@noble/hashes/": "/node_modules/@noble/hashes/"
         }
       }
     </script>

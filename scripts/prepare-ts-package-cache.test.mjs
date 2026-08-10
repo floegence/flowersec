@@ -22,7 +22,7 @@ test("derives the published production dependency ranges with lock coverage", ()
       "@fails-components/webtransport": "1.6.7",
       "@fails-components/webtransport-transport-http3-quiche": "1.6.7",
       "@noble/ciphers": "^2.2.0",
-      "@noble/curves": "^1.9.0",
+      "@noble/curves": "^2.3.0",
       "@noble/hashes": "^2.3.0",
       tr46: "5.0.0",
       ws: "^8.21.2",
