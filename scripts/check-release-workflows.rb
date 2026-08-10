@@ -271,11 +271,14 @@ require_exact_keys(release_job, ["needs", "runs-on", "permissions", "steps"], "t
 require_exact_keys(rust_reuse_job, ["needs", "permissions", "uses", "with"], "the unified release workflow rust-publish job")
 require_exact_keys(rust_publish_job, ["runs-on", "permissions", "steps"], "the Rust recovery workflow publish job")
 require_exact_keys(repository_job, ["runs-on", "steps"], "the hosted CI repository job")
-require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI precommit job")
+require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI precommit job")
 require_exact_keys(dependency_review_job, ["name", "if", "runs-on", "timeout-minutes", "steps"], "the hosted CI dependency review job")
 require_exact_value(precommit_job["name"], "Precommit quality gate", "the hosted CI precommit job name")
 require_exact_value(precommit_job["runs-on"], "macos-26", "the hosted CI precommit runner")
 require_exact_value(precommit_job["timeout-minutes"], 30, "the hosted CI precommit timeout")
+require_exact_value(precommit_job["env"], {
+  "DEVELOPER_DIR" => "/Applications/Xcode_26.3.app/Contents/Developer",
+}, "the hosted CI precommit Xcode selection")
 require_exact_value(dependency_review_job["name"], "Dependency review", "the hosted CI dependency review job name")
 require_exact_value(dependency_review_job["runs-on"], "ubuntu-latest", "the hosted CI dependency review runner")
 require_exact_value(dependency_review_job["timeout-minutes"], 5, "the hosted CI dependency review timeout")
