@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:681404a7-2d5b-5f31-8523-5fe6ac2101ca",
+  "serialNumber": "urn:uuid:70c1c6ad-c709-5adf-85fd-63a2589480ab",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "a08e2383bf812d4e9f1e97ae7c2c2c5b3d56f1fbd7b09e4c65efaffe59d71525"
+        "value": "fdec32fe094a0a1b26f73f6287a1f8fc485b2280cf176b212438a92c1c71f452"
       }
     ]
   },
@@ -246,9 +246,9 @@
     {
       "type": "library",
       "name": "golang.org/x/net",
-      "version": "v0.56.0",
-      "purl": "pkg:golang/golang.org/x/net@v0.56.0",
-      "bom-ref": "pkg:golang/golang.org/x/net@v0.56.0",
+      "version": "v0.57.0",
+      "purl": "pkg:golang/golang.org/x/net@v0.57.0",
+      "bom-ref": "pkg:golang/golang.org/x/net@v0.57.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -337,7 +337,7 @@
         "pkg:golang/github.com/quic-go/quic-go@v0.61.0",
         "pkg:golang/github.com/quic-go/webtransport-go@v0.12.0",
         "pkg:golang/golang.org/x/crypto@v0.54.0",
-        "pkg:golang/golang.org/x/net@v0.56.0",
+        "pkg:golang/golang.org/x/net@v0.57.0",
         "pkg:golang/golang.org/x/text@v0.40.0"
       ]
     },
@@ -362,7 +362,7 @@
     {
       "ref": "pkg:golang/github.com/quic-go/qpack@v0.6.0",
       "dependsOn": [
-        "pkg:golang/golang.org/x/net@v0.56.0"
+        "pkg:golang/golang.org/x/net@v0.57.0"
       ]
     },
     {
@@ -370,7 +370,7 @@
       "dependsOn": [
         "pkg:golang/github.com/quic-go/qpack@v0.6.0",
         "pkg:golang/golang.org/x/crypto@v0.54.0",
-        "pkg:golang/golang.org/x/net@v0.56.0",
+        "pkg:golang/golang.org/x/net@v0.57.0",
         "pkg:golang/golang.org/x/sys@v0.47.0"
       ]
     },
@@ -388,7 +388,7 @@
       ]
     },
     {
-      "ref": "pkg:golang/golang.org/x/net@v0.56.0",
+      "ref": "pkg:golang/golang.org/x/net@v0.57.0",
       "dependsOn": [
         "pkg:golang/golang.org/x/sys@v0.47.0",
         "pkg:golang/golang.org/x/text@v0.40.0"

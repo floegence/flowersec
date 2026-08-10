@@ -72,19 +72,19 @@
   "dependencies": {
     "@fails-components/webtransport": "1.6.7",
     "@fails-components/webtransport-transport-http3-quiche": "1.6.7",
-    "@noble/ciphers": "^0.6.0",
+    "@noble/ciphers": "^2.2.0",
     "@noble/curves": "^1.9.0",
-    "@noble/hashes": "^1.8.0",
+    "@noble/hashes": "^2.3.0",
     "tr46": "5.0.0",
-    "ws": "^8.21.0"
+    "ws": "^8.21.2"
   },
   "devDependencies": {
     "@playwright/test": "1.62.0",
     "@types/node": "^24.0.0",
     "@types/ws": "^8.5.12",
-    "@typescript-eslint/eslint-plugin": "^8.65.0",
-    "@typescript-eslint/parser": "^8.65.0",
-    "@vitest/coverage-v8": "4.1.0",
+    "@typescript-eslint/eslint-plugin": "^8.66.0",
+    "@typescript-eslint/parser": "^8.66.0",
+    "@vitest/coverage-v8": "4.1.10",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "ajv-formats-draft2019": "1.6.1",

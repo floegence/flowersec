@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-ts",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-ts/a08e2383bf812d4e9f1e97ae7c2c2c5b3d56f1fbd7b09e4c65efaffe59d71525",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-ts/fdec32fe094a0a1b26f73f6287a1f8fc485b2280cf176b212438a92c1c71f452",
   "creationInfo": {
     "created": "1970-01-01T00:00:00Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: a08e2383bf812d4e9f1e97ae7c2c2c5b3d56f1fbd7b09e4c65efaffe59d71525",
+      "comment": "Flowersec source inventory SHA-256: fdec32fe094a0a1b26f73f6287a1f8fc485b2280cf176b212438a92c1c71f452",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -82,9 +82,9 @@
     },
     {
       "name": "@noble/ciphers",
-      "SPDXID": "SPDXRef-Package-24f128c8779cacb70e46",
-      "versionInfo": "0.6.0",
-      "downloadLocation": "https://registry.npmjs.org/@noble/ciphers/-/ciphers-0.6.0.tgz",
+      "SPDXID": "SPDXRef-Package-5ce913a03239b02770fb",
+      "versionInfo": "2.3.0",
+      "downloadLocation": "https://registry.npmjs.org/@noble/ciphers/-/ciphers-2.3.0.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -93,7 +93,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/%40noble/ciphers@0.6.0"
+          "referenceLocator": "pkg:npm/%40noble/ciphers@2.3.0"
         }
       ]
     },
@@ -128,6 +128,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:npm/%40noble/hashes@1.8.0"
+        }
+      ]
+    },
+    {
+      "name": "@noble/hashes",
+      "SPDXID": "SPDXRef-Package-8815b117c8a1d5f7eeb0",
+      "versionInfo": "2.3.0",
+      "downloadLocation": "https://registry.npmjs.org/@noble/hashes/-/hashes-2.3.0.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/%40noble/hashes@2.3.0"
         }
       ]
     },
@@ -1323,9 +1340,9 @@
     },
     {
       "name": "ws",
-      "SPDXID": "SPDXRef-Package-38fe7b92bdac2a86fb61",
-      "versionInfo": "8.21.0",
-      "downloadLocation": "https://registry.npmjs.org/ws/-/ws-8.21.0.tgz",
+      "SPDXID": "SPDXRef-Package-b779412f685822663496",
+      "versionInfo": "8.21.3",
+      "downloadLocation": "https://registry.npmjs.org/ws/-/ws-8.21.3.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -1334,7 +1351,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/ws@8.21.0"
+          "referenceLocator": "pkg:npm/ws@8.21.3"
         }
       ]
     },
@@ -1471,7 +1488,7 @@
     {
       "spdxElementId": "SPDXRef-Package-4be78b4f0b851da93d5b",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-24f128c8779cacb70e46"
+      "relatedSpdxElement": "SPDXRef-Package-5ce913a03239b02770fb"
     },
     {
       "spdxElementId": "SPDXRef-Package-4be78b4f0b851da93d5b",
@@ -1481,7 +1498,7 @@
     {
       "spdxElementId": "SPDXRef-Package-4be78b4f0b851da93d5b",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-d976986d5d79eddc7789"
+      "relatedSpdxElement": "SPDXRef-Package-8815b117c8a1d5f7eeb0"
     },
     {
       "spdxElementId": "SPDXRef-Package-4be78b4f0b851da93d5b",
@@ -1491,7 +1508,7 @@
     {
       "spdxElementId": "SPDXRef-Package-4be78b4f0b851da93d5b",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-38fe7b92bdac2a86fb61"
+      "relatedSpdxElement": "SPDXRef-Package-b779412f685822663496"
     },
     {
       "spdxElementId": "SPDXRef-Package-ad5a99359616efe91f3b",

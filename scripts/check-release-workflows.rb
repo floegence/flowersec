@@ -204,7 +204,12 @@ require_exact_value(dependabot, {
     ["gomod", "/tools/idlgen"],
     ["gomod", "/tools/releasenotes"],
     ["gomod", "/tools/stabilitycheck"],
-    ["cargo", "/flowersec-rust"],
+    ["cargo", "/flowersec-rust", {
+      "ignore" => [{
+        "dependency-name" => "idna_mapping",
+        "versions" => [">= 1.1.0"],
+      }],
+    }],
     ["cargo", "/flowersec-rust/fuzz"],
     ["cargo", "/examples/rust"],
     ["swift", "/"],

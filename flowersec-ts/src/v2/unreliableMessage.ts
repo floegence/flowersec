@@ -1,7 +1,7 @@
-import { gcm } from "@noble/ciphers/aes";
-import { chacha20poly1305 } from "@noble/ciphers/chacha";
-import { expand } from "@noble/hashes/hkdf";
-import { sha256 } from "@noble/hashes/sha256";
+import { gcm } from "@noble/ciphers/aes.js";
+import { chacha20poly1305 } from "@noble/ciphers/chacha.js";
+import { expand } from "@noble/hashes/hkdf.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 
 import type { CarrierUnreliableDatagramsV2 } from "./carrier.js";
 import type {

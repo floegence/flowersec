@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:9b04648d-a38d-5fec-8143-b11238838458",
+  "serialNumber": "urn:uuid:b0278eec-72b9-56e1-8413-0ec6f735b212",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "a08e2383bf812d4e9f1e97ae7c2c2c5b3d56f1fbd7b09e4c65efaffe59d71525"
+        "value": "fdec32fe094a0a1b26f73f6287a1f8fc485b2280cf176b212438a92c1c71f452"
       }
     ]
   },
@@ -106,9 +106,9 @@
     {
       "type": "library",
       "name": "@noble/ciphers",
-      "version": "0.6.0",
-      "purl": "pkg:npm/%40noble/ciphers@0.6.0",
-      "bom-ref": "pkg:npm/%40noble/ciphers@0.6.0",
+      "version": "2.3.0",
+      "purl": "pkg:npm/%40noble/ciphers@2.3.0",
+      "bom-ref": "pkg:npm/%40noble/ciphers@2.3.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -117,7 +117,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@noble/ciphers/-/ciphers-0.6.0.tgz"
+          "url": "https://registry.npmjs.org/@noble/ciphers/-/ciphers-2.3.0.tgz"
         }
       ],
       "properties": [
@@ -174,6 +174,34 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/@noble/hashes/-/hashes-1.8.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@noble/hashes",
+      "version": "2.3.0",
+      "purl": "pkg:npm/%40noble/hashes@2.3.0",
+      "bom-ref": "pkg:npm/%40noble/hashes@2.3.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@noble/hashes/-/hashes-2.3.0.tgz"
         }
       ],
       "properties": [
@@ -2150,9 +2178,9 @@
     {
       "type": "library",
       "name": "ws",
-      "version": "8.21.0",
-      "purl": "pkg:npm/ws@8.21.0",
-      "bom-ref": "pkg:npm/ws@8.21.0",
+      "version": "8.21.3",
+      "purl": "pkg:npm/ws@8.21.3",
+      "bom-ref": "pkg:npm/ws@8.21.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -2161,7 +2189,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/ws/-/ws-8.21.0.tgz"
+          "url": "https://registry.npmjs.org/ws/-/ws-8.21.3.tgz"
         }
       ],
       "properties": [
@@ -2294,11 +2322,11 @@
       "dependsOn": [
         "pkg:npm/%40fails-components/webtransport-transport-http3-quiche@1.6.7",
         "pkg:npm/%40fails-components/webtransport@1.6.7",
-        "pkg:npm/%40noble/ciphers@0.6.0",
+        "pkg:npm/%40noble/ciphers@2.3.0",
         "pkg:npm/%40noble/curves@1.9.7",
-        "pkg:npm/%40noble/hashes@1.8.0",
+        "pkg:npm/%40noble/hashes@2.3.0",
         "pkg:npm/tr46@5.0.0",
-        "pkg:npm/ws@8.21.0"
+        "pkg:npm/ws@8.21.3"
       ]
     },
     {
@@ -2327,7 +2355,7 @@
       ]
     },
     {
-      "ref": "pkg:npm/%40noble/ciphers@0.6.0",
+      "ref": "pkg:npm/%40noble/ciphers@2.3.0",
       "dependsOn": []
     },
     {
@@ -2338,6 +2366,10 @@
     },
     {
       "ref": "pkg:npm/%40noble/hashes@1.8.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40noble/hashes@2.3.0",
       "dependsOn": []
     },
     {
@@ -2733,7 +2765,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/ws@8.21.0",
+      "ref": "pkg:npm/ws@8.21.3",
       "dependsOn": []
     },
     {

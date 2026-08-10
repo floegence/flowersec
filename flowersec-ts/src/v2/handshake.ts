@@ -1,8 +1,8 @@
 import { x25519 } from "@noble/curves/ed25519";
 import { p256 } from "@noble/curves/p256";
-import { expand, extract } from "@noble/hashes/hkdf";
-import { hmac } from "@noble/hashes/hmac";
-import { sha256 } from "@noble/hashes/sha256";
+import { expand, extract } from "@noble/hashes/hkdf.js";
+import { hmac } from "@noble/hashes/hmac.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 
 import { base64urlDecode, base64urlEncode } from "../utils/base64url.js";
 import { concatBytes, readU32be, u32be } from "../utils/bin.js";

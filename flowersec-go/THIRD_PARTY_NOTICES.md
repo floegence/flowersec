@@ -11,6 +11,6 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - github.com/quic-go/quic-go v0.61.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/quic-go)
 - github.com/quic-go/webtransport-go v0.12.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/webtransport-go)
 - golang.org/x/crypto v0.54.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/crypto)
-- golang.org/x/net v0.56.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/net)
+- golang.org/x/net v0.57.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/net)
 - golang.org/x/sys v0.47.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/sys)
 - golang.org/x/text v0.40.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/text)

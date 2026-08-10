@@ -1,4 +1,4 @@
-import { sha256 } from "@noble/hashes/sha256";
+import { sha256 } from "@noble/hashes/sha2.js";
 
 import { base64urlDecode, base64urlEncode } from "../utils/base64url.js";
 import { concatBytes, readU32be, u32be } from "../utils/bin.js";

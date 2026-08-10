@@ -535,6 +535,10 @@ test("release workflows pin actions and pass expressions through fields, not she
     dependabot,
     /  - package-ecosystem: gomod\n    directory: \/flowersec-go\n    schedule:\n      interval: weekly\n    groups:\n      quic-stack:\n        patterns:\n          - github\.com\/quic-go\/quic-go\n          - github\.com\/quic-go\/webtransport-go/m,
   );
+  assert.match(
+    dependabot,
+    /  - package-ecosystem: cargo\n    directory: \/flowersec-rust\n    schedule:\n      interval: weekly\n    ignore:\n      # Flowersec v2 freezes IDNA behavior to Unicode 15\.1; 1\.1\.0 moves to Unicode 16\.0\.\n      - dependency-name: idna_mapping\n        versions:\n          - ">= 1\.1\.0"/m,
+  );
 });
 
 test("CodeQL scans every language on changes and does not hide Swift failures", () => {

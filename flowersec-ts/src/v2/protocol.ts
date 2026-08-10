@@ -1,8 +1,8 @@
-import { gcm } from "@noble/ciphers/aes";
-import { chacha20poly1305 } from "@noble/ciphers/chacha";
-import { expand } from "@noble/hashes/hkdf";
-import { hmac } from "@noble/hashes/hmac";
-import { sha256 } from "@noble/hashes/sha256";
+import { gcm } from "@noble/ciphers/aes.js";
+import { chacha20poly1305 } from "@noble/ciphers/chacha.js";
+import { expand } from "@noble/hashes/hkdf.js";
+import { hmac } from "@noble/hashes/hmac.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 
 const encoder = new TextEncoder();
 const MAX_UINT32 = 0xffffffff;

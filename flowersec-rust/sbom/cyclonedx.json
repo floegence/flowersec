@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:05801405-1a7d-5449-88ab-fc191dab44c4",
+  "serialNumber": "urn:uuid:ed77d341-9a75-5f90-88b9-83e097582f75",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "a08e2383bf812d4e9f1e97ae7c2c2c5b3d56f1fbd7b09e4c65efaffe59d71525"
+        "value": "fdec32fe094a0a1b26f73f6287a1f8fc485b2280cf176b212438a92c1c71f452"
       }
     ]
   },
@@ -22,9 +22,9 @@
     {
       "type": "library",
       "name": "aead",
-      "version": "0.5.2",
-      "purl": "pkg:cargo/aead@0.5.2",
-      "bom-ref": "pkg:cargo/aead@0.5.2",
+      "version": "0.6.1",
+      "purl": "pkg:cargo/aead@0.6.1",
+      "bom-ref": "pkg:cargo/aead@0.6.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -50,9 +50,9 @@
     {
       "type": "library",
       "name": "aes",
-      "version": "0.8.4",
-      "purl": "pkg:cargo/aes@0.8.4",
-      "bom-ref": "pkg:cargo/aes@0.8.4",
+      "version": "0.9.2",
+      "purl": "pkg:cargo/aes@0.9.2",
+      "bom-ref": "pkg:cargo/aes@0.9.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -78,9 +78,9 @@
     {
       "type": "library",
       "name": "aes-gcm",
-      "version": "0.10.3",
-      "purl": "pkg:cargo/aes-gcm@0.10.3",
-      "bom-ref": "pkg:cargo/aes-gcm@0.10.3",
+      "version": "0.11.0",
+      "purl": "pkg:cargo/aes-gcm@0.11.0",
+      "bom-ref": "pkg:cargo/aes-gcm@0.11.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -162,9 +162,9 @@
     {
       "type": "library",
       "name": "base64",
-      "version": "0.22.1",
-      "purl": "pkg:cargo/base64@0.22.1",
-      "bom-ref": "pkg:cargo/base64@0.22.1",
+      "version": "0.23.1",
+      "purl": "pkg:cargo/base64@0.23.1",
+      "bom-ref": "pkg:cargo/base64@0.23.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -442,9 +442,9 @@
     {
       "type": "library",
       "name": "cipher",
-      "version": "0.4.4",
-      "purl": "pkg:cargo/cipher@0.4.4",
-      "bom-ref": "pkg:cargo/cipher@0.4.4",
+      "version": "0.5.2",
+      "purl": "pkg:cargo/cipher@0.5.2",
+      "bom-ref": "pkg:cargo/cipher@0.5.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -544,6 +544,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cpubits",
+      "version": "0.1.1",
+      "purl": "pkg:cargo/cpubits@0.1.1",
+      "bom-ref": "pkg:cargo/cpubits@0.1.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -694,9 +722,9 @@
     {
       "type": "library",
       "name": "ctr",
-      "version": "0.9.2",
-      "purl": "pkg:cargo/ctr@0.9.2",
-      "bom-ref": "pkg:cargo/ctr@0.9.2",
+      "version": "0.10.1",
+      "purl": "pkg:cargo/ctr@0.10.1",
+      "bom-ref": "pkg:cargo/ctr@0.10.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -1282,9 +1310,9 @@
     {
       "type": "library",
       "name": "ghash",
-      "version": "0.5.1",
-      "purl": "pkg:cargo/ghash@0.5.1",
-      "bom-ref": "pkg:cargo/ghash@0.5.1",
+      "version": "0.6.0",
+      "purl": "pkg:cargo/ghash@0.6.0",
+      "bom-ref": "pkg:cargo/ghash@0.6.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -1562,9 +1590,9 @@
     {
       "type": "library",
       "name": "inout",
-      "version": "0.1.4",
-      "purl": "pkg:cargo/inout@0.1.4",
-      "bom-ref": "pkg:cargo/inout@0.1.4",
+      "version": "0.2.2",
+      "purl": "pkg:cargo/inout@0.2.2",
+      "bom-ref": "pkg:cargo/inout@0.2.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -1785,34 +1813,6 @@
     },
     {
       "type": "library",
-      "name": "opaque-debug",
-      "version": "0.3.1",
-      "purl": "pkg:cargo/opaque-debug@0.3.1",
-      "bom-ref": "pkg:cargo/opaque-debug@0.3.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/RustCrypto/utils"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "p256",
       "version": "0.13.2",
       "purl": "pkg:cargo/p256@0.13.2",
@@ -1954,9 +1954,9 @@
     {
       "type": "library",
       "name": "polyval",
-      "version": "0.6.2",
-      "purl": "pkg:cargo/polyval@0.6.2",
-      "bom-ref": "pkg:cargo/polyval@0.6.2",
+      "version": "0.7.3",
+      "purl": "pkg:cargo/polyval@0.7.3",
+      "bom-ref": "pkg:cargo/polyval@0.7.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -3466,9 +3466,9 @@
     {
       "type": "library",
       "name": "universal-hash",
-      "version": "0.5.1",
-      "purl": "pkg:cargo/universal-hash@0.5.1",
-      "bom-ref": "pkg:cargo/universal-hash@0.5.1",
+      "version": "0.6.1",
+      "purl": "pkg:cargo/universal-hash@0.6.1",
+      "bom-ref": "pkg:cargo/universal-hash@0.6.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -4280,9 +4280,9 @@
     {
       "ref": "pkg:cargo/flowersec@2.3.6",
       "dependsOn": [
-        "pkg:cargo/aes-gcm@0.10.3",
+        "pkg:cargo/aes-gcm@0.11.0",
         "pkg:cargo/async-trait@0.1.92",
-        "pkg:cargo/base64@0.22.1",
+        "pkg:cargo/base64@0.23.1",
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/futures-util@0.3.33",
         "pkg:cargo/hkdf@0.13.0",
@@ -4309,28 +4309,28 @@
       ]
     },
     {
-      "ref": "pkg:cargo/aead@0.5.2",
+      "ref": "pkg:cargo/aead@0.6.1",
       "dependsOn": [
-        "pkg:cargo/crypto-common@0.1.6",
-        "pkg:cargo/generic-array@0.14.9"
+        "pkg:cargo/crypto-common@0.2.2",
+        "pkg:cargo/inout@0.2.2"
       ]
     },
     {
-      "ref": "pkg:cargo/aes@0.8.4",
+      "ref": "pkg:cargo/aes@0.9.2",
       "dependsOn": [
-        "pkg:cargo/cfg-if@1.0.4",
-        "pkg:cargo/cipher@0.4.4",
-        "pkg:cargo/cpufeatures@0.2.17"
+        "pkg:cargo/cipher@0.5.2",
+        "pkg:cargo/cpubits@0.1.1",
+        "pkg:cargo/cpufeatures@0.3.0"
       ]
     },
     {
-      "ref": "pkg:cargo/aes-gcm@0.10.3",
+      "ref": "pkg:cargo/aes-gcm@0.11.0",
       "dependsOn": [
-        "pkg:cargo/aead@0.5.2",
-        "pkg:cargo/aes@0.8.4",
-        "pkg:cargo/cipher@0.4.4",
-        "pkg:cargo/ctr@0.9.2",
-        "pkg:cargo/ghash@0.5.1",
+        "pkg:cargo/aead@0.6.1",
+        "pkg:cargo/aes@0.9.2",
+        "pkg:cargo/cipher@0.5.2",
+        "pkg:cargo/ctr@0.10.1",
+        "pkg:cargo/ghash@0.6.0",
         "pkg:cargo/subtle@2.6.1"
       ]
     },
@@ -4347,7 +4347,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/base64@0.22.1",
+      "ref": "pkg:cargo/base64@0.23.1",
       "dependsOn": []
     },
     {
@@ -4398,10 +4398,11 @@
       ]
     },
     {
-      "ref": "pkg:cargo/cipher@0.4.4",
+      "ref": "pkg:cargo/cipher@0.5.2",
       "dependsOn": [
-        "pkg:cargo/crypto-common@0.1.6",
-        "pkg:cargo/inout@0.1.4"
+        "pkg:cargo/block-buffer@0.12.1",
+        "pkg:cargo/crypto-common@0.2.2",
+        "pkg:cargo/inout@0.2.2"
       ]
     },
     {
@@ -4414,6 +4415,10 @@
     },
     {
       "ref": "pkg:cargo/const-oid@0.9.6",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/cpubits@0.1.1",
       "dependsOn": []
     },
     {
@@ -4441,20 +4446,21 @@
       "ref": "pkg:cargo/crypto-common@0.1.6",
       "dependsOn": [
         "pkg:cargo/generic-array@0.14.9",
-        "pkg:cargo/rand_core@0.6.4",
         "pkg:cargo/typenum@1.20.1"
       ]
     },
     {
       "ref": "pkg:cargo/crypto-common@0.2.2",
       "dependsOn": [
-        "pkg:cargo/hybrid-array@0.4.14"
+        "pkg:cargo/getrandom@0.4.3",
+        "pkg:cargo/hybrid-array@0.4.14",
+        "pkg:cargo/rand_core@0.10.1"
       ]
     },
     {
-      "ref": "pkg:cargo/ctr@0.9.2",
+      "ref": "pkg:cargo/ctr@0.10.1",
       "dependsOn": [
-        "pkg:cargo/cipher@0.4.4"
+        "pkg:cargo/cipher@0.5.2"
       ]
     },
     {
@@ -4620,10 +4626,9 @@
       ]
     },
     {
-      "ref": "pkg:cargo/ghash@0.5.1",
+      "ref": "pkg:cargo/ghash@0.6.0",
       "dependsOn": [
-        "pkg:cargo/opaque-debug@0.3.1",
-        "pkg:cargo/polyval@0.6.2"
+        "pkg:cargo/polyval@0.7.3"
       ]
     },
     {
@@ -4687,9 +4692,9 @@
       ]
     },
     {
-      "ref": "pkg:cargo/inout@0.1.4",
+      "ref": "pkg:cargo/inout@0.2.2",
       "dependsOn": [
-        "pkg:cargo/generic-array@0.14.9"
+        "pkg:cargo/hybrid-array@0.4.14"
       ]
     },
     {
@@ -4729,10 +4734,6 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/opaque-debug@0.3.1",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:cargo/p256@0.13.2",
       "dependsOn": [
         "pkg:cargo/ecdsa@0.16.9",
@@ -4763,12 +4764,11 @@
       ]
     },
     {
-      "ref": "pkg:cargo/polyval@0.6.2",
+      "ref": "pkg:cargo/polyval@0.7.3",
       "dependsOn": [
-        "pkg:cargo/cfg-if@1.0.4",
-        "pkg:cargo/cpufeatures@0.2.17",
-        "pkg:cargo/opaque-debug@0.3.1",
-        "pkg:cargo/universal-hash@0.5.1"
+        "pkg:cargo/cpubits@0.1.1",
+        "pkg:cargo/cpufeatures@0.3.0",
+        "pkg:cargo/universal-hash@0.6.1"
       ]
     },
     {
@@ -5149,10 +5149,10 @@
       ]
     },
     {
-      "ref": "pkg:cargo/universal-hash@0.5.1",
+      "ref": "pkg:cargo/universal-hash@0.6.1",
       "dependsOn": [
-        "pkg:cargo/crypto-common@0.1.6",
-        "pkg:cargo/subtle@2.6.1"
+        "pkg:cargo/crypto-common@0.2.2",
+        "pkg:cargo/ctutils@0.4.2"
       ]
     },
     {

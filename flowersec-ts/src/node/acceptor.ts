@@ -1,4 +1,4 @@
-import { sha256 } from "@noble/hashes/sha256";
+import { sha256 } from "@noble/hashes/sha2.js";
 
 import { RpcRouter } from "../rpc/server.js";
 import type { RpcError as WireRpcError } from "../rpc/wire.js";

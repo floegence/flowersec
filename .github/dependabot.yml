@@ -43,6 +43,11 @@ updates:
     directory: /flowersec-rust
     schedule:
       interval: weekly
+    ignore:
+      # Flowersec v2 freezes IDNA behavior to Unicode 15.1; 1.1.0 moves to Unicode 16.0.
+      - dependency-name: idna_mapping
+        versions:
+          - ">= 1.1.0"
 
   - package-ecosystem: cargo
     directory: /flowersec-rust/fuzz
