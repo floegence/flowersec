@@ -20,8 +20,6 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
-Flowersec 2.3.6은 Go, TypeScript, Swift, Rust SDK를 제공합니다. 제한된 루프백 평문 WebSocket Direct 프로필을 지원하며 네트워크에 노출되는 WebSocket 후보에는 WSS를 요구합니다. 게시된 패키지 버전과 일치하는 Release Tag를 고정하세요.
-
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
 
@@ -78,22 +76,22 @@ Go 서비스 control plane은 별도의 `github.com/floegence/flowersec/flowerse
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
 
-## 이식 가능한 Core 및 SDK Profile
+## SDK 기능
 
-Flowersec은 계약 계층을 명확히 구분합니다. 이식 가능한 Core, 연결 제어, Session/RPC/Stream 수명 주기, Accepted Session Workflow 및 게시된 모든 Consumer Workflow는 적용 가능한 각 SDK에서 의미가 동일한 Public Entry를 사용합니다. 각 SDK Profile은 Runtime 및 Platform 고유 Carrier 경계를 선언합니다. Platform 제한은 명시적 이유, 대체 Public Boundary, 실행 가능한 Test ID가 `stability/language_capabilities.json`에 기록된 경우에만 미지원으로 선언할 수 있습니다. Control Plane 영속성은 서비스 경계입니다. Client는 `flowersec-go/v2/controlplane`을 사용하는 인증된 Service를 호출하며 별도의 Issuer나 Datastore를 내장하지 않습니다. 언어별 Convenience는 이 계약을 바꾸지 않고 해당 언어 생태계에 맞는 구문이나 Orchestration만 제공합니다. 안정적인 언어 간 Recovery 계약은 Controller의 구조화된 Disposition이며 원시 Error Code의 Byte 단위 일치가 아닙니다.
+아래 기능은 내부 프로토콜 객체가 아니라 애플리케이션 개발자가 직접 사용하는 워크플로를 기준으로 분류했습니다. 각 SDK Profile은 Runtime 및 Platform 고유 Carrier 경계를 선언합니다. Platform 제한은 명시적 이유, 대체 Public Boundary, 실행 가능한 Test ID가 `stability/language_capabilities.json`에 기록된 경우에만 미지원으로 선언할 수 있습니다. Control Plane 영속성은 서비스 경계입니다. Client는 `flowersec-go/v2/controlplane`을 사용하는 인증된 Service를 호출하며 별도의 Issuer나 Datastore를 내장하지 않습니다. 언어별 Convenience는 공유 워크플로를 바꾸지 않고 해당 언어 생태계에 맞는 구문이나 Orchestration만 제공합니다. 연결 복구 동작은 Controller의 구조화된 Disposition으로 보고됩니다.
 
 | 기능 | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
-| 불투명 Artifact, Connector, Session, RPC 및 Byte Stream | 지원 | 지원 | 지원 | 지원 |
-| Single-owner Connection Controller | 지원 | 지원 | 지원 | 지원 |
-| 협상형 Unreliable Message Channel | 지원 | 지원 | 미지원 | 지원 |
-| RPC Notification Subscription | 미지원 | 지원 | 미지원 | 미지원 |
-| Inbound RPC Request Handler | 지원 | 미지원 | 미지원 | 미지원 |
-| 프로덕션 WebSocket Dial | 지원 | Browser 및 Node.js | macOS 및 iOS | 미지원 |
-| 프로덕션 raw QUIC Dial | 지원 | 미지원 | 미지원 | 지원 |
-| 프로덕션 WebTransport Dial | 지원 | Browser 및 Node.js | 미지원 | 미지원 |
-| Server Acceptor / Accepted Session | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Apple Listener Profile에서 미지원 | `Acceptor::bind` / `accept_with_handlers` |
-| Control Plane Issue / Authorize | `flowersec-go/v2/controlplane` | 미지원, Application 소유 Service Boundary | 미지원, Application 소유 Service Boundary | 미지원, Application 소유 Service Boundary |
+| 종단 간 암호화 Session, RPC 및 Byte Stream | 지원 | 지원 | 지원 | 지원 |
+| 장기 연결 자동 복구 | 지원 | 지원 | 지원 | 지원 |
+| Unreliable Message | 지원 | 지원 | 미지원 | 지원 |
+| RPC Notification 수신 | 미지원 | 지원 | 미지원 | 미지원 |
+| Inbound RPC Request 처리 | 지원 | 미지원 | 미지원 | 미지원 |
+| WebSocket Client 연결 | 지원 | Browser 및 Node.js | macOS 및 iOS | 미지원 |
+| raw QUIC Client 연결 | 지원 | 미지원 | 미지원 | 지원 |
+| WebTransport Client 연결 | 지원 | Browser 및 Node.js | 미지원 | 미지원 |
+| Server 측 Session 수락 | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Apple Listener Profile에서 미지원 | `Acceptor::bind` / `accept_with_handlers` |
+| Control Plane Artifact 발급 및 권한 부여 | `flowersec-go/v2/controlplane` | 미지원, Application 소유 Service Boundary | 미지원, Application 소유 Service Boundary | 미지원, Application 소유 Service Boundary |
 
 선언된 Carrier Tuple만 허용되며 미지원 Tuple은 Fail Closed됩니다. 각 지원 행은 프로덕션 Connector 코드와 `stability/language_capabilities.json`의 명시적인 Test ID로 검증됩니다. 미지원 Capability에는 이유와 대체 Boundary가 포함됩니다. Capability Descriptor와 Carrier 선택은 내부에만 유지됩니다.
 

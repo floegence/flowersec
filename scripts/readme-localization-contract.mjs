@@ -54,7 +54,3 @@ export function extractMarkdownShape(content) {
   flushParagraph();
   return shape;
 }
-
-export function extractProductVersion(content) {
-  return /\bFlowersec\s+(\d+\.\d+\.\d+)\b/u.exec(content)?.[1] ?? null;
-}

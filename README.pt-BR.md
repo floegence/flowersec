@@ -20,8 +20,6 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
-O Flowersec 2.3.6 fornece os SDKs para Go, TypeScript, Swift e Rust. Ele oferece o perfil WebSocket direto em texto simples restrito a loopback e exige WSS para candidatos WebSocket expostos à rede. Fixe as versões dos pacotes publicados e as tags de release correspondentes.
-
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
 
@@ -78,22 +76,22 @@ O [índice de Cookbooks](examples/README.md) contém somente exemplos v2 e coman
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
 
-## Núcleo portável e perfis de SDK
+## Recursos dos SDKs
 
-O Flowersec mantém explícitas as camadas de seu contrato. O núcleo portável, o controle de conexão, o ciclo de vida de sessão, RPC e fluxos, os workflows de sessões aceitas e todos os workflows publicados para consumidores usam entradas públicas com a mesma semântica em cada SDK aplicável. Cada perfil de SDK declara sua fronteira específica de runtime e plataforma. Uma limitação de plataforma só pode constar como não suportada quando `stability/language_capabilities.json` apresenta um motivo explícito, uma fronteira pública alternativa e um ID de teste executável. A persistência do control plane é uma fronteira de serviço: os clientes chamam o serviço autenticado que usa `flowersec-go/v2/controlplane`; eles não incorporam um segundo emissor nem datastore. Uma conveniência de linguagem adapta sintaxe ou orquestração ao ecossistema sem alterar esses contratos. O contrato estável de recuperação entre linguagens é a disposition estruturada do controller, não a igualdade byte a byte de códigos de erro brutos.
+As capacidades abaixo são agrupadas por workflows que desenvolvedores de aplicações podem usar diretamente, e não por objetos internos do protocolo. Cada perfil de SDK declara sua fronteira específica de runtime e plataforma. Uma limitação de plataforma só pode constar como não suportada quando `stability/language_capabilities.json` apresenta um motivo explícito, uma fronteira pública alternativa e um ID de teste executável. A persistência do control plane é uma fronteira de serviço: os clientes chamam o serviço autenticado que usa `flowersec-go/v2/controlplane`; eles não incorporam um segundo emissor nem datastore. Uma conveniência de linguagem adapta sintaxe ou orquestração ao ecossistema sem alterar os workflows compartilhados. O comportamento de recuperação das conexões é descrito pela disposition estruturada do controller.
 
 | Capacidade | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
-| Artifact opaco, connector, sessão, RPC e fluxos de bytes | Sim | Sim | Sim | Sim |
-| Controller de conexão com proprietário único | Sim | Sim | Sim | Sim |
-| Canal negociado de mensagens não confiáveis | Sim | Sim | Não | Sim |
-| Assinatura de notificações RPC | Não | Sim | Não | Não |
-| Handlers de solicitações RPC recebidas | Sim | Não | Não | Não |
-| Discagem WebSocket em produção | Sim | Browser e Node.js | macOS e iOS | Não |
-| Discagem raw QUIC em produção | Sim | Não | Não | Sim |
-| Discagem WebTransport em produção | Sim | Browser e Node.js | Não | Não |
-| Acceptor de servidor / sessão aceita | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Não suportado no perfil listener da Apple | `Acceptor::bind` / `accept_with_handlers` |
-| Emissão / autorização do control plane | `flowersec-go/v2/controlplane` | Não suportado; fronteira do serviço da aplicação | Não suportado; fronteira do serviço da aplicação | Não suportado; fronteira do serviço da aplicação |
+| Sessões criptografadas de ponta a ponta, RPC e fluxos de bytes | Sim | Sim | Sim | Sim |
+| Recuperação automática de conexões persistentes | Sim | Sim | Sim | Sim |
+| Mensagens não confiáveis | Sim | Sim | Não | Sim |
+| Recebimento de notificações RPC | Não | Sim | Não | Não |
+| Tratamento de solicitações RPC recebidas | Sim | Não | Não | Não |
+| Conexões cliente WebSocket | Sim | Browser e Node.js | macOS e iOS | Não |
+| Conexões cliente raw QUIC | Sim | Não | Não | Sim |
+| Conexões cliente WebTransport | Sim | Browser e Node.js | Não | Não |
+| Aceitação de sessões no servidor | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Não suportado no perfil listener da Apple | `Acceptor::bind` / `accept_with_handlers` |
+| Emissão e autorização de artifacts do control plane | `flowersec-go/v2/controlplane` | Não suportado; fronteira do serviço da aplicação | Não suportado; fronteira do serviço da aplicação | Não suportado; fronteira do serviço da aplicação |
 
 Somente tuplas de carrier declaradas são aceitas; tuplas sem suporte falham de forma fechada. Cada linha é respaldada por código de connector de produção e um ID de teste explícito em `stability/language_capabilities.json`. Capacidades sem suporte incluem um motivo e uma fronteira alternativa. Os descritores de capacidade e a seleção de carrier permanecem internos.
 

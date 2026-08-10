@@ -13,7 +13,6 @@ import {
 import {
   extractInlineCodeLiterals,
   extractMarkdownShape,
-  extractProductVersion,
 } from "./readme-localization-contract.mjs";
 
 function createTransportReadmeFixture(t) {
@@ -67,10 +66,10 @@ test("SDK README capability layers describe the final recovery owner", () => {
   }
 });
 
-test("README localization contract captures structure, literals, and version", () => {
+test("README localization contract captures structure and literals", () => {
   const source = [
     "# Flowersec",
-    "Flowersec 2.3.6 provides SDKs.",
+    "Carrier-neutral sessions for four SDKs.",
     "## Section",
     "- One",
     "- Two",
@@ -95,15 +94,12 @@ test("README localization contract captures structure, literals, and version", (
     "paragraph",
   ]);
   assert.deepEqual(extractInlineCodeLiterals(source), ["flowersec.Connect"]);
-  assert.equal(extractProductVersion(source), "2.3.6");
 });
 
-test("README localization contract detects missing API literals and stale versions", () => {
-  const source = "# Flowersec\nFlowersec 2.3.6\n`flowersec.Connect`\n";
+test("README localization contract detects changed API literals", () => {
+  const source = "# Flowersec\nCarrier-neutral sessions.\n`flowersec.Connect`\n";
   assert.notDeepEqual(
     extractInlineCodeLiterals(source),
     extractInlineCodeLiterals(source.replace("`flowersec.Connect`", "`flowersec.LegacyConnect`")),
   );
-  assert.notEqual(extractProductVersion(source), extractProductVersion(source.replace("2.3.6", "2.3.5")));
-  assert.equal(extractProductVersion(source.replace("Flowersec 2.3.6", "Flowersec SDKs")), null);
 });

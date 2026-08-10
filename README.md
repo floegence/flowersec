@@ -20,8 +20,6 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
-Flowersec 2.3.6 provides the Go, TypeScript, Swift, and Rust SDKs. It supports the restricted loopback plaintext WebSocket direct profile and requires WSS for network-facing WebSocket candidates. Pin the published package versions and matching release tags.
-
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
 
@@ -84,22 +82,22 @@ The [cookbook index](examples/README.md) contains only v2 examples and verificat
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
 
-## Portable Core and SDK Profiles
+## SDK Capabilities
 
-Flowersec keeps its contract layers explicit. The portable core, connection control, session/RPC/stream lifecycle, accepted-session workflows, and every published consumer workflow use same-semantic public entries in every applicable SDK. Each SDK profile declares its runtime and platform-specific carrier boundary. A platform limitation may be unsupported only with an explicit reason, alternative public boundary, and executable test ID in `stability/language_capabilities.json`. Control-plane persistence is a service boundary: clients call the authenticated service that uses `flowersec-go/v2/controlplane`; they do not embed a second issuer or datastore. A language convenience is syntax or orchestration that fits one language ecosystem without changing these contracts. The stable cross-language recovery contract is the controller's structured disposition, not byte-for-byte matching raw error codes.
+These capabilities are grouped by user-facing workflows rather than internal protocol objects. Each SDK profile declares its runtime and platform-specific carrier boundary. A platform limitation may be unsupported only with an explicit reason, alternative public boundary, and executable test ID in `stability/language_capabilities.json`. Control-plane persistence is a service boundary: clients call the authenticated service that uses `flowersec-go/v2/controlplane`; they do not embed a second issuer or datastore. Language-specific conveniences may adapt syntax or orchestration without changing the shared workflows. Recovery behavior is reported through the controller's structured disposition.
 
 | Capability | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
-| Opaque artifact, connector, session, RPC, and byte streams | Yes | Yes | Yes | Yes |
-| Single-owner connection controller | Yes | Yes | Yes | Yes |
-| Negotiated unreliable message channel | Yes | Yes | No | Yes |
-| RPC notification subscription | No | Yes | No | No |
-| Inbound RPC request handlers | Yes | No | No | No |
-| Production WebSocket dialing | Yes | Browser and Node.js | macOS and iOS | No |
-| Production raw QUIC dialing | Yes | No | No | Yes |
-| Production WebTransport dialing | Yes | Browser and Node.js | No | No |
-| Server acceptor / accepted Session | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Unsupported on Apple listener profile | `Acceptor::bind` / `accept_with_handlers` |
-| Control-plane issue / authorize | `flowersec-go/v2/controlplane` | Unsupported; application-owned service boundary | Unsupported; application-owned service boundary | Unsupported; application-owned service boundary |
+| End-to-end encrypted sessions, RPC, and byte streams | Yes | Yes | Yes | Yes |
+| Long-lived connection recovery | Yes | Yes | Yes | Yes |
+| Unreliable messaging | Yes | Yes | No | Yes |
+| Receiving RPC notifications | No | Yes | No | No |
+| Handling inbound RPC requests | Yes | No | No | No |
+| WebSocket client connections | Yes | Browser and Node.js | macOS and iOS | No |
+| Raw QUIC client connections | Yes | No | No | Yes |
+| WebTransport client connections | Yes | Browser and Node.js | No | No |
+| Server-side session acceptance | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Unsupported on Apple listener profile | `Acceptor::bind` / `accept_with_handlers` |
+| Control-plane artifact issuance and authorization | `flowersec-go/v2/controlplane` | Unsupported; application-owned service boundary | Unsupported; application-owned service boundary | Unsupported; application-owned service boundary |
 
 Only declared carrier tuples are accepted; unsupported tuples fail closed. Each support row is backed by production connector code and an explicit test ID in `stability/language_capabilities.json`; unsupported capabilities include a reason and an alternative boundary. Capability descriptors and carrier selection remain internal.
 

@@ -20,8 +20,6 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
-Flowersec 2.3.6 提供 Go、TypeScript、Swift 與 Rust SDK。它支援受限的迴環位址明文 WebSocket Direct 設定，並要求所有面向網路的 WebSocket 候選項目使用 WSS。請鎖定已發布的套件版本與對應的 Release Tag。
-
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
 
@@ -78,22 +76,22 @@ Go 服務控制面使用獨立的 `github.com/floegence/flowersec/flowersec-go/v
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
 
-## 可攜式核心與 SDK Profile
+## SDK 功能支援
 
-Flowersec 明確區分各個契約層。可攜式核心、連線控制、Session/RPC/Stream 生命週期、已接受 Session 工作流程，以及每一條已發布的 Consumer 工作流程，在所有適用 SDK 中都透過語意一致的公開入口提供。每個 SDK Profile 都會宣告其 Runtime 與平台特有的 Carrier 邊界。平台限制只有在 `stability/language_capabilities.json` 中記錄明確原因、替代公開邊界與可執行測試 ID 後，才能標示為不支援。Control Plane 持久化屬於服務邊界：Client 呼叫使用 `flowersec-go/v2/controlplane` 的已驗證服務，而不是內嵌第二套簽發器或資料儲存。語言便利能力只能配合特定語言生態的語法或編排方式，不得變更這些契約。穩定的跨語言復原契約是 Controller 的結構化處置結果，而不是逐 Byte 相符的原始錯誤碼。
+下表按照應用程式開發者可以直接使用的功能劃分，而不是按照內部協定物件劃分。每個 SDK Profile 都會宣告其 Runtime 與平台特有的 Carrier 邊界。平台限制只有在 `stability/language_capabilities.json` 中記錄明確原因、替代公開邊界與可執行測試 ID 後，才能標示為不支援。Control Plane 持久化屬於服務邊界：Client 呼叫使用 `flowersec-go/v2/controlplane` 的已驗證服務，而不是內嵌第二套簽發器或資料儲存。語言便利能力可以配合特定語言生態的語法或編排方式，但不會改變這些共用工作流程。連線復原行為透過 Controller 的結構化處置結果回報。
 
 | 能力 | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
-| 不透明 Artifact、Connector、Session、RPC 與位元組 Stream | 是 | 是 | 是 | 是 |
-| 單一 Owner 的連線 Controller | 是 | 是 | 是 | 是 |
-| 經協商的不可靠訊息 Channel | 是 | 是 | 否 | 是 |
-| RPC 通知訂閱 | 否 | 是 | 否 | 否 |
-| Inbound RPC Request Handler | 是 | 否 | 否 | 否 |
-| 生產級 WebSocket 撥號 | 是 | Browser 與 Node.js | macOS 與 iOS | 否 |
-| 生產級 raw QUIC 撥號 | 是 | 否 | 否 | 是 |
-| 生產級 WebTransport 撥號 | 是 | Browser 與 Node.js | 否 | 否 |
-| Server Acceptor / 已接受 Session | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Apple Listener Profile 不支援 | `Acceptor::bind` / `accept_with_handlers` |
-| Control Plane 簽發 / 授權 | `flowersec-go/v2/controlplane` | 不支援；由應用服務負責 | 不支援；由應用服務負責 | 不支援；由應用服務負責 |
+| 端對端加密工作階段、RPC 與位元組串流 | 是 | 是 | 是 | 是 |
+| 長連線自動復原 | 是 | 是 | 是 | 是 |
+| 不可靠訊息 | 是 | 是 | 否 | 是 |
+| 接收 RPC 通知 | 否 | 是 | 否 | 否 |
+| 處理 Inbound RPC Request | 是 | 否 | 否 | 否 |
+| WebSocket Client 連線 | 是 | Browser 與 Node.js | macOS 與 iOS | 否 |
+| raw QUIC Client 連線 | 是 | 否 | 否 | 是 |
+| WebTransport Client 連線 | 是 | Browser 與 Node.js | 否 | 否 |
+| Server 端接收工作階段 | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Apple Listener Profile 不支援 | `Acceptor::bind` / `accept_with_handlers` |
+| Control Plane 簽發 Artifact 與授權 | `flowersec-go/v2/controlplane` | 不支援；由應用服務負責 | 不支援；由應用服務負責 | 不支援；由應用服務負責 |
 
 僅接受已宣告的 Carrier 組合；不支援的組合會 Fail Closed。每一列支援狀態都有生產級 Connector 程式碼和 `stability/language_capabilities.json` 中的明確測試 ID 作為依據；不支援的能力會提供原因與替代邊界。Capability Descriptor 與 Carrier 選擇機制均維持內部可見。
 

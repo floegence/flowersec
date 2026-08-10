@@ -20,8 +20,6 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
-Flowersec 2.3.6 は Go、TypeScript、Swift、Rust SDK を提供します。制限付きのループバック平文 WebSocket Direct プロファイルをサポートし、ネットワーク向けの WebSocket 候補には WSS を必須とします。公開済みパッケージのバージョンと対応するリリースタグを固定してください。
-
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
 
@@ -78,22 +76,22 @@ Go サービスのコントロールプレーンは、opaque artifact の発行�
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
 
-## ポータブルコアと SDK プロファイル
+## SDK の機能
 
-Flowersec は契約レイヤーを明確に分離します。ポータブルコア、接続制御、Session/RPC/Stream のライフサイクル、Accepted Session のワークフロー、および公開されるすべての Consumer Workflow は、該当する各 SDK で同じ意味を持つ Public Entry を使用します。各 SDK プロファイルは、Runtime と Platform 固有の Carrier 境界を宣言します。Platform の制約を未対応とできるのは、明確な理由、代替の Public Boundary、実行可能な Test ID が `stability/language_capabilities.json` に記録されている場合だけです。Control Plane の永続化はサービス境界です。Client は `flowersec-go/v2/controlplane` を使用する認証済み Service を呼び出し、第 2 の Issuer や Datastore を組み込みません。言語固有の Convenience は、契約を変えずに各言語エコシステムへ構文や Orchestration を適合させるものです。安定した言語間 Recovery 契約は Controller の構造化 Disposition であり、生の Error Code の Byte 単位の一致ではありません。
+以下の機能は、内部のプロトコルオブジェクトではなく、アプリケーション開発者が直接利用するワークフローとして分類しています。各 SDK プロファイルは、Runtime と Platform 固有の Carrier 境界を宣言します。Platform の制約を未対応とできるのは、明確な理由、代替の Public Boundary、実行可能な Test ID が `stability/language_capabilities.json` に記録されている場合だけです。Control Plane の永続化はサービス境界です。Client は `flowersec-go/v2/controlplane` を使用する認証済み Service を呼び出し、第 2 の Issuer や Datastore を組み込みません。言語固有の Convenience は、共有ワークフローを変えずに各言語エコシステムへ構文や Orchestration を適合させるものです。接続の復旧動作は Controller の構造化 Disposition で報告されます。
 
 | 機能 | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
-| 不透明な Artifact、Connector、Session、RPC、Byte Stream | 対応 | 対応 | 対応 | 対応 |
-| Single-owner Connection Controller | 対応 | 対応 | 対応 | 対応 |
-| ネゴシエートされる Unreliable Message Channel | 対応 | 対応 | 非対応 | 対応 |
-| RPC Notification Subscription | 非対応 | 対応 | 非対応 | 非対応 |
-| Inbound RPC Request Handler | 対応 | 非対応 | 非対応 | 非対応 |
-| 本番 WebSocket Dial | 対応 | Browser と Node.js | macOS と iOS | 非対応 |
-| 本番 raw QUIC Dial | 対応 | 非対応 | 非対応 | 対応 |
-| 本番 WebTransport Dial | 対応 | Browser と Node.js | 非対応 | 非対応 |
-| Server Acceptor / Accepted Session | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Apple Listener プロファイルでは非対応 | `Acceptor::bind` / `accept_with_handlers` |
-| Control Plane の Issue / Authorize | `flowersec-go/v2/controlplane` | 非対応。Application 所有の Service Boundary | 非対応。Application 所有の Service Boundary | 非対応。Application 所有の Service Boundary |
+| エンドツーエンド暗号化セッション、RPC、Byte Stream | 対応 | 対応 | 対応 | 対応 |
+| 長期接続の自動復旧 | 対応 | 対応 | 対応 | 対応 |
+| Unreliable Message | 対応 | 対応 | 非対応 | 対応 |
+| RPC 通知の受信 | 非対応 | 対応 | 非対応 | 非対応 |
+| Inbound RPC Request の処理 | 対応 | 非対応 | 非対応 | 非対応 |
+| WebSocket Client 接続 | 対応 | Browser と Node.js | macOS と iOS | 非対応 |
+| raw QUIC Client 接続 | 対応 | 非対応 | 非対応 | 対応 |
+| WebTransport Client 接続 | 対応 | Browser と Node.js | 非対応 | 非対応 |
+| Server 側の Session 受け入れ | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Apple Listener プロファイルでは非対応 | `Acceptor::bind` / `accept_with_handlers` |
+| Control Plane による Artifact 発行と認可 | `flowersec-go/v2/controlplane` | 非対応。Application 所有の Service Boundary | 非対応。Application 所有の Service Boundary | 非対応。Application 所有の Service Boundary |
 
 宣言済みの Carrier Tuple だけを受け入れ、未対応の Tuple は Fail Closed になります。各対応行は、本番用 Connector コードと `stability/language_capabilities.json` の明示的な Test ID によって裏付けられています。未対応 Capability には理由と代替 Boundary が記載されています。Capability Descriptor と Carrier の選択は内部に留まります。
 

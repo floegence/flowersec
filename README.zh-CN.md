@@ -20,8 +20,6 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
-Flowersec 2.3.6 提供 Go、TypeScript、Swift 和 Rust SDK。它支持受限的回环地址明文 WebSocket 直连配置，并要求所有面向网络的 WebSocket 候选项使用 WSS。请锁定已发布的软件包版本和对应的发布标签。
-
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
 
@@ -78,22 +76,22 @@ Go 服务控制面使用独立的 `github.com/floegence/flowersec/flowersec-go/v
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
 
-## 可移植核心与 SDK 配置
+## SDK 能力
 
-Flowersec 明确区分不同契约层。可移植核心、连接控制、Session/RPC/Stream 生命周期、已接收 Session 工作流，以及每一条已发布的消费方工作流，在所有适用 SDK 中都通过语义一致的公共入口提供。每个 SDK 配置都会声明其运行时和平台特有的 Carrier 边界。平台限制只有在 `stability/language_capabilities.json` 中记录明确原因、替代公共边界和可执行测试 ID 后，才能标记为不支持。控制面持久化属于服务边界：客户端调用使用 `flowersec-go/v2/controlplane` 的认证服务，而不是嵌入第二套签发器或数据存储。语言便利能力只能适配某一语言生态的语法或编排方式，不得改变这些契约。稳定的跨语言恢复契约是控制器的结构化处置结果，而不是逐字节一致的原始错误码。
+下表按应用开发者可以直接使用的功能划分，而不是按内部协议对象划分。每个 SDK 配置都会声明其运行时和平台特有的 Carrier 边界。平台限制只有在 `stability/language_capabilities.json` 中记录明确原因、替代公共边界和可执行测试 ID 后，才能标记为不支持。控制面持久化属于服务边界：客户端调用使用 `flowersec-go/v2/controlplane` 的认证服务，而不是嵌入第二套签发器或数据存储。语言便利能力可以适配某一语言生态的语法或编排方式，但不会改变这些共享工作流。连接恢复行为通过控制器的结构化处置结果报告。
 
 | 能力 | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
-| 不透明 Artifact、Connector、Session、RPC 与字节流 | 是 | 是 | 是 | 是 |
-| 单一所有者连接控制器 | 是 | 是 | 是 | 是 |
-| 协商式不可靠消息通道 | 是 | 是 | 否 | 是 |
-| RPC 通知订阅 | 否 | 是 | 否 | 否 |
-| 入站 RPC 请求处理器 | 是 | 否 | 否 | 否 |
-| 生产级 WebSocket 拨号 | 是 | 浏览器与 Node.js | macOS 与 iOS | 否 |
-| 生产级 raw QUIC 拨号 | 是 | 否 | 否 | 是 |
-| 生产级 WebTransport 拨号 | 是 | 浏览器与 Node.js | 否 | 否 |
-| 服务端 Acceptor / 已接收 Session | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Apple Listener 配置不支持 | `Acceptor::bind` / `accept_with_handlers` |
-| 控制面签发 / 授权 | `flowersec-go/v2/controlplane` | 不支持；由应用服务负责 | 不支持；由应用服务负责 | 不支持；由应用服务负责 |
+| 端到端加密会话、RPC 与字节流 | 是 | 是 | 是 | 是 |
+| 长连接自动恢复 | 是 | 是 | 是 | 是 |
+| 不可靠消息 | 是 | 是 | 否 | 是 |
+| 接收 RPC 通知 | 否 | 是 | 否 | 否 |
+| 处理入站 RPC 请求 | 是 | 否 | 否 | 否 |
+| WebSocket 客户端连接 | 是 | 浏览器与 Node.js | macOS 与 iOS | 否 |
+| raw QUIC 客户端连接 | 是 | 否 | 否 | 是 |
+| WebTransport 客户端连接 | 是 | 浏览器与 Node.js | 否 | 否 |
+| 服务端接收会话 | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Apple Listener 配置不支持 | `Acceptor::bind` / `accept_with_handlers` |
+| 控制面签发 Artifact 与授权 | `flowersec-go/v2/controlplane` | 不支持；由应用服务负责 | 不支持；由应用服务负责 | 不支持；由应用服务负责 |
 
 只接受已声明的 Carrier 组合；不支持的组合会失败关闭。每一行支持状态都有生产级 Connector 代码和 `stability/language_capabilities.json` 中的显式测试 ID 作为依据；不支持的能力会给出原因和替代边界。能力描述符和 Carrier 选择逻辑始终属于内部实现。
 
