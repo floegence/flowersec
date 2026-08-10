@@ -294,7 +294,7 @@ require_exact_keys(codeql_job, ["name", "needs", "if", "runs-on", "timeout-minut
 require_exact_value(codeql_job["name"], "Analyze (${{ matrix.language }})", "the CodeQL job name")
 require_exact_value(codeql_job["needs"], "plan", "the CodeQL analyze dependency")
 require_exact_value(codeql_job["runs-on"], "${{ matrix.runner }}", "the CodeQL runner selector")
-require_exact_value(codeql_job["timeout-minutes"], 20, "the CodeQL timeout")
+require_exact_value(codeql_job["timeout-minutes"], 45, "the CodeQL timeout")
 require_exact_value(codeql_job["permissions"], {
   "actions" => "read",
   "contents" => "read",

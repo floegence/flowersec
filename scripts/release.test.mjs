@@ -542,7 +542,7 @@ test("CodeQL scans every language on changes and does not hide Swift failures", 
   assert.match(workflow, /"\$previous_sha" == "\$HEAD_SHA"/);
   assert.match(workflow, /^    needs: plan\n    if: needs\.plan\.outputs\.should_scan == 'true'$/m);
   assert.doesNotMatch(workflow, /continue-on-error:/);
-  assert.match(workflow, /^    timeout-minutes: 20$/m);
+  assert.match(workflow, /^    timeout-minutes: 45$/m);
   for (const language of ["actions", "c-cpp", "go", "javascript-typescript", "ruby", "rust", "swift"]) {
     assert.match(workflow, new RegExp("^          - language: " + language + "$", "m"));
   }

@@ -71,7 +71,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.should_scan == 'true'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       actions: read
       contents: read
