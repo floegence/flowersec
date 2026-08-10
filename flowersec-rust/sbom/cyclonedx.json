@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:ed77d341-9a75-5f90-88b9-83e097582f75",
+  "serialNumber": "urn:uuid:ac3d5222-b6d3-5fb7-8ff9-7e7e2fdc870b",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "fdec32fe094a0a1b26f73f6287a1f8fc485b2280cf176b212438a92c1c71f452"
+        "value": "c612c3925559c0ab69e608d4bdc3c71869c955d60e5bc8b040de1dbdb92ab18b"
       }
     ]
   },
@@ -133,10 +133,10 @@
     },
     {
       "type": "library",
-      "name": "base16ct",
-      "version": "0.2.0",
-      "purl": "pkg:cargo/base16ct@0.2.0",
-      "bom-ref": "pkg:cargo/base16ct@0.2.0",
+      "name": "autocfg",
+      "version": "1.5.1",
+      "purl": "pkg:cargo/autocfg@1.5.1",
+      "bom-ref": "pkg:cargo/autocfg@1.5.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -145,7 +145,35 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/RustCrypto/formats/tree/master/base16ct"
+          "url": "https://github.com/cuviper/autocfg"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "base16ct",
+      "version": "1.0.0",
+      "purl": "pkg:cargo/base16ct@1.0.0",
+      "bom-ref": "pkg:cargo/base16ct@1.0.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/RustCrypto/formats"
         }
       ],
       "properties": [
@@ -208,34 +236,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "block-buffer",
-      "version": "0.10.4",
-      "purl": "pkg:cargo/block-buffer@0.10.4",
-      "bom-ref": "pkg:cargo/block-buffer@0.10.4",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/RustCrypto/utils"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -525,66 +525,10 @@
     },
     {
       "type": "library",
-      "name": "const-oid",
-      "version": "0.9.6",
-      "purl": "pkg:cargo/const-oid@0.9.6",
-      "bom-ref": "pkg:cargo/const-oid@0.9.6",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/RustCrypto/formats/tree/master/const-oid"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "cpubits",
       "version": "0.1.1",
       "purl": "pkg:cargo/cpubits@0.1.1",
       "bom-ref": "pkg:cargo/cpubits@0.1.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/RustCrypto/utils"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "cpufeatures",
-      "version": "0.2.17",
-      "purl": "pkg:cargo/cpufeatures@0.2.17",
-      "bom-ref": "pkg:cargo/cpufeatures@0.2.17",
       "licenses": [
         {
           "expression": "MIT"
@@ -638,9 +582,9 @@
     {
       "type": "library",
       "name": "crypto-bigint",
-      "version": "0.5.5",
-      "purl": "pkg:cargo/crypto-bigint@0.5.5",
-      "bom-ref": "pkg:cargo/crypto-bigint@0.5.5",
+      "version": "0.7.5",
+      "purl": "pkg:cargo/crypto-bigint@0.7.5",
+      "bom-ref": "pkg:cargo/crypto-bigint@0.7.5",
       "licenses": [
         {
           "expression": "MIT"
@@ -656,34 +600,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "crypto-common",
-      "version": "0.1.6",
-      "purl": "pkg:cargo/crypto-common@0.1.6",
-      "bom-ref": "pkg:cargo/crypto-common@0.1.6",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/RustCrypto/traits"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -778,9 +694,9 @@
     {
       "type": "library",
       "name": "curve25519-dalek",
-      "version": "4.1.3",
-      "purl": "pkg:cargo/curve25519-dalek@4.1.3",
-      "bom-ref": "pkg:cargo/curve25519-dalek@4.1.3",
+      "version": "5.0.0",
+      "purl": "pkg:cargo/curve25519-dalek@5.0.0",
+      "bom-ref": "pkg:cargo/curve25519-dalek@5.0.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -834,9 +750,9 @@
     {
       "type": "library",
       "name": "der",
-      "version": "0.7.10",
-      "purl": "pkg:cargo/der@0.7.10",
-      "bom-ref": "pkg:cargo/der@0.7.10",
+      "version": "0.8.1",
+      "purl": "pkg:cargo/der@0.8.1",
+      "bom-ref": "pkg:cargo/der@0.8.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -845,41 +761,13 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/RustCrypto/formats/tree/master/der"
+          "url": "https://github.com/RustCrypto/formats"
         }
       ],
       "properties": [
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "digest",
-      "version": "0.10.7",
-      "purl": "pkg:cargo/digest@0.10.7",
-      "bom-ref": "pkg:cargo/digest@0.10.7",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/RustCrypto/traits"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -918,9 +806,9 @@
     {
       "type": "library",
       "name": "ecdsa",
-      "version": "0.16.9",
-      "purl": "pkg:cargo/ecdsa@0.16.9",
-      "bom-ref": "pkg:cargo/ecdsa@0.16.9",
+      "version": "0.17.0",
+      "purl": "pkg:cargo/ecdsa@0.17.0",
+      "bom-ref": "pkg:cargo/ecdsa@0.17.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -929,7 +817,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/RustCrypto/signatures/tree/master/ecdsa"
+          "url": "https://github.com/RustCrypto/signatures"
         }
       ],
       "properties": [
@@ -946,9 +834,9 @@
     {
       "type": "library",
       "name": "elliptic-curve",
-      "version": "0.13.8",
-      "purl": "pkg:cargo/elliptic-curve@0.13.8",
-      "bom-ref": "pkg:cargo/elliptic-curve@0.13.8",
+      "version": "0.14.1",
+      "purl": "pkg:cargo/elliptic-curve@0.14.1",
+      "bom-ref": "pkg:cargo/elliptic-curve@0.14.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -957,7 +845,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/RustCrypto/traits/tree/master/elliptic-curve"
+          "url": "https://github.com/RustCrypto/traits"
         }
       ],
       "properties": [
@@ -974,9 +862,9 @@
     {
       "type": "library",
       "name": "ff",
-      "version": "0.13.1",
-      "purl": "pkg:cargo/ff@0.13.1",
-      "bom-ref": "pkg:cargo/ff@0.13.1",
+      "version": "0.14.0",
+      "purl": "pkg:cargo/ff@0.14.0",
+      "bom-ref": "pkg:cargo/ff@0.14.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -1002,9 +890,9 @@
     {
       "type": "library",
       "name": "fiat-crypto",
-      "version": "0.2.9",
-      "purl": "pkg:cargo/fiat-crypto@0.2.9",
-      "bom-ref": "pkg:cargo/fiat-crypto@0.2.9",
+      "version": "0.3.0",
+      "purl": "pkg:cargo/fiat-crypto@0.3.0",
+      "bom-ref": "pkg:cargo/fiat-crypto@0.3.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -1225,34 +1113,6 @@
     },
     {
       "type": "library",
-      "name": "generic-array",
-      "version": "0.14.9",
-      "purl": "pkg:cargo/generic-array@0.14.9",
-      "bom-ref": "pkg:cargo/generic-array@0.14.9",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/fizyk20/generic-array.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "getrandom",
       "version": "0.2.17",
       "purl": "pkg:cargo/getrandom@0.2.17",
@@ -1338,9 +1198,9 @@
     {
       "type": "library",
       "name": "group",
-      "version": "0.13.0",
-      "purl": "pkg:cargo/group@0.13.0",
-      "bom-ref": "pkg:cargo/group@0.13.0",
+      "version": "0.14.0",
+      "purl": "pkg:cargo/group@0.14.0",
+      "bom-ref": "pkg:cargo/group@0.14.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -1350,34 +1210,6 @@
         {
           "type": "distribution",
           "url": "https://github.com/zkcrypto/group"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "hkdf",
-      "version": "0.12.4",
-      "purl": "pkg:cargo/hkdf@0.12.4",
-      "bom-ref": "pkg:cargo/hkdf@0.12.4",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/RustCrypto/KDFs/"
         }
       ],
       "properties": [
@@ -1406,34 +1238,6 @@
         {
           "type": "distribution",
           "url": "https://github.com/RustCrypto/KDFs/"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "hmac",
-      "version": "0.12.1",
-      "purl": "pkg:cargo/hmac@0.12.1",
-      "bom-ref": "pkg:cargo/hmac@0.12.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/RustCrypto/MACs"
         }
       ],
       "properties": [
@@ -1785,6 +1589,34 @@
     },
     {
       "type": "library",
+      "name": "num-traits",
+      "version": "0.2.19",
+      "purl": "pkg:cargo/num-traits@0.2.19",
+      "bom-ref": "pkg:cargo/num-traits@0.2.19",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rust-num/num-traits"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "once_cell",
       "version": "1.21.4",
       "purl": "pkg:cargo/once_cell@1.21.4",
@@ -1814,9 +1646,9 @@
     {
       "type": "library",
       "name": "p256",
-      "version": "0.13.2",
-      "purl": "pkg:cargo/p256@0.13.2",
-      "bom-ref": "pkg:cargo/p256@0.13.2",
+      "version": "0.14.0",
+      "purl": "pkg:cargo/p256@0.14.0",
+      "bom-ref": "pkg:cargo/p256@0.14.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -1825,7 +1657,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/RustCrypto/elliptic-curves/tree/master/p256"
+          "url": "https://github.com/RustCrypto/elliptic-curves"
         }
       ],
       "properties": [
@@ -1842,9 +1674,9 @@
     {
       "type": "library",
       "name": "pem-rfc7468",
-      "version": "0.7.0",
-      "purl": "pkg:cargo/pem-rfc7468@0.7.0",
-      "bom-ref": "pkg:cargo/pem-rfc7468@0.7.0",
+      "version": "1.0.0",
+      "purl": "pkg:cargo/pem-rfc7468@1.0.0",
+      "bom-ref": "pkg:cargo/pem-rfc7468@1.0.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -1853,7 +1685,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/RustCrypto/formats/tree/master/pem-rfc7468"
+          "url": "https://github.com/RustCrypto/formats"
         }
       ],
       "properties": [
@@ -1926,9 +1758,9 @@
     {
       "type": "library",
       "name": "pkcs8",
-      "version": "0.10.2",
-      "purl": "pkg:cargo/pkcs8@0.10.2",
-      "bom-ref": "pkg:cargo/pkcs8@0.10.2",
+      "version": "0.11.0",
+      "purl": "pkg:cargo/pkcs8@0.11.0",
+      "bom-ref": "pkg:cargo/pkcs8@0.11.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -1937,7 +1769,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/RustCrypto/formats/tree/master/pkcs8"
+          "url": "https://github.com/RustCrypto/formats"
         }
       ],
       "properties": [
@@ -1981,10 +1813,10 @@
     },
     {
       "type": "library",
-      "name": "ppv-lite86",
-      "version": "0.2.21",
-      "purl": "pkg:cargo/ppv-lite86@0.2.21",
-      "bom-ref": "pkg:cargo/ppv-lite86@0.2.21",
+      "name": "primefield",
+      "version": "0.14.0",
+      "purl": "pkg:cargo/primefield@0.14.0",
+      "bom-ref": "pkg:cargo/primefield@0.14.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -1993,13 +1825,13 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/cryptocorrosion/cryptocorrosion"
+          "url": "https://github.com/RustCrypto/elliptic-curves"
         }
       ],
       "properties": [
         {
           "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
+          "value": "Apache-2.0 OR MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -2010,9 +1842,9 @@
     {
       "type": "library",
       "name": "primeorder",
-      "version": "0.13.6",
-      "purl": "pkg:cargo/primeorder@0.13.6",
-      "bom-ref": "pkg:cargo/primeorder@0.13.6",
+      "version": "0.14.0",
+      "purl": "pkg:cargo/primeorder@0.14.0",
+      "bom-ref": "pkg:cargo/primeorder@0.14.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -2021,7 +1853,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/RustCrypto/elliptic-curves/tree/master/primeorder"
+          "url": "https://github.com/RustCrypto/elliptic-curves"
         }
       ],
       "properties": [
@@ -2233,62 +2065,6 @@
     },
     {
       "type": "library",
-      "name": "rand",
-      "version": "0.8.7",
-      "purl": "pkg:cargo/rand@0.8.7",
-      "bom-ref": "pkg:cargo/rand@0.8.7",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/rust-random/rand"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "rand_chacha",
-      "version": "0.3.1",
-      "purl": "pkg:cargo/rand_chacha@0.3.1",
-      "bom-ref": "pkg:cargo/rand_chacha@0.3.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/rust-random/rand"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "rand_core",
       "version": "0.10.1",
       "purl": "pkg:cargo/rand_core@0.10.1",
@@ -2302,34 +2078,6 @@
         {
           "type": "distribution",
           "url": "https://github.com/rust-random/rand_core"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "rand_core",
-      "version": "0.6.4",
-      "purl": "pkg:cargo/rand_core@0.6.4",
-      "bom-ref": "pkg:cargo/rand_core@0.6.4",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/rust-random/rand"
         }
       ],
       "properties": [
@@ -2374,9 +2122,9 @@
     {
       "type": "library",
       "name": "rfc6979",
-      "version": "0.4.0",
-      "purl": "pkg:cargo/rfc6979@0.4.0",
-      "bom-ref": "pkg:cargo/rfc6979@0.4.0",
+      "version": "0.6.0",
+      "purl": "pkg:cargo/rfc6979@0.6.0",
+      "bom-ref": "pkg:cargo/rfc6979@0.6.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -2385,7 +2133,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/RustCrypto/signatures/tree/master/rfc6979"
+          "url": "https://github.com/RustCrypto/signatures"
         }
       ],
       "properties": [
@@ -2598,9 +2346,9 @@
     {
       "type": "library",
       "name": "sec1",
-      "version": "0.7.3",
-      "purl": "pkg:cargo/sec1@0.7.3",
-      "bom-ref": "pkg:cargo/sec1@0.7.3",
+      "version": "0.8.1",
+      "purl": "pkg:cargo/sec1@0.8.1",
+      "bom-ref": "pkg:cargo/sec1@0.8.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -2609,7 +2357,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/RustCrypto/formats/tree/master/sec1"
+          "url": "https://github.com/RustCrypto/formats"
         }
       ],
       "properties": [
@@ -2765,10 +2513,10 @@
     },
     {
       "type": "library",
-      "name": "sha2",
-      "version": "0.10.9",
-      "purl": "pkg:cargo/sha2@0.10.9",
-      "bom-ref": "pkg:cargo/sha2@0.10.9",
+      "name": "serdect",
+      "version": "0.4.3",
+      "purl": "pkg:cargo/serdect@0.4.3",
+      "bom-ref": "pkg:cargo/serdect@0.4.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -2777,13 +2525,13 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/RustCrypto/hashes"
+          "url": "https://github.com/RustCrypto/formats"
         }
       ],
       "properties": [
         {
           "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
+          "value": "Apache-2.0 OR MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -2850,9 +2598,9 @@
     {
       "type": "library",
       "name": "signature",
-      "version": "2.2.0",
-      "purl": "pkg:cargo/signature@2.2.0",
-      "bom-ref": "pkg:cargo/signature@2.2.0",
+      "version": "3.0.0",
+      "purl": "pkg:cargo/signature@3.0.0",
+      "bom-ref": "pkg:cargo/signature@3.0.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -2861,7 +2609,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/RustCrypto/traits/tree/master/signature"
+          "url": "https://github.com/RustCrypto/traits"
         }
       ],
       "properties": [
@@ -2962,9 +2710,9 @@
     {
       "type": "library",
       "name": "spki",
-      "version": "0.7.3",
-      "purl": "pkg:cargo/spki@0.7.3",
-      "bom-ref": "pkg:cargo/spki@0.7.3",
+      "version": "0.8.0",
+      "purl": "pkg:cargo/spki@0.8.0",
+      "bom-ref": "pkg:cargo/spki@0.8.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -2973,7 +2721,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/RustCrypto/formats/tree/master/spki"
+          "url": "https://github.com/RustCrypto/formats"
         }
       ],
       "properties": [
@@ -3577,34 +3325,6 @@
     },
     {
       "type": "library",
-      "name": "version_check",
-      "version": "0.9.5",
-      "purl": "pkg:cargo/version_check@0.9.5",
-      "bom-ref": "pkg:cargo/version_check@0.9.5",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/SergioBenitez/version_check"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "wasi",
       "version": "0.11.1+wasi-snapshot-preview1",
       "purl": "pkg:cargo/wasi@0.11.1+wasi-snapshot-preview1",
@@ -4109,10 +3829,38 @@
     },
     {
       "type": "library",
+      "name": "wnaf",
+      "version": "0.14.0",
+      "purl": "pkg:cargo/wnaf@0.14.0",
+      "bom-ref": "pkg:cargo/wnaf@0.14.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/RustCrypto/elliptic-curves"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "x25519-dalek",
-      "version": "2.0.1",
-      "purl": "pkg:cargo/x25519-dalek@2.0.1",
-      "bom-ref": "pkg:cargo/x25519-dalek@2.0.1",
+      "version": "3.0.0",
+      "purl": "pkg:cargo/x25519-dalek@3.0.0",
+      "bom-ref": "pkg:cargo/x25519-dalek@3.0.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -4128,62 +3876,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "BSD-3-Clause"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "zerocopy",
-      "version": "0.8.56",
-      "purl": "pkg:cargo/zerocopy@0.8.56",
-      "bom-ref": "pkg:cargo/zerocopy@0.8.56",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/google/zerocopy"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-2-Clause OR Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "zerocopy-derive",
-      "version": "0.8.56",
-      "purl": "pkg:cargo/zerocopy-derive@0.8.56",
-      "bom-ref": "pkg:cargo/zerocopy-derive@0.8.56",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/google/zerocopy"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-2-Clause OR Apache-2.0 OR MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -4290,9 +3982,9 @@
         "pkg:cargo/idna@1.1.0",
         "pkg:cargo/idna_adapter@1.1.0",
         "pkg:cargo/idna_mapping@1.0.0",
-        "pkg:cargo/p256@0.13.2",
+        "pkg:cargo/p256@0.14.0",
         "pkg:cargo/quinn@0.11.11",
-        "pkg:cargo/rand@0.8.7",
+        "pkg:cargo/rand@0.10.2",
         "pkg:cargo/ring@0.17.14",
         "pkg:cargo/rustls@0.23.43",
         "pkg:cargo/serde@1.0.229",
@@ -4304,7 +3996,7 @@
         "pkg:cargo/tokio@1.53.1",
         "pkg:cargo/unicode-normalization@0.1.25",
         "pkg:cargo/url@2.5.8",
-        "pkg:cargo/x25519-dalek@2.0.1",
+        "pkg:cargo/x25519-dalek@3.0.0",
         "pkg:cargo/zeroize@1.9.0"
       ]
     },
@@ -4343,7 +4035,11 @@
       ]
     },
     {
-      "ref": "pkg:cargo/base16ct@0.2.0",
+      "ref": "pkg:cargo/autocfg@1.5.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/base16ct@1.0.0",
       "dependsOn": []
     },
     {
@@ -4353,12 +4049,6 @@
     {
       "ref": "pkg:cargo/base64ct@1.8.3",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:cargo/block-buffer@0.10.4",
-      "dependsOn": [
-        "pkg:cargo/generic-array@0.14.9"
-      ]
     },
     {
       "ref": "pkg:cargo/block-buffer@0.12.1",
@@ -4414,18 +4104,8 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/const-oid@0.9.6",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:cargo/cpubits@0.1.1",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:cargo/cpufeatures@0.2.17",
-      "dependsOn": [
-        "pkg:cargo/libc@0.2.189"
-      ]
     },
     {
       "ref": "pkg:cargo/cpufeatures@0.3.0",
@@ -4434,19 +4114,16 @@
       ]
     },
     {
-      "ref": "pkg:cargo/crypto-bigint@0.5.5",
+      "ref": "pkg:cargo/crypto-bigint@0.7.5",
       "dependsOn": [
-        "pkg:cargo/generic-array@0.14.9",
-        "pkg:cargo/rand_core@0.6.4",
+        "pkg:cargo/cpubits@0.1.1",
+        "pkg:cargo/ctutils@0.4.2",
+        "pkg:cargo/getrandom@0.4.3",
+        "pkg:cargo/hybrid-array@0.4.14",
+        "pkg:cargo/num-traits@0.2.19",
+        "pkg:cargo/rand_core@0.10.1",
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/zeroize@1.9.0"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/crypto-common@0.1.6",
-      "dependsOn": [
-        "pkg:cargo/generic-array@0.14.9",
-        "pkg:cargo/typenum@1.20.1"
       ]
     },
     {
@@ -4466,16 +4143,17 @@
     {
       "ref": "pkg:cargo/ctutils@0.4.2",
       "dependsOn": [
-        "pkg:cargo/cmov@0.5.4"
+        "pkg:cargo/cmov@0.5.4",
+        "pkg:cargo/subtle@2.6.1"
       ]
     },
     {
-      "ref": "pkg:cargo/curve25519-dalek@4.1.3",
+      "ref": "pkg:cargo/curve25519-dalek@5.0.0",
       "dependsOn": [
         "pkg:cargo/cfg-if@1.0.4",
-        "pkg:cargo/cpufeatures@0.2.17",
+        "pkg:cargo/cpufeatures@0.3.0",
         "pkg:cargo/curve25519-dalek-derive@0.1.1",
-        "pkg:cargo/fiat-crypto@0.2.9",
+        "pkg:cargo/fiat-crypto@0.3.0",
         "pkg:cargo/rustc_version@0.4.1",
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/zeroize@1.9.0"
@@ -4490,20 +4168,11 @@
       ]
     },
     {
-      "ref": "pkg:cargo/der@0.7.10",
+      "ref": "pkg:cargo/der@0.8.1",
       "dependsOn": [
-        "pkg:cargo/const-oid@0.9.6",
-        "pkg:cargo/pem-rfc7468@0.7.0",
+        "pkg:cargo/const-oid@0.10.2",
+        "pkg:cargo/pem-rfc7468@1.0.0",
         "pkg:cargo/zeroize@1.9.0"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/digest@0.10.7",
-      "dependsOn": [
-        "pkg:cargo/block-buffer@0.10.4",
-        "pkg:cargo/const-oid@0.9.6",
-        "pkg:cargo/crypto-common@0.1.6",
-        "pkg:cargo/subtle@2.6.1"
       ]
     },
     {
@@ -4516,43 +4185,45 @@
       ]
     },
     {
-      "ref": "pkg:cargo/ecdsa@0.16.9",
+      "ref": "pkg:cargo/ecdsa@0.17.0",
       "dependsOn": [
-        "pkg:cargo/der@0.7.10",
-        "pkg:cargo/digest@0.10.7",
-        "pkg:cargo/elliptic-curve@0.13.8",
-        "pkg:cargo/rfc6979@0.4.0",
-        "pkg:cargo/signature@2.2.0",
-        "pkg:cargo/spki@0.7.3"
+        "pkg:cargo/der@0.8.1",
+        "pkg:cargo/digest@0.11.3",
+        "pkg:cargo/elliptic-curve@0.14.1",
+        "pkg:cargo/rfc6979@0.6.0",
+        "pkg:cargo/signature@3.0.0",
+        "pkg:cargo/spki@0.8.0",
+        "pkg:cargo/zeroize@1.9.0"
       ]
     },
     {
-      "ref": "pkg:cargo/elliptic-curve@0.13.8",
+      "ref": "pkg:cargo/elliptic-curve@0.14.1",
       "dependsOn": [
-        "pkg:cargo/base16ct@0.2.0",
-        "pkg:cargo/crypto-bigint@0.5.5",
-        "pkg:cargo/digest@0.10.7",
-        "pkg:cargo/ff@0.13.1",
-        "pkg:cargo/generic-array@0.14.9",
-        "pkg:cargo/group@0.13.0",
-        "pkg:cargo/hkdf@0.12.4",
-        "pkg:cargo/pem-rfc7468@0.7.0",
-        "pkg:cargo/pkcs8@0.10.2",
-        "pkg:cargo/rand_core@0.6.4",
-        "pkg:cargo/sec1@0.7.3",
+        "pkg:cargo/base16ct@1.0.0",
+        "pkg:cargo/crypto-bigint@0.7.5",
+        "pkg:cargo/crypto-common@0.2.2",
+        "pkg:cargo/digest@0.11.3",
+        "pkg:cargo/ff@0.14.0",
+        "pkg:cargo/group@0.14.0",
+        "pkg:cargo/hkdf@0.13.0",
+        "pkg:cargo/hybrid-array@0.4.14",
+        "pkg:cargo/pem-rfc7468@1.0.0",
+        "pkg:cargo/pkcs8@0.11.0",
+        "pkg:cargo/rand_core@0.10.1",
+        "pkg:cargo/sec1@0.8.1",
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/zeroize@1.9.0"
       ]
     },
     {
-      "ref": "pkg:cargo/ff@0.13.1",
+      "ref": "pkg:cargo/ff@0.14.0",
       "dependsOn": [
-        "pkg:cargo/rand_core@0.6.4",
+        "pkg:cargo/rand_core@0.10.1",
         "pkg:cargo/subtle@2.6.1"
       ]
     },
     {
-      "ref": "pkg:cargo/fiat-crypto@0.2.9",
+      "ref": "pkg:cargo/fiat-crypto@0.3.0",
       "dependsOn": []
     },
     {
@@ -4597,14 +4268,6 @@
       ]
     },
     {
-      "ref": "pkg:cargo/generic-array@0.14.9",
-      "dependsOn": [
-        "pkg:cargo/typenum@1.20.1",
-        "pkg:cargo/version_check@0.9.5",
-        "pkg:cargo/zeroize@1.9.0"
-      ]
-    },
-    {
       "ref": "pkg:cargo/getrandom@0.2.17",
       "dependsOn": [
         "pkg:cargo/cfg-if@1.0.4",
@@ -4632,29 +4295,17 @@
       ]
     },
     {
-      "ref": "pkg:cargo/group@0.13.0",
+      "ref": "pkg:cargo/group@0.14.0",
       "dependsOn": [
-        "pkg:cargo/ff@0.13.1",
-        "pkg:cargo/rand_core@0.6.4",
+        "pkg:cargo/ff@0.14.0",
+        "pkg:cargo/rand_core@0.10.1",
         "pkg:cargo/subtle@2.6.1"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/hkdf@0.12.4",
-      "dependsOn": [
-        "pkg:cargo/hmac@0.12.1"
       ]
     },
     {
       "ref": "pkg:cargo/hkdf@0.13.0",
       "dependsOn": [
         "pkg:cargo/hmac@0.13.0"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/hmac@0.12.1",
-      "dependsOn": [
-        "pkg:cargo/digest@0.10.7"
       ]
     },
     {
@@ -4666,7 +4317,9 @@
     {
       "ref": "pkg:cargo/hybrid-array@0.4.14",
       "dependsOn": [
-        "pkg:cargo/typenum@1.20.1"
+        "pkg:cargo/subtle@2.6.1",
+        "pkg:cargo/typenum@1.20.1",
+        "pkg:cargo/zeroize@1.9.0"
       ]
     },
     {
@@ -4730,20 +4383,27 @@
       ]
     },
     {
+      "ref": "pkg:cargo/num-traits@0.2.19",
+      "dependsOn": [
+        "pkg:cargo/autocfg@1.5.1"
+      ]
+    },
+    {
       "ref": "pkg:cargo/once_cell@1.21.4",
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/p256@0.13.2",
+      "ref": "pkg:cargo/p256@0.14.0",
       "dependsOn": [
-        "pkg:cargo/ecdsa@0.16.9",
-        "pkg:cargo/elliptic-curve@0.13.8",
-        "pkg:cargo/primeorder@0.13.6",
-        "pkg:cargo/sha2@0.10.9"
+        "pkg:cargo/ecdsa@0.17.0",
+        "pkg:cargo/elliptic-curve@0.14.1",
+        "pkg:cargo/primefield@0.14.0",
+        "pkg:cargo/primeorder@0.14.0",
+        "pkg:cargo/sha2@0.11.0"
       ]
     },
     {
-      "ref": "pkg:cargo/pem-rfc7468@0.7.0",
+      "ref": "pkg:cargo/pem-rfc7468@1.0.0",
       "dependsOn": [
         "pkg:cargo/base64ct@1.8.3"
       ]
@@ -4757,10 +4417,10 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/pkcs8@0.10.2",
+      "ref": "pkg:cargo/pkcs8@0.11.0",
       "dependsOn": [
-        "pkg:cargo/der@0.7.10",
-        "pkg:cargo/spki@0.7.3"
+        "pkg:cargo/der@0.8.1",
+        "pkg:cargo/spki@0.8.0"
       ]
     },
     {
@@ -4772,15 +4432,24 @@
       ]
     },
     {
-      "ref": "pkg:cargo/ppv-lite86@0.2.21",
+      "ref": "pkg:cargo/primefield@0.14.0",
       "dependsOn": [
-        "pkg:cargo/zerocopy@0.8.56"
+        "pkg:cargo/crypto-bigint@0.7.5",
+        "pkg:cargo/crypto-common@0.2.2",
+        "pkg:cargo/ff@0.14.0",
+        "pkg:cargo/rand_core@0.10.1",
+        "pkg:cargo/subtle@2.6.1",
+        "pkg:cargo/zeroize@1.9.0"
       ]
     },
     {
-      "ref": "pkg:cargo/primeorder@0.13.6",
+      "ref": "pkg:cargo/primeorder@0.14.0",
       "dependsOn": [
-        "pkg:cargo/elliptic-curve@0.13.8"
+        "pkg:cargo/elliptic-curve@0.14.1",
+        "pkg:cargo/once_cell@1.21.4",
+        "pkg:cargo/primefield@0.14.0",
+        "pkg:cargo/serdect@0.4.3",
+        "pkg:cargo/wnaf@0.14.0"
       ]
     },
     {
@@ -4855,29 +4524,8 @@
       ]
     },
     {
-      "ref": "pkg:cargo/rand@0.8.7",
-      "dependsOn": [
-        "pkg:cargo/libc@0.2.189",
-        "pkg:cargo/rand_chacha@0.3.1",
-        "pkg:cargo/rand_core@0.6.4"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/rand_chacha@0.3.1",
-      "dependsOn": [
-        "pkg:cargo/ppv-lite86@0.2.21",
-        "pkg:cargo/rand_core@0.6.4"
-      ]
-    },
-    {
       "ref": "pkg:cargo/rand_core@0.10.1",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:cargo/rand_core@0.6.4",
-      "dependsOn": [
-        "pkg:cargo/getrandom@0.2.17"
-      ]
     },
     {
       "ref": "pkg:cargo/rand_pcg@0.10.2",
@@ -4886,10 +4534,10 @@
       ]
     },
     {
-      "ref": "pkg:cargo/rfc6979@0.4.0",
+      "ref": "pkg:cargo/rfc6979@0.6.0",
       "dependsOn": [
-        "pkg:cargo/hmac@0.12.1",
-        "pkg:cargo/subtle@2.6.1"
+        "pkg:cargo/crypto-bigint@0.7.5",
+        "pkg:cargo/hmac@0.13.0"
       ]
     },
     {
@@ -4944,12 +4592,12 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/sec1@0.7.3",
+      "ref": "pkg:cargo/sec1@0.8.1",
       "dependsOn": [
-        "pkg:cargo/base16ct@0.2.0",
-        "pkg:cargo/der@0.7.10",
-        "pkg:cargo/generic-array@0.14.9",
-        "pkg:cargo/pkcs8@0.10.2",
+        "pkg:cargo/base16ct@1.0.0",
+        "pkg:cargo/ctutils@0.4.2",
+        "pkg:cargo/der@0.8.1",
+        "pkg:cargo/hybrid-array@0.4.14",
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/zeroize@1.9.0"
       ]
@@ -4990,11 +4638,10 @@
       ]
     },
     {
-      "ref": "pkg:cargo/sha2@0.10.9",
+      "ref": "pkg:cargo/serdect@0.4.3",
       "dependsOn": [
-        "pkg:cargo/cfg-if@1.0.4",
-        "pkg:cargo/cpufeatures@0.2.17",
-        "pkg:cargo/digest@0.10.7"
+        "pkg:cargo/base16ct@1.0.0",
+        "pkg:cargo/serde@1.0.229"
       ]
     },
     {
@@ -5010,10 +4657,10 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/signature@2.2.0",
+      "ref": "pkg:cargo/signature@3.0.0",
       "dependsOn": [
-        "pkg:cargo/digest@0.10.7",
-        "pkg:cargo/rand_core@0.6.4"
+        "pkg:cargo/digest@0.11.3",
+        "pkg:cargo/rand_core@0.10.1"
       ]
     },
     {
@@ -5032,10 +4679,10 @@
       ]
     },
     {
-      "ref": "pkg:cargo/spki@0.7.3",
+      "ref": "pkg:cargo/spki@0.8.0",
       "dependsOn": [
         "pkg:cargo/base64ct@1.8.3",
-        "pkg:cargo/der@0.7.10"
+        "pkg:cargo/der@0.8.1"
       ]
     },
     {
@@ -5174,10 +4821,6 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/version_check@0.9.5",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:cargo/wasi@0.11.1+wasi-snapshot-preview1",
       "dependsOn": []
     },
@@ -5283,26 +4926,19 @@
       ]
     },
     {
-      "ref": "pkg:cargo/x25519-dalek@2.0.1",
+      "ref": "pkg:cargo/wnaf@0.14.0",
       "dependsOn": [
-        "pkg:cargo/curve25519-dalek@4.1.3",
-        "pkg:cargo/rand_core@0.6.4",
-        "pkg:cargo/serde@1.0.229",
+        "pkg:cargo/ff@0.14.0",
+        "pkg:cargo/group@0.14.0",
+        "pkg:cargo/hybrid-array@0.4.14"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/x25519-dalek@3.0.0",
+      "dependsOn": [
+        "pkg:cargo/curve25519-dalek@5.0.0",
+        "pkg:cargo/rand_core@0.10.1",
         "pkg:cargo/zeroize@1.9.0"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/zerocopy@0.8.56",
-      "dependsOn": [
-        "pkg:cargo/zerocopy-derive@0.8.56"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/zerocopy-derive@0.8.56",
-      "dependsOn": [
-        "pkg:cargo/proc-macro2@1.0.107",
-        "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@2.0.119"
       ]
     },
     {

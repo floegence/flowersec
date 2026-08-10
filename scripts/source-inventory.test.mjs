@@ -487,8 +487,9 @@ test("source and package graphs preserve real dependency edges and npm runtime c
 
   const npmSpdx = JSON.parse(artifacts.get("flowersec-ts/sbom/spdx.json"));
   const npmCyclone = JSON.parse(artifacts.get("flowersec-ts/sbom/cyclonedx.json"));
+  const npmManifest = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8"));
   assert.equal(npmSpdx.packages[0].name, "@floegence/flowersec-core");
-  assert.equal(npmSpdx.packages[0].versionInfo, "2.0.0");
+  assert.equal(npmSpdx.packages[0].versionInfo, npmManifest.version);
   assert.ok(npmSpdx.relationships.some((edge) => edge.relationshipType === "DEPENDS_ON"));
   assert.equal(npmSpdx.packages.some((pkg) => pkg.name === "typescript"), false);
   assert.equal(npmSpdx.packages.some((pkg) => pkg.name === "vitest"), false);

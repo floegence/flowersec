@@ -539,6 +539,14 @@ test("release workflows pin actions and pass expressions through fields, not she
     dependabot,
     /  - package-ecosystem: cargo\n    directory: \/flowersec-rust\n    schedule:\n      interval: weekly\n    ignore:\n      # Flowersec v2 freezes IDNA behavior to Unicode 15\.1; 1\.1\.0 moves to Unicode 16\.0\.\n      - dependency-name: idna_mapping\n        versions:\n          - ">= 1\.1\.0"/m,
   );
+  assert.match(
+    dependabot,
+    /  - package-ecosystem: npm\n    directory: \/flowersec-ts\n    schedule:\n      interval: weekly\n    ignore:\n      # Flowersec v2 freezes IDNA behavior to Unicode 15\.1; tr46 6 uses newer data\.\n      - dependency-name: tr46\n        versions:\n          - ">= 6\.0\.0"/m,
+  );
+  assert.match(
+    dependabot,
+    /      # idna_adapter 1\.2 uses newer ICU data that accepts post-15\.1 code points\.\n      - dependency-name: idna_adapter\n        versions:\n          - ">= 1\.2\.0"/m,
+  );
 });
 
 test("CodeQL scans every language on changes and does not hide Swift failures", () => {

@@ -1,5 +1,7 @@
-use p256::{PublicKey as P256PublicKey, SecretKey as P256SecretKey, ecdh::diffie_hellman};
-use rand::rngs::OsRng;
+use p256::{
+    PublicKey as P256PublicKey, SecretKey as P256SecretKey, ecdh::diffie_hellman,
+    elliptic_curve::Generate,
+};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519Secret};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -41,9 +43,10 @@ impl std::fmt::Debug for EphemeralPrivateKey {
 pub(crate) fn generate_ephemeral_keypair(
     suite: Suite,
 ) -> Result<(EphemeralPrivateKey, Vec<u8>), CryptoError> {
+    let mut rng = rand::rng();
     match suite {
         Suite::X25519HkdfSha256Aes256Gcm => {
-            let private = X25519Secret::random_from_rng(OsRng);
+            let private = X25519Secret::random_from_rng(&mut rng);
             let public = X25519PublicKey::from(&private);
             Ok((
                 EphemeralPrivateKey::X25519(private),
@@ -51,7 +54,7 @@ pub(crate) fn generate_ephemeral_keypair(
             ))
         }
         Suite::P256HkdfSha256Aes256Gcm => {
-            let private = P256SecretKey::random(&mut OsRng);
+            let private = P256SecretKey::generate_from_rng(&mut rng);
             let public = private.public_key();
             Ok((
                 EphemeralPrivateKey::P256(private),

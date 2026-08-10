@@ -15,7 +15,6 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use hkdf::Hkdf;
 use hmac::{Hmac, KeyInit, Mac};
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 #[cfg(test)]
@@ -1159,7 +1158,7 @@ async fn client_handshake_v2(
     let (private, public) =
         generate_ephemeral_keypair(handshake_suite(config.suite)).map_err(proto)?;
     let mut nonce = [0; 32];
-    rand::rngs::OsRng.fill_bytes(&mut nonce);
+    rand::fill(&mut nonce);
     let preface = control_preface_v2();
     let init = ClientInitWire {
         channel_id: config.channel_id.clone(),
@@ -1251,8 +1250,8 @@ async fn server_handshake_v2(
     let handshake_prk = hkdf_extract_v2(&config.psk, shared.expose());
     let mut nonce = [0; 32];
     let mut handshake_id = [0; 16];
-    rand::rngs::OsRng.fill_bytes(&mut nonce);
-    rand::rngs::OsRng.fill_bytes(&mut handshake_id);
+    rand::fill(&mut nonce);
+    rand::fill(&mut handshake_id);
     let core = ServerCoreWire {
         handshake_id: b64(&handshake_id),
         max_inbound_streams: config.max_inbound_streams,

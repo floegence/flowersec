@@ -190,7 +190,12 @@ require_exact_value(dependabot, {
       },
     },
   }] + [
-    ["npm", "/flowersec-ts"],
+    ["npm", "/flowersec-ts", {
+      "ignore" => [{
+        "dependency-name" => "tr46",
+        "versions" => [">= 6.0.0"],
+      }],
+    }],
     ["gomod", "/flowersec-go", {
       "groups" => {
         "quic-stack" => {
@@ -208,6 +213,9 @@ require_exact_value(dependabot, {
       "ignore" => [{
         "dependency-name" => "idna_mapping",
         "versions" => [">= 1.1.0"],
+      }, {
+        "dependency-name" => "idna_adapter",
+        "versions" => [">= 1.2.0"],
       }],
     }],
     ["cargo", "/flowersec-rust/fuzz"],
