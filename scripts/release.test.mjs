@@ -24,6 +24,7 @@ const releasePolicyFixtureFiles = [
   ".github/workflows/codeql.yml",
   ".github/workflows/release.yml",
   ".github/workflows/rust-release.yml",
+  ".github/workflows/scorecard.yml",
   "docker/flowersec-runtime/Dockerfile",
   "scripts/check-release-version-consistency.mjs",
   "scripts/check-release-version-consistency.test.mjs",
@@ -430,6 +431,8 @@ test("release gates stay wired into local checks and publication workflows", () 
   }
   assert.match(policyScript, /check-release-version-consistency\.mjs/);
   assert.match(ciWorkflow, /^\s+run: scripts\/check-release-workflow-policy\.sh$/m);
+  assert.match(ciWorkflow, /^\s+run: make precommit$/m);
+  assert.match(ciWorkflow, /actions\/dependency-review-action@[0-9a-f]{40} # v5\.0\.0/);
 });
 
 test("default and final Go gates use the maintained source and test runner", () => {
@@ -478,6 +481,7 @@ test("release workflows pin actions and pass expressions through fields, not she
     ".github/workflows/codeql.yml",
     ".github/workflows/release.yml",
     ".github/workflows/rust-release.yml",
+    ".github/workflows/scorecard.yml",
   ].map((file) => ({ file, source: fs.readFileSync(path.join(sourceRoot, file), "utf8") }));
   for (const { file, source } of workflows) {
     for (const match of source.matchAll(/^\s*uses:\s+(\S+)(?:\s+#\s*(\S+))?$/gm)) {
@@ -503,30 +507,48 @@ test("release workflows pin actions and pass expressions through fields, not she
   });
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
   const dependabot = fs.readFileSync(path.join(sourceRoot, ".github/dependabot.yml"), "utf8");
-  assert.match(dependabot, /^\s+- package-ecosystem: github-actions$/m);
-  assert.match(dependabot, /^\s+interval: weekly$/m);
+  for (const [ecosystem, directory] of [
+    ["github-actions", "/"],
+    ["npm", "/flowersec-ts"],
+    ["gomod", "/flowersec-go"],
+    ["gomod", "/tools/idlgen"],
+    ["gomod", "/tools/releasenotes"],
+    ["gomod", "/tools/stabilitycheck"],
+    ["cargo", "/flowersec-rust"],
+    ["cargo", "/flowersec-rust/fuzz"],
+    ["cargo", "/examples/rust"],
+    ["swift", "/"],
+    ["swift", "/examples/swift"],
+  ]) {
+    const escapedDirectory = directory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    assert.match(
+      dependabot,
+      new RegExp(`  - package-ecosystem: ${ecosystem}\\n    directory: ${escapedDirectory}\\n    schedule:\\n      interval: weekly`),
+    );
+  }
+  assert.doesNotMatch(dependabot, /open-pull-requests-limit:|\bgroups:/);
 });
 
-test("CodeQL retains every language with bounded jobs outside ordinary push CI", () => {
+test("CodeQL scans every language on changes and does not hide Swift failures", () => {
   const workflowPath = path.join(sourceRoot, ".github/workflows/codeql.yml");
   assert.equal(fs.existsSync(workflowPath), true, "the bounded CodeQL workflow must exist");
   const workflow = fs.readFileSync(workflowPath, "utf8");
   assert.match(workflow, /^name: codeql$/m);
-  assert.match(workflow, /^on:\n  workflow_dispatch: \{\}\n  schedule:\n    - cron: "17 3 \* \* \*"$/m);
-  assert.doesNotMatch(workflow, /^  (?:push|pull_request):/m);
+  assert.match(workflow, /^on:\n  workflow_dispatch: \{\}\n  push:\n    branches:\n      - main\n  pull_request:\n    branches:\n      - main\n  schedule:\n    - cron: "17 3 \* \* \*"$/m);
   assert.match(workflow, /^  plan:\n    name: Plan scheduled analysis$/m);
   assert.match(workflow, /actions\/workflows\/codeql\.yml\/runs\?branch=main&event=schedule&status=success&per_page=1/);
   assert.match(workflow, /previous_sha=.*workflow_runs\[0\]\.head_sha/);
   assert.match(workflow, /Could not inspect previous CodeQL runs; scanning fail-safe\./);
   assert.match(workflow, /"\$previous_sha" == "\$HEAD_SHA"/);
   assert.match(workflow, /^    needs: plan\n    if: needs\.plan\.outputs\.should_scan == 'true'$/m);
-  assert.match(workflow, /^    continue-on-error: \$\{\{ matrix\.language == 'swift' \}\}$/m);
-  assert.match(workflow, /^    timeout-minutes: 9$/m);
+  assert.doesNotMatch(workflow, /continue-on-error:/);
+  assert.match(workflow, /^    timeout-minutes: 20$/m);
   for (const language of ["actions", "c-cpp", "go", "javascript-typescript", "ruby", "rust", "swift"]) {
     assert.match(workflow, new RegExp("^          - language: " + language + "$", "m"));
   }
   assert.match(workflow, /^          - language: c-cpp\n            build-mode: none$/m);
   assert.match(workflow, /^          - language: rust\n            build-mode: none$/m);
+  assert.match(workflow, /^          - language: swift\n            build-mode: manual\n            runner: macos-15$/m);
   assert.match(workflow, /^        uses: github\/codeql-action\/init@[0-9a-f]{40} # v4$/m);
   assert.match(workflow, /^          languages: \$\{\{ matrix\.language \}\}\n          build-mode: \$\{\{ matrix\.build-mode \}\}\n          queries: security-extended$/m);
   const prepareSwift = workflow.indexOf("      - name: Prepare Swift build cache");

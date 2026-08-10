@@ -22,7 +22,7 @@ const protectedVariables = new Set([
 ]);
 
 const protectedTargets = [
-  "test", "test-resume", "coverage-race", "browser-smoke", "browser-compat", "precommit", "precommit-source",
+  "test", "test-resume", "coverage-race", "browser-smoke", "browser-compat", "precommit", "precommit-source", "precommit-ts",
   "diagnostic", "performance", "security-makefile-check", "security-dependency-check",
   "security-package-check", "release-policy-check", "release-version-check", "release-test",
   "release-check", "check", "final-network-preflight", "final-offline-contracts",
@@ -91,6 +91,12 @@ function verifyGraph(source) {
   exactRecipe(source, "browser-smoke", ["\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-smoke"]);
   exactRecipe(source, "browser-compat", ["\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-compat"]);
   exactRecipe(source, "precommit", ["\t$(MAKE) precommit-source"]);
+  exactRecipe(source, "precommit-ts", [
+    "\t$(MAKE) ts-ensure-deps",
+    "\t$(MAKE) ts-lint",
+    "\t$(MAKE) ts-build",
+    "\t$(MAKE) ts-test-short",
+  ]);
   exactRecipe(source, "diagnostic", ["\t$(FLOWERSEC_TEST_HOST) run --suite diagnostic"]);
   exactRecipe(source, "performance", ["\t$(FLOWERSEC_TEST_HOST) run --suite performance"]);
   exactRecipe(source, "security-makefile-check", ["\tnode scripts/check-security-makefile.mjs Makefile"]);

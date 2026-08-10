@@ -320,6 +320,7 @@ precommit-go:
 precommit-ts:
 	$(MAKE) ts-ensure-deps
 	$(MAKE) ts-lint
+	$(MAKE) ts-build
 	$(MAKE) ts-test-short
 
 precommit-swift:

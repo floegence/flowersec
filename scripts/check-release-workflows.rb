@@ -175,15 +175,28 @@ release_workflow = load_workflow(".github/workflows/release.yml")
 rust_workflow = load_workflow(".github/workflows/rust-release.yml")
 ci_workflow = load_workflow(".github/workflows/ci.yml")
 codeql_workflow = load_workflow(".github/workflows/codeql.yml")
+scorecard_workflow = load_workflow(".github/workflows/scorecard.yml")
 
 require_exact_keys(dependabot, ["version", "updates"], "Dependabot configuration")
 require_exact_value(dependabot, {
   "version" => 2,
-  "updates" => [{
-    "package-ecosystem" => "github-actions",
-    "directory" => "/",
+  "updates" => [
+    ["github-actions", "/"],
+    ["npm", "/flowersec-ts"],
+    ["gomod", "/flowersec-go"],
+    ["gomod", "/tools/idlgen"],
+    ["gomod", "/tools/releasenotes"],
+    ["gomod", "/tools/stabilitycheck"],
+    ["cargo", "/flowersec-rust"],
+    ["cargo", "/flowersec-rust/fuzz"],
+    ["cargo", "/examples/rust"],
+    ["swift", "/"],
+    ["swift", "/examples/swift"],
+  ].map { |ecosystem, directory| {
+    "package-ecosystem" => ecosystem,
+    "directory" => directory,
     "schedule" => { "interval" => "weekly" },
-  }],
+  } },
 }, "Dependabot configuration")
 
 [release_workflow, rust_workflow, ci_workflow, codeql_workflow].each do |workflow|
@@ -196,8 +209,16 @@ require_exact_value(ci_workflow[true], {
 }, "hosted CI triggers")
 require_exact_value(codeql_workflow[true], {
   "workflow_dispatch" => {},
+  "push" => { "branches" => ["main"] },
+  "pull_request" => { "branches" => ["main"] },
   "schedule" => [{ "cron" => "17 3 * * *" }],
 }, "CodeQL triggers")
+require_exact_keys(scorecard_workflow, ["name", true, "permissions", "jobs"], "the Scorecard workflow")
+require_exact_value(scorecard_workflow[true], {
+  "push" => { "branches" => ["main"] },
+  "schedule" => [{ "cron" => "30 1 * * 6" }],
+}, "Scorecard triggers")
+require_exact_value(scorecard_workflow["permissions"], "read-all", "Scorecard workflow permissions")
 require_exact_value(ci_workflow["permissions"], { "contents" => "read" }, "hosted CI permissions")
 require_exact_value(codeql_workflow["permissions"], {
   "actions" => "read",
@@ -235,24 +256,31 @@ release_jobs = require_hash(release_workflow["jobs"], "the unified release workf
 rust_jobs = require_hash(rust_workflow["jobs"], "the Rust recovery workflow jobs")
 ci_jobs = require_hash(ci_workflow["jobs"], "the hosted CI workflow jobs")
 codeql_jobs = require_hash(codeql_workflow["jobs"], "the CodeQL workflow jobs")
+scorecard_jobs = require_hash(scorecard_workflow["jobs"], "the Scorecard workflow jobs")
 require_exact_keys(release_jobs, ["prepare", "rust-publish", "release"], "the unified release workflow jobs")
 require_exact_keys(rust_jobs, ["publish"], "the Rust recovery workflow jobs")
-require_exact_keys(ci_jobs, ["repository"], "the hosted CI workflow jobs")
+require_exact_keys(ci_jobs, ["repository", "precommit", "dependency-review"], "the hosted CI workflow jobs")
 require_exact_keys(codeql_jobs, ["plan", "analyze"], "the CodeQL workflow jobs")
+require_exact_keys(scorecard_jobs, ["analysis"], "the Scorecard workflow jobs")
 
 prepare_job = require_job(release_workflow, "prepare", "the unified release workflow")
 release_job = require_job(release_workflow, "release", "the unified release workflow")
 rust_reuse_job = require_job(release_workflow, "rust-publish", "the unified release workflow")
 rust_publish_job = require_job(rust_workflow, "publish", "the Rust recovery workflow")
 repository_job = require_job(ci_workflow, "repository", "the hosted CI workflow")
+precommit_job = require_job(ci_workflow, "precommit", "the hosted CI workflow")
+dependency_review_job = require_job(ci_workflow, "dependency-review", "the hosted CI workflow")
 codeql_job = require_job(codeql_workflow, "analyze", "the CodeQL workflow")
 codeql_plan_job = require_job(codeql_workflow, "plan", "the CodeQL workflow")
+scorecard_job = require_job(scorecard_workflow, "analysis", "the Scorecard workflow")
 
 require_exact_keys(prepare_job, ["runs-on", "outputs", "steps"], "the unified release workflow prepare job")
 require_exact_keys(release_job, ["needs", "runs-on", "steps"], "the unified release workflow release job")
 require_exact_keys(rust_reuse_job, ["needs", "uses", "with"], "the unified release workflow rust-publish job")
 require_exact_keys(rust_publish_job, ["runs-on", "steps"], "the Rust recovery workflow publish job")
 require_exact_keys(repository_job, ["runs-on", "steps"], "the hosted CI repository job")
+require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI precommit job")
+require_exact_keys(dependency_review_job, ["name", "if", "runs-on", "timeout-minutes", "steps"], "the hosted CI dependency review job")
 require_exact_keys(codeql_plan_job, ["name", "runs-on", "timeout-minutes", "outputs", "steps"], "the CodeQL plan job")
 require_exact_value(codeql_plan_job["name"], "Plan scheduled analysis", "the CodeQL plan job name")
 require_exact_value(codeql_plan_job["runs-on"], "ubuntu-latest", "the CodeQL plan runner")
@@ -260,12 +288,11 @@ require_exact_value(codeql_plan_job["timeout-minutes"], 1, "the CodeQL plan time
 require_exact_value(codeql_plan_job["outputs"], {
   "should_scan" => "${{ steps.changes.outputs.should_scan }}",
 }, "the CodeQL plan outputs")
-require_exact_keys(codeql_job, ["name", "needs", "if", "continue-on-error", "runs-on", "timeout-minutes", "strategy", "steps"], "the CodeQL analyze job")
+require_exact_keys(codeql_job, ["name", "needs", "if", "runs-on", "timeout-minutes", "strategy", "steps"], "the CodeQL analyze job")
 require_exact_value(codeql_job["name"], "Analyze (${{ matrix.language }})", "the CodeQL job name")
 require_exact_value(codeql_job["needs"], "plan", "the CodeQL analyze dependency")
-require_exact_value(codeql_job["continue-on-error"], "${{ matrix.language == 'swift' }}", "the Swift CodeQL failure policy")
 require_exact_value(codeql_job["runs-on"], "${{ matrix.runner }}", "the CodeQL runner selector")
-require_exact_value(codeql_job["timeout-minutes"], 9, "the CodeQL timeout")
+require_exact_value(codeql_job["timeout-minutes"], 20, "the CodeQL timeout")
 require_exact_value(codeql_job["strategy"], {
   "fail-fast" => false,
   "matrix" => { "include" => [
@@ -275,9 +302,17 @@ require_exact_value(codeql_job["strategy"], {
     { "language" => "javascript-typescript", "build-mode" => "none", "runner" => "ubuntu-latest" },
     { "language" => "ruby", "build-mode" => "none", "runner" => "ubuntu-latest" },
     { "language" => "rust", "build-mode" => "none", "runner" => "ubuntu-latest" },
-    { "language" => "swift", "build-mode" => "manual", "runner" => "macos-15-large" },
+    { "language" => "swift", "build-mode" => "manual", "runner" => "macos-15" },
   ] },
 }, "the CodeQL matrix")
+require_exact_keys(scorecard_job, ["name", "runs-on", "timeout-minutes", "permissions", "steps"], "the Scorecard analysis job")
+require_exact_value(scorecard_job["name"], "OpenSSF Scorecard", "the Scorecard job name")
+require_exact_value(scorecard_job["runs-on"], "ubuntu-latest", "the Scorecard runner")
+require_exact_value(scorecard_job["timeout-minutes"], 10, "the Scorecard timeout")
+require_exact_value(scorecard_job["permissions"], {
+  "security-events" => "write",
+  "id-token" => "write",
+}, "the Scorecard job permissions")
 require_exact_value(prepare_job["outputs"], { "version" => "${{ steps.version.outputs.version }}" }, "the prepare job outputs")
 require_exact_value(rust_reuse_job["needs"], "prepare", "the rust-publish job dependency")
 require_exact_value(rust_reuse_job["with"], { "version" => "${{ needs.prepare.outputs.version }}" }, "the rust-publish job inputs")
@@ -289,8 +324,11 @@ require_exact_value(release_job["needs"], "prepare", "the release job dependency
   [rust_reuse_job, "the unified release workflow rust-publish job"],
   [rust_publish_job, "the Rust recovery workflow publish job"],
   [repository_job, "the hosted CI repository job"],
+  [precommit_job, "the hosted CI precommit job"],
   [codeql_plan_job, "the CodeQL plan job"],
+  [scorecard_job, "the Scorecard analysis job"],
 ].each { |job, context| require_unconditional(job, context) }
+require_condition_value(dependency_review_job, "github.event_name == 'pull_request'", "the hosted CI dependency review job")
 require_condition(codeql_job["if"] == "needs.plan.outputs.should_scan == 'true'", "the CodeQL analyze job must use only the approved condition")
 
 require_condition(prepare_job["runs-on"] == "ubuntu-latest", "the unified release workflow prepare job must run on ubuntu-latest")
@@ -301,8 +339,11 @@ require_condition(rust_publish_job["runs-on"] == "ubuntu-latest", "the Rust reco
 release_steps = require_steps(release_job, "the unified release workflow release job")
 rust_steps = require_steps(rust_publish_job, "the Rust recovery workflow publish job")
 ci_steps = require_steps(repository_job, "the hosted CI repository job")
+precommit_steps = require_steps(precommit_job, "the hosted CI precommit job")
+dependency_review_steps = require_steps(dependency_review_job, "the hosted CI dependency review job")
 codeql_steps = require_steps(codeql_job, "the CodeQL analyze job")
 codeql_plan_steps = require_steps(codeql_plan_job, "the CodeQL plan job")
+scorecard_steps = require_steps(scorecard_job, "the Scorecard analysis job")
 prepare_steps = require_steps(prepare_job, "the unified release workflow prepare job")
 
 checkout = { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262", "with" => { "fetch-depth" => 0 } }
@@ -325,6 +366,36 @@ validate_step_contracts(ci_steps, [
   { name: "Check shell syntax", keys: ["name", "run"], run_sha256: "37f031d1ced8b2c2554b688709bc5a7faecfee38d494f87d9f4da00284209b0a" },
   { name: "Check release workflow policy", keys: ["name", "run"], run_sha256: "ca5a81f1c6229ace59783918c84158923cedda3a99d4135a5e95fd812242a47d" },
 ], "the hosted CI repository job")
+validate_step_contracts(precommit_steps, [
+  { name: nil, keys: ["uses", "with"], values: checkout },
+  { name: "Setup Go", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff",
+    "with" => {
+      "go-version-file" => "flowersec-go/go.mod",
+      "cache" => true,
+      "cache-dependency-path" => "flowersec-go/go.sum\ntools/idlgen/go.sum\ntools/releasenotes/go.sum\ntools/stabilitycheck/go.sum\n",
+    },
+  } },
+  { name: "Setup Node", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+    "with" => { "node-version" => "24", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
+  } },
+  { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
+    "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
+    "with" => { "toolchain" => "1.88.0", "components" => "rustfmt,clippy" },
+  } },
+  { name: "Run precommit quality gate", keys: ["name", "run"], values: { "run" => "make precommit" } },
+], "the hosted CI precommit job")
+validate_step_contracts(dependency_review_steps, [
+  { name: nil, keys: ["uses", "with"], values: {
+    "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+    "with" => { "persist-credentials" => false },
+  } },
+  { name: "Review dependency changes", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294",
+    "with" => { "fail-on-severity" => "high", "retry-on-snapshot-warnings" => true },
+  } },
+], "the hosted CI dependency review job")
 validate_step_contracts(codeql_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" } },
   { name: "Prepare Swift build cache", keys: ["name", "if", "run"], values: { "if" => "matrix.language == 'swift'", "run" => "swift package --skip-update --only-use-versions-from-resolved-file resolve\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
@@ -345,6 +416,24 @@ validate_step_contracts(codeql_plan_steps, [
     },
   }, run_sha256: "6a94dacb488f0128af696fe2a8ae43f23b78c31b4132f409ea72cfbc20297ce6" },
 ], "the CodeQL plan job")
+validate_step_contracts(scorecard_steps, [
+  { name: "Checkout repository", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "with" => { "persist-credentials" => false },
+  } },
+  { name: "Run Scorecard analysis", keys: ["name", "uses", "with"], values: {
+    "uses" => "ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc",
+    "with" => { "results_file" => "results.sarif", "results_format" => "sarif", "publish_results" => true },
+  } },
+  { name: "Upload Scorecard artifact", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    "with" => { "name" => "scorecard-results", "path" => "results.sarif", "retention-days" => 5 },
+  } },
+  { name: "Upload Scorecard results", keys: ["name", "uses", "with"], values: {
+    "uses" => "github/codeql-action/upload-sarif@d1ba80a13dd99fba24a470575428917156a28b43",
+    "with" => { "sarif_file" => "results.sarif" },
+  } },
+], "the Scorecard analysis job")
 validate_step_contracts(release_steps, [
   { name: nil, keys: ["uses", "with"], values: release_checkout },
   { name: "Compute version vars", keys: ["name", "id", "env", "run"], values: {

@@ -4,3 +4,53 @@ updates:
     directory: /
     schedule:
       interval: weekly
+
+  - package-ecosystem: npm
+    directory: /flowersec-ts
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /flowersec-go
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /tools/idlgen
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /tools/releasenotes
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /tools/stabilitycheck
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: cargo
+    directory: /flowersec-rust
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: cargo
+    directory: /flowersec-rust/fuzz
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: cargo
+    directory: /examples/rust
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: swift
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: swift
+    directory: /examples/swift
+    schedule:
+      interval: weekly

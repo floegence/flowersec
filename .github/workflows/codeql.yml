@@ -2,6 +2,12 @@ name: codeql
 
 on:
   workflow_dispatch: {}
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
   schedule:
     - cron: "17 3 * * *"
 
@@ -63,11 +69,8 @@ jobs:
     name: Analyze (${{ matrix.language }})
     needs: plan
     if: needs.plan.outputs.should_scan == 'true'
-    continue-on-error: ${{ matrix.language == 'swift' }}
     runs-on: ${{ matrix.runner }}
-    # Swift manual extraction includes a bounded traced compile; keep this
-    # asynchronous security lane below the 10-minute operational stop line.
-    timeout-minutes: 9
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -92,7 +95,7 @@ jobs:
             runner: ubuntu-latest
           - language: swift
             build-mode: manual
-            runner: macos-15-large
+            runner: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 

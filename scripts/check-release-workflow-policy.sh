@@ -9,17 +9,18 @@ release_workflow=.github/workflows/release.yml
 rust_workflow=.github/workflows/rust-release.yml
 ci_workflow=.github/workflows/ci.yml
 codeql_workflow=.github/workflows/codeql.yml
+scorecard_workflow=.github/workflows/scorecard.yml
 
-expected_workflows=$'.github/workflows/ci.yml\n.github/workflows/codeql.yml\n.github/workflows/release.yml\n.github/workflows/rust-release.yml'
+expected_workflows=$'.github/workflows/ci.yml\n.github/workflows/codeql.yml\n.github/workflows/release.yml\n.github/workflows/rust-release.yml\n.github/workflows/scorecard.yml'
 actual_workflows=$(find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) -print | LC_ALL=C sort)
 if [[ "$actual_workflows" != "$expected_workflows" ]]; then
-  echo "the reviewed workflow set changed; expected only ci.yml, codeql.yml, release.yml, and rust-release.yml" >&2
+  echo "the reviewed workflow set changed; expected only ci.yml, codeql.yml, release.yml, rust-release.yml, and scorecard.yml" >&2
   exit 1
 fi
 
 version_checker=scripts/check-release-version-consistency.mjs
 
-for required in Makefile .github/dependabot.yml "$release_workflow" "$rust_workflow" "$ci_workflow" "$codeql_workflow" scripts/release.sh scripts/push-main.sh "$version_checker" scripts/release.test.mjs scripts/check-release-version-consistency.test.mjs scripts/check-container-release-policy.mjs scripts/check-release-workflows.rb scripts/check-security-makefile.mjs scripts/run-final-stage.mjs scripts/run-final-stage.test.mjs scripts/run-precommit-wave.mjs scripts/run-precommit-wave.test.mjs .githooks/pre-push; do
+for required in Makefile .github/dependabot.yml "$release_workflow" "$rust_workflow" "$ci_workflow" "$codeql_workflow" "$scorecard_workflow" scripts/release.sh scripts/push-main.sh "$version_checker" scripts/release.test.mjs scripts/check-release-version-consistency.test.mjs scripts/check-container-release-policy.mjs scripts/check-release-workflows.rb scripts/check-security-makefile.mjs scripts/run-final-stage.mjs scripts/run-final-stage.test.mjs scripts/run-precommit-wave.mjs scripts/run-precommit-wave.test.mjs .githooks/pre-push; do
   if [[ ! -f "$required" ]]; then
     echo "missing release policy file: $required" >&2
     exit 1
