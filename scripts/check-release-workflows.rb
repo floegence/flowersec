@@ -220,11 +220,7 @@ require_exact_value(scorecard_workflow[true], {
 }, "Scorecard triggers")
 require_exact_value(scorecard_workflow["permissions"], "read-all", "Scorecard workflow permissions")
 require_exact_value(ci_workflow["permissions"], { "contents" => "read" }, "hosted CI permissions")
-require_exact_value(codeql_workflow["permissions"], {
-  "actions" => "read",
-  "contents" => "read",
-  "security-events" => "write",
-}, "CodeQL permissions")
+require_exact_value(codeql_workflow["permissions"], { "contents" => "read" }, "CodeQL permissions")
 require_exact_value(release_workflow[true], {
   "push" => { "tags" => ["flowersec-go/v*"] },
   "workflow_dispatch" => { "inputs" => { "version" => {
@@ -233,11 +229,7 @@ require_exact_value(release_workflow[true], {
     "type" => "string",
   } } },
 }, "unified release triggers")
-require_exact_value(release_workflow["permissions"], {
-  "contents" => "write",
-  "packages" => "write",
-  "id-token" => "write",
-}, "unified release permissions")
+require_exact_value(release_workflow["permissions"], { "contents" => "read" }, "unified release permissions")
 require_exact_value(rust_workflow[true], {
   "workflow_call" => { "inputs" => { "version" => {
     "description" => "Rust crate version to publish",
@@ -250,7 +242,7 @@ require_exact_value(rust_workflow[true], {
     "type" => "string",
   } } },
 }, "Rust recovery triggers")
-require_exact_value(rust_workflow["permissions"], { "contents" => "read", "id-token" => "write" }, "Rust recovery permissions")
+require_exact_value(rust_workflow["permissions"], { "contents" => "read" }, "Rust recovery permissions")
 
 release_jobs = require_hash(release_workflow["jobs"], "the unified release workflow jobs")
 rust_jobs = require_hash(rust_workflow["jobs"], "the Rust recovery workflow jobs")
@@ -275,24 +267,39 @@ codeql_plan_job = require_job(codeql_workflow, "plan", "the CodeQL workflow")
 scorecard_job = require_job(scorecard_workflow, "analysis", "the Scorecard workflow")
 
 require_exact_keys(prepare_job, ["runs-on", "outputs", "steps"], "the unified release workflow prepare job")
-require_exact_keys(release_job, ["needs", "runs-on", "steps"], "the unified release workflow release job")
-require_exact_keys(rust_reuse_job, ["needs", "uses", "with"], "the unified release workflow rust-publish job")
-require_exact_keys(rust_publish_job, ["runs-on", "steps"], "the Rust recovery workflow publish job")
+require_exact_keys(release_job, ["needs", "runs-on", "permissions", "steps"], "the unified release workflow release job")
+require_exact_keys(rust_reuse_job, ["needs", "permissions", "uses", "with"], "the unified release workflow rust-publish job")
+require_exact_keys(rust_publish_job, ["runs-on", "permissions", "steps"], "the Rust recovery workflow publish job")
 require_exact_keys(repository_job, ["runs-on", "steps"], "the hosted CI repository job")
 require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI precommit job")
 require_exact_keys(dependency_review_job, ["name", "if", "runs-on", "timeout-minutes", "steps"], "the hosted CI dependency review job")
-require_exact_keys(codeql_plan_job, ["name", "runs-on", "timeout-minutes", "outputs", "steps"], "the CodeQL plan job")
+require_exact_value(precommit_job["name"], "Precommit quality gate", "the hosted CI precommit job name")
+require_exact_value(precommit_job["runs-on"], "macos-26", "the hosted CI precommit runner")
+require_exact_value(precommit_job["timeout-minutes"], 30, "the hosted CI precommit timeout")
+require_exact_value(dependency_review_job["name"], "Dependency review", "the hosted CI dependency review job name")
+require_exact_value(dependency_review_job["runs-on"], "ubuntu-latest", "the hosted CI dependency review runner")
+require_exact_value(dependency_review_job["timeout-minutes"], 5, "the hosted CI dependency review timeout")
+require_exact_keys(codeql_plan_job, ["name", "runs-on", "timeout-minutes", "permissions", "outputs", "steps"], "the CodeQL plan job")
 require_exact_value(codeql_plan_job["name"], "Plan scheduled analysis", "the CodeQL plan job name")
 require_exact_value(codeql_plan_job["runs-on"], "ubuntu-latest", "the CodeQL plan runner")
 require_exact_value(codeql_plan_job["timeout-minutes"], 1, "the CodeQL plan timeout")
+require_exact_value(codeql_plan_job["permissions"], {
+  "actions" => "read",
+  "contents" => "read",
+}, "the CodeQL plan permissions")
 require_exact_value(codeql_plan_job["outputs"], {
   "should_scan" => "${{ steps.changes.outputs.should_scan }}",
 }, "the CodeQL plan outputs")
-require_exact_keys(codeql_job, ["name", "needs", "if", "runs-on", "timeout-minutes", "strategy", "steps"], "the CodeQL analyze job")
+require_exact_keys(codeql_job, ["name", "needs", "if", "runs-on", "timeout-minutes", "permissions", "strategy", "steps"], "the CodeQL analyze job")
 require_exact_value(codeql_job["name"], "Analyze (${{ matrix.language }})", "the CodeQL job name")
 require_exact_value(codeql_job["needs"], "plan", "the CodeQL analyze dependency")
 require_exact_value(codeql_job["runs-on"], "${{ matrix.runner }}", "the CodeQL runner selector")
 require_exact_value(codeql_job["timeout-minutes"], 20, "the CodeQL timeout")
+require_exact_value(codeql_job["permissions"], {
+  "actions" => "read",
+  "contents" => "read",
+  "security-events" => "write",
+}, "the CodeQL analyze permissions")
 require_exact_value(codeql_job["strategy"], {
   "fail-fast" => false,
   "matrix" => { "include" => [
@@ -302,7 +309,7 @@ require_exact_value(codeql_job["strategy"], {
     { "language" => "javascript-typescript", "build-mode" => "none", "runner" => "ubuntu-latest" },
     { "language" => "ruby", "build-mode" => "none", "runner" => "ubuntu-latest" },
     { "language" => "rust", "build-mode" => "none", "runner" => "ubuntu-latest" },
-    { "language" => "swift", "build-mode" => "manual", "runner" => "macos-15" },
+    { "language" => "swift", "build-mode" => "manual", "runner" => "macos-26" },
   ] },
 }, "the CodeQL matrix")
 require_exact_keys(scorecard_job, ["name", "runs-on", "timeout-minutes", "permissions", "steps"], "the Scorecard analysis job")
@@ -315,8 +322,21 @@ require_exact_value(scorecard_job["permissions"], {
 }, "the Scorecard job permissions")
 require_exact_value(prepare_job["outputs"], { "version" => "${{ steps.version.outputs.version }}" }, "the prepare job outputs")
 require_exact_value(rust_reuse_job["needs"], "prepare", "the rust-publish job dependency")
+require_exact_value(rust_reuse_job["permissions"], {
+  "contents" => "read",
+  "id-token" => "write",
+}, "the rust-publish job permissions")
 require_exact_value(rust_reuse_job["with"], { "version" => "${{ needs.prepare.outputs.version }}" }, "the rust-publish job inputs")
 require_exact_value(release_job["needs"], "prepare", "the release job dependency")
+require_exact_value(release_job["permissions"], {
+  "contents" => "write",
+  "packages" => "write",
+  "id-token" => "write",
+}, "the release job permissions")
+require_exact_value(rust_publish_job["permissions"], {
+  "contents" => "read",
+  "id-token" => "write",
+}, "the Rust recovery publish permissions")
 
 [
   [prepare_job, "the unified release workflow prepare job"],

@@ -548,7 +548,7 @@ test("CodeQL scans every language on changes and does not hide Swift failures", 
   }
   assert.match(workflow, /^          - language: c-cpp\n            build-mode: none$/m);
   assert.match(workflow, /^          - language: rust\n            build-mode: none$/m);
-  assert.match(workflow, /^          - language: swift\n            build-mode: manual\n            runner: macos-15$/m);
+  assert.match(workflow, /^          - language: swift\n            build-mode: manual\n            runner: macos-26$/m);
   assert.match(workflow, /^        uses: github\/codeql-action\/init@[0-9a-f]{40} # v4$/m);
   assert.match(workflow, /^          languages: \$\{\{ matrix\.language \}\}\n          build-mode: \$\{\{ matrix\.build-mode \}\}\n          queries: security-extended$/m);
   const prepareSwift = workflow.indexOf("      - name: Prepare Swift build cache");
@@ -628,7 +628,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       const root = createReleasePolicyFixture(t);
       const workflowPath = path.join(root, ".github/workflows/release.yml");
       const workflow = fs.readFileSync(workflowPath, "utf8");
-      const marker = "  release:\n    needs: prepare\n    runs-on: ubuntu-latest\n    steps:\n";
+      const marker = "  release:\n    needs: prepare\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n      packages: write\n      id-token: write\n    steps:\n";
       assert.ok(workflow.includes(marker));
       fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}      - name: Unreviewed command\n        run: ${bypass.run}\n\n`));
       const result = runReleasePolicy(root);
@@ -641,7 +641,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/rust-release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
-    const marker = "  publish:\n    runs-on: ubuntu-latest\n    steps:\n";
+    const marker = "  publish:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      id-token: write\n    steps:\n";
     assert.ok(workflow.includes(marker));
     fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}      - name: Unreviewed cargo publication\n        run: cargo publish\n\n`));
     const result = runReleasePolicy(root);
@@ -653,7 +653,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
-    const marker = "  release:\n    needs: prepare\n    runs-on: ubuntu-latest\n    steps:\n";
+    const marker = "  release:\n    needs: prepare\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n      packages: write\n      id-token: write\n    steps:\n";
     assert.ok(workflow.includes(marker));
     fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}      - name: Unreviewed publisher\n        uses: example/publish-action@v1\n\n`));
     const result = runReleasePolicy(root);

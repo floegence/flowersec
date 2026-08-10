@@ -31,8 +31,24 @@ source /etc/os-release
 [[ ${ID:-} == ubuntu ]] || { echo "missing host capability: Ubuntu 22.04 or later" >&2; exit 1; }
 dpkg --compare-versions "${VERSION_ID:-0}" ge 22.04 || { echo "missing host capability: Ubuntu 22.04 or later" >&2; exit 1; }
 case $(uname -m) in
-  x86_64|amd64) architecture=amd64; go_arch=amd64; node_arch=x64; swiftly_arch=x86_64; ports_suffix= ;;
-  aarch64|arm64) architecture=arm64; go_arch=arm64; node_arch=arm64; swiftly_arch=aarch64; ports_suffix=-ports ;;
+  x86_64|amd64)
+    architecture=amd64
+    go_arch=amd64
+    node_arch=x64
+    rustup_target=x86_64-unknown-linux-gnu
+    rustup_sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c
+    swiftly_arch=x86_64
+    ports_suffix=
+    ;;
+  aarch64|arm64)
+    architecture=arm64
+    go_arch=arm64
+    node_arch=arm64
+    rustup_target=aarch64-unknown-linux-gnu
+    rustup_sha256=e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c
+    swiftly_arch=aarch64
+    ports_suffix=-ports
+    ;;
   *) echo "missing host capability: unsupported architecture $(uname -m)" >&2; exit 1 ;;
 esac
 
@@ -111,8 +127,18 @@ install_node() {
 }
 
 install_rust() {
+  local installer
   if [[ -x $host_home/.cargo/bin/rustc ]] && "$host_home/.cargo/bin/rustc" --version | grep -Eq 'rustc 1\.88\.0([[:space:]]|$)'; then return; fi
-  curl -fsSL --retry 3 https://rsproxy.cn/rustup-init.sh | sh -s -- -y --profile minimal --default-toolchain 1.88.0
+  installer=$(mktemp "$host_tmp/rustup-init.XXXXXX")
+  curl -fL --retry 3 -o "$installer" "https://static.rust-lang.org/rustup/archive/1.28.2/${rustup_target}/rustup-init"
+  if ! printf '%s  %s\n' "$rustup_sha256" "$installer" | sha256sum --check --status; then
+    rm -f -- "$installer"
+    echo "rustup-init checksum mismatch" >&2
+    exit 1
+  fi
+  chmod 0755 "$installer"
+  "$installer" -y --profile minimal --default-toolchain 1.88.0
+  rm -f -- "$installer"
 }
 
 install_swift() {

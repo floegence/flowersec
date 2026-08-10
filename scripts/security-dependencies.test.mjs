@@ -155,6 +155,15 @@ test("security dependency checks stay wired into local gates", () => {
   assert.match(makefile, /^final-offline-contracts:\n\t\$\(MAKE\) security-dependency-check$/m);
 });
 
+test("privileged host bootstrap verifies the pinned rustup installer", () => {
+  const source = fs.readFileSync(path.join(sourceRoot, "scripts/test-host-init.sh"), "utf8");
+  assert.match(source, /rustup\/archive\/1\.28\.2\/\$\{rustup_target\}\/rustup-init/);
+  assert.match(source, /rustup_sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c/);
+  assert.match(source, /rustup_sha256=e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c/);
+  assert.match(source, /sha256sum --check --status/);
+  assert.doesNotMatch(source, /curl[^\n]*\|\s*(?:bash|sh)\b/);
+});
+
 test("module-local Go checks cannot be masked by workspace MVS", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-security-version-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
