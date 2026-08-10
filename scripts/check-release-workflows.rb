@@ -275,7 +275,7 @@ require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "env", 
 require_exact_keys(dependency_review_job, ["name", "if", "runs-on", "timeout-minutes", "steps"], "the hosted CI dependency review job")
 require_exact_value(precommit_job["name"], "Precommit quality gate", "the hosted CI precommit job name")
 require_exact_value(precommit_job["runs-on"], "macos-26", "the hosted CI precommit runner")
-require_exact_value(precommit_job["timeout-minutes"], 30, "the hosted CI precommit timeout")
+require_exact_value(precommit_job["timeout-minutes"], 60, "the hosted CI precommit timeout")
 require_exact_value(precommit_job["env"], {
   "DEVELOPER_DIR" => "/Applications/Xcode_26.4.1.app/Contents/Developer",
 }, "the hosted CI precommit Xcode selection")
