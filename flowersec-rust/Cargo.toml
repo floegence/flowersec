@@ -26,7 +26,7 @@ idna_adapter = { version = "=1.1.0", features = ["compiled_data"] }
 idna_mapping = "=1.0.0"
 p256 = { version = "0.13", features = ["ecdh"] }
 quinn = { version = "=0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
-rand = "0.8"
+rand = "0.10"
 ring = { version = "=0.17.14", default-features = false, features = ["alloc"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1", features = ["derive"] }
