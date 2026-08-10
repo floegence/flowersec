@@ -1,16 +1,13 @@
 # Flowersec for Go
 
-The Go 2.x module exposes Flowersec's carrier-neutral v2 consumer API. Applications parse an opaque artifact, attach a durable single-use spend callback, connect, and use only the returned session, RPC, and byte-stream contracts.
-
-Flowersec 2.3.6 is the published Go module release.
+The Go 2.x module lets services open end-to-end encrypted sessions and use RPC,
+notifications, and reliable byte streams without managing connection details.
 
 ## Install
 
 ```bash
-go get github.com/floegence/flowersec/flowersec-go/v2@v2.3.6
+go get github.com/floegence/flowersec/flowersec-go/v2
 ```
-
-Repository tags for this module use the `flowersec-go/v2.x.y` prefix.
 
 ## Public API
 
@@ -34,7 +31,7 @@ acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
 httpServer.Handler = acceptor.Handler()
 ```
 
-Register inbound RPC and stream handlers before connecting. Stream kinds are valid UTF-8 values from 1 through 255 encoded bytes; `flowersec.rpc.v2` is reserved. A valid connection attempt freezes both registration sets; later registrations return `ErrSessionHandlersFrozen`. `NewStreamMetadata(...)` validates and defensively copies metadata before a stream is opened; `EmptyStreamMetadata()` represents the empty value, and incoming streams expose the same `StreamMetadata` type. `SessionHandlers.Serve` owns the session lifecycle, supplies bounded stream metadata to application handlers, resets then closes the current stream when its `StreamHandler` returns an error, and continues serving unrelated streams. It also resets unhandled or excess streams. The root package deliberately hides candidate data, carrier implementations, Yamux, wire messages, cryptographic state, keys, endpoint identities, logical stream IDs, and spend-ledger internals. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.
+Register inbound RPC and stream handlers before connecting. Stream kinds are valid UTF-8 values from 1 through 255 encoded bytes; `flowersec.rpc.v2` is reserved. A valid connection attempt freezes both registration sets; later registrations return `ErrSessionHandlersFrozen`. `NewStreamMetadata(...)` validates and defensively copies metadata before a stream is opened; `EmptyStreamMetadata()` represents the empty value, and incoming streams expose the same `StreamMetadata` type. `SessionHandlers.Serve` owns the session lifecycle, supplies bounded stream metadata to application handlers, resets then closes the current stream when its `StreamHandler` returns an error, and continues serving unrelated streams. It also resets unhandled or excess streams. Connection selection and cryptographic state remain private to the SDK. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.
 
 The executable `ExampleConnect` compiles the complete consumer lifecycle,
 including an atomically created and synchronized durable spend record. Reusing
@@ -42,24 +39,11 @@ the record key fails closed; the record contains no artifact or key material.
 
 An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default. `ConnectorOptions.Origin` may be empty when the artifact uses WSS or raw QUIC; a non-empty absolute HTTP(S) origin registers WebTransport eligibility, whose secure dial path still requires HTTPS. Go's native TLS paths require explicit non-empty `ConnectorOptions.TrustRoots`; load the system pool with `x509.SystemCertPool()` when platform trust is intended. Trust roots may be omitted only when every artifact candidate is a plaintext WebSocket direct candidate on exact loopback; secure or mixed candidate sets still require them. Invalid connector inputs and options are returned as `ConnectError` values. `Session.WaitTermination(...)` is the sole public termination waiting entrypoint and returns a redacted `SessionTermination` with the stable close reason; cancellation of the wait is returned separately. A long-lived connection uses `NewConnectionController(...)` with a refreshable `ArtifactSource`; every attempt acquires a fresh lease and establishes a new one-shot `Session`. Its structured decisions are `terminal`, `retryable`, or an absolute `retry_after` deadline. `RetryNow` only wakes the current wait, and streams, RPCs, and writes from a terminated session are never migrated or replayed.
 
-## Capability Layers
+## Supported Connections
 
-The portable core is the same application model used by every Flowersec SDK:
-opaque artifact parsing, a durable single-use lease, one-shot connection,
-carrier-neutral sessions, RPC, reliable streams, redacted public errors, and
-the optional `ConnectionController`. The controller is the only Flowersec
-retry scheduler; applications provide a refreshable artifact source and
-authentication recovery without maintaining a second protocol loop.
-
-Portable core, connection control, session/RPC/stream lifecycle, accepted-session
-workflows, and published consumer workflows align across every applicable SDK.
-Platform-limited profiles are unsupported only with an explicit alternative
-boundary and executable test ID in `stability/language_capabilities.json`.
-
-The Go SDK profile supports WebSocket, raw QUIC, and WebTransport production
-dialing. Its language convenience is `SessionHandlers`, which registers inbound
-RPC and stream handlers in a Go-native shape without making handler registration
-part of the portable core.
+The Go SDK supports WebSocket, raw QUIC, and WebTransport connections. It also
+provides `NewAcceptor` for server-side sessions and `SessionHandlers` for
+registering inbound RPC and stream handlers in a Go-native shape.
 
 ## Server Control Plane
 
@@ -67,17 +51,11 @@ Go service control planes use `github.com/floegence/flowersec/flowersec-go/v2/co
 
 See the executable `controlplane.ExampleIssuer_IssueTunnelPair` example for artifact delivery and authorization-record persistence. The package exposes opaque endpoint, issuance, authorization-record, and runtime callback types.
 
-## Transport v2 Support
+## Connection Notes
 
-WebSocket, raw QUIC, and WebTransport are equal carrier candidates. This SDK's production profile supports all three; that profile is separate from the portable application API shared by every SDK.
-
-Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow control, and migration behavior. They use native bidirectional streams without Yamux. WebSocket uses hop-local Yamux internally.
-
-Flowersec disables application 0-RTT. Reliable streams never use QUIC DATAGRAM; runtimes with negotiated native DATAGRAM expose it only through carrier-neutral unreliable messages.
-
-Transport v2 production carrier support: WebSocket, raw QUIC, and WebTransport.
-
-The runtime enables only direct and tunnel carrier tuples backed by production code and end-to-end tests. Runtime capability negotiation and listener implementation details are not part of the application-facing root package.
+Direct and relayed connections return the same `Session`. WebSocket, raw QUIC,
+and WebTransport are selected internally from the invitation. The SDK keeps
+credentials, routing, and transport state out of the application API.
 
 ## Verify
 

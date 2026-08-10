@@ -15,8 +15,8 @@
 </p>
 <!-- readme-locales:end -->
 
-<p align="center"><strong>Build secure app-to-app connections without managing transports.</strong></p>
-<p align="center">Flowersec gives Go, TypeScript, Swift, and Rust the same end-to-end encrypted session model, with RPC, notifications, and byte streams built in.</p>
+<p align="center"><strong>Connect the parts of your app securely, wherever they run.</strong></p>
+<p align="center">Flowersec gives Go, TypeScript, Swift, and Rust one simple API for end-to-end encrypted sessions, RPC, notifications, and byte streams.</p>
 
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
@@ -26,112 +26,106 @@
 
 ## Why Flowersec
 
-- One secure session model across four SDKs, so applications can share the same RPC and data-stream workflows.
-- Use supported network transports without rewriting application code for each one.
-- Keep RPC, notifications, and byte streams on one authenticated end-to-end encrypted connection.
-- Even through a relay, application data stays encrypted; the relay only forwards ciphertext.
+Flowersec is for applications that need a private connection between clients,
+services, and devices without turning transport code into application code.
+
+- **One programming model:** use the same authenticated session API from Go, TypeScript, Swift, or Rust.
+- **The features apps actually use:** make RPC calls, send notifications, and move reliable byte streams over one connection.
+- **Connections that fit the network:** connect directly when possible or pass through a relay when needed, without changing your application protocol.
+- **Private by default:** application data is encrypted end to end. A relay can forward traffic, but it cannot read it.
 
 <!-- readme-section:how-it-works -->
 <a id="how-it-works"></a>
 
 ## How It Works
 
-| Path | Connection shape | Stream transport |
-| --- | --- | --- |
-| Direct | Client connects to an endpoint using a compatible candidate | WebSocket uses hop-local Yamux; QUIC-family carriers use native bidirectional streams |
-| Tunnel | Client and server legs join through independently selected compatible carriers | The tunnel maps encrypted streams between legs without choosing a primary carrier |
+Flowersec keeps the application session separate from the path used to carry it:
 
-Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow control, and migration behavior. Flowersec disables application 0-RTT. Reliable streams never use QUIC DATAGRAM; runtimes with negotiated native DATAGRAM expose it only through carrier-neutral unreliable messages.
+1. Your service creates a short-lived connection invitation and gives it to the client.
+2. The SDK establishes a secure session over an available direct or relayed connection.
+3. Your application uses RPC, notifications, and byte streams through the same session API.
+
+Direct and relayed connections expose the same session to your code. Transport
+selection, credentials, and routing stay inside the SDK and runtime.
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
 
-## Try It Locally
+## Start Building
 
-Run the default acceptance suite:
+Choose the SDK that matches your application:
 
-```bash
-make test
-```
+| SDK | Best fit | Install and API guide |
+| --- | --- | --- |
+| Go | Services, gateways, and control-plane code | [Go SDK](flowersec-go/README.md) |
+| TypeScript | Browser and Node.js applications | [TypeScript SDK](flowersec-ts/README.md) |
+| Swift | macOS and iOS clients | [Swift SDK](flowersec-swift/README.md) |
+| Rust | Tokio services that need native QUIC | [Rust SDK](flowersec-rust/README.md) |
 
-After fixing a failure, use `make test-resume` to continue from the first
-incomplete test until the next failure or `ALL GREEN`. Completed IDs remain
-valid when the source commit changes.
-
-Use `make coverage-race` for the four language coverage lanes and exclusive Go
-race. Use `make browser-smoke` for the three local Chromium topologies and
-`make browser-compat` for explicit Firefox/WebKit capability checks. Privileged
-weak-network and kernel diagnostics use `make diagnostic`; capacity and soak
-use `make performance`.
+The [cookbook index](examples/README.md) contains small, runnable examples for
+each SDK, including direct connections, relays, accepted sessions, and RPC.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
 
-## SDKs and Cookbooks
+## Examples
 
-| Language | Package | Public entry |
-| --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewConnectionController`, `flowersec.NewAcceptor` |
-| TypeScript | `@floegence/flowersec-core` | root, `/browser`, `/node`, and `/proxy` opaque v2 entrypoints |
-| Swift | SwiftPM product `Flowersec` | `Artifact`, `connect`, `Session` |
-| Rust | crate `flowersec` | `Artifact`, `connect`, `Session` |
-
-Go service control planes use the separate `github.com/floegence/flowersec/flowersec-go/v2/controlplane` package to issue opaque artifacts and answer `flowersec-runtime` authorization callbacks.
-
-The [cookbook index](examples/README.md) contains only v2 examples and verification commands.
+Start with the [cookbook index](examples/README.md) for small examples that use
+the same public API as production applications. It covers client connections,
+control-plane invitation issuance, durable single-use handling, and session
+lifecycle.
 
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
 
-## SDK Capabilities
+## What Your App Can Do
 
-These capabilities are grouped by user-facing workflows rather than internal protocol objects. Each SDK profile declares its runtime and platform-specific carrier boundary. A platform limitation may be unsupported only with an explicit reason, alternative public boundary, and executable test ID in `stability/language_capabilities.json`. Control-plane persistence is a service boundary: clients call the authenticated service that uses `flowersec-go/v2/controlplane`; they do not embed a second issuer or datastore. Language-specific conveniences may adapt syntax or orchestration without changing the shared workflows. Recovery behavior is reported through the controller's structured disposition.
+The shared session model is consistent across SDKs; platform support differs
+where a runtime cannot provide a particular connection type.
 
-| Capability | Go | TypeScript | Swift | Rust |
+| App capability | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
-| End-to-end encrypted sessions, RPC, and byte streams | Yes | Yes | Yes | Yes |
+| End-to-end encrypted sessions | Yes | Yes | Yes | Yes |
+| Send RPC calls and notifications | Yes | Yes | Yes | Yes |
+| Receive RPC notifications | No | Yes | No | No |
+| Reliable byte streams | Yes | Yes | Yes | Yes |
 | Long-lived connection recovery | Yes | Yes | Yes | Yes |
-| Unreliable messaging | Yes | Yes | No | Yes |
-| Receiving RPC notifications | No | Yes | No | No |
-| Handling inbound RPC requests | Yes | No | No | No |
-| WebSocket client connections | Yes | Browser and Node.js | macOS and iOS | No |
-| Raw QUIC client connections | Yes | No | No | Yes |
-| WebTransport client connections | Yes | Browser and Node.js | No | No |
-| Server-side session acceptance | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | Unsupported on Apple listener profile | `Acceptor::bind` / `accept_with_handlers` |
-| Control-plane artifact issuance and authorization | `flowersec-go/v2/controlplane` | Unsupported; application-owned service boundary | Unsupported; application-owned service boundary | Unsupported; application-owned service boundary |
+| Unreliable messages when available | Yes | Yes | No | Yes |
+| Browser connections | No | Yes | No | No |
+| Apple client connections | No | No | Yes | No |
+| Native QUIC connections | Yes | No | No | Yes |
+| WebSocket connections | Yes | Yes | Yes | No |
+| WebTransport connections | Yes | Yes | No | No |
+| Server-side session acceptance | Yes | Node.js | No | Yes |
+| Control-plane invitation issuance | Go package | Application-owned | Application-owned | Application-owned |
 
-Only declared carrier tuples are accepted; unsupported tuples fail closed. Each support row is backed by production connector code and an explicit test ID in `stability/language_capabilities.json`; unsupported capabilities include a reason and an alternative boundary. Capability descriptors and carrier selection remain internal.
+See the SDK guides for the exact platform and connection combinations supported
+by each package.
 
 <!-- readme-section:security -->
 <a id="security"></a>
 
 ## Security
 
-- Artifacts are opaque, bounded, single-use handles. Durable spend completes before the first credential byte is sent.
-- QUIC-family carriers require TLS 1.3, exact ALPN, explicit trust roots, and disabled early data.
-- Public errors are redacted and bounded; candidate, wire, key, and ledger details remain internal.
-- Structured controller dispositions authorize only a fresh-artifact attempt; they never reuse credentials or replay work from a terminated session.
-- Session cancellation, deadlines, FIN, reset, liveness, rekey, and cleanup have bounded behavior.
+- Application data is encrypted end to end for both direct and relayed sessions.
+- Connection invitations are opaque, short-lived, and single-use.
+- Credentials are committed before use, so a consumed invitation cannot be replayed.
+- Relays forward encrypted traffic only; they do not terminate application sessions.
+- Invalid or unsupported connection attempts fail closed with bounded public errors.
 
-See the [Transport v2 architecture](docs/TRANSPORT_V2_ARCHITECTURE.md) and [threat model](docs/THREAT_MODEL.md).
+For protocol and threat-model details, read the [API contract](docs/API_CONTRACT.md),
+[transport architecture](docs/TRANSPORT_V2_ARCHITECTURE.md), and
+[threat model](docs/THREAT_MODEL.md).
 
 <!-- readme-section:deploy-and-develop -->
 <a id="deploy-and-develop"></a>
 
-## Deploy and Develop
+## Learn More
 
-The Flowersec runtime owns the production listener implementations for WebSocket, raw QUIC, and WebTransport. Application SDKs receive only opaque artifacts and sessions; runtime CLI tools compose the same connector and acceptor implementations.
+- [API contract](docs/API_CONTRACT.md): the stable application-facing behavior shared by the SDKs.
+- [Error model](docs/ERROR_MODEL.md): public connection, session, and RPC failures.
+- [Transport architecture](docs/TRANSPORT_V2_ARCHITECTURE.md): direct and relayed connection design.
+- [Examples](examples/README.md): runnable SDK usage.
 
-Install repository hooks and run the fast feature gate before integration:
-
-```bash
-make install-hooks
-make precommit
-```
-
-`scripts/push-main.sh` runs the bounded local acceptance suite before pushing
-the exact main SHA. Run the complete engineering check and the explicit
-nightly, diagnostic, and performance workflows for their compatibility,
-privileged, and load-testing scopes; release itself runs no tests.
-
-Flowersec is available under the [MIT License](LICENSE). Release artifacts are published through [GitHub Releases](https://github.com/floegence/flowersec/releases).
+Flowersec is available under the [MIT License](LICENSE). Published packages and
+release notes are available through [GitHub Releases](https://github.com/floegence/flowersec/releases).

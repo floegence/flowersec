@@ -1,13 +1,14 @@
 # Flowersec for TypeScript
 
-`@floegence/flowersec-core` is the ESM-only Flowersec v2 SDK for browsers and Node.js. Its public package surface is limited to the root, `/browser`, `/node`, and `/proxy` entrypoints.
-
-Flowersec 2.3.6 is the published TypeScript SDK release.
+`@floegence/flowersec-core` is the ESM-only Flowersec SDK for browsers and
+Node.js. It gives both runtimes the same encrypted session, RPC, notification,
+and byte-stream API through the root, `/browser`, `/node`, and `/proxy`
+entrypoints.
 
 ## Install
 
 ```bash
-npm install @floegence/flowersec-core@2.3.6
+npm install @floegence/flowersec-core
 ```
 
 ## Public API
@@ -46,25 +47,12 @@ A newly established session replaces `currentSession` atomically. The controller
 
 A negotiated `Session.unreliableMessages` channel sends defensively copied `Uint8Array` values and returns `accepted`, `dropped_expired`, `dropped_budget`, or `dropped_carrier`. `receive(...)` also returns a fresh `Uint8Array`. Invalid payloads, unavailable channels, cancellation, closure, and internal failures remain redacted public operation errors.
 
-## Capability Layers
+## Supported Connections
 
-The portable core is the same application model used by every Flowersec SDK:
-opaque artifact parsing, a durable single-use lease, one-shot connection,
-carrier-neutral sessions, RPC, reliable streams, redacted public errors, and
-the optional single-owner `ConnectionController`. Callers should not compare
-raw TypeScript error-code strings with other SDKs.
-
-Portable core, connection control, session/RPC/stream lifecycle, accepted-session
-workflows, and published consumer workflows align across every applicable SDK.
-Platform-limited profiles are unsupported only with an explicit alternative
-boundary and executable test ID in `stability/language_capabilities.json`.
-
-The TypeScript SDK profile is split by entrypoint: browsers own WebSocket and
-WebTransport dialing, while Node.js owns WebSocket and WebTransport dialing through
-the native `@fails-components/webtransport` adapter. Its language convenience
-includes static generic RPC result typing, notification subscriptions, and
-proxy composition. These conveniences do not expand the
-portable core required from Go, Swift, or Rust.
+Browsers support WebSocket and WebTransport connections. Node.js supports the
+same client connections and can accept server sessions through `/node`.
+The `/proxy` entrypoint adds browser bridges for applications that need to keep
+the session behind a Service Worker or another window.
 
 ## Opaque Boundaries
 
@@ -72,35 +60,29 @@ portable core required from Go, Swift, or Rust.
 
 `ConnectError` and `SessionError` expose only a closed `code`. They do not retain raw causes, credentials, URLs, candidate diagnostics, transport objects, peer details, or internal routing and handshake state.
 
-Candidate lists, runtime capability descriptors, transport factories, admission state, Yamux, wire messages, cryptographic state, keys, and spend-ledger internals are not package exports.
+Connection negotiation and cryptographic state are not package exports.
 
 Admission rejection reasons are server-authorized bounded protocol tokens. Clients validate their wire form without carrying a deployment-specific reason registry; the public error boundary remains closed and redacted.
 
-The proxy entrypoint accepts an opaque `ArtifactLease` or an already connected `Session`. Its public runtime never exposes the selected carrier, a Yamux stream, raw artifact fields, or proxy wire frames. Cross-window bridges require an exact allowed origin and may require a bounded capability nonce; runtime failures are mapped to closed status/code values before reaching Service Worker or Window messages.
+The proxy entrypoint accepts an opaque `ArtifactLease` or an already connected `Session`. Cross-window bridges require an exact allowed origin and may require a bounded capability nonce; runtime failures are mapped to closed status/code values before reaching Service Worker or Window messages.
 
-## Transport v2 Support
+## Connection Notes
 
-WebSocket, raw QUIC, and WebTransport are equal carrier candidates. Browser and Node.js support below describes this SDK's profiles, not the portable API.
-
-Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow control, and migration behavior. The TypeScript SDK support below is narrower than the protocol carrier set.
-
-WebSocket uses Yamux only inside its carrier adapter. Yamux has no independent STOP_SENDING primitive, so that operation is explicitly unavailable rather than emulated with a full stream reset.
-
-Browser applications receive a ready `Session` from `connect(...)`. The browser connector supports WSS, restricted plaintext loopback WebSocket direct connections, and WebTransport. WebTransport uses native HTTP/3 bidirectional streams and does not use Yamux.
+Browser applications receive a ready `Session` from `connect(...)`. The browser
+connector supports WSS, restricted plaintext loopback WebSocket direct
+connections, and WebTransport. WebTransport uses native HTTP/3 streams.
 
 Chromium does not support a WebTransport pooling option; each carrier creates an independent native WebTransport connection.
 
 Cold-connection diagnostics require every independent carrier to meet the declared deadline. A `dial_failed` result remains a test failure and is not hidden by pooling, retry, or timeout relaxation.
 
-Node.js applications receive the same `Session` contract from `connect(...)`. The Node.js connector supports WSS and WebTransport for direct and tunnel artifacts, plus restricted plaintext loopback WebSocket direct connections. It requires an absolute HTTP(S) `origin`; a custom certificate authority can be supplied through `tls.ca`. Invalid origin and TLS options fail as `ConnectError` with `invalid_options` and are terminal to the optional connection controller.
+Node.js applications receive the same `Session` contract from `connect(...)`.
+The Node connector supports WSS, WebTransport, and restricted plaintext
+loopback WebSocket direct connections. It requires an absolute HTTP(S) `origin`;
+custom certificate authorities can be supplied through `tls.ca`.
 
-The Node WebTransport direct listener/server is owned by the Node runtime and the `flowersec-ts-cli` server path. It uses the same native carrier acceptor and session engine as the client connector; it is not a second protocol implementation.
-
-The connectors select an eligible transport from the opaque artifact internally. They do not accept a public transport selector, capability manifest, candidate factory, or admission-reason override. Unsupported artifacts fail closed. The TypeScript package does not expose raw QUIC dialing.
-
-Transport v2 production carrier support: browsers support WebSocket and WebTransport; Node.js supports WebSocket and WebTransport dialing for direct clients and both tunnel roles. Node WebTransport uses the pinned native quiche adapter and is covered by a real admission/session integration test without Playwright.
-
-Flowersec disables application 0-RTT. Reliable streams never use QUIC DATAGRAM; runtimes with negotiated native DATAGRAM expose it only through carrier-neutral unreliable messages.
+The connectors choose an eligible connection path from the invitation. They do
+not expose transport selectors, candidate lists, or raw QUIC to application code.
 
 ## Verify
 

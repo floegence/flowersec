@@ -19,12 +19,9 @@
     "TypeScript",
     "Swift",
     "Rust",
-    "flowersec.ParseArtifact",
-    "flowersec.Connect",
     "examples/README.md",
     "docs/THREAT_MODEL.md",
-    "docs/TRANSPORT_V2_ARCHITECTURE.md",
-    "make precommit"
+    "docs/TRANSPORT_V2_ARCHITECTURE.md"
   ],
   "locales": [
     { "locale": "en-US", "native_name": "English", "file": "README.md" },

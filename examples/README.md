@@ -1,25 +1,17 @@
-# Flowersec v2 Cookbooks
+# Flowersec Cookbooks
 
-Every maintained cookbook uses opaque artifacts and carrier-neutral sessions. Examples cover the public control-plane, endpoint, tunnel, proxy, and session workflows.
+These examples show the public application workflow: create or receive a
+connection invitation, open an encrypted session, and use RPC or byte streams.
+The same session API works for direct connections and relayed connections.
 
-| Language | Cookbook | Runnable evidence |
+| Language | Cookbook | What it demonstrates |
 | --- | --- | --- |
-| Go | [`ExampleConnect`](../flowersec-go/example_client_test.go) and [`controlplane.ExampleIssuer_IssueTunnelPair`](../flowersec-go/controlplane/example_test.go) | Compiles durable consumer connection and control-plane issuance workflows |
-| TypeScript | [examples/ts](ts/README.md) | Syntax-checks a runnable Node.js connector with a durable spend receipt |
-| Swift | [examples/swift](swift/README.md) | Exercises the opaque public connector and session contract |
-| Rust | [examples/rust](rust/README.md) | Exercises the opaque public connector and session contract |
+| Go | [`ExampleConnect`](../flowersec-go/example_client_test.go) and [`controlplane.ExampleIssuer_IssueTunnelPair`](../flowersec-go/controlplane/example_test.go) | Client sessions, durable invitation use, and control-plane issuance |
+| TypeScript | [examples/ts](ts/README.md) | A runnable Node.js connector and long-lived session setup |
+| Swift | [examples/swift](swift/README.md) | The Apple client session contract |
+| Rust | [examples/rust](rust/README.md) | A Tokio client session and native QUIC connection |
 
-## Carrier Contract
-
-WebSocket, raw QUIC, and WebTransport are equal carrier candidates.
-
-Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow control, and migration behavior. They use native bidirectional streams without Yamux; WebSocket keeps Yamux internal to its hop.
-
-Flowersec disables application 0-RTT. Reliable streams never use QUIC DATAGRAM; runtimes with negotiated native DATAGRAM expose it only through carrier-neutral unreliable messages.
-
-Internal runtime descriptors advertise only production tuples proven by connector and end-to-end tests. A cookbook cannot add or broaden a capability claim.
-
-## Verify
+## Run the Examples
 
 From the repository root:
 
@@ -27,4 +19,10 @@ From the repository root:
 make example-check
 ```
 
-The repository-wide `make check` gate includes cookbook verification.
+The examples intentionally use the public SDK surface. They do not require
+application code to know which connection path was selected or how the relay
+forwards encrypted data.
+
+See the [API contract](../docs/API_CONTRACT.md) for shared behavior and the
+[transport architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md) for connection
+details.

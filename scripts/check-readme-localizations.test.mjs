@@ -26,35 +26,32 @@ function createTransportReadmeFixture(t) {
   return root;
 }
 
-test("Transport v2 README contract accepts the exact runtime support matrix", (t) => {
+test("README contract accepts the current user-facing support matrix", (t) => {
   const root = createTransportReadmeFixture(t);
   assert.deepEqual(validateTransportV2Readmes(root), []);
 });
 
-test("Transport v2 README contract rejects missing common semantics", (t) => {
+test("README contract rejects a missing user-facing support description", (t) => {
   const root = createTransportReadmeFixture(t);
   const target = path.join(root, "flowersec-go/README.md");
-  fs.writeFileSync(
-    target,
-    fs.readFileSync(target, "utf8").replace(transportV2CommonReadmeLiterals[0], "QUIC uses a mux."),
-  );
-  assert.match(validateTransportV2Readmes(root).join("\n"), /flowersec-go\/README\.md.*native FIN/);
+  fs.writeFileSync(target, "Supports connections.\n");
+  assert.match(validateTransportV2Readmes(root).join("\n"), /flowersec-go\/README\.md.*user-facing support/);
 });
 
-test("Transport v2 README contract rejects overstated SDK support", (t) => {
+test("README contract rejects overstated SDK support", (t) => {
   const root = createTransportReadmeFixture(t);
   const target = path.join(root, "flowersec-rust/README.md");
   fs.writeFileSync(
     target,
     fs.readFileSync(target, "utf8").replace(
       transportV2ReadmeContracts["flowersec-rust/README.md"],
-      "Transport v2 production carrier support: raw QUIC.",
+      "The native Rust runtime supports every connection type.",
     ),
   );
-  assert.match(validateTransportV2Readmes(root).join("\n"), /flowersec-rust\/README\.md.*production carrier support/);
+  assert.match(validateTransportV2Readmes(root).join("\n"), /flowersec-rust\/README\.md.*user-facing support/);
 });
 
-test("SDK README capability layers describe the final recovery owner", () => {
+test("SDK README descriptions identify the final recovery owner", () => {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   for (const file of ["flowersec-ts/README.md", "flowersec-swift/README.md"]) {
     const content = fs.readFileSync(path.join(repoRoot, file), "utf8");
@@ -69,7 +66,7 @@ test("SDK README capability layers describe the final recovery owner", () => {
 test("README localization contract captures structure and literals", () => {
   const source = [
     "# Flowersec",
-    "Carrier-neutral sessions for four SDKs.",
+    "Encrypted sessions for four SDKs.",
     "## Section",
     "- One",
     "- Two",
@@ -97,7 +94,7 @@ test("README localization contract captures structure and literals", () => {
 });
 
 test("README localization contract detects changed API literals", () => {
-  const source = "# Flowersec\nCarrier-neutral sessions.\n`flowersec.Connect`\n";
+  const source = "# Flowersec\nEncrypted sessions.\n`flowersec.Connect`\n";
   assert.notDeepEqual(
     extractInlineCodeLiterals(source),
     extractInlineCodeLiterals(source.replace("`flowersec.Connect`", "`flowersec.LegacyConnect`")),

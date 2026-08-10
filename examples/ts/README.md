@@ -1,4 +1,4 @@
-# TypeScript Transport v2
+# TypeScript Example
 
 Install the ESM package and use the runtime-specific opaque session connector:
 
@@ -9,9 +9,9 @@ npm install @floegence/flowersec-core
 - Browsers: `connect(...)` from `@floegence/flowersec-core/browser`
 - Node.js: `connect(...)` from `@floegence/flowersec-core/node`
 
-Both connectors consume a durable opaque `ArtifactLease` and return a
-carrier-neutral `Session`. Transport candidates, wire contracts, key
-material, and Yamux are implementation details and are not public APIs.
+Both connectors consume a durable opaque `ArtifactLease` and return the same
+`Session` API. The application does not need to know which connection path was
+selected.
 
 ## Node.js client
 

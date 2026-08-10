@@ -1,15 +1,13 @@
-# Rust Transport v2 Example
+# Rust Example
 
-This package exercises the maintained Rust v2 public surface without exposing
-carrier candidates, credentials, keys, or wire contracts. It provides two
+This package exercises the maintained Rust public surface. It provides two
 workflows:
 
 - parse an application-acquired opaque artifact without exposing its contents;
-- establish a session through the carrier-neutral one-shot `connect(...)` and `Session`.
+- establish a session through the one-shot `connect(...)` and `Session` API.
 
-Transport selection and topology remain internal. Neither command prints a
-carrier, path, candidate, endpoint identity, stream identifier, credential,
-key, wire value, or transport diagnostic.
+The examples keep connection details out of application code. Neither command
+prints credentials or protocol state.
 
 ## Inspect an Opaque Artifact
 
@@ -39,7 +37,7 @@ cargo run --locked --manifest-path examples/rust/Cargo.toml -- \
 The public `connect(...)` function consumes only the opaque artifact lease and its trust and
 deadline options. Before establishing the encrypted session, it invokes the
 `ArtifactLease` callback to synchronize the create-new receipt. A successful
-connection prints only `session=ready` and the carrier-neutral liveness result,
+connection prints only `session=ready` and the session liveness result,
 then closes the session cleanly. Reusing a receipt path fails closed.
 Connection and liveness failures print only their bounded public error code.
 Long-lived applications use `ConnectionController` with a refreshable artifact

@@ -35,7 +35,7 @@ source; this one-shot example never reuses its spend receipt.
 
 ## Runtime Boundaries
 
-Applications receive only opaque artifacts and carrier-neutral sessions, RPC peers, byte streams, and redacted errors. Candidate, carrier, path, endpoint identity, stream identity, admission, wire, key, and Yamux state remain internal.
+Applications receive only opaque artifacts, sessions, RPC peers, byte streams, and redacted errors. Connection selection and cryptographic state remain internal.
 
 ## Troubleshooting
 

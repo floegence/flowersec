@@ -15,114 +15,106 @@
 </p>
 <!-- readme-locales:end -->
 
-<p align="center"><strong>Construye conexiones seguras entre aplicaciones sin gestionar los transportes.</strong></p>
-<p align="center">Flowersec ofrece a Go, TypeScript, Swift y Rust el mismo modelo de sesión cifrada de extremo a extremo, con RPC, notificaciones y flujos de bytes integrados.</p>
+<p align="center"><strong>Conecta de forma segura las partes de tu aplicación, estén donde estén.</strong></p>
+<p align="center">Flowersec ofrece a Go, TypeScript, Swift y Rust una API sencilla para sesiones cifradas de extremo a extremo, RPC, notificaciones y flujos de bytes.</p>
 
-[![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
-[![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
+[![Última versión](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
+[![Licencia](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
 
 ## Por qué Flowersec
 
-- Los cuatro SDK comparten el mismo modelo de sesión segura, por lo que las aplicaciones pueden reutilizar los workflows de RPC y de datos.
-- Usa las conexiones de red compatibles sin reescribir el código de la aplicación para cada variante.
-- RPC, notificaciones y flujos de bytes funcionan en una única conexión autenticada y cifrada de extremo a extremo.
-- Incluso mediante un relay, los datos de la aplicación siguen cifrados; el relay solo reenvía el texto cifrado.
+Flowersec está pensado para aplicaciones que necesitan conexiones privadas entre clientes, servicios y dispositivos sin mezclar la lógica de transporte con el código de negocio.
+
+- **Un solo modelo de programación:** usa la misma API de sesión autenticada en Go, TypeScript, Swift y Rust.
+- **Funciones que las aplicaciones necesitan:** RPC, notificaciones y flujos de bytes fiables en una única conexión.
+- **Conexiones adaptadas a la red:** conecta directamente o mediante un relay sin cambiar el protocolo de la aplicación.
+- **Privacidad por defecto:** los datos se cifran de extremo a extremo. El relay puede reenviarlos, pero no leerlos.
 
 <!-- readme-section:how-it-works -->
 <a id="how-it-works"></a>
 
 ## Cómo funciona
 
-| Ruta | Forma de conexión | Transporte de flujos |
-| --- | --- | --- |
-| Direct | El cliente se conecta a un endpoint mediante un candidato compatible | WebSocket usa Yamux local al salto; los carriers de la familia QUIC usan flujos bidireccionales nativos |
-| Tunnel | Los extremos de cliente y servidor se unen mediante carriers compatibles seleccionados de forma independiente | El Tunnel asocia los flujos cifrados de ambos extremos sin elegir un carrier principal |
+Flowersec separa la sesión de la aplicación de la ruta de red que la transporta:
 
-Raw QUIC y WebTransport conservan el comportamiento nativo de FIN, RESET_STREAM, STOP_SENDING, control de flujo y migración. Flowersec desactiva el 0-RTT de aplicación. Los flujos fiables nunca usan QUIC DATAGRAM; los runtimes que negocian DATAGRAM nativo solo lo exponen mediante mensajes no fiables independientes del carrier.
+1. Tu servicio crea una invitación de conexión de corta duración y se la entrega al cliente.
+2. El SDK establece una sesión segura mediante una conexión directa o con relay disponible.
+3. La aplicación usa RPC, notificaciones y flujos de bytes desde la misma API de sesión.
+
+Las conexiones directas y con relay presentan la misma sesión al código. La selección, las credenciales y el enrutamiento permanecen dentro del SDK y del runtime.
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
 
-## Prueba local
+## Empieza a desarrollar
 
-Ejecuta la suite de aceptación predeterminada:
+Elige el SDK que mejor encaje con tu aplicación:
 
-```bash
-make test
-```
+| SDK | Uso recomendado | Guía de instalación y API |
+| --- | --- | --- |
+| Go | Servicios, gateways y código de plano de control | [Go SDK](flowersec-go/README.md) |
+| TypeScript | Aplicaciones web y Node.js | [TypeScript SDK](flowersec-ts/README.md) |
+| Swift | Clientes macOS e iOS | [Swift SDK](flowersec-swift/README.md) |
+| Rust | Servicios Tokio que necesitan QUIC nativo | [Rust SDK](flowersec-rust/README.md) |
 
-Después de corregir un fallo, usa `make test-resume` para continuar desde la primera prueba incompleta hasta el siguiente fallo o hasta `ALL GREEN`. Los ID completados siguen siendo válidos aunque cambie el commit de origen.
-
-Usa `make coverage-race` para los lanes de cobertura de los cuatro lenguajes y la prueba race exclusiva de Go. Usa `make browser-smoke` para las tres topologías locales de Chromium y `make browser-compat` para comprobar explícitamente las capacidades de Firefox/WebKit. Los diagnósticos privilegiados de red débil y kernel usan `make diagnostic`; las pruebas de capacidad y soak usan `make performance`.
+El [índice de ejemplos](examples/README.md) contiene ejemplos pequeños y ejecutables de conexiones directas, relays, aceptación de sesiones en servidor y RPC.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
 
-## SDK y guías prácticas
+## Ejemplos
 
-| Lenguaje | Paquete | Entrada pública |
-| --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewConnectionController`, `flowersec.NewAcceptor` |
-| TypeScript | `@floegence/flowersec-core` | puntos de entrada opacos v2 en la raíz, `/browser`, `/node` y `/proxy` |
-| Swift | Producto SwiftPM `Flowersec` | `Artifact`, `connect`, `Session` |
-| Rust | crate `flowersec` | `Artifact`, `connect`, `Session` |
-
-Los planos de control de servicios en Go usan el paquete separado `github.com/floegence/flowersec/flowersec-go/v2/controlplane` para emitir artifacts opacos y responder a los callbacks de autorización de `flowersec-runtime`.
-
-El [índice de guías prácticas](examples/README.md) contiene únicamente ejemplos v2 y comandos de verificación.
+Empieza por el [índice de ejemplos](examples/README.md). Usa la misma API pública que una aplicación de producción y cubre conexiones cliente, emisión de invitaciones, uso único duradero y ciclo de vida de sesiones.
 
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
 
-## Capacidades de los SDK
+## Lo que puede hacer tu aplicación
 
-Las capacidades siguientes se agrupan por workflows que los desarrolladores de aplicaciones pueden usar directamente, no por objetos internos del protocolo. Cada perfil de SDK declara su frontera específica de runtime y plataforma. Una limitación de plataforma solo puede figurar como no compatible si `stability/language_capabilities.json` incluye un motivo explícito, una frontera pública alternativa y un ID de prueba ejecutable. La persistencia del control plane es una frontera de servicio: los clientes llaman al servicio autenticado que usa `flowersec-go/v2/controlplane`; no incorporan un segundo emisor ni datastore. Una comodidad específica de un lenguaje adapta la sintaxis o la orquestación a su ecosistema sin cambiar los workflows compartidos. El comportamiento de recuperación de conexiones se describe mediante la disposición estructurada del controlador.
+Los cuatro SDK comparten el mismo modelo de sesión. El soporte varía cuando una plataforma no puede ofrecer un tipo de conexión.
 
-| Capacidad | Go | TypeScript | Swift | Rust |
+| Capacidad de la aplicación | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
-| Sesiones cifradas de extremo a extremo, RPC y flujos de bytes | Sí | Sí | Sí | Sí |
-| Recuperación automática de conexiones persistentes | Sí | Sí | Sí | Sí |
-| Mensajería no fiable | Sí | Sí | No | Sí |
-| Recepción de notificaciones RPC | No | Sí | No | No |
-| Gestión de solicitudes RPC entrantes | Sí | No | No | No |
-| Conexiones cliente WebSocket | Sí | Navegador y Node.js | macOS e iOS | No |
-| Conexiones cliente raw QUIC | Sí | No | No | Sí |
-| Conexiones cliente WebTransport | Sí | Navegador y Node.js | No | No |
-| Aceptación de sesiones en el servidor | `NewAcceptor` | `createAcceptor` / `AcceptedSession` | No compatible con el perfil listener de Apple | `Acceptor::bind` / `accept_with_handlers` |
-| Emisión y autorización de artifacts del control plane | `flowersec-go/v2/controlplane` | No compatible; frontera del servicio de la aplicación | No compatible; frontera del servicio de la aplicación | No compatible; frontera del servicio de la aplicación |
+| Sesiones cifradas de extremo a extremo | Sí | Sí | Sí | Sí |
+| Enviar llamadas RPC y notificaciones | Sí | Sí | Sí | Sí |
+| Recibir notificaciones RPC | No | Sí | No | No |
+| Flujos de bytes fiables | Sí | Sí | Sí | Sí |
+| Recuperación de conexiones duraderas | Sí | Sí | Sí | Sí |
+| Mensajes no fiables cuando estén disponibles | Sí | Sí | No | Sí |
+| Conexiones desde navegador | No | Sí | No | No |
+| Conexiones de clientes Apple | No | No | Sí | No |
+| Conexiones QUIC nativas | Sí | No | No | Sí |
+| Conexiones WebSocket | Sí | Sí | Sí | No |
+| Conexiones WebTransport | Sí | Sí | No | No |
+| Aceptación de sesiones en servidor | Sí | Node.js | No | Sí |
+| Emisión de invitaciones desde el plano de control | Paquete Go | Servicio de la aplicación | Servicio de la aplicación | Servicio de la aplicación |
 
-Solo se aceptan las tuplas de carrier declaradas; las no compatibles se rechazan de forma segura. Cada fila está respaldada por código de connector de producción y un ID de prueba explícito en `stability/language_capabilities.json`. Las capacidades no compatibles incluyen un motivo y una frontera alternativa. Los descriptores de capacidades y la selección del carrier permanecen internos.
+Consulta las guías de cada SDK para ver las combinaciones exactas de plataforma y conexión compatibles.
 
 <!-- readme-section:security -->
 <a id="security"></a>
 
 ## Seguridad
 
-- Los artefactos son handles opacos, acotados y de un solo uso. Su consumo queda registrado de forma duradera antes de enviar el primer byte de credenciales.
-- Los carriers de la familia QUIC exigen TLS 1.3, un ALPN exacto, raíces de confianza explícitas y early data desactivado.
-- Los errores públicos están redactados y acotados; los detalles sobre candidatos, protocolo de red, claves y registros permanecen internos.
-- Las disposiciones estructuradas del controlador solo autorizan un nuevo intento con un artefacto nuevo; nunca reutilizan credenciales ni repiten trabajo de una sesión terminada.
-- La cancelación de sesiones, los plazos, FIN, reset, la detección de actividad, la renovación de claves y la limpieza tienen un comportamiento acotado.
+- Los datos de la aplicación se cifran de extremo a extremo tanto en sesiones directas como con relay.
+- Las invitaciones de conexión son opacas, de corta duración y de un solo uso.
+- Las credenciales se consumen antes de usarse, por lo que una invitación gastada no puede reproducirse.
+- Los relays solo reenvían tráfico cifrado; no terminan las sesiones de la aplicación.
+- Los intentos inválidos o incompatibles fallan de forma segura con errores públicos limitados.
 
-Consulta la [arquitectura de Transport v2](docs/TRANSPORT_V2_ARCHITECTURE.md) y el [modelo de amenazas](docs/THREAT_MODEL.md).
+Para conocer el protocolo y el modelo de amenazas, consulta el [contrato de API](docs/API_CONTRACT.md), la [arquitectura de transporte](docs/TRANSPORT_V2_ARCHITECTURE.md) y el [modelo de amenazas](docs/THREAT_MODEL.md).
 
 <!-- readme-section:deploy-and-develop -->
 <a id="deploy-and-develop"></a>
 
-## Desplegar y desarrollar
+## Más información
 
-El runtime de Flowersec proporciona implementaciones de listeners de producción para WebSocket, raw QUIC y WebTransport. Los SDK de aplicación reciben únicamente artefactos y sesiones opacos; las CLI del runtime componen las mismas implementaciones de connector y acceptor.
+- [Contrato de API](docs/API_CONTRACT.md): comportamiento estable compartido por los SDK.
+- [Modelo de errores](docs/ERROR_MODEL.md): errores públicos de conexión, sesión y RPC.
+- [Arquitectura de transporte](docs/TRANSPORT_V2_ARCHITECTURE.md): diseño de conexiones directas y con relay.
+- [Ejemplos](examples/README.md): uso ejecutable de los SDK.
 
-Instala los hooks del repositorio y ejecuta la validación obligatoria antes de integrar:
-
-```bash
-make install-hooks
-make precommit
-```
-
-`scripts/push-main.sh` ejecuta la suite de aceptación local acotada antes de enviar el SHA exacto de main. La comprobación de ingeniería completa y los workflows explícitos nightly, diagnostic y performance cubren la compatibilidad, los diagnósticos privilegiados y las pruebas de carga; la publicación no ejecuta pruebas.
-
-Flowersec está disponible bajo la [licencia MIT](LICENSE). Los artefactos de cada versión se publican mediante [GitHub Releases](https://github.com/floegence/flowersec/releases).
+Flowersec está disponible bajo la [licencia MIT](LICENSE). Los paquetes publicados y las notas de versión están en [GitHub Releases](https://github.com/floegence/flowersec/releases).
