@@ -37,7 +37,7 @@ tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt-m
 tokio-util = { version = "0.7", features = ["rt"] }
 unicode-normalization = "=0.1.25"
 url = { version = "2", features = ["serde"] }
-x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
+x25519-dalek = { version = "3", features = ["static_secrets", "zeroize"] }
 zeroize = { version = "1", features = ["derive"] }
 subtle = "2"
 
