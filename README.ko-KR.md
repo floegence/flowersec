@@ -15,7 +15,8 @@
 </p>
 <!-- readme-locales:end -->
 
-<p align="center"><strong>Go, TypeScript, Swift, Rust를 위한 캐리어 중립적 종단 간 암호화 세션.</strong></p>
+<p align="center"><strong>전송 방식을 직접 관리하지 않고 안전한 앱 간 연결을 구축하세요.</strong></p>
+<p align="center">Flowersec은 Go, TypeScript, Swift, Rust에 동일한 종단 간 암호화 세션 모델을 제공하며 RPC, 알림, Byte Stream을 기본 지원합니다.</p>
 
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
@@ -25,10 +26,10 @@
 
 ## Flowersec을 선택하는 이유
 
-- 네 가지 SDK에서 하나의 불투명 Artifact 및 세션 계약을 사용합니다.
-- WebSocket, raw QUIC, WebTransport를 동등한 캐리어 후보로 취급합니다.
-- 애플리케이션에 캐리어, wire, key 또는 ledger 객체를 노출하지 않으면서 RPC와 바이트 스트림이 하나의 인증된 세션을 공유합니다.
-- Tunnel relay는 애플리케이션 암호화를 종료하지 않고 암호화된 스트림을 전달합니다.
+- 네 SDK가 동일한 보안 세션 모델을 공유하므로 RPC와 데이터 스트림 워크플로를 재사용할 수 있습니다.
+- 지원되는 네트워크 연결 방식을 사용하며 방식마다 애플리케이션 코드를 다시 작성할 필요가 없습니다.
+- RPC, 알림, Byte Stream을 하나의 인증된 종단 간 암호화 연결에서 처리합니다.
+- Relay를 거쳐도 앱 데이터는 암호화된 상태로 유지되며 Relay는 암호문만 전달합니다.
 
 <!-- readme-section:how-it-works -->
 <a id="how-it-works"></a>

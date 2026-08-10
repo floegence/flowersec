@@ -15,7 +15,8 @@
 </p>
 <!-- readme-locales:end -->
 
-<p align="center"><strong>Carrier-neutrale, Ende-zu-Ende-verschlüsselte Sitzungen für Go, TypeScript, Swift und Rust.</strong></p>
+<p align="center"><strong>Sichere Verbindungen zwischen Anwendungen, ohne Transporte selbst verwalten zu müssen.</strong></p>
+<p align="center">Flowersec bietet Go, TypeScript, Swift und Rust dasselbe Ende-zu-Ende-verschlüsselte Sitzungsmodell mit integrierten RPCs, Benachrichtigungen und Byte-Streams.</p>
 
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
@@ -25,10 +26,10 @@
 
 ## Warum Flowersec
 
-- Ein einheitlicher Vertrag für opake Artifacts und Sitzungen in vier SDKs.
-- WebSocket, raw QUIC und WebTransport sind gleichwertige Carrier-Kandidaten.
-- RPC und Byte-Streams teilen sich eine authentifizierte Sitzung, ohne Carrier-, Wire-, Key- oder Ledger-Objekte für Anwendungen offenzulegen.
-- Tunnel-Relays leiten verschlüsselte Streams weiter, ohne die Anwendungsverschlüsselung zu terminieren.
+- Vier SDKs teilen dasselbe sichere Sitzungsmodell, sodass Anwendungen RPC- und Datenstrom-Workflows wiederverwenden können.
+- Unterstützte Netzwerkverbindungen lassen sich nutzen, ohne den Anwendungscode für jede Variante neu zu schreiben.
+- RPCs, Benachrichtigungen und Byte-Streams laufen über eine authentifizierte Ende-zu-Ende-verschlüsselte Verbindung.
+- Auch über ein Relay bleiben Anwendungsdaten verschlüsselt; das Relay leitet ausschließlich Chiffretext weiter.
 
 <!-- readme-section:how-it-works -->
 <a id="how-it-works"></a>

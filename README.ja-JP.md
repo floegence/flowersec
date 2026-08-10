@@ -15,7 +15,8 @@
 </p>
 <!-- readme-locales:end -->
 
-<p align="center"><strong>Go、TypeScript、Swift、Rust に対応する、Carrier に依存しないエンドツーエンド暗号化セッション。</strong></p>
+<p align="center"><strong>トランスポートを管理せず、安全なアプリ間接続を構築できます。</strong></p>
+<p align="center">Flowersec は Go、TypeScript、Swift、Rust に共通のエンドツーエンド暗号化セッションモデルを提供し、RPC、通知、Byte Stream を組み込みます。</p>
 
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
@@ -25,10 +26,10 @@
 
 ## Flowersec を選ぶ理由
 
-- 4 つの SDK で、単一の不透明な Artifact と Session の契約を共有します。
-- WebSocket、raw QUIC、WebTransport は同等の Carrier 候補です。
-- RPC とバイトストリームは 1 つの認証済み Session を共有し、Carrier、Wire、Key、Ledger オブジェクトをアプリケーションへ公開しません。
-- Tunnel Relay はアプリケーションの暗号化を終端せず、暗号化された Stream を転送します。
+- 4 つの SDK が同じ安全なセッションモデルを共有するため、RPC とデータストリームのワークフローを共通化できます。
+- 対応するネットワーク接続方式を利用でき、方式ごとにアプリケーションコードを書き直す必要がありません。
+- RPC、通知、Byte Stream を 1 つの認証済みエンドツーエンド暗号化接続にまとめます。
+- Relay を経由してもアプリケーションデータは暗号化されたままです。Relay は暗号文を転送するだけです。
 
 <!-- readme-section:how-it-works -->
 <a id="how-it-works"></a>

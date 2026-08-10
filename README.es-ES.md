@@ -15,7 +15,8 @@
 </p>
 <!-- readme-locales:end -->
 
-<p align="center"><strong>Sesiones independientes del carrier y cifradas de extremo a extremo para Go, TypeScript, Swift y Rust.</strong></p>
+<p align="center"><strong>Construye conexiones seguras entre aplicaciones sin gestionar los transportes.</strong></p>
+<p align="center">Flowersec ofrece a Go, TypeScript, Swift y Rust el mismo modelo de sesión cifrada de extremo a extremo, con RPC, notificaciones y flujos de bytes integrados.</p>
 
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
@@ -25,10 +26,10 @@
 
 ## Por qué Flowersec
 
-- Un único artefacto opaco y un contrato de sesión común para los cuatro SDK.
-- WebSocket, raw QUIC y WebTransport son candidatos de carrier equivalentes.
-- RPC y los flujos de bytes comparten una sesión autenticada sin exponer a las aplicaciones objetos del carrier, del protocolo de red, de claves ni del registro.
-- Los relays de Tunnel reenvían flujos cifrados sin descifrar los datos de la aplicación.
+- Los cuatro SDK comparten el mismo modelo de sesión segura, por lo que las aplicaciones pueden reutilizar los workflows de RPC y de datos.
+- Usa las conexiones de red compatibles sin reescribir el código de la aplicación para cada variante.
+- RPC, notificaciones y flujos de bytes funcionan en una única conexión autenticada y cifrada de extremo a extremo.
+- Incluso mediante un relay, los datos de la aplicación siguen cifrados; el relay solo reenvía el texto cifrado.
 
 <!-- readme-section:how-it-works -->
 <a id="how-it-works"></a>

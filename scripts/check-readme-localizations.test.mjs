@@ -36,7 +36,7 @@ test("Transport v2 README contract rejects missing common semantics", (t) => {
   const target = path.join(root, "flowersec-go/README.md");
   fs.writeFileSync(
     target,
-    fs.readFileSync(target, "utf8").replace(transportV2CommonReadmeLiterals[1], "QUIC uses a mux."),
+    fs.readFileSync(target, "utf8").replace(transportV2CommonReadmeLiterals[0], "QUIC uses a mux."),
   );
   assert.match(validateTransportV2Readmes(root).join("\n"), /flowersec-go\/README\.md.*native FIN/);
 });

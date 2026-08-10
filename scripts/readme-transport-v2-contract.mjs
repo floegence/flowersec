@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 export const transportV2CommonReadmeLiterals = Object.freeze([
-  "WebSocket, raw QUIC, and WebTransport are equal carrier candidates.",
   "Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow control, and migration behavior.",
   "Flowersec disables application 0-RTT. Reliable streams never use QUIC DATAGRAM; runtimes with negotiated native DATAGRAM expose it only through carrier-neutral unreliable messages.",
 ]);

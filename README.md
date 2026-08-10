@@ -15,7 +15,8 @@
 </p>
 <!-- readme-locales:end -->
 
-<p align="center"><strong>Carrier-neutral, end-to-end encrypted sessions for Go, TypeScript, Swift, and Rust.</strong></p>
+<p align="center"><strong>Build secure app-to-app connections without managing transports.</strong></p>
+<p align="center">Flowersec gives Go, TypeScript, Swift, and Rust the same end-to-end encrypted session model, with RPC, notifications, and byte streams built in.</p>
 
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
@@ -25,10 +26,10 @@
 
 ## Why Flowersec
 
-- One opaque artifact and session contract across four SDKs.
-- WebSocket, raw QUIC, and WebTransport are equal carrier candidates.
-- RPC and byte streams share one authenticated session without exposing carrier, wire, key, or ledger objects to applications.
-- Tunnel relays forward encrypted streams without terminating application encryption.
+- One secure session model across four SDKs, so applications can share the same RPC and data-stream workflows.
+- Use supported network transports without rewriting application code for each one.
+- Keep RPC, notifications, and byte streams on one authenticated end-to-end encrypted connection.
+- Even through a relay, application data stays encrypted; the relay only forwards ciphertext.
 
 <!-- readme-section:how-it-works -->
 <a id="how-it-works"></a>

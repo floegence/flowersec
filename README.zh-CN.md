@@ -15,7 +15,8 @@
 </p>
 <!-- readme-locales:end -->
 
-<p align="center"><strong>面向 Go、TypeScript、Swift 和 Rust 的 Carrier 中立端到端加密会话。</strong></p>
+<p align="center"><strong>构建安全的应用间连接，无需管理底层传输方式。</strong></p>
+<p align="center">Flowersec 为 Go、TypeScript、Swift 和 Rust 提供统一的端到端加密会话模型，并内置 RPC、通知和字节流。</p>
 
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
@@ -25,10 +26,10 @@
 
 ## 为什么选择 Flowersec
 
-- 四种 SDK 共用一套不透明 Artifact 与 Session 契约。
-- WebSocket、raw QUIC 和 WebTransport 是同等的 Carrier 候选。
-- RPC 与字节流共享一个经过认证的 Session，应用无需接触 Carrier、Wire、Key 或 Ledger 对象。
-- Tunnel 中继只转发加密数据流，不终止应用层加密。
+- 四种 SDK 共用同一套安全会话模型，应用可以复用相同的 RPC 和数据流工作流。
+- 在支持的网络连接方式之间切换，无需为每种方式重写业务代码。
+- RPC、通知和字节流统一运行在一条经过认证的端到端加密连接上。
+- 即使经过中继，业务数据仍保持加密；中继只能转发密文。
 
 <!-- readme-section:how-it-works -->
 <a id="how-it-works"></a>

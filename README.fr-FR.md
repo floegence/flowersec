@@ -15,7 +15,8 @@
 </p>
 <!-- readme-locales:end -->
 
-<p align="center"><strong>Des sessions indépendantes du transport et chiffrées de bout en bout pour Go, TypeScript, Swift et Rust.</strong></p>
+<p align="center"><strong>Créez des connexions sécurisées entre applications sans gérer les transports.</strong></p>
+<p align="center">Flowersec fournit à Go, TypeScript, Swift et Rust un même modèle de session chiffrée de bout en bout, avec RPC, notifications et flux d'octets intégrés.</p>
 
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
@@ -25,10 +26,10 @@
 
 ## Pourquoi Flowersec
 
-- Un contrat unique d'artefact opaque et de session pour les quatre SDK.
-- WebSocket, raw QUIC et WebTransport sont des options de transport de même rang.
-- RPC et les flux d'octets partagent une même session authentifiée sans exposer aux applications les objets de transport, de protocole filaire, de clé ou de journal de consommation.
-- Les relais de tunnel transmettent les flux chiffrés sans mettre fin au chiffrement applicatif.
+- Les quatre SDK partagent le même modèle de session sécurisé, ce qui permet de réutiliser les workflows RPC et de flux de données.
+- Utilisez les connexions réseau prises en charge sans réécrire le code applicatif pour chaque variante.
+- RPC, notifications et flux d'octets restent sur une même connexion authentifiée et chiffrée de bout en bout.
+- Même via un relais, les données applicatives restent chiffrées ; le relais ne fait que transmettre le texte chiffré.
 
 <!-- readme-section:how-it-works -->
 <a id="how-it-works"></a>
