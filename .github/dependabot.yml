@@ -18,6 +18,11 @@ updates:
     directory: /flowersec-go
     schedule:
       interval: weekly
+    groups:
+      quic-stack:
+        patterns:
+          - github.com/quic-go/quic-go
+          - github.com/quic-go/webtransport-go
 
   - package-ecosystem: gomod
     directory: /tools/idlgen

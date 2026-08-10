@@ -8,7 +8,7 @@ use aes_gcm::{
     aead::{Aead, Payload},
 };
 use hkdf::Hkdf;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, Nonce, UnboundKey};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -747,8 +747,8 @@ pub fn compute_setup_mac_v2(
     preface: &SetupPrefaceV2,
 ) -> Result<[u8; 32], ProtocolV2Error> {
     let raw = preface.encode()?;
-    let mut mac =
-        <Hmac<Sha256> as Mac>::new_from_slice(setup_root).map_err(|_| ProtocolV2Error::Crypto)?;
+    let mut mac = <Hmac<Sha256> as HmacKeyInit>::new_from_slice(setup_root)
+        .map_err(|_| ProtocolV2Error::Crypto)?;
     mac.update(&label_with(b"flowersec-v2-setup", &[]));
     mac.update(h3);
     mac.update(&raw[..24]);

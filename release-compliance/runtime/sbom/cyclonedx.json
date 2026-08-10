@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:4304d9cc-57bc-5901-834c-4b792a910912",
+  "serialNumber": "urn:uuid:681404a7-2d5b-5f31-8523-5fe6ac2101ca",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "ed04be96860a13b4c2a53cd400072b7658237118c281fd955adf5f8e39f7678d"
+        "value": "a08e2383bf812d4e9f1e97ae7c2c2c5b3d56f1fbd7b09e4c65efaffe59d71525"
       }
     ]
   },
@@ -162,9 +162,9 @@
     {
       "type": "library",
       "name": "github.com/quic-go/quic-go",
-      "version": "v0.60.0",
-      "purl": "pkg:golang/github.com/quic-go/quic-go@v0.60.0",
-      "bom-ref": "pkg:golang/github.com/quic-go/quic-go@v0.60.0",
+      "version": "v0.61.0",
+      "purl": "pkg:golang/github.com/quic-go/quic-go@v0.61.0",
+      "bom-ref": "pkg:golang/github.com/quic-go/quic-go@v0.61.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -190,9 +190,9 @@
     {
       "type": "library",
       "name": "github.com/quic-go/webtransport-go",
-      "version": "v0.11.1",
-      "purl": "pkg:golang/github.com/quic-go/webtransport-go@v0.11.1",
-      "bom-ref": "pkg:golang/github.com/quic-go/webtransport-go@v0.11.1",
+      "version": "v0.12.0",
+      "purl": "pkg:golang/github.com/quic-go/webtransport-go@v0.12.0",
+      "bom-ref": "pkg:golang/github.com/quic-go/webtransport-go@v0.12.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -218,9 +218,9 @@
     {
       "type": "library",
       "name": "golang.org/x/crypto",
-      "version": "v0.53.0",
-      "purl": "pkg:golang/golang.org/x/crypto@v0.53.0",
-      "bom-ref": "pkg:golang/golang.org/x/crypto@v0.53.0",
+      "version": "v0.54.0",
+      "purl": "pkg:golang/golang.org/x/crypto@v0.54.0",
+      "bom-ref": "pkg:golang/golang.org/x/crypto@v0.54.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -274,9 +274,9 @@
     {
       "type": "library",
       "name": "golang.org/x/sys",
-      "version": "v0.46.0",
-      "purl": "pkg:golang/golang.org/x/sys@v0.46.0",
-      "bom-ref": "pkg:golang/golang.org/x/sys@v0.46.0",
+      "version": "v0.47.0",
+      "purl": "pkg:golang/golang.org/x/sys@v0.47.0",
+      "bom-ref": "pkg:golang/golang.org/x/sys@v0.47.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -302,9 +302,9 @@
     {
       "type": "library",
       "name": "golang.org/x/text",
-      "version": "v0.39.0",
-      "purl": "pkg:golang/golang.org/x/text@v0.39.0",
-      "bom-ref": "pkg:golang/golang.org/x/text@v0.39.0",
+      "version": "v0.40.0",
+      "purl": "pkg:golang/golang.org/x/text@v0.40.0",
+      "bom-ref": "pkg:golang/golang.org/x/text@v0.40.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -334,11 +334,11 @@
       "dependsOn": [
         "pkg:golang/github.com/gorilla/websocket@v1.5.3",
         "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
-        "pkg:golang/github.com/quic-go/quic-go@v0.60.0",
-        "pkg:golang/github.com/quic-go/webtransport-go@v0.11.1",
-        "pkg:golang/golang.org/x/crypto@v0.53.0",
+        "pkg:golang/github.com/quic-go/quic-go@v0.61.0",
+        "pkg:golang/github.com/quic-go/webtransport-go@v0.12.0",
+        "pkg:golang/golang.org/x/crypto@v0.54.0",
         "pkg:golang/golang.org/x/net@v0.56.0",
-        "pkg:golang/golang.org/x/text@v0.39.0"
+        "pkg:golang/golang.org/x/text@v0.40.0"
       ]
     },
     {
@@ -366,40 +366,40 @@
       ]
     },
     {
-      "ref": "pkg:golang/github.com/quic-go/quic-go@v0.60.0",
+      "ref": "pkg:golang/github.com/quic-go/quic-go@v0.61.0",
       "dependsOn": [
         "pkg:golang/github.com/quic-go/qpack@v0.6.0",
-        "pkg:golang/golang.org/x/crypto@v0.53.0",
+        "pkg:golang/golang.org/x/crypto@v0.54.0",
         "pkg:golang/golang.org/x/net@v0.56.0",
-        "pkg:golang/golang.org/x/sys@v0.46.0"
+        "pkg:golang/golang.org/x/sys@v0.47.0"
       ]
     },
     {
-      "ref": "pkg:golang/github.com/quic-go/webtransport-go@v0.11.1",
+      "ref": "pkg:golang/github.com/quic-go/webtransport-go@v0.12.0",
       "dependsOn": [
         "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
-        "pkg:golang/github.com/quic-go/quic-go@v0.60.0"
+        "pkg:golang/github.com/quic-go/quic-go@v0.61.0"
       ]
     },
     {
-      "ref": "pkg:golang/golang.org/x/crypto@v0.53.0",
+      "ref": "pkg:golang/golang.org/x/crypto@v0.54.0",
       "dependsOn": [
-        "pkg:golang/golang.org/x/sys@v0.46.0"
+        "pkg:golang/golang.org/x/sys@v0.47.0"
       ]
     },
     {
       "ref": "pkg:golang/golang.org/x/net@v0.56.0",
       "dependsOn": [
-        "pkg:golang/golang.org/x/sys@v0.46.0",
-        "pkg:golang/golang.org/x/text@v0.39.0"
+        "pkg:golang/golang.org/x/sys@v0.47.0",
+        "pkg:golang/golang.org/x/text@v0.40.0"
       ]
     },
     {
-      "ref": "pkg:golang/golang.org/x/sys@v0.46.0",
+      "ref": "pkg:golang/golang.org/x/sys@v0.47.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:golang/golang.org/x/text@v0.39.0",
+      "ref": "pkg:golang/golang.org/x/text@v0.40.0",
       "dependsOn": []
     }
   ]

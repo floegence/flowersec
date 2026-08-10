@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-swift",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-swift/ed04be96860a13b4c2a53cd400072b7658237118c281fd955adf5f8e39f7678d",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-swift/a08e2383bf812d4e9f1e97ae7c2c2c5b3d56f1fbd7b09e4c65efaffe59d71525",
   "creationInfo": {
     "created": "1970-01-01T00:00:00Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: ed04be96860a13b4c2a53cd400072b7658237118c281fd955adf5f8e39f7678d",
+      "comment": "Flowersec source inventory SHA-256: a08e2383bf812d4e9f1e97ae7c2c2c5b3d56f1fbd7b09e4c65efaffe59d71525",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",

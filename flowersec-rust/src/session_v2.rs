@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use hkdf::Hkdf;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1477,7 +1477,7 @@ fn confirm_v2(prk: &[u8; 32], label: &[u8], transcript: &[u8; 32]) -> io::Result
     let hkdf = Hkdf::<Sha256>::from_prk(prk).map_err(proto)?;
     let mut key = [0; 32];
     hkdf.expand(&info, &mut key).map_err(proto)?;
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&key).map_err(proto)?;
+    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&key).map_err(proto)?;
     mac.update(transcript);
     Ok(mac.finalize().into_bytes().into())
 }

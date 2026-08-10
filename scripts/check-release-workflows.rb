@@ -191,7 +191,16 @@ require_exact_value(dependabot, {
     },
   }] + [
     ["npm", "/flowersec-ts"],
-    ["gomod", "/flowersec-go"],
+    ["gomod", "/flowersec-go", {
+      "groups" => {
+        "quic-stack" => {
+          "patterns" => [
+            "github.com/quic-go/quic-go",
+            "github.com/quic-go/webtransport-go",
+          ],
+        },
+      },
+    }],
     ["gomod", "/tools/idlgen"],
     ["gomod", "/tools/releasenotes"],
     ["gomod", "/tools/stabilitycheck"],
@@ -200,11 +209,14 @@ require_exact_value(dependabot, {
     ["cargo", "/examples/rust"],
     ["swift", "/"],
     ["swift", "/examples/swift"],
-  ].map { |ecosystem, directory| {
+].map { |entry|
+  ecosystem, directory, extra = entry
+  {
     "package-ecosystem" => ecosystem,
     "directory" => directory,
     "schedule" => { "interval" => "weekly" },
-  } },
+  }.merge(extra || {})
+},
 }, "Dependabot configuration")
 
 [release_workflow, rust_workflow, ci_workflow, codeql_workflow].each do |workflow|

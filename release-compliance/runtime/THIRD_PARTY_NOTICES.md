@@ -8,12 +8,12 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - github.com/libp2p/go-buffer-pool v0.0.2 (Declared: MIT; selected: MIT; source: https://github.com/libp2p/go-buffer-pool)
 - github.com/libp2p/go-yamux/v5 v5.1.0 (Declared: MPL-2.0; selected: MPL-2.0; source: https://github.com/libp2p/go-yamux/v5)
 - github.com/quic-go/qpack v0.6.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/qpack)
-- github.com/quic-go/quic-go v0.60.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/quic-go)
-- github.com/quic-go/webtransport-go v0.11.1 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/webtransport-go)
-- golang.org/x/crypto v0.53.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/crypto)
+- github.com/quic-go/quic-go v0.61.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/quic-go)
+- github.com/quic-go/webtransport-go v0.12.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/webtransport-go)
+- golang.org/x/crypto v0.54.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/crypto)
 - golang.org/x/net v0.56.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/net)
-- golang.org/x/sys v0.46.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/sys)
-- golang.org/x/text v0.39.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/text)
+- golang.org/x/sys v0.47.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/sys)
+- golang.org/x/text v0.40.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/text)
 ## Distributed Dependency License Materials
 
 The following dependencies are incorporated into distributed Flowersec files or binaries.
@@ -483,7 +483,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-### github.com/quic-go/quic-go v0.60.0
+### github.com/quic-go/quic-go v0.61.0
 
 #### LICENSE
 
@@ -509,7 +509,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-### github.com/quic-go/webtransport-go v0.11.1
+### github.com/quic-go/webtransport-go v0.12.0
 
 #### LICENSE
 
@@ -521,7 +521,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-### golang.org/x/crypto v0.53.0
+### golang.org/x/crypto v0.54.0
 
 #### LICENSE
 
@@ -635,7 +635,7 @@ infringement, or inducement of patent infringement, then any patent
 rights granted to you under this License for this implementation of Go
 shall terminate as of the date such litigation is filed.
 
-### golang.org/x/sys v0.46.0
+### golang.org/x/sys v0.47.0
 
 #### LICENSE
 
@@ -692,7 +692,7 @@ infringement, or inducement of patent infringement, then any patent
 rights granted to you under this License for this implementation of Go
 shall terminate as of the date such litigation is filed.
 
-### golang.org/x/text v0.39.0
+### golang.org/x/text v0.40.0
 
 #### LICENSE
 

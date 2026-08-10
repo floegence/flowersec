@@ -79,7 +79,7 @@ func newServerQUICConfig(limits quicbase.Limits) (*quic.Config, error) {
 }
 
 type Dialer struct {
-	inner       *wt.Dialer
+	inner       *wt.Transport
 	capacity    uint16
 	ctx         context.Context
 	cancel      context.CancelCauseFunc
@@ -119,7 +119,7 @@ func NewDialer(tlsConfig *tls.Config, limits quicbase.Limits) (*Dialer, error) {
 		capacity: uint16(limits.MaxInboundStreams), ctx: ctx, cancel: cancel,
 		connections: make(map[*quic.Conn]*dialConnection),
 	}
-	dialer.inner = &wt.Dialer{
+	dialer.inner = &wt.Transport{
 		TLSClientConfig: preparedTLS,
 		QUICConfig:      config,
 		DialAddr:        dialer.dialQUIC,

@@ -531,6 +531,10 @@ test("release workflows pin actions and pass expressions through fields, not she
     dependabot,
     /^    groups:\n      codeql-action:\n        patterns:\n          - github\/codeql-action$/m,
   );
+  assert.match(
+    dependabot,
+    /  - package-ecosystem: gomod\n    directory: \/flowersec-go\n    schedule:\n      interval: weekly\n    groups:\n      quic-stack:\n        patterns:\n          - github\.com\/quic-go\/quic-go\n          - github\.com\/quic-go\/webtransport-go/m,
+  );
 });
 
 test("CodeQL scans every language on changes and does not hide Swift failures", () => {
