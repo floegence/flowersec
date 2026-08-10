@@ -3,6 +3,7 @@ package flowersec
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/url"
@@ -111,6 +112,7 @@ type IncomingStream struct {
 type RPCPeer interface {
 	Call(context.Context, uint32, any, any) error
 	Notify(context.Context, uint32, any) error
+	OnNotify(uint32, func(context.Context, json.RawMessage)) func()
 }
 
 // ConnectError is the redacted, stable public connection failure.
@@ -419,6 +421,18 @@ func (peer *opaqueRPCPeer) Notify(ctx context.Context, typeID uint32, request an
 		return &SessionError{code: SessionClosed}
 	}
 	return redactRPCError(peer.inner.Notify(ctx, typeID, request))
+}
+
+// OnNotify registers a handler for peer notifications. The returned function
+// removes only this subscription and is safe to call repeatedly.
+func (peer *opaqueRPCPeer) OnNotify(typeID uint32, handler func(context.Context, json.RawMessage)) func() {
+	if peer == nil || peer.inner == nil || handler == nil {
+		return func() {}
+	}
+	return peer.inner.OnNotify(typeID, func(ctx context.Context, payload []byte) {
+		defer func() { _ = recover() }()
+		handler(ctx, append(json.RawMessage(nil), payload...))
+	})
 }
 
 type opaqueByteStream struct {

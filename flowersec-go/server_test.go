@@ -62,8 +62,9 @@ func TestSessionHandlersDispatchAcceptedStreamMetadata(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Serve() did not stop")
 	}
-	if !stream.closed {
-		t.Fatal("accepted stream was not closed after the handler returned")
+	closed, writeClosed, _ := stream.state()
+	if !writeClosed || closed {
+		t.Fatalf("accepted stream writeClosed=%v closed=%v, want true/false", writeClosed, closed)
 	}
 }
 
@@ -123,6 +124,42 @@ func TestSessionHandlersServeRegisteredRPC(t *testing.T) {
 		if string(payload) != "null" || rpcErr == nil || rpcErr.Code != 500 || rpcErr.Message == nil || *rpcErr.Message != "handler failed" {
 			t.Fatalf("Call(%d) = payload %d bytes, error %#v", typeID, len(payload), rpcErr)
 		}
+	}
+}
+
+func TestPublicRPCPeerAndSessionHandlersExposeNotifications(t *testing.T) {
+	var peer RPCPeer = &opaqueRPCPeer{}
+	unsubscribe := peer.OnNotify(41, func(context.Context, json.RawMessage) {})
+	if unsubscribe == nil {
+		t.Fatal("OnNotify() returned nil unsubscribe function")
+	}
+	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handlers.HandleNotification(41, func(context.Context, json.RawMessage) error { return nil }); err != nil {
+		t.Fatalf("HandleNotification() error = %v", err)
+	}
+}
+
+func TestSessionHandlersNotificationRegistrationIsBoundedAndFrozen(t *testing.T) {
+	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := func(context.Context, json.RawMessage) error { return errors.New("application notification failure") }
+	if err := handlers.HandleNotification(42, handler); err != nil {
+		t.Fatalf("HandleNotification() error = %v", err)
+	}
+	if err := handlers.HandleNotification(42, handler); !errors.Is(err, ErrHandlerAlreadyExists) {
+		t.Fatalf("duplicate HandleNotification() error = %v", err)
+	}
+	if err := handlers.HandleRPC(42, func(context.Context, json.RawMessage) (any, *RPCError) { return nil, nil }); !errors.Is(err, ErrHandlerAlreadyExists) {
+		t.Fatalf("notification/RPC collision error = %v", err)
+	}
+	handlers.freeze()
+	if err := handlers.HandleNotification(43, handler); !errors.Is(err, ErrSessionHandlersFrozen) {
+		t.Fatalf("late HandleNotification() error = %v", err)
 	}
 }
 
@@ -263,8 +300,9 @@ func TestSessionHandlersResetStreamWhenConcurrencyIsExhausted(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("overload was not reported")
 	}
-	if !second.reset || !second.closed {
-		t.Fatalf("excess stream reset=%v closed=%v", second.reset, second.closed)
+	closed, _, reset := second.state()
+	if !reset || !closed {
+		t.Fatalf("excess stream reset=%v closed=%v", reset, closed)
 	}
 	close(release)
 	cancel()
@@ -304,11 +342,16 @@ func TestSessionHandlersResetOnlyFailedStreamAndContinueServing(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- handlers.Serve(ctx, session) }()
 	session.incoming <- IncomingStream{Kind: "work", Metadata: EmptyStreamMetadata(), Stream: failed}
-	for deadline := time.Now().Add(time.Second); !failed.closed && time.Now().Before(deadline); {
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		closed, _, _ := failed.state()
+		if closed {
+			break
+		}
 		time.Sleep(time.Millisecond)
 	}
-	if !failed.reset || !failed.closed {
-		t.Fatalf("failed stream reset=%v closed=%v, want both true", failed.reset, failed.closed)
+	failedClosed, _, failedReset := failed.state()
+	if !failedReset || !failedClosed {
+		t.Fatalf("failed stream reset=%v closed=%v, want both true", failedReset, failedClosed)
 	}
 
 	session.incoming <- IncomingStream{Kind: "work", Metadata: EmptyStreamMetadata(), Stream: succeeded}
@@ -317,11 +360,16 @@ func TestSessionHandlersResetOnlyFailedStreamAndContinueServing(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("accept loop did not continue after handler failure")
 	}
-	for deadline := time.Now().Add(time.Second); !succeeded.closed && time.Now().Before(deadline); {
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		_, writeClosed, _ := succeeded.state()
+		if writeClosed {
+			break
+		}
 		time.Sleep(time.Millisecond)
 	}
-	if succeeded.reset || !succeeded.closed {
-		t.Fatalf("successful stream reset=%v closed=%v, want false/true", succeeded.reset, succeeded.closed)
+	succeededClosed, succeededWriteClosed, succeededReset := succeeded.state()
+	if succeededReset || succeededClosed || !succeededWriteClosed {
+		t.Fatalf("successful stream reset=%v closed=%v writeClosed=%v, want false/false/true", succeededReset, succeededClosed, succeededWriteClosed)
 	}
 	cancel()
 	select {
@@ -385,16 +433,38 @@ func (session *serverTestSession) Close() error {
 
 type serverTestStream struct {
 	*bytes.Reader
-	closed bool
-	reset  bool
+	mu          sync.Mutex
+	closed      bool
+	writeClosed bool
+	reset       bool
 }
 
 func (stream *serverTestStream) Write(payload []byte) (int, error) { return len(payload), nil }
-func (stream *serverTestStream) Close() error                      { stream.closed = true; return nil }
-func (*serverTestStream) Kind() string                             { return "files/read" }
-func (*serverTestStream) TerminalError() *SessionError             { return nil }
-func (*serverTestStream) CloseWrite() error                        { return nil }
-func (stream *serverTestStream) Reset() error                      { stream.reset = true; return nil }
+func (stream *serverTestStream) Close() error {
+	stream.mu.Lock()
+	stream.closed = true
+	stream.mu.Unlock()
+	return nil
+}
+func (*serverTestStream) Kind() string                 { return "files/read" }
+func (*serverTestStream) TerminalError() *SessionError { return nil }
+func (stream *serverTestStream) CloseWrite() error {
+	stream.mu.Lock()
+	stream.writeClosed = true
+	stream.mu.Unlock()
+	return nil
+}
+func (stream *serverTestStream) Reset() error {
+	stream.mu.Lock()
+	stream.reset = true
+	stream.mu.Unlock()
+	return nil
+}
+func (stream *serverTestStream) state() (closed, writeClosed, reset bool) {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return stream.closed, stream.writeClosed, stream.reset
+}
 
 func ExampleSessionHandlers() {
 	handlers, _ := NewSessionHandlers(SessionHandlerOptions{})

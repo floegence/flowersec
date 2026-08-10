@@ -1,6 +1,9 @@
 use std::{
     fmt, io,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, SystemTime},
 };
 
@@ -689,6 +692,40 @@ pub enum RpcCallError {
     Session(SessionError),
 }
 
+/// A cancelable subscription for peer-originated RPC notifications.
+pub struct NotificationSubscription {
+    cancel: Arc<dyn Fn() + Send + Sync>,
+    canceled: AtomicBool,
+}
+
+impl NotificationSubscription {
+    pub(crate) fn new(cancel: impl Fn() + Send + Sync + 'static) -> Self {
+        Self {
+            cancel: Arc::new(cancel),
+            canceled: AtomicBool::new(false),
+        }
+    }
+
+    /// Removes this handler. Calling `cancel` more than once is harmless.
+    pub fn cancel(&self) {
+        if !self.canceled.swap(true, Ordering::AcqRel) {
+            (self.cancel)();
+        }
+    }
+}
+
+impl fmt::Debug for NotificationSubscription {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("NotificationSubscription { <opaque> }")
+    }
+}
+
+impl Drop for NotificationSubscription {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
+
 impl From<SessionError> for RpcCallError {
     fn from(error: SessionError) -> Self {
         Self::Session(error)
@@ -887,6 +924,12 @@ pub trait RpcPeer: fmt::Debug + Send + Sync + 'static {
     ) -> Result<serde_json::Value, RpcCallError>;
     /// Sends one notification without waiting for an application response.
     async fn notify(&self, type_id: u32, request: serde_json::Value) -> Result<(), SessionError>;
+    /// Subscribes one isolated handler for peer-originated notifications.
+    fn subscribe_notification(
+        &self,
+        type_id: u32,
+        handler: Arc<dyn Fn(serde_json::Value) + Send + Sync>,
+    ) -> Result<NotificationSubscription, SessionError>;
 }
 
 /// Type-safe JSON convenience methods layered over the object-safe RPC core.
@@ -980,6 +1023,14 @@ mod tests {
             _request: serde_json::Value,
         ) -> Result<(), SessionError> {
             Ok(())
+        }
+
+        fn subscribe_notification(
+            &self,
+            _type_id: u32,
+            _handler: Arc<dyn Fn(serde_json::Value) + Send + Sync>,
+        ) -> Result<NotificationSubscription, SessionError> {
+            Ok(NotificationSubscription::new(|| {}))
         }
     }
 

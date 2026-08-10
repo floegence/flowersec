@@ -687,6 +687,9 @@ func (peer controllerTestRPC) Call(context.Context, uint32, any, any) error {
 func (peer controllerTestRPC) Notify(context.Context, uint32, any) error {
 	return peer.session.recordOperation()
 }
+func (peer controllerTestRPC) OnNotify(uint32, func(context.Context, json.RawMessage)) func() {
+	return func() {}
+}
 
 type controllerTestStream struct{ session *controllerTestSession }
 

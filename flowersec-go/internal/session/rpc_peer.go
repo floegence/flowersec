@@ -57,6 +57,19 @@ func (peer *sessionRPCPeer) Notify(ctx context.Context, typeID uint32, request a
 	return client.Notify(typeID, payload)
 }
 
+func (peer *sessionRPCPeer) OnNotify(typeID uint32, handler func(context.Context, []byte)) func() {
+	if handler == nil {
+		return func() {}
+	}
+	client, err := peer.clientFor(context.Background())
+	if err != nil {
+		return func() {}
+	}
+	return client.OnNotify(typeID, func(payload json.RawMessage) {
+		handler(context.Background(), append([]byte(nil), payload...))
+	})
+}
+
 func (peer *sessionRPCPeer) clientFor(ctx context.Context) (*rpc.Client, error) {
 	if ctx == nil {
 		ctx = context.Background()

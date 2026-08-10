@@ -73,6 +73,7 @@ mod admission_v2;
 mod artifact_v2;
 mod connection_controller;
 mod connector_v2;
+pub mod controlplane;
 mod crypto_v2;
 mod idna_v2;
 mod native_runtime_v2;
@@ -106,15 +107,20 @@ pub use connection_controller::{
     ConnectionFailure, ConnectionSnapshot, ConnectionState, RetryDisposition,
 };
 pub use connector_v2::{ConnectError, ConnectErrorCode};
+pub use controlplane::{
+    AuthorizationRecord, ControlPlaneError, DirectIssueOptions, EndpointSet, IssuedArtifact,
+    IssuedTunnelPair, Issuer, RuntimeAuthorizationRequest, RuntimeAuthorizationResponse,
+    SessionOptions, TunnelIssueOptions, reject_runtime, retry_runtime,
+};
 pub use native_runtime_v2::{ConnectorOptions, connect, connect_with_cancellation};
 pub use session_handlers::{
-    AcceptedSession, HandlerRegistrationError, RpcHandler, SessionHandlerOptions, SessionHandlers,
-    StreamHandler,
+    AcceptedSession, HandlerRegistrationError, NotificationHandler, RpcHandler,
+    SessionHandlerOptions, SessionHandlers, StreamHandler,
 };
 pub use transport_v2::{
-    ByteStream, IncomingStream, JsonObject, RpcCallError, RpcError, RpcPeer, RpcPeerExt, Session,
-    SessionError, SessionTermination, StreamMetadata, StreamMetadataError,
-    UnreliableMessageChannel, UnreliableMessageError, UnreliableSendOutcome,
+    ByteStream, IncomingStream, JsonObject, NotificationSubscription, RpcCallError, RpcError,
+    RpcPeer, RpcPeerExt, Session, SessionError, SessionTermination, StreamMetadata,
+    StreamMetadataError, UnreliableMessageChannel, UnreliableMessageError, UnreliableSendOutcome,
 };
 
 #[cfg(test)]

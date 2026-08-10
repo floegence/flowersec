@@ -114,6 +114,17 @@ func TestCapabilityManifestRequiresPortableContractsAndSharedFixtures(t *testing
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+
+	t.Run("session handler fixture", func(t *testing.T) {
+		copy := cloneCapabilityManifest(t, manifest)
+		copy.SharedFixtures = slices.DeleteFunc(copy.SharedFixtures, func(fixture sharedFixture) bool {
+			return fixture.ID == "session_handlers_v2"
+		})
+		_, err := loadCapabilityManifest(writeCapabilityManifest(t, &copy))
+		if err == nil || !strings.Contains(err.Error(), "missing required shared fixture session_handlers_v2") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 }
 
 func TestCapabilityManifestRejectsUnverifiableServerClaims(t *testing.T) {

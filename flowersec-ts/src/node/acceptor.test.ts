@@ -43,4 +43,15 @@ describe("SessionHandlers", () => {
       expect.objectContaining<Partial<SessionHandlersError>>({ code: "already_registered" }),
     );
   });
+
+  test("keeps notification registrations isolated from request handlers and freezes them", () => {
+    const handlers = new SessionHandlers();
+    handlers.handleNotification(41, async () => undefined);
+    expect(() => handlers.handleNotification(41, async () => undefined)).toThrowError(
+      expect.objectContaining<Partial<SessionHandlersError>>({ code: "already_registered" }),
+    );
+    expect(() => handlers.handleRPC(41, async () => ({ payload: null }))).toThrowError(
+      expect.objectContaining<Partial<SessionHandlersError>>({ code: "already_registered" }),
+    );
+  });
 });

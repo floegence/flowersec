@@ -48,6 +48,7 @@ type IncomingStream struct {
 type RPCPeer interface {
 	Call(ctx context.Context, typeID uint32, request, response any) error
 	Notify(ctx context.Context, typeID uint32, request any) error
+	OnNotify(typeID uint32, handler func(context.Context, []byte)) func()
 }
 
 type UnreliableSendStatus string

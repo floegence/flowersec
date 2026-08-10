@@ -80,8 +80,9 @@ lifecycle.
 
 ## What Your App Can Do
 
-The shared session model is consistent across SDKs; platform support differs
-where a runtime cannot provide a particular connection type.
+The portable core keeps the shared session model consistent across SDKs. Each
+SDK profile documents platform support, while a language convenience may adapt
+syntax without changing shared behavior.
 
 | App capability | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |

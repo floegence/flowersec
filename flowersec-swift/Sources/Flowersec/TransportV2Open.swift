@@ -9,7 +9,7 @@ enum OpenPayloadErrorV2: Error, Equatable, Sendable {
 struct OpenPayloadV2: Equatable, Sendable {
   static let fixedPayloadBytes = 46
   static let maxPayloadBytes = 8_192
-  static let maxKindBytes = 128
+  static let maxKindBytes = 255
   static let maxMetadataBytes = 4_096
 
   let logicalStreamID: UInt64

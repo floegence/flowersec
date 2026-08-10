@@ -1009,6 +1009,9 @@ func renderGoVerifier(m *manifest) (string, string, error) {
 	if goVerifierUsesQualifier(m, "time") {
 		fmt.Fprintln(&imports, "\t\"time\"")
 	}
+	if goVerifierUsesQualifier(m, "json") {
+		fmt.Fprintln(&imports, "\t\"encoding/json\"")
+	}
 	for _, target := range m.Go.CompileTargets {
 		fmt.Fprintf(&imports, "\t%s %q\n", target.Alias, target.Package)
 		for _, entry := range target.Entries {

@@ -1,13 +1,20 @@
-import { sha256 } from "@noble/hashes/sha2.js";
-
 import { RpcRouter } from "../rpc/server.js";
 import type { RpcError as WireRpcError } from "../rpc/wire.js";
-import { acceptNativeSessionV2 } from "../connector/sessionAcceptor.js";
+import {
+  acceptReceivedSessionV2,
+  receiveSessionAdmissionV2,
+  rejectSessionAdmissionV2,
+  type ReceivedSessionAdmissionV2,
+} from "../connector/sessionAcceptor.js";
 import { nodeSessionRuntimeV2 } from "./sessionRuntime.js";
 import {
   startNodeWebTransportServerV2,
   type NodeWebTransportServerV2,
 } from "./webTransportServer.js";
+import type { CarrierSessionV2 } from "../v2/carrier.js";
+import { admissionBindingV2, type ArtifactV2, type DecodedFSB2RequestV2 } from "../v2/artifact.js";
+import { startNodeWebSocketServer, type NodeWebSocketServer } from "./webSocketServer.js";
+import { configureServerWebSocketCarrierRoleV2 } from "../transport/webSocketAdapter.js";
 import { unwrapArtifact, type Artifact } from "../public/artifact.js";
 import {
   SessionError,
@@ -17,17 +24,16 @@ import {
   type Session,
 } from "../public/contract.js";
 import { projectSessionV2 } from "../v2/publicSession.js";
-import type { DecodedFSB2RequestV2 } from "../v2/artifact.js";
-import { base64urlEncode } from "../utils/base64url.js";
+import {
+  runtimeAuthorizationRequestFromDecoded,
+  type RuntimeAuthorizationRequest,
+} from "./controlplane.js";
+
+export type { RuntimeAuthorizationRequest } from "./controlplane.js";
 
 const DEFAULT_MAX_CONCURRENT_STREAMS = 64;
 const MAX_CONCURRENT_STREAMS = 128;
 const encoder = new TextEncoder();
-
-export class RuntimeAuthorizationRequest {
-  declare private readonly requestBrand: void;
-  private constructor(readonly lookupKey: string) {}
-}
 
 export type AuthorizationDecision =
   | Readonly<{ decision: "allow"; artifact: Artifact }>
@@ -41,6 +47,11 @@ export type RPCHandler = (
   payload: JsonValue,
   request: Readonly<{ typeId: number }>,
 ) => Promise<RPCHandlerResult>;
+
+export type NotificationHandler = (
+  payload: JsonValue,
+  request: Readonly<{ typeId: number }>,
+) => Promise<void> | void;
 
 export type StreamHandler = (
   incoming: IncomingStream,
@@ -67,6 +78,7 @@ export class SessionHandlers {
     sessionHandlerStates.set(this, {
       maxConcurrentStreams: maximum,
       rpc: new Map(),
+      notifications: new Map(),
       streams: new Map(),
       frozen: false,
     });
@@ -78,7 +90,17 @@ export class SessionHandlers {
       throw new SessionHandlersError("invalid_handler");
     }
     if (state.rpc.has(typeId)) throw new SessionHandlersError("already_registered");
+    if (state.notifications.has(typeId)) throw new SessionHandlersError("already_registered");
     state.rpc.set(typeId, handler);
+  }
+
+  handleNotification(typeId: number, handler: NotificationHandler): void {
+    const state = mutableHandlerState(this);
+    if (!Number.isSafeInteger(typeId) || typeId < 1 || typeId > 0xffff_ffff || typeof handler !== "function") {
+      throw new SessionHandlersError("invalid_handler");
+    }
+    if (state.rpc.has(typeId) || state.notifications.has(typeId)) throw new SessionHandlersError("already_registered");
+    state.notifications.set(typeId, handler);
   }
 
   handleStream(kind: string, handler: StreamHandler): void {
@@ -94,6 +116,7 @@ export class SessionHandlers {
 type SessionHandlerState = {
   maxConcurrentStreams: number;
   rpc: Map<number, RPCHandler>;
+  notifications: Map<number, NotificationHandler>;
   streams: Map<string, StreamHandler>;
   frozen: boolean;
 };
@@ -117,6 +140,11 @@ function freezeHandlers(handlers: SessionHandlers, router: RpcRouter): FrozenHan
       return { payload: result.payload };
     });
   }
+  for (const [typeId, handler] of state.notifications) {
+    router.onNotify(typeId, (payload) => {
+      void Promise.resolve(handler(payload as JsonValue, Object.freeze({ typeId }))).catch(() => undefined);
+    });
+  }
   return Object.freeze({
     maxConcurrentStreams: state.maxConcurrentStreams,
     streams: new Map(state.streams),
@@ -128,12 +156,25 @@ type FrozenHandlers = Readonly<{
   streams: ReadonlyMap<string, StreamHandler>;
 }>;
 
-export type AcceptorOptions = Readonly<{
+export type AcceptorListener = Readonly<{
+  carrier: "websocket";
+  path: "direct" | "tunnel";
   host: string;
   port: number;
-  path: string;
+  tls?: Readonly<{ certificate: string; privateKey: string }>;
+  allowedOrigins: readonly string[];
+}> | Readonly<{
+  carrier: "webtransport";
+  path: "direct" | "tunnel";
+  host: string;
+  port: number;
+  route: string;
   certificate: string;
   privateKey: string;
+}>;
+
+export type AcceptorOptions = Readonly<{
+  listeners: readonly AcceptorListener[];
   maxInboundStreams: number;
   authorize(
     request: RuntimeAuthorizationRequest,
@@ -205,52 +246,174 @@ function createAcceptedSession(session: Session, handlers: FrozenHandlers): Acce
 export class Acceptor {
   private constructor() {}
 
-  address(): Readonly<{ host: string; port: number }> {
-    return acceptorState(this).server.address();
+  addresses(): readonly Readonly<{ host: string; port: number }>[] {
+    return acceptorState(this).listeners.map((listener) => listener.address());
   }
 
   async accept(operation: OperationOptions = {}): Promise<AcceptedSession> {
     const state = acceptorState(this);
-    const carrier = await state.server.accept(operation);
-    const router = new RpcRouter();
-    let handlers: FrozenHandlers | undefined;
-    const internal = await acceptNativeSessionV2(
-      carrier,
-      async (decoded, signal) => {
-        const request = runtimeAuthorizationRequest(decoded);
-        const decision = await state.options.authorize(request, signal === undefined ? {} : { signal });
-        if (decision.decision !== "allow") {
-          return {
-            accepted: false,
-            status: decision.decision === "retry" ? 2 : 1,
-            reason: decision.reason,
-          };
-        }
-        const registry = state.options.resolveHandlers === undefined
-          ? new SessionHandlers()
-          : await state.options.resolveHandlers(request, signal === undefined ? {} : { signal });
-        handlers = freezeHandlers(registry, router);
-        return { accepted: true, artifact: unwrapArtifact(decision.artifact) };
-      },
-      {
-        runtime: nodeSessionRuntimeV2,
-        rpcRouter: router,
-        ...(operation.signal === undefined ? {} : { signal: operation.signal }),
-      },
-    );
-    if (handlers === undefined) {
-      await internal.close().catch(() => undefined);
-      throw new SessionError("operation_failed");
-    }
-    return createAcceptedSession(projectSessionV2(internal), handlers);
+    state.start();
+    return await state.accepted.shift(operation.signal);
   }
 
   async close(): Promise<void> {
-    await acceptorState(this).server.close();
+    const state = acceptorState(this);
+    state.abort.abort();
+    state.accepted.close();
+    await Promise.all(state.pending.splice(0).map(async (leg) => await leg.received.carrier.close().catch(() => undefined)));
+    await Promise.all(state.listeners.map(async (listener) => await listener.close()));
   }
 }
 
-type AcceptorState = Readonly<{ server: NodeWebTransportServerV2; options: AcceptorOptions }>;
+type AuthorizedLeg = Readonly<{
+  received: ReceivedSessionAdmissionV2;
+  decoded: DecodedFSB2RequestV2;
+  artifact: ArtifactV2;
+  handlers: FrozenHandlers;
+  router: RpcRouter;
+}>;
+
+async function authorizeCarrier(state: AcceptorState, carrier: CarrierSessionV2): Promise<AuthorizedLeg | undefined> {
+  const received = await receiveSessionAdmissionV2(carrier, state.abort.signal);
+  const decoded = received.decoded;
+  const request = runtimeAuthorizationRequestFromDecoded(decoded);
+  const decision = await state.options.authorize(request, { signal: state.abort.signal });
+  if (decision.decision !== "allow") {
+    return await rejectSessionAdmissionV2(received, {
+      accepted: false,
+      status: decision.decision === "retry" ? 2 : 1,
+      reason: decision.reason,
+    }, state.abort.signal);
+  }
+  const router = new RpcRouter();
+  const registry = state.options.resolveHandlers === undefined
+    ? new SessionHandlers()
+    : await state.options.resolveHandlers(request, { signal: state.abort.signal });
+  return { received, decoded, artifact: unwrapArtifact(decision.artifact), handlers: freezeHandlers(registry, router), router };
+}
+
+async function establishDirect(leg: AuthorizedLeg, signal: AbortSignal): Promise<AcceptedSession> {
+  const internal = await acceptReceivedSessionV2(leg.received, leg.artifact, {
+    runtime: nodeSessionRuntimeV2,
+    rpcRouter: leg.router,
+    role: "server",
+    signal,
+  });
+  return createAcceptedSession(projectSessionV2(internal), leg.handlers);
+}
+
+function tunnelLegsMatch(first: AuthorizedLeg, second: AuthorizedLeg): boolean {
+  const a = first.artifact.path;
+  const b = second.artifact.path;
+  if (a.kind !== "tunnel" || b.kind !== "tunnel") return false;
+  return a.role !== b.role &&
+    a.rendezvous_group_id === b.rendezvous_group_id &&
+    first.artifact.session.channel_id === second.artifact.session.channel_id &&
+    first.artifact.session.contract_hash_b64u === second.artifact.session.contract_hash_b64u &&
+    first.decoded.request.listener_audience === second.decoded.request.listener_audience &&
+    first.decoded.request.candidate_set_hash_b64u === second.decoded.request.candidate_set_hash_b64u &&
+    a.local_endpoint_instance_id === b.expected_peer_endpoint_instance_id &&
+    a.expected_peer_endpoint_instance_id === b.local_endpoint_instance_id;
+}
+
+async function establishTunnelPair(first: AuthorizedLeg, second: AuthorizedLeg, signal: AbortSignal): Promise<readonly AcceptedSession[]> {
+  const establish = async (leg: AuthorizedLeg, peer: AuthorizedLeg): Promise<AcceptedSession> => {
+    const path = leg.artifact.path;
+    if (path.kind !== "tunnel") throw new SessionError("operation_failed");
+    if (leg.received.carrier.kind === "websocket") {
+      configureServerWebSocketCarrierRoleV2(leg.received.carrier, path.role === 2);
+    }
+    const internal = await acceptReceivedSessionV2(leg.received, leg.artifact, {
+      runtime: nodeSessionRuntimeV2,
+      rpcRouter: leg.router,
+      role: path.role === 1 ? "server" : "client",
+      localAdmissionBinding: admissionBindingV2(peer.received.rawFSB2),
+      peerAdmissionBinding: admissionBindingV2(leg.received.rawFSB2),
+      localEndpointInstanceID: path.expected_peer_endpoint_instance_id,
+      expectedPeerEndpointInstanceID: path.local_endpoint_instance_id,
+      signal,
+    });
+    return createAcceptedSession(projectSessionV2(internal), leg.handlers);
+  };
+  return await Promise.all([establish(first, second), establish(second, first)]);
+}
+
+async function processCarrier(state: AcceptorState, carrier: CarrierSessionV2): Promise<void> {
+  const leg = await authorizeCarrier(state, carrier);
+  if (leg === undefined) return;
+  if (leg.artifact.path.kind === "direct") {
+    state.accepted.push(await establishDirect(leg, state.abort.signal));
+    return;
+  }
+  const peerIndex = state.pending.findIndex((candidate) => tunnelLegsMatch(candidate, leg));
+  if (peerIndex < 0) {
+    state.pending.push(leg);
+    return;
+  }
+  const peer = state.pending.splice(peerIndex, 1)[0]!;
+  for (const accepted of await establishTunnelPair(peer, leg, state.abort.signal)) state.accepted.push(accepted);
+}
+
+async function runAcceptLoop(state: AcceptorState): Promise<void> {
+  while (!state.abort.signal.aborted) {
+    try {
+      const carrier = await state.accept({ signal: state.abort.signal });
+      void processCarrier(state, carrier).catch(async () => {
+        await carrier.close().catch(() => undefined);
+      });
+    } catch (error) {
+      if (!state.abort.signal.aborted) state.accepted.fail(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+  }
+}
+
+class AcceptedQueue {
+  private readonly values: AcceptedSession[] = [];
+  private readonly waiters = new Set<Readonly<{ resolve(value: AcceptedSession): void; reject(error: Error): void }>>();
+  private failure: Error | undefined;
+
+  push(value: AcceptedSession): void {
+    if (this.failure !== undefined) { void value.close(); return; }
+    const waiter = this.waiters.values().next().value;
+    if (waiter === undefined) this.values.push(value);
+    else { this.waiters.delete(waiter); waiter.resolve(value); }
+  }
+
+  async shift(signal?: AbortSignal): Promise<AcceptedSession> {
+    if (signal?.aborted === true) throw new SessionError("canceled");
+    const value = this.values.shift();
+    if (value !== undefined) return value;
+    if (this.failure !== undefined) throw this.failure;
+    return await new Promise<AcceptedSession>((resolve, reject) => {
+      const waiter = { resolve: (session: AcceptedSession) => { cleanup(); resolve(session); }, reject: (error: Error) => { cleanup(); reject(error); } };
+      const abort = () => { this.waiters.delete(waiter); reject(new SessionError("canceled")); };
+      const cleanup = () => signal?.removeEventListener("abort", abort);
+      this.waiters.add(waiter);
+      signal?.addEventListener("abort", abort, { once: true });
+    });
+  }
+
+  fail(error: Error): void {
+    if (this.failure !== undefined) return;
+    this.failure = error;
+    for (const waiter of this.waiters) waiter.reject(error);
+    this.waiters.clear();
+  }
+
+  close(): void { this.fail(new SessionError("closed")); }
+}
+
+type Listener = NodeWebTransportServerV2 | NodeWebSocketServer;
+type AcceptorState = Readonly<{
+  listeners: readonly Listener[];
+  options: AcceptorOptions;
+  accept(operation: OperationOptions): Promise<Awaited<ReturnType<Listener["accept"]>>>;
+  accepted: AcceptedQueue;
+  pending: AuthorizedLeg[];
+  abort: AbortController;
+  start(): void;
+}>;
 const acceptorStates = new WeakMap<Acceptor, AcceptorState>();
 
 function acceptorState(acceptor: Acceptor): AcceptorState {
@@ -260,29 +423,54 @@ function acceptorState(acceptor: Acceptor): AcceptorState {
 }
 
 export async function createAcceptor(options: AcceptorOptions): Promise<Acceptor> {
-  if (!Number.isSafeInteger(options.maxInboundStreams) || options.maxInboundStreams < 1 || options.maxInboundStreams > 128) {
+  if (!Number.isSafeInteger(options.maxInboundStreams) || options.maxInboundStreams < 1 || options.maxInboundStreams > 128 || options.listeners.length === 0) {
     throw new TypeError("invalid Flowersec Acceptor options");
   }
-  const server = await startNodeWebTransportServerV2({
-    host: options.host,
-    port: options.port,
-    path: options.path,
-    certificate: options.certificate,
-    privateKey: options.privateKey,
-    carrierPath: "direct",
-    inboundBidirectionalStreamCapacity: options.maxInboundStreams + 2,
-  });
+  const listeners: Listener[] = [];
+  try {
+    for (const listener of options.listeners) {
+      listeners.push(listener.carrier === "websocket"
+        ? await startNodeWebSocketServer({ ...listener, inboundBidirectionalStreamCapacity: options.maxInboundStreams + 2 })
+        : await startNodeWebTransportServerV2({
+          host: listener.host, port: listener.port, path: listener.route,
+          certificate: listener.certificate, privateKey: listener.privateKey,
+          carrierPath: listener.path,
+          inboundBidirectionalStreamCapacity: options.maxInboundStreams + 2,
+        }));
+    }
+  } catch (error) {
+    await Promise.allSettled(listeners.map(async (listener) => await listener.close()));
+    throw error;
+  }
+  let cursor = 0;
+  const accept = async (operation: OperationOptions) => {
+    if (listeners.length === 1) return await listeners[0]!.accept(operation);
+    const controller = new AbortController();
+    const abort = () => controller.abort(operation.signal?.reason);
+    operation.signal?.addEventListener("abort", abort, { once: true });
+    try {
+      return await Promise.any(listeners.map(async (listener, index) => {
+        const selected = listeners[(index + cursor) % listeners.length]!;
+        return await selected.accept({ signal: controller.signal });
+      })).finally(() => { cursor = (cursor + 1) % listeners.length; controller.abort(); });
+    } finally {
+      operation.signal?.removeEventListener("abort", abort);
+    }
+  };
   const acceptor = new (Acceptor as unknown as { new(): Acceptor })();
-  acceptorStates.set(acceptor, { server, options });
+  const accepted = new AcceptedQueue();
+  const abort = new AbortController();
+  let started = false;
+  const state: AcceptorState = {
+    listeners, options, accept, accepted, pending: [], abort,
+    start() {
+      if (started) return;
+      started = true;
+      void runAcceptLoop(state);
+    },
+  };
+  acceptorStates.set(acceptor, state);
   return Object.freeze(acceptor);
-}
-
-function runtimeAuthorizationRequest(decoded: DecodedFSB2RequestV2): RuntimeAuthorizationRequest {
-  const credential = decoded.request.pathKind === "direct"
-    ? decoded.request.routing_token
-    : decoded.request.attach_token;
-  const lookupKey = base64urlEncode(sha256(encoder.encode(credential)));
-  return new (RuntimeAuthorizationRequest as unknown as { new(lookupKey: string): RuntimeAuthorizationRequest })(lookupKey);
 }
 
 function validRPCError(error: Readonly<{ code: number; message?: string }>): WireRpcError {

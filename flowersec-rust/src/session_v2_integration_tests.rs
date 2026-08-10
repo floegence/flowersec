@@ -829,6 +829,62 @@ async fn lazy_reserved_rpc_is_encrypted_and_uses_u32_type_ids() {
 }
 
 #[tokio::test]
+async fn peer_notifications_dispatch_subscriptions_without_owning_the_session() {
+    let (client, server) = establish_pair().await;
+    let delivered = Arc::new(AtomicUsize::new(0));
+    let delivered_notify = Arc::new(Notify::new());
+    let first_count = delivered.clone();
+    let first_notify = delivered_notify.clone();
+    let first = server
+        .rpc()
+        .subscribe_notification(
+            27,
+            Arc::new(move |payload| {
+                assert_eq!(payload["sequence"], 1);
+                first_count.fetch_add(1, Ordering::AcqRel);
+                first_notify.notify_waiters();
+            }),
+        )
+        .expect("first notification subscription");
+    let panic_subscription = server
+        .rpc()
+        .subscribe_notification(27, Arc::new(|_| panic!("isolated subscriber panic")))
+        .expect("panicking notification subscription");
+
+    client
+        .rpc()
+        .notify(27, serde_json::json!({"sequence": 1}))
+        .await
+        .expect("send peer notification");
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while delivered.load(Ordering::Acquire) != 1 {
+            delivered_notify.notified().await;
+        }
+    })
+    .await
+    .expect("notification delivered");
+
+    panic_subscription.cancel();
+    first.cancel();
+    client
+        .rpc()
+        .notify(27, serde_json::json!({"sequence": 2}))
+        .await
+        .expect("send notification after cancellation");
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(delivered.load(Ordering::Acquire), 1);
+
+    let response = client
+        .rpc()
+        .call(28, serde_json::json!({"after": "notification"}))
+        .await
+        .expect("subscriber panic and cancellation do not close RPC");
+    assert_eq!(response["request"]["after"], "notification");
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
 async fn remote_rpc_application_error_preserves_bounded_semantics() {
     let (client_carrier, server_carrier) = memory_carrier_pair_v2();
     let client = SessionConfigV2 {
@@ -944,6 +1000,91 @@ async fn rpc_handler_failure_is_sanitized_before_crossing_the_session() {
         }
         RpcCallError::Session(error) => panic!("application error collapsed into {error:?}"),
     }
+
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+struct PanickingRpcHandler;
+
+#[async_trait::async_trait]
+impl RpcHandlerV2 for PanickingRpcHandler {
+    async fn call(
+        &self,
+        type_id: u32,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcError> {
+        if type_id == 500 {
+            panic!("application handler panic");
+        }
+        Ok(request)
+    }
+
+    async fn notify(&self, type_id: u32, _request: serde_json::Value) -> Result<(), RpcError> {
+        if type_id == 501 {
+            panic!("application notification handler panic");
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn rpc_handler_panics_are_isolated_from_the_reserved_stream() {
+    let (client_carrier, server_carrier) = memory_carrier_pair_v2();
+    let client = SessionConfigV2 {
+        role: SessionRole::Client,
+        path: PathKind::Direct,
+        channel_id: "rpc-panic-isolation".into(),
+        session_contract_hash: [51; 32],
+        suite: CipherSuiteV2::ChaCha20Poly1305,
+        psk: [52; 32],
+        max_inbound_streams: 4,
+        idle_timeout: Duration::ZERO,
+        local_admission_binding: [53; 32],
+        peer_admission_binding: Some([54; 32]),
+        local_endpoint_instance_id: None,
+        expected_peer_endpoint_instance_id: None,
+        rpc_handler: None,
+        deadlines: Default::default(),
+    };
+    let server = SessionConfigV2 {
+        role: SessionRole::Server,
+        local_admission_binding: [54; 32],
+        peer_admission_binding: Some([53; 32]),
+        rpc_handler: Some(Arc::new(PanickingRpcHandler)),
+        ..client.clone()
+    };
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client),
+        establish_session_v2(server_carrier, server),
+    );
+    let client = client.expect("client");
+    let server = server.expect("server");
+
+    let failure = tokio::time::timeout(
+        Duration::from_secs(1),
+        client.rpc().call(500, serde_json::Value::Null),
+    )
+    .await
+    .expect("panicking RPC handler must produce a bounded response")
+    .expect_err("panicking RPC handler must fail only its request");
+    assert!(matches!(failure, RpcCallError::Application(_)));
+
+    client
+        .rpc()
+        .notify(501, serde_json::Value::Null)
+        .await
+        .expect("send panicking notification");
+    let response = tokio::time::timeout(
+        Duration::from_secs(1),
+        client
+            .rpc()
+            .call(502, serde_json::json!({"after": "panic"})),
+    )
+    .await
+    .expect("reserved RPC stream remains live")
+    .expect("subsequent RPC succeeds");
+    assert_eq!(response["after"], "panic");
 
     client.close().await.expect("close client");
     server.close().await.expect("close server");

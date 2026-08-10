@@ -24,6 +24,50 @@ extension TransportV2CarrierStream {
 }
 
 final class TransportV2SessionTests: XCTestCase {
+  func testSharedStreamKindVectorsMatchPortableSessionValidation() async throws {
+    let url = packageRoot().appendingPathComponent(
+      "testdata/transport_v2/session_handler_vectors.json")
+    let vectors = try JSONDecoder().decode(
+      SessionHandlerVectors.self,
+      from: Data(contentsOf: url)
+    )
+
+    for vector in vectors.streamKinds {
+      let kind = String(repeating: vector.unit, count: vector.repetitions) + vector.suffix
+      let encode = {
+        try OpenPayloadV2(
+          logicalStreamID: 1,
+          fss2Hash: Data(repeating: 0, count: 32),
+          kind: kind,
+          metadata: Data("{}".utf8)
+        ).encoded()
+      }
+      if vector.id == "reserved-rpc-kind" {
+        XCTAssertNoThrow(try encode(), vector.id)
+        continue
+      }
+      if vector.valid {
+        XCTAssertNoThrow(try encode(), vector.id)
+      } else {
+        XCTAssertThrowsError(try encode(), vector.id)
+      }
+    }
+
+    let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
+    let configs = try makeConfigs()
+    async let server = TransportV2Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV2Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+    do {
+      _ = try await clientSession.openStream(kind: "flowersec.rpc.v2")
+      XCTFail("reserved RPC stream kind was accepted as an application stream")
+    } catch {
+      XCTAssertTrue(error is TransportV2SessionError)
+    }
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
   func testNOnePhysicalCapacityEstablishesAndCarriesOneApplicationStream() async throws {
     let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair(
       inboundBidirectionalStreamCapacity: 3
@@ -1292,6 +1336,30 @@ private struct SessionWireVectors: Decodable {
 
   enum CodingKeys: String, CodingKey {
     case streamKeyUpdateACK = "stream_key_update_ack"
+  }
+}
+
+private struct SessionHandlerVectors: Decodable {
+  let streamKinds: [SessionHandlerStreamKindVector]
+
+  enum CodingKeys: String, CodingKey {
+    case streamKinds = "stream_kinds"
+  }
+}
+
+private struct SessionHandlerStreamKindVector: Decodable {
+  let id: String
+  let unit: String
+  let repetitions: Int
+  let suffix: String
+  let valid: Bool
+
+  enum CodingKeys: String, CodingKey {
+    case id
+    case unit
+    case repetitions = "repeat"
+    case suffix
+    case valid
   }
 }
 

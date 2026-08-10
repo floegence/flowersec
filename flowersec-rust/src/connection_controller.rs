@@ -459,9 +459,8 @@ async fn run_controller(inner: Arc<ControllerInner>) {
             }
         };
 
-        let mut lease = lease;
         let result = connect_with_cancellation(
-            &mut lease,
+            lease,
             inner.options.connector.clone(),
             inner.cancellation.child_token(),
         )

@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
+	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
 	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
@@ -38,7 +40,11 @@ var ErrInvalidAcceptor = errors.New("invalid Flowersec acceptor")
 // Authorize must atomically reserve the control-plane record before returning
 // an allow response. Release is called exactly once for every accepted lease.
 type AcceptorOptions struct {
-	AllowedOrigins    []string
+	AllowedOrigins []string
+	// Listeners declares the native carrier/path adapters owned by this
+	// acceptor. WebSocket adapters are served by Handler; raw QUIC and
+	// WebTransport adapters are served by Serve.
+	Listeners         []AcceptorListener
 	MaxInboundStreams uint16
 	MaxDirectSessions uint16
 	Authorize         func(context.Context, controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error)
@@ -55,10 +61,11 @@ type Acceptor struct {
 	resources   carrierws.ResourcePolicy
 	coordinator *tunnelv2.Coordinator
 	directSlots chan struct{}
+	listeners   []registeredAcceptorListener
 }
 
 func NewAcceptor(options AcceptorOptions) (*Acceptor, error) {
-	if options.Authorize == nil || options.OnSession == nil || len(options.AllowedOrigins) == 0 {
+	if options.Authorize == nil || options.OnSession == nil {
 		return nil, ErrInvalidAcceptor
 	}
 	if options.MaxInboundStreams == 0 {
@@ -71,7 +78,28 @@ func NewAcceptor(options AcceptorOptions) (*Acceptor, error) {
 	if err != nil {
 		return nil, ErrInvalidAcceptor
 	}
-	acceptor := &Acceptor{options: options, resources: resources, directSlots: make(chan struct{}, options.MaxDirectSessions)}
+	listeners := make([]registeredAcceptorListener, 0, len(options.Listeners))
+	seen := make(map[string]struct{}, len(options.Listeners))
+	for _, registered := range options.Listeners {
+		listener, ok := registered.(registeredAcceptorListener)
+		if !ok {
+			return nil, ErrInvalidAcceptor
+		}
+		key := string(listener.acceptorCarrier()) + ":" + string(listener.acceptorPath())
+		if _, exists := seen[key]; exists {
+			return nil, ErrInvalidAcceptor
+		}
+		seen[key] = struct{}{}
+		listeners = append(listeners, listener)
+	}
+	webSocketConfigured := len(listeners) == 0
+	for _, listener := range listeners {
+		webSocketConfigured = webSocketConfigured || listener.acceptorCarrier() == carrier.KindWebSocket
+	}
+	if webSocketConfigured && len(options.AllowedOrigins) == 0 {
+		return nil, ErrInvalidAcceptor
+	}
+	acceptor := &Acceptor{options: options, resources: resources, directSlots: make(chan struct{}, options.MaxDirectSessions), listeners: listeners}
 	coordinatorConfig := tunnelv2.DefaultConfig()
 	coordinatorConfig.OnPair = acceptor.onTunnelPair
 	coordinator, err := tunnelv2.NewCoordinator(coordinatorConfig, acceptor.authorizeTunnel)
@@ -82,10 +110,209 @@ func NewAcceptor(options AcceptorOptions) (*Acceptor, error) {
 	return acceptor, nil
 }
 
+// Serve runs all registered native raw QUIC and WebTransport listeners until
+// ctx is canceled or a listener fails. WebSocket routes remain owned by
+// Handler and are intended to run on the application's HTTP server.
+func (acceptor *Acceptor) Serve(ctx context.Context) error {
+	if acceptor == nil {
+		return ErrInvalidAcceptor
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	native := make([]registeredAcceptorListener, 0, len(acceptor.listeners))
+	for _, listener := range acceptor.listeners {
+		if listener.acceptorCarrier() != carrier.KindWebSocket {
+			native = append(native, listener)
+		}
+	}
+	if len(native) == 0 {
+		return ErrInvalidAcceptor
+	}
+	serveCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errs := make(chan error, len(native))
+	var listenerWait sync.WaitGroup
+	var sessionWait sync.WaitGroup
+	var sessionMu sync.Mutex
+	acceptingSessions := true
+	acceptSession := func(sessionCtx context.Context, current carrier.Session) error {
+		sessionMu.Lock()
+		if !acceptingSessions {
+			sessionMu.Unlock()
+			_ = current.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "acceptor closed"})
+			return context.Canceled
+		}
+		sessionWait.Add(1)
+		sessionMu.Unlock()
+		go func() {
+			defer sessionWait.Done()
+			_ = acceptor.serveNativeCarrier(sessionCtx, current)
+		}()
+		return nil
+	}
+	for _, listener := range native {
+		listener := listener
+		listenerWait.Add(1)
+		go func() {
+			defer listenerWait.Done()
+			err := listener.serve(serveCtx, acceptSession)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				errs <- err
+			}
+		}()
+	}
+	var result error
+	select {
+	case <-ctx.Done():
+		result = context.Cause(ctx)
+	case result = <-errs:
+	}
+	cancel()
+	for _, listener := range native {
+		result = errors.Join(result, listener.Close())
+	}
+	listenerWait.Wait()
+	sessionMu.Lock()
+	acceptingSessions = false
+	sessionMu.Unlock()
+	sessionWait.Wait()
+	return result
+}
+
+func (acceptor *Acceptor) serveNativeCarrier(ctx context.Context, native carrier.Session) error {
+	if native == nil {
+		return ErrInvalidAcceptor
+	}
+	observed, ok := native.(interface{ RemoteAddr() net.Addr })
+	if !ok || observed.RemoteAddr() == nil || observed.RemoteAddr().String() == "" {
+		_ = native.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "address unavailable"})
+		return ErrInvalidAcceptor
+	}
+	transportContext := context.WithValue(ctx, acceptorTransportContextKey{}, acceptorTransportContext{carrier: string(native.Kind()), remoteAddress: observed.RemoteAddr().String()})
+	switch native.Path() {
+	case carrier.PathDirect:
+		return acceptor.serveNativeDirect(transportContext, native)
+	case carrier.PathTunnel:
+		return acceptor.serveNativeTunnel(transportContext, native)
+	default:
+		return ErrInvalidAcceptor
+	}
+}
+
+func (acceptor *Acceptor) serveNativeDirect(ctx context.Context, native carrier.Session) error {
+	if !acceptor.acquireDirect() {
+		_ = native.CloseWithError(carrier.ApplicationError{Code: 7, Reason: "capacity"})
+		return nil
+	}
+	defer acceptor.releaseDirect()
+	admissionContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	admission, err := acceptorNativeAdmissionStream(admissionContext, native)
+	if err != nil {
+		return err
+	}
+	var decoded *artifactv2.DecodedRequest
+	var response controlplane.AuthorizationResponse
+	var leaseID string
+	var router *internalrpc.Router
+	var serveHandlers func(context.Context, session.SessionV2) error
+	decoded, err = admissionv2.Serve(admissionContext, admission, acceptor.reasons(), func(authCtx context.Context, candidate *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
+		if candidate == nil || candidate.Request.PathKind != artifactv2.PathDirect {
+			return artifactv2.AdmissionResponse{}, ErrInvalidAcceptor
+		}
+		transport, ok := authCtx.Value(acceptorTransportContextKey{}).(acceptorTransportContext)
+		if !ok {
+			return artifactv2.AdmissionResponse{}, ErrInvalidAcceptor
+		}
+		authRequest, parseErr := runtimeAuthorizationRequest(candidate, transport.carrier, transport.remoteAddress)
+		if parseErr != nil {
+			return artifactv2.AdmissionResponse{}, parseErr
+		}
+		response, parseErr = acceptor.options.Authorize(authCtx, authRequest)
+		if parseErr != nil {
+			return artifactv2.AdmissionResponse{}, parseErr
+		}
+		if decision, decisionErr := responseDecision(response); decisionErr != nil {
+			return artifactv2.AdmissionResponse{}, decisionErr
+		} else if decision == "allow" {
+			leaseID, parseErr = responseLeaseID(response)
+			if parseErr != nil {
+				return artifactv2.AdmissionResponse{}, parseErr
+			}
+			if acceptor.options.ResolveHandlers != nil {
+				handlers, handlerErr := acceptor.options.ResolveHandlers(authCtx, authRequest)
+				if handlerErr != nil {
+					return artifactv2.AdmissionResponse{}, handlerErr
+				}
+				router, serveHandlers = acceptedHandlerSnapshot(handlers)
+			}
+		}
+		return responseAdmission(response)
+	})
+	if err != nil {
+		_ = native.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "admission rejected"})
+		return err
+	}
+	wire, err := decodeAuthorizationResponse(response)
+	if err != nil || wire.Direct == nil {
+		_ = native.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "authorization rejected"})
+		return ErrInvalidAcceptor
+	}
+	contract, err := wire.Direct.Session.contract()
+	if err != nil {
+		_ = native.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "session contract rejected"})
+		return err
+	}
+	accepted, err := establishAcceptedSession(ctx, native, contract, session.PathDirect, session.RoleServer, "", "", decoded.LocalAdmissionBinding, decoded.LocalAdmissionBinding, router)
+	if err == nil {
+		err = acceptor.runAcceptedSession(ctx, accepted, wire.Direct.Session.ChannelID, serveHandlers)
+	}
+	if accepted != nil {
+		_ = accepted.Close()
+	}
+	acceptor.releaseLease(ctx, leaseID)
+	return err
+}
+
+func (acceptor *Acceptor) serveNativeTunnel(ctx context.Context, native carrier.Session) error {
+	admissionContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	stream, err := acceptorNativeAdmissionStream(admissionContext, native)
+	if err != nil {
+		return err
+	}
+	leg, err := tunnelv2.NewNativeStreamLeg(native, stream)
+	if err != nil {
+		_ = native.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "admission rejected"})
+		return err
+	}
+	return acceptor.coordinator.Serve(ctx, leg)
+}
+
+func acceptorNativeAdmissionStream(ctx context.Context, native carrier.Session) (carrier.Stream, error) {
+	if webTransport, ok := native.(*carrierwt.Session); ok {
+		return carrierwt.OpenAdmissionStream(ctx, webTransport)
+	}
+	return native.AcceptStream(ctx)
+}
+
 func (acceptor *Acceptor) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc(WebSocketDirectPath, acceptor.handleDirect)
-	mux.HandleFunc(WebSocketTunnelPath, acceptor.handleTunnel)
+	direct, tunnel := len(acceptor.listeners) == 0, len(acceptor.listeners) == 0
+	for _, listener := range acceptor.listeners {
+		if listener.acceptorCarrier() != carrier.KindWebSocket {
+			continue
+		}
+		direct = direct || listener.acceptorPath() == carrier.PathDirect
+		tunnel = tunnel || listener.acceptorPath() == carrier.PathTunnel
+	}
+	if direct {
+		mux.HandleFunc(WebSocketDirectPath, acceptor.handleDirect)
+	}
+	if tunnel {
+		mux.HandleFunc(WebSocketTunnelPath, acceptor.handleTunnel)
+	}
 	return mux
 }
 

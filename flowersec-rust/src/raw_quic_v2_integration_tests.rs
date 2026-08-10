@@ -266,7 +266,7 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
             .expect("parse opaque facade artifact");
         let spend_count = Arc::new(AtomicUsize::new(0));
         let observed = spend_count.clone();
-        let mut lease = ArtifactLease::new(artifact, move || {
+        let lease = ArtifactLease::new(artifact, move || {
             let observed = observed.clone();
             async move {
                 observed.fetch_add(1, Ordering::SeqCst);
@@ -275,7 +275,7 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
         });
         let options =
             ConnectorOptions::new(vec![test_cert_der()]).expect("create public connector options");
-        let session = connect(&mut lease, options)
+        let session = connect(lease, options)
             .await
             .expect("connect through public facade");
         let unreliable = session
@@ -350,7 +350,6 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
             .await
             .expect("finish reverse direction");
         assert_eq!(spend_count.load(Ordering::SeqCst), 1);
-        assert!(lease.is_committed());
         let server = server_task.await.expect("join facade server");
         session.close().await.expect("close facade client");
         server.close().await.expect("close facade server");
@@ -640,10 +639,10 @@ async fn public_acceptor_establishes_opaque_direct_session() {
             .await
             .expect("accept opaque direct session")
     });
-    let mut lease = ArtifactLease::new(artifact, || async { Ok(()) });
+    let lease = ArtifactLease::new(artifact, || async { Ok(()) });
     let options =
         ConnectorOptions::new(vec![test_cert_der()]).expect("create public connector options");
-    let client = connect(&mut lease, options)
+    let client = connect(lease, options)
         .await
         .expect("connect public client");
     let server = server.await.expect("join public acceptor");
@@ -764,13 +763,10 @@ async fn public_acceptor_freezes_rpc_and_stream_handlers_before_establishment() 
     })
     .expect("create handlers");
     handlers
-        .handle_rpc(17, Arc::new(PublicEchoRpc))
+        .handle_rpc(17, PublicEchoRpc)
         .expect("register RPC handler");
     handlers
-        .handle_stream(
-            "accepted-handler",
-            Arc::new(PublicStreamHandler(stream_sent)),
-        )
+        .handle_stream("accepted-handler", PublicStreamHandler(stream_sent))
         .expect("register stream handler");
 
     let server_artifact = artifact.clone();
@@ -781,10 +777,10 @@ async fn public_acceptor_freezes_rpc_and_stream_handlers_before_establishment() 
             .expect("accept with handlers");
         accepted.serve(CancellationToken::new()).await
     });
-    let mut lease = ArtifactLease::new(artifact, || async { Ok(()) });
+    let lease = ArtifactLease::new(artifact, || async { Ok(()) });
     let options =
         ConnectorOptions::new(vec![test_cert_der()]).expect("create public connector options");
-    let client = connect(&mut lease, options)
+    let client = connect(lease, options)
         .await
         .expect("connect handler client");
 
@@ -849,10 +845,10 @@ async fn public_acceptor_resets_only_failed_handler_stream_and_continues_serving
     handlers
         .handle_stream(
             "handler-failure",
-            Arc::new(FailingThenSuccessfulStreamHandler {
+            FailingThenSuccessfulStreamHandler {
                 handled: handled_send,
                 release_failure,
-            }),
+            },
         )
         .expect("register stream handler");
 
@@ -864,10 +860,10 @@ async fn public_acceptor_resets_only_failed_handler_stream_and_continues_serving
             .expect("accept with handlers");
         accepted.serve(CancellationToken::new()).await
     });
-    let mut lease = ArtifactLease::new(artifact, || async { Ok(()) });
+    let lease = ArtifactLease::new(artifact, || async { Ok(()) });
     let options =
         ConnectorOptions::new(vec![test_cert_der()]).expect("create public connector options");
-    let client = connect(&mut lease, options)
+    let client = connect(lease, options)
         .await
         .expect("connect handler client");
 

@@ -50,9 +50,13 @@ export function projectSessionV2(session: InternalSessionV2): SessionV2 {
     async probeLiveness(options?: OperationOptionsV2): Promise<number> {
       try { return await session.probeLiveness(options); } catch (error) { throw redactSessionError(error); }
     },
-    async waitTermination() {
-      const { error } = await session.waitTermination();
-      return Object.freeze({ error: redactSessionError(error) });
+    async waitTermination(options?: OperationOptionsV2) {
+      try {
+        const { error } = await raceWithSignal(session.waitTermination(), options?.signal);
+        return Object.freeze({ error: redactSessionError(error) });
+      } catch (error) {
+        throw redactSessionError(error);
+      }
     },
     async close(): Promise<void> {
       try { await session.close(); } catch (error) { throw redactSessionError(error); }
@@ -90,10 +94,10 @@ function projectRpcPeerV2(peer: InternalSessionV2["rpc"]): RpcPeerV2 {
       typeId: number,
       payload: Request,
       decodeResponse: (payload: JsonValueV2) => Response,
-      signal?: AbortSignal,
+      options?: OperationOptionsV2,
     ): Promise<RpcResultV2<Response>> {
       try {
-        const result = await peer.call(typeId, payload, signal);
+        const result = await peer.call(typeId, payload, options?.signal);
         if (result.error !== undefined) {
           return Object.freeze({ ok: false as const, error: Object.freeze({ ...result.error }) });
         }
@@ -102,12 +106,25 @@ function projectRpcPeerV2(peer: InternalSessionV2["rpc"]): RpcPeerV2 {
         throw redactSessionError(error);
       }
     },
-    async notify<Payload = unknown>(typeId: number, payload: Payload) {
-      try { await peer.notify(typeId, payload); } catch (error) { throw redactSessionError(error); }
+    async notify<Payload = unknown>(typeId: number, payload: Payload, options?: OperationOptionsV2) {
+      try {
+        if (options?.signal?.aborted) throw options.signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+        await raceWithSignal(peer.notify(typeId, payload), options?.signal);
+      } catch (error) { throw redactSessionError(error); }
     },
     onNotify<Payload = unknown>(typeId: number, handler: (payload: Payload) => void) {
       return peer.onNotify(typeId, (payload) => handler(payload as Payload));
     },
+  });
+}
+
+async function raceWithSignal<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) return await operation;
+  if (signal.aborted) throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+  return await new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new DOMException("The operation was aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    void operation.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
   });
 }
 

@@ -293,6 +293,16 @@
       }
     },
     {
+      "id": "session_handlers_v2",
+      "path": "testdata/transport_v2/session_handler_vectors.json",
+      "consumers": {
+        "go": ["server/go-acceptor"],
+        "typescript": ["server/typescript-acceptor"],
+        "swift": ["protocol/swift"],
+        "rust": ["server/rust-acceptor-handlers"]
+      }
+    },
+    {
       "id": "session_wire_v2",
       "path": "testdata/transport_v2/session_wire_vectors.json",
       "consumers": {

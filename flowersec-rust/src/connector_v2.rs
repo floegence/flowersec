@@ -137,7 +137,7 @@ impl SessionConnectorV2 {
 
     pub(crate) async fn connect(
         &self,
-        lease: &mut ArtifactLease,
+        mut lease: ArtifactLease,
         cancellation: CancellationToken,
     ) -> Result<Arc<dyn Session>, ConnectError> {
         let deadline = tokio::time::Instant::now() + self.options.connect_timeout;
@@ -182,20 +182,22 @@ impl SessionConnectorV2 {
             .map_err(|_| error(ConnectErrorCode::InvalidInput))?;
 
         require_active(deadline, &cancellation)?;
-        let admitted =
-            AdmissionCommitV2::new(attempt, lease, encoded, plan.session.max_inbound_streams)
-                .commit(deadline, &cancellation)
-                .await
-                .map_err(|failure| match failure {
-                    AdmissionCommitErrorV2::Spend => error(ConnectErrorCode::SpendFailed),
-                    AdmissionCommitErrorV2::Canceled => error(ConnectErrorCode::Canceled),
-                    AdmissionCommitErrorV2::Timeout => error(ConnectErrorCode::Timeout),
-                    AdmissionCommitErrorV2::Rejected => {
-                        terminal_error(ConnectErrorCode::DialFailed)
-                    }
-                    AdmissionCommitErrorV2::Retryable => error(ConnectErrorCode::DialFailed),
-                    AdmissionCommitErrorV2::Carrier => error(ConnectErrorCode::DialFailed),
-                })?;
+        let admitted = AdmissionCommitV2::new(
+            attempt,
+            &mut lease,
+            encoded,
+            plan.session.max_inbound_streams,
+        )
+        .commit(deadline, &cancellation)
+        .await
+        .map_err(|failure| match failure {
+            AdmissionCommitErrorV2::Spend => error(ConnectErrorCode::SpendFailed),
+            AdmissionCommitErrorV2::Canceled => error(ConnectErrorCode::Canceled),
+            AdmissionCommitErrorV2::Timeout => error(ConnectErrorCode::Timeout),
+            AdmissionCommitErrorV2::Rejected => terminal_error(ConnectErrorCode::DialFailed),
+            AdmissionCommitErrorV2::Retryable => error(ConnectErrorCode::DialFailed),
+            AdmissionCommitErrorV2::Carrier => error(ConnectErrorCode::DialFailed),
+        })?;
 
         let mut config =
             session_config(&plan, admitted.binding(), self.options.close_flush_timeout);

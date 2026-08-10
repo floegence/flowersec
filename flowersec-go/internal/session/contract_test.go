@@ -29,8 +29,9 @@ func (testByteStream) Close() error                { return nil }
 
 type testRPCPeer struct{}
 
-func (testRPCPeer) Call(context.Context, uint32, any, any) error { return nil }
-func (testRPCPeer) Notify(context.Context, uint32, any) error    { return nil }
+func (testRPCPeer) Call(context.Context, uint32, any, any) error          { return nil }
+func (testRPCPeer) Notify(context.Context, uint32, any) error             { return nil }
+func (testRPCPeer) OnNotify(uint32, func(context.Context, []byte)) func() { return func() {} }
 
 type testSession struct{}
 

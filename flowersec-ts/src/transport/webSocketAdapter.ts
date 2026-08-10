@@ -30,6 +30,151 @@ export function createWebSocketCarrierSessionV2(
   return new WebSocketYamuxCarrierSession(transport, options);
 }
 
+export function createServerWebSocketCarrierSessionV2(
+  transport: WebSocketBinaryTransportV2,
+  options: Readonly<{
+    path: PathKind;
+    inboundBidirectionalStreamCapacity: number;
+    resourcePolicy?: WebSocketResourcePolicyV2;
+  }>,
+): CarrierSessionV2 {
+  requireCapacity(options.inboundBidirectionalStreamCapacity);
+  const carrier = new ServerWebSocketAdmissionCarrier(transport, options);
+  serverAdmissionCarriers.set(carrier, carrier);
+  return carrier;
+}
+
+const serverAdmissionCarriers = new WeakMap<CarrierSessionV2, ServerWebSocketAdmissionCarrier>();
+
+export function configureServerWebSocketCarrierRoleV2(carrier: CarrierSessionV2, client: boolean): void {
+  const server = serverAdmissionCarriers.get(carrier);
+  if (server === undefined) throw new CarrierError("closed", "WebSocket carrier is not a server admission carrier");
+  server.configureRole(client);
+}
+
+class ServerWebSocketAdmissionCarrier implements CarrierSessionV2 {
+  readonly kind = "websocket" as const;
+  readonly path: PathKind;
+  readonly inboundBidirectionalStreamCapacity: number;
+  readonly unreliableDatagrams = undefined;
+
+  private admissionAvailable = true;
+  private active: CarrierSessionV2 | undefined;
+  private closed = false;
+  private client = false;
+
+  constructor(
+    private readonly transport: WebSocketBinaryTransportV2,
+    private readonly options: Readonly<{
+      path: PathKind;
+      inboundBidirectionalStreamCapacity: number;
+      resourcePolicy?: WebSocketResourcePolicyV2;
+    }>,
+  ) {
+    this.path = options.path;
+    this.inboundBidirectionalStreamCapacity = options.inboundBidirectionalStreamCapacity;
+  }
+
+  async openStream(options: OperationOptionsV2 = {}): Promise<CarrierStreamV2> {
+    return await this.activate().openStream(options);
+  }
+
+  async acceptStream(options: OperationOptionsV2 = {}): Promise<CarrierStreamV2> {
+    throwIfAborted(options.signal);
+    if (this.closed) throw new CarrierError("closed", "WebSocket carrier is closed");
+    if (this.admissionAvailable) {
+      this.admissionAvailable = false;
+      return new WebSocketAdmissionStream(this.transport);
+    }
+    return await this.activate().acceptStream(options);
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    if (this.active === undefined) this.transport.close();
+    else await this.active.close();
+  }
+
+  abort(): void {
+    if (this.closed) return;
+    this.closed = true;
+    if (this.active === undefined) this.transport.close();
+    else this.active.abort();
+  }
+
+  async waitTermination(): Promise<void> {
+    if (this.closed && this.active === undefined) return;
+    await this.activate().waitTermination();
+  }
+
+  configureRole(client: boolean): void {
+    if (this.closed || this.active !== undefined) throw new CarrierError("closed", "WebSocket carrier is already active");
+    this.client = client;
+  }
+
+  private activate(): CarrierSessionV2 {
+    if (this.closed) throw new CarrierError("closed", "WebSocket carrier is closed");
+    if (this.admissionAvailable) {
+      throw new CarrierError("closed", "WebSocket admission has not completed");
+    }
+    this.active ??= createWebSocketCarrierSessionV2(this.transport, {
+      path: this.options.path,
+      client: this.client,
+      inboundBidirectionalStreamCapacity: this.options.inboundBidirectionalStreamCapacity,
+      ...(this.options.resourcePolicy === undefined ? {} : { resourcePolicy: this.options.resourcePolicy }),
+    });
+    return this.active;
+  }
+}
+
+class WebSocketAdmissionStream implements CarrierStreamV2 {
+  private readComplete = false;
+  private writeComplete = false;
+  private readonly outbound: Uint8Array[] = [];
+
+  constructor(private readonly transport: WebSocketBinaryTransportV2) {}
+
+  async read(options: OperationOptionsV2 = {}): Promise<Uint8Array | null> {
+    if (this.readComplete) return null;
+    this.readComplete = true;
+    return await this.transport.readBinary(options);
+  }
+
+  async write(data: Uint8Array, options: OperationOptionsV2 = {}): Promise<number> {
+    throwIfAborted(options.signal);
+    if (this.writeComplete) throw new CarrierError("write_closed", "admission response is closed");
+    this.outbound.push(data.slice());
+    return data.length;
+  }
+
+  async closeWrite(): Promise<void> {
+    if (this.writeComplete) return;
+    this.writeComplete = true;
+    const length = this.outbound.reduce((total, chunk) => total + chunk.length, 0);
+    const response = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of this.outbound) {
+      response.set(chunk, offset);
+      offset += chunk.length;
+    }
+    this.outbound.length = 0;
+    await this.transport.writeBinary(response);
+  }
+
+  async stopSending(): Promise<void> {
+    this.transport.close();
+  }
+
+  async reset(): Promise<void> {
+    this.transport.close();
+  }
+
+  abort(): void {
+    this.transport.close();
+  }
+}
+
 class WebSocketYamuxCarrierSession implements CarrierSessionV2 {
   readonly kind = "websocket" as const;
   readonly path: PathKind;

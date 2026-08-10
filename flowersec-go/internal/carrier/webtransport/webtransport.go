@@ -470,6 +470,11 @@ type Session struct {
 	closeErr  error
 }
 
+// LocalAddr and RemoteAddr expose internal transport observations to the
+// carrier admission owner. They are not part of Flowersec's public SDK.
+func (session *Session) LocalAddr() net.Addr  { return session.inner.LocalAddr() }
+func (session *Session) RemoteAddr() net.Addr { return session.inner.RemoteAddr() }
+
 func wrapSession(inner *wt.Session, capacity uint16, path carrier.Path) (*Session, error) {
 	if inner == nil {
 		return nil, ErrInvalidSession

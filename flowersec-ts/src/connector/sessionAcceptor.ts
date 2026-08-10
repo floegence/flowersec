@@ -7,7 +7,7 @@ import {
   type ArtifactV2,
   type DecodedFSB2RequestV2,
 } from "../v2/artifact.js";
-import { adaptNativeCarrierSessionV2, type NativeCarrierSessionV2, type NativeCarrierStreamV2 } from "../v2/carrier.js";
+import type { CarrierSessionV2, CarrierStreamV2 } from "../v2/carrier.js";
 import type { SessionProtocolRuntimeV2, SessionV2 as InternalSessionV2 } from "../v2/session.js";
 import { establishSessionV2 } from "../v2/session.js";
 import { AdmissionSessionV2Error } from "../v2/admissionError.js";
@@ -27,47 +27,112 @@ export type AdmissionAuthorizerV2 = (
   signal?: AbortSignal,
 ) => Promise<AdmissionDecisionV2>;
 
-export async function acceptNativeSessionV2(
-  carrier: NativeCarrierSessionV2,
-  authorize: AdmissionAuthorizerV2,
-  options: Readonly<{ runtime: SessionProtocolRuntimeV2; rpcRouter?: RpcRouter; signal?: AbortSignal }>,
-): Promise<InternalSessionV2> {
-  const admission = carrier.kind === "webtransport"
-    ? await carrier.openStream(signalOptions(options.signal))
-    : await carrier.acceptStream(signalOptions(options.signal));
+export type ReceivedSessionAdmissionV2 = Readonly<{
+  carrier: CarrierSessionV2;
+  stream: CarrierStreamV2;
+  rawFSB2: Uint8Array;
+  decoded: DecodedFSB2RequestV2;
+}>;
+
+export async function receiveSessionAdmissionV2(
+  carrier: CarrierSessionV2,
+  signal?: AbortSignal,
+): Promise<ReceivedSessionAdmissionV2> {
+  const stream = carrier.kind === "webtransport"
+    ? await carrier.openStream(signalOptions(signal))
+    : await carrier.acceptStream(signalOptions(signal));
   try {
-    const rawFSB2 = await readFSB2(admission, options.signal);
-    const decoded = decodeFSB2RequestV2(rawFSB2);
-    const decision = await authorize(decoded, options.signal);
-    if (decision.accepted) {
-      const expected = encodeFSB2RequestV2(
-        buildFSB2RequestV2(decision.artifact, decoded.request.chosen_candidate_id),
-      );
-      if (!equalBytes(expected, rawFSB2)) throw new Error("authorized artifact does not match admission");
-    }
-    const response = decision.accepted
-      ? { status: AdmissionStatusV2.Success, reason: "" }
-      : { status: decision.status, reason: decision.reason };
-    await writeAll(
-      admission,
-      encodeFSA2ResponseV2(response),
-      options.signal,
-    );
-    await raceAbort(admission.closeWrite(), options.signal);
-    if (!decision.accepted) {
-      throw new AdmissionSessionV2Error(decision.reason, `Flowersec v2 admission rejected: ${decision.reason}`);
-    }
-    const config = sessionConfigFromArtifactV2(decision.artifact, rawFSB2, options.runtime, undefined, "server");
-    return await establishSessionV2(
-      adaptNativeCarrierSessionV2(carrier),
-      options.rpcRouter === undefined ? config : { ...config, rpcRouter: options.rpcRouter },
-      signalOptions(options.signal),
-    );
+    const rawFSB2 = await readFSB2(stream, signal);
+    return Object.freeze({ carrier, stream, rawFSB2, decoded: decodeFSB2RequestV2(rawFSB2) });
   } catch (error) {
-    admission.abort(asError(error));
+    stream.abort(asError(error));
     carrier.abort({ code: 6, reason: "admission failed" });
     throw error;
   }
+}
+
+export async function rejectSessionAdmissionV2(
+  received: ReceivedSessionAdmissionV2,
+  decision: Extract<AdmissionDecisionV2, Readonly<{ accepted: false }>>,
+  signal?: AbortSignal,
+): Promise<never> {
+  await respondAdmission(received.stream, { status: decision.status, reason: decision.reason }, signal);
+  received.carrier.abort({ code: 6, reason: "admission rejected" });
+  throw new AdmissionSessionV2Error(
+    decision.reason,
+    `Flowersec v2 admission rejected: ${decision.reason}`,
+  );
+}
+
+export async function acceptReceivedSessionV2(
+  received: ReceivedSessionAdmissionV2,
+  artifact: ArtifactV2,
+  options: Readonly<{
+    runtime: SessionProtocolRuntimeV2;
+    rpcRouter?: RpcRouter;
+    signal?: AbortSignal;
+    role?: "client" | "server";
+    localAdmissionBinding?: Uint8Array;
+    peerAdmissionBinding?: Uint8Array;
+    localEndpointInstanceID?: string;
+    expectedPeerEndpointInstanceID?: string;
+  }>,
+): Promise<InternalSessionV2> {
+  try {
+    const expected = encodeFSB2RequestV2(
+      buildFSB2RequestV2(artifact, received.decoded.request.chosen_candidate_id),
+    );
+    if (!equalBytes(expected, received.rawFSB2)) throw new Error("authorized artifact does not match admission");
+    await respondAdmission(received.stream, { status: AdmissionStatusV2.Success, reason: "" }, options.signal);
+    const base = sessionConfigFromArtifactV2(
+      artifact,
+      received.rawFSB2,
+      options.runtime,
+      undefined,
+      options.role,
+    );
+    const config = {
+      ...base,
+      ...(options.rpcRouter === undefined ? {} : { rpcRouter: options.rpcRouter }),
+      ...(options.localAdmissionBinding === undefined ? {} : { localAdmissionBinding: options.localAdmissionBinding }),
+      ...(options.peerAdmissionBinding === undefined ? {} : { peerAdmissionBinding: options.peerAdmissionBinding }),
+      ...(options.localEndpointInstanceID === undefined ? {} : { localEndpointInstanceID: options.localEndpointInstanceID }),
+      ...(options.expectedPeerEndpointInstanceID === undefined ? {} : { expectedPeerEndpointInstanceID: options.expectedPeerEndpointInstanceID }),
+    };
+    return await establishSessionV2(received.carrier, config, signalOptions(options.signal));
+  } catch (error) {
+    received.stream.abort(asError(error));
+    received.carrier.abort({ code: 6, reason: "admission failed" });
+    throw error;
+  }
+}
+
+export async function acceptNativeSessionV2(
+  carrier: CarrierSessionV2,
+  authorize: AdmissionAuthorizerV2,
+  options: Readonly<{ runtime: SessionProtocolRuntimeV2; rpcRouter?: RpcRouter; signal?: AbortSignal }>,
+): Promise<InternalSessionV2> {
+  const received = await receiveSessionAdmissionV2(carrier, options.signal);
+  try {
+    const decision = await authorize(received.decoded, options.signal);
+    if (!decision.accepted) {
+      return await rejectSessionAdmissionV2(received, decision, options.signal);
+    }
+    return await acceptReceivedSessionV2(received, decision.artifact, { ...options, role: "server" });
+  } catch (error) {
+    received.stream.abort(asError(error));
+    carrier.abort({ code: 6, reason: "admission failed" });
+    throw error;
+  }
+}
+
+async function respondAdmission(
+  stream: CarrierStreamV2,
+  response: Readonly<{ status: AdmissionStatusV2; reason: string }>,
+  signal?: AbortSignal,
+): Promise<void> {
+  await writeAll(stream, encodeFSA2ResponseV2(response), signal);
+  await raceAbort(stream.closeWrite(), signal);
 }
 
 function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
@@ -77,7 +142,7 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   return difference === 0;
 }
 
-async function readFSB2(stream: NativeCarrierStreamV2, signal?: AbortSignal): Promise<Uint8Array> {
+async function readFSB2(stream: CarrierStreamV2, signal?: AbortSignal): Promise<Uint8Array> {
   const reader = new NativeReader(stream);
   const header = await reader.readExactly(12, signal);
   const length = new DataView(header.buffer, header.byteOffset, header.byteLength).getUint32(8, false);
@@ -95,7 +160,7 @@ class NativeReader {
   private offset = 0;
   private available = 0;
 
-  constructor(private readonly stream: NativeCarrierStreamV2) {}
+  constructor(private readonly stream: CarrierStreamV2) {}
 
   async readExactly(length: number, signal?: AbortSignal): Promise<Uint8Array> {
     while (this.available < length) {
@@ -132,7 +197,7 @@ class NativeReader {
   }
 }
 
-async function writeAll(stream: NativeCarrierStreamV2, value: Uint8Array, signal?: AbortSignal): Promise<void> {
+async function writeAll(stream: CarrierStreamV2, value: Uint8Array, signal?: AbortSignal): Promise<void> {
   let offset = 0;
   while (offset < value.length) {
     const written = await raceAbort(stream.write(value.subarray(offset)), signal);

@@ -32,6 +32,10 @@ type StreamHandler func(context.Context, IncomingStream) error
 // an application-level rejection without exposing transport or session state.
 type RPCHandler func(context.Context, json.RawMessage) (any, *RPCError)
 
+// RPCNotificationHandler processes one-way peer notifications. An error is
+// isolated to that notification and does not terminate the session.
+type RPCNotificationHandler func(context.Context, json.RawMessage) error
+
 // SessionHandlerOptions bounds application stream dispatch and exposes only
 // sanitized asynchronous failures.
 type SessionHandlerOptions struct {
@@ -45,10 +49,11 @@ type SessionHandlers struct {
 	maxConcurrent int
 	onError       func(error)
 
-	mu             sync.RWMutex
-	frozen         bool
-	streamHandlers map[string]StreamHandler
-	rpcHandlers    map[uint32]RPCHandler
+	mu                   sync.RWMutex
+	frozen               bool
+	streamHandlers       map[string]StreamHandler
+	rpcHandlers          map[uint32]RPCHandler
+	notificationHandlers map[uint32]RPCNotificationHandler
 }
 
 // String deliberately reveals no handler registration state.
@@ -70,16 +75,17 @@ func NewSessionHandlers(options SessionHandlerOptions) (*SessionHandlers, error)
 		return nil, ErrInvalidSessionHandlers
 	}
 	return &SessionHandlers{
-		maxConcurrent:  concurrent,
-		onError:        options.OnError,
-		streamHandlers: make(map[string]StreamHandler),
-		rpcHandlers:    make(map[uint32]RPCHandler),
+		maxConcurrent:        concurrent,
+		onError:              options.OnError,
+		streamHandlers:       make(map[string]StreamHandler),
+		rpcHandlers:          make(map[uint32]RPCHandler),
+		notificationHandlers: make(map[uint32]RPCNotificationHandler),
 	}, nil
 }
 
 func (handlers *SessionHandlers) valid() bool {
 	return handlers != nil && handlers.maxConcurrent >= 1 && handlers.maxConcurrent <= maxConcurrentStreams &&
-		handlers.streamHandlers != nil && handlers.rpcHandlers != nil
+		handlers.streamHandlers != nil && handlers.rpcHandlers != nil && handlers.notificationHandlers != nil
 }
 
 // HandleStream registers one application stream kind. Registrations are
@@ -141,7 +147,31 @@ func (handlers *SessionHandlers) HandleRPC(typeID uint32, handler RPCHandler) er
 	if _, exists := handlers.rpcHandlers[typeID]; exists {
 		return ErrHandlerAlreadyExists
 	}
+	if _, exists := handlers.notificationHandlers[typeID]; exists {
+		return ErrHandlerAlreadyExists
+	}
 	handlers.rpcHandlers[typeID] = handler
+	return nil
+}
+
+// HandleNotification registers one-way inbound notification handling. The
+// type-ID namespace is shared with request handlers to keep routing explicit.
+func (handlers *SessionHandlers) HandleNotification(typeID uint32, handler RPCNotificationHandler) error {
+	if handlers == nil || typeID == 0 || handler == nil {
+		return ErrInvalidSessionHandlers
+	}
+	handlers.mu.Lock()
+	defer handlers.mu.Unlock()
+	if handlers.frozen {
+		return ErrSessionHandlersFrozen
+	}
+	if _, exists := handlers.rpcHandlers[typeID]; exists {
+		return ErrHandlerAlreadyExists
+	}
+	if _, exists := handlers.notificationHandlers[typeID]; exists {
+		return ErrHandlerAlreadyExists
+	}
+	handlers.notificationHandlers[typeID] = handler
 	return nil
 }
 
@@ -161,8 +191,12 @@ func (handlers *SessionHandlers) rpcRouter() *internalrpc.Router {
 	}
 	handlers.mu.RLock()
 	registrations := make(map[uint32]RPCHandler, len(handlers.rpcHandlers))
+	notifications := make(map[uint32]RPCNotificationHandler, len(handlers.notificationHandlers))
 	for typeID, handler := range handlers.rpcHandlers {
 		registrations[typeID] = handler
+	}
+	for typeID, handler := range handlers.notificationHandlers {
+		notifications[typeID] = handler
 	}
 	handlers.mu.RUnlock()
 	for typeID, handler := range registrations {
@@ -177,6 +211,15 @@ func (handlers *SessionHandlers) rpcRouter() *internalrpc.Router {
 				return nil, internalRPCError()
 			}
 			return payload, nil
+		})
+	}
+	for typeID, handler := range notifications {
+		handler := handler
+		router.Register(typeID, func(ctx context.Context, request json.RawMessage) (json.RawMessage, *rpcwire.RpcError) {
+			if err := handler(ctx, append(json.RawMessage(nil), request...)); err != nil {
+				return nil, internalRPCError()
+			}
+			return nil, nil
 		})
 	}
 	return router
@@ -250,15 +293,20 @@ func (handlers *SessionHandlers) Serve(ctx context.Context, current Session) err
 			go func() {
 				defer active.Done()
 				defer func() { <-semaphore }()
-				defer incoming.Stream.Close()
 				defer func() {
 					if recover() != nil {
 						_ = incoming.Stream.Reset()
+						_ = incoming.Stream.Close()
 						handlers.reportError(&SessionError{code: SessionOperationFailed})
 					}
 				}()
 				if err := handler(serveCtx, incoming); err != nil {
 					_ = incoming.Stream.Reset()
+					_ = incoming.Stream.Close()
+					return
+				}
+				if err := incoming.Stream.CloseWrite(); err != nil {
+					handlers.reportError(err)
 				}
 			}()
 		default:

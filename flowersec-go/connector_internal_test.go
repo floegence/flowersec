@@ -377,8 +377,9 @@ func (backend *deadlineConnectorBackend) Connect(ctx context.Context) (connectv2
 
 type staticRPCPeer struct{ err error }
 
-func (peer staticRPCPeer) Call(context.Context, uint32, any, any) error { return peer.err }
-func (peer staticRPCPeer) Notify(context.Context, uint32, any) error    { return peer.err }
+func (peer staticRPCPeer) Call(context.Context, uint32, any, any) error          { return peer.err }
+func (peer staticRPCPeer) Notify(context.Context, uint32, any) error             { return peer.err }
+func (peer staticRPCPeer) OnNotify(uint32, func(context.Context, []byte)) func() { return func() {} }
 
 type staticByteStream struct{ err error }
 

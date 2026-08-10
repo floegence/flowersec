@@ -3,9 +3,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bytes::Bytes;
 use flowersec::{
-    ByteStream, IncomingStream, RpcCallError, RpcError, RpcPeer, Session, SessionError,
-    SessionTermination, StreamMetadata,
+    ByteStream, IncomingStream, NotificationSubscription, RpcCallError, RpcError, RpcPeer, Session,
+    SessionError, SessionTermination, StreamMetadata,
 };
+use std::sync::Arc;
 
 #[derive(Debug)]
 struct ProbeStream;
@@ -56,6 +57,14 @@ impl RpcPeer for ProbeRpc {
 
     async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> Result<(), SessionError> {
         Ok(())
+    }
+
+    fn subscribe_notification(
+        &self,
+        _type_id: u32,
+        _handler: Arc<dyn Fn(serde_json::Value) + Send + Sync>,
+    ) -> Result<NotificationSubscription, SessionError> {
+        Err(SessionError::OperationFailed)
     }
 }
 

@@ -13,6 +13,7 @@ use std::{
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
+use futures_util::FutureExt;
 use hkdf::Hkdf;
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
@@ -40,9 +41,10 @@ use crate::{
     },
     transport_v2::{
         ByteStream, CarrierSessionV2, CarrierStreamV2, CarrierUnreliableMessageErrorV2,
-        IncomingStream, JsonObject, PathKind, RpcCallError, RpcError, RpcPeer, Session,
-        SessionError, SessionRole, SessionTermination, StreamMetadata, UnreliableMessageChannel,
-        UnreliableMessageError, UnreliableSendOutcome, carrier_inbound_stream_limit_v2,
+        IncomingStream, JsonObject, NotificationSubscription, PathKind, RpcCallError, RpcError,
+        RpcPeer, Session, SessionError, SessionRole, SessionTermination, StreamMetadata,
+        UnreliableMessageChannel, UnreliableMessageError, UnreliableSendOutcome,
+        carrier_inbound_stream_limit_v2,
     },
 };
 
@@ -178,7 +180,7 @@ struct HandshakeMaterialV2 {
 /// Application-owned bidirectional RPC dispatch for the reserved encrypted
 /// `flowersec.rpc.v2` logical stream kind.
 #[async_trait]
-pub trait RpcHandlerV2: std::fmt::Debug + Send + Sync + 'static {
+pub trait RpcHandlerV2: Send + Sync + 'static {
     async fn call(
         &self,
         type_id: u32,
@@ -668,6 +670,7 @@ async fn establish_session_v2_inner(
             stream: Mutex::new(None),
             read_buffer: Mutex::new(VecDeque::new()),
             next_request_id: AtomicU64::new(1),
+            notifications: Arc::new(NotificationRegistryV2::default()),
         },
         unreliable: SessionUnreliableMessageChannelV2 {
             session: OnceLock::new(),
@@ -734,6 +737,70 @@ struct SessionRpcPeerV2 {
     stream: Mutex<Option<Box<dyn ByteStream>>>,
     read_buffer: Mutex<VecDeque<u8>>,
     next_request_id: AtomicU64,
+    notifications: Arc<NotificationRegistryV2>,
+}
+
+#[derive(Default)]
+struct NotificationRegistryV2 {
+    handlers: StdMutex<HashMap<u64, NotificationRegistrationV2>>,
+    next_id: AtomicU64,
+}
+
+type NotificationHandlerV2 = Arc<dyn Fn(serde_json::Value) + Send + Sync>;
+type NotificationRegistrationV2 = (u32, NotificationHandlerV2);
+
+impl std::fmt::Debug for NotificationRegistryV2 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("NotificationRegistryV2 { <opaque> }")
+    }
+}
+
+impl NotificationRegistryV2 {
+    fn subscribe(
+        self: &Arc<Self>,
+        type_id: u32,
+        handler: Arc<dyn Fn(serde_json::Value) + Send + Sync>,
+    ) -> NotificationSubscription {
+        let id = self
+            .next_id
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        self.handlers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(id, (type_id, handler));
+        let registry = Arc::clone(self);
+        NotificationSubscription::new(move || {
+            registry
+                .handlers
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(&id);
+        })
+    }
+
+    fn dispatch(&self, type_id: u32, payload: serde_json::Value) {
+        let handlers = self
+            .handlers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values()
+            .filter(|(registered, _)| *registered == type_id)
+            .map(|(_, handler)| Arc::clone(handler))
+            .collect::<Vec<_>>();
+        for handler in handlers {
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler(payload.clone())));
+            let _ = result;
+        }
+    }
+
+    fn clear(&self) {
+        self.handlers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
 }
 
 struct SessionUnreliableMessageChannelV2 {
@@ -833,6 +900,17 @@ impl RpcPeer for SessionRpcPeerV2 {
         rpc_notify_v2(self, type_id, request)
             .await
             .map_err(|error| SessionError::from_io(&error))
+    }
+
+    fn subscribe_notification(
+        &self,
+        type_id: u32,
+        handler: Arc<dyn Fn(serde_json::Value) + Send + Sync>,
+    ) -> Result<NotificationSubscription, SessionError> {
+        if type_id == 0 {
+            return Err(SessionError::OperationFailed);
+        }
+        Ok(self.notifications.subscribe(type_id, handler))
     }
 }
 
@@ -2124,6 +2202,7 @@ async fn send_goaway_v2(session: &EncryptedSessionV2, reason: u16) -> io::Result
 async fn close_session_v2(session: &EncryptedSessionV2) -> io::Result<()> {
     if session.begin_closing() {
         record_terminal_v2(session, &closed());
+        session.rpc.notifications.clear();
         session.canceled.cancel();
         let deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
         let flush = match tokio::time::timeout_at(deadline, async {
@@ -2200,6 +2279,7 @@ async fn idle_watchdog_v2(session: Arc<SelfSession>) {
                             "Flowersec v2 session idle timeout",
                         ),
                     );
+                    session.rpc.notifications.clear();
                     session.canceled.cancel();
                     let _ = tokio::time::timeout(
                         session.config.deadlines.close_flush,
@@ -2222,6 +2302,7 @@ async fn idle_watchdog_v2(session: Arc<SelfSession>) {
 fn fail_session_v2(session: &EncryptedSessionV2, error: io::Error) {
     if session.begin_closing() {
         record_terminal_v2(session, &error);
+        session.rpc.notifications.clear();
         session.canceled.cancel();
         session.carrier.abort();
         session.finish_closed();
@@ -3368,23 +3449,18 @@ async fn rpc_call_v2(
     write_rpc_frame_v2(stream, &envelope)
         .await
         .map_err(|error| RpcCallError::Session(SessionError::from_io(&error)))?;
-    loop {
-        let response = read_rpc_frame_v2(stream, &peer.read_buffer)
-            .await
-            .map_err(|error| RpcCallError::Session(SessionError::from_io(&error)))?;
-        if response.response_to != request_id {
-            if response.response_to == 0 && response.request_id == 0 {
-                continue;
-            }
-            return Err(RpcCallError::Session(SessionError::OperationFailed));
-        }
-        if let Some(error) = response.error {
-            let error =
-                RpcError::from_wire(error.code, error.message).map_err(RpcCallError::Session)?;
-            return Err(RpcCallError::Application(error));
-        }
-        return Ok(response.payload);
+    let response = read_rpc_frame_v2(stream, &peer.read_buffer)
+        .await
+        .map_err(|error| RpcCallError::Session(SessionError::from_io(&error)))?;
+    if response.response_to != request_id {
+        return Err(RpcCallError::Session(SessionError::OperationFailed));
     }
+    if let Some(error) = response.error {
+        let error =
+            RpcError::from_wire(error.code, error.message).map_err(RpcCallError::Session)?;
+        return Err(RpcCallError::Application(error));
+    }
+    Ok(response.payload)
 }
 
 async fn rpc_notify_v2(
@@ -3424,25 +3500,41 @@ async fn serve_rpc_stream_v2(session: &SelfSession, stream: StreamHandleV2) -> i
         }
         let handler = session.config.rpc_handler.as_ref();
         if request.request_id == 0 {
+            session
+                .rpc
+                .notifications
+                .dispatch(request.type_id, request.payload.clone());
             if let Some(handler) = handler {
-                handler
-                    .notify(request.type_id, request.payload)
-                    .await
-                    .map_err(|_| io::Error::other("RPC notification handler failed"))?;
+                let _ =
+                    std::panic::AssertUnwindSafe(handler.notify(request.type_id, request.payload))
+                        .catch_unwind()
+                        .await;
             }
             continue;
         }
         let (payload, error) = match handler {
-            Some(handler) => match handler.call(request.type_id, request.payload).await {
-                Ok(payload) => (payload, None),
-                Err(error) => (
-                    serde_json::Value::Null,
-                    Some(RpcErrorWireV2 {
-                        code: error.code,
-                        message: error.message,
-                    }),
-                ),
-            },
+            Some(handler) => {
+                match std::panic::AssertUnwindSafe(handler.call(request.type_id, request.payload))
+                    .catch_unwind()
+                    .await
+                {
+                    Ok(Ok(payload)) => (payload, None),
+                    Ok(Err(error)) => (
+                        serde_json::Value::Null,
+                        Some(RpcErrorWireV2 {
+                            code: error.code,
+                            message: error.message,
+                        }),
+                    ),
+                    Err(_) => (
+                        serde_json::Value::Null,
+                        Some(RpcErrorWireV2 {
+                            code: 500,
+                            message: Some("handler failed".into()),
+                        }),
+                    ),
+                }
+            }
             None => (
                 serde_json::Value::Null,
                 Some(RpcErrorWireV2 {

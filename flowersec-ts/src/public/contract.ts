@@ -25,7 +25,7 @@ export type UnreliableMessageSendResult =
   | "dropped_carrier";
 
 export interface UnreliableMessageChannel {
-  readonly maxMessageSize: 976;
+  readonly maxMessageSize: number;
   send(
     message: Uint8Array,
     options: UnreliableMessageSendOptions,
@@ -76,9 +76,9 @@ export interface RpcPeer {
     typeId: number,
     payload: Request,
     decodeResponse: (payload: JsonValue) => Response,
-    signal?: AbortSignal,
+    options?: OperationOptions,
   ): Promise<RpcResult<Response>>;
-  notify<Payload = unknown>(typeId: number, payload: Payload): Promise<void>;
+  notify<Payload = unknown>(typeId: number, payload: Payload, options?: OperationOptions): Promise<void>;
   onNotify<Payload = unknown>(typeId: number, handler: (payload: Payload) => void): () => void;
 }
 
@@ -112,6 +112,7 @@ export interface Session {
   rekey(options?: OperationOptions): Promise<void>;
   probeLiveness(options?: OperationOptions): Promise<number>;
   waitTermination(): Promise<SessionTermination>;
+  waitTermination(options: OperationOptions): Promise<SessionTermination>;
   close(): Promise<void>;
 }
 

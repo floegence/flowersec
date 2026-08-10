@@ -74,6 +74,18 @@ describe("opaque public SessionV2 projection", () => {
     expect((await session.waitTermination()).error.message).not.toContain("carrier");
   });
 
+  test("cancels waitTermination through OperationOptions", async () => {
+    const terminal = new Promise<never>(() => undefined);
+    const internal = fakeSession(fakeStream(new Error("closed")), new Error("closed"));
+    internal.waitTermination = async () => await terminal;
+    const session = projectSessionV2(internal);
+    const controller = new AbortController();
+    const waiting = session.waitTermination({ signal: controller.signal });
+    controller.abort();
+
+    await expect(waiting).rejects.toEqual(new SessionError("canceled"));
+  });
+
   test("projects RPC application outcomes as a discriminated union", async () => {
     const terminal = new Error("closed");
     const internal = fakeSession(fakeStream(terminal), terminal);

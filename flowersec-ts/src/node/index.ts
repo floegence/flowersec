@@ -2,7 +2,6 @@ export { connect, createConnectionController } from "./connectSession.js";
 export {
   AcceptedSession,
   Acceptor,
-  RuntimeAuthorizationRequest,
   SessionHandlers,
   SessionHandlersError,
   createAcceptor,
@@ -12,6 +11,7 @@ export type {
   AuthorizationDecision,
   RPCHandler,
   RPCHandlerResult,
+  NotificationHandler,
   SessionHandlerOptions,
   StreamHandler,
 } from "./acceptor.js";
@@ -20,4 +20,29 @@ export type {
   SessionOptions,
   SessionTLSOptions,
 } from "./connectSession.js";
+export {
+  AuthorizationRecord,
+  AuthorizationResponse,
+  ControlPlaneError,
+  EndpointSet,
+  IssuedArtifact,
+  Issuer,
+  RuntimeAuthorizationRequest,
+  authorizeRuntime,
+  createEndpointSet,
+  parseAuthorizationRecord,
+  parseRuntimeAuthorizationRequest,
+  rejectRuntime,
+} from "./controlplane.js";
+export type {
+  ArtifactMetadata,
+  ControlPlaneErrorCode,
+  DirectIssueOptions,
+  IssuedTunnelPair,
+  Scope,
+  SessionOptions as ControlPlaneSessionOptions,
+  TunnelIssueOptions,
+} from "./controlplane.js";
+export { ProxyServer, ProxyServerError } from "./proxyServer.js";
+export type { ProxyServerOptions } from "./proxyServer.js";
 export * from "../facade.js";

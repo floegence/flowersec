@@ -31,7 +31,7 @@ pub enum HandlerRegistrationError {
 
 /// Handles one bounded JSON RPC request or notification.
 #[async_trait]
-pub trait RpcHandler: fmt::Debug + Send + Sync + 'static {
+pub trait RpcHandler: Send + Sync + 'static {
     async fn call(
         &self,
         type_id: u32,
@@ -41,9 +41,19 @@ pub trait RpcHandler: fmt::Debug + Send + Sync + 'static {
     async fn notify(&self, type_id: u32, request: serde_json::Value) -> Result<(), RpcError>;
 }
 
+/// Handles one inbound RPC notification without producing a response.
+#[async_trait]
+pub trait NotificationHandler: Send + Sync + 'static {
+    async fn handle_notification(
+        &self,
+        type_id: u32,
+        request: serde_json::Value,
+    ) -> Result<(), RpcError>;
+}
+
 /// Handles one authenticated application stream without carrier access.
 #[async_trait]
-pub trait StreamHandler: fmt::Debug + Send + Sync + 'static {
+pub trait StreamHandler: Send + Sync + 'static {
     async fn handle(
         &self,
         stream: &IncomingStream,
@@ -55,6 +65,7 @@ pub trait StreamHandler: fmt::Debug + Send + Sync + 'static {
 pub struct SessionHandlers {
     max_concurrent_streams: usize,
     rpc: HashMap<u32, Arc<dyn RpcHandler>>,
+    notifications: HashMap<u32, Arc<dyn NotificationHandler>>,
     streams: HashMap<String, Arc<dyn StreamHandler>>,
 }
 
@@ -71,34 +82,63 @@ impl SessionHandlers {
         Ok(Self {
             max_concurrent_streams,
             rpc: HashMap::new(),
+            notifications: HashMap::new(),
             streams: HashMap::new(),
         })
     }
 
-    pub fn handle_rpc(
+    pub fn handle_rpc<H>(
         &mut self,
         type_id: u32,
-        handler: Arc<dyn RpcHandler>,
-    ) -> Result<(), HandlerRegistrationError> {
-        if type_id == 0 {
+        handler: H,
+    ) -> Result<(), HandlerRegistrationError>
+    where
+        H: RpcHandler,
+    {
+        if type_id == 0 || self.notifications.contains_key(&type_id) {
             return Err(HandlerRegistrationError::Invalid);
         }
-        if self.rpc.insert(type_id, handler).is_some() {
+        if self.rpc.insert(type_id, Arc::new(handler)).is_some() {
             return Err(HandlerRegistrationError::AlreadyRegistered);
         }
         Ok(())
     }
 
-    pub fn handle_stream<K: Into<String>>(
+    pub fn handle_stream<K, H>(
         &mut self,
         kind: K,
-        handler: Arc<dyn StreamHandler>,
-    ) -> Result<(), HandlerRegistrationError> {
+        handler: H,
+    ) -> Result<(), HandlerRegistrationError>
+    where
+        K: Into<String>,
+        H: StreamHandler,
+    {
         let kind = kind.into();
         if kind.is_empty() || kind.len() > 255 || kind == "flowersec.rpc.v2" {
             return Err(HandlerRegistrationError::Invalid);
         }
-        if self.streams.insert(kind, handler).is_some() {
+        if self.streams.insert(kind, Arc::new(handler)).is_some() {
+            return Err(HandlerRegistrationError::AlreadyRegistered);
+        }
+        Ok(())
+    }
+
+    pub fn handle_notification<H>(
+        &mut self,
+        type_id: u32,
+        handler: H,
+    ) -> Result<(), HandlerRegistrationError>
+    where
+        H: NotificationHandler,
+    {
+        if type_id == 0 || self.rpc.contains_key(&type_id) {
+            return Err(HandlerRegistrationError::Invalid);
+        }
+        if self
+            .notifications
+            .insert(type_id, Arc::new(handler))
+            .is_some()
+        {
             return Err(HandlerRegistrationError::AlreadyRegistered);
         }
         Ok(())
@@ -107,6 +147,7 @@ impl SessionHandlers {
     pub(crate) fn rpc_handler(&self) -> Arc<dyn RpcHandlerV2> {
         Arc::new(RpcHandlers {
             handlers: self.rpc.clone(),
+            notifications: self.notifications.clone(),
         })
     }
 }
@@ -117,9 +158,15 @@ impl fmt::Debug for SessionHandlers {
     }
 }
 
-#[derive(Debug)]
 struct RpcHandlers {
     handlers: HashMap<u32, Arc<dyn RpcHandler>>,
+    notifications: HashMap<u32, Arc<dyn NotificationHandler>>,
+}
+
+impl fmt::Debug for RpcHandlers {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("RpcHandlers { <opaque> }")
+    }
 }
 
 #[async_trait]
@@ -136,6 +183,9 @@ impl RpcHandlerV2 for RpcHandlers {
     }
 
     async fn notify(&self, type_id: u32, request: serde_json::Value) -> Result<(), RpcError> {
+        if let Some(handler) = self.notifications.get(&type_id) {
+            return handler.handle_notification(type_id, request).await;
+        }
         if let Some(handler) = self.handlers.get(&type_id) {
             handler.notify(type_id, request).await
         } else {
@@ -250,7 +300,7 @@ mod tests {
             let mut handlers =
                 SessionHandlers::new(SessionHandlerOptions::default()).expect("create handlers");
             let kind = format!("{}{}", vector.unit.repeat(vector.repeat), vector.suffix);
-            let result = handlers.handle_stream(kind, Arc::new(NoopStreamHandler));
+            let result = handlers.handle_stream(kind, NoopStreamHandler);
             assert_eq!(
                 result.is_ok(),
                 vector.valid,
@@ -265,10 +315,10 @@ mod tests {
         let mut handlers =
             SessionHandlers::new(SessionHandlerOptions::default()).expect("create handlers");
         handlers
-            .handle_stream(vectors.duplicate_kind.clone(), Arc::new(NoopStreamHandler))
+            .handle_stream(vectors.duplicate_kind.clone(), NoopStreamHandler)
             .expect("register stream handler");
         assert_eq!(
-            handlers.handle_stream(vectors.duplicate_kind, Arc::new(NoopStreamHandler)),
+            handlers.handle_stream(vectors.duplicate_kind, NoopStreamHandler),
             Err(HandlerRegistrationError::AlreadyRegistered)
         );
     }

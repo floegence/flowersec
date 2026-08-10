@@ -192,6 +192,11 @@
           },
           {
             "kind": "type",
+            "expr": "flowersec.RPCNotificationHandler",
+            "doc_token": "`flowersec.RPCNotificationHandler`"
+          },
+          {
+            "kind": "type",
             "expr": "flowersec.UnreliableMessageChannel",
             "doc_token": "`flowersec.UnreliableMessageChannel`"
           },
@@ -258,6 +263,12 @@
             "expr": "flowersec.RPCPeer.Notify",
             "signature": "func(flowersec.RPCPeer, context.Context, uint32, any) error",
             "doc_token": "`flowersec.RPCPeer.Notify(...)`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.RPCPeer.OnNotify",
+            "signature": "func(flowersec.RPCPeer, uint32, func(context.Context, json.RawMessage)) func()",
+            "doc_token": "`flowersec.RPCPeer.OnNotify(...)`"
           },
           {
             "kind": "interface_method",
@@ -344,6 +355,11 @@
             "kind": "method",
             "expr": "(*flowersec.SessionHandlers).HandleRPC",
             "doc_token": "`flowersec.SessionHandlers.HandleRPC(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.SessionHandlers).HandleNotification",
+            "doc_token": "`flowersec.SessionHandlers.HandleNotification(...)`"
           },
           {
             "kind": "method",
@@ -561,6 +577,36 @@
             "doc_token": "`flowersec.Acceptor`"
           },
           {
+            "kind": "type",
+            "expr": "flowersec.AcceptorListener",
+            "doc_token": "`flowersec.AcceptorListener`"
+          },
+          {
+            "kind": "method",
+            "expr": "flowersec.AcceptorListener.Address",
+            "doc_token": "`AcceptorListener.Address()`"
+          },
+          {
+            "kind": "method",
+            "expr": "flowersec.AcceptorListener.Close",
+            "doc_token": "`AcceptorListener.Close()`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.AcceptorPath",
+            "doc_token": "`flowersec.AcceptorPath`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.RawQUICAcceptorListenerOptions",
+            "doc_token": "`flowersec.RawQUICAcceptorListenerOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.WebTransportAcceptorListenerOptions",
+            "doc_token": "`flowersec.WebTransportAcceptorListenerOptions`"
+          },
+          {
             "kind": "var",
             "expr": "flowersec.ErrInvalidAcceptor",
             "doc_token": "`flowersec.ErrInvalidAcceptor`"
@@ -574,6 +620,36 @@
             "kind": "method",
             "expr": "(*flowersec.Acceptor).Handler",
             "doc_token": "`flowersec.Acceptor.Handler()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.Acceptor).Serve",
+            "doc_token": "`flowersec.Acceptor.Serve(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewWebSocketAcceptorListener",
+            "doc_token": "`flowersec.NewWebSocketAcceptorListener(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewRawQUICAcceptorListener",
+            "doc_token": "`flowersec.NewRawQUICAcceptorListener(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewWebTransportAcceptorListener",
+            "doc_token": "`flowersec.NewWebTransportAcceptorListener(...)`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.AcceptorPathDirect",
+            "doc_token": "`flowersec.AcceptorPathDirect`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.AcceptorPathTunnel",
+            "doc_token": "`flowersec.AcceptorPathTunnel`"
           },
           {
             "kind": "const",

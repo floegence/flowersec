@@ -35,6 +35,7 @@ var requiredSharedFixtureIDs = []string{
 	"handshake_v2",
 	"open_unicode_v2",
 	"connection_controller",
+	"session_handlers_v2",
 	"session_wire_v2",
 }
 

@@ -1,10 +1,56 @@
 use flowersec::{
     ArtifactLease, ArtifactSource, ArtifactSourceError, ConnectionController,
-    ConnectionControllerOptions, ConnectorOptions, RetryDisposition, RpcPeer, RpcPeerExt,
-    SessionError, SessionTermination, StreamMetadata, StreamMetadataError, connect,
+    ConnectionControllerOptions, ConnectorOptions, IncomingStream, NotificationHandler,
+    RetryDisposition, RpcError, RpcHandler, RpcPeer, RpcPeerExt, SessionError,
+    SessionHandlerOptions, SessionHandlers, SessionTermination, StreamHandler, StreamMetadata,
+    StreamMetadataError, connect,
 };
 use serde::{Deserialize, Serialize};
 use std::{fs, num::NonZeroU64, path::Path, process::Command, sync::Arc};
+use tokio_util::sync::CancellationToken;
+
+struct RpcWithoutDebug;
+
+#[async_trait::async_trait]
+impl RpcHandler for RpcWithoutDebug {
+    async fn call(
+        &self,
+        _type_id: u32,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcError> {
+        Ok(request)
+    }
+
+    async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> Result<(), RpcError> {
+        Ok(())
+    }
+}
+
+struct NotificationWithoutDebug;
+
+#[async_trait::async_trait]
+impl NotificationHandler for NotificationWithoutDebug {
+    async fn handle_notification(
+        &self,
+        _type_id: u32,
+        _request: serde_json::Value,
+    ) -> Result<(), RpcError> {
+        Ok(())
+    }
+}
+
+struct StreamWithoutDebug;
+
+#[async_trait::async_trait]
+impl StreamHandler for StreamWithoutDebug {
+    async fn handle(
+        &self,
+        _stream: &IncomingStream,
+        _cancellation: CancellationToken,
+    ) -> Result<(), SessionError> {
+        Ok(())
+    }
+}
 
 #[derive(Serialize)]
 struct TypedRequest {
@@ -16,7 +62,7 @@ struct TypedResponse {
     accepted: bool,
 }
 
-async fn compile_public_api(lease: &mut ArtifactLease, peer: &dyn RpcPeer) {
+async fn compile_public_api(lease: ArtifactLease, peer: &dyn RpcPeer) {
     let options = ConnectorOptions::new(vec![vec![1]]).expect("explicit trust roots");
     let _ = connect(lease, options).await;
     let response = peer
@@ -35,6 +81,18 @@ async fn compile_public_api(lease: &mut ArtifactLease, peer: &dyn RpcPeer) {
 #[test]
 fn exposes_explicit_options_and_typed_rpc() {
     let _ = compile_public_api;
+}
+
+#[test]
+fn handler_registration_is_generic_and_does_not_require_debug_or_arc() {
+    let mut handlers = SessionHandlers::new(SessionHandlerOptions::default()).unwrap();
+    handlers.handle_rpc(1, RpcWithoutDebug).unwrap();
+    handlers
+        .handle_notification(2, NotificationWithoutDebug)
+        .unwrap();
+    handlers
+        .handle_stream("application.stream", StreamWithoutDebug)
+        .unwrap();
 }
 
 #[test]
