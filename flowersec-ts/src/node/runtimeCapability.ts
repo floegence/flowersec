@@ -22,10 +22,9 @@ export const NODE_RUNTIME_PROFILE_V2 = defineRuntimeCapabilityDescriptorV2(
 );
 
 export function detectNodeRuntimeCapabilityV2(rawQuicAvailable: boolean) {
-  if (!rawQuicAvailable) {
-    const error = new Error("Flowersec native transport is unavailable on this platform");
-    Object.assign(error, { code: "native_transport_unavailable" });
-    throw error;
-  }
-  return NODE_RUNTIME_PROFILE_V2;
+  if (rawQuicAvailable) return NODE_RUNTIME_PROFILE_V2;
+  return defineRuntimeCapabilityDescriptorV2("node", nodeWebSocketTuples, [
+    { carrier: "raw_quic", reason: "node_native_transport_unavailable" },
+    { carrier: "webtransport", reason: "node_webtransport_driver_unavailable" },
+  ]);
 }

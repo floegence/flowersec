@@ -23,7 +23,8 @@ import {
 } from "./acceptor.js";
 import {
   createNativeRawQuicDriver,
-  loadNativeTransportAddon,
+  NativeTransportUnavailableError,
+  tryLoadNativeTransportAddon,
 } from "./nativeTransportAddon.js";
 import { createNodeRawQuicClientV2 } from "./rawQuicAdapter.js";
 
@@ -80,8 +81,11 @@ export async function connect(
   const rpcRouter = options.handlers === undefined
     ? undefined
     : freezeSessionHandlersForConnector(options.handlers);
-  const nativeAddon = loadNativeTransportAddon();
+  // WebSocket sessions do not require the optional native raw QUIC addon. Load
+  // it only when a raw QUIC candidate is actually selected by the connector.
+  const nativeAddon = tryLoadNativeTransportAddon();
   const rawQuicFactory = createRawQuicCandidateFactoryV2(async (candidate, artifact, signal) => {
+    if (nativeAddon === undefined) throw new NativeTransportUnavailableError();
     if (options.tls?.ca === undefined) {
       throw new TypeError("raw QUIC requires explicit trust roots");
     }

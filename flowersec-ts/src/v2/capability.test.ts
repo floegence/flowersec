@@ -62,10 +62,22 @@ describe("runtime capability v2", () => {
     });
   });
 
-  test("fails explicitly when the required Node native addon is unavailable", () => {
-    expect(() => detectNodeRuntimeCapabilityV2(false)).toThrowError(
-      expect.objectContaining({ code: "native_transport_unavailable" }),
-    );
+  test("keeps WebSocket available when the optional native addon is unavailable", () => {
+    expect(detectNodeRuntimeCapabilityV2(false)).toEqual({
+      language: "typescript",
+      runtime: "node",
+      schemaVersion: 2,
+      tuples: [
+        { carrier: "websocket", networkMode: "dial", path: "direct", sessionRole: "client", reliableStreams: true, datagrams: false, migration: false },
+        { carrier: "websocket", networkMode: "dial", path: "tunnel", sessionRole: "client", reliableStreams: true, datagrams: false, migration: false },
+        { carrier: "websocket", networkMode: "dial", path: "tunnel", sessionRole: "server", reliableStreams: true, datagrams: false, migration: false },
+        { carrier: "websocket", networkMode: "listen", path: "direct", sessionRole: "server", reliableStreams: true, datagrams: false, migration: false },
+      ],
+      unsupported: [
+        { carrier: "raw_quic", reason: "node_native_transport_unavailable" },
+        { carrier: "webtransport", reason: "node_webtransport_driver_unavailable" },
+      ],
+    });
   });
 
   test("removes WebTransport when the browser runtime API is unavailable", () => {
