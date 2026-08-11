@@ -83,6 +83,42 @@ describe("native transport addon loader", () => {
     expect(canceled).toBe(1);
   });
 
+  test("forwards bounded application close details through the native driver", async () => {
+    const closes: Array<readonly [number | undefined, string | undefined]> = [];
+    const session = {
+      kind: "raw_quic",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+      localAddress: () => ({ host: "127.0.0.1", port: 1 }),
+      peerAddress: () => ({ host: "127.0.0.1", port: 2 }),
+      openStream: () => { throw new Error("unused"); },
+      acceptStream: () => { throw new Error("unused"); },
+      sendDatagram: () => "unavailable",
+      receiveDatagram: () => { throw new Error("unused"); },
+      waitTermination: async () => undefined,
+      close: async (code?: number, reason?: string) => { closes.push([code, reason]); },
+      abort: () => undefined,
+    };
+    const addon = {
+      contractVersion: () => 1,
+      connectRawQuic: () => ({ result: async () => session, cancel: () => undefined }),
+      bindRawQuic: () => { throw new Error("unused"); },
+    } as unknown as NativeTransportAddonBinding;
+    const driver = createNativeRawQuicDriver(addon);
+    const connected = await driver.connectRawQuic({
+      host: "127.0.0.1",
+      port: 443,
+      serverName: "localhost",
+      path: "direct",
+      trustRootsDer: [new Uint8Array([1])],
+      inboundBidirectionalStreamCapacity: 3,
+      handshakeTimeoutMs: 1_000,
+    });
+
+    await connected.close({ code: 7, reason: "session closed" });
+    expect(closes).toEqual([[7, "session closed"]]);
+  });
+
   test("browser entry graph cannot reach the Node addon loader", () => {
     const sourceRoot = fileURLToPath(new URL("..", import.meta.url));
     const pending = [resolve(sourceRoot, "browser/index.ts")];

@@ -8,6 +8,7 @@ use std::{
     collections::HashMap,
     fmt,
     future::Future,
+    hash::Hash,
     io,
     net::SocketAddr,
     sync::{
@@ -129,10 +130,11 @@ impl fmt::Debug for TunnelRuntime {
 }
 
 struct TunnelState {
-    pending: Mutex<HashMap<String, Leg>>,
+    pending: Mutex<HashMap<AuthorityKey, PendingEntry<Leg>>>,
     credentials: Mutex<HashMap<String, SystemTime>>,
     active_pairs: Mutex<usize>,
     active_carriers: Mutex<HashMap<u64, ActivePairCarriers>>,
+    next_pending_id: AtomicU64,
     next_pair_id: AtomicU64,
     active_tasks: AtomicUsize,
     tasks_done: Notify,
@@ -146,11 +148,37 @@ type ActivePairCarriers = (Arc<dyn CarrierSessionV2>, Arc<dyn CarrierSessionV2>)
 struct Leg {
     carrier: Arc<dyn CarrierSessionV2>,
     admission: Arc<dyn CarrierStreamV2>,
-    role: u8,
+    claims: FsbClaims,
     expected_peer: String,
-    endpoint: String,
     lease_id: String,
     expires_at: SystemTime,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct AuthorityKey {
+    profile: String,
+    channel: String,
+    group: String,
+    audience: String,
+}
+
+struct PendingEntry<T> {
+    generation_id: u64,
+    value: T,
+}
+
+fn remove_pending_generation<K, T>(
+    pending: &mut HashMap<K, PendingEntry<T>>,
+    key: &K,
+    generation_id: u64,
+) -> Option<T>
+where
+    K: Eq + Hash,
+{
+    if pending.get(key)?.generation_id != generation_id {
+        return None;
+    }
+    pending.remove(key).map(|entry| entry.value)
 }
 
 impl TunnelRuntime {
@@ -181,6 +209,7 @@ impl TunnelRuntime {
                 credentials: Mutex::new(HashMap::new()),
                 active_pairs: Mutex::new(0),
                 active_carriers: Mutex::new(HashMap::new()),
+                next_pending_id: AtomicU64::new(1),
                 next_pair_id: AtomicU64::new(1),
                 active_tasks: AtomicUsize::new(0),
                 tasks_done: Notify::new(),
@@ -222,6 +251,7 @@ impl TunnelRuntime {
                 credentials: Mutex::new(HashMap::new()),
                 active_pairs: Mutex::new(0),
                 active_carriers: Mutex::new(HashMap::new()),
+                next_pending_id: AtomicU64::new(1),
                 next_pair_id: AtomicU64::new(1),
                 active_tasks: AtomicUsize::new(0),
                 tasks_done: Notify::new(),
@@ -307,7 +337,10 @@ impl TunnelRuntime {
         wait_for_zero(&self.state.active_accepts, &self.state.accepts_done).await;
         let legs = {
             let mut pending = self.state.pending.lock().await;
-            pending.drain().map(|(_, leg)| leg).collect::<Vec<_>>()
+            pending
+                .drain()
+                .map(|(_, entry)| entry.value)
+                .collect::<Vec<_>>()
         };
         for leg in legs {
             let _ = send_fsa2(&*leg.admission, FSA2_REJECT, "runtime_closed").await;
@@ -438,22 +471,26 @@ impl TaskRuntime {
             let _ = send_fsa2(&*admission, FSA2_REJECT, "invalid_carrier_state").await;
             return Err(TunnelRuntimeError::AdmissionFailed);
         }
-        let key = format!(
-            "{}:{}:{}:{}",
-            value.channel, value.group, value.audience, value.contract_hash
-        );
-        let leg = Leg {
+        let key = AuthorityKey {
+            profile: value.profile.clone(),
+            channel: value.channel.clone(),
+            group: value.group.clone(),
+            audience: value.audience.clone(),
+        };
+        let mut leg = Some(Leg {
             carrier: carrier.clone(),
             admission,
-            role: value.role,
+            claims: value,
             expected_peer: claims.expected_peer,
-            endpoint: value.endpoint,
             lease_id: claims.lease_id,
             expires_at: claims.expires_at,
-        };
+        });
         enum Registration {
-            Pending,
-            Paired(Leg),
+            Pending {
+                generation_id: u64,
+                expires_at: SystemTime,
+            },
+            Paired(Box<PendingEntry<Leg>>),
             Capacity,
         }
         let registration = {
@@ -461,44 +498,67 @@ impl TaskRuntime {
             if self.state.closed.is_cancelled() {
                 Registration::Capacity
             } else if let Some(peer) = pending.remove(&key) {
-                Registration::Paired(peer)
+                Registration::Paired(Box::new(peer))
             } else if pending.len() >= self.options.max_pending_legs {
                 Registration::Capacity
             } else {
-                Registration::Pending
+                let generation_id = self.state.next_pending_id.fetch_add(1, Ordering::Relaxed);
+                let pending_leg = leg.take().expect("pending leg is registered once");
+                let expires_at = pending_leg.expires_at;
+                pending.insert(
+                    key.clone(),
+                    PendingEntry {
+                        generation_id,
+                        value: pending_leg,
+                    },
+                );
+                Registration::Pending {
+                    generation_id,
+                    expires_at,
+                }
             }
         };
-        if let Registration::Capacity = &registration {
-            let _ = send_fsa2(&*leg.admission, FSA2_RETRY, "capacity").await;
-            self.authorizer.release(&leg.lease_id).await;
-            return Err(TunnelRuntimeError::Capacity);
-        }
-        let Registration::Paired(peer) = registration else {
-            let pending_lifetime = leg
-                .expires_at
-                .duration_since(SystemTime::now())
-                .unwrap_or(Duration::from_millis(1));
-            let mut pending = self.state.pending.lock().await;
-            pending.insert(key.clone(), leg);
-            let state = self.state.clone();
-            let authorizer = self.authorizer.clone();
-            let timeout = self.options.pair_timeout.min(pending_lifetime);
-            spawn_tracked(self.state.clone(), async move {
-                tokio::select! {
-                    _ = state.closed.cancelled() => return,
-                    _ = tokio::time::sleep(timeout) => {}
-                }
-                if let Some(leg) = state.pending.lock().await.remove(&key) {
-                    let _ = send_fsa2(&*leg.admission, FSA2_RETRY, "pair_timeout").await;
-                    leg.carrier.abort();
-                    authorizer.release(&leg.lease_id).await;
-                }
-            });
-            return Ok(());
+        let peer = match registration {
+            Registration::Capacity => {
+                let leg = leg.expect("capacity keeps the unregistered leg");
+                let _ = send_fsa2(&*leg.admission, FSA2_RETRY, "capacity").await;
+                self.authorizer.release(&leg.lease_id).await;
+                return Err(TunnelRuntimeError::Capacity);
+            }
+            Registration::Pending {
+                generation_id,
+                expires_at,
+            } => {
+                let pending_lifetime = expires_at
+                    .duration_since(SystemTime::now())
+                    .unwrap_or(Duration::from_millis(1));
+                let state = self.state.clone();
+                let authorizer = self.authorizer.clone();
+                let timeout = self.options.pair_timeout.min(pending_lifetime);
+                spawn_tracked(self.state.clone(), async move {
+                    tokio::select! {
+                        _ = state.closed.cancelled() => return,
+                        _ = tokio::time::sleep(timeout) => {}
+                    }
+                    let leg = {
+                        let mut pending = state.pending.lock().await;
+                        remove_pending_generation(&mut pending, &key, generation_id)
+                    };
+                    if let Some(leg) = leg {
+                        let _ = send_fsa2(&*leg.admission, FSA2_RETRY, "pair_timeout").await;
+                        leg.carrier.abort();
+                        authorizer.release(&leg.lease_id).await;
+                    }
+                });
+                return Ok(());
+            }
+            Registration::Paired(peer) => *peer,
         };
-        if peer.role == leg.role
-            || peer.endpoint != leg.expected_peer
-            || leg.endpoint != peer.expected_peer
+        let leg = leg.expect("paired registration keeps the incoming leg");
+        if peer.value.claims.role == leg.claims.role
+            || !pair_claims_match(&peer.value.claims, &leg.claims)
+            || peer.value.claims.endpoint != leg.expected_peer
+            || leg.claims.endpoint != peer.value.expected_peer
         {
             self.state.pending.lock().await.insert(key, peer);
             let _ = send_fsa2(&*leg.admission, FSA2_REJECT, "pair_mismatch").await;
@@ -520,13 +580,14 @@ impl TaskRuntime {
             .active_carriers
             .lock()
             .await
-            .insert(pair_id, (peer.carrier.clone(), leg.carrier.clone()));
+            .insert(pair_id, (peer.value.carrier.clone(), leg.carrier.clone()));
         let state = self.state.clone();
         let authorizer = self.authorizer.clone();
         spawn_tracked(self.state.clone(), async move {
+            let peer = peer.value;
             let _ = send_fsa2(&*peer.admission, 0, "").await;
             let _ = send_fsa2(&*leg.admission, 0, "").await;
-            let (client, server) = if peer.role == 1 {
+            let (client, server) = if peer.claims.role == 1 {
                 (peer.carrier.clone(), leg.carrier.clone())
             } else {
                 (leg.carrier.clone(), peer.carrier.clone())
@@ -714,12 +775,23 @@ fn valid_reason(reason: &str) -> bool {
 }
 
 struct FsbClaims {
+    profile: String,
     role: u8,
     endpoint: String,
     channel: String,
     group: String,
     audience: String,
     contract_hash: String,
+    candidate_set_hash: String,
+}
+
+fn pair_claims_match(first: &FsbClaims, second: &FsbClaims) -> bool {
+    first.profile == second.profile
+        && first.channel == second.channel
+        && first.group == second.group
+        && first.audience == second.audience
+        && first.contract_hash == second.contract_hash
+        && first.candidate_set_hash == second.candidate_set_hash
 }
 
 fn parse_fsb2_claims(raw: &[u8]) -> Result<FsbClaims, TunnelRuntimeError> {
@@ -746,12 +818,14 @@ fn parse_fsb2_claims(raw: &[u8]) -> Result<FsbClaims, TunnelRuntimeError> {
         .and_then(|value| u8::try_from(value).ok())
         .ok_or(TunnelRuntimeError::InvalidWire)?;
     Ok(FsbClaims {
+        profile: get("profile")?,
         role,
         endpoint: get("endpoint_instance_id")?,
         channel: get("channel_id")?,
         group: get("rendezvous_group_id")?,
         audience: get("listener_audience")?,
         contract_hash: get("session_contract_hash_b64u")?,
+        candidate_set_hash: get("candidate_set_hash_b64u")?,
     })
 }
 
@@ -984,5 +1058,65 @@ async fn copy_stream(
             }
             offset += written;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fsb2(profile: &str, candidate_set_hash: &str) -> Vec<u8> {
+        let payload = serde_json::json!({
+            "profile": profile,
+            "role": 1,
+            "endpoint_instance_id": "endpoint-a",
+            "channel_id": "channel",
+            "rendezvous_group_id": "group",
+            "listener_audience": "audience",
+            "session_contract_hash_b64u": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "candidate_set_hash_b64u": candidate_set_hash,
+        });
+        let payload = serde_json::to_vec(&payload).unwrap();
+        let mut raw = b"FSB2\x02\x02\x00\x00".to_vec();
+        raw.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        raw.extend_from_slice(&payload);
+        raw
+    }
+
+    #[test]
+    fn stale_timeout_cannot_remove_a_new_pending_generation() {
+        let key = "authority".to_owned();
+        let mut pending = HashMap::from([(
+            key.clone(),
+            PendingEntry {
+                generation_id: 2,
+                value: "generation-2",
+            },
+        )]);
+
+        assert_eq!(remove_pending_generation(&mut pending, &key, 1), None);
+        assert_eq!(
+            pending.get(&key).map(|entry| entry.value),
+            Some("generation-2")
+        );
+        assert_eq!(
+            remove_pending_generation(&mut pending, &key, 2),
+            Some("generation-2")
+        );
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn tunnel_pair_requires_matching_profile_and_candidate_set_hash() {
+        let canonical_hash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let other_hash = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+        let first = parse_fsb2_claims(&fsb2("flowersec/2", canonical_hash)).unwrap();
+        let matching = parse_fsb2_claims(&fsb2("flowersec/2", canonical_hash)).unwrap();
+        let other_profile = parse_fsb2_claims(&fsb2("flowersec/3", canonical_hash)).unwrap();
+        let other_candidates = parse_fsb2_claims(&fsb2("flowersec/2", other_hash)).unwrap();
+
+        assert!(pair_claims_match(&first, &matching));
+        assert!(!pair_claims_match(&first, &other_profile));
+        assert!(!pair_claims_match(&first, &other_candidates));
     }
 }

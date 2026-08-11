@@ -13,6 +13,7 @@ import {
   type ArtifactCarrierV2,
   type SessionContractV2,
 } from "../v2/artifact.js";
+import { wrapArtifact, type Artifact } from "../public/artifact.js";
 import { base64urlDecode, base64urlEncode } from "../utils/base64url.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 
@@ -330,21 +331,84 @@ export function runtimeAuthorizationRequestFromDecoded(
   return RuntimeAuthorizationRequest.fromDecoded(decoded, candidate.carrier);
 }
 
-export class AuthorizationResponse {
+export type DirectAuthorizationDecision =
+  | Readonly<{
+    decision: "allow";
+    artifact: Artifact;
+  }>
+  | Readonly<{ decision: "reject" | "retry"; reason: string }>;
+
+export type TunnelAuthorizationDecision =
+  | Readonly<{
+    decision: "allow";
+    credentialId: string;
+    leaseId: string;
+    expiresAtUnixSeconds: number;
+    expectedPeerEndpointInstanceId: string;
+    allowReplacement?: boolean;
+  }>
+  | Readonly<{ decision: "reject" | "retry"; reason: string }>;
+
+type DirectAllowDecision = Extract<DirectAuthorizationDecision, Readonly<{ decision: "allow" }>>;
+type DirectRuntimeAllowDecision = DirectAllowDecision & Readonly<{
+  leaseId: string;
+  expiresAtUnixSeconds: number;
+}>;
+type DirectDenyDecision = Extract<DirectAuthorizationDecision, Readonly<{ decision: "reject" | "retry" }>>;
+type TunnelAllowDecision = Extract<TunnelAuthorizationDecision, Readonly<{ decision: "allow" }>>;
+type TunnelDenyDecision = Extract<TunnelAuthorizationDecision, Readonly<{ decision: "reject" | "retry" }>>;
+
+export class AuthorizationResponse<Decision extends DirectAuthorizationDecision = DirectAuthorizationDecision> {
   readonly #json: Uint8Array;
+  readonly #decision: Decision;
+  readonly decision: Decision["decision"];
+  readonly artifact: Decision extends DirectAllowDecision ? Artifact : undefined;
+  readonly leaseId: Decision extends DirectRuntimeAllowDecision ? string : undefined;
+  readonly expiresAtUnixSeconds: Decision extends DirectRuntimeAllowDecision ? number : undefined;
+  readonly reason: Decision extends DirectDenyDecision ? string : undefined;
   /** @internal */
-  constructor(json: Uint8Array) { this.#json = json.slice(); }
+  constructor(json: Uint8Array, decision: Decision) {
+    this.#json = json.slice();
+    this.#decision = decision;
+    this.decision = decision.decision;
+    this.artifact = (decision.decision === "allow" ? decision.artifact : undefined) as AuthorizationResponse<Decision>["artifact"];
+    this.leaseId = (decision.decision === "allow" && "leaseId" in decision ? decision.leaseId : undefined) as AuthorizationResponse<Decision>["leaseId"];
+    this.expiresAtUnixSeconds = (decision.decision === "allow" && "expiresAtUnixSeconds" in decision ? decision.expiresAtUnixSeconds : undefined) as AuthorizationResponse<Decision>["expiresAtUnixSeconds"];
+    this.reason = (decision.decision === "allow" ? undefined : decision.reason) as AuthorizationResponse<Decision>["reason"];
+  }
   json(): Uint8Array { return this.#json.slice(); }
+  /** @internal */
+  asDecision(): Decision { return this.#decision; }
 }
 
-export class TunnelAuthorizationResponse {
+export class TunnelAuthorizationResponse<Decision extends TunnelAuthorizationDecision = TunnelAuthorizationDecision> {
   readonly #json: Uint8Array;
+  readonly #decision: Decision;
+  readonly decision: Decision["decision"];
+  readonly credentialId: Decision extends TunnelAllowDecision ? string : undefined;
+  readonly leaseId: Decision extends TunnelAllowDecision ? string : undefined;
+  readonly expiresAtUnixSeconds: Decision extends TunnelAllowDecision ? number : undefined;
+  readonly expectedPeerEndpointInstanceId: Decision extends TunnelAllowDecision ? string : undefined;
+  readonly allowReplacement: Decision extends TunnelAllowDecision ? boolean | undefined : undefined;
+  readonly reason: Decision extends TunnelDenyDecision ? string : undefined;
   /** @internal */
-  constructor(json: Uint8Array) { this.#json = json.slice(); }
+  constructor(json: Uint8Array, decision: Decision) {
+    this.#json = json.slice();
+    this.#decision = decision;
+    this.decision = decision.decision;
+    this.credentialId = (decision.decision === "allow" ? decision.credentialId : undefined) as TunnelAuthorizationResponse<Decision>["credentialId"];
+    this.leaseId = (decision.decision === "allow" ? decision.leaseId : undefined) as TunnelAuthorizationResponse<Decision>["leaseId"];
+    this.expiresAtUnixSeconds = (decision.decision === "allow" ? decision.expiresAtUnixSeconds : undefined) as TunnelAuthorizationResponse<Decision>["expiresAtUnixSeconds"];
+    this.expectedPeerEndpointInstanceId = (decision.decision === "allow" ? decision.expectedPeerEndpointInstanceId : undefined) as TunnelAuthorizationResponse<Decision>["expectedPeerEndpointInstanceId"];
+    this.allowReplacement = (decision.decision === "allow" ? decision.allowReplacement : undefined) as TunnelAuthorizationResponse<Decision>["allowReplacement"];
+    this.reason = (decision.decision === "allow" ? undefined : decision.reason) as TunnelAuthorizationResponse<Decision>["reason"];
+  }
   json(): Uint8Array { return this.#json.slice(); }
+  /** @internal */
+  asDecision(): Decision { return this.#decision; }
 }
 
-export function authorizeRuntime(request: RuntimeAuthorizationRequest, record: AuthorizationRecord, leaseId: string, nowUnixSeconds = Math.floor(Date.now() / 1000)): AuthorizationResponse {
+export function authorizeRuntime(request: RuntimeAuthorizationRequest, record: AuthorizationRecord, leaseId: string, nowUnixSeconds = Math.floor(Date.now() / 1000)): AuthorizationResponse<DirectRuntimeAllowDecision> {
   if (!(request instanceof RuntimeAuthorizationRequest) || !(record instanceof AuthorizationRecord) || !LEASE_ID.test(leaseId) || request.lookupKey() !== record.lookupKey()) throw invalidInput();
   const artifact = record.artifact;
   if (nowUnixSeconds >= artifact.session.init_expire_at_unix_s) throw invalidInput();
@@ -353,28 +417,51 @@ export function authorizeRuntime(request: RuntimeAuthorizationRequest, record: A
   const base = { decision: "allow", credential_id: record.lookupKey(), lease_id: leaseId, expires_at: new Date(artifact.session.init_expire_at_unix_s * 1000).toISOString() } as Record<string, unknown>;
   if (artifact.path.kind !== "direct") throw invalidInput();
   base.direct = { session: sessionWire(artifact.session), upstream: { network: "tcp", address: record.upstream } };
-  return new AuthorizationResponse(new TextEncoder().encode(JSON.stringify(base)));
+  return new AuthorizationResponse(
+    new TextEncoder().encode(JSON.stringify(base)),
+    {
+      decision: "allow",
+      artifact: wrapArtifact(artifact),
+      leaseId,
+      expiresAtUnixSeconds: artifact.session.init_expire_at_unix_s,
+    },
+  );
 }
 
-export function authorizeTunnelRuntime(request: RuntimeAuthorizationRequest, record: AuthorizationRecord, leaseId: string, nowUnixSeconds = Math.floor(Date.now() / 1000)): TunnelAuthorizationResponse {
+export function authorizeTunnelRuntime(request: RuntimeAuthorizationRequest, record: AuthorizationRecord, leaseId: string, nowUnixSeconds = Math.floor(Date.now() / 1000)): TunnelAuthorizationResponse<TunnelAllowDecision> {
   if (!(request instanceof RuntimeAuthorizationRequest) || !(record instanceof AuthorizationRecord) || !LEASE_ID.test(leaseId) || request.lookupKey() !== record.lookupKey()) throw invalidInput();
   const artifact = record.artifact;
   if (artifact.path.kind !== "tunnel" || nowUnixSeconds >= artifact.session.init_expire_at_unix_s) throw invalidInput();
   const expected = encodeFSB2RequestV2(buildFSB2RequestV2(artifact, request.decoded.request.chosen_candidate_id));
   if (!bytesEqual(expected, request.decoded.raw)) throw invalidInput();
+  const decision: TunnelAuthorizationDecision = {
+    decision: "allow",
+    credentialId: record.lookupKey(),
+    leaseId,
+    expiresAtUnixSeconds: artifact.session.init_expire_at_unix_s,
+    expectedPeerEndpointInstanceId: artifact.path.expected_peer_endpoint_instance_id,
+    allowReplacement: record.allowReplacement,
+  };
   return new TunnelAuthorizationResponse(new TextEncoder().encode(JSON.stringify({
     decision: "allow",
-    credential_id: record.lookupKey(),
-    lease_id: leaseId,
-    expires_at: new Date(artifact.session.init_expire_at_unix_s * 1000).toISOString(),
-    expected_peer_endpoint_instance_id: artifact.path.expected_peer_endpoint_instance_id,
-    allow_replacement: record.allowReplacement,
-  })));
+    credential_id: decision.credentialId,
+    lease_id: decision.leaseId,
+    expires_at: new Date(decision.expiresAtUnixSeconds * 1000).toISOString(),
+    expected_peer_endpoint_instance_id: decision.expectedPeerEndpointInstanceId,
+    allow_replacement: decision.allowReplacement,
+  })), decision);
 }
 
-export function rejectRuntime(reason: string, retryable: boolean): AuthorizationResponse {
+export function rejectRuntime(reason: string, retryable: boolean): AuthorizationResponse<DirectDenyDecision> {
   if (!REASON.test(reason) || reason.length > 64) throw invalidInput();
-  return new AuthorizationResponse(new TextEncoder().encode(JSON.stringify({ decision: retryable ? "retry" : "reject", reason })));
+  const decision: DirectAuthorizationDecision = { decision: retryable ? "retry" : "reject", reason };
+  return new AuthorizationResponse(new TextEncoder().encode(JSON.stringify(decision)), decision);
+}
+
+export function rejectTunnelRuntime(reason: string, retryable: boolean): TunnelAuthorizationResponse<TunnelDenyDecision> {
+  if (!REASON.test(reason) || reason.length > 64) throw invalidInput();
+  const decision: TunnelAuthorizationDecision = { decision: retryable ? "retry" : "reject", reason };
+  return new TunnelAuthorizationResponse(new TextEncoder().encode(JSON.stringify(decision)), decision);
 }
 
 export function parseAuthorizationRecord(encoded: string | Uint8Array): AuthorizationRecord { return AuthorizationRecord.parse(encoded); }

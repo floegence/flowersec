@@ -33,7 +33,7 @@ const peers = {
 validateTopologyContract(matrix.tunnel_topologies);
 const selectedTopologies = matrix.tunnel_topologies.filter((topology) => endpointAs.includes(topology.endpoint_a) && endpointBs.includes(topology.endpoint_b) && relayRuntimes.includes(topology.tunnel_runtime) && selectedCarriers.includes(topology.ingress_carrier_a));
 const nativeAddon = await prepareServerParityNativeAddon(repositoryRoot, selectedTopologies.some((topology) =>
-  topology.ingress_carrier_a === "raw-quic" && [topology.endpoint_a, topology.endpoint_b, topology.tunnel_runtime].includes("node-typescript")
+  [topology.endpoint_a, topology.endpoint_b, topology.tunnel_runtime].includes("node-typescript")
 ));
 try {
   for (const topology of selectedTopologies) await runTopology(topology);

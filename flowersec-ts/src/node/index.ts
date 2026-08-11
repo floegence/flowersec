@@ -42,6 +42,7 @@ export {
   parseAuthorizationRecord,
   parseRuntimeAuthorizationRequest,
   rejectRuntime,
+  rejectTunnelRuntime,
 } from "./controlplane.js";
 export type {
   ArtifactMetadata,

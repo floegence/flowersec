@@ -15,6 +15,7 @@ import {
   createEndpointSet,
   rejectRuntime,
 } from "./controlplane.js";
+import type { AuthorizationDecision } from "./acceptor.js";
 
 describe("Node control-plane public contract", () => {
   test("issues, persists, parses, and authorizes a direct artifact", () => {
@@ -45,6 +46,10 @@ describe("Node control-plane public contract", () => {
       remote_address: "127.0.0.1:23998",
     }));
     const response = authorizeRuntime(request, record, "lease-direct", now);
+    const decision: AuthorizationDecision = response;
+    expect(decision.decision).toBe("allow");
+    expect(response.leaseId).toBe("lease-direct");
+    expect(response.artifact).toBeDefined();
     expect(JSON.parse(new TextDecoder().decode(response.json()))).toMatchObject({
       decision: "allow",
       credential_id: issued.lookupKey(),
@@ -90,5 +95,31 @@ describe("Node control-plane public contract", () => {
     expect(JSON.parse(new TextDecoder().decode(rejectRuntime("permission_denied", false).json()))).toEqual({ decision: "reject", reason: "permission_denied" });
     expect(JSON.parse(new TextDecoder().decode(rejectRuntime("busy", true).json()))).toEqual({ decision: "retry", reason: "busy" });
     expect(() => rejectRuntime("Secret Detail", false)).toThrow();
+  });
+
+  test("returns typed tunnel decisions without requiring response JSON parsing", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const issuer = new Issuer();
+    const pair = issuer.issueTunnelPair({
+      session: { channelId: "typed-tunnel", expiresAtUnixSeconds: now + 60 },
+      endpoints: createEndpointSet("wss://edge.example/flowersec/v2/tunnel"),
+      rendezvousGroupId: "group",
+      listenerAudience: "audience",
+      firstEndpointId: "endpoint-a",
+      secondEndpointId: "endpoint-b",
+    });
+    const record = pair.first.authorizationRecord();
+    const artifact = decodeArtifactV2JSON(pair.first.artifactJSON());
+    const candidate = artifact.path.candidates[0]!;
+    const request = RuntimeAuthorizationRequest.parse(JSON.stringify({
+      fsb2_base64url: base64urlEncode(encodeFSB2RequestV2(buildFSB2RequestV2(artifact, candidate.id))),
+      carrier: candidate.carrier,
+      remote_address: "127.0.0.1:23998",
+    }));
+    const response = authorizeTunnelRuntime(request, record, "lease-tunnel", now);
+    expect(response.decision).toBe("allow");
+    expect(response.leaseId).toBe("lease-tunnel");
+    expect(response.expectedPeerEndpointInstanceId).toBe("endpoint-b");
+    expect(response.reason).toBeUndefined();
   });
 });

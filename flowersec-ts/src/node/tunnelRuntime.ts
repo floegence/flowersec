@@ -17,6 +17,8 @@ import type {
 import type { OperationOptions } from "../public/contract.js";
 import {
   runtimeAuthorizationRequestFromDecoded,
+  TunnelAuthorizationResponse,
+  type TunnelAuthorizationDecision as ControlPlaneTunnelAuthorizationDecision,
   type RuntimeAuthorizationRequest,
 } from "./controlplane.js";
 import { startNodeWebSocketServer, type NodeWebSocketServer } from "./webSocketServer.js";
@@ -31,16 +33,7 @@ const DEFAULT_MAX_CONCURRENT_STREAMS = 128;
 const ID = /^[A-Za-z0-9._~-]{1,128}$/u;
 const REASON = /^[A-Za-z0-9._~-]{1,64}$/u;
 
-export type TunnelAuthorizationDecision =
-  | Readonly<{
-    decision: "allow";
-    credentialId: string;
-    leaseId: string;
-    expiresAtUnixSeconds: number;
-    expectedPeerEndpointInstanceId: string;
-    allowReplacement?: boolean;
-  }>
-  | Readonly<{ decision: "reject" | "retry"; reason: string }>;
+export type TunnelAuthorizationDecision = ControlPlaneTunnelAuthorizationDecision;
 
 export type TunnelRuntimeListener =
   | Readonly<{
@@ -68,7 +61,7 @@ export type TunnelRuntimeOptions = Readonly<{
   authorize(
     request: RuntimeAuthorizationRequest,
     options: OperationOptions,
-  ): Promise<TunnelAuthorizationDecision>;
+  ): Promise<TunnelAuthorizationDecision | TunnelAuthorizationResponse>;
   release?(leaseId: string): Promise<void> | void;
 }>;
 
@@ -91,7 +84,8 @@ export class TunnelRuntime {
     const starting = starts.get(state);
     if (starting !== undefined) await Promise.allSettled([starting]);
     await Promise.allSettled(state.listeners.map(async (listener) => await listener.close()));
-    await Promise.allSettled([...state.tasks]);
+    await boundedCleanup(state.tasks, state.limits.cleanupTimeoutMs);
+    state.tasks.clear();
   }
 }
 
@@ -217,10 +211,16 @@ async function processCarrier(state: TunnelRuntimeState, carrier: CarrierSession
       await reject(received, "invalid_credential", false, state.abort.signal);
       return;
     }
-    const decision = await state.options.authorize(
-      runtimeAuthorizationRequestFromDecoded(decoded),
-      { signal: state.abort.signal },
+    const authorization = await abortableCallback(
+      state.options.authorize(
+        runtimeAuthorizationRequestFromDecoded(decoded),
+        { signal: state.abort.signal },
+      ),
+      state.abort.signal,
     );
+    const decision = authorization instanceof TunnelAuthorizationResponse
+      ? authorization.asDecision()
+      : authorization;
     if (decision.decision !== "allow") {
       await reject(received, decision.reason, decision.decision === "retry", state.abort.signal);
       return;
@@ -257,7 +257,7 @@ function validatedLeg(
     release() {
       if (released) return;
       released = true;
-      void Promise.resolve(state.options.release?.(authorization.leaseId)).catch(() => undefined);
+      trackRelease(state, authorization.leaseId);
     },
   };
 }
@@ -587,7 +587,14 @@ function pruneCredentials(state: TunnelRuntimeState): void {
 
 function releaseDecision(state: TunnelRuntimeState, decision: AllowedDecision): void {
   if (!ID.test(decision.leaseId)) return;
-  void Promise.resolve(state.options.release?.(decision.leaseId)).catch(() => undefined);
+  trackRelease(state, decision.leaseId);
+}
+
+function trackRelease(state: TunnelRuntimeState, leaseId: string): void {
+  if (state.options.release === undefined) return;
+  track(state, Promise.resolve()
+    .then(async () => await state.options.release!(leaseId))
+    .then(() => undefined));
 }
 
 function track(state: TunnelRuntimeState, task: Promise<void>): void {
@@ -600,6 +607,35 @@ async function boundedCleanup(tasks: ReadonlySet<Promise<void>>, timeoutMs: numb
     Promise.allSettled([...tasks]).then(() => undefined),
     new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
   ]);
+}
+
+async function abortableCallback<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw asError(signal.reason);
+  return await new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener("abort", abort);
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(asError(signal.reason));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    void promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      },
+    );
+  });
 }
 
 function aborted(signal: AbortSignal): Promise<void> {

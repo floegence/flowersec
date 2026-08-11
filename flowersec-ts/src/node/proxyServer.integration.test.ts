@@ -21,7 +21,14 @@ afterEach(async () => {
 describe("Node ProxyServer real Session integration", () => {
   test("forwards HTTP over a real WebSocket Session with bounded policy and cleanup", async () => {
     const observed: Array<Readonly<{ body: string; authorization?: string; host?: string }>> = [];
+    let slowStartedResolve: (() => void) | undefined;
+    const slowStarted = new Promise<void>((resolve) => { slowStartedResolve = resolve; });
     const upstream = createServer(async (request: IncomingMessage, response: ServerResponse) => {
+      if (request.url === "/slow") {
+        slowStartedResolve?.();
+        await new Promise<void>((resolve) => request.once("aborted", resolve));
+        return;
+      }
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       observed.push({
@@ -108,8 +115,18 @@ describe("Node ProxyServer real Session integration", () => {
     })).resolves.toContainEqual(expect.objectContaining({ type: "flowersec-proxy:response_error", code: "operation_failed" }));
     expect(observed).toHaveLength(1);
 
+    const slowDispatch = dispatch(runtime, { id: "slow", method: "GET", path: "/slow", headers: [] });
+    await slowStarted;
+    expect(proxy.activeCount).toBe(1);
+    const closing = proxy.close();
+    expect(proxy.activeCount).toBe(1);
+    await closing;
+    expect(proxy.activeCount).toBe(0);
+    await expect(slowDispatch).resolves.toContainEqual(expect.objectContaining({ type: "flowersec-proxy:response_error" }));
+    await expect(dispatch(runtime, { id: "closed", method: "GET", path: "/", headers: [] }))
+      .resolves.toContainEqual(expect.objectContaining({ type: "flowersec-proxy:response_error" }));
+
     runtime.dispose();
-    await proxy.close();
     await proxy.close();
     await client.close();
     await expect(serving).resolves.toMatchObject({ code: "closed" });

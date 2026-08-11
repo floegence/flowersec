@@ -2,7 +2,10 @@ use std::{
     collections::HashSet,
     fmt,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     task::{Context, Poll},
     time::Duration,
 };
@@ -19,7 +22,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::TcpStream,
-    sync::Semaphore,
+    sync::{Notify, Semaphore},
     task::JoinHandle,
     time::Instant,
 };
@@ -171,6 +174,8 @@ struct Inner {
     config: Config,
     permits: Arc<Semaphore>,
     closed: CancellationToken,
+    active: AtomicUsize,
+    completion: Notify,
     on_error: Option<ProxyErrorReporter>,
 }
 
@@ -198,6 +203,8 @@ impl ProxyServer {
                 config,
                 permits: Arc::new(Semaphore::new(max_concurrent)),
                 closed: CancellationToken::new(),
+                active: AtomicUsize::new(0),
+                completion: Notify::new(),
                 on_error,
             }),
         })
@@ -227,9 +234,16 @@ impl ProxyServer {
             })
     }
 
-    /// Cancels active operations and makes future handler calls fail closed.
-    pub fn close(&self) {
+    /// Cancels active operations, waits for their cleanup, and rejects future dispatch.
+    pub async fn close(&self) {
         self.inner.closed.cancel();
+        loop {
+            let completion = self.inner.completion.notified();
+            if self.inner.active.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            completion.await;
+        }
     }
 }
 
@@ -251,6 +265,32 @@ struct ProxyHandler {
     protocol: Protocol,
 }
 
+struct ActiveOperation {
+    inner: Arc<Inner>,
+}
+
+impl ActiveOperation {
+    fn enter(inner: Arc<Inner>) -> Result<Self, SessionError> {
+        if inner.closed.is_cancelled() {
+            return Err(SessionError::Closed);
+        }
+        inner.active.fetch_add(1, Ordering::AcqRel);
+        let operation = Self { inner };
+        if operation.inner.closed.is_cancelled() {
+            return Err(SessionError::Closed);
+        }
+        Ok(operation)
+    }
+}
+
+impl Drop for ActiveOperation {
+    fn drop(&mut self) {
+        if self.inner.active.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.inner.completion.notify_waiters();
+        }
+    }
+}
+
 #[async_trait]
 impl StreamHandler for ProxyHandler {
     async fn handle(
@@ -258,6 +298,7 @@ impl StreamHandler for ProxyHandler {
         incoming: &IncomingStream,
         cancellation: CancellationToken,
     ) -> Result<(), SessionError> {
+        let _active = ActiveOperation::enter(self.inner.clone())?;
         let permit = self
             .inner
             .permits
@@ -1759,7 +1800,7 @@ mod tests {
         .expect("bounded frame rejection");
         assert_eq!(result, Err(SessionError::OperationFailed));
         assert_eq!(server.inner.permits.available_permits(), 2);
-        server.close();
+        server.close().await;
         assert_eq!(
             handler
                 .handle(
@@ -1953,7 +1994,8 @@ mod tests {
                 .await
         });
         accepted_rx.await.expect("request reached upstream");
-        server.close();
+        server.close().await;
+        assert!(operation.is_finished());
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(1), operation)
                 .await
@@ -1962,6 +2004,20 @@ mod tests {
             Err(SessionError::OperationFailed)
         );
         assert_eq!(server.inner.permits.available_permits(), 2);
+        let rejected = ProxyHandler {
+            inner: server.inner.clone(),
+            protocol: Protocol::Http,
+        }
+        .handle(
+            &IncomingStream::new(
+                HTTP_KIND,
+                crate::StreamMetadata::empty(),
+                Box::new(Arc::new(TestStream::new(Vec::new()))),
+            ),
+            CancellationToken::new(),
+        )
+        .await;
+        assert_eq!(rejected, Err(SessionError::Closed));
         upstream.abort();
     }
 }

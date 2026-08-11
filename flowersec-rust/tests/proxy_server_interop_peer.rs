@@ -83,5 +83,5 @@ async fn browser_typescript_proxy_runtime_uses_rust_proxy_server() {
         .expect("accept Browser TypeScript Session");
     let _ = accepted.serve(cancellation.clone()).await;
     cancellation.cancel();
-    proxy.close();
+    proxy.close().await;
 }

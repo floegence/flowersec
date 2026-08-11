@@ -18,7 +18,7 @@ import {
   startNodeRawQuicServer,
   type NodeRawQuicServer,
 } from "./rawQuicServer.js";
-import { unwrapArtifact, type Artifact } from "../public/artifact.js";
+import { unwrapArtifact } from "../public/artifact.js";
 import {
   SessionError,
   type IncomingStream,
@@ -29,6 +29,7 @@ import {
 import { projectSessionV2 } from "../v2/publicSession.js";
 import {
   runtimeAuthorizationRequestFromDecoded,
+  type DirectAuthorizationDecision,
   type RuntimeAuthorizationRequest,
 } from "./controlplane.js";
 
@@ -36,11 +37,10 @@ export type { RuntimeAuthorizationRequest } from "./controlplane.js";
 
 const DEFAULT_MAX_CONCURRENT_STREAMS = 64;
 const MAX_CONCURRENT_STREAMS = 128;
+const DEFAULT_CLEANUP_TIMEOUT_MS = 2_000;
 const encoder = new TextEncoder();
 
-export type AuthorizationDecision =
-  | Readonly<{ decision: "allow"; artifact: Artifact }>
-  | Readonly<{ decision: "reject" | "retry"; reason: string }>;
+export type AuthorizationDecision = DirectAuthorizationDecision;
 
 export type RPCHandlerResult =
   | Readonly<{ payload: JsonValue }>
@@ -248,10 +248,12 @@ export type AcceptorListener =
 export type AcceptorOptions = Readonly<{
   listeners: readonly AcceptorListener[];
   maxInboundStreams: number;
+  cleanupTimeoutMs?: number;
   authorize(
     request: RuntimeAuthorizationRequest,
     options: OperationOptions,
   ): Promise<AuthorizationDecision>;
+  release?(leaseId: string): Promise<void> | void;
   resolveHandlers?(
     request: RuntimeAuthorizationRequest,
     options: OperationOptions,
@@ -291,20 +293,39 @@ export class AcceptedSession {
         active.add(task);
       }
     } finally {
-      await this.session.close().catch(() => undefined);
+      await this.close().catch(() => undefined);
       await Promise.allSettled(active);
     }
   }
 
   async close(): Promise<void> {
-    await this.session.close();
+    const state = acceptedSessionState(this) as AcceptedSessionState & {
+      closePromise?: Promise<void>;
+      releasePromise?: Promise<void>;
+    };
+    if (state.closePromise === undefined) {
+      state.closePromise = (async () => {
+        try {
+          await state.session.close();
+        } finally {
+          if (state.release !== undefined && state.releasePromise === undefined) {
+            state.releasePromise = Promise.resolve().then(() => state.release!());
+          }
+          await state.releasePromise;
+        }
+      })();
+    }
+    await state.closePromise;
   }
 }
 
-type AcceptedSessionState = Readonly<{
+type AcceptedSessionState = {
   session: Session;
   handlers: FrozenHandlers;
-}>;
+  release?: () => Promise<void> | void;
+  closePromise?: Promise<void>;
+  releasePromise?: Promise<void>;
+};
 const acceptedSessionStates = new WeakMap<
   AcceptedSession,
   AcceptedSessionState
@@ -319,11 +340,14 @@ function acceptedSessionState(accepted: AcceptedSession): AcceptedSessionState {
 function createAcceptedSession(
   session: Session,
   handlers: FrozenHandlers,
+  release?: () => Promise<void> | void,
 ): AcceptedSession {
   const accepted = new (
     AcceptedSession as unknown as { new (): AcceptedSession }
   )();
-  acceptedSessionStates.set(accepted, { session, handlers });
+  const state: AcceptedSessionState = { session, handlers };
+  if (release !== undefined) state.release = release;
+  acceptedSessionStates.set(accepted, state);
   return Object.freeze(accepted);
 }
 
@@ -347,7 +371,8 @@ export class Acceptor {
     await Promise.all(
       state.listeners.map(async (listener) => await listener.close()),
     );
-    while (state.tasks.size > 0) await Promise.allSettled([...state.tasks]);
+    await boundedCleanup(state.tasks, state.cleanupTimeoutMs);
+    state.tasks.clear();
   }
 }
 
@@ -356,7 +381,13 @@ type AuthorizedLeg = Readonly<{
   artifact: ArtifactV2;
   handlers: FrozenHandlers;
   router: RpcRouter;
+  leaseId?: string;
 }>;
+
+async function releaseLease(state: AcceptorState, leaseId: string | undefined): Promise<void> {
+  if (leaseId === undefined || state.options.release === undefined) return;
+  await state.options.release(leaseId);
+}
 
 async function authorizeCarrier(
   state: AcceptorState,
@@ -365,9 +396,10 @@ async function authorizeCarrier(
   const received = await receiveSessionAdmissionV2(carrier, state.abort.signal);
   const decoded = received.decoded;
   const request = runtimeAuthorizationRequestFromDecoded(decoded);
-  const decision = await state.options.authorize(request, {
-    signal: state.abort.signal,
-  });
+  const decision = await abortableCallback(
+    state.options.authorize(request, { signal: state.abort.signal }),
+    state.abort.signal,
+  );
   if (decision.decision !== "allow") {
     return await rejectSessionAdmissionV2(
       received,
@@ -379,24 +411,44 @@ async function authorizeCarrier(
       state.abort.signal,
     );
   }
-  const router = new RpcRouter();
-  const registry =
-    state.options.resolveHandlers === undefined
-      ? new SessionHandlers()
-      : await state.options.resolveHandlers(request, {
-          signal: state.abort.signal,
-        });
-  return {
-    received,
-    artifact: unwrapArtifact(decision.artifact),
-    handlers: freezeHandlers(registry, router),
-    router,
-  };
+  const leaseId = "leaseId" in decision && typeof decision.leaseId === "string"
+    ? decision.leaseId
+    : undefined;
+  try {
+    const router = new RpcRouter();
+    const registry =
+      state.options.resolveHandlers === undefined
+        ? new SessionHandlers()
+        : await abortableCallback(
+            Promise.resolve(state.options.resolveHandlers(request, {
+              signal: state.abort.signal,
+            })),
+            state.abort.signal,
+          );
+    const leg: {
+      received: ReceivedSessionAdmissionV2;
+      artifact: ArtifactV2;
+      handlers: FrozenHandlers;
+      router: RpcRouter;
+      leaseId?: string;
+    } = {
+      received,
+      artifact: unwrapArtifact(decision.artifact),
+      handlers: freezeHandlers(registry, router),
+      router,
+    };
+    if (leaseId !== undefined) leg.leaseId = leaseId;
+    return leg;
+  } catch (error) {
+    await releaseLease(state, leaseId).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function establishDirect(
   leg: AuthorizedLeg,
   signal: AbortSignal,
+  release?: () => Promise<void> | void,
 ): Promise<AcceptedSession> {
   const internal = await acceptReceivedSessionV2(leg.received, leg.artifact, {
     runtime: nodeSessionRuntimeV2,
@@ -404,7 +456,7 @@ async function establishDirect(
     role: "server",
     signal,
   });
-  return createAcceptedSession(projectSessionV2(internal), leg.handlers);
+  return createAcceptedSession(projectSessionV2(internal), leg.handlers, release);
 }
 
 async function processCarrier(
@@ -413,14 +465,23 @@ async function processCarrier(
 ): Promise<void> {
   const leg = await authorizeCarrier(state, carrier);
   if (leg === undefined) return;
-  if (
-    leg.received.decoded.request.pathKind !== "direct" ||
-    leg.artifact.path.kind !== "direct"
-  ) {
-    await leg.received.carrier.close().catch(() => undefined);
-    throw new SessionError("operation_failed");
+  try {
+    if (
+      leg.received.decoded.request.pathKind !== "direct" ||
+      leg.artifact.path.kind !== "direct"
+    ) {
+      await leg.received.carrier.close().catch(() => undefined);
+      throw new SessionError("operation_failed");
+    }
+    state.accepted.push(await establishDirect(
+      leg,
+      state.abort.signal,
+      leg.leaseId === undefined ? undefined : () => releaseLease(state, leg.leaseId),
+    ));
+  } catch (error) {
+    await releaseLease(state, leg.leaseId).catch(() => undefined);
+    throw error;
   }
-  state.accepted.push(await establishDirect(leg, state.abort.signal));
 }
 
 async function runAcceptLoop(state: AcceptorState): Promise<void> {
@@ -514,6 +575,7 @@ type AcceptorState = Readonly<{
   accepted: AcceptedQueue;
   abort: AbortController;
   tasks: Set<Promise<void>>;
+  cleanupTimeoutMs: number;
   start(): void;
 }>;
 const acceptorStates = new WeakMap<Acceptor, AcceptorState>();
@@ -534,6 +596,10 @@ export async function createAcceptor(
     options.listeners.length === 0
   ) {
     throw new TypeError("invalid Flowersec Acceptor options");
+  }
+  const cleanupTimeoutMs = options.cleanupTimeoutMs ?? DEFAULT_CLEANUP_TIMEOUT_MS;
+  if (!Number.isSafeInteger(cleanupTimeoutMs) || cleanupTimeoutMs < 1 || cleanupTimeoutMs > 60_000) {
+    throw new TypeError("invalid Flowersec Acceptor cleanup timeout");
   }
   if (options.listeners.some((listener) => listener.path !== "direct")) {
     throw new TypeError(
@@ -595,6 +661,7 @@ export async function createAcceptor(
     accepted,
     abort,
     tasks,
+    cleanupTimeoutMs,
     start() {
       if (started) return;
       started = true;
@@ -604,6 +671,42 @@ export async function createAcceptor(
   };
   acceptorStates.set(acceptor, state);
   return Object.freeze(acceptor);
+}
+
+async function boundedCleanup(tasks: ReadonlySet<Promise<void>>, timeoutMs: number): Promise<void> {
+  await Promise.race([
+    Promise.allSettled([...tasks]).then(() => undefined),
+    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+}
+
+async function abortableCallback<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw signal.reason instanceof Error ? signal.reason : new SessionError("closed");
+  return await new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener("abort", abort);
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(signal.reason instanceof Error ? signal.reason : new SessionError("closed"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    void promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      },
+    );
+  });
 }
 
 function validRPCError(

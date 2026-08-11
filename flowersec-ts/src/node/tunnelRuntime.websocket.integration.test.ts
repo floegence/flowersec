@@ -12,6 +12,53 @@ import { connect } from "./connectSession.js";
 import { createEndpointSet, Issuer } from "./controlplane.js";
 import { createTunnelRuntime } from "./tunnelRuntime.js";
 
+type TunnelArtifact = {
+  session: { init_expire_at_unix_s: number; max_inbound_streams: number };
+  path: {
+    role: 1 | 2;
+    token: string;
+    local_endpoint_instance_id: string;
+    expected_peer_endpoint_instance_id: string;
+    candidates: Array<{ url: string }>;
+  };
+};
+
+type Deferred<T> = Readonly<{
+  promise: Promise<T>;
+  resolve(value: T): void;
+}>;
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function createTLSFixture(prefix: string): Readonly<{
+  temporary: string;
+  certificate: string;
+  privateKey: string;
+}> {
+  const temporary = mkdtempSync(path.join(os.tmpdir(), prefix));
+  const certificatePath = path.join(temporary, "certificate.pem");
+  const privateKeyPath = path.join(temporary, "private-key.pem");
+  execFileSync("openssl", [
+    "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+    "-nodes", "-days", "1", "-sha256", "-subj", "/CN=localhost",
+    "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
+    "-keyout", privateKeyPath, "-out", certificatePath,
+  ], { stdio: "ignore" });
+  return {
+    temporary,
+    certificate: readFileSync(certificatePath, "utf8"),
+    privateKey: readFileSync(privateKeyPath, "utf8"),
+  };
+}
+
 test("Node TunnelRuntime relays opaque WSS streams and cleans up paired and timed-out leases", async () => {
   const temporary = mkdtempSync(path.join(os.tmpdir(), "flowersec-node-wss-tunnel-"));
   const certificatePath = path.join(temporary, "certificate.pem");
@@ -31,16 +78,6 @@ test("Node TunnelRuntime relays opaque WSS streams and cleans up paired and time
     firstEndpointId: "endpoint-a",
     secondEndpointId: "endpoint-b",
   });
-  type TunnelArtifact = {
-    session: { init_expire_at_unix_s: number; max_inbound_streams: number };
-    path: {
-      role: 1 | 2;
-      token: string;
-      local_endpoint_instance_id: string;
-      expected_peer_endpoint_instance_id: string;
-      candidates: Array<{ url: string }>;
-    };
-  };
   const artifacts = [pair.first, pair.second].map((issued) =>
     JSON.parse(new TextDecoder().decode(issued.artifactJSON())) as TunnelArtifact);
   const decisions = new Map<string, Readonly<{
@@ -162,3 +199,122 @@ test("Node TunnelRuntime relays opaque WSS streams and cleans up paired and time
     rmSync(temporary, { recursive: true, force: true });
   }
 }, 30_000);
+
+test("Node TunnelRuntime close waits for an asynchronous lease release", async () => {
+  const tls = createTLSFixture("flowersec-node-tunnel-release-");
+  const issued = new Issuer().issueTunnelPair({
+    session: { channelId: "node-release-barrier", maxInboundStreams: 8 },
+    endpoints: createEndpointSet("wss://localhost/flowersec/v2/tunnel"),
+    rendezvousGroupId: "node-release-group",
+    listenerAudience: "node-release-listener",
+    firstEndpointId: "release-a",
+    secondEndpointId: "release-b",
+  }).first;
+  const artifact = JSON.parse(new TextDecoder().decode(issued.artifactJSON())) as TunnelArtifact;
+  const credentialId = createHash("sha256").update(artifact.path.token).digest("base64url");
+  const authorized = deferred<void>();
+  const releaseStarted = deferred<void>();
+  const releaseAllowed = deferred<void>();
+  const runtime = createTunnelRuntime({
+    listeners: [{
+      carrier: "websocket",
+      host: "127.0.0.1",
+      port: 0,
+      tls: { certificate: tls.certificate, privateKey: tls.privateKey },
+      allowedOrigins: ["https://app.example"],
+    }],
+    maxInboundStreams: artifact.session.max_inbound_streams,
+    cleanupTimeoutMs: 1_000,
+    authorize: async () => {
+      authorized.resolve();
+      return {
+        decision: "allow",
+        credentialId,
+        leaseId: "lease-release-barrier",
+        expiresAtUnixSeconds: artifact.session.init_expire_at_unix_s,
+        expectedPeerEndpointInstanceId: artifact.path.expected_peer_endpoint_instance_id,
+      };
+    },
+    release: async () => {
+      releaseStarted.resolve();
+      await releaseAllowed.promise;
+    },
+  });
+  let connecting: Promise<unknown> | undefined;
+  let closing: Promise<void> | undefined;
+  try {
+    await runtime.start();
+    const address = runtime.addresses()[0]!;
+    artifact.path.candidates[0]!.url = `wss://localhost:${address.port}/flowersec/v2/tunnel`;
+    connecting = connect(
+      createArtifactLeaseV2(parseArtifact(JSON.stringify(artifact)), async () => undefined),
+      { origin: "https://app.example", tls: { ca: tls.certificate } },
+    ).catch(() => undefined);
+    await authorized.promise;
+    await delay(0);
+
+    closing = runtime.close();
+    await releaseStarted.promise;
+    await expect(Promise.race([
+      closing.then(() => "closed" as const),
+      delay(200).then(() => "release-pending" as const),
+    ])).resolves.toBe("release-pending");
+    releaseAllowed.resolve();
+    await closing;
+  } finally {
+    releaseAllowed.resolve();
+    await closing?.catch(() => undefined);
+    await runtime.close().catch(() => undefined);
+    await connecting;
+    rmSync(tls.temporary, { recursive: true, force: true });
+  }
+}, 10_000);
+
+test("Node TunnelRuntime close abandons an authorizer that ignores cancellation", async () => {
+  const tls = createTLSFixture("flowersec-node-tunnel-authorize-");
+  const issued = new Issuer().issueTunnelPair({
+    session: { channelId: "node-authorize-cancel", maxInboundStreams: 8 },
+    endpoints: createEndpointSet("wss://localhost/flowersec/v2/tunnel"),
+    rendezvousGroupId: "node-authorize-group",
+    listenerAudience: "node-authorize-listener",
+    firstEndpointId: "authorize-a",
+    secondEndpointId: "authorize-b",
+  }).first;
+  const artifact = JSON.parse(new TextDecoder().decode(issued.artifactJSON())) as TunnelArtifact;
+  const authorizeStarted = deferred<void>();
+  const authorizeAllowed = deferred<never>();
+  const runtime = createTunnelRuntime({
+    listeners: [{
+      carrier: "websocket",
+      host: "127.0.0.1",
+      port: 0,
+      tls: { certificate: tls.certificate, privateKey: tls.privateKey },
+      allowedOrigins: ["https://app.example"],
+    }],
+    maxInboundStreams: artifact.session.max_inbound_streams,
+    cleanupTimeoutMs: 100,
+    authorize: async () => {
+      authorizeStarted.resolve();
+      return await authorizeAllowed.promise;
+    },
+  });
+  let connecting: Promise<unknown> | undefined;
+  try {
+    await runtime.start();
+    const address = runtime.addresses()[0]!;
+    artifact.path.candidates[0]!.url = `wss://localhost:${address.port}/flowersec/v2/tunnel`;
+    connecting = connect(
+      createArtifactLeaseV2(parseArtifact(JSON.stringify(artifact)), async () => undefined),
+      { origin: "https://app.example", tls: { ca: tls.certificate } },
+    ).catch(() => undefined);
+    await authorizeStarted.promise;
+    await expect(Promise.race([
+      runtime.close().then(() => "closed" as const),
+      delay(500).then(() => "timed-out" as const),
+    ])).resolves.toBe("closed");
+  } finally {
+    await runtime.close().catch(() => undefined);
+    await connecting;
+    rmSync(tls.temporary, { recursive: true, force: true });
+  }
+}, 10_000);

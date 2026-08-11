@@ -52,11 +52,16 @@ type ProxyServerOptions struct {
 // ProxyServer owns the proxy application protocol and its upstream clients.
 // Carrier, session, stream framing, and proxy wire values remain private.
 type ProxyServer struct {
-	config     proxyServerConfig
-	permits    chan struct{}
-	httpClient *http.Client
-	wsDialer   *websocket.Dialer
-	closeOnce  sync.Once
+	config      proxyServerConfig
+	permits     chan struct{}
+	httpClient  *http.Client
+	wsDialer    *websocket.Dialer
+	closeOnce   sync.Once
+	stateMu     sync.Mutex
+	closed      bool
+	closeCtx    context.Context
+	closeCancel context.CancelFunc
+	active      sync.WaitGroup
 }
 
 type proxyServerConfig struct {
@@ -91,9 +96,12 @@ func NewProxyServer(options ProxyServerOptions) (*ProxyServer, error) {
 		ForceAttemptHTTP2:   false,
 		MaxIdleConnsPerHost: 8,
 	}
+	closeCtx, closeCancel := context.WithCancel(context.Background())
 	return &ProxyServer{
-		config:  config,
-		permits: make(chan struct{}, concurrent),
+		config:      config,
+		permits:     make(chan struct{}, concurrent),
+		closeCtx:    closeCtx,
+		closeCancel: closeCancel,
 		httpClient: &http.Client{
 			Transport:     transport,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -106,6 +114,11 @@ func NewProxyServer(options ProxyServerOptions) (*ProxyServer, error) {
 // handler registry can contain at most one ProxyServer.
 func (server *ProxyServer) Register(handlers *SessionHandlers) error {
 	if server == nil || server.httpClient == nil || server.wsDialer == nil || handlers == nil {
+		return ErrInvalidProxyServer
+	}
+	server.stateMu.Lock()
+	defer server.stateMu.Unlock()
+	if server.closed {
 		return ErrInvalidProxyServer
 	}
 	err := handlers.handleStreams(map[string]StreamHandler{
@@ -123,26 +136,50 @@ func (server *ProxyServer) Register(handlers *SessionHandlers) error {
 	return nil
 }
 
-// Close releases idle upstream connections. Active session streams continue
-// to follow their contexts and are not detached from SessionHandlers.
+// Close cancels active upstream operations, waits for their handlers to
+// finish, and rejects any future dispatch through the registered handlers.
 func (server *ProxyServer) Close() error {
 	if server == nil {
 		return nil
 	}
 	server.closeOnce.Do(func() {
+		server.stateMu.Lock()
+		server.closed = true
+		server.closeCancel()
+		server.stateMu.Unlock()
 		if transport, ok := server.httpClient.Transport.(*http.Transport); ok {
 			transport.CloseIdleConnections()
 		}
+		server.active.Wait()
 	})
 	return nil
 }
 
 func (server *ProxyServer) limit(handler StreamHandler) StreamHandler {
 	return func(ctx context.Context, incoming IncomingStream) error {
+		server.stateMu.Lock()
+		if server.closed {
+			server.stateMu.Unlock()
+			if incoming.Stream != nil {
+				_ = incoming.Stream.Reset()
+			}
+			server.report(ErrInvalidProxyServer)
+			return nil
+		}
+		server.active.Add(1)
+		server.stateMu.Unlock()
+		defer server.active.Done()
+
 		select {
 		case server.permits <- struct{}{}:
 			defer func() { <-server.permits }()
-			return handler(ctx, incoming)
+			operationCtx, cancel := context.WithCancel(ctx)
+			stop := context.AfterFunc(server.closeCtx, cancel)
+			defer func() {
+				stop()
+				cancel()
+			}()
+			return handler(operationCtx, incoming)
 		default:
 			if incoming.Stream != nil {
 				_ = incoming.Stream.Reset()

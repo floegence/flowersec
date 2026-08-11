@@ -121,6 +121,7 @@ struct RelayDecision {
 struct ParityTunnelAuthorizer {
     decisions: std::sync::Mutex<std::collections::HashMap<String, RelayDecision>>,
     released: Arc<AtomicUsize>,
+    released_notify: Arc<Notify>,
 }
 
 #[async_trait]
@@ -147,6 +148,7 @@ impl TunnelAuthorizer for ParityTunnelAuthorizer {
 
     async fn release(&self, _lease_id: &str) {
         self.released.fetch_add(1, Ordering::SeqCst);
+        self.released_notify.notify_waiters();
     }
 }
 
@@ -736,6 +738,7 @@ async fn run_tunnel_relay(carrier: &str) {
     let authorizer = Arc::new(ParityTunnelAuthorizer {
         decisions: std::sync::Mutex::new(std::collections::HashMap::new()),
         released: released.clone(),
+        released_notify: Arc::new(Notify::new()),
     });
     let runtime = Arc::new(bind_tunnel_runtime(carrier, authorizer.clone(), origin));
     let address = runtime.local_address().unwrap();
@@ -798,10 +801,12 @@ async fn run_tunnel_relay(carrier: &str) {
     runtime.close().await;
     let _ = tokio::time::timeout(Duration::from_secs(3), serving).await;
     let expected = authorizer.decisions.lock().unwrap().len();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-    while released.load(Ordering::SeqCst) < expected && tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    let release_wait = async {
+        while released.load(Ordering::SeqCst) < expected {
+            authorizer.released_notify.notified().await;
+        }
+    };
+    let _ = tokio::time::timeout(Duration::from_secs(3), release_wait).await;
     if released.load(Ordering::SeqCst) != expected {
         panic!(
             "relay cleanup released {} of {} leases",

@@ -182,8 +182,8 @@ has a 32-byte cleartext header followed by exactly `ciphertext_length` bytes:
 | 28 | 4 | ciphertext length, `17..992` |
 
 The plaintext is `1..976` opaque application bytes, keeping the complete FSD2
-wire image within the 1024-byte native WebTransport DATAGRAM limit shared by
-production Chromium and raw QUIC. Empty and oversized
+wire image within the negotiated DATAGRAM payload limit used by every carrier
+adapter that advertises unreliable messages. Empty and oversized
 messages are rejected before carrier access. Expiry must be in the future when
 sent. A receiver silently drops expired, duplicate, stale-epoch, malformed, or
 authentication-failed datagrams and continues receiving; these outcomes never

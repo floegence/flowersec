@@ -88,10 +88,13 @@ export class ProxyServer {
   readonly #config: Config;
   readonly #active = new Set<AbortController>();
   readonly #permits: Set<unknown> = new Set();
+  readonly #completion: Promise<void>;
+  #resolveCompletion!: () => void;
   #closed = false;
 
   constructor(options: ProxyServerOptions) {
     this.#config = compileConfig(options);
+    this.#completion = new Promise<void>((resolve) => { this.#resolveCompletion = resolve; });
   }
 
   register(handlers: SessionHandlers): void {
@@ -109,11 +112,12 @@ export class ProxyServer {
   }
 
   async close(): Promise<void> {
-    if (this.#closed) return;
-    this.#closed = true;
-    for (const controller of this.#active) controller.abort(new SessionError("closed"));
-    this.#active.clear();
-    this.#permits.clear();
+    if (!this.#closed) {
+      this.#closed = true;
+      for (const controller of this.#active) controller.abort(new SessionError("closed"));
+      if (this.#active.size === 0) this.#resolveCompletion();
+    }
+    await this.#completion;
   }
 
   /** @internal */
@@ -159,7 +163,10 @@ export class ProxyServer {
 
   #track(parent?: AbortSignal): AbortController {
     const controller = new AbortController();
-    if (this.#closed) controller.abort(new SessionError("closed"));
+    if (this.#closed) {
+      controller.abort(new SessionError("closed"));
+      return controller;
+    }
     if (parent !== undefined) {
       if (parent.aborted) controller.abort(parent.reason);
       else parent.addEventListener("abort", () => controller.abort(parent.reason), { once: true });
@@ -167,7 +174,10 @@ export class ProxyServer {
     this.#active.add(controller);
     return controller;
   }
-  #untrack(controller: AbortController): void { this.#active.delete(controller); }
+  #untrack(controller: AbortController): void {
+    this.#active.delete(controller);
+    if (this.#closed && this.#active.size === 0) this.#resolveCompletion();
+  }
   #report(error: unknown): void { try { this.#config.report?.(error); } catch { /* reporting is isolated */ } }
 
   async #serveHTTP(stream: ByteStream, signal: AbortSignal): Promise<void> {

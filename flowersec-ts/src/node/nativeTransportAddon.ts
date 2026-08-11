@@ -70,7 +70,7 @@ type NativeRawQuicSessionBinding = Readonly<{
   sendDatagram(data: Uint8Array): "accepted" | "dropped_budget" | "dropped_carrier" | "too_large" | "unavailable";
   receiveDatagram(): NativeOperation<Uint8Array>;
   waitTermination(): Promise<void>;
-  close(): Promise<void>;
+  close(code?: number, reason?: string): Promise<void>;
   abort(): void;
 }>;
 
@@ -207,8 +207,8 @@ function wrapSession(native: NativeRawQuicSessionBinding): NativeCarrierSessionV
     async waitTermination() {
       await native.waitTermination();
     },
-    async close() {
-      await native.close();
+    async close(error) {
+      await native.close(error?.code, error?.reason);
     },
     abort() {
       native.abort();

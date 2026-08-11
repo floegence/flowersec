@@ -83,7 +83,7 @@ export type NativeCarrierSessionV2 = Readonly<{
   openStream(options?: OperationOptionsV2): Promise<NativeCarrierStreamV2>;
   acceptStream(options?: OperationOptionsV2): Promise<NativeCarrierStreamV2>;
   waitTermination(): Promise<void>;
-  close(): Promise<void>;
+  close(error?: Readonly<{ code: number; reason: string }>): Promise<void>;
   /** See {@link CarrierSessionV2.abort}. */
   abort(error?: Readonly<{ code: number; reason: string }>): void;
 }>;
@@ -447,8 +447,8 @@ class NativeCarrierSessionAdapter implements CarrierSessionV2 {
     await this.native.waitTermination();
   }
 
-  async close(): Promise<void> {
-    await this.native.close();
+  async close(error?: Readonly<{ code: number; reason: string }>): Promise<void> {
+    await this.native.close(error);
   }
 
   abort(error?: Readonly<{ code: number; reason: string }>): void {

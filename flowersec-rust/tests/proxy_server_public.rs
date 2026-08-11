@@ -4,8 +4,8 @@ use flowersec::{
     ProxyServer, ProxyServerError, ProxyServerOptions, SessionHandlerOptions, SessionHandlers,
 };
 
-#[test]
-fn proxy_server_public_api_is_application_session_only() {
+#[tokio::test]
+async fn proxy_server_public_api_is_application_session_only() {
     let options = ProxyServerOptions {
         upstream: "http://127.0.0.1:8080".parse().expect("valid upstream"),
         upstream_origin: "http://127.0.0.1:8080"
@@ -39,6 +39,6 @@ fn proxy_server_public_api_is_application_session_only() {
         server.register(&mut handlers),
         Err(ProxyServerError::AlreadyRegistered)
     );
-    server.close();
-    server.close();
+    server.close().await;
+    server.close().await;
 }

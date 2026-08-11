@@ -56,7 +56,7 @@ const peers = {
 validateDirectContract(matrix.direct_cells);
 const selectedCells = matrix.direct_cells.filter((cell) => clients.includes(cell.client) && servers.includes(cell.server) && carriers.includes(cell.carrier));
 const nativeAddon = await prepareServerParityNativeAddon(repositoryRoot, selectedCells.some((cell) =>
-  cell.carrier === "raw-quic" && (cell.client === "node-typescript" || cell.server === "node-typescript")
+  cell.client === "node-typescript" || cell.server === "node-typescript"
 ));
 try {
   for (const cell of selectedCells) await runCell(cell);

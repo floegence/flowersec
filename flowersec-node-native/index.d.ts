@@ -46,7 +46,7 @@ export interface RawQuicSession {
   sendDatagram(data: Uint8Array): "accepted" | "dropped_budget" | "dropped_carrier" | "too_large" | "unavailable";
   receiveDatagram(): NativeOperation<Uint8Array>;
   waitTermination(): Promise<void>;
-  close(): Promise<void>;
+  close(code?: number, reason?: string): Promise<void>;
   abort(): void;
 }
 

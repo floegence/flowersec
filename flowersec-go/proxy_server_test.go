@@ -149,6 +149,62 @@ func TestProxyServerWebSocketRoundTripUsesFlowersecWire(t *testing.T) {
 	}
 }
 
+func TestProxyServerCloseCancelsActiveAndRejectsFutureDispatch(t *testing.T) {
+	received := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		close(received)
+		<-request.Context().Done()
+	}))
+	defer upstream.Close()
+
+	proxy, err := NewProxyServer(ProxyServerOptions{Upstream: upstream.URL, UpstreamOrigin: upstream.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
+	go func() { _, _ = io.Copy(io.Discard, client) }()
+	stream := &proxyServerTestStream{Conn: server, kind: proxyHTTPStreamKind}
+	handler := proxy.limit(func(ctx context.Context, incoming IncomingStream) error {
+		proxy.serveHTTP(ctx, incoming)
+		return nil
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- handler(context.Background(), IncomingStream{
+			Kind: proxyHTTPStreamKind, Metadata: EmptyStreamMetadata(), Stream: stream,
+		})
+	}()
+	if err := writeProxyJSON(client, proxyHTTPRequest{
+		Version: proxyWireVersion, RequestID: "close", Method: http.MethodGet, Path: "/slow",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeProxyTerminator(client); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-received:
+	case <-time.After(time.Second):
+		t.Fatal("upstream request did not start")
+	}
+	if err := proxy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("ProxyServer.Close returned before active handler completed")
+	}
+	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.Register(handlers); !errors.Is(err, ErrInvalidProxyServer) {
+		t.Fatalf("Register after Close error = %v", err)
+	}
+}
+
 func TestProxyServerRejectsUnsafeAndDuplicateRegistration(t *testing.T) {
 	for _, options := range []ProxyServerOptions{
 		{},

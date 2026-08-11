@@ -1,10 +1,18 @@
 import type {
+  AcceptorOptions,
   AuthorizationRecord,
   AuthorizationResponse,
   IssuedArtifact,
   Issuer,
   RuntimeAuthorizationRequest,
+  TunnelRuntimeOptions,
 } from "./index.js";
+import {
+  authorizeRuntime,
+  authorizeTunnelRuntime,
+  rejectRuntime,
+  rejectTunnelRuntime,
+} from "./controlplane.js";
 import type { OperationOptions, RpcPeer, Session, UnreliableMessageChannel } from "../public/contract.js";
 import { expect, test } from "vitest";
 import { readFile } from "node:fs/promises";
@@ -35,6 +43,29 @@ function typecheckNodeServerSurface(
 }
 
 export const nodeServerSurfaceTypecheck = typecheckNodeServerSurface;
+
+function typecheckTypedRuntimeAuthorizers(
+  record: AuthorizationRecord,
+): Readonly<{
+  direct: AcceptorOptions["authorize"];
+  tunnel: TunnelRuntimeOptions["authorize"];
+}> {
+  return {
+    direct: async (request) => authorizeRuntime(request, record, "lease-direct"),
+    tunnel: async (request) => authorizeTunnelRuntime(request, record, "lease-tunnel"),
+  };
+}
+
+const rejectedDirectAuthorizer: AcceptorOptions["authorize"] = async () =>
+  rejectRuntime("permission_denied", false);
+const retryingTunnelAuthorizer: TunnelRuntimeOptions["authorize"] = async () =>
+  rejectTunnelRuntime("busy", true);
+
+export const typedRuntimeAuthorizersTypecheck = typecheckTypedRuntimeAuthorizers;
+export const typedRuntimeRejectionsTypecheck = {
+  direct: rejectedDirectAuthorizer,
+  tunnel: retryingTunnelAuthorizer,
+};
 
 test("keeps the Node server public type surface callable", () => {
   expect(nodeServerSurfaceTypecheck).toBeTypeOf("function");

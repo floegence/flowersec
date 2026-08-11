@@ -27,7 +27,7 @@ The expensive inventory has four groups and no second manifest:
 | Coverage and race | `coverage/{go,typescript,rust,swift}`, `race/go` |
 | Local real browsers | Three `browser/chromium/*` topology IDs plus `browser/{firefox,webkit}/webtransport-capability` |
 | Privileged Linux diagnostics | `diagnostic/weaknet/{raw-quic,websocket}/direct` and four `diagnostic/kernel/*` lifecycle IDs |
-| Performance | Twelve `performance/capacity/*` IDs, raw QUIC migration soak, and production WSS/WebTransport soak IDs |
+| Performance | Twelve `performance/capacity/*` IDs, raw QUIC migration soak, production WSS soak, and optional Go/Browser WebTransport soak IDs |
 
 Coverage and race run with `make coverage-race`. Browser compatibility uses
 real native connections: Firefox currently rejects the connection before

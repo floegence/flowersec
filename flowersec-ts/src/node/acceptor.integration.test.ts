@@ -5,12 +5,82 @@ import { describe, expect, test } from "vitest";
 
 import { createArtifactLeaseV2 } from "../v2/artifactLease.js";
 import { parseArtifact } from "../v2/opaqueArtifact.js";
+import { createWebSocketCandidateFactoryV2 } from "../connector/adapters/webSocketCandidate.js";
+import { composeCandidateAttemptFactoryV2, SessionConnectorV2 } from "../connector/sessionConnector.js";
+import { projectSessionV2 } from "../v2/publicSession.js";
 import { createAcceptor, SessionHandlers } from "./acceptor.js";
 import { connect } from "./connectSession.js";
+import { authorizeRuntime, createEndpointSet, Issuer, type AuthorizationRecord } from "./controlplane.js";
+import { NODE_RUNTIME_PROFILE_V2 } from "./runtimeCapability.js";
+import { nodeSessionRuntimeV2 } from "./sessionRuntime.js";
+import { createNodeWsFactory } from "./wsFactory.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 describe("Node Acceptor handler lifecycle", () => {
+  test("consumes typed authorization and waits for exactly-once lease release", async () => {
+    let record: AuthorizationRecord | undefined;
+    let releaseStarted!: () => void;
+    const started = new Promise<void>((resolve) => { releaseStarted = resolve; });
+    let finishRelease!: () => void;
+    const releaseGate = new Promise<void>((resolve) => { finishRelease = resolve; });
+    const releases: string[] = [];
+    const acceptor = await createAcceptor({
+      listeners: [{
+        carrier: "websocket",
+        path: "direct",
+        host: "127.0.0.1",
+        port: 0,
+        allowedOrigins: ["https://app.example"],
+      }],
+      maxInboundStreams: 32,
+      authorize: async (request) => {
+        if (record === undefined) throw new Error("authorization record is not ready");
+        return authorizeRuntime(request, record, "lease-direct");
+      },
+      release: async (leaseId) => {
+        releases.push(leaseId);
+        releaseStarted();
+        await releaseGate;
+      },
+    });
+    const address = acceptor.addresses()[0];
+    if (address === undefined) throw new Error("WebSocket listener did not bind");
+    const issued = new Issuer().issueDirect({
+      session: { channelId: "typed-direct", maxInboundStreams: 32 },
+      endpoints: createEndpointSet(`ws://127.0.0.1:${address.port}/flowersec/v2/direct`),
+      rendezvousGroupId: "typed-direct-group",
+      listenerAudience: "typed-direct-listener",
+      upstreamAddress: "127.0.0.1:9000",
+    });
+    record = issued.authorizationRecord();
+    const accepting = acceptor.accept();
+    const lease = createArtifactLeaseV2(parseArtifact(issued.artifactJSON()), async () => undefined);
+    const wsFactory = createNodeWsFactory();
+    const connector = new SessionConnectorV2(
+      lease,
+      composeCandidateAttemptFactoryV2({
+        websocket: createWebSocketCandidateFactoryV2(
+          (url, subprotocol) => wsFactory(url, "https://app.example", subprotocol),
+        ),
+      }),
+      { capability: NODE_RUNTIME_PROFILE_V2, runtime: nodeSessionRuntimeV2 },
+    );
+    const client = projectSessionV2((await connector.connect()).session);
+    const accepted = await accepting;
+    let closed = false;
+    const firstClose = accepted.close().then(() => { closed = true; });
+    const secondClose = accepted.close();
+    await started;
+    expect(closed).toBe(false);
+    expect(releases).toEqual(["lease-direct"]);
+    finishRelease();
+    await Promise.all([firstClose, secondClose]);
+    expect(releases).toEqual(["lease-direct"]);
+    await client.close().catch(() => undefined);
+    await acceptor.close();
+  });
+
   test("close waits for in-flight admission cleanup", async () => {
     const raw = directWebSocketArtifact();
     let authorizationStarted!: () => void;
@@ -32,6 +102,7 @@ describe("Node Acceptor handler lifecycle", () => {
         },
       ],
       maxInboundStreams: raw.session.max_inbound_streams,
+      cleanupTimeoutMs: 100,
       authorize: async () => {
         authorizationStarted();
         await authorizationGate;
@@ -54,15 +125,13 @@ describe("Node Acceptor handler lifecycle", () => {
       { origin: "https://app.example" },
     ).catch((error: unknown) => error);
     await started;
-    let closed = false;
-    const closing = acceptor.close().then(() => {
-      closed = true;
-    });
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    const returnedBeforeAdmissionCleanup = closed;
+    const closing = acceptor.close();
+    await expect(Promise.race([
+      closing.then(() => "closed" as const),
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 500)),
+    ])).resolves.toBe("closed");
     releaseAuthorization();
     await Promise.allSettled([accepted, client, closing]);
-    expect(returnedBeforeAdmissionCleanup).toBe(false);
   });
 
   test("freezes handlers before establishing a direct WebSocket Session", async () => {

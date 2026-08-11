@@ -293,11 +293,11 @@ impl RawQuicSessionBinding {
     }
 
     #[napi]
-    pub async fn close(&self) -> Result<()> {
+    pub async fn close(&self, code: Option<u32>, reason: Option<String>) -> Result<()> {
         self.session
             .close(ApplicationClose {
-                code: DEFAULT_CLOSE_CODE,
-                reason: String::new(),
+                code: code.map(u64::from).unwrap_or(DEFAULT_CLOSE_CODE),
+                reason: reason.unwrap_or_default(),
             })
             .map_err(native_error)
     }
