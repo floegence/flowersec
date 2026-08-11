@@ -294,6 +294,10 @@ async function clientStreams(
     throw new Error("echo stream did not preserve metadata and FIN");
   executed.record("stream-metadata", "stream-fin");
 
+  // Let the peer finish the echo handler before opening the reset stream. This
+  // barrier makes the handler lifecycle ordering explicit across runtimes.
+  await callBarrier(session, ECHO_RPC, "ping", "echo stream cleanup");
+
   const reset = await session.openStream(RESET_KIND);
   let resetObserved = false;
   try {
