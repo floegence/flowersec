@@ -46,7 +46,7 @@
     }
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.19.0"
   },
   "overrides": {
     "js-yaml": "^4.3.0",
@@ -70,8 +70,6 @@
     "prepublishOnly": "npm run build && npm run verify:package"
   },
   "dependencies": {
-    "@fails-components/webtransport": "1.6.7",
-    "@fails-components/webtransport-transport-http3-quiche": "1.6.7",
     "@noble/ciphers": "^2.2.0",
     "@noble/curves": "^2.3.0",
     "@noble/hashes": "^2.3.0",
@@ -89,6 +87,7 @@
     "ajv-formats": "3.0.1",
     "ajv-formats-draft2019": "1.6.1",
     "eslint": "^10.8.0",
+    "tsx": "4.23.12",
     "typescript": "^5.7.2",
     "vite": "^8.2.1",
     "vitest": "4.1.10"

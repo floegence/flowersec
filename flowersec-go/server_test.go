@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -382,9 +383,90 @@ func TestSessionHandlersResetOnlyFailedStreamAndContinueServing(t *testing.T) {
 	}
 }
 
+func TestSessionHandlersCancellationClosesSessionBeforeWaitingForBlockedHandlers(t *testing.T) {
+	previous := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(previous)
+
+	stream := newBlockingServerStream()
+	session := &serverTestSession{incoming: make(chan IncomingStream, 1), closed: make(chan struct{}), closeStream: stream}
+	handlers, err := NewSessionHandlers(SessionHandlerOptions{MaxConcurrentStreams: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	if err := handlers.HandleStream("blocking", func(_ context.Context, incoming IncomingStream) error {
+		close(started)
+		_, readErr := incoming.Stream.Read(make([]byte, 1))
+		return readErr
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- handlers.Serve(ctx, session) }()
+	session.incoming <- IncomingStream{Kind: "blocking", Metadata: EmptyStreamMetadata(), Stream: stream}
+	<-started
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Serve() error = %v, want context cancellation", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		_ = session.Close()
+		<-done
+		t.Fatal("Serve() waited for a blocked handler before closing its Session")
+	}
+}
+
+func TestSessionHandlersServeWaitsForSessionCloseCompletion(t *testing.T) {
+	closeStarted := make(chan struct{})
+	closeRelease := make(chan struct{})
+	session := &serverTestSession{
+		incoming:     make(chan IncomingStream),
+		closed:       make(chan struct{}),
+		closeStarted: closeStarted,
+		closeRelease: closeRelease,
+	}
+	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- handlers.Serve(ctx, session) }()
+	cancel()
+	select {
+	case <-closeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("Session.Close was not started")
+	}
+	select {
+	case err := <-done:
+		close(closeRelease)
+		t.Fatalf("Serve() returned before Session.Close completed: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(closeRelease)
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Serve() error = %v, want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Serve() did not return after Session.Close completed")
+	}
+}
+
 type serverTestSession struct {
-	incoming chan IncomingStream
-	closed   chan struct{}
+	incoming     chan IncomingStream
+	closed       chan struct{}
+	closeStream  ByteStream
+	closeStarted chan struct{}
+	closeRelease chan struct{}
+	closeOnce    sync.Once
 }
 
 func (*serverTestSession) RPC() RPCPeer { return nil }
@@ -423,13 +505,43 @@ func (session *serverTestSession) WaitClosed(ctx context.Context) error {
 	}
 }
 func (session *serverTestSession) Close() error {
-	select {
-	case <-session.closed:
-	default:
+	session.closeOnce.Do(func() {
 		close(session.closed)
-	}
+		if session.closeStream != nil {
+			_ = session.closeStream.Reset()
+		}
+		if session.closeStarted != nil {
+			close(session.closeStarted)
+		}
+		if session.closeRelease != nil {
+			<-session.closeRelease
+		}
+	})
 	return nil
 }
+
+type blockingServerStream struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newBlockingServerStream() *blockingServerStream {
+	return &blockingServerStream{closed: make(chan struct{})}
+}
+
+func (stream *blockingServerStream) Read([]byte) (int, error) {
+	<-stream.closed
+	return 0, &SessionError{code: SessionStreamReset}
+}
+func (*blockingServerStream) Write(payload []byte) (int, error) { return len(payload), nil }
+func (*blockingServerStream) CloseWrite() error                 { return nil }
+func (stream *blockingServerStream) Close() error               { return stream.Reset() }
+func (stream *blockingServerStream) Reset() error {
+	stream.once.Do(func() { close(stream.closed) })
+	return nil
+}
+func (*blockingServerStream) Kind() string                 { return "blocking" }
+func (*blockingServerStream) TerminalError() *SessionError { return nil }
 
 type serverTestStream struct {
 	*bytes.Reader

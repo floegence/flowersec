@@ -14,26 +14,44 @@ import (
 	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
 )
 
-// AcceptorPath identifies the direct or tunnel admission profile of a
-// registered native listener.
-type AcceptorPath string
-
-const (
-	AcceptorPathDirect AcceptorPath = "direct"
-	AcceptorPathTunnel AcceptorPath = "tunnel"
-)
-
-// AcceptorListener is an opaque, Flowersec-owned listener adapter. Address
-// reports the bound native authority, or an empty string for WebSocket routes
-// served by the application's HTTP server. Close is idempotent.
-type AcceptorListener interface {
+type listenerLifecycle interface {
 	Address() string
 	Close() error
 	acceptorListener()
 }
 
+// DirectListener is a listener that terminates an application Session at an
+// Acceptor. It cannot be registered with a TunnelRuntime.
+type DirectListener interface {
+	listenerLifecycle
+	directListener()
+}
+
+// TunnelListener is a listener that admits one opaque relay leg. It cannot be
+// registered with an application Acceptor.
+type TunnelListener interface {
+	listenerLifecycle
+	tunnelListener()
+}
+
+type directListener struct{ registeredAcceptorListener }
+
+func (*directListener) directListener() {}
+
+type tunnelListener struct{ registeredAcceptorListener }
+
+func (*tunnelListener) tunnelListener() {}
+
+func NewWebSocketDirectListener() DirectListener {
+	return &directListener{registeredAcceptorListener: &websocketAcceptorListener{path: carrier.PathDirect}}
+}
+
+func NewWebSocketTunnelListener() TunnelListener {
+	return &tunnelListener{registeredAcceptorListener: &websocketAcceptorListener{path: carrier.PathTunnel}}
+}
+
 type registeredAcceptorListener interface {
-	AcceptorListener
+	listenerLifecycle
 	acceptorCarrier() carrier.Kind
 	acceptorPath() carrier.Path
 	serve(context.Context, func(context.Context, carrier.Session) error) error
@@ -50,16 +68,6 @@ func (listener *websocketAcceptorListener) acceptorCarrier() carrier.Kind {
 func (listener *websocketAcceptorListener) acceptorPath() carrier.Path { return listener.path }
 func (*websocketAcceptorListener) serve(context.Context, func(context.Context, carrier.Session) error) error {
 	return errors.New("WebSocket listener is served by Acceptor.Handler")
-}
-
-// NewWebSocketAcceptorListener registers one of the WebSocket routes exposed
-// by Acceptor.Handler. The returned adapter is useful when an application
-// declares its complete carrier/path listener set in AcceptorOptions.
-func NewWebSocketAcceptorListener(path AcceptorPath) AcceptorListener {
-	if path != AcceptorPathDirect && path != AcceptorPathTunnel {
-		return nil
-	}
-	return &websocketAcceptorListener{path: carrier.Path(path)}
 }
 
 type rawQUICAcceptorListener struct {
@@ -104,20 +112,31 @@ func (listener *rawQUICAcceptorListener) Close() error {
 	return listener.listener.Close()
 }
 
-// RawQUICAcceptorListenerOptions configures one native raw QUIC listener.
-// Path selects the ALPN and therefore cannot change after construction.
-type RawQUICAcceptorListenerOptions struct {
+// RawQUICListenerOptions configures one native raw QUIC listener.
+type RawQUICListenerOptions struct {
 	Address           string
 	TLSConfig         *tls.Config
-	Path              AcceptorPath
 	MaxInboundStreams uint16
 }
 
-// NewRawQUICAcceptorListener creates a production raw QUIC direct or tunnel
-// listener. TLS 1.3 and the Flowersec ALPN are enforced by the carrier.
-func NewRawQUICAcceptorListener(options RawQUICAcceptorListenerOptions) (AcceptorListener, error) {
-	path, err := normalizeAcceptorPath(options.Path)
-	if err != nil || options.TLSConfig == nil || options.Address == "" {
+func NewRawQUICDirectListener(options RawQUICListenerOptions) (DirectListener, error) {
+	listener, err := newRawQUICListener(options, carrier.PathDirect)
+	if err != nil {
+		return nil, err
+	}
+	return &directListener{registeredAcceptorListener: listener}, nil
+}
+
+func NewRawQUICTunnelListener(options RawQUICListenerOptions) (TunnelListener, error) {
+	listener, err := newRawQUICListener(options, carrier.PathTunnel)
+	if err != nil {
+		return nil, err
+	}
+	return &tunnelListener{registeredAcceptorListener: listener}, nil
+}
+
+func newRawQUICListener(options RawQUICListenerOptions, path carrier.Path) (registeredAcceptorListener, error) {
+	if options.TLSConfig == nil || options.Address == "" {
 		return nil, ErrInvalidAcceptor
 	}
 	maxLogical := options.MaxInboundStreams
@@ -211,20 +230,32 @@ func (listener *webTransportAcceptorListener) Close() error {
 	return serverErr
 }
 
-// WebTransportAcceptorListenerOptions configures one native WebTransport
-// direct or tunnel listener. The origin policy is exact and fail-closed.
-type WebTransportAcceptorListenerOptions struct {
+// WebTransportListenerOptions configures one native WebTransport listener.
+type WebTransportListenerOptions struct {
 	Address           string
 	TLSConfig         *tls.Config
-	Path              AcceptorPath
 	MaxInboundStreams uint16
 	CheckOrigin       func(*http.Request) bool
 }
 
-// NewWebTransportAcceptorListener creates a production WebTransport listener.
-func NewWebTransportAcceptorListener(options WebTransportAcceptorListenerOptions) (AcceptorListener, error) {
-	path, err := normalizeAcceptorPath(options.Path)
-	if err != nil || options.TLSConfig == nil || options.Address == "" || options.CheckOrigin == nil {
+func NewWebTransportDirectListener(options WebTransportListenerOptions) (DirectListener, error) {
+	listener, err := newWebTransportListener(options, carrier.PathDirect)
+	if err != nil {
+		return nil, err
+	}
+	return &directListener{registeredAcceptorListener: listener}, nil
+}
+
+func NewWebTransportTunnelListener(options WebTransportListenerOptions) (TunnelListener, error) {
+	listener, err := newWebTransportListener(options, carrier.PathTunnel)
+	if err != nil {
+		return nil, err
+	}
+	return &tunnelListener{registeredAcceptorListener: listener}, nil
+}
+
+func newWebTransportListener(options WebTransportListenerOptions, path carrier.Path) (registeredAcceptorListener, error) {
+	if options.TLSConfig == nil || options.Address == "" || options.CheckOrigin == nil {
 		return nil, ErrInvalidAcceptor
 	}
 	maxLogical := options.MaxInboundStreams
@@ -245,17 +276,6 @@ func NewWebTransportAcceptorListener(options WebTransportAcceptorListenerOptions
 		return nil, ErrInvalidAcceptor
 	}
 	return &webTransportAcceptorListener{server: server, packet: packet, path: path, checkOrigin: options.CheckOrigin}, nil
-}
-
-func normalizeAcceptorPath(path AcceptorPath) (carrier.Path, error) {
-	switch path {
-	case AcceptorPathDirect:
-		return carrier.PathDirect, nil
-	case AcceptorPathTunnel:
-		return carrier.PathTunnel, nil
-	default:
-		return "", carrier.ErrInvalidPath
-	}
 }
 
 func pathForAcceptorWebTransport(path carrier.Path) string {

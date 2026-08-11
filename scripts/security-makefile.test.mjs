@@ -106,6 +106,7 @@ test("Make control-flow injection and failure suppression are rejected", () => {
 
 test("security dependency inventory cannot be bypassed", () => {
   for (const mutation of [
+    canonical.replace("scripts/check-dependency-contracts.test.mjs", ""),
     canonical.replace("scripts/test-architecture-contract.mjs", ""),
     canonical.replace("generate-source-inventory.mjs --check", "generate-source-inventory.mjs"),
     canonical.replace("node scripts/check-security-makefile.mjs Makefile", "@true"),

@@ -241,30 +241,90 @@ func TestIssuerCreatesTunnelPairAndRejectsCrossRecordAuthorization(t *testing.T)
 	if _, err := AuthorizeRuntime(firstRequest, secondRecord, "lease-cross"); err == nil {
 		t.Fatal("cross-record authorization unexpectedly succeeded")
 	}
-	response, err := AuthorizeRuntime(firstRequest, firstRecord, "lease-first")
+	if _, err := AuthorizeRuntime(firstRequest, firstRecord, "lease-first"); err == nil {
+		t.Fatal("direct runtime authorization accepted a tunnel request")
+	}
+}
+
+func TestTunnelRuntimeAuthorizationNeverContainsSessionSecrets(t *testing.T) {
+	issuer := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x25}, 256)), time.Unix(1_800_000_000, 0))
+	endpoints, err := NewEndpointSet("wss://tunnel.example/flowersec/v2/tunnel")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var wire struct {
-		Decision                       string `json:"decision"`
-		ExpectedPeerEndpointInstanceID string `json:"expected_peer_endpoint_instance_id"`
-		AllowReplacement               bool   `json:"allow_replacement"`
-		LeaseID                        string `json:"lease_id"`
-		Session                        struct {
-			ChannelID         string `json:"channel_id"`
-			E2EEPSKBase64URL  string `json:"e2ee_psk_base64url"`
-			MaxInboundStreams uint16 `json:"max_inbound_streams"`
-			DefaultSuite      uint16 `json:"default_suite"`
-		} `json:"session"`
+	pair, err := issuer.IssueTunnelPair(TunnelIssueOptions{
+		Session:   SessionOptions{ChannelID: "opaque-relay", ExpiresAt: time.Unix(1_800_000_060, 0)},
+		Endpoints: endpoints, RendezvousGroupID: "opaque-group", ListenerAudience: "opaque-audience",
+		FirstEndpointID: "endpoint-a", SecondEndpointID: "endpoint-b",
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
+	record := pair.First.AuthorizationRecord()
+	request := runtimeRequestForCandidate(t, record, "websocket")
+	response, err := AuthorizeTunnelRuntime(request, record, "lease-opaque")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
 	if err := json.Unmarshal(response.JSON(), &wire); err != nil {
 		t.Fatal(err)
 	}
-	if wire.Decision != "allow" || wire.ExpectedPeerEndpointInstanceID != "endpoint-b" || !wire.AllowReplacement || wire.LeaseID != "lease-first" {
-		t.Fatalf("unexpected tunnel authorization: %+v", wire)
+	for _, forbidden := range []string{"session", "direct", "e2ee_psk_base64url", "allowed_suites", "default_suite"} {
+		if _, exists := wire[forbidden]; exists {
+			t.Fatalf("tunnel runtime authorization exposes forbidden field %q", forbidden)
+		}
+		if bytes.Contains(response.JSON(), []byte(forbidden)) {
+			t.Fatalf("tunnel runtime authorization contains forbidden token %q", forbidden)
+		}
 	}
-	if wire.Session.ChannelID != "channel-tunnel" || wire.Session.E2EEPSKBase64URL == "" || wire.Session.MaxInboundStreams == 0 || wire.Session.DefaultSuite == 0 {
-		t.Fatalf("tunnel authorization omitted session contract: %+v", wire.Session)
+}
+
+func TestAllowTunnelRuntimeBuildsSecretFreeResponseAfterExternalAuthorization(t *testing.T) {
+	issuer := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x26}, 256)), time.Unix(1_800_000_000, 0))
+	endpoints, err := NewEndpointSet("wss://tunnel.example/flowersec/v2/tunnel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := issuer.IssueTunnelPair(TunnelIssueOptions{
+		Session:   SessionOptions{ChannelID: "external-authorization", ExpiresAt: time.Unix(1_800_000_060, 0)},
+		Endpoints: endpoints, RendezvousGroupID: "external-group", ListenerAudience: "external-audience",
+		FirstEndpointID: "endpoint-a", SecondEndpointID: "endpoint-b", AllowReplacement: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := runtimeRequestForCandidate(t, pair.First.AuthorizationRecord(), "websocket")
+	response, err := AllowTunnelRuntime(request, "lease-external", time.Now().Add(time.Minute), "endpoint-b", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(response.JSON(), &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire["decision"] != "allow" || wire["credential_id"] != request.LookupKey() || wire["expected_peer_endpoint_instance_id"] != "endpoint-b" {
+		t.Fatalf("unexpected tunnel authorization response: %#v", wire)
+	}
+	for _, forbidden := range []string{"session", "artifact", "psk", "secret"} {
+		if bytes.Contains(bytes.ToLower(response.JSON()), []byte(forbidden)) {
+			t.Fatalf("secret-free response contains forbidden token %q", forbidden)
+		}
+	}
+
+	direct, err := issuer.IssueDirect(DirectIssueOptions{
+		Session:   SessionOptions{ChannelID: "direct-external", ExpiresAt: time.Unix(1_800_000_060, 0)},
+		Endpoints: endpoints, RendezvousGroupID: "direct-group", ListenerAudience: "direct-audience",
+		UpstreamAddress: "127.0.0.1:9000",
+	})
+	if err == nil {
+		directRequest := runtimeRequestForCandidate(t, direct.AuthorizationRecord(), "websocket")
+		if _, allowErr := AllowTunnelRuntime(directRequest, "lease-direct", time.Now().Add(time.Minute), "endpoint-b", false); allowErr == nil {
+			t.Fatal("secret-free tunnel allow accepted a direct request")
+		}
+	}
+	if _, err := AllowTunnelRuntime(request, "lease-external", time.Now().Add(-time.Second), "endpoint-b", false); err == nil {
+		t.Fatal("secret-free tunnel allow accepted an expired lease")
 	}
 }
 

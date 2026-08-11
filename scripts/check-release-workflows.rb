@@ -434,7 +434,7 @@ validate_step_contracts(precommit_steps, [
   } },
   { name: "Setup Node", keys: ["name", "uses", "with"], values: {
     "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
-    "with" => { "node-version" => "24", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
+    "with" => { "node-version" => "20.19.0", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
   } },
   { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
     "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",

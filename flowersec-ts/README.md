@@ -15,7 +15,7 @@ npm install @floegence/flowersec-core
 
 - `@floegence/flowersec-core` exports the portable artifact, lease, session, stream, RPC, stream-metadata, and connection-controller API, plus profile-owned unreliable messages when negotiated.
 - `@floegence/flowersec-core/browser` adds `connect(...)`, `createConnectionController(...)`, and their options.
-- `@floegence/flowersec-core/node` adds `connect(...)`, `createConnectionController(...)`, `createAcceptor(...)`, `SessionHandlers`, and `AcceptedSession`.
+- `@floegence/flowersec-core/node` adds `connect(...)`, `createConnectionController(...)`, direct-only `createAcceptor(...)`, opaque `createTunnelRuntime(...)`, `SessionHandlers`, `AcceptedSession`, `Issuer`, authorization record/request/response types, `authorizeRuntime(...)`, `authorizeTunnelRuntime(...)`, and `ProxyServer`.
 - `@floegence/flowersec-core/proxy` adds the `Session`-based HTTP/WebSocket runtime, Service Worker and controller/app-window bridges, strict `proxy.runtime@2` validation, and `connectProxyBrowser(...)` composition.
 
 The root type exports are:
@@ -39,7 +39,7 @@ The Browser and Node `connect(...)` operations are one-shot and never reconnect.
 
 The controller has one scheduler and one in-flight attempt. Its states are `idle`, `connecting`, `connected`, `waiting`, `failed`, and `closed`; immutable snapshots expose `ConnectionSnapshot.retryDisposition` while the corresponding retry decision applies and clear it before a new attempt, after connection, and on close. Call `start()` once, observe snapshots with `subscribe(...)`, await an established session with `waitForSession(...)`, and use `retryNow()` only to wake a `waiting` controller. `close()` cancels acquisition, connection, and waiting before closing the current session.
 
-Node `SessionHandlers` accept application stream kinds whose UTF-8 encoding is 1 through 255 bytes and reserve `flowersec.rpc.v2` for Flowersec RPC. `AcceptedSession.serve(...)` closes successfully handled streams. A rejected handler Promise resets then closes only that stream; the accept loop and unrelated streams continue.
+Node `SessionHandlers` accept application stream kinds whose UTF-8 encoding is 1 through 255 bytes and reserve `flowersec.rpc.v2` for Flowersec RPC. `AcceptedSession.serve(...)` half-closes successfully handled streams. A rejected handler Promise resets only that stream; the accept loop and unrelated streams continue.
 
 Source failures return a structured `terminal`, `retryable`, or `retry_after` disposition. Thrown or malformed source failures are terminal. Retry delay is deterministic exponential backoff from 250 ms, doubling to a 30-second maximum with no jitter; `retry_after` is never attempted before its specified Unix-millisecond boundary. Attempts are unlimited unless `maximumAttempts` is explicitly set.
 
@@ -49,8 +49,12 @@ A negotiated `Session.unreliableMessages` channel sends defensively copied `Uint
 
 ## Supported Connections
 
-Browsers support WebSocket and WebTransport connections. Node.js supports the
-same client connections and can accept server sessions through `/node`.
+Browsers support WebSocket and native WebTransport connections. Node.js
+supports WebSocket client connections and can accept WebSocket server sessions
+through `/node`. The same entrypoint provides an opaque WSS `TunnelRuntime`, a
+control-plane implementation, and a `ProxyServer`; the relay never terminates
+an E2EE Session. Node raw QUIC and WebTransport remain unsupported because no
+public production driver has passed the shared transport contracts.
 The `/proxy` entrypoint adds browser bridges for applications that need to keep
 the session behind a Service Worker or another window.
 
@@ -77,12 +81,12 @@ Chromium does not support a WebTransport pooling option; each carrier creates an
 Cold-connection diagnostics require every independent carrier to meet the declared deadline. A `dial_failed` result remains a test failure and is not hidden by pooling, retry, or timeout relaxation.
 
 Node.js applications receive the same `Session` contract from `connect(...)`.
-The Node connector supports WSS, WebTransport, and restricted plaintext
-loopback WebSocket direct connections. It requires an absolute HTTP(S) `origin`;
-custom certificate authorities can be supplied through `tls.ca`.
+The Node connector supports WSS and restricted plaintext loopback WebSocket
+direct connections. It requires an absolute HTTP(S) `origin`; custom
+certificate authorities can be supplied through `tls.ca`.
 
 The connectors choose an eligible connection path from the invitation. They do
-not expose transport selectors, candidate lists, or raw QUIC to application code.
+not expose transport selectors, candidate lists, or native carrier objects to application code.
 
 ## Verify
 

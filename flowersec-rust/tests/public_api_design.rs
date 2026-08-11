@@ -1,9 +1,10 @@
 use flowersec::{
-    ArtifactLease, ArtifactSource, ArtifactSourceError, ConnectionController,
+    Acceptor, ArtifactLease, ArtifactSource, ArtifactSourceError, ConnectionController,
     ConnectionControllerOptions, ConnectorOptions, IncomingStream, NotificationHandler,
     RetryDisposition, RpcError, RpcHandler, RpcPeer, RpcPeerExt, SessionError,
     SessionHandlerOptions, SessionHandlers, SessionTermination, StreamHandler, StreamMetadata,
-    StreamMetadataError, connect,
+    StreamMetadataError, TunnelAuthorizer, TunnelRuntime, TunnelRuntimeOptions,
+    WebSocketAcceptorOptions, connect,
 };
 use serde::{Deserialize, Serialize};
 use std::{fs, num::NonZeroU64, path::Path, process::Command, sync::Arc};
@@ -78,9 +79,45 @@ async fn compile_public_api(lease: ArtifactLease, peer: &dyn RpcPeer) {
     }
 }
 
+async fn compile_connector_handlers(lease: ArtifactLease, handlers: SessionHandlers) {
+    let options = ConnectorOptions::new(vec![vec![1]])
+        .expect("explicit trust roots")
+        .with_handlers(handlers);
+    let _ = connect(lease, options).await;
+}
+
 #[test]
 fn exposes_explicit_options_and_typed_rpc() {
     let _ = compile_public_api;
+    let _ = compile_connector_handlers;
+}
+
+#[test]
+fn exposes_a_production_websocket_direct_listener() {
+    fn compile_listener(options: WebSocketAcceptorOptions) {
+        let acceptor = Acceptor::bind_websocket(options).expect("bind WebSocket listener");
+        let _ = acceptor.local_address();
+    }
+    let _ = compile_listener;
+}
+
+#[test]
+fn exposes_an_independent_opaque_tunnel_runtime() {
+    fn compile_runtime(options: TunnelRuntimeOptions, authorizer: Arc<dyn TunnelAuthorizer>) {
+        let runtime =
+            TunnelRuntime::bind_websocket(options, authorizer).expect("bind opaque tunnel runtime");
+        let _ = runtime.local_address();
+    }
+    fn compile_raw_quic_runtime(
+        options: TunnelRuntimeOptions,
+        authorizer: Arc<dyn TunnelAuthorizer>,
+    ) {
+        let runtime = TunnelRuntime::bind_raw_quic(options, authorizer)
+            .expect("bind opaque raw QUIC tunnel runtime");
+        let _ = runtime.local_address();
+    }
+    let _ = compile_runtime;
+    let _ = compile_raw_quic_runtime;
 }
 
 #[test]

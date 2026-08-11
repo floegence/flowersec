@@ -829,6 +829,30 @@ async fn lazy_reserved_rpc_is_encrypted_and_uses_u32_type_ids() {
 }
 
 #[tokio::test]
+async fn peer_rekey_completes_while_the_reserved_rpc_reader_is_idle() {
+    let (client, server) = establish_pair().await;
+    let response = client
+        .rpc()
+        .call(7, serde_json::json!({"open": "rpc-stream"}))
+        .await
+        .expect("open reserved RPC stream");
+    assert_eq!(response["request"]["open"], "rpc-stream");
+
+    tokio::time::timeout(Duration::from_secs(1), client.rekey())
+        .await
+        .expect("peer rekey deadlocked behind the idle RPC reader")
+        .expect("peer rekey");
+    let after = client
+        .rpc()
+        .call(8, serde_json::json!({"epoch": 1}))
+        .await
+        .expect("RPC after peer rekey");
+    assert_eq!(after["request"]["epoch"], 1);
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
 async fn peer_notifications_dispatch_subscriptions_without_owning_the_session() {
     let (client, server) = establish_pair().await;
     let delivered = Arc::new(AtomicUsize::new(0));
@@ -2239,6 +2263,54 @@ async fn queued_data_open_does_not_starve_reserved_rpc_capacity() {
 }
 
 #[tokio::test]
+async fn peer_stream_reset_wakes_a_reader_blocked_below_the_session_boundary() {
+    let (client_carrier, server_inner) = memory_carrier_pair_for_logical(1);
+    let enabled = Arc::new(AtomicBool::new(false));
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let server_carrier: Arc<dyn CarrierSessionV2> =
+        Arc::new(BlockingApplicationReadCarrierSession {
+            inner: server_inner,
+            accepts: AtomicU64::new(0),
+            block_on: 2,
+            enabled: enabled.clone(),
+            entered: entered.clone(),
+            release: release.clone(),
+        });
+    let client_config = regression_config(SessionRole::Client, "peer-reset-wakes-read", 1, None);
+    let server_config = regression_config(SessionRole::Server, "peer-reset-wakes-read", 1, None);
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+    let (outgoing, incoming) = tokio::join!(
+        client.open_stream("peer-reset-wakes-read", StreamMetadata::empty()),
+        server.accept_stream(),
+    );
+    let outgoing = outgoing.expect("outgoing stream");
+    let incoming = incoming.expect("incoming stream");
+
+    enabled.store(true, Ordering::Release);
+    let reading = tokio::spawn(async move { incoming.stream().read().await });
+    tokio::time::timeout(Duration::from_millis(250), entered.notified())
+        .await
+        .expect("reader never reached the blocked carrier read");
+    outgoing.reset().await.expect("send peer stream reset");
+
+    let error = tokio::time::timeout(Duration::from_millis(250), reading)
+        .await
+        .expect("peer STREAM_RESET did not wake the blocked reader")
+        .expect("join blocked reader")
+        .expect_err("peer reset must fail the read");
+    assert_eq!(error, SessionError::StreamReset);
+    release.notify_waiters();
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
 async fn peer_initiated_rekey_is_bounded_by_the_receivers_completion_deadline() {
     let (client_carrier, server_inner) = memory_carrier_pair_for_logical(1);
     let enabled = Arc::new(AtomicBool::new(false));
@@ -2342,6 +2414,51 @@ async fn idle_timeout_drops_a_hanging_carrier_close_future() {
     tokio::time::sleep(Duration::from_millis(40)).await;
     assert_eq!(active_closes.load(Ordering::Acquire), 0);
     let _ = server.close().await;
+}
+
+#[tokio::test]
+async fn peer_session_close_flushes_an_authenticated_reply_before_carrier_shutdown() {
+    let (client_carrier, server_inner) = memory_carrier_pair_for_logical(1);
+    let enabled = Arc::new(AtomicBool::new(false));
+    let writes = Arc::new(AtomicU64::new(0));
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let server_carrier: Arc<dyn CarrierSessionV2> = Arc::new(BlockingNthWriteCarrierSession {
+        inner: server_inner,
+        enabled: enabled.clone(),
+        writes: writes.clone(),
+        block_on: 1,
+        entered: entered.clone(),
+        release: release.clone(),
+    });
+    let client_config = regression_config(SessionRole::Client, "peer-close-reply", 1, None);
+    let server_config = regression_config(SessionRole::Server, "peer-close-reply", 1, None);
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
+
+    enabled.store(true, Ordering::Release);
+    let closing = tokio::spawn({
+        let client = client.clone();
+        async move { client.close().await }
+    });
+    tokio::time::timeout(Duration::from_millis(250), entered.notified())
+        .await
+        .expect("peer SESSION_CLOSE did not trigger an authenticated reply");
+    assert_eq!(writes.load(Ordering::Acquire), 1);
+    release.notify_waiters();
+    tokio::time::timeout(Duration::from_millis(250), closing)
+        .await
+        .expect("client close did not finish after the authenticated reply")
+        .expect("join client close")
+        .expect("client close");
+    let termination = tokio::time::timeout(Duration::from_millis(250), server.wait_termination())
+        .await
+        .expect("peer close reply did not finish session termination");
+    assert_eq!(termination.error, SessionError::Closed);
 }
 
 #[tokio::test]

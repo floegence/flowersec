@@ -11,7 +11,7 @@ import {
 } from "./connectionController.js";
 import { SDK_DEFAULTS } from "./defaults.js";
 import type { ArtifactLeaseV2 } from "./v2/artifactLease.js";
-import { SessionError, type SessionV2 } from "./v2/contract.js";
+import { SessionError, type JsonValueV2, type SessionV2 } from "./v2/contract.js";
 
 type ControllerScenario = Readonly<{
   name: string;
@@ -340,7 +340,7 @@ async function explicitAttemptExhaustion(vector: ControllerScenario): Promise<vo
       return { kind: "failure", code: "unavailable", disposition: { kind: "retryable" } };
     }),
     async () => session("unused").value,
-    { maximumAttempts: vector.policy?.max_attempts },
+    vector.policy === undefined ? {} : { maximumAttempts: vector.policy.max_attempts },
   );
   const states = observedStates(controller);
 
@@ -475,11 +475,15 @@ function session(name: string): Readonly<{
     close: vi.fn(async () => undefined),
   };
   const openStream = vi.fn(async () => stream);
-  const rpcCall = vi.fn(async (_type: number, payload: unknown) => ({ ok: true as const, payload }));
+  const rpcCall = vi.fn(async (
+    _type,
+    payload,
+    decodeResponse,
+  ) => ({ ok: true as const, payload: decodeResponse(payload as JsonValueV2) }));
   const rpcNotify = vi.fn(async () => undefined);
   const value = {
     rpc: {
-      call: rpcCall,
+      call: rpcCall as unknown as SessionV2["rpc"]["call"],
       notify: rpcNotify,
       onNotify: vi.fn(() => () => undefined),
     },

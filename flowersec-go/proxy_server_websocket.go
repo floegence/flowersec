@@ -2,6 +2,7 @@ package flowersec
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"strings"
@@ -10,24 +11,24 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming IncomingStream) {
+func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming IncomingStream) error {
 	if incoming.Stream == nil {
 		server.report(ErrInvalidProxyServer)
-		return
+		return ErrInvalidProxyServer
 	}
 	stream := incoming.Stream
 	open := proxyWebSocketOpen{}
 	if err := readProxyJSON(stream, server.config.maxJSONFrame, &open); err != nil {
 		server.writeWebSocketError(stream, "unknown", "invalid_ws_open_meta")
 		server.report(err)
-		return
+		return nil
 	}
 	open.ConnID = strings.TrimSpace(open.ConnID)
 	path, err := parseProxyPath(open.Path)
 	if open.Version != proxyWireVersion || open.ConnID == "" || err != nil {
 		server.writeWebSocketError(stream, open.ConnID, "invalid_ws_open_meta")
 		server.report(ErrInvalidProxyServer)
-		return
+		return nil
 	}
 	target := *server.config.upstream
 	if target.Scheme == "http" {
@@ -52,7 +53,7 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 		}
 		server.writeWebSocketError(stream, open.ConnID, code)
 		server.report(err)
-		return
+		return nil
 	}
 	defer connection.Close()
 	connection.SetReadLimit(int64(server.config.maxWSFrame))
@@ -60,7 +61,7 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 		Version: proxyWireVersion, ConnID: open.ConnID, OK: true, Protocol: connection.Subprotocol(),
 	}); err != nil {
 		server.report(err)
-		return
+		return err
 	}
 
 	operationContext := ctx
@@ -75,7 +76,6 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 		closeOnce.Do(func() {
 			cancel()
 			_ = connection.Close()
-			_ = stream.Close()
 		})
 	}
 	go func() {
@@ -101,7 +101,7 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 					err = connection.WriteMessage(messageType, payload)
 				}
 				if err == nil && operation == 8 {
-					err = io.EOF
+					return
 				}
 			}
 			if err != nil {
@@ -131,7 +131,16 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 				}
 				err = writeProxyWebSocketFrame(stream, operation, payload, server.config.maxWSFrame)
 				if err == nil && operation == 8 {
-					err = io.EOF
+					return
+				}
+			} else {
+				var closeErr *websocket.CloseError
+				if errors.As(err, &closeErr) {
+					payload := proxyWebSocketClosePayload(closeErr.Code, closeErr.Text)
+					err = writeProxyWebSocketFrame(stream, 8, payload, server.config.maxWSFrame)
+					if err == nil {
+						err = io.EOF
+					}
 				}
 			}
 			if err != nil {
@@ -143,12 +152,29 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 	select {
 	case <-operationContext.Done():
 		closeBoth()
+		return operationContext.Err()
 	case err := <-errorsCh:
 		closeBoth()
 		if err != nil && !errors.Is(err, io.EOF) {
 			server.report(err)
+			return err
 		}
+		return nil
 	}
+}
+
+func proxyWebSocketClosePayload(code int, reason string) []byte {
+	if code < 0 || code > 65535 || code == 1004 || code == 1005 || code == 1006 {
+		return nil
+	}
+	reasonBytes := []byte(reason)
+	if len(reasonBytes) > 123 {
+		reasonBytes = reasonBytes[:123]
+	}
+	payload := make([]byte, 2+len(reasonBytes))
+	binary.BigEndian.PutUint16(payload[:2], uint16(code))
+	copy(payload[2:], reasonBytes)
+	return payload
 }
 
 func (server *ProxyServer) writeWebSocketError(stream io.Writer, connectionID, code string) {

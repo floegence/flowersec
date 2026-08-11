@@ -78,10 +78,13 @@ mod crypto_v2;
 mod idna_v2;
 mod native_runtime_v2;
 mod protocol_v2;
+mod proxy_server;
 mod raw_quic_v2;
 mod session_handlers;
 mod session_v2;
 mod transport_v2;
+mod tunnel_runtime_v2;
+mod websocket_v2;
 
 #[cfg(feature = "__flowersec_internal_fuzzing")]
 #[doc(hidden)]
@@ -100,7 +103,9 @@ pub mod fuzzing {
 
 #[cfg(test)]
 mod defaults_contract;
-pub use acceptor_v2::{AcceptError, AcceptErrorCode, Acceptor, AcceptorOptions};
+pub use acceptor_v2::{
+    AcceptError, AcceptErrorCode, Acceptor, AcceptorOptions, WebSocketAcceptorOptions,
+};
 pub use artifact_v2::{Artifact, ArtifactError, ArtifactLease, ArtifactSpendError};
 pub use connection_controller::{
     ArtifactSource, ArtifactSourceError, ConnectionController, ConnectionControllerOptions,
@@ -110,9 +115,11 @@ pub use connector_v2::{ConnectError, ConnectErrorCode};
 pub use controlplane::{
     AuthorizationRecord, ControlPlaneError, DirectIssueOptions, EndpointSet, IssuedArtifact,
     IssuedTunnelPair, Issuer, RuntimeAuthorizationRequest, RuntimeAuthorizationResponse,
-    SessionOptions, TunnelIssueOptions, reject_runtime, retry_runtime,
+    SessionOptions, TunnelAuthorizationResponse, TunnelIssueOptions, allow_tunnel_runtime,
+    reject_runtime, reject_tunnel_runtime, retry_runtime, retry_tunnel_runtime,
 };
 pub use native_runtime_v2::{ConnectorOptions, connect, connect_with_cancellation};
+pub use proxy_server::{ProxyErrorReporter, ProxyServer, ProxyServerError, ProxyServerOptions};
 pub use session_handlers::{
     AcceptedSession, HandlerRegistrationError, NotificationHandler, RpcHandler,
     SessionHandlerOptions, SessionHandlers, StreamHandler,
@@ -121,6 +128,9 @@ pub use transport_v2::{
     ByteStream, IncomingStream, JsonObject, NotificationSubscription, RpcCallError, RpcError,
     RpcPeer, RpcPeerExt, Session, SessionError, SessionTermination, StreamMetadata,
     StreamMetadataError, UnreliableMessageChannel, UnreliableMessageError, UnreliableSendOutcome,
+};
+pub use tunnel_runtime_v2::{
+    TunnelAuthorizer, TunnelRuntime, TunnelRuntimeError, TunnelRuntimeOptions,
 };
 
 #[cfg(test)]

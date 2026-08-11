@@ -267,8 +267,8 @@ var transportV2CarrierExpectations = map[string]transportV2CarrierExpectation{
 var transportV2RuntimeCarrierExpectations = map[string][]string{
 	"go_native":          {"raw_quic", "websocket", "webtransport"},
 	"typescript_browser": {"websocket", "webtransport"},
-	"typescript_node":    {"websocket", "webtransport"},
-	"rust_native":        {"raw_quic"},
+	"typescript_node":    {"websocket"},
+	"rust_native":        {"raw_quic", "websocket"},
 	"swift_ios":          {"websocket"},
 	"swift_linux":        {},
 	"swift_macos":        {"websocket"},
@@ -398,24 +398,24 @@ var transportV2UnsupportedExpectations = map[string]map[string]string{
 		"raw_quic": "browser_no_raw_udp",
 	},
 	"typescript_node": {
-		"raw_quic": "raw_quic_adapter_not_implemented",
+		"raw_quic":     "node_raw_quic_driver_unavailable",
+		"webtransport": "node_webtransport_driver_unavailable",
 	},
 	"rust_native": {
-		"websocket":    "unsupported_websocket_runtime",
-		"webtransport": "unsupported_webtransport_runtime",
+		"webtransport": "driver_unavailable",
 	},
 	"swift_ios": {
-		"raw_quic":     "raw_quic_adapter_not_implemented",
-		"webtransport": "webtransport_adapter_not_implemented",
+		"raw_quic":     "swift_apple_client_profile_excludes_raw_quic",
+		"webtransport": "swift_apple_client_profile_excludes_webtransport",
 	},
 	"swift_linux": {
-		"raw_quic":     "raw_quic_adapter_not_implemented",
+		"raw_quic":     "swift_apple_client_profile_excludes_raw_quic",
 		"websocket":    "websocket_adapter_not_supported_on_linux",
-		"webtransport": "webtransport_adapter_not_implemented",
+		"webtransport": "swift_apple_client_profile_excludes_webtransport",
 	},
 	"swift_macos": {
-		"raw_quic":     "raw_quic_adapter_not_implemented",
-		"webtransport": "webtransport_adapter_not_implemented",
+		"raw_quic":     "swift_apple_client_profile_excludes_raw_quic",
+		"webtransport": "swift_apple_client_profile_excludes_webtransport",
 	},
 }
 
@@ -793,11 +793,12 @@ func validateTransportV2Reasons(reasons []transportV2UnsupportedReason) (map[str
 		"browser_no_raw_udp",
 		"browser_websocket_api_unavailable",
 		"browser_webtransport_api_unavailable",
-		"raw_quic_adapter_not_implemented",
-		"unsupported_websocket_runtime",
-		"unsupported_webtransport_runtime",
+		"driver_unavailable",
+		"node_raw_quic_driver_unavailable",
+		"node_webtransport_driver_unavailable",
+		"swift_apple_client_profile_excludes_raw_quic",
+		"swift_apple_client_profile_excludes_webtransport",
 		"websocket_adapter_not_supported_on_linux",
-		"webtransport_adapter_not_implemented",
 	}
 	slices.Sort(ids)
 	if !slices.Equal(ids, expected) {
@@ -966,8 +967,8 @@ func validateTransportV2GoDependencies(dependencies transportV2GoDependencies) e
 		return errors.New("Go native runtime must pin exactly two QUIC dependencies")
 	}
 	want := map[string]string{
-		"github.com/quic-go/quic-go":         "v0.60.0",
-		"github.com/quic-go/webtransport-go": "v0.11.1",
+		"github.com/quic-go/quic-go":         "v0.61.0",
+		"github.com/quic-go/webtransport-go": "v0.12.0",
 	}
 	seen := make([]string, 0, len(dependencies.Dependencies))
 	for _, dependency := range dependencies.Dependencies {

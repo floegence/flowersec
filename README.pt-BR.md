@@ -80,17 +80,19 @@ Os quatro SDKs compartilham o mesmo modelo de sessão. O suporte varia quando um
 | --- | :---: | :---: | :---: | :---: |
 | Sessões criptografadas de ponta a ponta | Sim | Sim | Sim | Sim |
 | Enviar chamadas RPC e notificações | Sim | Sim | Sim | Sim |
-| Receber notificações RPC | Não | Sim | Não | Não |
+| Receber notificações RPC | Sim | Sim | Sim | Sim |
 | Fluxos de bytes confiáveis | Sim | Sim | Sim | Sim |
 | Recuperação de conexões duradouras | Sim | Sim | Sim | Sim |
 | Mensagens não confiáveis quando disponíveis | Sim | Sim | Não | Sim |
 | Conexões de navegador | Não | Sim | Não | Não |
 | Conexões de clientes Apple | Não | Não | Sim | Não |
 | Conexões QUIC nativas | Sim | Não | Não | Sim |
-| Conexões WebSocket | Sim | Sim | Sim | Não |
+| Conexões WebSocket | Sim | Sim | Sim | Sim |
 | Conexões WebTransport | Sim | Sim | Não | Não |
 | Aceitação de sessões no servidor | Sim | Node.js | Não | Sim |
-| Emissão de convites no plano de controle | Pacote Go | Serviço do aplicativo | Serviço do aplicativo | Serviço do aplicativo |
+| Runtime de relay opaco | Sim | Node.js | Não | Sim |
+| Emissão de convites no plano de controle | Sim | Node.js | Não | Sim |
+| ProxyServer HTTP e WebSocket | Sim | Node.js | Não | Sim |
 
 Consulte os guias dos SDKs para ver as combinações exatas de plataforma e conexão disponíveis.
 

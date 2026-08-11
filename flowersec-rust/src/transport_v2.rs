@@ -96,6 +96,13 @@ pub trait CarrierSessionV2: fmt::Debug + Send + Sync + 'static {
     /// Returns the carrier represented by this session.
     #[cfg_attr(not(test), allow(dead_code))]
     fn kind(&self) -> CarrierKind;
+    /// Selects the local Yamux opener side before a multiplexed carrier is activated.
+    fn set_multiplexer_client(&self, _client: bool) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "carrier has no configurable multiplexer role",
+        ))
+    }
     /// Returns the exact physical peer-initiated bidirectional stream capacity.
     /// Implementations must bind it before any FSC2/FSH2 bytes are written.
     fn inbound_bidirectional_stream_capacity(&self) -> u32;
@@ -313,6 +320,42 @@ pub(crate) const NATIVE_RUST_CAPABILITIES_V2: &[CapabilityTupleV2] = &[
         true,
         false,
     ),
+    CapabilityTupleV2::new(
+        CarrierKind::Wss,
+        NetworkMode::Dial,
+        SessionRole::Client,
+        PathKind::Direct,
+        true,
+        false,
+        false,
+    ),
+    CapabilityTupleV2::new(
+        CarrierKind::Wss,
+        NetworkMode::Dial,
+        SessionRole::Client,
+        PathKind::Tunnel,
+        true,
+        false,
+        false,
+    ),
+    CapabilityTupleV2::new(
+        CarrierKind::Wss,
+        NetworkMode::Dial,
+        SessionRole::Server,
+        PathKind::Tunnel,
+        true,
+        false,
+        false,
+    ),
+    CapabilityTupleV2::new(
+        CarrierKind::Wss,
+        NetworkMode::Listen,
+        SessionRole::Server,
+        PathKind::Direct,
+        true,
+        false,
+        false,
+    ),
 ];
 
 /// Builds the canonical descriptor advertised by the native Rust runtime.
@@ -323,16 +366,10 @@ pub(crate) fn native_rust_capability_descriptor_v2() -> RuntimeCapabilityDescrip
         runtime: "native".into(),
         schema_version: 2,
         tuples: NATIVE_RUST_CAPABILITIES_V2.to_vec(),
-        unsupported: vec![
-            UnsupportedRuntimeCarrierV2 {
-                carrier: CarrierKind::Wss,
-                reason: "unsupported_websocket_runtime".into(),
-            },
-            UnsupportedRuntimeCarrierV2 {
-                carrier: CarrierKind::WebTransport,
-                reason: "unsupported_webtransport_runtime".into(),
-            },
-        ],
+        unsupported: vec![UnsupportedRuntimeCarrierV2 {
+            carrier: CarrierKind::WebTransport,
+            reason: "driver_unavailable".into(),
+        }],
     }
 }
 

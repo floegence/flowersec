@@ -1,9 +1,5 @@
-import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, test } from "vitest";
@@ -23,7 +19,7 @@ afterEach(async () => {
 });
 
 describe("Node ProxyServer real Session integration", () => {
-  test("forwards HTTP over a real Flowersec Session with bounded policy and cleanup", async () => {
+  test("forwards HTTP over a real WebSocket Session with bounded policy and cleanup", async () => {
     const observed: Array<Readonly<{ body: string; authorization?: string; host?: string }>> = [];
     const upstream = createServer(async (request: IncomingMessage, response: ServerResponse) => {
       const chunks: Buffer[] = [];
@@ -45,8 +41,7 @@ describe("Node ProxyServer real Session integration", () => {
     if (address === null || typeof address === "string") throw new Error("upstream did not bind TCP");
     const upstreamOrigin = `http://127.0.0.1:${address.port}`;
 
-    const fixture = createWebTransportFixture();
-    cleanups.push(fixture.cleanup);
+    const artifact = directWebSocketArtifact();
     const proxy = new ProxyServer({
       upstream: upstreamOrigin,
       upstreamOrigin,
@@ -58,23 +53,20 @@ describe("Node ProxyServer real Session integration", () => {
     const handlers = new SessionHandlers({ maxConcurrentStreams: 2 });
     proxy.register(handlers);
     const acceptor = await createAcceptor({
-      host: "127.0.0.1",
-      port: 0,
-      path: "/flowersec/webtransport/v2/direct",
-      certificate: fixture.certificate,
-      privateKey: fixture.privateKey,
-      maxInboundStreams: fixture.artifact.session.max_inbound_streams,
-      authorize: async () => ({ decision: "allow" as const, artifact: parseArtifact(JSON.stringify(fixture.artifact)) }),
+      listeners: [{ carrier: "websocket", path: "direct", host: "127.0.0.1", port: 0, allowedOrigins: ["https://app.example"] }],
+      maxInboundStreams: artifact.session.max_inbound_streams,
+      authorize: async () => ({ decision: "allow", artifact: parseArtifact(JSON.stringify(artifact)) }),
       resolveHandlers: () => handlers,
     });
     cleanups.push(async () => await acceptor.close());
-    const acceptAddress = acceptor.address();
-    fixture.artifact.path.candidates[0]!.url = `https://127.0.0.1:${acceptAddress.port}/flowersec/webtransport/v2/direct`;
+    const acceptAddress = acceptor.addresses()[0];
+    if (acceptAddress === undefined) throw new Error("WebSocket listener did not bind");
+    artifact.path.candidates[0]!.url = `ws://127.0.0.1:${acceptAddress.port}/flowersec/v2/direct`;
 
     const acceptedPromise = acceptor.accept();
     const client = await connect(
-      createArtifactLeaseV2(parseArtifact(JSON.stringify(fixture.artifact)), async () => undefined),
-      { origin: "https://app.example", tls: { serverCertificateHash: fixture.certificateHash } },
+      createArtifactLeaseV2(parseArtifact(JSON.stringify(artifact)), async () => undefined),
+      { origin: "https://app.example" },
     );
     cleanups.push(async () => await client.close().catch(() => undefined));
     const accepted = await acceptedPromise;
@@ -107,7 +99,6 @@ describe("Node ProxyServer real Session integration", () => {
     cleanups.push(() => wrongOrigin.dispose());
     await expect(dispatch(wrongOrigin, { id: "origin", method: "GET", path: "/", headers: [] }))
       .resolves.toContainEqual(expect.objectContaining({ type: "flowersec-proxy:response_error", code: "operation_failed" }));
-
     await expect(dispatch(runtime, {
       id: "oversized",
       method: "POST",
@@ -122,7 +113,7 @@ describe("Node ProxyServer real Session integration", () => {
     await proxy.close();
     await client.close();
     await expect(serving).resolves.toMatchObject({ code: "closed" });
-  }, 30_000);
+  });
 });
 
 type ProxyRuntime = ReturnType<typeof createProxyRuntime>;
@@ -148,38 +139,16 @@ async function dispatch(runtime: ProxyRuntime, request: ProxyRequest): Promise<R
   return await result;
 }
 
-function createWebTransportFixture(): Readonly<{
-  artifact: { session: { max_inbound_streams: number }; path: { candidates: Array<{ id: string; carrier: string; url: string }> } };
-  certificate: string;
-  privateKey: string;
-  certificateHash: Uint8Array;
-  cleanup(): void;
-}> {
-  const temporary = mkdtempSync(path.join(os.tmpdir(), "flowersec-node-proxy-"));
-  const certificatePath = path.join(temporary, "certificate.pem");
-  const privateKeyPath = path.join(temporary, "private-key.pem");
-  const certificateDER = path.join(temporary, "certificate.der");
-  execFileSync("openssl", [
-    "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
-    "-nodes", "-days", "1", "-sha256", "-subj", "/CN=127.0.0.1",
-    "-addext", "subjectAltName=IP:127.0.0.1", "-keyout", privateKeyPath, "-out", certificatePath,
-  ], { stdio: "ignore" });
-  execFileSync("openssl", ["x509", "-in", certificatePath, "-outform", "DER", "-out", certificateDER]);
-  const vectors = JSON.parse(readFileSync(path.join(repositoryRoot, "testdata/transport_v2/artifact_vectors.json"), "utf8")) as {
+function directWebSocketArtifact(): {
+  session: { max_inbound_streams: number };
+  path: { candidates: Array<{ id: string; carrier: string; url: string }> };
+} {
+  const vectors = JSON.parse(readFileSync(`${repositoryRoot}/testdata/transport_v2/artifact_vectors.json`, "utf8")) as {
     positive: Array<{ id: string; artifact_json: string }>;
   };
   const source = vectors.positive.find((entry) => entry.id === "direct-three-carriers");
   if (source === undefined) throw new Error("missing direct artifact fixture");
-  const artifact = JSON.parse(source.artifact_json) as {
-    session: { max_inbound_streams: number };
-    path: { candidates: Array<{ id: string; carrier: string; url: string }> };
-  };
-  artifact.path.candidates = artifact.path.candidates.filter((candidate) => candidate.carrier === "webtransport");
-  return {
-    artifact,
-    certificate: readFileSync(certificatePath, "utf8"),
-    privateKey: readFileSync(privateKeyPath, "utf8"),
-    certificateHash: createHash("sha256").update(readFileSync(certificateDER)).digest(),
-    cleanup: () => rmSync(temporary, { recursive: true, force: true }),
-  };
+  const artifact = JSON.parse(source.artifact_json) as ReturnType<typeof directWebSocketArtifact>;
+  artifact.path.candidates = artifact.path.candidates.filter((candidate) => candidate.carrier === "websocket");
+  return artifact;
 }

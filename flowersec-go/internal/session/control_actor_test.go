@@ -129,6 +129,22 @@ func TestLiveControlActorHasReservedCriticalCapacityAndOrderedPublish(t *testing
 	}
 }
 
+func TestPeerSessionCloseDoesNotBypassQueuedControlFlush(t *testing.T) {
+	session := newControlActorUnitSession(t, 1)
+	session.ctx = context.Background()
+	session.peerSessionClose = make(chan struct{})
+	if err := session.commitControl(protocolv2.InnerSessionClose, []byte{0, 1}, nil); err != nil {
+		t.Fatal(err)
+	}
+	session.signalPeerSessionClose()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := session.flushControl(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("flushControl after peer close = %v, want deadline while the reply remains queued", err)
+	}
+}
+
 func newControlActorUnitSession(t *testing.T, maxInbound uint16) *engineSession {
 	t.Helper()
 	var sessionPRK [32]byte

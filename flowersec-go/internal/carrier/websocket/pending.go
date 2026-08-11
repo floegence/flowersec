@@ -188,14 +188,17 @@ func (server *PendingServer) WaitWhilePending(ctx context.Context) error {
 	}
 }
 
-// Activate constructs the server-role hop Yamux session after SUCCESS only.
-func (server *PendingServer) Activate(ctx context.Context) (*Session, error) {
+// Activate constructs the role-selected hop Yamux session after SUCCESS only.
+func (server *PendingServer) Activate(ctx context.Context, role Role) (*Session, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
 		server.fail(err)
 		return nil, err
+	}
+	if role != ClientRole && role != ServerRole {
+		return nil, ErrPendingServerState
 	}
 	server.stateMu.Lock()
 	if server.state != pendingActivating || !server.responseSent || server.activationStarted {
@@ -205,7 +208,7 @@ func (server *PendingServer) Activate(ctx context.Context) (*Session, error) {
 	server.activationStarted = true
 	server.stateMu.Unlock()
 
-	session, err := newSessionWithByteConn(server.raw, server.byteConn, ServerRole, SubprotocolTunnel, server.limits, func() error {
+	session, err := newSessionWithByteConn(server.raw, server.byteConn, role, SubprotocolTunnel, server.limits, func() error {
 		return server.closePipes(io.ErrClosedPipe)
 	})
 	if err != nil {

@@ -3,6 +3,10 @@ use std::{fs, path::PathBuf, time::Duration};
 use serde_json::Value;
 
 use crate::ConnectorOptions;
+use crate::proxy_server::{
+    DEFAULT_MAX_BODY, DEFAULT_MAX_CHUNK, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_JSON,
+    DEFAULT_MAX_WEBSOCKET_FRAME, DEFAULT_TIMEOUT, MAX_TIMEOUT,
+};
 use crate::session_v2::{MAX_HANDSHAKE_PAYLOAD_BYTES, SessionDeadlinesV2};
 
 #[test]
@@ -28,6 +32,36 @@ fn v2_defaults_match_shared_stability_contract() {
     assert_eq!(deadlines.rekey_prepare, Duration::from_secs(10));
     assert_eq!(deadlines.rekey_completion, Duration::from_secs(30));
     assert_eq!(deadlines.close_flush, Duration::from_secs(7));
+
+    let proxy = &manifest["proxy"];
+    assert_eq!(
+        DEFAULT_MAX_JSON as u64,
+        proxy["max_json_frame_bytes"].as_u64().unwrap()
+    );
+    assert_eq!(
+        DEFAULT_MAX_CONCURRENT as u64,
+        proxy["max_concurrent_streams"].as_u64().unwrap()
+    );
+    assert_eq!(
+        DEFAULT_MAX_CHUNK as u64,
+        proxy["max_chunk_bytes"].as_u64().unwrap()
+    );
+    assert_eq!(
+        DEFAULT_MAX_BODY as u64,
+        proxy["max_body_bytes"].as_u64().unwrap()
+    );
+    assert_eq!(
+        DEFAULT_MAX_WEBSOCKET_FRAME as u64,
+        proxy["max_ws_frame_bytes"].as_u64().unwrap()
+    );
+    assert_eq!(
+        DEFAULT_TIMEOUT.as_millis() as u64,
+        proxy["default_timeout_ms"].as_u64().unwrap()
+    );
+    assert_eq!(
+        MAX_TIMEOUT.as_millis() as u64,
+        proxy["max_timeout_ms"].as_u64().unwrap()
+    );
 }
 
 #[test]

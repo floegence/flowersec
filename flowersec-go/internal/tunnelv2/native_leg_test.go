@@ -112,7 +112,7 @@ func TestNativeStreamLegDelaysResponseAndRejectsExtraStreams(t *testing.T) {
 	if err := <-responseDone; err != nil {
 		t.Fatal(err)
 	}
-	session, err := leg.Activate(context.Background())
+	session, err := leg.Activate(context.Background(), 1)
 	if err != nil || session != tunnelSession {
 		t.Fatalf("Activate = %T/%v", session, err)
 	}
@@ -140,7 +140,7 @@ func TestNativeStreamLegPreservesStreamDequeuedAfterGuardCancellation(t *testing
 	}
 
 	markNativeLegReady(t, leg, admissionClient)
-	activated, err := leg.Activate(context.Background())
+	activated, err := leg.Activate(context.Background(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}

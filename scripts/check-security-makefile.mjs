@@ -4,6 +4,7 @@ import path from "node:path";
 
 const requiredSecurityTests = [
   "scripts/security-dependencies.test.mjs",
+  "scripts/check-dependency-contracts.test.mjs",
   "scripts/go-security.test.mjs",
   "scripts/rust-security.test.mjs",
   "scripts/swift-security.test.mjs",

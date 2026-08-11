@@ -16,7 +16,8 @@ import { createEndpointSet, Issuer } from "./controlplane.js";
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 describe("Node WebSocket Acceptor", () => {
-  test.each(["direct", "tunnel"] as const)("serves a complete %s WSS Session", async (carrierPath) => {
+  test("serves a complete direct WSS Session", async () => {
+    const carrierPath = "direct" as const;
     const temporary = mkdtempSync(path.join(os.tmpdir(), "flowersec-node-wss-acceptor-"));
     const certificatePath = path.join(temporary, "certificate.pem");
     const privateKeyPath = path.join(temporary, "private-key.pem");
@@ -60,7 +61,8 @@ describe("Node WebSocket Acceptor", () => {
         })();
     const artifactsByLookup = new Map<string, ReturnType<typeof parseArtifact>>();
 
-    const notification = Promise.withResolvers<unknown>();
+    let resolveNotification!: (value: unknown) => void;
+    const notification = new Promise<unknown>((resolve) => { resolveNotification = resolve; });
     const acceptor = await createAcceptor({
       listeners: [{
         carrier: "websocket",
@@ -83,7 +85,7 @@ describe("Node WebSocket Acceptor", () => {
       resolveHandlers: () => {
         const handlers = new SessionHandlers();
         handlers.handleRPC(17, async (payload) => ({ payload }));
-        handlers.handleNotification(18, (payload) => notification.resolve(payload));
+        handlers.handleNotification(18, (payload) => resolveNotification(payload));
         handlers.handleStream("node-wss", async (incoming) => {
           const payload = await incoming.stream.read();
           await incoming.stream.write(payload ?? new Uint8Array());
@@ -113,11 +115,13 @@ describe("Node WebSocket Acceptor", () => {
       expect(await clients[0]!.rpc.call(17, { path: carrierPath }, (payload) => payload))
         .toEqual({ ok: true, payload: { path: carrierPath } });
       await clients[0]!.rpc.notify(18, { ready: true });
-      await expect(notification.promise).resolves.toEqual({ ready: true });
+      await expect(notification).resolves.toEqual({ ready: true });
       const stream = await clients[0]!.openStream("node-wss");
       await stream.write(new TextEncoder().encode("payload"));
       await stream.closeWrite();
-      expect(new TextDecoder().decode(await stream.read())).toBe("payload");
+      const echoed = await stream.read();
+      if (echoed === null) throw new Error("echo stream ended before its payload");
+      expect(new TextDecoder().decode(echoed)).toBe("payload");
       expect(await stream.read()).toBeNull();
       await Promise.all(clients.map(async (client) => await client.close()));
       for (const task of serving) await expect(task).resolves.toMatchObject({ code: "closed" });

@@ -93,6 +93,8 @@ class BinaryEndpoint implements WebSocketBinaryTransportV2 {
     this.peer?.push(data.slice());
   }
 
+  async flush(): Promise<void> {}
+
   close(): void {
     this.error = new Error("binary transport closed");
     if (this.peer !== undefined) this.peer.error = new Error("binary transport closed by peer");

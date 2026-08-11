@@ -1,9 +1,9 @@
 package flowersec
 
-// This file exposes the smallest server-side boundary needed by applications
-// that own a Flowersec session. Carrier admission, session establishment, and
-// tunnel pairing remain implemented by Flowersec internals; callers receive
-// only the same public Session contract returned by Connect.
+// This file exposes the direct server boundary for applications that own a
+// Flowersec session. Carrier admission and session establishment remain
+// implemented by Flowersec internals; callers receive only the same public
+// Session contract returned by Connect.
 
 import (
 	"context"
@@ -25,7 +25,6 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
 	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -44,14 +43,13 @@ type AcceptorOptions struct {
 	// Listeners declares the native carrier/path adapters owned by this
 	// acceptor. WebSocket adapters are served by Handler; raw QUIC and
 	// WebTransport adapters are served by Serve.
-	Listeners         []AcceptorListener
+	Listeners         []DirectListener
 	MaxInboundStreams uint16
 	MaxDirectSessions uint16
 	Authorize         func(context.Context, controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error)
 	Release           func(context.Context, string)
-	// ResolveHandlers snapshots application handlers after authorization and
-	// before session establishment. The same callback is used for direct and
-	// tunnel admissions; returning nil installs an empty application router.
+	// ResolveHandlers snapshots application handlers after direct authorization
+	// and before session establishment. Returning nil installs an empty router.
 	ResolveHandlers func(context.Context, controlplane.RuntimeAuthorizationRequest) (*SessionHandlers, error)
 	OnSession       func(context.Context, Session, string) error
 }
@@ -59,7 +57,6 @@ type AcceptorOptions struct {
 type Acceptor struct {
 	options     AcceptorOptions
 	resources   carrierws.ResourcePolicy
-	coordinator *tunnelv2.Coordinator
 	directSlots chan struct{}
 	listeners   []registeredAcceptorListener
 }
@@ -82,7 +79,7 @@ func NewAcceptor(options AcceptorOptions) (*Acceptor, error) {
 	seen := make(map[string]struct{}, len(options.Listeners))
 	for _, registered := range options.Listeners {
 		listener, ok := registered.(registeredAcceptorListener)
-		if !ok {
+		if !ok || listener.acceptorPath() != carrier.PathDirect {
 			return nil, ErrInvalidAcceptor
 		}
 		key := string(listener.acceptorCarrier()) + ":" + string(listener.acceptorPath())
@@ -100,13 +97,6 @@ func NewAcceptor(options AcceptorOptions) (*Acceptor, error) {
 		return nil, ErrInvalidAcceptor
 	}
 	acceptor := &Acceptor{options: options, resources: resources, directSlots: make(chan struct{}, options.MaxDirectSessions), listeners: listeners}
-	coordinatorConfig := tunnelv2.DefaultConfig()
-	coordinatorConfig.OnPair = acceptor.onTunnelPair
-	coordinator, err := tunnelv2.NewCoordinator(coordinatorConfig, acceptor.authorizeTunnel)
-	if err != nil {
-		return nil, ErrInvalidAcceptor
-	}
-	acceptor.coordinator = coordinator
 	return acceptor, nil
 }
 
@@ -194,7 +184,8 @@ func (acceptor *Acceptor) serveNativeCarrier(ctx context.Context, native carrier
 	case carrier.PathDirect:
 		return acceptor.serveNativeDirect(transportContext, native)
 	case carrier.PathTunnel:
-		return acceptor.serveNativeTunnel(transportContext, native)
+		_ = native.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "wrong runtime boundary"})
+		return ErrInvalidAcceptor
 	default:
 		return ErrInvalidAcceptor
 	}
@@ -275,21 +266,6 @@ func (acceptor *Acceptor) serveNativeDirect(ctx context.Context, native carrier.
 	return err
 }
 
-func (acceptor *Acceptor) serveNativeTunnel(ctx context.Context, native carrier.Session) error {
-	admissionContext, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	stream, err := acceptorNativeAdmissionStream(admissionContext, native)
-	if err != nil {
-		return err
-	}
-	leg, err := tunnelv2.NewNativeStreamLeg(native, stream)
-	if err != nil {
-		_ = native.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "admission rejected"})
-		return err
-	}
-	return acceptor.coordinator.Serve(ctx, leg)
-}
-
 func acceptorNativeAdmissionStream(ctx context.Context, native carrier.Session) (carrier.Stream, error) {
 	if webTransport, ok := native.(*carrierwt.Session); ok {
 		return carrierwt.OpenAdmissionStream(ctx, webTransport)
@@ -299,19 +275,15 @@ func acceptorNativeAdmissionStream(ctx context.Context, native carrier.Session) 
 
 func (acceptor *Acceptor) Handler() http.Handler {
 	mux := http.NewServeMux()
-	direct, tunnel := len(acceptor.listeners) == 0, len(acceptor.listeners) == 0
+	direct := len(acceptor.listeners) == 0
 	for _, listener := range acceptor.listeners {
 		if listener.acceptorCarrier() != carrier.KindWebSocket {
 			continue
 		}
 		direct = direct || listener.acceptorPath() == carrier.PathDirect
-		tunnel = tunnel || listener.acceptorPath() == carrier.PathTunnel
 	}
 	if direct {
 		mux.HandleFunc(WebSocketDirectPath, acceptor.handleDirect)
-	}
-	if tunnel {
-		mux.HandleFunc(WebSocketTunnelPath, acceptor.handleTunnel)
 	}
 	return mux
 }
@@ -410,107 +382,6 @@ func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http
 	acceptor.releaseLease(request.Context(), leaseID)
 }
 
-func (acceptor *Acceptor) handleTunnel(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodGet || !acceptor.allowedOrigin(request) {
-		http.Error(writer, "request rejected", http.StatusForbidden)
-		return
-	}
-	connection, err := (&gorillaws.Upgrader{Subprotocols: []string{carrierws.SubprotocolTunnel}, CheckOrigin: acceptor.allowedOrigin, HandshakeTimeout: 10 * time.Second}).Upgrade(writer, request, nil)
-	if err != nil {
-		return
-	}
-	leg, err := tunnelv2.NewWebSocketPendingLeg(connection, acceptor.resources)
-	if err != nil {
-		_ = connection.Close()
-		return
-	}
-	ctx := context.WithValue(request.Context(), acceptorTransportContextKey{}, acceptorTransportContext{carrier: "websocket", remoteAddress: request.RemoteAddr})
-	if err := acceptor.coordinator.Serve(ctx, leg); err != nil {
-		_ = connection.Close()
-	}
-}
-
-func (acceptor *Acceptor) authorizeTunnel(ctx context.Context, decoded *artifactv2.DecodedRequest) (tunnelv2.Authorization, error) {
-	if decoded == nil {
-		return tunnelv2.Authorization{}, ErrInvalidAcceptor
-	}
-	transport, ok := ctx.Value(acceptorTransportContextKey{}).(acceptorTransportContext)
-	if !ok {
-		return tunnelv2.Authorization{}, ErrInvalidAcceptor
-	}
-	request, err := runtimeAuthorizationRequest(decoded, transport.carrier, transport.remoteAddress)
-	if err != nil {
-		return tunnelv2.Authorization{}, err
-	}
-	response, err := acceptor.options.Authorize(ctx, request)
-	if err != nil {
-		return tunnelv2.Authorization{}, err
-	}
-	wire, err := decodeAuthorizationResponse(response)
-	if err != nil || wire.Session.ChannelID == "" || wire.ExpectedPeerEndpointInstanceID == "" {
-		return tunnelv2.Authorization{}, ErrInvalidAcceptor
-	}
-	if wire.Decision != "allow" {
-		return tunnelv2.Authorization{}, &admissionv2.ResponseError{Status: artifactv2.AdmissionReject, Reason: wire.Reason}
-	}
-	if wire.LeaseID == "" {
-		return tunnelv2.Authorization{}, ErrInvalidAcceptor
-	}
-	contract, err := wire.Session.contract()
-	if err != nil {
-		return tunnelv2.Authorization{}, err
-	}
-	var router *internalrpc.Router
-	var serveHandlers func(context.Context, session.SessionV2) error
-	if acceptor.options.ResolveHandlers != nil {
-		handlers, handlerErr := acceptor.options.ResolveHandlers(ctx, request)
-		if handlerErr != nil {
-			return tunnelv2.Authorization{}, handlerErr
-		}
-		router, serveHandlers = acceptedHandlerSnapshot(handlers)
-	}
-	return tunnelv2.Authorization{
-		Claims:    tunnelv2.VerifiedClaims{CredentialID: wire.CredentialID, ChannelID: decoded.Request.ChannelID, Profile: decoded.Request.Profile, RendezvousGroupID: decoded.Request.RendezvousGroupID, SessionContractHash: decoded.Request.SessionContractHash, CandidateSetHash: decoded.Request.CandidateSetHash, ListenerAudience: decoded.Request.ListenerAudience, Role: decoded.Request.Role, EndpointInstanceID: decoded.Request.EndpointInstanceID, ExpectedPeerEndpointInstanceID: wire.ExpectedPeerEndpointInstanceID, AllowReplacement: wire.AllowReplacement},
-		RPCRouter: router, ServeHandlers: serveHandlers,
-		ExpiresAt: wire.ExpiresAt, Lease: acceptor.lease(wire.LeaseID), Session: contract, AdmissionBinding: decoded.LocalAdmissionBinding,
-	}, nil
-}
-
-func (acceptor *Acceptor) onTunnelPair(ctx context.Context, client, server carrier.Session, clientAuth, serverAuth tunnelv2.Authorization) error {
-	var wait sync.WaitGroup
-	errs := make(chan error, 2)
-	for _, item := range []struct {
-		carrier carrier.Session
-		auth    tunnelv2.Authorization
-		role    session.SessionRole
-		peer    [32]byte
-	}{{client, clientAuth, session.RoleServer, serverAuth.AdmissionBinding}, {server, serverAuth, session.RoleClient, clientAuth.AdmissionBinding}} {
-		item := item
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			inner, err := establishAcceptedSession(ctx, item.carrier, item.auth.Session, session.PathTunnel, item.role, item.auth.Claims.ExpectedPeerEndpointInstanceID, item.auth.Claims.EndpointInstanceID, item.peer, item.auth.AdmissionBinding, item.auth.RPCRouter)
-			if err == nil {
-				err = acceptor.runAcceptedSession(ctx, inner, item.auth.Claims.EndpointInstanceID, item.auth.ServeHandlers)
-				_ = inner.Close()
-			}
-			if err != nil {
-				errs <- err
-			}
-			if item.auth.Lease != nil {
-				item.auth.Lease.Release()
-			}
-		}()
-	}
-	wait.Wait()
-	close(errs)
-	var err error
-	for item := range errs {
-		err = errors.Join(err, item)
-	}
-	return err
-}
-
 func acceptedHandlerSnapshot(handlers *SessionHandlers) (*internalrpc.Router, func(context.Context, session.SessionV2) error) {
 	if handlers == nil {
 		return internalrpc.NewRouter(), nil
@@ -562,11 +433,8 @@ func (acceptor *Acceptor) releaseLease(ctx context.Context, leaseID string) {
 		acceptor.options.Release(ctx, leaseID)
 	}
 }
-func (acceptor *Acceptor) lease(id string) tunnelv2.Lease {
-	return &acceptorLease{release: func() { acceptor.releaseLease(context.Background(), id) }}
-}
 func (acceptor *Acceptor) reasons() artifactv2.ReasonRegistry {
-	return artifactv2.ReasonRegistry{"authorization_denied": {}, "authorization_unavailable": {}, tunnelv2.ReasonCapacity: {}, tunnelv2.ReasonCredentialReplay: {}, tunnelv2.ReasonPairMismatch: {}, tunnelv2.ReasonPairTimeout: {}, tunnelv2.ReasonReplaced: {}, tunnelv2.ReasonReplacementDenied: {}}
+	return artifactv2.ReasonRegistry{"authorization_denied": {}, "authorization_unavailable": {}}
 }
 
 type acceptorTransportContext struct {
@@ -594,13 +462,6 @@ func runtimeAuthorizationRequest(decoded *artifactv2.DecodedRequest, observedCar
 	}
 	return controlplane.ParseRuntimeAuthorizationRequest(encoded)
 }
-
-type acceptorLease struct {
-	once    sync.Once
-	release func()
-}
-
-func (lease *acceptorLease) Release() { lease.once.Do(lease.release) }
 
 type acceptorAuthorizationWire struct {
 	Decision                       string              `json:"decision"`

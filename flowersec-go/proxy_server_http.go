@@ -76,7 +76,7 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 		return
 	}
 	request.Header = proxyRequestHeaders(requestMeta.Headers, server.config)
-	if err := applyProxyExternalOrigin(request, requestMeta.ExternalOrigin); err != nil {
+	if err := applyProxyExternalOrigin(request, requestMeta.ExternalOrigin, server.config.allowedOrigins); err != nil {
 		server.writeHTTPError(stream, requestMeta.RequestID, "invalid_request_meta")
 		server.report(err)
 		return
@@ -207,19 +207,21 @@ func parseProxyPath(raw string) (*url.URL, error) {
 	return parsed, nil
 }
 
-func applyProxyExternalOrigin(request *http.Request, raw string) error {
+func applyProxyExternalOrigin(request *http.Request, raw string, allowed map[string]struct{}) error {
 	if raw == "" {
 		return nil
 	}
-	origin, err := url.Parse(raw)
-	if err != nil || origin == nil || (origin.Scheme != "http" && origin.Scheme != "https") || origin.Host == "" ||
-		origin.User != nil || (origin.Path != "" && origin.Path != "/") || origin.RawQuery != "" || origin.Fragment != "" {
+	canonical, valid := canonicalProxyOrigin(raw)
+	if !valid {
 		return ErrInvalidProxyServer
 	}
-	if current := request.Header.Get("Origin"); current != "" && current != origin.Scheme+"://"+origin.Host {
+	if _, ok := allowed[canonical]; !ok {
 		return ErrInvalidProxyServer
 	}
-	request.Host = origin.Host
+	origin, _ := url.Parse(canonical)
+	if current := request.Header.Get("Origin"); current != "" && current != canonical {
+		return ErrInvalidProxyServer
+	}
 	if request.Header.Get("X-Forwarded-Proto") == "" {
 		request.Header.Set("X-Forwarded-Proto", origin.Scheme)
 	}

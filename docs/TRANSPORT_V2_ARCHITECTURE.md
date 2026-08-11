@@ -43,7 +43,11 @@ conformance cases.
 | Raw QUIC | One native bidirectional stream per logical stream | Yamux imports and construction are forbidden. |
 | WebTransport | One native bidirectional stream per logical stream | Yamux imports and construction are forbidden. HTTP/3 protocol streams are not Flowersec application streams. |
 
-The tunnel terminates carrier multiplexing but never terminates end-to-end encryption. Mixed WebSocket/QUIC/WebTransport legs bridge opaque per-stream ciphertext through the same carrier contract.
+The tunnel runtime terminates only hop-local carrier multiplexing. It never
+receives a Session contract or E2EE key and never terminates application
+encryption. Mixed WebSocket/QUIC/WebTransport legs bridge opaque per-stream
+ciphertext through the same carrier contract; the two endpoint runtimes perform
+the application handshake across that bridge.
 
 ## Fixed Paths and Profiles
 
@@ -119,8 +123,8 @@ Linux system tests include netns/tc, eBPF counters, common-kernel behavior, real
 
 Go 1.26.5 validated the following exact pair:
 
-- `github.com/quic-go/quic-go v0.60.0`
-- `github.com/quic-go/webtransport-go v0.11.1`
+- `github.com/quic-go/quic-go v0.61.0`
+- `github.com/quic-go/webtransport-go v0.12.0`
 
 Both modules declare Go 1.25.0 and use the MIT license. The native adapters implement raw QUIC dial/listen, bidirectional streams, FIN, reset/stop, limits, configurable flow windows, TLS 1.3 and ALPN state, non-0-RTT establishment, application close, active path migration, NAT rebinding, and WebTransport dial/listen with bidirectional streams.
 
@@ -134,19 +138,20 @@ Rust pins `quinn =0.11.11` with default features disabled and only `runtime-toki
 
 ## Runtime Capability Decisions
 
-- Go native: WebSocket, raw QUIC, and WebTransport.
+- Go native: WebSocket and raw QUIC for direct and tunnel paths, plus
+  WebTransport for direct paths. WebTransport tunnel paths remain unsupported
+  because the opaque runtime does not forward datagrams across paired legs.
 - TypeScript browser: WebSocket and WebTransport when their constructors are
   present; `detectBrowserRuntimeCapabilityV2(...)` removes unavailable APIs at
   runtime. Raw UDP is unavailable.
-- TypeScript Node.js: WebSocket and WebTransport direct client dialing and
-  tunnel dialing for both session roles, plus direct WebTransport listening.
-  WebTransport uses the pinned native libquiche adapter; raw QUIC remains
-  unsupported.
-- Rust native: raw QUIC direct client dialing and runtime-owned direct server
-  listening, plus tunnel dialing for both session roles. The one-shot
-  connection path owns opaque artifact acquisition, equal-candidate race, durable spend, and client
-  admission; the runtime listener owns server admission. WebSocket and
-  WebTransport remain unsupported.
+- TypeScript Node.js: WebSocket direct/tunnel endpoint dialing, direct
+  WebSocket server acceptance, and an opaque WSS tunnel runtime. Raw QUIC and
+  WebTransport remain unsupported until a public production driver passes the
+  shared contracts.
+- Rust native: WebSocket and raw QUIC direct/tunnel endpoint dialing,
+  runtime-owned direct listeners, and opaque tunnel listeners. WebTransport
+  remains unsupported until a production driver passes the strict draft-15
+  and cross-runtime contracts.
 - Swift macOS and iOS: WebSocket direct client dialing and tunnel dialing for
   both session roles. Raw QUIC, WebTransport, DATAGRAM, and migration remain
   unavailable across the supported deployment targets.

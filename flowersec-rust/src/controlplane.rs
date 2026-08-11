@@ -694,19 +694,164 @@ impl RuntimeAuthorizationRequest {
         }
         let session = runtime_session(&artifact_value)?;
         let mut response = json!({"decision":"allow","credential_id":record.lookup_key,"lease_id":lease_id,"expires_at":format_rfc3339(expiry)?});
-        if artifact_value["path"]["kind"].as_str() == Some("direct") {
-            response["direct"] = json!({"session":session,"upstream":{"network":"tcp","address":record.direct_upstream.as_deref().ok_or(ControlPlaneError::InvalidInput)?}});
-        } else {
-            response["session"] = session;
-            response["expected_peer_endpoint_instance_id"] =
-                artifact_value["path"]["expected_peer_endpoint_instance_id"].clone();
-            response["allow_replacement"] = json!(record.allow_replacement);
+        if artifact_value["path"]["kind"].as_str() != Some("direct") {
+            return Err(ControlPlaneError::InvalidInput);
         }
+        response["direct"] = json!({"session":session,"upstream":{"network":"tcp","address":record.direct_upstream.as_deref().ok_or(ControlPlaneError::InvalidInput)?}});
         Ok(RuntimeAuthorizationResponse {
             encoded: serde_json::to_vec(&response)
                 .map_err(|_| ControlPlaneError::IssuanceFailed)?
                 .into(),
         })
+    }
+
+    pub fn authorize_tunnel(
+        &self,
+        record: &AuthorizationRecord,
+        lease_id: &str,
+    ) -> Result<TunnelAuthorizationResponse, ControlPlaneError> {
+        if !valid_id(lease_id, 128)
+            || subtle::ConstantTimeEq::ct_eq(
+                self.lookup_key.as_bytes(),
+                record.lookup_key.as_bytes(),
+            )
+            .unwrap_u8()
+                != 1
+        {
+            return Err(ControlPlaneError::InvalidInput);
+        }
+        let artifact_value: Value = serde_json::from_slice(&record.artifact_json)
+            .map_err(|_| ControlPlaneError::InvalidInput)?;
+        if artifact_value["path"]["kind"].as_str() != Some("tunnel") {
+            return Err(ControlPlaneError::InvalidInput);
+        }
+        let expiry = artifact_value["session"]["init_expire_at_unix_s"]
+            .as_i64()
+            .ok_or(ControlPlaneError::InvalidInput)?;
+        if SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| ControlPlaneError::InvalidInput)?
+            .as_secs()
+            >= expiry as u64
+        {
+            return Err(ControlPlaneError::Expired);
+        }
+        let encoded = record
+            .artifact
+            .encode_fsb2(&self.chosen_candidate_id)
+            .map_err(|_| ControlPlaneError::InvalidInput)?;
+        if encoded.raw.len() != self.raw.len()
+            || subtle::ConstantTimeEq::ct_eq(encoded.raw.as_slice(), self.raw.as_ref()).unwrap_u8()
+                != 1
+        {
+            return Err(ControlPlaneError::InvalidInput);
+        }
+        allow_tunnel_runtime(
+            self,
+            lease_id,
+            UNIX_EPOCH + Duration::from_secs(expiry as u64),
+            artifact_value["path"]["expected_peer_endpoint_instance_id"]
+                .as_str()
+                .ok_or(ControlPlaneError::InvalidInput)?,
+            record.allow_replacement,
+        )
+    }
+}
+
+/// Builds a secret-free allow response after an application-owned authorizer
+/// has verified a tunnel request. An untrusted relay receives pairing and lease
+/// claims without an Artifact, authorization record, Session contract, or PSK.
+pub fn allow_tunnel_runtime(
+    request: &RuntimeAuthorizationRequest,
+    lease_id: &str,
+    expires_at: SystemTime,
+    expected_peer_endpoint_instance_id: &str,
+    allow_replacement: bool,
+) -> Result<TunnelAuthorizationResponse, ControlPlaneError> {
+    if request.raw.get(5) != Some(&2)
+        || !valid_id(lease_id, 128)
+        || !valid_id(expected_peer_endpoint_instance_id, 128)
+    {
+        return Err(ControlPlaneError::InvalidInput);
+    }
+    let payload: Value = serde_json::from_slice(
+        request
+            .raw
+            .get(12..)
+            .ok_or(ControlPlaneError::InvalidInput)?,
+    )
+    .map_err(|_| ControlPlaneError::InvalidInput)?;
+    if payload.get("endpoint_instance_id").and_then(Value::as_str)
+        == Some(expected_peer_endpoint_instance_id)
+    {
+        return Err(ControlPlaneError::InvalidInput);
+    }
+    let expiry = expires_at
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| ControlPlaneError::InvalidInput)?
+        .as_secs();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| ControlPlaneError::InvalidInput)?
+        .as_secs();
+    if expiry <= now || expiry > i64::MAX as u64 {
+        return Err(ControlPlaneError::InvalidInput);
+    }
+    let response = json!({
+        "decision": "allow",
+        "credential_id": request.lookup_key,
+        "lease_id": lease_id,
+        "expires_at": format_rfc3339(expiry as i64)?,
+        "expected_peer_endpoint_instance_id": expected_peer_endpoint_instance_id,
+        "allow_replacement": allow_replacement,
+    });
+    Ok(TunnelAuthorizationResponse {
+        encoded: serde_json::to_vec(&response)
+            .map_err(|_| ControlPlaneError::IssuanceFailed)?
+            .into(),
+    })
+}
+
+/// Builds a secret-free terminal rejection for an opaque tunnel leg.
+pub fn reject_tunnel_runtime(
+    reason: &str,
+) -> Result<TunnelAuthorizationResponse, ControlPlaneError> {
+    tunnel_denial("reject", reason)
+}
+
+/// Builds a secret-free retry response for an opaque tunnel leg.
+pub fn retry_tunnel_runtime(
+    reason: &str,
+) -> Result<TunnelAuthorizationResponse, ControlPlaneError> {
+    tunnel_denial("retry", reason)
+}
+
+fn tunnel_denial(
+    decision: &str,
+    reason: &str,
+) -> Result<TunnelAuthorizationResponse, ControlPlaneError> {
+    if !valid_lower_id(reason, 64) {
+        return Err(ControlPlaneError::InvalidInput);
+    }
+    Ok(TunnelAuthorizationResponse {
+        encoded: serde_json::to_vec(&json!({"decision":decision,"reason":reason}))
+            .map_err(|_| ControlPlaneError::IssuanceFailed)?
+            .into(),
+    })
+}
+
+#[derive(Clone)]
+pub struct TunnelAuthorizationResponse {
+    encoded: Arc<[u8]>,
+}
+impl fmt::Debug for TunnelAuthorizationResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("TunnelAuthorizationResponse { <opaque> }")
+    }
+}
+impl TunnelAuthorizationResponse {
+    pub fn json(&self) -> Vec<u8> {
+        self.encoded.to_vec()
     }
 }
 

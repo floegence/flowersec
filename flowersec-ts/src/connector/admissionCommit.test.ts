@@ -16,6 +16,7 @@ import { wrapArtifact } from "../v2/opaqueArtifact.js";
 import { sessionConfigFromArtifactV2 } from "./sessionConfig.js";
 import {
   commitClientAdmissionV2,
+  type ClientAdmissionChannelV2,
   CredentialCommitError,
   type ReadyAdmissionTransportV2,
 } from "./admissionCommit.js";
@@ -170,7 +171,7 @@ function messageChannel(response: Uint8Array) {
 
 function readyTransport(
   candidate: ReturnType<typeof validateArtifactV2>["candidates"][number],
-  channel: ReturnType<typeof messageChannel>["value"],
+  channel: ClientAdmissionChannelV2,
   carrier: CarrierSessionV2,
 ) {
   const open = vi.fn(async () => channel);

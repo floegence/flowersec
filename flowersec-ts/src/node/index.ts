@@ -7,6 +7,7 @@ export {
   createAcceptor,
 } from "./acceptor.js";
 export type {
+  AcceptorListener,
   AcceptorOptions,
   AuthorizationDecision,
   RPCHandler,
@@ -15,6 +16,12 @@ export type {
   SessionHandlerOptions,
   StreamHandler,
 } from "./acceptor.js";
+export { TunnelRuntime, createTunnelRuntime } from "./tunnelRuntime.js";
+export type {
+  TunnelAuthorizationDecision,
+  TunnelRuntimeListener,
+  TunnelRuntimeOptions,
+} from "./tunnelRuntime.js";
 export type {
   ConnectionControllerOptions,
   SessionOptions,
@@ -23,12 +30,14 @@ export type {
 export {
   AuthorizationRecord,
   AuthorizationResponse,
+  TunnelAuthorizationResponse,
   ControlPlaneError,
   EndpointSet,
   IssuedArtifact,
   Issuer,
   RuntimeAuthorizationRequest,
   authorizeRuntime,
+  authorizeTunnelRuntime,
   createEndpointSet,
   parseAuthorizationRecord,
   parseRuntimeAuthorizationRequest,

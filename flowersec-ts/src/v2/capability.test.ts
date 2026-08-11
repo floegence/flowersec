@@ -49,12 +49,11 @@ describe("runtime capability v2", () => {
         { carrier: "websocket", networkMode: "dial", path: "direct", sessionRole: "client", reliableStreams: true, datagrams: false, migration: false },
         { carrier: "websocket", networkMode: "dial", path: "tunnel", sessionRole: "client", reliableStreams: true, datagrams: false, migration: false },
         { carrier: "websocket", networkMode: "dial", path: "tunnel", sessionRole: "server", reliableStreams: true, datagrams: false, migration: false },
-        { carrier: "webtransport", networkMode: "dial", path: "direct", sessionRole: "client", reliableStreams: true, datagrams: true, migration: false },
-        { carrier: "webtransport", networkMode: "dial", path: "tunnel", sessionRole: "client", reliableStreams: true, datagrams: true, migration: false },
-        { carrier: "webtransport", networkMode: "dial", path: "tunnel", sessionRole: "server", reliableStreams: true, datagrams: true, migration: false },
-        { carrier: "webtransport", networkMode: "listen", path: "direct", sessionRole: "server", reliableStreams: true, datagrams: true, migration: false },
       ],
-      unsupported: [{ carrier: "raw_quic", reason: "raw_quic_adapter_not_implemented" }],
+      unsupported: [
+        { carrier: "raw_quic", reason: "node_raw_quic_driver_unavailable" },
+        { carrier: "webtransport", reason: "node_webtransport_driver_unavailable" },
+      ],
     });
   });
 

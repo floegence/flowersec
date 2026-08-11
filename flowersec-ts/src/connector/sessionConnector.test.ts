@@ -14,7 +14,7 @@ import {
   type NativeCarrierSessionV2,
 } from "../v2/carrier.js";
 import { nodeSessionRuntimeV2 } from "../node/sessionRuntime.js";
-import { NODE_RUNTIME_CAPABILITY_V2 } from "../node/runtimeCapability.js";
+import { defineRuntimeCapabilityDescriptorV2 } from "../v2/capability.js";
 import { wrapArtifact } from "../v2/opaqueArtifact.js";
 import { acceptNativeSessionV2 } from "./sessionAcceptor.js";
 import type { ReadyAdmissionTransportV2 } from "./admissionCommit.js";
@@ -74,7 +74,7 @@ describe("neutral session connector candidate composition", () => {
       },
     }, {
       runtime: nodeSessionRuntimeV2,
-      capability: NODE_RUNTIME_CAPABILITY_V2,
+      capability: TEST_RUNTIME_CAPABILITY_V2,
     });
 
     const accepting = acceptNativeSessionV2(
@@ -105,19 +105,19 @@ describe("neutral session connector candidate composition", () => {
     }));
     const connector = new SessionConnectorV2(lease, { create: attempts }, {
       runtime: nodeSessionRuntimeV2,
-      capability: NODE_RUNTIME_CAPABILITY_V2,
+      capability: TEST_RUNTIME_CAPABILITY_V2,
     });
     const error = await connector.connect().catch((value: unknown) => value);
     expect(error).toMatchObject({ code: "connection_failed" });
     expect(connector.state).toBe("terminated");
-    expect(attempts).toHaveBeenCalledTimes(2);
+    expect(attempts).toHaveBeenCalledTimes(3);
   });
 
   test("fails closed when candidate creation throws before a race starts", async () => {
     const connector = new SessionConnectorV2(
       createArtifactLeaseV2(wrapArtifact(testArtifact()), async () => undefined),
       { create: () => { throw new Error("factory unavailable"); } },
-      { runtime: nodeSessionRuntimeV2, capability: NODE_RUNTIME_CAPABILITY_V2 },
+      { runtime: nodeSessionRuntimeV2, capability: TEST_RUNTIME_CAPABILITY_V2 },
     );
     await expect(connector.connect()).rejects.toMatchObject({ code: "connection_failed" });
     expect(connector.state).toBe("terminated");
@@ -131,7 +131,7 @@ describe("neutral session connector candidate composition", () => {
     const connector = new SessionConnectorV2(
       createArtifactLeaseV2(wrapArtifact(testArtifact()), async () => undefined),
       attemptFactory,
-      { runtime: nodeSessionRuntimeV2, capability: NODE_RUNTIME_CAPABILITY_V2, ...options },
+      { runtime: nodeSessionRuntimeV2, capability: TEST_RUNTIME_CAPABILITY_V2, ...options },
     );
     await expect(connector.connect()).rejects.toMatchObject({ code: "invalid_options" });
     expect(attemptFactory.create).not.toHaveBeenCalled();
@@ -142,7 +142,7 @@ describe("neutral session connector candidate composition", () => {
     const connector = new SessionConnectorV2(
       createArtifactLeaseV2(wrapArtifact(testArtifact()), async () => undefined),
       attemptFactory,
-      { runtime: nodeSessionRuntimeV2, capability: NODE_RUNTIME_CAPABILITY_V2, now: () => Number.MAX_SAFE_INTEGER },
+      { runtime: nodeSessionRuntimeV2, capability: TEST_RUNTIME_CAPABILITY_V2, now: () => Number.MAX_SAFE_INTEGER },
     );
     await expect(connector.connect()).rejects.toMatchObject({ code: "timeout" });
     expect(attemptFactory.create).not.toHaveBeenCalled();
@@ -162,7 +162,7 @@ describe("neutral session connector candidate composition", () => {
           };
         },
       },
-      { runtime: nodeSessionRuntimeV2, capability: NODE_RUNTIME_CAPABILITY_V2 },
+      { runtime: nodeSessionRuntimeV2, capability: TEST_RUNTIME_CAPABILITY_V2 },
     );
     const pending = connector.connect({ signal: controller.signal });
     controller.abort(new Error("caller canceled"));
@@ -193,13 +193,13 @@ describe("neutral session connector candidate composition", () => {
           };
         },
       },
-      { runtime: nodeSessionRuntimeV2, capability: NODE_RUNTIME_CAPABILITY_V2 },
+      { runtime: nodeSessionRuntimeV2, capability: TEST_RUNTIME_CAPABILITY_V2 },
     );
 
     await expect(connector.connect()).rejects.toMatchObject({ code: "connection_failed" });
-    expect(closed).toEqual(expect.arrayContaining(["w1", "t1"]));
-    expect(aborted).toHaveLength(1);
-    expect(["w1", "t1"]).toContain(aborted[0]);
+    expect(closed).toEqual(expect.arrayContaining(["w1", "q1", "t1"]));
+    expect(aborted).toHaveLength(2);
+    expect(aborted).toEqual(expect.arrayContaining(["w1", "t1"]));
     expect(connector.state).toBe("terminated");
   });
 
@@ -224,13 +224,19 @@ describe("neutral session connector candidate composition", () => {
           };
         },
       },
-      { runtime: nodeSessionRuntimeV2, capability: NODE_RUNTIME_CAPABILITY_V2 },
+      { runtime: nodeSessionRuntimeV2, capability: TEST_RUNTIME_CAPABILITY_V2 },
     );
 
     await expect(connector.connect()).rejects.toMatchObject({ code: "not_connected" });
     expect(connector.state).toBe("terminated");
   });
 });
+
+const TEST_RUNTIME_CAPABILITY_V2 = defineRuntimeCapabilityDescriptorV2("connector_test", [
+  { carrier: "raw_quic", networkMode: "dial", path: "direct", sessionRole: "client", reliableStreams: true, datagrams: true, migration: false },
+  { carrier: "websocket", networkMode: "dial", path: "direct", sessionRole: "client", reliableStreams: true, datagrams: false, migration: false },
+  { carrier: "webtransport", networkMode: "dial", path: "direct", sessionRole: "client", reliableStreams: true, datagrams: true, migration: false },
+], []);
 
 const fixture = JSON.parse(
   readFileSync(new URL("../../../testdata/transport_v2/artifact_vectors.json", import.meta.url), "utf8"),

@@ -263,12 +263,13 @@ func (handlers *SessionHandlers) Serve(ctx context.Context, current Session) err
 		ctx = context.Background()
 	}
 	serveCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	stopClose := context.AfterFunc(serveCtx, func() { _ = current.Close() })
-	defer stopClose()
 	semaphore := make(chan struct{}, handlers.maxConcurrent)
 	var active sync.WaitGroup
-	defer active.Wait()
+	defer func() {
+		cancel()
+		_ = current.Close()
+		active.Wait()
+	}()
 	for {
 		incoming, err := current.AcceptStream(serveCtx)
 		if err != nil {

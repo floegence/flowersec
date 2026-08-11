@@ -72,9 +72,9 @@ func (leg *NativeStreamLeg) SendAdmission(ctx context.Context, response artifact
 	return admissionv2.Respond(ctx, leg.admission, response, reasons)
 }
 
-func (leg *NativeStreamLeg) Activate(context.Context) (carrier.Session, error) {
+func (leg *NativeStreamLeg) Activate(_ context.Context, role uint8) (carrier.Session, error) {
 	leg.mu.Lock()
-	ready := leg.received && leg.responded
+	ready := leg.received && leg.responded && (role == 1 || role == 2)
 	if !ready {
 		leg.mu.Unlock()
 		return nil, ErrAdmissionState

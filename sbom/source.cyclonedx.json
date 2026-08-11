@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:aedaf4d5-0a42-5db7-8852-9cea51d341f3",
+  "serialNumber": "urn:uuid:11d5d3e0-dd6a-5699-82a2-7cf3c161575b",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "93c53e9c4638dc2e41c9a6ee74be92a707e8447099da937df3d62d234ff8fc20"
+        "value": "ec607c58e166433b649a580a82d042d291cf72b750498ff73421179eb4056ee8"
       }
     ]
   },
@@ -161,6 +161,34 @@
     },
     {
       "type": "library",
+      "name": "atomic-waker",
+      "version": "1.1.2",
+      "purl": "pkg:cargo/atomic-waker@1.1.2",
+      "bom-ref": "pkg:cargo/atomic-waker@1.1.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/smol-rs/atomic-waker"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "autocfg",
       "version": "1.5.1",
       "purl": "pkg:cargo/autocfg@1.5.1",
@@ -208,6 +236,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "base64",
+      "version": "0.22.1",
+      "purl": "pkg:cargo/base64@0.22.1",
+      "bom-ref": "pkg:cargo/base64@0.22.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/marshallpierce/rust-base64"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -342,6 +398,34 @@
         {
           "type": "distribution",
           "url": "https://github.com/bitflags/bitflags"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "block-buffer",
+      "version": "0.10.4",
+      "purl": "pkg:cargo/block-buffer@0.10.4",
+      "bom-ref": "pkg:cargo/block-buffer@0.10.4",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/RustCrypto/utils"
         }
       ],
       "properties": [
@@ -666,6 +750,34 @@
     {
       "type": "library",
       "name": "cpufeatures",
+      "version": "0.2.17",
+      "purl": "pkg:cargo/cpufeatures@0.2.17",
+      "bom-ref": "pkg:cargo/cpufeatures@0.2.17",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cpufeatures",
       "version": "0.3.0",
       "purl": "pkg:cargo/cpufeatures@0.3.0",
       "bom-ref": "pkg:cargo/cpufeatures@0.3.0",
@@ -712,6 +824,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "crypto-common",
+      "version": "0.1.7",
+      "purl": "pkg:cargo/crypto-common@0.1.7",
+      "bom-ref": "pkg:cargo/crypto-common@0.1.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/RustCrypto/traits"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -861,6 +1001,34 @@
     },
     {
       "type": "library",
+      "name": "data-encoding",
+      "version": "2.11.1",
+      "purl": "pkg:cargo/data-encoding@2.11.1",
+      "bom-ref": "pkg:cargo/data-encoding@2.11.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/ia0/data-encoding"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "der",
       "version": "0.8.1",
       "purl": "pkg:cargo/der@0.8.1",
@@ -880,6 +1048,62 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "deranged",
+      "version": "0.5.8",
+      "purl": "pkg:cargo/deranged@0.5.8",
+      "bom-ref": "pkg:cargo/deranged@0.5.8",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/jhpratt/deranged"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "digest",
+      "version": "0.10.7",
+      "purl": "pkg:cargo/digest@0.10.7",
+      "bom-ref": "pkg:cargo/digest@0.10.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/RustCrypto/traits"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -1169,10 +1393,122 @@
     },
     {
       "type": "library",
+      "name": "futures",
+      "version": "0.3.33",
+      "purl": "pkg:cargo/futures@0.3.33",
+      "bom-ref": "pkg:cargo/futures@0.3.33",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rust-lang/futures-rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "futures-channel",
+      "version": "0.3.33",
+      "purl": "pkg:cargo/futures-channel@0.3.33",
+      "bom-ref": "pkg:cargo/futures-channel@0.3.33",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rust-lang/futures-rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "futures-core",
       "version": "0.3.33",
       "purl": "pkg:cargo/futures-core@0.3.33",
       "bom-ref": "pkg:cargo/futures-core@0.3.33",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rust-lang/futures-rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "futures-executor",
+      "version": "0.3.33",
+      "purl": "pkg:cargo/futures-executor@0.3.33",
+      "bom-ref": "pkg:cargo/futures-executor@0.3.33",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rust-lang/futures-rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "futures-io",
+      "version": "0.3.33",
+      "purl": "pkg:cargo/futures-io@0.3.33",
+      "bom-ref": "pkg:cargo/futures-io@0.3.33",
       "licenses": [
         {
           "expression": "MIT"
@@ -1300,6 +1636,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "generic-array",
+      "version": "0.14.7",
+      "purl": "pkg:cargo/generic-array@0.14.7",
+      "bom-ref": "pkg:cargo/generic-array@0.14.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/fizyk20/generic-array.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -1505,6 +1869,118 @@
     },
     {
       "type": "library",
+      "name": "http",
+      "version": "1.5.0",
+      "purl": "pkg:cargo/http@1.5.0",
+      "bom-ref": "pkg:cargo/http@1.5.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/hyperium/http"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "http-body",
+      "version": "1.1.0",
+      "purl": "pkg:cargo/http-body@1.1.0",
+      "bom-ref": "pkg:cargo/http-body@1.1.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/hyperium/http-body"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "http-body-util",
+      "version": "0.1.4",
+      "purl": "pkg:cargo/http-body-util@0.1.4",
+      "bom-ref": "pkg:cargo/http-body-util@0.1.4",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/hyperium/http-body"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "httparse",
+      "version": "1.10.1",
+      "purl": "pkg:cargo/httparse@1.10.1",
+      "bom-ref": "pkg:cargo/httparse@1.10.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/seanmonstar/httparse"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "hybrid-array",
       "version": "0.4.14",
       "purl": "pkg:cargo/hybrid-array@0.4.14",
@@ -1524,6 +2000,90 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hyper",
+      "version": "1.11.0",
+      "purl": "pkg:cargo/hyper@1.11.0",
+      "bom-ref": "pkg:cargo/hyper@1.11.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/hyperium/hyper"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hyper-rustls",
+      "version": "0.27.9",
+      "purl": "pkg:cargo/hyper-rustls@0.27.9",
+      "bom-ref": "pkg:cargo/hyper-rustls@0.27.9",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rustls/hyper-rustls"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0 OR ISC OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hyper-util",
+      "version": "0.1.20",
+      "purl": "pkg:cargo/hyper-util@0.1.20",
+      "bom-ref": "pkg:cargo/hyper-util@0.1.20",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/hyperium/hyper-util"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -1630,6 +2190,34 @@
         {
           "type": "distribution",
           "url": "https://github.com/RustCrypto/utils"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ipnet",
+      "version": "2.12.1",
+      "purl": "pkg:cargo/ipnet@2.12.1",
+      "bom-ref": "pkg:cargo/ipnet@2.12.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/krisprice/ipnet"
         }
       ],
       "properties": [
@@ -1813,6 +2401,62 @@
     },
     {
       "type": "library",
+      "name": "lock_api",
+      "version": "0.4.14",
+      "purl": "pkg:cargo/lock_api@0.4.14",
+      "bom-ref": "pkg:cargo/lock_api@0.4.14",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/Amanieu/parking_lot"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "log",
+      "version": "0.4.33",
+      "purl": "pkg:cargo/log@0.4.33",
+      "bom-ref": "pkg:cargo/log@0.4.33",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rust-lang/log"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "lru-slab",
       "version": "0.1.2",
       "purl": "pkg:cargo/lru-slab@0.1.2",
@@ -1888,6 +2532,62 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "nohash-hasher",
+      "version": "0.2.0",
+      "purl": "pkg:cargo/nohash-hasher@0.2.0",
+      "bom-ref": "pkg:cargo/nohash-hasher@0.2.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/paritytech/nohash-hasher"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "num-conv",
+      "version": "0.2.2",
+      "purl": "pkg:cargo/num-conv@0.2.2",
+      "bom-ref": "pkg:cargo/num-conv@0.2.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/jhpratt/num-conv"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -1981,6 +2681,62 @@
     },
     {
       "type": "library",
+      "name": "parking_lot",
+      "version": "0.12.5",
+      "purl": "pkg:cargo/parking_lot@0.12.5",
+      "bom-ref": "pkg:cargo/parking_lot@0.12.5",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/Amanieu/parking_lot"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "parking_lot_core",
+      "version": "0.9.12",
+      "purl": "pkg:cargo/parking_lot_core@0.9.12",
+      "bom-ref": "pkg:cargo/parking_lot_core@0.9.12",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/Amanieu/parking_lot"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "pem-rfc7468",
       "version": "1.0.0",
       "purl": "pkg:cargo/pem-rfc7468@1.0.0",
@@ -2028,6 +2784,62 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pin-project",
+      "version": "1.1.13",
+      "purl": "pkg:cargo/pin-project@1.1.13",
+      "bom-ref": "pkg:cargo/pin-project@1.1.13",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/taiki-e/pin-project"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pin-project-internal",
+      "version": "1.1.13",
+      "purl": "pkg:cargo/pin-project-internal@1.1.13",
+      "bom-ref": "pkg:cargo/pin-project-internal@1.1.13",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/taiki-e/pin-project"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0 OR MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -2112,6 +2924,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "powerfmt",
+      "version": "0.2.0",
+      "purl": "pkg:cargo/powerfmt@0.2.0",
+      "bom-ref": "pkg:cargo/powerfmt@0.2.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/jhpratt/powerfmt"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -2653,6 +3493,34 @@
     },
     {
       "type": "library",
+      "name": "redox_syscall",
+      "version": "0.5.18",
+      "purl": "pkg:cargo/redox_syscall@0.5.18",
+      "bom-ref": "pkg:cargo/redox_syscall@0.5.18",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://gitlab.redox-os.org/redox-os/syscall"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "regex-syntax",
       "version": "0.8.11",
       "purl": "pkg:cargo/regex-syntax@0.8.11",
@@ -2666,6 +3534,34 @@
         {
           "type": "distribution",
           "url": "https://github.com/rust-lang/regex"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "reqwest",
+      "version": "0.12.28",
+      "purl": "pkg:cargo/reqwest@0.12.28",
+      "bom-ref": "pkg:cargo/reqwest@0.12.28",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/seanmonstar/reqwest"
         }
       ],
       "properties": [
@@ -2961,6 +3857,62 @@
     },
     {
       "type": "library",
+      "name": "ryu",
+      "version": "1.0.23",
+      "purl": "pkg:cargo/ryu@1.0.23",
+      "bom-ref": "pkg:cargo/ryu@1.0.23",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/dtolnay/ryu"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0 OR BSL-1.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "scopeguard",
+      "version": "1.2.0",
+      "purl": "pkg:cargo/scopeguard@1.2.0",
+      "bom-ref": "pkg:cargo/scopeguard@1.2.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/bluss/scopeguard"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "sec1",
       "version": "0.8.1",
       "purl": "pkg:cargo/sec1@0.8.1",
@@ -3129,6 +4081,34 @@
     },
     {
       "type": "library",
+      "name": "serde_urlencoded",
+      "version": "0.7.1",
+      "purl": "pkg:cargo/serde_urlencoded@0.7.1",
+      "bom-ref": "pkg:cargo/serde_urlencoded@0.7.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/nox/serde_urlencoded"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "serdect",
       "version": "0.4.3",
       "purl": "pkg:cargo/serdect@0.4.3",
@@ -3148,6 +4128,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sha1",
+      "version": "0.10.7",
+      "purl": "pkg:cargo/sha1@0.10.7",
+      "bom-ref": "pkg:cargo/sha1@0.10.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/RustCrypto/hashes"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -3353,6 +4361,34 @@
     },
     {
       "type": "library",
+      "name": "static_assertions",
+      "version": "1.1.0",
+      "purl": "pkg:cargo/static_assertions@1.1.0",
+      "bom-ref": "pkg:cargo/static_assertions@1.1.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/nvzqz/static-assertions-rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "subtle",
       "version": "2.6.1",
       "purl": "pkg:cargo/subtle@2.6.1",
@@ -3437,6 +4473,34 @@
     },
     {
       "type": "library",
+      "name": "sync_wrapper",
+      "version": "1.0.2",
+      "purl": "pkg:cargo/sync_wrapper@1.0.2",
+      "bom-ref": "pkg:cargo/sync_wrapper@1.0.2",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/Actyx/sync_wrapper"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "tempfile",
       "version": "3.27.0",
       "purl": "pkg:cargo/tempfile@3.27.0",
@@ -3506,6 +4570,90 @@
         {
           "type": "distribution",
           "url": "https://github.com/dtolnay/thiserror"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "time",
+      "version": "0.3.55",
+      "purl": "pkg:cargo/time@0.3.55",
+      "bom-ref": "pkg:cargo/time@0.3.55",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/time-rs/time"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "time-core",
+      "version": "0.1.9",
+      "purl": "pkg:cargo/time-core@0.1.9",
+      "bom-ref": "pkg:cargo/time-core@0.1.9",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/time-rs/time"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "time-macros",
+      "version": "0.2.32",
+      "purl": "pkg:cargo/time-macros@0.2.32",
+      "bom-ref": "pkg:cargo/time-macros@0.2.32",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/time-rs/time"
         }
       ],
       "properties": [
@@ -3633,6 +4781,62 @@
     },
     {
       "type": "library",
+      "name": "tokio-rustls",
+      "version": "0.26.4",
+      "purl": "pkg:cargo/tokio-rustls@0.26.4",
+      "bom-ref": "pkg:cargo/tokio-rustls@0.26.4",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rustls/tokio-rustls"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tokio-tungstenite",
+      "version": "0.28.0",
+      "purl": "pkg:cargo/tokio-tungstenite@0.28.0",
+      "bom-ref": "pkg:cargo/tokio-tungstenite@0.28.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/snapview/tokio-tungstenite"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "tokio-util",
       "version": "0.7.19",
       "purl": "pkg:cargo/tokio-util@0.7.19",
@@ -3646,6 +4850,118 @@
         {
           "type": "distribution",
           "url": "https://github.com/tokio-rs/tokio"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tower",
+      "version": "0.5.3",
+      "purl": "pkg:cargo/tower@0.5.3",
+      "bom-ref": "pkg:cargo/tower@0.5.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/tower-rs/tower"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tower-http",
+      "version": "0.6.11",
+      "purl": "pkg:cargo/tower-http@0.6.11",
+      "bom-ref": "pkg:cargo/tower-http@0.6.11",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/tower-rs/tower-http"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tower-layer",
+      "version": "0.3.3",
+      "purl": "pkg:cargo/tower-layer@0.3.3",
+      "bom-ref": "pkg:cargo/tower-layer@0.3.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/tower-rs/tower"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tower-service",
+      "version": "0.3.3",
+      "purl": "pkg:cargo/tower-service@0.3.3",
+      "bom-ref": "pkg:cargo/tower-service@0.3.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/tower-rs/tower"
         }
       ],
       "properties": [
@@ -3708,6 +5024,62 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "try-lock",
+      "version": "0.2.5",
+      "purl": "pkg:cargo/try-lock@0.2.5",
+      "bom-ref": "pkg:cargo/try-lock@0.2.5",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/seanmonstar/try-lock"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tungstenite",
+      "version": "0.28.0",
+      "purl": "pkg:cargo/tungstenite@0.28.0",
+      "bom-ref": "pkg:cargo/tungstenite@0.28.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/snapview/tungstenite-rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -3969,6 +5341,34 @@
     },
     {
       "type": "library",
+      "name": "utf-8",
+      "version": "0.7.6",
+      "purl": "pkg:cargo/utf-8@0.7.6",
+      "bom-ref": "pkg:cargo/utf-8@0.7.6",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/SimonSapin/rust-utf8"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "utf8_iter",
       "version": "1.0.4",
       "purl": "pkg:cargo/utf8_iter@1.0.4",
@@ -3997,6 +5397,34 @@
     },
     {
       "type": "library",
+      "name": "version_check",
+      "version": "0.9.5",
+      "purl": "pkg:cargo/version_check@0.9.5",
+      "bom-ref": "pkg:cargo/version_check@0.9.5",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/SergioBenitez/version_check"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "wait-timeout",
       "version": "0.2.1",
       "purl": "pkg:cargo/wait-timeout@0.2.1",
@@ -4016,6 +5444,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "want",
+      "version": "0.3.1",
+      "purl": "pkg:cargo/want@0.3.1",
+      "bom-ref": "pkg:cargo/want@0.3.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/seanmonstar/want"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -4109,6 +5565,34 @@
     },
     {
       "type": "library",
+      "name": "wasm-bindgen-futures",
+      "version": "0.4.77",
+      "purl": "pkg:cargo/wasm-bindgen-futures@0.4.77",
+      "bom-ref": "pkg:cargo/wasm-bindgen-futures@0.4.77",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/futures"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "wasm-bindgen-macro",
       "version": "0.2.127",
       "purl": "pkg:cargo/wasm-bindgen-macro@0.2.127",
@@ -4178,6 +5662,62 @@
         {
           "type": "distribution",
           "url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "wasm-streams",
+      "version": "0.4.2",
+      "purl": "pkg:cargo/wasm-streams@0.4.2",
+      "bom-ref": "pkg:cargo/wasm-streams@0.4.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/MattiasBuelens/wasm-streams/"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "web-sys",
+      "version": "0.3.104",
+      "purl": "pkg:cargo/web-sys@0.3.104",
+      "bom-ref": "pkg:cargo/web-sys@0.3.104",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys"
         }
       ],
       "properties": [
@@ -4632,6 +6172,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "BSD-3-Clause"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "yamux",
+      "version": "0.14.0",
+      "purl": "pkg:cargo/yamux@0.14.0",
+      "bom-ref": "pkg:cargo/yamux@0.14.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/paritytech/yamux"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0 OR MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -5229,6 +6797,734 @@
     },
     {
       "type": "library",
+      "name": "@esbuild/aix-ppc64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/aix-ppc64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/aix-ppc64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/aix-ppc64/-/aix-ppc64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/android-arm",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/android-arm@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/android-arm@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/android-arm/-/android-arm-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/android-arm64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/android-arm64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/android-arm64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/android-arm64/-/android-arm64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/android-x64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/android-x64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/android-x64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/android-x64/-/android-x64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/darwin-arm64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/darwin-arm64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/darwin-arm64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/darwin-arm64/-/darwin-arm64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/darwin-x64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/darwin-x64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/darwin-x64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/darwin-x64/-/darwin-x64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/freebsd-arm64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/freebsd-arm64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/freebsd-arm64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/freebsd-arm64/-/freebsd-arm64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/freebsd-x64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/freebsd-x64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/freebsd-x64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/freebsd-x64/-/freebsd-x64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-arm",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/linux-arm@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/linux-arm@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-arm/-/linux-arm-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-arm64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/linux-arm64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/linux-arm64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-ia32",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/linux-ia32@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/linux-ia32@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-ia32/-/linux-ia32-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-loong64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/linux-loong64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/linux-loong64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-loong64/-/linux-loong64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-mips64el",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/linux-mips64el@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/linux-mips64el@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-mips64el/-/linux-mips64el-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-ppc64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/linux-ppc64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/linux-ppc64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-ppc64/-/linux-ppc64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-riscv64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/linux-riscv64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/linux-riscv64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-riscv64/-/linux-riscv64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-s390x",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/linux-s390x@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/linux-s390x@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-s390x/-/linux-s390x-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/linux-x64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/linux-x64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/linux-x64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/netbsd-arm64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/netbsd-arm64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/netbsd-arm64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/netbsd-arm64/-/netbsd-arm64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/netbsd-x64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/netbsd-x64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/netbsd-x64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/netbsd-x64/-/netbsd-x64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/openbsd-arm64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/openbsd-arm64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/openbsd-arm64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/openbsd-arm64/-/openbsd-arm64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/openbsd-x64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/openbsd-x64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/openbsd-x64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/openbsd-x64/-/openbsd-x64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/openharmony-arm64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/openharmony-arm64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/openharmony-arm64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/openharmony-arm64/-/openharmony-arm64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/sunos-x64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/sunos-x64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/sunos-x64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/sunos-x64/-/sunos-x64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/win32-arm64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/win32-arm64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/win32-arm64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/win32-arm64/-/win32-arm64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/win32-ia32",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/win32-ia32@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/win32-ia32@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/win32-ia32/-/win32-ia32-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@esbuild/win32-x64",
+      "version": "0.28.2",
+      "purl": "pkg:npm/%40esbuild/win32-x64@0.28.2",
+      "bom-ref": "pkg:npm/%40esbuild/win32-x64@0.28.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@esbuild/win32-x64/-/win32-x64-0.28.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "@eslint-community/eslint-utils",
       "version": "4.9.1",
       "purl": "pkg:npm/%40eslint-community/eslint-utils@4.9.1",
@@ -5425,62 +7721,6 @@
     },
     {
       "type": "library",
-      "name": "@fails-components/webtransport",
-      "version": "1.6.7",
-      "purl": "pkg:npm/%40fails-components/webtransport@1.6.7",
-      "bom-ref": "pkg:npm/%40fails-components/webtransport@1.6.7",
-      "licenses": [
-        {
-          "expression": "BSD-3-Clause"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@fails-components/webtransport/-/webtransport-1.6.7.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-3-Clause"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@fails-components/webtransport-transport-http3-quiche",
-      "version": "1.6.7",
-      "purl": "pkg:npm/%40fails-components/webtransport-transport-http3-quiche@1.6.7",
-      "bom-ref": "pkg:npm/%40fails-components/webtransport-transport-http3-quiche@1.6.7",
-      "licenses": [
-        {
-          "expression": "BSD-3-Clause"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@fails-components/webtransport-transport-http3-quiche/-/webtransport-transport-http3-quiche-1.6.7.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-3-Clause"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "@humanfs/core",
       "version": "0.19.1",
       "purl": "pkg:npm/%40humanfs/core@0.19.1",
@@ -5584,34 +7824,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@isaacs/fs-minipass",
-      "version": "4.0.1",
-      "purl": "pkg:npm/%40isaacs/fs-minipass@4.0.1",
-      "bom-ref": "pkg:npm/%40isaacs/fs-minipass@4.0.1",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@isaacs/fs-minipass/-/fs-minipass-4.0.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "ISC"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -6321,34 +8533,6 @@
     },
     {
       "type": "library",
-      "name": "@types/debug",
-      "version": "4.1.13",
-      "purl": "pkg:npm/%40types/debug@4.1.13",
-      "bom-ref": "pkg:npm/%40types/debug@4.1.13",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@types/debug/-/debug-4.1.13.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "@types/deep-eql",
       "version": "4.0.2",
       "purl": "pkg:npm/%40types/deep-eql@4.0.2",
@@ -6446,34 +8630,6 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/@types/json-schema/-/json-schema-7.0.15.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@types/ms",
-      "version": "2.1.0",
-      "purl": "pkg:npm/%40types/ms@2.1.0",
-      "bom-ref": "pkg:npm/%40types/ms@2.1.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@types/ms/-/ms-2.1.0.tgz"
         }
       ],
       "properties": [
@@ -7217,62 +9373,6 @@
     },
     {
       "type": "library",
-      "name": "ansi-regex",
-      "version": "5.0.1",
-      "purl": "pkg:npm/ansi-regex@5.0.1",
-      "bom-ref": "pkg:npm/ansi-regex@5.0.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/ansi-regex/-/ansi-regex-5.0.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "ansi-styles",
-      "version": "4.3.0",
-      "purl": "pkg:npm/ansi-styles@4.3.0",
-      "bom-ref": "pkg:npm/ansi-styles@4.3.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/ansi-styles/-/ansi-styles-4.3.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "assertion-error",
       "version": "2.0.1",
       "purl": "pkg:npm/assertion-error@2.0.1",
@@ -7357,90 +9457,6 @@
     },
     {
       "type": "library",
-      "name": "base64-js",
-      "version": "1.5.1",
-      "purl": "pkg:npm/base64-js@1.5.1",
-      "bom-ref": "pkg:npm/base64-js@1.5.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/base64-js/-/base64-js-1.5.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "bindings",
-      "version": "1.5.0",
-      "purl": "pkg:npm/bindings@1.5.0",
-      "bom-ref": "pkg:npm/bindings@1.5.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/bindings/-/bindings-1.5.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "bl",
-      "version": "4.1.0",
-      "purl": "pkg:npm/bl@4.1.0",
-      "bom-ref": "pkg:npm/bl@4.1.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/bl/-/bl-4.1.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "brace-expansion",
       "version": "5.0.9",
       "purl": "pkg:npm/brace-expansion@5.0.9",
@@ -7469,34 +9485,6 @@
     },
     {
       "type": "library",
-      "name": "buffer",
-      "version": "5.7.1",
-      "purl": "pkg:npm/buffer@5.7.1",
-      "bom-ref": "pkg:npm/buffer@5.7.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/buffer/-/buffer-5.7.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "chai",
       "version": "6.2.2",
       "purl": "pkg:npm/chai@6.2.2",
@@ -7510,174 +9498,6 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/chai/-/chai-6.2.2.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "chownr",
-      "version": "1.1.4",
-      "purl": "pkg:npm/chownr@1.1.4",
-      "bom-ref": "pkg:npm/chownr@1.1.4",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/chownr/-/chownr-1.1.4.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "ISC"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "chownr",
-      "version": "3.0.0",
-      "purl": "pkg:npm/chownr@3.0.0",
-      "bom-ref": "pkg:npm/chownr@3.0.0",
-      "licenses": [
-        {
-          "expression": "BlueOak-1.0.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/chownr/-/chownr-3.0.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BlueOak-1.0.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "cliui",
-      "version": "8.0.1",
-      "purl": "pkg:npm/cliui@8.0.1",
-      "bom-ref": "pkg:npm/cliui@8.0.1",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/cliui/-/cliui-8.0.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "ISC"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "cmake-js",
-      "version": "8.0.0",
-      "purl": "pkg:npm/cmake-js@8.0.0",
-      "bom-ref": "pkg:npm/cmake-js@8.0.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/cmake-js/-/cmake-js-8.0.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "color-convert",
-      "version": "2.0.1",
-      "purl": "pkg:npm/color-convert@2.0.1",
-      "bom-ref": "pkg:npm/color-convert@2.0.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/color-convert/-/color-convert-2.0.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "color-name",
-      "version": "1.1.4",
-      "purl": "pkg:npm/color-name@1.1.4",
-      "bom-ref": "pkg:npm/color-name@1.1.4",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/color-name/-/color-name-1.1.4.tgz"
         }
       ],
       "properties": [
@@ -7805,62 +9625,6 @@
     },
     {
       "type": "library",
-      "name": "decompress-response",
-      "version": "6.0.0",
-      "purl": "pkg:npm/decompress-response@6.0.0",
-      "bom-ref": "pkg:npm/decompress-response@6.0.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/decompress-response/-/decompress-response-6.0.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "deep-extend",
-      "version": "0.6.0",
-      "purl": "pkg:npm/deep-extend@0.6.0",
-      "bom-ref": "pkg:npm/deep-extend@0.6.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/deep-extend/-/deep-extend-0.6.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "deep-is",
       "version": "0.1.4",
       "purl": "pkg:npm/deep-is@0.1.4",
@@ -7945,62 +9709,6 @@
     },
     {
       "type": "library",
-      "name": "emoji-regex",
-      "version": "8.0.0",
-      "purl": "pkg:npm/emoji-regex@8.0.0",
-      "bom-ref": "pkg:npm/emoji-regex@8.0.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/emoji-regex/-/emoji-regex-8.0.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "end-of-stream",
-      "version": "1.4.5",
-      "purl": "pkg:npm/end-of-stream@1.4.5",
-      "bom-ref": "pkg:npm/end-of-stream@1.4.5",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/end-of-stream/-/end-of-stream-1.4.5.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "es-module-lexer",
       "version": "2.1.0",
       "purl": "pkg:npm/es-module-lexer@2.1.0",
@@ -8029,10 +9737,10 @@
     },
     {
       "type": "library",
-      "name": "escalade",
-      "version": "3.2.0",
-      "purl": "pkg:npm/escalade@3.2.0",
-      "bom-ref": "pkg:npm/escalade@3.2.0",
+      "name": "esbuild",
+      "version": "0.28.2",
+      "purl": "pkg:npm/esbuild@0.28.2",
+      "bom-ref": "pkg:npm/esbuild@0.28.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -8041,7 +9749,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/escalade/-/escalade-3.2.0.tgz"
+          "url": "https://registry.npmjs.org/esbuild/-/esbuild-0.28.2.tgz"
         }
       ],
       "properties": [
@@ -8365,34 +10073,6 @@
     },
     {
       "type": "library",
-      "name": "expand-template",
-      "version": "2.0.3",
-      "purl": "pkg:npm/expand-template@2.0.3",
-      "bom-ref": "pkg:npm/expand-template@2.0.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/expand-template/-/expand-template-2.0.3.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR WTFPL"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "expect-type",
       "version": "1.3.0",
       "purl": "pkg:npm/expect-type@1.3.0",
@@ -8617,34 +10297,6 @@
     },
     {
       "type": "library",
-      "name": "file-uri-to-path",
-      "version": "1.0.0",
-      "purl": "pkg:npm/file-uri-to-path@1.0.0",
-      "bom-ref": "pkg:npm/file-uri-to-path@1.0.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/file-uri-to-path/-/file-uri-to-path-1.0.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "find-up",
       "version": "5.0.0",
       "purl": "pkg:npm/find-up@5.0.0",
@@ -8729,62 +10381,6 @@
     },
     {
       "type": "library",
-      "name": "fs-constants",
-      "version": "1.0.0",
-      "purl": "pkg:npm/fs-constants@1.0.0",
-      "bom-ref": "pkg:npm/fs-constants@1.0.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/fs-constants/-/fs-constants-1.0.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "fs-extra",
-      "version": "11.4.0",
-      "purl": "pkg:npm/fs-extra@11.4.0",
-      "bom-ref": "pkg:npm/fs-extra@11.4.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/fs-extra/-/fs-extra-11.4.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "fsevents",
       "version": "2.3.2",
       "purl": "pkg:npm/fsevents@2.3.2",
@@ -8841,62 +10437,6 @@
     },
     {
       "type": "library",
-      "name": "get-caller-file",
-      "version": "2.0.5",
-      "purl": "pkg:npm/get-caller-file@2.0.5",
-      "bom-ref": "pkg:npm/get-caller-file@2.0.5",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/get-caller-file/-/get-caller-file-2.0.5.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "ISC"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "github-from-package",
-      "version": "0.0.0",
-      "purl": "pkg:npm/github-from-package@0.0.0",
-      "bom-ref": "pkg:npm/github-from-package@0.0.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/github-from-package/-/github-from-package-0.0.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "glob-parent",
       "version": "6.0.2",
       "purl": "pkg:npm/glob-parent@6.0.2",
@@ -8910,34 +10450,6 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/glob-parent/-/glob-parent-6.0.2.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "ISC"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "graceful-fs",
-      "version": "4.2.11",
-      "purl": "pkg:npm/graceful-fs@4.2.11",
-      "bom-ref": "pkg:npm/graceful-fs@4.2.11",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/graceful-fs/-/graceful-fs-4.2.11.tgz"
         }
       ],
       "properties": [
@@ -9000,34 +10512,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "ieee754",
-      "version": "1.2.1",
-      "purl": "pkg:npm/ieee754@1.2.1",
-      "bom-ref": "pkg:npm/ieee754@1.2.1",
-      "licenses": [
-        {
-          "expression": "BSD-3-Clause"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/ieee754/-/ieee754-1.2.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-3-Clause"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -9121,62 +10605,6 @@
     },
     {
       "type": "library",
-      "name": "inherits",
-      "version": "2.0.4",
-      "purl": "pkg:npm/inherits@2.0.4",
-      "bom-ref": "pkg:npm/inherits@2.0.4",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "ISC"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "ini",
-      "version": "1.3.8",
-      "purl": "pkg:npm/ini@1.3.8",
-      "bom-ref": "pkg:npm/ini@1.3.8",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/ini/-/ini-1.3.8.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "ISC"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "is-extglob",
       "version": "2.1.1",
       "purl": "pkg:npm/is-extglob@2.1.1",
@@ -9190,34 +10618,6 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/is-extglob/-/is-extglob-2.1.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "is-fullwidth-code-point",
-      "version": "3.0.0",
-      "purl": "pkg:npm/is-fullwidth-code-point@3.0.0",
-      "bom-ref": "pkg:npm/is-fullwidth-code-point@3.0.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/is-fullwidth-code-point/-/is-fullwidth-code-point-3.0.0.tgz"
         }
       ],
       "properties": [
@@ -9280,34 +10680,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "ISC"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "isexe",
-      "version": "4.0.0",
-      "purl": "pkg:npm/isexe@4.0.0",
-      "bom-ref": "pkg:npm/isexe@4.0.0",
-      "licenses": [
-        {
-          "expression": "BlueOak-1.0.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/isexe/-/isexe-4.0.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BlueOak-1.0.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -9526,34 +10898,6 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/json-stable-stringify-without-jsonify/-/json-stable-stringify-without-jsonify-1.0.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "jsonfile",
-      "version": "6.2.1",
-      "purl": "pkg:npm/jsonfile@6.2.1",
-      "bom-ref": "pkg:npm/jsonfile@6.2.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/jsonfile/-/jsonfile-6.2.1.tgz"
         }
       ],
       "properties": [
@@ -10073,34 +11417,6 @@
     },
     {
       "type": "library",
-      "name": "mimic-response",
-      "version": "3.1.0",
-      "purl": "pkg:npm/mimic-response@3.1.0",
-      "bom-ref": "pkg:npm/mimic-response@3.1.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/mimic-response/-/mimic-response-3.1.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "minimatch",
       "version": "10.2.6",
       "purl": "pkg:npm/minimatch@10.2.6",
@@ -10120,118 +11436,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "BlueOak-1.0.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "minimist",
-      "version": "1.2.8",
-      "purl": "pkg:npm/minimist@1.2.8",
-      "bom-ref": "pkg:npm/minimist@1.2.8",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/minimist/-/minimist-1.2.8.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "minipass",
-      "version": "7.1.3",
-      "purl": "pkg:npm/minipass@7.1.3",
-      "bom-ref": "pkg:npm/minipass@7.1.3",
-      "licenses": [
-        {
-          "expression": "BlueOak-1.0.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/minipass/-/minipass-7.1.3.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BlueOak-1.0.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "minizlib",
-      "version": "3.1.0",
-      "purl": "pkg:npm/minizlib@3.1.0",
-      "bom-ref": "pkg:npm/minizlib@3.1.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/minizlib/-/minizlib-3.1.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "mkdirp-classic",
-      "version": "0.5.3",
-      "purl": "pkg:npm/mkdirp-classic@0.5.3",
-      "bom-ref": "pkg:npm/mkdirp-classic@0.5.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/mkdirp-classic/-/mkdirp-classic-0.5.3.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -10325,34 +11529,6 @@
     },
     {
       "type": "library",
-      "name": "napi-build-utils",
-      "version": "2.0.0",
-      "purl": "pkg:npm/napi-build-utils@2.0.0",
-      "bom-ref": "pkg:npm/napi-build-utils@2.0.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/napi-build-utils/-/napi-build-utils-2.0.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "natural-compare",
       "version": "1.4.0",
       "purl": "pkg:npm/natural-compare@1.4.0",
@@ -10409,90 +11585,6 @@
     },
     {
       "type": "library",
-      "name": "node-abi",
-      "version": "3.94.0",
-      "purl": "pkg:npm/node-abi@3.94.0",
-      "bom-ref": "pkg:npm/node-abi@3.94.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/node-abi/-/node-abi-3.94.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "node-addon-api",
-      "version": "7.1.1",
-      "purl": "pkg:npm/node-addon-api@7.1.1",
-      "bom-ref": "pkg:npm/node-addon-api@7.1.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/node-addon-api/-/node-addon-api-7.1.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "node-api-headers",
-      "version": "1.9.0",
-      "purl": "pkg:npm/node-api-headers@1.9.0",
-      "bom-ref": "pkg:npm/node-api-headers@1.9.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/node-api-headers/-/node-api-headers-1.9.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "obug",
       "version": "2.1.1",
       "purl": "pkg:npm/obug@2.1.1",
@@ -10512,34 +11604,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "once",
-      "version": "1.4.0",
-      "purl": "pkg:npm/once@1.4.0",
-      "bom-ref": "pkg:npm/once@1.4.0",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/once/-/once-1.4.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "ISC"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -10857,34 +11921,6 @@
     },
     {
       "type": "library",
-      "name": "prebuild-install",
-      "version": "7.1.3",
-      "purl": "pkg:npm/prebuild-install@7.1.3",
-      "bom-ref": "pkg:npm/prebuild-install@7.1.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/prebuild-install/-/prebuild-install-7.1.3.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "prelude-ls",
       "version": "1.2.1",
       "purl": "pkg:npm/prelude-ls@1.2.1",
@@ -10898,34 +11934,6 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/prelude-ls/-/prelude-ls-1.2.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "pump",
-      "version": "3.0.4",
-      "purl": "pkg:npm/pump@3.0.4",
-      "bom-ref": "pkg:npm/pump@3.0.4",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/pump/-/pump-3.0.4.tgz"
         }
       ],
       "properties": [
@@ -11025,90 +12033,6 @@
     },
     {
       "type": "library",
-      "name": "rc",
-      "version": "1.2.8",
-      "purl": "pkg:npm/rc@1.2.8",
-      "bom-ref": "pkg:npm/rc@1.2.8",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/rc/-/rc-1.2.8.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-2-Clause OR MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "readable-stream",
-      "version": "3.6.2",
-      "purl": "pkg:npm/readable-stream@3.6.2",
-      "bom-ref": "pkg:npm/readable-stream@3.6.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/readable-stream/-/readable-stream-3.6.2.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "require-directory",
-      "version": "2.1.1",
-      "purl": "pkg:npm/require-directory@2.1.1",
-      "bom-ref": "pkg:npm/require-directory@2.1.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/require-directory/-/require-directory-2.1.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "require-from-string",
       "version": "2.0.2",
       "purl": "pkg:npm/require-from-string@2.0.2",
@@ -11178,34 +12102,6 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/rolldown/-/rolldown-1.2.3.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "safe-buffer",
-      "version": "5.2.1",
-      "purl": "pkg:npm/safe-buffer@5.2.1",
-      "bom-ref": "pkg:npm/safe-buffer@5.2.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz"
         }
       ],
       "properties": [
@@ -11361,62 +12257,6 @@
     },
     {
       "type": "library",
-      "name": "simple-concat",
-      "version": "1.0.1",
-      "purl": "pkg:npm/simple-concat@1.0.1",
-      "bom-ref": "pkg:npm/simple-concat@1.0.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/simple-concat/-/simple-concat-1.0.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "simple-get",
-      "version": "4.0.1",
-      "purl": "pkg:npm/simple-get@4.0.1",
-      "bom-ref": "pkg:npm/simple-get@4.0.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/simple-get/-/simple-get-4.0.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "smtp-address-parser",
       "version": "1.1.0",
       "purl": "pkg:npm/smtp-address-parser@1.1.0",
@@ -11529,118 +12369,6 @@
     },
     {
       "type": "library",
-      "name": "string_decoder",
-      "version": "1.3.0",
-      "purl": "pkg:npm/string_decoder@1.3.0",
-      "bom-ref": "pkg:npm/string_decoder@1.3.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/string_decoder/-/string_decoder-1.3.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "string-width",
-      "version": "4.2.3",
-      "purl": "pkg:npm/string-width@4.2.3",
-      "bom-ref": "pkg:npm/string-width@4.2.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/string-width/-/string-width-4.2.3.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "strip-ansi",
-      "version": "6.0.1",
-      "purl": "pkg:npm/strip-ansi@6.0.1",
-      "bom-ref": "pkg:npm/strip-ansi@6.0.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/strip-ansi/-/strip-ansi-6.0.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "strip-json-comments",
-      "version": "2.0.1",
-      "purl": "pkg:npm/strip-json-comments@2.0.1",
-      "bom-ref": "pkg:npm/strip-json-comments@2.0.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/strip-json-comments/-/strip-json-comments-2.0.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "supports-color",
       "version": "7.2.0",
       "purl": "pkg:npm/supports-color@7.2.0",
@@ -11654,90 +12382,6 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/supports-color/-/supports-color-7.2.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tar",
-      "version": "7.5.22",
-      "purl": "pkg:npm/tar@7.5.22",
-      "bom-ref": "pkg:npm/tar@7.5.22",
-      "licenses": [
-        {
-          "expression": "BlueOak-1.0.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/tar/-/tar-7.5.22.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BlueOak-1.0.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tar-fs",
-      "version": "2.1.5",
-      "purl": "pkg:npm/tar-fs@2.1.5",
-      "bom-ref": "pkg:npm/tar-fs@2.1.5",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/tar-fs/-/tar-fs-2.1.5.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tar-stream",
-      "version": "2.2.0",
-      "purl": "pkg:npm/tar-stream@2.2.0",
-      "bom-ref": "pkg:npm/tar-stream@2.2.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/tar-stream/-/tar-stream-2.2.0.tgz"
         }
       ],
       "properties": [
@@ -11921,25 +12565,25 @@
     },
     {
       "type": "library",
-      "name": "tunnel-agent",
-      "version": "0.6.0",
-      "purl": "pkg:npm/tunnel-agent@0.6.0",
-      "bom-ref": "pkg:npm/tunnel-agent@0.6.0",
+      "name": "tsx",
+      "version": "4.23.12",
+      "purl": "pkg:npm/tsx@4.23.12",
+      "bom-ref": "pkg:npm/tsx@4.23.12",
       "licenses": [
         {
-          "expression": "Apache-2.0"
+          "expression": "MIT"
         }
       ],
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/tunnel-agent/-/tunnel-agent-0.6.0.tgz"
+          "url": "https://registry.npmjs.org/tsx/-/tsx-4.23.12.tgz"
         }
       ],
       "properties": [
         {
           "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
+          "value": "MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -12033,34 +12677,6 @@
     },
     {
       "type": "library",
-      "name": "universalify",
-      "version": "2.0.1",
-      "purl": "pkg:npm/universalify@2.0.1",
-      "bom-ref": "pkg:npm/universalify@2.0.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "uri-js",
       "version": "4.4.1",
       "purl": "pkg:npm/uri-js@4.4.1",
@@ -12080,62 +12696,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "BSD-2-Clause"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "url-join",
-      "version": "4.0.1",
-      "purl": "pkg:npm/url-join@4.0.1",
-      "bom-ref": "pkg:npm/url-join@4.0.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/url-join/-/url-join-4.0.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "util-deprecate",
-      "version": "1.0.2",
-      "purl": "pkg:npm/util-deprecate@1.0.2",
-      "bom-ref": "pkg:npm/util-deprecate@1.0.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/util-deprecate/-/util-deprecate-1.0.2.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -12229,34 +12789,6 @@
     },
     {
       "type": "library",
-      "name": "which",
-      "version": "6.0.1",
-      "purl": "pkg:npm/which@6.0.1",
-      "bom-ref": "pkg:npm/which@6.0.1",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/which/-/which-6.0.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "ISC"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "why-is-node-running",
       "version": "2.3.0",
       "purl": "pkg:npm/why-is-node-running@2.3.0",
@@ -12313,62 +12845,6 @@
     },
     {
       "type": "library",
-      "name": "wrap-ansi",
-      "version": "7.0.0",
-      "purl": "pkg:npm/wrap-ansi@7.0.0",
-      "bom-ref": "pkg:npm/wrap-ansi@7.0.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/wrap-ansi/-/wrap-ansi-7.0.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "wrappy",
-      "version": "1.0.2",
-      "purl": "pkg:npm/wrappy@1.0.2",
-      "bom-ref": "pkg:npm/wrappy@1.0.2",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/wrappy/-/wrappy-1.0.2.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "ISC"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "ws",
       "version": "8.21.3",
       "purl": "pkg:npm/ws@8.21.3",
@@ -12388,118 +12864,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "y18n",
-      "version": "5.0.8",
-      "purl": "pkg:npm/y18n@5.0.8",
-      "bom-ref": "pkg:npm/y18n@5.0.8",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/y18n/-/y18n-5.0.8.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "ISC"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "yallist",
-      "version": "5.0.0",
-      "purl": "pkg:npm/yallist@5.0.0",
-      "bom-ref": "pkg:npm/yallist@5.0.0",
-      "licenses": [
-        {
-          "expression": "BlueOak-1.0.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/yallist/-/yallist-5.0.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BlueOak-1.0.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "yargs",
-      "version": "17.7.3",
-      "purl": "pkg:npm/yargs@17.7.3",
-      "bom-ref": "pkg:npm/yargs@17.7.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/yargs/-/yargs-17.7.3.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "yargs-parser",
-      "version": "21.1.1",
-      "purl": "pkg:npm/yargs-parser@21.1.1",
-      "bom-ref": "pkg:npm/yargs-parser@21.1.1",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/yargs-parser/-/yargs-parser-21.1.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "ISC"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -12537,90 +12901,6 @@
     },
     {
       "type": "library",
-      "name": "async-http-client",
-      "version": "1.35.0",
-      "purl": "pkg:swift/async-http-client@1.35.0",
-      "bom-ref": "pkg:swift/async-http-client@1.35.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/swift-server/async-http-client.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "async-http-client",
-      "version": "1.36.0",
-      "purl": "pkg:swift/async-http-client@1.36.0",
-      "bom-ref": "pkg:swift/async-http-client@1.36.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/swift-server/async-http-client.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "swift-algorithms",
-      "version": "1.2.1",
-      "purl": "pkg:swift/swift-algorithms@1.2.1",
-      "bom-ref": "pkg:swift/swift-algorithms@1.2.1",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/apple/swift-algorithms.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "swift-asn1",
       "version": "1.7.1",
       "purl": "pkg:swift/swift-asn1@1.7.1",
@@ -12634,34 +12914,6 @@
         {
           "type": "distribution",
           "url": "https://github.com/apple/swift-asn1.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "swift-async-algorithms",
-      "version": "1.1.5",
-      "purl": "pkg:swift/swift-async-algorithms@1.1.5",
-      "bom-ref": "pkg:swift/swift-async-algorithms@1.1.5",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/apple/swift-async-algorithms.git"
         }
       ],
       "properties": [
@@ -12705,34 +12957,6 @@
     },
     {
       "type": "library",
-      "name": "swift-certificates",
-      "version": "1.19.3",
-      "purl": "pkg:swift/swift-certificates@1.19.3",
-      "bom-ref": "pkg:swift/swift-certificates@1.19.3",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/apple/swift-certificates.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "swift-collections",
       "version": "1.6.0",
       "purl": "pkg:swift/swift-collections@1.6.0",
@@ -12746,34 +12970,6 @@
         {
           "type": "distribution",
           "url": "https://github.com/apple/swift-collections.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "swift-configuration",
-      "version": "1.2.0",
-      "purl": "pkg:swift/swift-configuration@1.2.0",
-      "bom-ref": "pkg:swift/swift-configuration@1.2.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/apple/swift-configuration.git"
         }
       ],
       "properties": [
@@ -12817,118 +13013,6 @@
     },
     {
       "type": "library",
-      "name": "swift-distributed-tracing",
-      "version": "1.4.1",
-      "purl": "pkg:swift/swift-distributed-tracing@1.4.1",
-      "bom-ref": "pkg:swift/swift-distributed-tracing@1.4.1",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/apple/swift-distributed-tracing.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "swift-http-structured-headers",
-      "version": "1.7.0",
-      "purl": "pkg:swift/swift-http-structured-headers@1.7.0",
-      "bom-ref": "pkg:swift/swift-http-structured-headers@1.7.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/apple/swift-http-structured-headers.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "swift-http-types",
-      "version": "1.6.0",
-      "purl": "pkg:swift/swift-http-types@1.6.0",
-      "bom-ref": "pkg:swift/swift-http-types@1.6.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/apple/swift-http-types.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "swift-log",
-      "version": "1.14.0",
-      "purl": "pkg:swift/swift-log@1.14.0",
-      "bom-ref": "pkg:swift/swift-log@1.14.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/apple/swift-log.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "swift-nio",
       "version": "2.101.3",
       "purl": "pkg:swift/swift-nio@2.101.3",
@@ -12957,62 +13041,6 @@
     },
     {
       "type": "library",
-      "name": "swift-nio-extras",
-      "version": "1.34.3",
-      "purl": "pkg:swift/swift-nio-extras@1.34.3",
-      "bom-ref": "pkg:swift/swift-nio-extras@1.34.3",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/apple/swift-nio-extras.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "swift-nio-http2",
-      "version": "1.44.0",
-      "purl": "pkg:swift/swift-nio-http2@1.44.0",
-      "bom-ref": "pkg:swift/swift-nio-http2@1.44.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/apple/swift-nio-http2.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "swift-nio-ssl",
       "version": "2.37.2",
       "purl": "pkg:swift/swift-nio-ssl@2.37.2",
@@ -13026,118 +13054,6 @@
         {
           "type": "distribution",
           "url": "https://github.com/apple/swift-nio-ssl.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "swift-nio-transport-services",
-      "version": "1.28.0",
-      "purl": "pkg:swift/swift-nio-transport-services@1.28.0",
-      "bom-ref": "pkg:swift/swift-nio-transport-services@1.28.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/apple/swift-nio-transport-services.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "swift-numerics",
-      "version": "1.1.1",
-      "purl": "pkg:swift/swift-numerics@1.1.1",
-      "bom-ref": "pkg:swift/swift-numerics@1.1.1",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/apple/swift-numerics.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "swift-service-context",
-      "version": "1.3.0",
-      "purl": "pkg:swift/swift-service-context@1.3.0",
-      "bom-ref": "pkg:swift/swift-service-context@1.3.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/apple/swift-service-context.git"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "swift-service-lifecycle",
-      "version": "2.11.0",
-      "purl": "pkg:swift/swift-service-lifecycle@2.11.0",
-      "bom-ref": "pkg:swift/swift-service-lifecycle@2.11.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/swift-server/swift-service-lifecycle"
         }
       ],
       "properties": [
@@ -13199,6 +13115,7 @@
         "pkg:cargo/proptest@1.11.0",
         "pkg:cargo/quinn@0.11.11",
         "pkg:cargo/rand@0.10.2",
+        "pkg:cargo/reqwest@0.12.28",
         "pkg:cargo/ring@0.17.14",
         "pkg:cargo/rustls@0.23.43",
         "pkg:cargo/serde@1.0.229",
@@ -13207,11 +13124,15 @@
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/tempfile@3.27.0",
         "pkg:cargo/thiserror@2.0.20",
+        "pkg:cargo/time@0.3.55",
+        "pkg:cargo/tokio-rustls@0.26.4",
+        "pkg:cargo/tokio-tungstenite@0.28.0",
         "pkg:cargo/tokio-util@0.7.19",
         "pkg:cargo/tokio@1.53.1",
         "pkg:cargo/unicode-normalization@0.1.25",
         "pkg:cargo/url@2.5.8",
         "pkg:cargo/x25519-dalek@3.0.0",
+        "pkg:cargo/yamux@0.14.0",
         "pkg:cargo/zeroize@1.9.0",
         "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
         "pkg:golang/github.com/gorilla/websocket@v1.5.3",
@@ -13224,8 +13145,6 @@
         "pkg:golang/golang.org/x/net@v0.57.0",
         "pkg:golang/golang.org/x/sys@v0.47.0",
         "pkg:golang/golang.org/x/text@v0.40.0",
-        "pkg:npm/%40fails-components/webtransport-transport-http3-quiche@1.6.7",
-        "pkg:npm/%40fails-components/webtransport@1.6.7",
         "pkg:npm/%40noble/ciphers@2.3.0",
         "pkg:npm/%40noble/curves@2.3.0",
         "pkg:npm/%40noble/hashes@2.3.0",
@@ -13240,12 +13159,11 @@
         "pkg:npm/ajv@8.20.0",
         "pkg:npm/eslint@10.8.0",
         "pkg:npm/tr46@5.0.0",
+        "pkg:npm/tsx@4.23.12",
         "pkg:npm/typescript@5.9.3",
         "pkg:npm/vite@8.2.1",
         "pkg:npm/vitest@4.1.10",
         "pkg:npm/ws@8.21.3",
-        "pkg:swift/async-http-client@1.35.0",
-        "pkg:swift/async-http-client@1.36.0",
         "pkg:swift/swift-crypto@4.5.1",
         "pkg:swift/swift-nio-ssl@2.37.2",
         "pkg:swift/swift-nio@2.101.3"
@@ -13290,11 +13208,19 @@
       ]
     },
     {
+      "ref": "pkg:cargo/atomic-waker@1.1.2",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:cargo/autocfg@1.5.1",
       "dependsOn": []
     },
     {
       "ref": "pkg:cargo/base16ct@1.0.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/base64@0.22.1",
       "dependsOn": []
     },
     {
@@ -13318,6 +13244,12 @@
     {
       "ref": "pkg:cargo/bitflags@2.13.1",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/block-buffer@0.10.4",
+      "dependsOn": [
+        "pkg:cargo/generic-array@0.14.7"
+      ]
     },
     {
       "ref": "pkg:cargo/block-buffer@0.12.1",
@@ -13379,6 +13311,12 @@
       "dependsOn": []
     },
     {
+      "ref": "pkg:cargo/cpufeatures@0.2.17",
+      "dependsOn": [
+        "pkg:cargo/libc@0.2.189"
+      ]
+    },
+    {
       "ref": "pkg:cargo/cpufeatures@0.3.0",
       "dependsOn": [
         "pkg:cargo/libc@0.2.189"
@@ -13395,6 +13333,13 @@
         "pkg:cargo/rand_core@0.10.1",
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/zeroize@1.9.0"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/crypto-common@0.1.7",
+      "dependsOn": [
+        "pkg:cargo/generic-array@0.14.7",
+        "pkg:cargo/typenum@1.20.1"
       ]
     },
     {
@@ -13439,11 +13384,26 @@
       ]
     },
     {
+      "ref": "pkg:cargo/data-encoding@2.11.1",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:cargo/der@0.8.1",
       "dependsOn": [
         "pkg:cargo/const-oid@0.10.2",
         "pkg:cargo/pem-rfc7468@1.0.0",
         "pkg:cargo/zeroize@1.9.0"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/deranged@0.5.8",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/digest@0.10.7",
+      "dependsOn": [
+        "pkg:cargo/block-buffer@0.10.4",
+        "pkg:cargo/crypto-common@0.1.7"
       ]
     },
     {
@@ -13523,7 +13483,38 @@
       ]
     },
     {
+      "ref": "pkg:cargo/futures@0.3.33",
+      "dependsOn": [
+        "pkg:cargo/futures-channel@0.3.33",
+        "pkg:cargo/futures-core@0.3.33",
+        "pkg:cargo/futures-executor@0.3.33",
+        "pkg:cargo/futures-io@0.3.33",
+        "pkg:cargo/futures-sink@0.3.33",
+        "pkg:cargo/futures-task@0.3.33",
+        "pkg:cargo/futures-util@0.3.33"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/futures-channel@0.3.33",
+      "dependsOn": [
+        "pkg:cargo/futures-core@0.3.33",
+        "pkg:cargo/futures-sink@0.3.33"
+      ]
+    },
+    {
       "ref": "pkg:cargo/futures-core@0.3.33",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/futures-executor@0.3.33",
+      "dependsOn": [
+        "pkg:cargo/futures-core@0.3.33",
+        "pkg:cargo/futures-task@0.3.33",
+        "pkg:cargo/futures-util@0.3.33"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/futures-io@0.3.33",
       "dependsOn": []
     },
     {
@@ -13545,12 +13536,22 @@
     {
       "ref": "pkg:cargo/futures-util@0.3.33",
       "dependsOn": [
+        "pkg:cargo/futures-channel@0.3.33",
         "pkg:cargo/futures-core@0.3.33",
+        "pkg:cargo/futures-io@0.3.33",
         "pkg:cargo/futures-macro@0.3.33",
         "pkg:cargo/futures-sink@0.3.33",
         "pkg:cargo/futures-task@0.3.33",
+        "pkg:cargo/memchr@2.8.3",
         "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/slab@0.4.12"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/generic-array@0.14.7",
+      "dependsOn": [
+        "pkg:cargo/typenum@1.20.1",
+        "pkg:cargo/version_check@0.9.5"
       ]
     },
     {
@@ -13610,11 +13611,88 @@
       ]
     },
     {
+      "ref": "pkg:cargo/http@1.5.0",
+      "dependsOn": [
+        "pkg:cargo/bytes@1.12.1",
+        "pkg:cargo/itoa@1.0.18"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/http-body@1.1.0",
+      "dependsOn": [
+        "pkg:cargo/bytes@1.12.1",
+        "pkg:cargo/http@1.5.0"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/http-body-util@0.1.4",
+      "dependsOn": [
+        "pkg:cargo/bytes@1.12.1",
+        "pkg:cargo/futures-core@0.3.33",
+        "pkg:cargo/http-body@1.1.0",
+        "pkg:cargo/http@1.5.0",
+        "pkg:cargo/pin-project-lite@0.2.17"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/httparse@1.10.1",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:cargo/hybrid-array@0.4.14",
       "dependsOn": [
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/typenum@1.20.1",
         "pkg:cargo/zeroize@1.9.0"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/hyper@1.11.0",
+      "dependsOn": [
+        "pkg:cargo/atomic-waker@1.1.2",
+        "pkg:cargo/bytes@1.12.1",
+        "pkg:cargo/futures-channel@0.3.33",
+        "pkg:cargo/futures-core@0.3.33",
+        "pkg:cargo/http-body@1.1.0",
+        "pkg:cargo/http@1.5.0",
+        "pkg:cargo/httparse@1.10.1",
+        "pkg:cargo/itoa@1.0.18",
+        "pkg:cargo/pin-project-lite@0.2.17",
+        "pkg:cargo/smallvec@1.15.2",
+        "pkg:cargo/tokio@1.53.1",
+        "pkg:cargo/want@0.3.1"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/hyper-rustls@0.27.9",
+      "dependsOn": [
+        "pkg:cargo/http@1.5.0",
+        "pkg:cargo/hyper-util@0.1.20",
+        "pkg:cargo/hyper@1.11.0",
+        "pkg:cargo/rustls@0.23.43",
+        "pkg:cargo/tokio-rustls@0.26.4",
+        "pkg:cargo/tokio@1.53.1",
+        "pkg:cargo/tower-service@0.3.3"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/hyper-util@0.1.20",
+      "dependsOn": [
+        "pkg:cargo/base64@0.22.1",
+        "pkg:cargo/bytes@1.12.1",
+        "pkg:cargo/futures-channel@0.3.33",
+        "pkg:cargo/futures-util@0.3.33",
+        "pkg:cargo/http-body@1.1.0",
+        "pkg:cargo/http@1.5.0",
+        "pkg:cargo/hyper@1.11.0",
+        "pkg:cargo/ipnet@2.12.1",
+        "pkg:cargo/libc@0.2.189",
+        "pkg:cargo/percent-encoding@2.3.2",
+        "pkg:cargo/pin-project-lite@0.2.17",
+        "pkg:cargo/socket2@0.6.5",
+        "pkg:cargo/tokio@1.53.1",
+        "pkg:cargo/tower-service@0.3.3",
+        "pkg:cargo/tracing@0.1.44"
       ]
     },
     {
@@ -13644,6 +13722,10 @@
       "dependsOn": [
         "pkg:cargo/hybrid-array@0.4.14"
       ]
+    },
+    {
+      "ref": "pkg:cargo/ipnet@2.12.1",
+      "dependsOn": []
     },
     {
       "ref": "pkg:cargo/itoa@1.0.18",
@@ -13680,6 +13762,16 @@
       "dependsOn": []
     },
     {
+      "ref": "pkg:cargo/lock_api@0.4.14",
+      "dependsOn": [
+        "pkg:cargo/scopeguard@1.2.0"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/log@0.4.33",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:cargo/lru-slab@0.1.2",
       "dependsOn": []
     },
@@ -13694,6 +13786,14 @@
         "pkg:cargo/wasi@0.11.1+wasi-snapshot-preview1",
         "pkg:cargo/windows-sys@0.61.2"
       ]
+    },
+    {
+      "ref": "pkg:cargo/nohash-hasher@0.2.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/num-conv@0.2.2",
+      "dependsOn": []
     },
     {
       "ref": "pkg:cargo/num-traits@0.2.19",
@@ -13716,6 +13816,23 @@
       ]
     },
     {
+      "ref": "pkg:cargo/parking_lot@0.12.5",
+      "dependsOn": [
+        "pkg:cargo/lock_api@0.4.14",
+        "pkg:cargo/parking_lot_core@0.9.12"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/parking_lot_core@0.9.12",
+      "dependsOn": [
+        "pkg:cargo/cfg-if@1.0.4",
+        "pkg:cargo/libc@0.2.189",
+        "pkg:cargo/redox_syscall@0.5.18",
+        "pkg:cargo/smallvec@1.15.2",
+        "pkg:cargo/windows-link@0.2.1"
+      ]
+    },
+    {
       "ref": "pkg:cargo/pem-rfc7468@1.0.0",
       "dependsOn": [
         "pkg:cargo/base64ct@1.8.3"
@@ -13724,6 +13841,20 @@
     {
       "ref": "pkg:cargo/percent-encoding@2.3.2",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/pin-project@1.1.13",
+      "dependsOn": [
+        "pkg:cargo/pin-project-internal@1.1.13"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/pin-project-internal@1.1.13",
+      "dependsOn": [
+        "pkg:cargo/proc-macro2@1.0.107",
+        "pkg:cargo/quote@1.0.47",
+        "pkg:cargo/syn@2.0.119"
+      ]
     },
     {
       "ref": "pkg:cargo/pin-project-lite@0.2.17",
@@ -13743,6 +13874,10 @@
         "pkg:cargo/cpufeatures@0.3.0",
         "pkg:cargo/universal-hash@0.6.1"
       ]
+    },
+    {
+      "ref": "pkg:cargo/powerfmt@0.2.0",
+      "dependsOn": []
     },
     {
       "ref": "pkg:cargo/ppv-lite86@0.2.21",
@@ -13903,8 +14038,51 @@
       ]
     },
     {
+      "ref": "pkg:cargo/redox_syscall@0.5.18",
+      "dependsOn": [
+        "pkg:cargo/bitflags@2.13.1"
+      ]
+    },
+    {
       "ref": "pkg:cargo/regex-syntax@0.8.11",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/reqwest@0.12.28",
+      "dependsOn": [
+        "pkg:cargo/base64@0.22.1",
+        "pkg:cargo/bytes@1.12.1",
+        "pkg:cargo/futures-core@0.3.33",
+        "pkg:cargo/futures-util@0.3.33",
+        "pkg:cargo/http-body-util@0.1.4",
+        "pkg:cargo/http-body@1.1.0",
+        "pkg:cargo/http@1.5.0",
+        "pkg:cargo/hyper-rustls@0.27.9",
+        "pkg:cargo/hyper-util@0.1.20",
+        "pkg:cargo/hyper@1.11.0",
+        "pkg:cargo/js-sys@0.3.104",
+        "pkg:cargo/log@0.4.33",
+        "pkg:cargo/percent-encoding@2.3.2",
+        "pkg:cargo/pin-project-lite@0.2.17",
+        "pkg:cargo/quinn@0.11.11",
+        "pkg:cargo/rustls-pki-types@1.15.1",
+        "pkg:cargo/rustls@0.23.43",
+        "pkg:cargo/serde@1.0.229",
+        "pkg:cargo/serde_json@1.0.151",
+        "pkg:cargo/serde_urlencoded@0.7.1",
+        "pkg:cargo/sync_wrapper@1.0.2",
+        "pkg:cargo/tokio-rustls@0.26.4",
+        "pkg:cargo/tokio-util@0.7.19",
+        "pkg:cargo/tokio@1.53.1",
+        "pkg:cargo/tower-http@0.6.11",
+        "pkg:cargo/tower-service@0.3.3",
+        "pkg:cargo/tower@0.5.3",
+        "pkg:cargo/url@2.5.8",
+        "pkg:cargo/wasm-bindgen-futures@0.4.77",
+        "pkg:cargo/wasm-bindgen@0.2.127",
+        "pkg:cargo/wasm-streams@0.4.2",
+        "pkg:cargo/web-sys@0.3.104"
+      ]
     },
     {
       "ref": "pkg:cargo/rfc6979@0.6.0",
@@ -13984,6 +14162,14 @@
       ]
     },
     {
+      "ref": "pkg:cargo/ryu@1.0.23",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/scopeguard@1.2.0",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:cargo/sec1@0.8.1",
       "dependsOn": [
         "pkg:cargo/base16ct@1.0.0",
@@ -14030,10 +14216,27 @@
       ]
     },
     {
+      "ref": "pkg:cargo/serde_urlencoded@0.7.1",
+      "dependsOn": [
+        "pkg:cargo/form_urlencoded@1.2.2",
+        "pkg:cargo/itoa@1.0.18",
+        "pkg:cargo/ryu@1.0.23",
+        "pkg:cargo/serde@1.0.229"
+      ]
+    },
+    {
       "ref": "pkg:cargo/serdect@0.4.3",
       "dependsOn": [
         "pkg:cargo/base16ct@1.0.0",
         "pkg:cargo/serde@1.0.229"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/sha1@0.10.7",
+      "dependsOn": [
+        "pkg:cargo/cfg-if@1.0.4",
+        "pkg:cargo/cpufeatures@0.2.17",
+        "pkg:cargo/digest@0.10.7"
       ]
     },
     {
@@ -14078,6 +14281,10 @@
       ]
     },
     {
+      "ref": "pkg:cargo/static_assertions@1.1.0",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:cargo/subtle@2.6.1",
       "dependsOn": []
     },
@@ -14095,6 +14302,12 @@
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
         "pkg:cargo/unicode-ident@1.0.24"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/sync_wrapper@1.0.2",
+      "dependsOn": [
+        "pkg:cargo/futures-core@0.3.33"
       ]
     },
     {
@@ -14119,6 +14332,28 @@
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
         "pkg:cargo/syn@3.0.3"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/time@0.3.55",
+      "dependsOn": [
+        "pkg:cargo/deranged@0.5.8",
+        "pkg:cargo/num-conv@0.2.2",
+        "pkg:cargo/powerfmt@0.2.0",
+        "pkg:cargo/serde_core@1.0.229",
+        "pkg:cargo/time-core@0.1.9",
+        "pkg:cargo/time-macros@0.2.32"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/time-core@0.1.9",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/time-macros@0.2.32",
+      "dependsOn": [
+        "pkg:cargo/num-conv@0.2.2",
+        "pkg:cargo/time-core@0.1.9"
       ]
     },
     {
@@ -14152,15 +14387,67 @@
       ]
     },
     {
+      "ref": "pkg:cargo/tokio-rustls@0.26.4",
+      "dependsOn": [
+        "pkg:cargo/rustls@0.23.43",
+        "pkg:cargo/tokio@1.53.1"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/tokio-tungstenite@0.28.0",
+      "dependsOn": [
+        "pkg:cargo/futures-util@0.3.33",
+        "pkg:cargo/log@0.4.33",
+        "pkg:cargo/tokio@1.53.1",
+        "pkg:cargo/tungstenite@0.28.0"
+      ]
+    },
+    {
       "ref": "pkg:cargo/tokio-util@0.7.19",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/futures-core@0.3.33",
+        "pkg:cargo/futures-io@0.3.33",
         "pkg:cargo/futures-sink@0.3.33",
         "pkg:cargo/futures-util@0.3.33",
         "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/tokio@1.53.1"
       ]
+    },
+    {
+      "ref": "pkg:cargo/tower@0.5.3",
+      "dependsOn": [
+        "pkg:cargo/futures-core@0.3.33",
+        "pkg:cargo/futures-util@0.3.33",
+        "pkg:cargo/pin-project-lite@0.2.17",
+        "pkg:cargo/sync_wrapper@1.0.2",
+        "pkg:cargo/tokio@1.53.1",
+        "pkg:cargo/tower-layer@0.3.3",
+        "pkg:cargo/tower-service@0.3.3"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/tower-http@0.6.11",
+      "dependsOn": [
+        "pkg:cargo/bitflags@2.13.1",
+        "pkg:cargo/bytes@1.12.1",
+        "pkg:cargo/futures-util@0.3.33",
+        "pkg:cargo/http-body@1.1.0",
+        "pkg:cargo/http@1.5.0",
+        "pkg:cargo/pin-project-lite@0.2.17",
+        "pkg:cargo/tower-layer@0.3.3",
+        "pkg:cargo/tower-service@0.3.3",
+        "pkg:cargo/tower@0.5.3",
+        "pkg:cargo/url@2.5.8"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/tower-layer@0.3.3",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/tower-service@0.3.3",
+      "dependsOn": []
     },
     {
       "ref": "pkg:cargo/tracing@0.1.44",
@@ -14173,6 +14460,24 @@
       "ref": "pkg:cargo/tracing-core@0.1.36",
       "dependsOn": [
         "pkg:cargo/once_cell@1.21.4"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/try-lock@0.2.5",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/tungstenite@0.28.0",
+      "dependsOn": [
+        "pkg:cargo/bytes@1.12.1",
+        "pkg:cargo/data-encoding@2.11.1",
+        "pkg:cargo/http@1.5.0",
+        "pkg:cargo/httparse@1.10.1",
+        "pkg:cargo/log@0.4.33",
+        "pkg:cargo/rand@0.9.5",
+        "pkg:cargo/sha1@0.10.7",
+        "pkg:cargo/thiserror@2.0.20",
+        "pkg:cargo/utf-8@0.7.6"
       ]
     },
     {
@@ -14223,13 +14528,27 @@
       ]
     },
     {
+      "ref": "pkg:cargo/utf-8@0.7.6",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:cargo/utf8_iter@1.0.4",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/version_check@0.9.5",
       "dependsOn": []
     },
     {
       "ref": "pkg:cargo/wait-timeout@0.2.1",
       "dependsOn": [
         "pkg:cargo/libc@0.2.189"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/want@0.3.1",
+      "dependsOn": [
+        "pkg:cargo/try-lock@0.2.5"
       ]
     },
     {
@@ -14253,6 +14572,13 @@
       ]
     },
     {
+      "ref": "pkg:cargo/wasm-bindgen-futures@0.4.77",
+      "dependsOn": [
+        "pkg:cargo/js-sys@0.3.104",
+        "pkg:cargo/wasm-bindgen@0.2.127"
+      ]
+    },
+    {
       "ref": "pkg:cargo/wasm-bindgen-macro@0.2.127",
       "dependsOn": [
         "pkg:cargo/quote@1.0.47",
@@ -14273,6 +14599,23 @@
       "ref": "pkg:cargo/wasm-bindgen-shared@0.2.127",
       "dependsOn": [
         "pkg:cargo/unicode-ident@1.0.24"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/wasm-streams@0.4.2",
+      "dependsOn": [
+        "pkg:cargo/futures-util@0.3.33",
+        "pkg:cargo/js-sys@0.3.104",
+        "pkg:cargo/wasm-bindgen-futures@0.4.77",
+        "pkg:cargo/wasm-bindgen@0.2.127",
+        "pkg:cargo/web-sys@0.3.104"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/web-sys@0.3.104",
+      "dependsOn": [
+        "pkg:cargo/js-sys@0.3.104",
+        "pkg:cargo/wasm-bindgen@0.2.127"
       ]
     },
     {
@@ -14361,6 +14704,18 @@
         "pkg:cargo/curve25519-dalek@5.0.0",
         "pkg:cargo/rand_core@0.10.1",
         "pkg:cargo/zeroize@1.9.0"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/yamux@0.14.0",
+      "dependsOn": [
+        "pkg:cargo/futures@0.3.33",
+        "pkg:cargo/log@0.4.33",
+        "pkg:cargo/nohash-hasher@0.2.0",
+        "pkg:cargo/parking_lot@0.12.5",
+        "pkg:cargo/pin-project@1.1.13",
+        "pkg:cargo/static_assertions@1.1.0",
+        "pkg:cargo/web-time@1.1.0"
       ]
     },
     {
@@ -14491,6 +14846,110 @@
       "dependsOn": []
     },
     {
+      "ref": "pkg:npm/%40esbuild/aix-ppc64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/android-arm@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/android-arm64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/android-x64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/darwin-arm64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/darwin-x64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/freebsd-arm64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/freebsd-x64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/linux-arm@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/linux-arm64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/linux-ia32@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/linux-loong64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/linux-mips64el@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/linux-ppc64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/linux-riscv64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/linux-s390x@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/linux-x64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/netbsd-arm64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/netbsd-x64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/openbsd-arm64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/openbsd-x64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/openharmony-arm64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/sunos-x64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/win32-arm64@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/win32-ia32@0.28.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40esbuild/win32-x64@0.28.2",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:npm/%40eslint-community/eslint-utils@4.9.1",
       "dependsOn": [
         "pkg:npm/eslint-visitor-keys@3.4.3",
@@ -14533,25 +14992,6 @@
       ]
     },
     {
-      "ref": "pkg:npm/%40fails-components/webtransport@1.6.7",
-      "dependsOn": [
-        "pkg:npm/%40types/debug@4.1.13",
-        "pkg:npm/bindings@1.5.0",
-        "pkg:npm/debug@4.4.3"
-      ]
-    },
-    {
-      "ref": "pkg:npm/%40fails-components/webtransport-transport-http3-quiche@1.6.7",
-      "dependsOn": [
-        "pkg:npm/%40types/debug@4.1.13",
-        "pkg:npm/bindings@1.5.0",
-        "pkg:npm/cmake-js@8.0.0",
-        "pkg:npm/debug@4.4.3",
-        "pkg:npm/node-addon-api@7.1.1",
-        "pkg:npm/prebuild-install@7.1.3"
-      ]
-    },
-    {
       "ref": "pkg:npm/%40humanfs/core@0.19.1",
       "dependsOn": []
     },
@@ -14569,12 +15009,6 @@
     {
       "ref": "pkg:npm/%40humanwhocodes/retry@0.4.3",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/%40isaacs/fs-minipass@4.0.1",
-      "dependsOn": [
-        "pkg:npm/minipass@7.1.3"
-      ]
     },
     {
       "ref": "pkg:npm/%40jridgewell/resolve-uri@3.1.2",
@@ -14687,12 +15121,6 @@
       ]
     },
     {
-      "ref": "pkg:npm/%40types/debug@4.1.13",
-      "dependsOn": [
-        "pkg:npm/%40types/ms@2.1.0"
-      ]
-    },
-    {
       "ref": "pkg:npm/%40types/deep-eql@4.0.2",
       "dependsOn": []
     },
@@ -14706,10 +15134,6 @@
     },
     {
       "ref": "pkg:npm/%40types/json-schema@7.0.15",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/%40types/ms@2.1.0",
       "dependsOn": []
     },
     {
@@ -14938,16 +15362,6 @@
       ]
     },
     {
-      "ref": "pkg:npm/ansi-regex@5.0.1",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/ansi-styles@4.3.0",
-      "dependsOn": [
-        "pkg:npm/color-convert@2.0.1"
-      ]
-    },
-    {
       "ref": "pkg:npm/assertion-error@2.0.1",
       "dependsOn": []
     },
@@ -14964,78 +15378,13 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/base64-js@1.5.1",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/bindings@1.5.0",
-      "dependsOn": [
-        "pkg:npm/file-uri-to-path@1.0.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/bl@4.1.0",
-      "dependsOn": [
-        "pkg:npm/buffer@5.7.1",
-        "pkg:npm/inherits@2.0.4",
-        "pkg:npm/readable-stream@3.6.2"
-      ]
-    },
-    {
       "ref": "pkg:npm/brace-expansion@5.0.9",
       "dependsOn": [
         "pkg:npm/balanced-match@4.0.4"
       ]
     },
     {
-      "ref": "pkg:npm/buffer@5.7.1",
-      "dependsOn": [
-        "pkg:npm/base64-js@1.5.1",
-        "pkg:npm/ieee754@1.2.1"
-      ]
-    },
-    {
       "ref": "pkg:npm/chai@6.2.2",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/chownr@1.1.4",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/chownr@3.0.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/cliui@8.0.1",
-      "dependsOn": [
-        "pkg:npm/string-width@4.2.3",
-        "pkg:npm/strip-ansi@6.0.1",
-        "pkg:npm/wrap-ansi@7.0.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/cmake-js@8.0.0",
-      "dependsOn": [
-        "pkg:npm/debug@4.4.3",
-        "pkg:npm/fs-extra@11.4.0",
-        "pkg:npm/node-api-headers@1.9.0",
-        "pkg:npm/rc@1.2.8",
-        "pkg:npm/semver@7.7.3",
-        "pkg:npm/tar@7.5.22",
-        "pkg:npm/url-join@4.0.1",
-        "pkg:npm/which@6.0.1",
-        "pkg:npm/yargs@17.7.3"
-      ]
-    },
-    {
-      "ref": "pkg:npm/color-convert@2.0.1",
-      "dependsOn": [
-        "pkg:npm/color-name@1.1.4"
-      ]
-    },
-    {
-      "ref": "pkg:npm/color-name@1.1.4",
       "dependsOn": []
     },
     {
@@ -15061,16 +15410,6 @@
       ]
     },
     {
-      "ref": "pkg:npm/decompress-response@6.0.0",
-      "dependsOn": [
-        "pkg:npm/mimic-response@3.1.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/deep-extend@0.6.0",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/deep-is@0.1.4",
       "dependsOn": []
     },
@@ -15083,22 +15422,39 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/emoji-regex@8.0.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/end-of-stream@1.4.5",
-      "dependsOn": [
-        "pkg:npm/once@1.4.0"
-      ]
-    },
-    {
       "ref": "pkg:npm/es-module-lexer@2.1.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/escalade@3.2.0",
-      "dependsOn": []
+      "ref": "pkg:npm/esbuild@0.28.2",
+      "dependsOn": [
+        "pkg:npm/%40esbuild/aix-ppc64@0.28.2",
+        "pkg:npm/%40esbuild/android-arm64@0.28.2",
+        "pkg:npm/%40esbuild/android-arm@0.28.2",
+        "pkg:npm/%40esbuild/android-x64@0.28.2",
+        "pkg:npm/%40esbuild/darwin-arm64@0.28.2",
+        "pkg:npm/%40esbuild/darwin-x64@0.28.2",
+        "pkg:npm/%40esbuild/freebsd-arm64@0.28.2",
+        "pkg:npm/%40esbuild/freebsd-x64@0.28.2",
+        "pkg:npm/%40esbuild/linux-arm64@0.28.2",
+        "pkg:npm/%40esbuild/linux-arm@0.28.2",
+        "pkg:npm/%40esbuild/linux-ia32@0.28.2",
+        "pkg:npm/%40esbuild/linux-loong64@0.28.2",
+        "pkg:npm/%40esbuild/linux-mips64el@0.28.2",
+        "pkg:npm/%40esbuild/linux-ppc64@0.28.2",
+        "pkg:npm/%40esbuild/linux-riscv64@0.28.2",
+        "pkg:npm/%40esbuild/linux-s390x@0.28.2",
+        "pkg:npm/%40esbuild/linux-x64@0.28.2",
+        "pkg:npm/%40esbuild/netbsd-arm64@0.28.2",
+        "pkg:npm/%40esbuild/netbsd-x64@0.28.2",
+        "pkg:npm/%40esbuild/openbsd-arm64@0.28.2",
+        "pkg:npm/%40esbuild/openbsd-x64@0.28.2",
+        "pkg:npm/%40esbuild/openharmony-arm64@0.28.2",
+        "pkg:npm/%40esbuild/sunos-x64@0.28.2",
+        "pkg:npm/%40esbuild/win32-arm64@0.28.2",
+        "pkg:npm/%40esbuild/win32-ia32@0.28.2",
+        "pkg:npm/%40esbuild/win32-x64@0.28.2"
+      ]
     },
     {
       "ref": "pkg:npm/escape-string-regexp@4.0.0",
@@ -15191,10 +15547,6 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/expand-template@2.0.3",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/expect-type@1.3.0",
       "dependsOn": []
     },
@@ -15231,10 +15583,6 @@
       ]
     },
     {
-      "ref": "pkg:npm/file-uri-to-path@1.0.0",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/find-up@5.0.0",
       "dependsOn": [
         "pkg:npm/locate-path@6.0.0",
@@ -15253,31 +15601,11 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/fs-constants@1.0.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/fs-extra@11.4.0",
-      "dependsOn": [
-        "pkg:npm/graceful-fs@4.2.11",
-        "pkg:npm/jsonfile@6.2.1",
-        "pkg:npm/universalify@2.0.1"
-      ]
-    },
-    {
       "ref": "pkg:npm/fsevents@2.3.2",
       "dependsOn": []
     },
     {
       "ref": "pkg:npm/fsevents@2.3.3",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/get-caller-file@2.0.5",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/github-from-package@0.0.0",
       "dependsOn": []
     },
     {
@@ -15287,19 +15615,11 @@
       ]
     },
     {
-      "ref": "pkg:npm/graceful-fs@4.2.11",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/has-flag@4.0.0",
       "dependsOn": []
     },
     {
       "ref": "pkg:npm/html-escaper@2.0.2",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/ieee754@1.2.1",
       "dependsOn": []
     },
     {
@@ -15315,19 +15635,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/inherits@2.0.4",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/ini@1.3.8",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/is-extglob@2.1.1",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/is-fullwidth-code-point@3.0.0",
       "dependsOn": []
     },
     {
@@ -15338,10 +15646,6 @@
     },
     {
       "ref": "pkg:npm/isexe@2.0.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/isexe@4.0.0",
       "dependsOn": []
     },
     {
@@ -15382,13 +15686,6 @@
     {
       "ref": "pkg:npm/json-stable-stringify-without-jsonify@1.0.1",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/jsonfile@6.2.1",
-      "dependsOn": [
-        "pkg:npm/graceful-fs@4.2.11",
-        "pkg:npm/universalify@2.0.1"
-      ]
     },
     {
       "ref": "pkg:npm/keyv@4.5.4",
@@ -15491,32 +15788,10 @@
       ]
     },
     {
-      "ref": "pkg:npm/mimic-response@3.1.0",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/minimatch@10.2.6",
       "dependsOn": [
         "pkg:npm/brace-expansion@5.0.9"
       ]
-    },
-    {
-      "ref": "pkg:npm/minimist@1.2.8",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/minipass@7.1.3",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/minizlib@3.1.0",
-      "dependsOn": [
-        "pkg:npm/minipass@7.1.3"
-      ]
-    },
-    {
-      "ref": "pkg:npm/mkdirp-classic@0.5.3",
-      "dependsOn": []
     },
     {
       "ref": "pkg:npm/moo@0.5.3",
@@ -15528,10 +15803,6 @@
     },
     {
       "ref": "pkg:npm/nanoid@3.3.18",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/napi-build-utils@2.0.0",
       "dependsOn": []
     },
     {
@@ -15548,28 +15819,8 @@
       ]
     },
     {
-      "ref": "pkg:npm/node-abi@3.94.0",
-      "dependsOn": [
-        "pkg:npm/semver@7.7.3"
-      ]
-    },
-    {
-      "ref": "pkg:npm/node-addon-api@7.1.1",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/node-api-headers@1.9.0",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/obug@2.1.1",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/once@1.4.0",
-      "dependsOn": [
-        "pkg:npm/wrappy@1.0.2"
-      ]
     },
     {
       "ref": "pkg:npm/optionator@0.9.4",
@@ -15634,32 +15885,8 @@
       ]
     },
     {
-      "ref": "pkg:npm/prebuild-install@7.1.3",
-      "dependsOn": [
-        "pkg:npm/detect-libc@2.1.2",
-        "pkg:npm/expand-template@2.0.3",
-        "pkg:npm/github-from-package@0.0.0",
-        "pkg:npm/minimist@1.2.8",
-        "pkg:npm/mkdirp-classic@0.5.3",
-        "pkg:npm/napi-build-utils@2.0.0",
-        "pkg:npm/node-abi@3.94.0",
-        "pkg:npm/pump@3.0.4",
-        "pkg:npm/rc@1.2.8",
-        "pkg:npm/simple-get@4.0.1",
-        "pkg:npm/tar-fs@2.1.5",
-        "pkg:npm/tunnel-agent@0.6.0"
-      ]
-    },
-    {
       "ref": "pkg:npm/prelude-ls@1.2.1",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/pump@3.0.4",
-      "dependsOn": [
-        "pkg:npm/end-of-stream@1.4.5",
-        "pkg:npm/once@1.4.0"
-      ]
     },
     {
       "ref": "pkg:npm/punycode@2.3.1",
@@ -15675,27 +15902,6 @@
         "pkg:npm/discontinuous-range@1.0.0",
         "pkg:npm/ret@0.1.15"
       ]
-    },
-    {
-      "ref": "pkg:npm/rc@1.2.8",
-      "dependsOn": [
-        "pkg:npm/deep-extend@0.6.0",
-        "pkg:npm/ini@1.3.8",
-        "pkg:npm/minimist@1.2.8",
-        "pkg:npm/strip-json-comments@2.0.1"
-      ]
-    },
-    {
-      "ref": "pkg:npm/readable-stream@3.6.2",
-      "dependsOn": [
-        "pkg:npm/inherits@2.0.4",
-        "pkg:npm/string_decoder@1.3.0",
-        "pkg:npm/util-deprecate@1.0.2"
-      ]
-    },
-    {
-      "ref": "pkg:npm/require-directory@2.1.1",
-      "dependsOn": []
     },
     {
       "ref": "pkg:npm/require-from-string@2.0.2",
@@ -15727,10 +15933,6 @@
       ]
     },
     {
-      "ref": "pkg:npm/safe-buffer@5.2.1",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/schemes@1.4.0",
       "dependsOn": [
         "pkg:npm/extend@3.0.2"
@@ -15755,18 +15957,6 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/simple-concat@1.0.1",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/simple-get@4.0.1",
-      "dependsOn": [
-        "pkg:npm/decompress-response@6.0.0",
-        "pkg:npm/once@1.4.0",
-        "pkg:npm/simple-concat@1.0.1"
-      ]
-    },
-    {
       "ref": "pkg:npm/smtp-address-parser@1.1.0",
       "dependsOn": [
         "pkg:npm/nearley@2.20.1"
@@ -15785,62 +15975,9 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/string_decoder@1.3.0",
-      "dependsOn": [
-        "pkg:npm/safe-buffer@5.2.1"
-      ]
-    },
-    {
-      "ref": "pkg:npm/string-width@4.2.3",
-      "dependsOn": [
-        "pkg:npm/emoji-regex@8.0.0",
-        "pkg:npm/is-fullwidth-code-point@3.0.0",
-        "pkg:npm/strip-ansi@6.0.1"
-      ]
-    },
-    {
-      "ref": "pkg:npm/strip-ansi@6.0.1",
-      "dependsOn": [
-        "pkg:npm/ansi-regex@5.0.1"
-      ]
-    },
-    {
-      "ref": "pkg:npm/strip-json-comments@2.0.1",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/supports-color@7.2.0",
       "dependsOn": [
         "pkg:npm/has-flag@4.0.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/tar@7.5.22",
-      "dependsOn": [
-        "pkg:npm/%40isaacs/fs-minipass@4.0.1",
-        "pkg:npm/chownr@3.0.0",
-        "pkg:npm/minipass@7.1.3",
-        "pkg:npm/minizlib@3.1.0",
-        "pkg:npm/yallist@5.0.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/tar-fs@2.1.5",
-      "dependsOn": [
-        "pkg:npm/chownr@1.1.4",
-        "pkg:npm/mkdirp-classic@0.5.3",
-        "pkg:npm/pump@3.0.4",
-        "pkg:npm/tar-stream@2.2.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/tar-stream@2.2.0",
-      "dependsOn": [
-        "pkg:npm/bl@4.1.0",
-        "pkg:npm/end-of-stream@1.4.5",
-        "pkg:npm/fs-constants@1.0.0",
-        "pkg:npm/inherits@2.0.4",
-        "pkg:npm/readable-stream@3.6.2"
       ]
     },
     {
@@ -15875,9 +16012,10 @@
       ]
     },
     {
-      "ref": "pkg:npm/tunnel-agent@0.6.0",
+      "ref": "pkg:npm/tsx@4.23.12",
       "dependsOn": [
-        "pkg:npm/safe-buffer@5.2.1"
+        "pkg:npm/esbuild@0.28.2",
+        "pkg:npm/fsevents@2.3.3"
       ]
     },
     {
@@ -15895,33 +16033,23 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/universalify@2.0.1",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/uri-js@4.4.1",
       "dependsOn": [
         "pkg:npm/punycode@2.3.1"
       ]
     },
     {
-      "ref": "pkg:npm/url-join@4.0.1",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/util-deprecate@1.0.2",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/vite@8.2.1",
       "dependsOn": [
         "pkg:npm/%40types/node@26.2.0",
+        "pkg:npm/esbuild@0.28.2",
         "pkg:npm/fsevents@2.3.3",
         "pkg:npm/lightningcss@1.33.0",
         "pkg:npm/picomatch@4.0.5",
         "pkg:npm/postcss@8.5.23",
         "pkg:npm/rolldown@1.2.3",
-        "pkg:npm/tinyglobby@0.2.17"
+        "pkg:npm/tinyglobby@0.2.17",
+        "pkg:npm/tsx@4.23.12"
       ]
     },
     {
@@ -15958,12 +16086,6 @@
       ]
     },
     {
-      "ref": "pkg:npm/which@6.0.1",
-      "dependsOn": [
-        "pkg:npm/isexe@4.0.0"
-      ]
-    },
-    {
       "ref": "pkg:npm/why-is-node-running@2.3.0",
       "dependsOn": [
         "pkg:npm/siginfo@2.0.0",
@@ -15975,43 +16097,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/wrap-ansi@7.0.0",
-      "dependsOn": [
-        "pkg:npm/ansi-styles@4.3.0",
-        "pkg:npm/string-width@4.2.3",
-        "pkg:npm/strip-ansi@6.0.1"
-      ]
-    },
-    {
-      "ref": "pkg:npm/wrappy@1.0.2",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/ws@8.21.3",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/y18n@5.0.8",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/yallist@5.0.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/yargs@17.7.3",
-      "dependsOn": [
-        "pkg:npm/cliui@8.0.1",
-        "pkg:npm/escalade@3.2.0",
-        "pkg:npm/get-caller-file@2.0.5",
-        "pkg:npm/require-directory@2.1.1",
-        "pkg:npm/string-width@4.2.3",
-        "pkg:npm/y18n@5.0.8",
-        "pkg:npm/yargs-parser@21.1.1"
-      ]
-    },
-    {
-      "ref": "pkg:npm/yargs-parser@21.1.1",
       "dependsOn": []
     },
     {
@@ -16019,99 +16105,22 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:swift/async-http-client@1.35.0",
-      "dependsOn": [
-        "pkg:swift/swift-algorithms@1.2.1",
-        "pkg:swift/swift-atomics@1.3.1",
-        "pkg:swift/swift-configuration@1.2.0",
-        "pkg:swift/swift-distributed-tracing@1.4.1",
-        "pkg:swift/swift-log@1.14.0",
-        "pkg:swift/swift-nio-extras@1.34.3",
-        "pkg:swift/swift-nio-http2@1.44.0",
-        "pkg:swift/swift-nio-ssl@2.37.2",
-        "pkg:swift/swift-nio-transport-services@1.28.0",
-        "pkg:swift/swift-nio@2.101.3",
-        "pkg:swift/swift-service-context@1.3.0"
-      ]
-    },
-    {
-      "ref": "pkg:swift/async-http-client@1.36.0",
-      "dependsOn": [
-        "pkg:swift/swift-algorithms@1.2.1",
-        "pkg:swift/swift-atomics@1.3.1",
-        "pkg:swift/swift-configuration@1.2.0",
-        "pkg:swift/swift-distributed-tracing@1.4.1",
-        "pkg:swift/swift-log@1.14.0",
-        "pkg:swift/swift-nio-extras@1.34.3",
-        "pkg:swift/swift-nio-http2@1.44.0",
-        "pkg:swift/swift-nio-ssl@2.37.2",
-        "pkg:swift/swift-nio-transport-services@1.28.0",
-        "pkg:swift/swift-nio@2.101.3",
-        "pkg:swift/swift-service-context@1.3.0"
-      ]
-    },
-    {
-      "ref": "pkg:swift/swift-algorithms@1.2.1",
-      "dependsOn": [
-        "pkg:swift/swift-numerics@1.1.1"
-      ]
-    },
-    {
       "ref": "pkg:swift/swift-asn1@1.7.1",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:swift/swift-async-algorithms@1.1.5",
-      "dependsOn": [
-        "pkg:swift/swift-collections@1.6.0"
-      ]
     },
     {
       "ref": "pkg:swift/swift-atomics@1.3.1",
       "dependsOn": []
     },
     {
-      "ref": "pkg:swift/swift-certificates@1.19.3",
-      "dependsOn": [
-        "pkg:swift/swift-asn1@1.7.1",
-        "pkg:swift/swift-crypto@4.5.1"
-      ]
-    },
-    {
       "ref": "pkg:swift/swift-collections@1.6.0",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:swift/swift-configuration@1.2.0",
-      "dependsOn": [
-        "pkg:swift/swift-collections@1.6.0",
-        "pkg:swift/swift-service-lifecycle@2.11.0",
-        "pkg:swift/swift-system@1.7.5"
-      ]
     },
     {
       "ref": "pkg:swift/swift-crypto@4.5.1",
       "dependsOn": [
         "pkg:swift/swift-asn1@1.7.1"
       ]
-    },
-    {
-      "ref": "pkg:swift/swift-distributed-tracing@1.4.1",
-      "dependsOn": [
-        "pkg:swift/swift-service-context@1.3.0"
-      ]
-    },
-    {
-      "ref": "pkg:swift/swift-http-structured-headers@1.7.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:swift/swift-http-types@1.6.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:swift/swift-log@1.14.0",
-      "dependsOn": []
     },
     {
       "ref": "pkg:swift/swift-nio@2.101.3",
@@ -16122,55 +16131,9 @@
       ]
     },
     {
-      "ref": "pkg:swift/swift-nio-extras@1.34.3",
-      "dependsOn": [
-        "pkg:swift/swift-algorithms@1.2.1",
-        "pkg:swift/swift-asn1@1.7.1",
-        "pkg:swift/swift-async-algorithms@1.1.5",
-        "pkg:swift/swift-atomics@1.3.1",
-        "pkg:swift/swift-certificates@1.19.3",
-        "pkg:swift/swift-http-structured-headers@1.7.0",
-        "pkg:swift/swift-http-types@1.6.0",
-        "pkg:swift/swift-log@1.14.0",
-        "pkg:swift/swift-nio-http2@1.44.0",
-        "pkg:swift/swift-nio-ssl@2.37.2",
-        "pkg:swift/swift-nio@2.101.3",
-        "pkg:swift/swift-service-lifecycle@2.11.0"
-      ]
-    },
-    {
-      "ref": "pkg:swift/swift-nio-http2@1.44.0",
-      "dependsOn": [
-        "pkg:swift/swift-atomics@1.3.1",
-        "pkg:swift/swift-nio@2.101.3"
-      ]
-    },
-    {
       "ref": "pkg:swift/swift-nio-ssl@2.37.2",
       "dependsOn": [
         "pkg:swift/swift-nio@2.101.3"
-      ]
-    },
-    {
-      "ref": "pkg:swift/swift-nio-transport-services@1.28.0",
-      "dependsOn": [
-        "pkg:swift/swift-atomics@1.3.1",
-        "pkg:swift/swift-nio@2.101.3"
-      ]
-    },
-    {
-      "ref": "pkg:swift/swift-numerics@1.1.1",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:swift/swift-service-context@1.3.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:swift/swift-service-lifecycle@2.11.0",
-      "dependsOn": [
-        "pkg:swift/swift-async-algorithms@1.1.5",
-        "pkg:swift/swift-log@1.14.0"
       ]
     },
     {

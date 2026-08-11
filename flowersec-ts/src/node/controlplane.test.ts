@@ -10,6 +10,7 @@ import {
   AuthorizationRecord,
   Issuer,
   RuntimeAuthorizationRequest,
+  authorizeTunnelRuntime,
   authorizeRuntime,
   createEndpointSet,
   rejectRuntime,
@@ -74,11 +75,14 @@ describe("Node control-plane public contract", () => {
       remote_address: "127.0.0.1:23998",
     }));
     expect(() => authorizeRuntime(request, secondRecord, "lease-cross", now)).toThrow(/invalid/u);
-    expect(JSON.parse(new TextDecoder().decode(authorizeRuntime(request, firstRecord, "lease-first", now).json()))).toMatchObject({
+    expect(() => authorizeRuntime(request, firstRecord, "lease-first", now)).toThrow(/invalid/u);
+    const response = JSON.parse(new TextDecoder().decode(authorizeTunnelRuntime(request, firstRecord, "lease-first", now).json())) as Record<string, unknown>;
+    expect(response).toMatchObject({
       decision: "allow",
       expected_peer_endpoint_instance_id: "endpoint-b",
       allow_replacement: true,
     });
+    expect(JSON.stringify(response)).not.toMatch(/session|psk|suite|secret/iu);
   });
 
   test("strictly validates runtime requests and bounded reject/retry responses", () => {

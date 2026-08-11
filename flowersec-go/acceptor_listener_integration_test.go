@@ -23,8 +23,8 @@ import (
 
 func TestRawQUICAcceptorListenerEstablishesApplicationSession(t *testing.T) {
 	serverTLS, trustRoots := acceptorListenerTLS(t)
-	listener, err := flowersec.NewRawQUICAcceptorListener(flowersec.RawQUICAcceptorListenerOptions{
-		Address: "127.0.0.1:0", TLSConfig: serverTLS, Path: flowersec.AcceptorPathDirect, MaxInboundStreams: 8,
+	listener, err := flowersec.NewRawQUICDirectListener(flowersec.RawQUICListenerOptions{
+		Address: "127.0.0.1:0", TLSConfig: serverTLS, MaxInboundStreams: 8,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +34,7 @@ func TestRawQUICAcceptorListenerEstablishesApplicationSession(t *testing.T) {
 	started := make(chan struct{})
 	finish := make(chan struct{})
 	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
-		Listeners: []flowersec.AcceptorListener{listener},
+		Listeners: []flowersec.DirectListener{listener},
 		Authorize: func(_ context.Context, request controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
 			return controlplane.AuthorizeRuntime(request, record, "lease-native-raw-quic")
 		},
@@ -108,8 +108,8 @@ func TestRawQUICAcceptorListenerEstablishesApplicationSession(t *testing.T) {
 
 func TestRawQUICAcceptorServeCancellationWaitsForSessionCleanup(t *testing.T) {
 	serverTLS, trustRoots := acceptorListenerTLS(t)
-	listener, err := flowersec.NewRawQUICAcceptorListener(flowersec.RawQUICAcceptorListenerOptions{
-		Address: "127.0.0.1:0", TLSConfig: serverTLS, Path: flowersec.AcceptorPathDirect, MaxInboundStreams: 8,
+	listener, err := flowersec.NewRawQUICDirectListener(flowersec.RawQUICListenerOptions{
+		Address: "127.0.0.1:0", TLSConfig: serverTLS, MaxInboundStreams: 8,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestRawQUICAcceptorServeCancellationWaitsForSessionCleanup(t *testing.T) {
 	var released atomic.Int32
 	started := make(chan struct{})
 	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
-		Listeners: []flowersec.AcceptorListener{listener},
+		Listeners: []flowersec.DirectListener{listener},
 		Authorize: func(_ context.Context, request controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
 			return controlplane.AuthorizeRuntime(request, record, "lease-native-cancel")
 		},
@@ -194,8 +194,8 @@ func TestRawQUICAcceptorServeCancellationWaitsForSessionCleanup(t *testing.T) {
 func TestWebTransportAcceptorListenerEstablishesApplicationSession(t *testing.T) {
 	serverTLS, trustRoots := acceptorListenerTLS(t)
 	const origin = "https://client.example"
-	listener, err := flowersec.NewWebTransportAcceptorListener(flowersec.WebTransportAcceptorListenerOptions{
-		Address: "127.0.0.1:0", TLSConfig: serverTLS, Path: flowersec.AcceptorPathDirect, MaxInboundStreams: 8,
+	listener, err := flowersec.NewWebTransportDirectListener(flowersec.WebTransportListenerOptions{
+		Address: "127.0.0.1:0", TLSConfig: serverTLS, MaxInboundStreams: 8,
 		CheckOrigin: func(request *http.Request) bool { return request.Header.Get("Origin") == origin },
 	})
 	if err != nil {
@@ -211,7 +211,7 @@ func TestWebTransportAcceptorListenerEstablishesApplicationSession(t *testing.T)
 	started := make(chan struct{})
 	finish := make(chan struct{})
 	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
-		Listeners: []flowersec.AcceptorListener{listener},
+		Listeners: []flowersec.DirectListener{listener},
 		Authorize: func(_ context.Context, request controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
 			return controlplane.AuthorizeRuntime(request, record, "lease-native-webtransport")
 		},

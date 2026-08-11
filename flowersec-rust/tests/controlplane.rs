@@ -1,7 +1,8 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use flowersec::controlplane::{
     AuthorizationRecord, DirectIssueOptions, EndpointSet, Issuer, RuntimeAuthorizationRequest,
-    SessionOptions, TunnelIssueOptions,
+    SessionOptions, TunnelIssueOptions, allow_tunnel_runtime, reject_tunnel_runtime,
+    retry_tunnel_runtime,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -34,6 +35,20 @@ fn controlplane_public_issuance_and_opaque_record_contract() {
     assert!(String::from_utf8(allowed.json()).unwrap().contains("allow"));
     assert!(flowersec::retry_runtime("temporarily_unavailable").is_ok());
     assert!(flowersec::reject_runtime("not_authorized").is_ok());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&reject_tunnel_runtime("not_authorized").unwrap().json())
+            .unwrap(),
+        json!({"decision":"reject","reason":"not_authorized"})
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(
+            &retry_tunnel_runtime("temporarily_unavailable")
+                .unwrap()
+                .json()
+        )
+        .unwrap(),
+        json!({"decision":"retry","reason":"temporarily_unavailable"})
+    );
 
     let pair = issuer
         .issue_tunnel_pair(TunnelIssueOptions {
@@ -47,6 +62,24 @@ fn controlplane_public_issuance_and_opaque_record_contract() {
         })
         .expect("issue tunnel pair");
     assert_ne!(pair.first().lookup_key(), pair.second().lookup_key());
+
+    let tunnel_request = pair
+        .first()
+        .runtime_authorization_request("websocket", "127.0.0.1:12346")
+        .expect("build tunnel authorization request");
+    assert!(
+        tunnel_request
+            .authorize(&pair.first().authorization_record(), "lease-wrong-boundary")
+            .is_err()
+    );
+    let tunnel_response = tunnel_request
+        .authorize_tunnel(&pair.first().authorization_record(), "lease-tunnel")
+        .expect("authorize tunnel runtime");
+    let tunnel_json = String::from_utf8(tunnel_response.json()).unwrap();
+    assert!(!tunnel_json.contains("session"));
+    assert!(!tunnel_json.contains("psk"));
+    assert!(!tunnel_json.contains("suite"));
+    assert!(!tunnel_json.contains("secret"));
 
     let first: Value = serde_json::from_slice(&pair.first().artifact_json()).unwrap();
     let second: Value = serde_json::from_slice(&pair.second().artifact_json()).unwrap();
@@ -172,15 +205,67 @@ fn runtime_authorization_response_matches_runtime_contract() {
     let request = first
         .runtime_authorization_request("raw_quic", "127.0.0.1:12345")
         .unwrap();
+    assert!(
+        request
+            .authorize(&first.authorization_record(), "lease-tunnel")
+            .is_err()
+    );
     let response: Value = serde_json::from_slice(
         &request
-            .authorize(&first.authorization_record(), "lease-tunnel")
+            .authorize_tunnel(&first.authorization_record(), "lease-tunnel")
             .unwrap()
             .json(),
     )
     .unwrap();
-    assert_eq!(response["session"]["channel_id"], "tunnel-response");
+    assert!(response.get("session").is_none());
     assert_eq!(response["expected_peer_endpoint_instance_id"], "endpoint-b");
     assert_eq!(response["allow_replacement"], true);
     assert!(response.get("direct").is_none() || response["direct"].is_null());
+}
+
+#[test]
+fn external_tunnel_authorization_builds_a_secret_free_allow_response() {
+    let pair = Issuer::new()
+        .issue_tunnel_pair(TunnelIssueOptions {
+            session: SessionOptions::new("external-authorization"),
+            endpoints: EndpointSet::new(["wss://example.test/flowersec/v2/tunnel"]).unwrap(),
+            rendezvous_group_id: "external-group".into(),
+            listener_audience: "external-listener".into(),
+            first_endpoint_id: "endpoint-a".into(),
+            second_endpoint_id: "endpoint-b".into(),
+            allow_replacement: true,
+        })
+        .unwrap();
+    let request = pair
+        .first()
+        .runtime_authorization_request("websocket", "127.0.0.1:12345")
+        .unwrap();
+    let response = allow_tunnel_runtime(
+        &request,
+        "lease-external",
+        std::time::SystemTime::now() + std::time::Duration::from_secs(60),
+        "endpoint-b",
+        true,
+    )
+    .unwrap();
+    let json = response.json();
+    let value: Value = serde_json::from_slice(&json).unwrap();
+    assert_eq!(value["decision"], "allow");
+    assert_eq!(value["credential_id"], request.lookup_key());
+    assert_eq!(value["expected_peer_endpoint_instance_id"], "endpoint-b");
+    let lowercase = String::from_utf8(json).unwrap().to_ascii_lowercase();
+    for forbidden in ["session", "artifact", "psk", "secret"] {
+        assert!(!lowercase.contains(forbidden));
+    }
+
+    assert!(
+        allow_tunnel_runtime(
+            &request,
+            "lease-external",
+            std::time::SystemTime::now() - std::time::Duration::from_secs(1),
+            "endpoint-b",
+            false,
+        )
+        .is_err()
+    );
 }

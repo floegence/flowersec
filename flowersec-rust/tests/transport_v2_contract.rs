@@ -220,18 +220,24 @@ fn session_errors_are_closed_and_redacted() {
 }
 
 #[test]
-fn future_quic_handshake_tests_use_checked_in_der_not_runtime_generation() {
-    // Future handshake slices must place stable certificate and PKCS#8 fixtures under
-    // tests/fixtures/quic/*.der. Runtime certificate generation would make tests
-    // nondeterministic and currently pulls an advisory-affected MSRV-compatible time crate.
+fn production_tls_identity_requires_caller_owned_der() {
     let manifest = include_str!("../Cargo.toml");
-    let lockfile = include_str!("../Cargo.lock");
     assert!(
         !manifest
             .lines()
             .any(|line| line.trim_start().starts_with("rcgen"))
     );
-    assert!(!lockfile.lines().any(|line| line == "name = \"rcgen\""));
+    assert!(!manifest.lines().any(|line| {
+        line.trim_start().starts_with("wtransport ")
+            || line.trim_start().starts_with("web-transport-quinn ")
+            || line.trim_start().starts_with("web-transport-quiche ")
+    }));
+    assert!(!manifest.contains("[patch.crates-io]"));
+    assert!(!manifest.contains("\"tls12\""));
+    assert!(!manifest.contains("rustls-tls-webpki-roots"));
+    let proxy = include_str!("../src/proxy_server.rs");
+    assert!(proxy.contains("min_tls_version(reqwest::tls::Version::TLS_1_3)"));
+    assert!(proxy.contains("tls_built_in_root_certs(false)"));
     assert!("tests/fixtures/quic/server-cert.der".ends_with(".der"));
     assert!("tests/fixtures/quic/server-key.der".ends_with(".der"));
 }

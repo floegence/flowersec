@@ -29,6 +29,17 @@ acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
     OnSession: serveSession,
 })
 httpServer.Handler = acceptor.Handler()
+
+tunnel, err := flowersec.NewTunnelRuntime(flowersec.TunnelRuntimeOptions{
+    Listeners: []flowersec.TunnelListener{flowersec.NewWebSocketTunnelListener()},
+    Authorize: authorizeTunnelRuntime,
+})
+httpServer.Handler = tunnel.Handler()
+
+proxy, err := flowersec.NewProxyServer(flowersec.ProxyServerOptions{
+    Upstream: upstreamURL,
+})
+err = proxy.Register(handlers)
 ```
 
 Register inbound RPC and stream handlers before connecting. Stream kinds are valid UTF-8 values from 1 through 255 encoded bytes; `flowersec.rpc.v2` is reserved. A valid connection attempt freezes both registration sets; later registrations return `ErrSessionHandlersFrozen`. `NewStreamMetadata(...)` validates and defensively copies metadata before a stream is opened; `EmptyStreamMetadata()` represents the empty value, and incoming streams expose the same `StreamMetadata` type. `SessionHandlers.Serve` owns the session lifecycle, supplies bounded stream metadata to application handlers, resets then closes the current stream when its `StreamHandler` returns an error, and continues serving unrelated streams. It also resets unhandled or excess streams. Connection selection and cryptographic state remain private to the SDK. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.
@@ -41,9 +52,12 @@ An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default.
 
 ## Supported Connections
 
-The Go SDK supports WebSocket, raw QUIC, and WebTransport connections. It also
-provides `NewAcceptor` for server-side sessions and `SessionHandlers` for
-registering inbound RPC and stream handlers in a Go-native shape.
+The Go SDK supports WebSocket and raw QUIC on direct and tunnel paths, plus direct WebTransport connections. WebTransport tunnel paths remain unsupported
+because the opaque runtime does not forward datagrams across paired legs. The SDK provides the direct-only `NewAcceptor` for
+application-owned server sessions, the separate `NewTunnelRuntime` for opaque
+tunnel pairing and forwarding, and `NewProxyServer` for bounded browser
+HTTP/WebSocket proxy handling. A tunnel runtime never owns a `Session`,
+application handler, or E2EE PSK.
 
 ## Server Control Plane
 
@@ -53,9 +67,10 @@ See the executable `controlplane.ExampleIssuer_IssueTunnelPair` example for arti
 
 ## Connection Notes
 
-Direct and relayed connections return the same `Session`. WebSocket, raw QUIC,
-and WebTransport are selected internally from the invitation. The SDK keeps
-credentials, routing, and transport state out of the application API.
+Direct and relayed connections return the same `Session`. WebSocket and raw
+QUIC are selected internally for either path; WebTransport is selected only
+for direct invitations. The SDK keeps credentials, routing, and transport
+state out of the application API.
 
 ## Verify
 

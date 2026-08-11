@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+
+import { acceptNativeSessionV2 } from "./connector/sessionAcceptor.js";
+import { claimSpendMarker } from "./cliSpendMarker.js";
+import { connect } from "./node/connectSession.js";
+import { nodeSessionRuntimeV2 } from "./node/sessionRuntime.js";
+import { startNodeWebSocketServer } from "./node/webSocketServer.js";
+import type { Session } from "./public/contract.js";
 import { createArtifactLeaseV2 } from "./v2/artifactLease.js";
 import { buildFSB2RequestV2, encodeFSB2RequestV2 } from "./v2/artifact.js";
+import type { InternalSessionV2 } from "./v2/contract.js";
 import { parseArtifact, unwrapArtifact } from "./v2/opaqueArtifact.js";
-import { connect } from "./node/connectSession.js";
-import { startNodeWebTransportServerV2 } from "./node/webTransportServer.js";
-import { acceptNativeSessionV2 } from "./connector/sessionAcceptor.js";
-import type { SessionV2 as PublicSessionV2, InternalSessionV2 } from "./v2/contract.js";
-import { nodeSessionRuntimeV2 } from "./node/sessionRuntime.js";
-import { claimSpendMarker } from "./cliSpendMarker.js";
 
 type Arguments = Readonly<{ mode: "client" | "server"; values: Readonly<Record<string, string>> }>;
 
@@ -17,19 +19,14 @@ if (args.mode === "client") await runClient(args.values);
 else await runServer(args.values);
 
 async function runClient(values: Readonly<Record<string, string>>): Promise<void> {
-  const artifactPath = required(values, "artifact");
-  const origin = required(values, "origin");
-  const spendMarker = required(values, "spend-marker");
-  requireWebTransport(values);
-  const artifact = parseArtifact(readFileSync(artifactPath));
-  let session: PublicSessionV2 | undefined;
-  const lease = createArtifactLeaseV2(artifact, async () => claimSpendMarker(spendMarker));
+  requireWebSocket(values);
+  const artifact = parseArtifact(readFileSync(required(values, "artifact")));
+  const lease = createArtifactLeaseV2(artifact, async () => claimSpendMarker(required(values, "spend-marker")));
+  let session: Session | undefined;
   try {
     session = await connect(lease, {
-      origin,
-      ...(values["certificate-hash"] === undefined ? {} : {
-        tls: { serverCertificateHash: decodeHash(values["certificate-hash"]!) },
-      }),
+      origin: required(values, "origin"),
+      ...(values.ca === undefined ? {} : { tls: { ca: readFileSync(values.ca, "utf8") } }),
     });
     const stream = await session.openStream("cli");
     await stream.write(new TextEncoder().encode("flowersec-ts-cli"));
@@ -45,16 +42,26 @@ async function runClient(values: Readonly<Record<string, string>>): Promise<void
 }
 
 async function runServer(values: Readonly<Record<string, string>>): Promise<void> {
+  requireWebSocket(values);
   const artifact = unwrapArtifact(parseArtifact(readFileSync(required(values, "artifact"))));
-  requireWebTransport(values);
-  const server = await startNodeWebTransportServerV2({
+  if (artifact.path.kind !== "direct") throw new Error("CLI server requires a direct artifact");
+  const certificatePath = values.certificate;
+  const privateKeyPath = values["private-key"];
+  if ((certificatePath === undefined) !== (privateKeyPath === undefined)) {
+    throw new Error("--certificate and --private-key must be provided together");
+  }
+  const server = await startNodeWebSocketServer({
     host: values.host ?? "127.0.0.1",
     port: Number.parseInt(required(values, "port"), 10),
-    path: values.path ?? "/flowersec/webtransport/v2/direct",
-    certificate: readFileSync(required(values, "certificate"), "utf8"),
-    privateKey: readFileSync(required(values, "private-key"), "utf8"),
-    carrierPath: artifact.path.kind,
+    path: "direct",
+    allowedOrigins: [required(values, "origin")],
     inboundBidirectionalStreamCapacity: artifact.session.max_inbound_streams + 2,
+    ...(certificatePath === undefined || privateKeyPath === undefined ? {} : {
+      tls: {
+        certificate: readFileSync(certificatePath, "utf8"),
+        privateKey: readFileSync(privateKeyPath, "utf8"),
+      },
+    }),
   });
   process.stdout.write(JSON.stringify(server.address()) + "\n");
   const abort = new AbortController();
@@ -66,7 +73,7 @@ async function runServer(values: Readonly<Record<string, string>>): Promise<void
       await server.accept({ signal: abort.signal }),
       async (request) => {
         const chosen = artifact.path.candidates.find(({ id }) => id === request.request.chosen_candidate_id);
-        if (request.request.pathKind !== artifact.path.kind || chosen?.carrier !== "webtransport") {
+        if (request.request.pathKind !== "direct" || chosen?.carrier !== "websocket") {
           throw new Error("CLI server rejected an unexpected artifact candidate");
         }
         const expected = encodeFSB2RequestV2(buildFSB2RequestV2(artifact, request.request.chosen_candidate_id));
@@ -112,15 +119,8 @@ function required(values: Readonly<Record<string, string>>, name: string): strin
   return value;
 }
 
-function decodeHash(value: string): Uint8Array {
-  if (!/^[0-9a-fA-F]{64}$/.test(value)) throw new Error("--certificate-hash must be 32-byte SHA-256 hex");
-  return Uint8Array.from(Buffer.from(value, "hex"));
-}
-
-function requireWebTransport(values: Readonly<Record<string, string>>): void {
-  if (values.transport !== "webtransport") {
-    throw new Error("--transport webtransport is required");
-  }
+function requireWebSocket(values: Readonly<Record<string, string>>): void {
+  if (values.transport !== "websocket") throw new Error("--transport websocket is required");
 }
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {

@@ -123,6 +123,35 @@ impl SessionHandlers {
         Ok(())
     }
 
+    pub(crate) fn handle_streams(
+        &mut self,
+        handlers: impl IntoIterator<Item = (String, Arc<dyn StreamHandler>)>,
+    ) -> Result<(), HandlerRegistrationError> {
+        let handlers: Vec<_> = handlers.into_iter().collect();
+        for (kind, _) in &handlers {
+            if kind.is_empty()
+                || kind.len() > 255
+                || kind == "flowersec.rpc.v2"
+                || self.streams.contains_key(kind)
+            {
+                return Err(if self.streams.contains_key(kind) {
+                    HandlerRegistrationError::AlreadyRegistered
+                } else {
+                    HandlerRegistrationError::Invalid
+                });
+            }
+        }
+        if handlers
+            .iter()
+            .enumerate()
+            .any(|(index, (kind, _))| handlers[..index].iter().any(|(seen, _)| seen == kind))
+        {
+            return Err(HandlerRegistrationError::AlreadyRegistered);
+        }
+        self.streams.extend(handlers);
+        Ok(())
+    }
+
     pub fn handle_notification<H>(
         &mut self,
         type_id: u32,
@@ -231,14 +260,15 @@ impl AcceptedSession {
             let handler_cancellation = cancellation.child_token();
             tasks.spawn(async move {
                 let _permit = permit;
-                if handler
+                let succeeded = handler
                     .handle(&incoming, handler_cancellation)
                     .await
-                    .is_err()
-                {
+                    .is_ok();
+                if !succeeded {
                     let _ = incoming.stream().reset().await;
+                } else {
+                    let _ = incoming.stream().close_write().await;
                 }
-                let _ = incoming.stream().close().await;
             });
         };
         let _ = self.session.close().await;

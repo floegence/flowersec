@@ -95,16 +95,23 @@ assert.match(registry, /func registry\(\) \[\]registeredTest/);
 for (const id of [
   "controller/go", "controller/go-real-network-restart", "controller/typescript", "controller/typescript-real-network-restart", "controller/rust", "controller/rust-raw-quic",
   "protocol/go", "protocol/typescript", "protocol/rust",
-  "carrier/go-direct", "carrier/go-tunnel",
-  "integration/typescript/node-webtransport",
+  "carrier/go-direct", "carrier/go-tunnel", "carrier/go-webtransport-draft15-wire",
+  "carrier/rust-websocket-direct", "carrier/rust-websocket-tunnel",
+  "server/typescript-acceptor",
   "interop/typescript-go/wss/direct", "interop/typescript-go/wss/tunnel",
-  "interop/typescript-go/webtransport/direct", "interop/typescript-go/webtransport/tunnel",
   "interop/rust-go/raw-quic/direct", "interop/rust-go/raw-quic/tunnel",
   "interop/go-rust/raw-quic/direct", "interop/go-rust/raw-quic/tunnel",
+  "interop/server-parity/direct-matrix", "interop/server-parity/tunnel-matrix",
   "interop/swift-go/wss/direct", "interop/swift-go/wss/tunnel",
   "controller/swift-real-network-restart",
 ]) assert.match(registry, new RegExp(`"${escapeRegex(id)}"`));
-assert.match(registry, /"interop\/typescript-go\/webtransport\/direct"[\s\S]*webTransport\.integration\.test\.ts/);
+for (const retiredID of [
+  "carrier/typescript-raw-quic-direct", "carrier/typescript-raw-quic-tunnel",
+  "carrier/rust-webtransport-direct", "carrier/rust-webtransport-tunnel",
+  "integration/typescript/node-webtransport", "carrier/typescript-webtransport-tunnel-runtime",
+  "interop/typescript-go/webtransport/direct", "interop/typescript-go/webtransport/tunnel",
+]) assert.doesNotMatch(registry, new RegExp(`"${escapeRegex(retiredID)}"`));
+assert.match(registry, /"server\/typescript-acceptor"[\s\S]*freezes handlers before establishing a direct WebSocket Session/);
 assert.match(registry, /if runtime\.GOOS ===? "darwin"/);
 const acceptanceRegistry = registry.match(/func registry\(\)[\s\S]*?func browserSmokeEntry/)?.[0] ?? "";
 assert.doesNotMatch(acceptanceRegistry, /commandEntry\("browser\/[^"]+",\s*"acceptance"/);
@@ -127,18 +134,35 @@ const hostEntry = read("scripts/test-host.sh");
 const interopMatrix = JSON.parse(read("stability/interop_matrix.json"));
 const capabilityManifest = JSON.parse(read("stability/language_capabilities.json"));
 const registryIDs = new Set([...registry.matchAll(/(?:commandEntry|commandEntryWithEnvironment|vitestEntry|browserSmokeEntry|browserCompatibilityEntry|performanceCapacityEntry|privilegedGoTestEntry)\("([^"]+)"/g)].map((match) => match[1]));
-assert.equal(interopMatrix.version, 2);
-assert.ok(interopMatrix.cells.length > 0);
-for (const cell of interopMatrix.cells) {
-  assert.ok(Array.isArray(cell.test_ids) && cell.test_ids.length > 0, `interop cell ${cell.id} must use test_ids`);
+assert.equal(interopMatrix.version, 3);
+const interopCells = [...interopMatrix.direct_cells, ...interopMatrix.tunnel_topologies];
+assert.ok(interopMatrix.direct_cells.length > 0 && interopMatrix.tunnel_topologies.length > 0);
+for (const cell of interopCells) {
+  assert.ok(["supported", "unsupported"].includes(cell.status), `interop cell ${cell.id} has invalid status`);
+  if (cell.status === "supported") {
+    assert.equal(cell.test_ids?.length, 1, `supported interop cell ${cell.id} must use one test ID`);
+    assert.equal("reason" in cell, false, `supported interop cell ${cell.id} must not carry a reason`);
+  } else {
+    assert.equal("test_ids" in cell, false, `unsupported interop cell ${cell.id} must not claim test IDs`);
+    assert.ok(typeof cell.reason === "string" && cell.reason.length > 0, `unsupported interop cell ${cell.id} must carry a stable reason`);
+  }
   assert.equal("evidence" in cell, false, `interop cell ${cell.id} retains source evidence`);
-  for (const id of cell.test_ids) assert.ok(registryIDs.has(id), `interop cell ${cell.id} references unknown test_id ${id}`);
+  for (const id of cell.test_ids ?? []) assert.ok(registryIDs.has(id), `interop cell ${cell.id} references unknown test_id ${id}`);
 }
 for (const capability of capabilityManifest.portable_capabilities) {
   for (const implementation of Object.values(capability.implementations)) {
-    if (implementation.status === "complete") {
-      assert.equal(implementation.test_ids?.length, 1, `${capability.id} complete implementation must have one test_id`);
+    assert.ok(["supported", "unsupported"].includes(implementation.status), `${capability.id} has an invalid implementation status`);
+    if (implementation.status === "supported") {
+      assert.equal(implementation.test_ids?.length, 1, `${capability.id} supported implementation must have one test_id`);
+      if (capability.layer !== "portable_core") {
+        assert.ok(typeof implementation.entrypoint === "string" && implementation.entrypoint.length > 0, `${capability.id} supported implementation must name an entrypoint`);
+      }
+      assert.equal("reason" in implementation, false, `${capability.id} supported implementation must not carry a reason`);
       assert.ok(registryIDs.has(implementation.test_ids[0]), `${capability.id} references unknown test_id ${implementation.test_ids[0]}`);
+    } else {
+      assert.equal("test_ids" in implementation, false, `${capability.id} unsupported implementation must not claim test IDs`);
+      assert.equal("entrypoint" in implementation, false, `${capability.id} unsupported implementation must not claim an entrypoint`);
+      assert.ok(typeof implementation.reason === "string" && implementation.reason.length > 0, `${capability.id} unsupported implementation must carry a stable reason`);
     }
   }
 }

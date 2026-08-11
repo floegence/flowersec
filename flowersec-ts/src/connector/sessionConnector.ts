@@ -34,6 +34,7 @@ import {
 } from "../v2/capability.js";
 import { SDK_DEFAULTS } from "../defaults.js";
 import { sessionConfigFromArtifactV2 } from "./sessionConfig.js";
+import type { RpcRouter } from "../rpc/server.js";
 import {
   commitClientAdmissionV2,
   CredentialCommitError,
@@ -79,6 +80,7 @@ export type SessionConnectorOptionsV2 = Readonly<{
 
 type SessionConnectorInternalOptionsV2 = Readonly<{
   runtime: SessionProtocolRuntimeV2;
+  rpcRouter?: RpcRouter;
   connectTimeoutMs?: number;
   deadlineFactory?: SessionDeadlineFactoryV2;
   loserCloseTimeoutMs?: number;
@@ -350,12 +352,15 @@ export class SessionConnectorV2 {
       let config: SessionConfigV2;
       try {
         rawFSB2 = encodeFSB2RequestV2(buildFSB2RequestV2(this.artifact, selected.attempt.candidate.id));
-        config = sessionConfigFromArtifactV2(
+        const baseConfig = sessionConfigFromArtifactV2(
           this.artifact,
           rawFSB2,
           this.options.runtime,
           this.options.deadlineFactory,
         );
+        config = this.options.rpcRouter === undefined
+          ? baseConfig
+          : { ...baseConfig, rpcRouter: this.options.rpcRouter };
       } catch (error) {
         const closeFailure = await captureCandidateCleanupFailure(
           selected.attempt.candidate,

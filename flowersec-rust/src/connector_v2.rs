@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     admission_v2::{AdmissionCommitErrorV2, AdmissionCommitV2, CandidateAttemptV2},
     artifact_v2::{ArtifactLease, CandidatePlanV2, ConnectionPlanError, ConnectionPlanV2},
-    session_v2::{SessionConfigV2, SessionDeadlinesV2, establish_session_v2},
+    session_v2::{RpcHandlerV2, SessionConfigV2, SessionDeadlinesV2, establish_session_v2},
     transport_v2::{CarrierSessionV2, PathKind, Session, SessionRole},
 };
 
@@ -103,6 +103,7 @@ pub(crate) trait CandidateAttemptFactoryV2: fmt::Debug + Send + Sync {
     async fn prepare(
         &self,
         candidate: CandidatePlanV2,
+        role: SessionRole,
         max_inbound_streams: u16,
         deadline: tokio::time::Instant,
         cancellation: CancellationToken,
@@ -112,6 +113,7 @@ pub(crate) trait CandidateAttemptFactoryV2: fmt::Debug + Send + Sync {
 pub(crate) struct SessionConnectorV2 {
     options: SessionConnectorOptionsV2,
     runtime: Arc<dyn CandidateAttemptFactoryV2>,
+    rpc_handler: Option<Arc<dyn RpcHandlerV2>>,
 }
 
 impl fmt::Debug for SessionConnectorV2 {
@@ -120,6 +122,7 @@ impl fmt::Debug for SessionConnectorV2 {
             .debug_struct("SessionConnectorV2")
             .field("options", &self.options)
             .field("runtime", &self.runtime)
+            .field("has_rpc_handler", &self.rpc_handler.is_some())
             .finish()
     }
 }
@@ -128,11 +131,16 @@ impl SessionConnectorV2 {
     pub(crate) fn new(
         options: SessionConnectorOptionsV2,
         runtime: Arc<dyn CandidateAttemptFactoryV2>,
+        rpc_handler: Option<Arc<dyn RpcHandlerV2>>,
     ) -> Result<Self, ConnectError> {
         if options.connect_timeout.is_zero() {
             return Err(error(ConnectErrorCode::InvalidInput));
         }
-        Ok(Self { options, runtime })
+        Ok(Self {
+            options,
+            runtime,
+            rpc_handler,
+        })
     }
 
     pub(crate) async fn connect(
@@ -167,7 +175,13 @@ impl SessionConnectorV2 {
                     let id = candidate.id.clone();
                     let attempt = CandidateAttemptV2::attempt();
                     let prepared = runtime
-                        .prepare(candidate, max_inbound_streams, deadline, cancellation)
+                        .prepare(
+                            candidate,
+                            plan.role,
+                            max_inbound_streams,
+                            deadline,
+                            cancellation,
+                        )
                         .await
                         .map(|carrier| attempt.ready(carrier));
                     (id, prepared)
@@ -201,6 +215,7 @@ impl SessionConnectorV2 {
 
         let mut config =
             session_config(&plan, admitted.binding(), self.options.close_flush_timeout);
+        config.rpc_handler = self.rpc_handler.clone();
         if plan.path == PathKind::Direct {
             config.peer_admission_binding = Some(admitted.binding());
         }

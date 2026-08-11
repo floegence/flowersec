@@ -779,6 +779,7 @@ type pendingLeg struct {
 	responses            chan artifactv2.AdmissionResponse
 	sendErr              error
 	activations          atomic.Int32
+	activationRole       atomic.Uint32
 	closed               atomic.Int32
 	expiresAt            time.Time
 	allowReplacement     bool
@@ -848,8 +849,9 @@ func (leg *pendingLeg) SendAdmission(ctx context.Context, response artifactv2.Ad
 	return leg.sendErr
 }
 
-func (leg *pendingLeg) Activate(ctx context.Context) (carrier.Session, error) {
+func (leg *pendingLeg) Activate(ctx context.Context, role uint8) (carrier.Session, error) {
 	leg.activations.Add(1)
+	leg.activationRole.Store(uint32(role))
 	if leg.blockActivation {
 		<-ctx.Done()
 		return nil, ctx.Err()

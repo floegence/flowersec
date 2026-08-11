@@ -468,6 +468,8 @@ pub struct EncryptedSessionV2 {
     sent_goaway_last: AtomicU64,
     received_goaway: AtomicBool,
     received_goaway_last: AtomicU64,
+    received_session_close: AtomicBool,
+    received_session_close_changed: Notify,
     incoming_rx: Mutex<mpsc::Receiver<IncomingStream>>,
     incoming_tx: mpsc::Sender<IncomingStream>,
     outbound_permits: Arc<Semaphore>,
@@ -649,6 +651,8 @@ async fn establish_session_v2_inner(
         sent_goaway_last: AtomicU64::new(0),
         received_goaway: AtomicBool::new(false),
         received_goaway_last: AtomicU64::new(0),
+        received_session_close: AtomicBool::new(false),
+        received_session_close_changed: Notify::new(),
         incoming_rx: Mutex::new(incoming_rx),
         incoming_tx,
         outbound_permits: Arc::new(Semaphore::new(usize::from(local_max_inbound_streams))),
@@ -1725,9 +1729,17 @@ async fn control_loop_v2(session: Arc<SelfSession>) {
             }
             InnerRecordTypeV2::StreamReset => receive_stream_reset_v2(&session, &payload).await,
             InnerRecordTypeV2::GoAway => receive_goaway_v2(&session, &payload).await,
-            InnerRecordTypeV2::SessionClose => {
-                validate_session_close_payload_v2(&payload).and_then(|()| Err(closed()))
-            }
+            InnerRecordTypeV2::SessionClose => match validate_session_close_payload_v2(&payload) {
+                Ok(()) => {
+                    session
+                        .received_session_close
+                        .store(true, Ordering::Release);
+                    session.received_session_close_changed.notify_waiters();
+                    close_peer_session_v2(&session).await;
+                    return;
+                }
+                Err(error) => Err(error),
+            },
             _ => Err(invalid("unexpected control record")),
         };
         if let Err(error) = handled {
@@ -2052,7 +2064,8 @@ async fn receive_rekey_inner_v2(session: &EncryptedSessionV2, payload: &[u8]) ->
         .map_err(proto)?;
         state.recv_roots.insert(next, next_roots);
     }
-    if session.peer_ledger.lock().await.frontier() != watermark {
+    let peer_frontier = session.peer_ledger.lock().await.frontier();
+    if peer_frontier != watermark {
         return Err(invalid("rekey watermark does not match resolved frontier"));
     }
     let streams = active_receive_streams_v2(session);
@@ -2213,7 +2226,9 @@ async fn close_session_v2(session: &EncryptedSessionV2) -> io::Result<()> {
                 &NORMAL_CLOSE_REASON_V2.to_be_bytes(),
             )
             .await?;
-            session.control.close_write_delivered().await
+            session.control.close_write_delivered().await?;
+            wait_for_peer_session_close_v2(session).await;
+            Ok(())
         })
         .await
         {
@@ -2235,6 +2250,39 @@ async fn close_session_v2(session: &EncryptedSessionV2) -> io::Result<()> {
         carrier?;
     }
     Ok(())
+}
+
+async fn wait_for_peer_session_close_v2(session: &EncryptedSessionV2) {
+    loop {
+        let changed = session.received_session_close_changed.notified();
+        if session.received_session_close.load(Ordering::Acquire) {
+            return;
+        }
+        changed.await;
+    }
+}
+
+async fn close_peer_session_v2(session: &EncryptedSessionV2) {
+    if !session.begin_closing() {
+        return;
+    }
+    record_terminal_v2(session, &closed());
+    session.rpc.notifications.clear();
+    let deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
+    let reply = tokio::time::timeout_at(deadline, async {
+        send_control_v2(
+            session,
+            InnerRecordTypeV2::SessionClose,
+            &NORMAL_CLOSE_REASON_V2.to_be_bytes(),
+        )
+        .await?;
+        session.control.close_write_delivered().await
+    })
+    .await;
+    session.canceled.cancel();
+    let _ = reply;
+    let _ = tokio::time::timeout_at(deadline, session.carrier.close()).await;
+    session.finish_closed();
 }
 
 fn validate_session_close_payload_v2(payload: &[u8]) -> io::Result<()> {
@@ -2404,6 +2452,7 @@ struct EncryptedStreamV2 {
     recv_sequence: AtomicU64,
     prior_ack: Mutex<Option<(u32, u64)>>,
     recv_update: Mutex<Option<(u64, u32)>>,
+    recv_update_changed: Notify,
     send_update: Mutex<Option<(u64, u32)>>,
     send_update_ack: Mutex<Option<(u64, u32)>>,
     send_update_changed: Notify,
@@ -2413,6 +2462,7 @@ struct EncryptedStreamV2 {
     local_fin: AtomicBool,
     remote_fin: AtomicBool,
     reset: AtomicBool,
+    reset_changed: Notify,
     terminal: OnceLock<SessionError>,
     _outbound_permit: StdMutex<Option<tokio::sync::OwnedSemaphorePermit>>,
     _inbound_permit: StdMutex<Option<tokio::sync::OwnedSemaphorePermit>>,
@@ -2649,6 +2699,7 @@ async fn open_stream_with_capacity_v2(
         recv_sequence: AtomicU64::new(1),
         prior_ack: Mutex::new(None),
         recv_update: Mutex::new(None),
+        recv_update_changed: Notify::new(),
         send_update: Mutex::new(None),
         send_update_ack: Mutex::new(None),
         send_update_changed: Notify::new(),
@@ -2658,6 +2709,7 @@ async fn open_stream_with_capacity_v2(
         local_fin: AtomicBool::new(false),
         remote_fin: AtomicBool::new(false),
         reset: AtomicBool::new(false),
+        reset_changed: Notify::new(),
         terminal: OnceLock::new(),
         _outbound_permit: StdMutex::new(permit),
         _inbound_permit: StdMutex::new(None),
@@ -2832,6 +2884,7 @@ impl EncryptedStreamV2 {
     async fn reset_inner(&self) -> io::Result<()> {
         let _ = self.terminal.set(SessionError::StreamReset);
         if !self.reset.swap(true, Ordering::AcqRel) {
+            self.reset_changed.notify_waiters();
             if let Some(session) = self.session.upgrade() {
                 let mut payload = [0; 10];
                 payload[..8].copy_from_slice(&self.id.to_be_bytes());
@@ -2846,6 +2899,7 @@ impl EncryptedStreamV2 {
     async fn reset_local(&self) -> io::Result<()> {
         let _ = self.terminal.set(SessionError::StreamReset);
         self.reset.store(true, Ordering::Release);
+        self.reset_changed.notify_waiters();
         let result = self.carrier.reset().await;
         self.release_capacity();
         result
@@ -2870,11 +2924,42 @@ impl EncryptedStreamV2 {
         if let Some(buffered) = self.buffered_reads.lock().await.pop_front() {
             return Ok(buffered);
         }
+        if self.reset.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "logical stream reset",
+            ));
+        }
         let session = self.session.upgrade().ok_or_else(closed)?;
-        let _lock = self.read_lock.lock().await;
+        let reset_changed = self.reset_changed.notified();
+        tokio::pin!(reset_changed);
+        reset_changed.as_mut().enable();
+        let _lock = tokio::select! {
+            biased;
+            _ = &mut reset_changed => return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "logical stream reset",
+            )),
+            lock = self.read_lock.lock() => lock,
+        };
         loop {
-            let (kind, payload, epoch, sequence) =
-                read_stream_record_v2(&session, &self.carrier, self.id).await?;
+            let reset_changed = self.reset_changed.notified();
+            tokio::pin!(reset_changed);
+            reset_changed.as_mut().enable();
+            if self.reset.load(Ordering::Acquire) {
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "logical stream reset",
+                ));
+            }
+            let (kind, payload, epoch, sequence) = tokio::select! {
+                biased;
+                _ = &mut reset_changed => return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "logical stream reset",
+                )),
+                record = read_stream_record_v2(&session, &self.carrier, self.id) => record?,
+            };
             let prior = *self.prior_ack.lock().await;
             if kind == InnerRecordTypeV2::StreamKeyUpdateAck && prior == Some((epoch, sequence)) {
                 *self.prior_ack.lock().await = None;
@@ -2953,38 +3038,46 @@ impl EncryptedStreamV2 {
     }
 
     async fn await_stream_update(&self, transition: u64, next_epoch: u32) -> io::Result<()> {
-        if *self.recv_update.lock().await == Some((transition, next_epoch)) {
-            return Ok(());
-        }
         let session = self.session.upgrade().ok_or_else(closed)?;
-        let _read = self.read_lock.lock().await;
         loop {
             if *self.recv_update.lock().await == Some((transition, next_epoch)) {
                 return Ok(());
             }
-            let (kind, payload, epoch, sequence) =
-                read_stream_record_v2(&session, &self.carrier, self.id).await?;
-            self.accept_normal_header(epoch, sequence)?;
-            match kind {
-                InnerRecordTypeV2::Data => self
-                    .buffered_reads
-                    .lock()
-                    .await
-                    .push_back(Some(Bytes::from(payload))),
-                InnerRecordTypeV2::Fin => {
-                    self.remote_fin.store(true, Ordering::Release);
-                    self.buffered_reads.lock().await.push_back(None);
-                    self.release_if_clean();
-                    return Ok(());
-                }
-                InnerRecordTypeV2::StreamKeyUpdate => {
-                    self.handle_stream_update_locked(&session, &payload).await?;
-                    if *self.recv_update.lock().await != Some((transition, next_epoch)) {
-                        return Err(invalid("stream rekey transition mismatch"));
+            let changed = self.recv_update_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            tokio::select! {
+                () = &mut changed => continue,
+                read = self.read_lock.lock() => {
+                    let _read = read;
+                    if *self.recv_update.lock().await == Some((transition, next_epoch)) {
+                        return Ok(());
                     }
-                    return Ok(());
+                    let (kind, payload, epoch, sequence) =
+                        read_stream_record_v2(&session, &self.carrier, self.id).await?;
+                    self.accept_normal_header(epoch, sequence)?;
+                    match kind {
+                        InnerRecordTypeV2::Data => self
+                            .buffered_reads
+                            .lock()
+                            .await
+                            .push_back(Some(Bytes::from(payload))),
+                        InnerRecordTypeV2::Fin => {
+                            self.remote_fin.store(true, Ordering::Release);
+                            self.buffered_reads.lock().await.push_back(None);
+                            self.release_if_clean();
+                            return Ok(());
+                        }
+                        InnerRecordTypeV2::StreamKeyUpdate => {
+                            self.handle_stream_update_locked(&session, &payload).await?;
+                            if *self.recv_update.lock().await != Some((transition, next_epoch)) {
+                                return Err(invalid("stream rekey transition mismatch"));
+                            }
+                            return Ok(());
+                        }
+                        _ => return Err(invalid("unexpected record while awaiting stream rekey")),
+                    }
                 }
-                _ => return Err(invalid("unexpected record while awaiting stream rekey")),
             }
         }
     }
@@ -3034,6 +3127,7 @@ impl EncryptedStreamV2 {
             .store(u64::from(next_epoch), Ordering::Release);
         self.recv_sequence.store(0, Ordering::Release);
         *self.recv_update.lock().await = Some((transition, next_epoch));
+        self.recv_update_changed.notify_waiters();
         let ack = encode_stream_key_update_ack_v2(self.id, transition, next_epoch);
         self.write_record(InnerRecordTypeV2::StreamKeyUpdateAck, &ack)
             .await
@@ -3242,6 +3336,7 @@ async fn accept_one_stream_v2(
         recv_sequence: AtomicU64::new(1),
         prior_ack: Mutex::new(None),
         recv_update: Mutex::new(None),
+        recv_update_changed: Notify::new(),
         send_update: Mutex::new(None),
         send_update_ack: Mutex::new(None),
         send_update_changed: Notify::new(),
@@ -3251,6 +3346,7 @@ async fn accept_one_stream_v2(
         local_fin: AtomicBool::new(false),
         remote_fin: AtomicBool::new(false),
         reset: AtomicBool::new(false),
+        reset_changed: Notify::new(),
         terminal: OnceLock::new(),
         _outbound_permit: StdMutex::new(None),
         _inbound_permit: StdMutex::new(permit),

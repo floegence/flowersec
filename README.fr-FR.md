@@ -80,17 +80,19 @@ Les quatre SDK partagent le même modèle de session. La prise en charge varie l
 | --- | :---: | :---: | :---: | :---: |
 | Sessions chiffrées de bout en bout | Oui | Oui | Oui | Oui |
 | Envoyer des appels RPC et des notifications | Oui | Oui | Oui | Oui |
-| Recevoir des notifications RPC | Non | Oui | Non | Non |
+| Recevoir des notifications RPC | Oui | Oui | Oui | Oui |
 | Flux d'octets fiables | Oui | Oui | Oui | Oui |
 | Rétablissement des connexions durables | Oui | Oui | Oui | Oui |
 | Messages non fiables lorsqu'ils sont disponibles | Oui | Oui | Non | Oui |
 | Connexions depuis un navigateur | Non | Oui | Non | Non |
 | Connexions de clients Apple | Non | Non | Oui | Non |
 | Connexions QUIC natives | Oui | Non | Non | Oui |
-| Connexions WebSocket | Oui | Oui | Oui | Non |
+| Connexions WebSocket | Oui | Oui | Oui | Oui |
 | Connexions WebTransport | Oui | Oui | Non | Non |
 | Acceptation de sessions côté serveur | Oui | Node.js | Non | Oui |
-| Émission d'invitations par le plan de contrôle | Paquet Go | Service applicatif | Service applicatif | Service applicatif |
+| Runtime de relais opaque | Oui | Node.js | Non | Oui |
+| Émission d'invitations par le plan de contrôle | Oui | Node.js | Non | Oui |
+| ProxyServer HTTP et WebSocket | Oui | Node.js | Non | Oui |
 
 Consultez les guides des SDK pour connaître les combinaisons exactes de plateformes et de connexions prises en charge.
 

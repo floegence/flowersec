@@ -18,7 +18,9 @@ use crate::{
         SessionConnectorV2,
     },
     raw_quic_v2::{RawQuicClientConfig, RawQuicLimits, RawQuicPathProfile, RawQuicSession},
+    session_handlers::SessionHandlers,
     transport_v2::{CarrierKind, CarrierSessionV2, PathKind, Session, SessionRole},
+    websocket_v2,
 };
 
 const RESOLVED_ADDRESS_PROBE_DELAY: Duration = Duration::from_millis(250);
@@ -29,6 +31,8 @@ pub struct ConnectorOptions {
     trust_roots_der: Vec<Vec<u8>>,
     connect_timeout: Duration,
     close_flush_timeout: Option<Duration>,
+    websocket_origin: Option<String>,
+    handlers: Option<Arc<SessionHandlers>>,
 }
 
 impl fmt::Debug for ConnectorOptions {
@@ -41,6 +45,8 @@ impl fmt::Debug for ConnectorOptions {
             )
             .field("connect_timeout", &self.connect_timeout)
             .field("close_flush_timeout", &self.close_flush_timeout)
+            .field("websocket_origin", &self.websocket_origin)
+            .field("has_handlers", &self.handlers.is_some())
             .finish()
     }
 }
@@ -58,6 +64,8 @@ impl ConnectorOptions {
             trust_roots_der,
             connect_timeout: Duration::from_secs(10),
             close_flush_timeout: None,
+            websocket_origin: None,
+            handlers: None,
         })
     }
 
@@ -93,6 +101,34 @@ impl ConnectorOptions {
     pub const fn connect_timeout(&self) -> Duration {
         self.connect_timeout
     }
+
+    /// Sets the exact HTTP Origin sent by native WebSocket candidates.
+    pub fn with_websocket_origin(
+        mut self,
+        origin: impl Into<String>,
+    ) -> Result<Self, ConnectError> {
+        let origin = origin.into();
+        let valid = url::Url::parse(&origin).is_ok_and(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.host_str().is_some()
+                && url.path() == "/"
+                && url.query().is_none()
+                && url.fragment().is_none()
+        });
+        if !valid {
+            return Err(ConnectError::from_runtime_code(
+                crate::connector_v2::ConnectErrorCode::InvalidInput,
+            ));
+        }
+        self.websocket_origin = Some(origin);
+        Ok(self)
+    }
+
+    /// Freezes inbound RPC and notification handlers before session establishment.
+    pub fn with_handlers(mut self, handlers: SessionHandlers) -> Self {
+        self.handlers = Some(Arc::new(handlers));
+        self
+    }
 }
 
 /// Establishes one carrier-neutral session from a single-use artifact lease.
@@ -109,6 +145,10 @@ pub async fn connect_with_cancellation(
     options: ConnectorOptions,
     cancellation: CancellationToken,
 ) -> Result<Arc<dyn Session>, ConnectError> {
+    let rpc_handler = options
+        .handlers
+        .as_ref()
+        .map(|handlers| handlers.rpc_handler());
     let connector_options = SessionConnectorOptionsV2 {
         connect_timeout: options.connect_timeout,
         close_flush_timeout: options.close_flush_timeout,
@@ -116,8 +156,9 @@ pub async fn connect_with_cancellation(
     let runtime = Arc::new(RawQuicRuntimeAdapterV2 {
         trust_roots_der: options.trust_roots_der,
         connect_timeout: options.connect_timeout,
+        websocket_origin: options.websocket_origin,
     });
-    SessionConnectorV2::new(connector_options, runtime)?
+    SessionConnectorV2::new(connector_options, runtime, rpc_handler)?
         .connect(lease, cancellation)
         .await
 }
@@ -126,6 +167,7 @@ pub async fn connect_with_cancellation(
 struct RawQuicRuntimeAdapterV2 {
     trust_roots_der: Vec<Vec<u8>>,
     connect_timeout: Duration,
+    websocket_origin: Option<String>,
 }
 
 impl fmt::Debug for RawQuicRuntimeAdapterV2 {
@@ -137,21 +179,57 @@ impl fmt::Debug for RawQuicRuntimeAdapterV2 {
 #[async_trait]
 impl CandidateAttemptFactoryV2 for RawQuicRuntimeAdapterV2 {
     fn supports(&self, candidate: &CandidatePlanV2, path: PathKind, _role: SessionRole) -> bool {
-        candidate.carrier == CarrierKind::RawQuic
+        matches!(candidate.carrier, CarrierKind::RawQuic | CarrierKind::Wss)
             && candidate.wire_profile
                 == match path {
                     PathKind::Direct => "flowersec-direct/2",
                     PathKind::Tunnel => "flowersec-tunnel/2",
                 }
+            && (candidate.carrier != CarrierKind::Wss || self.websocket_origin.is_some())
     }
 
     async fn prepare(
         &self,
         candidate: CandidatePlanV2,
+        role: SessionRole,
         max_inbound_streams: u16,
         deadline: tokio::time::Instant,
         cancellation: CancellationToken,
     ) -> Result<Arc<dyn CarrierSessionV2>, RuntimeFailureV2> {
+        if candidate.carrier == CarrierKind::Wss {
+            let origin = self
+                .websocket_origin
+                .as_deref()
+                .ok_or(RuntimeFailureV2::Start)?;
+            let subprotocol = match candidate.wire_profile.as_str() {
+                "flowersec-direct/2" => websocket_v2::SUBPROTOCOL_DIRECT,
+                "flowersec-tunnel/2" => websocket_v2::SUBPROTOCOL_TUNNEL,
+                _ => return Err(RuntimeFailureV2::Start),
+            };
+            let capacity =
+                crate::transport_v2::carrier_inbound_stream_limit_v2(max_inbound_streams)
+                    .map_err(|_| RuntimeFailureV2::Start)?;
+            return tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => Err(RuntimeFailureV2::Canceled),
+                result = tokio::time::timeout_at(deadline, websocket_v2::dial(
+                    &candidate.normalized_url,
+                    subprotocol,
+                    origin,
+                    self.trust_roots_der.clone(),
+                    capacity,
+                )) => match result {
+                    Err(_) => Err(RuntimeFailureV2::Timeout),
+                    Ok(Err(_)) => Err(RuntimeFailureV2::Start),
+                    Ok(Ok(carrier)) => {
+                        carrier
+                            .set_multiplexer_client(role == SessionRole::Client)
+                            .map_err(|_| RuntimeFailureV2::Start)?;
+                        Ok(carrier)
+                    },
+                }
+            };
+        }
         let url =
             url::Url::parse(&candidate.normalized_url).map_err(|_| RuntimeFailureV2::Resolve)?;
         let host = url
@@ -235,5 +313,46 @@ pub(crate) async fn dial_resolved_raw_quic(
         Err(RuntimeFailureV2::Timeout)
     } else {
         Err(RuntimeFailureV2::Start)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidate(carrier: CarrierKind, url: &str) -> CandidatePlanV2 {
+        CandidatePlanV2 {
+            id: "candidate".into(),
+            carrier,
+            normalized_url: url.into(),
+            wire_profile: "flowersec-direct/2".into(),
+        }
+    }
+
+    #[test]
+    fn runtime_does_not_claim_webtransport_without_a_production_driver() {
+        let runtime = RawQuicRuntimeAdapterV2 {
+            trust_roots_der: vec![vec![1]],
+            connect_timeout: Duration::from_secs(1),
+            websocket_origin: Some("https://app.example".into()),
+        };
+        assert!(runtime.supports(
+            &candidate(CarrierKind::RawQuic, "quic://127.0.0.1:443"),
+            PathKind::Direct,
+            SessionRole::Client,
+        ));
+        assert!(runtime.supports(
+            &candidate(CarrierKind::Wss, "wss://localhost:443/flowersec/v2/direct"),
+            PathKind::Direct,
+            SessionRole::Client,
+        ));
+        assert!(!runtime.supports(
+            &candidate(
+                CarrierKind::WebTransport,
+                "https://localhost:443/flowersec/webtransport/v2/direct",
+            ),
+            PathKind::Direct,
+            SessionRole::Client,
+        ));
     }
 }

@@ -153,6 +153,7 @@ export class SessionV2Error extends Error {
       | "open_rejected"
       | "protocol"
       | "resource_exhausted"
+      | "stream_reset"
       | "timeout",
     message: string,
   ) {
@@ -494,13 +495,13 @@ export class SessionV2 implements SessionV2Contract {
 
   async localReset(stream: EncryptedStreamV2, error: Error): Promise<void> {
     if (!stream.markTerminal(error)) return;
-    await stream.carrier.reset().catch(() => undefined);
     try {
       await this.sendControl(InnerTypeV2.StreamReset, idReason(stream.id, 6));
       this.commitLocalReset(stream.id);
     } catch (cause) {
       this.fail(asError(cause));
     }
+    await stream.carrier.reset().catch(() => undefined);
     this.releaseStream(stream);
   }
 
@@ -825,7 +826,7 @@ export class SessionV2 implements SessionV2Contract {
           case InnerTypeV2.StreamReset: {
             const { id, reason } = parseIDReason(record.payload);
             if (id === 0n || reason === 0) throw protocolError("invalid STREAM_RESET");
-            this.streams.get(id)?.peerReset(new SessionV2Error("closed", "logical stream reset by peer"));
+            this.streams.get(id)?.peerReset(new SessionV2Error("stream_reset", "logical stream reset by peer"));
             if (this.isLocalLogicalID(id)) {
               this.outboundLedger.peerReset(id);
               this.notifyOutboundFrontierChanged();
@@ -1317,7 +1318,7 @@ class EncryptedStreamV2 implements ByteStreamV2 {
   }
 
   async reset(): Promise<void> {
-    await this.session.localReset(this, new SessionV2Error("closed", "logical stream reset"));
+    await this.session.localReset(this, new SessionV2Error("stream_reset", "logical stream reset"));
   }
 
   async close(): Promise<void> {

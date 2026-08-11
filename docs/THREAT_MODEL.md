@@ -8,7 +8,7 @@ Flowersec protects artifact credentials, endpoint identity, session keys, RPC pa
 
 - Applications own artifact acquisition and the durable pending-to-spent transition.
 - Endpoints terminate Flowersec session encryption.
-- Tunnel relays coordinate and forward encrypted carrier streams; they do not terminate application encryption.
+- Tunnel relays coordinate and forward opaque carrier streams; they do not receive the application Session contract or E2EE key, run the session engine, or expose application handlers. The two endpoint runtimes terminate one end-to-end application Session across the relay.
 - WebSocket uses hop-local Yamux. Network-facing WebSocket uses TLS 1.3; plaintext WebSocket is restricted to exact direct subprotocol connections whose local and remote TCP addresses are both loopback. Raw QUIC and WebTransport use TLS 1.3 and native bidirectional streams without Yamux.
 
 ## Admission

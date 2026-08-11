@@ -101,7 +101,7 @@ ts-ci:
 	cd flowersec-ts && npm ci --audit=false
 
 ts-ensure-deps:
-	@if [ ! -x flowersec-ts/node_modules/.bin/eslint ] || [ ! -x flowersec-ts/node_modules/.bin/vitest ] || [ ! -x flowersec-ts/node_modules/.bin/tsc ] || [ ! -f flowersec-ts/node_modules/@vitest/coverage-v8/package.json ] || [ ! -f flowersec-ts/node_modules/ajv/package.json ] || [ ! -f flowersec-ts/node_modules/ajv-formats/package.json ] || [ ! -f flowersec-ts/node_modules/ajv-formats-draft2019/package.json ]; then \
+	@if [ ! -x flowersec-ts/node_modules/.bin/eslint ] || [ ! -x flowersec-ts/node_modules/.bin/vitest ] || [ ! -x flowersec-ts/node_modules/.bin/tsc ] || [ ! -x flowersec-ts/node_modules/.bin/tsx ] || [ ! -f flowersec-ts/node_modules/@vitest/coverage-v8/package.json ] || [ ! -f flowersec-ts/node_modules/ajv/package.json ] || [ ! -f flowersec-ts/node_modules/ajv-formats/package.json ] || [ ! -f flowersec-ts/node_modules/ajv-formats-draft2019/package.json ]; then \
 		echo "flowersec-ts dependencies missing or incomplete; running npm ci --audit=false"; \
 		cd flowersec-ts && npm ci --audit=false; \
 	fi
@@ -298,7 +298,7 @@ security-makefile-check:
 	node scripts/check-security-makefile.mjs Makefile
 
 security-dependency-check:
-	node --test scripts/security-dependencies.test.mjs scripts/go-security.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/prepare-ts-package-cache.test.mjs scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs scripts/run-precommit-wave.test.mjs scripts/test-architecture-contract.mjs
+	node --test scripts/security-dependencies.test.mjs scripts/check-dependency-contracts.test.mjs scripts/go-security.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/prepare-ts-package-cache.test.mjs scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs scripts/run-precommit-wave.test.mjs scripts/test-architecture-contract.mjs
 	node scripts/generate-source-inventory.mjs --check
 
 security-package-check: ts-build

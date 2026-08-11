@@ -39,8 +39,8 @@ func TestTransportV2ContractDeclaresSignedSliceZeroRegistry(t *testing.T) {
 	wantRuntimeCarriers := map[string][]string{
 		"go_native":          {"raw_quic", "websocket", "webtransport"},
 		"typescript_browser": {"websocket", "webtransport"},
-		"typescript_node":    {"websocket", "webtransport"},
-		"rust_native":        {"raw_quic"},
+		"typescript_node":    {"websocket"},
+		"rust_native":        {"raw_quic", "websocket"},
 		"swift_ios":          {"websocket"},
 		"swift_linux":        {},
 		"swift_macos":        {"websocket"},
@@ -77,7 +77,7 @@ func TestTransportV2ContractDeclaresSignedSliceZeroRegistry(t *testing.T) {
 	for _, dependency := range contract.GoDependencies.Dependencies {
 		deps[dependency.Module] = dependency.Version
 	}
-	if deps["github.com/quic-go/quic-go"] != "v0.60.0" || deps["github.com/quic-go/webtransport-go"] != "v0.11.1" {
+	if deps["github.com/quic-go/quic-go"] != "v0.61.0" || deps["github.com/quic-go/webtransport-go"] != "v0.12.0" {
 		t.Fatalf("unexpected signed Go dependency set: %#v", deps)
 	}
 	if contract.GoDependencies.Toolchain != "1.26.5" || contract.GoDependencies.WebTransportDialer != "quic.DialAddr" {

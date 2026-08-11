@@ -33,6 +33,7 @@ const (
 	MaxH3IncomingUniStreams int64 = 16
 	streamResetCode               = wt.StreamErrorCode(0xf502)
 	maxSessionErrorCode           = uint64(1<<32 - 1)
+	settingsWTEnabled             = uint64(0x2c7cf000)
 )
 
 var (
@@ -316,6 +317,12 @@ func NewServer(tlsConfig *tls.Config, limits quicbase.Limits, checkOrigin func(*
 	h3 := &http3.Server{TLSConfig: preparedTLS, QUICConfig: config}
 	inner := &wt.Server{H3: h3, CheckOrigin: checkOrigin}
 	wt.ConfigureHTTP3Server(h3)
+	// Initialize before serving so the dependency cannot re-add compatibility
+	// SETTINGS after Flowersec fixes the advertised draft-15 contract.
+	if _, err := inner.Upgrade(nil, &http.Request{Method: http.MethodGet}); err == nil {
+		return nil, ErrInvalidSession
+	}
+	h3.AdditionalSettings = map[uint64]uint64{settingsWTEnabled: 1}
 	return &Server{inner: inner, capacity: uint16(limits.MaxInboundStreams)}, nil
 }
 
@@ -323,7 +330,8 @@ func NewServer(tlsConfig *tls.Config, limits quicbase.Limits, checkOrigin func(*
 func (server *Server) SetHandler(handler http.Handler) { server.inner.H3.Handler = handler }
 
 func (server *Server) Upgrade(writer http.ResponseWriter, request *http.Request) (*Session, error) {
-	if server == nil || server.inner == nil || request == nil ||
+	if server == nil || server.inner == nil || request == nil || request.URL == nil ||
+		request.Method != http.MethodConnect || request.Proto != "webtransport-h3" ||
 		(request.URL.Path != PathDirect && request.URL.Path != PathTunnel) ||
 		request.URL.RawPath != "" || request.URL.RawQuery != "" {
 		return nil, ErrInvalidURL

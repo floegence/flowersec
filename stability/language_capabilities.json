@@ -8,10 +8,10 @@
       "layer": "portable_core",
       "description": "Strict Flowersec v2 artifact parsing behind an opaque application-facing value",
       "implementations": {
-        "go": { "status": "complete", "test_ids": ["protocol/go"] },
-        "typescript": { "status": "complete", "test_ids": ["protocol/typescript"] },
-        "swift": { "status": "complete", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "complete", "test_ids": ["protocol/rust"] }
+        "go": { "status": "supported", "test_ids": ["protocol/go"] },
+        "typescript": { "status": "supported", "test_ids": ["protocol/typescript"] },
+        "swift": { "status": "supported", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "supported", "test_ids": ["protocol/rust"] }
       }
     },
     {
@@ -19,10 +19,10 @@
       "layer": "portable_core",
       "description": "Lease-consuming direct and tunnel connection without exposing carrier credentials",
       "implementations": {
-        "go": { "status": "complete", "test_ids": ["controller/go"] },
-        "typescript": { "status": "complete", "test_ids": ["controller/typescript-real-network-restart"] },
-        "swift": { "status": "complete", "test_ids": ["controller/swift-real-network-restart"] },
-        "rust": { "status": "complete", "test_ids": ["controller/rust"] }
+        "go": { "status": "supported", "test_ids": ["controller/go"] },
+        "typescript": { "status": "supported", "test_ids": ["controller/typescript-real-network-restart"] },
+        "swift": { "status": "supported", "test_ids": ["controller/swift-real-network-restart"] },
+        "rust": { "status": "supported", "test_ids": ["controller/rust"] }
       }
     },
     {
@@ -30,10 +30,10 @@
       "layer": "portable_core",
       "description": "Authenticated v2 sessions, bounded streams, rekey, cancellation, and close",
       "implementations": {
-        "go": { "status": "complete", "test_ids": ["protocol/go"] },
-        "typescript": { "status": "complete", "test_ids": ["protocol/typescript"] },
-        "swift": { "status": "complete", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "complete", "test_ids": ["protocol/rust"] }
+        "go": { "status": "supported", "test_ids": ["protocol/go"] },
+        "typescript": { "status": "supported", "test_ids": ["protocol/typescript"] },
+        "swift": { "status": "supported", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "supported", "test_ids": ["protocol/rust"] }
       }
     },
     {
@@ -41,10 +41,10 @@
       "layer": "portable_core",
       "description": "Outbound RPC calls and notifications over the reserved encrypted v2 stream kind",
       "implementations": {
-        "go": { "status": "complete", "test_ids": ["protocol/go"] },
-        "typescript": { "status": "complete", "test_ids": ["protocol/typescript"] },
-        "swift": { "status": "complete", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "complete", "test_ids": ["protocol/rust"] }
+        "go": { "status": "supported", "test_ids": ["protocol/go"] },
+        "typescript": { "status": "supported", "test_ids": ["protocol/typescript"] },
+        "swift": { "status": "supported", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "supported", "test_ids": ["protocol/rust"] }
       }
     },
     {
@@ -52,10 +52,10 @@
       "layer": "portable_core",
       "description": "Construction-validated application stream metadata used by both outgoing and incoming streams",
       "implementations": {
-        "go": { "status": "complete", "test_ids": ["carrier/go-direct"] },
-        "typescript": { "status": "complete", "test_ids": ["protocol/typescript"] },
-        "swift": { "status": "complete", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "complete", "test_ids": ["protocol/rust"] }
+        "go": { "status": "supported", "test_ids": ["carrier/go-direct"] },
+        "typescript": { "status": "supported", "test_ids": ["protocol/typescript"] },
+        "swift": { "status": "supported", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "supported", "test_ids": ["protocol/rust"] }
       }
     },
     {
@@ -63,10 +63,10 @@
       "layer": "portable_core",
       "description": "Single-owner long-lived connection lifecycle with fresh artifacts, structured retry, cancellation, and session replacement",
       "implementations": {
-        "go": { "status": "complete", "test_ids": ["controller/go"] },
-        "typescript": { "status": "complete", "test_ids": ["controller/typescript"] },
-        "swift": { "status": "complete", "test_ids": ["controller/swift"] },
-        "rust": { "status": "complete", "test_ids": ["controller/rust"] }
+        "go": { "status": "supported", "test_ids": ["controller/go"] },
+        "typescript": { "status": "supported", "test_ids": ["controller/typescript"] },
+        "swift": { "status": "supported", "test_ids": ["controller/swift"] },
+        "rust": { "status": "supported", "test_ids": ["controller/rust"] }
       }
     },
     {
@@ -74,10 +74,10 @@
       "layer": "server_integration",
       "description": "Carrier-neutral server admission establishes the same public Session contract without exposing carrier or wire state; each runtime profile declares its exact listener support.",
       "implementations": {
-        "go": { "status": "complete", "entrypoint": "flowersec.NewAcceptor/Acceptor.Handler/AcceptorOptions.ResolveHandlers/SessionHandlers", "test_ids": ["server/go-acceptor"] },
-        "typescript": { "status": "complete", "entrypoint": "@floegence/flowersec-core/node createAcceptor/Acceptor.accept -> AcceptedSession", "test_ids": ["server/typescript-acceptor"] },
-        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "Apple application processes do not provide the deployable listener profile required by this boundary.", "alternative_boundary": "Deploy flowersec-runtime and keep the Apple process on the Swift client Session boundary.", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "complete", "entrypoint": "flowersec::Acceptor::accept/accept_with_handlers -> Session/AcceptedSession", "test_ids": ["server/rust-acceptor"] }
+        "go": { "status": "supported", "entrypoint": "flowersec.NewAcceptor/Acceptor.Handler/AcceptorOptions.ResolveHandlers/SessionHandlers", "test_ids": ["server/go-acceptor"] },
+        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core/node createAcceptor/Acceptor.accept -> AcceptedSession", "test_ids": ["server/typescript-acceptor"] },
+        "swift": { "status": "unsupported", "reason": "Apple application processes do not provide the deployable listener profile required by this boundary." },
+        "rust": { "status": "supported", "entrypoint": "flowersec::Acceptor::accept/accept_with_handlers -> Session/AcceptedSession", "test_ids": ["server/rust-acceptor"] }
       }
     },
     {
@@ -85,10 +85,10 @@
       "layer": "server_integration",
       "description": "Accepted sessions bind inbound RPC and application stream handlers before encrypted session establishment, validate application stream kinds as 1 through 255 UTF-8 bytes outside the reserved RPC kind, and reset then close only the stream whose handler fails while keeping one session lifecycle owner.",
       "implementations": {
-        "go": { "status": "complete", "entrypoint": "AcceptorOptions.ResolveHandlers/NewSessionHandlers/SessionHandlers.HandleRPC/SessionHandlers.HandleStream", "test_ids": ["server/go-acceptor"] },
-        "typescript": { "status": "complete", "entrypoint": "createAcceptor/SessionHandlers.handleRPC/SessionHandlers.handleStream/AcceptedSession.serve", "test_ids": ["server/typescript-acceptor"] },
-        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "The Apple listener profile is unsupported, so it cannot own pre-establishment inbound handlers.", "alternative_boundary": "Register handlers in flowersec-runtime and use the Swift client Session for outbound RPC and streams.", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "complete", "entrypoint": "flowersec::Acceptor::accept_with_handlers/SessionHandlers/RpcHandler/StreamHandler/AcceptedSession::serve", "test_ids": ["server/rust-acceptor-handlers"] }
+        "go": { "status": "supported", "entrypoint": "AcceptorOptions.ResolveHandlers/NewSessionHandlers/SessionHandlers.HandleRPC/SessionHandlers.HandleStream", "test_ids": ["server/go-acceptor"] },
+        "typescript": { "status": "supported", "entrypoint": "createAcceptor/SessionHandlers.handleRPC/SessionHandlers.handleStream/AcceptedSession.serve", "test_ids": ["server/typescript-acceptor"] },
+        "swift": { "status": "unsupported", "reason": "The Apple listener profile cannot own pre-establishment inbound handlers." },
+        "rust": { "status": "supported", "entrypoint": "flowersec::Acceptor::accept_with_handlers/SessionHandlers/RpcHandler/StreamHandler/AcceptedSession::serve", "test_ids": ["server/rust-acceptor-handlers"] }
       }
     },
     {
@@ -96,32 +96,32 @@
       "layer": "control_plane",
       "description": "Opaque artifact issuance, durable authorization records, and runtime admission authorization.",
       "implementations": {
-        "go": { "status": "complete", "entrypoint": "flowersec-go/v2/controlplane", "test_ids": ["server/go-controlplane"] },
-        "typescript": { "status": "unsupported", "entrypoint": "@floegence/flowersec-core", "reason": "Control-plane persistence and atomic authorization require the service datastore boundary absent from the client SDK.", "alternative_boundary": "Call an application service built on flowersec-go/v2/controlplane and consume only its opaque artifact response.", "test_ids": ["protocol/typescript"] },
-        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "Control-plane persistence and atomic authorization are outside the Apple client SDK profile.", "alternative_boundary": "Call an application service built on flowersec-go/v2/controlplane and consume its opaque artifact response.", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "unsupported", "entrypoint": "flowersec", "reason": "The native crate is a session runtime and does not own an application control-plane datastore.", "alternative_boundary": "Call flowersec-go/v2/controlplane through the application's authenticated service HTTP boundary.", "test_ids": ["protocol/rust"] }
+        "go": { "status": "supported", "entrypoint": "flowersec-go/v2/controlplane", "test_ids": ["server/go-controlplane"] },
+        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core/node Issuer/AuthorizationRecord/RuntimeAuthorizationRequest/authorizeRuntime/authorizeTunnelRuntime", "test_ids": ["server/typescript-controlplane"] },
+        "swift": { "status": "unsupported", "reason": "Control-plane persistence and atomic authorization are outside the Apple client SDK profile." },
+        "rust": { "status": "supported", "entrypoint": "flowersec::controlplane::Issuer/AuthorizationRecord/RuntimeAuthorizationRequest::authorize/authorize_tunnel", "test_ids": ["server/rust-controlplane"] }
       }
     },
     {
       "id": "server_admission_paths",
       "layer": "server_integration",
-      "description": "Exact runtime-profile direct and tunnel admission paths with authorization binding and bounded cleanup; a complete status never implies carriers absent from the named entrypoint.",
+      "description": "Direct server admission binds authorization and application handlers before Session establishment; opaque tunnel relay ownership is declared separately in server_parity_contract.",
       "implementations": {
-        "go": { "status": "complete", "entrypoint": "flowersec.Acceptor.Handler: WSS direct+tunnel; flowersec-runtime: WSS/raw QUIC/WebTransport direct+tunnel", "test_ids": ["server/go-acceptor"] },
-        "typescript": { "status": "complete", "entrypoint": "@floegence/flowersec-core/node createAcceptor: WebTransport direct", "test_ids": ["server/typescript-acceptor"] },
-        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "Apple platforms do not provide the deployable listener profile used by Flowersec servers.", "alternative_boundary": "Deploy flowersec-runtime and connect through the public Swift Session API.", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "complete", "entrypoint": "flowersec::Acceptor: raw QUIC direct", "test_ids": ["server/rust-acceptor"] }
+        "go": { "status": "supported", "entrypoint": "flowersec.NewAcceptor: WebSocket/raw QUIC/WebTransport direct", "test_ids": ["server/go-acceptor"] },
+        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core/node createAcceptor: WebSocket direct", "test_ids": ["server/typescript-acceptor"] },
+        "swift": { "status": "unsupported", "reason": "Apple platforms do not provide the deployable listener profile used by Flowersec servers." },
+        "rust": { "status": "supported", "entrypoint": "flowersec::Acceptor: WebSocket and raw QUIC direct", "test_ids": ["server/rust-acceptor"] }
       }
     },
     {
       "id": "browser_proxy_runtime",
       "layer": "server_integration",
-      "description": "The TypeScript browser proxy runtime and Go server ProxyServer share one bounded Session/ByteStream application protocol for HTTP and WebSocket forwarding.",
+      "description": "The TypeScript browser proxy runtime and each server ProxyServer share one bounded Session/ByteStream application protocol for HTTP and WebSocket forwarding.",
       "implementations": {
-        "go": { "status": "complete", "entrypoint": "flowersec.NewProxyServer/ProxyServer.Register(SessionHandlers)", "test_ids": ["server/go-proxy"] },
-        "typescript": { "status": "complete", "entrypoint": "@floegence/flowersec-core/proxy createProxyRuntime", "test_ids": ["server/typescript-proxy"] },
-        "swift": { "status": "unsupported", "entrypoint": "Flowersec", "reason": "The browser Service Worker and MessagePort APIs do not exist on the Apple SDK profile.", "alternative_boundary": "Use the public Swift Session stream API and deploy the Go ProxyServer for browser peers.", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "unsupported", "entrypoint": "flowersec", "reason": "The browser Service Worker proxy application is not part of the native Rust profile.", "alternative_boundary": "Deploy the Go ProxyServer and use public Rust Session streams for native applications.", "test_ids": ["protocol/rust"] }
+        "go": { "status": "supported", "entrypoint": "flowersec.NewProxyServer/ProxyServer.Register(SessionHandlers)", "test_ids": ["interop/browser-proxy/server-matrix"] },
+        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core/node ProxyServer/ProxyServerOptions and @floegence/flowersec-core/proxy createProxyRuntime", "test_ids": ["interop/browser-proxy/server-matrix"] },
+        "swift": { "status": "unsupported", "reason": "The browser Service Worker and MessagePort APIs do not exist on the Apple SDK profile." },
+        "rust": { "status": "supported", "entrypoint": "flowersec::ProxyServer/ProxyServerOptions/SessionHandlers", "test_ids": ["interop/browser-proxy/server-matrix"] }
       }
     },
     {
@@ -129,10 +129,10 @@
       "layer": "portable_core",
       "description": "Canonical artifact profile for restricted plaintext WebSocket direct candidates on exact loopback only; this entry records parsing semantics, not runtime carrier availability.",
       "implementations": {
-        "go": { "status": "complete", "entrypoint": "flowersec.ParseArtifact", "test_ids": ["protocol/go"] },
-        "typescript": { "status": "complete", "entrypoint": "@floegence/flowersec-core parseArtifact", "test_ids": ["protocol/typescript"] },
-        "swift": { "status": "complete", "entrypoint": "Flowersec Artifact parser", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "complete", "entrypoint": "flowersec artifact parser", "test_ids": ["protocol/rust"] }
+        "go": { "status": "supported", "entrypoint": "flowersec.ParseArtifact", "test_ids": ["protocol/go"] },
+        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core parseArtifact", "test_ids": ["protocol/typescript"] },
+        "swift": { "status": "supported", "entrypoint": "Flowersec Artifact parser", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "supported", "entrypoint": "flowersec artifact parser", "test_ids": ["protocol/rust"] }
       }
     },
     {
@@ -140,10 +140,10 @@
       "layer": "server_integration",
       "description": "Runtime connection profile that permits plaintext only for the exact direct subprotocol when the underlying TCP local and remote addresses are both loopback; tunnel, non-loopback, missing-address, and wrong-subprotocol connections fail closed.",
       "implementations": {
-        "go": { "status": "complete", "entrypoint": "flowersec.Connect and flowersec.Acceptor.Handler", "test_ids": ["carrier/go-loopback-plaintext-direct"] },
-        "typescript": { "status": "complete", "entrypoint": "@floegence/flowersec-core/node connect and browser WebSocket connector", "test_ids": ["carrier/typescript-loopback-plaintext-direct"] },
-        "swift": { "status": "complete", "entrypoint": "Flowersec Apple WebSocket connector", "test_ids": ["carrier/swift-loopback-plaintext-direct"] },
-        "rust": { "status": "unsupported", "entrypoint": "flowersec native runtime", "reason": "The published Rust native runtime has no WebSocket carrier adapter and exposes raw QUIC only.", "alternative_boundary": "Use the public Rust raw QUIC direct profile or connect through a deployed Go Flowersec endpoint.", "test_ids": ["carrier/rust-loopback-plaintext-unsupported"] }
+        "go": { "status": "supported", "entrypoint": "flowersec.Connect and flowersec.Acceptor.Handler", "test_ids": ["carrier/go-loopback-plaintext-direct"] },
+        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core/node connect and browser WebSocket connector", "test_ids": ["carrier/typescript-loopback-plaintext-direct"] },
+        "swift": { "status": "supported", "entrypoint": "Flowersec Apple WebSocket connector", "test_ids": ["carrier/swift-loopback-plaintext-direct"] },
+        "rust": { "status": "supported", "entrypoint": "flowersec::connect/Acceptor::bind_websocket", "test_ids": ["carrier/rust-websocket-direct"] }
       }
     },
     {
@@ -151,10 +151,10 @@
       "layer": "portable_core",
       "description": "Carrier-neutral stream semantics with WSS, raw QUIC, and WebTransport capability reporting",
       "implementations": {
-        "go": { "status": "complete", "test_ids": ["carrier/go-direct"] },
-        "typescript": { "status": "complete", "test_ids": ["protocol/typescript"] },
-        "swift": { "status": "complete", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "complete", "test_ids": ["protocol/rust"] }
+        "go": { "status": "supported", "test_ids": ["carrier/go-direct"] },
+        "typescript": { "status": "supported", "test_ids": ["protocol/typescript"] },
+        "swift": { "status": "supported", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "supported", "test_ids": ["protocol/rust"] }
       }
     },
     {
@@ -162,10 +162,10 @@
       "layer": "portable_core",
       "description": "Canonical v2 handshake, record protection, admission binding, and Unicode validation",
       "implementations": {
-        "go": { "status": "complete", "test_ids": ["protocol/go"] },
-        "typescript": { "status": "complete", "test_ids": ["protocol/typescript"] },
-        "swift": { "status": "complete", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "complete", "test_ids": ["protocol/rust"] }
+        "go": { "status": "supported", "test_ids": ["protocol/go"] },
+        "typescript": { "status": "supported", "test_ids": ["protocol/typescript"] },
+        "swift": { "status": "supported", "test_ids": ["protocol/swift"] },
+        "rust": { "status": "supported", "test_ids": ["protocol/rust"] }
       }
     }
   ],
@@ -190,13 +190,6 @@
       "owner": "typescript",
       "reason": "Browser WebTransport uses browser-owned networking APIs.",
       "test_ids": ["browser/chromium/webtransport/direct"]
-    },
-    {
-      "id": "node_webtransport",
-      "layer": "sdk_profile",
-      "owner": "typescript",
-      "reason": "Node.js owns native WebTransport client and server adapters over the pinned libquiche runtime.",
-      "test_ids": ["integration/typescript/node-webtransport"]
     },
     {
       "id": "native_raw_quic",
@@ -241,6 +234,55 @@
       "test_ids": ["interop/rust-go/raw-quic/direct"]
     }
   ],
+  "server_parity_contract": {
+    "version": 1,
+    "units": [
+      { "runtime": "go", "deployment-role": "endpoint-client", "carrier": "websocket", "path": "direct", "feature": "connect", "status": "supported", "entrypoint": "flowersec.Connect", "test_ids": ["carrier/go-direct"] },
+      { "runtime": "go", "deployment-role": "endpoint-client", "carrier": "websocket", "path": "tunnel", "feature": "connect", "status": "supported", "entrypoint": "flowersec.Connect", "test_ids": ["carrier/go-tunnel"] },
+      { "runtime": "go", "deployment-role": "direct-server", "carrier": "websocket", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "flowersec.NewAcceptor/NewWebSocketDirectListener", "test_ids": ["server/go-acceptor"] },
+      { "runtime": "go", "deployment-role": "tunnel-runtime", "carrier": "websocket", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "flowersec.NewTunnelRuntime/NewWebSocketTunnelListener", "test_ids": ["carrier/go-tunnel"] },
+      { "runtime": "go", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "direct", "feature": "connect", "status": "supported", "entrypoint": "flowersec.Connect", "test_ids": ["carrier/go-direct"] },
+      { "runtime": "go", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "tunnel", "feature": "connect", "status": "supported", "entrypoint": "flowersec.Connect", "test_ids": ["carrier/go-tunnel"] },
+      { "runtime": "go", "deployment-role": "direct-server", "carrier": "raw-quic", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "flowersec.NewAcceptor/NewRawQUICDirectListener", "test_ids": ["server/go-acceptor"] },
+      { "runtime": "go", "deployment-role": "tunnel-runtime", "carrier": "raw-quic", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "flowersec.NewTunnelRuntime/NewRawQUICTunnelListener", "test_ids": ["carrier/go-tunnel"] },
+      { "runtime": "go", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "direct", "feature": "connect", "status": "supported", "entrypoint": "flowersec.Connect", "test_ids": ["carrier/go-direct"] },
+      { "runtime": "go", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "tunnel", "feature": "connect", "status": "unsupported", "reason": "No production tunnel runtime forwards WebTransport datagrams across paired legs." },
+      { "runtime": "go", "deployment-role": "direct-server", "carrier": "webtransport", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "flowersec.NewAcceptor/NewWebTransportDirectListener", "test_ids": ["server/go-acceptor"] },
+      { "runtime": "go", "deployment-role": "tunnel-runtime", "carrier": "webtransport", "path": "tunnel", "feature": "pair-forward", "status": "unsupported", "reason": "The Go opaque tunnel runtime does not forward WebTransport datagrams across paired legs." },
+      { "runtime": "go", "deployment-role": "control-plane", "carrier": "carrier-neutral", "path": "carrier-neutral", "feature": "issue-authorize", "status": "supported", "entrypoint": "flowersec-go/v2/controlplane", "test_ids": ["server/go-controlplane"] },
+      { "runtime": "go", "deployment-role": "proxy-server", "carrier": "carrier-neutral", "path": "direct", "feature": "proxy", "status": "supported", "entrypoint": "flowersec.NewProxyServer", "test_ids": ["server/go-proxy"] },
+
+      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "websocket", "path": "direct", "feature": "connect", "status": "supported", "entrypoint": "@floegence/flowersec-core/node connect", "test_ids": ["interop/typescript-go/wss/direct"] },
+      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "websocket", "path": "tunnel", "feature": "connect", "status": "supported", "entrypoint": "@floegence/flowersec-core/node connect", "test_ids": ["interop/typescript-go/wss/tunnel"] },
+      { "runtime": "node-typescript", "deployment-role": "direct-server", "carrier": "websocket", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "@floegence/flowersec-core/node createAcceptor", "test_ids": ["server/typescript-acceptor"] },
+      { "runtime": "node-typescript", "deployment-role": "tunnel-runtime", "carrier": "websocket", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "@floegence/flowersec-core/node createTunnelRuntime", "test_ids": ["carrier/typescript-websocket-tunnel"] },
+      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "direct", "feature": "connect", "status": "unsupported", "reason": "Node.js does not expose a stable production raw QUIC driver owned by Flowersec." },
+      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "tunnel", "feature": "connect", "status": "unsupported", "reason": "Node.js does not expose a stable production raw QUIC driver owned by Flowersec." },
+      { "runtime": "node-typescript", "deployment-role": "direct-server", "carrier": "raw-quic", "path": "direct", "feature": "accept", "status": "unsupported", "reason": "Node.js does not expose a stable production raw QUIC driver owned by Flowersec." },
+      { "runtime": "node-typescript", "deployment-role": "tunnel-runtime", "carrier": "raw-quic", "path": "tunnel", "feature": "pair-forward", "status": "unsupported", "reason": "Node.js does not expose a stable production raw QUIC driver owned by Flowersec." },
+      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "direct", "feature": "connect", "status": "unsupported", "reason": "Node.js has no production WebTransport driver that satisfies the strict draft-15 contract." },
+      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "tunnel", "feature": "connect", "status": "unsupported", "reason": "Node.js has no production WebTransport driver that satisfies the strict draft-15 contract." },
+      { "runtime": "node-typescript", "deployment-role": "direct-server", "carrier": "webtransport", "path": "direct", "feature": "accept", "status": "unsupported", "reason": "Node.js has no production WebTransport driver that satisfies the strict draft-15 contract." },
+      { "runtime": "node-typescript", "deployment-role": "tunnel-runtime", "carrier": "webtransport", "path": "tunnel", "feature": "pair-forward", "status": "unsupported", "reason": "Node.js has no production WebTransport driver that satisfies the strict draft-15 contract." },
+      { "runtime": "node-typescript", "deployment-role": "control-plane", "carrier": "carrier-neutral", "path": "carrier-neutral", "feature": "issue-authorize", "status": "supported", "entrypoint": "@floegence/flowersec-core/node Issuer/authorizeRuntime", "test_ids": ["server/typescript-controlplane"] },
+      { "runtime": "node-typescript", "deployment-role": "proxy-server", "carrier": "carrier-neutral", "path": "direct", "feature": "proxy", "status": "supported", "entrypoint": "@floegence/flowersec-core/node ProxyServer", "test_ids": ["server/typescript-proxy"] },
+
+      { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "websocket", "path": "direct", "feature": "connect", "status": "supported", "entrypoint": "flowersec::connect", "test_ids": ["carrier/rust-websocket-direct"] },
+      { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "websocket", "path": "tunnel", "feature": "connect", "status": "supported", "entrypoint": "flowersec::connect", "test_ids": ["carrier/rust-websocket-tunnel"] },
+      { "runtime": "rust", "deployment-role": "direct-server", "carrier": "websocket", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "flowersec::Acceptor::bind_websocket", "test_ids": ["carrier/rust-websocket-direct"] },
+      { "runtime": "rust", "deployment-role": "tunnel-runtime", "carrier": "websocket", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "flowersec::TunnelRuntime::bind_websocket", "test_ids": ["carrier/rust-websocket-tunnel"] },
+      { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "direct", "feature": "connect", "status": "supported", "entrypoint": "flowersec::connect", "test_ids": ["interop/rust-go/raw-quic/direct"] },
+      { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "tunnel", "feature": "connect", "status": "supported", "entrypoint": "flowersec::connect", "test_ids": ["interop/rust-go/raw-quic/tunnel"] },
+      { "runtime": "rust", "deployment-role": "direct-server", "carrier": "raw-quic", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "flowersec::Acceptor", "test_ids": ["server/rust-acceptor"] },
+      { "runtime": "rust", "deployment-role": "tunnel-runtime", "carrier": "raw-quic", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "flowersec::TunnelRuntime::bind_raw_quic", "test_ids": ["interop/rust-go/raw-quic/tunnel"] },
+      { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "direct", "feature": "connect", "status": "unsupported", "reason": "Rust has no production WebTransport driver that satisfies the strict draft-15 contract." },
+      { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "tunnel", "feature": "connect", "status": "unsupported", "reason": "Rust has no production WebTransport driver that satisfies the strict draft-15 contract." },
+      { "runtime": "rust", "deployment-role": "direct-server", "carrier": "webtransport", "path": "direct", "feature": "accept", "status": "unsupported", "reason": "Rust has no production WebTransport driver that satisfies the strict draft-15 contract." },
+      { "runtime": "rust", "deployment-role": "tunnel-runtime", "carrier": "webtransport", "path": "tunnel", "feature": "pair-forward", "status": "unsupported", "reason": "Rust has no production WebTransport driver that satisfies the strict draft-15 contract." },
+      { "runtime": "rust", "deployment-role": "control-plane", "carrier": "carrier-neutral", "path": "carrier-neutral", "feature": "issue-authorize", "status": "supported", "entrypoint": "flowersec::controlplane", "test_ids": ["server/rust-controlplane"] },
+      { "runtime": "rust", "deployment-role": "proxy-server", "carrier": "carrier-neutral", "path": "direct", "feature": "proxy", "status": "supported", "entrypoint": "flowersec::ProxyServer", "test_ids": ["server/rust-proxy"] }
+    ]
+  },
   "shared_fixtures": [
     {
       "id": "artifact_v2",

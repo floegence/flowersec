@@ -4,7 +4,11 @@ import type { ByteStream } from "../public/contract.js";
 import { SessionError } from "../public/contract.js";
 import { writeJsonFrame } from "../framing/jsonframe.js";
 import { ProxyByteReader, writeAll } from "../proxy/stream.js";
-import { SessionHandlers, type StreamHandler } from "./acceptor.js";
+import {
+  registerSessionStreamsAtomically,
+  SessionHandlers,
+  type StreamHandler,
+} from "./acceptor.js";
 
 const HTTP_KIND = "flowersec-proxy/http1";
 const WS_KIND = "flowersec-proxy/ws";
@@ -36,6 +40,8 @@ export type ProxyServerOptions = Readonly<{
   extraResponseHeaders?: readonly string[];
   blockedResponseHeaders?: readonly string[];
   extraWebSocketHeaders?: readonly string[];
+  forbiddenCookieNames?: readonly string[];
+  forbiddenCookieNamePrefixes?: readonly string[];
   onError?: (error: unknown) => void;
 }>;
 
@@ -54,6 +60,8 @@ type Config = Readonly<{
   responseHeaders: ReadonlySet<string>;
   blockedResponseHeaders: ReadonlySet<string>;
   websocketHeaders: ReadonlySet<string>;
+  forbiddenCookies: ReadonlySet<string>;
+  forbiddenCookiePrefixes: readonly string[];
   maxConcurrent: number;
   maxJSON: number;
   maxChunk: number;
@@ -90,8 +98,10 @@ export class ProxyServer {
     if (this.#closed) throw new ProxyServerError("closed");
     if (!(handlers instanceof SessionHandlers)) throw new ProxyServerError("handler_registration");
     try {
-      handlers.handleStream(HTTP_KIND, this.#httpHandler());
-      handlers.handleStream(WS_KIND, this.#webSocketHandler());
+      registerSessionStreamsAtomically(handlers, [
+        [HTTP_KIND, this.#httpHandler()],
+        [WS_KIND, this.#webSocketHandler()],
+      ]);
     } catch (error) {
       this.#report(error);
       throw new ProxyServerError("handler_registration");
@@ -115,7 +125,7 @@ export class ProxyServer {
       if (release === undefined) return;
       const controller = this.#track(options.signal);
       try { await this.#serveHTTP(incoming.stream, controller.signal); }
-      catch (error) { this.#report(error); }
+      catch (error) { await incoming.stream.reset().catch(() => undefined); this.#report(error); }
       finally { this.#untrack(controller); release(); }
     };
   }
@@ -126,7 +136,7 @@ export class ProxyServer {
       if (release === undefined) return;
       const controller = this.#track(options.signal);
       try { await this.#serveWebSocket(incoming.stream, controller.signal); }
-      catch (error) { this.#report(error); }
+      catch (error) { await incoming.stream.reset().catch(() => undefined); this.#report(error); }
       finally { this.#untrack(controller); release(); }
     };
   }
@@ -176,7 +186,16 @@ export class ProxyServer {
     if (body === undefined) { await writeHTTPError(stream, requestID, "request_body_invalid"); return; }
     const externalOrigin = validateOrigin(meta.external_origin, this.#config.allowedOrigins);
     if (meta.external_origin !== undefined && externalOrigin === undefined) { await writeHTTPError(stream, requestID, "invalid_request_meta"); return; }
-    const headers = Object.fromEntries(filterHeaders(meta.headers, REQUEST_HEADERS, this.#config.requestHeaders).map((header) => [header.name, header.value]));
+    const requestHeaders = filterRequestHeaders(meta.headers, this.#config);
+    if (externalOrigin !== undefined) {
+      const explicitOrigin = requestHeaders.find((header) => header.name === "origin")?.value;
+      if (explicitOrigin !== undefined && explicitOrigin !== externalOrigin) {
+        await writeHTTPError(stream, requestID, "invalid_request_meta"); return;
+      }
+      const origin = new URL(externalOrigin);
+      requestHeaders.push({ name: "x-forwarded-proto", value: origin.protocol.slice(0, -1) });
+    }
+    const headers = Object.fromEntries(requestHeaders.map((header) => [header.name, header.value]));
     const target = new URL(path, this.#config.upstream);
     const requestInit: RequestInit & { duplex?: "half" } = {
       method: meta.method.trim().toUpperCase(), headers, redirect: "manual", signal,
@@ -188,13 +207,28 @@ export class ProxyServer {
     try {
       requestInit.signal = linked.signal;
       const response = await fetch(target, requestInit);
-      const responseBody = new Uint8Array(await response.arrayBuffer());
-      if (responseBody.byteLength > this.#config.maxBody) { await writeHTTPError(stream, requestID, "response_body_too_large"); return; }
+      const contentLength = response.headers.get("content-length");
+      if (contentLength !== null && Number(contentLength) > this.#config.maxBody) {
+        await writeHTTPError(stream, requestID, "response_body_too_large"); return;
+      }
       await writeFrame(stream, {
         v: WIRE_VERSION, request_id: requestID, ok: true, status: response.status,
         headers: filterHeaders(responseHeaderList(response.headers), RESPONSE_HEADERS, this.#config.responseHeaders, this.#config.blockedResponseHeaders),
       }, signal);
-      await writeChunks(stream, responseBody, this.#config.maxChunk, signal);
+      let total = 0;
+      const reader = response.body?.getReader();
+      if (reader !== undefined) {
+        while (true) {
+          const result = await reader.read();
+          if (result.done) break;
+          total += result.value.length;
+          if (total > this.#config.maxBody) throw new Error("upstream response body exceeds limit");
+          for (let offset = 0; offset < result.value.length; offset += this.#config.maxChunk) {
+            await writeChunk(stream, result.value.subarray(offset, offset + this.#config.maxChunk), signal);
+          }
+        }
+      }
+      await writeChunk(stream, new Uint8Array(), signal);
     } catch (error) {
       const code = timeoutController.signal.aborted ? "timeout" : signal.aborted ? "canceled" : "upstream_request_failed";
       await writeHTTPError(stream, requestID, code);
@@ -203,7 +237,6 @@ export class ProxyServer {
       clearTimeout(timer);
       linked.dispose();
     }
-    void externalOrigin;
   }
 
   async #serveWebSocket(stream: ByteStream, signal: AbortSignal): Promise<void> {
@@ -219,17 +252,24 @@ export class ProxyServer {
     const wsModule = require("ws") as any;
     const WebSocketCtor = wsModule?.WebSocket ?? wsModule;
     const protocols = open.headers.find((header) => header.name.toLowerCase() === "sec-websocket-protocol")?.value;
-    const headers = filterHeaders(open.headers, new Set(["sec-websocket-protocol"]), this.#config.websocketHeaders);
+    const headers = filterHeaders(open.headers, new Set(["sec-websocket-protocol"]), this.#config.websocketHeaders)
+      .filter((header) => header.name !== "origin");
     const socket = new WebSocketCtor(upstreamURL.toString(), protocols === undefined ? undefined : protocols.split(",").map((item: string) => item.trim()), {
-      headers: { Origin: this.#config.upstreamOrigin }, maxPayload: this.#config.maxWS, perMessageDeflate: false,
-      ...(headers.length === 0 ? {} : { headers: Object.fromEntries(headers.map((header) => [header.name, header.value])) }),
+      headers: {
+        ...Object.fromEntries(headers.map((header) => [header.name, header.value])),
+        Origin: this.#config.upstreamOrigin,
+      },
+      maxPayload: this.#config.maxWS,
+      perMessageDeflate: false,
     });
+    let opened = false;
     try {
       await onceEvent(socket, "open", signal);
       await writeFrame(stream, { v: WIRE_VERSION, conn_id: open.conn_id.trim(), ok: true, protocol: socket.protocol ?? "" }, signal);
+      opened = true;
       await relayWebSocket(socket, stream, reader, this.#config.maxWS, signal);
     } catch (error) {
-      await writeWSError(stream, open.conn_id, signal.aborted ? "canceled" : "upstream_ws_dial_failed");
+      if (!opened) await writeWSError(stream, open.conn_id, signal.aborted ? "canceled" : "upstream_ws_dial_failed");
       this.#report(error);
     } finally {
       try { socket.close(); } catch { /* cleanup */ }
@@ -262,7 +302,40 @@ function compileConfig(options: ProxyServerOptions): Config {
     if (!HEADER_NAME.test(lower) || FORBIDDEN_HEADERS.has(lower)) throw new ProxyServerError("invalid_options");
     return lower;
   }));
-  return { upstream, upstreamOrigin: origin.origin, allowedOrigins, requestHeaders: normalizeHeaders(options.extraRequestHeaders), responseHeaders: normalizeHeaders(options.extraResponseHeaders), blockedResponseHeaders: normalizeHeaders(options.blockedResponseHeaders), websocketHeaders: normalizeHeaders(options.extraWebSocketHeaders), maxConcurrent, maxJSON, maxChunk, maxBody, maxWS, defaultTimeout, maxTimeout, ...(options.onError === undefined ? {} : { report: options.onError }) };
+  const normalizeCookieValues = (values: readonly string[] | undefined) => (values ?? []).map((value) => {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "" || /[;=\s]/u.test(normalized)) throw new ProxyServerError("invalid_options");
+    return normalized;
+  });
+  return {
+    upstream,
+    upstreamOrigin: origin.origin,
+    allowedOrigins,
+    requestHeaders: normalizeHeaders(options.extraRequestHeaders),
+    responseHeaders: normalizeHeaders(options.extraResponseHeaders),
+    blockedResponseHeaders: normalizeHeaders(options.blockedResponseHeaders),
+    websocketHeaders: normalizeHeaders(options.extraWebSocketHeaders),
+    forbiddenCookies: new Set(normalizeCookieValues(options.forbiddenCookieNames)),
+    forbiddenCookiePrefixes: normalizeCookieValues(options.forbiddenCookieNamePrefixes),
+    maxConcurrent, maxJSON, maxChunk, maxBody, maxWS, defaultTimeout, maxTimeout,
+    ...(options.onError === undefined ? {} : { report: options.onError }),
+  };
+}
+
+function filterRequestHeaders(input: readonly Header[], config: Config): Header[] {
+  const headers = filterHeaders(input, REQUEST_HEADERS, config.requestHeaders);
+  return headers.flatMap((header) => {
+    if (header.name !== "cookie") return [header];
+    const value = header.value.split(";").flatMap((part) => {
+      const item = part.trim();
+      const separator = item.indexOf("=");
+      if (separator < 1) return [];
+      const name = item.slice(0, separator).trim().toLowerCase();
+      if (config.forbiddenCookies.has(name) || config.forbiddenCookiePrefixes.some((prefix) => name.startsWith(prefix))) return [];
+      return [item];
+    }).join("; ");
+    return value === "" ? [] : [{ name: header.name, value }];
+  });
 }
 
 function filterHeaders(input: readonly Header[], base: ReadonlySet<string>, extra: ReadonlySet<string>, blocked?: ReadonlySet<string>): Header[] {
@@ -298,12 +371,14 @@ async function writeWSError(stream: ByteStream, connID: string, code: string): P
 }
 async function writeChunks(stream: ByteStream, body: Uint8Array, chunkSize: number, signal?: AbortSignal): Promise<void> {
   for (let offset = 0; offset < body.length; offset += chunkSize) {
-    const chunk = body.subarray(offset, Math.min(body.length, offset + chunkSize));
-    const bytes = new Uint8Array(4 + chunk.length);
-    new DataView(bytes.buffer).setUint32(0, chunk.length, false); bytes.set(chunk, 4);
-    await writeAll(stream, bytes, signal === undefined ? {} : { signal });
+    await writeChunk(stream, body.subarray(offset, Math.min(body.length, offset + chunkSize)), signal);
   }
-  await writeAll(stream, new Uint8Array(4), signal === undefined ? {} : { signal });
+  await writeChunk(stream, new Uint8Array(), signal);
+}
+async function writeChunk(stream: ByteStream, chunk: Uint8Array, signal?: AbortSignal): Promise<void> {
+  const bytes = new Uint8Array(4 + chunk.length);
+  new DataView(bytes.buffer).setUint32(0, chunk.length, false); bytes.set(chunk, 4);
+  await writeAll(stream, bytes, signal === undefined ? {} : { signal });
 }
 async function readBody(reader: ProxyByteReader, maxChunk: number, maxBody: number): Promise<Uint8Array | undefined> {
   const chunks: Uint8Array[] = []; let total = 0;
@@ -326,4 +401,105 @@ function decodeWSOpen(value: unknown): WSOpen { if (!isRecord(value) || value.v 
 function isHeader(value: unknown): value is Header { return isRecord(value) && typeof value.name === "string" && typeof value.value === "string"; }
 function isRecord(value: unknown): value is Record<string, any> { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function onceEvent(socket: any, event: string, signal: AbortSignal): Promise<void> { return new Promise((resolve, reject) => { const onAbort = () => { cleanup(); reject(signal.reason ?? new Error("aborted")); }; const onOpen = () => { cleanup(); resolve(); }; const onError = (error: unknown) => { cleanup(); reject(error); }; const cleanup = () => { signal.removeEventListener("abort", onAbort); socket.off?.(event, onOpen); socket.off?.("error", onError); }; socket.once(event, onOpen); socket.once("error", onError); signal.addEventListener("abort", onAbort, { once: true }); }); }
-async function relayWebSocket(socket: any, stream: ByteStream, reader: ProxyByteReader, maximum: number, signal: AbortSignal): Promise<void> { let done = false; const upstream = new Promise<void>((resolve, reject) => { socket.on("message", async (data: Uint8Array, isBinary: boolean) => { if (done) return; try { const payload = data instanceof Uint8Array ? data : new Uint8Array(data); if (payload.length > maximum) throw new Error("websocket frame too large"); const frame = new Uint8Array(5 + payload.length); frame[0] = isBinary ? 2 : 1; new DataView(frame.buffer).setUint32(1, payload.length, false); frame.set(payload, 5); await writeAll(stream, frame, { signal }); } catch (error) { reject(error); } }); socket.once("close", () => resolve()); socket.once("error", reject); }); const downstream = (async () => { while (!done) { const frame = await reader.readExactly(5); const operation = frame[0]!; const length = new DataView(frame.buffer, frame.byteOffset, 5).getUint32(1, false); if (length > maximum || ![1, 2, 8, 9, 10].includes(operation)) throw new Error("invalid websocket frame"); const payload = await reader.readExactly(length); if (operation === 8) { socket.close(); return; } socket.send(payload); } })(); try { await Promise.race([upstream, downstream]); } finally { done = true; try { socket.close(); } catch { /* cleanup */ } } }
+async function relayWebSocket(
+  socket: any,
+  stream: ByteStream,
+  reader: ProxyByteReader,
+  maximum: number,
+  signal: AbortSignal,
+): Promise<void> {
+  let done = false;
+  let writeChain = Promise.resolve();
+  const enqueue = (task: () => Promise<void>): Promise<void> => {
+    const current = writeChain.then(task);
+    writeChain = current.catch(() => undefined);
+    return current;
+  };
+  const upstream = new Promise<"upstream_close">((resolve, reject) => {
+    socket.on("message", (data: Uint8Array, isBinary: boolean) => {
+      if (done) return;
+      const payload = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (payload.length > maximum) { reject(new Error("websocket frame too large")); return; }
+      void enqueue(async () => {
+        const frame = new Uint8Array(5 + payload.length);
+        frame[0] = isBinary ? 2 : 1;
+        new DataView(frame.buffer).setUint32(1, payload.length, false);
+        frame.set(payload, 5);
+        await writeAll(stream, frame, { signal });
+      }).catch(reject);
+    });
+    socket.once("close", (code: number, reason: Buffer) => {
+      const closePayload = encodeWebSocketClose(code, reason);
+      void enqueue(async () => {
+        const frame = new Uint8Array(5 + closePayload.length);
+        frame[0] = 8;
+        new DataView(frame.buffer).setUint32(1, closePayload.length, false);
+        frame.set(closePayload, 5);
+        await writeAll(stream, frame, { signal });
+      }).then(() => resolve("upstream_close"), reject);
+    });
+    socket.once("error", reject);
+  });
+  const downstream = (async (): Promise<"downstream_close"> => {
+    while (!done) {
+      const frame = await reader.readExactly(5);
+      const operation = frame[0]!;
+      const length = new DataView(frame.buffer, frame.byteOffset, 5).getUint32(1, false);
+      if (length > maximum || ![1, 2, 8, 9, 10].includes(operation)) throw new Error("invalid websocket frame");
+      const payload = await reader.readExactly(length);
+      if (operation === 8) {
+        const close = decodeWebSocketClose(payload);
+        socket.close(close.code, close.reason);
+        return "downstream_close";
+      }
+      if (operation === 9) { await sendSocketControl(socket, "ping", payload); continue; }
+      if (operation === 10) { await sendSocketControl(socket, "pong", payload); continue; }
+      if (operation === 1) {
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(payload);
+        await sendSocketFrame(socket, text, undefined);
+      } else {
+        await sendSocketFrame(socket, payload, true);
+      }
+    }
+    return "downstream_close";
+  })();
+  try {
+    const winner = await Promise.race([upstream, downstream]);
+    if (winner === "downstream_close") {
+      await Promise.race([upstream, new Promise<void>((resolve) => setTimeout(resolve, 1_000))]);
+    }
+  } finally {
+    done = true;
+    try { socket.close(); } catch { /* cleanup */ }
+  }
+}
+
+async function sendSocketFrame(socket: any, payload: unknown, binary: boolean | undefined): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const callback = (error?: Error | null) => error == null ? resolve() : reject(error);
+    socket.send(payload, { binary: binary === true }, callback);
+  });
+}
+
+async function sendSocketControl(socket: any, operation: "ping" | "pong", payload: Uint8Array): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    socket[operation](payload, (error?: Error | null) => error == null ? resolve() : reject(error));
+  });
+}
+
+function encodeWebSocketClose(code: number, reason: Buffer | Uint8Array | undefined): Uint8Array {
+  if (!Number.isInteger(code) || code < 0 || code > 65_535 || code === 1004 || code === 1005 || code === 1006) return new Uint8Array();
+  const payload = new Uint8Array(2 + (reason?.length ?? 0));
+  new DataView(payload.buffer).setUint16(0, code, false);
+  if (reason !== undefined) payload.set(reason, 2);
+  return payload;
+}
+
+function decodeWebSocketClose(payload: Uint8Array): Readonly<{ code?: number; reason?: string }> {
+  if (payload.length === 0) return {};
+  if (payload.length < 2) throw new Error("invalid websocket close frame");
+  const code = new DataView(payload.buffer, payload.byteOffset, 2).getUint16(0, false);
+  if (code === 1004 || code === 1005 || code === 1006) throw new Error("invalid websocket close code");
+  const reason = new TextDecoder("utf-8", { fatal: true }).decode(payload.subarray(2));
+  return { code, reason };
+}

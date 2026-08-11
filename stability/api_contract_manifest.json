@@ -578,33 +578,23 @@
           },
           {
             "kind": "type",
-            "expr": "flowersec.AcceptorListener",
-            "doc_token": "`flowersec.AcceptorListener`"
-          },
-          {
-            "kind": "method",
-            "expr": "flowersec.AcceptorListener.Address",
-            "doc_token": "`AcceptorListener.Address()`"
-          },
-          {
-            "kind": "method",
-            "expr": "flowersec.AcceptorListener.Close",
-            "doc_token": "`AcceptorListener.Close()`"
+            "expr": "flowersec.DirectListener",
+            "doc_token": "`flowersec.DirectListener`"
           },
           {
             "kind": "type",
-            "expr": "flowersec.AcceptorPath",
-            "doc_token": "`flowersec.AcceptorPath`"
+            "expr": "flowersec.TunnelListener",
+            "doc_token": "`flowersec.TunnelListener`"
           },
           {
             "kind": "type",
-            "expr": "flowersec.RawQUICAcceptorListenerOptions",
-            "doc_token": "`flowersec.RawQUICAcceptorListenerOptions`"
+            "expr": "flowersec.RawQUICListenerOptions",
+            "doc_token": "`flowersec.RawQUICListenerOptions`"
           },
           {
             "kind": "type",
-            "expr": "flowersec.WebTransportAcceptorListenerOptions",
-            "doc_token": "`flowersec.WebTransportAcceptorListenerOptions`"
+            "expr": "flowersec.WebTransportListenerOptions",
+            "doc_token": "`flowersec.WebTransportListenerOptions`"
           },
           {
             "kind": "var",
@@ -628,28 +618,33 @@
           },
           {
             "kind": "func",
-            "expr": "flowersec.NewWebSocketAcceptorListener",
-            "doc_token": "`flowersec.NewWebSocketAcceptorListener(...)`"
+            "expr": "flowersec.NewWebSocketDirectListener",
+            "doc_token": "`flowersec.NewWebSocketDirectListener()`"
           },
           {
             "kind": "func",
-            "expr": "flowersec.NewRawQUICAcceptorListener",
-            "doc_token": "`flowersec.NewRawQUICAcceptorListener(...)`"
+            "expr": "flowersec.NewWebSocketTunnelListener",
+            "doc_token": "`flowersec.NewWebSocketTunnelListener()`"
           },
           {
             "kind": "func",
-            "expr": "flowersec.NewWebTransportAcceptorListener",
-            "doc_token": "`flowersec.NewWebTransportAcceptorListener(...)`"
+            "expr": "flowersec.NewRawQUICDirectListener",
+            "doc_token": "`flowersec.NewRawQUICDirectListener(...)`"
           },
           {
-            "kind": "const",
-            "expr": "flowersec.AcceptorPathDirect",
-            "doc_token": "`flowersec.AcceptorPathDirect`"
+            "kind": "func",
+            "expr": "flowersec.NewRawQUICTunnelListener",
+            "doc_token": "`flowersec.NewRawQUICTunnelListener(...)`"
           },
           {
-            "kind": "const",
-            "expr": "flowersec.AcceptorPathTunnel",
-            "doc_token": "`flowersec.AcceptorPathTunnel`"
+            "kind": "func",
+            "expr": "flowersec.NewWebTransportDirectListener",
+            "doc_token": "`flowersec.NewWebTransportDirectListener(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewWebTransportTunnelListener",
+            "doc_token": "`flowersec.NewWebTransportTunnelListener(...)`"
           },
           {
             "kind": "const",
@@ -660,6 +655,36 @@
             "kind": "const",
             "expr": "flowersec.WebSocketTunnelPath",
             "doc_token": "`flowersec.WebSocketTunnelPath`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.TunnelRuntimeOptions",
+            "doc_token": "`flowersec.TunnelRuntimeOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.TunnelRuntime",
+            "doc_token": "`flowersec.TunnelRuntime`"
+          },
+          {
+            "kind": "var",
+            "expr": "flowersec.ErrInvalidTunnelRuntime",
+            "doc_token": "`flowersec.ErrInvalidTunnelRuntime`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewTunnelRuntime",
+            "doc_token": "`flowersec.NewTunnelRuntime(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.TunnelRuntime).Handler",
+            "doc_token": "`flowersec.TunnelRuntime.Handler()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.TunnelRuntime).Serve",
+            "doc_token": "`flowersec.TunnelRuntime.Serve(...)`"
           },
           {
             "kind": "type",
@@ -1078,6 +1103,11 @@
             "doc_token": "`controlplane.AuthorizationResponse`"
           },
           {
+            "kind": "type",
+            "expr": "controlplane.TunnelAuthorizationResponse",
+            "doc_token": "`controlplane.TunnelAuthorizationResponse`"
+          },
+          {
             "kind": "func",
             "expr": "controlplane.AuthorizeRuntime",
             "doc_token": "`controlplane.AuthorizeRuntime(...)`"
@@ -1086,6 +1116,21 @@
             "kind": "func",
             "expr": "controlplane.RejectRuntime",
             "doc_token": "`controlplane.RejectRuntime(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "controlplane.AuthorizeTunnelRuntime",
+            "doc_token": "`controlplane.AuthorizeTunnelRuntime(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "controlplane.AllowTunnelRuntime",
+            "doc_token": "`controlplane.AllowTunnelRuntime(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "controlplane.RejectTunnelRuntime",
+            "doc_token": "`controlplane.RejectTunnelRuntime(...)`"
           },
           {
             "kind": "method",
@@ -1106,6 +1151,26 @@
             "kind": "method",
             "expr": "controlplane.AuthorizationResponse.MarshalJSON",
             "doc_token": "`controlplane.AuthorizationResponse.MarshalJSON()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.TunnelAuthorizationResponse.JSON",
+            "doc_token": "`controlplane.TunnelAuthorizationResponse.JSON()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.TunnelAuthorizationResponse.String",
+            "doc_token": "`controlplane.TunnelAuthorizationResponse.String()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.TunnelAuthorizationResponse.GoString",
+            "doc_token": "`controlplane.TunnelAuthorizationResponse.GoString()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.TunnelAuthorizationResponse.MarshalJSON",
+            "doc_token": "`controlplane.TunnelAuthorizationResponse.MarshalJSON()`"
           }
         ]
       }

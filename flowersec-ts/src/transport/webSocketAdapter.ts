@@ -6,6 +6,7 @@ import type { OperationOptionsV2, PathKind } from "../v2/contract.js";
 export type WebSocketBinaryTransportV2 = Readonly<{
   readBinary(options?: Readonly<{ signal?: AbortSignal; timeoutMs?: number }>): Promise<Uint8Array>;
   writeBinary(data: Uint8Array, options?: OperationOptionsV2): Promise<void>;
+  flush(options?: OperationOptionsV2): Promise<void>;
   close(): void;
 }>;
 
@@ -188,7 +189,7 @@ class WebSocketYamuxCarrierSession implements CarrierSessionV2 {
   private closed = false;
 
   constructor(
-    transport: WebSocketBinaryTransportV2,
+    private readonly transport: WebSocketBinaryTransportV2,
     options: Readonly<{
       path: PathKind;
       client: boolean;
@@ -247,6 +248,8 @@ class WebSocketYamuxCarrierSession implements CarrierSessionV2 {
   }
 
   async close(): Promise<void> {
+    if (this.closed) return;
+    await this.transport.flush().catch(() => undefined);
     this.closeLocally();
   }
 

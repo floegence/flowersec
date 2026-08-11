@@ -789,10 +789,7 @@ private struct ConnectorTestTLS {
   let privateKey: NIOSSLPrivateKey
 
   static func load() throws -> Self {
-    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-      .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-    let resources = root.appendingPathComponent(
-      ".build/checkouts/async-http-client/Tests/AsyncHTTPClientTests/Resources")
+    let resources = try XCTUnwrap(Bundle.module.resourceURL?.appendingPathComponent("Fixtures"))
     let cert = try Data(contentsOf: resources.appendingPathComponent("self_signed_cert.pem"))
     let key = try Data(contentsOf: resources.appendingPathComponent("self_signed_key.pem"))
     return try Self(

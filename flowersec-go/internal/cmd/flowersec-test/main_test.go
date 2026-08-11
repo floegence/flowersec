@@ -74,6 +74,12 @@ func TestPerformanceRegistryUsesCanonicalRunIDEnvironment(t *testing.T) {
 	}
 }
 
+func TestRegistryEntriesSatisfyRunnerBounds(t *testing.T) {
+	if _, err := selectSuite(registry(), "acceptance"); err != nil {
+		t.Fatalf("registry validation failed: %v", err)
+	}
+}
+
 func acceptanceProgress(completed ...string) progress {
 	return progress{Plan: planName, SourceSHA: testSourceSHA, Suite: "acceptance", Completed: completed}
 }

@@ -260,14 +260,6 @@ go -C "$source_root/flowersec-go" mod download
 npm --prefix "$source_root/flowersec-ts" ci --audit=false
 cargo fetch --manifest-path "$source_root/flowersec-rust/Cargo.toml" --locked
 
-(
-cd "$source_root/flowersec-ts"
-node --input-type=module -e '
-const runtime = await import("@fails-components/webtransport");
-await runtime.quicheLoaded;
-if (typeof runtime.WebTransport !== "function" || typeof runtime.Http3Server !== "function") process.exit(1);
-' ) || { echo "missing host capability: Node WebTransport libquiche runtime" >&2; exit 1; }
-
 playwright_version=$(cd "$source_root/flowersec-ts" && node --input-type=module -e '
 import fs from "node:fs";
 const browsers = JSON.parse(fs.readFileSync("node_modules/playwright-core/browsers.json", "utf8"));

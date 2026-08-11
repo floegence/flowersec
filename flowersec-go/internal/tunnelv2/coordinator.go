@@ -47,7 +47,7 @@ type PendingLeg interface {
 	CarrierKind() carrier.Kind
 	ReceiveAdmission(context.Context) (*artifactv2.DecodedRequest, error)
 	SendAdmission(context.Context, artifactv2.AdmissionResponse, artifactv2.ReasonRegistry) error
-	Activate(context.Context) (carrier.Session, error)
+	Activate(context.Context, uint8) (carrier.Session, error)
 	CloseWithError(context.Context, carrier.ApplicationError) error
 }
 
@@ -537,7 +537,7 @@ func (coordinator *Coordinator) activate(generation *pairGeneration) {
 	sessions := make(chan activationResult, 2)
 	for role, leg := range generation.roles {
 		go func(role uint8, leg *admittedLeg) {
-			session, err := leg.pending.Activate(activationCtx)
+			session, err := leg.pending.Activate(activationCtx, role)
 			sessions <- activationResult{role: role, session: session, err: err}
 		}(role, leg)
 	}

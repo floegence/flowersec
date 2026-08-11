@@ -191,41 +191,27 @@ func TestAcceptorEstablishesPlaintextLoopbackDirectSession(t *testing.T) {
 	}
 }
 
-func TestAcceptorResolvesHandlersForBothTunnelSessions(t *testing.T) {
+func TestTunnelRuntimeBridgesOpaqueEndpointSessions(t *testing.T) {
 	t.Parallel()
 
 	var records sync.Map
-	var handlersByLookup sync.Map
-	sessionsStarted := make(chan struct{}, 2)
-	releaseSessions := make(chan struct{})
 	var released atomic.Int32
-	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
+	runtime, err := flowersec.NewTunnelRuntime(flowersec.TunnelRuntimeOptions{
 		AllowedOrigins: []string{"https://consumer.example"},
-		Authorize: func(_ context.Context, request controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
+		Listeners:      []flowersec.TunnelListener{flowersec.NewWebSocketTunnelListener()},
+		Authorize: func(_ context.Context, request controlplane.RuntimeAuthorizationRequest) (controlplane.TunnelAuthorizationResponse, error) {
 			stored, ok := records.Load(request.LookupKey())
 			if !ok {
-				return controlplane.AuthorizationResponse{}, fmt.Errorf("unknown authorization record")
+				return controlplane.TunnelAuthorizationResponse{}, fmt.Errorf("unknown authorization record")
 			}
-			return controlplane.AuthorizeRuntime(request, stored.(controlplane.AuthorizationRecord), "lease-"+request.LookupKey()[:8])
-		},
-		ResolveHandlers: func(_ context.Context, request controlplane.RuntimeAuthorizationRequest) (*flowersec.SessionHandlers, error) {
-			stored, ok := handlersByLookup.Load(request.LookupKey())
-			if !ok {
-				return nil, fmt.Errorf("unknown handler registry")
-			}
-			return stored.(*flowersec.SessionHandlers), nil
+			return controlplane.AuthorizeTunnelRuntime(request, stored.(controlplane.AuthorizationRecord), "lease-"+request.LookupKey()[:8])
 		},
 		Release: func(context.Context, string) { released.Add(1) },
-		OnSession: func(context.Context, flowersec.Session, string) error {
-			sessionsStarted <- struct{}{}
-			<-releaseSessions
-			return nil
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewTLSServer(acceptor.Handler())
+	server := httptest.NewTLSServer(runtime.Handler())
 	defer server.Close()
 
 	pair, err := controlplane.NewIssuer().IssueTunnelPair(controlplane.TunnelIssueOptions{
@@ -244,7 +230,6 @@ func TestAcceptorResolvesHandlersForBothTunnelSessions(t *testing.T) {
 		name   string
 	}{{pair.First, "first"}, {pair.Second, "second"}} {
 		records.Store(item.issued.LookupKey(), item.issued.AuthorizationRecord())
-		handlersByLookup.Store(item.issued.LookupKey(), echoHandlers(t, item.name))
 	}
 
 	type result struct {
@@ -268,25 +253,17 @@ func TestAcceptorResolvesHandlersForBothTunnelSessions(t *testing.T) {
 		connected = append(connected, result.session)
 		defer result.session.Close()
 	}
-	for range 2 {
-		select {
-		case <-sessionsStarted:
-		case <-time.After(5 * time.Second):
-			t.Fatal("accepted tunnel sessions did not start")
+	for _, session := range connected {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, err := session.ProbeLiveness(ctx)
+		cancel()
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 	for _, session := range connected {
-		var response struct {
-			Server string `json:"server"`
-		}
-		if err := session.RPC().Call(context.Background(), 7001, map[string]string{"message": "ping"}, &response); err != nil {
-			t.Fatal(err)
-		}
-		if response.Server != "first" && response.Server != "second" {
-			t.Fatalf("unexpected tunnel RPC server %q", response.Server)
-		}
+		_ = session.Close()
 	}
-	close(releaseSessions)
 	for deadline := time.Now().Add(5 * time.Second); released.Load() != 2 && time.Now().Before(deadline); {
 		time.Sleep(10 * time.Millisecond)
 	}

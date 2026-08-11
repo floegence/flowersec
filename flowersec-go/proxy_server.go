@@ -32,6 +32,7 @@ type ProxyServerOptions struct {
 	Upstream                    string
 	UpstreamOrigin              string
 	AllowedUpstreamHosts        []string
+	AllowedOrigins              []string
 	MaxConcurrentStreams        int
 	MaxJSONFrameBytes           int
 	MaxChunkBytes               int
@@ -61,6 +62,7 @@ type ProxyServer struct {
 type proxyServerConfig struct {
 	upstream          *url.URL
 	upstreamOrigin    string
+	allowedOrigins    map[string]struct{}
 	maxJSONFrame      int
 	maxChunk          int
 	maxBody           int64
@@ -112,8 +114,7 @@ func (server *ProxyServer) Register(handlers *SessionHandlers) error {
 			return nil
 		}),
 		proxyWSStreamKind: server.limit(func(ctx context.Context, incoming IncomingStream) error {
-			server.serveWebSocket(ctx, incoming)
-			return nil
+			return server.serveWebSocket(ctx, incoming)
 		}),
 	})
 	if err != nil {
@@ -184,10 +185,21 @@ func compileProxyServerOptions(options ProxyServerOptions) (proxyServerConfig, i
 	if !allowed {
 		return fail()
 	}
-	origin, err := url.Parse(strings.TrimSpace(options.UpstreamOrigin))
-	if err != nil || origin == nil || (origin.Scheme != "http" && origin.Scheme != "https") || origin.Host == "" ||
-		(origin.Path != "" && origin.Path != "/") || origin.RawQuery != "" || origin.Fragment != "" || origin.User != nil {
+	origin, validOrigin := canonicalProxyOrigin(options.UpstreamOrigin)
+	if !validOrigin {
 		return fail()
+	}
+	allowedOriginValues := options.AllowedOrigins
+	if len(allowedOriginValues) == 0 {
+		allowedOriginValues = []string{origin}
+	}
+	allowedOrigins := make(map[string]struct{}, len(allowedOriginValues))
+	for _, raw := range allowedOriginValues {
+		allowed, valid := canonicalProxyOrigin(raw)
+		if !valid {
+			return fail()
+		}
+		allowedOrigins[allowed] = struct{}{}
 	}
 	maxConcurrent := positiveProxyLimit(options.MaxConcurrentStreams, defaults.ProxyMaxConcurrentStreams)
 	maxJSON := positiveProxyLimit(options.MaxJSONFrameBytes, internaljsonframe.DefaultMaxJSONFrameBytes)
@@ -241,12 +253,22 @@ func compileProxyServerOptions(options ProxyServerOptions) (proxyServerConfig, i
 		forbiddenPrefixes = append(forbiddenPrefixes, prefix)
 	}
 	return proxyServerConfig{
-		upstream: upstream, upstreamOrigin: origin.String(), maxJSONFrame: maxJSON, maxChunk: maxChunk,
+		upstream: upstream, upstreamOrigin: origin, allowedOrigins: allowedOrigins, maxJSONFrame: maxJSON, maxChunk: maxChunk,
 		maxBody: maxBody, maxWSFrame: maxWS, defaultTimeout: defaultTimeout, maxTimeout: maxTimeout,
 		requestHeaders: requestHeaders, responseHeaders: responseHeaders, blockedResponses: blockedResponses,
 		webSocketHeaders: webSocketHeaders, forbiddenCookies: forbiddenCookies, forbiddenPrefixes: forbiddenPrefixes,
 		onError: options.OnError,
 	}, maxConcurrent, nil
+}
+
+func canonicalProxyOrigin(raw string) (string, bool) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed == nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" ||
+		parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", false
+	}
+	canonical := parsed.Scheme + "://" + parsed.Host
+	return canonical, raw == canonical
 }
 
 func positiveProxyLimit(value, fallback int) int {

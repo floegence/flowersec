@@ -50,6 +50,20 @@ func TestLanguageCapabilitiesDeclareContractLayers(t *testing.T) {
 	}
 }
 
+func TestServerParityContractIsGranularAndExecutable(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := loadCapabilityManifest(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateServerParityContract(manifest.ServerParityContract); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSDKReadmesDescribePublicCapabilities(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
@@ -127,6 +141,23 @@ func TestCapabilityManifestRequiresPortableContractsAndSharedFixtures(t *testing
 	})
 }
 
+func TestCapabilityManifestRejectsRetiredProductionCarrierCapabilities(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := loadCapabilityManifest(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy := cloneCapabilityManifest(t, manifest)
+	copy.RuntimeSpecificCapabilities[0].ID = "node_webtransport"
+	_, err = loadCapabilityManifest(writeCapabilityManifest(t, &copy))
+	if err == nil || !strings.Contains(err.Error(), "retired production carrier capability") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestCapabilityManifestRejectsUnverifiableServerClaims(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
@@ -137,7 +168,7 @@ func TestCapabilityManifestRejectsUnverifiableServerClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Run("complete server capability without entrypoint", func(t *testing.T) {
+	t.Run("supported server capability without entrypoint", func(t *testing.T) {
 		copy := cloneCapabilityManifest(t, manifest)
 		implementation := copy.PortableCapabilities[6].Implementations["go"]
 		implementation.Entrypoint = ""
@@ -148,16 +179,123 @@ func TestCapabilityManifestRejectsUnverifiableServerClaims(t *testing.T) {
 		}
 	})
 
-	t.Run("unsupported server capability without alternative", func(t *testing.T) {
+	t.Run("supported server capability rejects the wrong owner", func(t *testing.T) {
 		copy := cloneCapabilityManifest(t, manifest)
-		implementation := copy.PortableCapabilities[6].Implementations["swift"]
-		implementation.AlternativeBoundary = ""
-		copy.PortableCapabilities[6].Implementations["swift"] = implementation
+		for index := range copy.PortableCapabilities {
+			if copy.PortableCapabilities[index].ID != "server_admission_paths" {
+				continue
+			}
+			implementation := copy.PortableCapabilities[index].Implementations["go"]
+			implementation.Entrypoint = "flowersec.NewTunnelRuntime"
+			copy.PortableCapabilities[index].Implementations["go"] = implementation
+		}
 		_, err := loadCapabilityManifest(writeCapabilityManifest(t, &copy))
-		if err == nil || !strings.Contains(err.Error(), "alternative_boundary") {
+		if err == nil || !strings.Contains(err.Error(), "production entrypoint") {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+
+	t.Run("unsupported server capability needs only a stable reason", func(t *testing.T) {
+		copy := cloneCapabilityManifest(t, manifest)
+		implementation := copy.PortableCapabilities[6].Implementations["swift"]
+		implementation.Entrypoint = ""
+		implementation.TestIDs = nil
+		copy.PortableCapabilities[6].Implementations["swift"] = implementation
+		_, err := loadCapabilityManifest(writeCapabilityManifest(t, &copy))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestServerParityContractUsesSupportedAndUnsupportedBinary(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := loadCapabilityManifest(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("supported requires exactly one test id", func(t *testing.T) {
+		copy := cloneCapabilityManifest(t, manifest)
+		copy.ServerParityContract.Units[0].TestIDs = []string{"carrier/go-direct", "protocol/go"}
+		err := validateServerParityContract(copy.ServerParityContract)
+		if err == nil || !strings.Contains(err.Error(), "exactly one test_id") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("supported rejects an incorrect non-empty production entrypoint", func(t *testing.T) {
+		copy := cloneCapabilityManifest(t, manifest)
+		unit := &copy.ServerParityContract.Units[0]
+		unit.Entrypoint = "flowersec.NewAcceptor"
+		err := validateServerParityContract(copy.ServerParityContract)
+		if err == nil || !strings.Contains(err.Error(), "production entrypoint") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("unsupported rejects executable metadata", func(t *testing.T) {
+		copy := cloneCapabilityManifest(t, manifest)
+		unit := &copy.ServerParityContract.Units[0]
+		unit.Status = "unsupported"
+		unit.Reason = "This production profile is unavailable."
+		err := validateServerParityContract(copy.ServerParityContract)
+		if err == nil || !strings.Contains(err.Error(), "must not declare an entrypoint or test_ids") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("unsupported requires stable English reason", func(t *testing.T) {
+		copy := cloneCapabilityManifest(t, manifest)
+		unit := &copy.ServerParityContract.Units[0]
+		unit.Status = "unsupported"
+		unit.Entrypoint = ""
+		unit.TestIDs = nil
+		unit.Reason = "temporary"
+		err := validateServerParityContract(copy.ServerParityContract)
+		if err == nil || !strings.Contains(err.Error(), "stable English reason") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("supported test id must exist in registry", func(t *testing.T) {
+		copy := cloneCapabilityManifest(t, manifest)
+		copy.ServerParityContract.Units[0].TestIDs = []string{"missing/test-id"}
+		err := validateServerParityRegistry(copy.ServerParityContract, map[string]struct{}{"carrier/go-direct": {}})
+		if err == nil || !strings.Contains(err.Error(), "unknown registry test_id") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestInteropUnsupportedTuplesCarryOnlyAReason(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matrix interopMatrix
+	if err := decodeStrictJSONFile(filepath.Join(repoRoot, interopMatrixPath), &matrix); err != nil {
+		t.Fatal(err)
+	}
+	cell := &matrix.DirectCells[0]
+	cell.Status = "unsupported"
+	cell.Reason = "This runtime does not expose the required production carrier."
+	if err := validateDirectInteropCells(matrix, map[string]struct{}{"interop/server-parity/direct-matrix": {}}); err == nil || !strings.Contains(err.Error(), "must not declare test_ids") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	cell.TestIDs = nil
+	if err := validateDirectInteropCells(matrix, map[string]struct{}{"interop/server-parity/direct-matrix": {}}); err != nil {
+		t.Fatal(err)
+	}
+	cell.Status = "supported"
+	cell.Reason = ""
+	cell.TestIDs = []string{"missing/test-id"}
+	if err := validateDirectInteropCells(matrix, map[string]struct{}{"interop/server-parity/direct-matrix": {}}); err == nil || !strings.Contains(err.Error(), "unknown registry test_id") {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
 
 func TestInteropMatrixContainsOnlyStableTestIDs(t *testing.T) {

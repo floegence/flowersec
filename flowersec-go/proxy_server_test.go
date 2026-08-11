@@ -15,15 +15,23 @@ import (
 )
 
 func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
+	var wantHost string
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.RequestURI() != "/files?id=7" {
 			t.Errorf("upstream path = %q", request.URL.RequestURI())
+		}
+		if request.Host != wantHost {
+			t.Errorf("upstream host = %q, want %q", request.Host, wantHost)
+		}
+		if request.Header.Get("X-Forwarded-Proto") != "https" {
+			t.Errorf("X-Forwarded-Proto = %q", request.Header.Get("X-Forwarded-Proto"))
 		}
 		writer.Header().Set("Content-Type", "text/plain")
 		writer.Header().Set("X-Frame-Options", "DENY")
 		_, _ = writer.Write([]byte("proxy-ok"))
 	}))
 	defer upstream.Close()
+	wantHost = strings.TrimPrefix(upstream.URL, "http://")
 
 	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
 	if err != nil {
@@ -31,6 +39,7 @@ func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
 	}
 	proxy, err := NewProxyServer(ProxyServerOptions{
 		Upstream: upstream.URL, UpstreamOrigin: upstream.URL,
+		AllowedOrigins:         []string{"https://app.example"},
 		BlockedResponseHeaders: []string{"x-frame-options"},
 	})
 	if err != nil {
@@ -45,6 +54,7 @@ func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
 	if err := writeProxyJSON(client, proxyHTTPRequest{
 		Version: proxyWireVersion, RequestID: "request-1", Method: http.MethodGet,
 		Path: "/files?id=7", Headers: []proxyHeader{{Name: "accept", Value: "text/plain"}},
+		ExternalOrigin: "https://app.example",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -144,6 +154,8 @@ func TestProxyServerRejectsUnsafeAndDuplicateRegistration(t *testing.T) {
 		{},
 		{Upstream: "http://example.com:80", UpstreamOrigin: "http://example.com"},
 		{Upstream: "http://127.0.0.1:80", UpstreamOrigin: "http://127.0.0.1", ExtraRequestHeaders: []string{"authorization"}},
+		{Upstream: "http://127.0.0.1:80", UpstreamOrigin: "http://127.0.0.1/"},
+		{Upstream: "http://127.0.0.1:80", UpstreamOrigin: "http://127.0.0.1", AllowedOrigins: []string{"https://app.example/"}},
 	} {
 		if _, err := NewProxyServer(options); !errors.Is(err, ErrInvalidProxyServer) {
 			t.Fatalf("NewProxyServer(%+v) error = %v", options, err)

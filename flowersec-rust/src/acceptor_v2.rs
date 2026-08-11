@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    fmt,
+    fmt, io,
     net::SocketAddr,
     sync::Mutex,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -20,6 +20,7 @@ use crate::{
     session_handlers::{AcceptedSession, SessionHandlers},
     session_v2::{RpcHandlerV2, establish_session_v2},
     transport_v2::{CarrierKind, CarrierSessionV2, PathKind, Session, SessionRole},
+    websocket_v2::WebSocketListener,
 };
 
 /// Runtime-owned bind, TLS, and resource policy for direct session acceptance.
@@ -29,6 +30,31 @@ pub struct AcceptorOptions {
     pub private_key_der: Vec<u8>,
     pub max_inbound_streams: u16,
     pub accept_timeout: Duration,
+}
+
+/// Runtime-owned bind, TLS, origin, and resource policy for a direct WebSocket listener.
+pub struct WebSocketAcceptorOptions {
+    pub bind_address: SocketAddr,
+    /// Empty certificate and key values select plaintext loopback-only WebSocket.
+    pub certificate_chain_der: Vec<Vec<u8>>,
+    pub private_key_der: Vec<u8>,
+    pub allowed_origins: Vec<String>,
+    pub max_inbound_streams: u16,
+    pub accept_timeout: Duration,
+}
+
+impl fmt::Debug for WebSocketAcceptorOptions {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WebSocketAcceptorOptions")
+            .field("bind_address", &self.bind_address)
+            .field("certificate_chain_der", &"[REDACTED]")
+            .field("private_key_der", &"[REDACTED]")
+            .field("allowed_origins", &self.allowed_origins)
+            .field("max_inbound_streams", &self.max_inbound_streams)
+            .field("accept_timeout", &self.accept_timeout)
+            .finish()
+    }
 }
 
 impl std::fmt::Debug for AcceptorOptions {
@@ -98,11 +124,37 @@ impl AcceptError {
 
 /// Accepts direct sessions from opaque artifacts without exposing carrier state.
 pub struct Acceptor {
-    listener: RawQuicListener,
+    listener: AcceptorListener,
+    carrier: CarrierKind,
     max_inbound_streams: u16,
     accept_timeout: Duration,
     accept_gate: AsyncMutex<()>,
     registrations: Mutex<HashMap<[u8; 32], bool>>,
+}
+
+enum AcceptorListener {
+    RawQuic(RawQuicListener),
+    WebSocket(WebSocketListener),
+}
+
+impl AcceptorListener {
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        match self {
+            Self::RawQuic(listener) => listener.local_addr(),
+            Self::WebSocket(listener) => listener.local_addr(),
+        }
+    }
+
+    async fn accept(&self) -> io::Result<std::sync::Arc<dyn CarrierSessionV2>> {
+        match self {
+            Self::RawQuic(listener) => listener
+                .accept()
+                .await
+                .map(|session| std::sync::Arc::new(session) as std::sync::Arc<dyn CarrierSessionV2>)
+                .map_err(io::Error::other),
+            Self::WebSocket(listener) => listener.accept().await.map_err(io::Error::other),
+        }
+    }
 }
 
 impl Acceptor {
@@ -123,7 +175,8 @@ impl Acceptor {
         let listener = RawQuicListener::bind(options.bind_address, config)
             .map_err(|_| error(AcceptErrorCode::BindFailed))?;
         Ok(Self {
-            listener,
+            listener: AcceptorListener::RawQuic(listener),
+            carrier: CarrierKind::RawQuic,
             max_inbound_streams: options.max_inbound_streams,
             accept_timeout: options.accept_timeout,
             accept_gate: AsyncMutex::new(()),
@@ -131,11 +184,37 @@ impl Acceptor {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn local_address(&self) -> Result<SocketAddr, AcceptError> {
+    /// Returns the effective local address after binding, including an OS-assigned port.
+    pub fn local_address(&self) -> Result<SocketAddr, AcceptError> {
         self.listener
             .local_addr()
             .map_err(|_| error(AcceptErrorCode::BindFailed))
+    }
+
+    /// Binds a production direct WebSocket listener.
+    pub fn bind_websocket(options: WebSocketAcceptorOptions) -> Result<Self, AcceptError> {
+        if options.accept_timeout.is_zero() {
+            return Err(error(AcceptErrorCode::InvalidInput));
+        }
+        let capacity =
+            crate::transport_v2::carrier_inbound_stream_limit_v2(options.max_inbound_streams)
+                .map_err(|_| error(AcceptErrorCode::InvalidInput))?;
+        let listener = WebSocketListener::bind_direct(
+            options.bind_address,
+            options.certificate_chain_der,
+            options.private_key_der,
+            options.allowed_origins,
+            capacity,
+        )
+        .map_err(|_| error(AcceptErrorCode::BindFailed))?;
+        Ok(Self {
+            listener: AcceptorListener::WebSocket(listener),
+            carrier: CarrierKind::Wss,
+            max_inbound_streams: options.max_inbound_streams,
+            accept_timeout: options.accept_timeout,
+            accept_gate: AsyncMutex::new(()),
+            registrations: Mutex::new(HashMap::new()),
+        })
     }
 
     pub async fn accept(
@@ -167,7 +246,7 @@ impl Acceptor {
         cancellation: CancellationToken,
         rpc_handler: Option<std::sync::Arc<dyn RpcHandlerV2>>,
     ) -> Result<std::sync::Arc<dyn Session>, AcceptError> {
-        let plan = accept_plan(artifact)?;
+        let plan = accept_plan(artifact, self.carrier)?;
         if plan.connection.session.max_inbound_streams != self.max_inbound_streams {
             return Err(error(AcceptErrorCode::InvalidInput));
         }
@@ -245,14 +324,14 @@ impl Acceptor {
             let cancel_raw = raw.clone();
             let admitted = tokio::select! {
                 _ = cancellation.cancelled() => {
-                    cancel_raw.close();
+                    cancel_raw.abort();
                     return Err(error(AcceptErrorCode::Canceled));
                 }
                 result = tokio::time::timeout_at(
                     deadline,
                     ServerAdmissionV2::new(
                         CandidateAttemptV2::attempt()
-                            .ready(std::sync::Arc::new(raw) as std::sync::Arc<dyn CarrierSessionV2>)
+                            .ready(raw)
                             .select_winner(),
                         &plan.expected_fsb2,
                         plan.connection.session.max_inbound_streams,
@@ -302,7 +381,7 @@ struct AcceptPlanV2 {
     expires_at_unix_seconds: i64,
 }
 
-fn accept_plan(artifact: &Artifact) -> Result<AcceptPlanV2, AcceptError> {
+fn accept_plan(artifact: &Artifact, carrier: CarrierKind) -> Result<AcceptPlanV2, AcceptError> {
     let mut connection = artifact
         .connection_plan()
         .map_err(|ConnectionPlanError::Invalid| error(AcceptErrorCode::InvalidInput))?;
@@ -312,7 +391,7 @@ fn accept_plan(artifact: &Artifact) -> Result<AcceptPlanV2, AcceptError> {
     let expected_fsb2 = connection
         .candidates
         .iter()
-        .filter(|candidate| candidate.carrier == CarrierKind::RawQuic)
+        .filter(|candidate| candidate.carrier == carrier)
         .map(|candidate| {
             artifact
                 .encode_fsb2(&candidate.id)

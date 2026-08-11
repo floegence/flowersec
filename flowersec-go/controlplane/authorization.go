@@ -198,6 +198,20 @@ func (AuthorizationResponse) String() string               { return "Flowersec.A
 func (AuthorizationResponse) GoString() string             { return "controlplane.AuthorizationResponse" }
 func (AuthorizationResponse) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
 
+// TunnelAuthorizationResponse is the secret-free authorization response used
+// by an untrusted tunnel runtime. It contains pairing claims and lease state,
+// never an application Session contract or E2EE key.
+type TunnelAuthorizationResponse struct {
+	encoded []byte
+}
+
+func (response TunnelAuthorizationResponse) JSON() []byte { return slices.Clone(response.encoded) }
+func (TunnelAuthorizationResponse) String() string        { return "Flowersec.TunnelAuthorizationResponse" }
+func (TunnelAuthorizationResponse) GoString() string {
+	return "controlplane.TunnelAuthorizationResponse"
+}
+func (TunnelAuthorizationResponse) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
+
 type authorizedSessionWire struct {
 	ChannelID                     string   `json:"channel_id"`
 	InitExpireAtUnixSeconds       int64    `json:"init_expire_at_unix_seconds"`
@@ -221,22 +235,21 @@ type directAuthorizationWire struct {
 }
 
 type runtimeAuthorizationResponseWire struct {
-	Decision                       string                   `json:"decision"`
-	Reason                         string                   `json:"reason"`
-	CredentialID                   string                   `json:"credential_id"`
-	LeaseID                        string                   `json:"lease_id"`
-	ExpiresAt                      time.Time                `json:"expires_at"`
-	ExpectedPeerEndpointInstanceID string                   `json:"expected_peer_endpoint_instance_id"`
-	AllowReplacement               bool                     `json:"allow_replacement"`
-	Session                        authorizedSessionWire    `json:"session"`
-	Direct                         *directAuthorizationWire `json:"direct"`
+	Decision     string                   `json:"decision"`
+	Reason       string                   `json:"reason"`
+	CredentialID string                   `json:"credential_id"`
+	LeaseID      string                   `json:"lease_id"`
+	ExpiresAt    time.Time                `json:"expires_at"`
+	Direct       *directAuthorizationWire `json:"direct"`
 }
 
 // AuthorizeRuntime verifies the complete FSB2 bytes against the stored
 // artifact before producing an allow response. The caller must atomically
 // reserve the one-time record and provide its durable lease ID first.
 func AuthorizeRuntime(request RuntimeAuthorizationRequest, record AuthorizationRecord, leaseID string) (AuthorizationResponse, error) {
-	if request.decoded == nil || request.lookupKey == "" || !leaseIDPattern.MatchString(leaseID) || record.validate() != nil ||
+	if request.decoded == nil || request.decoded.Request.PathKind != artifactv2.PathDirect ||
+		request.lookupKey == "" || !leaseIDPattern.MatchString(leaseID) || record.validate() != nil ||
+		record.artifact.Path.Kind != artifactv2.PathDirect ||
 		subtle.ConstantTimeCompare([]byte(request.lookupKey), []byte(record.lookupKey)) != 1 {
 		return AuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
@@ -256,21 +269,87 @@ func AuthorizeRuntime(request RuntimeAuthorizationRequest, record AuthorizationR
 		Decision: "allow", CredentialID: record.lookupKey, LeaseID: leaseID,
 		ExpiresAt: time.Unix(artifact.Session.InitExpireAtUnixSeconds, 0).UTC(),
 	}
-	if artifact.Path.Kind == artifactv2.PathDirect {
-		direct := &directAuthorizationWire{Session: sessionWire(artifact.Session)}
-		direct.Upstream.Network = "tcp"
-		direct.Upstream.Address = record.directUpstream
-		wire.Direct = direct
-	} else {
-		wire.Session = sessionWire(artifact.Session)
-		wire.ExpectedPeerEndpointInstanceID = artifact.Path.ExpectedPeerEndpointInstanceID
-		wire.AllowReplacement = record.allowReplacement
-	}
+	direct := &directAuthorizationWire{Session: sessionWire(artifact.Session)}
+	direct.Upstream.Network = "tcp"
+	direct.Upstream.Address = record.directUpstream
+	wire.Direct = direct
 	encoded, err := json.Marshal(wire)
 	if err != nil {
 		return AuthorizationResponse{}, fmt.Errorf("encode Flowersec authorization: %w", err)
 	}
 	return AuthorizationResponse{encoded: encoded}, nil
+}
+
+// AuthorizeTunnelRuntime verifies one tunnel admission and returns only the
+// claims required to pair and forward opaque carrier streams.
+func AuthorizeTunnelRuntime(request RuntimeAuthorizationRequest, record AuthorizationRecord, leaseID string) (TunnelAuthorizationResponse, error) {
+	if request.decoded == nil || request.decoded.Request.PathKind != artifactv2.PathTunnel ||
+		request.lookupKey == "" || !leaseIDPattern.MatchString(leaseID) || record.validate() != nil ||
+		record.artifact.Path.Kind != artifactv2.PathTunnel ||
+		subtle.ConstantTimeCompare([]byte(request.lookupKey), []byte(record.lookupKey)) != 1 {
+		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
+	}
+	artifact := record.artifact
+	if time.Now().Unix() >= artifact.Session.InitExpireAtUnixSeconds {
+		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
+	}
+	expected, err := artifactv2.BuildRequest(*artifact, request.decoded.Request.ChosenCandidateID)
+	if err != nil {
+		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
+	}
+	expectedRaw, err := artifactv2.MarshalRequest(expected)
+	if err != nil || subtle.ConstantTimeCompare(expectedRaw, request.decoded.Raw) != 1 {
+		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
+	}
+	return AllowTunnelRuntime(
+		request,
+		leaseID,
+		time.Unix(artifact.Session.InitExpireAtUnixSeconds, 0),
+		artifact.Path.ExpectedPeerEndpointInstanceID,
+		record.allowReplacement,
+	)
+}
+
+// AllowTunnelRuntime constructs the secret-free allow response returned by an
+// application-owned authorizer after it has verified a tunnel admission. This
+// boundary lets an untrusted relay consume only pairing and lease claims; it
+// never requires an Artifact, AuthorizationRecord, Session contract, or PSK.
+func AllowTunnelRuntime(request RuntimeAuthorizationRequest, leaseID string, expiresAt time.Time, expectedPeerEndpointInstanceID string, allowReplacement bool) (TunnelAuthorizationResponse, error) {
+	if request.decoded == nil || request.decoded.Request.PathKind != artifactv2.PathTunnel ||
+		request.lookupKey == "" || !leaseIDPattern.MatchString(leaseID) ||
+		!leaseIDPattern.MatchString(expectedPeerEndpointInstanceID) ||
+		expectedPeerEndpointInstanceID == request.decoded.Request.EndpointInstanceID ||
+		!expiresAt.After(time.Now()) {
+		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
+	}
+	wire := struct {
+		Decision                       string    `json:"decision"`
+		CredentialID                   string    `json:"credential_id"`
+		LeaseID                        string    `json:"lease_id"`
+		ExpiresAt                      time.Time `json:"expires_at"`
+		ExpectedPeerEndpointInstanceID string    `json:"expected_peer_endpoint_instance_id"`
+		AllowReplacement               bool      `json:"allow_replacement"`
+	}{
+		Decision: "allow", CredentialID: request.lookupKey, LeaseID: leaseID,
+		ExpiresAt:                      expiresAt.UTC(),
+		ExpectedPeerEndpointInstanceID: expectedPeerEndpointInstanceID,
+		AllowReplacement:               allowReplacement,
+	}
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
+	}
+	return TunnelAuthorizationResponse{encoded: encoded}, nil
+}
+
+// RejectTunnelRuntime creates a bounded tunnel rejection without exposing a
+// direct-runtime response type at the relay boundary.
+func RejectTunnelRuntime(reason string, retryable bool) (TunnelAuthorizationResponse, error) {
+	response, err := RejectRuntime(reason, retryable)
+	if err != nil {
+		return TunnelAuthorizationResponse{}, err
+	}
+	return TunnelAuthorizationResponse{encoded: response.JSON()}, nil
 }
 
 // RejectRuntime creates a bounded reject or retry response for a reason token

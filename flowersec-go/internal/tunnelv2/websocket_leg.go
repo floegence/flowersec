@@ -59,8 +59,15 @@ func (leg *WebSocketPendingLeg) SendAdmission(ctx context.Context, response arti
 	return leg.server.SendInitialResponse(ctx, raw, response.Status == artifactv2.AdmissionSuccess)
 }
 
-func (leg *WebSocketPendingLeg) Activate(ctx context.Context) (carrier.Session, error) {
-	return leg.server.Activate(ctx)
+func (leg *WebSocketPendingLeg) Activate(ctx context.Context, role uint8) (carrier.Session, error) {
+	if role != 1 && role != 2 {
+		return nil, ErrInvalidWebSocketLeg
+	}
+	yamuxRole := carrierws.ServerRole
+	if role == 2 {
+		yamuxRole = carrierws.ClientRole
+	}
+	return leg.server.Activate(ctx, yamuxRole)
 }
 
 func (leg *WebSocketPendingLeg) CloseWithError(ctx context.Context, applicationError carrier.ApplicationError) error {

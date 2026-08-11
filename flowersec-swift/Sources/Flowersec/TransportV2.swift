@@ -239,7 +239,7 @@ enum RuntimeCapabilitiesV2 {
     unsupported: [
       UnsupportedRuntimeCarrierV2(
         carrier: .rawQUIC,
-        reason: "raw_quic_adapter_not_implemented"
+        reason: "swift_apple_client_profile_excludes_raw_quic"
       ),
       UnsupportedRuntimeCarrierV2(
         carrier: .webSocket,
@@ -247,7 +247,7 @@ enum RuntimeCapabilitiesV2 {
       ),
       UnsupportedRuntimeCarrierV2(
         carrier: .webTransport,
-        reason: "webtransport_adapter_not_implemented"
+        reason: "swift_apple_client_profile_excludes_webtransport"
       ),
     ]
   )
@@ -271,11 +271,11 @@ enum RuntimeCapabilitiesV2 {
       unsupported: [
         UnsupportedRuntimeCarrierV2(
           carrier: .rawQUIC,
-          reason: "raw_quic_adapter_not_implemented"
+          reason: "swift_apple_client_profile_excludes_raw_quic"
         ),
         UnsupportedRuntimeCarrierV2(
           carrier: .webTransport,
-          reason: "webtransport_adapter_not_implemented"
+          reason: "swift_apple_client_profile_excludes_webtransport"
         ),
       ]
     )

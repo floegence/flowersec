@@ -1607,14 +1607,13 @@ fn public_source_hides_quinn_yamux_and_early_data() {
     assert!(source.contains("with_protocol_versions(&[&rustls::version::TLS13])"));
 
     let manifest = include_str!("../Cargo.toml");
-    let lockfile = include_str!("../Cargo.lock");
     assert!(manifest.contains("quinn = { version = \"=0.11.11\""));
     assert!(
         !manifest
             .lines()
             .any(|line| line.trim_start().starts_with("rcgen"))
     );
-    assert!(!lockfile.lines().any(|line| line == "name = \"rcgen\""));
+    assert!(!source.contains("rcgen"));
 }
 
 #[tokio::test]

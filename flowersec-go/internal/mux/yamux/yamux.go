@@ -212,6 +212,30 @@ func (s *Session) Close() error {
 	return s.inner.Close()
 }
 
+// Flush waits until the peer has processed frames queued before the Yamux
+// ping. Canceling the wait closes the mux so the owned ping cannot outlive it.
+func (s *Session) Flush(ctx context.Context) error {
+	if s == nil || s.inner == nil {
+		return io.ErrClosedPipe
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := s.inner.Ping()
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		_ = s.inner.Close()
+		<-result
+		return ctx.Err()
+	}
+}
+
 // CloseChan is closed when the session terminates.
 func (s *Session) CloseChan() <-chan struct{} {
 	if s == nil || s.inner == nil {

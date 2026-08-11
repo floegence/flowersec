@@ -11,7 +11,7 @@ instances, namespaces, faults, and temporary files that they create.
 | One-shot session lifecycle, stream FIN/reset/STOP_SENDING, DATAGRAM, close, and abort | Per-language memory carrier and native carrier contract tests |
 | ConnectionController scheduling, fresh artifact per attempt, retry disposition, cancellation, and no replay | Shared controller vectors executed by all four SDKs |
 | Go WebSocket, raw QUIC, and WebTransport in direct and tunnel topologies | Go native carrier and self-contained Go interoperability tests |
-| Node WebTransport and WSS against Go | TypeScript-to-Go integration tests using production adapters and session engines |
+| Node WSS against Go, Rust, and Node | TypeScript interoperability tests using production adapters and session engines |
 | Rust raw QUIC against Go | Rust-to-Go direct and tunnel integration tests |
 | Swift WSS against Go | Swift-to-Go integration tests |
 | Chromium direct, WebTransport-to-WSS tunnel, and WebTransport-to-QUIC tunnel | Local `make browser-smoke` using the Chromium Playwright project |

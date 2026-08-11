@@ -50,7 +50,7 @@ func TestCoordinatorBridgesProductionWebSocketPendingLegs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverEndpoint, err := carrierws.NewAfterAdmission(serverConn, carrierws.ClientRole, carrierws.SubprotocolTunnel, resources)
+	serverEndpoint, err := carrierws.NewAfterAdmission(serverConn, carrierws.ServerRole, carrierws.SubprotocolTunnel, resources)
 	if err != nil {
 		t.Fatal(err)
 	}

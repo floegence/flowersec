@@ -175,6 +175,14 @@ func newProductionWebSocketTunnelLeg(t *testing.T, maxInbound uint16, rawFSB2 []
 		t.Fatal(err)
 	}
 	result := make(chan productionEndpointResult, 1)
+	decoded, err := artifactv2.ParseRequest(rawFSB2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpointRole := carrierws.ClientRole
+	if decoded.Request.Role == 2 {
+		endpointRole = carrierws.ServerRole
+	}
 	go func() {
 		_, commitErr := admissionws.Commit(context.Background(), endpointConn, rawFSB2, tunnelv2.DefaultReasonRegistry())
 		if commitErr != nil {
@@ -182,7 +190,7 @@ func newProductionWebSocketTunnelLeg(t *testing.T, maxInbound uint16, rawFSB2 []
 			return
 		}
 		session, sessionErr := carrierws.NewAfterAdmission(
-			endpointConn, carrierws.ClientRole, carrierws.SubprotocolTunnel, resources,
+			endpointConn, endpointRole, carrierws.SubprotocolTunnel, resources,
 		)
 		result <- productionEndpointResult{session: session, err: sessionErr}
 	}()

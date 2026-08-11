@@ -512,6 +512,9 @@ func (s *engineSession) handlePeerSessionClose() {
 		protocolErr := s.sendControl(protocolv2.InnerSessionClose, []byte{0, 1})
 		protocolErr = errors.Join(protocolErr, s.flushControl(closeContext))
 		protocolErr = errors.Join(protocolErr, s.control.CloseWrite())
+		if flusher, ok := s.carrier.(interface{ Flush(context.Context) error }); ok {
+			protocolErr = errors.Join(protocolErr, flusher.Flush(closeContext))
+		}
 		s.cancel(ErrSessionClosed)
 		s.markClosed()
 		s.resetAllStreams()

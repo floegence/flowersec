@@ -21,10 +21,12 @@ let session = flowersec::connect(&mut lease, options).await?;
 
 ## Supported Connections
 
-The native Rust runtime uses raw QUIC for direct and relayed client sessions,
-and can accept direct server sessions through `Acceptor`. WebSocket and
-WebTransport are not implemented by this runtime. Connection selection,
-credentials, and protocol state stay inside the crate.
+The native Rust runtime uses WebSocket and raw QUIC for direct and relayed client sessions,
+accepts both carriers for direct server sessions, and
+provides opaque tunnel listeners for both carriers. WebTransport is
+unsupported because no Rust driver has passed Flowersec's strict draft-15 and
+cross-runtime contracts. Connection selection, credentials, and protocol
+state stay inside the crate.
 
 ## Public API
 
@@ -35,6 +37,9 @@ The crate gives applications these building blocks:
 - `Session`, `RpcPeer`, `ByteStream`, `IncomingStream`, and `StreamMetadata` for application traffic;
 - `ConnectionController` for reconnecting with a fresh invitation after a session ends;
 - `Acceptor`, `AcceptedSession`, and `SessionHandlers` for server-side sessions;
+- `TunnelRuntime` for authorized opaque relay pairing without application Session access;
+- `controlplane::Issuer`, `AuthorizationRecord`, and runtime authorization types;
+- `ProxyServer` for bounded HTTP and WebSocket forwarding over application Sessions;
 - `UnreliableMessageChannel` when the negotiated connection supports it;
 - typed RPC helpers through `RpcPeerExt::call_typed(...)`.
 

@@ -115,7 +115,7 @@ test("non-published Rust roots remain licensed and version their local Flowersec
   assert.match(policy, /^  "NCSA",$/m);
 });
 
-test("Rust native runtime owns raw QUIC trust without inactive root-store or WebSocket features", () => {
+test("Rust native runtime owns carrier trust without implicit platform root stores", () => {
   const manifest = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/Cargo.toml"), "utf8");
   const readme = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/README.md"), "utf8");
   const connector = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/connector_v2.rs"), "utf8");
@@ -130,7 +130,10 @@ test("Rust native runtime owns raw QUIC trust without inactive root-store or Web
   assert.match(crateRoot, /#\[cfg\(feature = "__flowersec_internal_fuzzing"\)\]\n#\[doc\(hidden\)\]\npub mod fuzzing/u);
   assert.match(fuzzManifest, /features = \["__flowersec_internal_fuzzing"\]/u);
   assert.doesNotMatch(manifest, /rustls-(?:native|webpki)-roots/u);
-  assert.doesNotMatch(manifest, /tokio-tungstenite/u);
+  assert.match(
+    manifest,
+    /^tokio-tungstenite = \{ version = "[^"]+", default-features = false, features = \["connect"\] \}$/m,
+  );
   assert.match(readme, /requires explicit DER trust roots/u);
   assert.match(readme, /rejects empty roots/u);
   assert.doesNotMatch(connector, /impl Default for ConnectorOptions/u);

@@ -180,6 +180,20 @@ export class WebSocketBinaryTransport {
     await write;
   }
 
+  async flush(opts: Readonly<{ signal?: AbortSignal }> = {}): Promise<void> {
+    throwIfAborted(opts.signal, "flush aborted");
+    await this.writeChain;
+    const startedAt = Date.now();
+    while (this.ws.bufferedAmount > 0) {
+      throwIfAborted(opts.signal, "flush aborted");
+      if (this.error != null) throw this.error;
+      if (Date.now() - startedAt >= this.limits.outboundDrainTimeoutMs) {
+        throw new TimeoutError("ws send buffer drain timeout");
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
   // close tears down listeners and rejects pending readers.
   close(): void {
     if (!this.localCloseRequested) {

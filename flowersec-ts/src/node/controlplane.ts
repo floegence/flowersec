@@ -337,6 +337,13 @@ export class AuthorizationResponse {
   json(): Uint8Array { return this.#json.slice(); }
 }
 
+export class TunnelAuthorizationResponse {
+  readonly #json: Uint8Array;
+  /** @internal */
+  constructor(json: Uint8Array) { this.#json = json.slice(); }
+  json(): Uint8Array { return this.#json.slice(); }
+}
+
 export function authorizeRuntime(request: RuntimeAuthorizationRequest, record: AuthorizationRecord, leaseId: string, nowUnixSeconds = Math.floor(Date.now() / 1000)): AuthorizationResponse {
   if (!(request instanceof RuntimeAuthorizationRequest) || !(record instanceof AuthorizationRecord) || !LEASE_ID.test(leaseId) || request.lookupKey() !== record.lookupKey()) throw invalidInput();
   const artifact = record.artifact;
@@ -344,14 +351,25 @@ export function authorizeRuntime(request: RuntimeAuthorizationRequest, record: A
   const expected = encodeFSB2RequestV2(buildFSB2RequestV2(artifact, request.decoded.request.chosen_candidate_id));
   if (!bytesEqual(expected, request.decoded.raw)) throw invalidInput();
   const base = { decision: "allow", credential_id: record.lookupKey(), lease_id: leaseId, expires_at: new Date(artifact.session.init_expire_at_unix_s * 1000).toISOString() } as Record<string, unknown>;
-  if (artifact.path.kind === "direct") {
-    base.direct = { session: sessionWire(artifact.session), upstream: { network: "tcp", address: record.upstream } };
-  } else {
-    base.session = sessionWire(artifact.session);
-    base.expected_peer_endpoint_instance_id = artifact.path.expected_peer_endpoint_instance_id;
-    base.allow_replacement = record.allowReplacement;
-  }
+  if (artifact.path.kind !== "direct") throw invalidInput();
+  base.direct = { session: sessionWire(artifact.session), upstream: { network: "tcp", address: record.upstream } };
   return new AuthorizationResponse(new TextEncoder().encode(JSON.stringify(base)));
+}
+
+export function authorizeTunnelRuntime(request: RuntimeAuthorizationRequest, record: AuthorizationRecord, leaseId: string, nowUnixSeconds = Math.floor(Date.now() / 1000)): TunnelAuthorizationResponse {
+  if (!(request instanceof RuntimeAuthorizationRequest) || !(record instanceof AuthorizationRecord) || !LEASE_ID.test(leaseId) || request.lookupKey() !== record.lookupKey()) throw invalidInput();
+  const artifact = record.artifact;
+  if (artifact.path.kind !== "tunnel" || nowUnixSeconds >= artifact.session.init_expire_at_unix_s) throw invalidInput();
+  const expected = encodeFSB2RequestV2(buildFSB2RequestV2(artifact, request.decoded.request.chosen_candidate_id));
+  if (!bytesEqual(expected, request.decoded.raw)) throw invalidInput();
+  return new TunnelAuthorizationResponse(new TextEncoder().encode(JSON.stringify({
+    decision: "allow",
+    credential_id: record.lookupKey(),
+    lease_id: leaseId,
+    expires_at: new Date(artifact.session.init_expire_at_unix_s * 1000).toISOString(),
+    expected_peer_endpoint_instance_id: artifact.path.expected_peer_endpoint_instance_id,
+    allow_replacement: record.allowReplacement,
+  })));
 }
 
 export function rejectRuntime(reason: string, retryable: boolean): AuthorizationResponse {

@@ -134,6 +134,11 @@ test("clean security gates install every pinned SBOM schema validator", () => {
       `${packageName} must be part of ts-ensure-deps`,
     );
   }
+  assert.match(
+    makefile,
+    /flowersec-ts\/node_modules\/\.bin\/tsx/,
+    "the TypeScript peer runner must be part of ts-ensure-deps",
+  );
 });
 
 test("security dependency checks stay wired into local gates", () => {

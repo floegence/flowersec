@@ -246,24 +246,28 @@
       "description": "The current browser runtime does not expose the WebTransport API required by the Transport v2 carrier."
     },
     {
-      "id": "raw_quic_adapter_not_implemented",
-      "description": "This runtime does not implement the raw QUIC carrier adapter."
+      "id": "node_raw_quic_driver_unavailable",
+      "description": "The Node.js server profile has no admitted production raw QUIC driver."
     },
     {
-      "id": "unsupported_websocket_runtime",
-      "description": "The Rust native runtime does not implement the WebSocket carrier adapter."
+      "id": "node_webtransport_driver_unavailable",
+      "description": "The Node.js server profile has no admitted production WebTransport driver."
     },
     {
-      "id": "unsupported_webtransport_runtime",
-      "description": "The Rust native runtime does not implement the WebTransport carrier adapter."
+      "id": "driver_unavailable",
+      "description": "The Rust server profile has no admitted production WebTransport driver."
+    },
+    {
+      "id": "swift_apple_client_profile_excludes_raw_quic",
+      "description": "The Swift Apple client profile does not expose a raw UDP transport runtime."
     },
     {
       "id": "websocket_adapter_not_supported_on_linux",
       "description": "The Swift Linux runtime does not implement the Apple WebSocket carrier adapter."
     },
     {
-      "id": "webtransport_adapter_not_implemented",
-      "description": "This runtime does not implement the WebTransport carrier adapter."
+      "id": "swift_apple_client_profile_excludes_webtransport",
+      "description": "The Swift Apple client profile does not expose WebTransport as a Flowersec carrier."
     }
   ],
   "runtimes": [
@@ -310,14 +314,11 @@
       "tuples": [
         { "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false },
         { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false },
-        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": false, "migration": false },
-        { "carrier": "webtransport", "network_mode": "dial", "path": "direct", "session_role": "client", "reliable_streams": true, "datagrams": true, "migration": false },
-        { "carrier": "webtransport", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": true, "migration": false },
-        { "carrier": "webtransport", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": true, "migration": false },
-        { "carrier": "webtransport", "network_mode": "listen", "path": "direct", "session_role": "server", "reliable_streams": true, "datagrams": true, "migration": false }
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": false, "migration": false }
       ],
       "unsupported": [
-        { "carrier": "raw_quic", "reason": "raw_quic_adapter_not_implemented" }
+        { "carrier": "raw_quic", "reason": "node_raw_quic_driver_unavailable" },
+        { "carrier": "webtransport", "reason": "node_webtransport_driver_unavailable" }
       ]
     },
     {
@@ -329,10 +330,13 @@
         { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": true, "migration": true },
         { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": true, "migration": true },
         { "carrier": "raw_quic", "network_mode": "listen", "path": "direct", "session_role": "server", "reliable_streams": true, "datagrams": true, "migration": false }
+        ,{ "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false }
+        ,{ "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false }
+        ,{ "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": false, "migration": false }
+        ,{ "carrier": "websocket", "network_mode": "listen", "path": "direct", "session_role": "server", "reliable_streams": true, "datagrams": false, "migration": false }
       ],
       "unsupported": [
-        { "carrier": "websocket", "reason": "unsupported_websocket_runtime" },
-        { "carrier": "webtransport", "reason": "unsupported_webtransport_runtime" }
+        { "carrier": "webtransport", "reason": "driver_unavailable" }
       ]
     },
     {
@@ -345,8 +349,8 @@
         { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": false, "migration": false }
       ],
       "unsupported": [
-        { "carrier": "raw_quic", "reason": "raw_quic_adapter_not_implemented" },
-        { "carrier": "webtransport", "reason": "webtransport_adapter_not_implemented" }
+        { "carrier": "raw_quic", "reason": "swift_apple_client_profile_excludes_raw_quic" },
+        { "carrier": "webtransport", "reason": "swift_apple_client_profile_excludes_webtransport" }
       ]
     },
     {
@@ -355,9 +359,9 @@
       "environment": "linux",
       "tuples": [],
       "unsupported": [
-        { "carrier": "raw_quic", "reason": "raw_quic_adapter_not_implemented" },
+        { "carrier": "raw_quic", "reason": "swift_apple_client_profile_excludes_raw_quic" },
         { "carrier": "websocket", "reason": "websocket_adapter_not_supported_on_linux" },
-        { "carrier": "webtransport", "reason": "webtransport_adapter_not_implemented" }
+        { "carrier": "webtransport", "reason": "swift_apple_client_profile_excludes_webtransport" }
       ]
     },
     {
@@ -370,8 +374,8 @@
         { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": false, "migration": false }
       ],
       "unsupported": [
-        { "carrier": "raw_quic", "reason": "raw_quic_adapter_not_implemented" },
-        { "carrier": "webtransport", "reason": "webtransport_adapter_not_implemented" }
+        { "carrier": "raw_quic", "reason": "swift_apple_client_profile_excludes_raw_quic" },
+        { "carrier": "webtransport", "reason": "swift_apple_client_profile_excludes_webtransport" }
       ]
     }
   ],
@@ -385,13 +389,13 @@
     "dependencies": [
       {
         "module": "github.com/quic-go/quic-go",
-        "version": "v0.60.0",
+        "version": "v0.61.0",
         "go_module_minimum": "1.25.0",
         "license": "MIT"
       },
       {
         "module": "github.com/quic-go/webtransport-go",
-        "version": "v0.11.1",
+        "version": "v0.12.0",
         "go_module_minimum": "1.25.0",
         "license": "MIT"
       }

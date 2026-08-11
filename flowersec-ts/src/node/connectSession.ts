@@ -6,9 +6,7 @@ import {
   SessionConnectorV2,
 } from "../connector/sessionConnector.js";
 import { createWebSocketCandidateFactoryV2 } from "../connector/adapters/webSocketCandidate.js";
-import { createWebTransportCandidateFactoryV2 } from "../connector/adapters/webTransportCandidate.js";
 import { createNodeWsFactory } from "./wsFactory.js";
-import { createNodeWebTransportClientV2 } from "./webTransportClient.js";
 import { projectSessionV2 } from "../v2/publicSession.js";
 import { ConnectError } from "../public/connectError.js";
 import { nodeSessionRuntimeV2 } from "./sessionRuntime.js";
@@ -18,10 +16,13 @@ import {
   type ConnectionController,
   type ConnectionControllerOptions as CoreConnectionControllerOptions,
 } from "../connectionController.js";
+import {
+  freezeSessionHandlersForConnector,
+  type SessionHandlers,
+} from "./acceptor.js";
 
 export type SessionTLSOptions = Readonly<{
   ca?: string | Uint8Array;
-  serverCertificateHash?: Uint8Array;
 }>;
 
 export type SessionOptions = Readonly<{
@@ -29,6 +30,7 @@ export type SessionOptions = Readonly<{
   signal?: AbortSignal;
   connectTimeoutMs?: number;
   tls?: SessionTLSOptions;
+  handlers?: SessionHandlers;
 }>;
 
 export type ConnectionControllerOptions = Readonly<{
@@ -69,23 +71,18 @@ export async function connect(
   } catch {
     throw new ConnectError("invalid_options");
   }
+  const rpcRouter = options.handlers === undefined
+    ? undefined
+    : freezeSessionHandlersForConnector(options.handlers);
   const connector = new SessionConnectorV2(
     lease,
     composeCandidateAttemptFactoryV2({
       websocket: createWebSocketCandidateFactoryV2((url, subprotocol) => wsFactory(url, origin, subprotocol)),
-      webtransport: createWebTransportCandidateFactoryV2(async (candidate, artifact, signal) =>
-        await createNodeWebTransportClientV2(candidate.normalized_url, {
-          path: artifact.path.kind,
-          inboundBidirectionalStreamCapacity: artifact.session.max_inbound_streams + 2,
-          signal,
-          ...(options.tls?.serverCertificateHash === undefined
-            ? {}
-            : { serverCertificateHash: options.tls.serverCertificateHash }),
-        })),
     }),
     {
       capability: NODE_RUNTIME_CAPABILITY_V2,
       runtime: nodeSessionRuntimeV2,
+      ...(rpcRouter === undefined ? {} : { rpcRouter }),
       ...(options.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: options.connectTimeoutMs }),
     },
   );

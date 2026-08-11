@@ -303,6 +303,11 @@ func (session *Session) CloseWithErrorContext(ctx context.Context, applicationEr
 	return errors.Join(session.closeErr, context.Cause(ctx))
 }
 
+// Flush waits until peer processing crosses the current mux write boundary.
+func (session *Session) Flush(ctx context.Context) error {
+	return session.mux.Flush(ctx)
+}
+
 func normalizeWebSocketShutdownError(err error, allowTimeout bool, applicationError carrier.ApplicationError) error {
 	if err == nil || errors.Is(err, net.ErrClosed) || errors.Is(err, gorillaws.ErrCloseSent) ||
 		errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {

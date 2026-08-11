@@ -39,6 +39,54 @@ var requiredSharedFixtureIDs = []string{
 	"session_wire_v2",
 }
 
+var retiredProductionCarrierCapabilityIDs = []string{
+	"carrier/rust-loopback-plaintext-unsupported",
+	"node_raw_quic",
+	"node_webtransport",
+	"rust_webtransport",
+}
+
+var expectedServerParityEntrypoints = map[string]string{
+	"go/endpoint-client/websocket/direct/connect":                                   "flowersec.Connect",
+	"go/endpoint-client/websocket/tunnel/connect":                                   "flowersec.Connect",
+	"go/direct-server/websocket/direct/accept":                                      "flowersec.NewAcceptor/NewWebSocketDirectListener",
+	"go/tunnel-runtime/websocket/tunnel/pair-forward":                               "flowersec.NewTunnelRuntime/NewWebSocketTunnelListener",
+	"go/endpoint-client/raw-quic/direct/connect":                                    "flowersec.Connect",
+	"go/endpoint-client/raw-quic/tunnel/connect":                                    "flowersec.Connect",
+	"go/direct-server/raw-quic/direct/accept":                                       "flowersec.NewAcceptor/NewRawQUICDirectListener",
+	"go/tunnel-runtime/raw-quic/tunnel/pair-forward":                                "flowersec.NewTunnelRuntime/NewRawQUICTunnelListener",
+	"go/endpoint-client/webtransport/direct/connect":                                "flowersec.Connect",
+	"go/endpoint-client/webtransport/tunnel/connect":                                "flowersec.Connect",
+	"go/direct-server/webtransport/direct/accept":                                   "flowersec.NewAcceptor/NewWebTransportDirectListener",
+	"go/tunnel-runtime/webtransport/tunnel/pair-forward":                            "flowersec.NewTunnelRuntime/NewWebTransportTunnelListener",
+	"go/control-plane/carrier-neutral/carrier-neutral/issue-authorize":              "flowersec-go/v2/controlplane",
+	"go/proxy-server/carrier-neutral/direct/proxy":                                  "flowersec.NewProxyServer",
+	"node-typescript/endpoint-client/websocket/direct/connect":                      "@floegence/flowersec-core/node connect",
+	"node-typescript/endpoint-client/websocket/tunnel/connect":                      "@floegence/flowersec-core/node connect",
+	"node-typescript/direct-server/websocket/direct/accept":                         "@floegence/flowersec-core/node createAcceptor",
+	"node-typescript/tunnel-runtime/websocket/tunnel/pair-forward":                  "@floegence/flowersec-core/node createTunnelRuntime",
+	"node-typescript/control-plane/carrier-neutral/carrier-neutral/issue-authorize": "@floegence/flowersec-core/node Issuer/authorizeRuntime",
+	"node-typescript/proxy-server/carrier-neutral/direct/proxy":                     "@floegence/flowersec-core/node ProxyServer",
+	"rust/endpoint-client/websocket/direct/connect":                                 "flowersec::connect",
+	"rust/endpoint-client/websocket/tunnel/connect":                                 "flowersec::connect",
+	"rust/direct-server/websocket/direct/accept":                                    "flowersec::Acceptor::bind_websocket",
+	"rust/tunnel-runtime/websocket/tunnel/pair-forward":                             "flowersec::TunnelRuntime::bind_websocket",
+	"rust/endpoint-client/raw-quic/direct/connect":                                  "flowersec::connect",
+	"rust/endpoint-client/raw-quic/tunnel/connect":                                  "flowersec::connect",
+	"rust/direct-server/raw-quic/direct/accept":                                     "flowersec::Acceptor",
+	"rust/tunnel-runtime/raw-quic/tunnel/pair-forward":                              "flowersec::TunnelRuntime::bind_raw_quic",
+	"rust/control-plane/carrier-neutral/carrier-neutral/issue-authorize":            "flowersec::controlplane",
+	"rust/proxy-server/carrier-neutral/direct/proxy":                                "flowersec::ProxyServer",
+}
+
+var expectedPortableServerEntrypoints = map[string]map[string]string{
+	"server_admission_paths": {
+		"go":         "flowersec.NewAcceptor: WebSocket/raw QUIC/WebTransport direct",
+		"typescript": "@floegence/flowersec-core/node createAcceptor: WebSocket direct",
+		"rust":       "flowersec::Acceptor: WebSocket and raw QUIC direct",
+	},
+}
+
 type capabilityManifest struct {
 	Version                     int                         `json:"version"`
 	Languages                   []string                    `json:"languages"`
@@ -46,6 +94,24 @@ type capabilityManifest struct {
 	PortableCapabilities        []portableCapability        `json:"portable_capabilities"`
 	RuntimeSpecificCapabilities []runtimeSpecificCapability `json:"runtime_specific_capabilities"`
 	SharedFixtures              []sharedFixture             `json:"shared_fixtures"`
+	ServerParityContract        *serverParityContract       `json:"server_parity_contract,omitempty"`
+}
+
+type serverParityContract struct {
+	Version int                `json:"version"`
+	Units   []serverParityUnit `json:"units"`
+}
+
+type serverParityUnit struct {
+	Runtime    string   `json:"runtime"`
+	Role       string   `json:"deployment-role"`
+	Carrier    string   `json:"carrier"`
+	Path       string   `json:"path"`
+	Feature    string   `json:"feature"`
+	Status     string   `json:"status"`
+	Entrypoint string   `json:"entrypoint,omitempty"`
+	Reason     string   `json:"reason,omitempty"`
+	TestIDs    []string `json:"test_ids,omitempty"`
 }
 
 type portableCapability struct {
@@ -56,11 +122,10 @@ type portableCapability struct {
 }
 
 type capabilityImplementation struct {
-	Status              string   `json:"status"`
-	Entrypoint          string   `json:"entrypoint,omitempty"`
-	Reason              string   `json:"reason,omitempty"`
-	AlternativeBoundary string   `json:"alternative_boundary,omitempty"`
-	TestIDs             []string `json:"test_ids"`
+	Status     string   `json:"status"`
+	Entrypoint string   `json:"entrypoint,omitempty"`
+	Reason     string   `json:"reason,omitempty"`
+	TestIDs    []string `json:"test_ids,omitempty"`
 }
 
 type runtimeSpecificCapability struct {
@@ -135,21 +200,36 @@ type proxyDefaults struct {
 
 type interopMatrix struct {
 	Version            int                        `json:"version"`
-	ReferenceLanguage  string                     `json:"reference_language"`
 	Languages          []string                   `json:"languages"`
+	ServerRuntimes     []string                   `json:"server_runtimes"`
 	Cases              []string                   `json:"cases"`
-	Cells              []interopCell              `json:"cells"`
+	DirectCells        []directInteropCell        `json:"direct_cells"`
+	TunnelTopologies   []tunnelInteropTopology    `json:"tunnel_topologies"`
 	CapabilityCoverage map[string]interopCoverage `json:"capability_coverage"`
 }
 
-type interopCell struct {
-	ID       string   `json:"id"`
-	Client   string   `json:"client"`
-	Server   string   `json:"server"`
-	Carriers []string `json:"carriers"`
-	Paths    []string `json:"paths"`
-	Cases    []string `json:"cases"`
-	TestIDs  []string `json:"test_ids"`
+type directInteropCell struct {
+	ID      string   `json:"id"`
+	Client  string   `json:"client"`
+	Server  string   `json:"server"`
+	Carrier string   `json:"carrier"`
+	Cases   []string `json:"cases"`
+	Status  string   `json:"status"`
+	Reason  string   `json:"reason,omitempty"`
+	TestIDs []string `json:"test_ids,omitempty"`
+}
+
+type tunnelInteropTopology struct {
+	ID              string   `json:"id"`
+	EndpointA       string   `json:"endpoint_a"`
+	IngressCarrierA string   `json:"ingress_carrier_a"`
+	TunnelRuntime   string   `json:"tunnel_runtime"`
+	EndpointB       string   `json:"endpoint_b"`
+	IngressCarrierB string   `json:"ingress_carrier_b"`
+	Cases           []string `json:"cases"`
+	Status          string   `json:"status"`
+	Reason          string   `json:"reason,omitempty"`
+	TestIDs         []string `json:"test_ids,omitempty"`
 }
 
 type interopCoverage struct {
@@ -248,6 +328,9 @@ func verifyParity(repoRoot string) error {
 	if err != nil {
 		return err
 	}
+	if err := validateServerParityContract(m.ServerParityContract); err != nil {
+		return err
+	}
 	transport, err := loadTransportV2Contract(repoRoot)
 	if err != nil {
 		return err
@@ -256,27 +339,18 @@ func verifyParity(repoRoot string) error {
 	if err != nil {
 		return err
 	}
-	var incomplete []string
 	for _, capability := range m.PortableCapabilities {
 		for _, language := range m.Languages {
 			implementation := capability.Implementations[language]
-			if implementation.Status != "complete" {
-				if capability.Layer == "portable_core" {
-					incomplete = append(incomplete, capability.ID+":"+language+"="+implementation.Status)
-				}
-				if implementation.Status == "unsupported" {
-					if err := requireRegistryConsumers(registryIDs, "capability "+capability.ID+" language "+language, implementation.TestIDs); err != nil {
-						return err
-					}
-				}
-				continue
-			}
-			if implementation.Status == "complete" {
+			if implementation.Status == "supported" {
 				if err := requireRegistryConsumers(registryIDs, "capability "+capability.ID+" language "+language, implementation.TestIDs); err != nil {
 					return err
 				}
 			}
 		}
+	}
+	if err := validateServerParityRegistry(m.ServerParityContract, registryIDs); err != nil {
+		return err
 	}
 	for _, capability := range m.RuntimeSpecificCapabilities {
 		if err := requireRegistryConsumers(registryIDs, "runtime-specific capability "+capability.ID, capability.TestIDs); err != nil {
@@ -294,10 +368,6 @@ func verifyParity(repoRoot string) error {
 				}
 			}
 		}
-	}
-	if len(incomplete) > 0 {
-		slices.Sort(incomplete)
-		return fmt.Errorf("portable language parity is incomplete:\n  - %s", strings.Join(incomplete, "\n  - "))
 	}
 	if err := verifyInteropMatrix(repoRoot, m); err != nil {
 		return err
@@ -435,13 +505,25 @@ func validateConnectionControllerRecoveryDomain(
 
 var connectionControllerRecoveryLanguages = []string{"go", "typescript", "swift", "rust"}
 
+var directInteropCases = []string{
+	"admission", "rpc", "notification", "stream-metadata", "stream-fin", "stream-reset",
+	"rekey", "liveness", "close", "cancel", "cleanup",
+}
+
+var tunnelInteropCases = []string{
+	"admission", "rpc", "notification", "stream-metadata", "stream-fin", "stream-reset",
+	"rekey", "liveness", "close", "cancel", "cleanup", "pairing", "opaque-forwarding",
+}
+
+var allInteropCases = append(append(slices.Clone(tunnelInteropCases), "datagram"), "datagram-forwarding")
+
 func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) error {
 	var matrix interopMatrix
 	if err := decodeStrictJSONFile(filepath.Join(repoRoot, interopMatrixPath), &matrix); err != nil {
 		return fmt.Errorf("parse %s: %w", interopMatrixPath, err)
 	}
-	if matrix.Version != 2 || matrix.ReferenceLanguage != "go" {
-		return fmt.Errorf("%s must declare version 2 with Go as the reference language", interopMatrixPath)
+	if matrix.Version != 3 {
+		return fmt.Errorf("%s must declare version 3", interopMatrixPath)
 	}
 	if !slices.Equal(matrix.Languages, capabilities.Languages) {
 		return fmt.Errorf("%s languages must match %s", interopMatrixPath, capabilityManifestPath)
@@ -449,46 +531,34 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	if err := requireUnique("interop cases", matrix.Cases); err != nil {
 		return err
 	}
+	if !slices.Equal(matrix.Cases, allInteropCases) {
+		return fmt.Errorf("interop matrix cases must match the executable semantic contract: %v", allInteropCases)
+	}
 	if len(matrix.Cases) == 0 {
 		return errors.New("interop matrix cases must not be empty")
 	}
-	if len(matrix.Cells) == 0 {
-		return errors.New("interop matrix must contain executable v2 cells")
+	if !slices.Equal(matrix.ServerRuntimes, []string{"go", "rust", "node-typescript"}) {
+		return errors.New("interop matrix server_runtimes must be [go rust node-typescript]")
+	}
+	if len(matrix.DirectCells) == 0 || len(matrix.TunnelTopologies) == 0 {
+		return errors.New("interop matrix must contain direct cells and explicit tunnel topologies")
 	}
 	registryIDs, err := loadRegistryIDs(repoRoot)
 	if err != nil {
 		return err
 	}
-	cellIDs := make([]string, 0, len(matrix.Cells))
-	usedTestIDs := make(map[string]string)
-	for _, cell := range matrix.Cells {
+	if err := validateDirectInteropCells(matrix, registryIDs); err != nil {
+		return err
+	}
+	if err := validateTunnelInteropTopologies(matrix, registryIDs); err != nil {
+		return err
+	}
+	cellIDs := make([]string, 0, len(matrix.DirectCells)+len(matrix.TunnelTopologies))
+	for _, cell := range matrix.DirectCells {
 		cellIDs = append(cellIDs, cell.ID)
-		if cell.Client != "go" && cell.Server != "go" {
-			return fmt.Errorf("non-Go pairwise interop edge is forbidden: %s", cell.ID)
-		}
-		if !slices.Contains(matrix.Languages, cell.Client) || !slices.Contains(matrix.Languages, cell.Server) {
-			return fmt.Errorf("interop cell %s names an unknown language", cell.ID)
-		}
-		if len(cell.Carriers) == 0 || len(cell.Paths) == 0 || len(cell.Cases) == 0 {
-			return fmt.Errorf("interop cell %s must declare carriers, paths, and cases", cell.ID)
-		}
-		for _, caseID := range cell.Cases {
-			if !slices.Contains(matrix.Cases, caseID) {
-				return fmt.Errorf("interop cell %s references unknown case %s", cell.ID, caseID)
-			}
-		}
-		if len(cell.TestIDs) == 0 {
-			return fmt.Errorf("interop cell %s must declare stable test_ids", cell.ID)
-		}
-		for _, testID := range cell.TestIDs {
-			if _, ok := registryIDs[testID]; !ok {
-				return fmt.Errorf("interop cell %s references unknown registry test_id %q", cell.ID, testID)
-			}
-			if previous, ok := usedTestIDs[testID]; ok {
-				return fmt.Errorf("registry test_id %q is consumed by both interop cells %s and %s", testID, previous, cell.ID)
-			}
-			usedTestIDs[testID] = cell.ID
-		}
+	}
+	for _, topology := range matrix.TunnelTopologies {
+		cellIDs = append(cellIDs, topology.ID)
 	}
 	if err := requireUnique("interop cell ids", cellIDs); err != nil {
 		return err
@@ -516,7 +586,130 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	if len(matrix.CapabilityCoverage) != len(requiredPortableCapabilityIDs) {
 		return errors.New("interop capability coverage must contain every portable capability exactly once")
 	}
-	fmt.Printf("Go-reference Transport v2 interop matrix OK: %d executable cells, %d cases\n", len(matrix.Cells), len(matrix.Cases))
+	fmt.Printf("Transport v2 interop matrix OK: %d direct cells, %d tunnel topologies, %d cases\n", len(matrix.DirectCells), len(matrix.TunnelTopologies), len(matrix.Cases))
+	return nil
+}
+
+func validateDirectInteropCells(matrix interopMatrix, registryIDs map[string]struct{}) error {
+	directSeen := make(map[string]bool)
+	for _, cell := range matrix.DirectCells {
+		if !slices.Contains(matrix.ServerRuntimes, cell.Client) || !slices.Contains(matrix.ServerRuntimes, cell.Server) {
+			return fmt.Errorf("interop cell %s names an unknown language", cell.ID)
+		}
+		if !slices.Contains([]string{"websocket", "raw-quic", "webtransport"}, cell.Carrier) || len(cell.Cases) == 0 {
+			return fmt.Errorf("interop cell %s must declare one carrier and cases", cell.ID)
+		}
+		key := strings.Join([]string{cell.Client, cell.Server, cell.Carrier}, "/")
+		if directSeen[key] {
+			return fmt.Errorf("duplicate direct interop cell %s", key)
+		}
+		directSeen[key] = true
+		for _, caseID := range cell.Cases {
+			if !slices.Contains(matrix.Cases, caseID) {
+				return fmt.Errorf("interop cell %s references unknown case %s", cell.ID, caseID)
+			}
+		}
+		expectedCases := slices.Clone(directInteropCases)
+		if cell.Carrier != "websocket" {
+			expectedCases = append(expectedCases, "datagram")
+		}
+		if !slices.Equal(cell.Cases, expectedCases) {
+			return fmt.Errorf("interop cell %s cases do not match its executable carrier contract", cell.ID)
+		}
+		switch cell.Status {
+		case "supported":
+			if cell.Reason != "" {
+				return fmt.Errorf("supported interop cell %s must not declare a reason", cell.ID)
+			}
+			if err := requireRegistryConsumers(registryIDs, "interop cell "+cell.ID, cell.TestIDs); err != nil {
+				return err
+			}
+		case "unsupported":
+			if len(cell.TestIDs) != 0 {
+				return fmt.Errorf("unsupported interop cell %s must not declare test_ids", cell.ID)
+			}
+			if !isStableUnsupportedReason(cell.Reason) {
+				return fmt.Errorf("unsupported interop cell %s requires a stable English reason", cell.ID)
+			}
+		default:
+			return fmt.Errorf("interop cell %s has forbidden status %q", cell.ID, cell.Status)
+		}
+	}
+	for _, client := range matrix.ServerRuntimes {
+		for _, server := range matrix.ServerRuntimes {
+			for _, carrier := range []string{"websocket", "raw-quic", "webtransport"} {
+				key := strings.Join([]string{client, server, carrier}, "/")
+				if !directSeen[key] {
+					return fmt.Errorf("missing direct interop cell %s", key)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateTunnelInteropTopologies(matrix interopMatrix, registryIDs map[string]struct{}) error {
+	for _, topology := range matrix.TunnelTopologies {
+		if !slices.Contains(matrix.ServerRuntimes, topology.EndpointA) || !slices.Contains(matrix.ServerRuntimes, topology.EndpointB) || !slices.Contains(matrix.ServerRuntimes, topology.TunnelRuntime) {
+			return fmt.Errorf("tunnel topology %s names an unknown runtime", topology.ID)
+		}
+		if !slices.Contains([]string{"websocket", "raw-quic", "webtransport"}, topology.IngressCarrierA) || !slices.Contains([]string{"websocket", "raw-quic", "webtransport"}, topology.IngressCarrierB) || len(topology.Cases) == 0 {
+			return fmt.Errorf("tunnel topology %s has invalid ingress or cases", topology.ID)
+		}
+		for _, caseID := range topology.Cases {
+			if !slices.Contains(matrix.Cases, caseID) {
+				return fmt.Errorf("tunnel topology %s references unknown case %s", topology.ID, caseID)
+			}
+		}
+		expectedCases := slices.Clone(tunnelInteropCases)
+		if topology.IngressCarrierA != "websocket" {
+			expectedCases = append(expectedCases, "datagram", "datagram-forwarding")
+		}
+		if !slices.Equal(topology.Cases, expectedCases) {
+			return fmt.Errorf("tunnel topology %s cases do not match its executable carrier contract", topology.ID)
+		}
+		switch topology.Status {
+		case "supported":
+			if topology.Reason != "" {
+				return fmt.Errorf("supported tunnel topology %s must not declare a reason", topology.ID)
+			}
+			if err := requireRegistryConsumers(registryIDs, "tunnel topology "+topology.ID, topology.TestIDs); err != nil {
+				return err
+			}
+		case "unsupported":
+			if len(topology.TestIDs) != 0 {
+				return fmt.Errorf("unsupported tunnel topology %s must not declare test_ids", topology.ID)
+			}
+			if !isStableUnsupportedReason(topology.Reason) {
+				return fmt.Errorf("unsupported tunnel topology %s requires a stable English reason", topology.ID)
+			}
+		default:
+			return fmt.Errorf("tunnel topology %s has forbidden status %q", topology.ID, topology.Status)
+		}
+	}
+	for _, endpointA := range matrix.ServerRuntimes {
+		for _, endpointB := range matrix.ServerRuntimes {
+			for _, carrier := range []string{"websocket", "raw-quic", "webtransport"} {
+				covered := slices.ContainsFunc(matrix.TunnelTopologies, func(topology tunnelInteropTopology) bool {
+					return topology.EndpointA == endpointA && topology.EndpointB == endpointB &&
+						topology.IngressCarrierA == carrier && topology.IngressCarrierB == carrier
+				})
+				if !covered {
+					return fmt.Errorf("missing tunnel endpoint topology %s/%s/%s", endpointA, endpointB, carrier)
+				}
+			}
+		}
+	}
+	for _, relay := range matrix.ServerRuntimes {
+		for _, carrier := range []string{"websocket", "raw-quic", "webtransport"} {
+			covered := slices.ContainsFunc(matrix.TunnelTopologies, func(topology tunnelInteropTopology) bool {
+				return topology.TunnelRuntime == relay && topology.IngressCarrierA == carrier && topology.IngressCarrierB == carrier
+			})
+			if !covered {
+				return fmt.Errorf("missing tunnel relay topology %s/%s", relay, carrier)
+			}
+		}
+	}
 	return nil
 }
 
@@ -645,16 +838,15 @@ func sameStringSet(left, right []string) bool {
 }
 
 func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
-	data, err := os.ReadFile(filepath.Join(repoRoot, capabilityManifestPath))
-	if err != nil {
-		return nil, err
-	}
 	var m capabilityManifest
-	if err := json.Unmarshal(data, &m); err != nil {
+	if err := decodeStrictJSONFile(filepath.Join(repoRoot, capabilityManifestPath), &m); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", capabilityManifestPath, err)
 	}
 	if m.Version != 2 {
 		return nil, fmt.Errorf("unsupported capability manifest version %d", m.Version)
+	}
+	if err := validateServerParityContract(m.ServerParityContract); err != nil {
+		return nil, err
 	}
 	if !slices.Equal(m.CapabilityLayers, []string{"portable_core", "server_integration", "control_plane", "sdk_profile", "language_convenience"}) {
 		return nil, fmt.Errorf("capability_layers must be [portable_core server_integration control_plane sdk_profile language_convenience]")
@@ -684,21 +876,28 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 				return nil, fmt.Errorf("capability %s is missing language %s", capability.ID, language)
 			}
 			switch implementation.Status {
-			case "complete":
+			case "supported":
 				if len(implementation.TestIDs) != 1 {
-					return nil, fmt.Errorf("capability %s language %s complete status requires exactly one test_id", capability.ID, language)
+					return nil, fmt.Errorf("capability %s language %s supported status requires exactly one test_id", capability.ID, language)
 				}
 				if capability.Layer != "portable_core" && strings.TrimSpace(implementation.Entrypoint) == "" {
-					return nil, fmt.Errorf("capability %s language %s complete status requires an entrypoint", capability.ID, language)
+					return nil, fmt.Errorf("capability %s language %s supported status requires an entrypoint", capability.ID, language)
 				}
-				if implementation.Reason != "" || implementation.AlternativeBoundary != "" {
-					return nil, fmt.Errorf("capability %s language %s complete status must not declare unsupported metadata", capability.ID, language)
+				if implementation.Reason != "" {
+					return nil, fmt.Errorf("capability %s language %s supported status must not declare an unsupported reason", capability.ID, language)
+				}
+				if byLanguage, ok := expectedPortableServerEntrypoints[capability.ID]; ok {
+					if expected, constrained := byLanguage[language]; constrained && implementation.Entrypoint != expected {
+						return nil, fmt.Errorf("capability %s language %s has production entrypoint %q, want %q", capability.ID, language, implementation.Entrypoint, expected)
+					}
 				}
 			case "unsupported":
-				if strings.TrimSpace(implementation.Reason) == "" || strings.TrimSpace(implementation.AlternativeBoundary) == "" || len(implementation.TestIDs) != 1 {
-					return nil, fmt.Errorf("capability %s language %s unsupported status requires reason, alternative_boundary, and exactly one test_id", capability.ID, language)
+				if strings.TrimSpace(implementation.Entrypoint) != "" || len(implementation.TestIDs) != 0 {
+					return nil, fmt.Errorf("capability %s language %s unsupported status must not declare an entrypoint or test_ids", capability.ID, language)
 				}
-			case "planned", "blocked":
+				if !isStableUnsupportedReason(implementation.Reason) {
+					return nil, fmt.Errorf("capability %s language %s unsupported status requires a stable English reason", capability.ID, language)
+				}
 			default:
 				return nil, fmt.Errorf("capability %s language %s has unsupported status %q", capability.ID, language, implementation.Status)
 			}
@@ -720,6 +919,9 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 	runtimeIDs := make([]string, 0, len(m.RuntimeSpecificCapabilities))
 	for _, capability := range m.RuntimeSpecificCapabilities {
 		runtimeIDs = append(runtimeIDs, capability.ID)
+		if slices.Contains(retiredProductionCarrierCapabilityIDs, capability.ID) {
+			return nil, fmt.Errorf("runtime-specific capability %s is a retired production carrier capability", capability.ID)
+		}
 		if capability.Layer != "server_integration" && capability.Layer != "control_plane" && capability.Layer != "sdk_profile" && capability.Layer != "language_convenience" {
 			return nil, fmt.Errorf("runtime-specific capability %s has unsupported layer %q", capability.ID, capability.Layer)
 		}
@@ -769,6 +971,101 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 		}
 	}
 	return &m, nil
+}
+
+func validateServerParityContract(contract *serverParityContract) error {
+	if contract == nil || contract.Version != 1 {
+		return errors.New("server_parity_contract must declare version 1")
+	}
+	validRuntime := map[string]bool{"go": true, "rust": true, "node-typescript": true}
+	validRole := map[string]bool{"endpoint-client": true, "direct-server": true, "tunnel-runtime": true, "control-plane": true, "proxy-server": true}
+	validCarrier := map[string]bool{"websocket": true, "raw-quic": true, "webtransport": true, "carrier-neutral": true}
+	validPath := map[string]bool{"direct": true, "tunnel": true, "carrier-neutral": true}
+	expected := make(map[string]bool)
+	for runtime := range validRuntime {
+		for carrier := range map[string]bool{"websocket": true, "raw-quic": true, "webtransport": true} {
+			expected[strings.Join([]string{runtime, "endpoint-client", carrier, "direct", "connect"}, "/")] = true
+			expected[strings.Join([]string{runtime, "endpoint-client", carrier, "tunnel", "connect"}, "/")] = true
+			expected[strings.Join([]string{runtime, "direct-server", carrier, "direct", "accept"}, "/")] = true
+			expected[strings.Join([]string{runtime, "tunnel-runtime", carrier, "tunnel", "pair-forward"}, "/")] = true
+		}
+		expected[strings.Join([]string{runtime, "control-plane", "carrier-neutral", "carrier-neutral", "issue-authorize"}, "/")] = true
+		expected[strings.Join([]string{runtime, "proxy-server", "carrier-neutral", "direct", "proxy"}, "/")] = true
+	}
+	seen := make(map[string]bool)
+	for _, unit := range contract.Units {
+		if !validRuntime[unit.Runtime] || !validRole[unit.Role] || !validCarrier[unit.Carrier] || !validPath[unit.Path] || strings.TrimSpace(unit.Feature) == "" {
+			return fmt.Errorf("invalid server parity unit dimensions: %+v", unit)
+		}
+		key := strings.Join([]string{unit.Runtime, unit.Role, unit.Carrier, unit.Path, unit.Feature}, "/")
+		if !expected[key] {
+			return fmt.Errorf("unexpected server parity unit %s", key)
+		}
+		if seen[key] {
+			return fmt.Errorf("duplicate server parity unit %s", key)
+		}
+		seen[key] = true
+		switch unit.Status {
+		case "supported":
+			if strings.TrimSpace(unit.Entrypoint) == "" {
+				return fmt.Errorf("supported server parity unit %s requires an entrypoint", key)
+			}
+			expectedEntrypoint, ok := expectedServerParityEntrypoints[key]
+			if !ok || unit.Entrypoint != expectedEntrypoint {
+				return fmt.Errorf("supported server parity unit %s has production entrypoint %q, want %q", key, unit.Entrypoint, expectedEntrypoint)
+			}
+			if len(unit.TestIDs) != 1 {
+				return fmt.Errorf("supported server parity unit %s requires exactly one test_id", key)
+			}
+			if unit.Reason != "" {
+				return fmt.Errorf("supported server parity unit %s must not declare a reason", key)
+			}
+		case "unsupported":
+			if strings.TrimSpace(unit.Entrypoint) != "" || len(unit.TestIDs) != 0 {
+				return fmt.Errorf("unsupported server parity unit %s must not declare an entrypoint or test_ids", key)
+			}
+			if !isStableUnsupportedReason(unit.Reason) {
+				return fmt.Errorf("unsupported server parity unit %s requires a stable English reason", key)
+			}
+		default:
+			return fmt.Errorf("server parity unit %s has forbidden status %q", key, unit.Status)
+		}
+	}
+	for key := range expected {
+		if !seen[key] {
+			return fmt.Errorf("missing required server parity unit %s", key)
+		}
+	}
+	return nil
+}
+
+func validateServerParityRegistry(contract *serverParityContract, registryIDs map[string]struct{}) error {
+	for _, unit := range contract.Units {
+		if unit.Status != "supported" {
+			continue
+		}
+		owner := strings.Join([]string{"server parity unit", unit.Runtime, unit.Role, unit.Carrier, unit.Path, unit.Feature}, " ")
+		if err := requireRegistryConsumers(registryIDs, owner, unit.TestIDs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var stableUnsupportedReasonPattern = regexp.MustCompile(`^[A-Z][ -~]{7,238}[.!?]$`)
+
+func isStableUnsupportedReason(reason string) bool {
+	reason = strings.TrimSpace(reason)
+	if !stableUnsupportedReasonPattern.MatchString(reason) {
+		return false
+	}
+	lower := strings.ToLower(reason)
+	for _, transient := range []string{"todo", "temporary", "pending", "planned", "not yet", "future work"} {
+		if strings.Contains(lower, transient) {
+			return false
+		}
+	}
+	return true
 }
 
 func verifyDefaults(repoRoot string) error {

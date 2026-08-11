@@ -329,7 +329,7 @@ func NewWebSocketCarrierDial(config WebSocketDialConfig) (Dial, error) {
 			return nil, err
 		}
 		handle := &webSocketAdmissionHandle{
-			conn: conn, subprotocol: subprotocol, resources: attemptResources,
+			conn: conn, subprotocol: subprotocol, resources: attemptResources, role: carrierws.ClientRole,
 		}
 		return handle, nil
 	}, nil
@@ -370,6 +370,30 @@ type ownedCarrierSession struct {
 
 func (session *ownedCarrierSession) Path() carrier.Path { return session.Session.Path() }
 
+// Optional carrier capabilities are not promoted through an embedded
+// interface. Preserve negotiated unreliable-message support when a dialer
+// owns the native session lifecycle.
+func (session *ownedCarrierSession) UnreliableAvailable() bool {
+	transport, ok := session.Session.(carrier.UnreliableTransport)
+	return ok && transport.UnreliableAvailable()
+}
+
+func (session *ownedCarrierSession) SendUnreliable(payload []byte) error {
+	transport, ok := session.Session.(carrier.UnreliableTransport)
+	if !ok {
+		return carrier.ErrUnreliableUnavailable
+	}
+	return transport.SendUnreliable(payload)
+}
+
+func (session *ownedCarrierSession) ReceiveUnreliable(ctx context.Context) ([]byte, error) {
+	transport, ok := session.Session.(carrier.UnreliableTransport)
+	if !ok {
+		return nil, carrier.ErrUnreliableUnavailable
+	}
+	return transport.ReceiveUnreliable(ctx)
+}
+
 func (session *ownedCarrierSession) CloseWithError(applicationError carrier.ApplicationError) error {
 	return session.CloseWithErrorContext(context.Background(), applicationError)
 }
@@ -406,6 +430,7 @@ type webSocketAdmissionHandle struct {
 	conn        *gorillaws.Conn
 	subprotocol string
 	resources   carrierws.ResourcePolicy
+	role        carrierws.Role
 	mu          sync.Mutex
 	session     *carrierws.Session
 
@@ -417,14 +442,49 @@ func (handle *webSocketAdmissionHandle) Admission() admissionv2.ClientExchange {
 	if handle == nil || handle.conn == nil {
 		return nil
 	}
-	return websocketadmission.NewClientExchange(handle.conn)
+	return &webSocketAdmissionExchange{
+		handle:   handle,
+		exchange: websocketadmission.NewClientExchange(handle.conn),
+	}
+}
+
+type webSocketAdmissionExchange struct {
+	handle   *webSocketAdmissionHandle
+	exchange admissionv2.ClientExchange
+}
+
+func (exchange *webSocketAdmissionExchange) Commit(ctx context.Context, rawFSB2 []byte) error {
+	if exchange == nil || exchange.handle == nil || exchange.exchange == nil {
+		return net.ErrClosed
+	}
+	decoded, err := artifactv2.ParseRequest(rawFSB2)
+	if err != nil {
+		return err
+	}
+	if err := exchange.exchange.Commit(ctx, rawFSB2); err != nil {
+		return err
+	}
+	role := carrierws.ClientRole
+	if decoded.Request.PathKind == artifactv2.PathTunnel && decoded.Request.Role == 2 {
+		role = carrierws.ServerRole
+	}
+	exchange.handle.mu.Lock()
+	exchange.handle.role = role
+	exchange.handle.mu.Unlock()
+	return nil
 }
 
 func (handle *webSocketAdmissionHandle) Establish() (carrier.Session, error) {
 	if handle == nil || handle.conn == nil {
 		return nil, ErrInvalidCarrierCandidate
 	}
-	session, err := carrierws.NewAfterAdmission(handle.conn, carrierws.ClientRole, handle.subprotocol, handle.resources)
+	handle.mu.Lock()
+	role := handle.role
+	handle.mu.Unlock()
+	if role == 0 {
+		role = carrierws.ClientRole
+	}
+	session, err := carrierws.NewAfterAdmission(handle.conn, role, handle.subprotocol, handle.resources)
 	if err != nil {
 		_ = handle.conn.Close()
 		return nil, err

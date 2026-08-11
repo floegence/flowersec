@@ -45,8 +45,10 @@ Flowersec keeps the application session separate from the path used to carry it:
 2. The SDK establishes a secure session over an available direct or relayed connection.
 3. Your application uses RPC, notifications, and byte streams through the same session API.
 
-Direct and relayed connections expose the same session to your code. Transport
-selection, credentials, and routing stay inside the SDK and runtime.
+Direct connections expose an application Session to the accepting service. A
+tunnel relay exposes no application Session: it only pairs and forwards opaque
+carrier streams while the two endpoint runtimes keep the end-to-end Session.
+Transport selection, credentials, and routing stay inside the SDK and runtime.
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
@@ -88,17 +90,19 @@ syntax without changing shared behavior.
 | --- | :---: | :---: | :---: | :---: |
 | End-to-end encrypted sessions | Yes | Yes | Yes | Yes |
 | Send RPC calls and notifications | Yes | Yes | Yes | Yes |
-| Receive RPC notifications | No | Yes | No | No |
+| Receive RPC notifications | Yes | Yes | Yes | Yes |
 | Reliable byte streams | Yes | Yes | Yes | Yes |
 | Long-lived connection recovery | Yes | Yes | Yes | Yes |
 | Unreliable messages when available | Yes | Yes | No | Yes |
 | Browser connections | No | Yes | No | No |
 | Apple client connections | No | No | Yes | No |
 | Native QUIC connections | Yes | No | No | Yes |
-| WebSocket connections | Yes | Yes | Yes | No |
+| WebSocket connections | Yes | Yes | Yes | Yes |
 | WebTransport connections | Yes | Yes | No | No |
 | Server-side session acceptance | Yes | Node.js | No | Yes |
-| Control-plane invitation issuance | Go package | Application-owned | Application-owned | Application-owned |
+| Opaque tunnel runtime | Yes | Node.js | No | Yes |
+| Control-plane invitation issuance | Yes | Node.js | No | Yes |
+| HTTP and WebSocket ProxyServer | Yes | Node.js | No | Yes |
 
 See the SDK guides for the exact platform and connection combinations supported
 by each package.

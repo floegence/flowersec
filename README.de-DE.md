@@ -80,17 +80,19 @@ Alle vier SDKs verwenden dasselbe Sitzungsmodell. Der Plattformumfang unterschei
 | --- | :---: | :---: | :---: | :---: |
 | Ende-zu-Ende-verschlüsselte Sitzungen | Ja | Ja | Ja | Ja |
 | RPC-Aufrufe und Benachrichtigungen senden | Ja | Ja | Ja | Ja |
-| RPC-Benachrichtigungen empfangen | Nein | Ja | Nein | Nein |
+| RPC-Benachrichtigungen empfangen | Ja | Ja | Ja | Ja |
 | Zuverlässige Byte-Streams | Ja | Ja | Ja | Ja |
 | Wiederherstellung langlebiger Verbindungen | Ja | Ja | Ja | Ja |
 | Unzuverlässige Nachrichten, wenn verfügbar | Ja | Ja | Nein | Ja |
 | Browserverbindungen | Nein | Ja | Nein | Nein |
 | Apple-Clientverbindungen | Nein | Nein | Ja | Nein |
 | Native QUIC-Verbindungen | Ja | Nein | Nein | Ja |
-| WebSocket-Verbindungen | Ja | Ja | Ja | Nein |
+| WebSocket-Verbindungen | Ja | Ja | Ja | Ja |
 | WebTransport-Verbindungen | Ja | Ja | Nein | Nein |
 | Serverseitige Sitzungsannahme | Ja | Node.js | Nein | Ja |
-| Verbindungseinladungen der Control Plane | Go-Paket | Anwendungsdienst | Anwendungsdienst | Anwendungsdienst |
+| Undurchsichtige Relay-Laufzeit | Ja | Node.js | Nein | Ja |
+| Verbindungseinladungen der Control Plane | Ja | Node.js | Nein | Ja |
+| HTTP- und WebSocket-ProxyServer | Ja | Node.js | Nein | Ja |
 
 Die SDK-Anleitungen nennen die genauen unterstützten Kombinationen aus Plattform und Verbindung.
 

@@ -13,7 +13,6 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-crypto.git", from: "4.5.0"),
-    .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.30.3"),
     .package(url: "https://github.com/apple/swift-nio.git", from: "2.82.0"),
     .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.30.0"),
   ],
@@ -22,7 +21,6 @@ let package = Package(
       name: "Flowersec",
       dependencies: [
         .product(name: "Crypto", package: "swift-crypto"),
-        .product(name: "AsyncHTTPClient", package: "async-http-client"),
         .product(name: "NIOCore", package: "swift-nio"),
         .product(name: "NIOHTTP1", package: "swift-nio"),
         .product(name: "NIOPosix", package: "swift-nio"),
@@ -37,7 +35,8 @@ let package = Package(
         "Flowersec",
         .product(name: "NIOFoundationCompat", package: "swift-nio"),
       ],
-      path: "flowersec-swift/Tests/FlowersecTests"
+      path: "flowersec-swift/Tests/FlowersecTests",
+      resources: [.copy("Fixtures")]
     ),
   ]
 )

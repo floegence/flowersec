@@ -9,7 +9,7 @@ import (
 
 func TestProxyServerPublicSurfaceIsApplicationOnly(t *testing.T) {
 	allowedOptions := map[string]struct{}{
-		"Upstream": {}, "UpstreamOrigin": {}, "AllowedUpstreamHosts": {},
+		"Upstream": {}, "UpstreamOrigin": {}, "AllowedUpstreamHosts": {}, "AllowedOrigins": {},
 		"MaxConcurrentStreams": {}, "MaxJSONFrameBytes": {}, "MaxChunkBytes": {},
 		"MaxBodyBytes": {}, "MaxWebSocketFrameBytes": {}, "DefaultHTTPRequestTimeout": {},
 		"MaxHTTPRequestTimeout": {}, "ExtraRequestHeaders": {}, "ExtraResponseHeaders": {},

@@ -3,7 +3,6 @@ package flowersec_test
 import (
 	"context"
 	"crypto/tls"
-	"net/http"
 	"reflect"
 	"testing"
 
@@ -47,8 +46,8 @@ func TestAcceptorRejectsIncompleteOptions(t *testing.T) {
 
 func TestAcceptorListenerRegistrationValidation(t *testing.T) {
 	serverTLS, _ := acceptorListenerTLS(t)
-	native, err := flowersec.NewRawQUICAcceptorListener(flowersec.RawQUICAcceptorListenerOptions{
-		Address: "127.0.0.1:0", TLSConfig: serverTLS, Path: flowersec.AcceptorPathDirect,
+	native, err := flowersec.NewRawQUICDirectListener(flowersec.RawQUICListenerOptions{
+		Address: "127.0.0.1:0", TLSConfig: serverTLS,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -62,19 +61,19 @@ func TestAcceptorListenerRegistrationValidation(t *testing.T) {
 	}
 
 	nativeOnly := base
-	nativeOnly.Listeners = []flowersec.AcceptorListener{native}
+	nativeOnly.Listeners = []flowersec.DirectListener{native}
 	if _, err := flowersec.NewAcceptor(nativeOnly); err != nil {
 		t.Fatalf("native-only acceptor unexpectedly required HTTP origins: %v", err)
 	}
 
 	duplicate := base
-	duplicate.Listeners = []flowersec.AcceptorListener{native, native}
+	duplicate.Listeners = []flowersec.DirectListener{native, native}
 	if _, err := flowersec.NewAcceptor(duplicate); err == nil {
 		t.Fatal("duplicate carrier/path registration unexpectedly succeeded")
 	}
 
 	webSocket := base
-	webSocket.Listeners = []flowersec.AcceptorListener{flowersec.NewWebSocketAcceptorListener(flowersec.AcceptorPathDirect)}
+	webSocket.Listeners = []flowersec.DirectListener{flowersec.NewWebSocketDirectListener()}
 	if _, err := flowersec.NewAcceptor(webSocket); err == nil {
 		t.Fatal("WebSocket acceptor without an exact origin allowlist unexpectedly succeeded")
 	}
@@ -88,20 +87,17 @@ func TestAcceptorListenerRegistrationValidation(t *testing.T) {
 	}
 }
 
-func TestAcceptorListenerConstructorsRejectInvalidPath(t *testing.T) {
+func TestAcceptorListenerConstructorsRejectInvalidOptions(t *testing.T) {
 	serverTLS, _ := acceptorListenerTLS(t)
-	if listener := flowersec.NewWebSocketAcceptorListener(flowersec.AcceptorPath("invalid")); listener != nil {
-		t.Fatal("invalid WebSocket path unexpectedly succeeded")
-	}
-	if listener, err := flowersec.NewRawQUICAcceptorListener(flowersec.RawQUICAcceptorListenerOptions{
-		Address: "127.0.0.1:0", TLSConfig: serverTLS, Path: flowersec.AcceptorPath("invalid"),
+	if listener, err := flowersec.NewRawQUICDirectListener(flowersec.RawQUICListenerOptions{
+		Address: "", TLSConfig: serverTLS,
 	}); err == nil || listener != nil {
-		t.Fatal("invalid raw QUIC path unexpectedly succeeded")
+		t.Fatal("invalid raw QUIC options unexpectedly succeeded")
 	}
-	if listener, err := flowersec.NewWebTransportAcceptorListener(flowersec.WebTransportAcceptorListenerOptions{
+	if listener, err := flowersec.NewWebTransportDirectListener(flowersec.WebTransportListenerOptions{
 		Address: "127.0.0.1:0", TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13},
-		Path: flowersec.AcceptorPath("invalid"), CheckOrigin: func(*http.Request) bool { return true },
+		CheckOrigin: nil,
 	}); err == nil || listener != nil {
-		t.Fatal("invalid WebTransport path unexpectedly succeeded")
+		t.Fatal("invalid WebTransport options unexpectedly succeeded")
 	}
 }

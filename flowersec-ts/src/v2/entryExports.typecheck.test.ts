@@ -4,7 +4,7 @@ import {
   ConnectError,
   createConnectionController as createBrowserConnectionController,
   type ArtifactSource as BrowserArtifactSource,
-  type BrowserConnectionControllerOptions,
+  type ConnectionControllerOptions as BrowserConnectionControllerOptions,
   type ConnectionController as BrowserConnectionController,
   type ConnectionSnapshot as BrowserConnectionSnapshot,
   type RetryDisposition as BrowserRetryDisposition,
@@ -14,7 +14,7 @@ import {
   type ArtifactSource as NodeArtifactSource,
   type ConnectionController as NodeConnectionController,
   type ConnectionSnapshot as NodeConnectionSnapshot,
-  type NodeConnectionControllerOptions,
+  type ConnectionControllerOptions as NodeConnectionControllerOptions,
   type RetryDisposition as NodeRetryDisposition,
 } from "../node/index.js";
 // @ts-expect-error runtime capability descriptors are package-internal.
