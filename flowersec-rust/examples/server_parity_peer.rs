@@ -3,7 +3,7 @@ use std::{
     io::{self, Read},
     net::SocketAddr,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -150,6 +150,29 @@ impl TunnelAuthorizer for ParityTunnelAuthorizer {
     }
 }
 
+#[derive(Clone, Default)]
+struct ExecutionLedger {
+    cases: Arc<Mutex<Vec<&'static str>>>,
+}
+
+impl ExecutionLedger {
+    fn record(&self, case_ids: &[&'static str]) {
+        let mut cases = self.cases.lock().expect("execution ledger lock poisoned");
+        for case_id in case_ids {
+            if !cases.contains(case_id) {
+                cases.push(case_id);
+            }
+        }
+    }
+
+    fn snapshot(&self) -> Vec<&'static str> {
+        self.cases
+            .lock()
+            .expect("execution ledger lock poisoned")
+            .clone()
+    }
+}
+
 #[derive(Serialize)]
 struct ResultMessage<'a> {
     #[serde(rename = "type")]
@@ -158,11 +181,11 @@ struct ResultMessage<'a> {
     carrier: &'a str,
     path: &'a str,
     cases: Vec<&'a str>,
-    active_sessions: usize,
-    active_streams: usize,
 }
 
-struct EchoRpc;
+struct EchoRpc {
+    executed: ExecutionLedger,
+}
 
 #[async_trait]
 impl RpcHandler for EchoRpc {
@@ -171,6 +194,7 @@ impl RpcHandler for EchoRpc {
         _type_id: u32,
         request: serde_json::Value,
     ) -> Result<serde_json::Value, RpcError> {
+        self.executed.record(&["rpc"]);
         Ok(request)
     }
 
@@ -182,6 +206,7 @@ impl RpcHandler for EchoRpc {
 struct BarrierRpc {
     value: &'static str,
     count: Arc<AtomicUsize>,
+    executed: ExecutionLedger,
 }
 
 #[async_trait]
@@ -195,6 +220,9 @@ impl RpcHandler for BarrierRpc {
             return Err(RpcError::new(400, Some("invalid barrier payload".into())).unwrap());
         }
         self.count.fetch_add(1, Ordering::SeqCst);
+        if self.value == "complete" {
+            self.executed.record(&["rekey", "liveness"]);
+        }
         Ok(request)
     }
 
@@ -206,6 +234,7 @@ impl RpcHandler for BarrierRpc {
 struct NotifyHandler {
     count: Arc<AtomicUsize>,
     received: Arc<Notify>,
+    executed: ExecutionLedger,
 }
 
 #[async_trait]
@@ -216,36 +245,84 @@ impl NotificationHandler for NotifyHandler {
         _request: serde_json::Value,
     ) -> Result<(), RpcError> {
         self.count.fetch_add(1, Ordering::SeqCst);
+        self.executed.record(&["notification"]);
         self.received.notify_one();
         Ok(())
     }
 }
 
-struct UnusedStreamHandler;
+struct EchoStreamHandler {
+    path: &'static str,
+    executed: ExecutionLedger,
+}
 
 #[async_trait]
-impl StreamHandler for UnusedStreamHandler {
+impl StreamHandler for EchoStreamHandler {
     async fn handle(
         &self,
-        _stream: &IncomingStream,
+        stream: &IncomingStream,
         _cancellation: CancellationToken,
     ) -> Result<(), SessionError> {
+        assert_eq!(stream.metadata().values()["cell"], self.path);
+        self.executed.record(&["stream-metadata"]);
+        assert_eq!(
+            stream.stream().read().await.unwrap(),
+            Some(Bytes::from_static(b"hello"))
+        );
+        assert_eq!(stream.stream().read().await.unwrap(), None);
+        stream
+            .stream()
+            .write(Bytes::from_static(b"world"))
+            .await
+            .unwrap();
+        self.executed.record(&["stream-fin"]);
         Ok(())
+    }
+}
+
+struct FailingResetStreamHandler {
+    executed: ExecutionLedger,
+}
+
+#[async_trait]
+impl StreamHandler for FailingResetStreamHandler {
+    async fn handle(
+        &self,
+        stream: &IncomingStream,
+        _cancellation: CancellationToken,
+    ) -> Result<(), SessionError> {
+        assert_eq!(
+            stream.stream().read().await.unwrap(),
+            Some(Bytes::from_static(b"reset"))
+        );
+        assert_eq!(stream.stream().read().await.unwrap(), None);
+        self.executed.record(&["stream-reset"]);
+        Err(SessionError::OperationFailed)
     }
 }
 
 fn handlers(
     notifications: Arc<AtomicUsize>,
     notification_received: Arc<Notify>,
+    path: &'static str,
+    executed: ExecutionLedger,
 ) -> SessionHandlers {
     let mut handlers = SessionHandlers::new(SessionHandlerOptions::default()).unwrap();
-    handlers.handle_rpc(ECHO_RPC, EchoRpc).unwrap();
+    handlers
+        .handle_rpc(
+            ECHO_RPC,
+            EchoRpc {
+                executed: executed.clone(),
+            },
+        )
+        .unwrap();
     handlers
         .handle_rpc(
             COMPLETE_RPC,
             BarrierRpc {
                 value: "complete",
                 count: notifications.clone(),
+                executed: executed.clone(),
             },
         )
         .unwrap();
@@ -255,6 +332,7 @@ fn handlers(
             BarrierRpc {
                 value: "datagram-ready",
                 count: notifications.clone(),
+                executed: executed.clone(),
             },
         )
         .unwrap();
@@ -264,11 +342,21 @@ fn handlers(
             NotifyHandler {
                 count: notifications,
                 received: notification_received,
+                executed: executed.clone(),
             },
         )
         .unwrap();
     handlers
-        .handle_stream("parity.reset", UnusedStreamHandler)
+        .handle_stream(
+            "parity.echo",
+            EchoStreamHandler {
+                path,
+                executed: executed.clone(),
+            },
+        )
+        .unwrap();
+    handlers
+        .handle_stream("parity.reset", FailingResetStreamHandler { executed })
         .unwrap();
     handlers
 }
@@ -311,7 +399,7 @@ fn issue(carrier: &str, address: SocketAddr) -> flowersec::IssuedArtifact {
         .unwrap()
 }
 
-fn print_result(message_type: &str, carrier: &str, cases: Vec<&str>) {
+fn print_result(message_type: &str, carrier: &str, executed: &ExecutionLedger) {
     println!(
         "{}",
         serde_json::to_string(&ResultMessage {
@@ -319,9 +407,7 @@ fn print_result(message_type: &str, carrier: &str, cases: Vec<&str>) {
             runtime: "rust",
             carrier,
             path: "direct",
-            cases,
-            active_sessions: 0,
-            active_streams: 0,
+            cases: executed.snapshot(),
         })
         .unwrap()
     );
@@ -331,6 +417,7 @@ async fn rpc_and_notifications(
     session: &dyn Session,
     notifications: &Arc<AtomicUsize>,
     notification_received: &Arc<Notify>,
+    executed: &ExecutionLedger,
 ) {
     let response = session
         .rpc()
@@ -338,6 +425,7 @@ async fn rpc_and_notifications(
         .await
         .unwrap();
     assert_eq!(response, serde_json::json!({"value":"ping"}));
+    executed.record(&["rpc"]);
     session
         .rpc()
         .notify(NOTIFY_RPC, serde_json::json!({"value":"notify"}))
@@ -345,12 +433,14 @@ async fn rpc_and_notifications(
         .unwrap();
     notification_received.notified().await;
     assert!(notifications.load(Ordering::SeqCst) > 0);
+    executed.record(&["notification"]);
 }
 
-async fn server_streams(session: &dyn Session, path: &str) {
+async fn server_streams(session: &dyn Session, path: &str, executed: &ExecutionLedger) {
     let incoming = session.accept_stream().await.unwrap();
     assert_eq!(incoming.kind(), "parity.echo");
     assert_eq!(incoming.metadata().values()["cell"], path);
+    executed.record(&["stream-metadata"]);
     assert_eq!(
         incoming.stream().read().await.unwrap(),
         Some(Bytes::from_static(b"hello"))
@@ -362,7 +452,7 @@ async fn server_streams(session: &dyn Session, path: &str) {
         .await
         .unwrap();
     incoming.stream().close_write().await.unwrap();
-    incoming.stream().close().await.unwrap();
+    executed.record(&["stream-fin"]);
     let reset = session.accept_stream().await.unwrap();
     assert_eq!(reset.kind(), "parity.reset");
     assert_eq!(
@@ -372,9 +462,10 @@ async fn server_streams(session: &dyn Session, path: &str) {
     assert_eq!(reset.stream().read().await.unwrap(), None);
     reset.stream().reset().await.unwrap();
     let _ = reset.stream().close().await;
+    executed.record(&["stream-reset"]);
 }
 
-async fn client_streams(session: &dyn Session, path: &str) {
+async fn client_streams(session: &dyn Session, path: &str, executed: &ExecutionLedger) {
     let metadata = StreamMetadata::try_from(serde_json::json!({"cell":path})).unwrap();
     let stream = session.open_stream("parity.echo", metadata).await.unwrap();
     stream.write(Bytes::from_static(b"hello")).await.unwrap();
@@ -384,16 +475,16 @@ async fn client_streams(session: &dyn Session, path: &str) {
         Some(Bytes::from_static(b"world"))
     );
     assert_eq!(stream.read().await.unwrap(), None);
-    stream.close().await.unwrap();
+    executed.record(&["stream-metadata", "stream-fin"]);
     let reset = session
         .open_stream("parity.reset", StreamMetadata::empty())
         .await
         .unwrap();
-    if reset.write(Bytes::from_static(b"reset")).await.is_ok() {
-        reset.close_write().await.unwrap();
-        assert!(reset.read().await.is_err());
-    }
+    reset.write(Bytes::from_static(b"reset")).await.unwrap();
+    reset.close_write().await.unwrap();
+    assert!(reset.read().await.is_err());
     let _ = reset.close().await;
+    executed.record(&["stream-reset"]);
 }
 
 async fn assert_cancellable_wait(session: &dyn Session) {
@@ -418,7 +509,7 @@ async fn call_barrier(session: &dyn Session, type_id: u32, value: &'static str) 
     assert_eq!(response, serde_json::json!({"value":value}));
 }
 
-async fn server_datagram(session: &dyn Session) {
+async fn server_datagram(session: &dyn Session, executed: &ExecutionLedger) {
     let channel = session.unreliable_messages().unwrap();
     assert_eq!(
         channel.receive().await.unwrap(),
@@ -434,11 +525,13 @@ async fn server_datagram(session: &dyn Session) {
             .unwrap(),
         UnreliableSendOutcome::Accepted
     );
+    executed.record(&["datagram"]);
 }
 
 async fn run_server(carrier: &str) {
     let notifications = Arc::new(AtomicUsize::new(0));
     let notification_received = Arc::new(Notify::new());
+    let executed = ExecutionLedger::default();
     let root = root_cert();
     let leaf = leaf_cert();
     let acceptor = match carrier {
@@ -475,48 +568,40 @@ async fn run_server(carrier: &str) {
     let accepted = acceptor
         .accept_with_handlers(
             &artifact,
-            handlers(notifications.clone(), notification_received.clone()),
+            handlers(
+                notifications.clone(),
+                notification_received.clone(),
+                "direct",
+                executed.clone(),
+            ),
             CancellationToken::new(),
         )
         .await
         .unwrap();
     let session = accepted.session();
-    assert_cancellable_wait(session).await;
-    if carrier == "websocket" {
-        tokio::join!(
-            rpc_and_notifications(session, &notifications, &notification_received),
-            server_streams(session, "direct")
-        );
-    } else {
-        tokio::join!(
-            rpc_and_notifications(session, &notifications, &notification_received),
-            server_streams(session, "direct"),
-            server_datagram(session),
-        );
-    }
-    session.wait_termination().await;
-    let mut cases = vec![
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-    ];
-    if carrier != "websocket" {
-        cases.push("datagram");
-    }
-    print_result("server-result", carrier, cases);
+    executed.record(&["admission"]);
+    let (serve_result, ()) = tokio::join!(accepted.serve(CancellationToken::new()), async {
+        assert_cancellable_wait(session).await;
+        executed.record(&["cancel"]);
+        if carrier == "websocket" {
+            rpc_and_notifications(session, &notifications, &notification_received, &executed).await;
+        } else {
+            tokio::join!(
+                rpc_and_notifications(session, &notifications, &notification_received, &executed),
+                server_datagram(session, &executed),
+            );
+        }
+        session.wait_termination().await;
+    });
+    assert_eq!(serve_result.unwrap_err(), SessionError::Closed);
+    executed.record(&["close", "cleanup"]);
+    print_result("server-result", carrier, &executed);
 }
 
 async fn run_client(carrier: &str, ready: Ready) {
     let notifications = Arc::new(AtomicUsize::new(0));
     let notification_received = Arc::new(Notify::new());
+    let executed = ExecutionLedger::default();
     let artifact = Artifact::parse(ready.artifact_json.as_bytes()).unwrap();
     let trust_roots = if ready.trust_roots_der.is_empty() {
         ready
@@ -540,15 +625,24 @@ async fn run_client(carrier: &str, ready: Ready) {
         .with_handlers(handlers(
             notifications.clone(),
             notification_received.clone(),
+            "direct",
+            executed.clone(),
         ));
     if carrier == "websocket" {
         options = options.with_websocket_origin(ready.origin).unwrap();
     }
     let session = connect(lease, options).await.unwrap();
+    executed.record(&["admission"]);
     assert_cancellable_wait(session.as_ref()).await;
+    executed.record(&["cancel"]);
     tokio::join!(
-        rpc_and_notifications(session.as_ref(), &notifications, &notification_received),
-        client_streams(session.as_ref(), "direct")
+        rpc_and_notifications(
+            session.as_ref(),
+            &notifications,
+            &notification_received,
+            &executed
+        ),
+        client_streams(session.as_ref(), "direct", &executed)
     );
     call_barrier(session.as_ref(), DATAGRAM_READY_RPC, "datagram-ready").await;
     if carrier != "websocket" {
@@ -567,9 +661,12 @@ async fn run_client(carrier: &str, ready: Ready) {
             channel.receive().await.unwrap(),
             Bytes::from_static(&[3, 2, 1])
         );
+        executed.record(&["datagram"]);
     }
     session.rekey().await.unwrap();
+    executed.record(&["rekey"]);
     session.probe_liveness().await.unwrap();
+    executed.record(&["liveness"]);
     call_barrier(session.as_ref(), COMPLETE_RPC, "complete").await;
     session
         .rpc()
@@ -579,46 +676,14 @@ async fn run_client(carrier: &str, ready: Ready) {
     if let Err(error) = session.close().await {
         assert_eq!(error, SessionError::Closed);
     }
-    print_result(
-        "client-result",
-        carrier,
-        if carrier == "websocket" {
-            vec![
-                "admission",
-                "rpc",
-                "notification",
-                "stream-metadata",
-                "stream-fin",
-                "stream-reset",
-                "rekey",
-                "liveness",
-                "close",
-                "cancel",
-                "cleanup",
-            ]
-        } else {
-            vec![
-                "admission",
-                "rpc",
-                "notification",
-                "stream-metadata",
-                "stream-fin",
-                "stream-reset",
-                "rekey",
-                "liveness",
-                "close",
-                "cancel",
-                "cleanup",
-                "datagram",
-            ]
-        },
-    );
+    executed.record(&["close", "cleanup"]);
+    print_result("client-result", carrier, &executed);
 }
 
 fn relay_endpoint(carrier: &str, address: SocketAddr) -> String {
     match carrier {
         "websocket" => format!("wss://localhost:{}/flowersec/v2/tunnel", address.port()),
-        "raw-quic" => format!("quic://localhost:{}", address.port()),
+        "raw-quic" => format!("quic://127.0.0.1:{}", address.port()),
         _ => panic!("unsupported carrier"),
     }
 }
@@ -667,6 +732,7 @@ fn tunnel_relay_ready(carrier: &str, address: SocketAddr, origin: &str) -> Relay
 async fn run_tunnel_relay(carrier: &str) {
     let origin = "https://native-client.test";
     let released = Arc::new(AtomicUsize::new(0));
+    let executed = ExecutionLedger::default();
     let authorizer = Arc::new(ParityTunnelAuthorizer {
         decisions: std::sync::Mutex::new(std::collections::HashMap::new()),
         released: released.clone(),
@@ -727,6 +793,7 @@ async fn run_tunnel_relay(carrier: &str) {
     {
         panic!("relay did not receive close command");
     }
+    executed.record(&["close", "cancel"]);
     cancellation.cancel();
     runtime.close().await;
     let _ = tokio::time::timeout(Duration::from_secs(3), serving).await;
@@ -735,49 +802,26 @@ async fn run_tunnel_relay(carrier: &str) {
     while released.load(Ordering::SeqCst) < expected && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+    if released.load(Ordering::SeqCst) != expected {
+        panic!(
+            "relay cleanup released {} of {} leases",
+            released.load(Ordering::SeqCst),
+            expected
+        );
+    }
+    executed.record(&["admission", "pairing", "opaque-forwarding"]);
+    if carrier != "websocket" {
+        executed.record(&["datagram-forwarding"]);
+    }
+    executed.record(&["cleanup"]);
     println!(
         "{}",
         serde_json::json!({
             "type": "relay-result", "runtime": "rust", "carrier": carrier, "path": "tunnel",
-            "cases": tunnel_relay_cases(carrier), "active_pairs": 0, "active_legs": 0,
-            "active_sessions": 0, "application_handlers": 0, "observed_plaintext": false,
+            "cases": executed.snapshot(), "observed_plaintext": false,
             "released_leases": released.load(Ordering::SeqCst),
         })
     );
-}
-
-fn tunnel_relay_cases(carrier: &str) -> Vec<&'static str> {
-    let mut cases = vec![
-        "admission",
-        "pairing",
-        "opaque-forwarding",
-        "close",
-        "cancel",
-        "cleanup",
-    ];
-    if carrier != "websocket" {
-        cases.push("datagram-forwarding");
-    }
-    cases
-}
-
-fn tunnel_endpoint_cases(carrier: &str) -> Vec<&'static str> {
-    let mut cases = vec![
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-    ];
-    if carrier != "websocket" {
-        cases.push("datagram");
-    }
-    cases
 }
 
 fn artifact_tunnel_claims(artifact_json: &[u8]) -> (u64, String) {
@@ -915,29 +959,49 @@ async fn run_tunnel_endpoint_b(carrier: &str) {
     }
     let notifications = Arc::new(AtomicUsize::new(0));
     let notification_received = Arc::new(Notify::new());
+    let executed = ExecutionLedger::default();
     let session = connect_tunnel_artifact(
         carrier,
         &envelope.relay,
         second_json,
-        handlers(notifications.clone(), notification_received.clone()),
+        handlers(
+            notifications.clone(),
+            notification_received.clone(),
+            "tunnel",
+            executed.clone(),
+        ),
     )
     .await;
+    executed.record(&["admission"]);
+    assert_cancellable_wait(session.as_ref()).await;
+    executed.record(&["cancel"]);
     if carrier == "websocket" {
         tokio::join!(
-            rpc_and_notifications(session.as_ref(), &notifications, &notification_received),
-            server_streams(session.as_ref(), "tunnel"),
+            rpc_and_notifications(
+                session.as_ref(),
+                &notifications,
+                &notification_received,
+                &executed
+            ),
+            server_streams(session.as_ref(), "tunnel", &executed),
         );
     } else {
         tokio::join!(
-            rpc_and_notifications(session.as_ref(), &notifications, &notification_received),
-            server_streams(session.as_ref(), "tunnel"),
-            server_datagram(session.as_ref()),
+            rpc_and_notifications(
+                session.as_ref(),
+                &notifications,
+                &notification_received,
+                &executed
+            ),
+            server_streams(session.as_ref(), "tunnel", &executed),
+            server_datagram(session.as_ref(), &executed),
         );
     }
     session.wait_termination().await;
+    executed.record(&["close", "cleanup"]);
     println!(
         "{}",
-        serde_json::json!({"type":"endpoint-b-result","runtime":"rust","carrier":carrier,"path":"tunnel","cases":tunnel_endpoint_cases(carrier),"active_sessions":0,"active_streams":0})
+        serde_json::json!({"type":"endpoint-b-result","runtime":"rust","carrier":carrier,"path":"tunnel","cases":executed.snapshot()})
     );
 }
 
@@ -958,17 +1022,30 @@ async fn run_tunnel_endpoint_a(carrier: &str) {
     }
     let notifications = Arc::new(AtomicUsize::new(0));
     let notification_received = Arc::new(Notify::new());
+    let executed = ExecutionLedger::default();
     let session = connect_tunnel_artifact(
         carrier,
         &ready.relay,
         ready.endpoint_a_artifact_json.clone(),
-        handlers(notifications.clone(), notification_received.clone()),
+        handlers(
+            notifications.clone(),
+            notification_received.clone(),
+            "tunnel",
+            executed.clone(),
+        ),
     )
     .await;
+    executed.record(&["admission"]);
     assert_cancellable_wait(session.as_ref()).await;
+    executed.record(&["cancel"]);
     tokio::join!(
-        rpc_and_notifications(session.as_ref(), &notifications, &notification_received),
-        client_streams(session.as_ref(), "tunnel"),
+        rpc_and_notifications(
+            session.as_ref(),
+            &notifications,
+            &notification_received,
+            &executed
+        ),
+        client_streams(session.as_ref(), "tunnel", &executed),
     );
     call_barrier(session.as_ref(), DATAGRAM_READY_RPC, "datagram-ready").await;
     if carrier != "websocket" {
@@ -987,9 +1064,12 @@ async fn run_tunnel_endpoint_a(carrier: &str) {
             channel.receive().await.unwrap(),
             Bytes::from_static(&[3, 2, 1])
         );
+        executed.record(&["datagram"]);
     }
     session.rekey().await.unwrap();
+    executed.record(&["rekey"]);
     session.probe_liveness().await.unwrap();
+    executed.record(&["liveness"]);
     call_barrier(session.as_ref(), COMPLETE_RPC, "complete").await;
     session
         .rpc()
@@ -997,9 +1077,10 @@ async fn run_tunnel_endpoint_a(carrier: &str) {
         .await
         .unwrap();
     let _ = session.close().await;
+    executed.record(&["close", "cleanup"]);
     println!(
         "{}",
-        serde_json::json!({"type":"endpoint-a-result","runtime":"rust","carrier":carrier,"path":"tunnel","cases":tunnel_endpoint_cases(carrier),"active_sessions":0,"active_streams":0})
+        serde_json::json!({"type":"endpoint-a-result","runtime":"rust","carrier":carrier,"path":"tunnel","cases":executed.snapshot()})
     );
 }
 

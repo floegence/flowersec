@@ -4,10 +4,22 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import {
+  generateDirectCellDimensions,
+  generateTunnelTopologyDimensions,
+} from "./server-parity-matrix.mjs";
+
 const root = path.resolve(import.meta.dirname, "..");
 const read = (relative) => fs.readFileSync(path.join(root, relative), "utf8");
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const makefile = read("Makefile");
+const rustlsFeatureGraph = spawnSync(
+  "cargo",
+  ["tree", "--locked", "--manifest-path", "flowersec-rust/Cargo.toml", "-e", "features", "-i", "rustls"],
+  { cwd: root, encoding: "utf8" },
+);
+assert.equal(rustlsFeatureGraph.status, 0, rustlsFeatureGraph.stderr);
+assert.doesNotMatch(rustlsFeatureGraph.stdout, /feature "tls12"/, "Rust production feature graph enables TLS 1.2");
 
 const trackedMarkdown = spawnSync(
   "git", ["ls-files", "-z", "--", "*.md"],
@@ -70,6 +82,16 @@ assert.match(pushMain, /FLOWERSEC_PUSH_MAIN_SHA="\$head" git push origin "refs\/
 
 const main = read("flowersec-go/internal/cmd/flowersec-test/main.go");
 const registry = read("flowersec-go/internal/cmd/flowersec-test/registry.go");
+const goWebTransportAdapter = read("flowersec-go/internal/carrier/webtransport/webtransport.go");
+const dependencyContracts = read("stability/dependency_contracts.json");
+const transportContract = read("stability/transport_v2_contract.json");
+const capabilityContracts = read("stability/language_capabilities.json");
+const transportArchitecture = read("docs/TRANSPORT_V2_ARCHITECTURE.md");
+const rustReadme = read("flowersec-rust/README.md");
+const typescriptReadme = read("flowersec-ts/README.md");
+const directParityRunner = read("scripts/test-server-parity-direct.mjs");
+const tunnelParityRunner = read("scripts/test-server-parity-tunnel.mjs");
+const parityMatrixGenerator = read("scripts/server-parity-matrix.mjs");
 const browserCarrier = read("flowersec-ts/src/browser/webTransportClient.ts") + read("flowersec-ts/src/transport/webTransportAdapter.ts");
 const browserCarrierTests = read("flowersec-ts/src/transport/webTransportAdapter.test.ts");
 const browserAcceptanceRunner = read("flowersec-ts/scripts/browser-test-runner-core.mjs") + read("flowersec-ts/playwright.config.ts");
@@ -95,7 +117,7 @@ assert.match(registry, /func registry\(\) \[\]registeredTest/);
 for (const id of [
   "controller/go", "controller/go-real-network-restart", "controller/typescript", "controller/typescript-real-network-restart", "controller/rust", "controller/rust-raw-quic",
   "protocol/go", "protocol/typescript", "protocol/rust",
-  "carrier/go-direct", "carrier/go-tunnel", "carrier/go-webtransport-draft15-wire",
+  "carrier/go-direct", "carrier/go-tunnel",
   "carrier/rust-websocket-direct", "carrier/rust-websocket-tunnel",
   "server/typescript-acceptor",
   "interop/typescript-go/wss/direct", "interop/typescript-go/wss/tunnel",
@@ -121,6 +143,18 @@ assert.match(registry, /browserCompatibilityEntry\("browser\/firefox\/webtranspo
 assert.match(registry, /browserCompatibilityEntry\("browser\/webkit\/webtransport-capability"/);
 assert.match(registry, /func browserCompatibilityEntry[\s\S]*commandEntry\(id, "browser-compat"/);
 assert.doesNotMatch(acceptanceRegistry, /--report|--artifact-dir|performance_manifest|case_registry|raw_execution/i);
+for (const [name, source] of [
+  ["Go WebTransport adapter", goWebTransportAdapter],
+  ["dependency contract", dependencyContracts],
+  ["transport contract", transportContract],
+  ["capability contract", capabilityContracts],
+  ["transport architecture", transportArchitecture],
+  ["Rust README", rustReadme],
+  ["TypeScript README", typescriptReadme],
+  ["acceptance registry", registry],
+]) {
+  assert.doesNotMatch(source, /draft-?15|2c7cf000|webtransport_required_quic_settings/i, `${name} owns draft-specific WebTransport wire`);
+}
 for (const id of [
   "coverage/go", "coverage/typescript", "coverage/rust", "coverage/swift", "race/go",
   "diagnostic/weaknet/raw-quic/direct", "diagnostic/weaknet/websocket/direct",
@@ -128,24 +162,167 @@ for (const id of [
   "diagnostic/kernel/reorder-duplicate-outage", "diagnostic/kernel/socket-traversal",
 ]) assert.match(registry, new RegExp(`"${escapeRegex(id)}"`));
 assert.doesNotMatch(registry, /"diagnostic\/(?:protocol|browser|interop|weaknet|kernel-outage|quic)"/);
+assert.match(directParityRunner, /required[\s\S]{0,80}unsupported|unsupported[\s\S]{0,80}required/i,
+  "direct required matrix runner must reject unsupported cells");
+assert.match(tunnelParityRunner, /required[\s\S]{0,80}unsupported|unsupported[\s\S]{0,80}required/i,
+  "tunnel required matrix runner must reject unsupported topologies");
+assert.match(parityMatrixGenerator, /language_capabilities\.json/,
+  "server parity dimensions must derive from the capability manifest");
 
 const hostInit = read("scripts/test-host-init.sh");
 const hostEntry = read("scripts/test-host.sh");
 const interopMatrix = JSON.parse(read("stability/interop_matrix.json"));
 const capabilityManifest = JSON.parse(read("stability/language_capabilities.json"));
 const registryIDs = new Set([...registry.matchAll(/(?:commandEntry|commandEntryWithEnvironment|vitestEntry|browserSmokeEntry|browserCompatibilityEntry|performanceCapacityEntry|privilegedGoTestEntry)\("([^"]+)"/g)].map((match) => match[1]));
+const deploymentProfiles = capabilityManifest.deployment_profiles;
+assert.equal(deploymentProfiles?.version, 1);
+assert.equal(deploymentProfiles?.application_wire, "shared_across_runtimes_and_carriers");
+assert.deepEqual(deploymentProfiles?.profiles?.map(({ id }) => id), [
+  "native-server-core", "browser-client", "apple-client", "webtransport-server",
+]);
+assert.deepEqual(deploymentProfiles.profiles[0], {
+  id: "native-server-core",
+  claimed_runtimes: ["go", "rust", "node-typescript"],
+  transport_runtime_ids: ["go_native", "rust_native", "typescript_node"],
+  required_roles: ["endpoint-client", "direct-server", "tunnel-runtime"],
+  required_carriers: ["websocket", "raw-quic"],
+  required_paths: {
+    "endpoint-client": ["direct", "tunnel"],
+    "direct-server": ["direct"],
+    "tunnel-runtime": ["tunnel"],
+  },
+  required_capability_ids: ["opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"],
+  optional_carriers: ["webtransport"],
+  required_tuple_count: 18,
+});
 assert.equal(interopMatrix.version, 3);
+const serverRuntimes = ["go", "rust", "node-typescript"];
+const serverCarriers = ["websocket", "raw-quic", "webtransport"];
+const requiredMatrixCarriers = ["websocket", "raw-quic"];
+const requiredServerRoles = [
+  { deploymentRole: "endpoint-client", path: "direct", feature: "connect" },
+  { deploymentRole: "endpoint-client", path: "tunnel", feature: "connect" },
+  { deploymentRole: "direct-server", path: "direct", feature: "accept" },
+  { deploymentRole: "tunnel-runtime", path: "tunnel", feature: "pair-forward" },
+];
+const parityUnits = capabilityManifest.server_parity_contract?.units ?? [];
+const parityUnitsByKey = new Map(parityUnits.map((unit) => [
+  `${unit.runtime}/${unit["deployment-role"]}/${unit.carrier}/${unit.path}/${unit.feature}`,
+  unit,
+]));
+const parityContractProblems = [];
+for (const runtime of serverRuntimes) for (const carrier of serverCarriers) for (const role of requiredServerRoles) {
+  const key = `${runtime}/${role.deploymentRole}/${carrier}/${role.path}/${role.feature}`;
+  const unit = parityUnitsByKey.get(key);
+  if (unit === undefined) parityContractProblems.push(`missing required server unit ${key}`);
+  else if (unit.status === "supported") {
+    if (typeof unit.entrypoint !== "string" || unit.entrypoint.length === 0) {
+      parityContractProblems.push(`supported server unit ${key} has no production entrypoint`);
+    }
+    if (!Array.isArray(unit.test_ids) || unit.test_ids.length !== 1 || !registryIDs.has(unit.test_ids[0])) {
+      parityContractProblems.push(`supported server unit ${key} has no executable test ID`);
+    }
+    if ("reason" in unit) parityContractProblems.push(`supported server unit ${key} carries an unsupported reason`);
+  } else if (unit.status === "unsupported") {
+    if (typeof unit.reason !== "string" || unit.reason.length === 0) {
+      parityContractProblems.push(`unsupported server unit ${key} has no stable reason`);
+    }
+    if ("entrypoint" in unit || "test_ids" in unit) {
+      parityContractProblems.push(`unsupported server unit ${key} claims a production entrypoint or test ID`);
+    }
+  } else {
+    parityContractProblems.push(`server unit ${key} has invalid status ${String(unit.status)}`);
+  }
+}
+for (const [kind, cells] of [["direct", interopMatrix.direct_cells], ["tunnel", interopMatrix.tunnel_topologies]]) {
+  for (const carrier of requiredMatrixCarriers) {
+    const count = cells.filter((cell) => (kind === "direct" ? cell.carrier : cell.ingress_carrier_a) === carrier).length;
+    if (count !== 9) parityContractProblems.push(`${kind} ${carrier} has ${count} cells, want 9`);
+  }
+}
+for (const [kind, actualCells, generatedCells] of [
+  ["direct", interopMatrix.direct_cells, generateDirectCellDimensions()],
+  ["tunnel", interopMatrix.tunnel_topologies, generateTunnelTopologyDimensions()],
+]) {
+  const actualByID = new Map(actualCells.map((cell) => [cell.id, cell]));
+  for (const generated of generatedCells) {
+    const actual = actualByID.get(generated.id);
+    if (actual === undefined || !Object.entries(generated).every(([key, value]) => actual[key] === value)) {
+      parityContractProblems.push(`${kind} matrix misses generated cell ${generated.id}`);
+    }
+    actualByID.delete(generated.id);
+  }
+  for (const id of actualByID.keys()) parityContractProblems.push(`${kind} matrix has non-generated cell ${id}`);
+}
+const nativeDriverFiles = [
+  "flowersec-native-transport/Cargo.toml",
+  "flowersec-native-transport/src/lib.rs",
+  "flowersec-native-transport/tests/public_boundary.rs",
+  "flowersec-node-native/Cargo.toml",
+  "flowersec-node-native/package.json",
+  "flowersec-node-native/src/lib.rs",
+];
+for (const relative of nativeDriverFiles) {
+  if (!fs.existsSync(path.join(root, relative))) parityContractProblems.push(`missing native transport production unit ${relative}`);
+}
+if (fs.existsSync(path.join(root, "flowersec-native-transport/src/lib.rs"))) {
+  const nativePublicBoundary = read("flowersec-native-transport/src/lib.rs");
+  if (/\bpub\s+(?:use\s+)?(?:quinn|napi|wtransport|web_transport)\b/.test(nativePublicBoundary)) {
+    parityContractProblems.push("native transport public boundary leaks a dependency implementation type");
+  }
+}
+const nativePlatforms = ["darwin-arm64", "darwin-x64", "linux-arm64-gnu", "linux-x64-gnu"];
+for (const platform of nativePlatforms) {
+  const relative = `flowersec-node-native/npm/${platform}/package.json`;
+  if (!fs.existsSync(path.join(root, relative))) parityContractProblems.push(`missing native addon prebuilt package ${platform}`);
+}
+if (fs.existsSync(path.join(root, "flowersec-node-native/package.json"))) {
+  const corePackage = JSON.parse(read("flowersec-ts/package.json"));
+  const nativePackage = JSON.parse(read("flowersec-node-native/package.json"));
+  const expectedOptionalPackages = Object.fromEntries(nativePlatforms.map((platform) => [
+    `@floegence/flowersec-node-native-${platform}`,
+    corePackage.version,
+  ]));
+  if (nativePackage.version !== corePackage.version || nativePackage.engines?.node !== corePackage.engines?.node) {
+    parityContractProblems.push("native addon wrapper version or Node runtime does not match the core package");
+  }
+  if (JSON.stringify(nativePackage.optionalDependencies) !== JSON.stringify(expectedOptionalPackages)) {
+    parityContractProblems.push("native addon wrapper does not declare the exact prebuilt package set");
+  }
+  const platformContracts = {
+    "darwin-arm64": { os: ["darwin"], cpu: ["arm64"] },
+    "darwin-x64": { os: ["darwin"], cpu: ["x64"] },
+    "linux-arm64-gnu": { os: ["linux"], cpu: ["arm64"], libc: ["glibc"] },
+    "linux-x64-gnu": { os: ["linux"], cpu: ["x64"], libc: ["glibc"] },
+  };
+  for (const [platform, expected] of Object.entries(platformContracts)) {
+    const relative = `flowersec-node-native/npm/${platform}/package.json`;
+    if (!fs.existsSync(path.join(root, relative))) continue;
+    const manifest = JSON.parse(read(relative));
+    const binary = `flowersec-node-native.${platform}.node`;
+    if (manifest.name !== `@floegence/flowersec-node-native-${platform}` ||
+        manifest.version !== corePackage.version || manifest.engines?.node !== corePackage.engines?.node ||
+        JSON.stringify(manifest.os) !== JSON.stringify(expected.os) ||
+        JSON.stringify(manifest.cpu) !== JSON.stringify(expected.cpu) ||
+        JSON.stringify(manifest.libc) !== JSON.stringify(expected.libc) ||
+        manifest.main !== binary || JSON.stringify(manifest.files) !== JSON.stringify([
+          binary,
+          "LICENSE",
+          "README.md",
+          "THIRD_PARTY_NOTICES.md",
+          "sbom/**",
+        ])) {
+      parityContractProblems.push(`native addon prebuilt package ${platform} has an invalid platform contract`);
+    }
+  }
+}
+assert.deepEqual(parityContractProblems, [], "server parity required tuple contract is incomplete");
 const interopCells = [...interopMatrix.direct_cells, ...interopMatrix.tunnel_topologies];
 assert.ok(interopMatrix.direct_cells.length > 0 && interopMatrix.tunnel_topologies.length > 0);
 for (const cell of interopCells) {
-  assert.ok(["supported", "unsupported"].includes(cell.status), `interop cell ${cell.id} has invalid status`);
-  if (cell.status === "supported") {
-    assert.equal(cell.test_ids?.length, 1, `supported interop cell ${cell.id} must use one test ID`);
-    assert.equal("reason" in cell, false, `supported interop cell ${cell.id} must not carry a reason`);
-  } else {
-    assert.equal("test_ids" in cell, false, `unsupported interop cell ${cell.id} must not claim test IDs`);
-    assert.ok(typeof cell.reason === "string" && cell.reason.length > 0, `unsupported interop cell ${cell.id} must carry a stable reason`);
-  }
+  assert.equal(cell.status, "supported", `required interop cell ${cell.id} must be supported`);
+  assert.equal(cell.test_ids?.length, 1, `supported interop cell ${cell.id} must use one test ID`);
+  assert.equal("reason" in cell, false, `supported interop cell ${cell.id} must not carry a reason`);
   assert.equal("evidence" in cell, false, `interop cell ${cell.id} retains source evidence`);
   for (const id of cell.test_ids ?? []) assert.ok(registryIDs.has(id), `interop cell ${cell.id} references unknown test_id ${id}`);
 }

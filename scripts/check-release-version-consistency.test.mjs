@@ -190,6 +190,48 @@ test("collects the maintained version from real npm and Cargo lock contexts", (t
   assert.deepEqual(collectReleaseVersions(root), matchingVersions());
 });
 
+test("collects native driver and prebuilt package version facts", (t) => {
+  const root = createReleaseFixture(t);
+  fs.mkdirSync(path.join(root, "flowersec-native-transport"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "flowersec-native-transport/Cargo.toml"),
+    "[package]\nname = \"flowersec-native-transport\"\nversion = \"0.26.0\"\nedition = \"2021\"\n",
+  );
+  fs.writeFileSync(
+    path.join(root, "flowersec-native-transport/Cargo.lock"),
+    "version = 4\n\n[[package]]\nname = \"flowersec-native-transport\"\nversion = \"0.26.0\"\n",
+  );
+  fs.mkdirSync(path.join(root, "flowersec-native-transport/src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "flowersec-native-transport/src/lib.rs"), "");
+  fs.mkdirSync(path.join(root, "flowersec-node-native"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "flowersec-node-native/Cargo.toml"),
+    "[package]\nname = \"flowersec-node-native\"\nversion = \"0.26.0\"\nedition = \"2021\"\n",
+  );
+  fs.writeFileSync(
+    path.join(root, "flowersec-node-native/Cargo.lock"),
+    "version = 4\n\n[[package]]\nname = \"flowersec-node-native\"\nversion = \"0.26.0\"\n",
+  );
+  fs.mkdirSync(path.join(root, "flowersec-node-native/src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "flowersec-node-native/src/lib.rs"), "");
+  fs.writeFileSync(
+    path.join(root, "flowersec-node-native/package.json"),
+    JSON.stringify({ name: "@floegence/flowersec-node-native", version: "0.26.0" }),
+  );
+  for (const platform of ["darwin-arm64", "darwin-x64", "linux-arm64-gnu", "linux-x64-gnu"]) {
+    const directory = path.join(root, "flowersec-node-native/npm", platform);
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(
+      path.join(directory, "package.json"),
+      JSON.stringify({ name: `@floegence/flowersec-node-native-${platform}`, version: "0.26.0" }),
+    );
+  }
+  const versions = collectReleaseVersions(root);
+  assert.equal(versions.some(({ label }) => label === "flowersec-native-transport/Cargo.toml"), true);
+  assert.equal(versions.some(({ label }) => label === "flowersec-node-native/package.json"), true);
+  assert.equal(versions.filter(({ label }) => label.startsWith("flowersec-node-native/npm/")).length, 4);
+});
+
 test("rejects drift in every maintained npm version fact", async (t) => {
   const mutations = [
     ["package.json", (document) => { document.version = "0.25.0"; }],

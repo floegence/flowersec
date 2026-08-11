@@ -241,7 +241,7 @@ impl AcceptedSession {
         self.session.as_ref()
     }
 
-    pub async fn serve(self, cancellation: CancellationToken) -> Result<(), SessionError> {
+    pub async fn serve(&self, cancellation: CancellationToken) -> Result<(), SessionError> {
         let permits = Arc::new(Semaphore::new(self.handlers.max_concurrent_streams));
         let mut tasks = JoinSet::new();
         let result = loop {

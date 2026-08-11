@@ -50,6 +50,74 @@ func TestLanguageCapabilitiesDeclareContractLayers(t *testing.T) {
 	}
 }
 
+func TestLanguageCapabilitiesDeclareNamedDeploymentProfiles(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(repoRoot, capabilityManifestPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		DeploymentProfiles struct {
+			ApplicationWire string `json:"application_wire"`
+			Profiles        []struct {
+				ID                 string   `json:"id"`
+				ClaimedRuntimes    []string `json:"claimed_runtimes"`
+				RequiredRoles      []string `json:"required_roles"`
+				RequiredCarriers   []string `json:"required_carriers"`
+				RequiredTupleCount int      `json:"required_tuple_count"`
+			} `json:"profiles"`
+		} `json:"deployment_profiles"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document.DeploymentProfiles.ApplicationWire != "shared_across_runtimes_and_carriers" {
+		t.Fatalf("deployment profile application wire = %q", document.DeploymentProfiles.ApplicationWire)
+	}
+	wantProfiles := []string{"native-server-core", "browser-client", "apple-client", "webtransport-server"}
+	gotProfiles := make([]string, 0, len(document.DeploymentProfiles.Profiles))
+	for _, profile := range document.DeploymentProfiles.Profiles {
+		gotProfiles = append(gotProfiles, profile.ID)
+	}
+	if !slices.Equal(gotProfiles, wantProfiles) {
+		t.Fatalf("deployment profiles = %v, want %v", gotProfiles, wantProfiles)
+	}
+	native := document.DeploymentProfiles.Profiles[0]
+	if !slices.Equal(native.ClaimedRuntimes, []string{"go", "rust", "node-typescript"}) ||
+		!slices.Equal(native.RequiredRoles, []string{"endpoint-client", "direct-server", "tunnel-runtime"}) ||
+		!slices.Equal(native.RequiredCarriers, []string{"websocket", "raw-quic"}) || native.RequiredTupleCount != 18 {
+		t.Fatalf("native-server-core profile does not declare the exact 18 required tuples: %+v", native)
+	}
+	manifest, err := loadCapabilityManifest(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := manifest.DeploymentProfiles
+	mutated.Profiles = slices.Clone(mutated.Profiles)
+	mutated.Profiles[0].RequiredTupleCount++
+	if err := validateDeploymentProfiles(mutated, manifest.ServerParityContract); err == nil || !strings.Contains(err.Error(), "canonical capability contract") {
+		t.Fatalf("mutated native profile validation error = %v", err)
+	}
+	capabilityMutation := manifest.DeploymentProfiles
+	capabilityMutation.Profiles = slices.Clone(capabilityMutation.Profiles)
+	capabilityMutation.Profiles[0].RequiredCapabilityIDs = slices.Clone(capabilityMutation.Profiles[0].RequiredCapabilityIDs)
+	capabilityMutation.Profiles[0].RequiredCapabilityIDs[0] = "missing_capability"
+	if err := validateDeploymentProfileCapabilityBindings(capabilityMutation, manifest.PortableCapabilities); err == nil || !strings.Contains(err.Error(), "unknown required capability") {
+		t.Fatalf("mutated profile capability validation error = %v", err)
+	}
+	transport, err := loadTransportV2Contract(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport.Policies.ProfileApplicationWire = "runtime_private_wire"
+	if err := validateDeploymentProfileTransportBindings(manifest.DeploymentProfiles, transport); err == nil || !strings.Contains(err.Error(), "application wire") {
+		t.Fatalf("mutated profile wire validation error = %v", err)
+	}
+}
+
 func TestServerParityContractIsGranularAndExecutable(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
@@ -60,7 +128,49 @@ func TestServerParityContractIsGranularAndExecutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := validateServerParityContract(manifest.ServerParityContract); err != nil {
+		t.Fatalf("valid supported/unsupported server parity contract failed: %v", err)
+	}
+	incomplete := *manifest.ServerParityContract
+	incomplete.Units = slices.Clone(incomplete.Units[1:])
+	if err := validateServerParityContract(&incomplete); err == nil || !strings.Contains(err.Error(), "missing required server parity unit") {
+		t.Fatalf("missing required server parity unit error = %v", err)
+	}
+}
+
+func TestServerParityCompletionObjectiveRejectsUnsupportedRequiredUnit(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
 		t.Fatal(err)
+	}
+	manifest, err := loadCapabilityManifest(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := *manifest.ServerParityContract
+	contract.Units = slices.Clone(contract.Units)
+	unit := &contract.Units[0]
+	unit.Status = "unsupported"
+	unit.Entrypoint = ""
+	unit.TestIDs = nil
+	unit.Reason = "No production driver satisfies the required contract."
+
+	err = validateRequiredServerParityComplete(&contract)
+	if err == nil || !strings.Contains(err.Error(), "required server parity unit") {
+		t.Fatalf("unsupported required unit error = %v", err)
+	}
+}
+
+func TestServerParityCompletionObjectiveAllowsUnsupportedOptionalWebTransport(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := loadCapabilityManifest(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRequiredServerParityComplete(manifest.ServerParityContract); err != nil {
+		t.Fatalf("optional WebTransport blocked required server parity: %v", err)
 	}
 }
 
@@ -269,9 +379,18 @@ func TestServerParityContractUsesSupportedAndUnsupportedBinary(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+
+	t.Run("completion rejects a supported test id missing from the registry", func(t *testing.T) {
+		copy := cloneCapabilityManifest(t, manifest)
+		copy.ServerParityContract.Units[0].TestIDs = []string{"missing/test-id"}
+		err := validateRequiredServerParityCompletionContract(copy.ServerParityContract, map[string]struct{}{"carrier/go-direct": {}})
+		if err == nil || !strings.Contains(err.Error(), "unknown registry test_id") {
+			t.Fatalf("unexpected completion error: %v", err)
+		}
+	})
 }
 
-func TestInteropUnsupportedTuplesCarryOnlyAReason(t *testing.T) {
+func TestRequiredInteropCellsCannotBeUnsupported(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
 		t.Fatal(err)
@@ -287,14 +406,69 @@ func TestInteropUnsupportedTuplesCarryOnlyAReason(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	cell.TestIDs = nil
-	if err := validateDirectInteropCells(matrix, map[string]struct{}{"interop/server-parity/direct-matrix": {}}); err != nil {
-		t.Fatal(err)
+	if err := validateDirectInteropCells(matrix, map[string]struct{}{"interop/server-parity/direct-matrix": {}}); err == nil || !strings.Contains(err.Error(), "required interop cell") {
+		t.Fatalf("unsupported required direct cell error = %v", err)
 	}
 	cell.Status = "supported"
 	cell.Reason = ""
 	cell.TestIDs = []string{"missing/test-id"}
 	if err := validateDirectInteropCells(matrix, map[string]struct{}{"interop/server-parity/direct-matrix": {}}); err == nil || !strings.Contains(err.Error(), "unknown registry test_id") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+
+	topology := &matrix.TunnelTopologies[0]
+	topology.Status = "unsupported"
+	topology.TestIDs = nil
+	topology.Reason = "This runtime does not expose the required production carrier."
+	if err := validateTunnelInteropTopologies(matrix, map[string]struct{}{"interop/server-parity/tunnel-matrix": {}}); err == nil || !strings.Contains(err.Error(), "required tunnel topology") {
+		t.Fatalf("unsupported required tunnel topology error = %v", err)
+	}
+}
+
+func TestTunnelInteropRequiresGeneratedPairwiseCoveringSet(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matrix interopMatrix
+	if err := decodeStrictJSONFile(filepath.Join(repoRoot, interopMatrixPath), &matrix); err != nil {
+		t.Fatal(err)
+	}
+	for index := range matrix.TunnelTopologies {
+		if matrix.TunnelTopologies[index].ID == "go_via_go_to_go_websocket_tunnel" {
+			matrix.TunnelTopologies[index].TunnelRuntime = "rust"
+			break
+		}
+	}
+	err = validateTunnelInteropTopologies(matrix, map[string]struct{}{
+		"interop/server-parity/tunnel-matrix": {},
+	})
+	if err == nil || !strings.Contains(err.Error(), "generated pairwise covering set") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRequiredInteropMatrixContainsOnlyWebSocketAndRawQUIC(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matrix interopMatrix
+	if err := decodeStrictJSONFile(filepath.Join(repoRoot, interopMatrixPath), &matrix); err != nil {
+		t.Fatal(err)
+	}
+	if len(matrix.DirectCells) != 18 || len(matrix.TunnelTopologies) != 18 {
+		t.Fatalf("required matrix dimensions = direct:%d tunnel:%d, want 18/18", len(matrix.DirectCells), len(matrix.TunnelTopologies))
+	}
+	for _, cell := range matrix.DirectCells {
+		if cell.Carrier == "webtransport" {
+			t.Fatalf("optional WebTransport direct cell %s entered the required matrix", cell.ID)
+		}
+	}
+	for _, topology := range matrix.TunnelTopologies {
+		if topology.IngressCarrierA == "webtransport" || topology.IngressCarrierB == "webtransport" {
+			t.Fatalf("optional WebTransport tunnel topology %s entered the required matrix", topology.ID)
+		}
 	}
 }
 

@@ -15,6 +15,8 @@ import {
   type JsonValue,
   type Session,
   type TunnelAuthorizationDecision,
+  type AcceptorListener,
+  type TunnelRuntimeListener,
 } from "../node/index.js";
 
 const RUNTIME = "node-typescript";
@@ -25,27 +27,6 @@ const COMPLETE_RPC = 7003;
 const DATAGRAM_READY_RPC = 7005;
 const ECHO_KIND = "parity.echo";
 const RESET_KIND = "parity.reset";
-const ENDPOINT_CASES = [
-  "rpc",
-  "notification",
-  "stream-metadata",
-  "stream-fin",
-  "stream-reset",
-  "rekey",
-  "liveness",
-  "close",
-  "cancel",
-  "cleanup",
-] as const;
-const DIRECT_CASES = ["admission", ...ENDPOINT_CASES] as const;
-const RELAY_CASES = [
-  "admission",
-  "pairing",
-  "opaque-forwarding",
-  "close",
-  "cancel",
-  "cleanup",
-] as const;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const TEST_CERT_DER_B64 =
@@ -55,6 +36,7 @@ const TEST_KEY_DER_B64 =
 
 type Role =
   "server" | "client" | "relay" | "tunnel-endpoint-a" | "tunnel-endpoint-b";
+type ParityCarrier = "websocket" | "raw-quic";
 
 type TLSFixture = Readonly<{
   tls: Readonly<{
@@ -165,20 +147,36 @@ type HandlerState = Readonly<{
   handlers: SessionHandlers;
   notifications: SignalQueue;
   activeStreams: { value: number };
+  executed: ExecutedCases;
 }>;
+
+class ExecutedCases {
+  readonly #cases = new Set<string>();
+
+  record(...caseIds: readonly string[]): void {
+    for (const caseId of caseIds) this.#cases.add(caseId);
+  }
+
+  snapshot(): readonly string[] {
+    return [...this.#cases];
+  }
+}
 
 function createHandlers(path: "direct" | "tunnel"): HandlerState {
   const handlers = new SessionHandlers({ maxConcurrentStreams: 16 });
   const notifications = new SignalQueue();
   const activeStreams = { value: 0 };
-  handlers.handleRPC(ECHO_RPC, async (payload) =>
-    validValuePayload(payload, "ping")
-      ? { payload }
-      : { error: { code: 400, message: "invalid echo payload" } },
-  );
+  const executed = new ExecutedCases();
+  handlers.handleRPC(ECHO_RPC, async (payload) => {
+    if (!validValuePayload(payload, "ping"))
+      return { error: { code: 400, message: "invalid echo payload" } };
+    executed.record("rpc");
+    return { payload };
+  });
   handlers.handleRPC(COMPLETE_RPC, async (payload) => {
     if (!validValuePayload(payload, "complete"))
       return { error: { code: 400, message: "invalid completion payload" } };
+    executed.record("rekey", "liveness");
     notifications.push();
     return { payload };
   });
@@ -193,6 +191,7 @@ function createHandlers(path: "direct" | "tunnel"): HandlerState {
   handlers.handleNotification(NOTIFY_RPC, (payload) => {
     if (!validValuePayload(payload, "notify"))
       throw new Error("invalid notification payload");
+    executed.record("notification");
     notifications.push();
   });
   handlers.handleStream(ECHO_KIND, async (incoming) => {
@@ -200,9 +199,11 @@ function createHandlers(path: "direct" | "tunnel"): HandlerState {
     try {
       if (incoming.metadata.values.cell !== path)
         throw new Error("invalid stream metadata");
+      executed.record("stream-metadata");
       if (decoder.decode(await readAll(incoming.stream)) !== "hello")
         throw new Error("invalid stream payload");
       await writeAll(incoming.stream, encoder.encode("world"));
+      executed.record("stream-fin");
     } finally {
       activeStreams.value--;
     }
@@ -210,9 +211,10 @@ function createHandlers(path: "direct" | "tunnel"): HandlerState {
   handlers.handleStream(RESET_KIND, async (incoming) => {
     if (decoder.decode(await readAll(incoming.stream)) !== "reset")
       throw new Error("invalid reset stream payload");
+    executed.record("stream-reset");
     throw new Error("intentional parity reset");
   });
-  return { handlers, notifications, activeStreams };
+  return { handlers, notifications, activeStreams, executed };
 }
 
 function validValuePayload(payload: JsonValue, expected: string): boolean {
@@ -281,6 +283,7 @@ async function assertCancellableWait(session: Session): Promise<void> {
 async function clientStreams(
   session: Session,
   path: "direct" | "tunnel",
+  executed: ExecutedCases,
 ): Promise<void> {
   const stream = await session.openStream(ECHO_KIND, {
     metadata: createStreamMetadata({ cell: path }),
@@ -289,7 +292,7 @@ async function clientStreams(
   await stream.closeWrite();
   if (decoder.decode(await readAll(stream)) !== "world")
     throw new Error("echo stream did not preserve metadata and FIN");
-  await stream.close();
+  executed.record("stream-metadata", "stream-fin");
 
   const reset = await session.openStream(RESET_KIND);
   let resetObserved = false;
@@ -305,20 +308,23 @@ async function clientStreams(
     await reset.close().catch(() => undefined);
   }
   if (!resetObserved) throw new Error("reset stream did not fail");
+  executed.record("stream-reset");
 }
 
 async function serverStreams(
   session: Session,
   path: "direct" | "tunnel",
+  executed: ExecutedCases,
 ): Promise<void> {
   const incoming = await session.acceptStream();
   if (incoming.kind !== ECHO_KIND || incoming.metadata.values.cell !== path)
     throw new Error("invalid echo stream metadata");
+  executed.record("stream-metadata");
   if (decoder.decode(await readAll(incoming.stream)) !== "hello")
     throw new Error("invalid echo stream payload");
   await writeAll(incoming.stream, encoder.encode("world"));
   await incoming.stream.closeWrite();
-  await incoming.stream.close();
+  executed.record("stream-fin");
 
   const reset = await session.acceptStream();
   if (
@@ -328,18 +334,23 @@ async function serverStreams(
     throw new Error("invalid reset stream payload");
   await reset.stream.reset();
   await reset.stream.close().catch(() => undefined);
+  executed.record("stream-reset");
 }
 
 async function exerciseClient(
   session: Session,
   state: HandlerState,
   path: "direct" | "tunnel",
+  carrier: ParityCarrier,
 ): Promise<void> {
   await callBarrier(session, ECHO_RPC, "ping", "client");
+  state.executed.record("rpc");
   await session.rpc.notify(NOTIFY_RPC, { value: "notify" });
   await state.notifications.shift();
-  await clientStreams(session, path);
+  state.executed.record("notification");
+  await clientStreams(session, path, state.executed);
   await assertCancellableWait(session);
+  state.executed.record("cancel");
   await callBarrier(session, ECHO_RPC, "ping", "client cleanup");
   await callBarrier(
     session,
@@ -347,8 +358,12 @@ async function exerciseClient(
     "datagram-ready",
     "client datagram",
   );
+  await exchangeDatagram(session, carrier, true);
+  if (carrier === "raw-quic") state.executed.record("datagram");
   await session.rekey();
+  state.executed.record("rekey");
   await session.probeLiveness();
+  state.executed.record("liveness");
   await callBarrier(session, COMPLETE_RPC, "complete", "client completion");
   await session.rpc.notify(NOTIFY_RPC, { value: "notify" });
 }
@@ -358,16 +373,48 @@ async function exerciseServer(
   state: HandlerState,
   path: "direct" | "tunnel",
   streamsServed: boolean,
+  carrier: ParityCarrier,
 ): Promise<void> {
+  await assertCancellableWait(session);
+  state.executed.record("cancel");
   const streams = streamsServed
     ? Promise.resolve()
-    : serverStreams(session, path);
+    : serverStreams(session, path, state.executed);
   await state.notifications.shift();
   await callBarrier(session, ECHO_RPC, "ping", "server");
+  state.executed.record("rpc");
   await session.rpc.notify(NOTIFY_RPC, { value: "notify" });
   await state.notifications.shift();
+  await exchangeDatagram(session, carrier, false);
+  if (carrier === "raw-quic") state.executed.record("datagram");
   await streams;
   await session.waitTermination();
+  state.executed.record("close");
+}
+
+async function exchangeDatagram(
+  session: Session,
+  carrier: ParityCarrier,
+  initiator: boolean,
+): Promise<void> {
+  if (carrier === "websocket") return;
+  const channel = session.unreliableMessages;
+  if (channel === undefined) throw new Error("raw QUIC session omitted unreliable messages");
+  const request = Uint8Array.of(1, 2, 3);
+  const response = Uint8Array.of(3, 2, 1);
+  if (initiator) {
+    const outcome = await channel.send(request, { expiresAtUnixMs: Date.now() + 2_000 });
+    if (outcome !== "accepted") throw new Error(`raw QUIC datagram was ${outcome}`);
+  }
+  const received = await channel.receive();
+  const expected = initiator ? response : request;
+  if (received.length !== expected.length || !expected.every((value, index) => received[index] === value)) {
+    throw new Error("raw QUIC datagram payload mismatch");
+  }
+  if (!initiator) {
+    const outcome = await channel.send(response, { expiresAtUnixMs: Date.now() + 2_000 });
+    if (outcome !== "accepted") throw new Error(`raw QUIC datagram was ${outcome}`);
+  }
 }
 
 function fixture(): TLSFixture {
@@ -404,23 +451,11 @@ async function connectArtifact(
   );
 }
 
-async function runServer(tls: TLSFixture): Promise<void> {
+async function runServer(tls: TLSFixture, carrier: ParityCarrier): Promise<void> {
   const issuedByLookup = new Map<string, ReturnType<typeof parseArtifact>>();
   const state = createHandlers("direct");
   const acceptor = await createAcceptor({
-    listeners: [
-      {
-        carrier: "websocket",
-        path: "direct",
-        host: "127.0.0.1",
-        port: 0,
-        tls: {
-          certificate: tls.tls.certificate_chain_pem,
-          privateKey: tls.tls.private_key_pem,
-        },
-        allowedOrigins: [ORIGIN],
-      },
-    ],
+    listeners: [directListenerOptions(carrier, tls)],
     maxInboundStreams: 16,
     authorize: async (request) => {
       const artifact = issuedByLookup.get(request.lookupKey());
@@ -433,11 +468,11 @@ async function runServer(tls: TLSFixture): Promise<void> {
   try {
     const address = acceptor.addresses()[0];
     if (address === undefined)
-      throw new Error("direct WSS listener did not bind");
+      throw new Error(`direct ${carrier} listener did not bind`);
     const issued = new Issuer().issueDirect({
       session: { channelId: "node-direct-parity", maxInboundStreams: 16 },
       endpoints: createEndpointSet(
-        `wss://localhost:${address.port}/flowersec/v2/direct`,
+        endpointURL(carrier, "direct", address.port),
       ),
       rendezvousGroupId: "node-direct-parity",
       listenerAudience: "server-parity",
@@ -449,35 +484,32 @@ async function runServer(tls: TLSFixture): Promise<void> {
     writeJSON({
       type: "ready",
       runtime: RUNTIME,
-      carrier: "websocket",
+      carrier,
       path: "direct",
       artifact_json: artifactJSON,
       trust_pem: tls.tls.root_certificate_pem,
       origin: ORIGIN,
     });
     const accepted = await accepting;
+    state.executed.record("admission");
     const serving = accepted.serve().catch((error: unknown) => error);
-    await exerciseServer(accepted.session, state, "direct", true);
+    await exerciseServer(accepted.session, state, "direct", true, carrier);
     await serving;
     await accepted.close().catch(() => undefined);
-    writeJSON(
-      result(
-        "server-result",
-        "direct",
-        DIRECT_CASES,
-        state.activeStreams.value,
-      ),
-    );
+    if (state.activeStreams.value !== 0)
+      throw new Error(`direct server cleanup left ${state.activeStreams.value} streams`);
+    state.executed.record("cleanup");
+    writeJSON(result("server-result", "direct", state.executed.snapshot(), carrier));
   } finally {
     await acceptor.close();
   }
 }
 
-async function runClient(input: PeerInput): Promise<void> {
+async function runClient(input: PeerInput, carrier: ParityCarrier): Promise<void> {
   const ready = await input.next<Ready>();
   if (
     ready.type !== "ready" ||
-    ready.carrier !== "websocket" ||
+    ready.carrier !== carrier ||
     ready.path !== "direct" ||
     ready.artifact_json === ""
   )
@@ -488,35 +520,28 @@ async function runClient(input: PeerInput): Promise<void> {
     ready,
     state.handlers,
   );
-  await exerciseClient(session, state, "direct");
+  state.executed.record("admission");
+  await exerciseClient(session, state, "direct", carrier);
   await session.close().catch((error: unknown) => {
     if (!(error instanceof SessionError) || error.code !== "closed")
       throw error;
   });
-  writeJSON(
-    result("client-result", "direct", DIRECT_CASES, state.activeStreams.value),
-  );
+  state.executed.record("close");
+  if (state.activeStreams.value !== 0)
+    throw new Error(`direct client cleanup left ${state.activeStreams.value} streams`);
+  state.executed.record("cleanup");
+  writeJSON(result("client-result", "direct", state.executed.snapshot(), carrier));
 }
 
-async function runRelay(tls: TLSFixture, input: PeerInput): Promise<void> {
+async function runRelay(tls: TLSFixture, input: PeerInput, carrier: ParityCarrier): Promise<void> {
   const decisions = new Map<
     string,
     Extract<TunnelAuthorizationDecision, Readonly<{ decision: "allow" }>>
   >();
   const released = new Set<string>();
+  const executed = new ExecutedCases();
   const runtime = createTunnelRuntime({
-    listeners: [
-      {
-        carrier: "websocket",
-        host: "127.0.0.1",
-        port: 0,
-        tls: {
-          certificate: tls.tls.certificate_chain_pem,
-          privateKey: tls.tls.private_key_pem,
-        },
-        allowedOrigins: [ORIGIN],
-      },
-    ],
+    listeners: [tunnelListenerOptions(carrier, tls)],
     maxInboundStreams: 16,
     maxPendingLegs: 16,
     maxActivePairs: 8,
@@ -533,13 +558,13 @@ async function runRelay(tls: TLSFixture, input: PeerInput): Promise<void> {
     await runtime.start();
     const address = runtime.addresses()[0];
     if (address === undefined)
-      throw new Error("tunnel WSS listener did not bind");
+      throw new Error(`tunnel ${carrier} listener did not bind`);
     writeJSON({
       type: "relay-ready",
       runtime: RUNTIME,
-      carrier: "websocket",
+      carrier,
       path: "tunnel",
-      endpoint_url: `wss://localhost:${address.port}/flowersec/v2/tunnel`,
+      endpoint_url: endpointURL(carrier, "tunnel", address.port),
       trust_pem: tls.tls.root_certificate_pem,
       trust_roots_der: [tls.tls.root_certificate_der_base64],
       server_certificate_der: tls.tls.leaf_certificate_der_base64,
@@ -577,28 +602,31 @@ async function runRelay(tls: TLSFixture, input: PeerInput): Promise<void> {
     const close = await input.next<{ type: string }>();
     if (close.type !== "close")
       throw new Error("invalid tunnel relay close command");
+    executed.record("close");
   } finally {
     await runtime.close();
+    executed.record("cancel");
   }
+  if (released.size !== decisions.size)
+    throw new Error(`relay cleanup released ${released.size} of ${decisions.size} leases`);
+  executed.record("admission", "pairing", "opaque-forwarding");
+  if (carrier === "raw-quic") executed.record("datagram-forwarding");
+  executed.record("cleanup");
   writeJSON({
     type: "relay-result",
     runtime: RUNTIME,
-    carrier: "websocket",
+    carrier,
     path: "tunnel",
-    cases: RELAY_CASES,
-    active_pairs: 0,
-    active_legs: 0,
-    active_sessions: 0,
-    application_handlers: 0,
+    cases: executed.snapshot(),
     observed_plaintext: false,
     released_leases: released.size,
   });
 }
 
-async function runTunnelEndpointB(input: PeerInput): Promise<void> {
+async function runTunnelEndpointB(input: PeerInput, carrier: ParityCarrier): Promise<void> {
   const envelope = await input.next<TunnelInput>();
   const { topology, relay } = envelope;
-  validateTunnelDimensions(topology, relay, "endpoint_b");
+  validateTunnelDimensions(topology, relay, "endpoint_b", carrier);
   const pair = new Issuer().issueTunnelPair({
     session: { channelId: `parity-${topology.id}`, maxInboundStreams: 16 },
     endpoints: createEndpointSet(relay.endpoint_url),
@@ -612,7 +640,7 @@ async function runTunnelEndpointB(input: PeerInput): Promise<void> {
   const ready: EndpointBReady = {
     type: "endpoint-b-ready",
     runtime: RUNTIME,
-    carrier: "websocket",
+    carrier,
     path: "tunnel",
     endpoint_a_artifact_json: firstJSON,
     endpoint_b_artifact_json: secondJSON,
@@ -628,29 +656,28 @@ async function runTunnelEndpointB(input: PeerInput): Promise<void> {
     throw new Error("endpoint B did not receive connect command");
   const state = createHandlers("tunnel");
   const session = await connectArtifact(secondJSON, relay, state.handlers);
-  await exerciseServer(session, state, "tunnel", false);
+  state.executed.record("admission");
+  await exerciseServer(session, state, "tunnel", false, carrier);
   await session.close().catch(() => undefined);
-  writeJSON(
-    result(
-      "endpoint-b-result",
-      "tunnel",
-      ENDPOINT_CASES,
-      state.activeStreams.value,
-    ),
-  );
+  state.executed.record("close");
+  if (state.activeStreams.value !== 0)
+    throw new Error(`endpoint B cleanup left ${state.activeStreams.value} streams`);
+  state.executed.record("cleanup");
+  writeJSON(result("endpoint-b-result", "tunnel", state.executed.snapshot(), carrier));
 }
 
-async function runTunnelEndpointA(input: PeerInput): Promise<void> {
+async function runTunnelEndpointA(input: PeerInput, carrier: ParityCarrier): Promise<void> {
   const envelope = await input.next<TunnelInput>();
   validateTunnelDimensions(
     envelope.topology,
     envelope.endpoint_b.relay,
     "endpoint_a",
+    carrier,
   );
   const ready = envelope.endpoint_b;
   if (
     ready.type !== "endpoint-b-ready" ||
-    ready.carrier !== "websocket" ||
+    ready.carrier !== carrier ||
     ready.path !== "tunnel" ||
     ready.endpoint_a_artifact_json === ""
   )
@@ -661,30 +688,29 @@ async function runTunnelEndpointA(input: PeerInput): Promise<void> {
     ready.relay,
     state.handlers,
   );
-  await exerciseClient(session, state, "tunnel");
+  state.executed.record("admission");
+  await exerciseClient(session, state, "tunnel", carrier);
   await session.close().catch(() => undefined);
-  writeJSON(
-    result(
-      "endpoint-a-result",
-      "tunnel",
-      ENDPOINT_CASES,
-      state.activeStreams.value,
-    ),
-  );
+  state.executed.record("close");
+  if (state.activeStreams.value !== 0)
+    throw new Error(`endpoint A cleanup left ${state.activeStreams.value} streams`);
+  state.executed.record("cleanup");
+  writeJSON(result("endpoint-a-result", "tunnel", state.executed.snapshot(), carrier));
 }
 
 function validateTunnelDimensions(
   topology: Topology,
   relay: RelayReady,
   endpoint: "endpoint_a" | "endpoint_b",
+  carrier: ParityCarrier,
 ): void {
   if (
     topology[endpoint] !== RUNTIME ||
     topology.tunnel_runtime !== relay.runtime ||
-    topology.ingress_carrier_a !== "websocket" ||
-    topology.ingress_carrier_b !== "websocket" ||
+    topology.ingress_carrier_a !== carrier ||
+    topology.ingress_carrier_b !== carrier ||
     relay.type !== "relay-ready" ||
-    relay.carrier !== "websocket" ||
+    relay.carrier !== carrier ||
     relay.path !== "tunnel"
   ) {
     throw new Error("invalid tunnel topology dimensions");
@@ -717,16 +743,14 @@ function result(
   type: string,
   path: "direct" | "tunnel",
   cases: readonly string[],
-  activeStreams: number,
+  carrier: ParityCarrier,
 ): Record<string, unknown> {
   return {
     type,
     runtime: RUNTIME,
-    carrier: "websocket",
+    carrier,
     path,
     cases,
-    active_sessions: 0,
-    active_streams: activeStreams,
   };
 }
 
@@ -736,7 +760,7 @@ function writeJSON(value: unknown): void {
 
 function parseArguments(
   arguments_: readonly string[],
-): Readonly<{ role: Role; carrier: "websocket" }> {
+): Readonly<{ role: Role; carrier: ParityCarrier }> {
   const roles = new Set<Role>([
     "server",
     "client",
@@ -753,30 +777,56 @@ function parseArguments(
     arguments_[1] !== "--carrier"
   )
     throw new Error("invalid server parity peer arguments");
-  if (arguments_[2] !== "websocket")
+  if (arguments_[2] !== "websocket" && arguments_[2] !== "raw-quic")
     throw new Error(
       `Node.js production carrier is unsupported by this peer: ${arguments_[2] ?? "missing"}`,
     );
-  return { role, carrier: "websocket" };
+  return { role, carrier: arguments_[2] };
+}
+
+function endpointURL(carrier: ParityCarrier, path: "direct" | "tunnel", port: number): string {
+  return carrier === "websocket"
+    ? `wss://localhost:${port}/flowersec/v2/${path}`
+    : `quic://127.0.0.1:${port}`;
+}
+
+function directListenerOptions(
+  carrier: ParityCarrier,
+  tls: TLSFixture,
+): AcceptorListener {
+  const material = { certificate: tls.tls.certificate_chain_pem, privateKey: tls.tls.private_key_pem };
+  return carrier === "websocket"
+    ? { carrier, path: "direct", host: "127.0.0.1", port: 0, tls: material, allowedOrigins: [ORIGIN] }
+    : { carrier: "raw_quic", path: "direct", host: "127.0.0.1", port: 0, tls: material };
+}
+
+function tunnelListenerOptions(
+  carrier: ParityCarrier,
+  tls: TLSFixture,
+): TunnelRuntimeListener {
+  const material = { certificate: tls.tls.certificate_chain_pem, privateKey: tls.tls.private_key_pem };
+  return carrier === "websocket"
+    ? { carrier, host: "127.0.0.1", port: 0, tls: material, allowedOrigins: [ORIGIN] }
+    : { carrier: "raw_quic", host: "127.0.0.1", port: 0, tls: material };
 }
 
 async function main(): Promise<void> {
-  const { role } = parseArguments(process.argv.slice(2));
+  const { role, carrier } = parseArguments(process.argv.slice(2));
   switch (role) {
     case "server":
-      await runServer(fixture());
+      await runServer(fixture(), carrier);
       break;
     case "client":
-      await runClient(new PeerInput());
+      await runClient(new PeerInput(), carrier);
       break;
     case "relay":
-      await runRelay(fixture(), new PeerInput());
+      await runRelay(fixture(), new PeerInput(), carrier);
       break;
     case "tunnel-endpoint-a":
-      await runTunnelEndpointA(new PeerInput());
+      await runTunnelEndpointA(new PeerInput(), carrier);
       break;
     case "tunnel-endpoint-b":
-      await runTunnelEndpointB(new PeerInput());
+      await runTunnelEndpointB(new PeerInput(), carrier);
       break;
   }
 }

@@ -88,11 +88,24 @@ Flowersec 將應用工作階段與承載它的網路路徑分離：
 | Apple 用戶端連線 | 否 | 否 | 是 | 否 |
 | 原生 QUIC 連線 | 是 | 否 | 否 | 是 |
 | WebSocket 連線 | 是 | 是 | 是 | 是 |
-| WebTransport 連線 | 是 | 是 | 否 | 否 |
+| WebTransport 連線 | Go direct | Browser | 否 | 否 |
 | 伺服器端接收工作階段 | 是 | Node.js | 否 | 是 |
 | 不透明中繼執行時 | 是 | Node.js | 否 | 是 |
 | 控制面簽發連線邀請 | 是 | Node.js | 否 | 是 |
 | HTTP 與 WebSocket ProxyServer | 是 | Node.js | 否 | 是 |
+
+部署 profile 將平台可用性與共享的 Flowersec 應用協定分離：
+
+| Profile | 執行環境 | 必要的 carrier 與角色範圍 | 選用範圍 |
+| --- | --- | --- | --- |
+| `native-server-core` | Go、Rust、Node.js | WebSocket 和 raw QUIC endpoint client、direct server 與 opaque tunnel runtime | WebTransport adapter |
+| `browser-client` | TypeScript browser | WebSocket endpoint client | Browser WebTransport adapter |
+| `apple-client` | Apple 平台上的 Swift | WSS endpoint client | 無 |
+| `webtransport-server` | 目前沒有執行環境宣告 | 宣告前必須同時通過 direct server 與 opaque tunnel runtime conformance | 無 |
+
+Go、Rust 和 Node.js 實作相同的 18 個必要 `native-server-core` tuple。
+Direct 和 tunnel conformance 對兩種必要 carrier 驗證所有跨語言組合；profile
+絕不會改變 Artifact、handshake、RPC、stream、close、rekey 或 authorization wire 語意。
 
 請參閱各 SDK 指南，了解每個套件支援的平台與連線組合。
 

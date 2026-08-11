@@ -151,6 +151,12 @@ impl WebSocketListener {
     }
 
     pub(crate) async fn accept(&self) -> Result<Arc<dyn CarrierSessionV2>, WebSocketError> {
+        self.accept_with_peer().await.map(|(carrier, _)| carrier)
+    }
+
+    pub(crate) async fn accept_with_peer(
+        &self,
+    ) -> Result<(Arc<dyn CarrierSessionV2>, SocketAddr), WebSocketError> {
         loop {
             let (stream, peer) = self
                 .listener
@@ -189,7 +195,7 @@ impl WebSocketListener {
                 .await
             };
             if let Ok(io) = accepted {
-                return Ok(WebSocketCarrier::pending(io, false, self.capacity));
+                return Ok((WebSocketCarrier::pending(io, false, self.capacity), peer));
             }
         }
     }

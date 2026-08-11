@@ -10,11 +10,12 @@ instances, namespaces, faults, and temporary files that they create.
 | Security-negative parser rejection and bounded malformed-input handling | `testdata/transport_v2/security_negative_vectors.json`, consumed by `protocol/{go,typescript,swift,rust}` |
 | One-shot session lifecycle, stream FIN/reset/STOP_SENDING, DATAGRAM, close, and abort | Per-language memory carrier and native carrier contract tests |
 | ConnectionController scheduling, fresh artifact per attempt, retry disposition, cancellation, and no replay | Shared controller vectors executed by all four SDKs |
-| Go WebSocket, raw QUIC, and WebTransport in direct and tunnel topologies | Go native carrier and self-contained Go interoperability tests |
-| Node WSS against Go, Rust, and Node | TypeScript interoperability tests using production adapters and session engines |
-| Rust raw QUIC against Go | Rust-to-Go direct and tunnel integration tests |
-| Swift WSS against Go | Swift-to-Go integration tests |
-| Chromium direct, WebTransport-to-WSS tunnel, and WebTransport-to-QUIC tunnel | Local `make browser-smoke` using the Chromium Playwright project |
+| Required Go/Rust/Node WebSocket and raw QUIC direct matrix (18 client/server cells) | `interop/server-parity/direct-matrix` using production adapters and session engines |
+| Required Go/Rust/Node WebSocket and raw QUIC tunnel covering set (18 topologies) | `interop/server-parity/tunnel-matrix` using endpoint A, opaque relay runtime, and endpoint B |
+| Optional Go WebTransport direct adapter | Go carrier conformance and Chromium direct checks when the adapter is selected |
+| Node and Rust WebSocket/raw QUIC cross-runtime behavior | The required direct and tunnel matrices above, with shared Flowersec application wire vectors |
+| Swift WSS against Go, Rust, and Node | Swift focused interoperability tests |
+| Chromium direct, WebTransport-to-WSS tunnel, and WebTransport-to-QUIC tunnel | Local `make browser-smoke` using Chromium dual-listener bridge workloads; these are not native `TunnelRuntime` declarations |
 | Firefox and WebKit native WebTransport capability | Local `make browser-compat`; unsupported runtime surfaces are asserted explicitly |
 | Network namespaces, BPF, tc, and weak networks | Explicit `make diagnostic` workloads on a prepared privileged host |
 | Capacity, resource, and soak thresholds | Explicit `make performance` workloads |

@@ -24,18 +24,26 @@ are carrier errors; Flowersec handshake, RPC, liveness, and protocol state are
 session errors. Adapters map native failures into the first two classes and
 must never manufacture a Flowersec handshake result.
 
-## Equal Carriers
+## Carrier Profiles
 
-WebSocket, raw QUIC, and WebTransport are equal carrier candidates. The connector races the exact candidates authorized by an artifact and does not interpret registry order as preference.
+WebSocket and raw QUIC are the required server carriers. Go, Rust, and Node.js
+implement both for client, direct-server, and opaque tunnel-runtime roles.
+WebTransport is an optional adapter profile. The connector races only the exact
+supported candidates authorized by an artifact and does not interpret registry
+order as preference.
 
-The performance matrix keeps the same forced coverage for every adverse
-network profile: direct WebSocket, direct raw QUIC, direct WebTransport,
-WebTransport over a WSS tunnel, and WebTransport over a QUIC tunnel are all
-separate cells. A native runtime can race WSS against raw QUIC, while a browser
-runtime can race WSS against WebTransport. Capacity coverage
-also includes direct WebTransport and both WebTransport tunnel directions; a
-mixed bridge is covered by the browser tunnel cells and the native mixed-leg
-conformance cases.
+A profile decides only whether a runtime exposes a carrier adapter. It never
+changes Flowersec application wire semantics. Runtimes that support the same
+carrier share Artifact admission, FSH2 handshake and record protection, RPC,
+notification, stream metadata and termination, datagram framing, rekey,
+liveness, authenticated close, cancellation, and cleanup behavior. Required
+carrier conformance therefore uses every Go/Rust/Node client-server pairing,
+not a language-private self-test or a one-way reference peer.
+
+Performance and interoperability runners execute only registered supported
+cells. Native runtimes can race WSS against raw QUIC, while browsers can race
+WSS against browser-native WebTransport. Go supports direct WebTransport. Rust
+and Node.js do not advertise a production WebTransport adapter.
 
 | Carrier | Multiplexing | Required behavior |
 |---|---|---|
@@ -45,9 +53,9 @@ conformance cases.
 
 The tunnel runtime terminates only hop-local carrier multiplexing. It never
 receives a Session contract or E2EE key and never terminates application
-encryption. Mixed WebSocket/QUIC/WebTransport legs bridge opaque per-stream
-ciphertext through the same carrier contract; the two endpoint runtimes perform
-the application handshake across that bridge.
+encryption. WebSocket and raw QUIC legs bridge opaque per-stream ciphertext
+through the same carrier contract; the two endpoint runtimes perform the
+application handshake across that bridge.
 
 ## Fixed Paths and Profiles
 
@@ -91,12 +99,10 @@ The Flowersec carrier-facing inbound bidirectional-stream capacity is exactly
 `N + 2`: one lifetime control stream, one persistent reserved RPC stream, and
 the negotiated `N` application streams. WebSocket applies the same budget to
 its hop-local Yamux session, and raw QUIC applies it directly to QUIC
-`MaxIncomingStreams`. WebTransport still exposes exactly `N + 2` native
-WebTransport streams to Flowersec and never uses Yamux, but its HTTP/3 server
-configures the underlying QUIC `MaxIncomingStreams` to `N + 3` because the
-long-lived extended CONNECT request consumes one additional HTTP/3
-bidirectional stream. That HTTP/3 stream is infrastructure-only and is never
-available as Flowersec application capacity.
+`MaxIncomingStreams`. A WebTransport adapter reports exactly `N + 2`
+Flowersec-visible streams and never exposes HTTP/3 infrastructure streams as
+application capacity. Its upstream implementation owns the corresponding
+HTTP/3 stream accounting.
 
 Every carrier session reports that exact physical capacity. Go uses
 `MaxIncomingStreams()`, TypeScript and Swift use
@@ -113,7 +119,7 @@ use the single-host runner. Every layer is judged by assertions and process exit
 status: success retains no output, while failure retains only a bounded
 first-failure diagnostic.
 
-Capacity tests include 1,000 concurrent direct WSS, raw QUIC, and WebTransport sessions, plus 1,000 sessions for each WW, QQ, WQ, QW, WebTransport-over-WSS, and WebTransport-over-QUIC tunnel topology. The performance package freezes a 30-second ramp, 60-second hold, 30-second cleanup, 120-second watchdog, and RSS, CPU, file-descriptor, goroutine, and task ceilings. Each capacity case counts attempted, succeeded, and failed sessions; proves a unique active peak of exactly 1,000 with no hold disconnect; records ramp/hold/cleanup resource samples; and finishes with zero watchdogs and zero residual sessions.
+Registered capacity tests cover 1,000 concurrent sessions for each production topology they select, including direct WSS, raw QUIC, Go WebTransport, and native WSS/raw-QUIC tunnels. Browser WebTransport bridge cases are dual-listener test workloads rather than production `TunnelRuntime` declarations. The performance package freezes a 30-second ramp, 60-second hold, 30-second cleanup, 120-second watchdog, and RSS, CPU, file-descriptor, goroutine, and task ceilings. Each selected case counts attempted, succeeded, and failed sessions; proves a unique active peak of exactly 1,000 with no hold disconnect; records ramp/hold/cleanup resource samples; and finishes with zero watchdogs and zero residual sessions.
 
 The three browser stream-capacity cases additionally prove 100 production sessions with 128 simultaneously live bidirectional streams per session. They use a 60-second ramp and a dedicated 32,768 aggregate process-tree descriptor ceiling plus a 240 CPU-second aggregate ceiling. Those ceilings preserve measured headroom over the Chromium calibration; the 1,000-session browser cases remain at 12,288 descriptors and non-browser capacity cases remain at 8,192.
 
@@ -130,7 +136,16 @@ Both modules declare Go 1.25.0 and use the MIT license. The native adapters impl
 
 Go raw QUIC and WebTransport fail closed before network use: clients must provide a non-empty explicit root pool and cannot set `InsecureSkipVerify`; servers must provide a certificate and private key or a dynamic certificate callback. Hostname and chain verification remain mandatory during the TLS 1.3 handshake.
 
-The WebTransport dependency implements draft-ietf-webtrans-http3-15. Browser support remains a separate runtime-adapter smoke contract and is not inferred from native Go support.
+The WebTransport dependency owns its HTTP/3 wire version and conformance.
+Browser support remains a separate runtime-adapter smoke contract and is not
+inferred from native Go support.
+
+Runtime tuples in `stability/transport_v2_contract.json` describe individual
+carrier leg adapters, not deployment-profile claims. Go retains WebTransport
+tunnel leg adapters for browser and mixed-leg workloads, while
+`webtransport-server` remains unclaimed until its complete direct-server and
+opaque-tunnel conformance set is registered. Required server parity never
+infers WebTransport support from those lower-level tuples.
 
 ## Rust Native Adapter
 
@@ -144,21 +159,22 @@ Rust pins `quinn =0.11.11` with default features disabled and only `runtime-toki
 - TypeScript browser: WebSocket and WebTransport when their constructors are
   present; `detectBrowserRuntimeCapabilityV2(...)` removes unavailable APIs at
   runtime. Raw UDP is unavailable.
-- TypeScript Node.js: WebSocket direct/tunnel endpoint dialing, direct
-  WebSocket server acceptance, and an opaque WSS tunnel runtime. Raw QUIC and
-  WebTransport remain unsupported until a public production driver passes the
-  shared contracts.
+- TypeScript Node.js: WebSocket and raw QUIC direct/tunnel endpoint dialing,
+  direct server acceptance, and opaque tunnel runtimes. Raw QUIC is provided
+  by the Flowersec-owned optional native addon and platform packages.
+  WebTransport is an optional profile and no production Node.js adapter is
+  currently registered.
 - Rust native: WebSocket and raw QUIC direct/tunnel endpoint dialing,
   runtime-owned direct listeners, and opaque tunnel listeners. WebTransport
-  remains unsupported until a production driver passes the strict draft-15
-  and cross-runtime contracts.
+  is an optional profile and no production Rust adapter is currently
+  registered.
 - Swift macOS and iOS: WebSocket direct client dialing and tunnel dialing for
   both session roles. Raw QUIC, WebTransport, DATAGRAM, and migration remain
   unavailable across the supported deployment targets.
 - Swift Linux: every carrier is explicitly unsupported; the SDK does not infer
   runtime support from the availability of the Swift toolchain.
 
-Unsupported states carry registered reason tokens. Missing tuples are unsupported; they must not be inferred by combining other modes or roles.
+Transport capability descriptors use registered reason tokens. Server parity entries use stable English reasons and never claim an entrypoint or test ID when unsupported. Missing tuples are unsupported; they must not be inferred by combining other modes or roles.
 
 ## Artifact and Session Lifecycle
 

@@ -65,6 +65,10 @@ var expectedServerParityEntrypoints = map[string]string{
 	"node-typescript/endpoint-client/websocket/tunnel/connect":                      "@floegence/flowersec-core/node connect",
 	"node-typescript/direct-server/websocket/direct/accept":                         "@floegence/flowersec-core/node createAcceptor",
 	"node-typescript/tunnel-runtime/websocket/tunnel/pair-forward":                  "@floegence/flowersec-core/node createTunnelRuntime",
+	"node-typescript/endpoint-client/raw-quic/direct/connect":                       "@floegence/flowersec-core/node connect",
+	"node-typescript/endpoint-client/raw-quic/tunnel/connect":                       "@floegence/flowersec-core/node connect",
+	"node-typescript/direct-server/raw-quic/direct/accept":                          "@floegence/flowersec-core/node createAcceptor",
+	"node-typescript/tunnel-runtime/raw-quic/tunnel/pair-forward":                   "@floegence/flowersec-core/node createTunnelRuntime",
 	"node-typescript/control-plane/carrier-neutral/carrier-neutral/issue-authorize": "@floegence/flowersec-core/node Issuer/authorizeRuntime",
 	"node-typescript/proxy-server/carrier-neutral/direct/proxy":                     "@floegence/flowersec-core/node ProxyServer",
 	"rust/endpoint-client/websocket/direct/connect":                                 "flowersec::connect",
@@ -82,7 +86,7 @@ var expectedServerParityEntrypoints = map[string]string{
 var expectedPortableServerEntrypoints = map[string]map[string]string{
 	"server_admission_paths": {
 		"go":         "flowersec.NewAcceptor: WebSocket/raw QUIC/WebTransport direct",
-		"typescript": "@floegence/flowersec-core/node createAcceptor: WebSocket direct",
+		"typescript": "@floegence/flowersec-core/node createAcceptor: WebSocket and raw QUIC direct",
 		"rust":       "flowersec::Acceptor: WebSocket and raw QUIC direct",
 	},
 }
@@ -94,7 +98,26 @@ type capabilityManifest struct {
 	PortableCapabilities        []portableCapability        `json:"portable_capabilities"`
 	RuntimeSpecificCapabilities []runtimeSpecificCapability `json:"runtime_specific_capabilities"`
 	SharedFixtures              []sharedFixture             `json:"shared_fixtures"`
+	DeploymentProfiles          deploymentProfilesContract  `json:"deployment_profiles"`
 	ServerParityContract        *serverParityContract       `json:"server_parity_contract,omitempty"`
+}
+
+type deploymentProfilesContract struct {
+	Version         int                 `json:"version"`
+	ApplicationWire string              `json:"application_wire"`
+	Profiles        []deploymentProfile `json:"profiles"`
+}
+
+type deploymentProfile struct {
+	ID                    string              `json:"id"`
+	ClaimedRuntimes       []string            `json:"claimed_runtimes"`
+	TransportRuntimeIDs   []string            `json:"transport_runtime_ids"`
+	RequiredRoles         []string            `json:"required_roles"`
+	RequiredCarriers      []string            `json:"required_carriers"`
+	RequiredPaths         map[string][]string `json:"required_paths"`
+	RequiredCapabilityIDs []string            `json:"required_capability_ids"`
+	OptionalCarriers      []string            `json:"optional_carriers"`
+	RequiredTupleCount    int                 `json:"required_tuple_count"`
 }
 
 type serverParityContract struct {
@@ -335,6 +358,9 @@ func verifyParity(repoRoot string) error {
 	if err != nil {
 		return err
 	}
+	if err := validateDeploymentProfileTransportBindings(m.DeploymentProfiles, transport); err != nil {
+		return err
+	}
 	registryIDs, err := loadRegistryIDs(repoRoot)
 	if err != nil {
 		return err
@@ -377,6 +403,61 @@ func verifyParity(repoRoot string) error {
 	}
 	fmt.Printf("language parity OK: %d capabilities across %d languages; transport v%d has %d runtime registries\n", len(m.PortableCapabilities), len(m.Languages), transport.Version, len(transport.Runtimes))
 	return nil
+}
+
+func verifyRequiredServerParityComplete(repoRoot string) error {
+	m, err := loadCapabilityManifest(repoRoot)
+	if err != nil {
+		return err
+	}
+	transport, err := loadTransportV2Contract(repoRoot)
+	if err != nil {
+		return err
+	}
+	if err := validateDeploymentProfileTransportBindings(m.DeploymentProfiles, transport); err != nil {
+		return err
+	}
+	runtimes, carriers, err := nativeServerProfileDimensions(m)
+	if err != nil {
+		return err
+	}
+	registryIDs, err := loadRegistryIDs(repoRoot)
+	if err != nil {
+		return err
+	}
+	if err := validateRequiredServerParityCompletionContract(m.ServerParityContract, registryIDs); err != nil {
+		return err
+	}
+	var matrix interopMatrix
+	if err := decodeStrictJSONFile(filepath.Join(repoRoot, interopMatrixPath), &matrix); err != nil {
+		return fmt.Errorf("parse %s: %w", interopMatrixPath, err)
+	}
+	if !slices.Equal(matrix.ServerRuntimes, runtimes) {
+		return fmt.Errorf("interop matrix server_runtimes must match native-server-core claimed runtimes")
+	}
+	if err := validateDirectInteropCells(matrix, registryIDs, carriers); err != nil {
+		return err
+	}
+	return validateTunnelInteropTopologies(matrix, registryIDs, runtimes, carriers)
+}
+
+func nativeServerProfileDimensions(capabilities *capabilityManifest) ([]string, []string, error) {
+	for _, profile := range capabilities.DeploymentProfiles.Profiles {
+		if profile.ID == "native-server-core" {
+			if len(profile.ClaimedRuntimes) == 0 || len(profile.RequiredCarriers) == 0 || profile.RequiredTupleCount != len(profile.ClaimedRuntimes)*len(profile.RequiredRoles)*len(profile.RequiredCarriers) {
+				return nil, nil, errors.New("native-server-core capability profile dimensions are incomplete")
+			}
+			return profile.ClaimedRuntimes, profile.RequiredCarriers, nil
+		}
+	}
+	return nil, nil, errors.New("native-server-core capability profile is missing")
+}
+
+func validateRequiredServerParityCompletionContract(contract *serverParityContract, registryIDs map[string]struct{}) error {
+	if err := validateRequiredServerParityComplete(contract); err != nil {
+		return err
+	}
+	return validateServerParityRegistry(contract, registryIDs)
 }
 
 func loadRegistryIDs(repoRoot string) (map[string]struct{}, error) {
@@ -537,8 +618,12 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	if len(matrix.Cases) == 0 {
 		return errors.New("interop matrix cases must not be empty")
 	}
-	if !slices.Equal(matrix.ServerRuntimes, []string{"go", "rust", "node-typescript"}) {
-		return errors.New("interop matrix server_runtimes must be [go rust node-typescript]")
+	runtimes, carriers, err := nativeServerProfileDimensions(capabilities)
+	if err != nil {
+		return err
+	}
+	if !slices.Equal(matrix.ServerRuntimes, runtimes) {
+		return errors.New("interop matrix server_runtimes must match native-server-core claimed runtimes")
 	}
 	if len(matrix.DirectCells) == 0 || len(matrix.TunnelTopologies) == 0 {
 		return errors.New("interop matrix must contain direct cells and explicit tunnel topologies")
@@ -547,10 +632,10 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	if err != nil {
 		return err
 	}
-	if err := validateDirectInteropCells(matrix, registryIDs); err != nil {
+	if err := validateDirectInteropCells(matrix, registryIDs, carriers); err != nil {
 		return err
 	}
-	if err := validateTunnelInteropTopologies(matrix, registryIDs); err != nil {
+	if err := validateTunnelInteropTopologies(matrix, registryIDs, runtimes, carriers); err != nil {
 		return err
 	}
 	cellIDs := make([]string, 0, len(matrix.DirectCells)+len(matrix.TunnelTopologies))
@@ -590,13 +675,17 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	return nil
 }
 
-func validateDirectInteropCells(matrix interopMatrix, registryIDs map[string]struct{}) error {
+func validateDirectInteropCells(matrix interopMatrix, registryIDs map[string]struct{}, requiredCarriers ...[]string) error {
+	carriers := matrixInteropCarriers(matrix)
+	if len(requiredCarriers) > 0 {
+		carriers = requiredCarriers[0]
+	}
 	directSeen := make(map[string]bool)
 	for _, cell := range matrix.DirectCells {
 		if !slices.Contains(matrix.ServerRuntimes, cell.Client) || !slices.Contains(matrix.ServerRuntimes, cell.Server) {
 			return fmt.Errorf("interop cell %s names an unknown language", cell.ID)
 		}
-		if !slices.Contains([]string{"websocket", "raw-quic", "webtransport"}, cell.Carrier) || len(cell.Cases) == 0 {
+		if !slices.Contains(carriers, cell.Carrier) || len(cell.Cases) == 0 {
 			return fmt.Errorf("interop cell %s must declare one carrier and cases", cell.ID)
 		}
 		key := strings.Join([]string{cell.Client, cell.Server, cell.Carrier}, "/")
@@ -631,13 +720,14 @@ func validateDirectInteropCells(matrix interopMatrix, registryIDs map[string]str
 			if !isStableUnsupportedReason(cell.Reason) {
 				return fmt.Errorf("unsupported interop cell %s requires a stable English reason", cell.ID)
 			}
+			return fmt.Errorf("required interop cell %s cannot be unsupported", cell.ID)
 		default:
 			return fmt.Errorf("interop cell %s has forbidden status %q", cell.ID, cell.Status)
 		}
 	}
 	for _, client := range matrix.ServerRuntimes {
 		for _, server := range matrix.ServerRuntimes {
-			for _, carrier := range []string{"websocket", "raw-quic", "webtransport"} {
+			for _, carrier := range carriers {
 				key := strings.Join([]string{client, server, carrier}, "/")
 				if !directSeen[key] {
 					return fmt.Errorf("missing direct interop cell %s", key)
@@ -648,12 +738,29 @@ func validateDirectInteropCells(matrix interopMatrix, registryIDs map[string]str
 	return nil
 }
 
-func validateTunnelInteropTopologies(matrix interopMatrix, registryIDs map[string]struct{}) error {
+func validateTunnelInteropTopologies(matrix interopMatrix, registryIDs map[string]struct{}, dimensions ...[]string) error {
+	runtimes := matrix.ServerRuntimes
+	carriers := matrixInteropCarriers(matrix)
+	if len(dimensions) == 2 {
+		runtimes = dimensions[0]
+		carriers = dimensions[1]
+	}
+	expectedTopologies := generatedTunnelTopologyDimensions(runtimes, carriers)
+	if len(matrix.TunnelTopologies) != len(expectedTopologies) {
+		return fmt.Errorf("tunnel matrix must match the generated pairwise covering set of %d topologies", len(expectedTopologies))
+	}
 	for _, topology := range matrix.TunnelTopologies {
+		expected, ok := expectedTopologies[topology.ID]
+		if !ok || topology.EndpointA != expected.EndpointA || topology.IngressCarrierA != expected.IngressCarrierA ||
+			topology.TunnelRuntime != expected.TunnelRuntime || topology.EndpointB != expected.EndpointB ||
+			topology.IngressCarrierB != expected.IngressCarrierB {
+			return fmt.Errorf("tunnel topology %s does not match the generated pairwise covering set", topology.ID)
+		}
+		delete(expectedTopologies, topology.ID)
 		if !slices.Contains(matrix.ServerRuntimes, topology.EndpointA) || !slices.Contains(matrix.ServerRuntimes, topology.EndpointB) || !slices.Contains(matrix.ServerRuntimes, topology.TunnelRuntime) {
 			return fmt.Errorf("tunnel topology %s names an unknown runtime", topology.ID)
 		}
-		if !slices.Contains([]string{"websocket", "raw-quic", "webtransport"}, topology.IngressCarrierA) || !slices.Contains([]string{"websocket", "raw-quic", "webtransport"}, topology.IngressCarrierB) || len(topology.Cases) == 0 {
+		if !slices.Contains(carriers, topology.IngressCarrierA) || !slices.Contains(carriers, topology.IngressCarrierB) || len(topology.Cases) == 0 {
 			return fmt.Errorf("tunnel topology %s has invalid ingress or cases", topology.ID)
 		}
 		for _, caseID := range topology.Cases {
@@ -683,13 +790,17 @@ func validateTunnelInteropTopologies(matrix interopMatrix, registryIDs map[strin
 			if !isStableUnsupportedReason(topology.Reason) {
 				return fmt.Errorf("unsupported tunnel topology %s requires a stable English reason", topology.ID)
 			}
+			return fmt.Errorf("required tunnel topology %s cannot be unsupported", topology.ID)
 		default:
 			return fmt.Errorf("tunnel topology %s has forbidden status %q", topology.ID, topology.Status)
 		}
 	}
+	if len(expectedTopologies) != 0 {
+		return errors.New("tunnel matrix is missing a topology from the generated pairwise covering set")
+	}
 	for _, endpointA := range matrix.ServerRuntimes {
 		for _, endpointB := range matrix.ServerRuntimes {
-			for _, carrier := range []string{"websocket", "raw-quic", "webtransport"} {
+			for _, carrier := range carriers {
 				covered := slices.ContainsFunc(matrix.TunnelTopologies, func(topology tunnelInteropTopology) bool {
 					return topology.EndpointA == endpointA && topology.EndpointB == endpointB &&
 						topology.IngressCarrierA == carrier && topology.IngressCarrierB == carrier
@@ -701,7 +812,7 @@ func validateTunnelInteropTopologies(matrix interopMatrix, registryIDs map[strin
 		}
 	}
 	for _, relay := range matrix.ServerRuntimes {
-		for _, carrier := range []string{"websocket", "raw-quic", "webtransport"} {
+		for _, carrier := range carriers {
 			covered := slices.ContainsFunc(matrix.TunnelTopologies, func(topology tunnelInteropTopology) bool {
 				return topology.TunnelRuntime == relay && topology.IngressCarrierA == carrier && topology.IngressCarrierB == carrier
 			})
@@ -711,6 +822,55 @@ func validateTunnelInteropTopologies(matrix interopMatrix, registryIDs map[strin
 		}
 	}
 	return nil
+}
+
+func generatedTunnelTopologyDimensions(runtimes, carriers []string) map[string]tunnelInteropTopology {
+	topologies := make(map[string]tunnelInteropTopology, len(runtimes)*len(runtimes)*len(carriers))
+	for _, carrier := range carriers {
+		for endpointAIndex, endpointA := range runtimes {
+			for relayIndex, relay := range runtimes {
+				endpointB := runtimes[(endpointAIndex+relayIndex)%len(runtimes)]
+				id := strings.Join([]string{
+					parityRuntimeID(endpointA), "via", parityRuntimeID(relay), "to", parityRuntimeID(endpointB), parityCarrierID(carrier), "tunnel",
+				}, "_")
+				topologies[id] = tunnelInteropTopology{
+					ID: id, EndpointA: endpointA, IngressCarrierA: carrier,
+					TunnelRuntime: relay, EndpointB: endpointB, IngressCarrierB: carrier,
+				}
+			}
+		}
+	}
+	return topologies
+}
+
+func matrixInteropCarriers(matrix interopMatrix) []string {
+	seen := make(map[string]struct{})
+	for _, cell := range matrix.DirectCells {
+		seen[cell.Carrier] = struct{}{}
+	}
+	for _, topology := range matrix.TunnelTopologies {
+		seen[topology.IngressCarrierA] = struct{}{}
+	}
+	carriers := make([]string, 0, len(seen))
+	for carrier := range seen {
+		carriers = append(carriers, carrier)
+	}
+	slices.Sort(carriers)
+	return carriers
+}
+
+func parityRuntimeID(runtime string) string {
+	if runtime == "node-typescript" {
+		return "node"
+	}
+	return runtime
+}
+
+func parityCarrierID(carrier string) string {
+	if carrier == "raw-quic" {
+		return "raw_quic"
+	}
+	return carrier
 }
 
 func validateInteropProfiles(profiles interopProfiles) error {
@@ -848,6 +1008,9 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 	if err := validateServerParityContract(m.ServerParityContract); err != nil {
 		return nil, err
 	}
+	if err := validateDeploymentProfiles(m.DeploymentProfiles, m.ServerParityContract); err != nil {
+		return nil, err
+	}
 	if !slices.Equal(m.CapabilityLayers, []string{"portable_core", "server_integration", "control_plane", "sdk_profile", "language_convenience"}) {
 		return nil, fmt.Errorf("capability_layers must be [portable_core server_integration control_plane sdk_profile language_convenience]")
 	}
@@ -915,6 +1078,9 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 		if !slices.Contains(capabilityIDs, required) {
 			return nil, fmt.Errorf("capability manifest is missing required portable capability %s", required)
 		}
+	}
+	if err := validateDeploymentProfileCapabilityBindings(m.DeploymentProfiles, m.PortableCapabilities); err != nil {
+		return nil, err
 	}
 	runtimeIDs := make([]string, 0, len(m.RuntimeSpecificCapabilities))
 	for _, capability := range m.RuntimeSpecificCapabilities {
@@ -1034,6 +1200,165 @@ func validateServerParityContract(contract *serverParityContract) error {
 	for key := range expected {
 		if !seen[key] {
 			return fmt.Errorf("missing required server parity unit %s", key)
+		}
+	}
+	return nil
+}
+
+func validateDeploymentProfiles(contract deploymentProfilesContract, parity *serverParityContract) error {
+	if contract.Version != 1 || contract.ApplicationWire != "shared_across_runtimes_and_carriers" {
+		return errors.New("deployment_profiles must declare version 1 and the shared application wire")
+	}
+	expected := []deploymentProfile{
+		{
+			ID: "native-server-core", ClaimedRuntimes: []string{"go", "rust", "node-typescript"},
+			TransportRuntimeIDs: []string{"go_native", "rust_native", "typescript_node"},
+			RequiredRoles:       []string{"endpoint-client", "direct-server", "tunnel-runtime"}, RequiredCarriers: []string{"websocket", "raw-quic"},
+			RequiredPaths:         map[string][]string{"endpoint-client": {"direct", "tunnel"}, "direct-server": {"direct"}, "tunnel-runtime": {"tunnel"}},
+			RequiredCapabilityIDs: []string{"opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"},
+			OptionalCarriers:      []string{"webtransport"}, RequiredTupleCount: 18,
+		},
+		{
+			ID: "browser-client", ClaimedRuntimes: []string{"typescript-browser"}, TransportRuntimeIDs: []string{"typescript_browser"}, RequiredRoles: []string{"endpoint-client"}, RequiredCarriers: []string{"websocket"},
+			RequiredPaths:         map[string][]string{"endpoint-client": {"direct", "tunnel"}},
+			RequiredCapabilityIDs: []string{"opaque_artifact", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller"},
+			OptionalCarriers:      []string{"webtransport"}, RequiredTupleCount: 1,
+		},
+		{
+			ID: "apple-client", ClaimedRuntimes: []string{"swift"}, TransportRuntimeIDs: []string{"swift_ios", "swift_macos"}, RequiredRoles: []string{"endpoint-client"}, RequiredCarriers: []string{"websocket"},
+			RequiredPaths:         map[string][]string{"endpoint-client": {"direct", "tunnel"}},
+			RequiredCapabilityIDs: []string{"opaque_artifact", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller"},
+			RequiredTupleCount:    1,
+		},
+		{
+			ID: "webtransport-server", RequiredRoles: []string{"direct-server", "tunnel-runtime"}, RequiredCarriers: []string{"webtransport"},
+			RequiredPaths:         map[string][]string{"direct-server": {"direct"}, "tunnel-runtime": {"tunnel"}},
+			RequiredCapabilityIDs: []string{"secure_session", "rpc_call_notify", "validated_stream_metadata", "carrier_contract", "wire_security"},
+		},
+	}
+	if len(contract.Profiles) != len(expected) {
+		return fmt.Errorf("deployment_profiles must declare exactly %d named profiles", len(expected))
+	}
+	for index, want := range expected {
+		got := contract.Profiles[index]
+		if got.ID != want.ID || !slices.Equal(got.ClaimedRuntimes, want.ClaimedRuntimes) || !slices.Equal(got.TransportRuntimeIDs, want.TransportRuntimeIDs) ||
+			!slices.Equal(got.RequiredRoles, want.RequiredRoles) || !slices.Equal(got.RequiredCarriers, want.RequiredCarriers) ||
+			!equalStringSlicesMap(got.RequiredPaths, want.RequiredPaths) || !slices.Equal(got.RequiredCapabilityIDs, want.RequiredCapabilityIDs) ||
+			!slices.Equal(got.OptionalCarriers, want.OptionalCarriers) || got.RequiredTupleCount != want.RequiredTupleCount {
+			return fmt.Errorf("deployment profile %q does not match its canonical capability contract", want.ID)
+		}
+		calculated := len(got.ClaimedRuntimes) * len(got.RequiredRoles) * len(got.RequiredCarriers)
+		if got.RequiredTupleCount != calculated {
+			return fmt.Errorf("deployment profile %q required_tuple_count = %d, want %d", got.ID, got.RequiredTupleCount, calculated)
+		}
+	}
+	if parity == nil {
+		return errors.New("native-server-core requires server_parity_contract")
+	}
+	units := make(map[string]serverParityUnit, len(parity.Units))
+	for _, unit := range parity.Units {
+		key := strings.Join([]string{unit.Runtime, unit.Role, unit.Carrier, unit.Path}, "/")
+		units[key] = unit
+	}
+	native := contract.Profiles[0]
+	tupleCount := 0
+	for _, runtime := range native.ClaimedRuntimes {
+		for _, role := range native.RequiredRoles {
+			for _, carrier := range native.RequiredCarriers {
+				tupleCount++
+				for _, path := range native.RequiredPaths[role] {
+					key := strings.Join([]string{runtime, role, carrier, path}, "/")
+					unit, ok := units[key]
+					if !ok || unit.Status != "supported" {
+						return fmt.Errorf("native-server-core required tuple path %s is not supported", key)
+					}
+				}
+			}
+		}
+	}
+	if tupleCount != native.RequiredTupleCount {
+		return fmt.Errorf("native-server-core derives %d required tuples, want %d", tupleCount, native.RequiredTupleCount)
+	}
+	return nil
+}
+
+func validateDeploymentProfileCapabilityBindings(contract deploymentProfilesContract, capabilities []portableCapability) error {
+	byID := make(map[string]portableCapability, len(capabilities))
+	for _, capability := range capabilities {
+		byID[capability.ID] = capability
+	}
+	runtimeLanguage := map[string]string{
+		"go": "go", "rust": "rust", "node-typescript": "typescript",
+		"typescript-browser": "typescript", "swift": "swift",
+	}
+	for _, profile := range contract.Profiles {
+		for _, capabilityID := range profile.RequiredCapabilityIDs {
+			capability, ok := byID[capabilityID]
+			if !ok {
+				return fmt.Errorf("deployment profile %q references unknown required capability %q", profile.ID, capabilityID)
+			}
+			for _, runtime := range profile.ClaimedRuntimes {
+				language, ok := runtimeLanguage[runtime]
+				if !ok {
+					return fmt.Errorf("deployment profile %q claims unknown runtime %q", profile.ID, runtime)
+				}
+				if capability.Implementations[language].Status != "supported" {
+					return fmt.Errorf("deployment profile %q required capability %q is unsupported for %s", profile.ID, capabilityID, runtime)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateDeploymentProfileTransportBindings(contract deploymentProfilesContract, transport *transportV2Contract) error {
+	if transport == nil {
+		return errors.New("deployment profiles require the transport contract")
+	}
+	if contract.ApplicationWire != transport.Policies.ProfileApplicationWire {
+		return errors.New("deployment profile and transport contracts disagree on the application wire")
+	}
+	runtimes := make(map[string]transportV2Runtime, len(transport.Runtimes))
+	for _, runtime := range transport.Runtimes {
+		runtimes[runtime.ID] = runtime
+	}
+	for _, profile := range contract.Profiles {
+		for _, runtimeID := range profile.TransportRuntimeIDs {
+			runtime, ok := runtimes[runtimeID]
+			if !ok {
+				return fmt.Errorf("deployment profile %q references unknown transport runtime %q", profile.ID, runtimeID)
+			}
+			for _, carrier := range profile.RequiredCarriers {
+				transportCarrier := strings.ReplaceAll(carrier, "-", "_")
+				if !slices.ContainsFunc(runtime.Tuples, func(tuple transportV2RuntimeTuple) bool { return tuple.Carrier == transportCarrier }) {
+					return fmt.Errorf("deployment profile %q transport runtime %q lacks required carrier %q", profile.ID, runtimeID, carrier)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func equalStringSlicesMap(left, right map[string][]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, values := range right {
+		if !slices.Equal(left[key], values) {
+			return false
+		}
+	}
+	return true
+}
+
+func validateRequiredServerParityComplete(contract *serverParityContract) error {
+	if err := validateServerParityContract(contract); err != nil {
+		return err
+	}
+	for _, unit := range contract.Units {
+		if unit.Status == "unsupported" && unit.Carrier != "webtransport" {
+			key := strings.Join([]string{unit.Runtime, unit.Role, unit.Carrier, unit.Path, unit.Feature}, "/")
+			return fmt.Errorf("required server parity unit %s is unsupported: %s", key, unit.Reason)
 		}
 	}
 	return nil

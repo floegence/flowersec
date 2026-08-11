@@ -10,7 +10,10 @@ import {
   BROWSER_RUNTIME_CAPABILITY_V2,
   detectBrowserRuntimeCapabilityV2,
 } from "../browser/runtimeCapability.js";
-import { NODE_RUNTIME_CAPABILITY_V2 } from "../node/runtimeCapability.js";
+import {
+  detectNodeRuntimeCapabilityV2,
+  NODE_RUNTIME_PROFILE_V2,
+} from "../node/runtimeCapability.js";
 
 const vectors = JSON.parse(
   readFileSync(new URL("../../../testdata/transport_v2/capability_vectors.json", import.meta.url), "utf8"),
@@ -41,20 +44,28 @@ describe("runtime capability v2", () => {
   });
 
   test("advertises only implemented Node carrier connectors", () => {
-    expect(NODE_RUNTIME_CAPABILITY_V2).toEqual({
+    expect(detectNodeRuntimeCapabilityV2(true)).toEqual({
       language: "typescript",
       runtime: "node",
       schemaVersion: 2,
       tuples: [
+        { carrier: "raw_quic", networkMode: "dial", path: "direct", sessionRole: "client", reliableStreams: true, datagrams: true, migration: false },
+        { carrier: "raw_quic", networkMode: "dial", path: "tunnel", sessionRole: "client", reliableStreams: true, datagrams: true, migration: false },
+        { carrier: "raw_quic", networkMode: "dial", path: "tunnel", sessionRole: "server", reliableStreams: true, datagrams: true, migration: false },
+        { carrier: "raw_quic", networkMode: "listen", path: "direct", sessionRole: "server", reliableStreams: true, datagrams: true, migration: false },
         { carrier: "websocket", networkMode: "dial", path: "direct", sessionRole: "client", reliableStreams: true, datagrams: false, migration: false },
         { carrier: "websocket", networkMode: "dial", path: "tunnel", sessionRole: "client", reliableStreams: true, datagrams: false, migration: false },
         { carrier: "websocket", networkMode: "dial", path: "tunnel", sessionRole: "server", reliableStreams: true, datagrams: false, migration: false },
+        { carrier: "websocket", networkMode: "listen", path: "direct", sessionRole: "server", reliableStreams: true, datagrams: false, migration: false },
       ],
-      unsupported: [
-        { carrier: "raw_quic", reason: "node_raw_quic_driver_unavailable" },
-        { carrier: "webtransport", reason: "node_webtransport_driver_unavailable" },
-      ],
+      unsupported: [{ carrier: "webtransport", reason: "node_webtransport_driver_unavailable" }],
     });
+  });
+
+  test("fails explicitly when the required Node native addon is unavailable", () => {
+    expect(() => detectNodeRuntimeCapabilityV2(false)).toThrowError(
+      expect.objectContaining({ code: "native_transport_unavailable" }),
+    );
   });
 
   test("removes WebTransport when the browser runtime API is unavailable", () => {
@@ -72,7 +83,7 @@ describe("runtime capability v2", () => {
   test("matches the shared strict codec and digest vectors", () => {
     for (const [descriptor, name] of [
       [BROWSER_RUNTIME_CAPABILITY_V2, "typescript-browser"],
-      [NODE_RUNTIME_CAPABILITY_V2, "typescript-node"],
+      [NODE_RUNTIME_PROFILE_V2, "typescript-node"],
     ] as const) {
       const expected = vector(name);
       const encoded = encodeRuntimeCapabilityDescriptorV2(descriptor);
@@ -88,6 +99,6 @@ describe("runtime capability v2", () => {
     expect(Object.isFrozen(BROWSER_RUNTIME_CAPABILITY_V2)).toBe(true);
     expect(Object.isFrozen(BROWSER_RUNTIME_CAPABILITY_V2.tuples)).toBe(true);
     expect(Object.isFrozen(BROWSER_RUNTIME_CAPABILITY_V2.tuples[0])).toBe(true);
-    expect(Object.isFrozen(NODE_RUNTIME_CAPABILITY_V2.unsupported)).toBe(true);
+    expect(Object.isFrozen(NODE_RUNTIME_PROFILE_V2.unsupported)).toBe(true);
   });
 });

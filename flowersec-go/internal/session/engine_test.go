@@ -1466,6 +1466,30 @@ func TestCloseUnblocksAcceptBeforeControlFlushCompletes(t *testing.T) {
 	}
 }
 
+func TestCloseAfterAuthenticatedPeerCloseIsIdempotent(t *testing.T) {
+	client, server := establishMemoryPair(t, carrier.KindRawQUIC, 2)
+	client.carrier.(*memoryCarrierSession).closeErr = io.ErrClosedPipe
+	serverClosed := make(chan error, 1)
+	go func() { serverClosed <- server.Close() }()
+
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), time.Second)
+	defer cancelWait()
+	if err := client.WaitClosed(waitCtx); !errors.Is(err, ErrSessionClosed) {
+		t.Fatalf("client peer close = %v, want ErrSessionClosed", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("client Close after authenticated peer close = %v, want nil", err)
+	}
+	select {
+	case err := <-serverClosed:
+		if err != nil {
+			t.Fatalf("server Close = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server Close did not finish")
+	}
+}
+
 func establishMemoryPair(t *testing.T, kind carrier.Kind, maxInbound uint16) (*engineSession, *engineSession) {
 	t.Helper()
 	clientCarrier, serverCarrier := newMemoryCarrierPair(kind)
@@ -1763,6 +1787,7 @@ type memoryCarrierSession struct {
 	hookMu      sync.RWMutex
 	writeHook   func([]byte)
 	closeBlock  <-chan struct{}
+	closeErr    error
 	closeActive atomic.Int32
 
 	datagramMu         sync.Mutex
@@ -1905,7 +1930,7 @@ func (s *memoryCarrierSession) CloseWithErrorContext(ctx context.Context, applic
 		}
 	}
 	s.closeNow(applicationError)
-	return nil
+	return s.closeErr
 }
 
 func (s *memoryCarrierSession) closeNow(applicationError carrier.ApplicationError) {

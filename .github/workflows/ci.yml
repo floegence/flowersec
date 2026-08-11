@@ -85,6 +85,25 @@ jobs:
       - name: Run precommit quality gate
         run: make precommit
 
+  node-current:
+    name: Current Node compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup current Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: flowersec-ts/package-lock.json
+
+      - name: Run TypeScript language lane
+        run: make ts-ci ts-build ts-test-short
+
   dependency-review:
     name: Dependency review
     if: github.event_name == 'pull_request'

@@ -88,11 +88,23 @@ Flowersec отделяет сеанс приложения от сетевого
 | Соединения клиентов Apple | Нет | Нет | Да | Нет |
 | Нативные соединения QUIC | Да | Нет | Нет | Да |
 | Соединения WebSocket | Да | Да | Да | Да |
-| Соединения WebTransport | Да | Да | Нет | Нет |
+| Соединения WebTransport | Go direct | Browser | Нет | Нет |
 | Приём сеансов на сервере | Да | Node.js | Нет | Да |
 | Непрозрачный relay runtime | Да | Node.js | Нет | Да |
 | Выпуск приглашений управляющей плоскостью | Да | Node.js | Нет | Да |
 | HTTP и WebSocket ProxyServer | Да | Node.js | Нет | Да |
+
+Профили развертывания отделяют доступность платформы от общего прикладного протокола Flowersec:
+
+| Профиль | Среды выполнения | Обязательные carrier и role | Необязательные возможности |
+| --- | --- | --- | --- |
+| `native-server-core` | Go, Rust, Node.js | WebSocket и raw QUIC endpoint client, direct server и opaque tunnel runtime | WebTransport adapter |
+| `browser-client` | TypeScript browser | WebSocket endpoint client | Browser WebTransport adapter |
+| `apple-client` | Swift на платформах Apple | WSS endpoint client | Нет |
+| `webtransport-server` | Сейчас не заявлен ни одной средой | Перед заявлением обязательна conformance direct server и opaque tunnel runtime | Нет |
+
+Go, Rust и Node.js реализуют одинаковые 18 обязательных tuple профиля `native-server-core`.
+Direct- и tunnel-conformance проверяет все межъязыковые сочетания для обоих обязательных carrier; профиль никогда не меняет wire-семантику Artifact, handshake, RPC, stream, close, rekey или authorization.
 
 Точные сочетания платформ и типов соединений перечислены в руководствах SDK.
 

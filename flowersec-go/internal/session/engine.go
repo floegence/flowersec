@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
@@ -116,6 +117,7 @@ type engineSession struct {
 	sentGoAwayLastAccepted uint64
 	peerSessionClose       chan struct{}
 	peerSessionCloseOnce   sync.Once
+	peerCloseOwned         atomic.Bool
 
 	outboundPermits chan struct{}
 	inboundPermits  chan struct{}
@@ -447,6 +449,9 @@ func (s *engineSession) Close() error {
 		defer cancelWait()
 		s.closeWaitErr = s.waitForWorkers(waitContext)
 	})
+	if s.peerCloseOwned.Load() {
+		return s.closeWaitErr
+	}
 	return errors.Join(s.closeErr, s.closeWaitErr)
 }
 
@@ -506,6 +511,7 @@ func (s *engineSession) signalPeerSessionClose() {
 func (s *engineSession) handlePeerSessionClose() {
 	s.signalPeerSessionClose()
 	s.closeOnce.Do(func() {
+		s.peerCloseOwned.Store(true)
 		s.beginClosing()
 		closeContext, cancelClose := context.WithTimeout(context.Background(), sessionCloseFlushTimeout)
 		defer cancelClose()

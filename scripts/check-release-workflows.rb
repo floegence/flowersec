@@ -218,6 +218,8 @@ require_exact_value(dependabot, {
         "versions" => [">= 1.2.0"],
       }],
     }],
+    ["cargo", "/flowersec-native-transport"],
+    ["cargo", "/flowersec-node-native"],
     ["cargo", "/flowersec-rust/fuzz"],
     ["cargo", "/examples/rust"],
     ["swift", "/"],
@@ -282,18 +284,20 @@ rust_jobs = require_hash(rust_workflow["jobs"], "the Rust recovery workflow jobs
 ci_jobs = require_hash(ci_workflow["jobs"], "the hosted CI workflow jobs")
 codeql_jobs = require_hash(codeql_workflow["jobs"], "the CodeQL workflow jobs")
 scorecard_jobs = require_hash(scorecard_workflow["jobs"], "the Scorecard workflow jobs")
-require_exact_keys(release_jobs, ["prepare", "rust-publish", "release"], "the unified release workflow jobs")
+require_exact_keys(release_jobs, ["prepare", "rust-publish", "native-prebuilt", "release"], "the unified release workflow jobs")
 require_exact_keys(rust_jobs, ["publish"], "the Rust recovery workflow jobs")
-require_exact_keys(ci_jobs, ["repository", "precommit", "dependency-review"], "the hosted CI workflow jobs")
+require_exact_keys(ci_jobs, ["repository", "precommit", "node-current", "dependency-review"], "the hosted CI workflow jobs")
 require_exact_keys(codeql_jobs, ["plan", "analyze"], "the CodeQL workflow jobs")
 require_exact_keys(scorecard_jobs, ["analysis"], "the Scorecard workflow jobs")
 
 prepare_job = require_job(release_workflow, "prepare", "the unified release workflow")
 release_job = require_job(release_workflow, "release", "the unified release workflow")
 rust_reuse_job = require_job(release_workflow, "rust-publish", "the unified release workflow")
+native_prebuilt_job = require_job(release_workflow, "native-prebuilt", "the unified release workflow")
 rust_publish_job = require_job(rust_workflow, "publish", "the Rust recovery workflow")
 repository_job = require_job(ci_workflow, "repository", "the hosted CI workflow")
 precommit_job = require_job(ci_workflow, "precommit", "the hosted CI workflow")
+node_current_job = require_job(ci_workflow, "node-current", "the hosted CI workflow")
 dependency_review_job = require_job(ci_workflow, "dependency-review", "the hosted CI workflow")
 codeql_job = require_job(codeql_workflow, "analyze", "the CodeQL workflow")
 codeql_plan_job = require_job(codeql_workflow, "plan", "the CodeQL workflow")
@@ -302,9 +306,11 @@ scorecard_job = require_job(scorecard_workflow, "analysis", "the Scorecard workf
 require_exact_keys(prepare_job, ["runs-on", "outputs", "steps"], "the unified release workflow prepare job")
 require_exact_keys(release_job, ["needs", "runs-on", "permissions", "steps"], "the unified release workflow release job")
 require_exact_keys(rust_reuse_job, ["needs", "permissions", "uses", "with"], "the unified release workflow rust-publish job")
+require_exact_keys(native_prebuilt_job, ["needs", "strategy", "runs-on", "permissions", "steps"], "the unified release workflow native-prebuilt job")
 require_exact_keys(rust_publish_job, ["runs-on", "permissions", "steps"], "the Rust recovery workflow publish job")
 require_exact_keys(repository_job, ["runs-on", "steps"], "the hosted CI repository job")
 require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI precommit job")
+require_exact_keys(node_current_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI current Node job")
 require_exact_keys(dependency_review_job, ["name", "if", "runs-on", "timeout-minutes", "steps"], "the hosted CI dependency review job")
 require_exact_value(precommit_job["name"], "Precommit quality gate", "the hosted CI precommit job name")
 require_exact_value(precommit_job["runs-on"], "macos-26", "the hosted CI precommit runner")
@@ -312,6 +318,9 @@ require_exact_value(precommit_job["timeout-minutes"], 60, "the hosted CI precomm
 require_exact_value(precommit_job["env"], {
   "DEVELOPER_DIR" => "/Applications/Xcode_26.4.1.app/Contents/Developer",
 }, "the hosted CI precommit Xcode selection")
+require_exact_value(node_current_job["name"], "Current Node compatibility", "the hosted CI current Node job name")
+require_exact_value(node_current_job["runs-on"], "ubuntu-latest", "the hosted CI current Node runner")
+require_exact_value(node_current_job["timeout-minutes"], 10, "the hosted CI current Node timeout")
 require_exact_value(dependency_review_job["name"], "Dependency review", "the hosted CI dependency review job name")
 require_exact_value(dependency_review_job["runs-on"], "ubuntu-latest", "the hosted CI dependency review runner")
 require_exact_value(dependency_review_job["timeout-minutes"], 5, "the hosted CI dependency review timeout")
@@ -363,7 +372,7 @@ require_exact_value(rust_reuse_job["permissions"], {
   "id-token" => "write",
 }, "the rust-publish job permissions")
 require_exact_value(rust_reuse_job["with"], { "version" => "${{ needs.prepare.outputs.version }}" }, "the rust-publish job inputs")
-require_exact_value(release_job["needs"], "prepare", "the release job dependency")
+require_exact_value(release_job["needs"], ["prepare", "rust-publish", "native-prebuilt"], "the release job dependency")
 require_exact_value(release_job["permissions"], {
   "contents" => "write",
   "packages" => "write",
@@ -373,14 +382,28 @@ require_exact_value(rust_publish_job["permissions"], {
   "contents" => "read",
   "id-token" => "write",
 }, "the Rust recovery publish permissions")
+require_exact_value(native_prebuilt_job["needs"], "prepare", "the native-prebuilt job dependency")
+require_exact_value(native_prebuilt_job["runs-on"], "${{ matrix.runner }}", "the native-prebuilt runner selector")
+require_exact_value(native_prebuilt_job["permissions"], { "contents" => "read" }, "the native-prebuilt permissions")
+require_exact_value(native_prebuilt_job["strategy"], {
+  "fail-fast" => false,
+  "matrix" => { "include" => [
+    { "platform" => "darwin-arm64", "runner" => "macos-14", "target" => "aarch64-apple-darwin" },
+    { "platform" => "darwin-x64", "runner" => "macos-13", "target" => "x86_64-apple-darwin" },
+    { "platform" => "linux-arm64-gnu", "runner" => "ubuntu-24.04-arm", "target" => "aarch64-unknown-linux-gnu" },
+    { "platform" => "linux-x64-gnu", "runner" => "ubuntu-latest", "target" => "x86_64-unknown-linux-gnu" },
+  ] },
+}, "the native-prebuilt matrix")
 
 [
   [prepare_job, "the unified release workflow prepare job"],
   [release_job, "the unified release workflow release job"],
   [rust_reuse_job, "the unified release workflow rust-publish job"],
+  [native_prebuilt_job, "the unified release workflow native-prebuilt job"],
   [rust_publish_job, "the Rust recovery workflow publish job"],
   [repository_job, "the hosted CI repository job"],
   [precommit_job, "the hosted CI precommit job"],
+  [node_current_job, "the hosted CI current Node job"],
   [codeql_plan_job, "the CodeQL plan job"],
   [scorecard_job, "the Scorecard analysis job"],
 ].each { |job, context| require_unconditional(job, context) }
@@ -390,12 +413,15 @@ require_condition(codeql_job["if"] == "needs.plan.outputs.should_scan == 'true'"
 require_condition(prepare_job["runs-on"] == "ubuntu-latest", "the unified release workflow prepare job must run on ubuntu-latest")
 require_condition(release_job["runs-on"] == "ubuntu-latest", "the unified release workflow release job must run on ubuntu-latest")
 require_condition(rust_reuse_job["uses"] == "./.github/workflows/rust-release.yml", "the unified release workflow rust-publish job must call the reviewed workflow")
+require_condition(native_prebuilt_job["runs-on"] == "${{ matrix.runner }}", "the native-prebuilt job must select its reviewed platform runner")
 require_condition(rust_publish_job["runs-on"] == "ubuntu-latest", "the Rust recovery workflow publish job must run on ubuntu-latest")
 
 release_steps = require_steps(release_job, "the unified release workflow release job")
 rust_steps = require_steps(rust_publish_job, "the Rust recovery workflow publish job")
+native_prebuilt_steps = require_steps(native_prebuilt_job, "the unified release workflow native-prebuilt job")
 ci_steps = require_steps(repository_job, "the hosted CI repository job")
 precommit_steps = require_steps(precommit_job, "the hosted CI precommit job")
+node_current_steps = require_steps(node_current_job, "the hosted CI current Node job")
 dependency_review_steps = require_steps(dependency_review_job, "the hosted CI dependency review job")
 codeql_steps = require_steps(codeql_job, "the CodeQL analyze job")
 codeql_plan_steps = require_steps(codeql_plan_job, "the CodeQL plan job")
@@ -442,6 +468,14 @@ validate_step_contracts(precommit_steps, [
   } },
   { name: "Run precommit quality gate", keys: ["name", "run"], values: { "run" => "make precommit" } },
 ], "the hosted CI precommit job")
+validate_step_contracts(node_current_steps, [
+  { name: nil, keys: ["uses", "with"], values: checkout },
+  { name: "Setup current Node", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+    "with" => { "node-version" => "24", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
+  } },
+  { name: "Run TypeScript language lane", keys: ["name", "run"], values: { "run" => "make ts-ci ts-build ts-test-short" } },
+], "the hosted CI current Node job")
 validate_step_contracts(dependency_review_steps, [
   { name: nil, keys: ["uses", "with"], values: {
     "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
@@ -507,11 +541,15 @@ validate_step_contracts(release_steps, [
     "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
   } }, run_sha256: "2dc2aa66b184f05c334e60ef6d1ca9421fc40c42ace1a5e74f6236355f3b8613" },
+  { name: "Download native prebuilt packages", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+    "with" => { "pattern" => "flowersec-node-native-*", "path" => "native-prebuilt", "merge-multiple" => false },
+  } },
   { name: "Build release artifacts", keys: ["name", "env", "run"], values: { "env" => {
     "RELEASE_DATE" => "${{ steps.vars.outputs.date }}",
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
-  } }, run_sha256: "6e0b1c56675b7b3f85696669bb68d33d69535b28c839c9f944217c9e1743e36b" },
+  } }, run_sha256: "0dfd45b156e72a71b11be7b68a04034774b991df98e6b7b3097079a90d9ecf26" },
   { name: "Generate release notes", keys: ["name", "env", "run"], values: { "env" => {
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_TAG" => "${{ steps.vars.outputs.tag }}",
@@ -532,17 +570,45 @@ validate_step_contracts(release_steps, [
     "tags" => "ghcr.io/${{ github.repository_owner }}/flowersec-runtime:${{ steps.vars.outputs.version }}\nghcr.io/${{ github.repository_owner }}/flowersec-runtime:latest\n",
     "build-args" => "VERSION=v${{ steps.vars.outputs.version }}\nCOMMIT=${{ steps.vars.outputs.sha }}\nDATE=${{ steps.vars.outputs.date }}\n",
   } } },
-  { name: "Publish npm package", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}" } }, run_sha256: "c2cec9670487797dad340e84b95b5b39b22a1bae2394463ba4c3b7aa74b20f50" },
+  { name: "Publish npm package", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}" } }, run_sha256: "327e8b782f02164a97b128dd92c86d51ba847a4171227f8cc47bb971a1904246" },
 ], "the unified release workflow release job")
+validate_step_contracts(native_prebuilt_steps, [
+  { name: nil, keys: ["uses", "with"], values: {
+    "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+    "with" => { "ref" => "refs/tags/flowersec-go/v${{ needs.prepare.outputs.version }}" },
+  } },
+  { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
+    "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
+    "with" => { "targets" => "${{ matrix.target }}" },
+  } },
+  { name: "Build native addon", keys: ["name", "env", "run"], values: { "env" => {
+    "NATIVE_TARGET" => "${{ matrix.target }}",
+    "NATIVE_PLATFORM" => "${{ matrix.platform }}",
+  } }, run_sha256: "690e76440261910d312f4d3078fa5dff71b134ecbc6229c81d14b72d29a26685" },
+  { name: "Upload native prebuilt", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    "with" => {
+      "name" => "flowersec-node-native-${{ matrix.platform }}",
+      "path" => "native-package/${{ matrix.platform }}",
+      "if-no-files-found" => "error",
+    },
+  } },
+], "the unified release workflow native-prebuilt job")
+
 validate_step_contracts(rust_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
   { name: "Checkout release commit", keys: ["name", "id", "env", "run"], values: { "id" => "version", "env" => { "RELEASE_VERSION_INPUT" => "${{ inputs.version }}" } }, run_sha256: "ac06a1217c1f7df7c9e899d1fd91e3eb5a9c16f30aba50503028c62b391ac398" },
   { name: "Setup Rust", keys: ["name", "uses"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4" } },
   { name: "Validate release version facts", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "9431ce4342dcd8f8af90607321f1ceb9e6e61c13f455b06acd242d96f53e0087" },
   { name: "Verify release tags", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "3e5e103b4b32e468d370d25613885b564a2f9f0dfebe2ced9b182a1691038830" },
-  { name: "Check whether version is already published", keys: ["name", "id", "env", "run"], values: { "id" => "published", "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "712e2393343ff375abca1a8046cc8aa0b85be961fda34cc5125f7397248d5de0" },
-  { name: "Authenticate to crates.io", keys: ["name", "if", "id", "uses"], values: { "if" => "steps.published.outputs.exists != 'true'", "id" => "auth", "uses" => "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18" } },
-  { name: "Publish crate", keys: ["name", "if", "working-directory", "env", "run"], values: { "if" => "steps.published.outputs.exists != 'true'", "working-directory" => "flowersec-rust", "env" => { "CARGO_REGISTRY_TOKEN" => "${{ steps.auth.outputs.token }}" } }, run_sha256: "0990bd3b2f0dd14204dc600e8a8bce3fd1e41ab5a6404e75e59f7c41b49ea0d5" },
+  { name: "Check whether native transport version is already published", keys: ["name", "id", "env", "run"], values: { "id" => "native-published", "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "35043da6ab7f3b9809adc65264a983823eb3020507fb191256aeacf903bc29ba" },
+  { name: "Authenticate native transport publication", keys: ["name", "if", "id", "uses"], values: { "if" => "steps.native-published.outputs.exists != 'true'", "id" => "native-auth", "uses" => "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18" } },
+  { name: "Publish native transport crate", keys: ["name", "if", "working-directory", "env", "run"], values: { "if" => "steps.native-published.outputs.exists != 'true'", "working-directory" => "flowersec-native-transport", "env" => { "CARGO_REGISTRY_TOKEN" => "${{ steps.native-auth.outputs.token }}" } }, run_sha256: "0990bd3b2f0dd14204dc600e8a8bce3fd1e41ab5a6404e75e59f7c41b49ea0d5" },
+  { name: "Wait for native transport registry readback", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "0ce3b7dbf987c027e6593638edde3705f8156206b49bfc8a3217399d231fb919" },
+  { name: "Check whether Flowersec Rust SDK version is already published", keys: ["name", "id", "env", "run"], values: { "id" => "sdk-published", "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "712e2393343ff375abca1a8046cc8aa0b85be961fda34cc5125f7397248d5de0" },
+  { name: "Authenticate Flowersec Rust SDK publication", keys: ["name", "if", "id", "uses"], values: { "if" => "steps.sdk-published.outputs.exists != 'true'", "id" => "sdk-auth", "uses" => "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18" } },
+  { name: "Publish Flowersec Rust SDK", keys: ["name", "if", "working-directory", "env", "run"], values: { "if" => "steps.sdk-published.outputs.exists != 'true'", "working-directory" => "flowersec-rust", "env" => { "CARGO_REGISTRY_TOKEN" => "${{ steps.sdk-auth.outputs.token }}" } }, run_sha256: "0990bd3b2f0dd14204dc600e8a8bce3fd1e41ab5a6404e75e59f7c41b49ea0d5" },
+  { name: "Verify Flowersec Rust SDK registry readback", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "0dbabe7a27bb178c05fe0aceac3b1f0104ba06457667d368c84712accdb3383f" },
 ], "the Rust recovery workflow publish job")
 
 reject_publication_before(release_steps, 8, "the unified release workflow")
@@ -575,24 +641,35 @@ end
 rust_setup, rust_setup_index = require_named_step(rust_steps, "Setup Rust", "the Rust recovery workflow")
 rust_version, rust_version_index = require_named_step(rust_steps, "Validate release version facts", "the Rust recovery workflow")
 rust_tags, rust_tags_index = require_named_step(rust_steps, "Verify release tags", "the Rust recovery workflow")
-rust_check, rust_check_index = require_named_step(rust_steps, "Check whether version is already published", "the Rust recovery workflow")
-rust_auth, rust_auth_index = require_named_step(rust_steps, "Authenticate to crates.io", "the Rust recovery workflow")
-rust_publish, rust_publish_index = require_named_step(rust_steps, "Publish crate", "the Rust recovery workflow")
+native_check, native_check_index = require_named_step(rust_steps, "Check whether native transport version is already published", "the Rust recovery workflow")
+native_auth, native_auth_index = require_named_step(rust_steps, "Authenticate native transport publication", "the Rust recovery workflow")
+native_publish, native_publish_index = require_named_step(rust_steps, "Publish native transport crate", "the Rust recovery workflow")
+native_readback, native_readback_index = require_named_step(rust_steps, "Wait for native transport registry readback", "the Rust recovery workflow")
+sdk_check, sdk_check_index = require_named_step(rust_steps, "Check whether Flowersec Rust SDK version is already published", "the Rust recovery workflow")
+sdk_auth, sdk_auth_index = require_named_step(rust_steps, "Authenticate Flowersec Rust SDK publication", "the Rust recovery workflow")
+sdk_publish, sdk_publish_index = require_named_step(rust_steps, "Publish Flowersec Rust SDK", "the Rust recovery workflow")
+sdk_readback, sdk_readback_index = require_named_step(rust_steps, "Verify Flowersec Rust SDK registry readback", "the Rust recovery workflow")
 require_step_field(rust_setup, "uses", "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4", "the Rust recovery workflow Setup Rust step")
 require_step_field(rust_version, "run", 'node scripts/check-release-version-consistency.mjs "$RELEASE_VERSION"', "the Rust recovery workflow version facts step")
 require_step_field(rust_tags, "run", 'scripts/verify-release-tags.sh "$RELEASE_VERSION" "$(git rev-parse HEAD)"', "the Rust recovery workflow tag verification step")
 [rust_setup, rust_version, rust_tags].each_with_index do |step, index|
   require_unconditional(step, "the Rust recovery workflow validation step #{index + 1}")
 end
-require_unconditional(rust_check, "the Rust publication step that checks existing versions")
-approved_condition = "steps.published.outputs.exists != 'true'"
-require_condition_value(rust_auth, approved_condition, "the Rust publication step that authenticates")
-require_condition_value(rust_publish, approved_condition, "the Rust publication step")
+require_unconditional(native_check, "the native transport publication step that checks existing versions")
+require_unconditional(native_readback, "the native transport registry readback")
+require_unconditional(sdk_check, "the Flowersec Rust SDK publication step that checks existing versions")
+require_unconditional(sdk_readback, "the Flowersec Rust SDK registry readback")
+require_condition_value(native_auth, "steps.native-published.outputs.exists != 'true'", "the native transport publication step that authenticates")
+require_condition_value(native_publish, "steps.native-published.outputs.exists != 'true'", "the native transport publication step")
+require_condition_value(sdk_auth, "steps.sdk-published.outputs.exists != 'true'", "the Flowersec Rust SDK publication step that authenticates")
+require_condition_value(sdk_publish, "steps.sdk-published.outputs.exists != 'true'", "the Flowersec Rust SDK publication step")
 require_condition(
   rust_setup_index < rust_version_index && rust_version_index < rust_tags_index &&
-    rust_tags_index < rust_check_index && rust_check_index < rust_auth_index &&
-    rust_auth_index < rust_publish_index,
-  "the Rust recovery workflow must validate versions and tags before every Rust publication step",
+    rust_tags_index < native_check_index && native_check_index < native_auth_index &&
+    native_auth_index < native_publish_index && native_publish_index < native_readback_index &&
+    native_readback_index < sdk_check_index && sdk_check_index < sdk_auth_index &&
+    sdk_auth_index < sdk_publish_index && sdk_publish_index < sdk_readback_index,
+  "the Rust recovery workflow must publish and read back the native driver before the SDK",
 )
 
 ci_policy_step, = require_named_step(ci_steps, "Check release workflow policy", "the hosted CI workflow")

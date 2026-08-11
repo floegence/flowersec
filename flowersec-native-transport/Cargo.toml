@@ -1,0 +1,23 @@
+[package]
+name = "flowersec-native-transport"
+version = "2.3.6"
+edition = "2024"
+rust-version = "1.88"
+description = "Flowersec-owned native transport primitives shared by Rust and Node runtimes"
+license = "MIT"
+repository = "https://github.com/floegence/flowersec"
+homepage = "https://github.com/floegence/flowersec"
+readme = "README.md"
+include = ["src/**", "tests/**", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "Cargo.toml"]
+
+[features]
+default = []
+__flowersec_internal_test_support = []
+
+[dependencies]
+bytes = "1"
+quinn = { version = "=0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }

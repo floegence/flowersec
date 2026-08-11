@@ -48,8 +48,66 @@ jobs:
     with:
       version: ${{ needs.prepare.outputs.version }}
 
-  release:
+  native-prebuilt:
     needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-14
+            target: aarch64-apple-darwin
+          - platform: darwin-x64
+            runner: macos-13
+            target: x86_64-apple-darwin
+          - platform: linux-arm64-gnu
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - platform: linux-x64-gnu
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: refs/tags/flowersec-go/v${{ needs.prepare.outputs.version }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build native addon
+        env:
+          NATIVE_TARGET: ${{ matrix.target }}
+          NATIVE_PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path flowersec-node-native/Cargo.toml --locked --release --target "$NATIVE_TARGET"
+          mkdir -p "native-package/$NATIVE_PLATFORM"
+          case "$NATIVE_TARGET" in
+            *apple*)
+              source_binary="flowersec-node-native/target/$NATIVE_TARGET/release/libflowersec_node_native.dylib"
+              ;;
+            *)
+              source_binary="flowersec-node-native/target/$NATIVE_TARGET/release/libflowersec_node_native.so"
+              ;;
+          esac
+          test -f "$source_binary"
+          cp "$source_binary" "native-package/$NATIVE_PLATFORM/flowersec-node-native.$NATIVE_PLATFORM.node"
+          cp "flowersec-node-native/npm/$NATIVE_PLATFORM/package.json" "native-package/$NATIVE_PLATFORM/package.json"
+
+      - name: Upload native prebuilt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flowersec-node-native-${{ matrix.platform }}
+          path: native-package/${{ matrix.platform }}
+          if-no-files-found: error
+
+  release:
+    needs: [prepare, rust-publish, native-prebuilt]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -110,6 +168,13 @@ jobs:
           RELEASE_SHA: ${{ steps.vars.outputs.sha }}
         run: scripts/verify-release-tags.sh "$RELEASE_VERSION" "$RELEASE_SHA"
 
+      - name: Download native prebuilt packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: flowersec-node-native-*
+          path: native-prebuilt
+          merge-multiple: false
+
       - name: Build release artifacts
         env:
           RELEASE_DATE: ${{ steps.vars.outputs.date }}
@@ -135,6 +200,17 @@ jobs:
             npm pack --silent && \
             mv "floegence-flowersec-core-${VERSION}.tgz" "../dist/" \
           )
+
+          # Stage all platform binaries before packing or publishing any Node package.
+          for platform in darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu; do
+            package_dir="native-prebuilt/flowersec-node-native-${platform}"
+            test -f "$package_dir/flowersec-node-native.${platform}.node"
+            cp "$package_dir/flowersec-node-native.${platform}.node" "flowersec-node-native/npm/${platform}/"
+          done
+          ( cd flowersec-node-native && npm pack --silent --pack-destination ../dist )
+          for platform in darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu; do
+            ( cd "flowersec-node-native/npm/${platform}" && npm pack --silent --pack-destination ../../../dist )
+          done
 
           build_runtime() {
             local os="$1"
@@ -214,12 +290,19 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$RELEASE_VERSION"
-          PKG="@floegence/flowersec-core"
+          publish_if_missing() {
+            local pkg="$1"
+            local dir="$2"
+            if npm view "${pkg}@${VERSION}" version >/dev/null 2>&1; then
+              echo "${pkg}@${VERSION} already published; skipping"
+            else
+              ( cd "$dir" && npx -y npm@11.5.1 publish --access public )
+            fi
+            test "$(npm view "${pkg}@${VERSION}" version)" = "$VERSION"
+          }
 
-          # Make reruns safe: if the version is already published, do nothing.
-          if npm view "${PKG}@${VERSION}" version >/dev/null 2>&1; then
-            echo "${PKG}@${VERSION} already published; skipping"
-            exit 0
-          fi
-
-          ( cd flowersec-ts && npx -y npm@11.5.1 publish --access public )
+          for platform in darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu; do
+            publish_if_missing "@floegence/flowersec-node-native-${platform}" "flowersec-node-native/npm/${platform}"
+          done
+          publish_if_missing "@floegence/flowersec-node-native" "flowersec-node-native"
+          publish_if_missing "@floegence/flowersec-core" "flowersec-ts"

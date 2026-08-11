@@ -77,30 +77,6 @@
       ]
     },
     {
-      "id": "go_to_go_webtransport_direct",
-      "client": "go",
-      "server": "go",
-      "carrier": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "datagram"
-      ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
-    },
-    {
       "id": "go_to_rust_websocket_direct",
       "client": "go",
       "server": "rust",
@@ -148,28 +124,6 @@
       ]
     },
     {
-      "id": "go_to_rust_webtransport_direct",
-      "client": "go",
-      "server": "rust",
-      "carrier": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "datagram"
-      ],
-      "status": "unsupported",
-      "reason": "Every endpoint in this tuple must expose a production draft-15 WebTransport driver."
-    },
-    {
       "id": "go_to_node_websocket_direct",
       "client": "go",
       "server": "node-typescript",
@@ -211,30 +165,10 @@
         "cleanup",
         "datagram"
       ],
-      "status": "unsupported",
-      "reason": "Every endpoint in this tuple must expose a stable production raw QUIC driver."
-    },
-    {
-      "id": "go_to_node_webtransport_direct",
-      "client": "go",
-      "server": "node-typescript",
-      "carrier": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "datagram"
-      ],
-      "status": "unsupported",
-      "reason": "Every endpoint in this tuple must expose a production draft-15 WebTransport driver."
+      "status": "supported",
+      "test_ids": [
+        "interop/server-parity/direct-matrix"
+      ]
     },
     {
       "id": "rust_to_go_websocket_direct",
@@ -284,28 +218,6 @@
       ]
     },
     {
-      "id": "rust_to_go_webtransport_direct",
-      "client": "rust",
-      "server": "go",
-      "carrier": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "datagram"
-      ],
-      "status": "unsupported",
-      "reason": "Every endpoint in this tuple must expose a production draft-15 WebTransport driver."
-    },
-    {
       "id": "rust_to_rust_websocket_direct",
       "client": "rust",
       "server": "rust",
@@ -353,28 +265,6 @@
       ]
     },
     {
-      "id": "rust_to_rust_webtransport_direct",
-      "client": "rust",
-      "server": "rust",
-      "carrier": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "datagram"
-      ],
-      "status": "unsupported",
-      "reason": "Every endpoint in this tuple must expose a production draft-15 WebTransport driver."
-    },
-    {
       "id": "rust_to_node_websocket_direct",
       "client": "rust",
       "server": "node-typescript",
@@ -416,30 +306,10 @@
         "cleanup",
         "datagram"
       ],
-      "status": "unsupported",
-      "reason": "Every endpoint in this tuple must expose a stable production raw QUIC driver."
-    },
-    {
-      "id": "rust_to_node_webtransport_direct",
-      "client": "rust",
-      "server": "node-typescript",
-      "carrier": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "datagram"
-      ],
-      "status": "unsupported",
-      "reason": "Every endpoint in this tuple must expose a production draft-15 WebTransport driver."
+      "status": "supported",
+      "test_ids": [
+        "interop/server-parity/direct-matrix"
+      ]
     },
     {
       "id": "node_to_go_websocket_direct",
@@ -483,30 +353,10 @@
         "cleanup",
         "datagram"
       ],
-      "status": "unsupported",
-      "reason": "Every endpoint in this tuple must expose a stable production raw QUIC driver."
-    },
-    {
-      "id": "node_to_go_webtransport_direct",
-      "client": "node-typescript",
-      "server": "go",
-      "carrier": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "datagram"
-      ],
-      "status": "unsupported",
-      "reason": "Every endpoint in this tuple must expose a production draft-15 WebTransport driver."
+      "status": "supported",
+      "test_ids": [
+        "interop/server-parity/direct-matrix"
+      ]
     },
     {
       "id": "node_to_rust_websocket_direct",
@@ -550,30 +400,10 @@
         "cleanup",
         "datagram"
       ],
-      "status": "unsupported",
-      "reason": "Every endpoint in this tuple must expose a stable production raw QUIC driver."
-    },
-    {
-      "id": "node_to_rust_webtransport_direct",
-      "client": "node-typescript",
-      "server": "rust",
-      "carrier": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "datagram"
-      ],
-      "status": "unsupported",
-      "reason": "Every endpoint in this tuple must expose a production draft-15 WebTransport driver."
+      "status": "supported",
+      "test_ids": [
+        "interop/server-parity/direct-matrix"
+      ]
     },
     {
       "id": "node_to_node_websocket_direct",
@@ -617,35 +447,15 @@
         "cleanup",
         "datagram"
       ],
-      "status": "unsupported",
-      "reason": "Every endpoint in this tuple must expose a stable production raw QUIC driver."
-    },
-    {
-      "id": "node_to_node_webtransport_direct",
-      "client": "node-typescript",
-      "server": "node-typescript",
-      "carrier": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "datagram"
-      ],
-      "status": "unsupported",
-      "reason": "Every endpoint in this tuple must expose a production draft-15 WebTransport driver."
+      "status": "supported",
+      "test_ids": [
+        "interop/server-parity/direct-matrix"
+      ]
     }
   ],
   "tunnel_topologies": [
     {
-      "id": "go_via_go_to_go_tunnel",
+      "id": "go_via_go_to_go_websocket_tunnel",
       "endpoint_a": "go",
       "ingress_carrier_a": "websocket",
       "tunnel_runtime": "go",
@@ -672,10 +482,10 @@
       ]
     },
     {
-      "id": "rust_via_rust_to_rust_tunnel",
+      "id": "rust_via_go_to_rust_raw_quic_tunnel",
       "endpoint_a": "rust",
       "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "rust",
+      "tunnel_runtime": "go",
       "endpoint_b": "rust",
       "ingress_carrier_b": "raw-quic",
       "cases": [
@@ -701,37 +511,10 @@
       ]
     },
     {
-      "id": "node_via_node_to_node_tunnel",
-      "endpoint_a": "node-typescript",
-      "ingress_carrier_a": "webtransport",
-      "tunnel_runtime": "node-typescript",
-      "endpoint_b": "node-typescript",
-      "ingress_carrier_b": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding",
-        "datagram",
-        "datagram-forwarding"
-      ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a production draft-15 WebTransport driver."
-    },
-    {
-      "id": "go_via_rust_to_go_raw_quic_tunnel",
+      "id": "go_via_go_to_go_raw_quic_tunnel",
       "endpoint_a": "go",
       "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "rust",
+      "tunnel_runtime": "go",
       "endpoint_b": "go",
       "ingress_carrier_b": "raw-quic",
       "cases": [
@@ -755,60 +538,6 @@
       "test_ids": [
         "interop/server-parity/tunnel-matrix"
       ]
-    },
-    {
-      "id": "go_via_node_to_go_webtransport_tunnel",
-      "endpoint_a": "go",
-      "ingress_carrier_a": "webtransport",
-      "tunnel_runtime": "node-typescript",
-      "endpoint_b": "go",
-      "ingress_carrier_b": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding",
-        "datagram",
-        "datagram-forwarding"
-      ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a production draft-15 WebTransport driver."
-    },
-    {
-      "id": "go_via_go_to_go_webtransport_tunnel",
-      "endpoint_a": "go",
-      "ingress_carrier_a": "webtransport",
-      "tunnel_runtime": "go",
-      "endpoint_b": "go",
-      "ingress_carrier_b": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding",
-        "datagram",
-        "datagram-forwarding"
-      ],
-      "status": "unsupported",
-      "reason": "The Go opaque tunnel runtime does not forward WebTransport datagrams across paired legs."
     },
     {
       "id": "go_via_rust_to_rust_websocket_tunnel",
@@ -838,10 +567,10 @@
       ]
     },
     {
-      "id": "go_via_node_to_rust_raw_quic_tunnel",
+      "id": "go_via_rust_to_rust_raw_quic_tunnel",
       "endpoint_a": "go",
       "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "node-typescript",
+      "tunnel_runtime": "rust",
       "endpoint_b": "rust",
       "ingress_carrier_b": "raw-quic",
       "cases": [
@@ -861,35 +590,10 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a stable production raw QUIC driver."
-    },
-    {
-      "id": "go_via_go_to_rust_webtransport_tunnel",
-      "endpoint_a": "go",
-      "ingress_carrier_a": "webtransport",
-      "tunnel_runtime": "go",
-      "endpoint_b": "rust",
-      "ingress_carrier_b": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding",
-        "datagram",
-        "datagram-forwarding"
-      ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a production draft-15 WebTransport driver."
+      "status": "supported",
+      "test_ids": [
+        "interop/server-parity/tunnel-matrix"
+      ]
     },
     {
       "id": "go_via_node_to_node_websocket_tunnel",
@@ -919,10 +623,10 @@
       ]
     },
     {
-      "id": "go_via_go_to_node_raw_quic_tunnel",
+      "id": "go_via_node_to_node_raw_quic_tunnel",
       "endpoint_a": "go",
       "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "go",
+      "tunnel_runtime": "node-typescript",
       "endpoint_b": "node-typescript",
       "ingress_carrier_b": "raw-quic",
       "cases": [
@@ -942,41 +646,16 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a stable production raw QUIC driver."
+      "status": "supported",
+      "test_ids": [
+        "interop/server-parity/tunnel-matrix"
+      ]
     },
     {
-      "id": "go_via_rust_to_node_webtransport_tunnel",
-      "endpoint_a": "go",
-      "ingress_carrier_a": "webtransport",
-      "tunnel_runtime": "rust",
-      "endpoint_b": "node-typescript",
-      "ingress_carrier_b": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding",
-        "datagram",
-        "datagram-forwarding"
-      ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a production draft-15 WebTransport driver."
-    },
-    {
-      "id": "rust_via_rust_to_go_websocket_tunnel",
+      "id": "rust_via_node_to_go_websocket_tunnel",
       "endpoint_a": "rust",
       "ingress_carrier_a": "websocket",
-      "tunnel_runtime": "rust",
+      "tunnel_runtime": "node-typescript",
       "endpoint_b": "go",
       "ingress_carrier_b": "websocket",
       "cases": [
@@ -1023,41 +702,16 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a stable production raw QUIC driver."
+      "status": "supported",
+      "test_ids": [
+        "interop/server-parity/tunnel-matrix"
+      ]
     },
     {
-      "id": "rust_via_go_to_go_webtransport_tunnel",
-      "endpoint_a": "rust",
-      "ingress_carrier_a": "webtransport",
-      "tunnel_runtime": "go",
-      "endpoint_b": "go",
-      "ingress_carrier_b": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding",
-        "datagram",
-        "datagram-forwarding"
-      ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a production draft-15 WebTransport driver."
-    },
-    {
-      "id": "rust_via_node_to_rust_websocket_tunnel",
+      "id": "rust_via_go_to_rust_websocket_tunnel",
       "endpoint_a": "rust",
       "ingress_carrier_a": "websocket",
-      "tunnel_runtime": "node-typescript",
+      "tunnel_runtime": "go",
       "endpoint_b": "rust",
       "ingress_carrier_b": "websocket",
       "cases": [
@@ -1081,37 +735,10 @@
       ]
     },
     {
-      "id": "rust_via_go_to_rust_webtransport_tunnel",
-      "endpoint_a": "rust",
-      "ingress_carrier_a": "webtransport",
-      "tunnel_runtime": "go",
-      "endpoint_b": "rust",
-      "ingress_carrier_b": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding",
-        "datagram",
-        "datagram-forwarding"
-      ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a production draft-15 WebTransport driver."
-    },
-    {
-      "id": "rust_via_node_to_node_websocket_tunnel",
+      "id": "rust_via_rust_to_node_websocket_tunnel",
       "endpoint_a": "rust",
       "ingress_carrier_a": "websocket",
-      "tunnel_runtime": "node-typescript",
+      "tunnel_runtime": "rust",
       "endpoint_b": "node-typescript",
       "ingress_carrier_b": "websocket",
       "cases": [
@@ -1135,10 +762,10 @@
       ]
     },
     {
-      "id": "rust_via_go_to_node_raw_quic_tunnel",
+      "id": "rust_via_rust_to_node_raw_quic_tunnel",
       "endpoint_a": "rust",
       "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "go",
+      "tunnel_runtime": "rust",
       "endpoint_b": "node-typescript",
       "ingress_carrier_b": "raw-quic",
       "cases": [
@@ -1158,41 +785,16 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a stable production raw QUIC driver."
+      "status": "supported",
+      "test_ids": [
+        "interop/server-parity/tunnel-matrix"
+      ]
     },
     {
-      "id": "rust_via_rust_to_node_webtransport_tunnel",
-      "endpoint_a": "rust",
-      "ingress_carrier_a": "webtransport",
-      "tunnel_runtime": "rust",
-      "endpoint_b": "node-typescript",
-      "ingress_carrier_b": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding",
-        "datagram",
-        "datagram-forwarding"
-      ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a production draft-15 WebTransport driver."
-    },
-    {
-      "id": "node_via_node_to_go_websocket_tunnel",
+      "id": "node_via_rust_to_go_websocket_tunnel",
       "endpoint_a": "node-typescript",
       "ingress_carrier_a": "websocket",
-      "tunnel_runtime": "node-typescript",
+      "tunnel_runtime": "rust",
       "endpoint_b": "go",
       "ingress_carrier_b": "websocket",
       "cases": [
@@ -1216,10 +818,10 @@
       ]
     },
     {
-      "id": "node_via_go_to_go_raw_quic_tunnel",
+      "id": "node_via_rust_to_go_raw_quic_tunnel",
       "endpoint_a": "node-typescript",
       "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "go",
+      "tunnel_runtime": "rust",
       "endpoint_b": "go",
       "ingress_carrier_b": "raw-quic",
       "cases": [
@@ -1239,41 +841,16 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a stable production raw QUIC driver."
+      "status": "supported",
+      "test_ids": [
+        "interop/server-parity/tunnel-matrix"
+      ]
     },
     {
-      "id": "node_via_rust_to_go_webtransport_tunnel",
-      "endpoint_a": "node-typescript",
-      "ingress_carrier_a": "webtransport",
-      "tunnel_runtime": "rust",
-      "endpoint_b": "go",
-      "ingress_carrier_b": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding",
-        "datagram",
-        "datagram-forwarding"
-      ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a production draft-15 WebTransport driver."
-    },
-    {
-      "id": "node_via_go_to_rust_websocket_tunnel",
+      "id": "node_via_node_to_rust_websocket_tunnel",
       "endpoint_a": "node-typescript",
       "ingress_carrier_a": "websocket",
-      "tunnel_runtime": "go",
+      "tunnel_runtime": "node-typescript",
       "endpoint_b": "rust",
       "ingress_carrier_b": "websocket",
       "cases": [
@@ -1297,10 +874,10 @@
       ]
     },
     {
-      "id": "node_via_rust_to_rust_raw_quic_tunnel",
+      "id": "node_via_node_to_rust_raw_quic_tunnel",
       "endpoint_a": "node-typescript",
       "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "rust",
+      "tunnel_runtime": "node-typescript",
       "endpoint_b": "rust",
       "ingress_carrier_b": "raw-quic",
       "cases": [
@@ -1320,35 +897,10 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a stable production raw QUIC driver."
-    },
-    {
-      "id": "node_via_node_to_rust_webtransport_tunnel",
-      "endpoint_a": "node-typescript",
-      "ingress_carrier_a": "webtransport",
-      "tunnel_runtime": "node-typescript",
-      "endpoint_b": "rust",
-      "ingress_carrier_b": "webtransport",
-      "cases": [
-        "admission",
-        "rpc",
-        "notification",
-        "stream-metadata",
-        "stream-fin",
-        "stream-reset",
-        "rekey",
-        "liveness",
-        "close",
-        "cancel",
-        "cleanup",
-        "pairing",
-        "opaque-forwarding",
-        "datagram",
-        "datagram-forwarding"
-      ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a production draft-15 WebTransport driver."
+      "status": "supported",
+      "test_ids": [
+        "interop/server-parity/tunnel-matrix"
+      ]
     },
     {
       "id": "node_via_go_to_node_websocket_tunnel",
@@ -1378,10 +930,10 @@
       ]
     },
     {
-      "id": "node_via_rust_to_node_raw_quic_tunnel",
+      "id": "node_via_go_to_node_raw_quic_tunnel",
       "endpoint_a": "node-typescript",
       "ingress_carrier_a": "raw-quic",
-      "tunnel_runtime": "rust",
+      "tunnel_runtime": "go",
       "endpoint_b": "node-typescript",
       "ingress_carrier_b": "raw-quic",
       "cases": [
@@ -1401,8 +953,10 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "Every role in this topology must expose a stable production raw QUIC driver."
+      "status": "supported",
+      "test_ids": [
+        "interop/server-parity/tunnel-matrix"
+      ]
     }
   ],
   "capability_coverage": {

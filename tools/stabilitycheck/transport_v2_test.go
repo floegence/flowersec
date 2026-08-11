@@ -39,7 +39,7 @@ func TestTransportV2ContractDeclaresSignedSliceZeroRegistry(t *testing.T) {
 	wantRuntimeCarriers := map[string][]string{
 		"go_native":          {"raw_quic", "websocket", "webtransport"},
 		"typescript_browser": {"websocket", "webtransport"},
-		"typescript_node":    {"websocket"},
+		"typescript_node":    {"raw_quic", "websocket"},
 		"rust_native":        {"raw_quic", "websocket"},
 		"swift_ios":          {"websocket"},
 		"swift_linux":        {},

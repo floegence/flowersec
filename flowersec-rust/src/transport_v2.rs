@@ -96,7 +96,7 @@ pub trait CarrierSessionV2: fmt::Debug + Send + Sync + 'static {
     /// Returns the carrier represented by this session.
     #[cfg_attr(not(test), allow(dead_code))]
     fn kind(&self) -> CarrierKind;
-    /// Selects the local Yamux opener side before a multiplexed carrier is activated.
+    /// Selects the local opener side before a multiplexed carrier is activated.
     fn set_multiplexer_client(&self, _client: bool) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,

@@ -210,14 +210,17 @@ rust-fetch:
 	rustup run 1.88.0 cargo fetch --locked --manifest-path examples/rust/Cargo.toml
 
 rust-package-check:
-	cd flowersec-rust && rustup run 1.88.0 cargo package --allow-dirty
-	cd flowersec-rust && rustup run 1.88.0 cargo publish --dry-run --allow-dirty
+	rustup run 1.88.0 cargo package --manifest-path flowersec-native-transport/Cargo.toml --locked --allow-dirty
+	rustup run 1.88.0 cargo publish --manifest-path flowersec-native-transport/Cargo.toml --locked --dry-run --allow-dirty --no-verify
+	rustup run 1.88.0 cargo package --manifest-path flowersec-rust/Cargo.toml --locked --allow-dirty --list
 
 rust-publish-preflight:
-	cd flowersec-rust && rustup run 1.88.0 cargo publish --dry-run --allow-dirty --no-verify
+	rustup run 1.88.0 cargo publish --manifest-path flowersec-native-transport/Cargo.toml --locked --dry-run --allow-dirty --no-verify
+	rustup run 1.88.0 cargo package --manifest-path flowersec-rust/Cargo.toml --locked --allow-dirty --list
 
 rust-package-offline-check:
-	cd flowersec-rust && rustup run 1.88.0 cargo package --allow-dirty --offline
+	rustup run 1.88.0 cargo package --allow-dirty --offline --manifest-path flowersec-native-transport/Cargo.toml --locked
+	rustup run 1.88.0 cargo package --allow-dirty --offline --manifest-path flowersec-rust/Cargo.toml --locked --list
 
 rust-audit:
 	node scripts/check-rust-security.mjs

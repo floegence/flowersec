@@ -127,6 +127,7 @@
   ],
   "policies": {
     "carrier_selection": "equal",
+    "profile_application_wire": "shared_across_runtimes_and_carriers",
     "quic_native_bidi_streams": true,
     "quic_yamux": "forbidden",
     "application_0rtt": "forbidden",
@@ -246,10 +247,6 @@
       "description": "The current browser runtime does not expose the WebTransport API required by the Transport v2 carrier."
     },
     {
-      "id": "node_raw_quic_driver_unavailable",
-      "description": "The Node.js server profile has no admitted production raw QUIC driver."
-    },
-    {
       "id": "node_webtransport_driver_unavailable",
       "description": "The Node.js server profile has no admitted production WebTransport driver."
     },
@@ -312,14 +309,16 @@
       "language": "typescript",
       "environment": "node",
       "tuples": [
+        { "carrier": "raw_quic", "network_mode": "dial", "path": "direct", "session_role": "client", "reliable_streams": true, "datagrams": true, "migration": false },
+        { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": true, "migration": false },
+        { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": true, "migration": false },
+        { "carrier": "raw_quic", "network_mode": "listen", "path": "direct", "session_role": "server", "reliable_streams": true, "datagrams": true, "migration": false },
         { "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false },
         { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client", "reliable_streams": true, "datagrams": false, "migration": false },
-        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": false, "migration": false }
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server", "reliable_streams": true, "datagrams": false, "migration": false },
+        { "carrier": "websocket", "network_mode": "listen", "path": "direct", "session_role": "server", "reliable_streams": true, "datagrams": false, "migration": false }
       ],
-      "unsupported": [
-        { "carrier": "raw_quic", "reason": "node_raw_quic_driver_unavailable" },
-        { "carrier": "webtransport", "reason": "node_webtransport_driver_unavailable" }
-      ]
+      "unsupported": [{ "carrier": "webtransport", "reason": "node_webtransport_driver_unavailable" }]
     },
     {
       "id": "rust_native",
@@ -382,10 +381,6 @@
   "go_native_dependencies": {
     "toolchain": "1.26.5",
     "webtransport_dialer": "quic.DialAddr",
-    "webtransport_required_quic_settings": [
-      "EnableDatagrams=true",
-      "EnableStreamResetPartialDelivery=true"
-    ],
     "dependencies": [
       {
         "module": "github.com/quic-go/quic-go",

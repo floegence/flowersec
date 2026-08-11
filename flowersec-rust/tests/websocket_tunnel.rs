@@ -24,6 +24,7 @@ const TEST_KEY_DER_B64: &str = "MC4CAQAwBQYDK2VwBCIEICxYUWHqGoh0CBBohsaNg/NThm1n
 
 struct Records {
     records: Mutex<HashMap<String, AuthorizationRecord>>,
+    remote_addresses: Mutex<Vec<String>>,
     next_lease: AtomicUsize,
     releases: AtomicUsize,
 }
@@ -34,6 +35,10 @@ impl TunnelAuthorizer for Records {
         &self,
         request: RuntimeAuthorizationRequest,
     ) -> Result<TunnelAuthorizationResponse, ControlPlaneError> {
+        self.remote_addresses
+            .lock()
+            .unwrap()
+            .push(request.remote_address().to_owned());
         let record = self
             .records
             .lock()
@@ -54,6 +59,7 @@ impl TunnelAuthorizer for Records {
 async fn production_wss_tunnel_relays_one_end_to_end_session_without_terminating_it() {
     let authorizer = Arc::new(Records {
         records: Mutex::new(HashMap::new()),
+        remote_addresses: Mutex::new(Vec::new()),
         next_lease: AtomicUsize::new(1),
         releases: AtomicUsize::new(0),
     });
@@ -170,6 +176,18 @@ async fn production_wss_tunnel_relays_one_end_to_end_session_without_terminating
     assert_eq!(
         releases_when_close_returned, 2,
         "TunnelRuntime.close must wait for active pair lease cleanup"
+    );
+    let remote_addresses = authorizer.remote_addresses.lock().unwrap().clone();
+    assert_eq!(remote_addresses.len(), 2);
+    assert!(
+        remote_addresses
+            .iter()
+            .all(|address| address.starts_with("127.0.0.1:"))
+    );
+    assert!(
+        remote_addresses
+            .iter()
+            .all(|address| address != "websocket")
     );
     std::net::TcpListener::bind(address)
         .expect("TunnelRuntime.close must release the listener socket before returning");

@@ -88,11 +88,23 @@ Flowersec은 애플리케이션 세션과 이를 전달하는 네트워크 경�
 | Apple 클라이언트 연결 | 미지원 | 미지원 | 지원 | 미지원 |
 | 네이티브 QUIC 연결 | 지원 | 미지원 | 미지원 | 지원 |
 | WebSocket 연결 | 지원 | 지원 | 지원 | 지원 |
-| WebTransport 연결 | 지원 | 지원 | 미지원 | 미지원 |
+| WebTransport 연결 | Go direct | Browser | 미지원 | 미지원 |
 | 서버 측 세션 수락 | 지원 | Node.js | 미지원 | 지원 |
 | 불투명 릴레이 런타임 | 지원 | Node.js | 미지원 | 지원 |
 | 제어 영역 연결 초대 발급 | 지원 | Node.js | 미지원 | 지원 |
 | HTTP 및 WebSocket ProxyServer | 지원 | Node.js | 미지원 | 지원 |
+
+배포 profile은 플랫폼 가용성과 공유 Flowersec 애플리케이션 프로토콜을 분리합니다.
+
+| Profile | 런타임 | 필수 carrier 및 role 범위 | 선택 범위 |
+| --- | --- | --- | --- |
+| `native-server-core` | Go, Rust, Node.js | WebSocket 및 raw QUIC endpoint client, direct server, opaque tunnel runtime | WebTransport adapter |
+| `browser-client` | TypeScript browser | WebSocket endpoint client | Browser WebTransport adapter |
+| `apple-client` | Apple 플랫폼의 Swift | WSS endpoint client | 없음 |
+| `webtransport-server` | 현재 선언한 런타임 없음 | 선언 전에 direct server와 opaque tunnel runtime conformance를 모두 통과해야 함 | 없음 |
+
+Go, Rust, Node.js는 동일한 18개 필수 `native-server-core` tuple을 구현합니다.
+Direct 및 tunnel conformance는 두 필수 carrier의 모든 언어 간 조합을 검증하며, profile은 Artifact, handshake, RPC, stream, close, rekey 또는 authorization wire semantics를 변경하지 않습니다.
 
 각 패키지가 지원하는 정확한 플랫폼과 연결 조합은 SDK 가이드를 확인하세요.
 

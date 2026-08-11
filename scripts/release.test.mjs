@@ -94,6 +94,28 @@ test("release policy assertions use anchored mirror URL matching", () => {
   );
 });
 
+test("Rust publication installs the shared native driver before the SDK", () => {
+  const nativeManifest = fs.readFileSync(path.join(sourceRoot, "flowersec-native-transport/Cargo.toml"), "utf8");
+  const sdkManifest = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/Cargo.toml"), "utf8");
+  const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
+  const rustWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/rust-release.yml"), "utf8");
+  const releaseWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
+
+  assert.doesNotMatch(nativeManifest, /^publish\s*=\s*false$/m);
+  for (const field of ["description", "license", "repository", "readme", "include"]) {
+    assert.match(nativeManifest, new RegExp(`^${field}\\s*=`, "m"), `native driver misses ${field} package metadata`);
+  }
+  assert.match(sdkManifest, /flowersec-native-transport\s*=\s*\{\s*version\s*=\s*"=2\.3\.6",\s*path\s*=\s*"\.\.\/flowersec-native-transport"\s*\}/);
+  assert.match(makefile, /cargo package --manifest-path flowersec-native-transport\/Cargo\.toml --locked --allow-dirty/);
+  assert.match(makefile, /cargo publish --manifest-path flowersec-native-transport\/Cargo\.toml --locked --dry-run --allow-dirty --no-verify/);
+  assert.match(makefile, /cargo package --manifest-path flowersec-rust\/Cargo\.toml --locked --allow-dirty --list/);
+  assert.match(rustWorkflow, /name: Publish native transport crate[\s\S]*working-directory: flowersec-native-transport[\s\S]*run: cargo publish --no-verify/);
+  assert.match(rustWorkflow, /name: Wait for native transport registry readback/);
+  assert.match(rustWorkflow, /name: Publish Flowersec Rust SDK[\s\S]*working-directory: flowersec-rust[\s\S]*run: cargo publish --no-verify/);
+  assert.match(rustWorkflow, /name: Verify Flowersec Rust SDK registry readback/);
+  assert.match(releaseWorkflow, /release:\n\s+needs: \[prepare, rust-publish, native-prebuilt\]/);
+});
+
 test("release policy mutations use bounded isolated concurrency", () => {
   const source = fs.readFileSync(import.meta.filename, "utf8");
   assert.match(source, /const releaseMutationConcurrency = 4;/);
@@ -653,7 +675,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       const root = createReleasePolicyFixture(t);
       const workflowPath = path.join(root, ".github/workflows/release.yml");
       const workflow = fs.readFileSync(workflowPath, "utf8");
-      const marker = "  release:\n    needs: prepare\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n      packages: write\n      id-token: write\n    steps:\n";
+      const marker = "  release:\n    needs: [prepare, rust-publish, native-prebuilt]\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n      packages: write\n      id-token: write\n    steps:\n";
       assert.ok(workflow.includes(marker));
       fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}      - name: Unreviewed command\n        run: ${bypass.run}\n\n`));
       const result = runReleasePolicy(root);
@@ -678,7 +700,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
-    const marker = "  release:\n    needs: prepare\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n      packages: write\n      id-token: write\n    steps:\n";
+    const marker = "  release:\n    needs: [prepare, rust-publish, native-prebuilt]\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n      packages: write\n      id-token: write\n    steps:\n";
     assert.ok(workflow.includes(marker));
     fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}      - name: Unreviewed publisher\n        uses: example/publish-action@v1\n\n`));
     const result = runReleasePolicy(root);
@@ -748,7 +770,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
 
   for (const mutation of [
     ["working-directory: flowersec-rust", "working-directory: ."],
-    ["CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}", "CARGO_REGISTRY_TOKEN: attacker-token"],
+    ["CARGO_REGISTRY_TOKEN: ${{ steps.native-auth.outputs.token }}", "CARGO_REGISTRY_TOKEN: attacker-token"],
     ["run: cargo publish --no-verify", "run: cargo publish --allow-dirty"],
     ["uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18", "uses: example/auth-action@v1"],
   ]) {
@@ -868,7 +890,8 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
   for (const step of [
     { file: ".github/workflows/release.yml", name: "Validate release version facts" },
     { file: ".github/workflows/release.yml", name: "Publish GitHub Release" },
-    { file: ".github/workflows/rust-release.yml", name: "Publish crate" },
+    { file: ".github/workflows/rust-release.yml", name: "Publish native transport crate" },
+    { file: ".github/workflows/rust-release.yml", name: "Publish Flowersec Rust SDK" },
   ]) {
     for (const mutation of equivalentControlKeyMutations) {
       schedulePolicyTest(`${step.name} rejects equivalent YAML key ${mutation.trim()}`, () => {
@@ -890,9 +913,14 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     { file: ".github/workflows/release.yml", name: "Publish GitHub Release" },
     { file: ".github/workflows/release.yml", name: "Build and push runtime image" },
     { file: ".github/workflows/release.yml", name: "Publish npm package" },
-    { file: ".github/workflows/rust-release.yml", name: "Check whether version is already published" },
-    { file: ".github/workflows/rust-release.yml", name: "Authenticate to crates.io" },
-    { file: ".github/workflows/rust-release.yml", name: "Publish crate" },
+    { file: ".github/workflows/rust-release.yml", name: "Check whether native transport version is already published" },
+    { file: ".github/workflows/rust-release.yml", name: "Authenticate native transport publication" },
+    { file: ".github/workflows/rust-release.yml", name: "Publish native transport crate" },
+    { file: ".github/workflows/rust-release.yml", name: "Wait for native transport registry readback" },
+    { file: ".github/workflows/rust-release.yml", name: "Check whether Flowersec Rust SDK version is already published" },
+    { file: ".github/workflows/rust-release.yml", name: "Authenticate Flowersec Rust SDK publication" },
+    { file: ".github/workflows/rust-release.yml", name: "Publish Flowersec Rust SDK" },
+    { file: ".github/workflows/rust-release.yml", name: "Verify Flowersec Rust SDK registry readback" },
   ];
   for (const step of criticalSteps) {
     for (const mutation of [
@@ -1059,18 +1087,18 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     const workflowPath = path.join(root, ".github/workflows/rust-release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
     const expected = [
-      "      - name: Publish crate",
-      "        if: steps.published.outputs.exists != 'true'",
+      "      - name: Publish Flowersec Rust SDK",
+      "        if: steps.sdk-published.outputs.exists != 'true'",
       "        working-directory: flowersec-rust",
       "        env:",
-      "          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}",
+      "          CARGO_REGISTRY_TOKEN: ${{ steps.sdk-auth.outputs.token }}",
     ].join("\n");
     const replacement = [
-      "      - name: Publish crate",
+      "      - name: Publish Flowersec Rust SDK",
       "        working-directory: flowersec-rust",
       "        env:",
-      "          if: steps.published.outputs.exists != 'true'",
-      "          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}",
+      "          if: steps.sdk-published.outputs.exists != 'true'",
+      "          CARGO_REGISTRY_TOKEN: ${{ steps.sdk-auth.outputs.token }}",
     ].join("\n");
     assert.ok(workflow.includes(expected));
     fs.writeFileSync(workflowPath, workflow.replace(expected, replacement));

@@ -553,6 +553,8 @@ pub struct RuntimeAuthorizationRequest {
     raw: Arc<[u8]>,
     lookup_key: String,
     chosen_candidate_id: String,
+    carrier: String,
+    remote_address: String,
 }
 impl fmt::Debug for RuntimeAuthorizationRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -648,10 +650,20 @@ impl RuntimeAuthorizationRequest {
             raw: raw.into(),
             lookup_key: URL_SAFE_NO_PAD.encode(Sha256::digest(credential.as_bytes())),
             chosen_candidate_id: chosen.into(),
+            carrier: carrier.into(),
+            remote_address: remote.into(),
         })
     }
     pub fn lookup_key(&self) -> &str {
         &self.lookup_key
+    }
+
+    pub fn carrier(&self) -> &str {
+        &self.carrier
+    }
+
+    pub fn remote_address(&self) -> &str {
+        &self.remote_address
     }
 
     pub fn authorize(

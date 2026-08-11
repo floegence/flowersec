@@ -12,12 +12,20 @@ async function loadChecker() {
   return import(pathToFileURL(checkerPath));
 }
 
-test("Rust security inventory includes main, fuzz, and example lock contexts", async () => {
+test("Rust security inventory includes every maintained Cargo root", async () => {
   const { rustSecurityContexts } = await loadChecker();
   assert.deepEqual(rustSecurityContexts(sourceRoot), [
     {
       manifest: path.join(sourceRoot, "flowersec-rust/Cargo.toml"),
       lockfile: path.join(sourceRoot, "flowersec-rust/Cargo.lock"),
+    },
+    {
+      manifest: path.join(sourceRoot, "flowersec-native-transport/Cargo.toml"),
+      lockfile: path.join(sourceRoot, "flowersec-native-transport/Cargo.lock"),
+    },
+    {
+      manifest: path.join(sourceRoot, "flowersec-node-native/Cargo.toml"),
+      lockfile: path.join(sourceRoot, "flowersec-node-native/Cargo.lock"),
     },
     {
       manifest: path.join(sourceRoot, "flowersec-rust/fuzz/Cargo.toml"),
@@ -41,9 +49,11 @@ test("every Rust lock is audited and denied without suppressions", async () => {
   };
 
   runRustSecurityChecks({ repoRoot: sourceRoot, run });
-  assert.equal(calls.length, 8);
+  assert.equal(calls.length, 12);
   for (const context of [
     ["flowersec-rust/Cargo.toml", "flowersec-rust/Cargo.lock"],
+    ["flowersec-native-transport/Cargo.toml", "flowersec-native-transport/Cargo.lock"],
+    ["flowersec-node-native/Cargo.toml", "flowersec-node-native/Cargo.lock"],
     ["flowersec-rust/fuzz/Cargo.toml", "flowersec-rust/fuzz/Cargo.lock"],
     ["examples/rust/Cargo.toml", "examples/rust/Cargo.lock"],
   ]) {
@@ -74,8 +84,8 @@ test("final Rust security checks reuse the preflight database without network ac
   runRustSecurityChecks({ repoRoot: sourceRoot, run, offline: true });
   const audits = calls.filter((call) => call.args[0] === "audit" && call.args[1] !== "--version");
   const denies = calls.filter((call) => call.args[0] === "deny" && call.args[1] !== "--version");
-  assert.equal(audits.length, 3);
-  assert.equal(denies.length, 3);
+  assert.equal(audits.length, 5);
+  assert.equal(denies.length, 5);
   for (const call of audits) assert.ok(call.args.includes("--no-fetch"));
   for (const call of denies) assert.ok(call.args.includes("--disable-fetch"));
 });

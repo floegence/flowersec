@@ -1146,7 +1146,9 @@ async fn production_stream_operation_reconciles_route_and_releases_the_old_udp_s
     )
     .await;
     let previous = client.local_address().expect("client local address");
-    client.replace_observed_route_for_test(SocketAddr::from(([192, 0, 2, 1], 0)));
+    client
+        .migrate_local_address(loopback_ephemeral())
+        .expect("migrate client endpoint");
     native_round_trip(&client, &server).await;
     let rebound = client.local_address().expect("rebound local address");
     assert_ne!(rebound, previous);
@@ -1588,6 +1590,7 @@ async fn raw_quic_control_and_rpc_slots_preserve_one_data_stream_capacity() {
 #[test]
 fn public_source_hides_quinn_yamux_and_early_data() {
     let source = include_str!("../src/raw_quic_v2.rs");
+    let native_source = include_str!("../../flowersec-native-transport/src/raw_quic.rs");
     for line in source.lines() {
         let public = line.trim_start().starts_with("pub ");
         assert!(
@@ -1599,21 +1602,39 @@ fn public_source_hides_quinn_yamux_and_early_data() {
             "public Yamux surface: {line}"
         );
     }
-    assert!(!source.contains("into_0rtt"));
-    assert!(source.contains("max_concurrent_uni_streams(0"));
-    assert!(source.contains("datagram_receive_buffer_size(Some("));
-    assert!(source.contains("enable_early_data = false"));
-    assert!(source.contains("max_early_data_size = 0"));
-    assert!(source.contains("with_protocol_versions(&[&rustls::version::TLS13])"));
+    assert!(!native_source.contains("into_0rtt"));
+    assert!(native_source.contains("max_concurrent_uni_streams(0"));
+    assert!(native_source.contains("datagram_receive_buffer_size(Some("));
+    assert!(native_source.contains("enable_early_data = false"));
+    assert!(native_source.contains("max_early_data_size = 0"));
+    assert!(native_source.contains("with_protocol_versions(&[&rustls::version::TLS13])"));
 
     let manifest = include_str!("../Cargo.toml");
-    assert!(manifest.contains("quinn = { version = \"=0.11.11\""));
+    assert!(!manifest.contains("quinn = { version"));
+    assert!(manifest.contains("flowersec-native-transport"));
     assert!(
         !manifest
             .lines()
             .any(|line| line.trim_start().starts_with("rcgen"))
     );
     assert!(!source.contains("rcgen"));
+}
+
+#[test]
+fn rust_sdk_raw_quic_uses_the_shared_native_transport_driver() {
+    let source = include_str!("../src/raw_quic_v2.rs");
+    let manifest = include_str!("../Cargo.toml");
+
+    assert!(
+        manifest.contains("flowersec-native-transport"),
+        "the Rust SDK must consume the shared native transport crate"
+    );
+    for forbidden in ["use quinn::", "quinn::", "rustls::", "fn transport_config("] {
+        assert!(
+            !source.contains(forbidden),
+            "the Rust SDK duplicated native transport implementation: {forbidden}"
+        );
+    }
 }
 
 #[tokio::test]

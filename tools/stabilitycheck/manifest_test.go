@@ -452,7 +452,7 @@ func TestMakefileStabilityCheckRunsEveryContractVerifier(t *testing.T) {
 	if strings.Count(sourceTarget, "go run . verify-source") != 1 {
 		t.Fatalf("stability-source-check must use one combined source verifier, got:\n%s", sourceTarget)
 	}
-	for _, command := range []string{"verify-manifest", "verify-defaults", "verify-parity", "verify-docs", "verify-go", "verify-ts", "report"} {
+	for _, command := range []string{"verify-manifest", "verify-defaults", "verify-parity", "verify-server-parity-completion", "verify-docs", "verify-go", "verify-ts", "report"} {
 		if strings.Contains(sourceTarget, "go run . "+command) {
 			t.Fatalf("stability-source-check must not launch the focused %s command separately, got:\n%s", command, sourceTarget)
 		}

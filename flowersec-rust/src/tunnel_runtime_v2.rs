@@ -87,6 +87,11 @@ enum TunnelListener {
     WebSocket(WebSocketListener),
 }
 
+struct AcceptedTunnelCarrier {
+    carrier: Arc<dyn CarrierSessionV2>,
+    remote_address: SocketAddr,
+}
+
 impl TunnelListener {
     fn local_addr(&self) -> io::Result<SocketAddr> {
         match self {
@@ -95,16 +100,23 @@ impl TunnelListener {
         }
     }
 
-    async fn accept(&self) -> Result<Arc<dyn CarrierSessionV2>, TunnelRuntimeError> {
+    async fn accept(&self) -> Result<AcceptedTunnelCarrier, TunnelRuntimeError> {
         match self {
             Self::RawQuic(listener) => listener
                 .accept()
                 .await
-                .map(|session| Arc::new(session) as Arc<dyn CarrierSessionV2>)
+                .map(|session| AcceptedTunnelCarrier {
+                    remote_address: session.peer_address(),
+                    carrier: Arc::new(session) as Arc<dyn CarrierSessionV2>,
+                })
                 .map_err(|_| TunnelRuntimeError::Closed),
             Self::WebSocket(listener) => listener
-                .accept()
+                .accept_with_peer()
                 .await
+                .map(|(carrier, remote_address)| AcceptedTunnelCarrier {
+                    carrier,
+                    remote_address,
+                })
                 .map_err(|_| TunnelRuntimeError::Closed),
         }
     }
@@ -271,14 +283,15 @@ impl TunnelRuntime {
                 return Ok(());
             };
             match accepted {
-                Ok(carrier) if !self.state.closed.is_cancelled() => {
+                Ok(accepted) if !self.state.closed.is_cancelled() => {
                     let runtime = self.clone_for_task();
-                    spawn_tracked(
-                        self.state.clone(),
-                        async move { runtime.process(carrier).await },
-                    );
+                    spawn_tracked(self.state.clone(), async move {
+                        runtime
+                            .process(accepted.carrier, accepted.remote_address)
+                            .await
+                    });
                 }
-                Ok(carrier) => carrier.abort(),
+                Ok(accepted) => accepted.carrier.abort(),
                 Err(_) if self.state.closed.is_cancelled() => return Ok(()),
                 Err(_) => return Err(TunnelRuntimeError::Closed),
             }
@@ -334,8 +347,8 @@ struct TaskRuntime {
 }
 
 impl TaskRuntime {
-    async fn process(self, carrier: Arc<dyn CarrierSessionV2>) {
-        let result = self.process_inner(carrier.clone()).await;
+    async fn process(self, carrier: Arc<dyn CarrierSessionV2>, remote_address: SocketAddr) {
+        let result = self.process_inner(carrier.clone(), remote_address).await;
         if result.is_err() {
             carrier.abort();
         }
@@ -344,6 +357,7 @@ impl TaskRuntime {
     async fn process_inner(
         &self,
         carrier: Arc<dyn CarrierSessionV2>,
+        remote_address: SocketAddr,
     ) -> Result<(), TunnelRuntimeError> {
         let admission = carrier
             .accept_stream()
@@ -358,7 +372,7 @@ impl TaskRuntime {
         let body = serde_json::json!({
             "fsb2_base64url": URL_SAFE_NO_PAD.encode(&raw),
             "carrier": carrier_name,
-            "remote_address": carrier_name,
+            "remote_address": remote_address.to_string(),
         });
         let request = RuntimeAuthorizationRequest::parse(
             &serde_json::to_vec(&body).map_err(|_| TunnelRuntimeError::AdmissionFailed)?,
@@ -936,7 +950,7 @@ async fn bridge_direction(
 
 async fn bridge_stream_pair(first: Arc<dyn CarrierStreamV2>, second: Arc<dyn CarrierStreamV2>) {
     let first_to_second = copy_stream(first.clone(), second.clone());
-    let second_to_first = copy_stream(second, first);
+    let second_to_first = copy_stream(second.clone(), first.clone());
     let _ = tokio::join!(first_to_second, second_to_first);
 }
 
@@ -946,13 +960,25 @@ async fn copy_stream(
 ) -> Result<(), ()> {
     let mut buffer = vec![0_u8; 64 * 1024];
     loop {
-        let count = source.read(&mut buffer).await.map_err(|_| ())?;
+        let count = match source.read(&mut buffer).await {
+            Ok(count) => count,
+            Err(_) => {
+                let _ = target.reset().await;
+                return Err(());
+            }
+        };
         if count == 0 {
             return target.close_write().await.map_err(|_| ());
         }
         let mut offset = 0;
         while offset < count {
-            let written = target.write(&buffer[offset..count]).await.map_err(|_| ())?;
+            let written = match target.write(&buffer[offset..count]).await {
+                Ok(written) => written,
+                Err(_) => {
+                    let _ = source.reset().await;
+                    return Err(());
+                }
+            };
             if written == 0 {
                 return Err(());
             }

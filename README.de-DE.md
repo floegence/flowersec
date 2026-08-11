@@ -88,11 +88,23 @@ Alle vier SDKs verwenden dasselbe Sitzungsmodell. Der Plattformumfang unterschei
 | Apple-Clientverbindungen | Nein | Nein | Ja | Nein |
 | Native QUIC-Verbindungen | Ja | Nein | Nein | Ja |
 | WebSocket-Verbindungen | Ja | Ja | Ja | Ja |
-| WebTransport-Verbindungen | Ja | Ja | Nein | Nein |
+| WebTransport-Verbindungen | Go direct | Browser | Nein | Nein |
 | Serverseitige Sitzungsannahme | Ja | Node.js | Nein | Ja |
 | Undurchsichtige Relay-Laufzeit | Ja | Node.js | Nein | Ja |
 | Verbindungseinladungen der Control Plane | Ja | Node.js | Nein | Ja |
 | HTTP- und WebSocket-ProxyServer | Ja | Node.js | Nein | Ja |
+
+Bereitstellungsprofile trennen die Plattformverfuegbarkeit vom gemeinsamen Flowersec-Anwendungsprotokoll:
+
+| Profil | Laufzeiten | Erforderliche Carrier- und Rollenoberflaeche | Optionale Oberflaeche |
+| --- | --- | --- | --- |
+| `native-server-core` | Go, Rust, Node.js | WebSocket- und Raw-QUIC-Endpunktclient, direkter Server und opake Tunnellaufzeit | WebTransport-Adapter |
+| `browser-client` | TypeScript-Browser | WebSocket-Endpunktclient | Browser-WebTransport-Adapter |
+| `apple-client` | Swift auf Apple-Plattformen | WSS-Endpunktclient | Keine |
+| `webtransport-server` | Derzeit von keiner Laufzeit beansprucht | Vor einer Beanspruchung muessen direkter Server und opake Tunnellaufzeit konform sein | Keine |
+
+Go, Rust und Node.js implementieren dieselben 18 erforderlichen `native-server-core`-Tupel.
+Die Direct- und Tunnel-Konformitaet prueft fuer beide erforderlichen Carrier jede sprachuebergreifende Kombination; ein Profil aendert niemals die Wire-Semantik fuer Artifact, Handshake, RPC, Stream, Close, Rekey oder Autorisierung.
 
 Die SDK-Anleitungen nennen die genauen unterstützten Kombinationen aus Plattform und Verbindung.
 

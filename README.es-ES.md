@@ -88,11 +88,23 @@ Los cuatro SDK comparten el mismo modelo de sesión. El soporte varía cuando un
 | Conexiones de clientes Apple | No | No | Sí | No |
 | Conexiones QUIC nativas | Sí | No | No | Sí |
 | Conexiones WebSocket | Sí | Sí | Sí | Sí |
-| Conexiones WebTransport | Sí | Sí | No | No |
+| Conexiones WebTransport | Go direct | Browser | No | No |
 | Aceptación de sesiones en servidor | Sí | Node.js | No | Sí |
 | Runtime de relay opaco | Sí | Node.js | No | Sí |
 | Emisión de invitaciones desde el plano de control | Sí | Node.js | No | Sí |
 | ProxyServer HTTP y WebSocket | Sí | Node.js | No | Sí |
+
+Los perfiles de despliegue separan la disponibilidad de plataforma del protocolo de aplicacion Flowersec compartido:
+
+| Perfil | Runtimes | Superficie obligatoria de carrier y rol | Superficie opcional |
+| --- | --- | --- | --- |
+| `native-server-core` | Go, Rust, Node.js | Cliente endpoint, servidor directo y runtime de tunel opaco para WebSocket y raw QUIC | Adaptador WebTransport |
+| `browser-client` | Navegador TypeScript | Cliente endpoint WebSocket | Adaptador WebTransport del navegador |
+| `apple-client` | Swift en plataformas Apple | Cliente endpoint WSS | Ninguna |
+| `webtransport-server` | Ningun runtime lo declara actualmente | Deben superar conformance tanto el servidor directo como el runtime de tunel opaco antes de declararlo | Ninguna |
+
+Go, Rust y Node.js implementan las mismas 18 tuplas obligatorias de `native-server-core`.
+La conformance directa y por tunel prueba cada combinacion entre lenguajes para ambos carriers obligatorios; un perfil nunca cambia la semantica wire de Artifact, handshake, RPC, stream, close, rekey o authorization.
 
 Consulta las guías de cada SDK para ver las combinaciones exactas de plataforma y conexión compatibles.
 

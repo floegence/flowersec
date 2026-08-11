@@ -20,6 +20,18 @@ export const releaseComplianceKinds = Object.freeze([
   "runtime-image",
 ]);
 
+export const nativeNodePlatforms = Object.freeze([
+  "darwin-arm64",
+  "darwin-x64",
+  "linux-arm64-gnu",
+  "linux-x64-gnu",
+]);
+
+const nativeNodeArtifactPrefixes = [
+  "flowersec-node-native/",
+  ...nativeNodePlatforms.map((platform) => `flowersec-node-native/npm/${platform}/`),
+];
+
 export const requiredArtifactPaths = [
   "THIRD_PARTY_NOTICES.md",
   "sbom/source-inventory.json",
@@ -34,6 +46,11 @@ export const requiredArtifactPaths = [
   "flowersec-rust/THIRD_PARTY_NOTICES.md",
   "flowersec-rust/sbom/spdx.json",
   "flowersec-rust/sbom/cyclonedx.json",
+  ...nativeNodeArtifactPrefixes.flatMap((prefix) => [
+    `${prefix}THIRD_PARTY_NOTICES.md`,
+    `${prefix}sbom/spdx.json`,
+    `${prefix}sbom/cyclonedx.json`,
+  ]),
   "sbom/swift/spdx.json",
   "sbom/swift/cyclonedx.json",
   ...releaseComplianceKinds.flatMap((kind) => [
@@ -866,6 +883,7 @@ export function collectGoReleaseDistributions(repoRoot) {
   const npmDistribution = collectNpmContext(
     readJson(path.join(repoRoot, "flowersec-ts/package-lock.json")),
     policy,
+    { allowUnresolvedOptionalNames: firstPartyNativePackageNames(repoRoot) },
   ).distribution;
   return collectGoReleaseDistributionsWithInputs(
     repoRoot,
@@ -873,6 +891,23 @@ export function collectGoReleaseDistributions(repoRoot) {
     releaseVersion,
     npmDistribution,
   );
+}
+
+function firstPartyNativePackageNames(repoRoot) {
+  const names = new Set();
+  for (const relative of [
+    "flowersec-node-native/package.json",
+    "flowersec-node-native/npm/darwin-arm64/package.json",
+    "flowersec-node-native/npm/darwin-x64/package.json",
+    "flowersec-node-native/npm/linux-arm64-gnu/package.json",
+    "flowersec-node-native/npm/linux-x64-gnu/package.json",
+  ]) {
+    const file = path.join(repoRoot, relative);
+    if (!fs.existsSync(file)) continue;
+    const metadata = readJson(file);
+    if (typeof metadata.name === "string") names.add(metadata.name);
+  }
+  return names;
 }
 
 function npmPackageName(packagePath) {
@@ -906,7 +941,7 @@ export function collectNpmComponents(lockfile, policy) {
   return collectNpmContext(lockfile, policy).source.components;
 }
 
-function collectNpmContext(lockfile, policy) {
+function collectNpmContext(lockfile, policy, options = {}) {
   if (!lockfile || typeof lockfile.packages !== "object" || lockfile.packages === null) {
     throw new Error("npm lockfile has no packages object");
   }
@@ -923,6 +958,7 @@ function collectNpmContext(lockfile, policy) {
     const name = npmPackageName(packagePath);
     if (!name || metadata.link === true) continue;
     if (typeof metadata.version !== "string" || typeof metadata.integrity !== "string") {
+      if (metadata.optional === true && options.allowUnresolvedOptionalNames?.has(name)) continue;
       throw new Error(`npm package ${packagePath} has no exact version`);
     }
     byPackagePath.set(packagePath, makeComponent({
@@ -955,7 +991,13 @@ function collectNpmContext(lockfile, policy) {
           if (kind === "optional" || peerOptional) continue;
           throw new Error(`npm dependency ${dependencyName} from ${packagePath || "<root>"} is unresolved`);
         }
-        edges.push({ from: from.purl, to: byPackagePath.get(targetPath).purl, kind });
+        const target = byPackagePath.get(targetPath);
+        if (!target) {
+          const peerOptional = kind === "peer" && metadata.peerDependenciesMeta?.[dependencyName]?.optional === true;
+          if (kind === "optional" || peerOptional) continue;
+          throw new Error(`npm dependency ${dependencyName} from ${packagePath || "<root>"} has no inventory metadata`);
+        }
+        edges.push({ from: from.purl, to: target.purl, kind });
       }
     }
   }
@@ -1627,9 +1669,12 @@ export function generateSourceArtifacts(repoRoot) {
   const npmContext = collectNpmContext(
     readJson(path.join(repoRoot, "flowersec-ts/package-lock.json")),
     policy,
+    { allowUnresolvedOptionalNames: firstPartyNativePackageNames(repoRoot) },
   );
   const rustDefinitions = [
     ["rust:flowersec-rust", "flowersec-rust/Cargo.toml", "flowersec-rust/Cargo.lock"],
+    ["rust:flowersec-native-transport", "flowersec-native-transport/Cargo.toml", "flowersec-native-transport/Cargo.lock"],
+    ["rust:flowersec-node-native", "flowersec-node-native/Cargo.toml", "flowersec-node-native/Cargo.lock"],
     ["rust:flowersec-rust/fuzz", "flowersec-rust/fuzz/Cargo.toml", "flowersec-rust/fuzz/Cargo.lock"],
     ["rust:examples/rust", "examples/rust/Cargo.toml", "examples/rust/Cargo.lock"],
   ];
@@ -1690,6 +1735,12 @@ export function generateSourceArtifacts(repoRoot) {
   if (!goDistribution) throw new Error("missing flowersec-go dependency context");
   const rustInput = rustMetadata.get("rust:flowersec-rust");
   const rustDistribution = collectRustContext(rustInput.metadata, policy, rustInput.lockfile).distribution;
+  const nodeNativeInput = rustMetadata.get("rust:flowersec-node-native");
+  const nodeNativeCargoDistribution = collectRustContext(
+    nodeNativeInput.metadata,
+    policy,
+    nodeNativeInput.lockfile,
+  ).distribution;
   const releaseDistributions = collectGoReleaseDistributionsWithInputs(
     repoRoot,
     policy,
@@ -1711,6 +1762,22 @@ export function generateSourceArtifacts(repoRoot) {
   addDistributionArtifacts(artifacts, repoRoot, "flowersec-go/", "flowersec-go", goDistribution, digest);
   addDistributionArtifacts(artifacts, repoRoot, "flowersec-ts/", "flowersec-ts", npmContext.distribution, digest);
   addDistributionArtifacts(artifacts, repoRoot, "flowersec-rust/", "flowersec-rust", rustDistribution, digest);
+  for (const prefix of nativeNodeArtifactPrefixes) {
+    const platform = /^flowersec-node-native\/npm\/([^/]+)\/$/.exec(prefix)?.[1];
+    const packageName = platform === undefined
+      ? "@floegence/flowersec-node-native"
+      : `@floegence/flowersec-node-native-${platform}`;
+    const graph = mergeDistributionGraphs(
+      rootComponent(
+        "npm",
+        packageName,
+        releaseVersion,
+        `pkg:npm/${packageName.replace("@", "%40")}@${releaseVersion}`,
+      ),
+      [nodeNativeCargoDistribution],
+    );
+    addDistributionArtifacts(artifacts, repoRoot, prefix, packageName, graph, digest);
+  }
   addDistributionArtifacts(artifacts, repoRoot, "", "flowersec-swift", swiftRootContext, digest, false);
   artifacts.set("sbom/swift/spdx.json", artifacts.get("sbom/spdx.json"));
   artifacts.set("sbom/swift/cyclonedx.json", artifacts.get("sbom/cyclonedx.json"));
@@ -1763,6 +1830,7 @@ export function assertOwnedOutputClosure(repoRoot, artifacts) {
     "flowersec-go/",
     "flowersec-ts/",
     "flowersec-rust/",
+    ...nativeNodeArtifactPrefixes,
     ...releaseComplianceKinds.map((kind) => `release-compliance/${kind}/`),
   ];
   const owned = prefixes.flatMap((prefix) => {
@@ -1789,6 +1857,28 @@ export function validateDistributionConfiguration(repoRoot, overrides = {}) {
   for (const required of ["THIRD_PARTY_NOTICES.md", "sbom/**"]) {
     if (!npmPackage.files?.includes(required)) {
       throw new Error(`npm package files must include ${required}`);
+    }
+  }
+  const nativePackage = overrides.nativePackage
+    ?? readJson(path.join(repoRoot, "flowersec-node-native/package.json"));
+  for (const required of ["LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "sbom/**"]) {
+    if (!nativePackage.files?.includes(required)) {
+      throw new Error(`native npm package files must include ${required}`);
+    }
+  }
+  const platformPackages = overrides.platformPackages ?? Object.fromEntries(
+    nativeNodePlatforms.map((platform) => [
+      platform,
+      readJson(path.join(repoRoot, "flowersec-node-native/npm", platform, "package.json")),
+    ]),
+  );
+  for (const platform of nativeNodePlatforms) {
+    const metadata = platformPackages[platform];
+    const binary = `flowersec-node-native.${platform}.node`;
+    for (const required of [binary, "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "sbom/**"]) {
+      if (!metadata?.files?.includes(required)) {
+        throw new Error(`native npm platform ${platform} files must include ${required}`);
+      }
     }
   }
   const cargoToml = overrides.cargoToml

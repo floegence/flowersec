@@ -49,12 +49,14 @@ A negotiated `Session.unreliableMessages` channel sends defensively copied `Uint
 
 ## Supported Connections
 
-Browsers support WebSocket and native WebTransport connections. Node.js
-supports WebSocket client connections and can accept WebSocket server sessions
-through `/node`. The same entrypoint provides an opaque WSS `TunnelRuntime`, a
-control-plane implementation, and a `ProxyServer`; the relay never terminates
-an E2EE Session. Node raw QUIC and WebTransport remain unsupported because no
-public production driver has passed the shared transport contracts.
+Browsers support WebSocket and native WebTransport connections. Through
+`/node`, Node.js supports WebSocket and raw QUIC client connections, direct
+server sessions, and opaque `TunnelRuntime` relay legs. Raw QUIC uses the
+Flowersec-owned optional native addon and prebuilt platform package; it never
+loads from the browser entrypoint. The same Node entrypoint provides the
+control plane and `ProxyServer`, and the relay never terminates an E2EE
+Session. WebTransport is an optional adapter profile and the Node.js runtime
+does not currently expose a production adapter.
 The `/proxy` entrypoint adds browser bridges for applications that need to keep
 the session behind a Service Worker or another window.
 
@@ -81,9 +83,10 @@ Chromium does not support a WebTransport pooling option; each carrier creates an
 Cold-connection diagnostics require every independent carrier to meet the declared deadline. A `dial_failed` result remains a test failure and is not hidden by pooling, retry, or timeout relaxation.
 
 Node.js applications receive the same `Session` contract from `connect(...)`.
-The Node connector supports WSS and restricted plaintext loopback WebSocket
-direct connections. It requires an absolute HTTP(S) `origin`; custom
-certificate authorities can be supplied through `tls.ca`.
+The Node connector supports WSS, restricted plaintext loopback WebSocket
+direct connections, and raw QUIC through the optional native package. It
+requires an absolute HTTP(S) `origin`; custom certificate authorities can be
+supplied through `tls.ca`, and raw QUIC requires explicit trust roots.
 
 The connectors choose an eligible connection path from the invitation. They do
 not expose transport selectors, candidate lists, or native carrier objects to application code.

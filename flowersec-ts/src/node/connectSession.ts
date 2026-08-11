@@ -1,11 +1,12 @@
 import type { ArtifactLease } from "../public/artifactLease.js";
-import { NODE_RUNTIME_CAPABILITY_V2 } from "./runtimeCapability.js";
+import { detectNodeRuntimeCapabilityV2 } from "./runtimeCapability.js";
 import type { Session } from "../public/contract.js";
 import {
   composeCandidateAttemptFactoryV2,
   SessionConnectorV2,
 } from "../connector/sessionConnector.js";
 import { createWebSocketCandidateFactoryV2 } from "../connector/adapters/webSocketCandidate.js";
+import { createRawQuicCandidateFactoryV2 } from "../connector/adapters/rawQuicCandidate.js";
 import { createNodeWsFactory } from "./wsFactory.js";
 import { projectSessionV2 } from "../v2/publicSession.js";
 import { ConnectError } from "../public/connectError.js";
@@ -20,6 +21,11 @@ import {
   freezeSessionHandlersForConnector,
   type SessionHandlers,
 } from "./acceptor.js";
+import {
+  createNativeRawQuicDriver,
+  loadNativeTransportAddon,
+} from "./nativeTransportAddon.js";
+import { createNodeRawQuicClientV2 } from "./rawQuicAdapter.js";
 
 export type SessionTLSOptions = Readonly<{
   ca?: string | Uint8Array;
@@ -74,13 +80,28 @@ export async function connect(
   const rpcRouter = options.handlers === undefined
     ? undefined
     : freezeSessionHandlersForConnector(options.handlers);
+  const nativeAddon = loadNativeTransportAddon();
+  const rawQuicFactory = createRawQuicCandidateFactoryV2(async (candidate, artifact, signal) => {
+    if (options.tls?.ca === undefined) {
+      throw new TypeError("raw QUIC requires explicit trust roots");
+    }
+    return await createNodeRawQuicClientV2(
+      createNativeRawQuicDriver(nativeAddon),
+      candidate,
+      artifact,
+      { ca: options.tls.ca },
+      signal,
+      options.connectTimeoutMs,
+    );
+  });
   const connector = new SessionConnectorV2(
     lease,
     composeCandidateAttemptFactoryV2({
       websocket: createWebSocketCandidateFactoryV2((url, subprotocol) => wsFactory(url, origin, subprotocol)),
+      raw_quic: rawQuicFactory,
     }),
     {
-      capability: NODE_RUNTIME_CAPABILITY_V2,
+      capability: detectNodeRuntimeCapabilityV2(nativeAddon !== undefined),
       runtime: nodeSessionRuntimeV2,
       ...(rpcRouter === undefined ? {} : { rpcRouter }),
       ...(options.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: options.connectTimeoutMs }),

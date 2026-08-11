@@ -2,6 +2,63 @@
   "version": 2,
   "languages": ["go", "typescript", "swift", "rust"],
   "capability_layers": ["portable_core", "server_integration", "control_plane", "sdk_profile", "language_convenience"],
+  "deployment_profiles": {
+    "version": 1,
+    "application_wire": "shared_across_runtimes_and_carriers",
+    "profiles": [
+      {
+        "id": "native-server-core",
+        "claimed_runtimes": ["go", "rust", "node-typescript"],
+        "transport_runtime_ids": ["go_native", "rust_native", "typescript_node"],
+        "required_roles": ["endpoint-client", "direct-server", "tunnel-runtime"],
+        "required_carriers": ["websocket", "raw-quic"],
+        "required_paths": {
+          "endpoint-client": ["direct", "tunnel"],
+          "direct-server": ["direct"],
+          "tunnel-runtime": ["tunnel"]
+        },
+        "required_capability_ids": ["opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"],
+        "optional_carriers": ["webtransport"],
+        "required_tuple_count": 18
+      },
+      {
+        "id": "browser-client",
+        "claimed_runtimes": ["typescript-browser"],
+        "transport_runtime_ids": ["typescript_browser"],
+        "required_roles": ["endpoint-client"],
+        "required_carriers": ["websocket"],
+        "required_paths": { "endpoint-client": ["direct", "tunnel"] },
+        "required_capability_ids": ["opaque_artifact", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller"],
+        "optional_carriers": ["webtransport"],
+        "required_tuple_count": 1
+      },
+      {
+        "id": "apple-client",
+        "claimed_runtimes": ["swift"],
+        "transport_runtime_ids": ["swift_ios", "swift_macos"],
+        "required_roles": ["endpoint-client"],
+        "required_carriers": ["websocket"],
+        "required_paths": { "endpoint-client": ["direct", "tunnel"] },
+        "required_capability_ids": ["opaque_artifact", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller"],
+        "optional_carriers": [],
+        "required_tuple_count": 1
+      },
+      {
+        "id": "webtransport-server",
+        "claimed_runtimes": [],
+        "transport_runtime_ids": [],
+        "required_roles": ["direct-server", "tunnel-runtime"],
+        "required_carriers": ["webtransport"],
+        "required_paths": {
+          "direct-server": ["direct"],
+          "tunnel-runtime": ["tunnel"]
+        },
+        "required_capability_ids": ["secure_session", "rpc_call_notify", "validated_stream_metadata", "carrier_contract", "wire_security"],
+        "optional_carriers": [],
+        "required_tuple_count": 0
+      }
+    ]
+  },
   "portable_capabilities": [
     {
       "id": "opaque_artifact",
@@ -108,7 +165,7 @@
       "description": "Direct server admission binds authorization and application handlers before Session establishment; opaque tunnel relay ownership is declared separately in server_parity_contract.",
       "implementations": {
         "go": { "status": "supported", "entrypoint": "flowersec.NewAcceptor: WebSocket/raw QUIC/WebTransport direct", "test_ids": ["server/go-acceptor"] },
-        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core/node createAcceptor: WebSocket direct", "test_ids": ["server/typescript-acceptor"] },
+        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core/node createAcceptor: WebSocket and raw QUIC direct", "test_ids": ["server/typescript-acceptor"] },
         "swift": { "status": "unsupported", "reason": "Apple platforms do not provide the deployable listener profile used by Flowersec servers." },
         "rust": { "status": "supported", "entrypoint": "flowersec::Acceptor: WebSocket and raw QUIC direct", "test_ids": ["server/rust-acceptor"] }
       }
@@ -256,14 +313,14 @@
       { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "websocket", "path": "tunnel", "feature": "connect", "status": "supported", "entrypoint": "@floegence/flowersec-core/node connect", "test_ids": ["interop/typescript-go/wss/tunnel"] },
       { "runtime": "node-typescript", "deployment-role": "direct-server", "carrier": "websocket", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "@floegence/flowersec-core/node createAcceptor", "test_ids": ["server/typescript-acceptor"] },
       { "runtime": "node-typescript", "deployment-role": "tunnel-runtime", "carrier": "websocket", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "@floegence/flowersec-core/node createTunnelRuntime", "test_ids": ["carrier/typescript-websocket-tunnel"] },
-      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "direct", "feature": "connect", "status": "unsupported", "reason": "Node.js does not expose a stable production raw QUIC driver owned by Flowersec." },
-      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "tunnel", "feature": "connect", "status": "unsupported", "reason": "Node.js does not expose a stable production raw QUIC driver owned by Flowersec." },
-      { "runtime": "node-typescript", "deployment-role": "direct-server", "carrier": "raw-quic", "path": "direct", "feature": "accept", "status": "unsupported", "reason": "Node.js does not expose a stable production raw QUIC driver owned by Flowersec." },
-      { "runtime": "node-typescript", "deployment-role": "tunnel-runtime", "carrier": "raw-quic", "path": "tunnel", "feature": "pair-forward", "status": "unsupported", "reason": "Node.js does not expose a stable production raw QUIC driver owned by Flowersec." },
-      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "direct", "feature": "connect", "status": "unsupported", "reason": "Node.js has no production WebTransport driver that satisfies the strict draft-15 contract." },
-      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "tunnel", "feature": "connect", "status": "unsupported", "reason": "Node.js has no production WebTransport driver that satisfies the strict draft-15 contract." },
-      { "runtime": "node-typescript", "deployment-role": "direct-server", "carrier": "webtransport", "path": "direct", "feature": "accept", "status": "unsupported", "reason": "Node.js has no production WebTransport driver that satisfies the strict draft-15 contract." },
-      { "runtime": "node-typescript", "deployment-role": "tunnel-runtime", "carrier": "webtransport", "path": "tunnel", "feature": "pair-forward", "status": "unsupported", "reason": "Node.js has no production WebTransport driver that satisfies the strict draft-15 contract." },
+      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "direct", "feature": "connect", "status": "supported", "entrypoint": "@floegence/flowersec-core/node connect", "test_ids": ["interop/server-parity/direct-matrix"] },
+      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "tunnel", "feature": "connect", "status": "supported", "entrypoint": "@floegence/flowersec-core/node connect", "test_ids": ["interop/server-parity/tunnel-matrix"] },
+      { "runtime": "node-typescript", "deployment-role": "direct-server", "carrier": "raw-quic", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "@floegence/flowersec-core/node createAcceptor", "test_ids": ["interop/server-parity/direct-matrix"] },
+      { "runtime": "node-typescript", "deployment-role": "tunnel-runtime", "carrier": "raw-quic", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "@floegence/flowersec-core/node createTunnelRuntime", "test_ids": ["interop/server-parity/tunnel-matrix"] },
+      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "direct", "feature": "connect", "status": "unsupported", "reason": "Node.js does not expose a production WebTransport adapter." },
+      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "tunnel", "feature": "connect", "status": "unsupported", "reason": "Node.js does not expose a production WebTransport adapter." },
+      { "runtime": "node-typescript", "deployment-role": "direct-server", "carrier": "webtransport", "path": "direct", "feature": "accept", "status": "unsupported", "reason": "Node.js does not expose a production WebTransport adapter." },
+      { "runtime": "node-typescript", "deployment-role": "tunnel-runtime", "carrier": "webtransport", "path": "tunnel", "feature": "pair-forward", "status": "unsupported", "reason": "Node.js does not expose a production WebTransport adapter." },
       { "runtime": "node-typescript", "deployment-role": "control-plane", "carrier": "carrier-neutral", "path": "carrier-neutral", "feature": "issue-authorize", "status": "supported", "entrypoint": "@floegence/flowersec-core/node Issuer/authorizeRuntime", "test_ids": ["server/typescript-controlplane"] },
       { "runtime": "node-typescript", "deployment-role": "proxy-server", "carrier": "carrier-neutral", "path": "direct", "feature": "proxy", "status": "supported", "entrypoint": "@floegence/flowersec-core/node ProxyServer", "test_ids": ["server/typescript-proxy"] },
 
@@ -275,10 +332,10 @@
       { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "tunnel", "feature": "connect", "status": "supported", "entrypoint": "flowersec::connect", "test_ids": ["interop/rust-go/raw-quic/tunnel"] },
       { "runtime": "rust", "deployment-role": "direct-server", "carrier": "raw-quic", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "flowersec::Acceptor", "test_ids": ["server/rust-acceptor"] },
       { "runtime": "rust", "deployment-role": "tunnel-runtime", "carrier": "raw-quic", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "flowersec::TunnelRuntime::bind_raw_quic", "test_ids": ["interop/rust-go/raw-quic/tunnel"] },
-      { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "direct", "feature": "connect", "status": "unsupported", "reason": "Rust has no production WebTransport driver that satisfies the strict draft-15 contract." },
-      { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "tunnel", "feature": "connect", "status": "unsupported", "reason": "Rust has no production WebTransport driver that satisfies the strict draft-15 contract." },
-      { "runtime": "rust", "deployment-role": "direct-server", "carrier": "webtransport", "path": "direct", "feature": "accept", "status": "unsupported", "reason": "Rust has no production WebTransport driver that satisfies the strict draft-15 contract." },
-      { "runtime": "rust", "deployment-role": "tunnel-runtime", "carrier": "webtransport", "path": "tunnel", "feature": "pair-forward", "status": "unsupported", "reason": "Rust has no production WebTransport driver that satisfies the strict draft-15 contract." },
+      { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "direct", "feature": "connect", "status": "unsupported", "reason": "Rust does not expose a production WebTransport adapter." },
+      { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "tunnel", "feature": "connect", "status": "unsupported", "reason": "Rust does not expose a production WebTransport adapter." },
+      { "runtime": "rust", "deployment-role": "direct-server", "carrier": "webtransport", "path": "direct", "feature": "accept", "status": "unsupported", "reason": "Rust does not expose a production WebTransport adapter." },
+      { "runtime": "rust", "deployment-role": "tunnel-runtime", "carrier": "webtransport", "path": "tunnel", "feature": "pair-forward", "status": "unsupported", "reason": "Rust does not expose a production WebTransport adapter." },
       { "runtime": "rust", "deployment-role": "control-plane", "carrier": "carrier-neutral", "path": "carrier-neutral", "feature": "issue-authorize", "status": "supported", "entrypoint": "flowersec::controlplane", "test_ids": ["server/rust-controlplane"] },
       { "runtime": "rust", "deployment-role": "proxy-server", "carrier": "carrier-neutral", "path": "direct", "feature": "proxy", "status": "supported", "entrypoint": "flowersec::ProxyServer", "test_ids": ["server/rust-proxy"] }
     ]

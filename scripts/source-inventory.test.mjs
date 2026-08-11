@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 
 const sourceRoot = path.resolve(import.meta.dirname, "..");
 const generatorPath = path.join(sourceRoot, "scripts/generate-source-inventory.mjs");
+const nativePlatforms = ["darwin-arm64", "darwin-x64", "linux-arm64-gnu", "linux-x64-gnu"];
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -152,6 +153,14 @@ test("source inventory output closure is explicit and package-local", async () =
     "flowersec-rust/THIRD_PARTY_NOTICES.md",
     "flowersec-rust/sbom/spdx.json",
     "flowersec-rust/sbom/cyclonedx.json",
+    ...[
+      "flowersec-node-native",
+      ...nativePlatforms.map((platform) => `flowersec-node-native/npm/${platform}`),
+    ].flatMap((prefix) => [
+      `${prefix}/THIRD_PARTY_NOTICES.md`,
+      `${prefix}/sbom/spdx.json`,
+      `${prefix}/sbom/cyclonedx.json`,
+    ]),
     "sbom/swift/spdx.json",
     "sbom/swift/cyclonedx.json",
     ...["runtime", "runtime-image"].flatMap((kind) => [
@@ -550,6 +559,64 @@ test("distribution package allowlists are bound to generated NOTICE and SBOM out
     () => validateDistributionConfiguration(sourceRoot, { cargoToml }),
     /sbom/i,
   );
+
+  const nativePackage = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-node-native/package.json"), "utf8"));
+  nativePackage.files = nativePackage.files.filter((entry) => entry !== "THIRD_PARTY_NOTICES.md");
+  assert.throws(
+    () => validateDistributionConfiguration(sourceRoot, { nativePackage }),
+    /native.*notice/i,
+  );
+
+  const platformPackages = Object.fromEntries(nativePlatforms.map((platform) => [
+    platform,
+    JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-node-native/npm", platform, "package.json"), "utf8")),
+  ]));
+  platformPackages["linux-x64-gnu"].files = platformPackages["linux-x64-gnu"].files
+    .filter((entry) => entry !== "sbom/**");
+  assert.throws(
+    () => validateDistributionConfiguration(sourceRoot, { platformPackages }),
+    /linux-x64-gnu.*sbom/i,
+  );
+});
+
+test("native Node wrapper and platform archives carry licenses, notices, and exact SBOMs", async (t) => {
+  const { generateSourceArtifacts } = await loadGenerator();
+  const artifacts = generateSourceArtifacts(sourceRoot);
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-native-npm-packages-"));
+  t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+
+  for (const [label, relative, binary] of [
+    ["native wrapper", "flowersec-node-native", null],
+    ...nativePlatforms.map((platform) => [
+      `native ${platform}`,
+      `flowersec-node-native/npm/${platform}`,
+      `flowersec-node-native.${platform}.node`,
+    ]),
+  ]) {
+    if (binary !== null) fs.writeFileSync(path.join(sourceRoot, relative, binary), "fixture native addon\n");
+    t.after(() => {
+      if (binary !== null) fs.rmSync(path.join(sourceRoot, relative, binary), { force: true });
+    });
+    const packRoot = path.join(scratch, relative.replaceAll("/", "-"));
+    const extractRoot = `${packRoot}-extract`;
+    fs.mkdirSync(packRoot, { recursive: true });
+    fs.mkdirSync(extractRoot, { recursive: true });
+    const archiveName = run(
+      "npm",
+      ["pack", "--silent", "--ignore-scripts", "--pack-destination", packRoot],
+      { cwd: path.join(sourceRoot, relative) },
+    ).trim().split(/\s+/).at(-1);
+    run("tar", ["-xzf", path.join(packRoot, archiveName), "-C", extractRoot]);
+    const files = stripArchiveRoot(extractedFiles(extractRoot));
+    for (const required of ["LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "sbom/spdx.json", "sbom/cyclonedx.json"]) {
+      assert.equal(files.has(required), true, `${label} missing ${required}`);
+    }
+    const artifactPrefix = `${relative}/`;
+    assert.deepEqual(files.get("THIRD_PARTY_NOTICES.md"), Buffer.from(artifacts.get(`${artifactPrefix}THIRD_PARTY_NOTICES.md`)));
+    assert.deepEqual(files.get("sbom/spdx.json"), Buffer.from(artifacts.get(`${artifactPrefix}sbom/spdx.json`)));
+    assert.deepEqual(files.get("sbom/cyclonedx.json"), Buffer.from(artifacts.get(`${artifactPrefix}sbom/cyclonedx.json`)));
+    if (binary !== null) assert.equal(files.has(binary), true, `${label} missing ${binary}`);
+  }
 });
 
 test("npm, Rust, Go, and Swift source archives carry exact generated distribution outputs", async (t) => {
@@ -593,6 +660,7 @@ test("npm, Rust, Go, and Swift source archives carry exact generated distributio
     "package", "--allow-dirty", "--no-verify",
     "--manifest-path", path.join(sourceRoot, "flowersec-rust/Cargo.toml"),
     "--target-dir", rustTarget,
+    "--config", "patch.crates-io.flowersec-native-transport.path=\"flowersec-native-transport\"",
   ], { cwd: sourceRoot });
   const rustArchive = findSingleFile(rustTarget, ".crate");
   const rustExtract = path.join(root, "rust-extract");
@@ -939,11 +1007,35 @@ test("generated source inventory is complete and checked-in artifacts are curren
   }
 });
 
+test("source inventory includes the shared native transport and Node addon Cargo contexts", async () => {
+  const { generateSourceArtifacts } = await loadGenerator();
+  const artifacts = generateSourceArtifacts(sourceRoot);
+  const inventory = JSON.parse(artifacts.get("sbom/source-inventory.json"));
+  const contextIDs = new Set(inventory.contexts.map((context) => context.id));
+  assert.equal(contextIDs.has("rust:flowersec-native-transport"), true);
+  assert.equal(contextIDs.has("rust:flowersec-node-native"), true);
+  const componentNames = new Set(inventory.components.map((component) => component.name));
+  for (const name of ["quinn", "rustls", "napi", "napi-derive", "napi-build"]) {
+    assert.equal(componentNames.has(name), true, `native dependency ${name} is missing from source inventory`);
+  }
+});
+
 test("published npm and Rust packages include their NOTICE and SBOM", async () => {
   await loadGenerator();
   const packageJson = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8"));
   assert.ok(packageJson.files.includes("THIRD_PARTY_NOTICES.md"));
   assert.ok(packageJson.files.includes("sbom/**"));
+
+  const nativePackage = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-node-native/package.json"), "utf8"));
+  for (const required of ["LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "sbom/**"]) {
+    assert.ok(nativePackage.files.includes(required), `native wrapper files missing ${required}`);
+  }
+  for (const platform of nativePlatforms) {
+    const platformPackage = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-node-native/npm", platform, "package.json"), "utf8"));
+    for (const required of ["LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "sbom/**"]) {
+      assert.ok(platformPackage.files.includes(required), `${platform} files missing ${required}`);
+    }
+  }
 
   const cargoToml = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/Cargo.toml"), "utf8");
   assert.match(cargoToml, /^include = \[.*"THIRD_PARTY_NOTICES\.md".*"sbom\/\*\*".*\]$/m);

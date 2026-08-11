@@ -43,10 +43,10 @@
       "boundary": "go-webtransport",
       "scope": "production",
       "requiredCapabilities": ["client", "server", "bidi-stream", "server-opened-stream", "datagram", "origin", "path", "close"],
-      "protocol": "webtransport-http3-draft-15",
+      "protocol": "webtransport-over-http3",
       "publicApiOnly": true,
       "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],
-      "conformanceTests": ["carrier/go-webtransport-draft15-wire", "interop/server-parity/direct-matrix", "browser/chromium/webtransport/direct"],
+      "conformanceTests": ["carrier/go-direct", "browser/chromium/webtransport/direct"],
       "upgradeGroup": "go-webtransport-stack"
     },
     {
@@ -159,15 +159,39 @@
     },
     {
       "ecosystem": "cargo",
-      "package": "reqwest",
+      "package": "hyper",
       "boundary": "rust-proxy-http",
       "scope": "production",
       "requiredCapabilities": ["http-client", "explicit-trust-roots", "cancellation", "body-limit"],
-      "protocol": "http-1.1-http-2",
+      "protocol": "http-1.1",
       "publicApiOnly": true,
       "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],
       "conformanceTests": ["server/rust-proxy"],
-      "upgradeGroup": null
+      "upgradeGroup": "rust-proxy-http"
+    },
+    {
+      "ecosystem": "cargo",
+      "package": "http-body-util",
+      "boundary": "rust-proxy-http-body",
+      "scope": "production",
+      "requiredCapabilities": ["bounded-body", "streaming-response", "cancellation"],
+      "protocol": "http-1.1",
+      "publicApiOnly": true,
+      "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],
+      "conformanceTests": ["server/rust-proxy"],
+      "upgradeGroup": "rust-proxy-http"
+    },
+    {
+      "ecosystem": "cargo",
+      "package": "hyper-util",
+      "boundary": "rust-proxy-http-runtime",
+      "scope": "production",
+      "requiredCapabilities": ["tokio-io-adapter", "http-client-runtime"],
+      "protocol": "http-1.1",
+      "publicApiOnly": true,
+      "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],
+      "conformanceTests": ["server/rust-proxy"],
+      "upgradeGroup": "rust-proxy-http"
     },
     {
       "ecosystem": "cargo",
@@ -302,6 +326,42 @@
       "upgradeGroup": "rust-idna-stack"
     },
     {
+      "ecosystem": "cargo",
+      "package": "napi",
+      "boundary": "node-native-transport-napi",
+      "scope": "production",
+      "requiredCapabilities": ["typed-bridge", "cancellation", "stream", "datagram"],
+      "protocol": "flowersec-native-driver-v1",
+      "publicApiOnly": true,
+      "platforms": ["linux-amd64", "linux-arm64", "macos-arm64", "macos-amd64"],
+      "conformanceTests": ["interop/server-parity/direct-matrix", "interop/server-parity/tunnel-matrix"],
+      "upgradeGroup": "rust-node-native-driver"
+    },
+    {
+      "ecosystem": "cargo",
+      "package": "napi-derive",
+      "boundary": "node-native-transport-napi-bindings",
+      "scope": "production",
+      "requiredCapabilities": ["typed-bridge", "stable-export"],
+      "protocol": "flowersec-native-driver-v1",
+      "publicApiOnly": true,
+      "platforms": ["linux-amd64", "linux-arm64", "macos-arm64", "macos-amd64"],
+      "conformanceTests": ["interop/server-parity/direct-matrix"],
+      "upgradeGroup": "rust-node-native-driver"
+    },
+    {
+      "ecosystem": "cargo",
+      "package": "napi-build",
+      "boundary": "node-native-transport-napi-build",
+      "scope": "tooling",
+      "requiredCapabilities": ["native-addon-build"],
+      "protocol": "napi-build-v2",
+      "publicApiOnly": true,
+      "platforms": ["linux-amd64", "linux-arm64", "macos-arm64", "macos-amd64"],
+      "conformanceTests": ["interop/server-parity/direct-matrix"],
+      "upgradeGroup": "rust-node-native-driver"
+    },
+    {
       "ecosystem": "npm",
       "package": "ws",
       "boundary": "node-websocket",
@@ -312,6 +372,18 @@
       "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],
       "conformanceTests": ["interop/typescript-go/wss/direct", "interop/typescript-go/wss/tunnel"],
       "upgradeGroup": null
+    },
+    {
+      "ecosystem": "npm",
+      "package": "@floegence/flowersec-node-native",
+      "boundary": "node-native-transport-addon",
+      "scope": "production",
+      "requiredCapabilities": ["raw-quic-client", "raw-quic-server", "stream", "datagram", "cancellation"],
+      "protocol": "flowersec-native-driver-v1",
+      "publicApiOnly": true,
+      "platforms": ["linux-amd64", "linux-arm64", "macos-arm64", "macos-amd64"],
+      "conformanceTests": ["interop/server-parity/direct-matrix", "interop/server-parity/tunnel-matrix"],
+      "upgradeGroup": "rust-node-native-driver"
     },
     {
       "ecosystem": "npm",

@@ -9,10 +9,19 @@ Across all four SDKs, an omitted public connection timeout uses the shared ten-s
 | Capability layer | Contract | Go | TypeScript | Swift | Rust |
 | --- | --- | :---: | :---: | :---: | :---: |
 | `portable_core` | Artifact/lease, one-shot connect, session, reliable streams with validated metadata, RPC call/notify, redacted errors, optional connection controller | Yes | Yes | Yes | Yes |
-| `sdk_profile` | Carrier/profile capabilities, unreliable messages, or runtime-owned acceptance | WSS, raw QUIC, WebTransport, direct Acceptor, opaque TunnelRuntime | Browser WSS/WebTransport; Node WSS, direct Acceptor, opaque TunnelRuntime | Apple WSS client | WSS, raw QUIC, direct Acceptor, opaque TunnelRuntime |
+| `sdk_profile` | Carrier/profile capabilities, unreliable messages, or runtime-owned acceptance | WSS, raw QUIC, WebTransport, direct Acceptor, opaque TunnelRuntime | Browser WSS/WebTransport; Node WSS/raw QUIC, direct Acceptor, opaque TunnelRuntime | Apple WSS client | WSS, raw QUIC, direct Acceptor, opaque TunnelRuntime |
 | `language_convenience` | Language-native additions | Inbound handlers | Generic RPC results and subscriptions | `Codable` RPC | `RpcPeerExt::call_typed` |
 
 Portable core, accepted-session lifecycle, control-plane issuance/authorization, connection control, RPC/stream lifecycle, and published consumer workflows require same-semantic public entries in every applicable SDK. An unsupported tuple records a stable reason and no executable test ID; supported tuples name their production entrypoint and focused test ID. The protocol carrier set is not a promise that every SDK exposes every carrier; each listener and connector profile declares only exact production-backed tuples.
+
+The named deployment profiles are `native-server-core` for Go, Rust, and
+Node.js; `browser-client` for TypeScript browser clients; `apple-client` for
+Swift clients on Apple platforms; and the currently unclaimed optional
+`webtransport-server`. The native server profile requires WebSocket and raw
+QUIC endpoint clients, direct servers, and opaque tunnel runtimes in all three
+languages. A runtime may claim `webtransport-server` only after both its direct
+server and tunnel runtime pass conformance. Profiles select carrier adapters;
+they never select a different Flowersec application wire.
 
 Trust-root sourcing is also profile-specific. TypeScript and Swift platform TLS may use the system trust store and accept explicit private roots. Go and Rust native QUIC paths require callers to provide non-empty trust roots explicitly; Go callers may load `x509.SystemCertPool()`, while Rust callers construct `ConnectorOptions::new(...)` with audited DER roots. None of these choices changes the shared ten-second default connection timeout.
 

@@ -88,11 +88,23 @@ Flowersec はアプリケーションセッションを、それを運ぶネッ�
 | Apple クライアント接続 | 非対応 | 非対応 | 対応 | 非対応 |
 | ネイティブ QUIC 接続 | 対応 | 非対応 | 非対応 | 対応 |
 | WebSocket 接続 | 対応 | 対応 | 対応 | 対応 |
-| WebTransport 接続 | 対応 | 対応 | 非対応 | 非対応 |
+| WebTransport 接続 | Go direct | Browser | 非対応 | 非対応 |
 | サーバー側のセッション受け入れ | 対応 | Node.js | 非対応 | 対応 |
 | 不透明リレーランタイム | 対応 | Node.js | 非対応 | 対応 |
 | コントロールプレーンでの接続招待発行 | 対応 | Node.js | 非対応 | 対応 |
 | HTTP と WebSocket ProxyServer | 対応 | Node.js | 非対応 | 対応 |
+
+デプロイ profile は、プラットフォームでの利用可否と共通の Flowersec アプリケーションプロトコルを分離します。
+
+| Profile | ランタイム | 必須の carrier と role | オプション |
+| --- | --- | --- | --- |
+| `native-server-core` | Go、Rust、Node.js | WebSocket と raw QUIC の endpoint client、direct server、opaque tunnel runtime | WebTransport adapter |
+| `browser-client` | TypeScript browser | WebSocket endpoint client | Browser WebTransport adapter |
+| `apple-client` | Apple プラットフォームの Swift | WSS endpoint client | なし |
+| `webtransport-server` | 現在宣言しているランタイムなし | 宣言前に direct server と opaque tunnel runtime の conformance が必要 | なし |
+
+Go、Rust、Node.js は同じ 18 個の必須 `native-server-core` tuple を実装します。
+Direct と tunnel conformance は、2 つの必須 carrier についてすべての言語間組み合わせを検証します。profile が Artifact、handshake、RPC、stream、close、rekey、authorization の wire semantics を変更することはありません。
 
 各パッケージが対応するプラットフォームと接続方式の組み合わせは、SDK ガイドで確認してください。
 

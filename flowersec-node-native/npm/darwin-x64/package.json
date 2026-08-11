@@ -1,0 +1,10 @@
+{
+  "name": "@floegence/flowersec-node-native-darwin-x64",
+  "version": "2.3.6",
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "main": "flowersec-node-native.darwin-x64.node",
+  "files": ["flowersec-node-native.darwin-x64.node", "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "sbom/**"],
+  "engines": { "node": ">=20.19.0" }
+}

@@ -39,12 +39,6 @@ const (
 	peerTimeout = 30 * time.Second
 )
 
-var commonCases = []string{"admission", "rpc", "notification", "stream-metadata", "stream-fin", "stream-reset", "rekey", "liveness", "close", "cancel", "cleanup"}
-
-var tunnelEndpointCases = []string{"rpc", "notification", "stream-metadata", "stream-fin", "stream-reset", "rekey", "liveness", "close", "cancel", "cleanup"}
-
-var tunnelRelayCases = []string{"admission", "pairing", "opaque-forwarding", "close", "cancel", "cleanup"}
-
 type readyMessage struct {
 	Type         string `json:"type"`
 	Runtime      string `json:"runtime"`
@@ -56,13 +50,11 @@ type readyMessage struct {
 }
 
 type resultMessage struct {
-	Type           string   `json:"type"`
-	Runtime        string   `json:"runtime"`
-	Carrier        string   `json:"carrier"`
-	Path           string   `json:"path"`
-	Cases          []string `json:"cases"`
-	ActiveSessions int32    `json:"active_sessions"`
-	ActiveStreams  int32    `json:"active_streams"`
+	Type    string   `json:"type"`
+	Runtime string   `json:"runtime"`
+	Carrier string   `json:"carrier"`
+	Path    string   `json:"path"`
+	Cases   []string `json:"cases"`
 }
 
 type tunnelRelayReadyMessage struct {
@@ -111,17 +103,41 @@ type tunnelInput struct {
 }
 
 type tunnelRelayResultMessage struct {
-	Type                string   `json:"type"`
-	Runtime             string   `json:"runtime"`
-	Carrier             string   `json:"carrier"`
-	Path                string   `json:"path"`
-	Cases               []string `json:"cases"`
-	ActivePairs         int32    `json:"active_pairs"`
-	ActiveLegs          int32    `json:"active_legs"`
-	ActiveSessions      int32    `json:"active_sessions"`
-	ApplicationHandlers int32    `json:"application_handlers"`
-	ObservedPlaintext   bool     `json:"observed_plaintext"`
-	ReleasedLeases      int32    `json:"released_leases"`
+	Type              string   `json:"type"`
+	Runtime           string   `json:"runtime"`
+	Carrier           string   `json:"carrier"`
+	Path              string   `json:"path"`
+	Cases             []string `json:"cases"`
+	ObservedPlaintext bool     `json:"observed_plaintext"`
+	ReleasedLeases    int32    `json:"released_leases"`
+}
+
+type executionLedger struct {
+	mu    sync.Mutex
+	cases []string
+	seen  map[string]struct{}
+}
+
+func newExecutionLedger() *executionLedger {
+	return &executionLedger{seen: make(map[string]struct{})}
+}
+
+func (ledger *executionLedger) record(caseIDs ...string) {
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	for _, caseID := range caseIDs {
+		if _, exists := ledger.seen[caseID]; exists {
+			continue
+		}
+		ledger.seen[caseID] = struct{}{}
+		ledger.cases = append(ledger.cases, caseID)
+	}
+}
+
+func (ledger *executionLedger) snapshot() []string {
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	return append([]string(nil), ledger.cases...)
 }
 
 func main() {
@@ -223,8 +239,9 @@ func runServer(ctx context.Context, carrier string) error {
 	record := issued.AuthorizationRecord()
 	var activeSessions atomic.Int32
 	var activeStreams atomic.Int32
+	executed := newExecutionLedger()
 	sessionDone := make(chan error, 1)
-	handlers, notificationReceived, err := parityHandlers(&activeStreams, "direct")
+	handlers, notificationReceived, err := parityHandlers(&activeStreams, "direct", executed)
 	if err != nil {
 		return err
 	}
@@ -238,7 +255,8 @@ func runServer(ctx context.Context, carrier string) error {
 		},
 		OnSession: func(sessionCtx context.Context, session flowersec.Session, _ string) error {
 			activeSessions.Add(1)
-			err := exerciseServer(sessionCtx, session, carrier, notificationReceived, &activeStreams)
+			executed.record("admission")
+			err := exerciseServer(sessionCtx, session, carrier, notificationReceived, &activeStreams, executed)
 			activeSessions.Add(-1)
 			sessionDone <- err
 			return err
@@ -283,7 +301,11 @@ func runServer(ctx context.Context, carrier string) error {
 	if err != nil {
 		return err
 	}
-	return writeJSON(resultMessage{Type: "server-result", Runtime: "go", Carrier: carrier, Path: "direct", Cases: cases(carrier), ActiveSessions: activeSessions.Load(), ActiveStreams: activeStreams.Load()})
+	if activeSessions.Load() != 0 || activeStreams.Load() != 0 {
+		return fmt.Errorf("server cleanup incomplete: sessions=%d streams=%d", activeSessions.Load(), activeStreams.Load())
+	}
+	executed.record("cleanup")
+	return writeJSON(resultMessage{Type: "server-result", Runtime: "go", Carrier: carrier, Path: "direct", Cases: executed.snapshot()})
 }
 
 func originsListener(listener flowersec.DirectListener) []flowersec.DirectListener {
@@ -314,7 +336,8 @@ func runClient(ctx context.Context, carrier string) error {
 		return errors.New("invalid server trust PEM")
 	}
 	var activeStreams atomic.Int32
-	handlers, notificationReceived, err := parityHandlers(&activeStreams, "direct")
+	executed := newExecutionLedger()
+	handlers, notificationReceived, err := parityHandlers(&activeStreams, "direct", executed)
 	if err != nil {
 		return err
 	}
@@ -322,14 +345,20 @@ func runClient(ctx context.Context, carrier string) error {
 	if err != nil {
 		return err
 	}
-	if err := exerciseClient(ctx, session, carrier, notificationReceived, "direct"); err != nil {
+	executed.record("admission")
+	if err := exerciseClient(ctx, session, carrier, notificationReceived, "direct", executed); err != nil {
 		_ = session.Close()
 		return fmt.Errorf("exercise client: %w", err)
 	}
 	if err := session.Close(); err != nil {
 		return err
 	}
-	return writeJSON(resultMessage{Type: "client-result", Runtime: "go", Carrier: carrier, Path: "direct", Cases: cases(carrier), ActiveSessions: 0, ActiveStreams: activeStreams.Load()})
+	executed.record("close")
+	if activeStreams.Load() != 0 {
+		return fmt.Errorf("client cleanup incomplete: streams=%d", activeStreams.Load())
+	}
+	executed.record("cleanup")
+	return writeJSON(resultMessage{Type: "client-result", Runtime: "go", Carrier: carrier, Path: "direct", Cases: executed.snapshot()})
 }
 
 func runTunnelEndpointA(ctx context.Context, carrier string) error {
@@ -345,7 +374,8 @@ func runTunnelEndpointA(ctx context.Context, carrier string) error {
 	}
 
 	var activeStreams atomic.Int32
-	handlers, notificationReceived, err := parityHandlers(&activeStreams, "tunnel")
+	executed := newExecutionLedger()
+	handlers, notificationReceived, err := parityHandlers(&activeStreams, "tunnel", executed)
 	if err != nil {
 		return err
 	}
@@ -353,24 +383,31 @@ func runTunnelEndpointA(ctx context.Context, carrier string) error {
 	if err != nil {
 		return fmt.Errorf("connect tunnel endpoint A: %w", err)
 	}
+	executed.record("admission")
 	handlersDone := serveSessionHandlers(ctx, handlers, session)
-	if err := exerciseClient(ctx, session, carrier, notificationReceived, "tunnel"); err != nil {
+	if err := exerciseClient(ctx, session, carrier, notificationReceived, "tunnel", executed); err != nil {
 		_ = session.Close()
 		return fmt.Errorf("exercise tunnel endpoint A: %w", err)
 	}
 	if err := session.Close(); err != nil {
 		return fmt.Errorf("tunnel endpoint A close: %w", err)
 	}
+	executed.record("close")
 	if err := awaitSessionHandlers(handlersDone); err != nil {
 		return fmt.Errorf("endpoint A handlers: %w", err)
 	}
+	if activeStreams.Load() != 0 {
+		return fmt.Errorf("endpoint A cleanup incomplete: streams=%d", activeStreams.Load())
+	}
+	executed.record("cleanup")
 	return writeJSON(resultMessage{
 		Type: "endpoint-a-result", Runtime: "go", Carrier: carrier, Path: "tunnel",
-		Cases: tunnelCases(tunnelEndpointCases, carrier, "datagram"), ActiveSessions: 0, ActiveStreams: activeStreams.Load(),
+		Cases: executed.snapshot(),
 	})
 }
 
 func runTunnelRelay(ctx context.Context, carrier string) error {
+	executed := newExecutionLedger()
 	tlsConfig, trustPEM, err := serverTLS()
 	if err != nil {
 		return err
@@ -477,7 +514,9 @@ func runTunnelRelay(ctx context.Context, carrier string) error {
 	if err := decoder.Decode(&closeCommand); err != nil || closeCommand.Type != "close" {
 		return errors.New("invalid tunnel relay close command")
 	}
+	executed.record("close")
 	stop()
+	executed.record("cancel")
 	if httpServer != nil {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = httpServer.Shutdown(shutdownCtx)
@@ -490,8 +529,17 @@ func runTunnelRelay(ctx context.Context, carrier string) error {
 	}
 	mu.Lock()
 	releasedCount := len(released)
+	decisionCount := len(decisions)
 	mu.Unlock()
-	return writeJSON(tunnelRelayResultMessage{Type: "relay-result", Runtime: "go", Carrier: carrier, Path: "tunnel", Cases: tunnelCases(tunnelRelayCases, carrier, "datagram-forwarding"), ActivePairs: 0, ActiveLegs: 0, ActiveSessions: 0, ApplicationHandlers: 0, ObservedPlaintext: false, ReleasedLeases: int32(releasedCount)})
+	if releasedCount != decisionCount {
+		return fmt.Errorf("relay cleanup incomplete: released=%d authorized=%d", releasedCount, decisionCount)
+	}
+	executed.record("admission", "pairing", "opaque-forwarding")
+	if carrier != "websocket" {
+		executed.record("datagram-forwarding")
+	}
+	executed.record("cleanup")
+	return writeJSON(tunnelRelayResultMessage{Type: "relay-result", Runtime: "go", Carrier: carrier, Path: "tunnel", Cases: executed.snapshot(), ObservedPlaintext: false, ReleasedLeases: int32(releasedCount)})
 }
 
 func runTunnelEndpointB(ctx context.Context, carrier string) error {
@@ -545,7 +593,8 @@ func runTunnelEndpointB(ctx context.Context, carrier string) error {
 	}
 
 	var activeStreams atomic.Int32
-	handlers, notificationReceived, err := parityHandlers(&activeStreams, "tunnel")
+	executed := newExecutionLedger()
+	handlers, notificationReceived, err := parityHandlers(&activeStreams, "tunnel", executed)
 	if err != nil {
 		return err
 	}
@@ -553,20 +602,26 @@ func runTunnelEndpointB(ctx context.Context, carrier string) error {
 	if err != nil {
 		return fmt.Errorf("connect tunnel endpoint B: %w", err)
 	}
+	executed.record("admission")
 	handlersDone := serveSessionHandlers(ctx, handlers, session)
-	if err := exerciseServer(ctx, session, carrier, notificationReceived, &activeStreams); err != nil {
+	if err := exerciseServer(ctx, session, carrier, notificationReceived, &activeStreams, executed); err != nil {
 		_ = session.Close()
 		return fmt.Errorf("exercise tunnel endpoint B: %w", err)
 	}
 	if err := session.Close(); err != nil {
 		return fmt.Errorf("tunnel endpoint B close: %w", err)
 	}
+	executed.record("close")
 	if err := awaitSessionHandlers(handlersDone); err != nil {
 		return fmt.Errorf("endpoint B handlers: %w", err)
 	}
+	if activeStreams.Load() != 0 {
+		return fmt.Errorf("endpoint B cleanup incomplete: streams=%d", activeStreams.Load())
+	}
+	executed.record("cleanup")
 	return writeJSON(resultMessage{
 		Type: "endpoint-b-result", Runtime: "go", Carrier: carrier, Path: "tunnel",
-		Cases: tunnelCases(tunnelEndpointCases, carrier, "datagram"), ActiveSessions: 0, ActiveStreams: activeStreams.Load(),
+		Cases: executed.snapshot(),
 	})
 }
 
@@ -721,7 +776,7 @@ func registerTunnelAuthorizer(ctx context.Context, registrationURL, authorizerUR
 	return nil
 }
 
-func parityHandlers(activeStreams *atomic.Int32, streamCell string) (*flowersec.SessionHandlers, <-chan struct{}, error) {
+func parityHandlers(activeStreams *atomic.Int32, streamCell string, executed *executionLedger) (*flowersec.SessionHandlers, <-chan struct{}, error) {
 	notificationReceived := make(chan struct{}, 4)
 	handlers, err := flowersec.NewSessionHandlers(flowersec.SessionHandlerOptions{OnError: func(err error) {
 		fmt.Fprintf(os.Stderr, "session handler error: %v\n", err)
@@ -734,6 +789,7 @@ func parityHandlers(activeStreams *atomic.Int32, streamCell string) (*flowersec.
 		if json.Unmarshal(request, &payload) != nil || payload["value"] != "ping" {
 			return nil, &flowersec.RPCError{Code: 400, Message: "invalid echo payload"}
 		}
+		executed.record("rpc")
 		return payload, nil
 	}); err != nil {
 		return nil, nil, err
@@ -743,6 +799,7 @@ func parityHandlers(activeStreams *atomic.Int32, streamCell string) (*flowersec.
 		if json.Unmarshal(request, &payload) != nil || payload["value"] != "complete" {
 			return nil, &flowersec.RPCError{Code: 400, Message: "invalid completion payload"}
 		}
+		executed.record("rekey", "liveness")
 		select {
 		case notificationReceived <- struct{}{}:
 		default:
@@ -769,6 +826,7 @@ func parityHandlers(activeStreams *atomic.Int32, streamCell string) (*flowersec.
 		if json.Unmarshal(request, &payload) != nil || payload["value"] != "notify" {
 			return errors.New("invalid notification payload")
 		}
+		executed.record("notification")
 		select {
 		case notificationReceived <- struct{}{}:
 		default:
@@ -783,11 +841,15 @@ func parityHandlers(activeStreams *atomic.Int32, streamCell string) (*flowersec.
 		if incoming.Metadata.Values()["cell"] != streamCell {
 			return errors.New("invalid stream metadata")
 		}
+		executed.record("stream-metadata")
 		payload, err := io.ReadAll(incoming.Stream)
 		if err != nil || string(payload) != "hello" {
 			return errors.New("invalid stream payload")
 		}
 		_, err = incoming.Stream.Write([]byte("world"))
+		if err == nil {
+			executed.record("stream-fin")
+		}
 		return err
 	}); err != nil {
 		return nil, nil, err
@@ -797,6 +859,7 @@ func parityHandlers(activeStreams *atomic.Int32, streamCell string) (*flowersec.
 		if readErr != nil || string(payload) != "reset" {
 			return errors.New("invalid reset stream payload")
 		}
+		executed.record("stream-reset")
 		return errors.New("intentional parity reset")
 	}); err != nil {
 		return nil, nil, err
@@ -804,16 +867,18 @@ func parityHandlers(activeStreams *atomic.Int32, streamCell string) (*flowersec.
 	return handlers, notificationReceived, nil
 }
 
-func exerciseClient(ctx context.Context, session flowersec.Session, carrier string, notificationReceived <-chan struct{}, streamCell string) error {
+func exerciseClient(ctx context.Context, session flowersec.Session, carrier string, notificationReceived <-chan struct{}, streamCell string, executed *executionLedger) error {
 	if err := callEcho(ctx, session); err != nil {
 		return fmt.Errorf("initial echo: %w", err)
 	}
+	executed.record("rpc")
 	if err := session.RPC().Notify(ctx, notifyRPC, map[string]string{"value": "notify"}); err != nil {
 		return fmt.Errorf("client notification: %w", err)
 	}
 	if err := waitSignal(ctx, notificationReceived, "server notification"); err != nil {
 		return fmt.Errorf("server notification: %w", err)
 	}
+	executed.record("notification")
 	metadata, err := flowersec.NewStreamMetadata(map[string]any{"cell": streamCell})
 	if err != nil {
 		return fmt.Errorf("open echo stream: %w", err)
@@ -830,10 +895,10 @@ func exerciseClient(ctx context.Context, session flowersec.Session, carrier stri
 		return fmt.Errorf("open reset stream: %w", err)
 	}
 	payload, readErr := io.ReadAll(stream)
-	_ = stream.Close()
 	if readErr != nil || string(payload) != "world" {
 		return fmt.Errorf("echo stream did not preserve metadata and FIN: payload=%q err=%w", payload, readErr)
 	}
+	executed.record("stream-metadata", "stream-fin")
 	if err := callEcho(ctx, session); err != nil {
 		return fmt.Errorf("echo stream cleanup barrier: %w", err)
 	}
@@ -848,11 +913,13 @@ func exerciseClient(ctx context.Context, session flowersec.Session, carrier stri
 	if resetErr == nil && reset.TerminalError() == nil {
 		return errors.New("reset stream did not fail")
 	}
+	executed.record("stream-reset")
 	cancelCtx, cancel := context.WithCancel(ctx)
 	cancel()
 	if _, err := session.WaitTermination(cancelCtx); !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("termination wait did not honor cancellation: %w", err)
 	}
+	executed.record("cancel")
 	if err := callEcho(ctx, session); err != nil {
 		return errors.New("session did not survive canceled RPC: " + err.Error())
 	}
@@ -863,12 +930,17 @@ func exerciseClient(ctx context.Context, session flowersec.Session, carrier stri
 	if err := exchangeDatagram(ctx, session, carrier, true); err != nil {
 		return fmt.Errorf("datagram: %w", err)
 	}
+	if carrier != "websocket" {
+		executed.record("datagram")
+	}
 	if err := session.Rekey(ctx); err != nil {
 		return fmt.Errorf("rekey: %w", err)
 	}
+	executed.record("rekey")
 	if _, err := session.ProbeLiveness(ctx); err != nil {
 		return fmt.Errorf("liveness: %w", err)
 	}
+	executed.record("liveness")
 	var completion map[string]string
 	if err := session.RPC().Call(ctx, completeRPC, map[string]string{"value": "complete"}, &completion); err != nil {
 		return fmt.Errorf("completion barrier: %w", err)
@@ -876,23 +948,37 @@ func exerciseClient(ctx context.Context, session flowersec.Session, carrier stri
 	return session.RPC().Notify(ctx, notifyRPC, map[string]string{"value": "notify"})
 }
 
-func exerciseServer(ctx context.Context, session flowersec.Session, carrier string, notificationReceived <-chan struct{}, activeStreams *atomic.Int32) error {
+func exerciseServer(ctx context.Context, session flowersec.Session, carrier string, notificationReceived <-chan struct{}, activeStreams *atomic.Int32, executed *executionLedger) error {
+	cancelCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := session.WaitTermination(cancelCtx); !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("termination wait did not honor cancellation: %w", err)
+	}
+	executed.record("cancel")
 	if err := callEcho(ctx, session); err != nil {
 		return err
 	}
+	executed.record("rpc")
 	if err := session.RPC().Notify(ctx, notifyRPC, map[string]string{"value": "notify"}); err != nil {
 		return err
 	}
 	if err := waitSignal(ctx, notificationReceived, "client notification"); err != nil {
 		return err
 	}
+	executed.record("notification")
 	if err := waitSignal(ctx, notificationReceived, "client datagram barrier"); err != nil {
 		return err
 	}
 	if err := exchangeDatagram(ctx, session, carrier, false); err != nil {
 		return err
 	}
+	if carrier != "websocket" {
+		executed.record("datagram")
+	}
 	_, err := session.WaitTermination(ctx)
+	if err == nil {
+		executed.record("close")
+	}
 	return err
 }
 
@@ -956,22 +1042,6 @@ func waitSignal(ctx context.Context, signal <-chan struct{}, name string) error 
 	case <-ctx.Done():
 		return fmt.Errorf("wait for %s: %w", name, ctx.Err())
 	}
-}
-
-func cases(carrier string) []string {
-	result := append([]string(nil), commonCases...)
-	if carrier != "websocket" {
-		result = append(result, "datagram")
-	}
-	return result
-}
-
-func tunnelCases(base []string, carrier, datagramCase string) []string {
-	result := append([]string(nil), base...)
-	if carrier != "websocket" {
-		result = append(result, datagramCase)
-	}
-	return result
 }
 
 func serverTLS() (*tls.Config, string, error) {

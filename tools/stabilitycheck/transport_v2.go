@@ -114,6 +114,7 @@ type transportV2WireFixtureConsumer struct {
 
 type transportV2Policies struct {
 	CarrierSelection            string `json:"carrier_selection"`
+	ProfileApplicationWire      string `json:"profile_application_wire"`
 	QUICNativeBidiStreams       bool   `json:"quic_native_bidi_streams"`
 	QUICYamux                   string `json:"quic_yamux"`
 	Application0RTT             string `json:"application_0rtt"`
@@ -215,10 +216,9 @@ type capabilityUnsupportedVector struct {
 }
 
 type transportV2GoDependencies struct {
-	Toolchain                        string                  `json:"toolchain"`
-	WebTransportDialer               string                  `json:"webtransport_dialer"`
-	WebTransportRequiredQUICSettings []string                `json:"webtransport_required_quic_settings"`
-	Dependencies                     []transportV2Dependency `json:"dependencies"`
+	Toolchain          string                  `json:"toolchain"`
+	WebTransportDialer string                  `json:"webtransport_dialer"`
+	Dependencies       []transportV2Dependency `json:"dependencies"`
 }
 
 type transportV2Dependency struct {
@@ -267,7 +267,7 @@ var transportV2CarrierExpectations = map[string]transportV2CarrierExpectation{
 var transportV2RuntimeCarrierExpectations = map[string][]string{
 	"go_native":          {"raw_quic", "websocket", "webtransport"},
 	"typescript_browser": {"websocket", "webtransport"},
-	"typescript_node":    {"websocket"},
+	"typescript_node":    {"raw_quic", "websocket"},
 	"rust_native":        {"raw_quic", "websocket"},
 	"swift_ios":          {"websocket"},
 	"swift_linux":        {},
@@ -398,7 +398,6 @@ var transportV2UnsupportedExpectations = map[string]map[string]string{
 		"raw_quic": "browser_no_raw_udp",
 	},
 	"typescript_node": {
-		"raw_quic":     "node_raw_quic_driver_unavailable",
 		"webtransport": "node_webtransport_driver_unavailable",
 	},
 	"rust_native": {
@@ -522,8 +521,8 @@ func validateTransportV2ControllerContract(repoRoot string, contract transportV2
 }
 
 func validateTransportV2Policies(policy transportV2Policies) error {
-	if policy.CarrierSelection != "equal" || !policy.QUICNativeBidiStreams || policy.QUICYamux != "forbidden" {
-		return errors.New("transport v2 must keep carriers equal and require native QUIC streams with Yamux forbidden")
+	if policy.CarrierSelection != "equal" || policy.ProfileApplicationWire != "shared_across_runtimes_and_carriers" || !policy.QUICNativeBidiStreams || policy.QUICYamux != "forbidden" {
+		return errors.New("transport v2 profiles must share one application wire and require native QUIC streams with Yamux forbidden")
 	}
 	if policy.Application0RTT != "forbidden" {
 		return errors.New("transport v2 application 0-RTT must be forbidden")
@@ -794,7 +793,6 @@ func validateTransportV2Reasons(reasons []transportV2UnsupportedReason) (map[str
 		"browser_websocket_api_unavailable",
 		"browser_webtransport_api_unavailable",
 		"driver_unavailable",
-		"node_raw_quic_driver_unavailable",
 		"node_webtransport_driver_unavailable",
 		"swift_apple_client_profile_excludes_raw_quic",
 		"swift_apple_client_profile_excludes_webtransport",
@@ -895,7 +893,7 @@ func expectedTransportV2TupleKeys(runtimeID string, carriers []string) []string 
 			carrier+"|dial|client|tunnel",
 			carrier+"|dial|server|tunnel",
 		)
-		if runtimeID == "go_native" || runtimeID == "rust_native" || runtimeID == "typescript_node" && carrier == "webtransport" {
+		if runtimeID == "go_native" || runtimeID == "rust_native" || runtimeID == "typescript_node" {
 			keys = append(keys, carrier+"|listen|server|direct")
 		}
 	}
@@ -958,10 +956,6 @@ func validateTransportV2Unsupported(runtime transportV2Runtime, reasons map[stri
 func validateTransportV2GoDependencies(dependencies transportV2GoDependencies) error {
 	if dependencies.Toolchain != "1.26.5" || dependencies.WebTransportDialer != "quic.DialAddr" {
 		return errors.New("Go native dependencies must use toolchain 1.26.5 and the non-early quic.DialAddr WebTransport dialer")
-	}
-	wantSettings := []string{"EnableDatagrams=true", "EnableStreamResetPartialDelivery=true"}
-	if !slices.Equal(dependencies.WebTransportRequiredQUICSettings, wantSettings) {
-		return fmt.Errorf("Go native WebTransport QUIC settings = %#v, want %#v", dependencies.WebTransportRequiredQUICSettings, wantSettings)
 	}
 	if len(dependencies.Dependencies) != 2 {
 		return errors.New("Go native runtime must pin exactly two QUIC dependencies")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -59,6 +60,49 @@ func TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers(t *testi
 				t.Fatal("Bridge did not stop after cancellation")
 			}
 		})
+	}
+}
+
+func TestBrokerForwardsOpaqueUnreliableMessagesBidirectionally(t *testing.T) {
+	clientEndpoint, clientTunnel := memoryUnreliableSessionPair(carrier.KindRawQUIC)
+	serverEndpoint, serverTunnel := memoryUnreliableSessionPair(carrier.KindRawQUIC)
+	ctx, cancel := context.WithCancel(context.Background())
+	bridgeDone := make(chan error, 1)
+	go func() {
+		bridgeDone <- tunnelv2.Bridge(ctx, clientTunnel, serverTunnel, tunnelv2.Limits{
+			MaxConcurrentStreams: 8,
+			CopyBufferBytes:      1024,
+			CleanupTimeout:       100 * time.Millisecond,
+		})
+	}()
+
+	controlClient := openStream(t, clientEndpoint)
+	controlServer := acceptStream(t, serverEndpoint)
+	assertOpenStreamRoundTrip(t, controlClient, controlServer, "FSC2", "FSH2")
+
+	clientPayload := []byte{0x00, 0xff, 0x71, 0x19}
+	if err := clientEndpoint.SendUnreliable(clientPayload); err != nil {
+		t.Fatal(err)
+	}
+	if got := receiveUnreliable(t, serverEndpoint); !slices.Equal(got, clientPayload) {
+		t.Fatalf("client to server unreliable payload = %x, want %x", got, clientPayload)
+	}
+	serverPayload := []byte{0x80, 0x00, 0x42}
+	if err := serverEndpoint.SendUnreliable(serverPayload); err != nil {
+		t.Fatal(err)
+	}
+	if got := receiveUnreliable(t, clientEndpoint); !slices.Equal(got, serverPayload) {
+		t.Fatalf("server to client unreliable payload = %x, want %x", got, serverPayload)
+	}
+
+	cancel()
+	select {
+	case err := <-bridgeDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Bridge error = %v, want canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Bridge did not stop its unreliable forwarding loops after cancellation")
 	}
 }
 
@@ -281,6 +325,12 @@ type memorySession struct {
 	closeOnce sync.Once
 }
 
+type memoryUnreliableSession struct {
+	carrier.Session
+	incoming chan []byte
+	peer     *memoryUnreliableSession
+}
+
 type failOpenSession struct {
 	carrier.Session
 	mu         sync.Mutex
@@ -294,6 +344,49 @@ type deadlineCloseSession struct {
 	release <-chan struct{}
 	active  atomic.Int32
 	once    sync.Once
+}
+
+func memoryUnreliableSessionPair(kind carrier.Kind) (*memoryUnreliableSession, *memoryUnreliableSession) {
+	leftSession, rightSession := memorySessionPair(kind)
+	left := &memoryUnreliableSession{Session: leftSession, incoming: make(chan []byte, 8)}
+	right := &memoryUnreliableSession{Session: rightSession, incoming: make(chan []byte, 8)}
+	left.peer = right
+	right.peer = left
+	return left, right
+}
+
+func (*memoryUnreliableSession) UnreliableAvailable() bool { return true }
+
+func (session *memoryUnreliableSession) SendUnreliable(payload []byte) error {
+	copyOfPayload := append([]byte(nil), payload...)
+	select {
+	case session.peer.incoming <- copyOfPayload:
+		return nil
+	case <-session.Termination():
+		return io.ErrClosedPipe
+	}
+}
+
+func (session *memoryUnreliableSession) ReceiveUnreliable(ctx context.Context) ([]byte, error) {
+	select {
+	case payload := <-session.incoming:
+		return append([]byte(nil), payload...), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-session.Termination():
+		return nil, io.ErrClosedPipe
+	}
+}
+
+func receiveUnreliable(t *testing.T, session carrier.UnreliableTransport) []byte {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	payload, err := session.ReceiveUnreliable(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }
 
 func newDeadlineCloseSession(session carrier.Session, release <-chan struct{}) *deadlineCloseSession {

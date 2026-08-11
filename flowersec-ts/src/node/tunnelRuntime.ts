@@ -20,6 +20,8 @@ import {
   type RuntimeAuthorizationRequest,
 } from "./controlplane.js";
 import { startNodeWebSocketServer, type NodeWebSocketServer } from "./webSocketServer.js";
+import { createNativeRawQuicDriver } from "./nativeTransportAddon.js";
+import { startNodeRawQuicServer, type NodeRawQuicServer } from "./rawQuicServer.js";
 
 const DEFAULT_PAIR_TIMEOUT_MS = 10_000;
 const DEFAULT_CLEANUP_TIMEOUT_MS = 2_000;
@@ -40,13 +42,20 @@ export type TunnelAuthorizationDecision =
   }>
   | Readonly<{ decision: "reject" | "retry"; reason: string }>;
 
-export type TunnelRuntimeListener = Readonly<{
-  carrier: "websocket";
-  host: string;
-  port: number;
-  tls: Readonly<{ certificate: string; privateKey: string }>;
-  allowedOrigins: readonly string[];
-}>;
+export type TunnelRuntimeListener =
+  | Readonly<{
+      carrier: "websocket";
+      host: string;
+      port: number;
+      tls: Readonly<{ certificate: string; privateKey: string }>;
+      allowedOrigins: readonly string[];
+    }>
+  | Readonly<{
+      carrier: "raw_quic";
+      host: string;
+      port: number;
+      tls: Readonly<{ certificate: string; privateKey: string }>;
+    }>;
 
 export type TunnelRuntimeOptions = Readonly<{
   listeners: readonly TunnelRuntimeListener[];
@@ -86,7 +95,7 @@ export class TunnelRuntime {
   }
 }
 
-type Listener = NodeWebSocketServer;
+type Listener = NodeWebSocketServer | NodeRawQuicServer;
 type AllowedDecision = Extract<TunnelAuthorizationDecision, Readonly<{ decision: "allow" }>>;
 type TunnelLeg = Readonly<{
   received: ReceivedSessionAdmissionV2;
@@ -152,14 +161,24 @@ async function startTunnelRuntime(state: TunnelRuntimeState): Promise<void> {
   let started = starts.get(state);
   if (started === undefined) {
     started = (async () => {
+      let rawQuicDriver: ReturnType<typeof createNativeRawQuicDriver> | undefined;
       try {
         for (const listener of state.options.listeners) {
           if (state.abort.signal.aborted) throw new Error("Flowersec tunnel runtime is closed");
-          const running = await startNodeWebSocketServer({
-            ...listener,
-            path: "tunnel",
-            inboundBidirectionalStreamCapacity: state.options.maxInboundStreams + 2,
-          });
+          const running = listener.carrier === "websocket"
+            ? await startNodeWebSocketServer({
+                ...listener,
+                path: "tunnel",
+                inboundBidirectionalStreamCapacity: state.options.maxInboundStreams + 2,
+              })
+            : await startNodeRawQuicServer(
+                rawQuicDriver ??= createNativeRawQuicDriver(),
+                {
+                  ...listener,
+                  path: "tunnel",
+                  inboundBidirectionalStreamCapacity: state.options.maxInboundStreams + 2,
+                },
+              );
           if (state.abort.signal.aborted) {
             await running.close().catch(() => undefined);
             throw new Error("Flowersec tunnel runtime is closed");

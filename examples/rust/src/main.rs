@@ -49,12 +49,12 @@ async fn connect_opaque_artifact(
     receipt_path: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
     let artifact = Artifact::parse(std::fs::read(artifact_path)?)?;
-    let mut lease = ArtifactLease::new(artifact, move || {
+    let lease = ArtifactLease::new(artifact, move || {
         let receipt_path = receipt_path.clone();
         async move { write_spend_receipt(receipt_path).await }
     });
     let options = ConnectorOptions::new(vec![std::fs::read(trust_root_path)?])?;
-    let session = match connect(&mut lease, options).await {
+    let session = match connect(lease, options).await {
         Ok(session) => session,
         Err(error) => {
             eprintln!("connection_error={}", error.as_str());

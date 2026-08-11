@@ -1,0 +1,11 @@
+{
+  "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
+  "version": "2.3.6",
+  "license": "MIT",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "libc": ["glibc"],
+  "main": "flowersec-node-native.linux-arm64-gnu.node",
+  "files": ["flowersec-node-native.linux-arm64-gnu.node", "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "sbom/**"],
+  "engines": { "node": ">=20.19.0" }
+}

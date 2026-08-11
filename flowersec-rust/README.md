@@ -23,9 +23,9 @@ let session = flowersec::connect(&mut lease, options).await?;
 
 The native Rust runtime uses WebSocket and raw QUIC for direct and relayed client sessions,
 accepts both carriers for direct server sessions, and
-provides opaque tunnel listeners for both carriers. WebTransport is
-unsupported because no Rust driver has passed Flowersec's strict draft-15 and
-cross-runtime contracts. Connection selection, credentials, and protocol
+provides opaque tunnel listeners for both carriers. WebTransport is an optional
+adapter profile and the Rust runtime does not currently expose a production
+adapter. Connection selection, credentials, and protocol
 state stay inside the crate.
 
 ## Public API

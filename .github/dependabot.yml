@@ -59,6 +59,16 @@ updates:
           - ">= 1.2.0"
 
   - package-ecosystem: cargo
+    directory: /flowersec-native-transport
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: cargo
+    directory: /flowersec-node-native
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: cargo
     directory: /flowersec-rust/fuzz
     schedule:
       interval: weekly

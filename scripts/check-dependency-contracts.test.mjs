@@ -36,7 +36,7 @@ function baselineContract() {
         boundary: "go-webtransport",
         scope: "production",
         requiredCapabilities: ["client", "server", "bidi-stream", "datagram", "origin", "close"],
-        protocol: "webtransport-http3-draft-15",
+        protocol: "webtransport-over-http3",
         publicApiOnly: true,
         platforms: ["linux-amd64", "linux-arm64", "macos-arm64"],
         conformanceTests: ["carrier/go-direct"],
@@ -103,7 +103,7 @@ function createFixture(t) {
   write(root, "flowersec-rust/Cargo.toml", `[package]\nname = "fixture"\nversion = "0.1.0"\n\n[dependencies]\nquinn = "=0.11.11"\nrustls = { version = "0.23", default-features = false, features = ["ring", "std"] }\n`);
   write(root, "flowersec-rust/Cargo.lock", `version = 4\n\n[[package]]\nname = "quinn"\nversion = "0.11.11"\n\n[[package]]\nname = "rustls"\nversion = "0.23.0"\n`);
   write(root, "flowersec-ts/package.json", `${JSON.stringify({ engines: { node: ">=20.19.0" }, dependencies: { ws: "8.21.2" } }, null, 2)}\n`);
-  write(root, "flowersec-ts/package-lock.json", `${JSON.stringify({ lockfileVersion: 3, packages: { "": { dependencies: { ws: "8.21.2" } }, "node_modules/ws": { version: "8.21.2", engines: { node: ">=10.0.0" } } } }, null, 2)}\n`);
+  write(root, "flowersec-ts/package-lock.json", `${JSON.stringify({ lockfileVersion: 3, packages: { "": { dependencies: { ws: "8.21.2" } }, "node_modules/ws": { version: "8.21.2", integrity: "sha512-fixture", engines: { node: ">=10.0.0" } } } }, null, 2)}\n`);
   const swiftLock = { version: 3, pins: [{ identity: "async-http-client", state: { revision: "abc", version: "1.36.0" } }] };
   write(root, "Package.resolved", `${JSON.stringify(swiftLock, null, 2)}\n`);
   write(root, "examples/swift/Package.resolved", `${JSON.stringify(swiftLock, null, 2)}\n`);
@@ -204,6 +204,43 @@ test("upgrade groups contain coordinated protocol stack members", (t) => {
     contract.dependencies[1].upgradeGroup = null;
     fs.writeFileSync(contractPath, `${JSON.stringify(contract, null, 2)}\n`);
   }, /upgrade group go-webtransport-stack must contain at least two dependencies/);
+});
+
+test("new native Cargo manifests cannot hide high-impact dependencies", (t) => {
+  expectFailure(t, (root) => {
+    write(root, "flowersec-native-transport/Cargo.toml", `[package]\nname = "flowersec-native-transport"\nversion = "2.3.6"\n\n[dependencies]\nquinn = "=0.11.11"\n`);
+    write(root, "flowersec-native-transport/Cargo.lock", `version = 4\n\n[[package]]\nname = "quinn"\nversion = "0.11.11"\n`);
+    write(root, "flowersec-node-native/Cargo.toml", `[package]\nname = "flowersec-node-native"\nversion = "2.3.6"\n\n[dependencies]\nnapi = "=3.12.1"\n`);
+    write(root, "flowersec-node-native/Cargo.lock", `version = 4\n\n[[package]]\nname = "napi"\nversion = "3.12.1"\n`);
+  }, /high-impact cargo dependency napi has no contract/);
+});
+
+test("optional production npm dependencies are checked like regular dependencies", (t) => {
+  expectFailure(t, (root) => {
+    const manifestPath = path.join(root, "flowersec-ts/package.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    manifest.optionalDependencies = { "@matrixai/quic": "0.9.0" };
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    const lockPath = path.join(root, "flowersec-ts/package-lock.json");
+    const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    lock.packages[""] .optionalDependencies = { "@matrixai/quic": "0.9.0" };
+    lock.packages["node_modules/@matrixai/quic"] = { version: "0.9.0", integrity: "sha512-fixture" };
+    fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+  }, /high-impact npm dependency @matrixai\/quic has no contract/);
+});
+
+test("optional dependencies cannot use incomplete lock metadata", (t) => {
+  expectFailure(t, (root) => {
+    const manifestPath = path.join(root, "flowersec-ts/package.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    manifest.optionalDependencies = { ws: "8.21.2" };
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    const lockPath = path.join(root, "flowersec-ts/package-lock.json");
+    const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    lock.packages[""] .optionalDependencies = { ws: "8.21.2" };
+    delete lock.packages["node_modules/ws"].version;
+    fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+  }, /npm dependency ws has no exact version/);
 });
 
 test("the repository satisfies its dependency contracts", () => {

@@ -33,7 +33,6 @@ const (
 	MaxH3IncomingUniStreams int64 = 16
 	streamResetCode               = wt.StreamErrorCode(0xf502)
 	maxSessionErrorCode           = uint64(1<<32 - 1)
-	settingsWTEnabled             = uint64(0x2c7cf000)
 )
 
 var (
@@ -317,12 +316,6 @@ func NewServer(tlsConfig *tls.Config, limits quicbase.Limits, checkOrigin func(*
 	h3 := &http3.Server{TLSConfig: preparedTLS, QUICConfig: config}
 	inner := &wt.Server{H3: h3, CheckOrigin: checkOrigin}
 	wt.ConfigureHTTP3Server(h3)
-	// Initialize before serving so the dependency cannot re-add compatibility
-	// SETTINGS after Flowersec fixes the advertised draft-15 contract.
-	if _, err := inner.Upgrade(nil, &http.Request{Method: http.MethodGet}); err == nil {
-		return nil, ErrInvalidSession
-	}
-	h3.AdditionalSettings = map[uint64]uint64{settingsWTEnabled: 1}
 	return &Server{inner: inner, capacity: uint16(limits.MaxInboundStreams)}, nil
 }
 

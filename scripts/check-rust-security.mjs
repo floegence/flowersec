@@ -30,6 +30,14 @@ export function rustSecurityContexts(repoRoot) {
       lockfile: path.join(repoRoot, "flowersec-rust/Cargo.lock"),
     },
     {
+      manifest: path.join(repoRoot, "flowersec-native-transport/Cargo.toml"),
+      lockfile: path.join(repoRoot, "flowersec-native-transport/Cargo.lock"),
+    },
+    {
+      manifest: path.join(repoRoot, "flowersec-node-native/Cargo.toml"),
+      lockfile: path.join(repoRoot, "flowersec-node-native/Cargo.lock"),
+    },
+    {
       manifest: path.join(repoRoot, "flowersec-rust/fuzz/Cargo.toml"),
       lockfile: path.join(repoRoot, "flowersec-rust/fuzz/Cargo.lock"),
     },

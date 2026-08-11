@@ -29,7 +29,8 @@ const RETIRED_CAPABILITY_TEST_IDS = [
 const HIGH_IMPACT = {
   cargo: new Set([
     "aes-gcm", "hkdf", "hmac", "idna", "idna_adapter", "idna_mapping", "p256", "quinn",
-    "ring", "rustls", "tokio-tungstenite", "unicode-normalization", "wtransport", "x25519-dalek", "yamux",
+    "napi", "napi-build", "napi-derive", "ring", "rustls", "tokio-tungstenite", "unicode-normalization",
+    "wtransport", "x25519-dalek", "yamux",
   ]),
   gomod: new Set([
     "github.com/gorilla/websocket", "github.com/libp2p/go-yamux/v5", "github.com/quic-go/quic-go",
@@ -38,7 +39,7 @@ const HIGH_IMPACT = {
   ]),
   npm: new Set([
     "@fails-components/webtransport", "@fails-components/webtransport-transport-http3-quiche", "@matrixai/quic",
-    "@noble/ciphers", "@noble/curves", "@noble/hashes", "tr46", "ws",
+    "@floegence/flowersec-node-native", "@noble/ciphers", "@noble/curves", "@noble/hashes", "tr46", "ws",
   ]),
   swiftpm: new Set(["async-http-client", "swift-crypto", "swift-nio", "swift-nio-ssl"]),
 };
@@ -122,18 +123,54 @@ function parseGoDependencies(source) {
 
 function parseCargoDependencies(source) {
   const dependencies = new Map();
-  let inDependencies = false;
+  let dependencySection = false;
   for (const rawLine of source.split("\n")) {
     const line = rawLine.replace(/#.*$/, "").trim();
     if (/^\[.*\]$/.test(line)) {
-      inDependencies = line === "[dependencies]";
+      dependencySection = line === "[dependencies]" || line === "[build-dependencies]";
       continue;
     }
-    if (!inDependencies || line.length === 0) continue;
+    if (!dependencySection || line.length === 0) continue;
     const match = /^([A-Za-z0-9_-]+)\s*=/.exec(line);
     if (match !== null) dependencies.set(match[1], line.slice(line.indexOf("=") + 1).trim());
   }
   return dependencies;
+}
+
+const cargoManifestContexts = [
+  ["flowersec-rust/Cargo.toml", "flowersec-rust/Cargo.lock"],
+  ["flowersec-native-transport/Cargo.toml", "flowersec-native-transport/Cargo.lock"],
+  ["flowersec-node-native/Cargo.toml", "flowersec-node-native/Cargo.lock"],
+];
+
+function cargoContexts(root) {
+  return cargoManifestContexts.flatMap(([manifest, lockfile]) => {
+    if (!fs.existsSync(path.join(root, manifest))) return [];
+    if (!fs.existsSync(path.join(root, lockfile))) {
+      fail(`cargo manifest ${manifest} is missing its lockfile ${lockfile}`);
+    }
+    return [{ manifest, lockfile }];
+  });
+}
+
+function localNpmPackages(root) {
+  const result = new Map();
+  for (const relative of [
+    "flowersec-node-native/package.json",
+    "flowersec-node-native/npm/darwin-arm64/package.json",
+    "flowersec-node-native/npm/darwin-x64/package.json",
+    "flowersec-node-native/npm/linux-arm64-gnu/package.json",
+    "flowersec-node-native/npm/linux-x64-gnu/package.json",
+  ]) {
+    const file = path.join(root, relative);
+    if (!fs.existsSync(file)) continue;
+    const metadata = readJSON(root, relative);
+    if (typeof metadata.name !== "string" || typeof metadata.version !== "string") {
+      fail(`${relative} must declare an exact npm name and version`);
+    }
+    result.set(metadata.name, { relative, version: metadata.version });
+  }
+  return result;
 }
 
 function parseCargoLockPackages(source) {
@@ -227,16 +264,29 @@ function check(root) {
   const npmLock = readJSON(root, "flowersec-ts/package-lock.json");
   const rootSwiftPins = swiftPins(readJSON(root, "Package.resolved"));
   const exampleSwiftPins = swiftPins(readJSON(root, "examples/swift/Package.resolved"));
-  const npmDependencies = new Map(Object.entries(npmManifest.dependencies ?? {}));
+  const npmDependencies = new Map([
+    ...Object.entries(npmManifest.dependencies ?? {}),
+    ...Object.entries(npmManifest.optionalDependencies ?? {}),
+  ]);
+  const cargoSources = cargoContexts(root);
+  const cargoDependencies = new Map();
+  for (const context of cargoSources) {
+    for (const [name, version] of parseCargoDependencies(read(root, context.manifest))) {
+      cargoDependencies.set(name, version);
+    }
+  }
   const manifests = {
-    cargo: parseCargoDependencies(cargoSource),
+    cargo: cargoDependencies,
     gomod: parseGoDependencies(goSource),
     npm: npmDependencies,
     swiftpm: rootSwiftPins,
   };
-  const cargoLockPackages = parseCargoLockPackages(read(root, "flowersec-rust/Cargo.lock"));
+  const cargoLockPackages = new Set(cargoSources.flatMap((context) => (
+    [...parseCargoLockPackages(read(root, context.lockfile))]
+  )));
   const goSumSelections = parseGoSumSelections(read(root, "flowersec-go/go.sum"));
   const contracts = new Map(contract.dependencies.map((entry) => [`${entry.ecosystem}:${entry.package}`, entry]));
+  const localPackages = localNpmPackages(root);
 
   for (const entry of contract.dependencies) {
     if (!manifests[entry.ecosystem].has(entry.package)) {
@@ -251,8 +301,18 @@ function check(root) {
         errors.push(`gomod dependency ${entry.package}@${version} is missing from flowersec-go/go.sum`);
       }
     }
-    if (entry.ecosystem === "npm" && npmLock.packages?.[`node_modules/${entry.package}`] === undefined) {
-      errors.push(`npm dependency ${entry.package} is missing from flowersec-ts/package-lock.json`);
+    if (entry.ecosystem === "npm") {
+      const metadata = npmLock.packages?.[`node_modules/${entry.package}`];
+      if (metadata === undefined) {
+        errors.push(`npm dependency ${entry.package} is missing from flowersec-ts/package-lock.json`);
+      } else if (typeof metadata.version !== "string" || typeof metadata.integrity !== "string") {
+        const local = localPackages.get(entry.package);
+        if (local === undefined) {
+          errors.push(`npm dependency ${entry.package} has no exact version and integrity in flowersec-ts/package-lock.json`);
+        } else if (metadata.version !== undefined && metadata.version !== local.version) {
+          errors.push(`npm dependency ${entry.package} lock version differs from ${local.relative}`);
+        }
+      }
     }
   }
   for (const [ecosystem, packages] of Object.entries(manifests)) {

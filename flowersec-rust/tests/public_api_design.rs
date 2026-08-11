@@ -7,7 +7,13 @@ use flowersec::{
     WebSocketAcceptorOptions, connect,
 };
 use serde::{Deserialize, Serialize};
-use std::{fs, num::NonZeroU64, path::Path, process::Command, sync::Arc};
+use std::{
+    fs,
+    num::NonZeroU64,
+    path::Path,
+    process::Command,
+    sync::{Arc, Mutex},
+};
 use tokio_util::sync::CancellationToken;
 
 struct RpcWithoutDebug;
@@ -41,6 +47,8 @@ impl NotificationHandler for NotificationWithoutDebug {
 }
 
 struct StreamWithoutDebug;
+
+static CARGO_PROBE_LOCK: Mutex<()> = Mutex::new(());
 
 #[async_trait::async_trait]
 impl StreamHandler for StreamWithoutDebug {
@@ -186,6 +194,7 @@ fn artifact_lease_does_not_expose_spend_state() {
 
 #[test]
 fn artifact_lease_does_not_expose_its_artifact() {
+    let _probe_guard = CARGO_PROBE_LOCK.lock().expect("cargo probe lock");
     let fixture = tempfile::tempdir().expect("create lease API probe directory");
     let crate_path = env!("CARGO_MANIFEST_DIR").replace('\\', "\\\\");
     fs::write(
@@ -221,6 +230,7 @@ fn artifact_lease_does_not_expose_its_artifact() {
 
 #[test]
 fn rustdoc_uses_real_unversioned_portable_types() {
+    let _probe_guard = CARGO_PROBE_LOCK.lock().expect("cargo probe lock");
     let fixture = tempfile::tempdir().expect("create rustdoc target directory");
     let output = Command::new("rustup")
         .args([
@@ -303,6 +313,7 @@ fn session_error_names_cover_portable_session_states() {
 
 #[test]
 fn default_public_api_does_not_expose_fuzzing() {
+    let _probe_guard = CARGO_PROBE_LOCK.lock().expect("cargo probe lock");
     let fixture = tempfile::tempdir().expect("create default API probe directory");
     let crate_path = env!("CARGO_MANIFEST_DIR").replace('\\', "\\\\");
     fs::write(

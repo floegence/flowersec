@@ -19,15 +19,18 @@ async-trait = "0.1"
 base64 = "0.23"
 bytes = "1"
 futures-util = { version = "0.3", features = ["io", "sink", "std"] }
+flowersec-native-transport = { version = "=2.3.6", path = "../flowersec-native-transport" }
 hkdf = "0.13"
 hmac = "0.13"
+http = "1"
+http-body-util = "0.1"
+hyper = { version = "1", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 idna = { version = "=1.1.0", default-features = false, features = ["std", "compiled_data"] }
 idna_adapter = { version = "=1.1.0", features = ["compiled_data"] }
 idna_mapping = "=1.0.0"
 p256 = { version = "0.14", features = ["ecdh"] }
-quinn = { version = "=0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 rand = "0.10"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-manual-roots", "stream"] }
 ring = { version = "=0.17.14", default-features = false, features = ["alloc"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 serde = { version = "1", features = ["derive"] }
@@ -47,6 +50,7 @@ subtle = "2"
 time = { version = "0.3", features = ["parsing", "formatting"] }
 
 [dev-dependencies]
+flowersec-native-transport = { version = "=2.3.6", path = "../flowersec-native-transport", features = ["__flowersec_internal_test_support"] }
 proptest = "1"
 tempfile = "3"
 

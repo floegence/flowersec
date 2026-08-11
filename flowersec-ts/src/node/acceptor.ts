@@ -13,6 +13,11 @@ import {
   startNodeWebSocketServer,
   type NodeWebSocketServer,
 } from "./webSocketServer.js";
+import { createNativeRawQuicDriver } from "./nativeTransportAddon.js";
+import {
+  startNodeRawQuicServer,
+  type NodeRawQuicServer,
+} from "./rawQuicServer.js";
 import { unwrapArtifact, type Artifact } from "../public/artifact.js";
 import {
   SessionError,
@@ -223,14 +228,22 @@ type FrozenHandlers = Readonly<{
   streams: ReadonlyMap<string, StreamHandler>;
 }>;
 
-export type AcceptorListener = Readonly<{
-  carrier: "websocket";
-  path: "direct";
-  host: string;
-  port: number;
-  tls?: Readonly<{ certificate: string; privateKey: string }>;
-  allowedOrigins: readonly string[];
-}>;
+export type AcceptorListener =
+  | Readonly<{
+      carrier: "websocket";
+      path: "direct";
+      host: string;
+      port: number;
+      tls?: Readonly<{ certificate: string; privateKey: string }>;
+      allowedOrigins: readonly string[];
+    }>
+  | Readonly<{
+      carrier: "raw_quic";
+      path: "direct";
+      host: string;
+      port: number;
+      tls: Readonly<{ certificate: string; privateKey: string }>;
+    }>;
 
 export type AcceptorOptions = Readonly<{
   listeners: readonly AcceptorListener[];
@@ -491,7 +504,7 @@ class AcceptedQueue {
   }
 }
 
-type Listener = NodeWebSocketServer;
+type Listener = NodeWebSocketServer | NodeRawQuicServer;
 type AcceptorState = Readonly<{
   listeners: readonly Listener[];
   options: AcceptorOptions;
@@ -528,14 +541,21 @@ export async function createAcceptor(
     );
   }
   const listeners: Listener[] = [];
+  let rawQuicDriver: ReturnType<typeof createNativeRawQuicDriver> | undefined;
   try {
     for (const listener of options.listeners) {
-      listeners.push(
-        await startNodeWebSocketServer({
+      if (listener.carrier === "websocket") {
+        listeners.push(await startNodeWebSocketServer({
           ...listener,
           inboundBidirectionalStreamCapacity: options.maxInboundStreams + 2,
-        }),
-      );
+        }));
+      } else {
+        rawQuicDriver ??= createNativeRawQuicDriver();
+        listeners.push(await startNodeRawQuicServer(rawQuicDriver, {
+          ...listener,
+          inboundBidirectionalStreamCapacity: options.maxInboundStreams + 2,
+        }));
+      }
     }
   } catch (error) {
     await Promise.allSettled(

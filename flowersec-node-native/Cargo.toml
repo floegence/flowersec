@@ -1,0 +1,18 @@
+[package]
+name = "flowersec-node-native"
+version = "2.3.6"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+flowersec-native-transport = { path = "../flowersec-native-transport", version = "=2.3.6" }
+napi = { version = "=3.12.1", features = ["napi8", "tokio_rt"] }
+napi-derive = "=3.6.3"
+
+[build-dependencies]
+napi-build = "=2.4.1"

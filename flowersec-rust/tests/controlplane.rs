@@ -108,6 +108,8 @@ fn runtime_authorization_request_is_strict_and_redacted() {
         format!("{valid:?}"),
         "RuntimeAuthorizationRequest { <opaque> }"
     );
+    assert_eq!(valid.carrier(), "websocket");
+    assert_eq!(valid.remote_address(), "127.0.0.1:12345");
 
     let artifact: Value = serde_json::from_slice(&issued.artifact_json()).unwrap();
     let fsb2 = direct_fsb2(&artifact);

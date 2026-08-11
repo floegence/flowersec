@@ -236,8 +236,9 @@ fn production_tls_identity_requires_caller_owned_der() {
     assert!(!manifest.contains("\"tls12\""));
     assert!(!manifest.contains("rustls-tls-webpki-roots"));
     let proxy = include_str!("../src/proxy_server.rs");
-    assert!(proxy.contains("min_tls_version(reqwest::tls::Version::TLS_1_3)"));
-    assert!(proxy.contains("tls_built_in_root_certs(false)"));
+    assert!(!proxy.contains("reqwest::"));
+    assert!(proxy.contains("websocket_v2::client_tls"));
+    assert!(proxy.contains("tokio::time::timeout_at"));
     assert!("tests/fixtures/quic/server-cert.der".ends_with(".der"));
     assert!("tests/fixtures/quic/server-key.der".ends_with(".der"));
 }

@@ -14,6 +14,18 @@ const releaseSources = [
   "examples/rust/Cargo.lock",
 ];
 
+const nativeReleaseSources = [
+  "flowersec-native-transport/Cargo.toml",
+  "flowersec-native-transport/Cargo.lock",
+  "flowersec-node-native/Cargo.toml",
+  "flowersec-node-native/Cargo.lock",
+  "flowersec-node-native/package.json",
+  "flowersec-node-native/npm/darwin-arm64/package.json",
+  "flowersec-node-native/npm/darwin-x64/package.json",
+  "flowersec-node-native/npm/linux-arm64-gnu/package.json",
+  "flowersec-node-native/npm/linux-x64-gnu/package.json",
+];
+
 function readJSON(filePath) {
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -29,7 +41,7 @@ function requireVersion(value, label) {
   return value;
 }
 
-function cargoMetadataVersion(manifestPath) {
+function cargoMetadataVersion(manifestPath, expectedPackageName = "flowersec") {
   const cargo = process.env.CARGO || "cargo";
   const result = spawnSync(
     cargo,
@@ -50,10 +62,10 @@ function cargoMetadataVersion(manifestPath) {
     throw new Error(`cargo metadata returned invalid JSON for ${manifestPath}: ${error.message}`);
   }
   const packages = metadata.packages?.filter(
-    (pkg) => pkg.name === "flowersec" && pkg.source === null,
+    (pkg) => pkg.name === expectedPackageName && pkg.source === null,
   );
   if (!Array.isArray(packages) || packages.length !== 1) {
-    throw new Error(`cargo metadata for ${manifestPath} must contain one local flowersec package`);
+    throw new Error(`cargo metadata for ${manifestPath} must contain one local ${expectedPackageName} package`);
   }
   return requireVersion(packages[0].version, manifestPath);
 }
@@ -93,8 +105,7 @@ export function collectReleaseVersions(
   const exampleLockVersion = cargoMetadata(
     path.join(root, "examples/rust/Cargo.toml"),
   );
-
-  return [
+  const versions = [
     { label: releaseSources[0], version: tsPackageVersion },
     { label: releaseSources[1], version: tsLockVersion },
     { label: releaseSources[2], version: rustManifestVersion },
@@ -102,22 +113,56 @@ export function collectReleaseVersions(
     { label: releaseSources[4], version: fuzzLockVersion },
     { label: releaseSources[5], version: exampleLockVersion },
   ];
+  const nativeMarker = path.join(root, nativeReleaseSources[0]);
+  if (!fs.existsSync(nativeMarker)) return versions;
+  for (const relative of nativeReleaseSources) {
+    if (!fs.existsSync(path.join(root, relative))) {
+      throw new Error(`native release source is missing: ${relative}`);
+    }
+  }
+  const nativeTransportVersion = cargoMetadata(
+    path.join(root, "flowersec-native-transport/Cargo.toml"),
+    "flowersec-native-transport",
+  );
+  const nodeNativeVersion = cargoMetadata(
+    path.join(root, "flowersec-node-native/Cargo.toml"),
+    "flowersec-node-native",
+  );
+  const nativePackageVersion = requireVersion(
+    readJSON(path.join(root, "flowersec-node-native/package.json")).version,
+    "flowersec-node-native/package.json",
+  );
+  const platformVersions = nativeReleaseSources.slice(5).map((relative) => ({
+    label: relative,
+    version: requireVersion(readJSON(path.join(root, relative)).version, relative),
+  }));
+  versions.push(
+    { label: nativeReleaseSources[0], version: nativeTransportVersion },
+    { label: nativeReleaseSources[1], version: nativeTransportVersion },
+    { label: nativeReleaseSources[2], version: nodeNativeVersion },
+    { label: nativeReleaseSources[3], version: nodeNativeVersion },
+    { label: nativeReleaseSources[4], version: nativePackageVersion },
+    ...platformVersions,
+  );
+  return versions;
 }
 
 export function validateReleaseVersions(versions, expectedVersion = "") {
+  const hasNativeSources = versions.some((entry) => nativeReleaseSources.includes(entry.label));
+  const maintainedSources = hasNativeSources ? [...releaseSources, ...nativeReleaseSources] : releaseSources;
   const byLabel = new Map(versions.map((entry) => [entry.label, entry.version]));
-  const missing = releaseSources.filter((label) => !byLabel.has(label));
-  const extra = [...byLabel.keys()].filter((label) => !releaseSources.includes(label));
-  if (missing.length > 0 || extra.length > 0 || versions.length !== releaseSources.length) {
+  const missing = maintainedSources.filter((label) => !byLabel.has(label));
+  const extra = [...byLabel.keys()].filter((label) => !maintainedSources.includes(label));
+  if (missing.length > 0 || extra.length > 0 || versions.length !== maintainedSources.length) {
     throw new Error(
       `release version sources must match the maintained set; missing=${missing.join(",") || "none"}, extra=${extra.join(",") || "none"}`,
     );
   }
 
-  for (const label of releaseSources) {
+  for (const label of maintainedSources) {
     requireVersion(byLabel.get(label), label);
   }
-  const distinct = new Set(releaseSources.map((label) => byLabel.get(label)));
+  const distinct = new Set(maintainedSources.map((label) => byLabel.get(label)));
   if (distinct.size !== 1) {
     const facts = releaseSources
       .map((label) => `${label}=${byLabel.get(label)}`)
@@ -125,7 +170,7 @@ export function validateReleaseVersions(versions, expectedVersion = "") {
     throw new Error(`release versions are inconsistent: ${facts}`);
   }
 
-  const version = byLabel.get(releaseSources[0]);
+  const version = byLabel.get(maintainedSources[0]);
   if (expectedVersion !== "" && version !== expectedVersion) {
     throw new Error(
       `requested release version ${expectedVersion} does not match maintained version ${version}`,
@@ -144,7 +189,7 @@ function main() {
     collectReleaseVersions(root),
     expectedVersion,
   );
-  process.stdout.write(`release versions OK: ${version} across ${releaseSources.length} sources\n`);
+  process.stdout.write(`release versions OK: ${version} across ${collectReleaseVersions(root).length} sources\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

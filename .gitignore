@@ -10,6 +10,8 @@
 
 # Rust
 /flowersec-rust/target/
+/flowersec-native-transport/target/
+/flowersec-node-native/target/
 /examples/rust/target/
 
 # Node

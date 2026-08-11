@@ -1,15 +1,27 @@
-use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    fmt,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use bytes::{Buf, Bytes, BytesMut};
 use futures_util::{SinkExt, StreamExt};
-use reqwest::{Method, StatusCode, header::HeaderMap};
+use http::{HeaderMap, Method, Request, StatusCode, Uri, header};
+use http_body_util::{BodyExt, Full};
+use hyper::{body::Incoming, client::conn::http1};
+use hyper_util::rt::TokioIo;
 use rustls::pki_types::ServerName;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
+    io::{AsyncRead, AsyncWrite, ReadBuf},
     net::TcpStream,
     sync::Semaphore,
+    task::JoinHandle,
+    time::Instant,
 };
 use tokio_rustls::TlsConnector;
 use tokio_tungstenite::{WebSocketStream, client_async_with_config, tungstenite};
@@ -157,7 +169,6 @@ struct Config {
 
 struct Inner {
     config: Config,
-    client: reqwest::Client,
     permits: Arc<Semaphore>,
     closed: CancellationToken,
     on_error: Option<ProxyErrorReporter>,
@@ -178,25 +189,13 @@ pub struct ProxyServer {
 impl ProxyServer {
     pub fn new(options: ProxyServerOptions) -> Result<Self, ProxyServerError> {
         let (config, max_concurrent, on_error) = compile_options(options)?;
-        let mut client = reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .http1_only()
-            .min_tls_version(reqwest::tls::Version::TLS_1_3)
-            .tls_built_in_root_certs(false);
-        for root in &config.upstream_trust_roots_der {
-            client = client.add_root_certificate(
-                reqwest::Certificate::from_der(root)
-                    .map_err(|_| ProxyServerError::InvalidOptions)?,
-            );
+        if config.upstream.scheme() == "https" {
+            websocket_v2::client_tls(config.upstream_trust_roots_der.clone())
+                .map_err(|_| ProxyServerError::InvalidOptions)?;
         }
-        let client = client
-            .build()
-            .map_err(|_| ProxyServerError::InvalidOptions)?;
         Ok(Self {
             inner: Arc::new(Inner {
                 config,
-                client,
                 permits: Arc::new(Semaphore::new(max_concurrent)),
                 closed: CancellationToken::new(),
                 on_error,
@@ -701,7 +700,31 @@ async fn serve_http(
     let mut target = inner.config.upstream.clone();
     target.set_path(path.path());
     target.set_query(path.query());
-    let mut request = inner.client.request(method, target).timeout(timeout);
+    let uri = if target.query().is_some() {
+        format!("{}?{}", target.path(), target.query().unwrap_or_default())
+    } else {
+        target.path().to_owned()
+    };
+    let uri: Uri = uri.parse().map_err(|_| ProxyServerError::OperationFailed)?;
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .body(Full::new(Bytes::from(body.clone())))
+        .map_err(|_| ProxyServerError::OperationFailed)?;
+    let connect_host = target
+        .host_str()
+        .ok_or(ProxyServerError::OperationFailed)?
+        .to_owned();
+    let port = target
+        .port_or_known_default()
+        .ok_or(ProxyServerError::OperationFailed)?;
+    let authority = target[url::Position::BeforeHost..url::Position::AfterPort].to_owned();
+    request.headers_mut().insert(
+        header::HOST,
+        authority
+            .parse()
+            .map_err(|_| ProxyServerError::OperationFailed)?,
+    );
     let request_headers = filter_request_headers(&meta.headers, &inner.config);
     if let Some(origin) = &external_origin {
         let expected = origin.origin().ascii_serialization();
@@ -715,72 +738,224 @@ async fn serve_http(
         }
     }
     for header in request_headers {
-        request = request.header(header.name, header.value);
+        let name = header::HeaderName::from_bytes(header.name.as_bytes())
+            .map_err(|_| ProxyServerError::OperationFailed)?;
+        let value = header::HeaderValue::from_str(&header.value)
+            .map_err(|_| ProxyServerError::OperationFailed)?;
+        request.headers_mut().append(name, value);
     }
     if let Some(origin) = external_origin {
-        request = request.header("x-forwarded-proto", origin.scheme());
+        request.headers_mut().insert(
+            "x-forwarded-proto",
+            origin
+                .scheme()
+                .parse()
+                .map_err(|_| ProxyServerError::OperationFailed)?,
+        );
     }
-    if !body.is_empty() {
-        request = request.body(body);
-    }
-    let response = tokio::select! {
-        _ = cancellation.cancelled() => return Err(ProxyServerError::Closed),
-        response = request.send() => response,
-    };
-    let response = match response {
+    let deadline = Instant::now() + timeout;
+    let (response, connection_task) = match send_http_request(
+        inner,
+        request,
+        connect_host,
+        port,
+        deadline,
+        &cancellation,
+    )
+    .await
+    {
         Ok(response) => response,
-        Err(error) => {
-            let code = if error.is_timeout() {
-                "timeout"
-            } else if error.is_connect() {
-                "upstream_dial_failed"
-            } else {
-                "upstream_request_failed"
-            };
-            write_http_error(stream, request_id, code, &cancellation).await;
+        Err(HttpRequestFailure::Closed) => return Err(ProxyServerError::Closed),
+        Err(HttpRequestFailure::Timeout) => {
+            write_http_error(stream, request_id, "timeout", &cancellation).await;
+            return Ok(());
+        }
+        Err(HttpRequestFailure::Dial) => {
+            write_http_error(stream, request_id, "upstream_dial_failed", &cancellation).await;
+            return Ok(());
+        }
+        Err(HttpRequestFailure::Request) => {
+            write_http_error(stream, request_id, "upstream_request_failed", &cancellation).await;
             return Ok(());
         }
     };
-    if response
-        .content_length()
+    let (parts, mut body) = response.into_parts();
+    if parts
+        .headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
         .is_some_and(|length| length > inner.config.max_body as u64)
     {
+        connection_task.abort();
         write_http_error(stream, request_id, "response_body_too_large", &cancellation).await;
         return Ok(());
     }
-    let status = response.status().as_u16();
-    let headers = filter_response_headers(response.headers(), &inner.config);
-    write_json(
-        stream,
-        &HttpResponseMeta {
-            v: WIRE_VERSION,
-            request_id,
-            ok: true,
-            status: Some(status),
-            headers,
-            error: None,
-        },
-        &cancellation,
-    )
-    .await?;
-    let mut total = 0usize;
-    let mut chunks = response.bytes_stream();
-    while let Some(chunk) = tokio::select! {
-        _ = cancellation.cancelled() => return Err(ProxyServerError::Closed),
-        chunk = chunks.next() => chunk,
-    } {
-        let chunk = chunk.map_err(|_| ProxyServerError::OperationFailed)?;
-        total = total
-            .checked_add(chunk.len())
-            .ok_or(ProxyServerError::OperationFailed)?;
-        if total > inner.config.max_body {
-            return Err(ProxyServerError::OperationFailed);
+    let status = parts.status.as_u16();
+    let headers = filter_response_headers(&parts.headers, &inner.config);
+    let result = async {
+        write_json(
+            stream,
+            &HttpResponseMeta {
+                v: WIRE_VERSION,
+                request_id,
+                ok: true,
+                status: Some(status),
+                headers,
+                error: None,
+            },
+            &cancellation,
+        )
+        .await?;
+        let mut total = 0usize;
+        while let Some(frame) = tokio::select! {
+            _ = cancellation.cancelled() => return Err(ProxyServerError::Closed),
+            frame = tokio::time::timeout_at(deadline, body.frame()) => frame
+                .map_err(|_| ProxyServerError::OperationFailed)?,
+        } {
+            let frame = frame.map_err(|_| ProxyServerError::OperationFailed)?;
+            let Some(chunk) = frame.data_ref() else {
+                continue;
+            };
+            total = total
+                .checked_add(chunk.len())
+                .ok_or(ProxyServerError::OperationFailed)?;
+            if total > inner.config.max_body {
+                return Err(ProxyServerError::OperationFailed);
+            }
+            for payload in chunk.chunks(inner.config.max_chunk) {
+                write_chunk(stream, payload, &cancellation).await?;
+            }
         }
-        for payload in chunk.chunks(inner.config.max_chunk) {
-            write_chunk(stream, payload, &cancellation).await?;
+        write_all(stream, Bytes::from_static(&[0, 0, 0, 0]), &cancellation).await
+    }
+    .await;
+    connection_task.abort();
+    result
+}
+
+#[derive(Clone, Copy, Debug)]
+enum HttpRequestFailure {
+    Closed,
+    Timeout,
+    Dial,
+    Request,
+}
+
+enum HttpIo {
+    Plain(TcpStream),
+    Tls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
+}
+
+impl AsyncRead for HttpIo {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match &mut *self {
+            Self::Plain(stream) => Pin::new(stream).poll_read(context, buffer),
+            Self::Tls(stream) => Pin::new(stream.as_mut()).poll_read(context, buffer),
         }
     }
-    write_all(stream, Bytes::from_static(&[0, 0, 0, 0]), &cancellation).await
+}
+
+impl AsyncWrite for HttpIo {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        match &mut *self {
+            Self::Plain(stream) => Pin::new(stream).poll_write(context, buffer),
+            Self::Tls(stream) => Pin::new(stream.as_mut()).poll_write(context, buffer),
+        }
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        match &mut *self {
+            Self::Plain(stream) => Pin::new(stream).poll_flush(context),
+            Self::Tls(stream) => Pin::new(stream.as_mut()).poll_flush(context),
+        }
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        match &mut *self {
+            Self::Plain(stream) => Pin::new(stream).poll_shutdown(context),
+            Self::Tls(stream) => Pin::new(stream.as_mut()).poll_shutdown(context),
+        }
+    }
+}
+
+async fn send_http_request(
+    inner: &Inner,
+    request: Request<Full<Bytes>>,
+    host: String,
+    port: u16,
+    deadline: Instant,
+    cancellation: &CancellationToken,
+) -> Result<(hyper::Response<Incoming>, JoinHandle<()>), HttpRequestFailure> {
+    let tcp = tokio::select! {
+        _ = cancellation.cancelled() => return Err(HttpRequestFailure::Closed),
+        result = tokio::time::timeout_at(deadline, TcpStream::connect((host.as_str(), port))) => match result {
+            Err(_) => return Err(HttpRequestFailure::Timeout),
+            Ok(Err(_)) => return Err(HttpRequestFailure::Dial),
+            Ok(Ok(tcp)) => tcp,
+        },
+    };
+    let io = if inner.config.upstream.scheme() == "https" {
+        let server_name = ServerName::try_from(host).map_err(|_| HttpRequestFailure::Dial)?;
+        let tls = TlsConnector::from(
+            websocket_v2::client_tls(inner.config.upstream_trust_roots_der.clone())
+                .map_err(|_| HttpRequestFailure::Dial)?,
+        );
+        let connected = tokio::select! {
+            _ = cancellation.cancelled() => return Err(HttpRequestFailure::Closed),
+            result = tokio::time::timeout_at(deadline, tls.connect(server_name, tcp)) => match result {
+                Err(_) => return Err(HttpRequestFailure::Timeout),
+                Ok(Err(_)) => return Err(HttpRequestFailure::Dial),
+                Ok(Ok(connected)) => connected,
+            },
+        };
+        HttpIo::Tls(Box::new(connected))
+    } else {
+        HttpIo::Plain(tcp)
+    };
+    let (mut sender, connection) = tokio::select! {
+        _ = cancellation.cancelled() => return Err(HttpRequestFailure::Closed),
+        result = tokio::time::timeout_at(deadline, http1::handshake(TokioIo::new(io))) => match result {
+            Err(_) => return Err(HttpRequestFailure::Timeout),
+            Ok(Err(_)) => return Err(HttpRequestFailure::Request),
+            Ok(Ok(parts)) => parts,
+        },
+    };
+    let connection_task = tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let response = tokio::select! {
+        _ = cancellation.cancelled() => {
+            connection_task.abort();
+            return Err(HttpRequestFailure::Closed);
+        },
+        result = tokio::time::timeout_at(deadline, sender.send_request(request)) => match result {
+            Err(_) => {
+                connection_task.abort();
+                return Err(HttpRequestFailure::Timeout);
+            },
+            Ok(Err(_)) => {
+                connection_task.abort();
+                return Err(HttpRequestFailure::Request);
+            },
+            Ok(Ok(response)) => response,
+        },
+    };
+    Ok((response, connection_task))
 }
 
 async fn write_http_error(

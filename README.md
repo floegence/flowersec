@@ -96,13 +96,28 @@ syntax without changing shared behavior.
 | Unreliable messages when available | Yes | Yes | No | Yes |
 | Browser connections | No | Yes | No | No |
 | Apple client connections | No | No | Yes | No |
-| Native QUIC connections | Yes | No | No | Yes |
+| Native QUIC connections | Yes | Node.js | No | Yes |
 | WebSocket connections | Yes | Yes | Yes | Yes |
-| WebTransport connections | Yes | Yes | No | No |
+| WebTransport connections | Go direct | Browser | No | No |
 | Server-side session acceptance | Yes | Node.js | No | Yes |
 | Opaque tunnel runtime | Yes | Node.js | No | Yes |
 | Control-plane invitation issuance | Yes | Node.js | No | Yes |
 | HTTP and WebSocket ProxyServer | Yes | Node.js | No | Yes |
+
+Deployment profiles keep platform availability separate from the shared
+Flowersec application protocol:
+
+| Profile | Runtimes | Required carrier and role surface | Optional surface |
+| --- | --- | --- | --- |
+| `native-server-core` | Go, Rust, Node.js | WebSocket and raw QUIC endpoint client, direct server, and opaque tunnel runtime | WebTransport adapter |
+| `browser-client` | TypeScript browser | WebSocket endpoint client | Browser WebTransport adapter |
+| `apple-client` | Swift on Apple platforms | WSS endpoint client | None |
+| `webtransport-server` | No runtime currently claims it | Direct server and opaque tunnel runtime conformance are both required before claiming | None |
+
+Go, Rust, and Node.js implement the same 18 required `native-server-core`
+tuples. Direct and tunnel conformance exercise every cross-language pairing for
+both required carriers; a profile never changes Artifact, handshake, RPC,
+stream, close, rekey, or authorization wire semantics.
 
 See the SDK guides for the exact platform and connection combinations supported
 by each package.

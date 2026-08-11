@@ -32,7 +32,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: go run . <verify-source|verify-manifest|verify-go|verify-ts|verify-swift|verify-rust|verify-docs|verify-go-coverage-short|verify-go-coverage|verify-parity|verify-defaults|report>")
+		return errors.New("usage: go run . <verify-source|verify-manifest|verify-go|verify-ts|verify-swift|verify-rust|verify-docs|verify-go-coverage-short|verify-go-coverage|verify-parity|verify-server-parity-completion|verify-defaults|report>")
 	}
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
@@ -64,6 +64,8 @@ func run(args []string) error {
 		return verifyGoCoverage(repoRoot, m, false)
 	case "verify-parity":
 		return verifyParity(repoRoot)
+	case "verify-server-parity-completion":
+		return verifyRequiredServerParityComplete(repoRoot)
 	case "verify-defaults":
 		return verifyDefaults(repoRoot)
 	case "report":

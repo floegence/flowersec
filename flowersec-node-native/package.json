@@ -1,0 +1,40 @@
+{
+  "name": "@floegence/flowersec-node-native",
+  "version": "2.3.6",
+  "description": "Prebuilt Flowersec native transport driver for Node.js",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/floegence/flowersec.git",
+    "directory": "flowersec-node-native"
+  },
+  "type": "commonjs",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "LICENSE",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md",
+    "sbom/**"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "optionalDependencies": {
+    "@floegence/flowersec-node-native-darwin-arm64": "2.3.6",
+    "@floegence/flowersec-node-native-darwin-x64": "2.3.6",
+    "@floegence/flowersec-node-native-linux-arm64-gnu": "2.3.6",
+    "@floegence/flowersec-node-native-linux-x64-gnu": "2.3.6"
+  },
+  "napi": {
+    "binaryName": "flowersec-node-native",
+    "targets": [
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-unknown-linux-gnu"
+    ]
+  }
+}

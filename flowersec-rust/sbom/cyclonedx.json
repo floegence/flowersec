@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:4081b406-1a2c-58a3-8b72-dc71d89d4186",
+  "serialNumber": "urn:uuid:2d6cf620-86db-5b72-80c8-d4245702dafe",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "ec607c58e166433b649a580a82d042d291cf72b750498ff73421179eb4056ee8"
+        "value": "4048e81159f72f9ae49b3029978ee6fc02d59e37f49515bdf9aa2ea4d666f69f"
       }
     ]
   },
@@ -208,34 +208,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "base64",
-      "version": "0.22.1",
-      "purl": "pkg:cargo/base64@0.22.1",
-      "bom-ref": "pkg:cargo/base64@0.22.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/marshallpierce/rust-base64"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -1869,34 +1841,6 @@
     },
     {
       "type": "library",
-      "name": "hyper-rustls",
-      "version": "0.27.9",
-      "purl": "pkg:cargo/hyper-rustls@0.27.9",
-      "bom-ref": "pkg:cargo/hyper-rustls@0.27.9",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/rustls/hyper-rustls"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0 OR ISC OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "hyper-util",
       "version": "0.1.20",
       "purl": "pkg:cargo/hyper-util@0.1.20",
@@ -2022,34 +1966,6 @@
         {
           "type": "distribution",
           "url": "https://github.com/RustCrypto/utils"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "ipnet",
-      "version": "2.12.1",
-      "purl": "pkg:cargo/ipnet@2.12.1",
-      "bom-ref": "pkg:cargo/ipnet@2.12.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/krisprice/ipnet"
         }
       ],
       "properties": [
@@ -3185,34 +3101,6 @@
     },
     {
       "type": "library",
-      "name": "reqwest",
-      "version": "0.12.28",
-      "purl": "pkg:cargo/reqwest@0.12.28",
-      "bom-ref": "pkg:cargo/reqwest@0.12.28",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/seanmonstar/reqwest"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "rfc6979",
       "version": "0.6.0",
       "purl": "pkg:cargo/rfc6979@0.6.0",
@@ -3437,34 +3325,6 @@
     },
     {
       "type": "library",
-      "name": "ryu",
-      "version": "1.0.23",
-      "purl": "pkg:cargo/ryu@1.0.23",
-      "bom-ref": "pkg:cargo/ryu@1.0.23",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/dtolnay/ryu"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0 OR BSL-1.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "scopeguard",
       "version": "1.2.0",
       "purl": "pkg:cargo/scopeguard@1.2.0",
@@ -3646,34 +3506,6 @@
         {
           "type": "distribution",
           "url": "https://github.com/serde-rs/json"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "serde_urlencoded",
-      "version": "0.7.1",
-      "purl": "pkg:cargo/serde_urlencoded@0.7.1",
-      "bom-ref": "pkg:cargo/serde_urlencoded@0.7.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/nox/serde_urlencoded"
         }
       ],
       "properties": [
@@ -4053,34 +3885,6 @@
     },
     {
       "type": "library",
-      "name": "sync_wrapper",
-      "version": "1.0.2",
-      "purl": "pkg:cargo/sync_wrapper@1.0.2",
-      "bom-ref": "pkg:cargo/sync_wrapper@1.0.2",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/Actyx/sync_wrapper"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "thiserror",
       "version": "2.0.20",
       "purl": "pkg:cargo/thiserror@2.0.20",
@@ -4402,118 +4206,6 @@
         {
           "type": "distribution",
           "url": "https://github.com/tokio-rs/tokio"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tower",
-      "version": "0.5.3",
-      "purl": "pkg:cargo/tower@0.5.3",
-      "bom-ref": "pkg:cargo/tower@0.5.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/tower-rs/tower"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tower-http",
-      "version": "0.6.11",
-      "purl": "pkg:cargo/tower-http@0.6.11",
-      "bom-ref": "pkg:cargo/tower-http@0.6.11",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/tower-rs/tower-http"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tower-layer",
-      "version": "0.3.3",
-      "purl": "pkg:cargo/tower-layer@0.3.3",
-      "bom-ref": "pkg:cargo/tower-layer@0.3.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/tower-rs/tower"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tower-service",
-      "version": "0.3.3",
-      "purl": "pkg:cargo/tower-service@0.3.3",
-      "bom-ref": "pkg:cargo/tower-service@0.3.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/tower-rs/tower"
         }
       ],
       "properties": [
@@ -5061,34 +4753,6 @@
     },
     {
       "type": "library",
-      "name": "wasm-bindgen-futures",
-      "version": "0.4.77",
-      "purl": "pkg:cargo/wasm-bindgen-futures@0.4.77",
-      "bom-ref": "pkg:cargo/wasm-bindgen-futures@0.4.77",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/futures"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "wasm-bindgen-macro",
       "version": "0.2.127",
       "purl": "pkg:cargo/wasm-bindgen-macro@0.2.127",
@@ -5158,62 +4822,6 @@
         {
           "type": "distribution",
           "url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "wasm-streams",
-      "version": "0.4.2",
-      "purl": "pkg:cargo/wasm-streams@0.4.2",
-      "bom-ref": "pkg:cargo/wasm-streams@0.4.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/MattiasBuelens/wasm-streams/"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "web-sys",
-      "version": "0.3.104",
-      "purl": "pkg:cargo/web-sys@0.3.104",
-      "bom-ref": "pkg:cargo/web-sys@0.3.104",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys"
         }
       ],
       "properties": [
@@ -5855,13 +5463,16 @@
         "pkg:cargo/futures-util@0.3.33",
         "pkg:cargo/hkdf@0.13.0",
         "pkg:cargo/hmac@0.13.0",
+        "pkg:cargo/http-body-util@0.1.4",
+        "pkg:cargo/http@1.5.0",
+        "pkg:cargo/hyper-util@0.1.20",
+        "pkg:cargo/hyper@1.11.0",
         "pkg:cargo/idna@1.1.0",
         "pkg:cargo/idna_adapter@1.1.0",
         "pkg:cargo/idna_mapping@1.0.0",
         "pkg:cargo/p256@0.14.0",
         "pkg:cargo/quinn@0.11.11",
         "pkg:cargo/rand@0.10.2",
-        "pkg:cargo/reqwest@0.12.28",
         "pkg:cargo/ring@0.17.14",
         "pkg:cargo/rustls@0.23.43",
         "pkg:cargo/serde@1.0.229",
@@ -5925,10 +5536,6 @@
     },
     {
       "ref": "pkg:cargo/base16ct@1.0.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:cargo/base64@0.22.1",
       "dependsOn": []
     },
     {
@@ -6345,35 +5952,14 @@
       ]
     },
     {
-      "ref": "pkg:cargo/hyper-rustls@0.27.9",
-      "dependsOn": [
-        "pkg:cargo/http@1.5.0",
-        "pkg:cargo/hyper-util@0.1.20",
-        "pkg:cargo/hyper@1.11.0",
-        "pkg:cargo/rustls@0.23.43",
-        "pkg:cargo/tokio-rustls@0.26.4",
-        "pkg:cargo/tokio@1.53.1",
-        "pkg:cargo/tower-service@0.3.3"
-      ]
-    },
-    {
       "ref": "pkg:cargo/hyper-util@0.1.20",
       "dependsOn": [
-        "pkg:cargo/base64@0.22.1",
         "pkg:cargo/bytes@1.12.1",
-        "pkg:cargo/futures-channel@0.3.33",
-        "pkg:cargo/futures-util@0.3.33",
         "pkg:cargo/http-body@1.1.0",
         "pkg:cargo/http@1.5.0",
         "pkg:cargo/hyper@1.11.0",
-        "pkg:cargo/ipnet@2.12.1",
-        "pkg:cargo/libc@0.2.189",
-        "pkg:cargo/percent-encoding@2.3.2",
         "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/socket2@0.6.5",
-        "pkg:cargo/tokio@1.53.1",
-        "pkg:cargo/tower-service@0.3.3",
-        "pkg:cargo/tracing@0.1.44"
+        "pkg:cargo/tokio@1.53.1"
       ]
     },
     {
@@ -6403,10 +5989,6 @@
       "dependsOn": [
         "pkg:cargo/hybrid-array@0.4.14"
       ]
-    },
-    {
-      "ref": "pkg:cargo/ipnet@2.12.1",
-      "dependsOn": []
     },
     {
       "ref": "pkg:cargo/itoa@1.0.18",
@@ -6681,43 +6263,6 @@
       ]
     },
     {
-      "ref": "pkg:cargo/reqwest@0.12.28",
-      "dependsOn": [
-        "pkg:cargo/base64@0.22.1",
-        "pkg:cargo/bytes@1.12.1",
-        "pkg:cargo/futures-core@0.3.33",
-        "pkg:cargo/futures-util@0.3.33",
-        "pkg:cargo/http-body-util@0.1.4",
-        "pkg:cargo/http-body@1.1.0",
-        "pkg:cargo/http@1.5.0",
-        "pkg:cargo/hyper-rustls@0.27.9",
-        "pkg:cargo/hyper-util@0.1.20",
-        "pkg:cargo/hyper@1.11.0",
-        "pkg:cargo/js-sys@0.3.104",
-        "pkg:cargo/log@0.4.33",
-        "pkg:cargo/percent-encoding@2.3.2",
-        "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/quinn@0.11.11",
-        "pkg:cargo/rustls-pki-types@1.15.1",
-        "pkg:cargo/rustls@0.23.43",
-        "pkg:cargo/serde@1.0.229",
-        "pkg:cargo/serde_json@1.0.151",
-        "pkg:cargo/serde_urlencoded@0.7.1",
-        "pkg:cargo/sync_wrapper@1.0.2",
-        "pkg:cargo/tokio-rustls@0.26.4",
-        "pkg:cargo/tokio-util@0.7.19",
-        "pkg:cargo/tokio@1.53.1",
-        "pkg:cargo/tower-http@0.6.11",
-        "pkg:cargo/tower-service@0.3.3",
-        "pkg:cargo/tower@0.5.3",
-        "pkg:cargo/url@2.5.8",
-        "pkg:cargo/wasm-bindgen-futures@0.4.77",
-        "pkg:cargo/wasm-bindgen@0.2.127",
-        "pkg:cargo/wasm-streams@0.4.2",
-        "pkg:cargo/web-sys@0.3.104"
-      ]
-    },
-    {
       "ref": "pkg:cargo/rfc6979@0.6.0",
       "dependsOn": [
         "pkg:cargo/crypto-bigint@0.7.5",
@@ -6776,10 +6321,6 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/ryu@1.0.23",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:cargo/scopeguard@1.2.0",
       "dependsOn": []
     },
@@ -6827,15 +6368,6 @@
         "pkg:cargo/serde@1.0.229",
         "pkg:cargo/serde_core@1.0.229",
         "pkg:cargo/zmij@1.0.23"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/serde_urlencoded@0.7.1",
-      "dependsOn": [
-        "pkg:cargo/form_urlencoded@1.2.2",
-        "pkg:cargo/itoa@1.0.18",
-        "pkg:cargo/ryu@1.0.23",
-        "pkg:cargo/serde@1.0.229"
       ]
     },
     {
@@ -6916,12 +6448,6 @@
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
         "pkg:cargo/unicode-ident@1.0.24"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/sync_wrapper@1.0.2",
-      "dependsOn": [
-        "pkg:cargo/futures-core@0.3.33"
       ]
     },
     {
@@ -7017,41 +6543,6 @@
         "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/tokio@1.53.1"
       ]
-    },
-    {
-      "ref": "pkg:cargo/tower@0.5.3",
-      "dependsOn": [
-        "pkg:cargo/futures-core@0.3.33",
-        "pkg:cargo/futures-util@0.3.33",
-        "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/sync_wrapper@1.0.2",
-        "pkg:cargo/tokio@1.53.1",
-        "pkg:cargo/tower-layer@0.3.3",
-        "pkg:cargo/tower-service@0.3.3"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/tower-http@0.6.11",
-      "dependsOn": [
-        "pkg:cargo/bitflags@2.13.1",
-        "pkg:cargo/bytes@1.12.1",
-        "pkg:cargo/futures-util@0.3.33",
-        "pkg:cargo/http-body@1.1.0",
-        "pkg:cargo/http@1.5.0",
-        "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/tower-layer@0.3.3",
-        "pkg:cargo/tower-service@0.3.3",
-        "pkg:cargo/tower@0.5.3",
-        "pkg:cargo/url@2.5.8"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/tower-layer@0.3.3",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:cargo/tower-service@0.3.3",
-      "dependsOn": []
     },
     {
       "ref": "pkg:cargo/tracing@0.1.44",
@@ -7166,13 +6657,6 @@
       ]
     },
     {
-      "ref": "pkg:cargo/wasm-bindgen-futures@0.4.77",
-      "dependsOn": [
-        "pkg:cargo/js-sys@0.3.104",
-        "pkg:cargo/wasm-bindgen@0.2.127"
-      ]
-    },
-    {
       "ref": "pkg:cargo/wasm-bindgen-macro@0.2.127",
       "dependsOn": [
         "pkg:cargo/quote@1.0.47",
@@ -7193,23 +6677,6 @@
       "ref": "pkg:cargo/wasm-bindgen-shared@0.2.127",
       "dependsOn": [
         "pkg:cargo/unicode-ident@1.0.24"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/wasm-streams@0.4.2",
-      "dependsOn": [
-        "pkg:cargo/futures-util@0.3.33",
-        "pkg:cargo/js-sys@0.3.104",
-        "pkg:cargo/wasm-bindgen-futures@0.4.77",
-        "pkg:cargo/wasm-bindgen@0.2.127",
-        "pkg:cargo/web-sys@0.3.104"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/web-sys@0.3.104",
-      "dependsOn": [
-        "pkg:cargo/js-sys@0.3.104",
-        "pkg:cargo/wasm-bindgen@0.2.127"
       ]
     },
     {

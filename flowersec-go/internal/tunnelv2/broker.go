@@ -86,6 +86,14 @@ func Bridge(ctx context.Context, clientLeg, serverLeg carrier.Session, limits Li
 	tasks.Add(2)
 	go acceptLoop(bridgeContext, tasks, semaphore, clientLeg, serverLeg, limits.CopyBufferBytes)
 	go acceptLoop(bridgeContext, tasks, semaphore, serverLeg, clientLeg, limits.CopyBufferBytes)
+	clientUnreliable, clientSupportsUnreliable := clientLeg.(carrier.UnreliableTransport)
+	serverUnreliable, serverSupportsUnreliable := serverLeg.(carrier.UnreliableTransport)
+	if clientSupportsUnreliable && serverSupportsUnreliable &&
+		clientUnreliable.UnreliableAvailable() && serverUnreliable.UnreliableAvailable() {
+		tasks.Add(2)
+		go unreliableLoop(bridgeContext, tasks, clientUnreliable, serverUnreliable)
+		go unreliableLoop(bridgeContext, tasks, serverUnreliable, clientUnreliable)
+	}
 
 	<-bridgeContext.Done()
 	cause := context.Cause(bridgeContext)
@@ -103,6 +111,23 @@ func Bridge(ctx context.Context, clientLeg, serverLeg carrier.Session, limits Li
 	cancelClose()
 	waitError := tasks.Wait(cleanupCtx)
 	return errors.Join(cause, closeError, waitError)
+}
+
+func unreliableLoop(
+	ctx context.Context,
+	tasks *taskGroup,
+	source, target carrier.UnreliableTransport,
+) {
+	defer tasks.Done()
+	for {
+		payload, err := source.ReceiveUnreliable(ctx)
+		if err != nil {
+			return
+		}
+		if err := target.SendUnreliable(payload); err != nil {
+			return
+		}
+	}
 }
 
 func acceptLoop(
