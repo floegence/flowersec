@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -149,6 +150,29 @@ func TestCoordinatorWebSocketAuthorizerRejectDoesNotActivateYamux(t *testing.T) 
 	}
 	if serveErr := <-done; !errors.As(serveErr, &responseError) {
 		t.Fatalf("Serve error = %v", serveErr)
+	}
+}
+
+func TestCoordinatorWebSocketPendingLegAdmissionTimeout(t *testing.T) {
+	endpointConn, tunnelConn := newTunnelWebSocketPair(t)
+	defer endpointConn.Close()
+	leg, err := tunnelv2.NewWebSocketPendingLeg(tunnelConn, carrierws.DefaultResourcePolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var authorizeCalls atomic.Int32
+	coordinator, err := tunnelv2.NewCoordinator(tunnelv2.Config{AdmissionTimeout: 20 * time.Millisecond}, func(context.Context, *artifactv2.DecodedRequest) (tunnelv2.Authorization, error) {
+		authorizeCalls.Add(1)
+		return tunnelv2.Authorization{}, errors.New("unexpected authorizer call")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serveLeg(coordinator, context.Background(), leg); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Serve error = %v, want admission deadline", err)
+	}
+	if authorizeCalls.Load() != 0 {
+		t.Fatalf("silent WebSocket authorizer calls = %d", authorizeCalls.Load())
 	}
 }
 

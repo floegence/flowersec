@@ -78,6 +78,7 @@ func newRuntimeServer(config Config, authorizer authorizationProvider, logger *l
 	}
 	coordinatorConfig := tunnelv2.DefaultConfig()
 	coordinatorConfig.Reasons = reasons
+	coordinatorConfig.AdmissionTimeout = config.admissionTimeout()
 	coordinator, err := tunnelv2.NewCoordinator(coordinatorConfig, tunnelAuthorizer(authorizer, reasons))
 	if err != nil {
 		return nil, err

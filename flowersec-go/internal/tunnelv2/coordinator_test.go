@@ -19,8 +19,118 @@ import (
 
 func TestDefaultConfigAllows1024ActivePairs(t *testing.T) {
 	config := tunnelv2.DefaultConfig()
-	if config.MaxActivePairs != 1024 || config.MaxPendingLegs != 1024 {
-		t.Fatalf("default tunnel capacity = active %d pending %d", config.MaxActivePairs, config.MaxPendingLegs)
+	if config.MaxConcurrentAdmissions != 1024 || config.MaxActivePairs != 1024 || config.MaxPendingLegs != 1024 {
+		t.Fatalf("default tunnel capacity = admissions %d active %d pending %d", config.MaxConcurrentAdmissions, config.MaxActivePairs, config.MaxPendingLegs)
+	}
+	if config.AdmissionTimeout != 10*time.Second {
+		t.Fatalf("default admission timeout = %v", config.AdmissionTimeout)
+	}
+}
+
+func TestCoordinatorAdmissionTimeoutStopsCredentialRead(t *testing.T) {
+	coordinator := newTestCoordinator(t, tunnelv2.Config{AdmissionTimeout: 20 * time.Millisecond})
+	_, tunnel := memorySessionPair(carrier.KindRawQUIC)
+	leg := newPendingLeg(tunnelRequest(1, "client", "silent-token"), tunnel)
+	leg.blockReceive = true
+
+	done := serveLeg(coordinator, context.Background(), leg)
+	if err := <-done; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Serve error = %v, want admission deadline", err)
+	}
+	if leg.authorized.Load() != 0 || leg.closed.Load() != 1 {
+		t.Fatalf("silent leg state = authorized:%d closed:%d", leg.authorized.Load(), leg.closed.Load())
+	}
+}
+
+func TestCoordinatorAdmissionTimeoutStopsAuthorizerAndReleasesCapacity(t *testing.T) {
+	coordinator := newTestCoordinator(t, tunnelv2.Config{
+		AdmissionTimeout:        20 * time.Millisecond,
+		MaxConcurrentAdmissions: 1,
+	})
+	_, blockedTunnel := memorySessionPair(carrier.KindRawQUIC)
+	blocked := newPendingLeg(tunnelRequest(1, "client", "blocked-authorizer-timeout"), blockedTunnel)
+	blocked.authorizeGate = make(chan struct{})
+	blocked.authorizeStarted = make(chan struct{})
+
+	done := serveLeg(coordinator, context.Background(), blocked)
+	waitForSignal(t, blocked.authorizeStarted, "blocked authorizer call")
+	if err := <-done; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Serve error = %v, want admission deadline", err)
+	}
+	if blocked.authorized.Load() != 1 || blocked.closed.Load() != 1 {
+		t.Fatalf("timed-out authorizer state = authorized:%d closed:%d", blocked.authorized.Load(), blocked.closed.Load())
+	}
+
+	_, nextTunnel := memorySessionPair(carrier.KindRawQUIC)
+	next := newPendingLeg(tunnelRequest(1, "client", "slot-after-timeout"), nextTunnel)
+	next.authorizeErr = errors.New("authorization probe")
+	if err := <-serveLeg(coordinator, context.Background(), next); !errors.Is(err, next.authorizeErr) {
+		t.Fatalf("released-slot Serve error = %v", err)
+	}
+	if next.authorized.Load() != 1 {
+		t.Fatalf("released-slot authorizer calls = %d", next.authorized.Load())
+	}
+}
+
+func TestCoordinatorPreAuthorizationCapacityBoundsAuthorizerCalls(t *testing.T) {
+	coordinator := newTestCoordinator(t, tunnelv2.Config{
+		AdmissionTimeout:        time.Second,
+		MaxConcurrentAdmissions: 1,
+	})
+	_, firstTunnel := memorySessionPair(carrier.KindRawQUIC)
+	first := newPendingLeg(tunnelRequest(1, "client", "blocked-authorizer"), firstTunnel)
+	gate := make(chan struct{})
+	first.authorizeGate = gate
+	first.authorizeStarted = make(chan struct{})
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	firstDone := serveLeg(coordinator, firstCtx, first)
+	waitForSignal(t, first.authorizeStarted, "first authorizer call")
+
+	_, rejectedTunnel := memorySessionPair(carrier.KindRawQUIC)
+	rejected := newPendingLeg(tunnelRequest(2, "server", "capacity-rejected"), rejectedTunnel)
+	if err := <-serveLeg(coordinator, context.Background(), rejected); !errors.Is(err, tunnelv2.ErrCapacity) {
+		t.Fatalf("capacity Serve error = %v", err)
+	}
+	select {
+	case <-rejected.received:
+		t.Fatal("capacity-rejected leg read credentials")
+	default:
+	}
+	if rejected.authorized.Load() != 0 || rejected.closed.Load() != 1 {
+		t.Fatalf("capacity-rejected state = authorized:%d closed:%d", rejected.authorized.Load(), rejected.closed.Load())
+	}
+
+	cancelFirst()
+	assertServeCanceled(t, firstDone)
+	close(gate)
+	_, nextTunnel := memorySessionPair(carrier.KindRawQUIC)
+	next := newPendingLeg(tunnelRequest(1, "client", "released-admission-slot"), nextTunnel)
+	next.authorizeErr = errors.New("authorization probe")
+	if err := <-serveLeg(coordinator, context.Background(), next); !errors.Is(err, next.authorizeErr) {
+		t.Fatalf("released-slot Serve error = %v", err)
+	}
+	if next.authorized.Load() != 1 {
+		t.Fatalf("released-slot authorizer calls = %d", next.authorized.Load())
+	}
+}
+
+func TestCoordinatorRejectsInvalidAdmissionConfig(t *testing.T) {
+	tests := []struct {
+		name   string
+		config tunnelv2.Config
+	}{
+		{name: "timeout", config: tunnelv2.Config{AdmissionTimeout: -time.Second}},
+		{name: "capacity", config: tunnelv2.Config{MaxConcurrentAdmissions: -1}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := tunnelv2.NewCoordinator(test.config, func(context.Context, *artifactv2.DecodedRequest) (tunnelv2.Authorization, error) {
+				return tunnelv2.Authorization{}, nil
+			})
+			if !errors.Is(err, tunnelv2.ErrInvalidConfig) {
+				t.Fatalf("NewCoordinator error = %v, want invalid config", err)
+			}
+		})
 	}
 }
 
@@ -602,13 +712,24 @@ func TestCoordinatorCleanupDeadlineBoundsPendingLegClose(t *testing.T) {
 
 func newTestCoordinator(t *testing.T, config tunnelv2.Config) *tunnelv2.Coordinator {
 	t.Helper()
-	coordinator, err := tunnelv2.NewCoordinator(config, func(_ context.Context, decoded *artifactv2.DecodedRequest) (tunnelv2.Authorization, error) {
+	coordinator, err := tunnelv2.NewCoordinator(config, func(ctx context.Context, decoded *artifactv2.DecodedRequest) (tunnelv2.Authorization, error) {
 		request := decoded.Request
 		expected := "server"
 		if request.Role == 2 {
 			expected = "client"
 		}
 		leg := currentPendingLeg(decoded)
+		leg.authorized.Add(1)
+		if leg.authorizeStarted != nil {
+			leg.authorizeStartedOnce.Do(func() { close(leg.authorizeStarted) })
+		}
+		if leg.authorizeGate != nil {
+			select {
+			case <-leg.authorizeGate:
+			case <-ctx.Done():
+				return tunnelv2.Authorization{}, ctx.Err()
+			}
+		}
 		if leg.authorizeErr != nil {
 			return tunnelv2.Authorization{}, leg.authorizeErr
 		}
@@ -651,23 +772,28 @@ func currentPendingLeg(decoded *artifactv2.DecodedRequest) *pendingLeg {
 }
 
 type pendingLeg struct {
-	decoded          *artifactv2.DecodedRequest
-	session          carrier.Session
-	lease            *countingLease
-	received         chan struct{}
-	responses        chan artifactv2.AdmissionResponse
-	sendErr          error
-	activations      atomic.Int32
-	closed           atomic.Int32
-	expiresAt        time.Time
-	allowReplacement bool
-	authorizeErr     error
-	mutateClaims     func(*tunnelv2.VerifiedClaims)
-	blockSend        bool
-	blockActivation  bool
-	closeBlock       <-chan struct{}
-	closeEntered     chan struct{}
-	closeEnteredOnce sync.Once
+	decoded              *artifactv2.DecodedRequest
+	session              carrier.Session
+	lease                *countingLease
+	received             chan struct{}
+	responses            chan artifactv2.AdmissionResponse
+	sendErr              error
+	activations          atomic.Int32
+	closed               atomic.Int32
+	expiresAt            time.Time
+	allowReplacement     bool
+	authorizeErr         error
+	mutateClaims         func(*tunnelv2.VerifiedClaims)
+	blockSend            bool
+	blockActivation      bool
+	closeBlock           <-chan struct{}
+	closeEntered         chan struct{}
+	closeEnteredOnce     sync.Once
+	blockReceive         bool
+	authorized           atomic.Int32
+	authorizeGate        <-chan struct{}
+	authorizeStarted     chan struct{}
+	authorizeStartedOnce sync.Once
 }
 
 var pendingBindingSequence atomic.Uint64
@@ -698,11 +824,15 @@ func newPendingLeg(request artifactv2.Request, session carrier.Session) *pending
 	return leg
 }
 
-func (leg *pendingLeg) ReceiveAdmission(context.Context) (*artifactv2.DecodedRequest, error) {
+func (leg *pendingLeg) ReceiveAdmission(ctx context.Context) (*artifactv2.DecodedRequest, error) {
 	select {
 	case <-leg.received:
 	default:
 		close(leg.received)
+	}
+	if leg.blockReceive {
+		<-ctx.Done()
+		return nil, ctx.Err()
 	}
 	return leg.decoded, nil
 }

@@ -98,7 +98,11 @@ type Authorize func(context.Context, *artifactv2.DecodedRequest) (Authorization,
 
 // Config bounds pending legs, active pairs, admission work, and bridge work.
 type Config struct {
-	PairTimeout time.Duration
+	PairTimeout      time.Duration
+	AdmissionTimeout time.Duration
+	// MaxConcurrentAdmissions bounds credential reads and authorizer calls
+	// before a verified leg enters the pending or active pair quotas.
+	MaxConcurrentAdmissions int
 	// MaxPendingLegs counts legs waiting for a missing peer. The matching
 	// second leg transitions directly to active quota, so a value of one is valid.
 	MaxPendingLegs           int
@@ -116,7 +120,8 @@ type Config struct {
 // DefaultConfig returns the production tunnel coordinator limits.
 func DefaultConfig() Config {
 	return Config{
-		PairTimeout: 10 * time.Second, MaxPendingLegs: 1024, MaxActivePairs: 1024,
+		PairTimeout: 10 * time.Second, AdmissionTimeout: 10 * time.Second,
+		MaxConcurrentAdmissions: 1024, MaxPendingLegs: 1024, MaxActivePairs: 1024,
 		BridgeLimits: DefaultLimits(), Reasons: defaultReasons(), GuardStopTimeout: time.Second,
 		AdmissionResponseTimeout: 2 * time.Second, ActivationTimeout: 10 * time.Second,
 	}
@@ -150,6 +155,7 @@ type Coordinator struct {
 	used        map[string]time.Time
 	pendingLegs int
 	activePairs int
+	admissions  chan struct{}
 }
 
 type authorityKey struct {
@@ -187,6 +193,12 @@ func NewCoordinator(config Config, authorize Authorize) (*Coordinator, error) {
 	if config.PairTimeout == 0 {
 		config.PairTimeout = defaults.PairTimeout
 	}
+	if config.AdmissionTimeout == 0 {
+		config.AdmissionTimeout = defaults.AdmissionTimeout
+	}
+	if config.MaxConcurrentAdmissions == 0 {
+		config.MaxConcurrentAdmissions = defaults.MaxConcurrentAdmissions
+	}
 	if config.MaxPendingLegs == 0 {
 		config.MaxPendingLegs = defaults.MaxPendingLegs
 	}
@@ -206,7 +218,8 @@ func NewCoordinator(config Config, authorize Authorize) (*Coordinator, error) {
 	if config.ActivationTimeout == 0 {
 		config.ActivationTimeout = defaults.ActivationTimeout
 	}
-	if config.PairTimeout < time.Millisecond || config.MaxPendingLegs < 1 ||
+	if config.PairTimeout < time.Millisecond || config.AdmissionTimeout < time.Millisecond ||
+		config.MaxConcurrentAdmissions < 1 || config.MaxPendingLegs < 1 ||
 		config.MaxActivePairs < 1 || config.GuardStopTimeout < time.Millisecond ||
 		config.AdmissionResponseTimeout < time.Millisecond || config.ActivationTimeout < time.Millisecond ||
 		config.BridgeLimits.validate() != nil || authorize == nil {
@@ -225,6 +238,7 @@ func NewCoordinator(config Config, authorize Authorize) (*Coordinator, error) {
 	return &Coordinator{
 		config: config, authorize: authorize,
 		groups: make(map[authorityKey]*pairGeneration), used: make(map[string]time.Time),
+		admissions: make(chan struct{}, config.MaxConcurrentAdmissions),
 	}, nil
 }
 
@@ -236,14 +250,22 @@ func (coordinator *Coordinator) Serve(ctx context.Context, pending PendingLeg) e
 	if coordinator == nil || pending == nil {
 		return io.ErrClosedPipe
 	}
-	decoded, err := pending.ReceiveAdmission(ctx)
+	releaseAdmission, acquired := coordinator.acquireAdmission()
+	if !acquired {
+		return errors.Join(ErrCapacity, coordinator.closePendingLegs([]PendingLeg{pending}, ReasonCapacity))
+	}
+	defer releaseAdmission()
+	admissionCtx, cancelAdmission := context.WithTimeout(ctx, coordinator.config.AdmissionTimeout)
+	defer cancelAdmission()
+
+	decoded, err := pending.ReceiveAdmission(admissionCtx)
 	if err != nil {
 		return errors.Join(err, coordinator.closePendingLegs([]PendingLeg{pending}, ReasonInvalidCredential))
 	}
 	if err := validateCarrierBinding(decoded, pending.CarrierKind()); err != nil {
-		return errors.Join(err, coordinator.rejectUnregistered(ctx, pending, artifactv2.AdmissionReject, ReasonInvalidCredential))
+		return errors.Join(err, coordinator.rejectUnregistered(admissionCtx, pending, artifactv2.AdmissionReject, ReasonInvalidCredential))
 	}
-	authorization, err := coordinator.authorize(ctx, decoded)
+	authorization, err := coordinator.authorize(admissionCtx, decoded)
 	if err != nil {
 		if authorization.Lease != nil {
 			authorization.Lease.Release()
@@ -253,15 +275,21 @@ func (coordinator *Coordinator) Serve(ctx context.Context, pending PendingLeg) e
 		if errors.As(err, &responseError) && responseError.Status != artifactv2.AdmissionSuccess {
 			status, reason = responseError.Status, responseError.Reason
 		}
-		return errors.Join(err, coordinator.rejectUnregistered(ctx, pending, status, reason))
+		return errors.Join(err, coordinator.rejectUnregistered(admissionCtx, pending, status, reason))
 	}
 	if err := validateAuthorization(decoded, authorization, time.Now()); err != nil {
 		if authorization.Lease != nil {
 			authorization.Lease.Release()
 		}
-		coordinator.rejectUnregistered(ctx, pending, artifactv2.AdmissionReject, ReasonInvalidCredential)
+		coordinator.rejectUnregistered(admissionCtx, pending, artifactv2.AdmissionReject, ReasonInvalidCredential)
 		return err
 	}
+	if err := admissionCtx.Err(); err != nil {
+		authorization.Lease.Release()
+		return errors.Join(err, coordinator.closePendingLegs([]PendingLeg{pending}, ReasonInvalidCredential))
+	}
+	cancelAdmission()
+	releaseAdmission()
 
 	leg := &admittedLeg{pending: pending, authorization: authorization}
 	generation, err := coordinator.register(ctx, leg)
@@ -282,6 +310,18 @@ func (coordinator *Coordinator) Serve(ctx context.Context, pending PendingLeg) e
 
 	<-generation.done
 	return generation.err
+}
+
+func (coordinator *Coordinator) acquireAdmission() (func(), bool) {
+	select {
+	case coordinator.admissions <- struct{}{}:
+		var once sync.Once
+		return func() {
+			once.Do(func() { <-coordinator.admissions })
+		}, true
+	default:
+		return func() {}, false
+	}
 }
 
 func validateCarrierBinding(decoded *artifactv2.DecodedRequest, actual carrier.Kind) error {
