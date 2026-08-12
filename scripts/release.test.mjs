@@ -133,6 +133,20 @@ test("crates registry readback sends a compliant User-Agent for metadata and dow
   );
 });
 
+test("registry package readback avoids dynamic regex and network-derived archive files", () => {
+  for (const filename of ["verify-crates-release-package.mjs", "verify-npm-release-package.mjs"]) {
+    const readback = fs.readFileSync(path.join(sourceRoot, "scripts", filename), "utf8");
+    assert.doesNotMatch(readback, /new RegExp\(/, `${filename} must not compile registry-derived regular expressions`);
+    assert.doesNotMatch(readback, /fs\.writeFile\(/, `${filename} must not write registry response bytes to a path`);
+    assert.match(readback, /MAX_ARCHIVE_BYTES/, `${filename} must bound downloaded archive bytes`);
+    assert.doesNotMatch(readback, /"-C"/, `${filename} must not extract registry content into a directory`);
+    assert.match(readback, /"-tzf", "-"/, `${filename} must validate the archive entry inventory from standard input`);
+    assert.match(readback, /"-xOzf", "-"/, `${filename} must read only exact archive entries from standard input`);
+    assert.match(readback, /assertSafeArchive/, `${filename} must reject unsafe paths, links, and duplicates`);
+    assert.match(readback, /assertRegistryURL/, `${filename} must bind downloads to the reviewed registry hosts`);
+  }
+});
+
 test("Rust registry publication waits for exact consumer resolution at each dependency layer", () => {
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/rust-release.yml"), "utf8");
   const consumer = fs.readFileSync(path.join(sourceRoot, "scripts/verify-crates-release-consumer.mjs"), "utf8");
