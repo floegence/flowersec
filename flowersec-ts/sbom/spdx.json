@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-ts",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-ts/4048e81159f72f9ae49b3029978ee6fc02d59e37f49515bdf9aa2ea4d666f69f",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-ts/e2ae80e088d1b91e6a63bf85b06fbe5421e4ffa3c13cdab562ee70552235643a",
   "creationInfo": {
     "created": "1970-01-01T00:00:00Z",
     "creators": [
@@ -13,19 +13,19 @@
   "packages": [
     {
       "name": "@floegence/flowersec-core",
-      "SPDXID": "SPDXRef-Package-4be78b4f0b851da93d5b",
-      "versionInfo": "2.3.6",
+      "SPDXID": "SPDXRef-Package-cbe5fbbee1466d26a977",
+      "versionInfo": "2.3.7",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: 4048e81159f72f9ae49b3029978ee6fc02d59e37f49515bdf9aa2ea4d666f69f",
+      "comment": "Flowersec source inventory SHA-256: e2ae80e088d1b91e6a63bf85b06fbe5421e4ffa3c13cdab562ee70552235643a",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/%40floegence/flowersec-core@2.3.6"
+          "referenceLocator": "pkg:npm/%40floegence/flowersec-core@2.3.7"
         }
       ]
     },
@@ -136,30 +136,30 @@
     {
       "spdxElementId": "SPDXRef-DOCUMENT",
       "relationshipType": "DESCRIBES",
-      "relatedSpdxElement": "SPDXRef-Package-4be78b4f0b851da93d5b"
+      "relatedSpdxElement": "SPDXRef-Package-cbe5fbbee1466d26a977"
     },
     {
-      "spdxElementId": "SPDXRef-Package-4be78b4f0b851da93d5b",
+      "spdxElementId": "SPDXRef-Package-cbe5fbbee1466d26a977",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-5ce913a03239b02770fb"
     },
     {
-      "spdxElementId": "SPDXRef-Package-4be78b4f0b851da93d5b",
+      "spdxElementId": "SPDXRef-Package-cbe5fbbee1466d26a977",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-01009adf60db02c13634"
     },
     {
-      "spdxElementId": "SPDXRef-Package-4be78b4f0b851da93d5b",
+      "spdxElementId": "SPDXRef-Package-cbe5fbbee1466d26a977",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-8815b117c8a1d5f7eeb0"
     },
     {
-      "spdxElementId": "SPDXRef-Package-4be78b4f0b851da93d5b",
+      "spdxElementId": "SPDXRef-Package-cbe5fbbee1466d26a977",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-f8b45a289df643042b94"
     },
     {
-      "spdxElementId": "SPDXRef-Package-4be78b4f0b851da93d5b",
+      "spdxElementId": "SPDXRef-Package-cbe5fbbee1466d26a977",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-b779412f685822663496"
     },

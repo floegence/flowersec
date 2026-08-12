@@ -208,9 +208,9 @@ test("upgrade groups contain coordinated protocol stack members", (t) => {
 
 test("new native Cargo manifests cannot hide high-impact dependencies", (t) => {
   expectFailure(t, (root) => {
-    write(root, "flowersec-native-transport/Cargo.toml", `[package]\nname = "flowersec-native-transport"\nversion = "2.3.6"\n\n[dependencies]\nquinn = "=0.11.11"\n`);
+    write(root, "flowersec-native-transport/Cargo.toml", `[package]\nname = "flowersec-native-transport"\nversion = "2.3.7"\n\n[dependencies]\nquinn = "=0.11.11"\n`);
     write(root, "flowersec-native-transport/Cargo.lock", `version = 4\n\n[[package]]\nname = "quinn"\nversion = "0.11.11"\n`);
-    write(root, "flowersec-node-native/Cargo.toml", `[package]\nname = "flowersec-node-native"\nversion = "2.3.6"\n\n[dependencies]\nnapi = "=3.12.1"\n`);
+    write(root, "flowersec-node-native/Cargo.toml", `[package]\nname = "flowersec-node-native"\nversion = "2.3.7"\n\n[dependencies]\nnapi = "=3.12.1"\n`);
     write(root, "flowersec-node-native/Cargo.lock", `version = 4\n\n[[package]]\nname = "napi"\nversion = "3.12.1"\n`);
   }, /high-impact cargo dependency napi has no contract/);
 });

@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 
 import type { NativeRawQuicDriver } from "./nativeTransportAddon.js";
+import { normalizeCertificateChain } from "./rawQuicAdapter.js";
 import { startNodeRawQuicServer } from "./rawQuicServer.js";
 
 describe("Node raw QUIC listener adapter", () => {
@@ -29,6 +30,29 @@ describe("Node raw QUIC listener adapter", () => {
       },
     })).rejects.toThrowError(new TypeError("invalid raw QUIC certificate"));
     expect(driver.bindRawQuic).not.toHaveBeenCalled();
+  });
+
+  test("rejects an oversized PEM bundle before certificate parsing", () => {
+    const oversized = `${TEST_CERTIFICATE}\n${" ".repeat(1024 * 1024)}`;
+    expect(() => normalizeCertificateChain(oversized)).toThrowError(
+      new TypeError("invalid raw QUIC certificate"),
+    );
+  });
+
+  test("accepts a bounded concatenated PEM chain", () => {
+    expect(normalizeCertificateChain(`${TEST_CERTIFICATE}\n${TEST_CERTIFICATE}`)).toHaveLength(2);
+  });
+
+  test("rejects a certificate array that exceeds the chain limit", () => {
+    expect(() => normalizeCertificateChain(Array.from({ length: 33 }, () => TEST_CERTIFICATE))).toThrowError(
+      new TypeError("invalid raw QUIC certificate"),
+    );
+  });
+
+  test("redacts malformed certificate array entries", () => {
+    expect(() => normalizeCertificateChain([null] as unknown as string[])).toThrowError(
+      new TypeError("invalid raw QUIC certificate"),
+    );
   });
 
   test("maps accepted sessions and waits for listener cleanup", async () => {

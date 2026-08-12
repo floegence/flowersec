@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:132bbc7e-e981-5119-8695-26e2b83a50b2",
+  "serialNumber": "urn:uuid:0eea82ba-bcd2-5b44-80b8-c5f6fa949106",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "@floegence/flowersec-core",
-      "version": "2.3.6",
-      "purl": "pkg:npm/%40floegence/flowersec-core@2.3.6",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-core@2.3.6"
+      "version": "2.3.7",
+      "purl": "pkg:npm/%40floegence/flowersec-core@2.3.7",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-core@2.3.7"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "4048e81159f72f9ae49b3029978ee6fc02d59e37f49515bdf9aa2ea4d666f69f"
+        "value": "e2ae80e088d1b91e6a63bf85b06fbe5421e4ffa3c13cdab562ee70552235643a"
       }
     ]
   },
@@ -190,7 +190,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:npm/%40floegence/flowersec-core@2.3.6",
+      "ref": "pkg:npm/%40floegence/flowersec-core@2.3.7",
       "dependsOn": [
         "pkg:npm/%40noble/ciphers@2.3.0",
         "pkg:npm/%40noble/curves@2.3.0",

@@ -1772,7 +1772,7 @@ export function generateSourceArtifacts(repoRoot) {
         "npm",
         packageName,
         releaseVersion,
-        `pkg:npm/${packageName.replace("@", "%40")}@${releaseVersion}`,
+        npmPurl(packageName, releaseVersion),
       ),
       [nodeNativeCargoDistribution],
     );

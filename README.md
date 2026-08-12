@@ -115,8 +115,9 @@ Flowersec application protocol:
 | `webtransport-server` | No runtime currently claims it | Direct server and opaque tunnel runtime conformance are both required before claiming | None |
 
 Go, Rust, and Node.js implement the same 18 required `native-server-core`
-tuples. Direct and tunnel conformance exercise every cross-language pairing for
-both required carriers; a profile never changes Artifact, handshake, RPC,
+runtime-role-carrier tuples. Expanding direct and tunnel paths yields 24 path-specific server units.
+Conformance is counted separately as 18 direct client/server cells and 18
+pairwise tunnel topologies. A profile never changes Artifact, handshake, RPC,
 stream, close, rekey, or authorization wire semantics.
 
 See the SDK guides for the exact platform and connection combinations supported

@@ -86,7 +86,7 @@ Flowersec 將應用工作階段與承載它的網路路徑分離：
 | 條件允許時傳送不可靠訊息 | 是 | 是 | 否 | 是 |
 | 瀏覽器連線 | 否 | 是 | 否 | 否 |
 | Apple 用戶端連線 | 否 | 否 | 是 | 否 |
-| 原生 QUIC 連線 | 是 | 否 | 否 | 是 |
+| 原生 QUIC 連線 | 是 | Node.js | 否 | 是 |
 | WebSocket 連線 | 是 | 是 | 是 | 是 |
 | WebTransport 連線 | Go direct | Browser | 否 | 否 |
 | 伺服器端接收工作階段 | 是 | Node.js | 否 | 是 |
@@ -103,9 +103,7 @@ Flowersec 將應用工作階段與承載它的網路路徑分離：
 | `apple-client` | Apple 平台上的 Swift | WSS endpoint client | 無 |
 | `webtransport-server` | 目前沒有執行環境宣告 | 宣告前必須同時通過 direct server 與 opaque tunnel runtime conformance | 無 |
 
-Go、Rust 和 Node.js 實作相同的 18 個必要 `native-server-core` tuple。
-Direct 和 tunnel conformance 對兩種必要 carrier 驗證所有跨語言組合；profile
-絕不會改變 Artifact、handshake、RPC、stream、close、rekey 或 authorization wire 語意。
+Go、Rust 和 Node.js 實作相同的 18 個必要 `native-server-core` 執行環境-角色-carrier tuple。展開 direct 與 tunnel path 後共有 24 個特定路徑的伺服器單元。Conformance 另行計數為 18 個 direct 用戶端/伺服器 cell 和 18 個兩兩 tunnel topology。profile 絕不會改變 Artifact、handshake、RPC、stream、close、rekey 或 authorization wire 語意。
 
 請參閱各 SDK 指南，了解每個套件支援的平台與連線組合。
 

@@ -63,11 +63,13 @@ func TestLanguageCapabilitiesDeclareNamedDeploymentProfiles(t *testing.T) {
 		DeploymentProfiles struct {
 			ApplicationWire string `json:"application_wire"`
 			Profiles        []struct {
-				ID                 string   `json:"id"`
-				ClaimedRuntimes    []string `json:"claimed_runtimes"`
-				RequiredRoles      []string `json:"required_roles"`
-				RequiredCarriers   []string `json:"required_carriers"`
-				RequiredTupleCount int      `json:"required_tuple_count"`
+				ID                    string              `json:"id"`
+				ClaimedRuntimes       []string            `json:"claimed_runtimes"`
+				RequiredRoles         []string            `json:"required_roles"`
+				RequiredCarriers      []string            `json:"required_carriers"`
+				RequiredTupleCount    int                 `json:"required_tuple_count"`
+				RequiredPathUnitCount int                 `json:"required_path_unit_count"`
+				RequiredPaths         map[string][]string `json:"required_paths"`
 			} `json:"profiles"`
 		} `json:"deployment_profiles"`
 	}
@@ -88,8 +90,8 @@ func TestLanguageCapabilitiesDeclareNamedDeploymentProfiles(t *testing.T) {
 	native := document.DeploymentProfiles.Profiles[0]
 	if !slices.Equal(native.ClaimedRuntimes, []string{"go", "rust", "node-typescript"}) ||
 		!slices.Equal(native.RequiredRoles, []string{"endpoint-client", "direct-server", "tunnel-runtime"}) ||
-		!slices.Equal(native.RequiredCarriers, []string{"websocket", "raw-quic"}) || native.RequiredTupleCount != 18 {
-		t.Fatalf("native-server-core profile does not declare the exact 18 required tuples: %+v", native)
+		!slices.Equal(native.RequiredCarriers, []string{"websocket", "raw-quic"}) || native.RequiredTupleCount != 18 || native.RequiredPathUnitCount != 24 {
+		t.Fatalf("native-server-core profile does not declare the exact 18 tuples and 24 path units: %+v", native)
 	}
 	manifest, err := loadCapabilityManifest(repoRoot)
 	if err != nil {
@@ -113,8 +115,62 @@ func TestLanguageCapabilitiesDeclareNamedDeploymentProfiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	transport.Policies.ProfileApplicationWire = "runtime_private_wire"
-	if err := validateDeploymentProfileTransportBindings(manifest.DeploymentProfiles, transport); err == nil || !strings.Contains(err.Error(), "application wire") {
+	if err := validateDeploymentProfileTransportBindings(manifest.DeploymentProfiles, transport, manifest.ServerParityContract); err == nil || !strings.Contains(err.Error(), "application wire") {
 		t.Fatalf("mutated profile wire validation error = %v", err)
+	}
+}
+
+func TestDeploymentProfileTransportBindingsRequireExactRolePathTuple(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := loadCapabilityManifest(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, err := loadTransportV2Contract(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name, runtime, carrier, network, role, path string
+	}{
+		{"native endpoint direct", "rust_native", "websocket", "dial", "client", "direct"},
+		{"native endpoint tunnel", "rust_native", "websocket", "dial", "client", "tunnel"},
+		{"native endpoint tunnel peer", "rust_native", "websocket", "dial", "server", "tunnel"},
+		{"native direct server", "rust_native", "websocket", "listen", "server", "direct"},
+		{"browser direct", "typescript_browser", "websocket", "dial", "client", "direct"},
+		{"browser tunnel", "typescript_browser", "websocket", "dial", "client", "tunnel"},
+		{"browser tunnel peer", "typescript_browser", "websocket", "dial", "server", "tunnel"},
+		{"apple direct", "swift_ios", "websocket", "dial", "client", "direct"},
+		{"apple tunnel", "swift_macos", "websocket", "dial", "client", "tunnel"},
+		{"apple tunnel peer", "swift_macos", "websocket", "dial", "server", "tunnel"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			mutated := *transport
+			mutated.Runtimes = slices.Clone(transport.Runtimes)
+			for i, runtime := range mutated.Runtimes {
+				if runtime.ID != testCase.runtime {
+					continue
+				}
+				mutated.Runtimes[i].Tuples = slices.DeleteFunc(slices.Clone(runtime.Tuples), func(tuple transportV2RuntimeTuple) bool {
+					return tuple.Carrier == testCase.carrier && tuple.NetworkMode == testCase.network && tuple.SessionRole == testCase.role && tuple.Path == testCase.path
+				})
+			}
+			if err := validateDeploymentProfileTransportBindings(manifest.DeploymentProfiles, &mutated, manifest.ServerParityContract); err == nil || !strings.Contains(err.Error(), testCase.runtime) || !strings.Contains(err.Error(), testCase.path) {
+				t.Fatalf("missing exact runtime role/path tuple error = %v", err)
+			}
+		})
+	}
+
+	parity := *manifest.ServerParityContract
+	parity.Units = slices.DeleteFunc(slices.Clone(parity.Units), func(unit serverParityUnit) bool {
+		return unit.Runtime == "rust" && unit.Role == "tunnel-runtime" && unit.Carrier == "websocket" && unit.Path == "tunnel"
+	})
+	if err := validateDeploymentProfileTransportBindings(manifest.DeploymentProfiles, transport, &parity); err == nil || !strings.Contains(err.Error(), "tunnel-runtime") {
+		t.Fatalf("missing opaque tunnel production unit error = %v", err)
 	}
 }
 

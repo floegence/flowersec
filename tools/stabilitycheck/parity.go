@@ -118,6 +118,7 @@ type deploymentProfile struct {
 	RequiredCapabilityIDs []string            `json:"required_capability_ids"`
 	OptionalCarriers      []string            `json:"optional_carriers"`
 	RequiredTupleCount    int                 `json:"required_tuple_count"`
+	RequiredPathUnitCount int                 `json:"required_path_unit_count"`
 }
 
 type serverParityContract struct {
@@ -358,7 +359,7 @@ func verifyParity(repoRoot string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateDeploymentProfileTransportBindings(m.DeploymentProfiles, transport); err != nil {
+	if err := validateDeploymentProfileTransportBindings(m.DeploymentProfiles, transport, m.ServerParityContract); err != nil {
 		return err
 	}
 	registryIDs, err := loadRegistryIDs(repoRoot)
@@ -414,7 +415,7 @@ func verifyRequiredServerParityComplete(repoRoot string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateDeploymentProfileTransportBindings(m.DeploymentProfiles, transport); err != nil {
+	if err := validateDeploymentProfileTransportBindings(m.DeploymentProfiles, transport, m.ServerParityContract); err != nil {
 		return err
 	}
 	runtimes, carriers, err := nativeServerProfileDimensions(m)
@@ -1216,24 +1217,24 @@ func validateDeploymentProfiles(contract deploymentProfilesContract, parity *ser
 			RequiredRoles:       []string{"endpoint-client", "direct-server", "tunnel-runtime"}, RequiredCarriers: []string{"websocket", "raw-quic"},
 			RequiredPaths:         map[string][]string{"endpoint-client": {"direct", "tunnel"}, "direct-server": {"direct"}, "tunnel-runtime": {"tunnel"}},
 			RequiredCapabilityIDs: []string{"opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"},
-			OptionalCarriers:      []string{"webtransport"}, RequiredTupleCount: 18,
+			OptionalCarriers:      []string{"webtransport"}, RequiredTupleCount: 18, RequiredPathUnitCount: 24,
 		},
 		{
 			ID: "browser-client", ClaimedRuntimes: []string{"typescript-browser"}, TransportRuntimeIDs: []string{"typescript_browser"}, RequiredRoles: []string{"endpoint-client"}, RequiredCarriers: []string{"websocket"},
 			RequiredPaths:         map[string][]string{"endpoint-client": {"direct", "tunnel"}},
 			RequiredCapabilityIDs: []string{"opaque_artifact", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller"},
-			OptionalCarriers:      []string{"webtransport"}, RequiredTupleCount: 1,
+			OptionalCarriers:      []string{"webtransport"}, RequiredTupleCount: 1, RequiredPathUnitCount: 2,
 		},
 		{
 			ID: "apple-client", ClaimedRuntimes: []string{"swift"}, TransportRuntimeIDs: []string{"swift_ios", "swift_macos"}, RequiredRoles: []string{"endpoint-client"}, RequiredCarriers: []string{"websocket"},
 			RequiredPaths:         map[string][]string{"endpoint-client": {"direct", "tunnel"}},
 			RequiredCapabilityIDs: []string{"opaque_artifact", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller"},
-			RequiredTupleCount:    1,
+			RequiredTupleCount:    1, RequiredPathUnitCount: 2,
 		},
 		{
 			ID: "webtransport-server", RequiredRoles: []string{"direct-server", "tunnel-runtime"}, RequiredCarriers: []string{"webtransport"},
 			RequiredPaths:         map[string][]string{"direct-server": {"direct"}, "tunnel-runtime": {"tunnel"}},
-			RequiredCapabilityIDs: []string{"secure_session", "rpc_call_notify", "validated_stream_metadata", "carrier_contract", "wire_security"},
+			RequiredCapabilityIDs: []string{"secure_session", "rpc_call_notify", "validated_stream_metadata", "carrier_contract", "wire_security"}, RequiredPathUnitCount: 0,
 		},
 	}
 	if len(contract.Profiles) != len(expected) {
@@ -1244,12 +1245,20 @@ func validateDeploymentProfiles(contract deploymentProfilesContract, parity *ser
 		if got.ID != want.ID || !slices.Equal(got.ClaimedRuntimes, want.ClaimedRuntimes) || !slices.Equal(got.TransportRuntimeIDs, want.TransportRuntimeIDs) ||
 			!slices.Equal(got.RequiredRoles, want.RequiredRoles) || !slices.Equal(got.RequiredCarriers, want.RequiredCarriers) ||
 			!equalStringSlicesMap(got.RequiredPaths, want.RequiredPaths) || !slices.Equal(got.RequiredCapabilityIDs, want.RequiredCapabilityIDs) ||
-			!slices.Equal(got.OptionalCarriers, want.OptionalCarriers) || got.RequiredTupleCount != want.RequiredTupleCount {
+			!slices.Equal(got.OptionalCarriers, want.OptionalCarriers) || got.RequiredTupleCount != want.RequiredTupleCount || got.RequiredPathUnitCount != want.RequiredPathUnitCount {
 			return fmt.Errorf("deployment profile %q does not match its canonical capability contract", want.ID)
 		}
 		calculated := len(got.ClaimedRuntimes) * len(got.RequiredRoles) * len(got.RequiredCarriers)
 		if got.RequiredTupleCount != calculated {
 			return fmt.Errorf("deployment profile %q required_tuple_count = %d, want %d", got.ID, got.RequiredTupleCount, calculated)
+		}
+		pathCount := 0
+		for _, role := range got.RequiredRoles {
+			pathCount += len(got.RequiredPaths[role])
+		}
+		calculatedPathUnits := len(got.ClaimedRuntimes) * len(got.RequiredCarriers) * pathCount
+		if got.RequiredPathUnitCount != calculatedPathUnits {
+			return fmt.Errorf("deployment profile %q required_path_unit_count = %d, want %d", got.ID, got.RequiredPathUnitCount, calculatedPathUnits)
 		}
 	}
 	if parity == nil {
@@ -1311,7 +1320,7 @@ func validateDeploymentProfileCapabilityBindings(contract deploymentProfilesCont
 	return nil
 }
 
-func validateDeploymentProfileTransportBindings(contract deploymentProfilesContract, transport *transportV2Contract) error {
+func validateDeploymentProfileTransportBindings(contract deploymentProfilesContract, transport *transportV2Contract, parity *serverParityContract) error {
 	if transport == nil {
 		return errors.New("deployment profiles require the transport contract")
 	}
@@ -1330,13 +1339,55 @@ func validateDeploymentProfileTransportBindings(contract deploymentProfilesContr
 			}
 			for _, carrier := range profile.RequiredCarriers {
 				transportCarrier := strings.ReplaceAll(carrier, "-", "_")
-				if !slices.ContainsFunc(runtime.Tuples, func(tuple transportV2RuntimeTuple) bool { return tuple.Carrier == transportCarrier }) {
-					return fmt.Errorf("deployment profile %q transport runtime %q lacks required carrier %q", profile.ID, runtimeID, carrier)
+				for _, role := range profile.RequiredRoles {
+					for _, path := range profile.RequiredPaths[role] {
+						if role == "tunnel-runtime" {
+							runtimeIndex := slices.Index(profile.TransportRuntimeIDs, runtimeID)
+							if runtimeIndex < 0 || runtimeIndex >= len(profile.ClaimedRuntimes) || !hasSupportedParityUnit(parity, profile.ClaimedRuntimes[runtimeIndex], role, carrier, path, "pair-forward") {
+								return fmt.Errorf("deployment profile %q transport runtime %q lacks exact %s/%s/%s production unit", profile.ID, runtimeID, carrier, role, path)
+							}
+							continue
+						}
+						for _, binding := range transportBindings(role, path) {
+							if !slices.ContainsFunc(runtime.Tuples, func(tuple transportV2RuntimeTuple) bool {
+								return tuple.Carrier == transportCarrier && tuple.NetworkMode == binding.networkMode && tuple.SessionRole == binding.sessionRole && tuple.Path == path
+							}) {
+								return fmt.Errorf("deployment profile %q transport runtime %q lacks exact %s/%s/%s/%s tuple", profile.ID, runtimeID, transportCarrier, binding.networkMode, binding.sessionRole, path)
+							}
+						}
+					}
 				}
 			}
 		}
 	}
 	return nil
+}
+
+func hasSupportedParityUnit(contract *serverParityContract, runtime, role, carrier, path, feature string) bool {
+	if contract == nil {
+		return false
+	}
+	return slices.ContainsFunc(contract.Units, func(unit serverParityUnit) bool {
+		return unit.Runtime == runtime && unit.Role == role && unit.Carrier == carrier && unit.Path == path && unit.Feature == feature && unit.Status == "supported" && strings.TrimSpace(unit.Entrypoint) != "" && len(unit.TestIDs) == 1
+	})
+}
+
+type transportBinding struct {
+	networkMode string
+	sessionRole string
+}
+
+func transportBindings(role, path string) []transportBinding {
+	if path == "direct" {
+		if role == "direct-server" {
+			return []transportBinding{{networkMode: "listen", sessionRole: "server"}}
+		}
+		return []transportBinding{{networkMode: "dial", sessionRole: "client"}}
+	}
+	return []transportBinding{
+		{networkMode: "dial", sessionRole: "client"},
+		{networkMode: "dial", sessionRole: "server"},
+	}
 }
 
 func equalStringSlicesMap(left, right map[string][]string) bool {

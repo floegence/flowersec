@@ -105,7 +105,7 @@ test("Rust publication installs the shared native driver before the SDK", () => 
   for (const field of ["description", "license", "repository", "readme", "include"]) {
     assert.match(nativeManifest, new RegExp(`^${field}\\s*=`, "m"), `native driver misses ${field} package metadata`);
   }
-  assert.match(sdkManifest, /flowersec-native-transport\s*=\s*\{\s*version\s*=\s*"=2\.3\.6",\s*path\s*=\s*"\.\.\/flowersec-native-transport"\s*\}/);
+  assert.match(sdkManifest, /flowersec-native-transport\s*=\s*\{\s*version\s*=\s*"=2\.3\.7",\s*path\s*=\s*"\.\.\/flowersec-native-transport"\s*\}/);
   assert.match(makefile, /cargo package --manifest-path flowersec-native-transport\/Cargo\.toml --locked --allow-dirty/);
   assert.match(makefile, /cargo publish --manifest-path flowersec-native-transport\/Cargo\.toml --locked --dry-run --allow-dirty --no-verify/);
   assert.match(makefile, /cargo package --manifest-path flowersec-rust\/Cargo\.toml --locked --allow-dirty --list/);
@@ -113,7 +113,104 @@ test("Rust publication installs the shared native driver before the SDK", () => 
   assert.match(rustWorkflow, /name: Wait for native transport registry readback/);
   assert.match(rustWorkflow, /name: Publish Flowersec Rust SDK[\s\S]*working-directory: flowersec-rust[\s\S]*run: cargo publish --no-verify/);
   assert.match(rustWorkflow, /name: Verify Flowersec Rust SDK registry readback/);
+  assert.match(rustWorkflow, /verify-crates-release-package\.mjs flowersec-native-transport/);
+  assert.match(rustWorkflow, /verify-crates-release-package\.mjs flowersec /);
+  assert.match(rustWorkflow, /verify-crates-release-consumer\.mjs flowersec-native-transport/);
+  assert.match(rustWorkflow, /verify-crates-release-consumer\.mjs flowersec /);
   assert.match(releaseWorkflow, /release:\n\s+needs: \[prepare, rust-publish, native-prebuilt\]/);
+});
+
+test("crates registry readback sends a compliant User-Agent for metadata and downloads", () => {
+  const readback = fs.readFileSync(path.join(sourceRoot, "scripts/verify-crates-release-package.mjs"), "utf8");
+  assert.match(
+    readback,
+    /const requestHeaders = Object\.freeze\(\{\s*"User-Agent": `flowersec-release-readback\/\$\{version\} \(https:\/\/github\.com\/floegence\/flowersec\)`,\s*\}\);/,
+  );
+  assert.equal(
+    [...readback.matchAll(/fetch\([^;]+, \{ headers: requestHeaders \}\)/g)].length,
+    2,
+    "metadata and crate download requests must both send the reviewed User-Agent",
+  );
+});
+
+test("Rust registry publication waits for exact consumer resolution at each dependency layer", () => {
+  const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/rust-release.yml"), "utf8");
+  const consumer = fs.readFileSync(path.join(sourceRoot, "scripts/verify-crates-release-consumer.mjs"), "utf8");
+  assert.match(consumer, /cargo.*add/);
+  assert.match(consumer, /@=\$\{version\}/);
+  assert.match(consumer, /cargo.*check/);
+  assert.match(consumer, /for \(let attempt = 1; attempt <= 30; attempt\+\+\)/);
+  const nativeConsumer = workflow.indexOf("verify-crates-release-consumer.mjs flowersec-native-transport");
+  const sdkPublish = workflow.indexOf("name: Publish Flowersec Rust SDK");
+  const sdkConsumer = workflow.indexOf("verify-crates-release-consumer.mjs flowersec ");
+  assert.ok(nativeConsumer >= 0 && nativeConsumer < sdkPublish, "native registry consumer must gate SDK publication");
+  assert.ok(sdkConsumer > sdkPublish, "SDK registry consumer must run after SDK publication");
+});
+
+test("native prebuilt release performs an addon load and raw QUIC smoke before upload", () => {
+  const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
+  const smoke = fs.readFileSync(path.join(sourceRoot, "scripts/native-addon-smoke.mjs"), "utf8");
+  assert.match(workflow, /node scripts\/native-addon-smoke\.mjs/);
+  assert.match(smoke, /contractVersion\(\)/);
+  assert.match(smoke, /bindRawQuic/);
+  assert.match(smoke, /connectRawQuic/);
+  assert.match(smoke, /close\(\)/);
+  assert.match(smoke, /waitTermination\(\)/);
+  const smokeIndex = workflow.indexOf("node scripts/native-addon-smoke.mjs");
+  const uploadIndex = workflow.indexOf("name: Upload native prebuilt");
+  assert.ok(smokeIndex >= 0 && smokeIndex < uploadIndex, "native smoke must precede upload");
+});
+
+test("npm release readback verifies tarball integrity, manifest, platform metadata, and source commit", () => {
+  const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
+  const readback = fs.readFileSync(path.join(sourceRoot, "scripts/verify-npm-release-package.mjs"), "utf8");
+  assert.match(workflow, /node scripts\/verify-npm-release-package\.mjs/);
+  assert.match(readback, /npm.*view/);
+  assert.match(readback, /dist\.tarball/);
+  assert.match(readback, /dist\.integrity/);
+  assert.match(workflow, /stage-npm-release-metadata\.mjs/);
+  assert.match(readback, /flowersecSourceCommit/);
+  assert.match(workflow, /scripts\/verify-npm-release-package\.mjs/);
+  assert.match(readback, /optionalDependencies/);
+  assert.match(readback, /os/);
+  assert.match(readback, /cpu/);
+  assert.match(readback, /libc/);
+  assert.match(readback, /manifest\.main/);
+  assert.match(readback, /flowersec-node-native/);
+  assert.match(workflow, /npm-consumer-smoke:/);
+  assert.match(workflow, /verify-npm-release-consumer\.mjs/);
+  const consumer = fs.readFileSync(path.join(sourceRoot, "scripts/verify-npm-release-consumer.mjs"), "utf8");
+  assert.match(consumer, /contractVersion\(\)/);
+  assert.match(consumer, /flowersec-core\/browser/);
+  assert.match(consumer, /--omit=optional/);
+});
+
+test("npm release metadata staging binds every published manifest to one source commit", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-npm-metadata-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
+  fs.copyFileSync(
+    path.join(sourceRoot, "scripts/stage-npm-release-metadata.mjs"),
+    path.join(root, "scripts/stage-npm-release-metadata.mjs"),
+  );
+  const manifests = [
+    "flowersec-ts/package.json",
+    "flowersec-node-native/package.json",
+    "flowersec-node-native/npm/darwin-arm64/package.json",
+    "flowersec-node-native/npm/darwin-x64/package.json",
+    "flowersec-node-native/npm/linux-arm64-gnu/package.json",
+    "flowersec-node-native/npm/linux-x64-gnu/package.json",
+  ];
+  for (const relative of manifests) {
+    fs.mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
+    fs.writeFileSync(path.join(root, relative), '{"name":"fixture","version":"2.3.7"}\n');
+  }
+  const sourceCommit = "a".repeat(40);
+  const result = spawnSync(process.execPath, [path.join(root, "scripts/stage-npm-release-metadata.mjs"), sourceCommit], { encoding: "utf8" });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  for (const relative of manifests) {
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, relative), "utf8")).flowersecSourceCommit, sourceCommit);
+  }
 });
 
 test("release policy mutations use bounded isolated concurrency", () => {
@@ -594,7 +691,7 @@ test("CodeQL scans every language on changes and does not hide Swift failures", 
   assert.match(workflow, /^        uses: github\/codeql-action\/init@[0-9a-f]{40} # v4(?:\.[0-9]+)*$/m);
   assert.match(workflow, /^          languages: \$\{\{ matrix\.language \}\}\n          build-mode: \$\{\{ matrix\.build-mode \}\}\n          queries: security-extended$/m);
   assert.match(workflow, /^      - name: Resolve Swift cache key\n        if: matrix\.language == 'swift'\n        id: swift-cache-key\n        run: \|\n          swift --version \| shasum -a 256 \| awk '\{ print "toolchain=" \$1 \}' >> "\$GITHUB_OUTPUT"$/m);
-  assert.match(workflow, /^      - name: Restore Swift build cache\n        if: matrix\.language == 'swift'\n        uses: actions\/cache@[0-9a-f]{40} # v4(?:\.[0-9]+)*\n        with:\n          path: \.build\n          key: swift-codeql-\$\{\{ runner\.os \}\}-\$\{\{ steps\.swift-cache-key\.outputs\.toolchain \}\}-\$\{\{ hashFiles\('Package\.swift', 'Package\.resolved'\) \}\}$/m);
+  assert.match(workflow, /^      - name: Restore Swift build cache\n        if: matrix\.language == 'swift'\n        uses: actions\/cache@[0-9a-f]{40} # v6(?:\.[0-9]+)*\n        with:\n          path: \.build\n          key: swift-codeql-\$\{\{ runner\.os \}\}-\$\{\{ steps\.swift-cache-key\.outputs\.toolchain \}\}-\$\{\{ hashFiles\('Package\.swift', 'Package\.resolved'\) \}\}$/m);
   const prepareSwift = workflow.indexOf("      - name: Prepare Swift build cache");
   const restoreSwift = workflow.indexOf("      - name: Restore Swift build cache");
   const initializeCodeQL = workflow.indexOf("      - name: Initialize CodeQL");
@@ -912,7 +1009,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     { file: ".github/workflows/release.yml", name: "Generate release notes" },
     { file: ".github/workflows/release.yml", name: "Publish GitHub Release" },
     { file: ".github/workflows/release.yml", name: "Build and push runtime image" },
-    { file: ".github/workflows/release.yml", name: "Publish npm package" },
+    { file: ".github/workflows/release.yml", name: "Publish npm packages with dependency barriers" },
     { file: ".github/workflows/rust-release.yml", name: "Check whether native transport version is already published" },
     { file: ".github/workflows/rust-release.yml", name: "Authenticate native transport publication" },
     { file: ".github/workflows/rust-release.yml", name: "Publish native transport crate" },

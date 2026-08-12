@@ -26,6 +26,10 @@ must never manufacture a Flowersec handshake result.
 
 ## Carrier Profiles
 
+The required native server profile has 18 runtime-role-carrier tuples and 24
+path-specific units. Conformance is counted independently as 18 direct
+client/server cells and 18 pairwise tunnel topologies.
+
 WebSocket and raw QUIC are the required server carriers. Go, Rust, and Node.js
 implement both for client, direct-server, and opaque tunnel-runtime roles.
 WebTransport is an optional adapter profile. The connector races only the exact

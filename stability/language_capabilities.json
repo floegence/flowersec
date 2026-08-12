@@ -19,7 +19,8 @@
         },
         "required_capability_ids": ["opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"],
         "optional_carriers": ["webtransport"],
-        "required_tuple_count": 18
+        "required_tuple_count": 18,
+        "required_path_unit_count": 24
       },
       {
         "id": "browser-client",
@@ -30,7 +31,8 @@
         "required_paths": { "endpoint-client": ["direct", "tunnel"] },
         "required_capability_ids": ["opaque_artifact", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller"],
         "optional_carriers": ["webtransport"],
-        "required_tuple_count": 1
+        "required_tuple_count": 1,
+        "required_path_unit_count": 2
       },
       {
         "id": "apple-client",
@@ -41,7 +43,8 @@
         "required_paths": { "endpoint-client": ["direct", "tunnel"] },
         "required_capability_ids": ["opaque_artifact", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller"],
         "optional_carriers": [],
-        "required_tuple_count": 1
+        "required_tuple_count": 1,
+        "required_path_unit_count": 2
       },
       {
         "id": "webtransport-server",
@@ -55,7 +58,8 @@
         },
         "required_capability_ids": ["secure_session", "rpc_call_notify", "validated_stream_metadata", "carrier_contract", "wire_security"],
         "optional_carriers": [],
-        "required_tuple_count": 0
+        "required_tuple_count": 0,
+        "required_path_unit_count": 0
       }
     ]
   },

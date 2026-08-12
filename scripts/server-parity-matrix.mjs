@@ -13,10 +13,14 @@ if (nativeProfile === undefined ||
     !Array.isArray(nativeProfile.required_roles) ||
     nativeProfile.claimed_runtimes.length === 0 ||
     nativeProfile.required_carriers.length === 0 ||
+    typeof nativeProfile.required_paths !== "object" ||
     new Set(nativeProfile.claimed_runtimes).size !== nativeProfile.claimed_runtimes.length ||
     new Set(nativeProfile.required_carriers).size !== nativeProfile.required_carriers.length ||
     nativeProfile.required_tuple_count !==
-      nativeProfile.claimed_runtimes.length * nativeProfile.required_roles.length * nativeProfile.required_carriers.length) {
+      nativeProfile.claimed_runtimes.length * nativeProfile.required_roles.length * nativeProfile.required_carriers.length ||
+    nativeProfile.required_path_unit_count !==
+      nativeProfile.claimed_runtimes.length * nativeProfile.required_carriers.length *
+        nativeProfile.required_roles.reduce((count, role) => count + (nativeProfile.required_paths[role]?.length ?? 0), 0)) {
   throw new Error("native-server-core capability profile is invalid");
 }
 

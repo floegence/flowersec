@@ -86,7 +86,7 @@ Flowersec은 애플리케이션 세션과 이를 전달하는 네트워크 경�
 | 가능한 경우 비신뢰 메시지 | 지원 | 지원 | 미지원 | 지원 |
 | 브라우저 연결 | 미지원 | 지원 | 미지원 | 미지원 |
 | Apple 클라이언트 연결 | 미지원 | 미지원 | 지원 | 미지원 |
-| 네이티브 QUIC 연결 | 지원 | 미지원 | 미지원 | 지원 |
+| 네이티브 QUIC 연결 | 지원 | Node.js | 미지원 | 지원 |
 | WebSocket 연결 | 지원 | 지원 | 지원 | 지원 |
 | WebTransport 연결 | Go direct | Browser | 미지원 | 미지원 |
 | 서버 측 세션 수락 | 지원 | Node.js | 미지원 | 지원 |
@@ -103,8 +103,7 @@ Flowersec은 애플리케이션 세션과 이를 전달하는 네트워크 경�
 | `apple-client` | Apple 플랫폼의 Swift | WSS endpoint client | 없음 |
 | `webtransport-server` | 현재 선언한 런타임 없음 | 선언 전에 direct server와 opaque tunnel runtime conformance를 모두 통과해야 함 | 없음 |
 
-Go, Rust, Node.js는 동일한 18개 필수 `native-server-core` tuple을 구현합니다.
-Direct 및 tunnel conformance는 두 필수 carrier의 모든 언어 간 조합을 검증하며, profile은 Artifact, handshake, RPC, stream, close, rekey 또는 authorization wire semantics를 변경하지 않습니다.
+Go, Rust, Node.js는 동일한 18개 필수 `native-server-core` runtime-role-carrier tuple을 구현합니다. Direct path와 tunnel path를 펼치면 path별 server unit은 24개입니다. Conformance는 별도로 계산하며 direct client/server cell 18개와 pairwise tunnel topology 18개로 구성됩니다. profile은 Artifact, handshake, RPC, stream, close, rekey 또는 authorization wire semantics를 변경하지 않습니다.
 
 각 패키지가 지원하는 정확한 플랫폼과 연결 조합은 SDK 가이드를 확인하세요.
 

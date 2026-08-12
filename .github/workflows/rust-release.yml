@@ -92,17 +92,8 @@ jobs:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          URL="https://crates.io/api/v1/crates/flowersec-native-transport/${RELEASE_VERSION}"
-          for attempt in $(seq 1 30); do
-            STATUS="$(curl --silent --show-error --location \
-              --user-agent "flowersec-release-recovery/${RELEASE_VERSION} (https://github.com/floegence/flowersec)" \
-              --output /dev/null --write-out '%{http_code}' "$URL")"
-            if [[ "$STATUS" == 200 ]]; then exit 0; fi
-            if [[ "$STATUS" != 404 ]]; then echo "Unexpected crates.io response status: $STATUS" >&2; exit 1; fi
-            sleep 10
-          done
-          echo "flowersec-native-transport ${RELEASE_VERSION} did not become readable" >&2
-          exit 1
+          node scripts/verify-crates-release-package.mjs flowersec-native-transport "$RELEASE_VERSION" "$(git rev-parse HEAD)"
+          node scripts/verify-crates-release-consumer.mjs flowersec-native-transport "$RELEASE_VERSION"
 
       - name: Check whether Flowersec Rust SDK version is already published
         id: sdk-published
@@ -137,14 +128,5 @@ jobs:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          URL="https://crates.io/api/v1/crates/flowersec/${RELEASE_VERSION}"
-          for attempt in $(seq 1 30); do
-            STATUS="$(curl --silent --show-error --location \
-              --user-agent "flowersec-release-recovery/${RELEASE_VERSION} (https://github.com/floegence/flowersec)" \
-              --output /dev/null --write-out '%{http_code}' "$URL")"
-            if [[ "$STATUS" == 200 ]]; then exit 0; fi
-            if [[ "$STATUS" != 404 ]]; then echo "Unexpected crates.io response status: $STATUS" >&2; exit 1; fi
-            sleep 10
-          done
-          echo "flowersec ${RELEASE_VERSION} did not become readable" >&2
-          exit 1
+          node scripts/verify-crates-release-package.mjs flowersec "$RELEASE_VERSION" "$(git rev-parse HEAD)"
+          node scripts/verify-crates-release-consumer.mjs flowersec "$RELEASE_VERSION"

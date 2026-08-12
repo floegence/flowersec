@@ -86,7 +86,7 @@ Flowersec отделяет сеанс приложения от сетевого
 | Ненадёжные сообщения, когда доступны | Да | Да | Нет | Да |
 | Браузерные соединения | Нет | Да | Нет | Нет |
 | Соединения клиентов Apple | Нет | Нет | Да | Нет |
-| Нативные соединения QUIC | Да | Нет | Нет | Да |
+| Нативные соединения QUIC | Да | Node.js | Нет | Да |
 | Соединения WebSocket | Да | Да | Да | Да |
 | Соединения WebTransport | Go direct | Browser | Нет | Нет |
 | Приём сеансов на сервере | Да | Node.js | Нет | Да |
@@ -103,8 +103,7 @@ Flowersec отделяет сеанс приложения от сетевого
 | `apple-client` | Swift на платформах Apple | WSS endpoint client | Нет |
 | `webtransport-server` | Сейчас не заявлен ни одной средой | Перед заявлением обязательна conformance direct server и opaque tunnel runtime | Нет |
 
-Go, Rust и Node.js реализуют одинаковые 18 обязательных tuple профиля `native-server-core`.
-Direct- и tunnel-conformance проверяет все межъязыковые сочетания для обоих обязательных carrier; профиль никогда не меняет wire-семантику Artifact, handshake, RPC, stream, close, rekey или authorization.
+Go, Rust и Node.js реализуют одинаковые 18 обязательных runtime-role-carrier tuple профиля `native-server-core`. Развёртывание direct- и tunnel-путей даёт 24 серверные единицы, специфичные для пути. Conformance считается отдельно как 18 direct client-server cells и 18 попарных tunnel topologies. Профиль никогда не меняет wire-семантику Artifact, handshake, RPC, stream, close, rekey или authorization.
 
 Точные сочетания платформ и типов соединений перечислены в руководствах SDK.
 

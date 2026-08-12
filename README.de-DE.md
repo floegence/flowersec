@@ -86,7 +86,7 @@ Alle vier SDKs verwenden dasselbe Sitzungsmodell. Der Plattformumfang unterschei
 | Unzuverlässige Nachrichten, wenn verfügbar | Ja | Ja | Nein | Ja |
 | Browserverbindungen | Nein | Ja | Nein | Nein |
 | Apple-Clientverbindungen | Nein | Nein | Ja | Nein |
-| Native QUIC-Verbindungen | Ja | Nein | Nein | Ja |
+| Native QUIC-Verbindungen | Ja | Node.js | Nein | Ja |
 | WebSocket-Verbindungen | Ja | Ja | Ja | Ja |
 | WebTransport-Verbindungen | Go direct | Browser | Nein | Nein |
 | Serverseitige Sitzungsannahme | Ja | Node.js | Nein | Ja |
@@ -103,8 +103,7 @@ Bereitstellungsprofile trennen die Plattformverfuegbarkeit vom gemeinsamen Flowe
 | `apple-client` | Swift auf Apple-Plattformen | WSS-Endpunktclient | Keine |
 | `webtransport-server` | Derzeit von keiner Laufzeit beansprucht | Vor einer Beanspruchung muessen direkter Server und opake Tunnellaufzeit konform sein | Keine |
 
-Go, Rust und Node.js implementieren dieselben 18 erforderlichen `native-server-core`-Tupel.
-Die Direct- und Tunnel-Konformitaet prueft fuer beide erforderlichen Carrier jede sprachuebergreifende Kombination; ein Profil aendert niemals die Wire-Semantik fuer Artifact, Handshake, RPC, Stream, Close, Rekey oder Autorisierung.
+Go, Rust und Node.js implementieren dieselben 18 erforderlichen Runtime-Rollen-Carrier-Tupel von `native-server-core`. Durch die Aufschluesselung direkter und getunnelter Pfade entstehen 24 pfadspezifische Servereinheiten. Die Konformitaet wird separat als 18 direkte Client-Server-Zellen und 18 paarweise Tunneltopologien gezaehlt. Ein Profil aendert niemals die Wire-Semantik fuer Artifact, Handshake, RPC, Stream, Close, Rekey oder Autorisierung.
 
 Die SDK-Anleitungen nennen die genauen unterstützten Kombinationen aus Plattform und Verbindung.
 

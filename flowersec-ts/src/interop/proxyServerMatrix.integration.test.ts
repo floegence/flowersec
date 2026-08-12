@@ -10,6 +10,7 @@ import { createProxyRuntime } from "../proxy/runtime.js";
 import { ProxyByteReader, writeAll } from "../proxy/stream.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
+const TEST_RESPONSE_COOKIE = "theme=light; Secure; HttpOnly; SameSite=Strict";
 
 describe("Browser TypeScript ProxyServer interoperability", () => {
   test("runs Browser TypeScript HTTP and WebSocket semantics against Go ProxyServer", async () => {
@@ -72,7 +73,7 @@ async function runMatrixCell(runtime: Runtime): Promise<void> {
     response.writeHead(201, {
       "content-type": "text/plain",
       "location": "/hidden",
-      "set-cookie": "secret=no",
+      "set-cookie": TEST_RESPONSE_COOKIE,
       "x-visible": "yes",
     });
     response.end("proxied");
@@ -159,6 +160,8 @@ async function runMatrixCell(runtime: Runtime): Promise<void> {
       expect.objectContaining({ name: "location" }),
       expect.objectContaining({ name: "set-cookie" }),
     ]));
+    expect(TEST_RESPONSE_COOKIE).toContain("Secure");
+    expect(TEST_RESPONSE_COOKIE).toContain("HttpOnly");
     expect(new TextDecoder().decode(new Uint8Array(success[1]!.data as ArrayBuffer))).toBe("proxied");
     expect(observed).toEqual([{
       body: "request",

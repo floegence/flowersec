@@ -1020,6 +1020,12 @@ test("source inventory includes the shared native transport and Node addon Cargo
   }
 });
 
+test("native npm package SBOM roots use the canonical purl builder", () => {
+  const source = fs.readFileSync(generatorPath, "utf8");
+  assert.doesNotMatch(source, /packageName\.replace\("@", "%40"\)/);
+  assert.match(source, /npmPurl\(packageName, releaseVersion\)/);
+});
+
 test("published npm and Rust packages include their NOTICE and SBOM", async () => {
   await loadGenerator();
   const packageJson = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8"));

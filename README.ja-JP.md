@@ -86,7 +86,7 @@ Flowersec はアプリケーションセッションを、それを運ぶネッ�
 | 利用可能な場合の非信頼メッセージ | 対応 | 対応 | 非対応 | 対応 |
 | ブラウザ接続 | 非対応 | 対応 | 非対応 | 非対応 |
 | Apple クライアント接続 | 非対応 | 非対応 | 対応 | 非対応 |
-| ネイティブ QUIC 接続 | 対応 | 非対応 | 非対応 | 対応 |
+| ネイティブ QUIC 接続 | 対応 | Node.js | 非対応 | 対応 |
 | WebSocket 接続 | 対応 | 対応 | 対応 | 対応 |
 | WebTransport 接続 | Go direct | Browser | 非対応 | 非対応 |
 | サーバー側のセッション受け入れ | 対応 | Node.js | 非対応 | 対応 |
@@ -103,8 +103,7 @@ Flowersec はアプリケーションセッションを、それを運ぶネッ�
 | `apple-client` | Apple プラットフォームの Swift | WSS endpoint client | なし |
 | `webtransport-server` | 現在宣言しているランタイムなし | 宣言前に direct server と opaque tunnel runtime の conformance が必要 | なし |
 
-Go、Rust、Node.js は同じ 18 個の必須 `native-server-core` tuple を実装します。
-Direct と tunnel conformance は、2 つの必須 carrier についてすべての言語間組み合わせを検証します。profile が Artifact、handshake、RPC、stream、close、rekey、authorization の wire semantics を変更することはありません。
+Go、Rust、Node.js は同じ 18 個の必須 `native-server-core` runtime-role-carrier tuple を実装します。Direct path と tunnel path を展開すると、path 固有の server unit は 24 個になります。Conformance は別に数え、direct client/server cell が 18 個、pairwise tunnel topology が 18 個です。profile が Artifact、handshake、RPC、stream、close、rekey、authorization の wire semantics を変更することはありません。
 
 各パッケージが対応するプラットフォームと接続方式の組み合わせは、SDK ガイドで確認してください。
 

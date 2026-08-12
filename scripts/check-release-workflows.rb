@@ -284,7 +284,7 @@ rust_jobs = require_hash(rust_workflow["jobs"], "the Rust recovery workflow jobs
 ci_jobs = require_hash(ci_workflow["jobs"], "the hosted CI workflow jobs")
 codeql_jobs = require_hash(codeql_workflow["jobs"], "the CodeQL workflow jobs")
 scorecard_jobs = require_hash(scorecard_workflow["jobs"], "the Scorecard workflow jobs")
-require_exact_keys(release_jobs, ["prepare", "rust-publish", "native-prebuilt", "release"], "the unified release workflow jobs")
+require_exact_keys(release_jobs, ["prepare", "rust-publish", "native-prebuilt", "release", "npm-consumer-smoke"], "the unified release workflow jobs")
 require_exact_keys(rust_jobs, ["publish"], "the Rust recovery workflow jobs")
 require_exact_keys(ci_jobs, ["repository", "precommit", "node-current", "dependency-review"], "the hosted CI workflow jobs")
 require_exact_keys(codeql_jobs, ["plan", "analyze"], "the CodeQL workflow jobs")
@@ -294,6 +294,7 @@ prepare_job = require_job(release_workflow, "prepare", "the unified release work
 release_job = require_job(release_workflow, "release", "the unified release workflow")
 rust_reuse_job = require_job(release_workflow, "rust-publish", "the unified release workflow")
 native_prebuilt_job = require_job(release_workflow, "native-prebuilt", "the unified release workflow")
+npm_consumer_job = require_job(release_workflow, "npm-consumer-smoke", "the unified release workflow")
 rust_publish_job = require_job(rust_workflow, "publish", "the Rust recovery workflow")
 repository_job = require_job(ci_workflow, "repository", "the hosted CI workflow")
 precommit_job = require_job(ci_workflow, "precommit", "the hosted CI workflow")
@@ -307,6 +308,7 @@ require_exact_keys(prepare_job, ["runs-on", "outputs", "steps"], "the unified re
 require_exact_keys(release_job, ["needs", "runs-on", "permissions", "steps"], "the unified release workflow release job")
 require_exact_keys(rust_reuse_job, ["needs", "permissions", "uses", "with"], "the unified release workflow rust-publish job")
 require_exact_keys(native_prebuilt_job, ["needs", "strategy", "runs-on", "permissions", "steps"], "the unified release workflow native-prebuilt job")
+require_exact_keys(npm_consumer_job, ["needs", "strategy", "runs-on", "permissions", "steps"], "the unified release workflow npm consumer job")
 require_exact_keys(rust_publish_job, ["runs-on", "permissions", "steps"], "the Rust recovery workflow publish job")
 require_exact_keys(repository_job, ["runs-on", "steps"], "the hosted CI repository job")
 require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI precommit job")
@@ -388,18 +390,31 @@ require_exact_value(native_prebuilt_job["permissions"], { "contents" => "read" }
 require_exact_value(native_prebuilt_job["strategy"], {
   "fail-fast" => false,
   "matrix" => { "include" => [
-    { "platform" => "darwin-arm64", "runner" => "macos-14", "target" => "aarch64-apple-darwin" },
-    { "platform" => "darwin-x64", "runner" => "macos-13", "target" => "x86_64-apple-darwin" },
+    { "platform" => "darwin-arm64", "runner" => "macos-15", "target" => "aarch64-apple-darwin" },
+    { "platform" => "darwin-x64", "runner" => "macos-15-intel", "target" => "x86_64-apple-darwin" },
     { "platform" => "linux-arm64-gnu", "runner" => "ubuntu-24.04-arm", "target" => "aarch64-unknown-linux-gnu" },
     { "platform" => "linux-x64-gnu", "runner" => "ubuntu-latest", "target" => "x86_64-unknown-linux-gnu" },
   ] },
 }, "the native-prebuilt matrix")
+require_exact_value(npm_consumer_job["needs"], ["prepare", "release"], "the npm consumer job dependency")
+require_exact_value(npm_consumer_job["runs-on"], "${{ matrix.runner }}", "the npm consumer runner selector")
+require_exact_value(npm_consumer_job["permissions"], { "contents" => "read" }, "the npm consumer permissions")
+require_exact_value(npm_consumer_job["strategy"], {
+  "fail-fast" => false,
+  "matrix" => { "include" => [
+    { "runner" => "macos-15" },
+    { "runner" => "macos-15-intel" },
+    { "runner" => "ubuntu-24.04-arm" },
+    { "runner" => "ubuntu-latest" },
+  ] },
+}, "the npm consumer matrix")
 
 [
   [prepare_job, "the unified release workflow prepare job"],
   [release_job, "the unified release workflow release job"],
   [rust_reuse_job, "the unified release workflow rust-publish job"],
   [native_prebuilt_job, "the unified release workflow native-prebuilt job"],
+  [npm_consumer_job, "the unified release workflow npm consumer job"],
   [rust_publish_job, "the Rust recovery workflow publish job"],
   [repository_job, "the hosted CI repository job"],
   [precommit_job, "the hosted CI precommit job"],
@@ -419,6 +434,7 @@ require_condition(rust_publish_job["runs-on"] == "ubuntu-latest", "the Rust reco
 release_steps = require_steps(release_job, "the unified release workflow release job")
 rust_steps = require_steps(rust_publish_job, "the Rust recovery workflow publish job")
 native_prebuilt_steps = require_steps(native_prebuilt_job, "the unified release workflow native-prebuilt job")
+npm_consumer_steps = require_steps(npm_consumer_job, "the unified release workflow npm consumer job")
 ci_steps = require_steps(repository_job, "the hosted CI repository job")
 precommit_steps = require_steps(precommit_job, "the hosted CI precommit job")
 node_current_steps = require_steps(node_current_job, "the hosted CI current Node job")
@@ -489,7 +505,7 @@ validate_step_contracts(dependency_review_steps, [
 validate_step_contracts(codeql_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" } },
   { name: "Resolve Swift cache key", keys: ["name", "if", "id", "run"], values: { "if" => "matrix.language == 'swift'", "id" => "swift-cache-key", "run" => "swift --version | shasum -a 256 | awk '{ print \"toolchain=\" $1 }' >> \"$GITHUB_OUTPUT\"\n" } },
-  { name: "Restore Swift build cache", keys: ["name", "if", "uses", "with"], values: { "if" => "matrix.language == 'swift'", "uses" => "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830", "with" => { "path" => ".build", "key" => "swift-codeql-${{ runner.os }}-${{ steps.swift-cache-key.outputs.toolchain }}-${{ hashFiles('Package.swift', 'Package.resolved') }}" } } },
+  { name: "Restore Swift build cache", keys: ["name", "if", "uses", "with"], values: { "if" => "matrix.language == 'swift'", "uses" => "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", "with" => { "path" => ".build", "key" => "swift-codeql-${{ runner.os }}-${{ steps.swift-cache-key.outputs.toolchain }}-${{ hashFiles('Package.swift', 'Package.resolved') }}" } } },
   { name: "Prepare Swift build cache", keys: ["name", "if", "run"], values: { "if" => "matrix.language == 'swift'", "run" => "swift package --skip-update --only-use-versions-from-resolved-file resolve\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
   { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
   { name: "Build Swift library", keys: ["name", "if", "run"], values: { "if" => "matrix.language == 'swift'", "run" => "find flowersec-swift/Sources/Flowersec -type f -name '*.swift' -exec touch {} +\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
@@ -542,14 +558,14 @@ validate_step_contracts(release_steps, [
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
   } }, run_sha256: "2dc2aa66b184f05c334e60ef6d1ca9421fc40c42ace1a5e74f6236355f3b8613" },
   { name: "Download native prebuilt packages", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+    "uses" => "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
     "with" => { "pattern" => "flowersec-node-native-*", "path" => "native-prebuilt", "merge-multiple" => false },
   } },
   { name: "Build release artifacts", keys: ["name", "env", "run"], values: { "env" => {
     "RELEASE_DATE" => "${{ steps.vars.outputs.date }}",
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
-  } }, run_sha256: "0dfd45b156e72a71b11be7b68a04034774b991df98e6b7b3097079a90d9ecf26" },
+  } }, run_sha256: "cb8966cd3310f94f7dbef013761d81bd3d5e91b62fdbc175975212374ffe8c56" },
   { name: "Generate release notes", keys: ["name", "env", "run"], values: { "env" => {
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_TAG" => "${{ steps.vars.outputs.tag }}",
@@ -570,7 +586,10 @@ validate_step_contracts(release_steps, [
     "tags" => "ghcr.io/${{ github.repository_owner }}/flowersec-runtime:${{ steps.vars.outputs.version }}\nghcr.io/${{ github.repository_owner }}/flowersec-runtime:latest\n",
     "build-args" => "VERSION=v${{ steps.vars.outputs.version }}\nCOMMIT=${{ steps.vars.outputs.sha }}\nDATE=${{ steps.vars.outputs.date }}\n",
   } } },
-  { name: "Publish npm package", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}" } }, run_sha256: "327e8b782f02164a97b128dd92c86d51ba847a4171227f8cc47bb971a1904246" },
+  { name: "Publish npm packages with dependency barriers", keys: ["name", "env", "run"], values: { "env" => {
+    "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
+    "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
+  } }, run_sha256: "8972e0612f98fd0de5a8b06f0945e153d3b50bd71086baf3295cb3441a9153cc" },
 ], "the unified release workflow release job")
 validate_step_contracts(native_prebuilt_steps, [
   { name: nil, keys: ["uses", "with"], values: {
@@ -581,10 +600,17 @@ validate_step_contracts(native_prebuilt_steps, [
     "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
     "with" => { "targets" => "${{ matrix.target }}" },
   } },
+  { name: "Setup Node", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+    "with" => { "node-version" => "20.19.0" },
+  } },
   { name: "Build native addon", keys: ["name", "env", "run"], values: { "env" => {
     "NATIVE_TARGET" => "${{ matrix.target }}",
     "NATIVE_PLATFORM" => "${{ matrix.platform }}",
   } }, run_sha256: "690e76440261910d312f4d3078fa5dff71b134ecbc6229c81d14b72d29a26685" },
+  { name: "Smoke test native addon", keys: ["name", "env", "run"], values: { "env" => {
+    "FLOWERSEC_NATIVE_ADDON_PATH" => "${{ github.workspace }}/native-package/${{ matrix.platform }}/flowersec-node-native.${{ matrix.platform }}.node",
+  } }, run_sha256: "d904f71a6438c51ed1aacc963893a8004a70f9168f16b4c603c6702e3d42bb63" },
   { name: "Upload native prebuilt", keys: ["name", "uses", "with"], values: {
     "uses" => "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
     "with" => {
@@ -594,6 +620,19 @@ validate_step_contracts(native_prebuilt_steps, [
     },
   } },
 ], "the unified release workflow native-prebuilt job")
+validate_step_contracts(npm_consumer_steps, [
+  { name: nil, keys: ["uses", "with"], values: {
+    "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+    "with" => { "ref" => "refs/tags/flowersec-go/v${{ needs.prepare.outputs.version }}" },
+  } },
+  { name: "Setup Node", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+    "with" => { "node-version" => "20.19.0", "registry-url" => "https://registry.npmjs.org" },
+  } },
+  { name: "Verify registry consumer install and load", keys: ["name", "env", "run"], values: { "env" => {
+    "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
+  } }, run_sha256: "60dfc6c71b5fcb8dec7d17777678d62aa94c0aba810e1e168861c176a9dfeb65" },
+], "the unified release workflow npm consumer job")
 
 validate_step_contracts(rust_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
@@ -604,11 +643,11 @@ validate_step_contracts(rust_steps, [
   { name: "Check whether native transport version is already published", keys: ["name", "id", "env", "run"], values: { "id" => "native-published", "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "35043da6ab7f3b9809adc65264a983823eb3020507fb191256aeacf903bc29ba" },
   { name: "Authenticate native transport publication", keys: ["name", "if", "id", "uses"], values: { "if" => "steps.native-published.outputs.exists != 'true'", "id" => "native-auth", "uses" => "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18" } },
   { name: "Publish native transport crate", keys: ["name", "if", "working-directory", "env", "run"], values: { "if" => "steps.native-published.outputs.exists != 'true'", "working-directory" => "flowersec-native-transport", "env" => { "CARGO_REGISTRY_TOKEN" => "${{ steps.native-auth.outputs.token }}" } }, run_sha256: "0990bd3b2f0dd14204dc600e8a8bce3fd1e41ab5a6404e75e59f7c41b49ea0d5" },
-  { name: "Wait for native transport registry readback", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "0ce3b7dbf987c027e6593638edde3705f8156206b49bfc8a3217399d231fb919" },
+  { name: "Wait for native transport registry readback", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "55c8d909b7748b4ed9596feb4556a426d474b5355c9321075b74b456554bb93d" },
   { name: "Check whether Flowersec Rust SDK version is already published", keys: ["name", "id", "env", "run"], values: { "id" => "sdk-published", "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "712e2393343ff375abca1a8046cc8aa0b85be961fda34cc5125f7397248d5de0" },
   { name: "Authenticate Flowersec Rust SDK publication", keys: ["name", "if", "id", "uses"], values: { "if" => "steps.sdk-published.outputs.exists != 'true'", "id" => "sdk-auth", "uses" => "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18" } },
   { name: "Publish Flowersec Rust SDK", keys: ["name", "if", "working-directory", "env", "run"], values: { "if" => "steps.sdk-published.outputs.exists != 'true'", "working-directory" => "flowersec-rust", "env" => { "CARGO_REGISTRY_TOKEN" => "${{ steps.sdk-auth.outputs.token }}" } }, run_sha256: "0990bd3b2f0dd14204dc600e8a8bce3fd1e41ab5a6404e75e59f7c41b49ea0d5" },
-  { name: "Verify Flowersec Rust SDK registry readback", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "0dbabe7a27bb178c05fe0aceac3b1f0104ba06457667d368c84712accdb3383f" },
+  { name: "Verify Flowersec Rust SDK registry readback", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "5d0dee062187ebcd7c435a23d84b5e8c4992ebd9a70f6b6b2b50f2cff26f140b" },
 ], "the Rust recovery workflow publish job")
 
 reject_publication_before(release_steps, 8, "the unified release workflow")
@@ -630,7 +669,7 @@ release_publication_steps = [
   "Generate release notes",
   "Publish GitHub Release",
   "Build and push runtime image",
-  "Publish npm package",
+  "Publish npm packages with dependency barriers",
 ]
 release_publication_steps.each do |name|
   step, index = require_named_step(release_steps, name, "the unified release workflow")
