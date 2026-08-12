@@ -292,8 +292,8 @@ test("npm lockfile contains the complete native optional dependency closure", ()
 
 test("npm release builds omit the unpublished optional native wrapper", () => {
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
-  assert.match(workflow, /npm install --omit=optional --ignore-scripts --no-audit --no-fund/);
-  assert.doesNotMatch(workflow, /npm ci --omit=optional/);
+  assert.match(workflow, /npm install --ignore-scripts --no-audit --no-fund/);
+  assert.doesNotMatch(workflow, /npm (?:ci|install) --omit=optional/);
 });
 
 test("npm release metadata staging binds every published manifest to one source commit", (t) => {
