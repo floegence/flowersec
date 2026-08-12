@@ -216,6 +216,8 @@ test("npm registry recovery consumes immutable release assets without rebuilding
   assert.match(workflow, /\.dist\.integrity == \$integrity/);
   assert.match(workflow, /return "\$view_status"/);
   assert.match(workflow, /unlink "\$npm_error"/);
+  assert.doesNotMatch(workflow, /tar -tzf "\$archive" \| grep -Fxq/);
+  assert.doesNotMatch(workflow, /tar -tzf "\$core_archive" \| grep -Fxq/);
   assert.match(workflow, /rust-publish:[\s\S]*if: needs\.prepare\.outputs\.mode == 'full'/);
   assert.match(workflow, /native-prebuilt:[\s\S]*if: needs\.prepare\.outputs\.mode == 'full'/);
   assert.match(workflow, /release:[\s\S]*if: needs\.prepare\.outputs\.mode == 'full'/);

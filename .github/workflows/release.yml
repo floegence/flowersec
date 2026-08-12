@@ -407,6 +407,14 @@ jobs:
               <<<"$manifest" >/dev/null
           }
 
+          has_archive_member() {
+            local archive="$1"
+            local member="$2"
+            local listing
+            listing="$(tar -tzf "$archive")"
+            grep -Fqx "$member" <<<"$listing"
+          }
+
           for platform in darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu; do
             package="@floegence/flowersec-node-native-${platform}"
             archive="npm-release-assets/floegence-flowersec-node-native-${platform}-${VERSION}.tgz"
@@ -425,7 +433,7 @@ jobs:
                (.files | index($main) != null) and
                (if $linux then .libc == ["glibc"] else (.libc | not) end)' \
               <<<"$manifest" >/dev/null
-            tar -tzf "$archive" | grep -Fxq "package/${main}"
+            has_archive_member "$archive" "package/${main}"
           done
 
           wrapper_archive="npm-release-assets/floegence-flowersec-node-native-${VERSION}.tgz"
@@ -444,8 +452,8 @@ jobs:
           tar -xOf "$core_archive" package/package.json | jq -e \
             --arg version "$VERSION" \
             '.optionalDependencies["@floegence/flowersec-node-native"] == $version' >/dev/null
-          tar -tzf "$core_archive" | grep -Fxq package/dist/node/index.js
-          tar -tzf "$core_archive" | grep -Fxq package/dist/browser/index.js
+          has_archive_member "$core_archive" package/dist/node/index.js
+          has_archive_member "$core_archive" package/dist/browser/index.js
 
           publish_archive_if_missing() {
             local package="$1"
