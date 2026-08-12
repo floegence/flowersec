@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:f6df9e7f-03a8-51b1-81af-fe08eefeadfa",
+  "serialNumber": "urn:uuid:8a981cf2-bcb5-54b8-85f8-4dd906d15990",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "flowersec-source",
-      "version": "2.3.8",
-      "purl": "pkg:generic/flowersec-source@2.3.8",
-      "bom-ref": "pkg:generic/flowersec-source@2.3.8"
+      "version": "2.3.9",
+      "purl": "pkg:generic/flowersec-source@2.3.9",
+      "bom-ref": "pkg:generic/flowersec-source@2.3.9"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "61acdda38c1b589f90670adc84ce2cfd838f91aaae3f7881bfc17397951c98ca"
+        "value": "b4caf4ded194f90bf76ccf0aa68b865fb30fa38d7248dfa79d5681393cf4fc79"
       }
     ]
   },
@@ -13210,7 +13210,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/flowersec-source@2.3.8",
+      "ref": "pkg:generic/flowersec-source@2.3.9",
       "dependsOn": [
         "pkg:cargo/aes-gcm@0.11.0",
         "pkg:cargo/async-trait@0.1.92",
@@ -14475,7 +14475,7 @@
       "ref": "pkg:cargo/tempfile@3.27.0",
       "dependsOn": [
         "pkg:cargo/fastrand@2.5.0",
-        "pkg:cargo/getrandom@0.4.3",
+        "pkg:cargo/getrandom@0.3.4",
         "pkg:cargo/once_cell@1.21.4",
         "pkg:cargo/rustix@1.1.4",
         "pkg:cargo/windows-sys@0.61.2"

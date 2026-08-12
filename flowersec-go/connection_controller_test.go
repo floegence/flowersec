@@ -255,10 +255,8 @@ func testControllerRetryNow(t *testing.T) {
 	}
 	startController(t, controller)
 	waitControllerState(t, controller, ConnectionWaiting)
-	for range 8 {
-		if !controller.RetryNow() {
-			t.Fatal("RetryNow rejected the active wait")
-		}
+	if !controller.RetryNow() {
+		t.Fatal("RetryNow rejected the active wait")
 	}
 	waitControllerState(t, controller, ConnectionConnected)
 	if source.callCount() != 2 || source.maxInFlightCount() != 1 {

@@ -11,8 +11,6 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 )
 
 const (
@@ -80,17 +78,9 @@ type VerifiedClaims struct {
 
 // Authorization binds verified claims and their lifetime to one acquired lease.
 type Authorization struct {
-	Claims           VerifiedClaims
-	ExpiresAt        time.Time
-	Lease            Lease
-	Session          artifactv2.SessionContract
-	AdmissionBinding [32]byte
-	// RPCRouter is an immutable application registration snapshot supplied by
-	// the public Acceptor before server Session establishment.
-	RPCRouter *internalrpc.Router
-	// ServeHandlers dispatches public application streams on the accepted
-	// session without exposing the handler registry to tunnel coordination.
-	ServeHandlers func(context.Context, session.SessionV2) error
+	Claims    VerifiedClaims
+	ExpiresAt time.Time
+	Lease     Lease
 }
 
 // Authorize verifies one independently received FSB2 credential.

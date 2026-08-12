@@ -13,15 +13,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
+	flowercontrol "github.com/floegence/flowersec/flowersec-go/v2/controlplane"
 	admissionws "github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -124,6 +129,141 @@ func TestWSSDirectListenerTerminatesV2AndBridgesAuthorizedTCP(t *testing.T) {
 	}
 	if len(provider.requests) != 1 || provider.requests[0].Carrier != string(carrier.KindWebSocket) {
 		t.Fatalf("authorization requests = %+v", provider.requests)
+	}
+}
+
+func TestWSSStandaloneTunnelConsumesSecretFreeHTTPAuthorization(t *testing.T) {
+	var (
+		records  sync.Map
+		released atomic.Int32
+	)
+	authorizerServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/authorize":
+			body, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, 64*1024))
+			if err != nil {
+				http.Error(writer, "invalid request", http.StatusBadRequest)
+				return
+			}
+			runtimeRequest, err := flowercontrol.ParseRuntimeAuthorizationRequest(body)
+			if err != nil {
+				http.Error(writer, "invalid request", http.StatusBadRequest)
+				return
+			}
+			stored, ok := records.LoadAndDelete(runtimeRequest.LookupKey())
+			if !ok {
+				http.Error(writer, "unknown credential", http.StatusForbidden)
+				return
+			}
+			response, err := flowercontrol.AuthorizeTunnelRuntime(runtimeRequest, stored.(flowercontrol.AuthorizationRecord), "lease-"+runtimeRequest.LookupKey()[:12])
+			if err != nil {
+				http.Error(writer, "authorization failed", http.StatusForbidden)
+				return
+			}
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write(response.JSON())
+		case "/release":
+			released.Add(1)
+			writer.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer authorizerServer.Close()
+
+	provider := &httpAuthorizationProvider{
+		url: authorizerServer.URL + "/authorize", releaseURL: authorizerServer.URL + "/release",
+		client: authorizerServer.Client(),
+	}
+	provider.client.Timeout = 2 * time.Second
+	resources, err := carrierws.BindSessionResourcePolicy(carrierws.DefaultResourcePolicy(), 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reasons := runtimeReasons()
+	coordinator, err := tunnelv2.NewCoordinator(tunnelv2.DefaultConfig(), tunnelAuthorizer(provider, reasons))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &runtimeServer{
+		config:     Config{AllowedOrigins: []string{"https://app.example"}, AdmissionTimeoutSeconds: 10},
+		authorizer: provider, reasons: reasons, coordinator: coordinator, wsResources: resources,
+		logger: log.New(io.Discard, "", 0),
+	}
+	baseContext, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := httptest.NewUnstartedServer(runtime.webSocketHandler(baseContext))
+	server.TLS = &tls.Config{MinVersion: tls.VersionTLS13}
+	server.StartTLS()
+	defer server.Close()
+
+	wssURL := "wss" + strings.TrimPrefix(server.URL, "https") + webSocketTunnelPath
+	endpoints, err := flowercontrol.NewEndpointSet(wssURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := flowercontrol.NewIssuer().IssueTunnelPair(flowercontrol.TunnelIssueOptions{
+		Session:           flowercontrol.SessionOptions{ChannelID: "standalone-secret-free", ExpiresAt: time.Now().Add(time.Minute)},
+		Endpoints:         endpoints,
+		RendezvousGroupID: "standalone-secret-free",
+		ListenerAudience:  "app.example",
+		FirstEndpointID:   "browser",
+		SecondEndpointID:  "runtime",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	records.Store(pair.First.LookupKey(), pair.First.AuthorizationRecord())
+	records.Store(pair.Second.LookupKey(), pair.Second.AuthorizationRecord())
+
+	type connectResult struct {
+		session flowersec.Session
+		err     error
+	}
+	connect := func(issued flowercontrol.IssuedArtifact) <-chan connectResult {
+		result := make(chan connectResult, 1)
+		go func() {
+			artifact, err := flowersec.ParseArtifact(issued.ArtifactJSON())
+			if err != nil {
+				result <- connectResult{err: err}
+				return
+			}
+			lease, err := flowersec.NewArtifactLease(artifact, func(context.Context) error { return nil })
+			if err != nil {
+				result <- connectResult{err: err}
+				return
+			}
+			roots := x509.NewCertPool()
+			roots.AddCert(server.Certificate())
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			session, err := flowersec.Connect(ctx, lease, flowersec.ConnectorOptions{TrustRoots: roots, Origin: "https://app.example"})
+			result <- connectResult{session: session, err: err}
+		}()
+		return result
+	}
+	firstConnect := connect(pair.First)
+	secondConnect := connect(pair.Second)
+	firstResult, secondResult := <-firstConnect, <-secondConnect
+	if firstResult.err != nil || secondResult.err != nil {
+		t.Fatalf("connect pair: first=%v second=%v", firstResult.err, secondResult.err)
+	}
+	for _, connected := range []flowersec.Session{firstResult.session, secondResult.session} {
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, err := connected.ProbeLiveness(probeCtx)
+		probeCancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = firstResult.session.Close()
+	_ = secondResult.session.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for released.Load() != 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if released.Load() != 2 {
+		t.Fatalf("released leases = %d, want 2", released.Load())
 	}
 }
 

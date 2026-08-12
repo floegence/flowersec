@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -81,7 +84,6 @@ func TestTunnelAuthorizerBindsClaimsAndReleasesLeaseOnce(t *testing.T) {
 	provider := &fakeAuthorizationProvider{response: authorizationResponse{
 		Decision: "allow", CredentialID: "credential-a", LeaseID: "lease-a",
 		ExpiresAt: time.Now().Add(time.Minute), ExpectedPeerEndpointInstanceID: "peer-b",
-		Session: validAuthorizedSession(t, "channel-a", 32),
 	}}
 	decoded := &artifactv2.DecodedRequest{Raw: []byte("FSB2 fixture"), Request: artifactv2.Request{
 		PathKind: artifactv2.PathTunnel, Profile: artifactv2.Profile, ChannelID: "channel-a",
@@ -100,6 +102,38 @@ func TestTunnelAuthorizerBindsClaimsAndReleasesLeaseOnce(t *testing.T) {
 	authorization.Lease.Release()
 	if len(provider.released) != 1 || provider.released[0] != "lease-a" {
 		t.Fatalf("lease release count = %v", provider.released)
+	}
+}
+
+func TestHTTPAuthorizationProviderAcceptsSecretFreeTunnelResponse(t *testing.T) {
+	expiresAt := time.Now().Add(time.Minute).UTC().Truncate(time.Second)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(writer, `{"decision":"allow","credential_id":"credential-a","lease_id":"lease-a","expires_at":%q,"expected_peer_endpoint_instance_id":"peer-b","allow_replacement":false}`, expiresAt.Format(time.RFC3339))
+	}))
+	defer server.Close()
+
+	provider := &httpAuthorizationProvider{url: server.URL, client: server.Client()}
+	decision, err := provider.Authorize(context.Background(), authorizationRequest{FSB2Base64URL: "RlNCMg", Carrier: "websocket"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Decision != "allow" || decision.CredentialID != "credential-a" || decision.ExpectedPeerEndpointInstanceID != "peer-b" || !decision.ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("unexpected tunnel authorization: %+v", decision)
+	}
+}
+
+func TestHTTPAuthorizationProviderRejectsTunnelSessionOverclaim(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(writer, `{"decision":"allow","credential_id":"credential-a","lease_id":"lease-a","expires_at":"2099-01-01T00:00:00Z","expected_peer_endpoint_instance_id":"peer-b","session":{"e2ee_psk_base64url":"secret"}}`)
+	}))
+	defer server.Close()
+
+	provider := &httpAuthorizationProvider{url: server.URL, client: server.Client()}
+	_, err := provider.Authorize(context.Background(), authorizationRequest{FSB2Base64URL: "RlNCMg", Carrier: "websocket"})
+	if !errors.Is(err, ErrInvalidAuthorization) {
+		t.Fatalf("session overclaim error = %v, want ErrInvalidAuthorization", err)
 	}
 }
 

@@ -42,15 +42,14 @@ type authorizationRequest struct {
 }
 
 type authorizationResponse struct {
-	Decision                       string                    `json:"decision"`
-	Reason                         string                    `json:"reason"`
-	CredentialID                   string                    `json:"credential_id"`
-	LeaseID                        string                    `json:"lease_id"`
-	ExpiresAt                      time.Time                 `json:"expires_at"`
-	ExpectedPeerEndpointInstanceID string                    `json:"expected_peer_endpoint_instance_id"`
-	AllowReplacement               bool                      `json:"allow_replacement"`
-	Session                        authorizedSessionContract `json:"session"`
-	Direct                         *directAuthorization      `json:"direct"`
+	Decision                       string               `json:"decision"`
+	Reason                         string               `json:"reason"`
+	CredentialID                   string               `json:"credential_id"`
+	LeaseID                        string               `json:"lease_id"`
+	ExpiresAt                      time.Time            `json:"expires_at"`
+	ExpectedPeerEndpointInstanceID string               `json:"expected_peer_endpoint_instance_id"`
+	AllowReplacement               bool                 `json:"allow_replacement"`
+	Direct                         *directAuthorization `json:"direct"`
 }
 
 type directAuthorization struct {
@@ -262,10 +261,6 @@ func tunnelAuthorizer(provider authorizationProvider, reasons artifactv2.ReasonR
 			decision.ExpectedPeerEndpointInstanceID == "" {
 			return tunnelv2.Authorization{}, ErrInvalidAuthorization
 		}
-		sessionContract, err := decision.Session.contract()
-		if err != nil {
-			return tunnelv2.Authorization{}, err
-		}
 		request := decoded.Request
 		return tunnelv2.Authorization{
 			Claims: tunnelv2.VerifiedClaims{
@@ -276,10 +271,8 @@ func tunnelAuthorizer(provider authorizationProvider, reasons artifactv2.ReasonR
 				ExpectedPeerEndpointInstanceID: decision.ExpectedPeerEndpointInstanceID,
 				AllowReplacement:               decision.AllowReplacement,
 			},
-			Session:          sessionContract,
-			AdmissionBinding: decoded.LocalAdmissionBinding,
-			ExpiresAt:        decision.ExpiresAt,
-			Lease:            &externalLease{provider: provider, id: decision.LeaseID},
+			ExpiresAt: decision.ExpiresAt,
+			Lease:     &externalLease{provider: provider, id: decision.LeaseID},
 		}, nil
 	}
 }

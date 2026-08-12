@@ -239,7 +239,6 @@ func (runtime *TunnelRuntime) authorize(ctx context.Context, decoded *artifactv2
 				runtime.options.Release(context.Background(), wire.LeaseID)
 			}
 		}},
-		AdmissionBinding: decoded.LocalAdmissionBinding,
 	}, nil
 }
 
