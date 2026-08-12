@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-runtime",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-runtime/e2ae80e088d1b91e6a63bf85b06fbe5421e4ffa3c13cdab562ee70552235643a",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-runtime/4e2a10559bbc58d821b53f553014a854a5511acab3a4edeab123406ef32a10a1",
   "creationInfo": {
     "created": "1970-01-01T00:00:00Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: e2ae80e088d1b91e6a63bf85b06fbe5421e4ffa3c13cdab562ee70552235643a",
+      "comment": "Flowersec source inventory SHA-256: 4e2a10559bbc58d821b53f553014a854a5511acab3a4edeab123406ef32a10a1",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",

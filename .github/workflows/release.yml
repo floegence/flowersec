@@ -10,6 +10,14 @@ on:
         description: "Existing coordinated release version to recover"
         required: true
         type: string
+      mode:
+        description: "Recovery scope"
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - npm-only
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -22,11 +30,13 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      mode: ${{ steps.version.outputs.mode }}
     steps:
       - name: Resolve release version
         id: version
         env:
           RELEASE_VERSION_INPUT: ${{ inputs.version }}
+          RELEASE_MODE_INPUT: ${{ inputs.mode }}
         run: |
           set -euo pipefail
           VERSION="$RELEASE_VERSION_INPUT"
@@ -37,10 +47,17 @@ jobs:
             echo "version must be canonical major.minor.patch" >&2
             exit 2
           fi
+          MODE="${RELEASE_MODE_INPUT:-full}"
+          if [[ "$MODE" != "full" && "$MODE" != "npm-only" ]]; then
+            echo "mode must be full or npm-only" >&2
+            exit 2
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
 
   rust-publish:
     needs: prepare
+    if: needs.prepare.outputs.mode == 'full'
     permissions:
       contents: read
       id-token: write
@@ -50,6 +67,7 @@ jobs:
 
   native-prebuilt:
     needs: prepare
+    if: needs.prepare.outputs.mode == 'full'
     strategy:
       fail-fast: false
       matrix:
@@ -118,6 +136,7 @@ jobs:
 
   release:
     needs: [prepare, rust-publish, native-prebuilt]
+    if: needs.prepare.outputs.mode == 'full'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -322,8 +341,163 @@ jobs:
           publish_if_missing "@floegence/flowersec-core" "flowersec-ts"
           node scripts/verify-npm-release-package.mjs "@floegence/flowersec-core" "$VERSION" "$RELEASE_SHA"
 
+  npm-recovery:
+    needs: prepare
+    if: needs.prepare.outputs.mode == 'npm-only'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: refs/tags/flowersec-go/v${{ needs.prepare.outputs.version }}
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Recover npm registry packages from immutable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          VERSION="$RELEASE_VERSION"
+          SHA="$(git rev-parse HEAD)"
+          scripts/verify-release-tags.sh "$VERSION" "$SHA"
+
+          mkdir npm-release-assets
+          gh release download "flowersec-go/v${VERSION}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern checksums.txt \
+            --pattern 'floegence-flowersec-*.tgz' \
+            --dir npm-release-assets
+
+          archives=(
+            "floegence-flowersec-node-native-darwin-arm64-${VERSION}.tgz"
+            "floegence-flowersec-node-native-darwin-x64-${VERSION}.tgz"
+            "floegence-flowersec-node-native-linux-arm64-gnu-${VERSION}.tgz"
+            "floegence-flowersec-node-native-linux-x64-gnu-${VERSION}.tgz"
+            "floegence-flowersec-node-native-${VERSION}.tgz"
+            "floegence-flowersec-core-${VERSION}.tgz"
+          )
+          mapfile -t downloaded < <(find npm-release-assets -maxdepth 1 -type f -printf '%f\n' | sort)
+          mapfile -t expected < <(printf '%s\n' checksums.txt "${archives[@]}" | sort)
+          [[ "${downloaded[*]}" == "${expected[*]}" ]]
+          for archive in "${archives[@]}"; do
+            test -f "npm-release-assets/${archive}"
+            [[ "$(awk -v file="$archive" '$2 == file { count++ } END { print count + 0 }' npm-release-assets/checksums.txt)" == 1 ]]
+          done
+          ( cd npm-release-assets && sha256sum --check checksums.txt --ignore-missing )
+
+          validate_manifest() {
+            local archive="$1"
+            local package="$2"
+            local manifest
+            manifest="$(tar -xOf "$archive" package/package.json)"
+            jq -e \
+              --arg package "$package" \
+              --arg version "$VERSION" \
+              --arg sha "$SHA" \
+              '.name == $package and .version == $version and .flowersecSourceCommit == $sha' \
+              <<<"$manifest" >/dev/null
+          }
+
+          for platform in darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu; do
+            package="@floegence/flowersec-node-native-${platform}"
+            archive="npm-release-assets/floegence-flowersec-node-native-${platform}-${VERSION}.tgz"
+            os="${platform%%-*}"
+            remainder="${platform#*-}"
+            cpu="${remainder%%-*}"
+            main="flowersec-node-native.${platform}.node"
+            validate_manifest "$archive" "$package"
+            manifest="$(tar -xOf "$archive" package/package.json)"
+            jq -e \
+              --arg os "$os" \
+              --arg cpu "$cpu" \
+              --arg main "$main" \
+              --argjson linux "$([[ "$os" == linux ]] && echo true || echo false)" \
+              '.os == [$os] and .cpu == [$cpu] and .main == $main and
+               (.files | index($main) != null) and
+               (if $linux then .libc == ["glibc"] else (.libc | not) end)' \
+              <<<"$manifest" >/dev/null
+            tar -tzf "$archive" | grep -Fxq "package/${main}"
+          done
+
+          wrapper_archive="npm-release-assets/floegence-flowersec-node-native-${VERSION}.tgz"
+          validate_manifest "$wrapper_archive" "@floegence/flowersec-node-native"
+          tar -xOf "$wrapper_archive" package/package.json | jq -e \
+            --arg version "$VERSION" \
+            '.optionalDependencies == {
+              "@floegence/flowersec-node-native-darwin-arm64": $version,
+              "@floegence/flowersec-node-native-darwin-x64": $version,
+              "@floegence/flowersec-node-native-linux-arm64-gnu": $version,
+              "@floegence/flowersec-node-native-linux-x64-gnu": $version
+            }' >/dev/null
+
+          core_archive="npm-release-assets/floegence-flowersec-core-${VERSION}.tgz"
+          validate_manifest "$core_archive" "@floegence/flowersec-core"
+          tar -xOf "$core_archive" package/package.json | jq -e \
+            --arg version "$VERSION" \
+            '.optionalDependencies["@floegence/flowersec-node-native"] == $version' >/dev/null
+          tar -tzf "$core_archive" | grep -Fxq package/dist/node/index.js
+          tar -tzf "$core_archive" | grep -Fxq package/dist/browser/index.js
+
+          publish_archive_if_missing() {
+            local package="$1"
+            local archive="$2"
+            local local_integrity
+            local metadata
+            local npm_error
+            local view_status
+            local_integrity="sha512-$(openssl dgst -sha512 -binary "$archive" | openssl base64 -A)"
+            npm_error="$(mktemp)"
+            set +e
+            metadata="$(npm view "${package}@${VERSION}" --json 2>"$npm_error")"
+            view_status=$?
+            set -e
+            npm_error_text="$(cat "$npm_error")"
+            unlink "$npm_error"
+            if [[ $view_status -eq 0 ]]; then
+              jq -e \
+                --arg package "$package" \
+                --arg version "$VERSION" \
+                --arg integrity "$local_integrity" \
+                '.name == $package and .version == $version and .dist.integrity == $integrity' \
+                <<<"$metadata" >/dev/null
+              echo "${package}@${VERSION} already published; skipping"
+            elif jq -e '.error.code == "E404"' <<<"$metadata" >/dev/null 2>&1; then
+              npx -y npm@11.5.1 publish --access public "$archive"
+            else
+              sed -E 's/(token|authorization)[^ ]*/\1=<redacted>/Ig' <<<"$npm_error_text" >&2
+              return "$view_status"
+            fi
+            node scripts/verify-npm-release-package.mjs "$package" "$VERSION" "$SHA"
+          }
+
+          for platform in darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu; do
+            package="@floegence/flowersec-node-native-${platform}"
+            archive="npm-release-assets/floegence-flowersec-node-native-${platform}-${VERSION}.tgz"
+            publish_archive_if_missing "$package" "$archive"
+          done
+          publish_archive_if_missing \
+            "@floegence/flowersec-node-native" \
+            "npm-release-assets/floegence-flowersec-node-native-${VERSION}.tgz"
+          publish_archive_if_missing \
+            "@floegence/flowersec-core" \
+            "npm-release-assets/floegence-flowersec-core-${VERSION}.tgz"
+
   npm-consumer-smoke:
-    needs: [prepare, release]
+    needs: [prepare, release, npm-recovery]
+    if: >-
+      always() &&
+      needs.prepare.result == 'success' &&
+      ((needs.prepare.outputs.mode == 'full' && needs.release.result == 'success') ||
+      (needs.prepare.outputs.mode == 'npm-only' && needs.npm-recovery.result == 'success'))
     strategy:
       fail-fast: false
       matrix:

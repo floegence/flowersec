@@ -262,6 +262,12 @@ require_exact_value(release_workflow[true], {
     "description" => "Existing coordinated release version to recover",
     "required" => true,
     "type" => "string",
+  }, "mode" => {
+    "description" => "Recovery scope",
+    "required" => true,
+    "default" => "full",
+    "type" => "choice",
+    "options" => ["full", "npm-only"],
   } } },
 }, "unified release triggers")
 require_exact_value(release_workflow["permissions"], { "contents" => "read" }, "unified release permissions")
@@ -284,7 +290,7 @@ rust_jobs = require_hash(rust_workflow["jobs"], "the Rust recovery workflow jobs
 ci_jobs = require_hash(ci_workflow["jobs"], "the hosted CI workflow jobs")
 codeql_jobs = require_hash(codeql_workflow["jobs"], "the CodeQL workflow jobs")
 scorecard_jobs = require_hash(scorecard_workflow["jobs"], "the Scorecard workflow jobs")
-require_exact_keys(release_jobs, ["prepare", "rust-publish", "native-prebuilt", "release", "npm-consumer-smoke"], "the unified release workflow jobs")
+require_exact_keys(release_jobs, ["prepare", "rust-publish", "native-prebuilt", "release", "npm-recovery", "npm-consumer-smoke"], "the unified release workflow jobs")
 require_exact_keys(rust_jobs, ["publish"], "the Rust recovery workflow jobs")
 require_exact_keys(ci_jobs, ["repository", "precommit", "node-current", "dependency-review"], "the hosted CI workflow jobs")
 require_exact_keys(codeql_jobs, ["plan", "analyze"], "the CodeQL workflow jobs")
@@ -295,6 +301,7 @@ release_job = require_job(release_workflow, "release", "the unified release work
 rust_reuse_job = require_job(release_workflow, "rust-publish", "the unified release workflow")
 native_prebuilt_job = require_job(release_workflow, "native-prebuilt", "the unified release workflow")
 npm_consumer_job = require_job(release_workflow, "npm-consumer-smoke", "the unified release workflow")
+npm_recovery_job = require_job(release_workflow, "npm-recovery", "the unified release workflow")
 rust_publish_job = require_job(rust_workflow, "publish", "the Rust recovery workflow")
 repository_job = require_job(ci_workflow, "repository", "the hosted CI workflow")
 precommit_job = require_job(ci_workflow, "precommit", "the hosted CI workflow")
@@ -305,10 +312,11 @@ codeql_plan_job = require_job(codeql_workflow, "plan", "the CodeQL workflow")
 scorecard_job = require_job(scorecard_workflow, "analysis", "the Scorecard workflow")
 
 require_exact_keys(prepare_job, ["runs-on", "outputs", "steps"], "the unified release workflow prepare job")
-require_exact_keys(release_job, ["needs", "runs-on", "permissions", "steps"], "the unified release workflow release job")
-require_exact_keys(rust_reuse_job, ["needs", "permissions", "uses", "with"], "the unified release workflow rust-publish job")
-require_exact_keys(native_prebuilt_job, ["needs", "strategy", "runs-on", "permissions", "steps"], "the unified release workflow native-prebuilt job")
-require_exact_keys(npm_consumer_job, ["needs", "strategy", "runs-on", "permissions", "steps"], "the unified release workflow npm consumer job")
+require_exact_keys(release_job, ["needs", "if", "runs-on", "permissions", "steps"], "the unified release workflow release job")
+require_exact_keys(rust_reuse_job, ["needs", "if", "permissions", "uses", "with"], "the unified release workflow rust-publish job")
+require_exact_keys(native_prebuilt_job, ["needs", "if", "strategy", "runs-on", "permissions", "steps"], "the unified release workflow native-prebuilt job")
+require_exact_keys(npm_recovery_job, ["needs", "if", "runs-on", "permissions", "steps"], "the unified release workflow npm recovery job")
+require_exact_keys(npm_consumer_job, ["needs", "if", "strategy", "runs-on", "permissions", "steps"], "the unified release workflow npm consumer job")
 require_exact_keys(rust_publish_job, ["runs-on", "permissions", "steps"], "the Rust recovery workflow publish job")
 require_exact_keys(repository_job, ["runs-on", "steps"], "the hosted CI repository job")
 require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI precommit job")
@@ -367,7 +375,10 @@ require_exact_value(scorecard_job["permissions"], {
   "security-events" => "write",
   "id-token" => "write",
 }, "the Scorecard job permissions")
-require_exact_value(prepare_job["outputs"], { "version" => "${{ steps.version.outputs.version }}" }, "the prepare job outputs")
+require_exact_value(prepare_job["outputs"], {
+  "version" => "${{ steps.version.outputs.version }}",
+  "mode" => "${{ steps.version.outputs.mode }}",
+}, "the prepare job outputs")
 require_exact_value(rust_reuse_job["needs"], "prepare", "the rust-publish job dependency")
 require_exact_value(rust_reuse_job["permissions"], {
   "contents" => "read",
@@ -396,7 +407,13 @@ require_exact_value(native_prebuilt_job["strategy"], {
     { "platform" => "linux-x64-gnu", "runner" => "ubuntu-latest", "target" => "x86_64-unknown-linux-gnu" },
   ] },
 }, "the native-prebuilt matrix")
-require_exact_value(npm_consumer_job["needs"], ["prepare", "release"], "the npm consumer job dependency")
+require_exact_value(npm_recovery_job["needs"], "prepare", "the npm recovery job dependency")
+require_exact_value(npm_recovery_job["runs-on"], "ubuntu-latest", "the npm recovery runner")
+require_exact_value(npm_recovery_job["permissions"], {
+  "contents" => "read",
+  "id-token" => "write",
+}, "the npm recovery permissions")
+require_exact_value(npm_consumer_job["needs"], ["prepare", "release", "npm-recovery"], "the npm consumer job dependency")
 require_exact_value(npm_consumer_job["runs-on"], "${{ matrix.runner }}", "the npm consumer runner selector")
 require_exact_value(npm_consumer_job["permissions"], { "contents" => "read" }, "the npm consumer permissions")
 require_exact_value(npm_consumer_job["strategy"], {
@@ -411,10 +428,6 @@ require_exact_value(npm_consumer_job["strategy"], {
 
 [
   [prepare_job, "the unified release workflow prepare job"],
-  [release_job, "the unified release workflow release job"],
-  [rust_reuse_job, "the unified release workflow rust-publish job"],
-  [native_prebuilt_job, "the unified release workflow native-prebuilt job"],
-  [npm_consumer_job, "the unified release workflow npm consumer job"],
   [rust_publish_job, "the Rust recovery workflow publish job"],
   [repository_job, "the hosted CI repository job"],
   [precommit_job, "the hosted CI precommit job"],
@@ -422,6 +435,11 @@ require_exact_value(npm_consumer_job["strategy"], {
   [codeql_plan_job, "the CodeQL plan job"],
   [scorecard_job, "the Scorecard analysis job"],
 ].each { |job, context| require_unconditional(job, context) }
+require_condition_value(release_job, "needs.prepare.outputs.mode == 'full'", "the unified release workflow release job")
+require_condition_value(rust_reuse_job, "needs.prepare.outputs.mode == 'full'", "the unified release workflow rust-publish job")
+require_condition_value(native_prebuilt_job, "needs.prepare.outputs.mode == 'full'", "the unified release workflow native-prebuilt job")
+require_condition_value(npm_recovery_job, "needs.prepare.outputs.mode == 'npm-only'", "the unified release workflow npm recovery job")
+require_condition_value(npm_consumer_job, "always() && needs.prepare.result == 'success' && ((needs.prepare.outputs.mode == 'full' && needs.release.result == 'success') || (needs.prepare.outputs.mode == 'npm-only' && needs.npm-recovery.result == 'success'))", "the unified release workflow npm consumer job")
 require_condition_value(dependency_review_job, "github.event_name == 'pull_request'", "the hosted CI dependency review job")
 require_condition(codeql_job["if"] == "needs.plan.outputs.should_scan == 'true'", "the CodeQL analyze job must use only the approved condition")
 
@@ -435,6 +453,7 @@ release_steps = require_steps(release_job, "the unified release workflow release
 rust_steps = require_steps(rust_publish_job, "the Rust recovery workflow publish job")
 native_prebuilt_steps = require_steps(native_prebuilt_job, "the unified release workflow native-prebuilt job")
 npm_consumer_steps = require_steps(npm_consumer_job, "the unified release workflow npm consumer job")
+npm_recovery_steps = require_steps(npm_recovery_job, "the unified release workflow npm recovery job")
 ci_steps = require_steps(repository_job, "the hosted CI repository job")
 precommit_steps = require_steps(precommit_job, "the hosted CI precommit job")
 node_current_steps = require_steps(node_current_job, "the hosted CI current Node job")
@@ -455,8 +474,11 @@ release_checkout = {
 validate_step_contracts(prepare_steps, [
   { name: "Resolve release version", keys: ["name", "id", "env", "run"], values: {
     "id" => "version",
-    "env" => { "RELEASE_VERSION_INPUT" => "${{ inputs.version }}" },
-  }, run_sha256: "18ecf5a6ceec68c881d49600a824f4417ea61699070f34b37458c3248920be66" },
+    "env" => {
+      "RELEASE_VERSION_INPUT" => "${{ inputs.version }}",
+      "RELEASE_MODE_INPUT" => "${{ inputs.mode }}",
+    },
+  }, run_sha256: "a6ae5453b78e4d35fcfd50e172b465130f1e159898b009cb9a7154503f7ab7c7" },
 ], "the unified release workflow prepare job")
 validate_step_contracts(ci_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
@@ -620,6 +642,17 @@ validate_step_contracts(native_prebuilt_steps, [
     },
   } },
 ], "the unified release workflow native-prebuilt job")
+validate_step_contracts(npm_recovery_steps, [
+  { name: nil, keys: ["uses", "with"], values: release_checkout },
+  { name: "Setup Node", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+    "with" => { "node-version" => "24", "registry-url" => "https://registry.npmjs.org" },
+  } },
+  { name: "Recover npm registry packages from immutable release assets", keys: ["name", "env", "run"], values: { "env" => {
+    "GH_TOKEN" => "${{ github.token }}",
+    "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
+  } }, run_sha256: "d1ec19f00c4eedd4cd6c8b240cb9c549a2af8b4adff6b25bba8d1b3c87c2562f" },
+], "the unified release workflow npm recovery job")
 validate_step_contracts(npm_consumer_steps, [
   { name: nil, keys: ["uses", "with"], values: {
     "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",

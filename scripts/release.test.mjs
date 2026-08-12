@@ -199,6 +199,49 @@ test("npm release readback verifies tarball integrity, manifest, platform metada
   assert.match(consumer, /--omit=optional/);
 });
 
+test("npm registry recovery consumes immutable release assets without rebuilding the release", () => {
+  const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
+  assert.match(workflow, /mode:\n\s+description: "Recovery scope"[\s\S]*options:\n\s+- full\n\s+- npm-only/);
+  assert.match(workflow, /npm-recovery:\n\s+needs: prepare\n\s+if: needs\.prepare\.outputs\.mode == 'npm-only'/);
+  assert.match(workflow, /gh release download "flowersec-go\/v\$\{VERSION\}"/);
+  assert.match(workflow, /sha256sum --check checksums\.txt/);
+  assert.match(workflow, /downloaded\[\*\].*expected\[\*\]/);
+  assert.match(workflow, /awk -v file="\$archive"/);
+  assert.match(workflow, /validate_manifest "\$archive" "\$package"/);
+  assert.match(workflow, /\.flowersecSourceCommit == \$sha/);
+  assert.match(workflow, /\.optionalDependencies == \{/);
+  assert.match(workflow, /\.os == \[\$os\] and \.cpu == \[\$cpu\]/);
+  assert.match(workflow, /npm@11\.5\.1 publish --access public "\$archive"/);
+  assert.match(workflow, /\.error\.code == "E404"/);
+  assert.match(workflow, /\.dist\.integrity == \$integrity/);
+  assert.match(workflow, /return "\$view_status"/);
+  assert.match(workflow, /unlink "\$npm_error"/);
+  assert.match(workflow, /rust-publish:[\s\S]*if: needs\.prepare\.outputs\.mode == 'full'/);
+  assert.match(workflow, /native-prebuilt:[\s\S]*if: needs\.prepare\.outputs\.mode == 'full'/);
+  assert.match(workflow, /release:[\s\S]*if: needs\.prepare\.outputs\.mode == 'full'/);
+  assert.match(workflow, /npm-consumer-smoke:[\s\S]*needs: \[prepare, release, npm-recovery\]/);
+  const recovery = workflow.match(/  npm-recovery:\n([\s\S]*?)\n  npm-consumer-smoke:/)?.[1] ?? "";
+  assert.doesNotMatch(recovery, /npm ci|npm run build|cargo build|go build|action-gh-release|docker\/build-push-action/);
+});
+
+test("npm lockfile contains the complete native optional dependency closure", () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8"));
+  const lock = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package-lock.json"), "utf8"));
+  const version = manifest.optionalDependencies?.["@floegence/flowersec-node-native"];
+  assert.match(version ?? "", /^\d+\.\d+\.\d+$/);
+  const wrapper = lock.packages?.["node_modules/@floegence/flowersec-node-native"];
+  assert.equal(wrapper?.version, version);
+  assert.match(wrapper?.integrity ?? "", /^sha512-/);
+  for (const platform of ["darwin-arm64", "darwin-x64", "linux-arm64-gnu", "linux-x64-gnu"]) {
+    const packageName = `@floegence/flowersec-node-native-${platform}`;
+    assert.equal(wrapper.optionalDependencies?.[packageName], version);
+    const entry = lock.packages?.[`node_modules/${packageName}`];
+    assert.equal(entry?.version, version);
+    assert.match(entry?.integrity ?? "", /^sha512-/);
+    assert.equal(entry?.optional, true);
+  }
+});
+
 test("npm release metadata staging binds every published manifest to one source commit", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-npm-metadata-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -786,7 +829,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       const root = createReleasePolicyFixture(t);
       const workflowPath = path.join(root, ".github/workflows/release.yml");
       const workflow = fs.readFileSync(workflowPath, "utf8");
-      const marker = "  release:\n    needs: [prepare, rust-publish, native-prebuilt]\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n      packages: write\n      id-token: write\n    steps:\n";
+      const marker = "  release:\n    needs: [prepare, rust-publish, native-prebuilt]\n    if: needs.prepare.outputs.mode == 'full'\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n      packages: write\n      id-token: write\n    steps:\n";
       assert.ok(workflow.includes(marker));
       fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}      - name: Unreviewed command\n        run: ${bypass.run}\n\n`));
       const result = runReleasePolicy(root);
@@ -811,7 +854,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
-    const marker = "  release:\n    needs: [prepare, rust-publish, native-prebuilt]\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n      packages: write\n      id-token: write\n    steps:\n";
+    const marker = "  release:\n    needs: [prepare, rust-publish, native-prebuilt]\n    if: needs.prepare.outputs.mode == 'full'\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n      packages: write\n      id-token: write\n    steps:\n";
     assert.ok(workflow.includes(marker));
     fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}      - name: Unreviewed publisher\n        uses: example/publish-action@v1\n\n`));
     const result = runReleasePolicy(root);
@@ -1024,6 +1067,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     { file: ".github/workflows/release.yml", name: "Publish GitHub Release" },
     { file: ".github/workflows/release.yml", name: "Build and push runtime image" },
     { file: ".github/workflows/release.yml", name: "Publish npm packages with dependency barriers" },
+    { file: ".github/workflows/release.yml", name: "Recover npm registry packages from immutable release assets" },
     { file: ".github/workflows/rust-release.yml", name: "Check whether native transport version is already published" },
     { file: ".github/workflows/rust-release.yml", name: "Authenticate native transport publication" },
     { file: ".github/workflows/rust-release.yml", name: "Publish native transport crate" },
@@ -1363,9 +1407,9 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
   });
 
   for (const tt of [
-    { file: ".github/workflows/release.yml", job: "release" },
-    { file: ".github/workflows/release.yml", job: "rust-publish" },
-    { file: ".github/workflows/rust-release.yml", job: "publish" },
+    { file: ".github/workflows/release.yml", job: "release", expected: /duplicate YAML key|fields/ },
+    { file: ".github/workflows/release.yml", job: "rust-publish", expected: /duplicate YAML key|fields/ },
+    { file: ".github/workflows/rust-release.yml", job: "publish", expected: /must remain unconditional|fields/ },
   ]) {
     for (const mutation of [
       "    if: ${{ false }}\n",
@@ -1385,7 +1429,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
         );
         const result = runReleasePolicy(root);
         assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-        assert.match(result.stderr, /must remain unconditional|fields/);
+        assert.match(result.stderr, tt.expected);
       });
     }
   }
