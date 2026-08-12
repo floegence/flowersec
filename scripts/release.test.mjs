@@ -211,8 +211,8 @@ test("npm registry recovery consumes immutable release assets without rebuilding
   assert.match(workflow, /\.flowersecSourceCommit == \$sha/);
   assert.match(workflow, /\.optionalDependencies == \{/);
   assert.match(workflow, /\.os == \[\$os\] and \.cpu == \[\$cpu\]/);
-  assert.match(workflow, /npm@11\.5\.1 publish --access public "\$archive"/);
   assert.match(workflow, /\.error\.code == "E404"/);
+  assert.match(workflow, /npm@11\.5\.1 publish --access public "\.\/\$archive"/);
   assert.match(workflow, /\.dist\.integrity == \$integrity/);
   assert.match(workflow, /return "\$view_status"/);
   assert.match(workflow, /unlink "\$npm_error"/);

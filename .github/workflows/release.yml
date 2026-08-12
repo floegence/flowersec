@@ -479,7 +479,7 @@ jobs:
                 <<<"$metadata" >/dev/null
               echo "${package}@${VERSION} already published; skipping"
             elif jq -e '.error.code == "E404"' <<<"$metadata" >/dev/null 2>&1; then
-              npx -y npm@11.5.1 publish --access public "$archive"
+              npx -y npm@11.5.1 publish --access public "./$archive"
             else
               sed -E 's/(token|authorization)[^ ]*/\1=<redacted>/Ig' <<<"$npm_error_text" >&2
               return "$view_status"
