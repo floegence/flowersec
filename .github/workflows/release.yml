@@ -526,6 +526,11 @@ jobs:
         with:
           node-version: "20.19.0"
           registry-url: "https://registry.npmjs.org"
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: flowersec-go/go.mod
+          cache: false
       - name: Verify registry consumer install and load
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}

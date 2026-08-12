@@ -103,7 +103,7 @@ func runCLI(args []string) error {
 }
 
 func validateExecutionEnvironment(suite, goos string, euid int, home, path, temporary, state, workingDirectory string) error {
-	if suite != "diagnostic" && suite != "performance" {
+	if suite != "diagnostic" && suite != "performance" && suite != "performance-optional" {
 		return nil
 	}
 	if goos != "linux" || euid != 0 {
@@ -121,7 +121,7 @@ func validateExecutionEnvironment(suite, goos string, euid int, home, path, temp
 }
 
 func testStateDirectory(suite string) (string, error) {
-	if suite == "diagnostic" || suite == "performance" {
+	if suite == "diagnostic" || suite == "performance" || suite == "performance-optional" {
 		return filepath.Join(externalHostRoot, "state"), nil
 	}
 	if configured := os.Getenv("FLOWERSEC_TEST_STATE_DIR"); configured != "" {

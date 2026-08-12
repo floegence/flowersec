@@ -32,6 +32,9 @@ func TestOwnedTaskResidualIgnoresParkedRuntimeThreads(t *testing.T) {
 
 func TestFocusedProductionSoakCase(t *testing.T) {
 	if os.Getenv("FLOWERSEC_TEST_SOAK") != "1" {
+		if os.Getenv("FLOWERSEC_REQUIRED_PERFORMANCE") == "1" {
+			t.Fatal("required performance soak environment is incomplete")
+		}
 		t.Skip("set FLOWERSEC_TEST_SOAK=1 to run the production soak")
 	}
 	ctx, cancel := context.WithTimeout(performanceTestContext, productionSoakContract().Duration+30*time.Second)

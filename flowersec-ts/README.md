@@ -54,8 +54,10 @@ the browser's WebTransport API and is an optional browser adapter, not a
 required native-server carrier. Through
 `/node`, Node.js supports WebSocket and raw QUIC client connections, direct
 server sessions, and opaque `TunnelRuntime` relay legs. Raw QUIC uses the
-Flowersec-owned optional native addon and prebuilt platform package; it never
-loads from the browser entrypoint. The same Node entrypoint provides the
+Flowersec-owned optional native addon wrapper and one of its supported
+prebuilt platform packages; it never loads from the browser entrypoint. The
+wrapper selects the matching optional package for macOS arm64/x64 or Linux
+arm64/x64 glibc. Windows and musl packages are not published. The same Node entrypoint provides the
 control plane and `ProxyServer`, and the relay never terminates an E2EE
 Session. WebTransport is an optional adapter profile and the Node.js runtime
 does not currently expose a production adapter.

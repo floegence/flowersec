@@ -60,14 +60,14 @@ Flowersec はアプリケーションセッションを、それを運ぶネッ�
 | Swift | macOS および iOS クライアント | [Swift SDK](flowersec-swift/README.md) |
 | Rust | ネイティブ QUIC が必要な Tokio サービス | [Rust SDK](flowersec-rust/README.md) |
 
-[Cookbook 一覧](examples/README.md)には、直接接続、リレー、サーバー側のセッション受け入れ、RPC を扱う小さな実行可能サンプルがあります。
+[Cookbook 一覧](examples/README.md)には、各 SDK のクライアント接続、永続的な一回限りの使用、コントロールプレーンによる発行、liveness、セッションのライフサイクルを扱う小さな実行可能サンプルがあります。
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
 
 ## サンプル
 
-まず [Cookbook 一覧](examples/README.md)をご覧ください。本番アプリケーションと同じ公開 API を使い、クライアント接続、接続招待の発行、永続的な一回限りの処理、セッションのライフサイクルを示します。
+まず [Cookbook 一覧](examples/README.md)をご覧ください。本番アプリケーションと同じ公開 API を使い、クライアント接続、接続招待の発行、永続的な一回限りの処理、liveness、セッションのライフサイクルを示します。
 
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>

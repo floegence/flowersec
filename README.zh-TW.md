@@ -60,14 +60,14 @@ Flowersec 將應用工作階段與承載它的網路路徑分離：
 | Swift | macOS 與 iOS 用戶端 | [Swift SDK](flowersec-swift/README.md) |
 | Rust | 需要原生 QUIC 的 Tokio 服務 | [Rust SDK](flowersec-rust/README.md) |
 
-[Cookbook 索引](examples/README.md)提供每種 SDK 的小型可執行範例，涵蓋直連、中繼、伺服器端接收工作階段與 RPC。
+[Cookbook 索引](examples/README.md)提供每種 SDK 的小型可執行範例，涵蓋用戶端連線、持久化單次使用、控制面簽發、活性探測與工作階段生命週期。
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
 
 ## 範例
 
-從 [Cookbook 索引](examples/README.md)開始，其中的範例使用與正式應用相同的公開 API，涵蓋用戶端連線、控制面簽發連線邀請、持久化單次使用處理與工作階段生命週期。
+從 [Cookbook 索引](examples/README.md)開始，其中的範例使用與正式應用相同的公開 API，涵蓋用戶端連線、控制面簽發連線邀請、持久化單次使用處理、活性探測與工作階段生命週期。
 
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>

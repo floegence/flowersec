@@ -117,6 +117,43 @@ func TestConfigForSystemCaseSupportsIsolatedIPv6(t *testing.T) {
 	}
 }
 
+func TestConfigForRoutedSystemCaseSeparatesEndpointAndPathMTU(t *testing.T) {
+	config, err := ConfigForRoutedSystemCase("pmtu-v2", 1, 1500, FrozenFirewall, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.LinkMTU != 1500 || config.PathMTU != 1280 || config.RouterNamespace == "" {
+		t.Fatalf("routed PMTU config = %+v", config)
+	}
+	if err := validateConfig(config); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingRunner{}
+	lab, err := Open(context.Background(), runner, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := strings.Join(runner.commands, "\n")
+	clientEndpoint := "ip [-n " + config.ClientNamespace + " link set dev " + config.ClientInterface + " mtu 1500]"
+	clientFacing := "ip [-n " + config.RouterNamespace + " link set dev " + config.RouterClientInterface + " mtu 1500]"
+	serverFacing := "ip [-n " + config.RouterNamespace + " link set dev " + config.RouterServerInterface + " mtu 1500]"
+	serverEndpoint := "ip [-n " + config.ServerNamespace + " link set dev " + config.ServerInterface + " mtu 1500]"
+	clientRoute := "ip [-n " + config.RouterNamespace + " route replace " + config.ClientAddress.Masked().String() + " dev " + config.RouterClientInterface + " src " + config.RouterClientAddress.Addr().String() + " mtu 1280]"
+	serverRoute := "ip [-n " + config.RouterNamespace + " route replace " + config.ServerAddress.Masked().String() + " dev " + config.RouterServerInterface + " src " + config.RouterServerAddress.Addr().String() + " mtu 1280]"
+	if !strings.Contains(commands, clientEndpoint) || !strings.Contains(commands, clientFacing) ||
+		!strings.Contains(commands, serverFacing) || !strings.Contains(commands, serverEndpoint) ||
+		!strings.Contains(commands, clientRoute) || !strings.Contains(commands, serverRoute) {
+		t.Fatalf("routed PMTU interfaces do not preserve ingress before the bottleneck:\n%s", commands)
+	}
+	routerUp := "ip [-n " + config.RouterNamespace + " link set dev " + config.RouterServerInterface + " up]"
+	if strings.Index(commands, clientRoute) < strings.Index(commands, routerUp) || strings.Index(commands, serverRoute) < strings.Index(commands, routerUp) {
+		t.Fatalf("routed PMTU routes are configured before router links are up:\n%s", commands)
+	}
+	if err := lab.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestIPv6LabAddressesSkipAsynchronousDAD(t *testing.T) {
 	address := netip.MustParsePrefix("2001:db8:1::1/126")
 	got := addressAddArguments("client", address, "eth0")

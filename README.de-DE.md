@@ -60,14 +60,14 @@ Wähle das SDK für deine Anwendung:
 | Swift | macOS- und iOS-Clients | [Swift SDK](flowersec-swift/README.md) |
 | Rust | Tokio-Dienste mit nativem QUIC | [Rust SDK](flowersec-rust/README.md) |
 
-Der [Cookbook-Index](examples/README.md) enthält kleine ausführbare Beispiele für direkte Verbindungen, Relays, serverseitige Sitzungen und RPC.
+Der [Cookbook-Index](examples/README.md) enthält kleine ausführbare Beispiele für Client-Verbindungen, dauerhafte Einmalverwendung, Control-Plane-Ausstellung, Liveness und den Sitzungslebenszyklus in jedem SDK.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
 
 ## Beispiele
 
-Beginne mit dem [Cookbook-Index](examples/README.md). Die Beispiele verwenden dieselbe öffentliche API wie Produktionsanwendungen und zeigen Client-Verbindungen, das Ausstellen von Verbindungseinladungen, dauerhafte Einmalverwendung und den Sitzungslebenszyklus.
+Beginne mit dem [Cookbook-Index](examples/README.md). Die Beispiele verwenden dieselbe öffentliche API wie Produktionsanwendungen und zeigen Client-Verbindungen, das Ausstellen von Verbindungseinladungen, dauerhafte Einmalverwendung, Liveness und den Sitzungslebenszyklus.
 
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>

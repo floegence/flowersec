@@ -65,7 +65,8 @@ Choose the SDK that matches your application:
 | Rust | Tokio services that need native QUIC | [Rust SDK](flowersec-rust/README.md) |
 
 The [cookbook index](examples/README.md) contains small, runnable examples for
-each SDK, including direct connections, relays, accepted sessions, and RPC.
+client connections, durable invitation use, control-plane issuance, liveness,
+and session lifecycle in each SDK.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
@@ -74,8 +75,8 @@ each SDK, including direct connections, relays, accepted sessions, and RPC.
 
 Start with the [cookbook index](examples/README.md) for small examples that use
 the same public API as production applications. It covers client connections,
-control-plane invitation issuance, durable single-use handling, and session
-lifecycle.
+control-plane invitation issuance, durable single-use handling, liveness, and
+session lifecycle.
 
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>

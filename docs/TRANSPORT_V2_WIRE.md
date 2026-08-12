@@ -7,13 +7,17 @@ All multibyte integers are unsigned big-endian. Receivers reject non-zero
 reserved bytes, undeclared trailing bytes, unknown fields, non-canonical JSON,
 invalid UTF-8, size violations, and values outside the registries below.
 
-Transport v2 uses the same session wire over WebSocket, raw QUIC, and
-WebTransport. WebSocket uses one hop-local Yamux session after admission. Raw
-QUIC and WebTransport map every Flowersec stream directly to one native
-bidirectional stream and never add Yamux. Reliable application data is never
-sent as a QUIC or WebTransport datagram. An independently encrypted FSD2
-unreliable message is permitted only after native DATAGRAM and the matching
-FSH2 feature are negotiated; it is never carried on a reliable stream.
+Transport v2 uses the same Flowersec application session wire over every
+carrier adapter that declares the `flowersec/2` profile. WebSocket uses one
+hop-local Yamux session after admission. Raw QUIC maps every Flowersec stream
+directly to one native bidirectional stream and never adds Yamux. A future or
+optional WebTransport adapter must use the same application wire, but its
+HTTP/3/WebTransport version, SETTINGS, CONNECT headers, QPACK, and native
+stream/datagram negotiation remain owned by the upstream adapter and are not
+Flowersec wire constants. Reliable application data is never sent as a QUIC or
+WebTransport datagram. An independently encrypted FSD2 unreliable message is
+permitted only after native DATAGRAM and the matching FSH2 feature are
+negotiated; it is never carried on a reliable stream.
 
 ## Connection Order
 
@@ -167,7 +171,8 @@ The stream label is `flowersec v2 stream`; the control label is
 
 ## FSD2 Unreliable Message
 
-FSD2 exists only on negotiated raw QUIC or WebTransport DATAGRAM support. It
+FSD2 exists only on negotiated raw QUIC or optional WebTransport DATAGRAM
+support. It
 has a 32-byte cleartext header followed by exactly `ciphertext_length` bytes:
 
 | Offset | Size | Field |

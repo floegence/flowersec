@@ -39,7 +39,7 @@ The public surface is defined by `stability/api_contract_manifest.json`; package
 
 ## Transport Behavior
 
-WebSocket, raw QUIC, and WebTransport are equal candidate classes. WebSocket may use hop-local Yamux internally; raw QUIC and WebTransport use native bidirectional streams and preserve native FIN, reset, stop-sending, flow-control, and migration behavior. Application 0-RTT is disabled. Reliable streams never use QUIC DATAGRAM; a negotiated native DATAGRAM path is available only through the carrier-neutral unreliable-message contract.
+WebSocket, raw QUIC, and WebTransport are equal candidate classes. WebSocket may use hop-local Yamux internally; raw QUIC and WebTransport use native bidirectional streams and preserve native FIN, reset, stop-sending, and flow-control behavior. Raw QUIC exposes the declared active migration capability. WebTransport preserves transport-managed passive rebinding but does not expose application-managed active migration. Application 0-RTT is disabled. Reliable streams never use QUIC DATAGRAM; a negotiated native DATAGRAM path is available only through the carrier-neutral unreliable-message contract.
 
 Internal runtime support facts may contain only exact tuples backed by production connector/listener code and executable conformance tests. Capability descriptors and carrier selection are not public SDK contracts. Only declared carrier tuples are accepted; unsupported tuples fail closed.
 

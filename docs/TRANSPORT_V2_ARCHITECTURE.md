@@ -123,11 +123,13 @@ use the single-host runner. Every layer is judged by assertions and process exit
 status: success retains no output, while failure retains only a bounded
 first-failure diagnostic.
 
-Registered capacity tests cover 1,000 concurrent sessions for each production topology they select, including direct WSS, raw QUIC, Go WebTransport, and native WSS/raw-QUIC tunnels. Browser WebTransport bridge cases are dual-listener test workloads rather than production `TunnelRuntime` declarations. The performance package freezes a 30-second ramp, 60-second hold, 30-second cleanup, 120-second watchdog, and RSS, CPU, file-descriptor, goroutine, and task ceilings. Each selected case counts attempted, succeeded, and failed sessions; proves a unique active peak of exactly 1,000 with no hold disconnect; records ramp/hold/cleanup resource samples; and finishes with zero watchdogs and zero residual sessions.
+Required performance is Go-owned. It measures the production Go runtime's connection and stream control-plane capacity, connect and liveness latency, cleanup, and resource growth; it is not multi-language performance parity and does not represent application business throughput. Six required capacity IDs cover direct WSS/raw QUIC and the WW/QQ/WQ/QW native tunnel topologies. They freeze 1,000 concurrent sessions, a 30-second ramp, 60-second hold, 30-second cleanup, 120-second watchdog, and RSS, CPU, file-descriptor, goroutine, and task ceilings. Each case counts attempted, succeeded, and failed sessions; proves a unique active peak of exactly 1,000 with no hold disconnect; records ramp/hold/cleanup resource samples; and finishes with zero watchdogs and zero residual sessions.
 
-The three browser stream-capacity cases additionally prove 100 production sessions with 128 simultaneously live bidirectional streams per session. They use a 60-second ramp and a dedicated 32,768 aggregate process-tree descriptor ceiling plus a 240 CPU-second aggregate ceiling. Those ceilings preserve measured headroom over the Chromium calibration; the 1,000-session browser cases remain at 12,288 descriptors and non-browser capacity cases remain at 8,192.
+`performance/throughput/{wss,raw-quic}` separately measures production encrypted stream payload transfer with a fixed 64 KiB payload, four concurrent streams, three five-second samples, bytes per second, and p50/p95 acknowledgement latency. Static minimum throughput and maximum p95 budgets decide each sample. No historical baseline, confidence interval, or generated performance evidence is used.
 
-Linux system tests include netns/tc, eBPF counters, common-kernel behavior, real path migration, and IPv4/IPv6 PMTUD. The default diagnostic path asserts observed fault counters and protocol behavior directly. Qlog and pcap are optional troubleshooting inputs for an explicitly selected diagnostic; they are not required outputs and do not decide whether an ordinary run is GREEN. Capacity, soak, resource-growth, and A-B metrics remain confined to explicit performance targets.
+Optional Go/Chromium WebTransport capacity and soak run only in the explicit `performance-optional` suite. The three browser stream-capacity cases prove 100 production sessions with 128 simultaneously live bidirectional streams per session. They use a 60-second ramp and a dedicated 32,768 aggregate process-tree descriptor ceiling plus a 240 CPU-second aggregate ceiling. Those ceilings preserve measured headroom over the Chromium calibration; the 1,000-session browser cases remain at 12,288 descriptors and required non-browser capacity cases remain at 8,192. Missing optional capability fails that selected profile's preflight; it is neither a required performance failure nor a skipped GREEN.
+
+Linux diagnostics separate three boundaries. `diagnostic/kernel/*` proves netns, tc, eBPF schedules, counters, topology cleanup, and socket traversal. `diagnostic/weaknet/*` is a local userspace Flowersec fault smoke. `diagnostic/flowersec-weaknet/*` runs production WSS/raw QUIC Sessions and representative opaque tunnel topologies inside the kernel fault lab, with independent IDs for delay/jitter, periodic and burst loss, outage behavior, routed PMTU discovery from 1500-byte endpoint links to a 1280-byte bottleneck with large payloads, measured 5/1 Mbps shaping, reorder/duplicate, RPC, stream FIN, and cleanup. Raw QUIC direct weaknet additionally checks unreliable messages. Required diagnostics parse `go test -json`; skip, missing target execution, and `[no tests to run]` are RED. Fault-schedule tests compile, verifier-load, own, and clean their BPF object; topology and socket-traversal tests own their namespace and socket resources. Qlog and pcap are optional troubleshooting inputs and never decide GREEN.
 
 ## Go Native Adapters
 
@@ -145,8 +147,10 @@ Browser support remains a separate runtime-adapter smoke contract and is not
 inferred from native Go support.
 
 Runtime tuples in `stability/transport_v2_contract.json` describe individual
-carrier leg adapters, not deployment-profile claims. Go retains WebTransport
-tunnel leg adapters for browser and mixed-leg workloads, while
+carrier leg adapters, not deployment-profile claims. `NewWebTransportTunnelListener(...)`
+is a low-level listener adapter only; it is not a supported endpoint-client
+tunnel path or TunnelRuntime capability because the production opaque relay
+does not provide complete paired WebTransport datagram forwarding.
 `webtransport-server` remains unclaimed until its complete direct-server and
 opaque-tunnel conformance set is registered. Required server parity never
 infers WebTransport support from those lower-level tuples.
@@ -159,8 +163,9 @@ Rust pins `quinn =0.11.11` with default features disabled and only `runtime-toki
 
 - Go native: WebSocket and raw QUIC for direct and tunnel paths, plus
   WebTransport for direct paths. Go retains an optional low-level WebTransport
-  tunnel leg adapter for browser and mixed-leg workloads, but does not claim
-  the complete `webtransport-server` profile.
+  tunnel listener adapter, but it is not a supported endpoint-client tunnel
+  path or TunnelRuntime capability and does not claim the complete
+  `webtransport-server` profile.
 - TypeScript browser: WebSocket and WebTransport when their constructors are
   present; `detectBrowserRuntimeCapabilityV2(...)` removes unavailable APIs at
   runtime. Raw UDP is unavailable.

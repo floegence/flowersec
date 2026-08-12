@@ -662,6 +662,10 @@ validate_step_contracts(npm_consumer_steps, [
     "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
     "with" => { "node-version" => "20.19.0", "registry-url" => "https://registry.npmjs.org" },
   } },
+  { name: "Setup Go", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff",
+    "with" => { "go-version-file" => "flowersec-go/go.mod", "cache" => false },
+  } },
   { name: "Verify registry consumer install and load", keys: ["name", "env", "run"], values: { "env" => {
     "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
   } }, run_sha256: "60dfc6c71b5fcb8dec7d17777678d62aa94c0aba810e1e168861c176a9dfeb65" },

@@ -36,6 +36,7 @@ type Config struct {
 	RouterClientAddress   netip.Prefix
 	RouterServerAddress   netip.Prefix
 	LinkMTU               int
+	PathMTU               int
 	Firewall              string
 }
 
@@ -114,6 +115,7 @@ func ConfigForRoutedSystemCase(caseID string, run int, linkMTU int, firewall str
 	}
 	stem := fmt.Sprintf("fs%08x", hash.Sum32())
 	config.ClientAddress, config.ServerAddress = client, server
+	config.PathMTU = 1280
 	config.RouterNamespace = "fr-" + stem[2:10]
 	config.RouterClientInterface, config.RouterServerInterface = stem[:10]+"rc", stem[:10]+"rs"
 	config.RouterClientAddress, config.RouterServerAddress = routerClient, routerServer
@@ -177,8 +179,12 @@ func open(ctx context.Context, runner CommandRunner, config Config, rollbackTime
 			step{command{"ip", []string{"link", "add", "name", config.RouterServerInterface, "netns", config.RouterNamespace, "type", "veth", "peer", "name", config.ServerInterface, "netns", config.ServerNamespace}}, nil},
 		)
 		for _, item := range []struct{ namespace, device string }{
-			{config.ClientNamespace, config.ClientInterface}, {config.RouterNamespace, config.RouterClientInterface},
-			{config.RouterNamespace, config.RouterServerInterface}, {config.ServerNamespace, config.ServerInterface},
+			{config.ClientNamespace, config.ClientInterface}, {config.ServerNamespace, config.ServerInterface},
+		} {
+			steps = append(steps, step{command{"ip", []string{"-n", item.namespace, "link", "set", "dev", item.device, "mtu", strconv.Itoa(config.LinkMTU)}}, nil})
+		}
+		for _, item := range []struct{ namespace, device string }{
+			{config.RouterNamespace, config.RouterClientInterface}, {config.RouterNamespace, config.RouterServerInterface},
 		} {
 			steps = append(steps, step{command{"ip", []string{"-n", item.namespace, "link", "set", "dev", item.device, "mtu", strconv.Itoa(config.LinkMTU)}}, nil})
 		}
@@ -201,6 +207,8 @@ func open(ctx context.Context, runner CommandRunner, config Config, rollbackTime
 			step{command{"ip", []string{"-n", config.RouterNamespace, "link", "set", "dev", "lo", "up"}}, nil},
 			step{command{"ip", []string{"-n", config.RouterNamespace, "link", "set", "dev", config.RouterClientInterface, "up"}}, nil},
 			step{command{"ip", []string{"-n", config.RouterNamespace, "link", "set", "dev", config.RouterServerInterface, "up"}}, nil},
+			step{command{"ip", []string{"-n", config.RouterNamespace, "route", "replace", config.ClientAddress.Masked().String(), "dev", config.RouterClientInterface, "src", config.RouterClientAddress.Addr().String(), "mtu", strconv.Itoa(config.PathMTU)}}, nil},
+			step{command{"ip", []string{"-n", config.RouterNamespace, "route", "replace", config.ServerAddress.Masked().String(), "dev", config.RouterServerInterface, "src", config.RouterServerAddress.Addr().String(), "mtu", strconv.Itoa(config.PathMTU)}}, nil},
 			step{command{"ip", []string{"-n", config.ClientNamespace, "route", "add", config.ServerAddress.Masked().String(), "via", config.RouterClientAddress.Addr().String()}}, nil},
 			step{command{"ip", []string{"-n", config.ServerNamespace, "route", "add", config.ClientAddress.Masked().String(), "via", config.RouterServerAddress.Addr().String()}}, nil},
 		)
@@ -369,7 +377,7 @@ func validateConfig(config Config) error {
 		config.RouterClientInterface == config.RouterServerInterface || !config.RouterClientAddress.IsValid() || !config.RouterServerAddress.IsValid() ||
 		config.RouterClientAddress.Addr().Is4() != config.ClientAddress.Addr().Is4() || config.RouterServerAddress.Addr().Is4() != config.ServerAddress.Addr().Is4() ||
 		config.RouterClientAddress.Masked() != config.ClientAddress.Masked() || config.RouterServerAddress.Masked() != config.ServerAddress.Masked() ||
-		config.ClientAddress.Masked() == config.ServerAddress.Masked() {
+		config.ClientAddress.Masked() == config.ServerAddress.Masked() || config.PathMTU < 1280 || config.PathMTU > config.LinkMTU {
 		return errors.New("routed linux netlab configuration is invalid")
 	}
 	return nil

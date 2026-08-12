@@ -286,6 +286,15 @@ func OpenTestEndpointAt(ctx context.Context, topology Topology, listenHost strin
 	return openEndpointAtWithSuiteAndCoordinator(ctx, topology, listenHost, protocolv2.SuiteChaCha20Poly1305, config)
 }
 
+// SetEndpointDialNamespace binds both endpoint connector legs to one network
+// namespace. The relay listeners remain in the namespace where the endpoint
+// was constructed, so both legs traverse the configured kernel path.
+func (endpoint *Endpoint) SetEndpointDialNamespace(namespace string) {
+	if endpoint != nil {
+		endpoint.serverDialNamespace = namespace
+	}
+}
+
 func releaseCoordinatorConfig(plan transporttest.ProfilePlan) (tunnelv2.Config, error) {
 	if plan.Cold.OperationDeadlineSeconds < 1 || plan.Cold.PhaseDeadlineSeconds < plan.Cold.OperationDeadlineSeconds {
 		return tunnelv2.Config{}, errors.New("release tunnel profile has invalid cold deadlines")

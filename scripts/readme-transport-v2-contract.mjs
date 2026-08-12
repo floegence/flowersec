@@ -5,7 +5,7 @@ export const transportV2CommonReadmeLiterals = Object.freeze([]);
 
 export const transportV2ReadmeContracts = Object.freeze({
   "README.md": "Application data is encrypted end to end for both direct and relayed sessions.",
-  "flowersec-go/README.md": "tunnel listener for browser and mixed-leg workloads",
+  "flowersec-go/README.md": "it is not a supported endpoint-client\ntunnel path or `TunnelRuntime` capability",
   "flowersec-ts/README.md": "Browser WebTransport is capability-dependent on",
   "flowersec-rust/README.md": "The native Rust runtime uses WebSocket and raw QUIC for direct and relayed client sessions,",
   "flowersec-swift/README.md": "The Swift SDK supports direct and relayed WebSocket sessions on macOS and iOS.",

@@ -60,14 +60,14 @@ Escolha o SDK adequado ao seu aplicativo:
 | Swift | Clientes macOS e iOS | [Swift SDK](flowersec-swift/README.md) |
 | Rust | Serviços Tokio que precisam de QUIC nativo | [Rust SDK](flowersec-rust/README.md) |
 
-O [índice de exemplos](examples/README.md) contém exemplos pequenos e executáveis de conexões diretas, relays, aceitação de sessões no servidor e RPC.
+O [índice de exemplos](examples/README.md) contém exemplos pequenos e executáveis de conexões de cliente, uso único durável, emissão pelo plano de controle, liveness e ciclo de vida da sessão em cada SDK.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
 
 ## Exemplos
 
-Comece pelo [índice de exemplos](examples/README.md). Eles usam a mesma API pública de aplicativos em produção e cobrem conexões de cliente, emissão de convites, uso único durável e ciclo de vida da sessão.
+Comece pelo [índice de exemplos](examples/README.md). Eles usam a mesma API pública de aplicativos em produção e cobrem conexões de cliente, emissão de convites, uso único durável, liveness e ciclo de vida da sessão.
 
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>

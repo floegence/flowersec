@@ -60,14 +60,14 @@ Flowersec은 애플리케이션 세션과 이를 전달하는 네트워크 경�
 | Swift | macOS 및 iOS 클라이언트 | [Swift SDK](flowersec-swift/README.md) |
 | Rust | 네이티브 QUIC가 필요한 Tokio 서비스 | [Rust SDK](flowersec-rust/README.md) |
 
-[Cookbook 인덱스](examples/README.md)에는 직접 연결, 릴레이, 서버 측 세션 수락, RPC를 다루는 작고 실행 가능한 예제가 있습니다.
+[Cookbook 인덱스](examples/README.md)에는 각 SDK의 클라이언트 연결, 영구 단일 사용 처리, 제어 영역 발급, liveness, 세션 수명 주기를 다루는 작고 실행 가능한 예제가 있습니다.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
 
 ## 예제
 
-[Cookbook 인덱스](examples/README.md)부터 살펴보세요. 프로덕션 앱과 같은 공개 API를 사용해 클라이언트 연결, 제어 영역의 연결 초대 발급, 영구 단일 사용 처리, 세션 수명 주기를 보여 줍니다.
+[Cookbook 인덱스](examples/README.md)부터 살펴보세요. 프로덕션 앱과 같은 공개 API를 사용해 클라이언트 연결, 제어 영역의 연결 초대 발급, 영구 단일 사용 처리, liveness, 세션 수명 주기를 보여 줍니다.
 
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>

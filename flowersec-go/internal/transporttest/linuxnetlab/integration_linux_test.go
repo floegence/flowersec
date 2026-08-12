@@ -10,13 +10,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
 
 func TestPrivilegedTopologyLifecycle(t *testing.T) {
 	if os.Getenv("FLOWERSEC_LINUX_NETLAB_INTEGRATION") != "1" {
+		if os.Getenv("FLOWERSEC_REQUIRED_DIAGNOSTIC") == "1" {
+			t.Fatal("required diagnostic integration environment is incomplete")
+		}
 		t.Skip("set FLOWERSEC_LINUX_NETLAB_INTEGRATION=1 on the audited privileged Linux runner")
 	}
 	config, err := ConfigForCell("integration", os.Getpid()%9999+1, 1280, FrozenFirewall)
@@ -115,30 +117,23 @@ print(json.dumps({'probe_rtt':probe,'bulk_elapsed':bulk}))`
 
 func compileDiagnosticBPFObject(t *testing.T, ctx context.Context) string {
 	t.Helper()
-	if object := os.Getenv("FLOWERSEC_BPF_OBJECT"); object != "" {
-		return object
-	}
-	multiarch, err := exec.CommandContext(ctx, "gcc", "-print-multiarch").Output()
+	object, err := CompileDiagnosticBPFObject(ctx, t.TempDir())
 	if err != nil {
-		t.Fatalf("resolve compiler include path: %v", err)
-	}
-	object := filepath.Join(t.TempDir(), "packet_fault.o")
-	source := filepath.Join("bpf", "packet_fault.c")
-	arguments := []string{"-target", "bpf", "-I", filepath.Join("/usr/include", strings.TrimSpace(string(multiarch))), "-O2", "-g", "-c", source, "-o", object}
-	if output, err := exec.CommandContext(ctx, "clang", arguments...).CombinedOutput(); err != nil {
-		t.Fatalf("compile diagnostic BPF object: %v: %s", err, output)
+		t.Fatal(err)
 	}
 	return object
 }
 
 func TestPrivilegedExactFaultSchedules(t *testing.T) {
 	if os.Getenv("FLOWERSEC_LINUX_NETLAB_INTEGRATION") != "1" {
+		if os.Getenv("FLOWERSEC_REQUIRED_DIAGNOSTIC") == "1" {
+			t.Fatal("required diagnostic integration environment is incomplete")
+		}
 		t.Skip("set FLOWERSEC_LINUX_NETLAB_INTEGRATION=1 on the audited privileged Linux runner")
 	}
-	bpfObject := os.Getenv("FLOWERSEC_BPF_OBJECT")
-	if bpfObject == "" {
-		t.Skip("set FLOWERSEC_BPF_OBJECT to the verifier-loaded classifier object")
-	}
+	ctx, cancel := context.WithTimeout(privilegedTestContext, 45*time.Second)
+	defer cancel()
+	bpfObject := compileDiagnosticBPFObject(t, ctx)
 	profiles := map[string]FaultProfile{
 		"periodic-loss": {
 			BPFObject: bpfObject, BaseDelay: 60 * time.Millisecond,
@@ -160,9 +155,9 @@ func TestPrivilegedExactFaultSchedules(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithTimeout(privilegedTestContext, 20*time.Second)
-			defer cancel()
-			lab, err := Open(ctx, ExecRunner{}, config)
+			cellCtx, cellCancel := context.WithTimeout(ctx, 20*time.Second)
+			defer cellCancel()
+			lab, err := Open(cellCtx, ExecRunner{}, config)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -173,7 +168,7 @@ func TestPrivilegedExactFaultSchedules(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			if err := lab.ApplyFaultProfile(ctx, profile); err != nil {
+			if err := lab.ApplyFaultProfile(cellCtx, profile); err != nil {
 				t.Fatal(err)
 			}
 			const sent = 200
@@ -181,25 +176,34 @@ func TestPrivilegedExactFaultSchedules(t *testing.T) {
 			serverBaseline := stableFaultStats(t, config, "server")
 			clientDelivered := sent - expectedLossesBetween(profile, int(clientBaseline.Packets)+1, sent)
 			serverDelivered := sent - expectedLossesBetween(profile, int(serverBaseline.Packets)+1, sent)
-			exchangeUDPPackets(t, ctx, config, sent, clientDelivered, serverDelivered)
+			exchangeUDPPackets(t, cellCtx, config, sent, clientDelivered, serverDelivered)
 			assertFaultStats(t, config, "client", profile, int(clientBaseline.Packets)+sent)
 			assertFaultStats(t, config, "server", profile, int(serverBaseline.Packets)+sent)
 			assertKernelQdiscs(t, config, profile)
 			if name == "edge" {
-				assertQueueLimitDrops(t, ctx, config, profile)
+				assertQueueLimitDrops(t, cellCtx, config, profile)
 			}
 		})
 	}
 }
 
+func TestRequiredDiagnosticCompilesItsOwnBPFObject(t *testing.T) {
+	if os.Getenv("FLOWERSEC_REQUIRED_DIAGNOSTIC") != "1" {
+		return
+	}
+	if os.Getenv("FLOWERSEC_BPF_OBJECT") != "" {
+		t.Fatal("required diagnostics must not consume a caller-provided BPF object")
+	}
+}
+
 func TestPrivilegedReorderDuplicateAndOutage(t *testing.T) {
 	if os.Getenv("FLOWERSEC_LINUX_NETLAB_INTEGRATION") != "1" {
+		if os.Getenv("FLOWERSEC_REQUIRED_DIAGNOSTIC") == "1" {
+			t.Fatal("required diagnostic integration environment is incomplete")
+		}
 		t.Skip("set FLOWERSEC_LINUX_NETLAB_INTEGRATION=1 on the audited privileged Linux runner")
 	}
-	bpfObject := os.Getenv("FLOWERSEC_BPF_OBJECT")
-	if bpfObject == "" {
-		bpfObject = compileIntegrationBPF(t)
-	}
+	bpfObject := compileIntegrationBPF(t)
 	profile := FaultProfile{
 		BPFObject: bpfObject, BaseDelay: 60 * time.Millisecond,
 		Jitter:   []time.Duration{0, 8 * time.Millisecond, -4 * time.Millisecond, 12 * time.Millisecond, -8 * time.Millisecond, 4 * time.Millisecond, -2 * time.Millisecond, 6 * time.Millisecond},
@@ -285,14 +289,9 @@ for sequence in range(1,401):
 
 func compileIntegrationBPF(t *testing.T) string {
 	t.Helper()
-	multiarch, err := exec.Command("gcc", "-print-multiarch").Output()
+	output, err := CompileDiagnosticBPFObject(privilegedTestContext, t.TempDir())
 	if err != nil {
-		t.Fatalf("resolve multiarch include: %v", err)
-	}
-	output := filepath.Join(t.TempDir(), "packet-fault.o")
-	command := exec.Command("clang", "-target", "bpf", "-I", filepath.Join("/usr/include", strings.TrimSpace(string(multiarch))), "-O2", "-g", "-c", filepath.Join("bpf", "packet_fault.c"), "-o", output)
-	if combined, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("compile packet-fault BPF: %v: %s", err, combined)
+		t.Fatal(err)
 	}
 	return output
 }

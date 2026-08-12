@@ -175,6 +175,20 @@ test("native prebuilt release performs an addon load and raw QUIC smoke before u
   assert.ok(smokeIndex >= 0 && smokeIndex < uploadIndex, "native smoke must precede upload");
 });
 
+test("documentation distinguishes injector, real weaknet, required performance, and optional WebTransport", () => {
+  const matrix = fs.readFileSync(path.join(sourceRoot, "docs/TEST_MATRIX.md"), "utf8");
+  const architecture = fs.readFileSync(path.join(sourceRoot, "docs/TRANSPORT_V2_ARCHITECTURE.md"), "utf8");
+  assert.match(matrix, /diagnostic\/flowersec-weaknet\/\{websocket,raw-quic\}\/direct/);
+  assert.match(matrix, /diagnostic\/flowersec-weaknet\/\{websocket,raw-quic\}\/tunnel\/representative/);
+  assert.match(matrix, /Go-owned/);
+  assert.match(matrix, /performance\/throughput\/\{wss,raw-quic\}/);
+  assert.match(matrix, /performance-optional/);
+  assert.doesNotMatch(matrix, /Swift WSS against Go, Rust, and Node/);
+  assert.match(architecture, /not multi-language performance parity/);
+  assert.match(architecture, /not a supported endpoint-client\s+tunnel path or TunnelRuntime capability/);
+  assert.doesNotMatch(architecture, /Linux system tests include[^\n]*real path migration[^\n]*IPv4\/IPv6 PMTUD/);
+});
+
 test("npm release readback verifies tarball integrity, manifest, platform metadata, and source commit", () => {
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
   const readback = fs.readFileSync(path.join(sourceRoot, "scripts/verify-npm-release-package.mjs"), "utf8");
@@ -197,6 +211,29 @@ test("npm release readback verifies tarball integrity, manifest, platform metada
   assert.match(consumer, /contractVersion\(\)/);
   assert.match(consumer, /flowersec-core\/browser/);
   assert.match(consumer, /--omit=optional/);
+  assert.match(consumer, /release\/npm-consumer\/go-node-raw-quic\/direct-session/);
+  assert.match(consumer, /@floegence\/flowersec-core\/node/);
+  assert.match(consumer, /parseArtifact/);
+  assert.match(consumer, /createArtifactLease/);
+  assert.match(consumer, /rpc\.call/);
+  assert.match(consumer, /openStream/);
+  assert.match(consumer, /session\.close/);
+  assert.match(consumer, /GOWORK/);
+  assert.match(consumer, /flowersec-go\/v2 v\$\{version\}/);
+  assert.doesNotMatch(consumer, /flowersec-ts\/src|server-parity|interop_matrix/);
+  assert.match(workflow, /actions\/setup-go/);
+  const goConsumer = fs.readFileSync(
+    path.join(sourceRoot, "scripts/fixtures/npm-release-go-node-raw-quic/main.go"),
+    "utf8",
+  );
+  assert.match(goConsumer, /NewRawQUICDirectListener/);
+  assert.match(goConsumer, /NewAcceptor/);
+  assert.match(goConsumer, /IssueDirect/);
+  assert.match(goConsumer, /HandleRPC/);
+  assert.match(goConsumer, /HandleStream/);
+  assert.match(goConsumer, /SessionClosed/);
+  assert.match(goConsumer, /accepted lease was not released/);
+  assert.doesNotMatch(goConsumer, /\/internal\//);
 });
 
 test("npm registry recovery consumes immutable release assets without rebuilding the release", () => {

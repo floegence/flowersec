@@ -240,7 +240,7 @@ function walkFiles(directory, predicate) {
 
 function registeredTestIDs(source) {
   const result = new Set();
-  for (const match of source.matchAll(/(?:commandEntry|commandEntryWithEnvironment|vitestEntry|browserSmokeEntry|browserCompatibilityEntry|privilegedGoTestEntry)\(\s*"([^"]+)"/g)) {
+  for (const match of source.matchAll(/(?:commandEntry|commandEntryWithEnvironment|vitestEntry|browserSmokeEntry|browserCompatibilityEntry|privilegedGoTestEntry|throughputEntry|flowersecWeaknetEntry)\(\s*"([^"]+)"/g)) {
     result.add(match[1]);
   }
   return result;

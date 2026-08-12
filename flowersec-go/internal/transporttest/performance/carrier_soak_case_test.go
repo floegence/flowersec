@@ -41,6 +41,9 @@ func productionCarrierSoakContract() carrierSoakContract {
 
 func TestFocusedProductionCarrierSoakCase(t *testing.T) {
 	if os.Getenv("FLOWERSEC_TEST_SOAK") != "1" {
+		if os.Getenv("FLOWERSEC_REQUIRED_PERFORMANCE") == "1" {
+			t.Fatal("required performance carrier soak environment is incomplete")
+		}
 		t.Skip("set FLOWERSEC_TEST_SOAK=1 to run the production carrier soak")
 	}
 	var kind carrier.Kind

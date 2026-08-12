@@ -14,20 +14,27 @@ instances, namespaces, faults, and temporary files that they create.
 | Required Go/Rust/Node WebSocket and raw QUIC tunnel covering set (18 topologies) | `interop/server-parity/tunnel-matrix` using endpoint A, opaque relay runtime, and endpoint B |
 | Optional Go WebTransport direct adapter | Go carrier conformance and Chromium direct checks when the adapter is selected |
 | Node and Rust WebSocket/raw QUIC cross-runtime behavior | The required direct and tunnel matrices above, with shared Flowersec application wire vectors |
-| Swift WSS against Go, Rust, and Node | Swift focused interoperability tests |
+| Swift WSS against Go | `interop/swift-go/wss/{direct,tunnel}` using the production Swift connector and Go peer |
 | Chromium direct, WebTransport-to-WSS tunnel, and WebTransport-to-QUIC tunnel | Local `make browser-smoke` using Chromium dual-listener bridge workloads; these are not native `TunnelRuntime` declarations |
 | Firefox and WebKit native WebTransport capability | Local `make browser-compat`; unsupported runtime surfaces are asserted explicitly |
-| Network namespaces, BPF, tc, and weak networks | Explicit `make diagnostic` workloads on a prepared privileged host |
-| Capacity, resource, and soak thresholds | Explicit `make performance` workloads |
+| Fault injector and kernel topology conformance | Four `diagnostic/kernel/*` tests using netns, tc, eBPF counters, and generic socket workloads |
+| Real Flowersec weak-network behavior | Production WSS/raw QUIC direct Sessions and representative opaque tunnels in the same netns/tc/eBPF lab |
+| Go-owned capacity, resource, soak, and payload throughput | Explicit `make performance`; this is not multi-language performance parity |
+| Optional WebTransport and Chromium performance | Explicit `flowersec-test --suite performance-optional` on the prepared privileged host |
+| Published Go-to-Node raw QUIC consumer compatibility | `release/npm-consumer/go-node-raw-quic/direct-session` installs registry packages and the tagged Go module, then verifies handshake, RPC, stream FIN, close, and cleanup; this is release readback, not a repository parity test |
 
-The expensive inventory has four groups and no second manifest:
+The expensive inventory is grouped by execution boundary and has no second manifest:
 
 | Group | Stable runner IDs |
 | --- | --- |
 | Coverage and race | `coverage/{go,typescript,rust,swift}`, `race/go` |
 | Local real browsers | Three `browser/chromium/*` topology IDs plus `browser/{firefox,webkit}/webtransport-capability` |
-| Privileged Linux diagnostics | `diagnostic/weaknet/{raw-quic,websocket}/direct` and four `diagnostic/kernel/*` lifecycle IDs |
-| Performance | Twelve `performance/capacity/*` IDs, raw QUIC migration soak, production WSS soak, and optional Go/Browser WebTransport soak IDs |
+| Userspace Flowersec fault smoke | `diagnostic/weaknet/{raw-quic,websocket}/direct` |
+| Kernel fault injector | Four `diagnostic/kernel/*` lifecycle and exact-fault IDs |
+| Kernel-backed Flowersec weaknet | `diagnostic/flowersec-weaknet/{websocket,raw-quic}/direct/{delay-jitter,periodic-loss,burst-loss,outage,mtu-large-payload,rate-5mbps,rate-1mbps,reorder-duplicate}` and `diagnostic/flowersec-weaknet/{websocket,raw-quic}/tunnel/representative` |
+| Required Go performance | Six `performance/capacity/*` WSS/raw-QUIC IDs, raw QUIC migration soak, production WSS soak, and `performance/throughput/{wss,raw-quic}` |
+| Optional WebTransport performance | `performance-optional/webtransport-capability`, then six `performance/capacity/*` WebTransport/Chromium IDs plus `performance/soak/webtransport` in `performance-optional` |
+| Registry consumer readback | `release/npm-consumer/go-node-raw-quic/direct-session`, executed after publication on each supported native package platform |
 
 Coverage and race run with `make coverage-race`. Browser compatibility uses
 real native connections: Firefox currently rejects the connection before

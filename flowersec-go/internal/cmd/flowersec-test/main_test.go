@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -50,13 +51,24 @@ func TestVitestEntryUsesRepositoryConfigFromTheRunnerRoot(t *testing.T) {
 	}
 }
 
-func TestPerformanceRegistryUsesCanonicalRunIDEnvironment(t *testing.T) {
+func TestPerformanceRegistrySeparatesRequiredAndOptionalCarriers(t *testing.T) {
 	capacityEntries := 0
+	optionalCapacityEntries := 0
 	for _, test := range registry() {
-		if test.Suite != "performance" || !strings.HasPrefix(test.ID, "performance/capacity/") {
+		if !strings.HasPrefix(test.ID, "performance/capacity/") {
 			continue
 		}
-		capacityEntries++
+		if strings.Contains(test.ID, "wt") || strings.Contains(test.ID, "webtransport") {
+			if test.Suite != "performance-optional" {
+				t.Fatalf("optional WebTransport capacity %s is registered in %s", test.ID, test.Suite)
+			}
+			optionalCapacityEntries++
+		} else {
+			if test.Suite != "performance" {
+				t.Fatalf("required capacity %s is registered in %s", test.ID, test.Suite)
+			}
+			capacityEntries++
+		}
 		runID, err := newRunID(test.ID)
 		if err != nil {
 			t.Fatalf("%s: generate run ID: %v", test.ID, err)
@@ -69,8 +81,13 @@ func TestPerformanceRegistryUsesCanonicalRunIDEnvironment(t *testing.T) {
 			t.Fatalf("%s: capacity environment = %#v", test.ID, parts)
 		}
 	}
-	if capacityEntries != 12 {
-		t.Fatalf("capacity registry entries = %d, want 12", capacityEntries)
+	if capacityEntries != 6 || optionalCapacityEntries != 6 {
+		t.Fatalf("capacity registry entries = required %d optional %d, want 6 and 6", capacityEntries, optionalCapacityEntries)
+	}
+	for _, test := range registry() {
+		if test.Suite == "performance" && strings.Contains(test.ID, "webtransport") {
+			t.Fatalf("required performance contains optional WebTransport test %s", test.ID)
+		}
 	}
 }
 
@@ -78,6 +95,122 @@ func TestRegistryEntriesSatisfyRunnerBounds(t *testing.T) {
 	if _, err := selectSuite(registry(), "acceptance"); err != nil {
 		t.Fatalf("registry validation failed: %v", err)
 	}
+}
+
+func TestOptionalPerformanceUsesThePrivilegedHostBoundary(t *testing.T) {
+	if err := validateExecutionEnvironment("performance-optional", "linux", 0, "/var/lib/flowersec-test/home", externalHostPath, "/var/lib/flowersec-test/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace"); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateExecutionEnvironment("performance-optional", "darwin", 501, "/Users/test", "/usr/bin", "/tmp", "", "/tmp/flowersec"); err == nil {
+		t.Fatal("optional performance was allowed outside the fixed privileged host")
+	}
+}
+
+func TestOptionalPerformanceStartsWithWebTransportCapabilityPreflight(t *testing.T) {
+	tests, err := selectSuite(registry(), "performance-optional")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tests[0].ID != "performance-optional/webtransport-capability" {
+		t.Fatalf("optional performance first test = %q", tests[0].ID)
+	}
+}
+
+func TestRequiredPerformanceRegistersBothPayloadThroughputCarriers(t *testing.T) {
+	want := map[string]bool{
+		"performance/throughput/wss":      false,
+		"performance/throughput/raw-quic": false,
+	}
+	for _, entry := range registry() {
+		if _, ok := want[entry.ID]; ok {
+			if entry.Suite != "performance" {
+				t.Fatalf("throughput %s suite = %s", entry.ID, entry.Suite)
+			}
+			want[entry.ID] = true
+		}
+	}
+	for id, found := range want {
+		if !found {
+			t.Fatalf("required payload throughput %s is not registered", id)
+		}
+	}
+}
+
+func TestRequiredGoTestOutputRejectsSkipAndMissingTarget(t *testing.T) {
+	for name, output := range map[string]string{
+		"skip": strings.Join([]string{
+			jsonLine(goTestEvent{Action: "start", Test: "TestRequired"}),
+			jsonLine(goTestEvent{Action: "skip", Test: "TestRequired", Output: "--- SKIP: TestRequired (0.00s)\\n"}),
+			jsonLine(goTestEvent{Action: "pass", Package: "example.test"}),
+		}, ""),
+		"subtest skip": strings.Join([]string{
+			jsonLine(goTestEvent{Action: "run", Package: "example.test", Test: "TestRequired"}),
+			jsonLine(goTestEvent{Action: "run", Package: "example.test", Test: "TestRequired/required-cell"}),
+			jsonLine(goTestEvent{Action: "skip", Package: "example.test", Test: "TestRequired/required-cell"}),
+			jsonLine(goTestEvent{Action: "pass", Package: "example.test", Test: "TestRequired"}),
+		}, ""),
+		"missing": jsonLine(goTestEvent{Action: "pass", Package: "example.test"}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateRequiredGoTestOutput([]byte(output), "example.test", "TestRequired"); err == nil {
+				t.Fatal("required diagnostic output was accepted without a target pass")
+			}
+		})
+	}
+}
+
+func TestRequiredGoTestOutputAcceptsTargetPass(t *testing.T) {
+	output := strings.Join([]string{
+		jsonLine(goTestEvent{Action: "run", Package: "example.test", Test: "TestRequired"}),
+		jsonLine(goTestEvent{Action: "pass", Package: "example.test", Test: "TestRequired"}),
+		jsonLine(goTestEvent{Action: "pass", Package: "example.test"}),
+	}, "")
+	if err := validateRequiredGoTestOutput([]byte(output), "example.test", "TestRequired"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRequiredDiagnosticRegistryUsesExactGoTestCompletion(t *testing.T) {
+	want := map[string]bool{
+		"diagnostic/weaknet/raw-quic/direct":         false,
+		"diagnostic/weaknet/websocket/direct":        false,
+		"diagnostic/kernel/topology-lifecycle":       false,
+		"diagnostic/kernel/fault-schedules":          false,
+		"diagnostic/kernel/reorder-duplicate-outage": false,
+		"diagnostic/kernel/socket-traversal":         false,
+	}
+	for _, carrierName := range []string{"websocket", "raw-quic"} {
+		for _, scenario := range []string{"delay-jitter", "periodic-loss", "burst-loss", "outage", "mtu-large-payload", "rate-5mbps", "rate-1mbps", "reorder-duplicate"} {
+			want["diagnostic/flowersec-weaknet/"+carrierName+"/direct/"+scenario] = false
+		}
+	}
+	want["diagnostic/flowersec-weaknet/websocket/tunnel/representative"] = false
+	want["diagnostic/flowersec-weaknet/raw-quic/tunnel/representative"] = false
+	for _, entry := range registry() {
+		if _, ok := want[entry.ID]; ok {
+			want[entry.ID] = true
+		}
+	}
+	for id, found := range want {
+		if !found {
+			t.Fatalf("required diagnostic %q is not registered", id)
+		}
+	}
+}
+
+type goTestEvent struct {
+	Action  string `json:"Action"`
+	Package string `json:"Package"`
+	Test    string `json:"Test"`
+	Output  string `json:"Output"`
+}
+
+func jsonLine(event goTestEvent) string {
+	value, err := json.Marshal(event)
+	if err != nil {
+		panic(err)
+	}
+	return string(value) + "\n"
 }
 
 func acceptanceProgress(completed ...string) progress {

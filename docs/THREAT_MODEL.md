@@ -24,9 +24,9 @@ The authenticated session handshake derives independent directional and epoch ke
 ## Carrier Security
 
 - WSS requires authenticated TLS 1.3 and accepts binary frames only. Plaintext WebSocket accepts only the direct subprotocol with resolvable loopback TCP addresses at both ends; tunnel, non-loopback, missing-address, and wrong-subprotocol connections fail closed.
-- Raw QUIC and WebTransport require exact ALPN, explicit trust roots, TLS 1.3, and disabled early data.
+- Raw QUIC requires Flowersec's exact ALPN, explicit trust roots, TLS 1.3, and disabled early data. An optional WebTransport adapter must enforce equivalent TLS, origin, early-data, and lifecycle properties, while its HTTP/3 wire version and ALPN details remain upstream-owned rather than Flowersec contract constants.
 - QUIC native FIN, RESET_STREAM, STOP_SENDING, flow control, and path migration remain visible to the carrier implementation but not to applications.
-- Application streams remain reliable and never fall back to QUIC DATAGRAM. Raw QUIC and WebTransport may expose negotiated native DATAGRAM only through the carrier-neutral, separately encrypted unreliable-message channel.
+- Application streams remain reliable and never fall back to QUIC DATAGRAM. Raw QUIC, and an optional WebTransport adapter when it exposes native DATAGRAM, may provide unreliable messages only through the carrier-neutral, separately encrypted channel.
 
 ## Out Of Scope
 

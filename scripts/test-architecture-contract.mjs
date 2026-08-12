@@ -87,6 +87,8 @@ const dependencyContracts = read("stability/dependency_contracts.json");
 const transportContract = read("stability/transport_v2_contract.json");
 const capabilityContracts = read("stability/language_capabilities.json");
 const transportArchitecture = read("docs/TRANSPORT_V2_ARCHITECTURE.md");
+const testMatrix = read("docs/TEST_MATRIX.md");
+const apiChangePolicy = read("docs/API_CHANGE_POLICY.md");
 const rustReadme = read("flowersec-rust/README.md");
 const typescriptReadme = read("flowersec-ts/README.md");
 const directParityRunner = read("scripts/test-server-parity-direct.mjs");
@@ -107,6 +109,10 @@ for (const source of [browserCarrier, browserCarrierTests].map(stripComments)) {
 assert.match(browserCarrier, /new Constructor\(parsed\.href\)/);
 assert.doesNotMatch(browserAcceptanceRunner, /ExtendQuicHandshakeTimeout|QuicHandshakeTimeout|MaxIdleTimeBeforeCryptoHandshake|force-fieldtrial|quic-client-connection-options/i);
 assert.doesNotMatch(browserAcceptanceWorker, /__flowersecCancelArtifact|expected_failure|assertFullyResolved|resolved\s*=\s*new Set/);
+assert.match(testMatrix, /release\/npm-consumer\/go-node-raw-quic\/direct-session/,
+  "test matrix must identify the post-publication Go-to-Node registry consumer boundary");
+assert.match(apiChangePolicy, /WebTransport preserves transport-managed passive rebinding but does not expose application-managed active migration/,
+  "API policy must not overclaim WebTransport active migration");
 assert.match(main, /type progress struct \{\n\s*Plan\s+string\s+`json:"plan"`\n\s*SourceSHA\s+string\s+`json:"source_sha"`\n\s*Suite\s+string\s+`json:"suite"`\n\s*Completed\s+\[\]string\s+`json:"completed"`/);
 assert.match(main, /filepath\.Join\(stateDir, safeName\(\*suite\), "test-progress\.json"\)/);
 assert.doesNotMatch(main, /namespace|bpftool|Chromium|QLOG|pcap|fault|shard|stage|base_sha|final_sha|config_digest/i);
@@ -173,7 +179,7 @@ const hostInit = read("scripts/test-host-init.sh");
 const hostEntry = read("scripts/test-host.sh");
 const interopMatrix = JSON.parse(read("stability/interop_matrix.json"));
 const capabilityManifest = JSON.parse(read("stability/language_capabilities.json"));
-const registryIDs = new Set([...registry.matchAll(/(?:commandEntry|commandEntryWithEnvironment|vitestEntry|browserSmokeEntry|browserCompatibilityEntry|performanceCapacityEntry|privilegedGoTestEntry)\("([^"]+)"/g)].map((match) => match[1]));
+const registryIDs = new Set([...registry.matchAll(/(?:commandEntry|commandEntryWithEnvironment|vitestEntry|browserSmokeEntry|browserCompatibilityEntry|performanceCapacityEntry|privilegedGoTestEntry|throughputEntry|flowersecWeaknetEntry)\("([^"]+)"/g)].map((match) => match[1]));
 const deploymentProfiles = capabilityManifest.deployment_profiles;
 assert.equal(deploymentProfiles?.version, 1);
 assert.equal(deploymentProfiles?.application_wire, "shared_across_runtimes_and_carriers");

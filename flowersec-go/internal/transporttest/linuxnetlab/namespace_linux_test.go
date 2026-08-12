@@ -13,6 +13,9 @@ import (
 
 func TestPrivilegedGoSocketsTraverseNamespaces(t *testing.T) {
 	if os.Getenv("FLOWERSEC_LINUX_NETLAB_INTEGRATION") != "1" {
+		if os.Getenv("FLOWERSEC_REQUIRED_DIAGNOSTIC") == "1" {
+			t.Fatal("required diagnostic integration environment is incomplete")
+		}
 		t.Skip("set FLOWERSEC_LINUX_NETLAB_INTEGRATION=1 on the audited privileged Linux runner")
 	}
 	config, err := ConfigForCell("go-sockets", os.Getpid()%9999+1, 1500, FrozenFirewall)

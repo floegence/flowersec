@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -65,13 +67,36 @@ func registry() []registeredTest {
 		commandEntry("coverage/rust", "coverage-race", 10*time.Minute, "make", "rust-cover-check"),
 		commandEntry("coverage/swift", "coverage-race", 10*time.Minute, "make", "swift-test", "swift-cover-check"),
 		commandEntry("race/go", "coverage-race", 10*time.Minute, "make", "go-test-race"),
-		commandEntryWithEnvironment("diagnostic/weaknet/raw-quic/direct", "diagnostic", 5*time.Minute, []string{"FLOWERSEC_RUN_WEAKNET_SMOKE=1"}, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestWeaknetRawQUICSmoke$", "./internal/weaknetsmoke"),
-		commandEntryWithEnvironment("diagnostic/weaknet/websocket/direct", "diagnostic", 5*time.Minute, []string{"FLOWERSEC_RUN_WEAKNET_SMOKE=1"}, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestWeaknetWebSocketSmoke$", "./internal/weaknetsmoke"),
+		requiredGoTestEntry("diagnostic/weaknet/raw-quic/direct", "TestWeaknetRawQUICSmoke", "./internal/weaknetsmoke", []string{"FLOWERSEC_RUN_WEAKNET_SMOKE=1"}),
+		requiredGoTestEntry("diagnostic/weaknet/websocket/direct", "TestWeaknetWebSocketSmoke", "./internal/weaknetsmoke", []string{"FLOWERSEC_RUN_WEAKNET_SMOKE=1"}),
 		privilegedGoTestEntry("diagnostic/kernel/topology-lifecycle", "TestPrivilegedTopologyLifecycle"),
 		privilegedGoTestEntry("diagnostic/kernel/fault-schedules", "TestPrivilegedExactFaultSchedules"),
 		privilegedGoTestEntry("diagnostic/kernel/reorder-duplicate-outage", "TestPrivilegedReorderDuplicateAndOutage"),
 		privilegedGoTestEntry("diagnostic/kernel/socket-traversal", "TestPrivilegedGoSocketsTraverseNamespaces"),
 	}
+	// Keep every required weak-network coordinate as a literal registry entry.
+	// The architecture checker consumes these IDs statically and must not have
+	// to execute Go loops to discover production test coverage.
+	tests = append(tests,
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/websocket/direct/delay-jitter", "websocket", "direct", "delay-jitter"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/websocket/direct/periodic-loss", "websocket", "direct", "periodic-loss"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/websocket/direct/burst-loss", "websocket", "direct", "burst-loss"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/websocket/direct/outage", "websocket", "direct", "outage"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/websocket/direct/mtu-large-payload", "websocket", "direct", "mtu-large-payload"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/websocket/direct/rate-5mbps", "websocket", "direct", "rate-5mbps"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/websocket/direct/rate-1mbps", "websocket", "direct", "rate-1mbps"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/websocket/direct/reorder-duplicate", "websocket", "direct", "reorder-duplicate"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/websocket/tunnel/representative", "websocket", "tunnel", "representative"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/raw-quic/direct/delay-jitter", "raw-quic", "direct", "delay-jitter"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/raw-quic/direct/periodic-loss", "raw-quic", "direct", "periodic-loss"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/raw-quic/direct/burst-loss", "raw-quic", "direct", "burst-loss"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/raw-quic/direct/outage", "raw-quic", "direct", "outage"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/raw-quic/direct/mtu-large-payload", "raw-quic", "direct", "mtu-large-payload"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/raw-quic/direct/rate-5mbps", "raw-quic", "direct", "rate-5mbps"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/raw-quic/direct/rate-1mbps", "raw-quic", "direct", "rate-1mbps"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/raw-quic/direct/reorder-duplicate", "raw-quic", "direct", "reorder-duplicate"),
+		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/raw-quic/tunnel/representative", "raw-quic", "tunnel", "representative"),
+	)
 	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
 		tests = append(tests,
 			commandEntry("controller/swift", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectionController"),
@@ -83,24 +108,48 @@ func registry() []registeredTest {
 		)
 	}
 	for _, id := range []string{
-		"CAP-DIRECT-WSS-1000", "CAP-DIRECT-QUIC-1000", "CAP-DIRECT-WT-1000",
-		"CAP-TUNNEL-WT-WSS-1000", "CAP-TUNNEL-WT-QUIC-1000",
-		"CAP-STREAM-WT-DIRECT-100X128", "CAP-STREAM-WT-WSS-100X128", "CAP-STREAM-WT-QUIC-100X128",
+		"CAP-DIRECT-WSS-1000", "CAP-DIRECT-QUIC-1000",
 		"CAP-WW-1000", "CAP-QQ-1000", "CAP-WQ-1000", "CAP-QW-1000",
 	} {
-		tests = append(tests, performanceCapacityEntry("performance/capacity/"+strings.ToLower(id), id))
+		tests = append(tests, performanceCapacityEntry("performance/capacity/"+strings.ToLower(id), "performance", id))
 	}
-	tests = append(tests, commandEntryWithEnvironment("performance/soak", "performance", 10*time.Minute, []string{"FLOWERSEC_TEST_SOAK=1"}, "go", "-C", "flowersec-go", "test", "-timeout=10m", "-count=1", "-run", "^TestFocusedProductionSoakCase$", "./internal/transporttest/performance"))
+	for _, id := range []string{
+		"CAP-DIRECT-WT-1000", "CAP-TUNNEL-WT-WSS-1000", "CAP-TUNNEL-WT-QUIC-1000",
+		"CAP-STREAM-WT-DIRECT-100X128", "CAP-STREAM-WT-WSS-100X128", "CAP-STREAM-WT-QUIC-100X128",
+	} {
+		if id == "CAP-DIRECT-WT-1000" {
+			tests = append(tests, commandEntry("performance-optional/webtransport-capability", "performance-optional", time.Minute,
+				"node", "flowersec-ts/scripts/browser-test-runner.mjs", "--runtime-canary", os.Getenv("FLOWERSEC_CHROMIUM_EXECUTABLE")))
+		}
+		tests = append(tests, performanceCapacityEntry("performance/capacity/"+strings.ToLower(id), "performance-optional", id))
+	}
+	tests = append(tests, requiredPerformanceGoTestEntry("performance/soak", "performance", "TestFocusedProductionSoakCase", []string{"FLOWERSEC_TEST_SOAK=1", "FLOWERSEC_REQUIRED_PERFORMANCE=1"}, 10*time.Minute))
 	tests = append(tests,
-		carrierSoakEntry("performance/soak/wss", "websocket"),
-		carrierSoakEntry("performance/soak/webtransport", "webtransport"),
+		carrierSoakEntry("performance/soak/wss", "performance", "websocket"),
+		carrierSoakEntry("performance/soak/webtransport", "performance-optional", "webtransport"),
+		throughputEntry("performance/throughput/wss", "websocket"),
+		throughputEntry("performance/throughput/raw-quic", "raw-quic"),
 	)
 	return tests
 }
 
-func performanceCapacityEntry(id, caseID string) registeredTest {
-	return registeredTest{ID: id, Suite: "performance", Timeout: 5 * time.Minute, Run: func(ctx context.Context, run runContext) error {
-		return runCommand(ctx, run.Root, withRunID(performanceCapacityEnvironment(caseID), run.RunID), "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestFocusedProductionCapacityCase$", "./internal/transporttest/performance")
+func flowersecWeaknetEntry(id, carrierName, path, scenario string) registeredTest {
+	return requiredGoTestEntry(id, "TestPrivilegedFlowersecWeaknet", "./internal/transporttest/flowersecweaknet", []string{
+		"FLOWERSEC_LINUX_NETLAB_INTEGRATION=1",
+		"FLOWERSEC_WEAKNET_CARRIER=" + carrierName,
+		"FLOWERSEC_WEAKNET_PATH=" + path,
+		"FLOWERSEC_WEAKNET_SCENARIO=" + scenario,
+	})
+}
+
+func throughputEntry(id, kind string) registeredTest {
+	return requiredPerformanceGoTestEntry(id, "performance", "TestFocusedProductionPayloadThroughputCase", []string{"FLOWERSEC_TEST_THROUGHPUT_CARRIER=" + kind}, 2*time.Minute)
+}
+
+func performanceCapacityEntry(id, suite, caseID string) registeredTest {
+	return registeredTest{ID: id, Suite: suite, Timeout: 5 * time.Minute, Run: func(ctx context.Context, run runContext) error {
+		arguments := []string{"-C", "flowersec-go", "test", "-json", "-timeout=5m", "-count=1", "-run", "^TestFocusedProductionCapacityCase$", "./internal/transporttest/performance"}
+		return runRequiredGoTest(ctx, run.Root, withRunID(performanceCapacityEnvironment(caseID), run.RunID), arguments, "./internal/transporttest/performance", "TestFocusedProductionCapacityCase")
 	}}
 }
 
@@ -108,10 +157,19 @@ func performanceCapacityEnvironment(caseID string) []string {
 	return []string{"FLOWERSEC_TEST_CAPACITY_CASE=" + caseID}
 }
 
-func carrierSoakEntry(id, kind string) registeredTest {
-	return commandEntryWithEnvironment(id, "performance", 10*time.Minute,
-		[]string{"FLOWERSEC_TEST_SOAK=1", "FLOWERSEC_TEST_SOAK_CARRIER=" + kind},
-		"go", "-C", "flowersec-go", "test", "-timeout=10m", "-count=1", "-run", "^TestFocusedProductionCarrierSoakCase$", "./internal/transporttest/performance")
+func carrierSoakEntry(id, suite, kind string) registeredTest {
+	environment := []string{"FLOWERSEC_TEST_SOAK=1", "FLOWERSEC_TEST_SOAK_CARRIER=" + kind}
+	if suite == "performance" {
+		environment = append(environment, "FLOWERSEC_REQUIRED_PERFORMANCE=1")
+	}
+	return requiredPerformanceGoTestEntry(id, suite, "TestFocusedProductionCarrierSoakCase", environment, 10*time.Minute)
+}
+
+func requiredPerformanceGoTestEntry(id, suite, testName string, environment []string, timeout time.Duration) registeredTest {
+	return registeredTest{ID: id, Suite: suite, Timeout: timeout, Run: func(ctx context.Context, run runContext) error {
+		arguments := []string{"-C", "flowersec-go", "test", "-json", "-timeout=" + timeout.String(), "-count=1", "-run", "^" + regexp.QuoteMeta(testName) + "$", "./internal/transporttest/performance"}
+		return runRequiredGoTest(ctx, run.Root, withRunID(environment, run.RunID), arguments, "./internal/transporttest/performance", testName)
+	}}
 }
 
 func withRunID(environment []string, runID string) []string {
@@ -129,8 +187,14 @@ func browserCompatibilityEntry(id, browser, title string) registeredTest {
 func playwrightTitle(title string) string { return regexp.QuoteMeta(title) }
 
 func privilegedGoTestEntry(id, testName string) registeredTest {
-	return commandEntryWithEnvironment(id, "diagnostic", 5*time.Minute, []string{"FLOWERSEC_LINUX_NETLAB_INTEGRATION=1"},
-		"go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^"+regexp.QuoteMeta(testName)+"$", "./internal/transporttest/linuxnetlab")
+	return requiredGoTestEntry(id, testName, "./internal/transporttest/linuxnetlab", []string{"FLOWERSEC_LINUX_NETLAB_INTEGRATION=1", "FLOWERSEC_REQUIRED_DIAGNOSTIC=1"})
+}
+
+func requiredGoTestEntry(id, testName, packageName string, environment []string) registeredTest {
+	return registeredTest{ID: id, Suite: "diagnostic", Timeout: 5 * time.Minute, Run: func(ctx context.Context, run runContext) error {
+		args := []string{"-C", "flowersec-go", "test", "-json", "-timeout=5m", "-count=1", "-run", "^" + regexp.QuoteMeta(testName) + "$", packageName}
+		return runRequiredGoTest(ctx, run.Root, withRunID(append(environment, "FLOWERSEC_REQUIRED_DIAGNOSTIC=1"), run.RunID), args, packageName, testName)
+	}}
 }
 
 func vitestEntry(id, suite, file, title string) registeredTest {
@@ -160,6 +224,11 @@ func commandEntryWithEnvironment(id, suite string, timeout time.Duration, enviro
 }
 
 func runCommand(ctx context.Context, directory string, environment []string, name string, arguments ...string) error {
+	_, err := runCommandOutput(ctx, directory, environment, name, arguments...)
+	return err
+}
+
+func runCommandOutput(ctx context.Context, directory string, environment []string, name string, arguments ...string) ([]byte, error) {
 	command := exec.Command(name, arguments...)
 	command.Dir = directory
 	command.Env = append(os.Environ(), environment...)
@@ -168,16 +237,16 @@ func runCommand(ctx context.Context, directory string, environment []string, nam
 	output.limit = 64 << 10
 	command.Stdout, command.Stderr = &output, &output
 	if err := command.Start(); err != nil {
-		return err
+		return nil, err
 	}
 	done := make(chan error, 1)
 	go func() { done <- command.Wait() }()
 	select {
 	case err := <-done:
 		if err != nil {
-			return fmt.Errorf("%s: %w: %s", name, err, output.String())
+			return nil, fmt.Errorf("%s: %w: %s", name, err, output.String())
 		}
-		return nil
+		return append([]byte(nil), output.Bytes()...), nil
 	case <-ctx.Done():
 		_ = syscall.Kill(-command.Process.Pid, syscall.SIGTERM)
 		err, drained := waitForCommandGroup(command.Process.Pid, done, 5*time.Second)
@@ -186,10 +255,64 @@ func runCommand(ctx context.Context, directory string, environment []string, nam
 			if err == nil {
 				err = <-done
 			}
-			return errors.Join(context.Cause(ctx), err, errors.New("subprocess group did not finish teardown after SIGTERM"), errors.New(output.String()))
+			return nil, errors.Join(context.Cause(ctx), err, errors.New("subprocess group did not finish teardown after SIGTERM"), errors.New(output.String()))
 		}
-		return errors.Join(context.Cause(ctx), err, errors.New(output.String()))
+		return nil, errors.Join(context.Cause(ctx), err, errors.New(output.String()))
 	}
+}
+
+type goTestOutputEvent struct {
+	Action  string `json:"Action"`
+	Package string `json:"Package"`
+	Test    string `json:"Test"`
+}
+
+func runRequiredGoTest(ctx context.Context, directory string, environment, arguments []string, packageName, testName string) error {
+	output, err := runCommandOutput(ctx, directory, environment, "go", arguments...)
+	if err != nil {
+		return err
+	}
+	return validateRequiredGoTestOutput(output, packageName, testName)
+}
+
+func validateRequiredGoTestOutput(output []byte, packageName, testName string) error {
+	if strings.TrimSpace(packageName) == "" || strings.TrimSpace(testName) == "" {
+		return errors.New("required Go test identity is empty")
+	}
+	passed := false
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	for scanner.Scan() {
+		var event goTestOutputEvent
+		if json.Unmarshal(scanner.Bytes(), &event) != nil || !matchesGoTestPackage(event.Package, packageName) ||
+			(event.Test != testName && !strings.HasPrefix(event.Test, testName+"/")) {
+			continue
+		}
+		switch event.Action {
+		case "skip":
+			return fmt.Errorf("required Go test %s skipped", testName)
+		case "fail":
+			return fmt.Errorf("required Go test %s failed", testName)
+		case "pass":
+			if event.Test == testName {
+				passed = true
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("parse required Go test output: %w", err)
+	}
+	if !passed {
+		return fmt.Errorf("required Go test %s did not execute to completion", testName)
+	}
+	return nil
+}
+
+func matchesGoTestPackage(actual, expected string) bool {
+	if actual == expected {
+		return true
+	}
+	expected = strings.TrimPrefix(expected, "./")
+	return expected != "" && strings.HasSuffix(actual, "/"+expected)
 }
 
 func waitForCommandGroup(processGroup int, done <-chan error, grace time.Duration) (error, bool) {
