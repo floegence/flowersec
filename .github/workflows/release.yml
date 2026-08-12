@@ -219,6 +219,7 @@ jobs:
 
           # Build and pack the TypeScript SDK artifact.
           ( cd flowersec-ts && \
+            npm install --package-lock-only --ignore-scripts --no-audit && \
             npm ci --audit=false && \
             npm run build \
           )

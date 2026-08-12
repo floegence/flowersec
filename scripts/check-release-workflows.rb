@@ -587,7 +587,7 @@ validate_step_contracts(release_steps, [
     "RELEASE_DATE" => "${{ steps.vars.outputs.date }}",
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
-  } }, run_sha256: "cb8966cd3310f94f7dbef013761d81bd3d5e91b62fdbc175975212374ffe8c56" },
+  } }, run_sha256: "988c91cdd9dc577e9e723e5b16a807165737cef0ddd0a43e395f26690e796ba8" },
   { name: "Generate release notes", keys: ["name", "env", "run"], values: { "env" => {
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_TAG" => "${{ steps.vars.outputs.tag }}",

@@ -281,6 +281,14 @@ test("npm lockfile contains the complete native optional dependency closure", ()
   }
 });
 
+test("npm release builds refresh historical lock metadata before clean install", () => {
+  const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
+  const refresh = workflow.indexOf("npm install --package-lock-only --ignore-scripts");
+  const cleanInstall = workflow.indexOf("npm ci --audit=false");
+  assert.ok(refresh >= 0, "release build must refresh lock metadata for immutable historical tags");
+  assert.ok(cleanInstall > refresh, "release build must refresh lock metadata before npm ci");
+});
+
 test("npm release metadata staging binds every published manifest to one source commit", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-npm-metadata-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
