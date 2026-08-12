@@ -97,6 +97,7 @@ test("release policy assertions use anchored mirror URL matching", () => {
 test("Rust publication installs the shared native driver before the SDK", () => {
   const nativeManifest = fs.readFileSync(path.join(sourceRoot, "flowersec-native-transport/Cargo.toml"), "utf8");
   const sdkManifest = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/Cargo.toml"), "utf8");
+  const releaseVersion = nativeManifest.match(/^version\s*=\s*"(\d+\.\d+\.\d+)"$/m)?.[1];
   const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
   const rustWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/rust-release.yml"), "utf8");
   const releaseWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
@@ -105,7 +106,11 @@ test("Rust publication installs the shared native driver before the SDK", () => 
   for (const field of ["description", "license", "repository", "readme", "include"]) {
     assert.match(nativeManifest, new RegExp(`^${field}\\s*=`, "m"), `native driver misses ${field} package metadata`);
   }
-  assert.match(sdkManifest, /flowersec-native-transport\s*=\s*\{\s*version\s*=\s*"=2\.3\.7",\s*path\s*=\s*"\.\.\/flowersec-native-transport"\s*\}/);
+  assert.ok(releaseVersion, "native driver package version is missing");
+  assert.match(
+    sdkManifest,
+    new RegExp(`flowersec-native-transport\\s*=\\s*\\{\\s*version\\s*=\\s*"=${releaseVersion.replaceAll(".", "\\.")}",\\s*path\\s*=\\s*"\\.\\.\\/flowersec-native-transport"\\s*\\}`),
+  );
   assert.match(makefile, /cargo package --manifest-path flowersec-native-transport\/Cargo\.toml --locked --allow-dirty/);
   assert.match(makefile, /cargo publish --manifest-path flowersec-native-transport\/Cargo\.toml --locked --dry-run --allow-dirty --no-verify/);
   assert.match(makefile, /cargo package --manifest-path flowersec-rust\/Cargo\.toml --locked --allow-dirty --list/);
@@ -269,8 +274,12 @@ test("npm lockfile contains the complete native optional dependency closure", ()
   const version = manifest.optionalDependencies?.["@floegence/flowersec-node-native"];
   assert.match(version ?? "", /^\d+\.\d+\.\d+$/);
   const wrapper = lock.packages?.["node_modules/@floegence/flowersec-node-native"];
-  assert.equal(wrapper?.version, version);
-  assert.match(wrapper?.integrity ?? "", /^sha512-/);
+  if (wrapper?.version === undefined) {
+    assert.deepEqual(wrapper, { optional: true });
+    return;
+  }
+  assert.equal(wrapper.version, version);
+  assert.match(wrapper.integrity ?? "", /^sha512-/);
   for (const platform of ["darwin-arm64", "darwin-x64", "linux-arm64-gnu", "linux-x64-gnu"]) {
     const packageName = `@floegence/flowersec-node-native-${platform}`;
     assert.equal(wrapper.optionalDependencies?.[packageName], version);

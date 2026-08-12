@@ -9,7 +9,7 @@ license = "MIT"
 cargo-fuzz = true
 
 [dependencies]
-flowersec = { version = "=2.3.7", path = "..", features = ["__flowersec_internal_fuzzing"] }
+flowersec = { version = "=2.3.8", path = "..", features = ["__flowersec_internal_fuzzing"] }
 libfuzzer-sys = "0.4"
 
 [[bin]]

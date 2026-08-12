@@ -1,6 +1,6 @@
 {
   "name": "@floegence/flowersec-node-native-darwin-arm64",
-  "version": "2.3.7",
+  "version": "2.3.8",
   "license": "MIT",
   "os": ["darwin"],
   "cpu": ["arm64"],

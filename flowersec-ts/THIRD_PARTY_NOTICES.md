@@ -3,11 +3,6 @@
 This file is generated from the canonical Flowersec source dependency inventory for flowersec-ts.
 Do not edit it manually. License decisions are reviewed by the repository source license policy.
 
-- @floegence/flowersec-node-native 2.3.7 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@floegence/flowersec-node-native/-/flowersec-node-native-2.3.7.tgz)
-- @floegence/flowersec-node-native-darwin-arm64 2.3.7 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@floegence/flowersec-node-native-darwin-arm64/-/flowersec-node-native-darwin-arm64-2.3.7.tgz)
-- @floegence/flowersec-node-native-darwin-x64 2.3.7 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@floegence/flowersec-node-native-darwin-x64/-/flowersec-node-native-darwin-x64-2.3.7.tgz)
-- @floegence/flowersec-node-native-linux-arm64-gnu 2.3.7 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@floegence/flowersec-node-native-linux-arm64-gnu/-/flowersec-node-native-linux-arm64-gnu-2.3.7.tgz)
-- @floegence/flowersec-node-native-linux-x64-gnu 2.3.7 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@floegence/flowersec-node-native-linux-x64-gnu/-/flowersec-node-native-linux-x64-gnu-2.3.7.tgz)
 - @noble/ciphers 2.3.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@noble/ciphers/-/ciphers-2.3.0.tgz)
 - @noble/curves 2.3.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@noble/curves/-/curves-2.3.0.tgz)
 - @noble/hashes 2.3.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@noble/hashes/-/hashes-2.3.0.tgz)
