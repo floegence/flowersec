@@ -220,7 +220,7 @@ jobs:
           # Build and pack the TypeScript SDK artifact.
           ( cd flowersec-ts && \
             npm install --package-lock-only --ignore-scripts --no-audit && \
-            npm ci --audit=false && \
+            npm ci --omit=optional --audit=false && \
             npm run build \
           )
           node scripts/stage-npm-release-metadata.mjs "$COMMIT"
