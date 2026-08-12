@@ -98,7 +98,7 @@ syntax without changing shared behavior.
 | Apple client connections | No | No | Yes | No |
 | Native QUIC connections | Yes | Node.js | No | Yes |
 | WebSocket connections | Yes | Yes | Yes | Yes |
-| WebTransport connections | Go direct | Browser | No | No |
+| WebTransport connections | Go direct (optional adapter) | Browser (WebTransport API when available) | No | No |
 | Server-side session acceptance | Yes | Node.js | No | Yes |
 | Opaque tunnel runtime | Yes | Node.js | No | Yes |
 | Control-plane invitation issuance | Yes | Node.js | No | Yes |
@@ -122,6 +122,12 @@ stream, close, rekey, or authorization wire semantics.
 
 See the SDK guides for the exact platform and connection combinations supported
 by each package.
+
+WebTransport is optional rather than part of the required native-server carrier
+contract. Go provides a direct adapter; the Browser profile uses the browser
+WebTransport API when present; Node.js and Rust do not currently provide a
+production WebTransport adapter. Required native-server parity is WebSocket and
+raw QUIC across Go, Rust, and Node.js.
 
 <!-- readme-section:security -->
 <a id="security"></a>

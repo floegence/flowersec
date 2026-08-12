@@ -49,7 +49,9 @@ A negotiated `Session.unreliableMessages` channel sends defensively copied `Uint
 
 ## Supported Connections
 
-Browsers support WebSocket and native WebTransport connections. Through
+Browsers support WebSocket. Browser WebTransport is capability-dependent on
+the browser's WebTransport API and is an optional browser adapter, not a
+required native-server carrier. Through
 `/node`, Node.js supports WebSocket and raw QUIC client connections, direct
 server sessions, and opaque `TunnelRuntime` relay legs. Raw QUIC uses the
 Flowersec-owned optional native addon and prebuilt platform package; it never
@@ -76,7 +78,8 @@ The proxy entrypoint accepts an opaque `ArtifactLease` or an already connected `
 
 Browser applications receive a ready `Session` from `connect(...)`. The browser
 connector supports WSS, restricted plaintext loopback WebSocket direct
-connections, and WebTransport. WebTransport uses native HTTP/3 streams.
+connections, and WebTransport when the browser exposes that API. WebTransport
+uses browser-owned HTTP/3 streams and is not available in the Node entrypoint.
 
 Chromium does not support a WebTransport pooling option; each carrier creates an independent native WebTransport connection.
 

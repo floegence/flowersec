@@ -88,7 +88,7 @@ Flowersec отделяет сеанс приложения от сетевого
 | Соединения клиентов Apple | Нет | Нет | Да | Нет |
 | Нативные соединения QUIC | Да | Node.js | Нет | Да |
 | Соединения WebSocket | Да | Да | Да | Да |
-| Соединения WebTransport | Go direct | Browser | Нет | Нет |
+| Соединения WebTransport | Go direct (необязательный адаптер) | Browser (при наличии API WebTransport в браузере) | Нет | Нет |
 | Приём сеансов на сервере | Да | Node.js | Нет | Да |
 | Непрозрачный relay runtime | Да | Node.js | Нет | Да |
 | Выпуск приглашений управляющей плоскостью | Да | Node.js | Нет | Да |
@@ -106,6 +106,8 @@ Flowersec отделяет сеанс приложения от сетевого
 Go, Rust и Node.js реализуют одинаковые 18 обязательных runtime-role-carrier tuple профиля `native-server-core`. Развёртывание direct- и tunnel-путей даёт 24 серверные единицы, специфичные для пути. Conformance считается отдельно как 18 direct client-server cells и 18 попарных tunnel topologies. Профиль никогда не меняет wire-семантику Artifact, handshake, RPC, stream, close, rekey или authorization.
 
 Точные сочетания платформ и типов соединений перечислены в руководствах SDK.
+
+WebTransport является необязательным адаптером и не входит в обязательный контракт carrier native-server. Go предоставляет direct-адаптер; профиль Browser использует API WebTransport браузера, если оно доступно. Node.js и Rust в настоящее время не предоставляют production-адаптер WebTransport. Обязательная native-server parity включает только WebSocket и raw QUIC для Go, Rust и Node.js.
 
 <!-- readme-section:security -->
 <a id="security"></a>

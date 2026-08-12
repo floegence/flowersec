@@ -63,6 +63,22 @@ test("SDK README descriptions identify the final recovery owner", () => {
   }
 });
 
+test("README support claims state optional WebTransport and native package boundaries", () => {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const rootReadme = fs.readFileSync(path.join(repoRoot, "README.md"), "utf8");
+  const goReadme = fs.readFileSync(path.join(repoRoot, "flowersec-go/README.md"), "utf8");
+  const typescriptReadme = fs.readFileSync(path.join(repoRoot, "flowersec-ts/README.md"), "utf8");
+  const nativeReadme = fs.readFileSync(path.join(repoRoot, "flowersec-node-native/README.md"), "utf8");
+  assert.match(rootReadme, /Browser \(WebTransport API when available\)/u);
+  assert.match(rootReadme, /Required native-server parity is WebSocket and\s+raw QUIC across Go, Rust, and Node\.js/u);
+  assert.match(goReadme, /optional low-level\s+WebTransport\s+tunnel listener/u);
+  assert.doesNotMatch(goReadme, /does not forward datagrams/u);
+  assert.match(typescriptReadme, /Browser WebTransport is capability-dependent/u);
+  assert.match(typescriptReadme, /WebTransport\s+uses browser-owned HTTP\/3 streams and is not available in the Node entrypoint/u);
+  assert.match(nativeReadme, /macOS\s+arm64, macOS x64, Linux arm64 glibc, and Linux x64 glibc/u);
+  assert.match(nativeReadme, /Windows and\s+musl packages are not published/u);
+});
+
 test("README localization contract captures structure and literals", () => {
   const source = [
     "# Flowersec",

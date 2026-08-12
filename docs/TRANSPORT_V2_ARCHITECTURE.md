@@ -158,8 +158,9 @@ Rust pins `quinn =0.11.11` with default features disabled and only `runtime-toki
 ## Runtime Capability Decisions
 
 - Go native: WebSocket and raw QUIC for direct and tunnel paths, plus
-  WebTransport for direct paths. WebTransport tunnel paths remain unsupported
-  because the opaque runtime does not forward datagrams across paired legs.
+  WebTransport for direct paths. Go retains an optional low-level WebTransport
+  tunnel leg adapter for browser and mixed-leg workloads, but does not claim
+  the complete `webtransport-server` profile.
 - TypeScript browser: WebSocket and WebTransport when their constructors are
   present; `detectBrowserRuntimeCapabilityV2(...)` removes unavailable APIs at
   runtime. Raw UDP is unavailable.

@@ -88,7 +88,7 @@ Alle vier SDKs verwenden dasselbe Sitzungsmodell. Der Plattformumfang unterschei
 | Apple-Clientverbindungen | Nein | Nein | Ja | Nein |
 | Native QUIC-Verbindungen | Ja | Node.js | Nein | Ja |
 | WebSocket-Verbindungen | Ja | Ja | Ja | Ja |
-| WebTransport-Verbindungen | Go direct | Browser | Nein | Nein |
+| WebTransport-Verbindungen | Go direct (optionaler Adapter) | Browser (wenn die WebTransport-API verfügbar ist) | Nein | Nein |
 | Serverseitige Sitzungsannahme | Ja | Node.js | Nein | Ja |
 | Undurchsichtige Relay-Laufzeit | Ja | Node.js | Nein | Ja |
 | Verbindungseinladungen der Control Plane | Ja | Node.js | Nein | Ja |
@@ -106,6 +106,8 @@ Bereitstellungsprofile trennen die Plattformverfuegbarkeit vom gemeinsamen Flowe
 Go, Rust und Node.js implementieren dieselben 18 erforderlichen Runtime-Rollen-Carrier-Tupel von `native-server-core`. Durch die Aufschluesselung direkter und getunnelter Pfade entstehen 24 pfadspezifische Servereinheiten. Die Konformitaet wird separat als 18 direkte Client-Server-Zellen und 18 paarweise Tunneltopologien gezaehlt. Ein Profil aendert niemals die Wire-Semantik fuer Artifact, Handshake, RPC, Stream, Close, Rekey oder Autorisierung.
 
 Die SDK-Anleitungen nennen die genauen unterstützten Kombinationen aus Plattform und Verbindung.
+
+WebTransport ist optional und nicht Teil des erforderlichen native-server-carrier-Vertrags. Go bietet einen direkten Adapter; das Browser-Profil verwendet die Browser-WebTransport-API, wenn sie verfügbar ist. Node.js und Rust bieten derzeit keinen produktiven WebTransport-Adapter. Die erforderliche native-server-Parität umfasst bei Go, Rust und Node.js nur WebSocket und raw QUIC.
 
 <!-- readme-section:security -->
 <a id="security"></a>

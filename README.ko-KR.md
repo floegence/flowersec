@@ -88,7 +88,7 @@ Flowersec은 애플리케이션 세션과 이를 전달하는 네트워크 경�
 | Apple 클라이언트 연결 | 미지원 | 미지원 | 지원 | 미지원 |
 | 네이티브 QUIC 연결 | 지원 | Node.js | 미지원 | 지원 |
 | WebSocket 연결 | 지원 | 지원 | 지원 | 지원 |
-| WebTransport 연결 | Go direct | Browser | 미지원 | 미지원 |
+| WebTransport 연결 | Go direct(선택적 adapter) | Browser(브라우저 API 사용 가능 시) | 미지원 | 미지원 |
 | 서버 측 세션 수락 | 지원 | Node.js | 미지원 | 지원 |
 | 불투명 릴레이 런타임 | 지원 | Node.js | 미지원 | 지원 |
 | 제어 영역 연결 초대 발급 | 지원 | Node.js | 미지원 | 지원 |
@@ -106,6 +106,8 @@ Flowersec은 애플리케이션 세션과 이를 전달하는 네트워크 경�
 Go, Rust, Node.js는 동일한 18개 필수 `native-server-core` runtime-role-carrier tuple을 구현합니다. Direct path와 tunnel path를 펼치면 path별 server unit은 24개입니다. Conformance는 별도로 계산하며 direct client/server cell 18개와 pairwise tunnel topology 18개로 구성됩니다. profile은 Artifact, handshake, RPC, stream, close, rekey 또는 authorization wire semantics를 변경하지 않습니다.
 
 각 패키지가 지원하는 정확한 플랫폼과 연결 조합은 SDK 가이드를 확인하세요.
+
+WebTransport는 필수 native-server carrier가 아닌 선택적 adapter입니다. Go는 direct adapter를 제공하고 Browser profile은 브라우저 WebTransport API를 사용할 수 있을 때 사용합니다. Node.js와 Rust는 현재 production WebTransport adapter를 제공하지 않습니다. 필수 native-server parity는 Go, Rust, Node.js의 WebSocket과 raw QUIC만 포함합니다.
 
 <!-- readme-section:security -->
 <a id="security"></a>

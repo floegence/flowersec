@@ -88,7 +88,7 @@ Flowersec はアプリケーションセッションを、それを運ぶネッ�
 | Apple クライアント接続 | 非対応 | 非対応 | 対応 | 非対応 |
 | ネイティブ QUIC 接続 | 対応 | Node.js | 非対応 | 対応 |
 | WebSocket 接続 | 対応 | 対応 | 対応 | 対応 |
-| WebTransport 接続 | Go direct | Browser | 非対応 | 非対応 |
+| WebTransport 接続 | Go direct（オプション adapter） | Browser（ブラウザー API が利用可能な場合） | 非対応 | 非対応 |
 | サーバー側のセッション受け入れ | 対応 | Node.js | 非対応 | 対応 |
 | 不透明リレーランタイム | 対応 | Node.js | 非対応 | 対応 |
 | コントロールプレーンでの接続招待発行 | 対応 | Node.js | 非対応 | 対応 |
@@ -106,6 +106,8 @@ Flowersec はアプリケーションセッションを、それを運ぶネッ�
 Go、Rust、Node.js は同じ 18 個の必須 `native-server-core` runtime-role-carrier tuple を実装します。Direct path と tunnel path を展開すると、path 固有の server unit は 24 個になります。Conformance は別に数え、direct client/server cell が 18 個、pairwise tunnel topology が 18 個です。profile が Artifact、handshake、RPC、stream、close、rekey、authorization の wire semantics を変更することはありません。
 
 各パッケージが対応するプラットフォームと接続方式の組み合わせは、SDK ガイドで確認してください。
+
+WebTransport は必須の native-server carrier ではなく、オプションの adapter です。Go は direct adapter を提供し、Browser profile はブラウザーの WebTransport API が利用可能な場合に使用します。Node.js と Rust は現在 production WebTransport adapter を提供しません。必須の native-server parity は Go、Rust、Node.js の WebSocket と raw QUIC です。
 
 <!-- readme-section:security -->
 <a id="security"></a>

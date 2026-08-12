@@ -88,7 +88,7 @@ Flowersec 將應用工作階段與承載它的網路路徑分離：
 | Apple 用戶端連線 | 否 | 否 | 是 | 否 |
 | 原生 QUIC 連線 | 是 | Node.js | 否 | 是 |
 | WebSocket 連線 | 是 | 是 | 是 | 是 |
-| WebTransport 連線 | Go direct | Browser | 否 | 否 |
+| WebTransport 連線 | Go direct（選用 adapter） | Browser（瀏覽器 API 可用時） | 否 | 否 |
 | 伺服器端接收工作階段 | 是 | Node.js | 否 | 是 |
 | 不透明中繼執行時 | 是 | Node.js | 否 | 是 |
 | 控制面簽發連線邀請 | 是 | Node.js | 否 | 是 |
@@ -106,6 +106,8 @@ Flowersec 將應用工作階段與承載它的網路路徑分離：
 Go、Rust 和 Node.js 實作相同的 18 個必要 `native-server-core` 執行環境-角色-carrier tuple。展開 direct 與 tunnel path 後共有 24 個特定路徑的伺服器單元。Conformance 另行計數為 18 個 direct 用戶端/伺服器 cell 和 18 個兩兩 tunnel topology。profile 絕不會改變 Artifact、handshake、RPC、stream、close、rekey 或 authorization wire 語意。
 
 請參閱各 SDK 指南，了解每個套件支援的平台與連線組合。
+
+WebTransport 是選用能力，不屬於必要的 native-server carrier 合約。Go 提供 direct adapter；Browser profile 會在瀏覽器 WebTransport API 可用時使用它；Node.js 與 Rust 目前沒有 production WebTransport adapter。必要的 native-server parity 僅涵蓋 Go、Rust 與 Node.js 的 WebSocket 與 raw QUIC。
 
 <!-- readme-section:security -->
 <a id="security"></a>
