@@ -290,12 +290,10 @@ test("npm lockfile contains the complete native optional dependency closure", ()
   }
 });
 
-test("npm release builds refresh historical lock metadata before clean install", () => {
+test("npm release builds omit the unpublished optional native wrapper", () => {
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
-  const refresh = workflow.indexOf("npm install --package-lock-only --ignore-scripts");
-  const cleanInstall = workflow.indexOf("npm ci --omit=optional --audit=false");
-  assert.ok(refresh >= 0, "release build must refresh lock metadata for immutable historical tags");
-  assert.ok(cleanInstall > refresh, "release build must refresh lock metadata before npm ci");
+  assert.match(workflow, /npm install --omit=optional --ignore-scripts --no-audit --no-fund/);
+  assert.doesNotMatch(workflow, /npm ci --omit=optional/);
 });
 
 test("npm release metadata staging binds every published manifest to one source commit", (t) => {
