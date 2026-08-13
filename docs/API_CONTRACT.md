@@ -27,6 +27,8 @@ they never select a different Flowersec application wire.
 
 Trust-root sourcing is also profile-specific. TypeScript and Swift platform TLS may use the system trust store and accept explicit private roots. Go and Rust native QUIC paths require callers to provide non-empty trust roots explicitly; Go callers may load `x509.SystemCertPool()`, while Rust callers construct `ConnectorOptions::new(...)` with audited DER roots. None of these choices changes the shared ten-second default connection timeout.
 
+Every production TLS connector validates both the certificate chain and the requested target identity; an untrusted root or hostname/IP mismatch fails closed. Test-only roots are supplied explicitly by acceptance fixtures or the browser test runner. No production connector has an insecure verification fallback.
+
 The public contract is split into four layers. The portable core is the shared artifact, lease, one-shot connector, session, RPC, and stream model implemented by every SDK. An optional `ConnectionController` is the sole Flowersec long-lived connection owner above a refreshable artifact source. Each SDK profile records runtime-owned carrier support, listener support, and platform trust constraints. A language convenience is an ecosystem-specific API shape layered on top of the portable core, not a promise that every SDK exposes the same syntax. Retry decisions are structured as `terminal`, `retryable`, or an absolute `retry_after` deadline; raw public error code taxonomies remain SDK-local.
 
 ## Go

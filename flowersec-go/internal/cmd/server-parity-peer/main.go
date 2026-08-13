@@ -29,14 +29,14 @@ import (
 )
 
 const (
-	origin      = "https://client.example"
-	echoRPC     = uint32(7001)
-	notifyRPC   = uint32(7002)
-	completeRPC = uint32(7003)
-	datagramRPC = uint32(7005)
-	echoKind    = "parity.echo"
-	resetKind   = "parity.reset"
-	peerTimeout = 30 * time.Second
+	defaultOrigin = "https://client.example"
+	echoRPC       = uint32(7001)
+	notifyRPC     = uint32(7002)
+	completeRPC   = uint32(7003)
+	datagramRPC   = uint32(7005)
+	echoKind      = "parity.echo"
+	resetKind     = "parity.reset"
+	peerTimeout   = 30 * time.Second
 )
 
 type readyMessage struct {
@@ -186,6 +186,7 @@ func parseArguments(arguments []string) (string, string, error) {
 }
 
 func runServer(ctx context.Context, carrier string) error {
+	origin := parityOrigin()
 	tlsConfig, trustPEM, err := serverTLS()
 	if err != nil {
 		return err
@@ -256,7 +257,12 @@ func runServer(ctx context.Context, carrier string) error {
 		OnSession: func(sessionCtx context.Context, session flowersec.Session, _ string) error {
 			activeSessions.Add(1)
 			executed.record("admission")
-			err := exerciseServer(sessionCtx, session, carrier, notificationReceived, &activeStreams, executed)
+			var err error
+			if os.Getenv("FLOWERSEC_PARITY_CLIENT_PROFILE") != "" {
+				err = exerciseExternalServer(sessionCtx, session, executed)
+			} else {
+				err = exerciseServer(sessionCtx, session, carrier, notificationReceived, &activeStreams, executed)
+			}
 			activeSessions.Add(-1)
 			sessionDone <- err
 			return err
@@ -306,6 +312,14 @@ func runServer(ctx context.Context, carrier string) error {
 	}
 	executed.record("cleanup")
 	return writeJSON(resultMessage{Type: "server-result", Runtime: "go", Carrier: carrier, Path: "direct", Cases: executed.snapshot()})
+}
+
+func exerciseExternalServer(ctx context.Context, session flowersec.Session, executed *executionLedger) error {
+	if _, err := session.WaitTermination(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	executed.record("close")
+	return nil
 }
 
 func originsListener(listener flowersec.DirectListener) []flowersec.DirectListener {
@@ -407,6 +421,7 @@ func runTunnelEndpointA(ctx context.Context, carrier string) error {
 }
 
 func runTunnelRelay(ctx context.Context, carrier string) error {
+	origin := parityOrigin()
 	executed := newExecutionLedger()
 	tlsConfig, trustPEM, err := serverTLS()
 	if err != nil {
@@ -604,9 +619,15 @@ func runTunnelEndpointB(ctx context.Context, carrier string) error {
 	}
 	executed.record("admission")
 	handlersDone := serveSessionHandlers(ctx, handlers, session)
-	if err := exerciseServer(ctx, session, carrier, notificationReceived, &activeStreams, executed); err != nil {
+	var exerciseErr error
+	if os.Getenv("FLOWERSEC_PARITY_CLIENT_PROFILE") != "" {
+		exerciseErr = exerciseExternalServer(ctx, session, executed)
+	} else {
+		exerciseErr = exerciseServer(ctx, session, carrier, notificationReceived, &activeStreams, executed)
+	}
+	if exerciseErr != nil {
 		_ = session.Close()
-		return fmt.Errorf("exercise tunnel endpoint B: %w", err)
+		return fmt.Errorf("exercise tunnel endpoint B: %w", exerciseErr)
 	}
 	if err := session.Close(); err != nil {
 		return fmt.Errorf("tunnel endpoint B close: %w", err)
@@ -623,6 +644,13 @@ func runTunnelEndpointB(ctx context.Context, carrier string) error {
 		Type: "endpoint-b-result", Runtime: "go", Carrier: carrier, Path: "tunnel",
 		Cases: executed.snapshot(),
 	})
+}
+
+func parityOrigin() string {
+	if value := os.Getenv("FLOWERSEC_PARITY_ORIGIN"); value != "" {
+		return value
+	}
+	return defaultOrigin
 }
 
 func tunnelAuthorizations(first, second controlplane.IssuedArtifact) ([]tunnelAuthorizationWire, error) {

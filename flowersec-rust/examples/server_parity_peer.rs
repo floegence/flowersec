@@ -3,25 +3,25 @@ use std::{
     io::{self, Read},
     net::SocketAddr,
     sync::{
-        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use bytes::Bytes;
 use flowersec::controlplane::{ControlPlaneError, RuntimeAuthorizationRequest};
 use flowersec::{
-    Acceptor, AcceptorOptions, Artifact, ArtifactLease, ConnectorOptions, DirectIssueOptions,
-    EndpointSet, IncomingStream, Issuer, NotificationHandler, RpcError, RpcHandler, Session,
-    SessionError, SessionHandlerOptions, SessionHandlers, StreamHandler, StreamMetadata,
-    TunnelAuthorizationResponse, TunnelAuthorizer, TunnelIssueOptions, TunnelRuntime,
-    TunnelRuntimeOptions, UnreliableSendOutcome, WebSocketAcceptorOptions, allow_tunnel_runtime,
-    connect,
+    allow_tunnel_runtime, connect, Acceptor, AcceptorOptions, Artifact, ArtifactLease,
+    ConnectorOptions, DirectIssueOptions, EndpointSet, IncomingStream, Issuer, NotificationHandler,
+    RpcError, RpcHandler, Session, SessionError, SessionHandlerOptions, SessionHandlers,
+    StreamHandler, StreamMetadata, TunnelAuthorizationResponse, TunnelAuthorizer,
+    TunnelIssueOptions, TunnelRuntime, TunnelRuntimeOptions, UnreliableSendOutcome,
+    WebSocketAcceptorOptions,
 };
-use rustls::pki_types::{CertificateDer, pem::PemObject};
+use rustls::pki_types::{pem::PemObject, CertificateDer};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::Notify;
@@ -531,6 +531,7 @@ async fn server_datagram(session: &dyn Session, executed: &ExecutionLedger) {
 }
 
 async fn run_server(carrier: &str) {
+    let origin = parity_origin();
     let notifications = Arc::new(AtomicUsize::new(0));
     let notification_received = Arc::new(Notify::new());
     let executed = ExecutionLedger::default();
@@ -541,7 +542,7 @@ async fn run_server(carrier: &str) {
             bind_address: "127.0.0.1:0".parse().unwrap(),
             certificate_chain_der: vec![leaf.clone(), root.clone()],
             private_key_der: key(),
-            allowed_origins: vec!["https://native-client.test".into()],
+            allowed_origins: vec![origin.clone()],
             max_inbound_streams: 16,
             accept_timeout: Duration::from_secs(10),
         }),
@@ -563,7 +564,7 @@ async fn run_server(carrier: &str) {
             "type":"ready", "runtime":"rust", "carrier":carrier, "path":"direct",
             "artifact_json":String::from_utf8(issued.artifact_json()).unwrap(),
             "trust_roots_der":[STANDARD.encode(&root)], "trust_pem":cert_pem(&root),
-            "server_certificate_der":STANDARD.encode(&leaf), "origin":"https://native-client.test"
+            "server_certificate_der":STANDARD.encode(&leaf), "origin":origin
         })
     );
     let artifact = Artifact::parse(issued.artifact_json()).unwrap();
@@ -585,7 +586,9 @@ async fn run_server(carrier: &str) {
     let (serve_result, ()) = tokio::join!(accepted.serve(CancellationToken::new()), async {
         assert_cancellable_wait(session).await;
         executed.record(&["cancel"]);
-        if carrier == "websocket" {
+        if env::var("FLOWERSEC_PARITY_CLIENT_PROFILE").is_ok() {
+            external_server(session, &executed).await;
+        } else if carrier == "websocket" {
             rpc_and_notifications(session, &notifications, &notification_received, &executed).await;
         } else {
             tokio::join!(
@@ -637,15 +640,19 @@ async fn run_client(carrier: &str, ready: Ready) {
     executed.record(&["admission"]);
     assert_cancellable_wait(session.as_ref()).await;
     executed.record(&["cancel"]);
-    tokio::join!(
-        rpc_and_notifications(
-            session.as_ref(),
-            &notifications,
-            &notification_received,
-            &executed
-        ),
-        client_streams(session.as_ref(), "direct", &executed)
-    );
+    if env::var("FLOWERSEC_PARITY_CLIENT_PROFILE").is_ok() {
+        external_server(session.as_ref(), &executed).await;
+    } else {
+        tokio::join!(
+            rpc_and_notifications(
+                session.as_ref(),
+                &notifications,
+                &notification_received,
+                &executed
+            ),
+            client_streams(session.as_ref(), "direct", &executed)
+        );
+    }
     call_barrier(session.as_ref(), DATAGRAM_READY_RPC, "datagram-ready").await;
     if carrier != "websocket" {
         let channel = session.unreliable_messages().unwrap();
@@ -680,6 +687,11 @@ async fn run_client(carrier: &str, ready: Ready) {
     }
     executed.record(&["close", "cleanup"]);
     print_result("client-result", carrier, &executed);
+}
+
+async fn external_server(session: &dyn Session, executed: &ExecutionLedger) {
+    let _ = session.wait_termination().await;
+    executed.record(&["close"]);
 }
 
 fn relay_endpoint(carrier: &str, address: SocketAddr) -> String {
@@ -732,7 +744,7 @@ fn tunnel_relay_ready(carrier: &str, address: SocketAddr, origin: &str) -> Relay
 }
 
 async fn run_tunnel_relay(carrier: &str) {
-    let origin = "https://native-client.test";
+    let origin = parity_origin();
     let released = Arc::new(AtomicUsize::new(0));
     let executed = ExecutionLedger::default();
     let authorizer = Arc::new(ParityTunnelAuthorizer {
@@ -740,11 +752,11 @@ async fn run_tunnel_relay(carrier: &str) {
         released: released.clone(),
         released_notify: Arc::new(Notify::new()),
     });
-    let runtime = Arc::new(bind_tunnel_runtime(carrier, authorizer.clone(), origin));
+    let runtime = Arc::new(bind_tunnel_runtime(carrier, authorizer.clone(), &origin));
     let address = runtime.local_address().unwrap();
     println!(
         "{}",
-        serde_json::to_string(&tunnel_relay_ready(carrier, address, origin)).unwrap()
+        serde_json::to_string(&tunnel_relay_ready(carrier, address, &origin)).unwrap()
     );
 
     let mut input = String::new();
@@ -980,7 +992,9 @@ async fn run_tunnel_endpoint_b(carrier: &str) {
     executed.record(&["admission"]);
     assert_cancellable_wait(session.as_ref()).await;
     executed.record(&["cancel"]);
-    if carrier == "websocket" {
+    if env::var("FLOWERSEC_PARITY_CLIENT_PROFILE").is_ok() {
+        external_server(session.as_ref(), &executed).await;
+    } else if carrier == "websocket" {
         tokio::join!(
             rpc_and_notifications(
                 session.as_ref(),
@@ -1008,6 +1022,10 @@ async fn run_tunnel_endpoint_b(carrier: &str) {
         "{}",
         serde_json::json!({"type":"endpoint-b-result","runtime":"rust","carrier":carrier,"path":"tunnel","cases":executed.snapshot()})
     );
+}
+
+fn parity_origin() -> String {
+    env::var("FLOWERSEC_PARITY_ORIGIN").unwrap_or_else(|_| "https://native-client.test".into())
 }
 
 async fn run_tunnel_endpoint_a(carrier: &str) {

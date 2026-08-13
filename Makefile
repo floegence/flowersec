@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test test-resume coverage-race browser-smoke browser-compat precommit diagnostic performance go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-package-cache-preflight ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-public-api-check swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-publish-preflight rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-source-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-source precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check flowersec-test-contract go-cover-check-short go-cover-check nightly-check
+.PHONY: test test-resume coverage-race browser-smoke browser-compat precommit diagnostic performance go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-package-cache-preflight ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-public-api-check swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-publish-preflight rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-source-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-source precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check flowersec-test-contract go-cover-check-short go-cover-check nightly-check
 
 FLOWERSEC_TEST_HOST ?= ./scripts/test-host.sh
 SWIFTPM_CACHE_PATH := $(CURDIR)/.flowersec/swiftpm-cache
@@ -7,32 +7,6 @@ SWIFT_SOURCE_GUARD_PATTERN := Redeven|redeven|RedevenFlowersec|RedevenRPCClient|
 SWIFT_SOURCE_GUARD_PATHS := flowersec-swift/Sources Package.swift README.md flowersec-swift/README.md docs examples .github
 SWIFT_SOURCE_GUARD_PRUNE := .build .git .swiftpm dist node_modules
 SWIFT_SOURCE_GUARD_FILE_GLOBS := -name '*.go' -o -name '*.json' -o -name '*.md' -o -name '*.mjs' -o -name '*.swift' -o -name '*.ts' -o -name '*.tsx' -o -name '*.txt' -o -name '*.yaml' -o -name '*.yml'
-
-gen: gen-core gen-examples
-
-gen-check: gen
-	@# Fail if any tracked generated outputs changed (prevents forgetting to commit codegen results).
-	@git diff --exit-code -- \
-		flowersec-go/gen \
-		flowersec-ts/src/gen \
-		flowersec-rust/src/gen \
-		flowersec-swift/Sources/Flowersec/Generated \
-		flowersec-swift/Tests/FlowersecTests/Generated \
-		examples/gen \
-		flowersec-go/internal/testgen \
-		flowersec-ts/src/_examples
-
-gen-core:
-	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.core.txt -go-out ../../flowersec-go/gen -ts-out ../../flowersec-ts/src/gen
-	cd flowersec-go && gofmt -w gen
-	cd flowersec-rust && rustup run 1.88.0 cargo fmt --all
-
-gen-examples:
-	# Demo IDL is for examples/integration tests only; do not ship it as a public API surface.
-	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.examples.txt -go-out ../../examples/gen -ts-out ../../flowersec-ts/src/_examples
-	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.examples.txt -go-out ../../flowersec-go/internal/testgen -ts-out ../../flowersec-ts/src/_examples
-	gofmt -w examples/gen
-	cd flowersec-go && gofmt -w internal/testgen
 
 test:
 	go -C flowersec-go run ./internal/cmd/flowersec-test run --suite acceptance
@@ -57,25 +31,21 @@ performance:
 
 go-test:
 	cd flowersec-go && go test -timeout=5m $$(../scripts/list-default-go-test-packages.sh)
-	cd tools/idlgen && go test -timeout=5m ./...
 	cd tools/releasenotes && go test -timeout=5m ./...
 	cd tools/stabilitycheck && go test -timeout=5m ./...
 
 go-test-short:
 	cd flowersec-go && go test -short -timeout=5m $$(../scripts/list-default-go-test-packages.sh)
-	cd tools/idlgen && go test -short -timeout=5m ./...
 	cd tools/releasenotes && go test -short -timeout=5m ./...
 	cd tools/stabilitycheck && go test -short -timeout=5m ./...
 
 go-test-race:
 	cd flowersec-go && go test -race -timeout=5m $$(../scripts/list-default-go-test-packages.sh)
-	cd tools/idlgen && go test -race -timeout=5m ./...
 	cd tools/releasenotes && go test -race -timeout=5m ./...
 	cd tools/stabilitycheck && go test -race -timeout=5m ./...
 
 go-vet:
 	cd flowersec-go && go vet ./...
-	cd tools/idlgen && go vet ./...
 	cd tools/releasenotes && go vet ./...
 	cd tools/stabilitycheck && go vet ./...
 
@@ -270,12 +240,12 @@ example-check: example-source-check
 example-install-check: example-check
 
 fmt:
-	gofmt -w flowersec-go examples/gen
+	gofmt -w flowersec-go
 
 fmt-check:
-	@if [ -n "$$(gofmt -l flowersec-go examples/gen)" ]; then \
+	@if [ -n "$$(gofmt -l flowersec-go)" ]; then \
 		echo "gofmt needed; run 'make fmt'"; \
-		gofmt -l flowersec-go examples/gen; \
+		gofmt -l flowersec-go; \
 		exit 1; \
 	fi
 
@@ -340,8 +310,8 @@ precommit:
 	$(MAKE) precommit-source
 
 precommit-source:
-	node scripts/run-precommit-wave.mjs generate $(MAKE) gen-check
 	node scripts/run-precommit-wave.mjs dependencies $(MAKE) ts-ensure-deps
+	node scripts/run-precommit-wave.mjs static $(MAKE) flowersec-test-contract security-makefile-check
 	node scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check example-source-check
 	node scripts/run-precommit-wave.mjs languages $(MAKE) precommit-go precommit-ts precommit-swift precommit-rust
 
@@ -407,7 +377,6 @@ final-rust-preflight:
 
 final-offline-contracts:
 	$(MAKE) security-dependency-check
-	$(MAKE) gen-check
 	$(MAKE) stability-source-check
 
 final-package-validation:

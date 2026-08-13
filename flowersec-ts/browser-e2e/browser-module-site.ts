@@ -10,7 +10,7 @@ export type BrowserModuleSite = Readonly<{
   close: () => Promise<void>;
 }>;
 
-export async function startBrowserModuleSite(): Promise<BrowserModuleSite> {
+export async function startBrowserModuleSite(port?: number): Promise<BrowserModuleSite> {
   const distRoot = path.join(packageRoot, "dist");
   const nobleModulesRoot = path.join(packageRoot, "node_modules", "@noble");
   const server = http.createServer(async (request, response) => {
@@ -71,7 +71,7 @@ export async function startBrowserModuleSite(): Promise<BrowserModuleSite> {
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
+    server.listen(port ?? 0, "127.0.0.1", resolve);
   });
   const address = server.address();
   if (address == null || typeof address === "string") {

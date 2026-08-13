@@ -30,11 +30,6 @@ updates:
           - github.com/quic-go/webtransport-go
 
   - package-ecosystem: gomod
-    directory: /tools/idlgen
-    schedule:
-      interval: weekly
-
-  - package-ecosystem: gomod
     directory: /tools/releasenotes
     schedule:
       interval: weekly

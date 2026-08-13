@@ -1,1 +1,0 @@
-# Transport v2 uses frozen vectors and custom codecs under testdata/transport_v2.

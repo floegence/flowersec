@@ -545,18 +545,6 @@
       ]
     },
     {
-      "id": "go:tools/idlgen",
-      "ecosystem": "go",
-      "root": {
-        "ecosystem": "go",
-        "name": "github.com/floegence/flowersec/tools/idlgen",
-        "version": "2.3.9",
-        "purl": "pkg:golang/github.com/floegence/flowersec/tools/idlgen@2.3.9"
-      },
-      "components": [],
-      "edges": []
-    },
-    {
       "id": "go:tools/releasenotes",
       "ecosystem": "go",
       "root": {

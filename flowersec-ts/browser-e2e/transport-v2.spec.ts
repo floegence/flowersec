@@ -9,6 +9,45 @@ import { startBrowserModuleSite } from "./browser-module-site.js";
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = path.resolve(packageRoot, "..");
 
+test("Chromium runs the WebSocket client profile", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "requires Chromium");
+  const encoded = process.env.FLOWERSEC_PARITY_READY_BASE64;
+  if (encoded === undefined) return;
+  test.setTimeout(60_000);
+  const ready = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as {
+    artifact_json: string; trust_pem: string; origin: string; path: "direct" | "tunnel";
+  };
+  const site = await startBrowserModuleSite(Number(process.env.FLOWERSEC_BROWSER_SITE_PORT));
+  try {
+    await page.goto(site.origin, { waitUntil: "networkidle" });
+    const result = await page.evaluate(async (artifactJSON) => {
+      const sdk = await import("/dist/browser/index.js");
+      const artifact = sdk.parseArtifact(artifactJSON);
+      const session = await sdk.connect(sdk.createArtifactLease(artifact, async () => undefined));
+      const echo = await session.rpc.call(7001, { value: "ping" }, (payload) => payload);
+      if (!echo.ok || echo.payload.value !== "ping") throw new Error("RPC echo failed");
+      await session.rpc.notify(7002, { value: "notify" });
+      const stream = await session.openStream("parity.echo", { metadata: sdk.createStreamMetadata({ cell: "direct" }) });
+      await stream.write(new TextEncoder().encode("hello"));
+      await stream.closeWrite();
+      if (new TextDecoder().decode(await stream.read()) !== "world") throw new Error("stream FIN failed");
+      const reset = await session.openStream("parity.reset");
+      await reset.write(new TextEncoder().encode("reset"));
+      await reset.closeWrite();
+      let resetObserved = false;
+      try { await reset.read(); } catch { resetObserved = true; }
+      if (!resetObserved) throw new Error("stream reset failed");
+      await session.rekey();
+      await session.probeLiveness();
+      await session.close();
+      return true;
+    }, ready.artifact_json);
+    expect(result).toBe(true);
+  } finally {
+    await site.close();
+  }
+});
+
 test("Chromium runs the direct WebTransport topology", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "requires Chromium");
   test.setTimeout(45_000);

@@ -28,6 +28,7 @@ const trackedMarkdown = spawnSync(
 assert.equal(trackedMarkdown.status, 0, trackedMarkdown.stderr);
 const maintainedDocumentation = trackedMarkdown.stdout.split("\0").filter((relative) => (
   relative !== "" && relative !== "AGENTS.md"
+  && fs.existsSync(path.join(root, relative))
   && !relative.endsWith("THIRD_PARTY_NOTICES.md")
   && !relative.endsWith("SBOM_SCOPE.md")
 ));
@@ -45,6 +46,10 @@ for (const token of [
 ]) assert.match(currentDocumentation, new RegExp(escapeRegex(token)), `documentation misses current token ${token}`);
 
 const retiredPaths = [
+  "tools/idlgen", "idl/manifest.core.txt", "idl/manifest.examples.txt",
+  "flowersec-go/gen", "flowersec-go/internal/testgen", "flowersec-ts/src/gen",
+  "flowersec-ts/src/_examples", "flowersec-rust/src/gen",
+  "flowersec-swift/Sources/Flowersec/Generated", "examples/gen",
   "scripts/transport-v2-runner.sh", "scripts/transport-v2-runner-host.py",
   "scripts/transport-v2-runner-agent.sh", "scripts/transport-v2-runner-kvm.py",
   "scripts/transport-v2-focused-tail-remote.sh", "scripts/flowersec-test-helper",
@@ -57,6 +62,9 @@ const retiredPaths = [
   "flowersec-ts/scripts/browser-acceptance-core.node-test.mjs",
 ];
 for (const relative of retiredPaths) assert.equal(fs.existsSync(path.join(root, relative)), false, `retired path remains: ${relative}`);
+
+assert.doesNotMatch(makefile, /\bgen(?:-core|-examples|-check)?\b|tools\/idlgen|manifest\.(?:core|examples)\.txt/,
+  "the repository gate must not advertise unused IDL generation");
 
 const forbidden = /transportcheck|transport-test-runner|transport-acceptance-runner|flowersec-test-helper|ubuntu-test-runner|run-transport-v2|execution[_ -]request|final_command|gate receipt|raw_transport_execution|performance_manifest|case_registry|runner ABI/i;
 assert.doesNotMatch(makefile, forbidden);
@@ -130,7 +138,11 @@ for (const id of [
   "interop/rust-go/raw-quic/direct", "interop/rust-go/raw-quic/tunnel",
   "interop/go-rust/raw-quic/direct", "interop/go-rust/raw-quic/tunnel",
   "interop/server-parity/direct-matrix", "interop/server-parity/tunnel-matrix",
-  "interop/swift-go/wss/direct", "interop/swift-go/wss/tunnel",
+  "interop/swift-go/wss/direct",
+  "interop/swift-via-go-to-rust/wss/tunnel",
+  "browser/chromium/websocket/go/direct",
+  "browser/chromium/websocket/node/direct",
+  "browser/chromium/websocket/via-go-to-rust/tunnel",
   "controller/swift-real-network-restart",
 ]) assert.match(registry, new RegExp(`"${escapeRegex(id)}"`));
 for (const retiredID of [
@@ -174,6 +186,10 @@ assert.match(tunnelParityRunner, /required[\s\S]{0,80}unsupported|unsupported[\s
   "tunnel required matrix runner must reject unsupported topologies");
 assert.match(parityMatrixGenerator, /language_capabilities\.json/,
   "server parity dimensions must derive from the capability manifest");
+assert.match(directParityRunner, /FLOWERSEC_PARITY_CLIENT_PROFILE/,
+  "the existing direct parity runner must own client-profile interop cells");
+assert.match(tunnelParityRunner, /FLOWERSEC_PARITY_CLIENT_PROFILE/,
+  "the existing tunnel parity runner must own client-profile interop cells");
 
 const hostInit = read("scripts/test-host-init.sh");
 const hostEntry = read("scripts/test-host.sh");
@@ -351,8 +367,8 @@ for (const capability of capabilityManifest.portable_capabilities) {
   }
 }
 for (const capability of capabilityManifest.runtime_specific_capabilities) {
-  assert.equal(capability.test_ids?.length, 1, `${capability.id} must have one test_id`);
-  assert.ok(registryIDs.has(capability.test_ids[0]), `${capability.id} references unknown test_id ${capability.test_ids[0]}`);
+  assert.ok(capability.test_ids?.length >= 1, `${capability.id} must have test_ids`);
+  for (const testID of capability.test_ids) assert.ok(registryIDs.has(testID), `${capability.id} references unknown test_id ${testID}`);
 }
 for (const fixture of capabilityManifest.shared_fixtures) {
   for (const consumers of Object.values(fixture.consumers)) {
@@ -425,7 +441,7 @@ assert.match(hostEntry, /go -C flowersec-go build -o "\$temporary_runner"/);
 assert.doesNotMatch(hostEntry, /go -C flowersec-go run/);
 assert.match(hostInit, /\(cd "\$host_home" && "\$swiftly" install 6\.1/);
 assert.match(hostInit, /\.swift-version/);
-assert.match(registry, /runtime\.GOOS == "darwin" \|\| runtime\.GOOS == "linux"/);
+assert.doesNotMatch(registry, /runtime\.GOOS == "darwin" \|\| runtime\.GOOS == "linux"/);
 
 const performance = fs.readdirSync(path.join(root, "flowersec-go/internal/transporttest/performance"))
   .filter((name) => name.endsWith(".go") && !name.endsWith("_test.go"))

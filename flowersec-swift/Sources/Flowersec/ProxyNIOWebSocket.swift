@@ -99,7 +99,7 @@
             try channel.pipeline.syncOperations.addHandler(
               NIOSSLClientHandler(
                 context: context,
-                serverHostname: ipAddress == nil ? host : nil
+                serverHostname: host
               )
             )
           }

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import net from "node:net";
 import path from "node:path";
 
 import {
@@ -11,6 +12,8 @@ import { prepareServerParityNativeAddon } from "./server-parity-native-addon.mjs
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const matrix = JSON.parse(await readFile(path.join(repositoryRoot, "stability/interop_matrix.json"), "utf8"));
+const clientProfile = process.env.FLOWERSEC_PARITY_CLIENT_PROFILE?.trim();
+const clientProfileTestID = process.env.FLOWERSEC_PARITY_TEST_ID?.trim();
 const runtimeValues = SERVER_PARITY_RUNTIMES;
 const carrierValues = SERVER_PARITY_CARRIERS;
 const clients = selectedValues("FLOWERSEC_PARITY_CLIENTS", runtimeValues);
@@ -54,7 +57,9 @@ const peers = {
 };
 
 validateDirectContract(matrix.direct_cells);
-const selectedCells = matrix.direct_cells.filter((cell) => clients.includes(cell.client) && servers.includes(cell.server) && carriers.includes(cell.carrier));
+const selectedCells = clientProfile === undefined
+  ? matrix.direct_cells.filter((cell) => clients.includes(cell.client) && servers.includes(cell.server) && carriers.includes(cell.carrier))
+  : [selectClientProfileCell()];
 const nativeAddon = await prepareServerParityNativeAddon(repositoryRoot, selectedCells.some((cell) =>
   cell.client === "node-typescript" || cell.server === "node-typescript"
 ));
@@ -104,6 +109,7 @@ function sameValues(actual, expected) {
 }
 
 async function runCell(cell) {
+  if (clientProfile !== undefined) return await runClientProfileCell(cell);
   const id = `${cell.client}/${cell.server}/${cell.carrier}`;
   const expectedCases = [...commonCases, ...(datagramCarriers.has(cell.carrier) ? ["datagram"] : [])];
   const serverPeer = startPeer(cell.server, ["server", "--carrier", cell.carrier]);
@@ -147,11 +153,79 @@ async function runCell(cell) {
   }
 }
 
-function startPeer(runtime, roleArguments) {
+function selectClientProfileCell() {
+  if (!['swift', 'browser'].includes(clientProfile) || clientProfileTestID === undefined) {
+    throw new Error("FLOWERSEC_PARITY_CLIENT_PROFILE and FLOWERSEC_PARITY_TEST_ID must select a supported client-profile cell");
+  }
+  const expectedClient = clientProfile === "swift" ? "swift" : "typescript-browser";
+  const cells = [{ profile: clientProfile, client: expectedClient, server: "go", carrier: "websocket", path: "direct", test_id: clientProfileTestID }].filter((cell) => cell.test_id === clientProfileTestID);
+  if (cells.length !== 1) throw new Error(`${clientProfileTestID}: client-profile direct cell is absent or ambiguous`);
+  return cells[0];
+}
+
+async function runClientProfileCell(cell) {
+  const id = cell.test_id;
+  const browserPort = clientProfile === "browser" ? await reserveLoopbackPort() : undefined;
+  const origin = browserPort === undefined ? "https://client.example" : `http://127.0.0.1:${browserPort}`;
+  const serverPeer = startPeer(cell.server, ["server", "--carrier", "websocket"], {
+    FLOWERSEC_PARITY_CLIENT_PROFILE: clientProfile,
+    FLOWERSEC_PARITY_ORIGIN: origin,
+  });
+  let externalClient;
+  const timer = setTimeout(() => {
+    serverPeer.kill("SIGKILL");
+    externalClient?.kill("SIGKILL");
+  }, cellTimeoutMS);
+  try {
+    const ready = await serverPeer.stdout.nextJSON();
+    assertMessage(ready, "ready", id);
+    if (ready.runtime !== cell.server || ready.carrier !== "websocket" || ready.path !== "direct" || ready.origin !== origin) {
+      throw new Error(`${id}: server ready dimensions do not match the client-profile cell`);
+    }
+    externalClient = startExternalClient(ready, "direct", browserPort);
+    await requireSuccessfulExit(externalClient, `${id} ${clientProfile} client`);
+    const serverResult = await serverPeer.stdout.nextJSON();
+    assertResult(serverResult, "server-result", cell.server, "websocket", ["admission", "rpc", "notification", "stream-metadata", "stream-fin", "stream-reset", "close", "cleanup"], id);
+    await requireSuccessfulExit(serverPeer, `${id} server`);
+  } catch (error) {
+    serverPeer.kill("SIGKILL");
+    externalClient?.kill("SIGKILL");
+    const diagnostics = [serverPeer, externalClient].filter(Boolean).map((peer) => peer.stderr.text()).filter(Boolean).join("\n");
+    throw new Error(`${id}: ${error instanceof Error ? error.message : String(error)}${diagnostics === "" ? "" : `\n${diagnostics}`}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function startExternalClient(ready, pathKind, browserPort) {
+  const encoded = Buffer.from(JSON.stringify(ready)).toString("base64");
+  if (clientProfile === "swift") {
+    return startProcess("swift", ["test", "--filter", "ConnectorV2Tests/testServerParityClientProfile"], path.join(repositoryRoot, "flowersec-swift"), {
+      FLOWERSEC_PARITY_READY_BASE64: encoded,
+      FLOWERSEC_PARITY_PATH: pathKind,
+    });
+  }
+  return startProcess("npm", ["--prefix", "flowersec-ts", "run", "test:browser:chromium", "--", "--grep", "Chromium runs the WebSocket client profile"], repositoryRoot, {
+    FLOWERSEC_PARITY_READY_BASE64: encoded,
+    FLOWERSEC_PARITY_PATH: pathKind,
+    FLOWERSEC_BROWSER_SITE_PORT: String(browserPort),
+  });
+}
+
+async function reserveLoopbackPort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => server.once("error", reject).listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("failed to reserve browser site port");
+  await new Promise((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error)));
+  return address.port;
+}
+
+function startPeer(runtime, roleArguments, environment = {}) {
   const peer = peers[runtime];
   const child = spawn(peer.command, [...peer.arguments, ...roleArguments], {
     cwd: peer.cwd,
-    env: { ...process.env, ...nativeAddon.environment, FLOWERSEC_SERVER_PARITY_PEER: "1" },
+    env: { ...process.env, ...nativeAddon.environment, ...environment, FLOWERSEC_SERVER_PARITY_PEER: "1" },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const stderr = collectText(child.stderr);
@@ -163,6 +237,13 @@ function startPeer(runtime, roleArguments) {
       if (child.exitCode === null && child.signalCode === null) child.kill(signal);
     },
   };
+}
+
+function startProcess(command, arguments_, cwd, environment) {
+  const child = spawn(command, arguments_, { cwd, env: { ...process.env, ...environment }, stdio: ["ignore", "pipe", "pipe"] });
+  const stdout = collectText(child.stdout);
+  const stderr = collectText(child.stderr);
+  return { child, stderr: { text: () => `${stdout.text()}\n${stderr.text()}` }, kill(signal) { if (child.exitCode === null && child.signalCode === null) child.kill(signal); } };
 }
 
 function assertMessage(message, type, cellID) {
@@ -178,7 +259,7 @@ function assertResult(message, type, runtime, carrier, expectedCases, cellID) {
   }
   if (!Array.isArray(message.cases) || message.cases.length !== expectedCases.length ||
       !expectedCases.every((caseID) => message.cases.includes(caseID))) {
-    throw new Error(`${cellID}: ${type} did not prove every required semantic case`);
+    throw new Error(`${cellID}: ${type} did not prove every required semantic case (got=${JSON.stringify(message.cases)} expected=${JSON.stringify(expectedCases)})`);
   }
 }
 

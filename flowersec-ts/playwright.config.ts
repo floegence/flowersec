@@ -16,6 +16,9 @@ export default defineConfig({
       use: {
         browserName: "chromium",
         channel: "chromium",
+        launchOptions: process.env.FLOWERSEC_PARITY_CLIENT_PROFILE === "browser"
+          ? { args: ["--ignore-certificate-errors"] }
+          : undefined,
       },
     },
     {

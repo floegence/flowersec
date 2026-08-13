@@ -20,7 +20,7 @@ import {
 } from "../node/index.js";
 
 const RUNTIME = "node-typescript";
-const ORIGIN = "https://client.example";
+const ORIGIN = process.env.FLOWERSEC_PARITY_ORIGIN ?? "https://client.example";
 const ECHO_RPC = 7001;
 const NOTIFY_RPC = 7002;
 const COMPLETE_RPC = 7003;
@@ -497,7 +497,11 @@ async function runServer(tls: TLSFixture, carrier: ParityCarrier): Promise<void>
     const accepted = await accepting;
     state.executed.record("admission");
     const serving = accepted.serve().catch((error: unknown) => error);
-    await exerciseServer(accepted.session, state, "direct", true, carrier);
+    if (process.env.FLOWERSEC_PARITY_CLIENT_PROFILE !== undefined) {
+      await externalServer(accepted.session, state);
+    } else {
+      await exerciseServer(accepted.session, state, "direct", true, carrier);
+    }
     await serving;
     await accepted.close().catch(() => undefined);
     if (state.activeStreams.value !== 0)
@@ -661,13 +665,22 @@ async function runTunnelEndpointB(input: PeerInput, carrier: ParityCarrier): Pro
   const state = createHandlers("tunnel");
   const session = await connectArtifact(secondJSON, relay, state.handlers);
   state.executed.record("admission");
-  await exerciseServer(session, state, "tunnel", false, carrier);
+  if (process.env.FLOWERSEC_PARITY_CLIENT_PROFILE !== undefined) {
+    await externalServer(session, state);
+  } else {
+    await exerciseServer(session, state, "tunnel", false, carrier);
+  }
   await session.close().catch(() => undefined);
   state.executed.record("close");
   if (state.activeStreams.value !== 0)
     throw new Error(`endpoint B cleanup left ${state.activeStreams.value} streams`);
   state.executed.record("cleanup");
   writeJSON(result("endpoint-b-result", "tunnel", state.executed.snapshot(), carrier));
+}
+
+async function externalServer(session: Session, state: HandlerState): Promise<void> {
+  await session.waitTermination();
+  state.executed.record("close");
 }
 
 async function runTunnelEndpointA(input: PeerInput, carrier: ParityCarrier): Promise<void> {

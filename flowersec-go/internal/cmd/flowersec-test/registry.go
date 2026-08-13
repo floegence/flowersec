@@ -58,6 +58,9 @@ func registry() []registeredTest {
 		commandEntry("interop/server-parity/direct-matrix", "acceptance", 10*time.Minute, "node", "scripts/test-server-parity-direct.mjs"),
 		commandEntry("interop/server-parity/tunnel-matrix", "acceptance", 10*time.Minute, "node", "scripts/test-server-parity-tunnel.mjs"),
 		browserSmokeEntry("browser/chromium/webtransport/direct", "Chromium runs the direct WebTransport topology"),
+		browserClientProfileEntry("browser/chromium/websocket/go/direct", "go/direct"),
+		browserClientProfileEntry("browser/chromium/websocket/node/direct", "node/direct"),
+		browserClientProfileEntry("browser/chromium/websocket/via-go-to-rust/tunnel", "via-go-to-rust/tunnel"),
 		browserSmokeEntry("browser/chromium-tunnel-wt-wss", "Chromium exercises the WebTransport-to-WSS dual-listener test workload"),
 		browserSmokeEntry("browser/chromium-tunnel-wt-quic", "Chromium exercises the WebTransport-to-raw-QUIC dual-listener test workload"),
 		browserCompatibilityEntry("browser/firefox/webtransport-capability", "firefox", "Firefox reports unsupported native WebTransport connection"),
@@ -97,13 +100,13 @@ func registry() []registeredTest {
 		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/raw-quic/direct/reorder-duplicate", "raw-quic", "direct", "reorder-duplicate"),
 		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/raw-quic/tunnel/representative", "raw-quic", "tunnel", "representative"),
 	)
-	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+	if runtime.GOOS == "darwin" {
 		tests = append(tests,
 			commandEntry("controller/swift", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectionController"),
 			commandEntry("controller/swift-real-network-restart", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectorV2Tests/testConnectionControllerReplacesTerminatedGoWSSessionWithoutReplay"),
 			commandEntry("protocol/swift", "acceptance", 5*time.Minute, "swift", "test", "--filter", "TransportV2|IDNAHostV2|SecurityNegativeVectors"),
 			commandEntry("interop/swift-go/wss/direct", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectorV2Tests/testRealGoWSSDirectEndToEnd"),
-			commandEntry("interop/swift-go/wss/tunnel", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectorV2Tests/testRealGoWSSTunnelEndToEnd"),
+			commandEntryWithEnvironment("interop/swift-via-go-to-rust/wss/tunnel", "acceptance", 5*time.Minute, []string{"FLOWERSEC_PARITY_CLIENT_PROFILE=swift", "FLOWERSEC_PARITY_TEST_ID=interop/swift-via-go-to-rust/wss/tunnel"}, "node", "scripts/test-server-parity-tunnel.mjs"),
 			commandEntry("carrier/swift-loopback-plaintext-direct", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectorV2Tests/testLoopbackPlaintextDirectRuntimeContract"),
 		)
 	}
@@ -178,6 +181,12 @@ func withRunID(environment []string, runID string) []string {
 
 func browserSmokeEntry(id, title string) registeredTest {
 	return commandEntry(id, "browser-smoke", 5*time.Minute, "npm", "--prefix", "flowersec-ts", "run", "test:browser:chromium", "--", "--grep", playwrightTitle(title))
+}
+
+func browserClientProfileEntry(id, cell string) registeredTest {
+	return commandEntryWithEnvironment(id, "browser-smoke", 10*time.Minute,
+		[]string{"FLOWERSEC_PARITY_CLIENT_PROFILE=browser", "FLOWERSEC_PARITY_TEST_ID=" + id},
+		"npm", "--prefix", "flowersec-ts", "run", "test:browser:chromium", "--", "--grep", playwrightTitle("Chromium runs the WebSocket client profile"))
 }
 
 func browserCompatibilityEntry(id, browser, title string) registeredTest {

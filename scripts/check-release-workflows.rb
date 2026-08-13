@@ -206,7 +206,6 @@ require_exact_value(dependabot, {
         },
       },
     }],
-    ["gomod", "/tools/idlgen"],
     ["gomod", "/tools/releasenotes"],
     ["gomod", "/tools/stabilitycheck"],
     ["cargo", "/flowersec-rust", {
@@ -493,7 +492,7 @@ validate_step_contracts(precommit_steps, [
     "with" => {
       "go-version-file" => "flowersec-go/go.mod",
       "cache" => true,
-      "cache-dependency-path" => "flowersec-go/go.sum\ntools/idlgen/go.sum\ntools/releasenotes/go.sum\ntools/stabilitycheck/go.sum\n",
+      "cache-dependency-path" => "flowersec-go/go.sum\ntools/releasenotes/go.sum\ntools/stabilitycheck/go.sum\n",
     },
   } },
   { name: "Setup Node", keys: ["name", "uses", "with"], values: {

@@ -65,7 +65,6 @@ jobs:
           cache: true
           cache-dependency-path: |
             flowersec-go/go.sum
-            tools/idlgen/go.sum
             tools/releasenotes/go.sum
             tools/stabilitycheck/go.sum
 

@@ -699,7 +699,6 @@ func main() {
 `);
   const goModules = [
     "flowersec-go",
-    "tools/idlgen",
     "tools/releasenotes",
     "tools/stabilitycheck",
   ];

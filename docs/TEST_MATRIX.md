@@ -22,6 +22,7 @@ instances, namespaces, faults, and temporary files that they create.
 | Go-owned capacity, resource, soak, and payload throughput | Explicit `make performance`; this is not multi-language performance parity |
 | Optional WebTransport and Chromium performance | Explicit `flowersec-test --suite performance-optional` on the prepared privileged host |
 | Published Go-to-Node raw QUIC consumer compatibility | `release/npm-consumer/go-node-raw-quic/direct-session` installs registry packages and the tagged Go module, then verifies handshake, RPC, stream FIN, close, and cleanup; this is release readback, not a repository parity test |
+| Apple/browser client-profile WSS interoperability | `interop/swift-go/wss/direct`, `interop/swift-via-go-to-rust/wss/tunnel`, `browser/chromium/websocket/go/direct`, and `browser/chromium/websocket/via-go-to-rust/tunnel` use the existing production parity peers and runner; Swift is Darwin-only and browser trust is runner-managed |
 
 The expensive inventory is grouped by execution boundary and has no second manifest:
 

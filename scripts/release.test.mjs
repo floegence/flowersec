@@ -742,7 +742,6 @@ test("release workflows pin actions and pass expressions through fields, not she
     ["github-actions", "/"],
     ["npm", "/flowersec-ts"],
     ["gomod", "/flowersec-go"],
-    ["gomod", "/tools/idlgen"],
     ["gomod", "/tools/releasenotes"],
     ["gomod", "/tools/stabilitycheck"],
     ["cargo", "/flowersec-rust"],

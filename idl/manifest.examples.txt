@@ -1,1 +1,0 @@
-# Transport v2 examples consume the frozen codecs and fixtures directly.
