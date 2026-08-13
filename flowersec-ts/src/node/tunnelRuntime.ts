@@ -412,8 +412,11 @@ async function bridgeStreams(
       outgoing = await target.openStream({ signal });
     } catch (error) {
       release();
-      incoming.abort(asError(error));
-      if (signal.aborted) throw error;
+      if (signal.aborted) {
+        incoming.abort(asError(error));
+        throw error;
+      }
+      await incoming.reset().catch(() => undefined);
       continue;
     }
     start(spliceStreams(incoming, outgoing, signal, false).finally(release), false);
@@ -435,8 +438,12 @@ async function spliceStreams(
     await Promise.all([copyStream(left, right, signal), copyStream(right, left, signal)]);
     if (closePair) throw new Error("Flowersec tunnel control stream closed");
   } catch (error) {
-    left.abort(asError(error));
-    right.abort(asError(error));
+    if (closePair || signal.aborted) {
+      left.abort(asError(error));
+      right.abort(asError(error));
+    } else {
+      await Promise.allSettled([left.reset(), right.reset()]);
+    }
     throw error;
   } finally {
     signal.removeEventListener("abort", abort);

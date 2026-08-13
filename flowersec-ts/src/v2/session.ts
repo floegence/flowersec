@@ -90,6 +90,7 @@ const MAX_BUFFERED_STREAM_BYTES = 4 * 1024 * 1024;
 const RESERVED_RPC_KIND = "flowersec.rpc.v2";
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 const DEFAULT_CLOSE_TIMEOUT_MS = 2_000;
+const DEFAULT_CONTROL_CONFIRM_TIMEOUT_MS = 2_000;
 
 type SessionTerminationV2 = Readonly<{ error: Error }>;
 
@@ -258,12 +259,15 @@ export class SessionV2 implements SessionV2Contract {
   private sessionCloseCommitted = false;
   private readonly peerSessionClose = deferred<void>();
   private readonly streams = new Map<bigint, EncryptedStreamV2>();
+  private readonly releasedStreams = new Map<bigint, WeakRef<EncryptedStreamV2>>();
+  private readonly releasedStreamCleanup = releasedStreamCleanup(this.releasedStreams);
   private readonly peerLedger: StreamLifetimeLedgerV2;
   private readonly outboundLedger: StreamLifetimeLedgerV2;
   private readonly incoming = new AsyncQueue<IncomingStreamV2>();
   private readonly outboundPermits: AsyncSemaphore;
   private readonly inboundPermits: AsyncSemaphore;
   private readonly pings = new Map<bigint, Deferred<void>>();
+  private readonly backgroundTasks = new Set<Promise<void>>();
   private nextPing = 1n;
   private readonly rpcActivation = deferred<void>();
   private rpcStreamPromise: Promise<EncryptedStreamV2> | undefined;
@@ -454,8 +458,8 @@ export class SessionV2 implements SessionV2Contract {
       ciphertextLength: inner.length + 16,
     };
     const ciphertext = sealRecord(this.config.suite, material, this.h3, stream.id, this.sendDirection, header, inner);
-    stream.sendSequence += 1n;
     await writeAll(stream.carrier, concat(encodeRecordHeader(header), ciphertext), signal);
+    stream.sendSequence += 1n;
     this.markAuthenticatedActivity();
   }
 
@@ -495,21 +499,47 @@ export class SessionV2 implements SessionV2Contract {
 
   async localReset(stream: EncryptedStreamV2, error: Error): Promise<void> {
     if (!stream.markTerminal(error)) return;
+    this.releaseStream(stream);
+    let controlConfirmed = false;
     try {
       await this.sendControl(InnerTypeV2.StreamReset, idReason(stream.id, 6));
       this.commitLocalReset(stream.id);
+      if (stream.hasRemoteFIN()) controlConfirmed = await this.confirmControlDelivery();
     } catch (cause) {
       this.fail(asError(cause));
     }
-    await stream.carrier.reset().catch(() => undefined);
-    this.releaseStream(stream);
+    if (controlConfirmed) {
+      await stream.carrier.closeWrite().catch(async () => await stream.carrier.reset().catch(() => undefined));
+    } else {
+      await stream.carrier.reset().catch(() => undefined);
+    }
   }
 
   releaseStream(stream: EncryptedStreamV2): void {
+    if (stream.terminalError !== undefined) {
+      this.releasedStreams.delete(stream.id);
+      this.releasedStreamCleanup.unregister(stream);
+    }
     if (this.streams.get(stream.id) !== stream) return;
     this.streams.delete(stream.id);
+    if (stream.terminalError === undefined) {
+      this.releasedStreams.set(stream.id, new WeakRef(stream));
+      this.releasedStreamCleanup.register(stream, stream.id, stream);
+    }
     stream.releasePermit();
     this.cleanupEpochRoots();
+  }
+
+  private async confirmControlDelivery(): Promise<boolean> {
+    const nonce = this.nextPing++;
+    const pending = deferred<void>();
+    this.pings.set(nonce, pending);
+    try {
+      await this.sendControl(InnerTypeV2.Ping, u64(nonce));
+      return await resolveWithin(pending.promise, DEFAULT_CONTROL_CONFIRM_TIMEOUT_MS);
+    } finally {
+      this.pings.delete(nonce);
+    }
   }
 
   private async openLogicalStream(
@@ -826,7 +856,20 @@ export class SessionV2 implements SessionV2Contract {
           case InnerTypeV2.StreamReset: {
             const { id, reason } = parseIDReason(record.payload);
             if (id === 0n || reason === 0) throw protocolError("invalid STREAM_RESET");
-            this.streams.get(id)?.peerReset(new SessionV2Error("stream_reset", "logical stream reset by peer"));
+            const stream = this.streams.get(id);
+            if (stream !== undefined) {
+              stream.peerReset(new SessionV2Error("stream_reset", "logical stream reset by peer"));
+            } else {
+              const released = this.releasedStreams.get(id);
+              if (released !== undefined) {
+                this.releasedStreams.delete(id);
+                const releasedStream = released.deref();
+                if (releasedStream !== undefined) {
+                  this.releasedStreamCleanup.unregister(releasedStream);
+                  releasedStream.markTerminal(new SessionV2Error("stream_reset", "logical stream reset by peer"));
+                }
+              }
+            }
             if (this.isLocalLogicalID(id)) {
               this.outboundLedger.peerReset(id);
               this.notifyOutboundFrontierChanged();
@@ -1140,9 +1183,19 @@ export class SessionV2 implements SessionV2Contract {
     this.receivedGoAwayReason = reason;
     const excluded = [...this.streams.values()].filter((stream) =>
       this.isLocalLogicalID(stream.id) && stream.id > lastAccepted);
-    await Promise.allSettled(excluded.map(async (stream) => {
-      await this.localReset(stream, new SessionV2Error("going_away", "logical stream exceeds peer GOAWAY boundary"));
-    }));
+    for (const stream of excluded) {
+      this.trackBackground(this.localReset(
+        stream,
+        new SessionV2Error("going_away", "logical stream exceeds peer GOAWAY boundary"),
+      ));
+    }
+  }
+
+  private trackBackground(task: Promise<void>): void {
+    this.backgroundTasks.add(task);
+    void task.catch((error) => {
+      if (this.lifecycle !== "closed") this.fail(asError(error));
+    }).finally(() => this.backgroundTasks.delete(task));
   }
 
   private localOpeningAllowedAfterGoAway(id: bigint): boolean {
@@ -1222,6 +1275,11 @@ export class SessionV2 implements SessionV2Contract {
     this.pings.clear();
     this.rpc.close();
     for (const stream of [...this.streams.values()]) stream.peerReset(error);
+    for (const released of this.releasedStreams.values()) {
+      const stream = released.deref();
+      if (stream !== undefined) this.releasedStreamCleanup.unregister(stream);
+    }
+    this.releasedStreams.clear();
     this.wipeAllRoots();
     this.h3.fill(0);
     if (abortCarrier && !normalPeerCarrierClose) this.carrier.abort({ code: 6, reason: "session terminated" });
@@ -1251,6 +1309,7 @@ class EncryptedStreamV2 implements ByteStreamV2 {
   private remoteFIN = false;
   private pumpStarted = false;
   private permitReleased = false;
+  private closeWriteTask: Promise<void> | undefined;
   private pendingSendRekey: Readonly<{
     transition: bigint;
     epoch: number;
@@ -1292,13 +1351,20 @@ class EncryptedStreamV2 implements ByteStreamV2 {
     if (this.terminalError !== undefined) throw this.terminalError;
     const copy = payload.slice();
     await this.enqueueSend(async () => {
-      for (let offset = 0; offset < copy.length; offset += MAX_DATA_BYTES) {
-        throwIfAborted(options.signal);
-        await this.session.sendStreamRecord(
-          this,
-          InnerTypeV2.Data,
-          copy.subarray(offset, Math.min(copy.length, offset + MAX_DATA_BYTES)),
-        );
+      try {
+        for (let offset = 0; offset < copy.length; offset += MAX_DATA_BYTES) {
+          throwIfAborted(options.signal);
+          await this.session.sendStreamRecord(
+            this,
+            InnerTypeV2.Data,
+            copy.subarray(offset, Math.min(copy.length, offset + MAX_DATA_BYTES)),
+            options.signal,
+          );
+        }
+      } catch (error) {
+        const normalized = asError(error);
+        void this.session.localReset(this, normalized);
+        throw normalized;
       }
     });
     return copy.length;
@@ -1307,14 +1373,22 @@ class EncryptedStreamV2 implements ByteStreamV2 {
   async closeWrite(): Promise<void> {
     await this.opened.promise;
     await this.waitSendRekey();
-    if (this.localFIN || this.terminalError !== undefined) return;
-    await this.enqueueSend(async () => {
-      if (this.localFIN) return;
-      this.localFIN = true;
-      await this.session.sendStreamRecord(this, InnerTypeV2.FIN, new Uint8Array());
-      await this.carrier.closeWrite();
-      this.releaseIfClean();
+    if (this.localFIN) return;
+    if (this.terminalError !== undefined) throw this.terminalError;
+    this.closeWriteTask ??= this.enqueueSend(async () => {
+      try {
+        if (this.localFIN) return;
+        await this.session.sendStreamRecord(this, InnerTypeV2.FIN, new Uint8Array());
+        await this.carrier.closeWrite();
+        this.localFIN = true;
+        this.releaseIfClean();
+      } catch (error) {
+        const normalized = asError(error);
+        void this.session.localReset(this, normalized);
+        throw normalized;
+      }
     });
+    await this.closeWriteTask;
   }
 
   async reset(): Promise<void> {
@@ -1331,6 +1405,10 @@ class EncryptedStreamV2 implements ByteStreamV2 {
 
   canRekeySend(): boolean {
     return this.terminalError === undefined && this.opened.settled && !this.localFIN;
+  }
+
+  hasRemoteFIN(): boolean {
+    return this.remoteFIN;
   }
 
   startSendRekey(transition: bigint, epoch: number): Readonly<{
@@ -1396,6 +1474,11 @@ class EncryptedStreamV2 implements ByteStreamV2 {
     this.session.releaseStream(this);
   }
 
+  carrierReset(): void {
+    if (!this.markTerminal(new SessionV2Error("stream_reset", "logical stream reset by peer"))) return;
+    this.session.releaseStream(this);
+  }
+
   abort(error: Error = new SessionV2Error("closed", "logical stream aborted")): void {
     this.peerReset(error);
   }
@@ -1433,6 +1516,7 @@ class EncryptedStreamV2 implements ByteStreamV2 {
         switch (record.type) {
           case InnerTypeV2.Data:
             if (this.remoteFIN) throw protocolError("DATA after FIN");
+            await this.data.waitForCapacity(record.payload.length);
             this.data.push(record.payload);
             break;
           case InnerTypeV2.FIN:
@@ -1453,6 +1537,10 @@ class EncryptedStreamV2 implements ByteStreamV2 {
       }
     } catch (error) {
       const normalized = asError(error);
+      if (normalized instanceof CarrierError && normalized.code === "reset") {
+        this.carrierReset();
+        return;
+      }
       if (this.remoteFIN && /closed|EOF/i.test(normalized.message)) {
         this.releaseIfClean();
         return;
@@ -1712,6 +1800,7 @@ class ByteQueue {
   private closed = false;
   private error: Error | undefined;
   private readonly waiters = new Set<Deferred<void>>();
+  private readonly capacityWaiters = new Set<Deferred<void>>();
 
   constructor(private readonly limit: number) {}
 
@@ -1735,6 +1824,21 @@ class ByteQueue {
     this.head = 0;
     this.bytes = 0;
     this.wake(error);
+    this.wakeCapacity(error);
+  }
+
+  async waitForCapacity(required: number): Promise<void> {
+    if (!Number.isInteger(required) || required < 0 || required > this.limit) {
+      throw new RangeError("invalid stream receive capacity request");
+    }
+    while (this.bytes + required > this.limit) {
+      if (this.error !== undefined) throw this.error;
+      if (this.closed) return;
+      const waiter = deferred<void>();
+      this.capacityWaiters.add(waiter);
+      try { await waiter.promise; }
+      finally { this.capacityWaiters.delete(waiter); }
+    }
   }
 
   async read(signal?: AbortSignal): Promise<Uint8Array | null> {
@@ -1743,6 +1847,7 @@ class ByteQueue {
       if (this.head < this.chunks.length) {
         const chunk = this.chunks[this.head++]!;
         this.bytes -= chunk.length;
+        this.wakeCapacity();
         if (this.head > 1_024 && this.head * 2 > this.chunks.length) {
           this.chunks.splice(0, this.head);
           this.head = 0;
@@ -1760,6 +1865,11 @@ class ByteQueue {
   private wake(error?: Error): void {
     for (const waiter of [...this.waiters]) error === undefined ? waiter.resolve() : waiter.reject(error);
     this.waiters.clear();
+  }
+
+  private wakeCapacity(error?: Error): void {
+    for (const waiter of [...this.capacityWaiters]) error === undefined ? waiter.resolve() : waiter.reject(error);
+    this.capacityWaiters.clear();
   }
 }
 
@@ -2002,6 +2112,16 @@ async function settleWithin(promise: Promise<unknown>, timeoutMs: number): Promi
   });
 }
 
+async function resolveWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    void promise.then(
+      () => { clearTimeout(timer); resolve(true); },
+      () => { clearTimeout(timer); resolve(false); },
+    );
+  });
+}
+
 function sessionIdleTimeoutMs(config: SessionConfigV2): number {
   const timeoutMs = config.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0) {
@@ -2112,6 +2232,15 @@ function abortedError(): SessionV2Error {
 
 function abortReason(signal: AbortSignal): Error {
   return signal.reason instanceof Error ? signal.reason : abortedError();
+}
+
+function releasedStreamCleanup(
+  streams: Map<bigint, WeakRef<EncryptedStreamV2>>,
+): FinalizationRegistry<bigint> {
+  return new FinalizationRegistry<bigint>((id) => {
+    const stream = streams.get(id);
+    if (stream !== undefined && stream.deref() === undefined) streams.delete(id);
+  });
 }
 
 function createSessionDeadline(config: SessionConfigV2, phase: SessionDeadlinePhaseV2): SessionDeadlineHandleV2 {

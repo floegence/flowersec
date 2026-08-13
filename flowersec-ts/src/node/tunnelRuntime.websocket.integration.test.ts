@@ -133,10 +133,27 @@ test("Node TunnelRuntime relays opaque WSS streams and cleans up paired and time
       expect(incoming.kind).toBe("opaque-e2ee");
       await outgoing.write(new TextEncoder().encode("endpoint-only plaintext"));
       await outgoing.closeWrite();
-    const payload = await incoming.stream.read();
-    if (payload === null) throw new Error("tunnel stream ended before its payload");
-    expect(new TextDecoder().decode(payload)).toBe("endpoint-only plaintext");
+      const payload = await incoming.stream.read();
+      if (payload === null) throw new Error("tunnel stream ended before its payload");
+      expect(new TextDecoder().decode(payload)).toBe("endpoint-only plaintext");
       expect(await incoming.stream.read()).toBeNull();
+
+      const resetOutgoing = await first!.openStream("reset-after-fin");
+      const resetIncoming = await second!.acceptStream();
+      await resetOutgoing.write(new TextEncoder().encode("reset payload"));
+      await resetOutgoing.closeWrite();
+      const resetPayload = await resetIncoming.stream.read();
+      if (resetPayload === null) throw new Error("tunnel reset stream ended before its payload");
+      expect(new TextDecoder().decode(resetPayload)).toBe("reset payload");
+      await resetIncoming.stream.reset();
+      await expect(resetOutgoing.read()).rejects.toMatchObject({ code: "stream_reset" });
+
+      const siblingOutgoing = await first!.openStream("after-reset");
+      const siblingIncoming = await second!.acceptStream();
+      await siblingOutgoing.write(Uint8Array.of(7));
+      expect(await siblingIncoming.stream.read()).toEqual(Uint8Array.of(7));
+      await siblingOutgoing.reset();
+      await expect(siblingIncoming.stream.read()).rejects.toMatchObject({ code: "stream_reset" });
     } finally {
       await Promise.all([first!.close(), second!.close()]);
     }

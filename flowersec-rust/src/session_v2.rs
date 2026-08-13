@@ -1750,6 +1750,10 @@ async fn control_loop_v2(session: Arc<SelfSession>) {
 }
 
 async fn probe_v2(session: &EncryptedSessionV2) -> io::Result<Duration> {
+    confirm_control_delivery_v2(session).await
+}
+
+async fn confirm_control_delivery_v2(session: &EncryptedSessionV2) -> io::Result<Duration> {
     if session.is_closed() {
         return Err(closed());
     }
@@ -2463,6 +2467,9 @@ struct EncryptedStreamV2 {
     remote_fin: AtomicBool,
     reset: AtomicBool,
     reset_changed: Notify,
+    reset_cleanup_done: AtomicBool,
+    reset_cleanup_changed: Notify,
+    reset_cleanup_error: StdMutex<Option<io::ErrorKind>>,
     terminal: OnceLock<SessionError>,
     _outbound_permit: StdMutex<Option<tokio::sync::OwnedSemaphorePermit>>,
     _inbound_permit: StdMutex<Option<tokio::sync::OwnedSemaphorePermit>>,
@@ -2710,6 +2717,9 @@ async fn open_stream_with_capacity_v2(
         remote_fin: AtomicBool::new(false),
         reset: AtomicBool::new(false),
         reset_changed: Notify::new(),
+        reset_cleanup_done: AtomicBool::new(false),
+        reset_cleanup_changed: Notify::new(),
+        reset_cleanup_error: StdMutex::new(None),
         terminal: OnceLock::new(),
         _outbound_permit: StdMutex::new(permit),
         _inbound_permit: StdMutex::new(None),
@@ -2792,18 +2802,24 @@ impl ByteStream for StreamHandleV2 {
             .map_err(|error| SessionError::from_io(&error))
     }
     async fn write(&self, payload: Bytes) -> Result<usize, SessionError> {
-        self.0
-            .write_data(payload)
-            .await
-            .inspect_err(|error| self.0.record_terminal(error))
-            .map_err(|error| SessionError::from_io(&error))
+        match self.0.write_data(payload).await {
+            Ok(written) => Ok(written),
+            Err(error) => {
+                self.0.record_terminal(&error);
+                let _ = self.0.reset_inner().await;
+                Err(SessionError::from_io(&error))
+            }
+        }
     }
     async fn close_write(&self) -> Result<(), SessionError> {
-        self.0
-            .close_write_inner()
-            .await
-            .inspect_err(|error| self.0.record_terminal(error))
-            .map_err(|error| SessionError::from_io(&error))
+        match self.0.close_write_inner().await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.0.record_terminal(&error);
+                let _ = self.0.reset_inner().await;
+                Err(SessionError::from_io(&error))
+            }
+        }
     }
     async fn reset(&self) -> Result<(), SessionError> {
         self.0
@@ -2812,13 +2828,10 @@ impl ByteStream for StreamHandleV2 {
             .map_err(|error| SessionError::from_io(&error))
     }
     async fn close(&self) -> Result<(), SessionError> {
-        let _ = self.0.close_write_inner().await;
-        let result = self.0.carrier.close().await;
-        if let Err(error) = &result {
-            self.0.record_terminal(error);
-        }
-        self.0.release_capacity();
-        result.map_err(|error| SessionError::from_io(&error))
+        self.0
+            .reset_inner()
+            .await
+            .map_err(|error| SessionError::from_io(&error))
     }
 }
 
@@ -2862,6 +2875,7 @@ impl EncryptedStreamV2 {
         if payload.is_empty() {
             return Ok(0);
         }
+        let _lock = self.send_lock.lock().await;
         if self.local_fin.load(Ordering::Acquire) || self.reset.load(Ordering::Acquire) {
             return Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
@@ -2869,44 +2883,147 @@ impl EncryptedStreamV2 {
             ));
         }
         let length = payload.len().min(MAX_DATA_V2_BYTES);
-        self.write_record(InnerRecordTypeV2::Data, &payload[..length])
+        self.write_record_locked_cancelable(InnerRecordTypeV2::Data, &payload[..length])
             .await?;
         Ok(length)
     }
     async fn close_write_inner(&self) -> io::Result<()> {
-        if !self.local_fin.swap(true, Ordering::AcqRel) {
-            self.write_record(InnerRecordTypeV2::Fin, &[]).await?;
-            self.carrier.close_write().await?;
+        let _lock = self.send_lock.lock().await;
+        if self.reset.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "logical stream reset",
+            ));
+        }
+        if !self.local_fin.load(Ordering::Acquire) {
+            let reset_changed = self.reset_changed.notified();
+            tokio::pin!(reset_changed);
+            reset_changed.as_mut().enable();
+            if self.reset.load(Ordering::Acquire) {
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "logical stream reset",
+                ));
+            }
+            tokio::select! {
+                biased;
+                _ = &mut reset_changed => return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "logical stream reset",
+                )),
+                result = async {
+                    self.write_record_locked(InnerRecordTypeV2::Fin, &[]).await?;
+                    self.carrier.close_write().await
+                } => result?,
+            }
+            self.local_fin.store(true, Ordering::Release);
         }
         self.release_if_clean();
         Ok(())
     }
-    async fn reset_inner(&self) -> io::Result<()> {
+    async fn reset_inner(self: &Arc<Self>) -> io::Result<()> {
         let _ = self.terminal.set(SessionError::StreamReset);
         if !self.reset.swap(true, Ordering::AcqRel) {
             self.reset_changed.notify_waiters();
-            if let Some(session) = self.session.upgrade() {
-                let mut payload = [0; 10];
-                payload[..8].copy_from_slice(&self.id.to_be_bytes());
-                payload[8..].copy_from_slice(&1_u16.to_be_bytes());
-                let _ = send_control_v2(&session, InnerRecordTypeV2::StreamReset, &payload).await;
-            }
-            self.carrier.reset().await?;
+            let stream = self.clone();
+            tokio::spawn(async move { stream.finish_reset().await });
         }
-        self.release_capacity();
-        Ok(())
+        self.wait_reset_cleanup().await
     }
-    async fn reset_local(&self) -> io::Result<()> {
-        let _ = self.terminal.set(SessionError::StreamReset);
-        self.reset.store(true, Ordering::Release);
-        self.reset_changed.notify_waiters();
+    async fn wait_reset_cleanup(&self) -> io::Result<()> {
+        loop {
+            let changed = self.reset_cleanup_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.reset_cleanup_done.load(Ordering::Acquire) {
+                break;
+            }
+            changed.await;
+        }
+        match *self
+            .reset_cleanup_error
+            .lock()
+            .expect("reset cleanup error lock poisoned")
+        {
+            Some(kind) => Err(io::Error::new(kind, "logical stream reset cleanup failed")),
+            None => Ok(()),
+        }
+    }
+    async fn finish_reset(self: Arc<Self>) {
+        let _control_confirmed = if let Some(session) = self.session.upgrade() {
+            let mut payload = [0; 10];
+            payload[..8].copy_from_slice(&self.id.to_be_bytes());
+            payload[8..].copy_from_slice(&1_u16.to_be_bytes());
+            if send_control_v2(&session, InnerRecordTypeV2::StreamReset, &payload)
+                .await
+                .is_ok()
+                && self.remote_fin.load(Ordering::Acquire)
+            {
+                confirm_control_delivery_v2(&session).await.is_ok()
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        self.finish_physical_reset().await;
+    }
+    async fn finish_physical_reset(&self) {
         let result = self.carrier.reset().await;
         self.release_capacity();
-        result
+        if let Err(error) = result {
+            *self
+                .reset_cleanup_error
+                .lock()
+                .expect("reset cleanup error lock poisoned") = Some(error.kind());
+        }
+        self.reset_cleanup_done.store(true, Ordering::Release);
+        self.reset_cleanup_changed.notify_waiters();
+    }
+    async fn reset_local(self: &Arc<Self>) -> io::Result<()> {
+        let _ = self.terminal.set(SessionError::StreamReset);
+        if !self.reset.swap(true, Ordering::AcqRel) {
+            self.reset_changed.notify_waiters();
+            let stream = self.clone();
+            tokio::spawn(async move { stream.finish_physical_reset().await });
+        }
+        self.wait_reset_cleanup().await
     }
     async fn write_record(&self, kind: InnerRecordTypeV2, payload: &[u8]) -> io::Result<()> {
-        let session = self.session.upgrade().ok_or_else(closed)?;
         let _lock = self.send_lock.lock().await;
+        if self.reset.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "logical stream reset",
+            ));
+        }
+        self.write_record_locked_cancelable(kind, payload).await
+    }
+    async fn write_record_locked_cancelable(
+        &self,
+        kind: InnerRecordTypeV2,
+        payload: &[u8],
+    ) -> io::Result<()> {
+        let reset_changed = self.reset_changed.notified();
+        tokio::pin!(reset_changed);
+        reset_changed.as_mut().enable();
+        if self.reset.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "logical stream reset",
+            ));
+        }
+        tokio::select! {
+            biased;
+            _ = &mut reset_changed => Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "logical stream reset",
+            )),
+            result = self.write_record_locked(kind, payload) => result,
+        }
+    }
+    async fn write_record_locked(&self, kind: InnerRecordTypeV2, payload: &[u8]) -> io::Result<()> {
+        let session = self.session.upgrade().ok_or_else(closed)?;
         let epoch = self.send_epoch.load(Ordering::Acquire) as u32;
         let sequence = next_stream_send_sequence_v2(&self.send_sequence)?;
         write_stream_record_v2(
@@ -3347,6 +3464,9 @@ async fn accept_one_stream_v2(
         remote_fin: AtomicBool::new(false),
         reset: AtomicBool::new(false),
         reset_changed: Notify::new(),
+        reset_cleanup_done: AtomicBool::new(false),
+        reset_cleanup_changed: Notify::new(),
+        reset_cleanup_error: StdMutex::new(None),
         terminal: OnceLock::new(),
         _outbound_permit: StdMutex::new(None),
         _inbound_permit: StdMutex::new(permit),

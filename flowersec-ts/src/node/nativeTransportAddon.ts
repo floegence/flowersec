@@ -55,6 +55,7 @@ type NativeRawQuicStreamBinding = Readonly<{
   closeWrite(): Promise<void>;
   stopSending(): Promise<void>;
   reset(): Promise<void>;
+  cancelPending?(): void;
   abort(): void;
 }>;
 
@@ -218,13 +219,28 @@ function wrapSession(native: NativeRawQuicSessionBinding): NativeCarrierSessionV
 
 function wrapStream(native: NativeRawQuicStreamBinding): NativeCarrierStreamV2 {
   return Object.freeze({
-    read: async () => await native.read(),
-    write: async (data) => await native.write(data),
-    closeWrite: async () => await native.closeWrite(),
-    stopSending: async () => await native.stopSending(),
-    reset: async () => await native.reset(),
+    read: async () => await nativeStreamCall(native.read()),
+    write: async (data) => await nativeStreamCall(native.write(data)),
+    closeWrite: async () => await nativeStreamCall(native.closeWrite()),
+    stopSending: async () => await nativeStreamCall(native.stopSending()),
+    reset: async () => await nativeStreamCall(native.reset()),
+    cancelPending: () => native.cancelPending?.(),
     abort: () => native.abort(),
   });
+}
+
+async function nativeStreamCall<T>(operation: Promise<T>): Promise<T> {
+  try {
+    return await operation;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "";
+    switch (reason) {
+      case "reset": throw new CarrierError("reset", "raw QUIC stream reset", error);
+      case "canceled": throw new CarrierError("aborted", "raw QUIC stream operation canceled", error);
+      case "closed": throw new CarrierError("closed", "raw QUIC stream closed", error);
+      default: throw error;
+    }
+  }
 }
 
 async function settle<T>(operation: NativeOperation<T>, signal?: AbortSignal): Promise<T> {

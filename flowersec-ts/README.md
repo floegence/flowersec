@@ -41,6 +41,8 @@ The controller has one scheduler and one in-flight attempt. Its states are `idle
 
 Node `SessionHandlers` accept application stream kinds whose UTF-8 encoding is 1 through 255 bytes and reserve `flowersec.rpc.v2` for Flowersec RPC. `AcceptedSession.serve(...)` half-closes successfully handled streams. A rejected handler Promise resets only that stream; the accept loop and unrelated streams continue.
 
+Reliable streams apply bounded per-stream receive backpressure instead of buffering application data without limit. A slow consumer pauses carrier progress until reads release capacity; records retain carrier order, so a rekey behind backpressured DATA completes after the consumer resumes. `closeWrite()` sends the graceful FIN and keeps reads available. `reset()` and `close()` abort both directions. If a write is canceled or fails after its wire commit may have started, only that stream becomes terminal and cannot be reused.
+
 Source failures return a structured `terminal`, `retryable`, or `retry_after` disposition. Thrown or malformed source failures are terminal. Retry delay is deterministic exponential backoff from 250 ms, doubling to a 30-second maximum with no jitter; `retry_after` is never attempted before its specified Unix-millisecond boundary. Attempts are unlimited unless `maximumAttempts` is explicitly set.
 
 A newly established session replaces `currentSession` atomically. The controller never migrates or replays streams, RPC calls, or writes from a terminated session; callers start new application operations on the new session.

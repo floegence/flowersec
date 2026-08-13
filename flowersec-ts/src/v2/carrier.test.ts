@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  adaptNativeCarrierSessionV2,
   createMemoryCarrierPairV2,
 } from "./carrier.js";
 import { createWebSocketCarrierSessionV2, type WebSocketBinaryTransportV2 } from "../transport/webSocketAdapter.js";
@@ -40,6 +41,40 @@ describe("transport v2 carrier contract", () => {
     await opened.write(Uint8Array.of(7));
     expect(await accepted.read()).toEqual(Uint8Array.of(7));
     await server.close();
+  });
+
+  test("cancels native stream I/O without initiating peer-visible teardown", async () => {
+    let cancelPendingCalls = 0;
+    let abortCalls = 0;
+    const nativeStream = {
+      read: async () => await new Promise<Uint8Array | null>(() => undefined),
+      write: async () => await new Promise<number>(() => undefined),
+      closeWrite: async () => undefined,
+      stopSending: async () => undefined,
+      reset: async () => undefined,
+      cancelPending: () => { cancelPendingCalls++; },
+      abort: () => { abortCalls++; },
+    };
+    const native = {
+      kind: "raw_quic" as const,
+      path: "direct" as const,
+      inboundBidirectionalStreamCapacity: 3,
+      openStream: async () => nativeStream,
+      acceptStream: async () => nativeStream,
+      waitTermination: async () => undefined,
+      close: async () => undefined,
+      abort: () => undefined,
+    };
+    const stream = await adaptNativeCarrierSessionV2(native).openStream();
+    const controller = new AbortController();
+    const writing = stream.write(Uint8Array.of(1), { signal: controller.signal });
+    controller.abort();
+
+    await expect(writing).rejects.toMatchObject({ code: "aborted" });
+    expect(cancelPendingCalls).toBe(1);
+    expect(abortCalls).toBe(0);
+    stream.abort();
+    expect(abortCalls).toBe(1);
   });
 
   test("binds WSS Yamux to the exact three physical N=1 slots and releases capacity after reset", async () => {

@@ -481,6 +481,100 @@ struct ControlFlushOrderCarrierStream {
     control_finish_order: Arc<AtomicU64>,
 }
 
+#[derive(Debug)]
+struct ResetAfterFinCarrierSession {
+    inner: Arc<dyn CarrierSessionV2>,
+    accepts: AtomicU64,
+    close_writes: Arc<AtomicU64>,
+    resets: Arc<AtomicU64>,
+    reset_entered: Option<Arc<Notify>>,
+    reset_release: Option<Arc<Semaphore>>,
+}
+
+#[derive(Debug)]
+struct ResetAfterFinCarrierStream {
+    inner: Arc<dyn CarrierStreamV2>,
+    close_writes: Arc<AtomicU64>,
+    resets: Arc<AtomicU64>,
+    reset_entered: Option<Arc<Notify>>,
+    reset_release: Option<Arc<Semaphore>>,
+}
+
+#[async_trait::async_trait]
+impl CarrierSessionV2 for ResetAfterFinCarrierSession {
+    fn kind(&self) -> CarrierKind {
+        self.inner.kind()
+    }
+
+    fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+        self.inner.inbound_bidirectional_stream_capacity()
+    }
+
+    async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+        self.inner.open_stream().await
+    }
+
+    async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+        let stream = self.inner.accept_stream().await?;
+        if self.accepts.fetch_add(1, Ordering::AcqRel) + 1 == 2 {
+            Ok(Arc::new(ResetAfterFinCarrierStream {
+                inner: stream,
+                close_writes: self.close_writes.clone(),
+                resets: self.resets.clone(),
+                reset_entered: self.reset_entered.clone(),
+                reset_release: self.reset_release.clone(),
+            }))
+        } else {
+            Ok(stream)
+        }
+    }
+
+    async fn close(&self) -> io::Result<()> {
+        self.inner.close().await
+    }
+
+    fn abort(&self) {
+        self.inner.abort();
+    }
+}
+
+#[async_trait::async_trait]
+impl CarrierStreamV2 for ResetAfterFinCarrierStream {
+    async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(payload).await
+    }
+
+    async fn write(&self, payload: &[u8]) -> io::Result<usize> {
+        self.inner.write(payload).await
+    }
+
+    async fn close_write(&self) -> io::Result<()> {
+        self.close_writes.fetch_add(1, Ordering::AcqRel);
+        self.inner.close_write().await
+    }
+
+    async fn stop_sending(&self) -> io::Result<()> {
+        self.inner.stop_sending().await
+    }
+
+    async fn reset(&self) -> io::Result<()> {
+        let reset_ordinal = self.resets.fetch_add(1, Ordering::AcqRel);
+        if reset_ordinal == 0 {
+            if let Some(entered) = &self.reset_entered {
+                entered.notify_one();
+            }
+            if let Some(release) = &self.reset_release {
+                release.acquire().await.expect("reset gate closed").forget();
+            }
+        }
+        self.inner.reset().await
+    }
+
+    async fn close(&self) -> io::Result<()> {
+        self.inner.close().await
+    }
+}
+
 #[async_trait::async_trait]
 impl CarrierSessionV2 for ControlFlushOrderCarrierSession {
     fn kind(&self) -> CarrierKind {
@@ -1230,6 +1324,263 @@ async fn encrypted_stream_reports_only_the_closed_terminal_error_set() {
         opened.terminal_error(),
         Some(crate::SessionError::StreamReset)
     );
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn encrypted_stream_close_is_the_cleanup_alias_for_reset() {
+    let (client, server) = establish_pair().await;
+    let (opened, incoming) = tokio::join!(
+        client.open_stream("close-reset", StreamMetadata::empty()),
+        server.accept_stream(),
+    );
+    let opened = opened.expect("open close stream");
+    let incoming = incoming.expect("accept close stream");
+
+    opened.close().await.expect("close stream");
+    assert_eq!(
+        opened.terminal_error(),
+        Some(crate::SessionError::StreamReset)
+    );
+    assert_eq!(
+        incoming.stream().read().await.expect_err("peer reset"),
+        crate::SessionError::StreamReset
+    );
+
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn reset_after_peer_fin_confirms_control_before_physical_reset() {
+    let (client_carrier, server_inner) = memory_carrier_pair_for_logical(2);
+    let close_writes = Arc::new(AtomicU64::new(0));
+    let resets = Arc::new(AtomicU64::new(0));
+    let server_carrier: Arc<dyn CarrierSessionV2> = Arc::new(ResetAfterFinCarrierSession {
+        inner: server_inner,
+        accepts: AtomicU64::new(0),
+        close_writes: close_writes.clone(),
+        resets: resets.clone(),
+        reset_entered: None,
+        reset_release: None,
+    });
+    let client_config = regression_config(SessionRole::Client, "reset-after-peer-fin", 2, None);
+    let server_config = regression_config(SessionRole::Server, "reset-after-peer-fin", 2, None);
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+    let (outgoing, incoming) = tokio::join!(
+        client.open_stream("reset-after-peer-fin", StreamMetadata::empty()),
+        server.accept_stream(),
+    );
+    let outgoing = outgoing.expect("open stream");
+    let incoming = incoming.expect("accept stream");
+
+    outgoing.close_write().await.expect("send peer FIN");
+    assert_eq!(incoming.stream().read().await.expect("read peer FIN"), None);
+    incoming
+        .stream()
+        .reset()
+        .await
+        .expect("reset after peer FIN");
+    assert_eq!(close_writes.load(Ordering::Acquire), 0);
+    assert_eq!(resets.load(Ordering::Acquire), 1);
+    assert_eq!(outgoing.read().await, Err(SessionError::StreamReset));
+
+    let (sibling, sibling_incoming) = tokio::join!(
+        client.open_stream("reset-sibling", StreamMetadata::empty()),
+        server.accept_stream(),
+    );
+    let sibling = sibling.expect("open sibling");
+    let sibling_incoming = sibling_incoming.expect("accept sibling");
+    sibling
+        .write(Bytes::from_static(b"alive"))
+        .await
+        .expect("write sibling");
+    assert_eq!(
+        sibling_incoming
+            .stream()
+            .read()
+            .await
+            .expect("read sibling"),
+        Some(Bytes::from_static(b"alive"))
+    );
+    sibling.reset().await.expect("reset sibling");
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn canceled_reset_waiter_does_not_cancel_owned_cleanup() {
+    let (client_carrier, server_inner) = memory_carrier_pair_for_logical(1);
+    let reset_entered = Arc::new(Notify::new());
+    let reset_release = Arc::new(Semaphore::new(0));
+    let server_carrier: Arc<dyn CarrierSessionV2> = Arc::new(ResetAfterFinCarrierSession {
+        inner: server_inner,
+        accepts: AtomicU64::new(0),
+        close_writes: Arc::new(AtomicU64::new(0)),
+        resets: Arc::new(AtomicU64::new(0)),
+        reset_entered: Some(reset_entered.clone()),
+        reset_release: Some(reset_release.clone()),
+    });
+    let client_config = regression_config(SessionRole::Client, "owned-reset-cleanup", 1, None);
+    let server_config = regression_config(SessionRole::Server, "owned-reset-cleanup", 1, None);
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+    let (outgoing, incoming) = tokio::join!(
+        client.open_stream("owned-reset-cleanup", StreamMetadata::empty()),
+        server.accept_stream(),
+    );
+    let outgoing = outgoing.expect("open stream");
+    let incoming = incoming.expect("accept stream");
+
+    let mut resetting = Box::pin(incoming.stream().reset());
+    tokio::select! {
+        result = &mut resetting => panic!("reset completed before carrier cleanup gate: {result:?}"),
+        _ = reset_entered.notified() => {}
+    }
+    drop(resetting);
+    let mut next_opening = {
+        let client = client.clone();
+        tokio::spawn(async move {
+            client
+                .open_stream("permit-after-canceled-reset", StreamMetadata::empty())
+                .await
+        })
+    };
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut next_opening)
+            .await
+            .is_err(),
+        "logical permit released before physical reset completed"
+    );
+    reset_release.add_permits(1);
+    tokio::time::timeout(Duration::from_millis(250), incoming.stream().reset())
+        .await
+        .expect("owned cleanup stopped with its first waiter")
+        .expect("repeat reset observes cleanup success");
+    assert_eq!(outgoing.read().await, Err(SessionError::StreamReset));
+
+    let (next, next_incoming) = tokio::join!(next_opening, server.accept_stream());
+    let next = next
+        .expect("join replacement open")
+        .expect("reset released stream permit");
+    let next_incoming = next_incoming.expect("accept stream after reset");
+    next.write(Bytes::from_static(b"next"))
+        .await
+        .expect("write next stream");
+    assert_eq!(
+        next_incoming
+            .stream()
+            .read()
+            .await
+            .expect("read next stream"),
+        Some(Bytes::from_static(b"next"))
+    );
+    next.reset().await.expect("reset next stream");
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn simultaneous_peer_reset_does_not_release_capacity_before_owned_cleanup() {
+    let (client_carrier, server_inner) = memory_carrier_pair_for_logical(1);
+    let resets = Arc::new(AtomicU64::new(0));
+    let reset_entered = Arc::new(Notify::new());
+    let reset_release = Arc::new(Semaphore::new(0));
+    let server_carrier: Arc<dyn CarrierSessionV2> = Arc::new(ResetAfterFinCarrierSession {
+        inner: server_inner,
+        accepts: AtomicU64::new(0),
+        close_writes: Arc::new(AtomicU64::new(0)),
+        resets: resets.clone(),
+        reset_entered: Some(reset_entered.clone()),
+        reset_release: Some(reset_release.clone()),
+    });
+    let client_config = regression_config(SessionRole::Client, "simultaneous-reset", 1, None);
+    let server_config = regression_config(SessionRole::Server, "simultaneous-reset", 1, None);
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+    let (outgoing, incoming) = tokio::join!(
+        client.open_stream("simultaneous-reset", StreamMetadata::empty()),
+        server.accept_stream(),
+    );
+    let outgoing = outgoing.expect("open stream");
+    let incoming = incoming.expect("accept stream");
+
+    let mut local_reset = Box::pin(incoming.stream().reset());
+    tokio::select! {
+        result = &mut local_reset => panic!("local reset completed before carrier gate: {result:?}"),
+        _ = reset_entered.notified() => {}
+    }
+    outgoing
+        .reset()
+        .await
+        .expect("send simultaneous peer reset");
+
+    let mut repeated_reset = Box::pin(incoming.stream().reset());
+    let mut next_opening = {
+        let client = client.clone();
+        tokio::spawn(async move {
+            client
+                .open_stream("permit-after-simultaneous-reset", StreamMetadata::empty())
+                .await
+        })
+    };
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut repeated_reset)
+            .await
+            .is_err(),
+        "repeat reset completed before the owned physical cleanup"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut next_opening)
+            .await
+            .is_err(),
+        "logical capacity released before the owned physical cleanup"
+    );
+    assert_eq!(
+        resets.load(Ordering::Acquire),
+        1,
+        "peer reset must not start a second physical reset"
+    );
+
+    reset_release.add_permits(1);
+    tokio::time::timeout(Duration::from_millis(250), &mut local_reset)
+        .await
+        .expect("owned physical cleanup remained blocked")
+        .expect("owned physical cleanup succeeded");
+    tokio::time::timeout(Duration::from_millis(250), &mut repeated_reset)
+        .await
+        .expect("repeat reset did not observe shared completion")
+        .expect("repeat reset observed cleanup success");
+    tokio::time::timeout(Duration::from_millis(250), client.probe_liveness())
+        .await
+        .expect("control probe remained blocked after cleanup")
+        .expect("control probe after peer reset");
+    assert_eq!(
+        resets.load(Ordering::Acquire),
+        1,
+        "processed peer reset must share the owned physical cleanup"
+    );
+    let (next, next_incoming) = tokio::join!(next_opening, server.accept_stream());
+    let next = next
+        .expect("join replacement open")
+        .expect("cleanup released logical capacity");
+    let next_incoming = next_incoming.expect("accept replacement stream");
+    next.reset().await.expect("reset replacement stream");
+    drop(next_incoming);
     client.close().await.expect("close client");
     server.close().await.expect("close server");
 }

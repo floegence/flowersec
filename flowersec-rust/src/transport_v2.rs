@@ -87,6 +87,7 @@ pub trait CarrierStreamV2: fmt::Debug + Send + Sync + 'static {
     /// Aborts both directions with the carrier's stable generic reset code.
     async fn reset(&self) -> io::Result<()>;
     /// Releases local resources after bounded shutdown.
+    #[allow(dead_code)]
     async fn close(&self) -> io::Result<()>;
 }
 
@@ -889,7 +890,10 @@ pub trait ByteStream: fmt::Debug + Send + Sync + 'static {
     async fn close_write(&self) -> Result<(), SessionError>;
     /// Aborts both logical directions using the stable generic reset state.
     async fn reset(&self) -> Result<(), SessionError>;
-    /// Releases the stream and performs bounded local cleanup.
+    /// Aborts both logical directions and releases local resources.
+    ///
+    /// This is the cleanup-oriented alias of [`ByteStream::reset`]. Use
+    /// [`ByteStream::close_write`] when the peer must observe a clean FIN.
     async fn close(&self) -> Result<(), SessionError>;
 }
 

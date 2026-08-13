@@ -773,7 +773,11 @@ impl RawQuicStream {
                 io::ErrorKind::Interrupted,
                 "raw QUIC operation was canceled",
             )),
-            _ = self.inner.canceled.cancelled() => Err(local_reset_error()),
+            _ = self.inner.canceled.cancelled() => Err(if self.inner.reset.load(Ordering::Acquire) {
+                local_reset_error()
+            } else {
+                local_canceled_error()
+            }),
             result = receive.read(payload) => result
                 .map(|read| read.unwrap_or(0))
                 .map_err(io::Error::from),
@@ -829,7 +833,11 @@ impl RawQuicStream {
                 io::ErrorKind::Interrupted,
                 "raw QUIC operation was canceled",
             )),
-            _ = self.inner.canceled.cancelled() => Err(local_reset_error()),
+            _ = self.inner.canceled.cancelled() => Err(if self.inner.reset.load(Ordering::Acquire) {
+                local_reset_error()
+            } else {
+                local_canceled_error()
+            }),
             result = send.write(payload) => result.map_err(io::Error::from),
         }
     }
@@ -874,7 +882,11 @@ impl RawQuicStream {
                 io::ErrorKind::Interrupted,
                 "raw QUIC operation was canceled",
             )),
-            _ = self.inner.canceled.cancelled() => Err(local_reset_error()),
+            _ = self.inner.canceled.cancelled() => Err(if self.inner.reset.load(Ordering::Acquire) {
+                local_reset_error()
+            } else {
+                local_canceled_error()
+            }),
             result = async { send.finish() } => result.map_err(|error| {
                 io::Error::new(io::ErrorKind::BrokenPipe, error)
             }),
@@ -976,6 +988,13 @@ fn same_route_source(left: SocketAddr, right: SocketAddr) -> bool {
 
 fn local_reset_error() -> io::Error {
     io::Error::new(io::ErrorKind::ConnectionReset, "raw QUIC stream was reset")
+}
+
+fn local_canceled_error() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Interrupted,
+        "raw QUIC stream operation was canceled",
+    )
 }
 
 fn connection_error_to_io(error: quinn::ConnectionError) -> io::Error {

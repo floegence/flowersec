@@ -5,6 +5,7 @@ import {
   type CarrierSessionV2,
   type CarrierStreamV2,
 } from "./carrier.js";
+import type { OperationOptionsV2 } from "./contract.js";
 import { CipherSuiteV2 } from "./protocol.js";
 import { SessionV2, establishSessionV2, type SessionConfigV2 } from "./session.js";
 import { nodeSessionRuntimeV2 } from "../node/sessionRuntime.js";
@@ -38,7 +39,12 @@ async function establishPair(maxInboundStreams = 8): Promise<readonly [SessionV2
   ]);
 }
 
-function blockCarrierWritesAfter(inner: CarrierSessionV2, blocked: () => boolean): CarrierSessionV2 {
+function blockCarrierWritesAfter(
+  inner: CarrierSessionV2,
+  blocked: () => boolean,
+  applicationOnly = false,
+): CarrierSessionV2 {
+  let opens = 0;
   const wrapStream = async (stream: CarrierStreamV2): Promise<CarrierStreamV2> => ({
     read: (options) => stream.read(options),
     write: (data, options = {}) => {
@@ -61,12 +67,118 @@ function blockCarrierWritesAfter(inner: CarrierSessionV2, blocked: () => boolean
     path: inner.path,
     inboundBidirectionalStreamCapacity: inner.inboundBidirectionalStreamCapacity,
     unreliableDatagrams: inner.unreliableDatagrams,
-    openStream: async (options) => await wrapStream(await inner.openStream(options)),
+    openStream: async (options) => {
+      const stream = await inner.openStream(options);
+      opens++;
+      return applicationOnly && opens === 1 ? stream : await wrapStream(stream);
+    },
     acceptStream: async (options) => await wrapStream(await inner.acceptStream(options)),
     close: (error) => inner.close(error),
     abort: (error) => inner.abort(error),
     waitTermination: () => inner.waitTermination(),
   };
+}
+
+function failApplicationCloseWrite(inner: CarrierSessionV2): CarrierSessionV2 {
+  let opens = 0;
+  const wrapStream = (stream: CarrierStreamV2): CarrierStreamV2 => ({
+    read: (options) => stream.read(options),
+    write: (data, options) => stream.write(data, options),
+    closeWrite: async () => { throw new Error("injected application FIN failure"); },
+    reset: () => stream.reset(),
+    stopSending: () => stream.stopSending(),
+    abort: (error) => stream.abort(error),
+  });
+  return {
+    kind: inner.kind,
+    path: inner.path,
+    inboundBidirectionalStreamCapacity: inner.inboundBidirectionalStreamCapacity,
+    unreliableDatagrams: inner.unreliableDatagrams,
+    openStream: async (options) => {
+      const stream = await inner.openStream(options);
+      opens++;
+      return opens === 1 ? stream : wrapStream(stream);
+    },
+    acceptStream: (options) => inner.acceptStream(options),
+    close: (error) => inner.close(error),
+    abort: (error) => inner.abort(error),
+    waitTermination: () => inner.waitTermination(),
+  };
+}
+
+class BlockedResetCarrier implements CarrierSessionV2 {
+  readonly kind;
+  readonly path;
+  readonly inboundBidirectionalStreamCapacity: number;
+  applicationOpens = 0;
+  applicationResetCalls = 0;
+  controlWriteBlocked = false;
+  private readonly controlGate = deferred<void>();
+  private blockControl = false;
+  private blockApplication = false;
+
+  constructor(private readonly inner: CarrierSessionV2) {
+    this.kind = inner.kind;
+    this.path = inner.path;
+    this.inboundBidirectionalStreamCapacity = inner.inboundBidirectionalStreamCapacity;
+  }
+
+  blockNextResetAndDataWrite(): void {
+    this.blockControl = true;
+    this.blockApplication = true;
+  }
+
+  releaseControlWrite(): void { this.controlGate.resolve(); }
+
+  async openStream(options: OperationOptionsV2 = {}): Promise<CarrierStreamV2> {
+    const stream = await this.inner.openStream(options);
+    const control = this.applicationOpens === 0;
+    this.applicationOpens++;
+    return this.wrap(stream, control);
+  }
+
+  async acceptStream(options: OperationOptionsV2 = {}): Promise<CarrierStreamV2> {
+    return await this.inner.acceptStream(options);
+  }
+
+  async close(error?: Readonly<{ code: number; reason: string }>): Promise<void> { await this.inner.close(error); }
+  async waitTermination(): Promise<void> { await this.inner.waitTermination(); }
+  abort(error?: Readonly<{ code: number; reason: string }>): void { this.controlGate.resolve(); this.inner.abort(error); }
+
+  private wrap(stream: CarrierStreamV2, control: boolean): CarrierStreamV2 {
+    return {
+      read: (options) => stream.read(options),
+      write: async (data, options = {}) => {
+        if (control && this.blockControl) {
+          this.blockControl = false;
+          this.controlWriteBlocked = true;
+          await this.controlGate.promise;
+          return await stream.write(data, options);
+        }
+        if (!control && this.blockApplication) {
+          this.blockApplication = false;
+          return await new Promise<number>((_resolve, reject) => {
+            if (options.signal?.aborted === true) reject(options.signal.reason);
+            else options.signal?.addEventListener("abort", () => reject(options.signal!.reason), { once: true });
+          });
+        }
+        return await stream.write(data, options);
+      },
+      closeWrite: () => stream.closeWrite(),
+      reset: async () => {
+        if (!control) this.applicationResetCalls++;
+        await stream.reset();
+      },
+      stopSending: () => stream.stopSending(),
+      abort: (error) => stream.abort(error),
+    };
+  }
+}
+
+function deferred<T>(): Readonly<{ promise: Promise<T>; resolve(value: T | PromiseLike<T>): void }> {
+  let resolvePromise!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolve) => { resolvePromise = resolve; });
+  return { promise, resolve: resolvePromise };
 }
 
 describe("SessionV2", () => {
@@ -151,6 +263,157 @@ describe("SessionV2", () => {
     expect(server.terminalError).toBeInstanceOf(Error);
   });
 
+  test("backpressures a slow reader instead of resetting after the receive high-water mark", async () => {
+    const [client, server] = await establishPair();
+    const opened = client.openStream("slow-reader");
+    const incoming = await server.acceptStream();
+    const stream = await opened;
+    const payload = new Uint8Array(4 * 1024 * 1024 + 16_384).fill(0x5a);
+
+    await stream.write(payload);
+    let received = 0;
+    while (true) {
+      const chunk = await incoming.stream.read();
+      if (chunk === null) break;
+      received += chunk.length;
+      if (received === payload.length) break;
+    }
+    expect(received).toBe(payload.length);
+    expect(incoming.stream.terminalError).toBeUndefined();
+
+    await stream.reset();
+    await client.close();
+  });
+
+  test("resumes stream rekey after a backpressured reader consumes earlier data", async () => {
+    const [client, server] = await establishPair();
+    const opened = client.openStream("slow-reader-rekey");
+    const incoming = await server.acceptStream();
+    const stream = await opened;
+    const payload = new Uint8Array(4 * 1024 * 1024 + 16_384).fill(0x33);
+
+    let writeSettled = false;
+    let rekeySettled = false;
+    const writing = stream.write(payload).then((written) => {
+      writeSettled = true;
+      return written;
+    });
+    const rekeying = client.rekey().then(() => { rekeySettled = true; });
+    expect(writeSettled).toBe(false);
+    expect(rekeySettled).toBe(false);
+
+    let received = 0;
+    while (received < payload.length) {
+      const chunk = await incoming.stream.read();
+      if (chunk === null) throw new Error("unexpected FIN before the backpressured payload completed");
+      expect(chunk.every((value) => value === 0x33)).toBe(true);
+      received += chunk.length;
+    }
+    expect(received).toBe(payload.length);
+    expect(await writing).toBe(payload.length);
+    await Promise.race([
+      rekeying,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("stream rekey did not resume after capacity became available")), 500)),
+    ]);
+    expect(writeSettled).toBe(true);
+    expect(rekeySettled).toBe(true);
+    expect(incoming.stream.terminalError).toBeUndefined();
+
+    await stream.reset();
+    await client.close();
+  });
+
+  test("resets a stream when a pending application write is canceled", async () => {
+    const [rawClient, serverCarrier] = createMemoryCarrierPairV2({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 10,
+    });
+    let blocked = false;
+    const [client, server] = await Promise.all([
+      establishSessionV2(blockCarrierWritesAfter(rawClient, () => blocked, true), configs()[0]),
+      establishSessionV2(serverCarrier, configs()[1]),
+    ]);
+    const opened = client.openStream("cancel-write");
+    const incoming = await server.acceptStream();
+    const stream = await opened;
+    blocked = true;
+    const controller = new AbortController();
+    const writing = stream.write(Uint8Array.of(1), { signal: controller.signal });
+    controller.abort(new Error("cancel application write"));
+
+    await expect(writing).rejects.toThrow("cancel application write");
+    expect(stream.terminalError).toMatchObject({ message: "cancel application write" });
+    await expect(incoming.stream.read()).rejects.toThrow("reset");
+    await client.close();
+  });
+
+  test("settles a canceled write and releases its permit before ordered reset commit", async () => {
+    const [rawClient, serverCarrier] = createMemoryCarrierPairV2({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const blocked = new BlockedResetCarrier(rawClient);
+    const [client, server] = await Promise.all([
+      establishSessionV2(blocked, configs(1)[0]),
+      establishSessionV2(serverCarrier, configs(1)[1]),
+    ]);
+    const internals = sessionInternals(client);
+    let localResetCommits = 0;
+    const commitLocalReset = internals.commitLocalReset.bind(client);
+    internals.commitLocalReset = (id) => { localResetCommits++; commitLocalReset(id); };
+    const opened = client.openStream("cancel-write-before-reset-commit");
+    await server.acceptStream();
+    const stream = await opened;
+    blocked.blockNextResetAndDataWrite();
+    const controller = new AbortController();
+    const writing = stream.write(Uint8Array.of(1), { signal: controller.signal });
+    controller.abort(new Error("cancel while reset control is blocked"));
+
+    await expect(Promise.race([
+      writing,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("canceled write did not settle")), 100)),
+    ])).rejects.toThrow("cancel while reset control is blocked");
+    await eventually(() => expect(blocked.controlWriteBlocked).toBe(true));
+    expect(localResetCommits).toBe(0);
+    expect(blocked.applicationResetCalls).toBe(0);
+
+    const nextOpen = client.openStream("permit-released-before-reset-commit");
+    void nextOpen.catch(() => undefined);
+    await eventually(() => expect(blocked.applicationOpens).toBe(3));
+
+    blocked.releaseControlWrite();
+    await eventually(() => expect(localResetCommits).toBe(1));
+    await eventually(() => expect(blocked.applicationResetCalls).toBe(1));
+    rawClient.abort({ code: 6, reason: "test cleanup" });
+    serverCarrier.abort({ code: 6, reason: "test cleanup" });
+  });
+
+  test("does not commit local FIN when the carrier half-close fails", async () => {
+    const [rawClient, serverCarrier] = createMemoryCarrierPairV2({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 10,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV2(failApplicationCloseWrite(rawClient), configs()[0]),
+      establishSessionV2(serverCarrier, configs()[1]),
+    ]);
+    const opened = client.openStream("failed-fin");
+    const incoming = await server.acceptStream();
+    const stream = await opened;
+
+    const firstClose = stream.closeWrite();
+    const secondClose = stream.closeWrite();
+    await expect(firstClose).rejects.toThrow("injected application FIN failure");
+    await expect(secondClose).rejects.toThrow("injected application FIN failure");
+    expect(stream.terminalError).toMatchObject({ message: "injected application FIN failure" });
+    await expect(stream.closeWrite()).rejects.toThrow("injected application FIN failure");
+    await expect(incoming.stream.read()).rejects.toThrow("reset");
+    await client.close();
+  });
+
   test("isolates reset, enforces stream limits, and preserves canceled accepts", async () => {
     const [client, server] = await establishPair(2);
     const firstOpen = client.openStream("first");
@@ -215,3 +478,18 @@ describe("SessionV2", () => {
     await client.close();
   });
 });
+
+type SessionInternals = {
+  commitLocalReset(id: bigint): void;
+};
+
+function sessionInternals(session: SessionV2): SessionInternals {
+  return session as unknown as SessionInternals;
+}
+
+async function eventually(assertion: () => void): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try { assertion(); return; } catch { await new Promise((resolve) => setTimeout(resolve, 1)); }
+  }
+  assertion();
+}

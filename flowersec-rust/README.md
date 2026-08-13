@@ -48,6 +48,11 @@ with `ArtifactLease`, and establish a session through `connect(...)`. A
 terminated session is never silently migrated or replayed; the controller
 creates a new session from a new invitation.
 
+Reliable stream shutdown is explicit: `close_write()` sends a graceful FIN and
+keeps the receive direction available, while `reset()` and `close()` abort both
+directions and release local stream capacity. A stream failure remains isolated
+from unrelated streams in the same Session.
+
 `Acceptor` accepts one pending invitation at a time. Use
 `accept_with_handlers(...)` when the server owns inbound RPC and stream
 dispatch. A handler error affects only that stream, while unrelated streams

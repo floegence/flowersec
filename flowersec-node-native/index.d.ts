@@ -31,6 +31,7 @@ export interface RawQuicStream {
   closeWrite(): Promise<void>;
   stopSending(): Promise<void>;
   reset(): Promise<void>;
+  cancelPending(): void;
   abort(): void;
 }
 

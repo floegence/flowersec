@@ -45,6 +45,13 @@ describe("Node native raw QUIC driver", () => {
     expect(Array.from((await inbound.read())!)).toEqual([1, 2, 3]);
     expect(await inbound.read()).toBeNull();
 
+    const resetOutbound = await client.openStream();
+    await resetOutbound.write(new Uint8Array([9]));
+    const resetInbound = await server.acceptStream();
+    expect(Array.from((await resetInbound.read())!)).toEqual([9]);
+    await resetOutbound.reset();
+    await expect(resetInbound.read()).rejects.toMatchObject({ code: "reset" });
+
     expect(client.unreliableDatagrams).toBeDefined();
     expect(server.unreliableDatagrams).toBeDefined();
     await expect(client.unreliableDatagrams!.send(new Uint8Array([4, 5]))).resolves.toBe("accepted");

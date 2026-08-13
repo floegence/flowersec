@@ -390,29 +390,35 @@ pub struct RawQuicStreamBinding {
 impl RawQuicStreamBinding {
     #[napi]
     pub async fn read(&self) -> Result<Option<Buffer>> {
-        self.stream
-            .read(DEFAULT_READ_BYTES, &Cancellation::new())
+        let mut payload = vec![0_u8; DEFAULT_READ_BYTES];
+        let read = self
+            .stream
+            .read_into(&mut payload, &Cancellation::new())
             .await
-            .map(|payload| payload.map(Into::into))
-            .map_err(native_error)
+            .map_err(stream_io_error)?;
+        if read == 0 {
+            return Ok(None);
+        }
+        payload.truncate(read);
+        Ok(Some(payload.into()))
     }
 
     #[napi]
     pub async fn write(&self, payload: Uint8Array) -> Result<u32> {
         let written = self
             .stream
-            .write(payload.to_vec(), &Cancellation::new())
+            .write_slice(payload.as_ref(), &Cancellation::new())
             .await
-            .map_err(native_error)?;
+            .map_err(stream_io_error)?;
         u32::try_from(written).map_err(|_| stable_error("operation_failed"))
     }
 
     #[napi(js_name = "closeWrite")]
     pub async fn close_write(&self) -> Result<()> {
         self.stream
-            .close_write(&Cancellation::new())
+            .close_write_io(&Cancellation::new())
             .await
-            .map_err(native_error)
+            .map_err(stream_io_error)
     }
 
     #[napi(js_name = "stopSending")]
@@ -423,6 +429,11 @@ impl RawQuicStreamBinding {
     #[napi]
     pub async fn reset(&self) -> Result<()> {
         self.stream.reset().await.map_err(native_error)
+    }
+
+    #[napi]
+    pub fn cancel_pending(&self) {
+        self.stream.abort();
     }
 
     #[napi]
@@ -524,16 +535,37 @@ fn native_error(error: RawQuicError) -> Error {
     stable_error(code)
 }
 
+fn stream_io_error(error: std::io::Error) -> Error {
+    match error.kind() {
+        std::io::ErrorKind::ConnectionReset => stable_error("reset"),
+        std::io::ErrorKind::Interrupted => stable_error("canceled"),
+        _ => stable_error("stream_failed"),
+    }
+}
+
 fn stable_error(code: &str) -> Error {
     Error::new(Status::GenericFailure, code.to_owned())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::limits;
+    use super::{limits, stream_io_error};
+    use std::io;
 
     #[test]
     fn handshake_timeout_preserves_the_public_connector_range() {
         assert!(limits(66, 120_000).is_ok());
+    }
+
+    #[test]
+    fn stream_reset_uses_the_stable_reset_code() {
+        assert_eq!(
+            stream_io_error(io::Error::new(io::ErrorKind::ConnectionReset, "peer reset")).reason,
+            "reset",
+        );
+        assert_eq!(
+            stream_io_error(io::Error::new(io::ErrorKind::BrokenPipe, "connection lost")).reason,
+            "stream_failed",
+        );
     }
 }

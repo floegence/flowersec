@@ -1057,8 +1057,9 @@ async fn send_websocket_barrier(outgoing: &mpsc::Sender<OutgoingMessage>) -> io:
 }
 
 struct YamuxCarrierStream {
-    reader: Mutex<futures_util::io::ReadHalf<yamux::Stream>>,
+    reader: Mutex<Option<futures_util::io::ReadHalf<yamux::Stream>>>,
     writer: Mutex<Option<futures_util::io::WriteHalf<yamux::Stream>>>,
+    canceled: CancellationToken,
     mux_commands: mpsc::Sender<MuxCommand>,
     outbound_flush: mpsc::Sender<oneshot::Sender<io::Result<()>>>,
 }
@@ -1071,8 +1072,9 @@ impl YamuxCarrierStream {
     ) -> Self {
         let (reader, writer) = futures_util::io::AsyncReadExt::split(stream);
         Self {
-            reader: Mutex::new(reader),
+            reader: Mutex::new(Some(reader)),
             writer: Mutex::new(Some(writer)),
+            canceled: CancellationToken::new(),
             mux_commands,
             outbound_flush,
         }
@@ -1088,23 +1090,55 @@ impl fmt::Debug for YamuxCarrierStream {
 #[async_trait]
 impl CarrierStreamV2 for YamuxCarrierStream {
     async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
-        futures_util::io::AsyncReadExt::read(&mut *self.reader.lock().await, payload).await
+        tokio::select! {
+            biased;
+            _ = self.canceled.cancelled() => Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "Yamux stream reset",
+            )),
+            result = async {
+                let mut reader = self.reader.lock().await;
+                let reader = reader.as_mut().ok_or_else(|| io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "Yamux stream reset",
+                ))?;
+                futures_util::io::AsyncReadExt::read(reader, payload).await
+            } => result,
+        }
     }
 
     async fn write(&self, payload: &[u8]) -> io::Result<usize> {
-        let mut stream = self.writer.lock().await;
-        let stream = stream
-            .as_mut()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "stream closed"))?;
-        futures_util::io::AsyncWriteExt::write(stream, payload).await
+        tokio::select! {
+            biased;
+            _ = self.canceled.cancelled() => Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "Yamux stream reset",
+            )),
+            result = async {
+                let mut writer = self.writer.lock().await;
+                let writer = writer
+                    .as_mut()
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "stream closed"))?;
+                futures_util::io::AsyncWriteExt::write(writer, payload).await
+            } => result,
+        }
     }
 
     async fn close_write(&self) -> io::Result<()> {
-        let mut stream = self.writer.lock().await;
-        if let Some(stream) = stream.as_mut() {
-            futures_util::io::AsyncWriteExt::close(stream).await?;
+        tokio::select! {
+            biased;
+            _ = self.canceled.cancelled() => Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "Yamux stream reset",
+            )),
+            result = async {
+                let mut writer = self.writer.lock().await;
+                if let Some(writer) = writer.as_mut() {
+                    futures_util::io::AsyncWriteExt::close(writer).await?;
+                }
+                Ok(())
+            } => result,
         }
-        Ok(())
     }
 
     async fn close_write_delivered(&self) -> io::Result<()> {
@@ -1135,10 +1169,16 @@ impl CarrierStreamV2 for YamuxCarrierStream {
     }
 
     async fn reset(&self) -> io::Result<()> {
-        // Dropping an unclosed Yamux write half emits the protocol RESET. Calling
-        // `close` here would send FIN and make application failures look like a
-        // clean stream close to the peer.
-        let _ = self.writer.lock().await.take();
+        self.canceled.cancel();
+        let mut reader_guard = self.reader.lock().await;
+        let mut writer_guard = self.writer.lock().await;
+        let reader = reader_guard.take();
+        let writer = writer_guard.take();
+        drop(writer_guard);
+        drop(reader_guard);
+        if let (Some(reader), Some(writer)) = (reader, writer) {
+            drop(reader.reunite(writer));
+        }
         Ok(())
     }
 

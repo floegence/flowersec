@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import type { CarrierSessionV2, CarrierStreamV2 } from "./carrier.js";
 import { createMemoryCarrierPairV2 } from "./carrier.js";
 import type { OperationOptionsV2 } from "./contract.js";
-import { CipherSuiteV2 } from "./protocol.js";
+import { CipherSuiteV2, InnerTypeV2 } from "./protocol.js";
 import { establishSessionV2, type SessionConfigV2, type SessionV2 } from "./session.js";
 import { nodeSessionRuntimeV2 } from "../node/sessionRuntime.js";
 
@@ -130,10 +130,33 @@ describe("SessionV2 protocol hardening", () => {
     expect(await incoming.stream.read()).toEqual(Uint8Array.of(7));
     await client.close();
   });
+
+  test("does not block the control loop while resetting a remote-FIN stream for GOAWAY", async () => {
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV2({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 6,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV2(clientCarrier, config("client")),
+      establishSessionV2(serverCarrier, config("server")),
+    ]);
+    const opening = client.openStream("goaway-remote-fin");
+    const incoming = await server.acceptStream();
+    const stream = await opening;
+    await incoming.stream.closeWrite();
+    expect(await stream.read()).toBeNull();
+
+    await sessionInternals(server).sendControl(InnerTypeV2.GoAway, idReason(0n, 2));
+    await eventually(() => expect(stream.terminalError).toMatchObject({ code: "going_away" }));
+    await expect(settlementWithin(client.probeLiveness(), 250)).resolves.toBe("settled");
+    await Promise.all([client.close(), server.close()]);
+  });
 });
 
 type SessionInternals = Readonly<{
   receiveGoAway(payload: Uint8Array): Promise<void>;
+  sendControl(type: InnerTypeV2, payload: Uint8Array): Promise<void>;
   sendGoAway(reason: number): Promise<void>;
   receivedGoAway: boolean;
   receivedGoAwayLastAccepted: bigint;
@@ -143,6 +166,16 @@ type SessionInternals = Readonly<{
 
 function sessionInternals(session: SessionV2): SessionInternals {
   return session as unknown as SessionInternals;
+}
+
+async function settlementWithin(
+  promise: Promise<unknown>,
+  timeoutMs: number,
+): Promise<"settled" | "pending"> {
+  return await Promise.race([
+    promise.then(() => "settled" as const, () => "settled" as const),
+    new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), timeoutMs)),
+  ]);
 }
 
 class PrefaceCapturingCarrier implements CarrierSessionV2 {

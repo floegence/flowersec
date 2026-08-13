@@ -71,6 +71,8 @@ export type NativeCarrierStreamV2 = Readonly<{
   closeWrite(): Promise<void>;
   stopSending(): Promise<void>;
   reset(): Promise<void>;
+  /** Cancels pending local primitives without initiating peer-visible teardown. */
+  cancelPending?(): void;
   /** See {@link CarrierStreamV2.abort}. */
   abort(error?: Error): void;
 }>;
@@ -466,12 +468,12 @@ class NativeCarrierStreamAdapter implements CarrierStreamV2 {
   constructor(private readonly native: NativeCarrierStreamV2) {}
 
   async read(options: OperationOptionsV2 = {}): Promise<Uint8Array | null> {
-    return await abortable(this.native.read(), options.signal, () => this.native.abort());
+    return await abortable(this.native.read(), options.signal, () => this.cancelPending());
   }
 
   async write(data: Uint8Array, options: OperationOptionsV2 = {}): Promise<number> {
     throwIfAborted(options.signal);
-    return await abortable(this.native.write(data), options.signal, () => this.native.abort());
+    return await abortable(this.native.write(data), options.signal, () => this.cancelPending());
   }
 
   async closeWrite(): Promise<void> {
@@ -488,6 +490,11 @@ class NativeCarrierStreamAdapter implements CarrierStreamV2 {
 
   abort(error?: Error): void {
     this.native.abort(error);
+  }
+
+  private cancelPending(): void {
+    if (this.native.cancelPending !== undefined) this.native.cancelPending();
+    else this.native.abort();
   }
 }
 
