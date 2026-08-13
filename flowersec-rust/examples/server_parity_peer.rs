@@ -3,25 +3,25 @@ use std::{
     io::{self, Read},
     net::SocketAddr,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use flowersec::controlplane::{ControlPlaneError, RuntimeAuthorizationRequest};
 use flowersec::{
-    allow_tunnel_runtime, connect, Acceptor, AcceptorOptions, Artifact, ArtifactLease,
-    ConnectorOptions, DirectIssueOptions, EndpointSet, IncomingStream, Issuer, NotificationHandler,
-    RpcError, RpcHandler, Session, SessionError, SessionHandlerOptions, SessionHandlers,
-    StreamHandler, StreamMetadata, TunnelAuthorizationResponse, TunnelAuthorizer,
-    TunnelIssueOptions, TunnelRuntime, TunnelRuntimeOptions, UnreliableSendOutcome,
-    WebSocketAcceptorOptions,
+    Acceptor, AcceptorOptions, Artifact, ArtifactLease, ConnectorOptions, DirectIssueOptions,
+    EndpointSet, IncomingStream, Issuer, NotificationHandler, RpcError, RpcHandler, Session,
+    SessionError, SessionHandlerOptions, SessionHandlers, StreamHandler, StreamMetadata,
+    TunnelAuthorizationResponse, TunnelAuthorizer, TunnelIssueOptions, TunnelRuntime,
+    TunnelRuntimeOptions, UnreliableSendOutcome, WebSocketAcceptorOptions, allow_tunnel_runtime,
+    connect,
 };
-use rustls::pki_types::{pem::PemObject, CertificateDer};
+use rustls::pki_types::{CertificateDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::Notify;

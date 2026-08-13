@@ -53,7 +53,9 @@ func main() {
 		must(errors.New("test TLS server did not expose its certificate"))
 	}
 	address := endpoint{
-		URL: strings.Replace(server.URL, "https://", "wss://", 1) + endpointPath,
+		// Advertise the DNS name covered by httptest's certificate. The listener
+		// remains loopback; Swift NIO rejects an IP literal as an SNI hostname.
+		URL: strings.Replace(strings.Replace(server.URL, "https://127.0.0.1", "https://localhost", 1), "https://", "wss://", 1) + endpointPath,
 		CAPEM: string(pem.EncodeToMemory(&pem.Block{
 			Type:  "CERTIFICATE",
 			Bytes: certificate.Raw,

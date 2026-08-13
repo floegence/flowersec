@@ -95,7 +95,6 @@
             tls.minimumTLSVersion = .tlsv13
             if let trustRoots { tls.trustRoots = .certificates(trustRoots) }
             let context = try NIOSSLContext(configuration: tls)
-            let ipAddress = try? SocketAddress(ipAddress: host, port: port)
             try channel.pipeline.syncOperations.addHandler(
               NIOSSLClientHandler(
                 context: context,
