@@ -7,7 +7,9 @@ use crate::proxy_server::{
     DEFAULT_MAX_BODY, DEFAULT_MAX_CHUNK, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_JSON,
     DEFAULT_MAX_WEBSOCKET_FRAME, DEFAULT_TIMEOUT, MAX_TIMEOUT,
 };
-use crate::session_v2::{MAX_HANDSHAKE_PAYLOAD_BYTES, SessionDeadlinesV2};
+use crate::session_v2::{
+    MAX_BUFFERED_STREAM_BYTES_V2, MAX_HANDSHAKE_PAYLOAD_BYTES, SessionDeadlinesV2,
+};
 
 #[test]
 fn v2_defaults_match_shared_stability_contract() {
@@ -25,6 +27,12 @@ fn v2_defaults_match_shared_stability_contract() {
         manifest["e2ee"]["max_handshake_payload_bytes"]
             .as_u64()
             .expect("e2ee.max_handshake_payload_bytes")
+    );
+    assert_eq!(
+        MAX_BUFFERED_STREAM_BYTES_V2 as u64,
+        manifest["e2ee"]["max_inbound_buffered_bytes"]
+            .as_u64()
+            .expect("e2ee.max_inbound_buffered_bytes")
     );
 
     let deadlines = SessionDeadlinesV2::default();

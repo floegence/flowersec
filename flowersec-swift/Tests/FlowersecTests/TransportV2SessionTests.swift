@@ -1253,6 +1253,186 @@ final class TransportV2SessionTests: XCTestCase {
     try await serverSession.close()
   }
 
+  func testDataWriteFailureTerminatesEstablishedStreamExactlyOnce() async throws {
+    let faults = EstablishedStreamFaults()
+    let (clientBase, serverCarrier) = MemoryCarrierSession.pair(
+      inboundBidirectionalStreamCapacity: 3
+    )
+    let clientCarrier = FaultingEstablishedStreamCarrierSession(
+      base: clientBase,
+      faults: faults,
+      wrapOpenedStreamNumber: 2
+    )
+    let configs = try makeConfigs(maxInboundStreams: 1)
+    async let server = TransportV2Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV2Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+    let stream = try await clientSession.openStream(kind: "failed-data")
+    _ = try await serverSession.acceptStream()
+
+    await faults.failNextWrite()
+    await faults.blockReset()
+    let failingWrite = Task { try await stream.write(Data([1])) }
+    let resetEntered = await waitUntil { await faults.resetEntered }
+    XCTAssertTrue(resetEntered)
+    let terminal = await stream.terminalError()
+    XCTAssertNotNil(terminal)
+    await assertThrowsAsync { _ = try await stream.write(Data([2])) }
+    await assertThrowsAsync { try await stream.closeWrite() }
+    await faults.releaseReset()
+    do {
+      _ = try await failingWrite.value
+      XCTFail("injected DATA write unexpectedly succeeded")
+    } catch is InjectedEstablishedStreamFailure {
+    } catch {
+      XCTFail("injected DATA write error was replaced: \(error)")
+    }
+    let resetCount = await faults.resetCount
+    XCTAssertEqual(resetCount, 1)
+
+    let replacement = try await clientSession.openStream(kind: "replacement")
+    _ = try await serverSession.acceptStream()
+    do {
+      _ = try await clientSession.openStream(kind: "over-capacity")
+      XCTFail("failed stream released its permit more than once")
+    } catch let error as TransportV2SessionError {
+      XCTAssertEqual(error, .resourceExhausted)
+    }
+    try await replacement.reset()
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
+  func testFINRecordWriteFailureTerminatesEstablishedStream() async throws {
+    let faults = EstablishedStreamFaults()
+    let (clientBase, serverCarrier) = MemoryCarrierSession.pair()
+    let clientCarrier = FaultingEstablishedStreamCarrierSession(
+      base: clientBase,
+      faults: faults,
+      wrapOpenedStreamNumber: 2
+    )
+    let configs = try makeConfigs()
+    async let server = TransportV2Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV2Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+    let stream = try await clientSession.openStream(kind: "failed-fin-record")
+    _ = try await serverSession.acceptStream()
+
+    await faults.failNextWrite()
+    await assertThrowsAsync { try await stream.closeWrite() }
+    let terminal = await stream.terminalError()
+    XCTAssertNotNil(terminal)
+    await assertThrowsAsync { try await stream.closeWrite() }
+    let resetCount = await faults.resetCount
+    XCTAssertEqual(resetCount, 1)
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
+  func testCarrierCloseWriteFailureDoesNotCommitLocalFIN() async throws {
+    let faults = EstablishedStreamFaults()
+    let (clientBase, serverCarrier) = MemoryCarrierSession.pair()
+    let clientCarrier = FaultingEstablishedStreamCarrierSession(
+      base: clientBase,
+      faults: faults,
+      wrapOpenedStreamNumber: 2
+    )
+    let configs = try makeConfigs()
+    async let server = TransportV2Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV2Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+    let stream = try await clientSession.openStream(kind: "failed-native-fin")
+    _ = try await serverSession.acceptStream()
+
+    await faults.failNextCloseWrite()
+    await assertThrowsAsync { try await stream.closeWrite() }
+    let terminal = await stream.terminalError()
+    XCTAssertNotNil(terminal)
+    await assertThrowsAsync { try await stream.closeWrite() }
+    let resetCount = await faults.resetCount
+    XCTAssertEqual(resetCount, 1)
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
+  func testStreamRekeyACKWriteFailureTerminatesStreamAndSession() async throws {
+    let faults = EstablishedStreamFaults()
+    let (clientCarrier, serverBase) = MemoryCarrierSession.pair()
+    let serverCarrier = FaultingEstablishedStreamCarrierSession(
+      base: serverBase,
+      faults: faults,
+      wrapAcceptedStreamNumber: 2
+    )
+    var configs = try makeConfigs()
+    configs.client.deadlines.rekeyCompletion = .milliseconds(100)
+    configs.server.deadlines.rekeyCompletion = .milliseconds(100)
+    let clientConfig = configs.client
+    let serverConfig = configs.server
+    async let server = TransportV2Session.establish(carrier: serverCarrier, config: serverConfig)
+    async let client = TransportV2Session.establish(carrier: clientCarrier, config: clientConfig)
+    let (clientSession, serverSession) = try await (client, server)
+    _ = try await clientSession.openStream(kind: "failed-rekey-ack")
+    let stream = try await serverSession.acceptStream().stream
+
+    await faults.failNextWrite()
+    await assertThrowsAsync { try await clientSession.rekey() }
+    let terminal = await stream.terminalError()
+    XCTAssertNotNil(terminal)
+    let resetCount = await faults.resetCount
+    XCTAssertEqual(resetCount, 1)
+    let closedProbe = CompletionProbe()
+    let waiting = Task {
+      _ = await serverSession.waitClosed()
+      await closedProbe.finish()
+    }
+    let sessionClosed = await waitUntil(timeout: .milliseconds(300)) {
+      await closedProbe.completed
+    }
+    XCTAssertTrue(sessionClosed)
+    waiting.cancel()
+    try? await clientSession.close()
+    try? await serverSession.close()
+  }
+
+  func testStreamRekeyUpdateWriteFailureTerminatesStreamAndSession() async throws {
+    let faults = EstablishedStreamFaults()
+    let (clientBase, serverCarrier) = MemoryCarrierSession.pair()
+    let clientCarrier = FaultingEstablishedStreamCarrierSession(
+      base: clientBase,
+      faults: faults,
+      wrapOpenedStreamNumber: 2
+    )
+    var configs = try makeConfigs()
+    configs.client.deadlines.rekeyCompletion = .milliseconds(100)
+    configs.server.deadlines.rekeyCompletion = .milliseconds(100)
+    let clientConfig = configs.client
+    let serverConfig = configs.server
+    async let server = TransportV2Session.establish(carrier: serverCarrier, config: serverConfig)
+    async let client = TransportV2Session.establish(carrier: clientCarrier, config: clientConfig)
+    let (clientSession, serverSession) = try await (client, server)
+    let stream = try await clientSession.openStream(kind: "failed-rekey-update")
+    _ = try await serverSession.acceptStream()
+
+    await faults.failNextWrite()
+    await assertThrowsAsync { try await clientSession.rekey() }
+    let terminal = await stream.terminalError()
+    XCTAssertNotNil(terminal)
+    let resetCount = await faults.resetCount
+    XCTAssertEqual(resetCount, 1)
+    let closedProbe = CompletionProbe()
+    let waiting = Task {
+      _ = await clientSession.waitClosed()
+      await closedProbe.finish()
+    }
+    let sessionClosed = await waitUntil(timeout: .milliseconds(300)) {
+      await closedProbe.completed
+    }
+    XCTAssertTrue(sessionClosed)
+    waiting.cancel()
+    try? await clientSession.close()
+    try? await serverSession.close()
+  }
+
   private func makeConfigs(
     maxInboundStreams: UInt16 = 8,
     clientIdleTimeoutSeconds: UInt32 = 0,
@@ -1329,6 +1509,17 @@ final class TransportV2SessionTests: XCTestCase {
     }
     return await condition()
   }
+
+  private func assertThrowsAsync(
+    _ operation: () async throws -> Void,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) async {
+    do {
+      try await operation()
+      XCTFail("operation unexpectedly succeeded", file: file, line: line)
+    } catch {}
+  }
 }
 
 private struct SessionWireVectors: Decodable {
@@ -1402,6 +1593,126 @@ private actor CompletionProbe {
   private(set) var completed = false
 
   func finish() { completed = true }
+}
+
+private struct InjectedEstablishedStreamFailure: Error {}
+
+private actor EstablishedStreamFaults {
+  private var failWrite = false
+  private var failCloseWrite = false
+  private(set) var resetCount = 0
+  private(set) var resetEntered = false
+  private var resetBlocked = false
+  private let resetGate = EstablishedStreamResetGate()
+
+  func failNextWrite() { failWrite = true }
+  func failNextCloseWrite() { failCloseWrite = true }
+  func consumeWriteFailure() -> Bool { defer { failWrite = false }; return failWrite }
+  func consumeCloseWriteFailure() -> Bool {
+    defer { failCloseWrite = false }
+    return failCloseWrite
+  }
+  func recordReset() { resetCount += 1 }
+  func blockReset() { resetBlocked = true }
+  func enterReset() async {
+    resetEntered = true
+    if resetBlocked { await resetGate.wait() }
+  }
+  func releaseReset() async { await resetGate.release() }
+}
+
+private actor EstablishedStreamResetGate {
+  private var released = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    if released { return }
+    await withCheckedContinuation { waiters.append($0) }
+  }
+
+  func release() {
+    guard !released else { return }
+    released = true
+    let pending = waiters
+    waiters.removeAll()
+    for waiter in pending { waiter.resume() }
+  }
+}
+
+private actor FaultingEstablishedStreamCarrierSession: TransportV2CarrierSession {
+  nonisolated let chosenCarrier: CarrierKind
+  nonisolated let inboundBidirectionalStreamCapacity: UInt16
+  private let base: MemoryCarrierSession
+  private let faults: EstablishedStreamFaults
+  private let wrapOpenedStreamNumber: Int?
+  private let wrapAcceptedStreamNumber: Int?
+  private var openCount = 0
+  private var acceptCount = 0
+
+  init(
+    base: MemoryCarrierSession,
+    faults: EstablishedStreamFaults,
+    wrapOpenedStreamNumber: Int? = nil,
+    wrapAcceptedStreamNumber: Int? = nil
+  ) {
+    self.base = base
+    self.faults = faults
+    self.wrapOpenedStreamNumber = wrapOpenedStreamNumber
+    self.wrapAcceptedStreamNumber = wrapAcceptedStreamNumber
+    chosenCarrier = base.chosenCarrier
+    inboundBidirectionalStreamCapacity = base.inboundBidirectionalStreamCapacity
+  }
+
+  func openStream() async throws -> any TransportV2CarrierStream {
+    openCount += 1
+    let stream = try await base.openStream()
+    return openCount == wrapOpenedStreamNumber
+      ? FaultingEstablishedStreamCarrierStream(base: stream, faults: faults) : stream
+  }
+
+  func acceptStream() async throws -> any TransportV2CarrierStream {
+    acceptCount += 1
+    let stream = try await base.acceptStream()
+    return acceptCount == wrapAcceptedStreamNumber
+      ? FaultingEstablishedStreamCarrierStream(base: stream, faults: faults) : stream
+  }
+
+  func close(code: UInt16, reason: String) async {
+    await base.close(code: code, reason: reason)
+  }
+
+  nonisolated func abort(code: UInt16, reason: String) {
+    base.abort(code: code, reason: reason)
+  }
+}
+
+private actor FaultingEstablishedStreamCarrierStream: TransportV2CarrierStream {
+  nonisolated let carrierStreamID: UInt64
+  private let base: any TransportV2CarrierStream
+  private let faults: EstablishedStreamFaults
+
+  init(base: any TransportV2CarrierStream, faults: EstablishedStreamFaults) {
+    self.base = base
+    self.faults = faults
+    carrierStreamID = base.carrierStreamID
+  }
+
+  func read(maxBytes: Int) async throws -> Data? { try await base.read(maxBytes: maxBytes) }
+  func write(_ data: Data) async throws -> Int {
+    if await faults.consumeWriteFailure() { throw InjectedEstablishedStreamFailure() }
+    return try await base.write(data)
+  }
+  func closeWrite() async throws {
+    if await faults.consumeCloseWriteFailure() { throw InjectedEstablishedStreamFailure() }
+    try await base.closeWrite()
+  }
+  func reset(code: UInt16) async {
+    await faults.enterReset()
+    await base.reset(code: code)
+    await faults.recordReset()
+  }
+  func close() async { await base.close() }
+  nonisolated func abort(code: UInt16) { base.abort(code: code) }
 }
 
 private actor MemoryCarrierSession: TransportV2CarrierSession {

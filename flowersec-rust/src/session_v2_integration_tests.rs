@@ -10,8 +10,9 @@ use std::{
 use crate::{
     protocol_v2::CipherSuiteV2,
     session_v2::{
-        RpcHandlerV2, SessionConfigV2, SessionDeadlinesV2, establish_session_v2,
-        memory_carrier_pair_v2, memory_carrier_pair_v2_with_capacity,
+        MAX_BUFFERED_STREAM_BYTES_V2, RpcHandlerV2, SessionConfigV2, SessionDeadlinesV2,
+        establish_session_v2, memory_carrier_pair_v2, memory_carrier_pair_v2_with_capacities,
+        memory_carrier_pair_v2_with_capacity,
     },
     transport_v2::{
         CarrierKind, CarrierSessionV2, CarrierStreamV2, CarrierUnreliableMessageErrorV2, PathKind,
@@ -1430,6 +1431,160 @@ async fn bidirectional_open_data_fin_and_consecutive_rekey() {
     assert_eq!(incoming.stream().read().await.expect("peer FIN"), None);
     client.close().await.expect("close client");
     server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn rekey_receive_buffer_applies_backpressure_and_preserves_order() {
+    let (client_carrier, server_carrier) =
+        memory_carrier_pair_v2_with_capacities(3, 8 * 1024 * 1024);
+    let mut client_config = regression_config(SessionRole::Client, "bounded-rekey-buffer", 1, None);
+    let mut server_config = regression_config(SessionRole::Server, "bounded-rekey-buffer", 1, None);
+    client_config.deadlines.establish = Duration::from_secs(1);
+    server_config.deadlines.establish = Duration::from_secs(1);
+    client_config.deadlines.rekey_completion = Duration::from_secs(3);
+    server_config.deadlines.rekey_completion = Duration::from_secs(3);
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+    let (outgoing, incoming) = tokio::join!(
+        client.open_stream("bounded-rekey-buffer", StreamMetadata::empty()),
+        server.accept_stream(),
+    );
+    let outgoing = outgoing.expect("open stream");
+    let incoming = incoming.expect("accept stream");
+    let total = MAX_BUFFERED_STREAM_BYTES_V2 + 16 * 1024;
+    let payload = Bytes::from(
+        (0..total)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>(),
+    );
+    let mut offset = 0;
+    while offset < payload.len() {
+        offset += outgoing
+            .write(payload.slice(offset..))
+            .await
+            .expect("write pre-rekey data");
+    }
+
+    let mut rekeying = {
+        let client = client.clone();
+        tokio::spawn(async move { client.rekey().await })
+    };
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if incoming.stream().internal_test_buffered_bytes() == MAX_BUFFERED_STREAM_BYTES_V2 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("rekey helper did not reach the receive high-water mark");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut rekeying)
+            .await
+            .is_err(),
+        "rekey crossed unread DATA instead of applying backpressure"
+    );
+    let mut received = Vec::with_capacity(total);
+    while received.len() < total {
+        let chunk = incoming
+            .stream()
+            .read()
+            .await
+            .expect("read buffered data")
+            .expect("DATA before FIN");
+        received.extend_from_slice(&chunk);
+    }
+    assert_eq!(received, payload.as_ref());
+    rekeying
+        .await
+        .expect("join rekey")
+        .expect("rekey resumes after application reads");
+    outgoing
+        .write(Bytes::from_static(b"after-bounded-rekey"))
+        .await
+        .expect("post-rekey write");
+    assert_eq!(
+        incoming.stream().read().await.expect("post-rekey read"),
+        Some(Bytes::from_static(b"after-bounded-rekey"))
+    );
+    outgoing.reset().await.expect("reset stream");
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn reset_wakes_full_rekey_buffer_and_releases_capacity_once() {
+    let (client_carrier, server_carrier) =
+        memory_carrier_pair_v2_with_capacities(3, 8 * 1024 * 1024);
+    let mut client_config = regression_config(SessionRole::Client, "bounded-rekey-reset", 1, None);
+    let mut server_config = regression_config(SessionRole::Server, "bounded-rekey-reset", 1, None);
+    client_config.deadlines.establish = Duration::from_secs(1);
+    server_config.deadlines.establish = Duration::from_secs(1);
+    client_config.deadlines.rekey_completion = Duration::from_secs(3);
+    server_config.deadlines.rekey_completion = Duration::from_secs(3);
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+    let (outgoing, incoming) = tokio::join!(
+        client.open_stream("bounded-rekey-reset", StreamMetadata::empty()),
+        server.accept_stream(),
+    );
+    let outgoing = outgoing.expect("open stream");
+    let incoming = incoming.expect("accept stream");
+    assert_eq!(server.internal_test_inbound_available_permits(), 0);
+    let payload = Bytes::from(vec![0x5a; MAX_BUFFERED_STREAM_BYTES_V2 + 16 * 1024]);
+    let mut offset = 0;
+    while offset < payload.len() {
+        offset += outgoing
+            .write(payload.slice(offset..))
+            .await
+            .expect("write pre-reset data");
+    }
+    let rekeying = {
+        let client = client.clone();
+        tokio::spawn(async move { client.rekey().await })
+    };
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if incoming.stream().internal_test_buffered_bytes() == MAX_BUFFERED_STREAM_BYTES_V2 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("rekey helper did not fill the bounded queue");
+    tokio::time::timeout(Duration::from_millis(250), incoming.stream().reset())
+        .await
+        .expect("reset did not wake the capacity waiter")
+        .expect("reset stream");
+    assert_eq!(incoming.stream().internal_test_buffered_bytes(), 0);
+    tokio::time::timeout(Duration::from_millis(250), rekeying)
+        .await
+        .expect("rekey task remained blocked after reset")
+        .expect("join rekey task")
+        .expect_err("reset must fail the pending rekey");
+    assert_eq!(server.internal_test_inbound_available_permits(), 1);
+    incoming
+        .stream()
+        .reset()
+        .await
+        .expect("repeated reset observes owned cleanup");
+    assert_eq!(
+        server.internal_test_inbound_available_permits(),
+        1,
+        "repeated reset released the stream permit more than once"
+    );
+    let _ = client.close().await;
+    let _ = server.close().await;
 }
 
 #[tokio::test]

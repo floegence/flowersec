@@ -1596,6 +1596,7 @@ private actor TransportV2ByteStream: ByteStream {
   private let writer: TransportV2CarrierWriter
   private let readPermit = TransportV2ReadPermit()
   private let writePermit = TransportV2ReadPermit()
+  private let writeOperationPermit = TransportV2ReadPermit()
   private let suite: TransportCipherSuiteV2
   private let h3: Data
   private let sendDirection: TransportDirectionV2
@@ -1615,6 +1616,7 @@ private actor TransportV2ByteStream: ByteStream {
   private var localFIN = false
   private var remoteFIN = false
   private var terminal: TransportV2SessionError?
+  private var terminationStarted = false
   private var pendingSendRekey: PendingStreamRekeyV2?
   private var lastAcceptedSendRekeyACK: StreamKeyUpdateACKPayloadV2?
   private var pendingReceiveTransition: UInt64 = 0
@@ -1705,13 +1707,31 @@ private actor TransportV2ByteStream: ByteStream {
 
   func write(_ data: Data) async throws -> Int {
     guard terminal == nil else { throw terminal! }
+    await writeOperationPermit.acquire()
+    do {
+      let written = try await writeOwned(data)
+      await writeOperationPermit.release()
+      return written
+    } catch {
+      await writeOperationPermit.release()
+      throw error
+    }
+  }
+
+  private func writeOwned(_ data: Data) async throws -> Int {
+    guard terminal == nil else { throw terminal! }
     guard !localFIN else { throw TransportV2SessionError.streamReset }
     guard !data.isEmpty else { return 0 }
     var offset = 0
     while offset < data.count {
-      try Task.checkCancellation()
       let count = min(TransportV2Crypto.maxDataBytes, data.count - offset)
-      try await writeRecord(.data, payload: Data(data[offset..<(offset + count)]))
+      do {
+        try Task.checkCancellation()
+        try await writeRecord(.data, payload: Data(data[offset..<(offset + count)]))
+      } catch {
+        await terminateLocally(.streamReset)
+        throw error
+      }
       offset += count
     }
     return data.count
@@ -1719,22 +1739,49 @@ private actor TransportV2ByteStream: ByteStream {
 
   func closeWrite() async throws {
     guard terminal == nil else { throw terminal! }
+    await writeOperationPermit.acquire()
+    do {
+      try await closeWriteOwned()
+      await writeOperationPermit.release()
+    } catch {
+      await writeOperationPermit.release()
+      throw error
+    }
+  }
+
+  private func closeWriteOwned() async throws {
+    guard terminal == nil else { throw terminal! }
     guard !localFIN else { return }
-    try await writeRecord(.fin, payload: Data())
+    do {
+      try await writeRecord(.fin, payload: Data())
+      try await carrier.closeWrite()
+    } catch {
+      await terminateLocally(.streamReset)
+      throw error
+    }
+    guard terminal == nil else { throw terminal! }
     localFIN = true
-    try await carrier.closeWrite()
     await releaseIfFinished()
   }
 
   func reset() async throws {
-    guard terminal == nil else { return }
-    terminal = .streamReset
+    await terminateLocally(.streamReset)
+  }
+
+  private func terminateLocally(_ error: TransportV2SessionError) async {
+    if terminal == nil { terminal = error }
+    guard !terminationStarted else { return }
+    terminationStarted = true
     if let pendingSendRekey {
       self.pendingSendRekey = nil
-      await pendingSendRekey.signal.fail(TransportV2SessionError.streamReset)
+      await pendingSendRekey.signal.fail(error)
     }
     if let pendingReceiveSignal {
-      await pendingReceiveSignal.fail(TransportV2SessionError.streamReset)
+      self.pendingReceiveSignal = nil
+      pendingReceiveTransition = 0
+      pendingReceiveEpoch = 0
+      pendingReceiveACKed = false
+      await pendingReceiveSignal.fail(error)
     }
     await session.sendStreamReset(id: id)
     await carrier.reset(code: 6)
@@ -1750,18 +1797,41 @@ private actor TransportV2ByteStream: ByteStream {
   fileprivate func isUsableAfterOpenACK() -> Bool { terminal == nil }
 
   fileprivate func peerReset(_ error: TransportV2SessionError) async {
-    guard terminal == nil else { return }
-    terminal = error
+    if terminal == nil { terminal = error }
+    guard !terminationStarted else { return }
+    terminationStarted = true
     if let pendingSendRekey {
       self.pendingSendRekey = nil
       await pendingSendRekey.signal.fail(error)
     }
-    if let pendingReceiveSignal { await pendingReceiveSignal.fail(error) }
+    if let pendingReceiveSignal {
+      self.pendingReceiveSignal = nil
+      pendingReceiveTransition = 0
+      pendingReceiveEpoch = 0
+      pendingReceiveACKed = false
+      await pendingReceiveSignal.fail(error)
+    }
     carrier.abort(code: 6)
     await session.streamFinished(id: id, inbound: inbound, internalRPC: internalRPC)
   }
 
   fileprivate func beginSendRekey(
+    transition: UInt64,
+    nextEpoch: UInt32
+  ) async throws -> RekeySignalV2? {
+    guard terminal == nil else { throw terminal! }
+    await writeOperationPermit.acquire()
+    do {
+      let signal = try await beginSendRekeyOwned(transition: transition, nextEpoch: nextEpoch)
+      await writeOperationPermit.release()
+      return signal
+    } catch {
+      await writeOperationPermit.release()
+      throw error
+    }
+  }
+
+  private func beginSendRekeyOwned(
     transition: UInt64,
     nextEpoch: UInt32
   ) async throws -> RekeySignalV2? {
@@ -1774,7 +1844,12 @@ private actor TransportV2ByteStream: ByteStream {
     var payload = Data()
     payload.appendUInt64BE(transition)
     payload.appendUInt32BE(nextEpoch)
-    try await writeRecord(.streamKeyUpdate, payload: payload)
+    do {
+      try await writeRecord(.streamKeyUpdate, payload: payload)
+    } catch {
+      await terminateLocally(.rekeyFailed)
+      throw error
+    }
     Task { [weak self] in await self?.driveSendRekey(pending) }
     return pending.signal
   }
@@ -1910,7 +1985,12 @@ private actor TransportV2ByteStream: ByteStream {
       transition: transition,
       epoch: nextEpoch
     )
-    try await writeRecord(.streamKeyUpdateACK, payload: ack.encoded())
+    do {
+      try await writeRecord(.streamKeyUpdateACK, payload: ack.encoded())
+    } catch {
+      await terminateLocally(.rekeyFailed)
+      throw error
+    }
     pendingReceiveACKed = true
     await receiveSignal.succeed()
   }

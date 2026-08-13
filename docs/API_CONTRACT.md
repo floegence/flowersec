@@ -95,6 +95,8 @@ The `flowersec` crate exposes `Artifact`, `ArtifactError`, `ArtifactLease`, `Art
 
 ## Cross-language semantics
 
+A failed DATA, FIN, or stream-rekey write makes that stream terminal because its wire commit boundary is no longer reusable; unrelated streams remain live unless the failed record is required to complete a session rekey. Rekey-assisted receive processing never crosses unread DATA. Rust and TypeScript bound that auxiliary receive queue by the shared `e2ee.max_inbound_buffered_bytes` high-water mark and pause carrier reads until the application consumes buffered DATA.
+
 Remote application RPC failures are semantically separate from session and transport failures across the SDKs. The expression is language-native rather than byte-for-byte identical: TypeScript uses typed `RpcResult<Response>` with an `ok: false` application `error`, Go returns `flowersec.RPCError`, Swift throws `RPCError`, and Rust returns `RpcCallError::Application`. Raw error-code taxonomies remain SDK-local; the portable contract is the RPC application/session boundary plus structured controller dispositions. Session, stream, carrier, handshake, and credential-spend failures remain redacted public connection or session failures instead of application RPC failures.
 
 Application stream metadata is a construction-validated value in every SDK. Invalid JSON shape, number, depth, or size fails before `openStream`/`open_stream`; incoming streams expose the same validated value model. Each language uses its native constructor and immutable/read-only access conventions.

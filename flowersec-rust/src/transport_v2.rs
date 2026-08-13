@@ -877,6 +877,10 @@ impl From<SessionError> for io::Error {
 pub trait ByteStream: fmt::Debug + Send + Sync + 'static {
     #[cfg(test)]
     fn internal_test_id(&self) -> u64;
+    #[cfg(test)]
+    fn internal_test_buffered_bytes(&self) -> usize {
+        0
+    }
     /// Application stream kind negotiated by the Flowersec v2 stream setup.
     fn kind(&self) -> &str;
     /// Stable terminal failure, if the stream has already terminated abnormally.
@@ -1011,6 +1015,10 @@ where
 /// Public Flowersec v2 session contract shared by WSS and raw QUIC.
 #[async_trait]
 pub trait Session: fmt::Debug + Send + Sync + 'static {
+    #[cfg(test)]
+    fn internal_test_inbound_available_permits(&self) -> usize {
+        0
+    }
     /// Borrows the session's carrier-neutral RPC peer.
     fn rpc(&self) -> &dyn RpcPeer;
     /// Borrows unreliable message access after FSH2 negotiation and READY.

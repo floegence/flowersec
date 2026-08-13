@@ -51,6 +51,7 @@ use crate::{
 const CONTROL_PREFACE_BYTES: usize = 16;
 const HANDSHAKE_HEADER_BYTES: usize = 12;
 pub(crate) const MAX_HANDSHAKE_PAYLOAD_BYTES: usize = 8_192;
+pub(crate) const MAX_BUFFERED_STREAM_BYTES_V2: usize = 4 * 1024 * 1024;
 const RESERVED_RPC_KIND: &str = "flowersec.rpc.v2";
 const MAX_LEDGER_SLOTS: u64 = 1_048_576;
 const NORMAL_CLOSE_REASON_V2: u16 = 1;
@@ -536,6 +537,19 @@ impl EncryptedSessionV2 {
         self.lifecycle
             .store(SessionLifecycleV2::Closed as u8, Ordering::Release);
     }
+
+    fn terminate_stream_buffers(&self) {
+        let streams = self
+            .streams
+            .lock()
+            .expect("logical stream registry poisoned")
+            .values()
+            .filter_map(Weak::upgrade)
+            .collect::<Vec<_>>();
+        for stream in streams {
+            stream.buffered_reads.terminate();
+        }
+    }
 }
 
 impl std::fmt::Debug for EncryptedSessionV2 {
@@ -949,6 +963,10 @@ impl UnreliableMessageChannel for SessionUnreliableMessageChannelV2 {
 
 #[async_trait]
 impl Session for SelfSession {
+    #[cfg(test)]
+    fn internal_test_inbound_available_permits(&self) -> usize {
+        self.inbound_permits.available_permits()
+    }
     fn rpc(&self) -> &dyn RpcPeer {
         &self.rpc
     }
@@ -1995,7 +2013,11 @@ async fn complete_rekey_v2(
     session: &EncryptedSessionV2,
     prepared: CommittedRekeyV2,
 ) -> io::Result<()> {
-    prepared.session_ack.await.map_err(|_| closed())?;
+    tokio::select! {
+        biased;
+        _ = session.canceled.cancelled() => return Err(terminal_error_v2(session)),
+        result = prepared.session_ack => result.map_err(|_| closed())?,
+    }
     {
         let mut state = session.state.lock().await;
         state.send_epoch = prepared.next_epoch;
@@ -2154,7 +2176,12 @@ async fn receive_stream_reset_v2(session: &EncryptedSessionV2, payload: &[u8]) -
         .get(&id)
         .and_then(Weak::upgrade);
     if let Some(stream) = stream {
+        let rekey_pending =
+            stream.send_update.lock().await.is_some() || stream.recv_update.lock().await.is_some();
         stream.reset_local().await?;
+        if rekey_pending {
+            return Err(invalid("stream reset during rekey"));
+        }
     }
     if session.peer_ledger.lock().await.index(id).is_ok() {
         session.peer_ledger.lock().await.mark_peer_reset(id)?;
@@ -2220,6 +2247,7 @@ async fn close_session_v2(session: &EncryptedSessionV2) -> io::Result<()> {
     if session.begin_closing() {
         record_terminal_v2(session, &closed());
         session.rpc.notifications.clear();
+        session.terminate_stream_buffers();
         session.canceled.cancel();
         let deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
         let flush = match tokio::time::timeout_at(deadline, async {
@@ -2272,6 +2300,7 @@ async fn close_peer_session_v2(session: &EncryptedSessionV2) {
     }
     record_terminal_v2(session, &closed());
     session.rpc.notifications.clear();
+    session.terminate_stream_buffers();
     let deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
     let reply = tokio::time::timeout_at(deadline, async {
         send_control_v2(
@@ -2332,6 +2361,7 @@ async fn idle_watchdog_v2(session: Arc<SelfSession>) {
                         ),
                     );
                     session.rpc.notifications.clear();
+                    session.terminate_stream_buffers();
                     session.canceled.cancel();
                     let _ = tokio::time::timeout(
                         session.config.deadlines.close_flush,
@@ -2355,6 +2385,7 @@ fn fail_session_v2(session: &EncryptedSessionV2, error: io::Error) {
     if session.begin_closing() {
         record_terminal_v2(session, &error);
         session.rpc.notifications.clear();
+        session.terminate_stream_buffers();
         session.canceled.cancel();
         session.carrier.abort();
         session.finish_closed();
@@ -2460,7 +2491,7 @@ struct EncryptedStreamV2 {
     send_update: Mutex<Option<(u64, u32)>>,
     send_update_ack: Mutex<Option<(u64, u32)>>,
     send_update_changed: Notify,
-    buffered_reads: Mutex<VecDeque<Option<Bytes>>>,
+    buffered_reads: BoundedReadQueueV2,
     send_lock: Mutex<()>,
     read_lock: Mutex<()>,
     local_fin: AtomicBool,
@@ -2473,6 +2504,103 @@ struct EncryptedStreamV2 {
     terminal: OnceLock<SessionError>,
     _outbound_permit: StdMutex<Option<tokio::sync::OwnedSemaphorePermit>>,
     _inbound_permit: StdMutex<Option<tokio::sync::OwnedSemaphorePermit>>,
+}
+
+#[derive(Default)]
+struct BoundedReadQueueStateV2 {
+    items: VecDeque<Option<Bytes>>,
+    bytes: usize,
+    terminal: bool,
+}
+
+#[derive(Default)]
+struct BoundedReadQueueV2 {
+    state: StdMutex<BoundedReadQueueStateV2>,
+    capacity_changed: Notify,
+    state_changed: Notify,
+}
+
+enum BufferedReadPushV2 {
+    Pushed,
+    Full(Bytes),
+    Terminal,
+}
+
+enum BufferedReadPopV2 {
+    Item(Option<Bytes>),
+    Empty,
+    Terminal,
+}
+
+impl BoundedReadQueueV2 {
+    fn pop(&self) -> BufferedReadPopV2 {
+        let mut state = self.state.lock().expect("buffered read queue poisoned");
+        if state.terminal {
+            return BufferedReadPopV2::Terminal;
+        }
+        let Some(item) = state.items.pop_front() else {
+            return BufferedReadPopV2::Empty;
+        };
+        let released_capacity = if let Some(data) = &item {
+            state.bytes -= data.len();
+            true
+        } else {
+            false
+        };
+        drop(state);
+        if released_capacity {
+            self.capacity_changed.notify_one();
+        }
+        BufferedReadPopV2::Item(item)
+    }
+
+    fn try_push_data(&self, data: Bytes) -> BufferedReadPushV2 {
+        let mut state = self.state.lock().expect("buffered read queue poisoned");
+        if state.terminal {
+            return BufferedReadPushV2::Terminal;
+        }
+        if state
+            .bytes
+            .checked_add(data.len())
+            .is_none_or(|bytes| bytes > MAX_BUFFERED_STREAM_BYTES_V2)
+        {
+            return BufferedReadPushV2::Full(data);
+        }
+        state.bytes += data.len();
+        state.items.push_back(Some(data));
+        drop(state);
+        self.state_changed.notify_waiters();
+        BufferedReadPushV2::Pushed
+    }
+
+    fn push_fin(&self) -> bool {
+        let mut state = self.state.lock().expect("buffered read queue poisoned");
+        if state.terminal {
+            return false;
+        }
+        state.items.push_back(None);
+        drop(state);
+        self.state_changed.notify_waiters();
+        true
+    }
+
+    fn terminate(&self) {
+        let mut state = self.state.lock().expect("buffered read queue poisoned");
+        state.terminal = true;
+        state.items.clear();
+        state.bytes = 0;
+        drop(state);
+        self.capacity_changed.notify_waiters();
+        self.state_changed.notify_waiters();
+    }
+
+    #[cfg(test)]
+    fn buffered_bytes(&self) -> usize {
+        self.state
+            .lock()
+            .expect("buffered read queue poisoned")
+            .bytes
+    }
 }
 
 impl std::fmt::Debug for EncryptedStreamV2 {
@@ -2710,7 +2838,7 @@ async fn open_stream_with_capacity_v2(
         send_update: Mutex::new(None),
         send_update_ack: Mutex::new(None),
         send_update_changed: Notify::new(),
-        buffered_reads: Mutex::new(VecDeque::new()),
+        buffered_reads: BoundedReadQueueV2::default(),
         send_lock: Mutex::new(()),
         read_lock: Mutex::new(()),
         local_fin: AtomicBool::new(false),
@@ -2787,6 +2915,10 @@ impl ByteStream for StreamHandleV2 {
     #[cfg(test)]
     fn internal_test_id(&self) -> u64 {
         self.0.id
+    }
+    #[cfg(test)]
+    fn internal_test_buffered_bytes(&self) -> usize {
+        self.0.buffered_reads.buffered_bytes()
     }
     fn kind(&self) -> &str {
         &self.0.kind
@@ -2924,6 +3056,7 @@ impl EncryptedStreamV2 {
     async fn reset_inner(self: &Arc<Self>) -> io::Result<()> {
         let _ = self.terminal.set(SessionError::StreamReset);
         if !self.reset.swap(true, Ordering::AcqRel) {
+            self.buffered_reads.terminate();
             self.reset_changed.notify_waiters();
             let stream = self.clone();
             tokio::spawn(async move { stream.finish_reset().await });
@@ -2984,6 +3117,7 @@ impl EncryptedStreamV2 {
     async fn reset_local(self: &Arc<Self>) -> io::Result<()> {
         let _ = self.terminal.set(SessionError::StreamReset);
         if !self.reset.swap(true, Ordering::AcqRel) {
+            self.buffered_reads.terminate();
             self.reset_changed.notify_waiters();
             let stream = self.clone();
             tokio::spawn(async move { stream.finish_physical_reset().await });
@@ -3039,28 +3173,11 @@ impl EncryptedStreamV2 {
         .await
     }
     async fn read_next(&self) -> io::Result<Option<Bytes>> {
-        if let Some(buffered) = self.buffered_reads.lock().await.pop_front() {
-            return Ok(buffered);
-        }
-        if self.reset.load(Ordering::Acquire) {
-            return Err(io::Error::new(
-                io::ErrorKind::ConnectionReset,
-                "logical stream reset",
-            ));
-        }
         let session = self.session.upgrade().ok_or_else(closed)?;
-        let reset_changed = self.reset_changed.notified();
-        tokio::pin!(reset_changed);
-        reset_changed.as_mut().enable();
-        let _lock = tokio::select! {
-            biased;
-            _ = &mut reset_changed => return Err(io::Error::new(
-                io::ErrorKind::ConnectionReset,
-                "logical stream reset",
-            )),
-            lock = self.read_lock.lock() => lock,
-        };
         loop {
+            let state_changed = self.buffered_reads.state_changed.notified();
+            tokio::pin!(state_changed);
+            state_changed.as_mut().enable();
             let reset_changed = self.reset_changed.notified();
             tokio::pin!(reset_changed);
             reset_changed.as_mut().enable();
@@ -3070,12 +3187,45 @@ impl EncryptedStreamV2 {
                     "logical stream reset",
                 ));
             }
+            if session.canceled.is_cancelled() {
+                return Err(terminal_error_v2(&session));
+            }
+            match self.buffered_reads.pop() {
+                BufferedReadPopV2::Item(item) => return Ok(item),
+                BufferedReadPopV2::Terminal => return Err(terminal_error_v2(&session)),
+                BufferedReadPopV2::Empty => {}
+            }
+            let _read_lock = tokio::select! {
+                biased;
+                _ = &mut reset_changed => return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "logical stream reset",
+                )),
+                _ = session.canceled.cancelled() => return Err(terminal_error_v2(&session)),
+                _ = &mut state_changed => continue,
+                lock = self.read_lock.lock() => lock,
+            };
+            if self.reset.load(Ordering::Acquire) {
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "logical stream reset",
+                ));
+            }
+            if session.canceled.is_cancelled() {
+                return Err(terminal_error_v2(&session));
+            }
+            match self.buffered_reads.pop() {
+                BufferedReadPopV2::Item(item) => return Ok(item),
+                BufferedReadPopV2::Terminal => return Err(terminal_error_v2(&session)),
+                BufferedReadPopV2::Empty => {}
+            }
             let (kind, payload, epoch, sequence) = tokio::select! {
                 biased;
                 _ = &mut reset_changed => return Err(io::Error::new(
                     io::ErrorKind::ConnectionReset,
                     "logical stream reset",
                 )),
+                _ = session.canceled.cancelled() => return Err(terminal_error_v2(&session)),
                 record = read_stream_record_v2(&session, &self.carrier, self.id) => record?,
             };
             let prior = *self.prior_ack.lock().await;
@@ -3133,6 +3283,37 @@ impl EncryptedStreamV2 {
             .take();
     }
 
+    async fn buffer_read_data(
+        &self,
+        session: &EncryptedSessionV2,
+        mut data: Bytes,
+    ) -> io::Result<()> {
+        loop {
+            let capacity_changed = self.buffered_reads.capacity_changed.notified();
+            tokio::pin!(capacity_changed);
+            capacity_changed.as_mut().enable();
+            match self.buffered_reads.try_push_data(data) {
+                BufferedReadPushV2::Pushed => return Ok(()),
+                BufferedReadPushV2::Terminal => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::ConnectionReset,
+                        "logical stream reset",
+                    ));
+                }
+                BufferedReadPushV2::Full(pending) => data = pending,
+            }
+            tokio::select! {
+                biased;
+                _ = self.reset_changed.notified() => return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "logical stream reset",
+                )),
+                _ = session.canceled.cancelled() => return Err(terminal_error_v2(session)),
+                _ = &mut capacity_changed => {}
+            }
+        }
+    }
+
     async fn send_stream_update(&self, transition: u64, next_epoch: u32) -> io::Result<()> {
         {
             let mut pending = self.send_update.lock().await;
@@ -3175,14 +3356,17 @@ impl EncryptedStreamV2 {
                         read_stream_record_v2(&session, &self.carrier, self.id).await?;
                     self.accept_normal_header(epoch, sequence)?;
                     match kind {
-                        InnerRecordTypeV2::Data => self
-                            .buffered_reads
-                            .lock()
-                            .await
-                            .push_back(Some(Bytes::from(payload))),
+                        InnerRecordTypeV2::Data => {
+                            self.buffer_read_data(&session, Bytes::from(payload)).await?
+                        }
                         InnerRecordTypeV2::Fin => {
                             self.remote_fin.store(true, Ordering::Release);
-                            self.buffered_reads.lock().await.push_back(None);
+                            if !self.buffered_reads.push_fin() {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::ConnectionReset,
+                                    "logical stream reset",
+                                ));
+                            }
                             self.release_if_clean();
                             return Ok(());
                         }
@@ -3281,14 +3465,17 @@ impl EncryptedStreamV2 {
                         InnerRecordTypeV2::StreamKeyUpdateAck => {
                             self.process_stream_update_ack(&payload).await?;
                         }
-                        InnerRecordTypeV2::Data => self
-                            .buffered_reads
-                            .lock()
-                            .await
-                            .push_back(Some(Bytes::from(payload))),
+                        InnerRecordTypeV2::Data => {
+                            self.buffer_read_data(&session, Bytes::from(payload)).await?
+                        }
                         InnerRecordTypeV2::Fin => {
                             self.remote_fin.store(true, Ordering::Release);
-                            self.buffered_reads.lock().await.push_back(None);
+                            if !self.buffered_reads.push_fin() {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::ConnectionReset,
+                                    "logical stream reset",
+                                ));
+                            }
                             self.release_if_clean();
                         }
                         InnerRecordTypeV2::StreamKeyUpdate => {
@@ -3458,7 +3645,7 @@ async fn accept_one_stream_v2(
         send_update: Mutex::new(None),
         send_update_ack: Mutex::new(None),
         send_update_changed: Notify::new(),
-        buffered_reads: Mutex::new(VecDeque::new()),
+        buffered_reads: BoundedReadQueueV2::default(),
         send_lock: Mutex::new(()),
         read_lock: Mutex::new(()),
         local_fin: AtomicBool::new(false),
@@ -3952,6 +4139,15 @@ pub fn memory_carrier_pair_v2() -> (Arc<dyn CarrierSessionV2>, Arc<dyn CarrierSe
 pub fn memory_carrier_pair_v2_with_capacity(
     inbound_bidirectional_stream_capacity: u32,
 ) -> (Arc<dyn CarrierSessionV2>, Arc<dyn CarrierSessionV2>) {
+    memory_carrier_pair_v2_with_capacities(inbound_bidirectional_stream_capacity, 256 * 1024)
+}
+
+/// Creates a deterministic carrier pair with explicit stream and byte capacities.
+#[cfg(test)]
+pub fn memory_carrier_pair_v2_with_capacities(
+    inbound_bidirectional_stream_capacity: u32,
+    stream_byte_capacity: usize,
+) -> (Arc<dyn CarrierSessionV2>, Arc<dyn CarrierSessionV2>) {
     let (client_tx, client_rx) = mpsc::channel(64);
     let (server_tx, server_rx) = mpsc::channel(64);
     (
@@ -3960,12 +4156,14 @@ pub fn memory_carrier_pair_v2_with_capacity(
             incoming: Mutex::new(client_rx),
             canceled: CancellationToken::new(),
             inbound_bidirectional_stream_capacity,
+            stream_byte_capacity,
         }),
         Arc::new(MemoryCarrierSessionV2 {
             outgoing: client_tx,
             incoming: Mutex::new(server_rx),
             canceled: CancellationToken::new(),
             inbound_bidirectional_stream_capacity,
+            stream_byte_capacity,
         }),
     )
 }
@@ -3976,6 +4174,7 @@ struct MemoryCarrierSessionV2 {
     incoming: Mutex<mpsc::Receiver<Arc<dyn CarrierStreamV2>>>,
     canceled: CancellationToken,
     inbound_bidirectional_stream_capacity: u32,
+    stream_byte_capacity: usize,
 }
 
 #[cfg(test)]
@@ -3998,7 +4197,7 @@ impl CarrierSessionV2 for MemoryCarrierSessionV2 {
         if self.canceled.is_cancelled() {
             return Err(closed());
         }
-        let (local, peer) = tokio::io::duplex(256 * 1024);
+        let (local, peer) = tokio::io::duplex(self.stream_byte_capacity);
         let local: Arc<dyn CarrierStreamV2> = Arc::new(MemoryCarrierStreamV2::new(local));
         let peer: Arc<dyn CarrierStreamV2> = Arc::new(MemoryCarrierStreamV2::new(peer));
         self.outgoing.send(peer).await.map_err(|_| closed())?;
