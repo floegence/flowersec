@@ -448,6 +448,28 @@ struct BlockingNthWriteCarrierStream {
 }
 
 #[derive(Debug)]
+struct FailingControlWriteCarrierSession {
+    inner: Arc<dyn CarrierSessionV2>,
+    opens: AtomicU64,
+    fail_next_control_write: Arc<AtomicBool>,
+    application_reset_entered: Arc<AtomicU64>,
+    application_resets: Arc<AtomicU64>,
+}
+
+#[derive(Debug)]
+struct FailingControlWriteCarrierStream {
+    inner: Arc<dyn CarrierStreamV2>,
+    fail_next_write: Arc<AtomicBool>,
+}
+
+#[derive(Debug)]
+struct ResetCountingCarrierStream {
+    inner: Arc<dyn CarrierStreamV2>,
+    reset_entered: Arc<AtomicU64>,
+    resets: Arc<AtomicU64>,
+}
+
+#[derive(Debug)]
 struct BlockingApplicationReadCarrierSession {
     inner: Arc<dyn CarrierSessionV2>,
     accepts: AtomicU64,
@@ -777,6 +799,108 @@ impl CarrierStreamV2 for BlockingNthWriteCarrierStream {
     async fn reset(&self) -> io::Result<()> {
         self.inner.reset().await
     }
+    async fn close(&self) -> io::Result<()> {
+        self.inner.close().await
+    }
+}
+
+#[async_trait::async_trait]
+impl CarrierSessionV2 for FailingControlWriteCarrierSession {
+    fn kind(&self) -> CarrierKind {
+        self.inner.kind()
+    }
+
+    fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+        self.inner.inbound_bidirectional_stream_capacity()
+    }
+
+    async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+        let stream = self.inner.open_stream().await?;
+        if self.opens.fetch_add(1, Ordering::AcqRel) == 0 {
+            Ok(Arc::new(FailingControlWriteCarrierStream {
+                inner: stream,
+                fail_next_write: self.fail_next_control_write.clone(),
+            }))
+        } else {
+            Ok(Arc::new(ResetCountingCarrierStream {
+                inner: stream,
+                reset_entered: self.application_reset_entered.clone(),
+                resets: self.application_resets.clone(),
+            }))
+        }
+    }
+
+    async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+        self.inner.accept_stream().await
+    }
+
+    async fn close(&self) -> io::Result<()> {
+        self.inner.close().await
+    }
+
+    fn abort(&self) {
+        self.inner.abort();
+    }
+}
+
+#[async_trait::async_trait]
+impl CarrierStreamV2 for FailingControlWriteCarrierStream {
+    async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(payload).await
+    }
+
+    async fn write(&self, payload: &[u8]) -> io::Result<usize> {
+        if self.fail_next_write.swap(false, Ordering::AcqRel) {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "injected control write failure",
+            ));
+        }
+        self.inner.write(payload).await
+    }
+
+    async fn close_write(&self) -> io::Result<()> {
+        self.inner.close_write().await
+    }
+
+    async fn stop_sending(&self) -> io::Result<()> {
+        self.inner.stop_sending().await
+    }
+
+    async fn reset(&self) -> io::Result<()> {
+        self.inner.reset().await
+    }
+
+    async fn close(&self) -> io::Result<()> {
+        self.inner.close().await
+    }
+}
+
+#[async_trait::async_trait]
+impl CarrierStreamV2 for ResetCountingCarrierStream {
+    async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(payload).await
+    }
+
+    async fn write(&self, payload: &[u8]) -> io::Result<usize> {
+        self.inner.write(payload).await
+    }
+
+    async fn close_write(&self) -> io::Result<()> {
+        self.inner.close_write().await
+    }
+
+    async fn stop_sending(&self) -> io::Result<()> {
+        self.inner.stop_sending().await
+    }
+
+    async fn reset(&self) -> io::Result<()> {
+        self.reset_entered.fetch_add(1, Ordering::AcqRel);
+        self.inner.reset().await?;
+        self.resets.fetch_add(1, Ordering::AcqRel);
+        Ok(())
+    }
+
     async fn close(&self) -> io::Result<()> {
         self.inner.close().await
     }
@@ -1412,6 +1536,65 @@ async fn reset_after_peer_fin_confirms_control_before_physical_reset() {
     sibling.reset().await.expect("reset sibling");
     client.close().await.expect("close client");
     server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn reset_control_write_failure_terminates_session_and_finishes_physical_cleanup() {
+    let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
+    let fail_next_control_write = Arc::new(AtomicBool::new(false));
+    let application_reset_entered = Arc::new(AtomicU64::new(0));
+    let application_resets = Arc::new(AtomicU64::new(0));
+    let client_carrier: Arc<dyn CarrierSessionV2> = Arc::new(FailingControlWriteCarrierSession {
+        inner: client_inner,
+        opens: AtomicU64::new(0),
+        fail_next_control_write: fail_next_control_write.clone(),
+        application_reset_entered: application_reset_entered.clone(),
+        application_resets: application_resets.clone(),
+    });
+    let client_config = regression_config(SessionRole::Client, "reset-control-failure", 1, None);
+    let server_config = regression_config(SessionRole::Server, "reset-control-failure", 1, None);
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+    let (outgoing, incoming) = tokio::join!(
+        client.open_stream("reset-control-failure", StreamMetadata::empty()),
+        server.accept_stream(),
+    );
+    let outgoing = outgoing.expect("open stream");
+    let incoming = incoming.expect("accept stream");
+
+    fail_next_control_write.store(true, Ordering::Release);
+    tokio::time::timeout(Duration::from_millis(250), outgoing.reset())
+        .await
+        .expect("reset cleanup waiter remained blocked")
+        .expect("physical reset cleanup must still complete");
+    assert_eq!(
+        application_reset_entered.load(Ordering::Acquire),
+        1,
+        "control failure must start physical reset exactly once"
+    );
+    assert_eq!(
+        application_resets.load(Ordering::Acquire),
+        1,
+        "control failure must finish physical reset exactly once"
+    );
+
+    let termination = tokio::time::timeout(Duration::from_millis(250), client.wait_termination())
+        .await
+        .expect("control write failure did not terminate the session");
+    assert_eq!(termination.error, SessionError::Closed);
+    assert!(
+        client
+            .open_stream("after-control-failure", StreamMetadata::empty())
+            .await
+            .is_err(),
+        "session remained reusable after consuming an unsent control sequence"
+    );
+    drop(incoming);
+    let _ = server.close().await;
 }
 
 #[tokio::test]

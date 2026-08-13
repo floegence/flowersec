@@ -2950,22 +2950,23 @@ impl EncryptedStreamV2 {
         }
     }
     async fn finish_reset(self: Arc<Self>) {
-        let _control_confirmed = if let Some(session) = self.session.upgrade() {
+        if let Some(session) = self.session.upgrade() {
             let mut payload = [0; 10];
             payload[..8].copy_from_slice(&self.id.to_be_bytes());
             payload[8..].copy_from_slice(&1_u16.to_be_bytes());
-            if send_control_v2(&session, InnerRecordTypeV2::StreamReset, &payload)
-                .await
-                .is_ok()
-                && self.remote_fin.load(Ordering::Acquire)
-            {
-                confirm_control_delivery_v2(&session).await.is_ok()
-            } else {
-                false
+            let result =
+                match send_control_v2(&session, InnerRecordTypeV2::StreamReset, &payload).await {
+                    Ok(()) if self.remote_fin.load(Ordering::Acquire) => {
+                        confirm_control_delivery_v2(&session).await.map(|_| ())
+                    }
+                    result => result,
+                };
+            if let Err(error) = result {
+                if !session.is_closed() {
+                    fail_session_v2(&session, io::Error::new(error.kind(), error.to_string()));
+                }
             }
-        } else {
-            false
-        };
+        }
         self.finish_physical_reset().await;
     }
     async fn finish_physical_reset(&self) {
