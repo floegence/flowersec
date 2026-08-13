@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:f1962093-d2fd-59b4-82f7-12ef6e00eb88",
+  "serialNumber": "urn:uuid:ee8a287b-95f0-56a4-8d02-97e2a5e422b1",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "b4caf4ded194f90bf76ccf0aa68b865fb30fa38d7248dfa79d5681393cf4fc79"
+        "value": "ca50cf6efaef0e75b1aa6454954a2168136fa8116b47515e85ae9e4a92dc0c04"
       }
     ]
   },

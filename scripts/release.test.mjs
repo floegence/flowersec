@@ -290,9 +290,10 @@ test("npm lockfile contains the complete native optional dependency closure", ()
   }
 });
 
-test("npm release builds omit the unpublished optional native wrapper", () => {
+test("npm release builds use the complete lockfile without omitting optional packages", () => {
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
-  assert.match(workflow, /npm install --ignore-scripts --no-audit --no-fund/);
+  assert.match(workflow, /npm ci --ignore-scripts --no-audit --no-fund/);
+  assert.doesNotMatch(workflow, /npm install(?:\s|$)/);
   assert.doesNotMatch(workflow, /npm (?:ci|install) --omit=optional/);
 });
 
