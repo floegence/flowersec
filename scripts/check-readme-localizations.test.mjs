@@ -79,6 +79,15 @@ test("README support claims state optional WebTransport and native package bound
   assert.match(nativeReadme, /Windows and\s+musl packages are not published/u);
 });
 
+test("README states the machine-readable parity counts without ambiguous aliases", () => {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const content = fs.readFileSync(path.join(repoRoot, "README.md"), "utf8");
+  assert.match(content, /18 runtime-role-carrier tuples/u);
+  assert.match(content, /24\s+path-specific server units/u);
+  assert.match(content, /18\s+direct cells/u);
+  assert.match(content, /18\s+tunnel cells/u);
+});
+
 test("README localization contract captures structure and literals", () => {
   const source = [
     "# Flowersec",
