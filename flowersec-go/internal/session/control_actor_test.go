@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -80,6 +83,151 @@ func TestNativeResetDoesNotWaitForBlockedControlWriter(t *testing.T) {
 	}
 }
 
+func TestResetAfterPeerFINConfirmsControlBeforePhysicalCleanup(t *testing.T) {
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
+	clientConfig, serverConfig := testEngineConfigs(1)
+	client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
+	defer client.Close()
+	defer server.Close()
+
+	accepted := make(chan IncomingStream, 1)
+	acceptErr := make(chan error, 1)
+	go acceptOne(server, accepted, acceptErr)
+	stream, err := client.OpenStream(context.Background(), "reset-after-peer-fin", Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := awaitIncoming(t, accepted, acceptErr)
+	readPeer := make(chan struct {
+		payload []byte
+		err     error
+	}, 1)
+	go func() {
+		payload, err := io.ReadAll(peer.Stream)
+		readPeer <- struct {
+			payload []byte
+			err     error
+		}{payload: payload, err: err}
+	}()
+	if _, err := stream.Write([]byte("payload")); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	read := <-readPeer
+	if read.err != nil || string(read.payload) != "payload" {
+		t.Fatalf("read peer FIN: payload=%q err=%v", read.payload, read.err)
+	}
+
+	pongEntered := make(chan struct{})
+	releasePong := make(chan struct{})
+	var releasePongOnce sync.Once
+	t.Cleanup(func() { releasePongOnce.Do(func() { close(releasePong) }) })
+	var pongOnce sync.Once
+	clientCarrier.setWriteHook(func(payload []byte) {
+		if bytes.HasPrefix(payload, []byte("FSR2")) {
+			pongOnce.Do(func() { close(pongEntered) })
+			<-releasePong
+		}
+	})
+	physicalResetEntered := make(chan struct{})
+	releasePhysicalReset := make(chan struct{})
+	var releasePhysicalOnce sync.Once
+	t.Cleanup(func() { releasePhysicalOnce.Do(func() { close(releasePhysicalReset) }) })
+	var physicalOnce sync.Once
+	peer.Stream.(*encryptedStream).carrier.(*memoryStream).setResetHook(func() {
+		physicalOnce.Do(func() { close(physicalResetEntered) })
+		<-releasePhysicalReset
+	})
+
+	resetReturned := make(chan error, 1)
+	go func() { resetReturned <- peer.Stream.Reset() }()
+	select {
+	case err := <-resetReturned:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("public reset waited for control confirmation")
+	}
+	select {
+	case <-pongEntered:
+	case <-time.After(time.Second):
+		t.Fatal("reset control confirmation PONG was not sent")
+	}
+	select {
+	case <-physicalResetEntered:
+		t.Fatal("physical reset started before control confirmation")
+	default:
+	}
+	releasePongOnce.Do(func() { close(releasePong) })
+	select {
+	case <-physicalResetEntered:
+	case <-time.After(time.Second):
+		t.Fatal("physical reset did not start after control confirmation")
+	}
+	if got := len(server.inboundPermits); got != 1 {
+		t.Fatalf("inbound permit count before physical reset = %d, want 1", got)
+	}
+	releasePhysicalOnce.Do(func() { close(releasePhysicalReset) })
+	deadline := time.After(time.Second)
+	for len(server.inboundPermits) != 0 {
+		select {
+		case <-deadline:
+			t.Fatal("inbound permit was not released after physical reset")
+		default:
+			runtime.Gosched()
+		}
+	}
+}
+
+func TestResetDuringSessionClosingLeavesPhysicalCleanupToSessionOwner(t *testing.T) {
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
+	clientConfig, serverConfig := testEngineConfigs(1)
+	client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
+	defer client.Close()
+	defer server.Close()
+
+	accepted := make(chan IncomingStream, 1)
+	acceptErr := make(chan error, 1)
+	go acceptOne(server, accepted, acceptErr)
+	_, err := client.OpenStream(context.Background(), "reset-during-close", Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := awaitIncoming(t, accepted, acceptErr)
+	server.beginClosing()
+
+	physicalResetEntered := make(chan struct{})
+	releasePhysicalReset := make(chan struct{})
+	var releasePhysicalOnce sync.Once
+	t.Cleanup(func() { releasePhysicalOnce.Do(func() { close(releasePhysicalReset) }) })
+	peer.Stream.(*encryptedStream).carrier.(*memoryStream).setResetHook(func() {
+		close(physicalResetEntered)
+		<-releasePhysicalReset
+	})
+	resetReturned := make(chan error, 1)
+	go func() { resetReturned <- peer.Stream.Reset() }()
+	select {
+	case err := <-resetReturned:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reset blocked during session closing")
+	}
+	select {
+	case <-physicalResetEntered:
+		t.Fatal("stream reset duplicated physical cleanup after session closing began")
+	default:
+	}
+	if got := len(server.inboundPermits); got != 0 {
+		t.Fatalf("inbound permit count after closing reset = %d, want 0", got)
+	}
+	releasePhysicalOnce.Do(func() { close(releasePhysicalReset) })
+}
+
 func TestLiveControlActorHasReservedCriticalCapacityAndOrderedPublish(t *testing.T) {
 	session := newControlActorUnitSession(t, 1)
 	published := false
@@ -126,6 +274,86 @@ func TestLiveControlActorHasReservedCriticalCapacityAndOrderedPublish(t *testing
 	}
 	if err := session.commitControl(protocolv2.InnerPing, make([]byte, 8), nil); !errors.Is(err, protocolv2.ErrControlQueueFull) {
 		t.Fatalf("noncritical capacity+1 error = %v", err)
+	}
+	if err := session.commitControlPriority(protocolv2.InnerPing, make([]byte, 8), nil, controlPriorityLiveness); err != nil {
+		t.Fatalf("reset confirmation ping with saturated normal queue: %v", err)
+	}
+	if err := session.sendControl(protocolv2.InnerPong, make([]byte, 8)); err != nil {
+		t.Fatalf("PONG with saturated normal queue: %v", err)
+	}
+	for i := 1; i < session.controlNormalCap+1; i++ {
+		if err := session.sendControl(protocolv2.InnerPong, make([]byte, 8)); err != nil {
+			t.Fatalf("liveness response %d at legal peak: %v", i, err)
+		}
+	}
+	if err := session.sendControl(protocolv2.InnerPong, make([]byte, 8)); !errors.Is(err, protocolv2.ErrControlQueueFull) {
+		t.Fatalf("liveness capacity+1 error = %v", err)
+	}
+}
+
+func TestLivenessControlWaitsForReservedCapacity(t *testing.T) {
+	session := newControlActorUnitSession(t, 1)
+	session.ctx = context.Background()
+	for i := 0; i < session.controlLivenessCap; i++ {
+		if err := session.commitControlPriority(protocolv2.InnerPong, make([]byte, 8), nil, controlPriorityLiveness); err != nil {
+			t.Fatalf("fill liveness capacity %d: %v", i, err)
+		}
+	}
+	written := make(chan error, 1)
+	go func() {
+		written <- session.commitControlPriorityWait(context.Background(), protocolv2.InnerPong, make([]byte, 8), controlPriorityLiveness)
+	}()
+	select {
+	case err := <-written:
+		t.Fatalf("liveness write did not wait for capacity: %v", err)
+	default:
+	}
+
+	session.controlActorMu.Lock()
+	session.controlQueue[0] = queuedControlRecord{}
+	session.controlQueue = session.controlQueue[1:]
+	session.controlLivenessCount--
+	close(session.controlCapacityChanged)
+	session.controlCapacityChanged = make(chan struct{})
+	session.controlActorMu.Unlock()
+	select {
+	case err := <-written:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("liveness write did not resume after capacity return")
+	}
+}
+
+func TestResetConfirmationsBatchCommittedGenerations(t *testing.T) {
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindRawQUIC)
+	clientConfig, serverConfig := testEngineConfigs(1)
+	client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
+	defer client.Close()
+	defer server.Close()
+
+	var pingWrites atomic.Int32
+	clientCarrier.setWriteHook(func(payload []byte) {
+		if bytes.HasPrefix(payload, []byte("FSR2")) {
+			pingWrites.Add(1)
+		}
+	})
+	targets := make([]uint64, 16)
+	for i := range targets {
+		targets[i] = client.registerResetConfirmation()
+	}
+	errs := make(chan error, len(targets))
+	for _, target := range targets {
+		go func() { errs <- client.confirmResetDelivery(target) }()
+	}
+	for range targets {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := pingWrites.Load(); got != 1 {
+		t.Fatalf("confirmation PING writes = %d, want one batched barrier", got)
 	}
 }
 

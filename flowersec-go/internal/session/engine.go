@@ -92,17 +92,20 @@ type engineSession struct {
 	controlRecvSeq       uint64
 	controlRecvExhausted bool
 
-	controlActorMu       sync.Mutex
-	controlQueue         []queuedControlRecord
-	controlWake          chan struct{}
-	controlCriticalCount int
-	controlNormalCount   int
-	controlCriticalCap   int
-	controlNormalCap     int
-	controlSendEpoch     uint32
-	controlSendSeq       uint64
-	controlSendExhausted bool
-	controlIdle          chan struct{}
+	controlActorMu         sync.Mutex
+	controlQueue           []queuedControlRecord
+	controlWake            chan struct{}
+	controlCriticalCount   int
+	controlNormalCount     int
+	controlLivenessCount   int
+	controlCriticalCap     int
+	controlNormalCap       int
+	controlLivenessCap     int
+	controlSendEpoch       uint32
+	controlSendSeq         uint64
+	controlSendExhausted   bool
+	controlIdle            chan struct{}
+	controlCapacityChanged chan struct{}
 
 	openMu                 sync.Mutex
 	openFrozen             bool
@@ -136,9 +139,13 @@ type engineSession struct {
 	activeResponders     int
 	responderChanged     chan struct{}
 
-	pingsMu  sync.Mutex
-	nextPing uint64
-	pings    map[uint64]chan struct{}
+	pingsMu              sync.Mutex
+	nextPing             uint64
+	pings                map[uint64]chan struct{}
+	resetConfirmMu       sync.Mutex
+	resetConfirmNext     uint64
+	resetConfirmComplete uint64
+	resetConfirmFlight   *resetConfirmationFlight
 
 	rekeyMu             sync.Mutex
 	nextTransition      uint64
@@ -186,7 +193,21 @@ type queuedControlRecord struct {
 	epoch    uint32
 	sequence uint64
 	raw      []byte
-	critical bool
+	priority controlPriority
+}
+
+type controlPriority uint8
+
+const (
+	controlPriorityNormal controlPriority = iota
+	controlPriorityCritical
+	controlPriorityLiveness
+)
+
+type resetConfirmationFlight struct {
+	target uint64
+	done   chan struct{}
+	err    error
 }
 
 // Establish completes FSC2/FSH2 and the encrypted final READY confirmation
@@ -467,6 +488,21 @@ func (s *engineSession) waitForWorkers(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (s *engineSession) startOwnedWorker(worker func()) bool {
+	s.openMu.Lock()
+	if s.lifecycle >= lifecycleClosing {
+		s.openMu.Unlock()
+		return false
+	}
+	s.wg.Add(1)
+	s.openMu.Unlock()
+	go func() {
+		defer s.wg.Done()
+		worker()
+	}()
+	return true
 }
 
 func (s *engineSession) markOpen() {

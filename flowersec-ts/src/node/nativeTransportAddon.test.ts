@@ -51,6 +51,37 @@ describe("native transport addon loader", () => {
     }));
   });
 
+  test("uses an explicit native addon only for the server parity peer", () => {
+    const previousPeer = process.env.FLOWERSEC_SERVER_PARITY_PEER;
+    const previousAddon = process.env.FLOWERSEC_SERVER_PARITY_NATIVE_ADDON;
+    const requested: string[] = [];
+    const addon = Object.freeze({
+      contractVersion: () => 1,
+      connectRawQuic: () => { throw new Error("unused"); },
+      bindRawQuic: () => { throw new Error("unused"); },
+    }) as unknown as NativeTransportAddonBinding;
+    try {
+      process.env.FLOWERSEC_SERVER_PARITY_NATIVE_ADDON = "/tmp/flowersec-parity-addon.js";
+      delete process.env.FLOWERSEC_SERVER_PARITY_PEER;
+      expect(loadNativeTransportAddon((specifier) => {
+        requested.push(specifier);
+        return addon;
+      })).toBe(addon);
+      process.env.FLOWERSEC_SERVER_PARITY_PEER = "1";
+      expect(loadNativeTransportAddon((specifier) => {
+        requested.push(specifier);
+        return addon;
+      })).toBe(addon);
+      expect(requested).toEqual([
+        "@floegence/flowersec-node-native",
+        "/tmp/flowersec-parity-addon.js",
+      ]);
+    } finally {
+      restoreEnvironment("FLOWERSEC_SERVER_PARITY_PEER", previousPeer);
+      restoreEnvironment("FLOWERSEC_SERVER_PARITY_NATIVE_ADDON", previousAddon);
+    }
+  });
+
   test("reports optional addon availability without leaking loader errors", () => {
     expect(tryLoadNativeTransportAddon(() => {
       throw new Error("platform loader detail");
@@ -260,6 +291,11 @@ function nativeSessionBinding(stream: object) {
     close: async () => undefined,
     abort: () => undefined,
   };
+}
+
+function restoreEnvironment(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
 }
 
 function assertBrowserGraphIsolation(graph: string, externalSpecifiers: readonly string[]): void {

@@ -9,6 +9,7 @@ import (
 	"math"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
@@ -64,8 +65,9 @@ type openResponse struct {
 }
 
 const (
-	reservedRPCStreamKind  = "flowersec.rpc.v2"
-	maxCoalescedWriteBytes = 4 * protocolv2.MaxDataBytes
+	reservedRPCStreamKind      = "flowersec.rpc.v2"
+	maxCoalescedWriteBytes     = 4 * protocolv2.MaxDataBytes
+	resetControlConfirmTimeout = 2 * time.Second
 )
 
 func (s *engineSession) OpenStream(ctx context.Context, kind string, metadata Metadata) (ByteStream, error) {
@@ -1249,10 +1251,10 @@ func (s *encryptedStream) localReset(cause error) {
 	s.terminalErr = cause
 	s.terminalMu.Unlock()
 	s.stateMu.Lock()
+	confirmControl := s.state.RemoteHalfClosed()
 	s.state.Reset()
 	s.stateMu.Unlock()
-	_ = s.carrier.Reset()
-	if err := s.session.commitControl(protocolv2.InnerStreamReset, marshalIDReason(s.id, 6), func() error {
+	controlErr := s.session.commitControl(protocolv2.InnerStreamReset, marshalIDReason(s.id, 6), func() error {
 		if !validLocalLogicalID(s.session.role, s.id) {
 			return nil
 		}
@@ -1261,13 +1263,32 @@ func (s *encryptedStream) localReset(cause error) {
 		err := s.session.outboundLedger.LocalResetCommitted(s.id)
 		s.session.notifyLedgerChangedLocked()
 		return err
-	}); err != nil {
-		s.session.fail(err)
+	})
+	var confirmationTarget uint64
+	if controlErr == nil && confirmControl {
+		confirmationTarget = s.session.registerResetConfirmation()
 	}
 	s.completeSendRekeyTerminal()
-	s.clearRootEpochs()
-	s.finish(cause, false)
-	s.session.cleanupEpochRoots()
+	cleanup := func() {
+		if confirmationTarget != 0 {
+			confirmErr := s.session.confirmResetDelivery(confirmationTarget)
+			if confirmErr != nil && s.session.ctx.Err() == nil {
+				s.session.fail(fmt.Errorf("%w: reset control confirmation: %v", ErrSessionProtocol, confirmErr))
+			}
+		}
+		_ = s.carrier.Reset()
+		s.clearRootEpochs()
+		s.finish(cause, false)
+		s.session.cleanupEpochRoots()
+	}
+	if !s.session.startOwnedWorker(cleanup) {
+		s.clearRootEpochs()
+		s.finish(cause, false)
+		s.session.cleanupEpochRoots()
+	}
+	if controlErr != nil {
+		s.session.fail(controlErr)
+	}
 }
 
 func (s *engineSession) commitOutboundReset(id uint64) error {

@@ -133,6 +133,27 @@ describe("SessionV2 stream lifecycle regressions", () => {
     await client.close();
   }, 15_000);
 
+  test("reserves a stream sequence before a delivered rekey write completes", async () => {
+    const [client, server, carrier] = await establishFaultPair();
+    const opening = client.openStream("delayed-rekey-write");
+    const incoming = await server.acceptStream();
+    const stream = await opening;
+    const application = carrier.latestApplicationStream();
+    const delayed = application.delayNextWriteCompletion();
+
+    const rekeying = client.rekey();
+    await delayed.delivered;
+    await eventually(() => expect(streamSendEpoch(stream)).toBe(1));
+    delayed.release();
+    await rekeying;
+
+    await stream.write(Uint8Array.of(7));
+    expect(await incoming.stream.read()).toEqual(Uint8Array.of(7));
+    expect(client.terminalError).toBeUndefined();
+    expect(server.terminalError).toBeUndefined();
+    await client.close();
+  });
+
   test("makes a FIN record write failure terminal and does not report a later closeWrite as success", async () => {
     const [client, server, carrier] = await establishFaultPair();
     const opening = client.openStream("failed-fin-record");
@@ -321,6 +342,7 @@ class FaultInjectingStream implements CarrierStreamV2 {
   private writeFailure: Error | undefined;
   private closeWriteFailure: Error | undefined;
   private blockedWrite: Readonly<{ entered: Deferred<void>; signal: AbortSignal }> | undefined;
+  private delayedWrite: Readonly<{ delivered: Deferred<void>; release: Deferred<void> }> | undefined;
 
   constructor(private readonly inner: CarrierStreamV2) {}
 
@@ -340,7 +362,14 @@ class FaultInjectingStream implements CarrierStreamV2 {
       blocked.entered.resolve();
       await aborted(blocked.signal);
     }
-    return await this.inner.write(data, options);
+    const written = await this.inner.write(data, options);
+    const delayed = this.delayedWrite;
+    if (delayed !== undefined) {
+      this.delayedWrite = undefined;
+      delayed.delivered.resolve();
+      await delayed.release.promise;
+    }
+    return written;
   }
 
   async closeWrite(): Promise<void> {
@@ -374,6 +403,13 @@ class FaultInjectingStream implements CarrierStreamV2 {
     const entered = deferred<void>();
     this.blockedWrite = { entered, signal };
     return entered.promise;
+  }
+
+  delayNextWriteCompletion(): Readonly<{ delivered: Promise<void>; release: () => void }> {
+    const delivered = deferred<void>();
+    const release = deferred<void>();
+    this.delayedWrite = { delivered, release };
+    return { delivered: delivered.promise, release: () => release.resolve() };
   }
 
   failNextCloseWrite(error: Error): void {
@@ -420,4 +456,8 @@ async function eventually(assertion: () => void): Promise<void> {
 
 async function expectPeerReset(operation: Promise<unknown>): Promise<void> {
   await expect(operation).rejects.toMatchObject({ code: "stream_reset" });
+}
+
+function streamSendEpoch(stream: Awaited<ReturnType<SessionV2["openStream"]>>): number {
+  return (stream as unknown as Readonly<{ sendEpoch: number }>).sendEpoch;
 }

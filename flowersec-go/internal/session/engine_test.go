@@ -1991,6 +1991,7 @@ type memoryStream struct {
 	mutateMu         sync.Mutex
 	mutateCiphertext bool
 	mutateSequence   bool
+	resetHook        func()
 }
 
 func newMemoryStreamPair(leftSession, rightSession context.Context) (*memoryStream, *memoryStream) {
@@ -2040,6 +2041,9 @@ func (s *memoryStream) StopSending() error       { return s.Reset() }
 
 func (s *memoryStream) Reset() error {
 	s.reset.Do(func() {
+		if s.resetHook != nil {
+			s.resetHook()
+		}
 		s.resetCount.Add(1)
 		_ = s.reader.CloseWithError(carrier.ErrStreamReset)
 		_ = s.writer.CloseWithError(carrier.ErrStreamReset)
@@ -2047,6 +2051,8 @@ func (s *memoryStream) Reset() error {
 	})
 	return nil
 }
+
+func (s *memoryStream) setResetHook(hook func()) { s.resetHook = hook }
 
 func (s *memoryStream) Close() error { return s.Reset() }
 

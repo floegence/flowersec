@@ -9,6 +9,7 @@ import type { PathKind } from "../v2/contract.js";
 
 export const NATIVE_TRANSPORT_CONTRACT_VERSION = 1;
 const NATIVE_PACKAGE = "@floegence/flowersec-node-native";
+const SERVER_PARITY_NATIVE_ADDON = "FLOWERSEC_SERVER_PARITY_NATIVE_ADDON";
 
 export type NativeRawQuicConnectOptions = Readonly<{
   host: string;
@@ -106,7 +107,7 @@ export function loadNativeTransportAddon(
 ): NativeTransportAddonBinding {
   let candidate: unknown;
   try {
-    candidate = requireFunction(NATIVE_PACKAGE);
+    candidate = requireFunction(nativePackageSpecifier());
   } catch {
     throw new NativeTransportUnavailableError();
   }
@@ -114,6 +115,14 @@ export function loadNativeTransportAddon(
     throw new NativeTransportUnavailableError();
   }
   return candidate;
+}
+
+function nativePackageSpecifier(): string {
+  if (process.env.FLOWERSEC_SERVER_PARITY_PEER === "1") {
+    const override = process.env[SERVER_PARITY_NATIVE_ADDON];
+    if (override !== undefined && override !== "") return override;
+  }
+  return NATIVE_PACKAGE;
 }
 
 export function tryLoadNativeTransportAddon(

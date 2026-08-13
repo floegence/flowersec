@@ -458,8 +458,8 @@ export class SessionV2 implements SessionV2Contract {
       ciphertextLength: inner.length + 16,
     };
     const ciphertext = sealRecord(this.config.suite, material, this.h3, stream.id, this.sendDirection, header, inner);
-    await writeAll(stream.carrier, concat(encodeRecordHeader(header), ciphertext), signal);
     stream.sendSequence += 1n;
+    await writeAll(stream.carrier, concat(encodeRecordHeader(header), ciphertext), signal);
     this.markAuthenticatedActivity();
   }
 

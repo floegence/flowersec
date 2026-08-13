@@ -49,7 +49,10 @@ export async function prepareServerParityNativeAddon(repositoryRoot, required) {
       ? moduleRoot
       : `${moduleRoot}${path.delimiter}${process.env.NODE_PATH}`;
     return Object.freeze({
-      environment: Object.freeze({ NODE_PATH: nodePath }),
+      environment: Object.freeze({
+        NODE_PATH: nodePath,
+        FLOWERSEC_SERVER_PARITY_NATIVE_ADDON: path.join(wrapperRoot, "index.js"),
+      }),
       cleanup: async () => { await rm(stagingRoot, { recursive: true, force: true }); },
     });
   } catch (error) {

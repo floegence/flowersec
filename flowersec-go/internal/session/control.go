@@ -16,7 +16,13 @@ import (
 var errPeerSessionClose = errors.New("peer closed Flowersec v2 session")
 
 func (s *engineSession) sendControl(typ protocolv2.InnerType, payload []byte) error {
-	return s.commitControl(typ, payload, nil)
+	priority := controlPriorityCritical
+	if typ == protocolv2.InnerPing {
+		priority = controlPriorityNormal
+	} else if typ == protocolv2.InnerPong {
+		priority = controlPriorityLiveness
+	}
+	return s.commitControlPriority(typ, payload, nil, priority)
 }
 
 func (s *engineSession) initControlActor() {
@@ -28,6 +34,8 @@ func (s *engineSession) initControlActor() {
 		s.controlCriticalCap = 8
 	}
 	s.controlNormalCap = 8
+	s.controlLivenessCap = s.controlNormalCap + 2
+	s.controlCapacityChanged = make(chan struct{})
 }
 
 func (s *engineSession) startControlWriter() {
@@ -39,20 +47,35 @@ func (s *engineSession) startControlWriter() {
 }
 
 func (s *engineSession) commitControl(typ protocolv2.InnerType, payload []byte, publish func() error) error {
+	priority := controlPriorityCritical
+	if typ == protocolv2.InnerPing || typ == protocolv2.InnerPong {
+		priority = controlPriorityNormal
+	}
+	return s.commitControlPriority(typ, payload, publish, priority)
+}
+
+func (s *engineSession) commitControlPriority(typ protocolv2.InnerType, payload []byte, publish func() error, priority controlPriority) error {
 	inner, err := protocolv2.MarshalInnerRecord(typ, payload)
 	if err != nil {
 		return err
 	}
-	critical := typ != protocolv2.InnerPing && typ != protocolv2.InnerPong
-
 	s.controlActorMu.Lock()
 	defer s.controlActorMu.Unlock()
-	if critical {
+	switch priority {
+	case controlPriorityCritical:
 		if s.controlCriticalCount >= s.controlCriticalCap {
 			return protocolv2.ErrControlQueueFull
 		}
-	} else if s.controlNormalCount >= s.controlNormalCap {
-		return protocolv2.ErrControlQueueFull
+	case controlPriorityNormal:
+		if s.controlNormalCount >= s.controlNormalCap {
+			return protocolv2.ErrControlQueueFull
+		}
+	case controlPriorityLiveness:
+		if s.controlLivenessCount >= s.controlLivenessCap {
+			return protocolv2.ErrControlQueueFull
+		}
+	default:
+		return ErrSessionProtocol
 	}
 
 	s.cryptoMu.RLock()
@@ -95,12 +118,15 @@ func (s *engineSession) commitControl(typ protocolv2.InnerType, payload []byte, 
 		s.controlIdle = make(chan struct{})
 	}
 	s.controlQueue = append(s.controlQueue, queuedControlRecord{
-		typ: typ, epoch: epoch, sequence: sequence, raw: raw, critical: critical,
+		typ: typ, epoch: epoch, sequence: sequence, raw: raw, priority: priority,
 	})
-	if critical {
+	switch priority {
+	case controlPriorityCritical:
 		s.controlCriticalCount++
-	} else {
+	case controlPriorityNormal:
 		s.controlNormalCount++
+	case controlPriorityLiveness:
+		s.controlLivenessCount++
 	}
 	if sequence == math.MaxUint64 {
 		s.controlSendExhausted = true
@@ -112,6 +138,42 @@ func (s *engineSession) commitControl(typ protocolv2.InnerType, payload []byte, 
 	default:
 	}
 	return nil
+}
+
+func (s *engineSession) commitControlPriorityWait(ctx context.Context, typ protocolv2.InnerType, payload []byte, priority controlPriority) error {
+	for {
+		err := s.commitControlPriority(typ, payload, nil, priority)
+		if !errors.Is(err, protocolv2.ErrControlQueueFull) {
+			return err
+		}
+		s.controlActorMu.Lock()
+		if s.controlPriorityHasCapacityLocked(priority) {
+			s.controlActorMu.Unlock()
+			continue
+		}
+		changed := s.controlCapacityChanged
+		s.controlActorMu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-s.ctx.Done():
+			return s.sessionError()
+		}
+	}
+}
+
+func (s *engineSession) controlPriorityHasCapacityLocked(priority controlPriority) bool {
+	switch priority {
+	case controlPriorityCritical:
+		return s.controlCriticalCount < s.controlCriticalCap
+	case controlPriorityNormal:
+		return s.controlNormalCount < s.controlNormalCap
+	case controlPriorityLiveness:
+		return s.controlLivenessCount < s.controlLivenessCap
+	default:
+		return false
+	}
 }
 
 func (s *engineSession) controlWriterLoop() {
@@ -141,11 +203,16 @@ func (s *engineSession) controlWriterLoop() {
 			s.controlActorMu.Lock()
 			s.controlQueue[0] = queuedControlRecord{}
 			s.controlQueue = s.controlQueue[1:]
-			if record.critical {
+			switch record.priority {
+			case controlPriorityCritical:
 				s.controlCriticalCount--
-			} else {
+			case controlPriorityNormal:
 				s.controlNormalCount--
+			case controlPriorityLiveness:
+				s.controlLivenessCount--
 			}
+			close(s.controlCapacityChanged)
+			s.controlCapacityChanged = make(chan struct{})
 			if len(s.controlQueue) == 0 {
 				close(s.controlIdle)
 			}
@@ -266,7 +333,7 @@ func (s *engineSession) controlLoop() {
 func (s *engineSession) handleControl(typ protocolv2.InnerType, payload []byte) error {
 	switch typ {
 	case protocolv2.InnerPing:
-		return s.sendControl(protocolv2.InnerPong, payload)
+		return s.commitControlPriorityWait(s.ctx, protocolv2.InnerPong, payload, controlPriorityLiveness)
 	case protocolv2.InnerPong:
 		nonce := binary.BigEndian.Uint64(payload)
 		s.pingsMu.Lock()
@@ -313,6 +380,62 @@ func (s *engineSession) handleControl(typ protocolv2.InnerType, payload []byte) 
 }
 
 func (s *engineSession) ProbeLiveness(ctx context.Context) (time.Duration, error) {
+	return s.probeLiveness(ctx, false)
+}
+
+func (s *engineSession) registerResetConfirmation() uint64 {
+	s.resetConfirmMu.Lock()
+	s.resetConfirmNext++
+	target := s.resetConfirmNext
+	s.resetConfirmMu.Unlock()
+	return target
+}
+
+func (s *engineSession) confirmResetDelivery(target uint64) error {
+	for {
+		s.resetConfirmMu.Lock()
+		if s.resetConfirmComplete >= target {
+			s.resetConfirmMu.Unlock()
+			return nil
+		}
+		flight := s.resetConfirmFlight
+		if flight == nil {
+			flight = &resetConfirmationFlight{target: s.resetConfirmNext, done: make(chan struct{})}
+			s.resetConfirmFlight = flight
+			s.resetConfirmMu.Unlock()
+
+			ctx, cancel := context.WithTimeout(context.Background(), resetControlConfirmTimeout)
+			_, err := s.probeLiveness(ctx, true)
+			cancel()
+
+			s.resetConfirmMu.Lock()
+			flight.err = err
+			if err == nil && s.resetConfirmComplete < flight.target {
+				s.resetConfirmComplete = flight.target
+			}
+			if s.resetConfirmFlight == flight {
+				s.resetConfirmFlight = nil
+			}
+			close(flight.done)
+			s.resetConfirmMu.Unlock()
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		s.resetConfirmMu.Unlock()
+		select {
+		case <-flight.done:
+			if flight.err != nil {
+				return flight.err
+			}
+		case <-s.ctx.Done():
+			return s.sessionError()
+		}
+	}
+}
+
+func (s *engineSession) probeLiveness(ctx context.Context, critical bool) (time.Duration, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -331,7 +454,17 @@ func (s *engineSession) ProbeLiveness(ctx context.Context) (time.Duration, error
 	var payload [8]byte
 	binary.BigEndian.PutUint64(payload[:], nonce)
 	started := time.Now()
-	if err := s.sendControl(protocolv2.InnerPing, payload[:]); err != nil {
+	priority := controlPriorityNormal
+	if critical {
+		priority = controlPriorityLiveness
+	}
+	var err error
+	if critical {
+		err = s.commitControlPriorityWait(ctx, protocolv2.InnerPing, payload[:], priority)
+	} else {
+		err = s.commitControlPriority(protocolv2.InnerPing, payload[:], nil, priority)
+	}
+	if err != nil {
 		s.removePing(nonce)
 		return 0, fmt.Errorf("%w: %v", ErrLivenessProbe, err)
 	}
