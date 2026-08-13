@@ -75,14 +75,17 @@ describe("SessionV2 stream lifecycle regressions", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(incoming.stream.terminalError).toBeUndefined();
 
+    const drained = new Uint8Array(payload.length);
     let received = 0;
     while (true) {
       const chunk = await incoming.stream.read();
       if (chunk === null) break;
-      expect(chunk).toEqual(payload.subarray(received, received + chunk.length));
+      expect(received + chunk.length).toBeLessThanOrEqual(drained.length);
+      drained.set(chunk, received);
       received += chunk.length;
     }
     expect(received).toBe(payload.length);
+    expect(bytesEqual(drained, payload)).toBe(true);
     expect(incoming.stream.terminalError).toBeUndefined();
     expect(server.terminalError).toBeUndefined();
 
@@ -456,6 +459,13 @@ async function eventually(assertion: () => void): Promise<void> {
 
 async function expectPeerReset(operation: Promise<unknown>): Promise<void> {
   await expect(operation).rejects.toMatchObject({ code: "stream_reset" });
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index++) difference |= left[index]! ^ right[index]!;
+  return difference === 0;
 }
 
 function streamSendEpoch(stream: Awaited<ReturnType<SessionV2["openStream"]>>): number {
