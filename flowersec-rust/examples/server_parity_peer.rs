@@ -993,7 +993,10 @@ async fn run_tunnel_endpoint_b(carrier: &str) {
     assert_cancellable_wait(session.as_ref()).await;
     executed.record(&["cancel"]);
     if env::var("FLOWERSEC_PARITY_CLIENT_PROFILE").is_ok() {
-        external_server(session.as_ref(), &executed).await;
+        tokio::join!(
+            external_server(session.as_ref(), &executed),
+            server_streams(session.as_ref(), "tunnel", &executed),
+        );
     } else if carrier == "websocket" {
         tokio::join!(
             rpc_and_notifications(

@@ -167,7 +167,7 @@ async function runClientProfileTopology(topology) {
     await requireSuccessfulExit(endpointA, `${id} ${clientProfile} endpoint A`);
 
     const endpointBResult = await nextPeerJSON(endpointB, `${id} endpoint B result`);
-    assertResult(endpointBResult, "endpoint-b-result", topology.endpoint_b, "websocket", ["admission", "close", "cleanup"], `${id} endpoint B`);
+    assertResult(endpointBResult, "endpoint-b-result", topology.endpoint_b, "websocket", ["admission", "cancel", "rpc", "notification", "stream-metadata", "stream-fin", "stream-reset", "close", "cleanup"], `${id} endpoint B`);
     await requireSuccessfulExit(endpointB, `${id} endpoint B`);
 
     relay.child.stdin.end(`${JSON.stringify({ type: "close" })}\n`);
