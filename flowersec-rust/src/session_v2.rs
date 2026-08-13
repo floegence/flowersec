@@ -2247,8 +2247,6 @@ async fn close_session_v2(session: &EncryptedSessionV2) -> io::Result<()> {
     if session.begin_closing() {
         record_terminal_v2(session, &closed());
         session.rpc.notifications.clear();
-        session.terminate_stream_buffers();
-        session.canceled.cancel();
         let deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
         let flush = match tokio::time::timeout_at(deadline, async {
             send_goaway_v2(session, NORMAL_CLOSE_REASON_V2).await?;
@@ -2270,6 +2268,8 @@ async fn close_session_v2(session: &EncryptedSessionV2) -> io::Result<()> {
                 "Flowersec v2 close flush timeout",
             )),
         };
+        session.terminate_stream_buffers();
+        session.canceled.cancel();
         let carrier = match tokio::time::timeout_at(deadline, session.carrier.close()).await {
             Ok(result) => result,
             Err(_) => Err(io::Error::new(
@@ -2300,7 +2300,6 @@ async fn close_peer_session_v2(session: &EncryptedSessionV2) {
     }
     record_terminal_v2(session, &closed());
     session.rpc.notifications.clear();
-    session.terminate_stream_buffers();
     let deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
     let reply = tokio::time::timeout_at(deadline, async {
         send_control_v2(
@@ -2312,6 +2311,7 @@ async fn close_peer_session_v2(session: &EncryptedSessionV2) {
         session.control.close_write_delivered().await
     })
     .await;
+    session.terminate_stream_buffers();
     session.canceled.cancel();
     let _ = reply;
     let _ = tokio::time::timeout_at(deadline, session.carrier.close()).await;
