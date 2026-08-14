@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,6 +171,31 @@ func TestSummarizePayloadThroughputReportsBytesPerSecondAndLatency(t *testing.T)
 	summary := summarizePayloadThroughput(result)
 	if summary.Bytes != 6000 || summary.BytesPerSecond != 2000 || summary.P50 != 3*time.Millisecond || summary.P95 != 6*time.Millisecond {
 		t.Fatalf("payload throughput summary = %+v", summary)
+	}
+}
+
+func TestThroughputReportPreservesMetricsWhenResourceThresholdFails(t *testing.T) {
+	contract := productionSingleConnectionThroughputContracts()[0]
+	result := payloadThroughputResult{
+		Carrier:  carrier.KindWebSocket,
+		Baseline: caseResourceRecord{RSSBytes: 1},
+		Resources: []caseResourceRecord{
+			{Phase: "baseline", RSSBytes: 1},
+			{Phase: "measured sample 1", AtNS: int64(15 * time.Second), RSSBytes: 2, CPUNanoseconds: uint64(121 * time.Second)},
+		},
+		Samples: []payloadThroughputSample{
+			{Bytes: 10 << 20, Duration: 5 * time.Second, BytesPerSecond: 2 << 20, Latencies: []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond, time.Millisecond, time.Millisecond}},
+			{Bytes: 10 << 20, Duration: 5 * time.Second, BytesPerSecond: 2 << 20, Latencies: []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond, time.Millisecond, time.Millisecond}},
+			{Bytes: 10 << 20, Duration: 5 * time.Second, BytesPerSecond: 2 << 20, Latencies: []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond, time.Millisecond, time.Millisecond}},
+		},
+	}
+	result.Summary = summarizePayloadThroughput(result)
+	report := throughputMatrixPerformanceResult("performance/single-connection/wss", carrier.KindWebSocket, "single-connection", []payloadThroughputCoordinateResult{{Contract: contract, Result: result}}, nil)
+	if report.Status != "FAIL" || report.Stage != "measurement" || !strings.Contains(report.FirstError, "CPU time") {
+		t.Fatalf("threshold failure was not promoted to the case: %+v", report)
+	}
+	if err := report.Validate(); err != nil {
+		t.Fatalf("failed report did not preserve valid observed metrics: %v", err)
 	}
 }
 

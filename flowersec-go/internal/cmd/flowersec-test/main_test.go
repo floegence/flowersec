@@ -215,6 +215,48 @@ func TestPerformanceFailureWritesPartialReportAndReturnsNonzero(t *testing.T) {
 	}
 }
 
+func TestPerformanceStructuredFailureWritesImmediatelyAndContinues(t *testing.T) {
+	root := t.TempDir()
+	reportPath := filepath.Join(t.TempDir(), "performance-report.md")
+	progressPath := filepath.Join(t.TempDir(), "test-progress.json")
+	partialObserved := false
+	tests := []registeredTest{
+		{ID: "performance/single-connection/wss", Suite: "performance", Timeout: time.Second, Run: func(_ context.Context, run runContext) error {
+			return perfreport.WriteCaseResult(run.ResultPath, perfreport.CaseResult{
+				ID: "performance/single-connection/wss", Section: perfreport.SectionSingleConnection, Status: perfreport.StatusFail,
+				Stage: "measurement", FirstError: "CPU time observed 121 CPU-s, threshold <= 120 CPU-s",
+				Measurements: []perfreport.Measurement{{Name: "CPU time", Observed: 121, Threshold: 120, Unit: "CPU-s", Comparator: "<=", Status: perfreport.StatusFail}},
+			})
+		}},
+		{ID: "performance/throughput/wss", Suite: "performance", Timeout: time.Second, Run: func(_ context.Context, run runContext) error {
+			data, err := os.ReadFile(reportPath)
+			partialObserved = err == nil && strings.Contains(string(data), "121.000")
+			return perfreport.WriteCaseResult(run.ResultPath, perfreport.CaseResult{
+				ID: "performance/throughput/wss", Section: perfreport.SectionStreamingThroughput, Status: perfreport.StatusPass,
+				Measurements: []perfreport.Measurement{{Name: "throughput", Observed: 10, Threshold: 1, Unit: "MiB/s", Comparator: ">=", Status: perfreport.StatusPass}},
+			})
+		}},
+	}
+	environment := perfreport.Environment{HostName: "udesk24", OS: "Ubuntu", LogicalCPUs: 4, MemoryBytes: 8 << 30}
+	var stdout, stderr bytes.Buffer
+	err := executePerformanceSuite(context.Background(), &stdout, &stderr, "run", progressPath, root, testSourceSHA, tests, false, reportPath, environment)
+	if err == nil {
+		t.Fatal("integrated performance returned success after a structured threshold failure")
+	}
+	if !partialObserved {
+		t.Fatal("structured threshold failure was not atomically reported before the next case")
+	}
+	data, readErr := os.ReadFile(reportPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	for _, want := range []string{"Overall status | **FAIL**", "121.000", "10.000", "CPU time observed"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("integrated failure report missing %q:\n%s", want, data)
+		}
+	}
+}
+
 func TestRequiredGoTestOutputRejectsSkipAndMissingTarget(t *testing.T) {
 	for name, output := range map[string]string{
 		"skip": strings.Join([]string{

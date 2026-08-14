@@ -170,9 +170,17 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 		}
 		next := firstIncomplete(tests, current.Completed)
 		if next == nil {
-			report := performanceReport(sourceSHA, state, environment, perfreport.StatusPass)
+			status := perfreport.StatusPass
+			failure := firstPerformanceCaseFailure(state.Cases)
+			if failure != nil {
+				status = perfreport.StatusFail
+			}
+			report := performanceReport(sourceSHA, state, environment, status)
 			if err := perfreport.WriteMarkdown(reportPath, report); err != nil {
 				return fmt.Errorf("write performance report: %w", err)
+			}
+			if failure != nil {
+				return failure
 			}
 			if err := clearProgress(progressPath); err != nil {
 				return err
@@ -236,6 +244,32 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 		if runErr == nil && resultErr != nil {
 			runErr = fmt.Errorf("structured case result: %w", resultErr)
 		}
+		if runErr == nil && result.Status == perfreport.StatusFail {
+			state.Cases = mergeCaseResult(state.Cases, result)
+			current.Completed = append(current.Completed, next.ID)
+			if err := writePerformanceState(statePath, state); err != nil {
+				return err
+			}
+			if err := writeProgress(progressPath, current, tests); err != nil {
+				return err
+			}
+			if err := perfreport.WriteMarkdown(reportPath, performanceReport(sourceSHA, state, environment, perfreport.StatusFail)); err != nil {
+				return fmt.Errorf("write partial performance report: %w", err)
+			}
+			failure := boundedText(result.FirstError, 64<<10)
+			logPath, logErr := writeFailure(progressPath, next.ID, failure)
+			if !debug {
+				_ = os.RemoveAll(tempDir)
+			}
+			fmt.Fprintf(stderr, "[FAIL] %s %s: %s\n", next.ID, duration, firstLine(failure))
+			if logErr == nil {
+				fmt.Fprintf(stderr, "failure log: %s\n", logPath)
+			}
+			if logErr != nil {
+				return logErr
+			}
+			continue
+		}
 		if runErr != nil {
 			if resultErr != nil {
 				result = perfreport.CaseResult{ID: next.ID, Section: sectionForCase(next.ID), Status: perfreport.StatusFail, StartedAt: started, EndedAt: time.Now(), Stage: "runner", FirstError: firstLine(runErr.Error())}
@@ -275,6 +309,11 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 		if err := writeProgress(progressPath, current, tests); err != nil {
 			return err
 		}
+		if firstPerformanceCaseFailure(state.Cases) != nil {
+			if err := perfreport.WriteMarkdown(reportPath, performanceReport(sourceSHA, state, environment, perfreport.StatusFail)); err != nil {
+				return fmt.Errorf("refresh partial performance report: %w", err)
+			}
+		}
 		_ = os.Remove(failurePath(progressPath, next.ID))
 		if err := os.RemoveAll(tempDir); err != nil {
 			return err
@@ -285,6 +324,15 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 
 func performanceReport(sourceSHA string, state performanceState, environment perfreport.Environment, status perfreport.Status) perfreport.Report {
 	return perfreport.Report{SourceSHA: sourceSHA, Status: status, StartedAt: state.StartedAt, EndedAt: time.Now(), Environment: environment, Cases: state.Cases}
+}
+
+func firstPerformanceCaseFailure(results []perfreport.CaseResult) error {
+	for _, result := range results {
+		if result.Status == perfreport.StatusFail {
+			return fmt.Errorf("performance case %s failed: %s", result.ID, result.FirstError)
+		}
+	}
+	return nil
 }
 
 func mergeCaseResult(results []perfreport.CaseResult, next perfreport.CaseResult) []perfreport.CaseResult {

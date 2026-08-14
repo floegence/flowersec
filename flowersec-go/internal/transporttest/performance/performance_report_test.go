@@ -35,6 +35,22 @@ func measured(name string, observed, threshold float64, unit, comparator string)
 	return perfreport.Measurement{Name: name, Observed: observed, Threshold: threshold, Unit: unit, Comparator: comparator, Status: status}
 }
 
+func finalizePerformanceResult(result perfreport.CaseResult) perfreport.CaseResult {
+	if result.Status != perfreport.StatusPass {
+		return result
+	}
+	for _, measurement := range result.Measurements {
+		if measurement.Status != perfreport.StatusFail {
+			continue
+		}
+		result.Status = perfreport.StatusFail
+		result.Stage = "measurement"
+		result.FirstError = fmt.Sprintf("%s observed %.3f %s, threshold %s %.3f %s", measurement.Name, measurement.Observed, measurement.Unit, measurement.Comparator, measurement.Threshold, measurement.Unit)
+		break
+	}
+	return result
+}
+
 func capacityPerformanceResult(definition capacityCaseDefinition, contract capacityContract, result capacityCaseResult, caseErr error) perfreport.CaseResult {
 	status := perfreport.StatusPass
 	stage, firstError := "", ""
@@ -74,7 +90,7 @@ func capacityPerformanceResult(definition capacityCaseDefinition, contract capac
 		measurements = append(measurements, capacityResourceMeasurements(result, contract)...)
 	}
 	raw := capacityRawSamples(result)
-	return perfreport.CaseResult{
+	return finalizePerformanceResult(perfreport.CaseResult{
 		ID: caseID, Section: perfreport.SectionCapacity, Status: status, Stage: stage, FirstError: firstError,
 		Configuration: map[string]string{
 			"profile": definition.Profile, "sessions": fmt.Sprint(contract.Sessions), "streams per session": fmt.Sprint(contract.StreamsPerSession),
@@ -82,7 +98,7 @@ func capacityPerformanceResult(definition capacityCaseDefinition, contract capac
 			"carrier/path": capacityCarrierPath(definition), "resource scope": contract.ResourceScope, "resource sampling": "baseline and phase boundaries",
 		},
 		Measurements: measurements, RawSamples: raw,
-	}
+	})
 }
 
 func capacityCarrierPath(definition capacityCaseDefinition) string {
@@ -162,7 +178,7 @@ func throughputPerformanceResult(result payloadThroughputResult, contract payloa
 	}
 	medianRate, peakRate := perfreport.Percentile(rates, .5), perfreport.Percentile(rates, 1)
 	caseID := "performance/throughput/" + carrierReportName(string(result.Carrier))
-	return perfreport.CaseResult{ID: caseID, Section: perfreport.SectionStreamingThroughput, Status: status, Stage: stage, FirstError: firstError,
+	return finalizePerformanceResult(perfreport.CaseResult{ID: caseID, Section: perfreport.SectionStreamingThroughput, Status: status, Stage: stage, FirstError: firstError,
 		Configuration: map[string]string{"carrier": string(result.Carrier), "direction": "client-to-server", "payload": fmt.Sprintf("%d bytes", contract.PayloadBytes), "concurrency": fmt.Sprint(contract.Concurrency), "warm-up": "one verified operation per worker", "measured samples": fmt.Sprint(contract.Samples), "fixed sample window": contract.SampleDuration.String(), "peak definition": "maximum sustained throughput across fixed measured windows"},
 		Measurements: []perfreport.Measurement{
 			measured("sustained median throughput", medianRate, contract.MinBytesPerSecond/float64(1<<20), "MiB/s", ">="),
@@ -172,7 +188,7 @@ func throughputPerformanceResult(result payloadThroughputResult, contract payloa
 			measured("operation p50", durationMS(result.Summary.P50), durationMS(contract.MaxP95), "ms", "<="),
 			measured("operation p95", durationMS(result.Summary.P95), durationMS(contract.MaxP95), "ms", "<="),
 			measured("operation p99", durationMS(result.Summary.P99), durationMS(contract.MaxP95), "ms", "<="),
-		}, RawSamples: raw}
+		}, RawSamples: raw})
 }
 
 type payloadThroughputCoordinateResult struct {
@@ -233,11 +249,11 @@ func throughputMatrixPerformanceResult(caseID string, kind carrier.Kind, mode st
 			raw = append(raw, perfreport.RawSample{Round: 10000 + coordinateIndex*100 + sampleIndex + 1, Phase: fmt.Sprintf("resource %s %d bytes %s", coordinate.Contract.Direction, coordinate.Contract.PayloadBytes, sample.Phase), Values: map[string]float64{"at_ms": float64(sample.AtNS) / 1e6, "rss_bytes": float64(sample.RSSBytes), "cpu_seconds": float64(sample.CPUNanoseconds) / 1e9, "open_fds": float64(sample.OpenFDs), "goroutines": float64(sample.Goroutines), "tasks": float64(sample.Tasks)}})
 		}
 	}
-	return perfreport.CaseResult{
+	return finalizePerformanceResult(perfreport.CaseResult{
 		ID: caseID, Section: section, Status: status, Stage: stage, FirstError: firstError,
 		Configuration: map[string]string{"carrier": string(kind), "mode": mode, "warm-up": "one verified 64 KiB bidirectional round trip before each measured window", "measured samples per coordinate": "3", "fixed sample window": "5s", "peak definition": "maximum sustained throughput across fixed measured windows", "byte accounting": "only fully read and content-verified bytes", "stream cleanup": "FIN required; reset only on failure", "resource scope": "Go test runner process", "resource sampling": "baseline and after each fixed measured window"},
 		Measurements:  measurements, RawSamples: raw,
-	}
+	})
 }
 
 func throughputResourceMeasurements(results []payloadThroughputCoordinateResult) []perfreport.Measurement {
@@ -309,9 +325,9 @@ func soakPerformanceResult(id string, result soakCaseResult, contract soakContra
 		measured("residual sessions", float64(result.Residuals.Sessions), float64(contract.ResidualSessions), "sessions", "<="), measured("residual goroutines", float64(result.Residuals.Goroutines), float64(contract.ResidualGoroutines), "goroutines", "<="), measured("residual FDs", float64(result.Residuals.OpenFDs), float64(contract.ResidualOpenFDs), "FDs", "<="), measured("residual tasks", float64(result.Residuals.Tasks), float64(contract.ResidualTasks), "tasks", "<="), measured("watchdog timeouts", float64(result.WatchdogTimeouts), 0, "timeouts", "<="),
 	}
 	measurements = append(measurements, soakResourceMeasurements(result.Resources, contract.Duration)...)
-	return perfreport.CaseResult{ID: id, Section: perfreport.SectionSoak, Status: status, Stage: stage, FirstError: firstError,
+	return finalizePerformanceResult(perfreport.CaseResult{ID: id, Section: perfreport.SectionSoak, Status: status, Stage: stage, FirstError: firstError,
 		Configuration: map[string]string{"duration": contract.Duration.String(), "cycle period": contract.CyclePeriod.String(), "resource sampling": "baseline, each cycle, and cleanup"},
-		Measurements:  measurements, RawSamples: raw}
+		Measurements:  measurements, RawSamples: raw})
 }
 
 func soakResourceMeasurements(resources []caseResourceRecord, duration time.Duration) []perfreport.Measurement {
@@ -386,11 +402,11 @@ func carrierSoakPerformanceResult(kind carrier.Kind, result carrierSoakResult, c
 			measured("peak normalized CPU utilization", peakCPU, 100, "% logical CPU capacity", "<="),
 		)
 	}
-	return perfreport.CaseResult{
+	return finalizePerformanceResult(perfreport.CaseResult{
 		ID: "performance/soak/" + carrierReportName(string(kind)), Section: perfreport.SectionSoak, Status: status, Stage: stage, FirstError: firstError,
 		Configuration: map[string]string{"carrier": string(kind), "duration": contract.Duration.String(), "cycle period": contract.CyclePeriod.String(), "resource sampling": "baseline, each cycle, and cleanup"},
 		Measurements:  measurements, RawSamples: raw,
-	}
+	})
 }
 
 func durationMS(value time.Duration) float64 { return float64(value) / float64(time.Millisecond) }
