@@ -14,6 +14,7 @@ import (
 type carrierSoakContract struct {
 	Duration           time.Duration
 	CyclePeriod        time.Duration
+	CPUTimeBudget      time.Duration
 	Cycles             int
 	MaxRSSGrowth       uint64
 	MaxGoroutineGrowth int
@@ -48,10 +49,16 @@ func TestProductionCarrierSoakContractIsFrozen(t *testing.T) {
 }
 
 func productionCarrierSoakContract() carrierSoakContract {
-	return carrierSoakContract{
-		Duration: 5 * time.Minute, CyclePeriod: time.Minute, Cycles: 5,
+	contract := carrierSoakContract{
+		Duration: 5 * time.Minute, CyclePeriod: time.Minute, CPUTimeBudget: 5 * time.Minute, Cycles: 5,
 		MaxRSSGrowth: 64 << 20, MaxGoroutineGrowth: 64, MaxOpenFDGrowth: 16, MaxTaskGrowth: 64,
 	}
+	if duration, configured := scaledPerformanceDuration(30 * time.Second); configured {
+		contract.Duration = duration
+		contract.CyclePeriod = duration / 3
+		contract.Cycles = 3
+	}
+	return contract
 }
 
 func TestFocusedProductionCarrierSoakCase(t *testing.T) {

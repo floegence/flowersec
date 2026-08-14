@@ -28,14 +28,21 @@ const externalHostPath = "/var/lib/flowersec-test/cache/toolchains/go/bin:/var/l
 
 const teardownGrace = 10 * time.Second
 
+const (
+	standardPerformanceBudget = 10 * time.Minute
+	minimumPerformanceBudget  = 5 * time.Minute
+	maximumPerformanceBudget  = 24 * time.Hour
+)
+
 var errTeardownTimeout = errors.New("test teardown did not finish within the grace period")
 
 type runContext struct {
-	RunID      string
-	TempDir    string
-	ResultPath string
-	Root       string
-	Debug      bool
+	RunID             string
+	TempDir           string
+	ResultPath        string
+	Root              string
+	Debug             bool
+	PerformanceBudget time.Duration
 }
 
 type registeredTest struct {
@@ -61,16 +68,27 @@ func main() {
 
 func runCLI(args []string) error {
 	if len(args) == 0 || (args[0] != "run" && args[0] != "resume" && args[0] != "status") {
-		return errors.New("usage: flowersec-test <run|resume|status> [--suite NAME] [--report ABSOLUTE.md] [--debug]")
+		return errors.New("usage: flowersec-test <run|resume|status> [--suite NAME] [--report ABSOLUTE.md] [--budget DURATION] [--debug]")
 	}
 	action := args[0]
 	flags := flag.NewFlagSet(action, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	suite := flags.String("suite", "acceptance", "test suite")
 	report := flags.String("report", "", "absolute performance Markdown report path")
+	budgetValue := flags.String("budget", "", "integrated performance suite wall-clock budget")
 	debug := flags.Bool("debug", false, "retain test-owned debug output")
-	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 || (action == "status" && (*debug || *report != "")) {
-		return errors.New("usage: flowersec-test <run|resume|status> [--suite NAME] [--report ABSOLUTE.md] [--debug]")
+	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 || (action == "status" && (*debug || *report != "" || *budgetValue != "")) {
+		return errors.New("usage: flowersec-test <run|resume|status> [--suite NAME] [--report ABSOLUTE.md] [--budget DURATION] [--debug]")
+	}
+	performanceBudget := time.Duration(0)
+	if *suite == "performance" && action != "status" {
+		var err error
+		performanceBudget, err = parsePerformanceBudget(*budgetValue)
+		if err != nil {
+			return err
+		}
+	} else if *budgetValue != "" {
+		return errors.New("--budget is only valid for the integrated performance suite")
 	}
 	var tests []registeredTest
 	var err error
@@ -119,9 +137,27 @@ func runCLI(args []string) error {
 		if err != nil {
 			return err
 		}
-		return executePerformanceSuite(ctx, os.Stdout, os.Stderr, action, path, root, sha, tests, *debug, *report, environment)
+		return executePerformanceSuite(ctx, os.Stdout, os.Stderr, action, path, root, sha, tests, *debug, *report, environment, performanceBudget)
 	}
 	return executeSuite(ctx, os.Stdout, os.Stderr, action, path, root, *suite, sha, tests, *debug)
+}
+
+func parsePerformanceBudget(value string) (time.Duration, error) {
+	if value == "" {
+		return standardPerformanceBudget, nil
+	}
+	budget, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid performance budget %q: %w", value, err)
+	}
+	if budget < minimumPerformanceBudget || budget > maximumPerformanceBudget {
+		return 0, fmt.Errorf("performance budget must be between %s and %s", minimumPerformanceBudget, maximumPerformanceBudget)
+	}
+	return budget, nil
+}
+
+func performanceBudgetEnvironment(budget time.Duration) []string {
+	return []string{"FLOWERSEC_PERFORMANCE_BUDGET=" + budget.String()}
 }
 
 func validatePerformanceReportPath(path, root string) error {

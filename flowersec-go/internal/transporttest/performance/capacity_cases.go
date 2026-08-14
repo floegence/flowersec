@@ -59,7 +59,7 @@ type capacityContract struct {
 }
 
 func productionCapacityContract() capacityContract {
-	return capacityContract{
+	contract := capacityContract{
 		Sessions: 1000, Ramp: 30 * time.Second, Hold: 60 * time.Second, Cleanup: 30 * time.Second,
 		Watchdog: 120 * time.Second, MaxRSS: 1 << 30, MaxCPU: 120 * time.Second,
 		MaxOpenFDs: 8192, MaxGoroutines: 40960, MaxTasks: 8192,
@@ -67,6 +67,13 @@ func productionCapacityContract() capacityContract {
 		MaxLivenessP99: 5 * time.Second, MinConnectsPerSecond: 10, MinLivenessOpsPerSecond: 1,
 		ResourceScope: "go_runner",
 	}
+	if ramp, configured := scaledPerformanceDuration(10 * time.Second); configured {
+		contract.Ramp = ramp
+		contract.Hold, _ = scaledPerformanceDuration(7 * time.Second)
+		contract.Cleanup, _ = scaledPerformanceDuration(3 * time.Second)
+		contract.Watchdog = contract.Ramp + contract.Hold + contract.Cleanup
+	}
+	return contract
 }
 
 func productionBrowserCapacityContract() capacityContract {
@@ -84,7 +91,9 @@ func productionBrowserStreamCapacityContract() capacityContract {
 	contract := productionBrowserCapacityContract()
 	contract.Sessions = 100
 	contract.StreamsPerSession = 128
-	contract.Ramp = 60 * time.Second
+	if _, configured := performanceBudgetScale(); !configured {
+		contract.Ramp = 60 * time.Second
+	}
 	contract.MaxCPU = 240 * time.Second
 	contract.MaxOpenFDs = 32768
 	contract.Watchdog = contract.Ramp + contract.Hold + contract.Cleanup
@@ -96,6 +105,14 @@ func productionBrowserStreamCapacityContract() capacityContract {
 }
 
 func browserCapacityOperationDeadline(definition capacityCaseDefinition) time.Duration {
+	if _, configured := performanceBudgetScale(); configured {
+		if definition.Kind == capacityBrowserStream {
+			deadline, _ := scaledPerformanceDuration(10 * time.Second)
+			return deadline
+		}
+		deadline, _ := scaledPerformanceDuration(5 * time.Second)
+		return deadline
+	}
 	if definition.Kind == capacityBrowserStream {
 		return 60 * time.Second
 	}

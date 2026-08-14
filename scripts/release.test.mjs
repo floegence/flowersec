@@ -694,7 +694,7 @@ test("default and final Go gates use the maintained source and test runner", () 
   assert.match(makefile, /^diagnostic:\n\t\$\(FLOWERSEC_TEST_HOST\) run --suite diagnostic$/m);
   assert.match(
     makefile,
-    /^performance:\n\t@test -n "\$\(REPORT\)" \|\| \{ echo "REPORT=\/absolute\/path\/performance-report\.md is required" >&2; exit 2; \}\n\t\$\(FLOWERSEC_TEST_HOST\) run --suite performance --report "\$\(REPORT\)"$/m,
+    /^performance:\n\t@test -n "\$\(REPORT\)" \|\| \{ echo "REPORT=\/absolute\/path\/performance-report\.md is required" >&2; exit 2; \}\n\t\$\(FLOWERSEC_TEST_HOST\) run --suite performance --report "\$\(REPORT\)" --budget "\$\(PERFORMANCE_BUDGET\)"$/m,
   );
 });
 

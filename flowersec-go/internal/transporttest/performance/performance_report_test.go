@@ -324,7 +324,7 @@ func soakPerformanceResult(id string, result soakCaseResult, contract soakContra
 		measured("goroutine growth", float64(result.GoroutineGrowth), float64(contract.MaxGoroutineGrowth), "goroutines", "<="), measured("open FD growth", float64(result.OpenFDGrowth), float64(contract.MaxOpenFDGrowth), "FDs", "<="), measured("task growth", float64(result.TaskGrowth), float64(contract.MaxTaskGrowth), "tasks", "<="),
 		measured("residual sessions", float64(result.Residuals.Sessions), float64(contract.ResidualSessions), "sessions", "<="), measured("residual goroutines", float64(result.Residuals.Goroutines), float64(contract.ResidualGoroutines), "goroutines", "<="), measured("residual FDs", float64(result.Residuals.OpenFDs), float64(contract.ResidualOpenFDs), "FDs", "<="), measured("residual tasks", float64(result.Residuals.Tasks), float64(contract.ResidualTasks), "tasks", "<="), measured("watchdog timeouts", float64(result.WatchdogTimeouts), 0, "timeouts", "<="),
 	}
-	measurements = append(measurements, soakResourceMeasurements(result.Resources, contract.Duration)...)
+	measurements = append(measurements, soakResourceMeasurements(result.Resources, contract.CPUTimeBudget)...)
 	return finalizePerformanceResult(perfreport.CaseResult{ID: id, Section: perfreport.SectionSoak, Status: status, Stage: stage, FirstError: firstError,
 		Configuration: map[string]string{"duration": contract.Duration.String(), "cycle period": contract.CyclePeriod.String(), "resource sampling": "baseline, each cycle, and cleanup"},
 		Measurements:  measurements, RawSamples: raw})
@@ -397,7 +397,7 @@ func carrierSoakPerformanceResult(kind carrier.Kind, result carrierSoakResult, c
 			previousCPU, previousAt = sample.CPUNanoseconds, sample.At
 		}
 		measurements = append(measurements,
-			measured("CPU time", float64(cpuTime)/1e9, contract.Duration.Seconds()*float64(runtime.NumCPU()), "CPU-s", "<="),
+			measured("CPU time", float64(cpuTime)/1e9, contract.CPUTimeBudget.Seconds()*float64(runtime.NumCPU()), "CPU-s", "<="),
 			measured("average normalized CPU utilization", averageCPU, 100, "% logical CPU capacity", "<="),
 			measured("peak normalized CPU utilization", peakCPU, 100, "% logical CPU capacity", "<="),
 		)

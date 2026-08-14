@@ -41,7 +41,7 @@ test("local and external test targets remain separated", () => {
   const performanceRecipe = canonical.match(/^performance:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.equal(performanceRecipe.trim(), [
     '@test -n "$(REPORT)" || { echo "REPORT=/absolute/path/performance-report.md is required" >&2; exit 2; }',
-    '\t$(FLOWERSEC_TEST_HOST) run --suite performance --report "$(REPORT)"',
+    '\t$(FLOWERSEC_TEST_HOST) run --suite performance --report "$(REPORT)" --budget "$(PERFORMANCE_BUDGET)"',
   ].join("\n"));
   assert.match(canonical, /^test:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite acceptance$/m);
   assert.match(canonical, /^test-resume:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test resume --suite acceptance$/m);

@@ -153,12 +153,13 @@ type Environment struct {
 }
 
 type Report struct {
-	SourceSHA   string       `json:"source_sha"`
-	Status      Status       `json:"status"`
-	StartedAt   time.Time    `json:"started_at"`
-	EndedAt     time.Time    `json:"ended_at"`
-	Environment Environment  `json:"environment"`
-	Cases       []CaseResult `json:"cases"`
+	SourceSHA   string        `json:"source_sha"`
+	Status      Status        `json:"status"`
+	StartedAt   time.Time     `json:"started_at"`
+	EndedAt     time.Time     `json:"ended_at"`
+	Budget      time.Duration `json:"budget_ns,omitempty"`
+	Environment Environment   `json:"environment"`
+	Cases       []CaseResult  `json:"cases"`
 }
 
 func (value Report) Validate() error {
@@ -326,7 +327,11 @@ func renderMarkdown(report Report) []byte {
 	}
 	fmt.Fprint(&output, "# Flowersec Performance Report\n\n")
 	fmt.Fprint(&output, "## Executive Summary\n\n")
-	fmt.Fprintf(&output, "| Field | Value |\n|---|---|\n| Source SHA | `%s` |\n| Overall status | **%s** |\n| Started | %s |\n| Ended | %s |\n| Total duration | %s |\n| Passed / Failed / Unsupported | %d / %d / %d |\n\n", report.SourceSHA, report.Status, report.StartedAt.Format(time.RFC3339), report.EndedAt.Format(time.RFC3339), report.EndedAt.Sub(report.StartedAt).Round(time.Millisecond), passed, failed, unsupported)
+	fmt.Fprintf(&output, "| Field | Value |\n|---|---|\n| Source SHA | `%s` |\n", report.SourceSHA)
+	if report.Budget > 0 {
+		fmt.Fprintf(&output, "| Wall-clock budget | %s |\n", report.Budget)
+	}
+	fmt.Fprintf(&output, "| Overall status | **%s** |\n| Started | %s |\n| Ended | %s |\n| Total duration | %s |\n| Passed / Failed / Unsupported | %d / %d / %d |\n\n", report.Status, report.StartedAt.Format(time.RFC3339), report.EndedAt.Format(time.RFC3339), report.EndedAt.Sub(report.StartedAt).Round(time.Millisecond), passed, failed, unsupported)
 	env := report.Environment
 	fmt.Fprint(&output, "## Test Environment\n\n")
 	fmt.Fprintf(&output, "| Field | Value |\n|---|---|\n| Host | **%s** |\n| OS | %s |\n| Kernel | %s |\n| Architecture | %s |\n| CPU | %s (%d logical CPUs) |\n| Memory | %.2f GiB |\n| Go | %s |\n| Node | %s |\n| Chromium | %s |\n\n", env.HostName, env.OS, env.Kernel, env.Architecture, env.CPUModel, env.LogicalCPUs, float64(env.MemoryBytes)/float64(1<<30), env.GoVersion, env.NodeVersion, env.ChromiumVersion)

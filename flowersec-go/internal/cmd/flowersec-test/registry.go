@@ -164,7 +164,8 @@ func throughputEntry(id, suite, kind, mode string, timeout time.Duration) regist
 func performanceCapacityEntry(id, suite, caseID string) registeredTest {
 	return registeredTest{ID: id, Suite: suite, Timeout: 5 * time.Minute, Run: func(ctx context.Context, run runContext) error {
 		arguments := []string{"-C", "flowersec-go", "test", "-json", "-timeout=5m", "-count=1", "-run", "^TestFocusedProductionCapacityCase$", "./internal/transporttest/performance"}
-		environment := append(performanceCapacityEnvironment(caseID), "FLOWERSEC_TEST_RESULT_PATH="+run.ResultPath)
+		environment := append(performanceCapacityEnvironment(caseID), performanceBudgetEnvironment(run.PerformanceBudget)...)
+		environment = append(environment, "FLOWERSEC_TEST_RESULT_PATH="+run.ResultPath)
 		return runRequiredGoTest(ctx, run.Root, withRunID(environment, run.RunID), arguments, "./internal/transporttest/performance", "TestFocusedProductionCapacityCase")
 	}}
 }
@@ -184,8 +185,9 @@ func carrierSoakEntry(id, suite, kind string) registeredTest {
 func requiredPerformanceGoTestEntry(id, suite, testName string, environment []string, timeout time.Duration) registeredTest {
 	return registeredTest{ID: id, Suite: suite, Timeout: timeout, Run: func(ctx context.Context, run runContext) error {
 		arguments := []string{"-C", "flowersec-go", "test", "-json", "-timeout=" + timeout.String(), "-count=1", "-run", "^" + regexp.QuoteMeta(testName) + "$", "./internal/transporttest/performance"}
-		environment = append(append([]string(nil), environment...), "FLOWERSEC_TEST_RESULT_PATH="+run.ResultPath)
-		return runRequiredGoTest(ctx, run.Root, withRunID(environment, run.RunID), arguments, "./internal/transporttest/performance", testName)
+		caseEnvironment := append(append([]string(nil), environment...), performanceBudgetEnvironment(run.PerformanceBudget)...)
+		caseEnvironment = append(caseEnvironment, "FLOWERSEC_TEST_RESULT_PATH="+run.ResultPath)
+		return runRequiredGoTest(ctx, run.Root, withRunID(caseEnvironment, run.RunID), arguments, "./internal/transporttest/performance", testName)
 	}}
 }
 

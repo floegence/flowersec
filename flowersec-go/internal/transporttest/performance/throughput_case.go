@@ -34,25 +34,37 @@ const (
 )
 
 func productionPayloadThroughputContract() payloadThroughputContract {
-	return payloadThroughputContract{
+	contract := payloadThroughputContract{
 		PayloadBytes: 64 << 10, Concurrency: 4, SampleDuration: 5 * time.Second, Samples: 3,
 		MinBytesPerSecond: 1 << 20, MaxP95: 2 * time.Second, Direction: payloadClientToServer,
 	}
+	if duration, configured := scaledPerformanceDuration(700 * time.Millisecond); configured {
+		contract.SampleDuration = duration
+	}
+	return contract
 }
 
 func productionSingleConnectionThroughputContracts() []payloadThroughputContract {
 	result := make([]payloadThroughputContract, 0, 3)
+	sampleDuration := 5 * time.Second
+	if duration, configured := scaledPerformanceDuration(700 * time.Millisecond); configured {
+		sampleDuration = duration
+	}
 	for _, direction := range []payloadDirection{payloadClientToServer, payloadServerToClient, payloadFullDuplex} {
-		result = append(result, payloadThroughputContract{PayloadBytes: 1 << 20, Concurrency: 1, SampleDuration: 5 * time.Second, Samples: 3, MinBytesPerSecond: 1 << 20, MaxP95: 2 * time.Second, Direction: direction})
+		result = append(result, payloadThroughputContract{PayloadBytes: 1 << 20, Concurrency: 1, SampleDuration: sampleDuration, Samples: 3, MinBytesPerSecond: 1 << 20, MaxP95: 2 * time.Second, Direction: direction})
 	}
 	return result
 }
 
 func productionStreamingThroughputContracts() []payloadThroughputContract {
 	result := make([]payloadThroughputContract, 0, 9)
+	sampleDuration := 5 * time.Second
+	if duration, configured := scaledPerformanceDuration(700 * time.Millisecond); configured {
+		sampleDuration = duration
+	}
 	for _, payloadBytes := range []int{1 << 10, 64 << 10, 1 << 20} {
 		for _, direction := range []payloadDirection{payloadClientToServer, payloadServerToClient, payloadFullDuplex} {
-			result = append(result, payloadThroughputContract{PayloadBytes: payloadBytes, Concurrency: 4, SampleDuration: 5 * time.Second, Samples: 3, MinBytesPerSecond: 1 << 20, MaxP95: 2 * time.Second, Direction: direction})
+			result = append(result, payloadThroughputContract{PayloadBytes: payloadBytes, Concurrency: 4, SampleDuration: sampleDuration, Samples: 3, MinBytesPerSecond: 1 << 20, MaxP95: 2 * time.Second, Direction: direction})
 		}
 	}
 	return result

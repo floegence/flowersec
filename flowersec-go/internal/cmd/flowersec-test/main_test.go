@@ -172,6 +172,29 @@ func TestPerformanceReportPathIsRequiredAbsoluteMarkdownOutsideRepository(t *tes
 	}
 }
 
+func TestPerformanceBudgetDefaultsToTenMinutesAndRejectsIncompleteWindows(t *testing.T) {
+	budget, err := parsePerformanceBudget("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if budget != 10*time.Minute {
+		t.Fatalf("default performance budget = %s, want 10m", budget)
+	}
+	if _, err := parsePerformanceBudget("4m59s"); err == nil {
+		t.Fatal("accepted a performance budget too short for the complete plan")
+	}
+	if budget, err := parsePerformanceBudget("25m"); err != nil || budget != 25*time.Minute {
+		t.Fatalf("custom performance budget = %s, %v", budget, err)
+	}
+}
+
+func TestPerformanceBudgetEnvironmentIsExplicit(t *testing.T) {
+	got := performanceBudgetEnvironment(10 * time.Minute)
+	if len(got) != 1 || got[0] != "FLOWERSEC_PERFORMANCE_BUDGET=10m0s" {
+		t.Fatalf("performance budget environment = %#v", got)
+	}
+}
+
 func TestPerformanceStateRestoresSameSHAAndRejectsDifferentSHA(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "performance-results.json")
 	state := performanceState{SourceSHA: testSourceSHA, StartedAt: time.Now(), Cases: []perfreport.CaseResult{{ID: "case/a", Section: perfreport.SectionCapacity, Status: perfreport.StatusPass, Measurements: []perfreport.Measurement{{Name: "sessions", Observed: 1000, Threshold: 1000, Unit: "sessions", Comparator: ">=", Status: perfreport.StatusPass}}}}}
@@ -184,6 +207,59 @@ func TestPerformanceStateRestoresSameSHAAndRejectsDifferentSHA(t *testing.T) {
 	}
 	if _, err := readPerformanceState(path, strings.Repeat("f", 40)); err == nil || !strings.Contains(err.Error(), "source SHA") {
 		t.Fatalf("different source SHA was not rejected: %v", err)
+	}
+}
+
+func TestPerformanceResumeRejectsDifferentBudget(t *testing.T) {
+	root := t.TempDir()
+	reportPath := filepath.Join(t.TempDir(), "performance-report.md")
+	progressPath := filepath.Join(t.TempDir(), "test-progress.json")
+	tests := []registeredTest{{ID: "performance/case", Suite: "performance", Timeout: time.Second, Run: func(_ context.Context, run runContext) error {
+		return perfreport.WriteCaseResult(run.ResultPath, perfreport.CaseResult{ID: "performance/case", Section: perfreport.SectionCapacity, Status: perfreport.StatusPass, Measurements: []perfreport.Measurement{{Name: "sessions", Observed: 1, Threshold: 1, Unit: "sessions", Comparator: "==", Status: perfreport.StatusPass}}})
+	}}}
+	environment := perfreport.Environment{HostName: "udesk24", OS: "Ubuntu", LogicalCPUs: 4, MemoryBytes: 8 << 30}
+	var stdout, stderr bytes.Buffer
+	if err := executePerformanceSuite(context.Background(), &stdout, &stderr, "run", progressPath, root, testSourceSHA, tests, false, reportPath, environment, 10*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(filepath.Dir(progressPath), "performance-results.json")
+	state := performanceState{SourceSHA: testSourceSHA, StartedAt: time.Now(), Budget: 10 * time.Minute, Cases: []perfreport.CaseResult{}}
+	if err := writePerformanceState(statePath, state); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeProgress(progressPath, progress{Plan: planName, SourceSHA: testSourceSHA, Suite: "performance", Completed: []string{}}, tests); err != nil {
+		t.Fatal(err)
+	}
+	err := executePerformanceSuite(context.Background(), &stdout, &stderr, "resume", progressPath, root, testSourceSHA, tests, false, reportPath, environment, 20*time.Minute)
+	if err == nil || !strings.Contains(err.Error(), "budget") {
+		t.Fatalf("resume with a different budget = %v", err)
+	}
+}
+
+func TestPerformanceBudgetCancellationWritesPartialReport(t *testing.T) {
+	root := t.TempDir()
+	reportPath := filepath.Join(t.TempDir(), "performance-report.md")
+	progressPath := filepath.Join(t.TempDir(), "test-progress.json")
+	tests := []registeredTest{{ID: "performance/slow", Suite: "performance", Timeout: time.Hour, Run: func(ctx context.Context, _ runContext) error {
+		<-ctx.Done()
+		return context.Cause(ctx)
+	}}}
+	environment := perfreport.Environment{HostName: "udesk24", OS: "Ubuntu", LogicalCPUs: 4, MemoryBytes: 8 << 30}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	err := executePerformanceSuite(ctx, &stdout, &stderr, "run", progressPath, root, testSourceSHA, tests, false, reportPath, environment, 5*time.Minute)
+	if err == nil {
+		t.Fatal("cancelled performance suite returned success")
+	}
+	data, readErr := os.ReadFile(reportPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	for _, want := range []string{"Overall status | **FAIL**", "suite budget", "5m0s wall-clock budget"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("budget cancellation report missing %q:\n%s", want, data)
+		}
 	}
 }
 
@@ -208,7 +284,7 @@ func TestPerformanceFailureWritesPartialReportAndReturnsNonzero(t *testing.T) {
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	for _, want := range []string{"Overall status | **FAIL**", "first observed error", "1.000", "2.000"} {
+	for _, want := range []string{"Wall-clock budget | 10m0s", "Overall status | **FAIL**", "first observed error", "1.000", "2.000"} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("partial report missing %q:\n%s", want, data)
 		}

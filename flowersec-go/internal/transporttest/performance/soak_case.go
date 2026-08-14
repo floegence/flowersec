@@ -31,6 +31,7 @@ const soakCleanupGrace = 5 * time.Second
 type soakContract struct {
 	Duration           time.Duration
 	CyclePeriod        time.Duration
+	CPUTimeBudget      time.Duration
 	Cycles             int
 	Reconnects         int
 	Migrations         int
@@ -45,10 +46,18 @@ type soakContract struct {
 }
 
 func productionSoakContract() soakContract {
-	return soakContract{
-		Duration: 5 * time.Minute, CyclePeriod: time.Minute, Cycles: 5, Reconnects: 5, Migrations: 5,
+	contract := soakContract{
+		Duration: 5 * time.Minute, CyclePeriod: time.Minute, CPUTimeBudget: 5 * time.Minute, Cycles: 5, Reconnects: 5, Migrations: 5,
 		MaxRSSGrowth: 64 << 20, MaxGoroutineGrowth: 64, MaxOpenFDGrowth: 16, MaxTaskGrowth: 64,
 	}
+	if duration, configured := scaledPerformanceDuration(30 * time.Second); configured {
+		contract.Duration = duration
+		contract.CyclePeriod = duration / 3
+		contract.Cycles = 3
+		contract.Reconnects = 3
+		contract.Migrations = 3
+	}
+	return contract
 }
 
 type soakCycleObservation struct {

@@ -21,6 +21,7 @@ import (
 type performanceState struct {
 	SourceSHA string                  `json:"source_sha"`
 	StartedAt time.Time               `json:"started_at"`
+	Budget    time.Duration           `json:"budget_ns,omitempty"`
 	Cases     []perfreport.CaseResult `json:"cases"`
 }
 
@@ -105,7 +106,16 @@ func writeAtomicFile(path string, data []byte, mode os.FileMode) error {
 	return os.Rename(temporaryPath, path)
 }
 
-func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, action, progressPath, root, sourceSHA string, tests []registeredTest, debug bool, reportPath string, environment perfreport.Environment) error {
+func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, action, progressPath, root, sourceSHA string, tests []registeredTest, debug bool, reportPath string, environment perfreport.Environment, configuredBudget ...time.Duration) error {
+	budget := standardPerformanceBudget
+	if len(configuredBudget) > 0 {
+		budget = configuredBudget[0]
+	}
+	if budget < minimumPerformanceBudget || budget > maximumPerformanceBudget {
+		return fmt.Errorf("performance budget must be between %s and %s", minimumPerformanceBudget, maximumPerformanceBudget)
+	}
+	executionCtx, cancelExecution := context.WithTimeout(ctx, budget-teardownGrace)
+	defer cancelExecution()
 	progressLock, err := lockProgress(progressPath)
 	if err != nil {
 		return err
@@ -113,7 +123,7 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 	defer progressLock.Close()
 	statePath := filepath.Join(filepath.Dir(progressPath), "performance-results.json")
 	current := progress{Plan: planName, SourceSHA: sourceSHA, Suite: "performance", Completed: []string{}}
-	state := performanceState{SourceSHA: sourceSHA, StartedAt: time.Now(), Cases: []perfreport.CaseResult{}}
+	state := performanceState{SourceSHA: sourceSHA, StartedAt: time.Now(), Budget: budget, Cases: []perfreport.CaseResult{}}
 	if action == "run" {
 		if err := os.RemoveAll(filepath.Join(filepath.Dir(progressPath), "failures")); err != nil {
 			return fmt.Errorf("clear stale failure logs: %w", err)
@@ -132,6 +142,9 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 		loadedState, err := readPerformanceState(statePath, sourceSHA)
 		if err != nil {
 			return err
+		}
+		if loadedState.Budget != budget {
+			return fmt.Errorf("performance resume budget %s does not match current budget %s", loadedState.Budget, budget)
 		}
 		current, state = loadedProgress, loadedState
 		completed := make(map[string]struct{}, len(current.Completed))
@@ -165,8 +178,20 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 		return err
 	}
 	for {
-		if err := context.Cause(ctx); err != nil {
-			return err
+		if cause := context.Cause(executionCtx); cause != nil {
+			next := firstIncomplete(tests, current.Completed)
+			if next != nil {
+				state.Cases = mergeCaseResult(state.Cases, perfreport.CaseResult{ID: next.ID, Section: sectionForCase(next.ID), Status: perfreport.StatusFail, Stage: "suite budget", FirstError: fmt.Sprintf("performance suite exhausted its %s wall-clock budget", budget), StartedAt: time.Now(), EndedAt: time.Now()})
+			}
+			if len(state.Cases) > 0 {
+				if writeErr := writePerformanceState(statePath, state); writeErr != nil {
+					return errors.Join(cause, writeErr)
+				}
+				if writeErr := perfreport.WriteMarkdown(reportPath, performanceReport(sourceSHA, state, environment, perfreport.StatusFail)); writeErr != nil {
+					return errors.Join(cause, writeErr)
+				}
+			}
+			return fmt.Errorf("performance suite exhausted its %s wall-clock budget: %w", budget, cause)
 		}
 		next := firstIncomplete(tests, current.Completed)
 		if next == nil {
@@ -202,7 +227,7 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 		resultPath := filepath.Join(tempDir, "case-result.json")
 		started := time.Now()
 		fmt.Fprintf(stdout, "[RUN ] %s\n", next.ID)
-		runErr := runRegisteredTest(ctx, *next, runContext{RunID: runID, TempDir: tempDir, ResultPath: resultPath, Root: root, Debug: debug})
+		runErr := runRegisteredTest(executionCtx, *next, runContext{RunID: runID, TempDir: tempDir, ResultPath: resultPath, Root: root, Debug: debug, PerformanceBudget: budget})
 		duration := time.Since(started).Round(time.Millisecond)
 		if next.ID == "performance-optional/webtransport-capability" && runErr != nil {
 			reason := firstLine(runErr.Error())
@@ -323,7 +348,7 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 }
 
 func performanceReport(sourceSHA string, state performanceState, environment perfreport.Environment, status perfreport.Status) perfreport.Report {
-	return perfreport.Report{SourceSHA: sourceSHA, Status: status, StartedAt: state.StartedAt, EndedAt: time.Now(), Environment: environment, Cases: state.Cases}
+	return perfreport.Report{SourceSHA: sourceSHA, Status: status, StartedAt: state.StartedAt, EndedAt: time.Now(), Budget: state.Budget, Environment: environment, Cases: state.Cases}
 }
 
 func firstPerformanceCaseFailure(results []perfreport.CaseResult) error {
