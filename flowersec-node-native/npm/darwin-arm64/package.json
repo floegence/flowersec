@@ -2,6 +2,10 @@
   "name": "@floegence/flowersec-node-native-darwin-arm64",
   "version": "2.3.10",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/floegence/flowersec.git"
+  },
   "os": ["darwin"],
   "cpu": ["arm64"],
   "main": "flowersec-node-native.darwin-arm64.node",

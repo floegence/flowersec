@@ -462,6 +462,8 @@ jobs:
             local metadata
             local npm_error
             local view_status
+            local repository_url
+            local publish_args=(--access public)
             local_integrity="sha512-$(openssl dgst -sha512 -binary "$archive" | openssl base64 -A)"
             npm_error="$(mktemp)"
             set +e
@@ -479,7 +481,15 @@ jobs:
                 <<<"$metadata" >/dev/null
               echo "${package}@${VERSION} already published; skipping"
             elif jq -e '.error.code == "E404"' <<<"$metadata" >/dev/null 2>&1; then
-              npx -y npm@11.5.1 publish --access public "./$archive"
+              repository_url="$(tar -xOf "$archive" package/package.json | jq -r '.repository?.url // empty')"
+              if [[ -z "$repository_url" ]]; then
+                publish_args+=(--provenance=false)
+              elif [[ "$repository_url" != "git+https://github.com/floegence/flowersec.git" &&
+                "$repository_url" != "https://github.com/floegence/flowersec" ]]; then
+                echo "unsupported package repository URL: $repository_url" >&2
+                return 2
+              fi
+              npx -y npm@11.5.1 publish "${publish_args[@]}" "./$archive"
             else
               sed -E 's/(token|authorization)[^ ]*/\1=<redacted>/Ig' <<<"$npm_error_text" >&2
               return "$view_status"

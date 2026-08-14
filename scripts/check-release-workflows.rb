@@ -650,7 +650,7 @@ validate_step_contracts(npm_recovery_steps, [
   { name: "Recover npm registry packages from immutable release assets", keys: ["name", "env", "run"], values: { "env" => {
     "GH_TOKEN" => "${{ github.token }}",
     "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
-  } }, run_sha256: "28f3012d07ab19889e7cbba9b6466aadfbc5a060dc880e6174b526c1b8f96972" },
+  } }, run_sha256: "6feafd9fa377d946d2dcdaa43b39149a563c9f80428d4525f5c30ca4f7e9a59a" },
 ], "the unified release workflow npm recovery job")
 validate_step_contracts(npm_consumer_steps, [
   { name: nil, keys: ["uses", "with"], values: {

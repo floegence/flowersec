@@ -254,7 +254,10 @@ test("npm registry recovery consumes immutable release assets without rebuilding
   assert.match(workflow, /\.optionalDependencies == \{/);
   assert.match(workflow, /\.os == \[\$os\] and \.cpu == \[\$cpu\]/);
   assert.match(workflow, /\.error\.code == "E404"/);
-  assert.match(workflow, /npm@11\.5\.1 publish --access public "\.\/\$archive"/);
+  assert.match(workflow, /npm@11\.5\.1 publish "\$\{publish_args\[\@\]\}" "\.\/\$archive"/);
+  assert.match(workflow, /--provenance=false/);
+  assert.match(workflow, /repository_url/);
+  assert.match(workflow, /if \[\[ -z "\$repository_url" \]\]/);
   assert.match(workflow, /\.dist\.integrity == \$integrity/);
   assert.match(workflow, /return "\$view_status"/);
   assert.match(workflow, /unlink "\$npm_error"/);
@@ -266,6 +269,19 @@ test("npm registry recovery consumes immutable release assets without rebuilding
   assert.match(workflow, /npm-consumer-smoke:[\s\S]*needs: \[prepare, release, npm-recovery\]/);
   const recovery = workflow.match(/  npm-recovery:\n([\s\S]*?)\n  npm-consumer-smoke:/)?.[1] ?? "";
   assert.doesNotMatch(recovery, /npm ci|npm run build|cargo build|go build|action-gh-release|docker\/build-push-action/);
+});
+
+test("native npm platform packages carry repository metadata for provenance", () => {
+  for (const platform of ["darwin-arm64", "darwin-x64", "linux-arm64-gnu", "linux-x64-gnu"]) {
+    const manifest = JSON.parse(fs.readFileSync(
+      path.join(sourceRoot, `flowersec-node-native/npm/${platform}/package.json`),
+      "utf8",
+    ));
+    assert.deepEqual(manifest.repository, {
+      type: "git",
+      url: "git+https://github.com/floegence/flowersec.git",
+    }, `${platform} package must identify the source repository for npm provenance`);
+  }
 });
 
 test("npm lockfile contains the complete native optional dependency closure", () => {
