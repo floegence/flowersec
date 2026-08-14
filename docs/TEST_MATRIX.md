@@ -16,6 +16,7 @@ instances, namespaces, faults, and temporary files that they create.
 | Required Go/Rust/Node WebSocket and raw QUIC tunnel covering set (18 topologies) | `interop/server-parity/tunnel-matrix` using endpoint A, opaque relay runtime, and endpoint B |
 | Optional Go WebTransport direct adapter | Go carrier conformance and Chromium direct checks when the adapter is selected |
 | Node and Rust WebSocket/raw QUIC cross-runtime behavior | The required direct and tunnel matrices above, with shared Flowersec application wire vectors |
+| Node raw-QUIC-only no-origin and Rust rootless loopback profiles | Node native connector one-shot and Controller generations; Rust direct WebSocket plus spend-before-roots validation |
 | Swift WSS against Go | `interop/swift-go/wss/{direct,tunnel}` using the production Swift connector and Go peer |
 | Chromium direct, WebTransport-to-WSS tunnel, and WebTransport-to-QUIC tunnel | Local `make browser-smoke` using Chromium dual-listener bridge workloads; these are not native `TunnelRuntime` declarations |
 | Firefox and WebKit native WebTransport capability | Local `make browser-compat`; unsupported runtime surfaces are asserted explicitly |

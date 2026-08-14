@@ -65,6 +65,11 @@ const session = await controller.waitForSession();
 The immutable callback definition applies to every generation, while each
 Session gets a fresh router. Terminated Session work is never replayed.
 
+For the complete durable `ArtifactLease` spend workflow, see the
+[TypeScript cookbook](../examples/ts/README.md). Node raw-QUIC-only artifacts
+may omit `origin`; providing an absolute HTTP(S) origin enables WebSocket
+candidates. Secure raw QUIC still requires an explicit `tls.ca` trust root.
+
 ### Accepted Node server Session
 
 ```ts
@@ -145,9 +150,10 @@ Cold-connection diagnostics require every independent carrier to meet the declar
 
 Node.js applications receive the same `Session` contract from `connect(...)`.
 The Node connector supports WSS, restricted plaintext loopback WebSocket
-direct connections, and raw QUIC through the optional native package. It
-requires an absolute HTTP(S) `origin`; custom certificate authorities can be
-supplied through `tls.ca`, and raw QUIC requires explicit trust roots.
+direct connections, and raw QUIC through the optional native package. WebSocket
+candidates require an absolute HTTP(S) `origin`; raw-QUIC-only artifacts may
+omit it. Custom certificate authorities can be supplied through `tls.ca`, and
+secure raw QUIC requires an explicit trust root.
 
 The connectors choose an eligible connection path from the invitation. They do
 not expose transport selectors, candidate lists, or native carrier objects to application code.

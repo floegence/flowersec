@@ -809,7 +809,7 @@ mod tests {
     }
 
     fn options() -> ConnectionControllerOptions {
-        let connector = ConnectorOptions::new(vec![vec![1]]).expect("valid test trust root");
+        let connector = ConnectorOptions::new();
         ConnectionControllerOptions::new(connector)
     }
 

@@ -12,14 +12,17 @@ by default, and contains no Flowersec-authored `unsafe`.
 cargo add flowersec
 ```
 
-The raw QUIC connection profile requires explicit DER trust roots and rejects empty roots:
+TLS connection candidates require explicit, non-empty DER trust roots. Exact-loopback
+plaintext direct WebSocket candidates do not require trust roots; no system trust
+store is selected implicitly:
 
 ```rust,no_run
 # async fn connect_example(
 #     lease: flowersec::ArtifactLease,
 #     root_der: Vec<u8>,
 # ) -> Result<(), Box<dyn std::error::Error>> {
-let options = flowersec::ConnectorOptions::new(vec![root_der])?;
+let options = flowersec::ConnectorOptions::new()
+    .with_trust_roots_der(vec![root_der])?;
 let session = flowersec::connect(lease, options).await?;
 # session.close().await?;
 # Ok(())
@@ -59,11 +62,8 @@ creates a new session from a new invitation.
 
 ```rust,no_run
 # async fn run(lease: flowersec::ArtifactLease, roots: Vec<Vec<u8>>) -> Result<(), Box<dyn std::error::Error>> {
-let mut handlers = flowersec::RpcHandlers::new();
-handlers.handle_rpc(7, MyRpcHandler)?;
-handlers.handle_notification(8, MyNotificationHandler)?;
-let options = flowersec::ConnectorOptions::new(roots)?
-    .with_rpc_handlers(handlers);
+let options = flowersec::ConnectorOptions::new()
+    .with_trust_roots_der(roots)?;
 let session = flowersec::connect(lease, options).await?;
 # Ok(()) }
 ```
@@ -72,10 +72,8 @@ let session = flowersec::connect(lease, options).await?;
 
 ```rust,no_run
 # fn build(source: std::sync::Arc<dyn flowersec::ArtifactSource>, roots: Vec<Vec<u8>>) {
-let mut handlers = flowersec::RpcHandlers::new();
-handlers.handle_rpc(7, MyRpcHandler).unwrap();
-let connector = flowersec::ConnectorOptions::new(roots).unwrap()
-    .with_rpc_handlers(handlers);
+let connector = flowersec::ConnectorOptions::new()
+    .with_trust_roots_der(roots).unwrap();
 let controller = flowersec::ConnectionController::new(
     source,
     flowersec::ConnectionControllerOptions::new(connector),
@@ -87,14 +85,15 @@ controller.start();
 Every Controller generation uses the same immutable callback definition and a
 fresh router. Work from a terminated Session is not migrated or replayed.
 
+For the complete durable `ArtifactLease` spend workflow, see the
+[Rust cookbook](../examples/rust/README.md). The spend record must be committed
+before the connector can send connection credentials.
+
 ### Accepted server Session
 
 ```rust,no_run
 # async fn serve(acceptor: flowersec::Acceptor, artifact: flowersec::Artifact) -> Result<(), Box<dyn std::error::Error>> {
-let mut handlers = flowersec::SessionHandlers::new(Default::default())?;
-handlers.handle_rpc(7, MyRpcHandler)?;
-handlers.handle_notification(8, MyNotificationHandler)?;
-handlers.handle_stream("files/read", MyStreamHandler)?;
+let handlers = flowersec::SessionHandlers::new(Default::default())?;
 let accepted = acceptor.accept_with_handlers(
     &artifact,
     handlers,

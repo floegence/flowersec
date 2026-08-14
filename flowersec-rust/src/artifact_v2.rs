@@ -207,7 +207,7 @@ impl Artifact {
         let candidates = candidates
             .iter()
             .map(|candidate| {
-                let normalized_url = normalize_url(
+                let normalized = normalize_url(
                     if path == PathKind::Direct {
                         "direct"
                     } else {
@@ -223,7 +223,8 @@ impl Artifact {
                         CarrierWire::RawQuic => CarrierKind::RawQuic,
                         CarrierWire::Webtransport => CarrierKind::WebTransport,
                     },
-                    normalized_url,
+                    normalized_url: normalized.value,
+                    requires_tls: normalized.requires_tls,
                     wire_profile: candidate.wire_profile.clone(),
                 })
             })
@@ -287,6 +288,7 @@ pub(crate) struct CandidatePlanV2 {
     pub(crate) id: String,
     pub(crate) carrier: CarrierKind,
     pub(crate) normalized_url: String,
+    pub(crate) requires_tls: bool,
     pub(crate) wire_profile: String,
 }
 
@@ -359,7 +361,7 @@ fn canonicalize_candidates(wire: &ArtifactWire) -> Result<Vec<CanonicalCandidate
             Ok(CanonicalCandidate {
                 carrier: candidate.carrier,
                 id: candidate.id.clone(),
-                normalized_url: normalize_url(kind, candidate)?,
+                normalized_url: normalize_url(kind, candidate)?.value,
                 wire_profile: candidate.wire_profile.clone(),
             })
         })
@@ -745,7 +747,7 @@ fn validate_candidates(kind: &str, candidates: &[CandidateWire]) -> Result<(), A
         let normalized = normalize_url(kind, c)?;
         if !tuples.insert(format!(
             "{:?}\0{}\0{}",
-            c.carrier, normalized, c.wire_profile
+            c.carrier, normalized.value, c.wire_profile
         )) {
             return Err(ArtifactError::Invalid);
         }
@@ -753,7 +755,12 @@ fn validate_candidates(kind: &str, candidates: &[CandidateWire]) -> Result<(), A
     Ok(())
 }
 
-fn normalize_url(kind: &str, c: &CandidateWire) -> Result<String, ArtifactError> {
+struct NormalizedCandidateUrl {
+    value: String,
+    requires_tls: bool,
+}
+
+fn normalize_url(kind: &str, c: &CandidateWire) -> Result<NormalizedCandidateUrl, ArtifactError> {
     if c.url.contains(['\\', '?', '#', '%']) {
         return Err(ArtifactError::Invalid);
     }
@@ -785,7 +792,10 @@ fn normalize_url(kind: &str, c: &CandidateWire) -> Result<String, ArtifactError>
     url.set_query(None);
     url.set_fragment(None);
     let text = url.to_string();
-    Ok(text.strip_suffix('/').unwrap_or(&text).to_string())
+    Ok(NormalizedCandidateUrl {
+        value: text.strip_suffix('/').unwrap_or(&text).to_string(),
+        requires_tls: !loopback_plaintext,
+    })
 }
 
 fn is_loopback_host(host: &str) -> bool {

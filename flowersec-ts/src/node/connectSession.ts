@@ -28,14 +28,14 @@ import {
   NativeTransportUnavailableError,
   tryLoadNativeTransportAddon,
 } from "./nativeTransportAddon.js";
-import { createNodeRawQuicClientV2 } from "./rawQuicAdapter.js";
+import { createNodeRawQuicClientV2, normalizeCertificateChain } from "./rawQuicAdapter.js";
 
 export type SessionTLSOptions = Readonly<{
   ca?: string | Uint8Array;
 }>;
 
 export type SessionOptions = Readonly<{
-  origin: string;
+  origin?: string;
   signal?: AbortSignal;
   connectTimeoutMs?: number;
   tls?: SessionTLSOptions;
@@ -43,7 +43,7 @@ export type SessionOptions = Readonly<{
 }>;
 
 export type ConnectionControllerOptions = Readonly<{
-  origin: string;
+  origin?: string;
   connectTimeoutMs?: number;
   tls?: SessionTLSOptions;
   maximumAttempts?: number;
@@ -54,54 +54,40 @@ export function createConnectionController(
   source: ArtifactSource,
   options: ConnectionControllerOptions,
 ): ConnectionController {
-  validateSessionOptions(options);
+  const normalized = normalizeNodeOptions(options);
   const controllerOptions: CoreConnectionControllerOptions = options.maximumAttempts === undefined
     ? {}
     : { maximumAttempts: options.maximumAttempts };
-  let rpcSnapshot: FrozenRPCHandlers | undefined;
-  const controller = createConnectionControllerV2(
+  return createConnectionControllerV2(
     source,
-    async (lease, signal) => await connectWithRPCSnapshot(lease, {
-      origin: options.origin,
-      signal,
-      ...(options.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: options.connectTimeoutMs }),
-      ...(options.tls === undefined ? {} : { tls: options.tls }),
-    }, rpcSnapshot),
+    async (lease, signal) => await connectWithRPCSnapshot(lease, normalized, signal),
     controllerOptions,
   );
-  rpcSnapshot = options.rpcHandlers === undefined
-    ? undefined
-    : freezeRPCHandlers(options.rpcHandlers);
-  return controller;
 }
 
 export async function connect(
   lease: ArtifactLease,
   options: SessionOptions,
 ): Promise<Session> {
-  validateSessionOptions(options);
-  const rpcSnapshot = options.rpcHandlers === undefined
-    ? undefined
-    : freezeRPCHandlers(options.rpcHandlers);
-  return await connectWithRPCSnapshot(lease, options, rpcSnapshot);
+  const normalized = normalizeNodeOptions(options);
+  return await connectWithRPCSnapshot(lease, normalized, options.signal);
 }
+
+type NormalizedNodeOptions = Readonly<{
+  origin?: string;
+  connectTimeoutMs?: number;
+  tls?: SessionTLSOptions;
+  rpcSnapshot?: FrozenRPCHandlers;
+}>;
 
 async function connectWithRPCSnapshot(
   lease: ArtifactLease,
-  options: SessionOptions,
-  rpcSnapshot: FrozenRPCHandlers | undefined,
+  options: NormalizedNodeOptions,
+  signal: AbortSignal | undefined,
 ): Promise<Session> {
-  let origin: string;
-  let wsFactory: ReturnType<typeof createNodeWsFactory>;
-  try {
-    origin = normalizeOrigin(options.origin);
-    wsFactory = createNodeWsFactory(options.tls);
-  } catch {
-    throw new ConnectError("invalid_options");
-  }
-  const rpcRouter = rpcSnapshot === undefined
+  const rpcRouter = options.rpcSnapshot === undefined
     ? undefined
-    : createRPCRouter(rpcSnapshot);
+    : createRPCRouter(options.rpcSnapshot);
   // WebSocket sessions do not require the optional native raw QUIC addon. Load
   // it only when a raw QUIC candidate is actually selected by the connector.
   const nativeAddon = tryLoadNativeTransportAddon();
@@ -119,10 +105,18 @@ async function connectWithRPCSnapshot(
       options.connectTimeoutMs,
     );
   });
+  const origin = options.origin;
+  let websocketFactory: ReturnType<typeof createWebSocketCandidateFactoryV2> | undefined;
+  if (origin !== undefined) {
+    const wsFactory = createNodeWsFactory(options.tls);
+    websocketFactory = createWebSocketCandidateFactoryV2(
+      (url, subprotocol) => wsFactory(url, origin, subprotocol),
+    );
+  }
   const connector = new SessionConnectorV2(
     lease,
     composeCandidateAttemptFactoryV2({
-      websocket: createWebSocketCandidateFactoryV2((url, subprotocol) => wsFactory(url, origin, subprotocol)),
+      ...(websocketFactory === undefined ? {} : { websocket: websocketFactory }),
       raw_quic: rawQuicFactory,
     }),
     {
@@ -132,23 +126,37 @@ async function connectWithRPCSnapshot(
       ...(options.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: options.connectTimeoutMs }),
     },
   );
-  const result = await connector.connect(options.signal === undefined ? {} : { signal: options.signal });
+  const result = await connector.connect(signal === undefined ? {} : { signal });
   return projectSessionV2(result.session);
 }
 
-function validateSessionOptions(options: Readonly<{
-  origin: string;
+function normalizeNodeOptions(options: Readonly<{
+  origin?: string;
+  connectTimeoutMs?: number;
   tls?: SessionTLSOptions;
-}>): void {
+  rpcHandlers?: RPCHandlers;
+}>): NormalizedNodeOptions {
   try {
-    normalizeOrigin(options.origin);
-    createNodeWsFactory(options.tls);
+    const origin = normalizeOrigin(options.origin);
+    if (options.connectTimeoutMs !== undefined &&
+      (!Number.isSafeInteger(options.connectTimeoutMs) || options.connectTimeoutMs < 1)) {
+      throw new RangeError("connectTimeoutMs must be a positive safe integer");
+    }
+    if (origin !== undefined) createNodeWsFactory(options.tls);
+    if (options.tls?.ca !== undefined) normalizeCertificateChain(options.tls.ca);
+    return Object.freeze({
+      ...(origin === undefined ? {} : { origin }),
+      ...(options.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: options.connectTimeoutMs }),
+      ...(options.tls === undefined ? {} : { tls: options.tls }),
+      ...(options.rpcHandlers === undefined ? {} : { rpcSnapshot: freezeRPCHandlers(options.rpcHandlers) }),
+    });
   } catch {
     throw new ConnectError("invalid_options");
   }
 }
 
-function normalizeOrigin(input: string): string {
+function normalizeOrigin(input: string | undefined): string | undefined {
+  if (input === undefined) return undefined;
   let parsed: URL;
   try { parsed = new URL(input); } catch { throw new TypeError("origin must be an absolute HTTP(S) origin"); }
   if ((parsed.protocol !== "https:" && parsed.protocol !== "http:") || parsed.origin !== input || parsed.username !== "" || parsed.password !== "") {

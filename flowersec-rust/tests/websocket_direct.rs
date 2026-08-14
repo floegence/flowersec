@@ -1,9 +1,16 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use bytes::Bytes;
 use flowersec::{
-    Acceptor, Artifact, ArtifactLease, ConnectorOptions, DirectIssueOptions, EndpointSet, Issuer,
-    SessionOptions, StreamMetadata, WebSocketAcceptorOptions, connect,
+    Acceptor, Artifact, ArtifactLease, ConnectErrorCode, ConnectorOptions, DirectIssueOptions,
+    EndpointSet, Issuer, SessionOptions, StreamMetadata, WebSocketAcceptorOptions, connect,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -71,8 +78,7 @@ async fn production_websocket_direct_runs_the_shared_session_core() {
 
     let client_artifact = Artifact::parse(issued.artifact_json()).expect("client artifact");
     let lease = ArtifactLease::new(client_artifact, || async { Ok(()) });
-    let connector = ConnectorOptions::new(vec![vec![1]])
-        .unwrap()
+    let connector = ConnectorOptions::new()
         .with_websocket_origin("https://native-client.test")
         .unwrap()
         .with_connect_timeout(Duration::from_secs(5))
@@ -101,4 +107,70 @@ async fn production_websocket_direct_runs_the_shared_session_core() {
     client_close.expect("close client");
     server_close.expect("close server");
     cancellation.cancel();
+}
+
+#[tokio::test]
+async fn secure_or_mixed_candidates_without_roots_fail_before_spend() {
+    for (name, endpoints) in [
+        ("wss", vec!["wss://localhost:443"]),
+        ("raw-quic", vec!["quic://127.0.0.1:443"]),
+        (
+            "mixed",
+            vec!["ws://127.0.0.1:23998", "quic://127.0.0.1:443"],
+        ),
+    ] {
+        let issued = Issuer::new()
+            .issue_direct(DirectIssueOptions {
+                session: SessionOptions::new(format!("rust-rootless-{name}")),
+                endpoints: EndpointSet::new(endpoints).expect("canonical endpoint set"),
+                rendezvous_group_id: format!("rust-rootless-{name}-group"),
+                listener_audience: "rust-rootless-listener".into(),
+                upstream_address: "127.0.0.1:23998".into(),
+            })
+            .expect("issue secure artifact");
+        let artifact = Artifact::parse(issued.artifact_json()).expect("parse secure artifact");
+        let spends = Arc::new(AtomicUsize::new(0));
+        let observed = spends.clone();
+        let lease = ArtifactLease::new(artifact, move || {
+            let observed = observed.clone();
+            async move {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        });
+        let options = ConnectorOptions::new()
+            .with_websocket_origin("https://native-client.test")
+            .expect("valid WebSocket origin");
+
+        let error = connect(lease, options)
+            .await
+            .expect_err("TLS candidates require explicit roots");
+        assert_eq!(error.code(), ConnectErrorCode::InvalidInput, "{name}");
+        assert_eq!(spends.load(Ordering::SeqCst), 0, "{name} spend count");
+    }
+}
+
+#[test]
+fn explicit_roots_reject_invalid_values() {
+    assert_eq!(
+        ConnectorOptions::new()
+            .with_trust_roots_der(Vec::new())
+            .expect_err("empty root set must fail")
+            .code(),
+        ConnectErrorCode::InvalidInput,
+    );
+    assert_eq!(
+        ConnectorOptions::new()
+            .with_trust_roots_der(vec![Vec::new()])
+            .expect_err("empty root must fail")
+            .code(),
+        ConnectErrorCode::InvalidInput,
+    );
+    assert_eq!(
+        ConnectorOptions::new()
+            .with_trust_roots_der(vec![vec![1]])
+            .expect_err("malformed DER root must fail")
+            .code(),
+        ConnectErrorCode::InvalidInput,
+    );
 }

@@ -185,6 +185,36 @@ describe("Node Transport v2 WSS production connector", () => {
     await new Promise<void>((resolve) => wss.close(() => resolve()));
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));
   }, 20_000);
+
+  test("rejects a WebSocket-only artifact without origin before dialing or spending", async () => {
+    const source = fixture.positive.find((entry) => entry.path_kind === "direct");
+    if (source === undefined) throw new Error("missing direct artifact fixture");
+    const httpServer = createHTTPServer();
+    let upgrades = 0;
+    httpServer.on("upgrade", (_request, socket) => {
+      upgrades += 1;
+      socket.destroy();
+    });
+    httpServer.listen(0, "127.0.0.1");
+    await once(httpServer, "listening");
+    const address = httpServer.address();
+    if (typeof address !== "object" || address === null) throw new Error("loopback server did not bind TCP");
+    const localArtifact = withLocalWSS(
+      source.artifact_json,
+      `ws://127.0.0.1:${address.port}/flowersec/v2/direct`,
+    );
+    let spends = 0;
+    const lease = createArtifactLeaseV2(parseArtifact(localArtifact.raw), async () => { spends += 1; });
+
+    await expect(connect(lease, {})).rejects.toMatchObject({
+      name: "ConnectError",
+      code: "connection_failed",
+    });
+    await new Promise<void>((resolve) => { setImmediate(resolve); });
+    expect(upgrades).toBe(0);
+    expect(spends).toBe(0);
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+  });
 });
 
 function withLocalWSS(rawArtifact: string, url: string): Readonly<{ raw: string; artifact: ArtifactV2 }> {

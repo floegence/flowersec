@@ -28,7 +28,7 @@ const RESOLVED_ADDRESS_PROBE_DELAY: Duration = Duration::from_millis(250);
 /// Native runtime trust and lifecycle configuration.
 #[derive(Clone)]
 pub struct ConnectorOptions {
-    trust_roots_der: Vec<Vec<u8>>,
+    trust_roots_der: Option<Vec<Vec<u8>>>,
     connect_timeout: Duration,
     close_flush_timeout: Option<Duration>,
     websocket_origin: Option<String>,
@@ -41,7 +41,10 @@ impl fmt::Debug for ConnectorOptions {
             .debug_struct("ConnectorOptions")
             .field(
                 "trust_roots_der",
-                &format_args!("[{} roots]", self.trust_roots_der.len()),
+                &format_args!(
+                    "[{} roots]",
+                    self.trust_roots_der.as_ref().map_or(0, Vec::len)
+                ),
             )
             .field("connect_timeout", &self.connect_timeout)
             .field("close_flush_timeout", &self.close_flush_timeout)
@@ -52,21 +55,34 @@ impl fmt::Debug for ConnectorOptions {
 }
 
 impl ConnectorOptions {
-    /// Creates native raw-QUIC options with explicit DER trust roots and the
-    /// shared ten-second connection timeout.
-    pub fn new(trust_roots_der: Vec<Vec<u8>>) -> Result<Self, ConnectError> {
-        if trust_roots_der.is_empty() || trust_roots_der.iter().any(Vec::is_empty) {
-            return Err(ConnectError::from_runtime_code(
-                crate::connector_v2::ConnectErrorCode::InvalidInput,
-            ));
-        }
-        Ok(Self {
-            trust_roots_der,
+    /// Creates native connector options without trust roots and with the shared
+    /// ten-second connection timeout.
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self {
+            trust_roots_der: None,
             connect_timeout: Duration::from_secs(10),
             close_flush_timeout: None,
             websocket_origin: None,
             rpc_handlers: None,
-        })
+        }
+    }
+
+    /// Sets the complete explicit DER trust-root collection used by TLS candidates.
+    pub fn with_trust_roots_der(
+        mut self,
+        trust_roots_der: Vec<Vec<u8>>,
+    ) -> Result<Self, ConnectError> {
+        if trust_roots_der.is_empty()
+            || trust_roots_der.iter().any(Vec::is_empty)
+            || websocket_v2::client_tls(trust_roots_der.clone()).is_err()
+        {
+            return Err(ConnectError::from_runtime_code(
+                crate::connector_v2::ConnectErrorCode::InvalidInput,
+            ));
+        }
+        self.trust_roots_der = Some(trust_roots_der);
+        Ok(self)
     }
 
     /// Overrides the complete connection-attempt deadline.
@@ -95,7 +111,7 @@ impl ConnectorOptions {
     }
 
     pub fn trust_roots_der(&self) -> &[Vec<u8>] {
-        &self.trust_roots_der
+        self.trust_roots_der.as_deref().unwrap_or(&[])
     }
 
     pub const fn connect_timeout(&self) -> Duration {
@@ -154,13 +170,36 @@ pub async fn connect_with_cancellation(
         close_flush_timeout: options.close_flush_timeout,
     };
     let runtime = Arc::new(RawQuicRuntimeAdapterV2 {
-        trust_roots_der: options.trust_roots_der,
+        trust_roots_der: options.trust_roots_der.unwrap_or_default(),
         connect_timeout: options.connect_timeout,
         websocket_origin: options.websocket_origin,
     });
+    validate_trust_for_artifact(&lease, runtime.as_ref())?;
     SessionConnectorV2::new(connector_options, runtime, rpc_handler)?
         .connect(lease, cancellation)
         .await
+}
+
+fn validate_trust_for_artifact(
+    lease: &ArtifactLease,
+    runtime: &RawQuicRuntimeAdapterV2,
+) -> Result<(), ConnectError> {
+    let plan = lease
+        .artifact_for_connector()
+        .connection_plan()
+        .map_err(|_| {
+            ConnectError::from_runtime_code(crate::connector_v2::ConnectErrorCode::InvalidInput)
+        })?;
+    if runtime.trust_roots_der.is_empty()
+        && plan.candidates.iter().any(|candidate| {
+            runtime.supports(candidate, plan.path, plan.role) && candidate.requires_tls
+        })
+    {
+        return Err(ConnectError::from_runtime_code(
+            crate::connector_v2::ConnectErrorCode::InvalidInput,
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -325,6 +364,7 @@ mod tests {
             id: "candidate".into(),
             carrier,
             normalized_url: url.into(),
+            requires_tls: true,
             wire_profile: "flowersec-direct/2".into(),
         }
     }

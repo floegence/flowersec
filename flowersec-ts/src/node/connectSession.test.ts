@@ -6,7 +6,11 @@ import { connect, createConnectionController } from "./connectSession.js";
 
 describe("Node session facade", () => {
   test.each([
+    "",
+    "/relative",
     "https://app.example/path",
+    "https://app.example?mode=test",
+    "https://user@app.example",
     "ftp://app.example",
     "not a URL",
   ])("rejects invalid origin %s before dialing", async (origin) => {
@@ -26,6 +30,20 @@ describe("Node session facade", () => {
       origin: "https://app.example",
       maximumAttempts: 3,
     });
+
+    expect(controller.state).toBe("idle");
+    expect(acquisitions).toBe(0);
+  });
+
+  test("constructs a raw-QUIC-eligible ConnectionController without origin", () => {
+    let acquisitions = 0;
+    const source: ArtifactSource = {
+      acquire: async () => {
+        acquisitions += 1;
+        return { kind: "failure", code: "unused", disposition: { kind: "terminal" } };
+      },
+    };
+    const controller = createConnectionController(source, { maximumAttempts: 3 });
 
     expect(controller.state).toBe("idle");
     expect(acquisitions).toBe(0);

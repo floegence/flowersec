@@ -273,8 +273,9 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
                 Ok(())
             }
         });
-        let options =
-            ConnectorOptions::new(vec![test_cert_der()]).expect("create public connector options");
+        let options = ConnectorOptions::new()
+            .with_trust_roots_der(vec![test_cert_der()])
+            .expect("create public connector options");
         let session = connect(lease, options)
             .await
             .expect("connect through public facade");
@@ -429,8 +430,9 @@ async fn connection_controller_replaces_terminated_raw_quic_session_without_repl
         acquisitions: acquisitions.clone(),
         spends: spends.clone(),
     });
-    let connector =
-        ConnectorOptions::new(vec![test_cert_der()]).expect("create controller connector options");
+    let connector = ConnectorOptions::new()
+        .with_trust_roots_der(vec![test_cert_der()])
+        .expect("create controller connector options");
     let controller = ConnectionController::new(source, ConnectionControllerOptions::new(connector));
 
     let first_accept = tokio::spawn(establish_controller_server(listener.clone()));
@@ -640,8 +642,9 @@ async fn public_acceptor_establishes_opaque_direct_session() {
             .expect("accept opaque direct session")
     });
     let lease = ArtifactLease::new(artifact, || async { Ok(()) });
-    let options =
-        ConnectorOptions::new(vec![test_cert_der()]).expect("create public connector options");
+    let options = ConnectorOptions::new()
+        .with_trust_roots_der(vec![test_cert_der()])
+        .expect("create public connector options");
     let client = connect(lease, options)
         .await
         .expect("connect public client");
@@ -778,8 +781,9 @@ async fn public_acceptor_freezes_rpc_and_stream_handlers_before_establishment() 
         accepted.serve(CancellationToken::new()).await
     });
     let lease = ArtifactLease::new(artifact, || async { Ok(()) });
-    let options =
-        ConnectorOptions::new(vec![test_cert_der()]).expect("create public connector options");
+    let options = ConnectorOptions::new()
+        .with_trust_roots_der(vec![test_cert_der()])
+        .expect("create public connector options");
     let client = connect(lease, options)
         .await
         .expect("connect handler client");
@@ -861,8 +865,9 @@ async fn public_acceptor_resets_only_failed_handler_stream_and_continues_serving
         accepted.serve(CancellationToken::new()).await
     });
     let lease = ArtifactLease::new(artifact, || async { Ok(()) });
-    let options =
-        ConnectorOptions::new(vec![test_cert_der()]).expect("create public connector options");
+    let options = ConnectorOptions::new()
+        .with_trust_roots_der(vec![test_cert_der()])
+        .expect("create public connector options");
     let client = connect(lease, options)
         .await
         .expect("connect handler client");

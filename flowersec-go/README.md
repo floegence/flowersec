@@ -47,6 +47,10 @@ snapshot := controller.Snapshot()
 The same frozen handler definition is installed in every new Session. Each
 generation has a fresh router and old Session operations are never replayed.
 
+For the complete durable `ArtifactLease` spend workflow, see the
+[Go cookbook](example_client_test.go). The spend record must be committed
+before the connector can send connection credentials.
+
 ### Accepted server Session
 
 ```go

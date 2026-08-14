@@ -114,7 +114,8 @@ async fn production_wss_tunnel_relays_one_end_to_end_session_without_terminating
     });
 
     let options = || {
-        ConnectorOptions::new(vec![cert.clone()])
+        ConnectorOptions::new()
+            .with_trust_roots_der(vec![cert.clone()])
             .unwrap()
             .with_websocket_origin("https://native-endpoint.test")
             .unwrap()

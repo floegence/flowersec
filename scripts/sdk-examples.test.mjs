@@ -90,8 +90,12 @@ test("consumer examples expose structured connection and session recovery", () =
   }
 
   const rustReadme = read("flowersec-rust/README.md");
-  assert.match(rustReadme, /ConnectorOptions::new\(vec!\[root_der\]\)/);
-  assert.match(rustReadme, /requires explicit DER trust roots/u);
+  assert.match(
+    rustReadme,
+    /ConnectorOptions::new\(\)\s*\.with_trust_roots_der\(vec!\[root_der\]\)/u,
+  );
+  assert.match(rustReadme, /TLS connection candidates require explicit, non-empty DER trust roots/u);
+  assert.match(rustReadme, /Exact-loopback\nplaintext direct WebSocket candidates do not require trust roots/u);
 });
 
 test("four SDK examples use the maintained parity application contract", () => {

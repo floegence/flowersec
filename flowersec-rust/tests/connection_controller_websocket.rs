@@ -213,8 +213,7 @@ async fn controller_reuses_rpc_definitions_with_generation_local_websocket_route
             },
         )
         .unwrap();
-    let connector = ConnectorOptions::new(vec![vec![1]])
-        .unwrap()
+    let connector = ConnectorOptions::new()
         .with_websocket_origin("https://native-client.test")
         .unwrap()
         .with_connect_timeout(Duration::from_secs(5))

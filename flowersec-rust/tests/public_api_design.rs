@@ -72,7 +72,9 @@ struct TypedResponse {
 }
 
 async fn compile_public_api(lease: ArtifactLease, peer: &dyn RpcPeer) {
-    let options = ConnectorOptions::new(vec![vec![1]]).expect("explicit trust roots");
+    let options = ConnectorOptions::new()
+        .with_trust_roots_der(vec![vec![1]])
+        .expect("explicit trust roots");
     let _ = connect(lease, options).await;
     let response = peer
         .call_typed::<TypedRequest, TypedResponse>(
@@ -92,7 +94,8 @@ async fn compile_connector_handlers(lease: ArtifactLease, mut handlers: RpcHandl
     handlers
         .handle_notification(2, NotificationWithoutDebug)
         .unwrap();
-    let options = ConnectorOptions::new(vec![vec![1]])
+    let options = ConnectorOptions::new()
+        .with_trust_roots_der(vec![vec![1]])
         .expect("explicit trust roots")
         .with_rpc_handlers(handlers);
     let _ = connect(lease, options).await;
@@ -147,7 +150,9 @@ fn handler_registration_is_generic_and_does_not_require_debug_or_arc() {
 #[test]
 fn connection_controller_requires_a_refreshable_artifact_source() {
     fn compile_controller(source: Arc<dyn ArtifactSource>) -> ConnectionController {
-        let connector = ConnectorOptions::new(vec![vec![1]]).expect("explicit trust roots");
+        let connector = ConnectorOptions::new()
+            .with_trust_roots_der(vec![vec![1]])
+            .expect("explicit trust roots");
         ConnectionController::new(
             source,
             ConnectionControllerOptions::new(connector)
@@ -171,7 +176,9 @@ fn artifact_source_failures_require_structured_dispositions() {
 
 #[test]
 fn public_error_codes_expose_direct_stable_strings() {
-    let connect_error = ConnectorOptions::new(vec![]).expect_err("empty trust roots are invalid");
+    let connect_error = ConnectorOptions::new()
+        .with_trust_roots_der(vec![])
+        .expect_err("empty trust roots are invalid");
     assert_eq!(connect_error.as_str(), "invalid_input");
     assert_eq!(SessionError::Timeout.as_str(), "timeout");
     assert_eq!(SessionError::GoingAway.as_str(), "going_away");

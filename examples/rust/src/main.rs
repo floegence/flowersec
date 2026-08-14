@@ -69,7 +69,8 @@ async fn connect_opaque_artifact(
         let receipt_path = receipt_path.clone();
         async move { write_spend_receipt(receipt_path).await }
     });
-    let options = ConnectorOptions::new(vec![std::fs::read(trust_root_path)?])?;
+    let options = ConnectorOptions::new()
+        .with_trust_roots_der(vec![std::fs::read(trust_root_path)?])?;
     let session = match connect(lease, options).await {
         Ok(session) => session,
         Err(error) => {

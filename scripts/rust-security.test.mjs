@@ -144,11 +144,13 @@ test("Rust native runtime owns carrier trust without implicit platform root stor
     manifest,
     /^tokio-tungstenite = \{ version = "[^"]+", default-features = false, features = \["connect"\] \}$/m,
   );
-  assert.match(readme, /requires explicit DER trust roots/u);
-  assert.match(readme, /rejects empty roots/u);
+  assert.match(readme, /TLS connection candidates require explicit, non-empty DER trust roots/u);
+  assert.match(readme, /plaintext direct WebSocket candidates do not require trust roots/u);
+  assert.match(readme, /no system trust\nstore is selected implicitly/u);
   assert.doesNotMatch(connector, /impl Default for ConnectorOptions/u);
   assert.doesNotMatch(connector, /trust_roots_der/u);
-  assert.match(runtime, /pub fn new\(trust_roots_der: Vec<Vec<u8>>\)/u);
+  assert.match(runtime, /pub fn new\(\) -> Self/u);
+  assert.match(runtime, /pub fn with_trust_roots_der\(/u);
 });
 
 test("serde_with is absent or patched for GHSA-7gcf-g7xr-8hxj without drifting the published MSRV", async () => {

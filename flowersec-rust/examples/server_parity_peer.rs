@@ -672,7 +672,8 @@ async fn run_client(carrier: &str, ready: Ready) {
             .collect()
     };
     let lease = ArtifactLease::new(artifact, || async { Ok(()) });
-    let mut options = ConnectorOptions::new(trust_roots)
+    let mut options = ConnectorOptions::new()
+        .with_trust_roots_der(trust_roots)
         .unwrap()
         .with_rpc_handlers(rpc_handlers(
             notifications.clone(),
@@ -943,7 +944,8 @@ fn tunnel_connector_options(
         .iter()
         .map(|root| STANDARD.decode(root).unwrap())
         .collect();
-    let mut options = ConnectorOptions::new(roots)
+    let mut options = ConnectorOptions::new()
+        .with_trust_roots_der(roots)
         .unwrap()
         .with_rpc_handlers(handlers);
     if carrier == "websocket" {
