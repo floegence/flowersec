@@ -292,7 +292,7 @@ scorecard_jobs = require_hash(scorecard_workflow["jobs"], "the Scorecard workflo
 require_exact_keys(release_jobs, ["prepare", "rust-publish", "native-prebuilt", "release", "npm-recovery", "npm-consumer-smoke"], "the unified release workflow jobs")
 require_exact_keys(rust_jobs, ["publish"], "the Rust recovery workflow jobs")
 require_exact_keys(ci_jobs, ["repository", "precommit", "node-current", "dependency-review"], "the hosted CI workflow jobs")
-require_exact_keys(codeql_jobs, ["plan", "analyze"], "the CodeQL workflow jobs")
+require_exact_keys(codeql_jobs, ["plan", "analyze", "analyze-swift"], "the CodeQL workflow jobs")
 require_exact_keys(scorecard_jobs, ["analysis"], "the Scorecard workflow jobs")
 
 prepare_job = require_job(release_workflow, "prepare", "the unified release workflow")
@@ -307,6 +307,7 @@ precommit_job = require_job(ci_workflow, "precommit", "the hosted CI workflow")
 node_current_job = require_job(ci_workflow, "node-current", "the hosted CI workflow")
 dependency_review_job = require_job(ci_workflow, "dependency-review", "the hosted CI workflow")
 codeql_job = require_job(codeql_workflow, "analyze", "the CodeQL workflow")
+codeql_swift_job = require_job(codeql_workflow, "analyze-swift", "the CodeQL workflow")
 codeql_plan_job = require_job(codeql_workflow, "plan", "the CodeQL workflow")
 scorecard_job = require_job(scorecard_workflow, "analysis", "the Scorecard workflow")
 
@@ -363,9 +364,18 @@ require_exact_value(codeql_job["strategy"], {
     { "language" => "javascript-typescript", "build-mode" => "none", "runner" => "ubuntu-latest" },
     { "language" => "ruby", "build-mode" => "none", "runner" => "ubuntu-latest" },
     { "language" => "rust", "build-mode" => "none", "runner" => "ubuntu-latest" },
-    { "language" => "swift", "build-mode" => "manual", "runner" => "macos-26" },
   ] },
 }, "the CodeQL matrix")
+require_exact_keys(codeql_swift_job, ["name", "needs", "if", "runs-on", "timeout-minutes", "permissions", "steps"], "the CodeQL Swift analyze job")
+require_exact_value(codeql_swift_job["name"], "Analyze (swift)", "the CodeQL Swift job name")
+require_exact_value(codeql_swift_job["needs"], "plan", "the CodeQL Swift analyze dependency")
+require_exact_value(codeql_swift_job["runs-on"], "macos-26", "the CodeQL Swift runner")
+require_exact_value(codeql_swift_job["timeout-minutes"], 45, "the CodeQL Swift timeout")
+require_exact_value(codeql_swift_job["permissions"], {
+  "actions" => "read",
+  "contents" => "read",
+  "security-events" => "write",
+}, "the CodeQL Swift analyze permissions")
 require_exact_keys(scorecard_job, ["name", "runs-on", "timeout-minutes", "permissions", "steps"], "the Scorecard analysis job")
 require_exact_value(scorecard_job["name"], "OpenSSF Scorecard", "the Scorecard job name")
 require_exact_value(scorecard_job["runs-on"], "ubuntu-latest", "the Scorecard runner")
@@ -440,7 +450,8 @@ require_condition_value(native_prebuilt_job, "needs.prepare.outputs.mode == 'ful
 require_condition_value(npm_recovery_job, "needs.prepare.outputs.mode == 'npm-only'", "the unified release workflow npm recovery job")
 require_condition_value(npm_consumer_job, "always() && needs.prepare.result == 'success' && ((needs.prepare.outputs.mode == 'full' && needs.release.result == 'success') || (needs.prepare.outputs.mode == 'npm-only' && needs.npm-recovery.result == 'success'))", "the unified release workflow npm consumer job")
 require_condition_value(dependency_review_job, "github.event_name == 'pull_request'", "the hosted CI dependency review job")
-require_condition(codeql_job["if"] == "needs.plan.outputs.should_scan == 'true'", "the CodeQL analyze job must use only the approved condition")
+require_condition_value(codeql_job, "needs.plan.outputs.should_scan == 'true'", "the CodeQL analyze job")
+require_condition_value(codeql_swift_job, "github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && needs.plan.outputs.should_scan == 'true')", "the CodeQL Swift analyze job")
 
 require_condition(prepare_job["runs-on"] == "ubuntu-latest", "the unified release workflow prepare job must run on ubuntu-latest")
 require_condition(release_job["runs-on"] == "ubuntu-latest", "the unified release workflow release job must run on ubuntu-latest")
@@ -458,6 +469,7 @@ precommit_steps = require_steps(precommit_job, "the hosted CI precommit job")
 node_current_steps = require_steps(node_current_job, "the hosted CI current Node job")
 dependency_review_steps = require_steps(dependency_review_job, "the hosted CI dependency review job")
 codeql_steps = require_steps(codeql_job, "the CodeQL analyze job")
+codeql_swift_steps = require_steps(codeql_swift_job, "the CodeQL Swift analyze job")
 codeql_plan_steps = require_steps(codeql_plan_job, "the CodeQL plan job")
 scorecard_steps = require_steps(scorecard_job, "the Scorecard analysis job")
 prepare_steps = require_steps(prepare_job, "the unified release workflow prepare job")
@@ -525,14 +537,19 @@ validate_step_contracts(dependency_review_steps, [
 ], "the hosted CI dependency review job")
 validate_step_contracts(codeql_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" } },
-  { name: "Resolve Swift cache key", keys: ["name", "if", "id", "run"], values: { "if" => "matrix.language == 'swift'", "id" => "swift-cache-key", "run" => "swift --version | shasum -a 256 | awk '{ print \"toolchain=\" $1 }' >> \"$GITHUB_OUTPUT\"\n" } },
-  { name: "Restore Swift build cache", keys: ["name", "if", "uses", "with"], values: { "if" => "matrix.language == 'swift'", "uses" => "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", "with" => { "path" => ".build", "key" => "swift-codeql-${{ runner.os }}-${{ steps.swift-cache-key.outputs.toolchain }}-${{ hashFiles('Package.swift', 'Package.resolved') }}" } } },
-  { name: "Prepare Swift build cache", keys: ["name", "if", "run"], values: { "if" => "matrix.language == 'swift'", "run" => "swift package --skip-update --only-use-versions-from-resolved-file resolve\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
   { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
-  { name: "Build Swift library", keys: ["name", "if", "run"], values: { "if" => "matrix.language == 'swift'", "run" => "find flowersec-swift/Sources/Flowersec -type f -name '*.swift' -exec touch {} +\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
   { name: "Autobuild Go", keys: ["name", "if", "uses"], values: { "if" => "matrix.language == 'go'", "uses" => "github/codeql-action/autobuild@5595ccaf912efad79be6eef63a5619ff05969be3" } },
   { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3" } },
 ], "the CodeQL analyze job")
+validate_step_contracts(codeql_swift_steps, [
+  { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" } },
+  { name: "Resolve Swift cache key", keys: ["name", "id", "run"], values: { "id" => "swift-cache-key", "run" => "swift --version | shasum -a 256 | awk '{ print \"toolchain=\" $1 }' >> \"$GITHUB_OUTPUT\"\n" } },
+  { name: "Restore Swift build cache", keys: ["name", "uses", "with"], values: { "uses" => "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", "with" => { "path" => ".build", "key" => "swift-codeql-${{ runner.os }}-${{ steps.swift-cache-key.outputs.toolchain }}-${{ hashFiles('Package.swift', 'Package.resolved') }}" } } },
+  { name: "Prepare Swift build cache", keys: ["name", "run"], values: { "run" => "swift package --skip-update --only-use-versions-from-resolved-file resolve\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
+  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3", "with" => { "languages" => "swift", "build-mode" => "manual", "queries" => "security-extended" } } },
+  { name: "Build Swift library", keys: ["name", "run"], values: { "run" => "find flowersec-swift/Sources/Flowersec -type f -name '*.swift' -exec touch {} +\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
+  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3" } },
+], "the CodeQL Swift analyze job")
 validate_step_contracts(codeql_plan_steps, [
   { name: "Check for new main commits", keys: ["name", "id", "env", "run"], values: {
     "id" => "changes",
@@ -543,7 +560,7 @@ validate_step_contracts(codeql_plan_steps, [
       "HEAD_SHA" => "${{ github.sha }}",
       "REPOSITORY" => "${{ github.repository }}",
     },
-  }, run_sha256: "6a94dacb488f0128af696fe2a8ae43f23b78c31b4132f409ea72cfbc20297ce6" },
+  }, run_sha256: "47795e7fb85588c38dccae853ab0cbea06406b7bf48ba040fbe309331e039c58" },
 ], "the CodeQL plan job")
 validate_step_contracts(scorecard_steps, [
   { name: "Checkout repository", keys: ["name", "uses", "with"], values: {

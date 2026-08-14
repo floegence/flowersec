@@ -795,41 +795,23 @@ test("release workflows pin actions and pass expressions through fields, not she
   );
 });
 
-test("CodeQL scans every language on changes and does not hide Swift failures", () => {
-  const workflowPath = path.join(sourceRoot, ".github/workflows/codeql.yml");
-  assert.equal(fs.existsSync(workflowPath), true, "the bounded CodeQL workflow must exist");
-  const workflow = fs.readFileSync(workflowPath, "utf8");
-  assert.match(workflow, /^name: codeql$/m);
-  assert.match(workflow, /^on:\n  workflow_dispatch: \{\}\n  push:\n    branches:\n      - main\n  pull_request:\n    branches:\n      - main\n  schedule:\n    - cron: "17 3 \* \* \*"$/m);
-  assert.match(workflow, /^  plan:\n    name: Plan scheduled analysis$/m);
-  assert.match(workflow, /actions\/workflows\/codeql\.yml\/runs\?branch=main&event=schedule&status=success&per_page=1/);
-  assert.match(workflow, /previous_sha=.*workflow_runs\[0\]\.head_sha/);
-  assert.match(workflow, /Could not inspect previous CodeQL runs; scanning fail-safe\./);
-  assert.match(workflow, /"\$previous_sha" == "\$HEAD_SHA"/);
-  assert.match(workflow, /^    needs: plan\n    if: needs\.plan\.outputs\.should_scan == 'true'$/m);
-  assert.doesNotMatch(workflow, /continue-on-error:/);
-  assert.match(workflow, /^    timeout-minutes: 45$/m);
-  for (const language of ["actions", "c-cpp", "go", "javascript-typescript", "ruby", "rust", "swift"]) {
-    assert.match(workflow, new RegExp("^          - language: " + language + "$", "m"));
-  }
-  assert.match(workflow, /^          - language: c-cpp\n            build-mode: none$/m);
-  assert.match(workflow, /^          - language: rust\n            build-mode: none$/m);
-  assert.match(workflow, /^          - language: swift\n            build-mode: manual\n            runner: macos-26$/m);
-  assert.match(workflow, /^        uses: github\/codeql-action\/init@[0-9a-f]{40} # v4(?:\.[0-9]+)*$/m);
-  assert.match(workflow, /^          languages: \$\{\{ matrix\.language \}\}\n          build-mode: \$\{\{ matrix\.build-mode \}\}\n          queries: security-extended$/m);
-  assert.match(workflow, /^      - name: Resolve Swift cache key\n        if: matrix\.language == 'swift'\n        id: swift-cache-key\n        run: \|\n          swift --version \| shasum -a 256 \| awk '\{ print "toolchain=" \$1 \}' >> "\$GITHUB_OUTPUT"$/m);
-  assert.match(workflow, /^      - name: Restore Swift build cache\n        if: matrix\.language == 'swift'\n        uses: actions\/cache@[0-9a-f]{40} # v6(?:\.[0-9]+)*\n        with:\n          path: \.build\n          key: swift-codeql-\$\{\{ runner\.os \}\}-\$\{\{ steps\.swift-cache-key\.outputs\.toolchain \}\}-\$\{\{ hashFiles\('Package\.swift', 'Package\.resolved'\) \}\}$/m);
-  const prepareSwift = workflow.indexOf("      - name: Prepare Swift build cache");
-  const restoreSwift = workflow.indexOf("      - name: Restore Swift build cache");
-  const initializeCodeQL = workflow.indexOf("      - name: Initialize CodeQL");
-  assert.notEqual(restoreSwift, -1, "Swift dependency artifacts must be restored across runs");
-  assert.notEqual(prepareSwift, -1, "Swift dependencies must be built outside CodeQL tracing");
-  assert.ok(restoreSwift < prepareSwift, "the Swift build cache must be restored before dependency preparation");
-  assert.ok(prepareSwift < initializeCodeQL, "Swift dependencies must be built before CodeQL initialization");
-  assert.match(workflow, /^        run: \|\n          swift package --skip-update --only-use-versions-from-resolved-file resolve\n          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8$/m);
-  assert.match(workflow, /^      - name: Build Swift library\n        if: matrix\.language == 'swift'\n        run: \|\n          find flowersec-swift\/Sources\/Flowersec -type f -name '\*\.swift' -exec touch \{\} \+\n          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8$/m);
-  assert.match(workflow, /^        if: matrix\.language == 'go'\n        uses: github\/codeql-action\/autobuild@[0-9a-f]{40} # v4(?:\.[0-9]+)*$/m);
-  assert.match(workflow, /^        uses: github\/codeql-action\/analyze@[0-9a-f]{40} # v4(?:\.[0-9]+)*$/m);
+test("CodeQL policy structurally separates scheduled Swift analysis", () => {
+  const result = spawnSync("ruby", ["-W0", "scripts/check-release-workflows.rb"], {
+    cwd: sourceRoot,
+    encoding: "utf8",
+    env: isolatedEnvironment(),
+  });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+});
+
+test("push and release gates never depend on Swift CodeQL", () => {
+  const releaseWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
+  const pushMain = fs.readFileSync(path.join(sourceRoot, "scripts/push-main.sh"), "utf8");
+  const agentGuide = fs.readFileSync(path.join(sourceRoot, "AGENTS.md"), "utf8");
+
+  assert.doesNotMatch(releaseWorkflow, /swift[^\n]*(?:codeql|analysis)|(?:codeql|analysis)[^\n]*swift/i);
+  assert.doesNotMatch(pushMain, /codeql|swift/i);
+  assert.match(agentGuide, /^- Swift CodeQL runs on the daily\/manual path only and never gates push or release\.$/m);
 });
 
 test("release workflow parser passes filenames compatibly across Psych versions", () => {
@@ -1502,6 +1484,68 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
         assert.match(result.stderr, tt.expected);
       });
     }
+  }
+
+  for (const mutation of [
+    {
+      name: "Swift returns to the push and pull request matrix",
+      from: "          - language: rust\n            build-mode: none\n            runner: ubuntu-latest\n",
+      to: "          - language: rust\n            build-mode: none\n            runner: ubuntu-latest\n          - language: swift\n            build-mode: manual\n            runner: macos-26\n",
+      expected: /CodeQL matrix/,
+    },
+    {
+      name: "Swift permits push events",
+      from: "    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && needs.plan.outputs.should_scan == 'true')\n",
+      to: "    if: github.event_name != 'pull_request'\n",
+      expected: /Swift analyze job.*approved condition/i,
+    },
+    {
+      name: "Swift loses its manual recovery path",
+      from: "    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && needs.plan.outputs.should_scan == 'true')\n",
+      to: "    if: github.event_name == 'schedule' && needs.plan.outputs.should_scan == 'true'\n",
+      expected: /Swift analyze job.*approved condition/i,
+    },
+    {
+      name: "daily CodeQL scheduling is removed",
+      from: "  schedule:\n    - cron: \"17 3 * * *\"\n",
+      to: "",
+      expected: /CodeQL triggers/,
+    },
+    {
+      name: "same-SHA schedules no longer skip Swift",
+      from: "            echo \"should_scan=false\" >> \"$GITHUB_OUTPUT\"\n",
+      to: "            echo \"should_scan=true\" >> \"$GITHUB_OUTPUT\"\n",
+      expected: /CodeQL plan job.*reviewed command/i,
+    },
+    {
+      name: "scheduled API failure no longer scans fail-safe",
+      from: "            echo \"::warning::Could not inspect previous CodeQL runs; scanning fail-safe.\"\n            echo \"should_scan=true\" >> \"$GITHUB_OUTPUT\"\n            exit 0\n          fi\n",
+      to: "            echo \"::warning::Could not inspect previous CodeQL runs; scanning fail-safe.\"\n            echo \"should_scan=false\" >> \"$GITHUB_OUTPUT\"\n            exit 0\n          fi\n",
+      expected: /CodeQL plan job.*reviewed command/i,
+    },
+    {
+      name: "scheduled API requests lose their bounded timeout",
+      from: "            --connect-timeout 5 --max-time 20 \\\n",
+      to: "",
+      expected: /CodeQL plan job.*reviewed command/i,
+    },
+    {
+      name: "scheduled API response parsing no longer scans fail-safe",
+      from: "            echo \"::warning::Could not parse previous CodeQL runs; scanning fail-safe.\"\n            echo \"should_scan=true\" >> \"$GITHUB_OUTPUT\"\n            exit 0\n          fi\n",
+      to: "            echo \"::warning::Could not parse previous CodeQL runs; scanning fail-safe.\"\n            echo \"should_scan=false\" >> \"$GITHUB_OUTPUT\"\n            exit 0\n          fi\n",
+      expected: /CodeQL plan job.*reviewed command/i,
+    },
+  ]) {
+    schedulePolicyTest(`rejects CodeQL policy mutation: ${mutation.name}`, () => {
+      const root = createReleasePolicyFixture(t);
+      const workflowPath = path.join(root, ".github/workflows/codeql.yml");
+      const workflow = fs.readFileSync(workflowPath, "utf8");
+      assert.ok(workflow.includes(mutation.from), `missing CodeQL policy marker for ${mutation.name}`);
+      fs.writeFileSync(workflowPath, workflow.replace(mutation.from, mutation.to));
+      const result = runReleasePolicy(root);
+      assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+      assert.match(result.stderr, mutation.expected);
+    });
   }
   await Promise.all(policyMutations);
 });

@@ -48,6 +48,7 @@ jobs:
           trap 'rm -f -- "$response"' EXIT
           url="$API_URL/repos/$REPOSITORY/actions/workflows/codeql.yml/runs?branch=main&event=schedule&status=success&per_page=1"
           if ! curl --silent --show-error --fail-with-body --location \
+            --connect-timeout 5 --max-time 20 \
             --header "Accept: application/vnd.github+json" \
             --header "Authorization: Bearer $GH_TOKEN" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
@@ -58,7 +59,12 @@ jobs:
             exit 0
           fi
 
-          previous_sha=$(jq -r '.workflow_runs[0].head_sha // ""' "$response")
+          if ! previous_sha=$(jq -r '.workflow_runs[0].head_sha // ""' "$response"); then
+            echo "::warning::Could not parse previous CodeQL runs; scanning fail-safe."
+            echo "should_scan=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           if [[ -n "$previous_sha" && "$previous_sha" == "$HEAD_SHA" ]]; then
             echo "No new main commit since the latest successful scheduled CodeQL run."
             echo "should_scan=false" >> "$GITHUB_OUTPUT"
@@ -98,30 +104,8 @@ jobs:
           - language: rust
             build-mode: none
             runner: ubuntu-latest
-          - language: swift
-            build-mode: manual
-            runner: macos-26
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Resolve Swift cache key
-        if: matrix.language == 'swift'
-        id: swift-cache-key
-        run: |
-          swift --version | shasum -a 256 | awk '{ print "toolchain=" $1 }' >> "$GITHUB_OUTPUT"
-
-      - name: Restore Swift build cache
-        if: matrix.language == 'swift'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .build
-          key: swift-codeql-${{ runner.os }}-${{ steps.swift-cache-key.outputs.toolchain }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
-
-      - name: Prepare Swift build cache
-        if: matrix.language == 'swift'
-        run: |
-          swift package --skip-update --only-use-versions-from-resolved-file resolve
-          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
@@ -130,15 +114,54 @@ jobs:
           build-mode: ${{ matrix.build-mode }}
           queries: security-extended
 
-      - name: Build Swift library
-        if: matrix.language == 'swift'
-        run: |
-          find flowersec-swift/Sources/Flowersec -type f -name '*.swift' -exec touch {} +
-          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8
-
       - name: Autobuild Go
         if: matrix.language == 'go'
         uses: github/codeql-action/autobuild@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+
+  analyze-swift:
+    name: Analyze (swift)
+    needs: plan
+    # Swift CodeQL is intentionally scheduled/manual only because its runtime is unsuitable for push or release gating.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && needs.plan.outputs.should_scan == 'true')
+    runs-on: macos-26
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Resolve Swift cache key
+        id: swift-cache-key
+        run: |
+          swift --version | shasum -a 256 | awk '{ print "toolchain=" $1 }' >> "$GITHUB_OUTPUT"
+
+      - name: Restore Swift build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build
+          key: swift-codeql-${{ runner.os }}-${{ steps.swift-cache-key.outputs.toolchain }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+
+      - name: Prepare Swift build cache
+        run: |
+          swift package --skip-update --only-use-versions-from-resolved-file resolve
+          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        with:
+          languages: swift
+          build-mode: manual
+          queries: security-extended
+
+      - name: Build Swift library
+        run: |
+          find flowersec-swift/Sources/Flowersec -type f -name '*.swift' -exec touch {} +
+          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8
 
       - name: Analyze
         uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
