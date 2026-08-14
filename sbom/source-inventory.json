@@ -7,8 +7,8 @@
       "root": {
         "ecosystem": "go",
         "name": "github.com/floegence/flowersec/flowersec-go/v2",
-        "version": "v2.4.0",
-        "purl": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.0"
+        "version": "v2.4.1",
+        "purl": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.1"
       },
       "components": [
         {
@@ -388,57 +388,57 @@
       ],
       "edges": [
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.1",
           "to": "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.1",
           "to": "pkg:golang/github.com/gorilla/websocket@v1.5.3",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.1",
           "to": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.1",
           "to": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.1",
           "to": "pkg:golang/github.com/quic-go/qpack@v0.6.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.1",
           "to": "pkg:golang/github.com/quic-go/quic-go@v0.61.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.1",
           "to": "pkg:golang/github.com/quic-go/webtransport-go@v0.12.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.1",
           "to": "pkg:golang/golang.org/x/crypto@v0.54.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.1",
           "to": "pkg:golang/golang.org/x/net@v0.57.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.1",
           "to": "pkg:golang/golang.org/x/sys@v0.47.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.4.1",
           "to": "pkg:golang/golang.org/x/text@v0.40.0",
           "kind": "runtime"
         },
@@ -550,8 +550,8 @@
       "root": {
         "ecosystem": "go",
         "name": "github.com/floegence/flowersec/tools/releasenotes",
-        "version": "2.4.0",
-        "purl": "pkg:golang/github.com/floegence/flowersec/tools/releasenotes@2.4.0"
+        "version": "2.4.1",
+        "purl": "pkg:golang/github.com/floegence/flowersec/tools/releasenotes@2.4.1"
       },
       "components": [],
       "edges": []
@@ -562,8 +562,8 @@
       "root": {
         "ecosystem": "go",
         "name": "github.com/floegence/flowersec/tools/stabilitycheck",
-        "version": "2.4.0",
-        "purl": "pkg:golang/github.com/floegence/flowersec/tools/stabilitycheck@2.4.0"
+        "version": "2.4.1",
+        "purl": "pkg:golang/github.com/floegence/flowersec/tools/stabilitycheck@2.4.1"
       },
       "components": [],
       "edges": []
@@ -574,8 +574,8 @@
       "root": {
         "ecosystem": "npm",
         "name": "@floegence/flowersec-core",
-        "version": "2.4.0",
-        "purl": "pkg:npm/%40floegence/flowersec-core@2.4.0"
+        "version": "2.4.1",
+        "purl": "pkg:npm/%40floegence/flowersec-core@2.4.1"
       },
       "components": [
         {
@@ -1856,176 +1856,6 @@
             "sourceEvidenceValue": "sha512-+CNAzxglkrpNf/kKywqQfk74QjtceuOE7Qm+AF8miRvPF/wmmK5+OJOgVh3AVTT3RP2mH3+FOaxlE5v72owk0A==",
             "sourceEvidenceSha256": "91fa572ae1af2890a20c13288e8781713da712f580f192e677db5715cb4413ec",
             "expressionEvidenceSha256": "18becba96f4f9fe4633afbae133c5e5d2ecdc32048ab2b24a367b813cc736030",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "npm",
-          "name": "@floegence/flowersec-node-native",
-          "version": "2.4.0",
-          "declaredLicense": "MIT",
-          "concludedLicense": "MIT",
-          "source": "https://registry.npmjs.org/@floegence/flowersec-node-native/-/flowersec-node-native-2.4.0.tgz",
-          "purl": "pkg:npm/%40floegence/flowersec-node-native@2.4.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-08-07",
-            "policyRevision": "source-license-policy-v3",
-            "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-HctwOc5F7VUfHIYkbLY7aYakxw2THcCL4VPkaRj9ZdWWRM881XHDLs6UXe+1+UXyJp1RHqI+17PdsE/hu3UWgg==",
-            "sourceEvidenceSha256": "c69cf04bae03e8d21a1ddc55cf43d1a424d93b4277e2d6f62aca603b59da2d92",
-            "expressionEvidenceSha256": "824e783e2e6e6f339800c4b66744245b06e0bb568ae9adac17098a341dacc905",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "npm",
-          "name": "@floegence/flowersec-node-native-darwin-arm64",
-          "version": "2.4.0",
-          "declaredLicense": "MIT",
-          "concludedLicense": "MIT",
-          "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-darwin-arm64/-/flowersec-node-native-darwin-arm64-2.4.0.tgz",
-          "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@2.4.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-08-07",
-            "policyRevision": "source-license-policy-v3",
-            "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-8WVITMTfHaXli3BuzhU6aDWbLiILiE+FGZL0wDlMZeco/NoewAQPvCBUJkiPdm1p3K+WHmHBplb94JKfV1YHNg==",
-            "sourceEvidenceSha256": "af075e1f623ebfb5b85cab2ab0e223a29ee8194ecf272dda6d82fc1d5e5d14c4",
-            "expressionEvidenceSha256": "54358219e2619d0ee5b8021448e0e0942a525d9f12db3465df6eed4d7b30e32b",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "npm",
-          "name": "@floegence/flowersec-node-native-darwin-x64",
-          "version": "2.4.0",
-          "declaredLicense": "MIT",
-          "concludedLicense": "MIT",
-          "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-darwin-x64/-/flowersec-node-native-darwin-x64-2.4.0.tgz",
-          "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@2.4.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-08-07",
-            "policyRevision": "source-license-policy-v3",
-            "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-I/DiXbBRb/NNKUo1Dkp5pXPvtABDAUMhR4Bo6QbbVoSB531kWek73d7ldUOV9Ueae7FsRIy8qyy6NndZ9Rf1hg==",
-            "sourceEvidenceSha256": "3ead85aaaec085f6fee2d1947dfc2efad4c2d21ce9ae5257dc042826efb8fb8a",
-            "expressionEvidenceSha256": "fd2820e0d02352f07c594ae0019f0f2d540e24c90a7c454d25898824d7f83571",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "npm",
-          "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
-          "version": "2.4.0",
-          "declaredLicense": "MIT",
-          "concludedLicense": "MIT",
-          "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-linux-arm64-gnu/-/flowersec-node-native-linux-arm64-gnu-2.4.0.tgz",
-          "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@2.4.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-08-07",
-            "policyRevision": "source-license-policy-v3",
-            "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-4JSVf70M7/QbzolAoyaW99l+sLfq/GEnvTenjBqS6cGHqTtv6cfUjWF61ZiUCdkjr+DDnkqeqiGABTi4legTgA==",
-            "sourceEvidenceSha256": "a7fd4cb4f3f78ec87bec6314bf26678b8953a78cb21acbd03e408ecb5827d4d2",
-            "expressionEvidenceSha256": "571f17e29c7760714f27202fe9c687b95c2f30e1e24e8287b49bffbf25ba19cc",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "npm",
-          "name": "@floegence/flowersec-node-native-linux-x64-gnu",
-          "version": "2.4.0",
-          "declaredLicense": "MIT",
-          "concludedLicense": "MIT",
-          "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-linux-x64-gnu/-/flowersec-node-native-linux-x64-gnu-2.4.0.tgz",
-          "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@2.4.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-08-07",
-            "policyRevision": "source-license-policy-v3",
-            "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-TQ+DXiTnwWEbpfbw5elLETIaQD81YcPqmjclwgVTr/21RjlpVDMyuS/LaotqHDBu5KQwCBtidif8YtNYmx/RWw==",
-            "sourceEvidenceSha256": "0007dac6bb2674c32d0f2cbeefe3147ab2448ca9fe715cb10d0b2291a199a76d",
-            "expressionEvidenceSha256": "3b519f26b7ad1d4e9e649acf95e0f67ec01dc4cca3db8797b2b67578d1a9c2ef",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -8405,124 +8235,99 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
-          "to": "pkg:npm/%40floegence/flowersec-node-native@2.4.0",
-          "kind": "optional"
-        },
-        {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/%40noble/ciphers@2.3.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/%40noble/curves@2.3.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/%40noble/hashes@2.3.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/%40playwright/test@1.62.1",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/%40types/node@26.2.0",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/%40types/ws@8.18.1",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/%40typescript-eslint/eslint-plugin@8.66.0",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/%40typescript-eslint/parser@8.66.0",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/%40vitest/coverage-v8@4.1.10",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/ajv-formats-draft2019@1.6.1",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/ajv-formats@3.0.1",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/ajv@8.20.0",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/eslint@10.8.0",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/tr46@5.0.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/tsx@4.23.12",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/typescript@5.9.3",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/vite@8.2.1",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/vitest@4.1.10",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@2.4.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.4.1",
           "to": "pkg:npm/ws@8.21.3",
           "kind": "runtime"
-        },
-        {
-          "from": "pkg:npm/%40floegence/flowersec-node-native@2.4.0",
-          "to": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@2.4.0",
-          "kind": "optional"
-        },
-        {
-          "from": "pkg:npm/%40floegence/flowersec-node-native@2.4.0",
-          "to": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@2.4.0",
-          "kind": "optional"
-        },
-        {
-          "from": "pkg:npm/%40floegence/flowersec-node-native@2.4.0",
-          "to": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@2.4.0",
-          "kind": "optional"
-        },
-        {
-          "from": "pkg:npm/%40floegence/flowersec-node-native@2.4.0",
-          "to": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@2.4.0",
-          "kind": "optional"
         },
         {
           "from": "pkg:npm/%40humanfs/node@0.16.7",
@@ -10022,8 +9827,8 @@
       "root": {
         "ecosystem": "cargo",
         "name": "flowersec",
-        "version": "2.4.0",
-        "purl": "pkg:cargo/flowersec@2.4.0"
+        "version": "2.4.1",
+        "purl": "pkg:cargo/flowersec@2.4.1"
       },
       "components": [
         {
@@ -17570,182 +17375,182 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/aes-gcm@0.11.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/async-trait@0.1.92",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/base64@0.23.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/bytes@1.12.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/futures-util@0.3.33",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/hkdf@0.13.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/hmac@0.13.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/http-body-util@0.1.4",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/http@1.5.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/hyper-util@0.1.20",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/hyper@1.11.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/idna_adapter@1.1.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/idna_mapping@1.0.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/idna@1.1.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/p256@0.14.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/proptest@1.11.0",
           "kind": "dev"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/quinn@0.11.11",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/rand@0.10.2",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/ring@0.17.14",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/rustls@0.23.43",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/serde_json@1.0.151",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/serde@1.0.229",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/sha2@0.11.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/subtle@2.6.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/tempfile@3.27.0",
           "kind": "dev"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/thiserror@2.0.20",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/time@0.3.55",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/tokio-rustls@0.26.4",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/tokio-tungstenite@0.28.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/tokio-util@0.7.19",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/tokio@1.53.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/unicode-normalization@0.1.25",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/url@2.5.8",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/x25519-dalek@3.0.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/yamux@0.14.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@2.4.0",
+          "from": "pkg:cargo/flowersec@2.4.1",
           "to": "pkg:cargo/zeroize@1.9.0",
           "kind": "runtime"
         },
@@ -19557,8 +19362,8 @@
       "root": {
         "ecosystem": "cargo",
         "name": "flowersec-native-transport",
-        "version": "2.4.0",
-        "purl": "pkg:cargo/flowersec-native-transport@2.4.0"
+        "version": "2.4.1",
+        "purl": "pkg:cargo/flowersec-native-transport@2.4.1"
       },
       "components": [
         {
@@ -22042,32 +21847,32 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec-native-transport@2.4.0",
+          "from": "pkg:cargo/flowersec-native-transport@2.4.1",
           "to": "pkg:cargo/bytes@1.12.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec-native-transport@2.4.0",
+          "from": "pkg:cargo/flowersec-native-transport@2.4.1",
           "to": "pkg:cargo/quinn@0.11.11",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec-native-transport@2.4.0",
+          "from": "pkg:cargo/flowersec-native-transport@2.4.1",
           "to": "pkg:cargo/rustls@0.23.43",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec-native-transport@2.4.0",
+          "from": "pkg:cargo/flowersec-native-transport@2.4.1",
           "to": "pkg:cargo/thiserror@2.0.20",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec-native-transport@2.4.0",
+          "from": "pkg:cargo/flowersec-native-transport@2.4.1",
           "to": "pkg:cargo/tokio-util@0.7.19",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec-native-transport@2.4.0",
+          "from": "pkg:cargo/flowersec-native-transport@2.4.1",
           "to": "pkg:cargo/tokio@1.53.1",
           "kind": "runtime"
         },
@@ -22764,8 +22569,8 @@
       "root": {
         "ecosystem": "cargo",
         "name": "flowersec-node-native",
-        "version": "2.4.0",
-        "purl": "pkg:cargo/flowersec-node-native@2.4.0"
+        "version": "2.4.1",
+        "purl": "pkg:cargo/flowersec-node-native@2.4.1"
       },
       "components": [
         {
@@ -25832,47 +25637,47 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec-node-native@2.4.0",
+          "from": "pkg:cargo/flowersec-node-native@2.4.1",
           "to": "pkg:cargo/bytes@1.12.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec-node-native@2.4.0",
+          "from": "pkg:cargo/flowersec-node-native@2.4.1",
           "to": "pkg:cargo/napi-build@2.4.1",
           "kind": "build"
         },
         {
-          "from": "pkg:cargo/flowersec-node-native@2.4.0",
+          "from": "pkg:cargo/flowersec-node-native@2.4.1",
           "to": "pkg:cargo/napi-derive@3.6.3",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec-node-native@2.4.0",
+          "from": "pkg:cargo/flowersec-node-native@2.4.1",
           "to": "pkg:cargo/napi@3.12.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec-node-native@2.4.0",
+          "from": "pkg:cargo/flowersec-node-native@2.4.1",
           "to": "pkg:cargo/quinn@0.11.11",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec-node-native@2.4.0",
+          "from": "pkg:cargo/flowersec-node-native@2.4.1",
           "to": "pkg:cargo/rustls@0.23.43",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec-node-native@2.4.0",
+          "from": "pkg:cargo/flowersec-node-native@2.4.1",
           "to": "pkg:cargo/thiserror@2.0.20",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec-node-native@2.4.0",
+          "from": "pkg:cargo/flowersec-node-native@2.4.1",
           "to": "pkg:cargo/tokio-util@0.7.19",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec-node-native@2.4.0",
+          "from": "pkg:cargo/flowersec-node-native@2.4.1",
           "to": "pkg:cargo/tokio@1.53.1",
           "kind": "runtime"
         },
@@ -44631,8 +44436,8 @@
       "root": {
         "ecosystem": "swift",
         "name": "Flowersec",
-        "version": "2.4.0",
-        "purl": "pkg:swift/Flowersec@2.4.0"
+        "version": "2.4.1",
+        "purl": "pkg:swift/Flowersec@2.4.1"
       },
       "components": [
         {
@@ -44876,17 +44681,17 @@
       ],
       "edges": [
         {
-          "from": "pkg:swift/Flowersec@2.4.0",
+          "from": "pkg:swift/Flowersec@2.4.1",
           "to": "pkg:swift/swift-crypto@4.5.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:swift/Flowersec@2.4.0",
+          "from": "pkg:swift/Flowersec@2.4.1",
           "to": "pkg:swift/swift-nio-ssl@2.37.2",
           "kind": "runtime"
         },
         {
-          "from": "pkg:swift/Flowersec@2.4.0",
+          "from": "pkg:swift/Flowersec@2.4.1",
           "to": "pkg:swift/swift-nio@2.101.3",
           "kind": "runtime"
         },
@@ -44923,8 +44728,8 @@
       "root": {
         "ecosystem": "swift",
         "name": "FlowersecSwiftClientExample",
-        "version": "2.4.0",
-        "purl": "pkg:swift/FlowersecSwiftClientExample@2.4.0"
+        "version": "2.4.1",
+        "purl": "pkg:swift/FlowersecSwiftClientExample@2.4.1"
       },
       "components": [
         {
@@ -45168,17 +44973,17 @@
       ],
       "edges": [
         {
-          "from": "pkg:swift/FlowersecSwiftClientExample@2.4.0",
+          "from": "pkg:swift/FlowersecSwiftClientExample@2.4.1",
           "to": "pkg:swift/swift-crypto@4.5.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:swift/FlowersecSwiftClientExample@2.4.0",
+          "from": "pkg:swift/FlowersecSwiftClientExample@2.4.1",
           "to": "pkg:swift/swift-nio-ssl@2.37.2",
           "kind": "runtime"
         },
         {
-          "from": "pkg:swift/FlowersecSwiftClientExample@2.4.0",
+          "from": "pkg:swift/FlowersecSwiftClientExample@2.4.1",
           "to": "pkg:swift/swift-nio@2.101.3",
           "kind": "runtime"
         },
@@ -54699,176 +54504,6 @@
     },
     {
       "ecosystem": "npm",
-      "name": "@floegence/flowersec-node-native",
-      "version": "2.4.0",
-      "declaredLicense": "MIT",
-      "concludedLicense": "MIT",
-      "source": "https://registry.npmjs.org/@floegence/flowersec-node-native/-/flowersec-node-native-2.4.0.tgz",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native@2.4.0",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MIT",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-08-07",
-        "policyRevision": "source-license-policy-v3",
-        "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-HctwOc5F7VUfHIYkbLY7aYakxw2THcCL4VPkaRj9ZdWWRM881XHDLs6UXe+1+UXyJp1RHqI+17PdsE/hu3UWgg==",
-        "sourceEvidenceSha256": "c69cf04bae03e8d21a1ddc55cf43d1a424d93b4277e2d6f62aca603b59da2d92",
-        "expressionEvidenceSha256": "824e783e2e6e6f339800c4b66744245b06e0bb568ae9adac17098a341dacc905",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "npm",
-      "name": "@floegence/flowersec-node-native-darwin-arm64",
-      "version": "2.4.0",
-      "declaredLicense": "MIT",
-      "concludedLicense": "MIT",
-      "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-darwin-arm64/-/flowersec-node-native-darwin-arm64-2.4.0.tgz",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@2.4.0",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MIT",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-08-07",
-        "policyRevision": "source-license-policy-v3",
-        "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-8WVITMTfHaXli3BuzhU6aDWbLiILiE+FGZL0wDlMZeco/NoewAQPvCBUJkiPdm1p3K+WHmHBplb94JKfV1YHNg==",
-        "sourceEvidenceSha256": "af075e1f623ebfb5b85cab2ab0e223a29ee8194ecf272dda6d82fc1d5e5d14c4",
-        "expressionEvidenceSha256": "54358219e2619d0ee5b8021448e0e0942a525d9f12db3465df6eed4d7b30e32b",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "npm",
-      "name": "@floegence/flowersec-node-native-darwin-x64",
-      "version": "2.4.0",
-      "declaredLicense": "MIT",
-      "concludedLicense": "MIT",
-      "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-darwin-x64/-/flowersec-node-native-darwin-x64-2.4.0.tgz",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@2.4.0",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MIT",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-08-07",
-        "policyRevision": "source-license-policy-v3",
-        "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-I/DiXbBRb/NNKUo1Dkp5pXPvtABDAUMhR4Bo6QbbVoSB531kWek73d7ldUOV9Ueae7FsRIy8qyy6NndZ9Rf1hg==",
-        "sourceEvidenceSha256": "3ead85aaaec085f6fee2d1947dfc2efad4c2d21ce9ae5257dc042826efb8fb8a",
-        "expressionEvidenceSha256": "fd2820e0d02352f07c594ae0019f0f2d540e24c90a7c454d25898824d7f83571",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "npm",
-      "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
-      "version": "2.4.0",
-      "declaredLicense": "MIT",
-      "concludedLicense": "MIT",
-      "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-linux-arm64-gnu/-/flowersec-node-native-linux-arm64-gnu-2.4.0.tgz",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@2.4.0",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MIT",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-08-07",
-        "policyRevision": "source-license-policy-v3",
-        "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-4JSVf70M7/QbzolAoyaW99l+sLfq/GEnvTenjBqS6cGHqTtv6cfUjWF61ZiUCdkjr+DDnkqeqiGABTi4legTgA==",
-        "sourceEvidenceSha256": "a7fd4cb4f3f78ec87bec6314bf26678b8953a78cb21acbd03e408ecb5827d4d2",
-        "expressionEvidenceSha256": "571f17e29c7760714f27202fe9c687b95c2f30e1e24e8287b49bffbf25ba19cc",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "npm",
-      "name": "@floegence/flowersec-node-native-linux-x64-gnu",
-      "version": "2.4.0",
-      "declaredLicense": "MIT",
-      "concludedLicense": "MIT",
-      "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-linux-x64-gnu/-/flowersec-node-native-linux-x64-gnu-2.4.0.tgz",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@2.4.0",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MIT",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-08-07",
-        "policyRevision": "source-license-policy-v3",
-        "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-TQ+DXiTnwWEbpfbw5elLETIaQD81YcPqmjclwgVTr/21RjlpVDMyuS/LaotqHDBu5KQwCBtidif8YtNYmx/RWw==",
-        "sourceEvidenceSha256": "0007dac6bb2674c32d0f2cbeefe3147ab2448ca9fe715cb10d0b2291a199a76d",
-        "expressionEvidenceSha256": "3b519f26b7ad1d4e9e649acf95e0f67ec01dc4cca3db8797b2b67578d1a9c2ef",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "npm",
       "name": "@humanfs/core",
       "version": "0.19.1",
       "declaredLicense": "Apache-2.0",
@@ -63935,372 +63570,367 @@
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/aes-gcm@0.11.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/async-trait@0.1.92",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/base64@0.23.1",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/bytes@1.12.1",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/futures-util@0.3.33",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/hkdf@0.13.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/hmac@0.13.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/http-body-util@0.1.4",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/http@1.5.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/hyper-util@0.1.20",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/hyper@1.11.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/idna_adapter@1.1.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/idna_mapping@1.0.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/idna@1.1.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/libfuzzer-sys@0.4.13",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/napi-build@2.4.1",
       "kind": "build"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/napi-derive@3.6.3",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/napi@3.12.1",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/p256@0.14.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/proptest@1.11.0",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/quinn@0.11.11",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/rand@0.10.2",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/ring@0.17.14",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/rustls@0.23.43",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/serde_json@1.0.151",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/serde@1.0.229",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/sha2@0.11.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/subtle@2.6.1",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/tempfile@3.27.0",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/thiserror@2.0.20",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/time@0.3.55",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/tokio-rustls@0.26.4",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/tokio-tungstenite@0.28.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/tokio-util@0.7.19",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/tokio@1.53.1",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/unicode-normalization@0.1.25",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/url@2.5.8",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/x25519-dalek@3.0.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/yamux@0.14.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:cargo/zeroize@1.9.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:golang/github.com/gorilla/websocket@v1.5.3",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:golang/github.com/quic-go/qpack@v0.6.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:golang/github.com/quic-go/quic-go@v0.61.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:golang/github.com/quic-go/webtransport-go@v0.12.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:golang/golang.org/x/crypto@v0.54.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:golang/golang.org/x/net@v0.57.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:golang/golang.org/x/sys@v0.47.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:golang/golang.org/x/text@v0.40.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
-      "to": "pkg:npm/%40floegence/flowersec-node-native@2.4.0",
-      "kind": "optional"
-    },
-    {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/%40noble/ciphers@2.3.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/%40noble/curves@2.3.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/%40noble/hashes@2.3.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/%40playwright/test@1.62.1",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/%40types/node@26.2.0",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/%40types/ws@8.18.1",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/%40typescript-eslint/eslint-plugin@8.66.0",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/%40typescript-eslint/parser@8.66.0",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/%40vitest/coverage-v8@4.1.10",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/ajv-formats-draft2019@1.6.1",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/ajv-formats@3.0.1",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/ajv@8.20.0",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/eslint@10.8.0",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/tr46@5.0.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/tsx@4.23.12",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/typescript@5.9.3",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/vite@8.2.1",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/vitest@4.1.10",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:npm/ws@8.21.3",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:swift/swift-crypto@4.5.1",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:swift/swift-nio-ssl@2.37.2",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@2.4.0",
+      "from": "pkg:generic/flowersec-source@2.4.1",
       "to": "pkg:swift/swift-nio@2.101.3",
       "kind": "runtime"
     },
@@ -64463,26 +64093,6 @@
       "from": "pkg:npm/%40eslint/plugin-kit@0.7.2",
       "to": "pkg:npm/levn@0.4.1",
       "kind": "runtime"
-    },
-    {
-      "from": "pkg:npm/%40floegence/flowersec-node-native@2.4.0",
-      "to": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@2.4.0",
-      "kind": "optional"
-    },
-    {
-      "from": "pkg:npm/%40floegence/flowersec-node-native@2.4.0",
-      "to": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@2.4.0",
-      "kind": "optional"
-    },
-    {
-      "from": "pkg:npm/%40floegence/flowersec-node-native@2.4.0",
-      "to": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@2.4.0",
-      "kind": "optional"
-    },
-    {
-      "from": "pkg:npm/%40floegence/flowersec-node-native@2.4.0",
-      "to": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@2.4.0",
-      "kind": "optional"
     },
     {
       "from": "pkg:npm/%40humanfs/node@0.16.7",
