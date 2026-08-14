@@ -128,12 +128,12 @@ func runProductionSoakCase(ctx context.Context, engine soakCycleEngine) (soakCas
 // runNativeProductionSoakCase owns the production raw-QUIC reconnect and path
 // migration engine. The public Flowersec session intentionally stays opaque;
 // test output uses this internal carrier boundary to exercise Migrate.
-func runNativeProductionSoakCase(ctx context.Context) (soakCaseResult, error) {
+func runNativeProductionSoakCase(ctx context.Context, contract soakContract) (soakCaseResult, error) {
 	engine, err := newRawQUICSoakEngine(ctx)
 	if err != nil {
 		return soakCaseResult{}, err
 	}
-	return runProductionSoakCase(ctx, engine)
+	return runSoakCase(ctx, contract, engine, transporttest.CaptureResourceSnapshot)
 }
 
 func runSoakCase(ctx context.Context, contract soakContract, engine soakCycleEngine, capture resourceSnapshotFunc) (result soakCaseResult, resultErr error) {

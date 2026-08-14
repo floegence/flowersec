@@ -3,6 +3,7 @@ package performance
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -37,18 +38,48 @@ func TestFocusedProductionSoakCase(t *testing.T) {
 		}
 		t.Skip("set FLOWERSEC_TEST_SOAK=1 to run the production soak")
 	}
-	ctx, cancel := context.WithTimeout(performanceTestContext, productionSoakContract().Duration+30*time.Second)
+	contract := productionSoakContract()
+	ctx, cancel := context.WithTimeout(performanceTestContext, contract.Duration+30*time.Second)
 	defer cancel()
-	result, err := runNativeProductionSoakCase(ctx)
-	if reportErr := writeFocusedPerformanceResult(soakPerformanceResult("performance/soak", result, productionSoakContract(), err)); reportErr != nil {
+	result, err := runNativeProductionSoakCase(ctx, contract)
+	if reportErr := writeFocusedPerformanceResult(soakPerformanceResult("performance/soak", result, contract, err)); reportErr != nil {
 		t.Fatal(reportErr)
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("soak metrics: %+v", result.Metrics)
-	if result.FaultCycles != 5 || result.Reconnects != 5 || result.Migrations != 5 || result.Residuals != (soakResiduals{}) {
-		t.Fatalf("production soak result = %+v", result)
+	if err := validateFocusedSoakResult(result, contract); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func validateFocusedSoakResult(result soakCaseResult, contract soakContract) error {
+	wantResiduals := soakResiduals{
+		Sessions:   contract.ResidualSessions,
+		Goroutines: contract.ResidualGoroutines,
+		OpenFDs:    contract.ResidualOpenFDs,
+		Tasks:      contract.ResidualTasks,
+	}
+	if result.FaultCycles != contract.Cycles || result.Reconnects != contract.Reconnects ||
+		result.Migrations != contract.Migrations || result.Residuals != wantResiduals {
+		return fmt.Errorf("production soak result = %+v, want cycles=%d reconnects=%d migrations=%d residuals=%+v",
+			result, contract.Cycles, contract.Reconnects, contract.Migrations, wantResiduals)
+	}
+	return nil
+}
+
+func TestValidateFocusedSoakResultUsesConfiguredContract(t *testing.T) {
+	t.Setenv(performanceBudgetEnvironmentName, "10m")
+	contract := productionSoakContract()
+	result := soakCaseResult{
+		FaultCycles: contract.Cycles,
+		Reconnects:  contract.Reconnects,
+		Migrations:  contract.Migrations,
+		Residuals:   soakResiduals{},
+	}
+	if err := validateFocusedSoakResult(result, contract); err != nil {
+		t.Fatal(err)
 	}
 }
 
