@@ -117,8 +117,10 @@ function selectClientProfileTopology() {
   if (!['swift', 'browser'].includes(clientProfile) || clientProfileTestID === undefined) {
     throw new Error("FLOWERSEC_PARITY_CLIENT_PROFILE and FLOWERSEC_PARITY_TEST_ID must select a supported client-profile topology");
   }
-  const expectedClient = clientProfile === "swift" ? "swift" : "typescript-browser";
-  const cells = [{ client: expectedClient, tunnel_runtime: "go", endpoint_b: "rust", carrier: "websocket", path: "tunnel", test_id: clientProfileTestID }].filter((cell) => cell.test_id === clientProfileTestID);
+  const cells = [
+    { profile: "browser", client: "typescript-browser", tunnel_runtime: "go", endpoint_b: "rust", carrier: "websocket", path: "tunnel", test_id: "browser/chromium/websocket/via-go-to-rust/tunnel" },
+    { profile: "swift", client: "swift", tunnel_runtime: "go", endpoint_b: "rust", carrier: "websocket", path: "tunnel", test_id: "interop/swift-via-go-to-rust/wss/tunnel" },
+  ].filter((cell) => cell.profile === clientProfile && cell.test_id === clientProfileTestID);
   if (cells.length !== 1) throw new Error(`${clientProfileTestID}: client-profile tunnel cell is absent or ambiguous`);
   const cell = cells[0];
   const topologyID = `${cell.tunnel_runtime}-${cell.endpoint_b}-websocket-client-profile`;

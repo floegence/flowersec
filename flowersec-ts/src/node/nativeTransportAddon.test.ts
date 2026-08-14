@@ -171,10 +171,7 @@ describe("native transport addon loader", () => {
     const wrapped = await connected.openStream();
 
     await expect(wrapped.read()).rejects.toMatchObject({ code: "reset" });
-    await expect(wrapped.write(new Uint8Array([1]))).rejects.toMatchObject({
-      code: "GenericFailure",
-      message: "stream_failed",
-    });
+    await expect(wrapped.write(new Uint8Array([1]))).rejects.toMatchObject({ code: "closed" });
   });
 
   test("forwards stream I/O cancellation to the versioned native capability", async () => {

@@ -247,8 +247,21 @@ async function nativeStreamCall<T>(operation: Promise<T>): Promise<T> {
       case "reset": throw new CarrierError("reset", "raw QUIC stream reset", error);
       case "canceled": throw new CarrierError("aborted", "raw QUIC stream operation canceled", error);
       case "closed": throw new CarrierError("closed", "raw QUIC stream closed", error);
+      case "stream_failed": throw new CarrierError("closed", "raw QUIC stream operation closed", error);
       default: throw error;
     }
+  }
+}
+
+function nativeOperationError(error: unknown): unknown {
+  const reason = error instanceof Error ? error.message : "";
+  switch (reason) {
+    case "canceled": return new CarrierError("aborted", "native transport operation canceled", error);
+    case "closed":
+    case "listener_closed":
+    case "stream_failed":
+      return new CarrierError("closed", "native transport operation closed", error);
+    default: return error;
   }
 }
 
@@ -257,7 +270,13 @@ async function settle<T>(operation: NativeOperation<T>, signal?: AbortSignal): P
     operation.cancel();
     throw new CarrierError("aborted", "native transport operation aborted");
   }
-  if (signal === undefined) return await operation.result();
+  if (signal === undefined) {
+    try {
+      return await operation.result();
+    } catch (error) {
+      throw nativeOperationError(error);
+    }
+  }
   return await new Promise<T>((resolve, reject) => {
     let settled = false;
     const cleanup = () => signal.removeEventListener("abort", abort);
@@ -280,7 +299,7 @@ async function settle<T>(operation: NativeOperation<T>, signal?: AbortSignal): P
         if (settled) return;
         settled = true;
         cleanup();
-        reject(error);
+        reject(nativeOperationError(error));
       },
     );
   });

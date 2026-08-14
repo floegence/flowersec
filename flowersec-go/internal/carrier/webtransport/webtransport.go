@@ -323,10 +323,7 @@ func NewServer(tlsConfig *tls.Config, limits quicbase.Limits, checkOrigin func(*
 func (server *Server) SetHandler(handler http.Handler) { server.inner.H3.Handler = handler }
 
 func (server *Server) Upgrade(writer http.ResponseWriter, request *http.Request) (*Session, error) {
-	if server == nil || server.inner == nil || request == nil || request.URL == nil ||
-		request.Method != http.MethodConnect || request.Proto != "webtransport-h3" ||
-		(request.URL.Path != PathDirect && request.URL.Path != PathTunnel) ||
-		request.URL.RawPath != "" || request.URL.RawQuery != "" {
+	if server == nil || server.inner == nil || !validUpgradeRequest(request) {
 		return nil, ErrInvalidURL
 	}
 	path, err := pathForConnectPath(request.URL.Path)
@@ -338,6 +335,13 @@ func (server *Server) Upgrade(writer http.ResponseWriter, request *http.Request)
 		return nil, err
 	}
 	return wrapSession(inner, server.capacity, path)
+}
+
+func validUpgradeRequest(request *http.Request) bool {
+	return request != nil && request.URL != nil && request.Method == http.MethodConnect &&
+		(request.Proto == "webtransport-h3" || request.Proto == "webtransport") &&
+		(request.URL.Path == PathDirect || request.URL.Path == PathTunnel) &&
+		request.URL.RawPath == "" && request.URL.RawQuery == ""
 }
 
 type serveStartPacketConn struct {

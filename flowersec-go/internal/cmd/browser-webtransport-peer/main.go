@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +51,7 @@ func main() {
 	pathFlag := flag.String("path", "direct", "carrier path: direct or tunnel")
 	oppositeFlag := flag.String("opposite", "", "mixed tunnel opposite carrier: wss or raw_quic")
 	faultedSessionsFlag := flag.Int("faulted-sessions", 0, "accept this many faulted WebTransport sessions and one stream per session")
+	dropTransportAfterStreamsFlag := flag.Int("drop-transport-after-streams", 0, "drop the UDP transport after accepting this many logical streams")
 	flag.Parse()
 	tlsConfig, certificateHash, err := testTLSConfig(time.Now())
 	must(err)
@@ -63,20 +65,29 @@ func main() {
 		must(runFaultedSessionsPeer(tlsConfig, certificateHash, connectPath, *faultedSessionsFlag))
 		return
 	}
+	if *dropTransportAfterStreamsFlag < 0 || *dropTransportAfterStreamsFlag > 8 {
+		must(errors.New("drop-transport-after-streams must be between 0 and 8"))
+	}
 	limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), 64)
 	must(err)
 	server, err := carrierwt.NewServer(tlsConfig, limits, allowedOrigin)
 	must(err)
-	result := make(chan error, 1)
-	server.SetHandler(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		result <- serveSession(server, writer, request, sessionPath)
-	}))
 	packetConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
 	must(err)
 	defer packetConn.Close()
 	defer server.Close()
+	result := make(chan error, 1)
+	server.SetHandler(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		result <- serveSession(server, writer, request, sessionPath, *dropTransportAfterStreamsFlag, packetConn.Close)
+	}))
 	serveDone := make(chan error, 1)
-	go func() { serveDone <- server.Serve(packetConn) }()
+	go func() {
+		serveErr := server.Serve(packetConn)
+		if *dropTransportAfterStreamsFlag > 0 && errors.Is(serveErr, net.ErrClosed) {
+			serveErr = nil
+		}
+		serveDone <- serveErr
+	}()
 
 	address := packetConn.LocalAddr().(*net.UDPAddr)
 	must(json.NewEncoder(os.Stdout).Encode(endpoint{
@@ -673,6 +684,8 @@ func serveSession(
 	writer http.ResponseWriter,
 	request *http.Request,
 	sessionPath session.PathKind,
+	dropTransportAfterStreams int,
+	dropTransport func() error,
 ) error {
 	transport, err := server.Upgrade(writer, request)
 	if err != nil {
@@ -717,6 +730,39 @@ func serveSession(
 	})
 	if err != nil {
 		return err
+	}
+	if dropTransportAfterStreams > 0 {
+		accepted := make([]session.IncomingStream, 0, dropTransportAfterStreams)
+		for range dropTransportAfterStreams {
+			incoming, acceptErr := established.AcceptStream(ctx)
+			if acceptErr != nil {
+				return acceptErr
+			}
+			accepted = append(accepted, incoming)
+		}
+		for _, incoming := range accepted {
+			var barrier [1]byte
+			if _, readErr := io.ReadFull(incoming.Stream, barrier[:]); readErr != nil {
+				return fmt.Errorf("read WebTransport drop barrier: %w", readErr)
+			}
+			if barrier[0] != 1 {
+				return fmt.Errorf("invalid WebTransport drop barrier %d", barrier[0])
+			}
+		}
+		if dropTransport == nil {
+			return errors.New("missing WebTransport drop fixture")
+		}
+		if dropErr := dropTransport(); dropErr != nil && !errors.Is(dropErr, net.ErrClosed) {
+			return dropErr
+		}
+		select {
+		case <-established.Termination():
+			runtime.KeepAlive(accepted)
+			return nil
+		case <-ctx.Done():
+			runtime.KeepAlive(accepted)
+			return ctx.Err()
+		}
 	}
 	defer established.Close()
 

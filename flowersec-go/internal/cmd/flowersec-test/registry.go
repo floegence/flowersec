@@ -57,14 +57,20 @@ func registry() []registeredTest {
 		commandEntry("carrier/rust-tls-rejection", "acceptance", 5*time.Minute, "rustup", "run", "1.88.0", "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--all-features", "--lib", "raw_quic_v2_integration_tests::handshake_rejects_wrong_alpn_hostname_and_trust", "--", "--exact"),
 		commandEntry("interop/server-parity/direct-matrix", "acceptance", 10*time.Minute, "node", "scripts/test-server-parity-direct.mjs"),
 		commandEntry("interop/server-parity/tunnel-matrix", "acceptance", 10*time.Minute, "node", "scripts/test-server-parity-tunnel.mjs"),
+		commandEntry("carrier/node-native-addon/lifecycle", "acceptance", 10*time.Minute, "make", "native-addon-test"),
 		browserSmokeEntry("browser/chromium/webtransport/direct", "Chromium runs the direct WebTransport topology"),
+		browserSmokeEntry("browser/chromium/webtransport/peer-termination", "Chromium WebTransport closes bounded concurrent streams after peer termination"),
+		browserSmokeEntry("browser/chromium/websocket/self-contained", "Portable browsers run the self-contained WebSocket client contract"),
+		browserSmokeEntry("browser/chromium/proxy-service-worker", "Chromium runs the Service Worker proxy product chain"),
 		browserClientProfileEntry("browser/chromium/websocket/go/direct", "go/direct"),
 		browserClientProfileEntry("browser/chromium/websocket/node/direct", "node/direct"),
 		browserClientProfileEntry("browser/chromium/websocket/via-go-to-rust/tunnel", "via-go-to-rust/tunnel"),
-		browserSmokeEntry("browser/chromium-tunnel-wt-wss", "Chromium exercises the WebTransport-to-WSS dual-listener test workload"),
-		browserSmokeEntry("browser/chromium-tunnel-wt-quic", "Chromium exercises the WebTransport-to-raw-QUIC dual-listener test workload"),
+		browserSmokeEntry("browser/chromium-tunnel-wt-wss", "Chromium WebTransport tunnel bridges to production Go wss"),
+		browserSmokeEntry("browser/chromium-tunnel-wt-quic", "Chromium WebTransport tunnel bridges to production Go raw_quic"),
 		browserCompatibilityEntry("browser/firefox/webtransport-capability", "firefox", "Firefox reports unsupported native WebTransport connection"),
+		browserCompatibilityEntry("browser/firefox/websocket/self-contained", "firefox", "Portable browsers run the self-contained WebSocket client contract"),
 		browserCompatibilityEntry("browser/webkit/webtransport-capability", "webkit", "WebKit reports unsupported native WebTransport DATAGRAM surface"),
+		browserCompatibilityEntry("browser/webkit/websocket/self-contained", "webkit", "Portable browsers run the self-contained WebSocket client contract"),
 		commandEntry("coverage/go", "coverage-race", 10*time.Minute, "make", "go-cover-check"),
 		commandEntry("coverage/typescript", "coverage-race", 10*time.Minute, "make", "ts-cover-check"),
 		commandEntry("coverage/rust", "coverage-race", 10*time.Minute, "make", "rust-cover-check"),
@@ -184,9 +190,17 @@ func browserSmokeEntry(id, title string) registeredTest {
 }
 
 func browserClientProfileEntry(id, cell string) registeredTest {
+	script := "scripts/test-server-parity-direct.mjs"
+	switch cell {
+	case "go/direct", "node/direct":
+	case "via-go-to-rust/tunnel":
+		script = "scripts/test-server-parity-tunnel.mjs"
+	default:
+		panic("unknown browser client profile cell: " + cell)
+	}
 	return commandEntryWithEnvironment(id, "browser-smoke", 10*time.Minute,
 		[]string{"FLOWERSEC_PARITY_CLIENT_PROFILE=browser", "FLOWERSEC_PARITY_TEST_ID=" + id},
-		"npm", "--prefix", "flowersec-ts", "run", "test:browser:chromium", "--", "--grep", playwrightTitle("Chromium runs the WebSocket client profile"))
+		"node", script)
 }
 
 func browserCompatibilityEntry(id, browser, title string) registeredTest {

@@ -109,6 +109,8 @@ type candidateAttempt struct {
 	mu        sync.Mutex
 	aborted   bool
 	carrier   ReadyCarrier
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (attempt *candidateAttempt) Ready(ctx context.Context) (connectv2.AdmissionCommit, error) {
@@ -128,10 +130,20 @@ func (attempt *candidateAttempt) Ready(ctx context.Context) (connectv2.Admission
 	operationContext, cancelOperation := context.WithCancel(ctx)
 	stop := context.AfterFunc(attempt.ctx, cancelOperation)
 	ready, err := attempt.dial(operationContext, attempt.candidate, attempt.contract)
+	operationErr := operationContext.Err()
 	_ = stop()
 	cancelOperation()
 	if err != nil {
 		close(attempt.readyDone)
+		if cause := context.Cause(ctx); cause != nil {
+			return nil, cause
+		}
+		if cause := context.Cause(attempt.ctx); cause != nil {
+			return nil, cause
+		}
+		if operationErr != nil {
+			return nil, operationErr
+		}
 		return nil, err
 	}
 	if ready == nil {
@@ -142,7 +154,7 @@ func (attempt *candidateAttempt) Ready(ctx context.Context) (connectv2.Admission
 	if attempt.aborted {
 		attempt.mu.Unlock()
 		cleanupContext, cancelCleanup := context.WithTimeout(context.Background(), lateCarrierCloseTimeout)
-		closeErr := ready.Close(cleanupContext)
+		closeErr := attempt.closeCarrier(cleanupContext, ready)
 		cancelCleanup()
 		close(attempt.readyDone)
 		return nil, errors.Join(context.Canceled, closeErr)
@@ -176,7 +188,17 @@ func (attempt *candidateAttempt) Abort(ctx context.Context) error {
 	if ready == nil {
 		return nil
 	}
-	return ready.Close(ctx)
+	return attempt.closeCarrier(ctx, ready)
+}
+
+func (attempt *candidateAttempt) closeCarrier(ctx context.Context, ready ReadyCarrier) error {
+	if ready == nil {
+		return nil
+	}
+	attempt.closeOnce.Do(func() {
+		attempt.closeErr = ready.Close(ctx)
+	})
+	return attempt.closeErr
 }
 
 type admissionCommit struct {
@@ -188,38 +210,39 @@ func (commit *admissionCommit) Commit(ctx context.Context, commitSpend func(cont
 	if commit == nil || commit.attempt == nil || !commit.used.CompareAndSwap(false, true) {
 		return nil, ErrCommitAlreadyUsed
 	}
-	if commitSpend == nil {
-		return nil, connectv2.ErrInvalidArtifactLease
-	}
 	commit.attempt.mu.Lock()
 	ready := commit.attempt.carrier
 	aborted := commit.attempt.aborted
 	commit.attempt.mu.Unlock()
+	if commitSpend == nil {
+		_ = commit.attempt.closeCarrier(ctx, ready)
+		return nil, connectv2.ErrInvalidArtifactLease
+	}
 	if aborted || ready == nil {
 		return nil, context.Canceled
 	}
 	if err := commitSpend(ctx); err != nil {
-		_ = ready.Close(ctx)
+		_ = commit.attempt.closeCarrier(ctx, ready)
 		return nil, err
 	}
 	exchange := ready.Admission()
 	if exchange == nil {
-		_ = ready.Close(ctx)
+		_ = commit.attempt.closeCarrier(ctx, ready)
 		return nil, connectv2.ErrInvalidFactory
 	}
 	if err := exchange.Commit(ctx, fsb2); err != nil {
-		_ = ready.Close(ctx)
+		_ = commit.attempt.closeCarrier(ctx, ready)
 		return nil, err
 	}
 	session, err := ready.Establish()
 	if err != nil {
-		_ = ready.Close(ctx)
+		_ = commit.attempt.closeCarrier(ctx, ready)
 		return nil, err
 	}
 	wantKind, kindOK := carrierKind(commit.attempt.candidate.Carrier)
 	wantPath, pathOK := carrierPath(commit.attempt.candidate)
 	if session == nil || !kindOK || !pathOK || session.Kind() != wantKind || session.Path() != wantPath {
-		_ = ready.Close(ctx)
+		_ = commit.attempt.closeCarrier(ctx, ready)
 		return nil, connectv2.ErrInvalidFactory
 	}
 	return session, nil

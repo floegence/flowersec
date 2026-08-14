@@ -10,7 +10,13 @@ export type BrowserModuleSite = Readonly<{
   close: () => Promise<void>;
 }>;
 
-export async function startBrowserModuleSite(port?: number): Promise<BrowserModuleSite> {
+export type BrowserModuleSiteOptions = Readonly<{
+  port?: number;
+  serviceWorkerScript?: string;
+}>;
+
+export async function startBrowserModuleSite(input?: number | BrowserModuleSiteOptions): Promise<BrowserModuleSite> {
+  const options = typeof input === "number" ? { port: input } : input ?? {};
   const distRoot = path.join(packageRoot, "dist");
   const nobleModulesRoot = path.join(packageRoot, "node_modules", "@noble");
   const server = http.createServer(async (request, response) => {
@@ -22,6 +28,15 @@ export async function startBrowserModuleSite(port?: number): Promise<BrowserModu
           "content-type": "text/html; charset=utf-8",
         });
         response.end(browserPage());
+        return;
+      }
+      if (url.pathname === "/proxy-sw.js" && options.serviceWorkerScript !== undefined) {
+        response.writeHead(200, {
+          "cache-control": "no-store",
+          "content-type": "text/javascript; charset=utf-8",
+          "service-worker-allowed": "/",
+        });
+        response.end(options.serviceWorkerScript);
         return;
       }
       if (url.pathname.startsWith("/dist/")) {
@@ -71,7 +86,7 @@ export async function startBrowserModuleSite(port?: number): Promise<BrowserModu
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(port ?? 0, "127.0.0.1", resolve);
+    server.listen(options.port ?? 0, "127.0.0.1", resolve);
   });
   const address = server.address();
   if (address == null || typeof address === "string") {

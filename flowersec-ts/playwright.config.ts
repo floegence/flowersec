@@ -1,5 +1,12 @@
 import { defineConfig } from "@playwright/test";
 
+const externalParityTitle = "Chromium runs the WebSocket client profile";
+const externalParityRequested = process.env.FLOWERSEC_PARITY_READY_BASE64 !== undefined ||
+  process.argv.some((argument) => argument.includes(externalParityTitle));
+const chromiumTests = externalParityRequested
+  ? /(Chromium (runs|WebTransport)|Portable browsers run)/
+  : /(Chromium (?!runs the WebSocket client profile)(runs|WebTransport)|Portable browsers run)/;
+
 export default defineConfig({
   testDir: "./browser-e2e",
   fullyParallel: false,
@@ -12,23 +19,20 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      grep: /Chromium (runs|WebTransport)/,
+      grep: chromiumTests,
       use: {
         browserName: "chromium",
         channel: "chromium",
-        launchOptions: process.env.FLOWERSEC_PARITY_CLIENT_PROFILE === "browser"
-          ? { args: ["--ignore-certificate-errors"] }
-          : undefined,
       },
     },
     {
       name: "firefox-compat",
-      grep: /Firefox reports/,
+      grep: /(Firefox reports|Portable browsers run)/,
       use: { browserName: "firefox" },
     },
     {
       name: "webkit-smoke",
-      grep: /WebKit reports/,
+      grep: /(WebKit reports|Portable browsers run)/,
       use: { browserName: "webkit" },
     },
   ],

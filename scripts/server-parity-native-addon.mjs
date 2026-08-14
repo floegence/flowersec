@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -48,10 +49,12 @@ export async function prepareServerParityNativeAddon(repositoryRoot, required) {
     const nodePath = process.env.NODE_PATH === undefined || process.env.NODE_PATH === ""
       ? moduleRoot
       : `${moduleRoot}${path.delimiter}${process.env.NODE_PATH}`;
+    const addonPath = path.join(platformRoot, `flowersec-node-native.${platform.package}.node`);
     return Object.freeze({
       environment: Object.freeze({
         NODE_PATH: nodePath,
         FLOWERSEC_SERVER_PARITY_NATIVE_ADDON: path.join(wrapperRoot, "index.js"),
+        FLOWERSEC_NATIVE_ADDON_PATH: addonPath,
       }),
       cleanup: async () => { await rm(stagingRoot, { recursive: true, force: true }); },
     });
@@ -59,4 +62,30 @@ export async function prepareServerParityNativeAddon(repositoryRoot, required) {
     await rm(stagingRoot, { recursive: true, force: true });
     throw error;
   }
+}
+
+async function runNativeIntegration(repositoryRoot) {
+  const fixture = await prepareServerParityNativeAddon(repositoryRoot, true);
+  try {
+    const result = await execFileAsync("npm", [
+      "--prefix", "flowersec-ts", "exec", "--", "vitest", "run", "--config",
+      "flowersec-ts/vitest.config.ts", "flowersec-ts/src/node/nativeRawQuic.integration.test.ts",
+    ], {
+      cwd: repositoryRoot,
+      env: { ...process.env, ...fixture.environment },
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    process.stdout.write(result.stdout);
+    process.stderr.write(result.stderr);
+  } finally {
+    await fixture.cleanup();
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (process.argv.length !== 3 || process.argv[2] !== "--test-native-integration") {
+    throw new Error("usage: server-parity-native-addon.mjs --test-native-integration");
+  }
+  const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  await runNativeIntegration(repositoryRoot);
 }

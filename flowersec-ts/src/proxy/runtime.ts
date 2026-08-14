@@ -398,8 +398,12 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
         }
         const headersOut = filterHeaders(response.headers ?? [], BASE_RESPONSE_HEADERS, responseExtra);
         port.postMessage({ type: "flowersec-proxy:response_meta", status: response.status, headers: headersOut });
-        for await (const chunk of readChunks(reader, maxChunkBytes, maxBodyBytes)) {
+        const chunks = readChunks(reader, maxChunkBytes, maxBodyBytes)[Symbol.asyncIterator]();
+        for (;;) {
           await waitForCredit();
+          const next = await chunks.next();
+          if (next.done) break;
+          const chunk = next.value;
           const data = chunk.slice().buffer as ArrayBuffer;
           port.postMessage({ type: "flowersec-proxy:response_chunk", data }, [data]);
         }

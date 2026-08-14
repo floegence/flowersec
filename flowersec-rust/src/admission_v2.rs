@@ -299,18 +299,12 @@ fn validate_capacity(carrier: &dyn CarrierSessionV2, max_inbound_streams: u16) -
 async fn read_bounded_fsb2(stream: &dyn CarrierStreamV2) -> io::Result<Vec<u8>> {
     let mut header = [0_u8; FSB2_HEADER_BYTES];
     read_exact(stream, &mut header).await?;
-    if &header[..4] != b"FSB2" || header[4] != 2 || header[6..8] != [0, 0] {
-        return Err(protocol_error("invalid admission header"));
-    }
-    let payload_length =
-        u32::from_be_bytes(header[8..12].try_into().expect("header length")) as usize;
-    if payload_length == 0 || payload_length > MAX_FSB2_PAYLOAD_BYTES {
-        return Err(protocol_error("invalid admission payload length"));
-    }
+    let payload_length = fsb2_payload_length(&header)?;
     let mut raw = Vec::with_capacity(FSB2_HEADER_BYTES + payload_length);
     raw.extend_from_slice(&header);
     raw.resize(FSB2_HEADER_BYTES + payload_length, 0);
     read_exact(stream, &mut raw[FSB2_HEADER_BYTES..]).await?;
+    validate_fsb2_frame(&raw)?;
     let mut trailing = [0_u8; 1];
     if stream.read(&mut trailing).await? != 0 {
         return Err(protocol_error("trailing admission bytes"));
@@ -324,32 +318,77 @@ async fn read_client_fsa2(stream: &dyn CarrierStreamV2) -> io::Result<AdmissionS
     if &header[..4] != b"FSA2" || header[4] != 2 {
         return Err(protocol_error("invalid admission response header"));
     }
-    let status = match header[5] {
-        0 => AdmissionStatusV2::Success,
-        1 => AdmissionStatusV2::Reject,
-        2 => AdmissionStatusV2::Retryable,
-        _ => return Err(protocol_error("invalid admission response status")),
-    };
     let reason_length = usize::from(u16::from_be_bytes([header[6], header[7]]));
     if reason_length > MAX_FSA2_REASON_BYTES {
         return Err(protocol_error("admission response reason exceeds limit"));
     }
     let mut reason = vec![0_u8; reason_length];
     read_exact(stream, &mut reason).await?;
+    let mut raw = Vec::with_capacity(FSA2_HEADER_BYTES + reason_length);
+    raw.extend_from_slice(&header);
+    raw.extend_from_slice(&reason);
+    let status = parse_fsa2_frame(&raw)?;
+    let mut trailing = [0_u8; 1];
+    if stream.read(&mut trailing).await? != 0 {
+        return Err(protocol_error("trailing admission response bytes"));
+    }
+    Ok(status)
+}
+
+fn fsb2_payload_length(header: &[u8]) -> io::Result<usize> {
+    if header.len() != FSB2_HEADER_BYTES
+        || &header[..4] != b"FSB2"
+        || header[4] != 2
+        || header[6..8] != [0, 0]
+    {
+        return Err(protocol_error("invalid admission header"));
+    }
+    let payload_length =
+        u32::from_be_bytes(header[8..12].try_into().expect("header length")) as usize;
+    if payload_length == 0 || payload_length > MAX_FSB2_PAYLOAD_BYTES {
+        return Err(protocol_error("invalid admission payload length"));
+    }
+    Ok(payload_length)
+}
+
+fn validate_fsb2_frame(raw: &[u8]) -> io::Result<()> {
+    if raw.len() < FSB2_HEADER_BYTES {
+        return Err(protocol_error("truncated admission header"));
+    }
+    let payload_length = fsb2_payload_length(&raw[..FSB2_HEADER_BYTES])?;
+    if FSB2_HEADER_BYTES.checked_add(payload_length) != Some(raw.len()) {
+        return Err(protocol_error("invalid admission frame length"));
+    }
+    Ok(())
+}
+
+fn parse_fsa2_frame(raw: &[u8]) -> io::Result<AdmissionStatusV2> {
+    if raw.len() < FSA2_HEADER_BYTES || &raw[..4] != b"FSA2" || raw[4] != 2 {
+        return Err(protocol_error("invalid admission response header"));
+    }
+    let status = match raw[5] {
+        0 => AdmissionStatusV2::Success,
+        1 => AdmissionStatusV2::Reject,
+        2 => AdmissionStatusV2::Retryable,
+        _ => return Err(protocol_error("invalid admission response status")),
+    };
+    let reason_length = usize::from(u16::from_be_bytes([raw[6], raw[7]]));
+    if reason_length > MAX_FSA2_REASON_BYTES
+        || FSA2_HEADER_BYTES.checked_add(reason_length) != Some(raw.len())
+    {
+        return Err(protocol_error("invalid admission response length"));
+    }
+    let reason = &raw[FSA2_HEADER_BYTES..];
     // Rejection reasons are deployment-owned. Clients validate only the
     // bounded wire token and never require a deployment registry.
     let valid_reason = match status {
         AdmissionStatusV2::Success => reason.is_empty(),
         AdmissionStatusV2::Reject | AdmissionStatusV2::Retryable => {
-            valid_admission_reason_token(&reason)
+            valid_admission_reason_token(reason)
         }
     };
     if !valid_reason {
         return Err(protocol_error("invalid admission response reason"));
-    }
-    let mut trailing = [0_u8; 1];
-    if stream.read(&mut trailing).await? != 0 {
-        return Err(protocol_error("trailing admission response bytes"));
     }
     Ok(status)
 }
@@ -386,16 +425,8 @@ pub(crate) fn security_accepts(kind: &str, raw: &[u8]) -> bool {
 
 #[cfg(feature = "__flowersec_internal_fuzzing")]
 pub fn fuzz_parse(raw: &[u8]) {
-    if raw.len() >= FSB2_HEADER_BYTES && &raw[..4] == b"FSB2" {
-        let payload = u32::from_be_bytes(raw[8..12].try_into().unwrap_or([0; 4])) as usize;
-        let _ = payload
-            .checked_add(FSB2_HEADER_BYTES)
-            .filter(|length| *length <= raw.len());
-    }
-    if raw.len() >= FSA2_HEADER_BYTES && &raw[..4] == b"FSA2" {
-        let reason = u16::from_be_bytes(raw[6..8].try_into().unwrap_or([0; 2])) as usize;
-        let _ = reason <= MAX_FSA2_REASON_BYTES && FSA2_HEADER_BYTES + reason <= raw.len();
-    }
+    let _ = validate_fsb2_frame(raw);
+    let _ = parse_fsa2_frame(raw);
 }
 
 async fn read_exact(stream: &dyn CarrierStreamV2, mut payload: &mut [u8]) -> io::Result<()> {
@@ -428,4 +459,20 @@ async fn write_all(stream: &dyn CarrierStreamV2, mut payload: &[u8]) -> io::Resu
 
 fn protocol_error(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+#[cfg(test)]
+mod fuzz_tests {
+    use super::*;
+
+    #[test]
+    fn fuzz_hook_uses_the_production_admission_frame_validators() {
+        assert!(validate_fsb2_frame(b"FSB2\x02\x01\x00\x00\x00\x00\x00\x01x").is_ok());
+        assert!(validate_fsb2_frame(b"FSB2\x02\x01\x00\x00\x00\x00\x00\x01x!").is_err());
+        assert_eq!(
+            parse_fsa2_frame(b"FSA2\x02\x01\x00\x08rejected").unwrap(),
+            AdmissionStatusV2::Reject,
+        );
+        assert!(parse_fsa2_frame(b"FSA2\x02\x01\x00\x08rejecte").is_err());
+    }
 }

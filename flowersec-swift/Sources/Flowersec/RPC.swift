@@ -334,20 +334,26 @@ internal struct RPCEnvelope: Equatable, Sendable {
   internal init(data: Data) throws {
     guard
       let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let typeNumber = root["type_id"] as? NSNumber,
+      let typeID = Self.portableUInt32(root["type_id"]),
       let requestID = Self.portableID(root["request_id"]),
       let responseTo = Self.portableID(root["response_to"])
     else {
       throw FlowersecError.invalidRPC("RPC envelope is invalid.")
     }
-    typeID = typeNumber.uint32Value
+    self.typeID = typeID
     self.requestID = requestID
     self.responseTo = responseTo
-    if let errorObject = root["error"] as? [String: Any],
-      let code = errorObject["code"] as? NSNumber
-    {
+    if let rawError = root["error"], !(rawError is NSNull) {
+      guard let errorObject = rawError as? [String: Any],
+        let code = Self.portableUInt32(errorObject["code"])
+      else {
+        throw FlowersecError.invalidRPC("RPC error payload is invalid.")
+      }
+      if let rawMessage = errorObject["message"], !(rawMessage is String) {
+        throw FlowersecError.invalidRPC("RPC error message is invalid.")
+      }
       let message = (errorObject["message"] as? String) ?? "RPC request failed."
-      error = RPCErrorPayload(code: code.uint32Value, message: message)
+      error = RPCErrorPayload(code: code, message: message)
     } else {
       error = nil
     }
@@ -397,6 +403,18 @@ internal struct RPCEnvelope: Equatable, Sendable {
       double.rounded(.towardZero) == double
     else { return nil }
     let integer = number.uint64Value
+    return Double(integer) == double ? integer : nil
+  }
+
+  private static func portableUInt32(_ value: Any?) -> UInt32? {
+    guard let number = value as? NSNumber,
+      CFGetTypeID(number) != CFBooleanGetTypeID()
+    else { return nil }
+    let double = number.doubleValue
+    guard double.isFinite, double >= 0, double <= Double(UInt32.max),
+      double.rounded(.towardZero) == double
+    else { return nil }
+    let integer = number.uint32Value
     return Double(integer) == double ? integer : nil
   }
 }

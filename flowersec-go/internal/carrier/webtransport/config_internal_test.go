@@ -3,10 +3,37 @@ package webtransport
 import (
 	"crypto/tls"
 	"errors"
+	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
 )
+
+func TestUpgradeRequestAcceptsCurrentAndLegacyWebTransportProtocols(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		method string
+		proto  string
+		path   string
+		query  string
+		want   bool
+	}{
+		{name: "current protocol", method: http.MethodConnect, proto: "webtransport-h3", path: PathDirect, want: true},
+		{name: "browser legacy protocol", method: http.MethodConnect, proto: "webtransport", path: PathTunnel, want: true},
+		{name: "unknown protocol", method: http.MethodConnect, proto: "websocket", path: PathDirect},
+		{name: "wrong method", method: http.MethodGet, proto: "webtransport", path: PathDirect},
+		{name: "wrong path", method: http.MethodConnect, proto: "webtransport", path: "/other"},
+		{name: "query", method: http.MethodConnect, proto: "webtransport", path: PathDirect, query: "x=1"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			request := &http.Request{Method: testCase.method, Proto: testCase.proto, URL: &url.URL{Path: testCase.path, RawQuery: testCase.query}}
+			if got := validUpgradeRequest(request); got != testCase.want {
+				t.Fatalf("validUpgradeRequest = %t, want %t", got, testCase.want)
+			}
+		})
+	}
+}
 
 func TestClientTLSConfigBindsVerifiedServerName(t *testing.T) {
 	for _, testCase := range []struct {

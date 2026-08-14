@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -205,6 +206,121 @@ func TestProxyServerCloseCancelsActiveAndRejectsFutureDispatch(t *testing.T) {
 	}
 }
 
+func TestProxyServerHTTPStreamResetCancelsUpstream(t *testing.T) {
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		close(started)
+		<-request.Context().Done()
+		close(canceled)
+	}))
+	defer upstream.Close()
+
+	proxy, err := NewProxyServer(ProxyServerOptions{
+		Upstream: upstream.URL, UpstreamOrigin: upstream.URL,
+		DefaultHTTPRequestTimeout: 15 * time.Second,
+		MaxHTTPRequestTimeout:     15 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+	client, server := net.Pipe()
+	stream := &proxyResetTestStream{Conn: server, kind: proxyHTTPStreamKind}
+	t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
+	done := make(chan struct{})
+	go func() {
+		proxy.serveHTTP(context.Background(), IncomingStream{
+			Kind: proxyHTTPStreamKind, Metadata: EmptyStreamMetadata(), Stream: stream,
+		})
+		close(done)
+	}()
+	if err := writeProxyJSON(client, proxyHTTPRequest{
+		Version: proxyWireVersion, RequestID: "cancel", Method: http.MethodGet, Path: "/slow",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeProxyTerminator(client); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("upstream request did not start")
+	}
+	stream.markReset()
+	_ = client.Close()
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("stream reset did not cancel upstream request")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("proxy handler did not finish after stream reset")
+	}
+}
+
+func TestProxyServerCloseInterruptsPartialHTTPFrames(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		write func(net.Conn) error
+	}{
+		{name: "metadata", write: func(client net.Conn) error {
+			_, err := client.Write([]byte{0, 0})
+			return err
+		}},
+		{name: "body terminator", write: func(client net.Conn) error {
+			if err := writeProxyJSON(client, proxyHTTPRequest{
+				Version: proxyWireVersion, RequestID: "partial", Method: http.MethodGet, Path: "/slow",
+			}); err != nil {
+				return err
+			}
+			_, err := client.Write([]byte{0, 0})
+			return err
+		}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			proxy, err := NewProxyServer(ProxyServerOptions{
+				Upstream: "http://127.0.0.1:1", UpstreamOrigin: "http://127.0.0.1:1",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			client, server := net.Pipe()
+			defer client.Close()
+			defer server.Close()
+			started := make(chan struct{})
+			handler := proxy.limit(func(ctx context.Context, incoming IncomingStream) error {
+				close(started)
+				proxy.serveHTTP(ctx, incoming)
+				return nil
+			})
+			go func() {
+				_ = handler(context.Background(), IncomingStream{
+					Kind: proxyHTTPStreamKind, Metadata: EmptyStreamMetadata(),
+					Stream: &proxyServerTestStream{Conn: server, kind: proxyHTTPStreamKind},
+				})
+			}()
+			<-started
+			if err := testCase.write(client); err != nil {
+				t.Fatal(err)
+			}
+			closed := make(chan struct{})
+			go func() {
+				_ = proxy.Close()
+				close(closed)
+			}()
+			select {
+			case <-closed:
+			case <-time.After(time.Second):
+				t.Fatal("ProxyServer.Close did not interrupt the partial frame")
+			}
+		})
+	}
+}
+
 func TestProxyServerRejectsUnsafeAndDuplicateRegistration(t *testing.T) {
 	for _, options := range []ProxyServerOptions{
 		{},
@@ -255,6 +371,29 @@ type proxyServerTestStream struct {
 	net.Conn
 	kind string
 }
+
+type proxyResetTestStream struct {
+	net.Conn
+	kind     string
+	terminal atomic.Pointer[SessionError]
+}
+
+func (stream *proxyResetTestStream) markReset() {
+	stream.terminal.Store(&SessionError{code: SessionStreamReset})
+}
+func (stream *proxyResetTestStream) Read(buffer []byte) (int, error) {
+	count, err := stream.Conn.Read(buffer)
+	if errors.Is(err, io.EOF) && stream.TerminalError() != nil {
+		return count, stream.TerminalError()
+	}
+	return count, err
+}
+func (stream *proxyResetTestStream) Kind() string { return stream.kind }
+func (stream *proxyResetTestStream) TerminalError() *SessionError {
+	return stream.terminal.Load()
+}
+func (*proxyResetTestStream) CloseWrite() error   { return nil }
+func (stream *proxyResetTestStream) Reset() error { return stream.Close() }
 
 func (stream *proxyServerTestStream) Kind() string          { return stream.kind }
 func (*proxyServerTestStream) TerminalError() *SessionError { return nil }

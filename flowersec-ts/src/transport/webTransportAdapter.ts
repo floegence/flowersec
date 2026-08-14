@@ -526,9 +526,9 @@ function isAborted(signal: AbortSignal | undefined): boolean {
 
 async function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (signal === undefined) return await promise;
-  if (signal.aborted) throw signal.reason;
+  if (signal.aborted) throw abortedCarrierError(signal.reason);
   return await new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason);
+    const abort = () => reject(abortedCarrierError(signal.reason));
     signal.addEventListener("abort", abort, { once: true });
     void promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
   });

@@ -20,12 +20,14 @@ class FakeStream implements ByteStreamV2 {
   readonly kind = "fake";
   terminalError = undefined;
   readonly writes: Uint8Array[] = [];
+  readCalls = 0;
   closed = false;
   resetCalled = false;
   private readonly reads: Array<Uint8Array | Error | null>;
 
   constructor(reads: Array<Uint8Array | Error | null>, private readonly partialWrite = 3) { this.reads = reads; }
   async read(): Promise<Uint8Array | null> {
+    this.readCalls++;
     const value = this.reads.shift() ?? null;
     if (value instanceof Error) throw value;
     return value;
@@ -124,6 +126,40 @@ describe("SessionV2 proxy runtime", () => {
     runtime.dispose();
   });
 
+  it("does not read the next response chunk without Service Worker credit", async () => {
+    const stream = new FakeStream([
+      jsonFrame({ v: 1, request_id: "credit", ok: true, status: 200, headers: [] }),
+      concat([u32be(1), Uint8Array.of(1)]),
+      concat([u32be(1), Uint8Array.of(2)]),
+      u32be(0),
+    ]);
+    const runtime = createProxyRuntime({ session: new FakeSession([stream]), maxChunkBytes: 8, maxBodyBytes: 64 });
+    const channel = new MessageChannel();
+    channel.port2.start();
+    const metadata = nextPortMessage(channel.port2);
+    runtime.dispatchFetch({
+      id: "credit", method: "GET", path: "/stream", headers: [], responseFlowControl: "chunk_credit_v2",
+    }, channel.port1);
+    await expect(metadata).resolves.toMatchObject({ type: "flowersec-proxy:response_meta", status: 200 });
+    await eventLoopTurn();
+    expect(stream.readCalls).toBe(1);
+
+    let message = nextPortMessage(channel.port2);
+    channel.port2.postMessage({ type: "flowersec-proxy:response_credit" });
+    await expect(message).resolves.toMatchObject({ type: "flowersec-proxy:response_chunk" });
+    await eventLoopTurn();
+    expect(stream.readCalls).toBe(2);
+
+    message = nextPortMessage(channel.port2);
+    channel.port2.postMessage({ type: "flowersec-proxy:abort" });
+    await expect(message).resolves.toMatchObject({
+      type: "flowersec-proxy:response_error", status: 499, code: "canceled",
+    });
+    expect(stream.resetCalled).toBe(true);
+    channel.port2.close();
+    runtime.dispose();
+  });
+
   it("opens WebSockets through a carrier-neutral ByteStreamV2", async () => {
     const stream = new FakeStream([jsonFrame({ v: 1, ok: true, protocol: "chat" })]);
     const session = new FakeSession([stream]);
@@ -139,3 +175,17 @@ describe("SessionV2 proxy runtime", () => {
     runtime.dispose();
   });
 });
+
+async function nextPortMessage(port: MessagePort): Promise<Record<string, unknown>> {
+  return await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("proxy message timed out")), 1_000);
+    port.addEventListener("message", (event) => {
+      clearTimeout(timer);
+      resolve(event.data as Record<string, unknown>);
+    }, { once: true });
+  });
+}
+
+async function eventLoopTurn(): Promise<void> {
+  await new Promise<void>((resolve) => { setImmediate(resolve); });
+}

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -23,9 +24,22 @@ type endpoint struct {
 
 func main() {
 	upstream := flag.String("upstream", "", "fixed loopback HTTP upstream origin")
+	origin := flag.String("origin", "https://app.example", "exact browser and proxy external origin")
+	maxBodyBytes := flag.Int64("max-body-bytes", 8, "maximum proxied HTTP body size")
+	httpTimeout := flag.Duration("http-timeout", time.Second, "proxy HTTP request timeout")
 	flag.Parse()
 	if *upstream == "" {
 		fail(errors.New("--upstream is required"))
+	}
+	parsedOrigin, err := url.Parse(*origin)
+	if err != nil || parsedOrigin.Scheme == "" || parsedOrigin.Host == "" || parsedOrigin.String() != parsedOrigin.Scheme+"://"+parsedOrigin.Host {
+		fail(errors.New("--origin must be an exact origin"))
+	}
+	if *maxBodyBytes < 1 {
+		fail(errors.New("--max-body-bytes must be positive"))
+	}
+	if *httpTimeout <= 0 {
+		fail(errors.New("--http-timeout must be positive"))
 	}
 
 	handlers, err := flowersec.NewSessionHandlers(flowersec.SessionHandlerOptions{MaxConcurrentStreams: 4})
@@ -33,14 +47,14 @@ func main() {
 	proxy, err := flowersec.NewProxyServer(flowersec.ProxyServerOptions{
 		Upstream:                    *upstream,
 		UpstreamOrigin:              *upstream,
-		AllowedOrigins:              []string{"https://app.example"},
+		AllowedOrigins:              []string{*origin},
 		MaxConcurrentStreams:        4,
 		MaxJSONFrameBytes:           4096,
 		MaxChunkBytes:               8,
-		MaxBodyBytes:                8,
+		MaxBodyBytes:                *maxBodyBytes,
 		MaxWebSocketFrameBytes:      32,
-		DefaultHTTPRequestTimeout:   time.Second,
-		MaxHTTPRequestTimeout:       time.Second,
+		DefaultHTTPRequestTimeout:   *httpTimeout,
+		MaxHTTPRequestTimeout:       *httpTimeout,
 		ExtraRequestHeaders:         []string{"cookie", "origin", "x-request-id"},
 		ExtraResponseHeaders:        []string{"x-visible"},
 		BlockedResponseHeaders:      []string{"location"},
@@ -59,7 +73,7 @@ func main() {
 	var record controlplane.AuthorizationRecord
 	released := make(chan struct{}, 1)
 	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
-		AllowedOrigins:    []string{"https://app.example"},
+		AllowedOrigins:    []string{*origin},
 		MaxInboundStreams: 8,
 		Authorize: func(_ context.Context, request controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
 			return controlplane.AuthorizeRuntime(request, record, "proxy-matrix-go")
@@ -98,7 +112,7 @@ func main() {
 	fail(err)
 	record = issued.AuthorizationRecord()
 	fail(json.NewEncoder(os.Stdout).Encode(endpoint{
-		Runtime: "go", ArtifactJSON: string(issued.ArtifactJSON()), Origin: "https://app.example",
+		Runtime: "go", ArtifactJSON: string(issued.ArtifactJSON()), Origin: *origin,
 	}))
 
 	select {

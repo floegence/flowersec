@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,6 +18,21 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 		return
 	}
 	stream := incoming.Stream
+	handlerContext := ctx
+	if handlerContext == nil {
+		handlerContext = context.Background()
+	}
+	resetStream := sync.OnceFunc(func() { _ = stream.Reset() })
+	outerResetDone := make(chan struct{})
+	stopOuterReset := context.AfterFunc(handlerContext, func() {
+		defer close(outerResetDone)
+		resetStream()
+	})
+	defer func() {
+		if !stopOuterReset() {
+			<-outerResetDone
+		}
+	}()
 	requestMeta := proxyHTTPRequest{}
 	if err := readProxyJSON(stream, server.config.maxJSONFrame, &requestMeta); err != nil {
 		server.writeHTTPError(stream, "unknown", "invalid_request_meta")
@@ -37,15 +53,40 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 		server.report(err)
 		return
 	}
-	requestContext := ctx
-	if requestContext == nil {
-		requestContext = context.Background()
-	}
+	requestContext := handlerContext
+	var cancelRequest context.CancelFunc
 	if timeout > 0 {
-		var cancel context.CancelFunc
-		requestContext, cancel = context.WithTimeout(requestContext, timeout)
-		defer cancel()
+		requestContext, cancelRequest = context.WithTimeout(requestContext, timeout)
+	} else {
+		requestContext, cancelRequest = context.WithCancel(requestContext)
 	}
+	var watchDone chan struct{}
+	var resetDone chan struct{}
+	var stopReset func() bool
+	startWatcher := func(beforeWatch func() error) {
+		watchDone = make(chan struct{})
+		resetDone = make(chan struct{})
+		stopReset = context.AfterFunc(requestContext, func() {
+			defer close(resetDone)
+			resetStream()
+		})
+		go func() {
+			defer close(watchDone)
+			if beforeWatch != nil && beforeWatch() != nil {
+				return
+			}
+			watchProxyRequestStream(stream, cancelRequest)
+		}()
+	}
+	defer func() {
+		if watchDone != nil {
+			<-watchDone
+			if !stopReset() {
+				<-resetDone
+			}
+		}
+		cancelRequest()
+	}()
 
 	var body io.ReadCloser
 	var bodyErrors chan error
@@ -55,15 +96,17 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 			server.report(err)
 			return
 		}
+		startWatcher(nil)
 	} else {
 		reader, writer := io.Pipe()
 		body = reader
 		bodyErrors = make(chan error, 1)
-		go func() {
+		startWatcher(func() error {
 			err := server.copyProxyBody(requestContext, stream, writer)
 			_ = writer.CloseWithError(err)
 			bodyErrors <- err
-		}()
+			return err
+		})
 		defer body.Close()
 	}
 
@@ -119,7 +162,7 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 		count, readErr := response.Body.Read(buffer)
 		if count > 0 {
 			if err := writeProxyChunk(stream, buffer[:count], server.config.maxChunk, &total, server.config.maxBody); err != nil {
-				_ = stream.Reset()
+				resetStream()
 				server.report(err)
 				return
 			}
@@ -131,10 +174,18 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 				}
 				return
 			}
-			_ = stream.Reset()
+			resetStream()
 			server.report(readErr)
 			return
 		}
+	}
+}
+
+func watchProxyRequestStream(stream io.Reader, cancel context.CancelFunc) {
+	var unexpected [1]byte
+	count, err := stream.Read(unexpected[:])
+	if count > 0 || (err != nil && !errors.Is(err, io.EOF)) {
+		cancel()
 	}
 }
 

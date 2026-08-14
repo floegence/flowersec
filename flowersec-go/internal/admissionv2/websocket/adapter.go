@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
@@ -54,13 +55,14 @@ func commit(ctx context.Context, conn *gorillaws.Conn, rawFSB2 []byte, parseResp
 	if conn == nil {
 		return response, net.ErrClosed
 	}
+	closeConnection := closeOnce(func() error { return conn.Close() })
 	succeeded := false
 	defer func() {
 		if !succeeded {
-			_ = conn.Close()
+			closeConnection()
 		}
 	}()
-	cancellation := newAdmissionCancellation(ctx, func() { _ = conn.Close() })
+	cancellation := newAdmissionCancellation(ctx, closeConnection)
 	defer func() {
 		if cancelErr := cancellation.stopAndWait(); cancelErr != nil {
 			err = cancelErr
@@ -91,7 +93,10 @@ func commit(ctx context.Context, conn *gorillaws.Conn, rawFSB2 []byte, parseResp
 	conn.SetReadLimit(artifactv2.FSA2HeaderSize + artifactv2.MaxAdmissionReasonBytes)
 	messageType, rawFSA2, err := conn.ReadMessage()
 	if err != nil {
-		return response, preferAdmissionContextError(ctx, err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return response, ctxErr
+		}
+		return response, invalidAdmissionMessage(err)
 	}
 	if messageType != gorillaws.BinaryMessage {
 		return response, invalidAdmissionMessage(carrierws.ErrNonBinaryMessage)
@@ -120,13 +125,14 @@ func Serve(ctx context.Context, conn *gorillaws.Conn, reasons artifactv2.ReasonR
 	if conn == nil {
 		return nil, net.ErrClosed
 	}
+	closeConnection := closeOnce(func() error { return conn.Close() })
 	succeeded := false
 	defer func() {
 		if !succeeded {
-			_ = conn.Close()
+			closeConnection()
 		}
 	}()
-	cancellation := newAdmissionCancellation(ctx, func() { _ = conn.Close() })
+	cancellation := newAdmissionCancellation(ctx, closeConnection)
 	defer func() {
 		if cancelErr := cancellation.stopAndWait(); cancelErr != nil {
 			err = cancelErr
@@ -167,6 +173,9 @@ func Serve(ctx context.Context, conn *gorillaws.Conn, reasons artifactv2.ReasonR
 	}
 	response, err := authorize(ctx, decoded)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	rawFSA2, err := artifactv2.MarshalResponse(response, reasons)
@@ -211,6 +220,13 @@ func newAdmissionCancellation(ctx context.Context, closeConnection func()) *admi
 		closeConnection()
 	})
 	return guard
+}
+
+func closeOnce(closeConnection func() error) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() { _ = closeConnection() })
+	}
 }
 
 func (guard *admissionCancellation) stopAndWait() error {

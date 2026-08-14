@@ -168,7 +168,10 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
       const target = config.windowTarget === "request_client"
         ? source
         : runtimeClientId === "" ? null : await worker.clients.get(runtimeClientId);
-      if (target === null) return new Response("proxy runtime unavailable", { status: 503 });
+      if (target === null) {
+        if (config.windowTarget === "registered_runtime") runtimeClientId = "";
+        return new Response("proxy runtime unavailable", { status: 503 });
+      }
 
       let body: ArrayBuffer | undefined;
       if (request.method !== "GET" && request.method !== "HEAD") {
@@ -226,17 +229,23 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
         };
         channel.port1.onmessageerror = () => finishError(502, "proxy request failed");
         const headers = Array.from(request.headers.entries() as Iterable<[string, string]>).map(([name, value]) => ({ name, value }));
-        target.postMessage({
-          type: config.windowClientMessageType,
-          req: {
-            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-            method: request.method,
-            path,
-            headers,
-            response_flow_control: "chunk_credit_v2",
-            ...(body === undefined ? {} : { body }),
-          },
-        }, [channel.port2, ...(body === undefined ? [] : [body])]);
+        try {
+          target.postMessage({
+            type: config.windowClientMessageType,
+            req: {
+              id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+              method: request.method,
+              path,
+              headers,
+              response_flow_control: "chunk_credit_v2",
+              ...(body === undefined ? {} : { body }),
+            },
+          }, [channel.port2, ...(body === undefined ? [] : [body])]);
+        } catch {
+          if (config.windowTarget === "registered_runtime") runtimeClientId = "";
+          channel.port1.close();
+          resolve(new Response("proxy runtime unavailable", { status: 503 }));
+        }
       });
 
       const injection = config.injectHTML;

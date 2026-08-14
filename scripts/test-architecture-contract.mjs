@@ -106,6 +106,7 @@ const browserCarrier = read("flowersec-ts/src/browser/webTransportClient.ts") + 
 const browserCarrierTests = read("flowersec-ts/src/transport/webTransportAdapter.test.ts");
 const browserAcceptanceRunner = read("flowersec-ts/scripts/browser-test-runner-core.mjs") + read("flowersec-ts/playwright.config.ts");
 const browserAcceptanceWorker = read("flowersec-ts/scripts/browser-test-runner.mjs");
+const playwrightConfig = read("flowersec-ts/playwright.config.ts");
 const stripComments = (source) => source
   .replace(/\/\*[\s\S]*?\*\//g, "")
   .replace(/^\s*\/\/.*$/gm, "");
@@ -117,6 +118,32 @@ for (const source of [browserCarrier, browserCarrierTests].map(stripComments)) {
 assert.match(browserCarrier, /new Constructor\(parsed\.href\)/);
 assert.doesNotMatch(browserAcceptanceRunner, /ExtendQuicHandshakeTimeout|QuicHandshakeTimeout|MaxIdleTimeBeforeCryptoHandshake|force-fieldtrial|quic-client-connection-options/i);
 assert.doesNotMatch(browserAcceptanceWorker, /__flowersecCancelArtifact|expected_failure|assertFullyResolved|resolved\s*=\s*new Set/);
+assert.match(playwrightConfig, /ignoreHTTPSErrors:\s*true/,
+  "browser tests must explicitly trust their self-signed local fixture");
+assert.doesNotMatch(playwrightConfig, /--ignore-certificate-errors/,
+  "browser tests must not disable Chromium certificate validation globally");
+const ignoreHTTPSErrorsFiles = spawnSync(
+  "git", ["grep", "-l", "ignoreHTTPSErrors", "--", "flowersec-ts"],
+  { cwd: root, encoding: "utf8" },
+);
+assert.equal(ignoreHTTPSErrorsFiles.status, 0, ignoreHTTPSErrorsFiles.stderr);
+assert.deepEqual(ignoreHTTPSErrorsFiles.stdout.trim().split("\n").sort(), [
+  "flowersec-ts/playwright.config.ts",
+  "flowersec-ts/scripts/browser-capacity-controller.mjs",
+  "flowersec-ts/scripts/browser-test-runner.mjs",
+], "self-signed certificate trust must remain confined to Playwright test configuration and runners");
+const productionSourceFiles = spawnSync(
+  "git", ["ls-files", "--", "flowersec-go/**/*.go", "flowersec-rust/src/**/*.rs", "flowersec-swift/Sources/**/*.swift", "flowersec-ts/src/**/*.ts", "flowersec-native-transport/src/**/*.rs", "flowersec-node-native/src/**/*.rs"],
+  { cwd: root, encoding: "utf8" },
+);
+assert.equal(productionSourceFiles.status, 0, productionSourceFiles.stderr);
+const productionSources = productionSourceFiles.stdout.trim().split("\n")
+  .filter((relative) => relative !== "" && !/(?:_test\.go|\.test\.ts)$/.test(relative))
+  .map(read)
+  .join("\n");
+assert.doesNotMatch(productionSources,
+  /--ignore-certificate-errors|NODE_TLS_REJECT_UNAUTHORIZED|rejectUnauthorized\s*:\s*false|InsecureSkipVerify\s*:\s*true|\.InsecureSkipVerify\s*=\s*true|danger_accept_invalid_(?:certs|hostnames)\s*\(\s*true\s*\)/,
+  "production source must not enable an insecure TLS verification fallback");
 assert.match(testMatrix, /release\/npm-consumer\/go-node-raw-quic\/direct-session/,
   "test matrix must identify the post-publication Go-to-Node registry consumer boundary");
 assert.match(apiChangePolicy, /WebTransport preserves transport-managed passive rebinding but does not expose application-managed active migration/,
