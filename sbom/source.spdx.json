@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-source",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-source/1c377fd1fb5ea77eadd418a3990b5ae9585edf1a740a95901287df743cc2ec9c",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-source/568e7c7ac2f33e07223c10090cd9c81fa97c4c6694e4fa5a0eae93c7bec6d909",
   "creationInfo": {
     "created": "1970-01-01T00:00:00Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: 1c377fd1fb5ea77eadd418a3990b5ae9585edf1a740a95901287df743cc2ec9c",
+      "comment": "Flowersec source inventory SHA-256: 568e7c7ac2f33e07223c10090cd9c81fa97c4c6694e4fa5a0eae93c7bec6d909",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -4769,6 +4769,91 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:npm/%40eslint/plugin-kit@0.7.2"
+        }
+      ]
+    },
+    {
+      "name": "@floegence/flowersec-node-native",
+      "SPDXID": "SPDXRef-Package-1cf1c152d88fec6d668e",
+      "versionInfo": "2.4.0",
+      "downloadLocation": "https://registry.npmjs.org/@floegence/flowersec-node-native/-/flowersec-node-native-2.4.0.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/%40floegence/flowersec-node-native@2.4.0"
+        }
+      ]
+    },
+    {
+      "name": "@floegence/flowersec-node-native-darwin-arm64",
+      "SPDXID": "SPDXRef-Package-77ec604d94f668803624",
+      "versionInfo": "2.4.0",
+      "downloadLocation": "https://registry.npmjs.org/@floegence/flowersec-node-native-darwin-arm64/-/flowersec-node-native-darwin-arm64-2.4.0.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@2.4.0"
+        }
+      ]
+    },
+    {
+      "name": "@floegence/flowersec-node-native-darwin-x64",
+      "SPDXID": "SPDXRef-Package-1809c3ec96e0c6707264",
+      "versionInfo": "2.4.0",
+      "downloadLocation": "https://registry.npmjs.org/@floegence/flowersec-node-native-darwin-x64/-/flowersec-node-native-darwin-x64-2.4.0.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@2.4.0"
+        }
+      ]
+    },
+    {
+      "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
+      "SPDXID": "SPDXRef-Package-ebd7f188277d8b1bbcaf",
+      "versionInfo": "2.4.0",
+      "downloadLocation": "https://registry.npmjs.org/@floegence/flowersec-node-native-linux-arm64-gnu/-/flowersec-node-native-linux-arm64-gnu-2.4.0.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@2.4.0"
+        }
+      ]
+    },
+    {
+      "name": "@floegence/flowersec-node-native-linux-x64-gnu",
+      "SPDXID": "SPDXRef-Package-014650b483284d124a0f",
+      "versionInfo": "2.4.0",
+      "downloadLocation": "https://registry.npmjs.org/@floegence/flowersec-node-native-linux-x64-gnu/-/flowersec-node-native-linux-x64-gnu-2.4.0.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@2.4.0"
         }
       ]
     },
@@ -10826,6 +10911,11 @@
     {
       "spdxElementId": "SPDXRef-Package-d2fe84b9df2103f6a65f",
       "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-1cf1c152d88fec6d668e"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d2fe84b9df2103f6a65f",
+      "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-5ce913a03239b02770fb"
     },
     {
@@ -11092,6 +11182,26 @@
       "spdxElementId": "SPDXRef-Package-04a6a22eaeaeaea4c438",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-f30abd529f6b7d4767cc"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-1cf1c152d88fec6d668e",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-77ec604d94f668803624"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-1cf1c152d88fec6d668e",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-1809c3ec96e0c6707264"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-1cf1c152d88fec6d668e",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-ebd7f188277d8b1bbcaf"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-1cf1c152d88fec6d668e",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-014650b483284d124a0f"
     },
     {
       "spdxElementId": "SPDXRef-Package-3db3b719d811a9190c19",

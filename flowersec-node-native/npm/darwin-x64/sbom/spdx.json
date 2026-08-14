@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "@floegence/flowersec-node-native-darwin-x64",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/%40floegence%2Fflowersec-node-native-darwin-x64/1c377fd1fb5ea77eadd418a3990b5ae9585edf1a740a95901287df743cc2ec9c",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/%40floegence%2Fflowersec-node-native-darwin-x64/568e7c7ac2f33e07223c10090cd9c81fa97c4c6694e4fa5a0eae93c7bec6d909",
   "creationInfo": {
     "created": "1970-01-01T00:00:00Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: 1c377fd1fb5ea77eadd418a3990b5ae9585edf1a740a95901287df743cc2ec9c",
+      "comment": "Flowersec source inventory SHA-256: 568e7c7ac2f33e07223c10090cd9c81fa97c4c6694e4fa5a0eae93c7bec6d909",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
