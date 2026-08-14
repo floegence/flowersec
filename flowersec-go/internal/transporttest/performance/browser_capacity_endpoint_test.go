@@ -72,6 +72,46 @@ func TestBrowserCapacityAllowedOriginMatchesSecureModuleSite(t *testing.T) {
 	}
 }
 
+func TestBrowserCapacityOperationDeadlineUsesThePerformanceBudgetContract(t *testing.T) {
+	tests := []struct {
+		budget string
+		tunnel time.Duration
+		stream time.Duration
+	}{
+		{budget: "", tunnel: 30 * time.Second, stream: 60 * time.Second},
+		{budget: "10m", tunnel: 5 * time.Second, stream: 10 * time.Second},
+		{budget: "20m", tunnel: 10 * time.Second, stream: 20 * time.Second},
+	}
+	caseIDs := []string{
+		"CAP-TUNNEL-WT-WSS-1000",
+		"CAP-TUNNEL-WT-QUIC-1000",
+		"CAP-STREAM-WT-DIRECT-100X128",
+		"CAP-STREAM-WT-WSS-100X128",
+		"CAP-STREAM-WT-QUIC-100X128",
+	}
+	for _, test := range tests {
+		t.Run(test.budget, func(t *testing.T) {
+			t.Setenv(performanceBudgetEnvironmentName, test.budget)
+			for _, caseID := range caseIDs {
+				definition, ok := lookupCapacityCase(caseID)
+				if !ok {
+					t.Fatalf("capacity case %q is missing", caseID)
+				}
+				want := test.tunnel
+				if definition.Kind == capacityBrowserStream {
+					want = test.stream
+				}
+				if got := browserCapacityOperationDeadlineForKind(definition.Kind); got != want {
+					t.Errorf("%s operation deadline = %s, want %s", caseID, got, want)
+				}
+				if got := browserCapacityOperationDeadline(definition); got != want {
+					t.Errorf("%s caller operation deadline = %s, want %s", caseID, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestBrowserCapacityEndpointHoldsUniqueProductionSessionsUntilCleanup(t *testing.T) {
 	var issued int
 	broker, err := newBrowserCapacityArtifactBroker(func() (browserCapacityArtifact, error) {

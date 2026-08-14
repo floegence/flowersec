@@ -136,15 +136,14 @@ func openProductionBrowserCapacityEndpoint(ctx context.Context, config browserCa
 		(config.Topology == tunnelworkload.BrowserTunnelWTWSS || config.Topology == tunnelworkload.BrowserTunnelWTQUIC)
 	streamCapacity := config.Sessions == 100 && config.StreamsPerSession == 128 &&
 		(config.Topology == browserDirectWebTransportTopology || config.Topology == tunnelworkload.BrowserTunnelWTWSS || config.Topology == tunnelworkload.BrowserTunnelWTQUIC)
+	capacityKind := capacityBrowserTunnel
+	if streamCapacity {
+		capacityKind = capacityBrowserStream
+	}
 	if (!heldSessions && !streamCapacity) ||
 		config.ProfileID == "" || config.ClientNamespace == "" || config.ServerNamespace == "" || config.ClientNamespace == config.ServerNamespace ||
 		net.ParseIP(config.ServerAddress) == nil || !filepath.IsAbs(config.SourceRoot) || !filepath.IsAbs(config.OutputDirectory) ||
-		config.OperationDeadline != func() time.Duration {
-			if streamCapacity {
-				return 60 * time.Second
-			}
-			return 30 * time.Second
-		}() {
+		config.OperationDeadline != browserCapacityOperationDeadlineForKind(capacityKind) {
 		return nil, errors.New("browser capacity endpoint configuration is incomplete")
 	}
 	contract := productionBrowserCapacityContract()

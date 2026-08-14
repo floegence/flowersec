@@ -105,15 +105,19 @@ func productionBrowserStreamCapacityContract() capacityContract {
 }
 
 func browserCapacityOperationDeadline(definition capacityCaseDefinition) time.Duration {
+	return browserCapacityOperationDeadlineForKind(definition.Kind)
+}
+
+func browserCapacityOperationDeadlineForKind(kind capacityCaseKind) time.Duration {
 	if _, configured := performanceBudgetScale(); configured {
-		if definition.Kind == capacityBrowserStream {
+		if kind == capacityBrowserStream {
 			deadline, _ := scaledPerformanceDuration(10 * time.Second)
 			return deadline
 		}
 		deadline, _ := scaledPerformanceDuration(5 * time.Second)
 		return deadline
 	}
-	if definition.Kind == capacityBrowserStream {
+	if kind == capacityBrowserStream {
 		return 60 * time.Second
 	}
 	return 30 * time.Second
