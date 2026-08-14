@@ -1,6 +1,6 @@
 {
   "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
-  "version": "2.3.9",
+  "version": "2.3.10",
   "license": "MIT",
   "os": ["linux"],
   "cpu": ["arm64"],
