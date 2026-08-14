@@ -436,7 +436,9 @@ dependencies = [
 name = "flowersec-rust-client-example"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "flowersec",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util",

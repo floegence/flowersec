@@ -26,9 +26,11 @@ internal struct RPCServerOptions: Equatable, Sendable {
 }
 
 internal typealias RPCHandler = @Sendable (Data) async throws -> Data
+internal typealias RPCNotificationHandler = @Sendable (Data) async throws -> Void
 
 internal actor RPCRouter {
   private var handlers: [UInt32: RPCHandler] = [:]
+  private var notificationHandlers: [UInt32: [UUID: RPCNotificationHandler]] = [:]
 
   internal init() {}
 
@@ -49,6 +51,32 @@ internal actor RPCRouter {
 
   fileprivate func handler(for typeID: UInt32) -> RPCHandler? {
     handlers[typeID]
+  }
+
+  internal func subscribeNotification(
+    _ typeID: UInt32,
+    handler: @escaping RPCNotificationHandler
+  ) -> RPCSubscription {
+    let id = UUID()
+    notificationHandlers[typeID, default: [:]][id] = handler
+    return RPCSubscription {
+      await self.removeNotificationHandler(typeID: typeID, id: id)
+    }
+  }
+
+  fileprivate func notificationHandlers(for typeID: UInt32) -> [RPCNotificationHandler] {
+    Array(notificationHandlers[typeID]?.values ?? [:].values)
+  }
+
+  internal func clearNotificationSubscriptions() {
+    notificationHandlers.removeAll()
+  }
+
+  private func removeNotificationHandler(typeID: UInt32, id: UUID) {
+    notificationHandlers[typeID]?.removeValue(forKey: id)
+    if notificationHandlers[typeID]?.isEmpty == true {
+      notificationHandlers.removeValue(forKey: typeID)
+    }
   }
 }
 
@@ -243,15 +271,23 @@ internal actor RPCServer {
       if let handler = await router.handler(for: envelope.typeID) {
         do {
           _ = try await handler(envelope.payload)
-        } catch is CancellationError {
-          break
         } catch {
-          await fail(error)
-          break
+          // Notification handlers are isolated from the RPC stream lifecycle.
+        }
+      }
+      let subscribers = await router.notificationHandlers(for: envelope.typeID)
+      for subscriber in subscribers {
+        do {
+          try await subscriber(envelope.payload)
+        } catch {
+          // One application subscriber cannot terminate delivery to the others.
         }
       }
     }
     notificationTask = nil
+    if !closed, !notificationQueue.isEmpty {
+      startNotificationWorkerIfNeeded()
+    }
   }
 
   private func writeResponse(

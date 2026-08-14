@@ -38,11 +38,14 @@ final class FlowersecRPCTests: XCTestCase {
     }
   }
 
-  func testServerPropagatesNotificationHandlerFailure() async throws {
+  func testServerIsolatesNotificationHandlerFailure() async throws {
     let stream = InMemoryByteStream()
     let router = RPCRouter()
     await router.register(7011) { (_: RPCNotification) async throws -> RPCNotification in
       throw IntentionalRPCServerError()
+    }
+    await router.register(7012) { (request: RPCNotification) async throws -> RPCNotification in
+      RPCNotification(value: "after-\(request.value)")
     }
     let server = try RPCServer(stream: stream, router: router)
     let serve = Task { try await server.serve() }
@@ -55,15 +58,26 @@ final class FlowersecRPCTests: XCTestCase {
         error: nil
       ).encoded()
     )
+    try await stream.pushJSONFrame(
+      RPCEnvelope(
+        typeID: 7012,
+        requestID: 1,
+        responseTo: 0,
+        payload: JSONEncoder.flowersecRPCTest.encode(RPCNotification(value: "failure")),
+        error: nil
+      ).encoded()
+    )
 
-    do {
-      try await serve.value
-      XCTFail("Expected notification handler failure")
-    } catch let error as FlowersecError {
-      XCTAssertEqual(error.path, .direct)
-      XCTAssertEqual(error.stage, .rpc)
-      XCTAssertEqual(error.code, .rpcFailed)
-    }
+    let response = try RPCEnvelope(data: await stream.nextWrittenJSONFrame())
+    XCTAssertEqual(response.responseTo, 1)
+    XCTAssertEqual(
+      try JSONDecoder().decode(RPCNotification.self, from: response.payload),
+      RPCNotification(value: "after-failure")
+    )
+
+    serve.cancel()
+    await server.close()
+    _ = try? await serve.value
   }
 
   func testCallWritesEnvelopeAndDecodesResponse() async throws {
@@ -136,12 +150,11 @@ final class FlowersecRPCTests: XCTestCase {
     await client.start()
 
     let expectation = expectation(description: "notify")
-    let subscription = client.onNotify(7003) { data in
+    let subscription = try await client.subscribeNotification(7003) { data in
       let decoded = try? JSONDecoder().decode(RPCReply.self, from: data)
       XCTAssertEqual(decoded, RPCReply(ok: true))
       expectation.fulfill()
     }
-    await Task.yield()
 
     try await stream.pushEnvelope(
       RPCEnvelope(
@@ -154,7 +167,8 @@ final class FlowersecRPCTests: XCTestCase {
     )
 
     await fulfillment(of: [expectation], timeout: 1)
-    subscription.cancel()
+    await subscription.cancel()
+    await subscription.cancel()
     await client.close()
   }
 
@@ -352,13 +366,12 @@ final class FlowersecRPCTests: XCTestCase {
     let gate = RPCNotificationGate()
     await client.start()
 
-    let subscription = client.onNotify(7100) { data in
+    let subscription = try await client.subscribeNotification(7100) { data in
       let notification = try? JSONDecoder().decode(RPCNotification.self, from: data)
       guard let value = notification?.value else { return }
       await recorder.append(value)
       if value == "first" { await gate.wait() }
     }
-    await Task.yield()
 
     try await stream.pushEnvelope(notificationEnvelope(typeID: 7100, value: "first"))
     try await waitForRPCCondition { await gate.isStarted() }
@@ -382,8 +395,7 @@ final class FlowersecRPCTests: XCTestCase {
     let decodedResponse = try await response
     XCTAssertEqual(decodedResponse, RPCReply(ok: true))
 
-    subscription.cancel()
-    await Task.yield()
+    await subscription.cancel()
     await gate.release()
     try await waitForRPCCondition { await recorder.count() >= 2 }
     let recordedValues = await recorder.values()
@@ -396,8 +408,7 @@ final class FlowersecRPCTests: XCTestCase {
     let client = RPCClient(stream: stream, path: .tunnel)
     let gate = RPCNotificationGate()
     await client.start()
-    _ = client.onNotify(7200) { _ in await gate.wait() }
-    await Task.yield()
+    let subscription = try await client.subscribeNotification(7200) { _ in await gate.wait() }
 
     try await stream.pushEnvelope(notificationEnvelope(typeID: 7200, value: "active"))
     try await waitForRPCCondition { await gate.isStarted() }
@@ -425,6 +436,7 @@ final class FlowersecRPCTests: XCTestCase {
       XCTAssertEqual(error.code, .resourceExhausted)
     }
     await gate.release()
+    await subscription.cancel()
     await client.close()
   }
 
@@ -433,7 +445,7 @@ final class FlowersecRPCTests: XCTestCase {
     let client = RPCClient(stream: stream)
     let recorder = RPCNotificationRecorder()
     await client.start()
-    _ = client.onNotify(7300) { data in
+    let subscription = try await client.subscribeNotification(7300) { data in
       let notification = try? JSONDecoder().decode(RPCNotification.self, from: data)
       guard let value = notification?.value else { return }
       await recorder.append(value)
@@ -443,7 +455,6 @@ final class FlowersecRPCTests: XCTestCase {
         await recorder.recordCancellation()
       } catch {}
     }
-    await Task.yield()
 
     try await stream.pushEnvelope(notificationEnvelope(typeID: 7300, value: "active"))
     try await waitForRPCCondition { await recorder.count() >= 1 }
@@ -452,6 +463,7 @@ final class FlowersecRPCTests: XCTestCase {
     try await waitForRPCCondition { await recorder.wasCanceled() }
     let recordedValues = await recorder.values()
     XCTAssertEqual(recordedValues, ["active"])
+    await subscription.cancel()
   }
 
   func testEnvelopeRejectsNonPortableJSONIDs() throws {

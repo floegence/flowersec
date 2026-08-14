@@ -29,7 +29,7 @@ The root type exports are:
 
 Retry ownership belongs to `ConnectionController`; applications do not classify error text or run a parallel retry scheduler. Public failures remain redacted and reveal no carrier, candidate, URL, credential, stage, key, or diagnostic details.
 
-`RpcResult<Response>` is a discriminated union. `RpcPeer.call(...)` requires a decoder for successful payloads, so the typed success value has passed application validation before it is returned. Check `result.ok` before reading either the typed success `payload` or bounded application `error`; a result cannot contain both. RPC call and notify are portable across SDKs. TypeScript `RpcPeer.onNotify(...)` receives peer outbound notifications through the local Session's inbound reserved RPC stream.
+`RpcResult<Response>` is a discriminated union. `RpcPeer.call(...)` requires a decoder for successful payloads, so the typed success value has passed application validation before it is returned. Check `result.ok` before reading either the typed success `payload` or bounded application `error`; a result cannot contain both. RPC call and notify accept only `JsonValue` payloads and reject values that cannot be represented on the wire before sending. TypeScript `RpcPeer.onNotify(typeId, decoder, handler)` receives peer outbound notifications through the local Session's inbound reserved RPC stream. A notification reaches the handler only after its decoder succeeds; decoder and handler failures are isolated from RPC serving.
 
 When connector options omit a connection timeout, browser and Node.js connectors use the shared ten-second default.
 

@@ -80,7 +80,7 @@ func TestTransportV2ContractDeclaresSignedSliceZeroRegistry(t *testing.T) {
 	if deps["github.com/quic-go/quic-go"] != "v0.61.0" || deps["github.com/quic-go/webtransport-go"] != "v0.12.0" {
 		t.Fatalf("unexpected signed Go dependency set: %#v", deps)
 	}
-	if contract.GoDependencies.Toolchain != "1.26.5" || contract.GoDependencies.WebTransportDialer != "quic.DialAddr" {
+	if contract.GoDependencies.Toolchain != "1.26.6" || contract.GoDependencies.WebTransportDialer != "quic.DialAddr" {
 		t.Fatalf("unexpected Go native dependency contract: %+v", contract.GoDependencies)
 	}
 	if contract.RustDependencies.QuinnVersion != "=0.11.11" || contract.RustDependencies.RCGen != "forbidden" {

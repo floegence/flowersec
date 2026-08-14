@@ -1,8 +1,24 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, test, vi } from "vitest";
 
 import type { RpcClient } from "../rpc/client.js";
 import { SessionError, type InternalByteStreamV2, type InternalSessionV2 } from "./contract.js";
 import { projectSessionV2 } from "./publicSession.js";
+
+const notificationFixture = JSON.parse(readFileSync(
+  new URL("../../../testdata/transport_v2/rpc_notification_vectors.json", import.meta.url),
+  "utf8",
+)) as Readonly<{
+  type_id: number;
+  payloads: readonly Readonly<{
+    id: string;
+    json: string;
+    decoder: "state_object" | "string_array" | "string";
+    expected_value?: string;
+    outcome: "success" | "decode_failure";
+  }>[];
+  subscription_scenarios: readonly string[];
+}>;
 
 describe("opaque public SessionV2 projection", () => {
   test("removes path, endpoint, and logical stream IDs at runtime", async () => {
@@ -114,6 +130,135 @@ describe("opaque public SessionV2 projection", () => {
       new SessionError("operation_failed"),
     );
   });
+
+  test("decodes notifications and isolates decoder and handler failures", async () => {
+    const terminal = new Error("closed");
+    const internal = fakeSession(fakeStream(terminal), terminal);
+    let dispatch: ((payload: unknown) => void) | undefined;
+    const unsubscribeInternal = vi.fn();
+    internal.rpc.onNotify = vi.fn((_typeId, handler) => {
+      dispatch = handler;
+      return unsubscribeInternal;
+    });
+    const session = projectSessionV2(internal);
+    const observed: boolean[] = [];
+    const unsubscribe = session.rpc.onNotify(7, decodeAccepted, async (payload) => {
+      observed.push(payload.accepted);
+      if (!payload.accepted) throw new Error("handler failure");
+    });
+
+    dispatch?.({ accepted: true });
+    dispatch?.({ accepted: "invalid" });
+    dispatch?.({ accepted: false });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(observed).toEqual([true, false]);
+    unsubscribe();
+    unsubscribe();
+    expect(unsubscribeInternal).toHaveBeenCalledTimes(1);
+  });
+
+  test("executes shared notification payload and lifecycle vectors", () => {
+    expect(notificationFixture.subscription_scenarios).toEqual([
+      "duplicate_subscriptions_receive_independently",
+      "cancel_is_idempotent",
+      "handler_failure_is_isolated",
+      "session_close_terminates_subscriptions",
+    ]);
+
+    for (const vector of notificationFixture.payloads) {
+      const terminal = new Error("closed");
+      const internal = fakeSession(fakeStream(terminal), terminal);
+      let dispatch: ((payload: unknown) => void) | undefined;
+      internal.rpc.onNotify = vi.fn((_typeId, handler) => {
+        dispatch = handler;
+        return () => undefined;
+      });
+      const session = projectSessionV2(internal);
+      const observed: unknown[] = [];
+      const unsubscribe = session.rpc.onNotify(
+        notificationFixture.type_id,
+        (payload) => decodeFixturePayload(vector.decoder, payload),
+        (payload) => { observed.push(payload); },
+      );
+
+      dispatch?.(JSON.parse(vector.json));
+
+      if (vector.outcome === "decode_failure") {
+        expect(observed, vector.id).toEqual([]);
+      } else if (vector.decoder === "string_array") {
+        expect(observed, vector.id).toEqual([JSON.parse(vector.json)]);
+      } else {
+        expect(observed, vector.id).toEqual([vector.expected_value]);
+      }
+      unsubscribe();
+    }
+  });
+
+  test("keeps duplicate subscriptions independent and clears them on close", async () => {
+    const terminal = new Error("closed");
+    const internal = fakeSession(fakeStream(terminal), terminal);
+    const handlers = new Set<(payload: unknown) => void>();
+    const unsubscribeInternal = vi.fn((handler: (payload: unknown) => void) => {
+      handlers.delete(handler);
+    });
+    internal.rpc.onNotify = vi.fn((_typeId, handler) => {
+      handlers.add(handler);
+      return () => unsubscribeInternal(handler);
+    });
+    const session = projectSessionV2(internal);
+    const observed: string[] = [];
+    const first = session.rpc.onNotify(7, decodeMessage, (payload) => {
+      observed.push(`first:${payload}`);
+      throw new Error("isolated handler failure");
+    });
+    session.rpc.onNotify(7, decodeMessage, (payload) => {
+      observed.push(`second:${payload}`);
+    });
+
+    for (const handler of [...handlers]) handler({ message: "one" });
+    expect(observed).toEqual(["first:one", "second:one"]);
+
+    first();
+    first();
+    for (const handler of [...handlers]) handler({ message: "two" });
+    expect(observed).toEqual(["first:one", "second:one", "second:two"]);
+
+    await session.close();
+    expect(handlers).toHaveLength(0);
+    expect(unsubscribeInternal).toHaveBeenCalledTimes(2);
+    const afterClose = session.rpc.onNotify(7, decodeMessage, () => undefined);
+    afterClose();
+    afterClose();
+    expect(internal.rpc.onNotify).toHaveBeenCalledTimes(2);
+  });
+
+  test("rejects non-JSON outbound payloads before calling the internal peer", async () => {
+    const terminal = new Error("closed");
+    const internal = fakeSession(fakeStream(terminal), terminal);
+    const session = projectSessionV2(internal);
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const invalidPayloads: unknown[] = [
+      1n,
+      undefined,
+      Number.POSITIVE_INFINITY,
+      { value: 1n },
+      { value: undefined },
+      cyclic,
+      { value: Number.NaN },
+    ];
+
+    for (const payload of invalidPayloads) {
+      await expect(session.rpc.call(1, payload as never, decodeAccepted))
+        .rejects.toEqual(new SessionError("operation_failed"));
+      await expect(session.rpc.notify(2, payload as never))
+        .rejects.toEqual(new SessionError("operation_failed"));
+    }
+
+    expect(internal.rpc.call).not.toHaveBeenCalled();
+    expect(internal.rpc.notify).not.toHaveBeenCalled();
+  });
 });
 
 function decodeAccepted(payload: unknown): Readonly<{ accepted: boolean }> {
@@ -126,6 +271,45 @@ function decodeAccepted(payload: unknown): Readonly<{ accepted: boolean }> {
     throw new TypeError("invalid accepted response");
   }
   return { accepted: payload.accepted };
+}
+
+function decodeFixturePayload(
+  decoder: "state_object" | "string_array" | "string",
+  payload: unknown,
+): unknown {
+  if (decoder === "state_object") return decodeState(payload);
+  if (decoder === "string_array") {
+    if (!Array.isArray(payload) || payload.some((value) => typeof value !== "string")) {
+      throw new TypeError("expected notification string array");
+    }
+    return payload;
+  }
+  if (typeof payload !== "string") throw new TypeError("expected notification string");
+  return payload;
+}
+
+function decodeState(payload: unknown): string {
+  if (
+    typeof payload !== "object"
+    || payload === null
+    || !("state" in payload)
+    || typeof payload.state !== "string"
+  ) {
+    throw new TypeError("expected notification state");
+  }
+  return payload.state;
+}
+
+function decodeMessage(payload: unknown): string {
+  if (
+    typeof payload !== "object"
+    || payload === null
+    || !("message" in payload)
+    || typeof payload.message !== "string"
+  ) {
+    throw new TypeError("expected notification message");
+  }
+  return payload.message;
 }
 
 function fakeStream(error: Error): InternalByteStreamV2 & { read: ReturnType<typeof vi.fn> } {

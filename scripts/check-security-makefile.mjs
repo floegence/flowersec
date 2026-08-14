@@ -6,6 +6,7 @@ const requiredSecurityTests = [
   "scripts/security-dependencies.test.mjs",
   "scripts/check-dependency-contracts.test.mjs",
   "scripts/go-security.test.mjs",
+  "scripts/go-toolchain-policy.test.mjs",
   "scripts/rust-security.test.mjs",
   "scripts/swift-security.test.mjs",
   "scripts/prepare-ts-package-cache.test.mjs",
@@ -106,6 +107,7 @@ function verifyGraph(source) {
   exactRecipe(source, "security-makefile-check", ["\tnode scripts/check-security-makefile.mjs Makefile"]);
   exactRecipe(source, "security-dependency-check", [
     `\tnode --test ${requiredSecurityTests.join(" ")}`,
+    "\tnode scripts/check-go-toolchain-policy.mjs",
     "\tnode scripts/generate-source-inventory.mjs --check",
   ]);
   exactRecipe(source, "release-policy-check", [

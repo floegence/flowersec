@@ -16,8 +16,20 @@ import { createStreamMetadataV2, streamMetadataValuesV2 } from "./streamMetadata
 
 /** @internal */
 export function projectSessionV2(session: InternalSessionV2): SessionV2 {
-  const rpc = projectRpcPeerV2(session.rpc);
+  const notificationOwner: NotificationSubscriptionOwner = {
+    subscriptions: new Set(),
+    closed: false,
+  };
+  const clearNotificationSubscriptions = () => {
+    notificationOwner.closed = true;
+    for (const unsubscribe of [...notificationOwner.subscriptions]) unsubscribe();
+  };
+  const rpc = projectRpcPeerV2(session.rpc, notificationOwner);
   const unreliable = session.unreliableMessages;
+  void session.termination.then(
+    clearNotificationSubscriptions,
+    clearNotificationSubscriptions,
+  );
   return Object.freeze({
     rpc,
     ...(unreliable === undefined ? {} : { unreliableMessages: unreliable }),
@@ -60,6 +72,7 @@ export function projectSessionV2(session: InternalSessionV2): SessionV2 {
     },
     async close(): Promise<void> {
       try { await session.close(); } catch (error) { throw redactSessionError(error); }
+      finally { clearNotificationSubscriptions(); }
     },
   });
 }
@@ -88,34 +101,110 @@ function projectByteStreamV2(stream: InternalByteStreamV2): ByteStreamV2 {
   });
 }
 
-function projectRpcPeerV2(peer: InternalSessionV2["rpc"]): RpcPeerV2 {
+function projectRpcPeerV2(
+  peer: InternalSessionV2["rpc"],
+  notificationOwner: NotificationSubscriptionOwner,
+): RpcPeerV2 {
   return Object.freeze({
-    async call<Request = unknown, Response = unknown>(
+    async call<Request extends JsonValueV2 = JsonValueV2, Response = unknown>(
       typeId: number,
       payload: Request,
       decodeResponse: (payload: JsonValueV2) => Response,
       options?: OperationOptionsV2,
     ): Promise<RpcResultV2<Response>> {
       try {
+        assertJsonValue(payload);
         const result = await peer.call(typeId, payload, options?.signal);
         if (result.error !== undefined) {
           return Object.freeze({ ok: false as const, error: Object.freeze({ ...result.error }) });
         }
-        return Object.freeze({ ok: true as const, payload: decodeResponse(result.payload as JsonValueV2) });
+        assertJsonValue(result.payload);
+        return Object.freeze({ ok: true as const, payload: decodeResponse(result.payload) });
       } catch (error) {
         throw redactSessionError(error);
       }
     },
-    async notify<Payload = unknown>(typeId: number, payload: Payload, options?: OperationOptionsV2) {
+    async notify<Payload extends JsonValueV2 = JsonValueV2>(
+      typeId: number,
+      payload: Payload,
+      options?: OperationOptionsV2,
+    ) {
       try {
+        assertJsonValue(payload);
         if (options?.signal?.aborted) throw options.signal.reason ?? new DOMException("The operation was aborted", "AbortError");
         await raceWithSignal(peer.notify(typeId, payload), options?.signal);
       } catch (error) { throw redactSessionError(error); }
     },
-    onNotify<Payload = unknown>(typeId: number, handler: (payload: Payload) => void) {
-      return peer.onNotify(typeId, (payload) => handler(payload as Payload));
+    onNotify<Payload>(
+      typeId: number,
+      decodePayload: (payload: JsonValueV2) => Payload,
+      handler: (payload: Payload) => void | Promise<void>,
+    ) {
+      if (notificationOwner.closed) return () => undefined;
+      const unsubscribe = peer.onNotify(typeId, (payload) => {
+        let decoded: Payload;
+        try {
+          assertJsonValue(payload);
+          decoded = decodePayload(payload);
+        } catch {
+          return;
+        }
+        try {
+          void Promise.resolve(handler(decoded)).catch(() => undefined);
+        } catch {
+          // Notification handlers are isolated from RPC serving.
+        }
+      });
+      let subscribed = true;
+      const cancel = () => {
+        if (!subscribed) return;
+        subscribed = false;
+        notificationOwner.subscriptions.delete(cancel);
+        unsubscribe();
+      };
+      notificationOwner.subscriptions.add(cancel);
+      return cancel;
     },
   });
+}
+
+type NotificationSubscriptionOwner = {
+  subscriptions: Set<() => void>;
+  closed: boolean;
+};
+
+function assertJsonValue(value: unknown): asserts value is JsonValueV2 {
+  validateJsonValue(value, new Set<object>());
+}
+
+function validateJsonValue(value: unknown, ancestors: Set<object>): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (Number.isFinite(value)) return;
+    throw new TypeError("RPC payload contains a non-finite number");
+  }
+  if (typeof value !== "object") throw new TypeError("RPC payload is not a JSON value");
+  if (ancestors.has(value)) throw new TypeError("RPC payload contains a cycle");
+
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        if (!(index in value)) throw new TypeError("RPC payload contains a sparse array");
+        validateJsonValue(value[index], ancestors);
+      }
+      return;
+    }
+    const prototype: unknown = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError("RPC payload contains a non-JSON object");
+    }
+    for (const key of Object.keys(value)) {
+      validateJsonValue((value as Record<string, unknown>)[key], ancestors);
+    }
+  } finally {
+    ancestors.delete(value);
+  }
 }
 
 async function raceWithSignal<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {

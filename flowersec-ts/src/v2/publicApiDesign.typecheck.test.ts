@@ -18,6 +18,10 @@ import { expect, test } from "vitest";
 type PingRequest = Readonly<{ nonce: string }>;
 type PingResponse = Readonly<{ acknowledged: boolean }>;
 
+function decodePingNotification(payload: unknown): PingResponse {
+  return decodePingResponse(payload);
+}
+
 function decodePingResponse(payload: unknown): PingResponse {
   if (
     typeof payload !== "object"
@@ -43,6 +47,11 @@ function typecheckPublicAPI(
     decodePingResponse,
   );
   void result;
+  const unsubscribe = peer.onNotify(8, decodePingNotification, (payload) => {
+    const acknowledged: boolean = payload.acknowledged;
+    void acknowledged;
+  });
+  unsubscribe();
   void session.openStream("typed", { metadata });
   void stream.kind;
   void connect(lease, { origin: "https://client.example" });
@@ -58,6 +67,12 @@ function typecheckPublicAPI(
   void session.termination;
   // @ts-expect-error successful typed responses require an explicit decoder.
   void peer.call<PingRequest, PingResponse>(7, { nonce: "n" });
+  // @ts-expect-error notification payloads require an explicit decoder.
+  void peer.onNotify<PingResponse>(8, () => undefined);
+  // @ts-expect-error RPC calls accept only JSON values.
+  void peer.call(7, { nonce: 1n }, decodePingResponse);
+  // @ts-expect-error RPC notifications accept only JSON values.
+  void peer.notify(8, undefined);
 }
 
 test("exposes the unversioned typed public API", () => {

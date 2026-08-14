@@ -14,9 +14,16 @@ cargo add flowersec
 
 The raw QUIC connection profile requires explicit DER trust roots and rejects empty roots:
 
-```rust
+```rust,no_run
+# async fn connect_example(
+#     lease: flowersec::ArtifactLease,
+#     root_der: Vec<u8>,
+# ) -> Result<(), Box<dyn std::error::Error>> {
 let options = flowersec::ConnectorOptions::new(vec![root_der])?;
-let session = flowersec::connect(&mut lease, options).await?;
+let session = flowersec::connect(lease, options).await?;
+# session.close().await?;
+# Ok(())
+# }
 ```
 
 ## Supported Connections

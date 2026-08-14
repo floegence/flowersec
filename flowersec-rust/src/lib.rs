@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 #![deny(missing_debug_implementations)]
+#![doc = include_str!("../README.md")]
 
 //! Native Rust support for Flowersec v2.2 secure direct and tunneled sessions.
 //!

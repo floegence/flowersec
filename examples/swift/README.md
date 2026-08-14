@@ -1,6 +1,9 @@
 # Swift Cookbook
 
-The Swift example prints the opaque Flowersec v2 public contract marker and optionally establishes a macOS WSS session from an artifact lease.
+The Swift example prints the opaque Flowersec v2 public contract marker and
+optionally establishes a macOS WSS session from an artifact lease. A connected
+client exercises typed RPC, decoded notification delivery, reliable stream
+write/read/FIN, liveness, subscription cancellation, and session close.
 
 ## Run
 
@@ -29,7 +32,13 @@ FSEC_SPEND_RECEIPT_V2_PATH=/durable/state/artifact.spent \
 The example creates the receipt with no overwrite, restricts it to the current
 user, synchronizes it before connection credentials are sent, and fails closed
 when the path already exists. The receipt contains no artifact or key material.
-Connection and liveness failures expose only a structured `RetryDisposition`.
+After connecting, the client registers notification type `7002`, makes typed
+RPC type `7001` with `{ "value": "ping" }`, exchanges
+`{ "value": "notify" }`, then writes `hello` on a `parity.echo` stream,
+sends FIN, and reads `world` through peer FIN. The repository server-parity
+fixtures implement this application contract; a deployed service must register
+equivalent handlers. Connection and session failures expose only a structured
+`RetryDisposition`.
 Long-lived applications give `ConnectionController` a refreshable artifact
 source; this one-shot example never reuses its spend receipt.
 

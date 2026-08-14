@@ -49,6 +49,26 @@ assert.equal(
 );
 assert.equal(rendered.includes('ArtifactError'), true, 'Swift public API must expose ArtifactError');
 assert.equal(rendered.includes('invalidValue'), true, 'Swift metadata errors must expose invalidValue');
+assert.equal(
+  rendered.includes('RPCNotificationError'),
+  true,
+  'Swift public API must expose typed notification decode failures',
+);
+assert.equal(
+  surface.some(({ pathComponents, declaration }) =>
+    pathComponents.join('.') === 'RPCPeer.subscribeNotification(_:as:handler:)'
+      && declaration.includes('Result<Payload, RPCNotificationError>')
+      && declaration.includes('async throws -> any RPCNotificationSubscription')),
+  true,
+  'Swift RPCPeer must expose deterministic typed notification subscriptions',
+);
+assert.equal(
+  surface.some(({ pathComponents, declaration }) =>
+    pathComponents.join('.') === 'RPCNotificationSubscription.cancel()'
+      && declaration.includes('async')),
+  true,
+  'Swift notification subscriptions must expose async cancellation',
+);
 
 function findFile(directory, name) {
   if (!fs.existsSync(directory)) return undefined;

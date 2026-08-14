@@ -3,14 +3,26 @@ package flowersec_test
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
 
 	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
 )
+
+const (
+	exampleEchoRPCTypeID      = uint32(7001)
+	exampleNotificationTypeID = uint32(7002)
+	exampleEchoStreamKind     = "parity.echo"
+)
+
+type exampleValuePayload struct {
+	Value string `json:"value"`
+}
 
 func ExampleConnect() {
 	artifactJSON, err := os.ReadFile(os.Getenv("FSEC_ARTIFACT_V2_PATH"))
@@ -48,9 +60,86 @@ func ExampleConnect() {
 		return
 	}
 	defer session.Close()
-	if _, err := session.ProbeLiveness(ctx); err != nil {
+	if err := runExampleApplication(ctx, session); err != nil {
 		reportRecovery(err)
 	}
+}
+
+func runExampleApplication(ctx context.Context, session flowersec.Session) error {
+	notifications := make(chan exampleValuePayload, 1)
+	unsubscribe := session.RPC().OnNotify(exampleNotificationTypeID, func(_ context.Context, raw json.RawMessage) {
+		var payload exampleValuePayload
+		if json.Unmarshal(raw, &payload) == nil {
+			select {
+			case notifications <- payload:
+			default:
+			}
+		}
+	})
+	defer unsubscribe()
+
+	request := exampleValuePayload{Value: "ping"}
+	var response exampleValuePayload
+	if err := session.RPC().Call(ctx, exampleEchoRPCTypeID, request, &response); err != nil {
+		return err
+	}
+	if response != request {
+		return errors.New("unexpected typed RPC response")
+	}
+	if err := session.RPC().Notify(ctx, exampleNotificationTypeID, exampleValuePayload{Value: "notify"}); err != nil {
+		return err
+	}
+	select {
+	case notification := <-notifications:
+		if notification.Value != "notify" {
+			return errors.New("unexpected notification payload")
+		}
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	streamCell := os.Getenv("FSEC_EXAMPLE_STREAM_CELL")
+	if streamCell == "" {
+		streamCell = "direct"
+	}
+	metadata, err := flowersec.NewStreamMetadata(map[string]any{"cell": streamCell})
+	if err != nil {
+		return err
+	}
+	stream, err := session.OpenStream(ctx, exampleEchoStreamKind, metadata)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+	if err := writeExampleAll(stream, []byte("hello")); err != nil {
+		return err
+	}
+	if err := stream.CloseWrite(); err != nil {
+		return err
+	}
+	responseBytes, err := io.ReadAll(stream)
+	if err != nil {
+		return err
+	}
+	if string(responseBytes) != "world" {
+		return errors.New("unexpected reliable stream response")
+	}
+	_, err = session.ProbeLiveness(ctx)
+	return err
+}
+
+func writeExampleAll(stream flowersec.ByteStream, payload []byte) error {
+	for len(payload) > 0 {
+		written, err := stream.Write(payload)
+		if err != nil {
+			return err
+		}
+		if written <= 0 || written > len(payload) {
+			return io.ErrShortWrite
+		}
+		payload = payload[written:]
+	}
+	return nil
 }
 
 func reportRecovery(err error) {

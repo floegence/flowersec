@@ -257,6 +257,121 @@ final class TransportV2SessionTests: XCTestCase {
     try await serverSession.close()
   }
 
+  func testPublicNotificationSubscriptionIsTypedDeterministicAndIsolated() async throws {
+    let vectors = try JSONDecoder().decode(
+      RPCNotificationVectors.self,
+      from: Data(
+        contentsOf: packageRoot().appendingPathComponent(
+          "testdata/transport_v2/rpc_notification_vectors.json"))
+    )
+    XCTAssertEqual(
+      Set(vectors.subscriptionScenarios),
+      Set([
+        "duplicate_subscriptions_receive_independently",
+        "cancel_is_idempotent",
+        "handler_failure_is_isolated",
+        "session_close_terminates_subscriptions",
+      ])
+    )
+    let payloads = Dictionary(uniqueKeysWithValues: vectors.payloads.map { ($0.id, $0) })
+    let objectPayload = try JSONDecoder().decode(
+      PublicNotificationOutboundObject.self,
+      from: Data(try XCTUnwrap(payloads["object_unicode_unknown"]).json.utf8)
+    )
+    let arrayPayload = try JSONDecoder().decode(
+      [String].self,
+      from: Data(try XCTUnwrap(payloads["array"]).json.utf8)
+    )
+    let scalarPayload = try JSONDecoder().decode(
+      String.self,
+      from: Data(try XCTUnwrap(payloads["scalar"]).json.utf8)
+    )
+    let invalidPayload = try JSONDecoder().decode(
+      PublicNotificationInvalidObject.self,
+      from: Data(try XCTUnwrap(payloads["decode_failure"]).json.utf8)
+    )
+    let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
+    let configs = try makeConfigs()
+    async let server = TransportV2Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV2Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+    let publicSession: any Session = OpaqueSessionV2(clientSession)
+    let recorder = PublicNotificationRecorder()
+
+    let object = try await publicSession.rpc.subscribeNotification(
+      vectors.typeID,
+      as: PublicNotificationObject.self
+    ) { result in
+      let value = try result.get()
+      await recorder.append("object:\(value.state)")
+      throw PublicNotificationHandlerFailure()
+    }
+    let duplicate = try await publicSession.rpc.subscribeNotification(
+      vectors.typeID,
+      as: PublicNotificationObject.self
+    ) { result in
+      let value = try result.get()
+      await recorder.append("duplicate:\(value.state)")
+    }
+    let array = try await publicSession.rpc.subscribeNotification(
+      vectors.typeID + 1,
+      as: [String].self
+    ) { result in
+      await recorder.append("array:\(try result.get().joined(separator: ","))")
+    }
+    let scalar = try await publicSession.rpc.subscribeNotification(
+      vectors.typeID + 2,
+      as: String.self
+    ) { result in
+      await recorder.append("scalar:\(try result.get())")
+    }
+    let invalid = try await publicSession.rpc.subscribeNotification(
+      vectors.typeID + 3,
+      as: PublicNotificationObject.self
+    ) { result in
+      switch result {
+      case .success:
+        await recorder.append("invalid:unexpected-success")
+      case .failure(let error):
+        await recorder.append("invalid:\(error)")
+      }
+    }
+
+    try await serverSession.rpc.notify(
+      vectors.typeID,
+      objectPayload
+    )
+    try await serverSession.rpc.notify(vectors.typeID + 1, arrayPayload)
+    try await serverSession.rpc.notify(vectors.typeID + 2, scalarPayload)
+    try await serverSession.rpc.notify(vectors.typeID + 3, invalidPayload)
+
+    let delivered = await waitUntil { await recorder.count() == 5 }
+    XCTAssertTrue(delivered)
+    let observed = await recorder.values()
+    XCTAssertTrue(observed.contains("object:notification accepted 通知"))
+    XCTAssertTrue(observed.contains("duplicate:notification accepted 通知"))
+    XCTAssertTrue(observed.contains("array:notification,通知"))
+    XCTAssertTrue(observed.contains("scalar:notification"))
+    XCTAssertTrue(observed.contains("invalid:invalidPayload"))
+
+    await object.cancel()
+    await object.cancel()
+    await duplicate.cancel()
+    try await serverSession.rpc.notify(
+      vectors.typeID,
+      PublicNotificationOutboundObject(state: "after-cancel", unknown: [:])
+    )
+    try await Task.sleep(for: .milliseconds(20))
+    let countAfterCancel = await recorder.count()
+    XCTAssertEqual(countAfterCancel, 5)
+
+    try await publicSession.close()
+    await array.cancel()
+    await scalar.cancel()
+    await invalid.cancel()
+    try await serverSession.close()
+  }
+
   func testActiveBidirectionalStreamSurvivesConsecutiveRekeys() async throws {
     let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
     let configs = try makeConfigs()
@@ -1570,6 +1685,46 @@ private struct StreamKeyUpdateACKVector: Decodable {
 
 private struct SessionEcho: Codable, Equatable, Sendable {
   let value: String
+}
+
+private struct PublicNotificationObject: Decodable, Sendable {
+  let state: String
+}
+
+private struct PublicNotificationOutboundObject: Codable, Sendable {
+  let state: String
+  let unknown: [String: Bool]
+}
+
+private struct PublicNotificationInvalidObject: Codable, Sendable {
+  let state: Int
+}
+
+private struct RPCNotificationVectors: Decodable {
+  let typeID: UInt32
+  let payloads: [RPCNotificationPayloadVector]
+  let subscriptionScenarios: [String]
+
+  enum CodingKeys: String, CodingKey {
+    case typeID = "type_id"
+    case payloads
+    case subscriptionScenarios = "subscription_scenarios"
+  }
+}
+
+private struct RPCNotificationPayloadVector: Decodable {
+  let id: String
+  let json: String
+}
+
+private struct PublicNotificationHandlerFailure: Error {}
+
+private actor PublicNotificationRecorder {
+  private var recorded: [String] = []
+
+  func append(_ value: String) { recorded.append(value) }
+  func count() -> Int { recorded.count }
+  func values() -> [String] { recorded }
 }
 
 private actor SessionOperationProbe {

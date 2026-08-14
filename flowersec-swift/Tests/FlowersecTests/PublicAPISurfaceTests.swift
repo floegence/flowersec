@@ -66,6 +66,21 @@ private actor PublicContractRPCPeer: RPCPeer {
     _ = typeID
     _ = payload
   }
+
+  func subscribeNotification<Payload: Decodable & Sendable>(
+    _ typeID: UInt32,
+    as payloadType: Payload.Type,
+    handler: @escaping @Sendable (Result<Payload, RPCNotificationError>) async throws -> Void
+  ) async throws -> any RPCNotificationSubscription {
+    _ = typeID
+    _ = payloadType
+    _ = handler
+    return PublicContractNotificationSubscription()
+  }
+}
+
+private struct PublicContractNotificationSubscription: RPCNotificationSubscription {
+  func cancel() async {}
 }
 
 private struct PublicContractSession: Session {

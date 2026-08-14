@@ -954,8 +954,8 @@ func validateTransportV2Unsupported(runtime transportV2Runtime, reasons map[stri
 }
 
 func validateTransportV2GoDependencies(dependencies transportV2GoDependencies) error {
-	if dependencies.Toolchain != "1.26.5" || dependencies.WebTransportDialer != "quic.DialAddr" {
-		return errors.New("Go native dependencies must use toolchain 1.26.5 and the non-early quic.DialAddr WebTransport dialer")
+	if dependencies.Toolchain != "1.26.6" || dependencies.WebTransportDialer != "quic.DialAddr" {
+		return errors.New("Go native dependencies must use toolchain 1.26.6 and the non-early quic.DialAddr WebTransport dialer")
 	}
 	if len(dependencies.Dependencies) != 2 {
 		return errors.New("Go native runtime must pin exactly two QUIC dependencies")

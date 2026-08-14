@@ -335,6 +335,18 @@ public struct RPCError: Error, Equatable, Sendable {
   }
 }
 
+/// A stable failure produced while decoding a peer-originated RPC notification.
+public enum RPCNotificationError: Error, Equatable, Sendable {
+  case invalidPayload
+}
+
+/// A cancelable peer-notification registration.
+///
+/// Cancellation is idempotent and returns only after the registration has been removed.
+public protocol RPCNotificationSubscription: Sendable {
+  func cancel() async
+}
+
 public struct StreamMetadata: Equatable, Sendable {
   private static let maxEncodedBytes = 4_096
   private static let maxDepth = 4
@@ -476,6 +488,12 @@ public protocol RPCPeer: Sendable {
   ) async throws -> Response
 
   func notify<Payload: Encodable & Sendable>(_ typeID: UInt32, _ payload: Payload) async throws
+
+  func subscribeNotification<Payload: Decodable & Sendable>(
+    _ typeID: UInt32,
+    as payloadType: Payload.Type,
+    handler: @escaping @Sendable (Result<Payload, RPCNotificationError>) async throws -> Void
+  ) async throws -> any RPCNotificationSubscription
 }
 
 public protocol Session: Sendable {

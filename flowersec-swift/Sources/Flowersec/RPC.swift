@@ -23,15 +23,32 @@ internal struct FlowersecStreamResetError: LocalizedError, Equatable, Sendable {
   internal var errorDescription: String? { "The peer reset the stream." }
 }
 
-internal struct RPCSubscription: Sendable {
-  private let cancelHandler: @Sendable () -> Void
+internal final class RPCSubscription: RPCNotificationSubscription, @unchecked Sendable {
+  private let lock = NSLock()
+  private var cancelHandler: (@Sendable () async -> Void)?
 
-  internal init(cancelHandler: @escaping @Sendable () -> Void) {
+  internal init(cancelHandler: @escaping @Sendable () async -> Void) {
     self.cancelHandler = cancelHandler
   }
 
-  internal func cancel() {
-    cancelHandler()
+  internal func cancel() async {
+    let handler = lock.withLock {
+      let current = cancelHandler
+      cancelHandler = nil
+      return current
+    }
+    await handler?()
+  }
+
+  deinit {
+    let handler = lock.withLock {
+      let current = cancelHandler
+      cancelHandler = nil
+      return current
+    }
+    if let handler {
+      Task { await handler() }
+    }
   }
 }
 
@@ -168,14 +185,15 @@ internal actor RPCClient {
     try await writeEnvelope(envelope)
   }
 
-  internal nonisolated func onNotify(
+  internal func subscribeNotification(
     _ typeID: UInt32,
     handler: @escaping @Sendable (Data) async -> Void
-  ) -> RPCSubscription {
+  ) throws -> RPCSubscription {
+    guard !closed else { throw FlowersecError.closed(path: path) }
     let id = UUID()
-    Task { await self.addNotifyHandler(typeID: typeID, id: id, handler: handler) }
+    addNotifyHandler(typeID: typeID, id: id, handler: handler)
     return RPCSubscription {
-      Task { await self.removeNotifyHandler(typeID: typeID, id: id) }
+      await self.removeNotifyHandler(typeID: typeID, id: id)
     }
   }
 
@@ -285,6 +303,9 @@ internal actor RPCClient {
       }
     }
     notificationTask = nil
+    if !closed, !notificationQueue.isEmpty {
+      startNotificationWorkerIfNeeded()
+    }
   }
 
   private func terminate(with failure: Error) {
@@ -385,13 +406,14 @@ internal struct RPCEnvelope: Equatable, Sendable {
   }
 
   private static func encodeRawJSONObject(_ object: Any) throws -> Data {
-    if object is NSNull {
-      return Data("null".utf8)
-    }
-    guard JSONSerialization.isValidJSONObject(object) else {
+    do {
+      return try JSONSerialization.data(
+        withJSONObject: object,
+        options: [.fragmentsAllowed, .sortedKeys]
+      )
+    } catch {
       throw FlowersecError.invalidRPC("RPC payload JSON is invalid.")
     }
-    return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
   }
 
   private static func portableID(_ value: Any?) -> UInt64? {

@@ -88,6 +88,7 @@ trap - EXIT
 
 apt-get update
 packages=(ca-certificates curl git jq xz-utils gnupg openssl build-essential clang gcc g++ g++-12 libstdc++-12-dev pkg-config libbpf-dev ethtool iproute2 iptables nftables libatomic1 libcurl4 libedit2 libicu-dev libncurses6 libpython3-dev libsqlite3-0 libxml2-dev tzdata zlib1g)
+readonly go_version=1.26.6
 if ! command -v bpftool >/dev/null 2>&1; then
   kernel_tools="linux-tools-$(uname -r)"
   if apt-cache show "$kernel_tools" >/dev/null 2>&1; then
@@ -107,9 +108,9 @@ fi
 
 install_go() {
   local destination=$host_cache/toolchains/go archive
-  if [[ -x $destination/bin/go ]] && "$destination/bin/go" version | grep -Fq 'go1.26.5'; then return; fi
+  if [[ -x $destination/bin/go ]] && "$destination/bin/go" version | grep -Fq "go${go_version}"; then return; fi
   archive=$(mktemp "$host_tmp/go.XXXXXX.tar.gz")
-  curl -fL --retry 3 -o "$archive" "https://mirrors.aliyun.com/golang/go1.26.5.linux-${go_arch}.tar.gz"
+  curl -fL --retry 3 -o "$archive" "https://mirrors.aliyun.com/golang/go${go_version}.linux-${go_arch}.tar.gz"
   rm -rf -- "$destination"
   tar -C "$host_cache/toolchains" -xzf "$archive"
   rm -f -- "$archive"
@@ -214,7 +215,7 @@ for required in "${required_commands[@]}"; do
   resolved=$(type -P "$required" || true)
   [[ -n $resolved && $resolved == /* && -x $resolved ]] || { echo "missing host capability: $required" >&2; exit 1; }
 done
-go version | grep -F 'go1.26.5' >/dev/null || { echo "missing host capability: Go 1.26.5" >&2; exit 1; }
+go version | grep -F "go${go_version}" >/dev/null || { echo "missing host capability: Go ${go_version}" >&2; exit 1; }
 [[ $(node --version) == v24.14.1 ]] || { echo "missing host capability: Node 24.14.1" >&2; exit 1; }
 rustc --version | grep -Eq 'rustc 1\.88\.0([[:space:]]|$)' || { echo "missing host capability: Rust 1.88.0" >&2; exit 1; }
 swift --version | grep -Eq 'Swift version 6\.1(\.[0-9]+)?([[:space:]]|$)' || { echo "missing host capability: Swift 6.1" >&2; exit 1; }

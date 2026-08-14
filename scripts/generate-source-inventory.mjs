@@ -827,7 +827,7 @@ function collectGoBinaryGraph(repoRoot, policy, releaseVersion, kind, definition
           GOENV: "off",
           GOFLAGS: "",
           GOOS: platform.goos,
-          GOTOOLCHAIN: "go1.26.5",
+          GOTOOLCHAIN: "go1.26.6",
           GOWORK: "off",
         },
       ));

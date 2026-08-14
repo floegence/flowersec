@@ -11,6 +11,10 @@ private struct PublicResponse: Codable, Sendable {
   let accepted: Bool
 }
 
+private struct PublicNotification: Codable, Sendable {
+  let state: String
+}
+
 @Test
 func unversionedOneShotPublicAPICompiles() async throws {
   let parse: (Data) throws -> Artifact = parseArtifact
@@ -22,10 +26,17 @@ func unversionedOneShotPublicAPICompiles() async throws {
     try await peer.call(
       7, PublicRequest(value: "request"), as: PublicResponse.self, timeout: .seconds(1))
   }
+  let notificationSubscription: @Sendable (any RPCPeer) async throws ->
+    any RPCNotificationSubscription = { peer in
+      try await peer.subscribeNotification(9_002, as: PublicNotification.self) { result in
+        _ = try result.get()
+      }
+    }
 
   _ = parse
   _ = connectAttempt
   _ = rpcCall
+  _ = notificationSubscription
 }
 
 @Test

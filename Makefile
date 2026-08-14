@@ -239,6 +239,7 @@ example-source-check:
 
 example-check: example-source-check
 	cd flowersec-go && go test -run '^$$' .
+	flowersec-ts/node_modules/.bin/tsc --project examples/ts/tsconfig.json
 	rustup run 1.88.0 cargo check --locked --offline --manifest-path examples/rust/Cargo.toml
 	swift test --package-path examples/swift --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file
 
@@ -276,7 +277,8 @@ security-makefile-check:
 	node scripts/check-security-makefile.mjs Makefile
 
 security-dependency-check:
-	node --test scripts/security-dependencies.test.mjs scripts/check-dependency-contracts.test.mjs scripts/go-security.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/prepare-ts-package-cache.test.mjs scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs scripts/run-precommit-wave.test.mjs scripts/test-architecture-contract.mjs
+	node --test scripts/security-dependencies.test.mjs scripts/check-dependency-contracts.test.mjs scripts/go-security.test.mjs scripts/go-toolchain-policy.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/prepare-ts-package-cache.test.mjs scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs scripts/run-precommit-wave.test.mjs scripts/test-architecture-contract.mjs
+	node scripts/check-go-toolchain-policy.mjs
 	node scripts/generate-source-inventory.mjs --check
 
 security-package-check: ts-build

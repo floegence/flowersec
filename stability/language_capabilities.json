@@ -100,7 +100,7 @@
     {
       "id": "rpc_call_notify",
       "layer": "portable_core",
-      "description": "Outbound RPC calls and notifications over the reserved encrypted v2 stream kind",
+      "description": "Typed RPC calls, outbound notifications, and peer notification subscriptions over the reserved encrypted v2 stream kind",
       "implementations": {
         "go": { "status": "supported", "test_ids": ["protocol/go"] },
         "typescript": { "status": "supported", "test_ids": ["protocol/typescript"] },
@@ -231,13 +231,6 @@
     }
   ],
   "runtime_specific_capabilities": [
-    {
-      "id": "typescript_rpc_notification_subscription",
-      "layer": "language_convenience",
-      "owner": "typescript",
-      "reason": "TypeScript RpcPeer.onNotify receives peer outbound notifications through the local Session's inbound reserved RPC stream.",
-      "test_ids": ["protocol/typescript"]
-    },
     {
       "id": "go_rpc_request_handlers",
       "layer": "language_convenience",

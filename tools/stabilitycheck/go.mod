@@ -1,3 +1,3 @@
 module github.com/floegence/flowersec/tools/stabilitycheck
 
-go 1.26.5
+go 1.26.6

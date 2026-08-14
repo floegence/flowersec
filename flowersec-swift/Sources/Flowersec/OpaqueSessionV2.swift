@@ -147,6 +147,22 @@ private struct RedactedRPCPeerV2: RPCPeer {
       throw redactTransportErrorV2(error)
     }
   }
+
+  func subscribeNotification<Payload: Decodable & Sendable>(
+    _ typeID: UInt32,
+    as payloadType: Payload.Type,
+    handler: @escaping @Sendable (Result<Payload, RPCNotificationError>) async throws -> Void
+  ) async throws -> any RPCNotificationSubscription {
+    do {
+      return try await peer.subscribeNotification(
+        typeID,
+        as: payloadType,
+        handler: handler
+      )
+    } catch {
+      throw redactTransportErrorV2(error)
+    }
+  }
 }
 
 func redactTransportErrorV2(_ error: any Error) -> SessionError {

@@ -72,14 +72,22 @@ export type RpcResult<Response = unknown> =
   | Readonly<{ ok: false; error: Readonly<{ code: number; message?: string }> }>;
 
 export interface RpcPeer {
-  call<Request = unknown, Response = unknown>(
+  call<Request extends JsonValue = JsonValue, Response = unknown>(
     typeId: number,
     payload: Request,
     decodeResponse: (payload: JsonValue) => Response,
     options?: OperationOptions,
   ): Promise<RpcResult<Response>>;
-  notify<Payload = unknown>(typeId: number, payload: Payload, options?: OperationOptions): Promise<void>;
-  onNotify<Payload = unknown>(typeId: number, handler: (payload: Payload) => void): () => void;
+  notify<Payload extends JsonValue = JsonValue>(
+    typeId: number,
+    payload: Payload,
+    options?: OperationOptions,
+  ): Promise<void>;
+  onNotify<Payload>(
+    typeId: number,
+    decodePayload: (payload: JsonValue) => Payload,
+    handler: (payload: Payload) => void | Promise<void>,
+  ): () => void;
 }
 
 export interface ByteStream {

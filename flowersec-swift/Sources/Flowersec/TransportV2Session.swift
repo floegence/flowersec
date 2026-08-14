@@ -20,6 +20,7 @@ actor TransportV2Session {
   private let controlReader: TransportV2CarrierReader
   private let controlWriter: TransportV2CarrierWriter
   private let config: TransportV2SessionConfig
+  private let rpcRouter: RPCRouter
   private let h3: Data
   private let sendDirection: TransportDirectionV2
   private let receiveDirection: TransportDirectionV2
@@ -91,6 +92,7 @@ actor TransportV2Session {
   ) throws {
     self.carrier = carrier
     self.config = config
+    rpcRouter = config.rpcRouter ?? RPCRouter()
     self.h3 = material.h3
     controlReader = TransportV2CarrierReader(stream: control)
     controlWriter = TransportV2CarrierWriter(stream: control)
@@ -442,6 +444,14 @@ actor TransportV2Session {
     await client.start()
     rpcClient = client
     return client
+  }
+
+  fileprivate func subscribeNotification(
+    _ typeID: UInt32,
+    handler: @escaping RPCNotificationHandler
+  ) async throws -> RPCSubscription {
+    guard !closing, !closed else { throw TransportV2SessionError.closed }
+    return await rpcRouter.subscribeNotification(typeID, handler: handler)
   }
 
   private func openStream(
@@ -817,11 +827,10 @@ actor TransportV2Session {
       return
     }
     rpcServerClaimed = true
-    let router = config.rpcRouter ?? RPCRouter()
     do {
       let server = try RPCServer(
         stream: TransportV2RPCStreamAdapter(stream: stream),
-        router: router,
+        router: rpcRouter,
         options: config.rpcServerOptions,
         path: rpcPath
       )
@@ -1484,6 +1493,7 @@ actor TransportV2Session {
       await rpcClient.close()
       self.rpcClient = nil
     }
+    await rpcRouter.clearNotificationSubscriptions()
     let pingWaiters = Array(pings.values)
     pings.removeAll()
     for waiter in pingWaiters { await waiter.fail(error) }
@@ -2619,6 +2629,27 @@ private final class TransportV2RPCReference: RPCPeer, @unchecked Sendable {
     guard let session = boundSession() else { throw TransportV2SessionError.closed }
     let client = try await session.rpcClientForUse()
     try await client.notify(typeID, payload)
+  }
+
+  func subscribeNotification<Payload: Decodable & Sendable>(
+    _ typeID: UInt32,
+    as payloadType: Payload.Type,
+    handler: @escaping @Sendable (Result<Payload, RPCNotificationError>) async throws -> Void
+  ) async throws -> any RPCNotificationSubscription {
+    guard let session = boundSession() else { throw TransportV2SessionError.closed }
+    return try await session.subscribeNotification(typeID) { data in
+      let result: Result<Payload, RPCNotificationError>
+      do {
+        result = .success(try JSONDecoder.flowersecRPC.decode(payloadType, from: data))
+      } catch {
+        result = .failure(.invalidPayload)
+      }
+      do {
+        try await handler(result)
+      } catch {
+        // Application notification handlers are isolated from the RPC read loop.
+      }
+    }
   }
 
   private func boundSession() -> TransportV2Session? { lock.withLock { session } }

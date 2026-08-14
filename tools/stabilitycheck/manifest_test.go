@@ -318,7 +318,7 @@ func (Session) Close() error { return nil }
 			if err := os.MkdirAll(moduleRoot, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(moduleRoot, "go.mod"), []byte("module example.com/interfaceprobe\n\ngo 1.26.5\n"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(moduleRoot, "go.mod"), []byte("module example.com/interfaceprobe\n\ngo 1.26.6\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			packageDir := filepath.Join(moduleRoot, "sample")

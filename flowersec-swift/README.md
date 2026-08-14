@@ -12,6 +12,8 @@ in Xcode or `Package.swift`, then select the `Flowersec` library product.
 
 Parse an opaque `Artifact` with `parseArtifact(...)`, bind it to a single-use `ArtifactLease`, and call `connect(lease:options:)` with `ConnectorOptions`. This one-shot connector creates exactly one `Session`; a terminated session never reconnects, migrates its streams, or replays its RPCs and writes. Applications use the same `Session`, `RPCPeer`, `ByteStream`, `IncomingStream`, and bounded `StreamMetadata` contracts as the other Flowersec SDKs. `StreamMetadata` validates during initialization and is the same value type used for outgoing and incoming stream metadata.
 
+`RPCPeer.subscribeNotification(_:as:handler:)` registers before it returns and decodes every peer notification as the requested `Decodable & Sendable` type. The handler receives `.failure(.invalidPayload)` for invalid payloads, never unvalidated data. Throwing handlers are isolated from the RPC stream. The returned `RPCNotificationSubscription` has an async, idempotent `cancel()` operation, and closing the Session removes every remaining subscription.
+
 `ConnectError` and `SessionError` are closed redacted error sets. A remote application RPC failure is `RPCError` with only its semantic code and sanitized message. Connection selection, credentials, endpoint details, and cryptographic state are not public.
 
 `ConnectError` and `SessionError` expose a structured `RetryDisposition`: `terminal`, `retryable`, or `retryAfter(Date)` with an absolute not-before time. Controller retry timing uses the shared fixed defaults; only `maximumAttempts` is public. `ConnectorOptions` uses the shared ten-second connection timeout when the caller omits it. Apple TLS uses the system trust store when `trustRootsPEM` is empty and accepts explicit PEM roots for private trust profiles. An HTTP origin is accepted only for an exact loopback origin when every artifact candidate is a plaintext loopback WebSocket direct candidate.
@@ -35,6 +37,6 @@ WebSocket connections require exact Flowersec v2 subprotocol negotiation. WSS re
 
 ## Cookbook
 
-The [Swift cookbook](https://github.com/floegence/flowersec/tree/main/examples/swift) prints the opaque public contract marker and can establish a macOS WSS session from a fresh artifact.
+The [Swift cookbook](https://github.com/floegence/flowersec/tree/main/examples/swift) establishes a macOS WSS session from a fresh artifact, performs typed RPC and notification exchange, completes a reliable stream through FIN, and closes the Session.
 
 Review the shared [API contract](../docs/API_CONTRACT.md), [threat model](../docs/THREAT_MODEL.md), and [error model](../docs/ERROR_MODEL.md).

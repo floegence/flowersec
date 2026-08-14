@@ -2475,7 +2475,7 @@ fn isolated_go_work() -> PathBuf {
             let go_module =
                 fs::canonicalize(concat!(env!("CARGO_MANIFEST_DIR"), "/../flowersec-go"))
                     .expect("resolve Flowersec Go module");
-            fs::write(&path, format!("go 1.26.5\n\nuse {}\n", go_module.display()))
+            fs::write(&path, format!("go 1.26.6\n\nuse {}\n", go_module.display()))
                 .expect("write isolated Go interop workspace");
             path
         })

@@ -94,6 +94,23 @@ test("consumer examples expose structured connection and session recovery", () =
   assert.match(rustReadme, /requires explicit DER trust roots/u);
 });
 
+test("four SDK examples use the maintained parity application contract", () => {
+  const examples = [
+    ["Go", read("flowersec-go/example_client_test.go")],
+    ["TypeScript", read("examples/ts/node-client.mjs")],
+    ["Swift", read("examples/swift/Sources/FlowersecSwiftClientExample/main.swift")],
+    ["Rust", read("examples/rust/src/main.rs")],
+  ];
+
+  for (const [language, source] of examples) {
+    assert.match(source, /7_?001/u, `${language} must use typed RPC type 7001`);
+    assert.match(source, /7_?002/u, `${language} must use notification type 7002`);
+    assert.match(source, /parity\.echo/u, `${language} must use the parity echo stream`);
+    assert.match(source, /hello/u, `${language} must write the shared stream request`);
+    assert.match(source, /world/u, `${language} must validate the shared stream response`);
+  }
+});
+
 test("Swift example preserves the primary failure while propagating final close errors", () => {
   const swift = read("examples/swift/Sources/FlowersecSwiftClientExample/main.swift");
   assert.match(swift, /try\? await session\.close\(\)\s+throw error/u);

@@ -145,7 +145,7 @@ test("security dependency checks stay wired into local gates", () => {
   const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
   assert.match(
     makefile,
-    /^security-dependency-check:\n\tnode --test .*scripts\/security-makefile\.test\.mjs.*\n\tnode scripts\/generate-source-inventory\.mjs --check$/m,
+    /^security-dependency-check:\n\tnode --test .*scripts\/go-toolchain-policy\.test\.mjs.*scripts\/security-makefile\.test\.mjs.*\n\tnode scripts\/check-go-toolchain-policy\.mjs\n\tnode scripts\/generate-source-inventory\.mjs --check$/m,
   );
   assert.match(
     makefile,
@@ -186,18 +186,18 @@ test("module-local Go checks cannot be masked by workspace MVS", (t) => {
       path.join(moduleProxy, `${version}.info`),
       `${JSON.stringify({ Version: version, Time: "2026-01-01T00:00:00Z" })}\n`,
     );
-    fs.writeFileSync(path.join(moduleProxy, `${version}.mod`), `module ${modulePath}\n\ngo 1.26.5\n`);
+    fs.writeFileSync(path.join(moduleProxy, `${version}.mod`), `module ${modulePath}\n\ngo 1.26.6\n`);
   }
   fs.writeFileSync(
     path.join(vulnerableModule, "go.mod"),
-    `module example.com/vulnerable\n\ngo 1.26.5\n\nrequire ${modulePath} v0.51.0\n`,
+    `module example.com/vulnerable\n\ngo 1.26.6\n\nrequire ${modulePath} v0.51.0\n`,
   );
   fs.writeFileSync(
     path.join(maskingModule, "go.mod"),
-    `module example.com/masking\n\ngo 1.26.5\n\nrequire ${modulePath} v0.52.0\n`,
+    `module example.com/masking\n\ngo 1.26.6\n\nrequire ${modulePath} v0.52.0\n`,
   );
   const workspace = path.join(root, "go.work");
-  fs.writeFileSync(workspace, "go 1.26.5\n\nuse (\n\t./vulnerable\n\t./masking\n)\n");
+  fs.writeFileSync(workspace, "go 1.26.6\n\nuse (\n\t./vulnerable\n\t./masking\n)\n");
 
   const offlineEnvironment = {
     GOPROXY: pathToFileURL(proxy).href,

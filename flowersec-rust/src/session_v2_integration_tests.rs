@@ -1075,7 +1075,9 @@ async fn peer_rekey_completes_while_the_reserved_rpc_reader_is_idle() {
 async fn peer_notifications_dispatch_subscriptions_without_owning_the_session() {
     let (client, server) = establish_pair().await;
     let delivered = Arc::new(AtomicUsize::new(0));
+    let duplicate_delivered = Arc::new(AtomicUsize::new(0));
     let delivered_notify = Arc::new(Notify::new());
+    let retained_resource = Arc::new(());
     let first_count = delivered.clone();
     let first_notify = delivered_notify.clone();
     let first = server
@@ -1089,10 +1091,32 @@ async fn peer_notifications_dispatch_subscriptions_without_owning_the_session() 
             }),
         )
         .expect("first notification subscription");
+    let duplicate_count = duplicate_delivered.clone();
+    let duplicate = server
+        .rpc()
+        .subscribe_notification(
+            27,
+            Arc::new(move |payload| {
+                assert_eq!(payload["sequence"], 1);
+                duplicate_count.fetch_add(1, Ordering::AcqRel);
+            }),
+        )
+        .expect("duplicate notification subscription");
     let panic_subscription = server
         .rpc()
         .subscribe_notification(27, Arc::new(|_| panic!("isolated subscriber panic")))
         .expect("panicking notification subscription");
+    let handler_resource = retained_resource.clone();
+    let close_resource_subscription = server
+        .rpc()
+        .subscribe_notification(
+            29,
+            Arc::new(move |_| {
+                let _ = &handler_resource;
+            }),
+        )
+        .expect("session-owned notification subscription");
+    assert_eq!(Arc::strong_count(&retained_resource), 2);
 
     client
         .rpc()
@@ -1106,8 +1130,13 @@ async fn peer_notifications_dispatch_subscriptions_without_owning_the_session() 
     })
     .await
     .expect("notification delivered");
+    assert_eq!(duplicate_delivered.load(Ordering::Acquire), 1);
 
     panic_subscription.cancel();
+    panic_subscription.cancel();
+    duplicate.cancel();
+    duplicate.cancel();
+    first.cancel();
     first.cancel();
     client
         .rpc()
@@ -1125,6 +1154,15 @@ async fn peer_notifications_dispatch_subscriptions_without_owning_the_session() 
     assert_eq!(response["request"]["after"], "notification");
     client.close().await.expect("close client");
     server.close().await.expect("close server");
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while Arc::strong_count(&retained_resource) != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("session close releases notification handler resources");
+    close_resource_subscription.cancel();
+    close_resource_subscription.cancel();
 }
 
 #[tokio::test]

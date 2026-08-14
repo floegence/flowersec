@@ -33,7 +33,7 @@ try {
   await fs.writeFile(path.join(goRoot, "go.mod"), [
     "module flowersec_release_consumer",
     "",
-    "go 1.26.5",
+    "go 1.26.6",
     "",
     `require github.com/floegence/flowersec/flowersec-go/v2 v${version}`,
     "",

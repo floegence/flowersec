@@ -379,7 +379,7 @@
     }
   ],
   "go_native_dependencies": {
-    "toolchain": "1.26.5",
+    "toolchain": "1.26.6",
     "webtransport_dialer": "quic.DialAddr",
     "dependencies": [
       {

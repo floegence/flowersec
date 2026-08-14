@@ -1486,6 +1486,11 @@
       },
       {
         "kind": "swift.enum",
+        "name": "RPCNotificationError",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
         "name": "SessionError",
         "doc_token": ""
       },
@@ -1572,6 +1577,11 @@
       {
         "kind": "swift.enum.case",
         "name": "JSONValue.string(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "RPCNotificationError.invalidPayload",
         "doc_token": ""
       },
       {
@@ -1721,6 +1731,16 @@
       },
       {
         "kind": "swift.method",
+        "name": "RPCNotificationSubscription.cancel()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCPeer.subscribeNotification(_:as:handler:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
         "name": "Session.acceptStream()",
         "doc_token": ""
       },
@@ -1837,6 +1857,11 @@
       {
         "kind": "swift.protocol",
         "name": "RPCPeer",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.protocol",
+        "name": "RPCNotificationSubscription",
         "doc_token": ""
       },
       {

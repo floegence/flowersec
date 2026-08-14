@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-const repoGoToolchain = "go1.26.5"
+const repoGoToolchain = "go1.26.6"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -1050,7 +1050,7 @@ func renderGoVerifier(m *manifest) (string, string, error) {
 		fmt.Fprintf(&checks, "\tvar _ %s = (manifestInterface%d)(nil)\n", group.receiver, index)
 	}
 
-	goMod := fmt.Sprintf("module flowersecstabilitychecktmp\n\ngo 1.26.5\n\nrequire %s %s\n", m.Go.ModulePath, goVerifierModuleVersion(m.Go.ModulePath))
+	goMod := fmt.Sprintf("module flowersecstabilitychecktmp\n\ngo 1.26.6\n\nrequire %s %s\n", m.Go.ModulePath, goVerifierModuleVersion(m.Go.ModulePath))
 	goTest := fmt.Sprintf("package flowersecstabilitychecktmp\n\nimport (\n%s)\n\nfunc TestContractSymbolsCompile(t *testing.T) {\n%s}\n", imports.String()+"\t\"testing\"\n", checks.String())
 	return goMod, goTest, nil
 }

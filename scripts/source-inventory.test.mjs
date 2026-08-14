@@ -677,7 +677,7 @@ test("npm, Rust, Go, and Swift source archives carry exact generated distributio
   fs.mkdirSync(goZipTool);
   fs.writeFileSync(
     path.join(goZipTool, "go.mod"),
-    "module flowersec.local/source-zip-test\n\ngo 1.26.5\n\nrequire golang.org/x/mod v0.37.0\n",
+    "module flowersec.local/source-zip-test\n\ngo 1.26.6\n\nrequire golang.org/x/mod v0.37.0\n",
   );
   fs.writeFileSync(
     path.join(goZipTool, "go.sum"),
@@ -1052,7 +1052,7 @@ test("source inventory generation and freshness are wired into local gates", asy
   assert.match(makefile, /^source-inventory:\n\tnode scripts\/generate-source-inventory\.mjs$/m);
   assert.match(
     makefile,
-    /^security-dependency-check:\n\tnode --test scripts\/security-dependencies\.test\.mjs scripts\/check-dependency-contracts\.test\.mjs scripts\/go-security\.test\.mjs scripts\/rust-security\.test\.mjs scripts\/swift-security\.test\.mjs scripts\/prepare-ts-package-cache\.test\.mjs scripts\/security-makefile\.test\.mjs scripts\/run-final-stage\.test\.mjs scripts\/run-final-lanes\.test\.mjs scripts\/run-precommit-wave\.test\.mjs scripts\/test-architecture-contract\.mjs\n\tnode scripts\/generate-source-inventory\.mjs --check$/m,
+    /^security-dependency-check:\n\tnode --test scripts\/security-dependencies\.test\.mjs scripts\/check-dependency-contracts\.test\.mjs scripts\/go-security\.test\.mjs scripts\/go-toolchain-policy\.test\.mjs scripts\/rust-security\.test\.mjs scripts\/swift-security\.test\.mjs scripts\/prepare-ts-package-cache\.test\.mjs scripts\/security-makefile\.test\.mjs scripts\/run-final-stage\.test\.mjs scripts\/run-final-lanes\.test\.mjs scripts\/run-precommit-wave\.test\.mjs scripts\/test-architecture-contract\.mjs\n\tnode scripts\/check-go-toolchain-policy\.mjs\n\tnode scripts\/generate-source-inventory\.mjs --check$/m,
   );
   assert.match(
     makefile,

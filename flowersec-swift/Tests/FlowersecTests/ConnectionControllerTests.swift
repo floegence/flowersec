@@ -451,6 +451,17 @@ private struct ControlledRPCPeer: RPCPeer, Sendable {
     _ = payload
     throw SessionError.closed
   }
+
+  func subscribeNotification<Payload: Decodable & Sendable>(
+    _ typeID: UInt32,
+    as payloadType: Payload.Type,
+    handler: @escaping @Sendable (Result<Payload, RPCNotificationError>) async throws -> Void
+  ) async throws -> any RPCNotificationSubscription {
+    _ = typeID
+    _ = payloadType
+    _ = handler
+    throw SessionError.closed
+  }
 }
 
 private actor CloseCompletionProbe {

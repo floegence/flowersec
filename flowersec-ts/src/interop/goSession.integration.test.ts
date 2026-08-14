@@ -58,8 +58,8 @@ async function runGoWSSSession(sessionPath: "direct" | "tunnel"): Promise<void> 
     expect(await session.probeLiveness()).toBeGreaterThanOrEqual(0);
 
     phase = "server-notify";
-    const serverNotification = new Promise<unknown>((resolve) => {
-      const unsubscribe = session.rpc.onNotify(9_002, (payload) => {
+    const serverNotification = new Promise<Readonly<{ state: string }>>((resolve) => {
+      const unsubscribe = session.rpc.onNotify(9_002, decodeStateNotification, (payload) => {
         unsubscribe();
         resolve(payload);
       });
@@ -93,6 +93,18 @@ async function runGoWSSSession(sessionPath: "direct" | "tunnel"): Promise<void> 
   } finally {
     if (peer.exitCode === null) peer.kill("SIGKILL");
   }
+}
+
+function decodeStateNotification(payload: unknown): Readonly<{ state: string }> {
+  if (
+    typeof payload !== "object"
+    || payload === null
+    || !("state" in payload)
+    || typeof payload.state !== "string"
+  ) {
+    throw new TypeError("invalid state notification");
+  }
+  return Object.freeze({ state: payload.state });
 }
 
 async function firstLine(stream: NodeJS.ReadableStream): Promise<string> {

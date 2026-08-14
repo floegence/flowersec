@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-function parseDockerfile(source) {
+export function parseDockerfile(source) {
   if (typeof source !== "string" || source === "") throw new Error("Dockerfile is empty");
   const logicalLines = [];
   let pending = "";
@@ -31,7 +31,7 @@ function parseDockerfile(source) {
 export const containerDockerfileContracts = Object.freeze({
   "docker/flowersec-runtime/Dockerfile": Object.freeze({
     syntax: "# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e",
-    buildFrom: "--platform=$BUILDPLATFORM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build",
+    buildFrom: "--platform=$BUILDPLATFORM golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df AS build",
     buildOutput: "/out/flowersec-runtime",
     buildPackage: "./cmd/flowersec-runtime",
     final: [

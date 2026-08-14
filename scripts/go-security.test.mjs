@@ -43,7 +43,7 @@ test("every Go module is downloaded, verified, resolved, and scanned with worksp
   const modules = runGoSecurityChecks({
     repoRoot: sourceRoot,
     govulncheckVersion: "v1.1.4",
-    goToolchain: "go1.26.5",
+    goToolchain: "go1.26.6",
     moduleManifest: { modules: ["flowersec-go"] },
     discoverModules: () => [path.join(sourceRoot, "flowersec-go")],
     run,
@@ -61,7 +61,7 @@ test("every Go module is downloaded, verified, resolved, and scanned with worksp
     ]);
     for (const call of moduleCalls) {
       assert.equal(call.options.env.GOWORK, "off");
-      assert.equal(call.options.env.GOTOOLCHAIN, "go1.26.5");
+      assert.equal(call.options.env.GOTOOLCHAIN, "go1.26.6");
       assert.equal(call.options.env.GOFLAGS, "-mod=readonly");
     }
   }
@@ -80,7 +80,7 @@ test("Go security tool versions are fixed and environment overrides fail closed"
   const { goSecurityToolVersions } = await loadChecker();
   assert.deepEqual(goSecurityToolVersions({}), {
     govulncheckVersion: "v1.1.4",
-    goToolchain: "go1.26.5",
+    goToolchain: "go1.26.6",
   });
   assert.throws(
     () => goSecurityToolVersions({ GOVULNCHECK_VERSION: "not-a-version" }),
@@ -106,14 +106,14 @@ test("offline stages bind the exact prefetched Go toolchain to the source HEAD",
   const sourceHead = "a".repeat(40);
   const run = (command, args, options) => {
     calls.push({ command, args, options });
-    if (command === "go") return `${toolchainRoot}\ngo1.26.5\n`;
-    if (command === realBinary) return "go version go1.26.5 test/arch\n";
+    if (command === "go") return `${toolchainRoot}\ngo1.26.6\n`;
+    if (command === realBinary) return "go version go1.26.6 test/arch\n";
     if (command === "git") return `${sourceHead}\n`;
     throw new Error(`unexpected command: ${command}`);
   };
   const state = prepareOfflineGoToolchain({
     repoRoot,
-    goToolchain: "go1.26.5",
+    goToolchain: "go1.26.6",
     run,
     statePath,
   });
@@ -121,7 +121,7 @@ test("offline stages bind the exact prefetched Go toolchain to the source HEAD",
   assert.equal(state.sourceHead, sourceHead);
   assert.equal(state.binary, realBinary);
   assert.match(state.sha256, /^[0-9a-f]{64}$/);
-  assert.deepEqual(calls[0].options.env, { GOTOOLCHAIN: "go1.26.5", GOWORK: "off" });
+  assert.deepEqual(calls[0].options.env, { GOTOOLCHAIN: "go1.26.6", GOWORK: "off" });
   assert.deepEqual(calls[1].options.env, { GOTOOLCHAIN: "local", GOWORK: "off" });
 });
 

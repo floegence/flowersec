@@ -3,7 +3,7 @@
   "profile": "flowersec/2",
   "source": {
     "producer": "flowersec-go/internal/artifactv2",
-    "go": "go1.26.5",
+    "go": "go1.26.6",
     "command": "go run /tmp/flowersec-artifact-vector-producer.go"
   },
   "positive": [

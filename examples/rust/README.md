@@ -4,7 +4,11 @@ This package exercises the maintained Rust public surface. It provides two
 workflows:
 
 - parse an application-acquired opaque artifact without exposing its contents;
-- establish a session through the one-shot `connect(...)` and `Session` API.
+- establish a session through the one-shot `connect(...)` and `Session` API;
+- run the repository parity application contract: typed RPC type `7001` with
+  `{ "value": "ping" }`, notification type `7002` with
+  `{ "value": "notify" }`, and a `parity.echo` reliable stream that exchanges
+  `hello`/`world` and observes FIN in both directions.
 
 The examples keep connection details out of application code. Neither command
 prints credentials or protocol state.
@@ -37,8 +41,12 @@ cargo run --locked --manifest-path examples/rust/Cargo.toml -- \
 The public `connect(...)` function consumes only the opaque artifact lease and its trust and
 deadline options. Before establishing the encrypted session, it invokes the
 `ArtifactLease` callback to synchronize the create-new receipt. A successful
-connection prints only `session=ready` and the session liveness result,
-then closes the session cleanly. Reusing a receipt path fails closed.
+connection prints only `session=ready`, runs the typed RPC, notification, and
+reliable-stream workflow, probes liveness, then closes the session cleanly.
+The notification subscription is registered before application traffic and is
+explicitly canceled after receipt. The stream sends `hello`, closes only its
+write direction, reads `world` through peer FIN, and preserves the session for
+the final liveness probe. Reusing a receipt path fails closed.
 Connection and liveness failures print only their bounded public error code.
 Long-lived applications use `ConnectionController` with a refreshable artifact
 source; this one-shot example never reuses the committed path.
@@ -56,6 +64,9 @@ cargo clippy --locked --manifest-path examples/rust/Cargo.toml \
 ```
 
 The integration test verifies artifact redaction. The compiled `connect-v2`
-workflow uses trusted roots, a bounded deadline, a cancellation token, durable
-single-use spend, the opaque connection boundary, session liveness, and bounded
-close.
+workflow uses trusted roots, durable single-use spend, the opaque connection
+boundary, typed RPC, notification subscription and delivery, reliable stream
+write/read/FIN, session liveness, and bounded close. The repository's maintained
+server-parity peers implement the same application contract for integration
+coverage; a deployed service must register those application handlers before
+running this client.

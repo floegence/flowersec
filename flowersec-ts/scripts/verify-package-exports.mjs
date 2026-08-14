@@ -487,6 +487,28 @@ import type {} from '@floegence/flowersec-core/gen/flowersec/rpc/v1';
 declare const session: Session;
 declare const stream: ByteStream;
 declare const incoming: IncomingStream;
+const unsubscribeNotification = session.rpc.onNotify(
+  9_002,
+  (payload) => {
+    if (
+      typeof payload !== 'object'
+      || payload === null
+      || !('state' in payload)
+      || typeof payload.state !== 'string'
+    ) throw new TypeError('invalid state notification');
+    return { state: payload.state } as const;
+  },
+  (payload) => { void payload.state; },
+);
+unsubscribeNotification();
+void session.rpc.call(9_001, { state: 'ready' }, (payload) => payload);
+void session.rpc.notify(9_001, { state: 'ready' });
+// @ts-expect-error notification subscriptions require an explicit payload decoder.
+session.rpc.onNotify(9_002, () => undefined);
+// @ts-expect-error RPC calls accept only JSON values.
+void session.rpc.call(9_001, { state: 1n }, (payload) => payload);
+// @ts-expect-error RPC notifications accept only JSON values.
+void session.rpc.notify(9_001, undefined);
 const metadata = createStreamMetadata({ purpose: 'rpc' });
 declare const openOptions: StreamOpenOptions;
 declare const rawArtifact: string;

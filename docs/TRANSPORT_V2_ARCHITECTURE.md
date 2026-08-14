@@ -133,7 +133,7 @@ Linux diagnostics separate three boundaries. `diagnostic/kernel/*` proves netns,
 
 ## Go Native Adapters
 
-Go 1.26.5 validated the following exact pair:
+Go 1.26.6 is the minimum security baseline and validates the following exact pair:
 
 - `github.com/quic-go/quic-go v0.61.0`
 - `github.com/quic-go/webtransport-go v0.12.0`

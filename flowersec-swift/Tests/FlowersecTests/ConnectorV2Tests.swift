@@ -162,6 +162,38 @@ final class ConnectorV2Tests: XCTestCase {
     try await exerciseGoWSS(path: "direct", vectorIndex: 0)
   }
 
+  func testRealGoWSSPublicNotificationSubscription() async throws {
+    let peer = try GoWSSPeer.start(path: "direct", serverNotify: true)
+    defer { peer.stop() }
+    let artifact = try goWSSArtifact(endpoint: peer.endpoint, vectorIndex: 0)
+    let session = try await connect(
+      lease: ArtifactLease(artifact: artifact) {},
+      options: ConnectorOptions(
+        origin: "https://client.example",
+        connectTimeout: .seconds(5),
+        trustRootsPEM: [Data(peer.endpoint.caPEM.utf8)]
+      )
+    )
+    let delivered = expectation(description: "typed Go RPC notification")
+    let subscription = try await session.rpc.subscribeNotification(
+      9_002,
+      as: GoWSSNotification.self
+    ) { result in
+      XCTAssertEqual(try result.get(), GoWSSNotification(state: "accepted"))
+      delivered.fulfill()
+    }
+
+    try await session.rpc.notify(9_001, GoWSSNotification(state: "ready"))
+    await fulfillment(of: [delivered], timeout: 5)
+    try await exerciseGoSession(session)
+    await subscription.cancel()
+    await subscription.cancel()
+    try await session.close()
+
+    let result = peer.finish()
+    XCTAssertEqual(result.status, 0, result.stderr)
+  }
+
   func testRealGoWSSTunnelEndToEnd() async throws {
     try await exerciseGoWSS(path: "tunnel", vectorIndex: 1)
   }
@@ -704,6 +736,10 @@ private struct GoWSSEndpoint: Decodable {
   }
 }
 
+private struct GoWSSNotification: Codable, Equatable, Sendable {
+  let state: String
+}
+
 private final class GoWSSPeer: @unchecked Sendable {
   let endpoint: GoWSSEndpoint
   private let process: Process
@@ -716,12 +752,13 @@ private final class GoWSSPeer: @unchecked Sendable {
     self.endpoint = endpoint
   }
 
-  static func start(path: String) throws -> GoWSSPeer {
+  static func start(path: String, serverNotify: Bool = false) throws -> GoWSSPeer {
     let process = Process()
     let output = Pipe()
     let errors = Pipe()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = ["go", "run", "./internal/cmd/ts-session-peer", "--path", path]
+    if serverNotify { process.arguments?.append("--server-notify") }
     process.currentDirectoryURL = packageRoot().appendingPathComponent("flowersec-go")
     process.standardOutput = output
     process.standardError = errors
