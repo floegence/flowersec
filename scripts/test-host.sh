@@ -13,7 +13,7 @@ readonly playwright_download_timeout=120000
 readonly host_open_file_limit=65536
 
 usage() {
-  echo "usage: test-host.sh <init|run|resume|status> [--suite NAME] [--debug]" >&2
+  echo "usage: test-host.sh <init|run|resume|status> [--suite NAME] [--report ABSOLUTE.md] [--debug]" >&2
   exit 2
 }
 

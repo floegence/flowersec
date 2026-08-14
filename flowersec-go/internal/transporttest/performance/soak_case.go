@@ -266,7 +266,10 @@ func runSoakCase(ctx context.Context, contract soakContract, engine soakCycleEng
 			phase = "soak_end"
 		}
 		snapshot := observation.Snapshot
-		record := caseResourceRecord{Phase: phase, AtNS: observation.AtNS, RSSBytes: snapshot.RSSBytes, OpenFDs: snapshot.OpenFDs, Goroutines: snapshot.Goroutines, Tasks: snapshot.Tasks}
+		if snapshot.CPUNanoseconds < startSnapshot.CPUNanoseconds {
+			return result, errors.New("soak CPU counter moved backwards")
+		}
+		record := caseResourceRecord{Phase: phase, AtNS: observation.AtNS, RSSBytes: snapshot.RSSBytes, CPUNanoseconds: snapshot.CPUNanoseconds - startSnapshot.CPUNanoseconds, OpenFDs: snapshot.OpenFDs, Goroutines: snapshot.Goroutines, Tasks: snapshot.Tasks}
 		if phase == "soak_end" {
 			record.ResidualSessions = intPointerValue(result.Residuals.Sessions)
 			record.ResidualGoroutines = intPointerValue(result.Residuals.Goroutines)

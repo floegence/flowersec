@@ -40,6 +40,9 @@ func TestFocusedProductionSoakCase(t *testing.T) {
 	ctx, cancel := context.WithTimeout(performanceTestContext, productionSoakContract().Duration+30*time.Second)
 	defer cancel()
 	result, err := runNativeProductionSoakCase(ctx)
+	if reportErr := writeFocusedPerformanceResult(soakPerformanceResult("performance/soak", result, productionSoakContract(), err)); reportErr != nil {
+		t.Fatal(reportErr)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

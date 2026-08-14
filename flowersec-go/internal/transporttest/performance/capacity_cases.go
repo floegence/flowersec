@@ -184,6 +184,7 @@ type capacityQuiescingEndpoint interface {
 type resourceSnapshotFunc func() (transporttest.ResourceSnapshot, error)
 
 type capacityCaseResult struct {
+	Baseline             caseResourceRecord
 	Attempted            int
 	Succeeded            int
 	Failed               int
@@ -199,6 +200,7 @@ type capacityCaseResult struct {
 	ConnectP50           time.Duration
 	ConnectP95           time.Duration
 	ConnectP99           time.Duration
+	ConnectMax           time.Duration
 	LivenessP50          time.Duration
 	LivenessP95          time.Duration
 	LivenessP99          time.Duration
@@ -262,6 +264,7 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 	if err != nil {
 		return result, fmt.Errorf("capture capacity resource baseline: %w", err)
 	}
+	result.Baseline = caseResourceRecord{Phase: "baseline", AtNS: 0, RSSBytes: base.RSSBytes, OpenFDs: base.OpenFDs, Goroutines: base.Goroutines, Tasks: base.Tasks}
 	started := time.Now()
 	watchdogAt := started.Add(contract.Watchdog)
 	sessions := make([]capacitySession, 0, contract.Sessions)
@@ -366,6 +369,9 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 	result.ConnectP50 = percentileDuration(connectLatencies, 50)
 	result.ConnectP95 = percentileDuration(connectLatencies, 95)
 	result.ConnectP99 = percentileDuration(connectLatencies, 99)
+	for _, latency := range connectLatencies {
+		result.ConnectMax = maxDuration(result.ConnectMax, latency)
+	}
 	result.ConnectsPerSecond = float64(result.Succeeded) / maxSeconds(time.Since(started))
 	connectLatencyMu.Unlock()
 	if err := assertCapacityLatencyBudget(contract, result); err != nil {

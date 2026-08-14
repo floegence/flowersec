@@ -99,7 +99,10 @@ function verifyGraph(source) {
     "\t$(MAKE) ts-test-short",
   ]);
   exactRecipe(source, "diagnostic", ["\t$(FLOWERSEC_TEST_HOST) run --suite diagnostic"]);
-  exactRecipe(source, "performance", ["\t$(FLOWERSEC_TEST_HOST) run --suite performance"]);
+  exactRecipe(source, "performance", [
+    '\t@test -n "$(REPORT)" || { echo "REPORT=/absolute/path/performance-report.md is required" >&2; exit 2; }',
+    '\t$(FLOWERSEC_TEST_HOST) run --suite performance --report "$(REPORT)"',
+  ]);
   exactRecipe(source, "security-makefile-check", ["\tnode scripts/check-security-makefile.mjs Makefile"]);
   exactRecipe(source, "security-dependency-check", [
     `\tnode --test ${requiredSecurityTests.join(" ")}`,

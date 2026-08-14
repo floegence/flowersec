@@ -31,10 +31,11 @@ const teardownGrace = 10 * time.Second
 var errTeardownTimeout = errors.New("test teardown did not finish within the grace period")
 
 type runContext struct {
-	RunID   string
-	TempDir string
-	Root    string
-	Debug   bool
+	RunID      string
+	TempDir    string
+	ResultPath string
+	Root       string
+	Debug      bool
 }
 
 type registeredTest struct {
@@ -60,17 +61,24 @@ func main() {
 
 func runCLI(args []string) error {
 	if len(args) == 0 || (args[0] != "run" && args[0] != "resume" && args[0] != "status") {
-		return errors.New("usage: flowersec-test <run|resume|status> [--suite NAME] [--debug]")
+		return errors.New("usage: flowersec-test <run|resume|status> [--suite NAME] [--report ABSOLUTE.md] [--debug]")
 	}
 	action := args[0]
 	flags := flag.NewFlagSet(action, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	suite := flags.String("suite", "acceptance", "test suite")
+	report := flags.String("report", "", "absolute performance Markdown report path")
 	debug := flags.Bool("debug", false, "retain test-owned debug output")
-	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 || (action == "status" && *debug) {
-		return errors.New("usage: flowersec-test <run|resume|status> [--suite NAME] [--debug]")
+	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 || (action == "status" && (*debug || *report != "")) {
+		return errors.New("usage: flowersec-test <run|resume|status> [--suite NAME] [--report ABSOLUTE.md] [--debug]")
 	}
-	tests, err := selectSuite(registry(), *suite)
+	var tests []registeredTest
+	var err error
+	if *suite == "performance" {
+		tests, err = selectPerformancePlan(registry())
+	} else {
+		tests, err = selectSuite(registry(), *suite)
+	}
 	if err != nil {
 		return err
 	}
@@ -90,6 +98,13 @@ func runCLI(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *suite == "performance" && action != "status" {
+		if err := validatePerformanceReportPath(*report, root); err != nil {
+			return err
+		}
+	} else if *report != "" {
+		return errors.New("--report is only valid for the integrated performance suite")
+	}
 	sha, err := repositorySourceSHA(root)
 	if err != nil {
 		return err
@@ -99,7 +114,31 @@ func runCLI(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if *suite == "performance" {
+		environment, err := capturePerformanceEnvironment()
+		if err != nil {
+			return err
+		}
+		return executePerformanceSuite(ctx, os.Stdout, os.Stderr, action, path, root, sha, tests, *debug, *report, environment)
+	}
 	return executeSuite(ctx, os.Stdout, os.Stderr, action, path, root, *suite, sha, tests, *debug)
+}
+
+func validatePerformanceReportPath(path, root string) error {
+	if path == "" {
+		return errors.New("integrated performance requires --report /absolute/path/performance-report.md")
+	}
+	if !filepath.IsAbs(path) || filepath.Ext(path) != ".md" {
+		return errors.New("performance report path must be absolute and end in .md")
+	}
+	relative, err := filepath.Rel(root, filepath.Clean(path))
+	if err != nil {
+		return err
+	}
+	if relative == "." || relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+		return errors.New("performance report must be outside the repository")
+	}
+	return nil
 }
 
 func validateExecutionEnvironment(suite, goos string, euid int, home, path, temporary, state, workingDirectory string) error {

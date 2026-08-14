@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/perfreport"
 )
 
 const testSourceSHA = "0123456789abcdef0123456789abcdef01234567"
@@ -132,6 +134,83 @@ func TestRequiredPerformanceRegistersBothPayloadThroughputCarriers(t *testing.T)
 	for id, found := range want {
 		if !found {
 			t.Fatalf("required payload throughput %s is not registered", id)
+		}
+	}
+}
+
+func TestIntegratedPerformancePlanIncludesRequiredAndOptional(t *testing.T) {
+	tests, err := selectPerformancePlan(registry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	required, optional := 0, 0
+	for _, entry := range tests {
+		switch entry.Suite {
+		case "performance":
+			required++
+		case "performance-optional":
+			optional++
+		default:
+			t.Fatalf("integrated performance plan contains %s", entry.Suite)
+		}
+	}
+	if required == 0 || optional == 0 || tests[required].ID != "performance-optional/webtransport-capability" {
+		t.Fatalf("integrated performance plan = required %d optional %d", required, optional)
+	}
+}
+
+func TestPerformanceReportPathIsRequiredAbsoluteMarkdownOutsideRepository(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(filepath.Dir(root), "flowersec-performance-report.md")
+	if err := validatePerformanceReportPath(outside, root); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"", "relative.md", filepath.Join(root, "inside.md"), filepath.Join(filepath.Dir(root), "report.json")} {
+		if err := validatePerformanceReportPath(path, root); err == nil {
+			t.Fatalf("invalid performance report path %q was accepted", path)
+		}
+	}
+}
+
+func TestPerformanceStateRestoresSameSHAAndRejectsDifferentSHA(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "performance-results.json")
+	state := performanceState{SourceSHA: testSourceSHA, StartedAt: time.Now(), Cases: []perfreport.CaseResult{{ID: "case/a", Section: perfreport.SectionCapacity, Status: perfreport.StatusPass, Measurements: []perfreport.Measurement{{Name: "sessions", Observed: 1000, Threshold: 1000, Unit: "sessions", Comparator: ">=", Status: perfreport.StatusPass}}}}}
+	if err := writePerformanceState(path, state); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := readPerformanceState(path, testSourceSHA)
+	if err != nil || len(loaded.Cases) != 1 || loaded.Cases[0].Measurements[0].Observed != 1000 {
+		t.Fatalf("restored performance state = %+v, %v", loaded, err)
+	}
+	if _, err := readPerformanceState(path, strings.Repeat("f", 40)); err == nil || !strings.Contains(err.Error(), "source SHA") {
+		t.Fatalf("different source SHA was not rejected: %v", err)
+	}
+}
+
+func TestPerformanceFailureWritesPartialReportAndReturnsNonzero(t *testing.T) {
+	root := t.TempDir()
+	reportPath := filepath.Join(t.TempDir(), "performance-report.md")
+	progressPath := filepath.Join(t.TempDir(), "test-progress.json")
+	tests := []registeredTest{{ID: "performance/failing", Suite: "performance", Timeout: time.Second, Run: func(_ context.Context, run runContext) error {
+		result := perfreport.CaseResult{ID: "performance/failing", Section: perfreport.SectionStreamingThroughput, Status: perfreport.StatusFail, Stage: "measurement", FirstError: "first observed error", Measurements: []perfreport.Measurement{{Name: "throughput", Observed: 1, Threshold: 2, Unit: "MiB/s", Comparator: ">=", Status: perfreport.StatusFail}}}
+		if err := perfreport.WriteCaseResult(run.ResultPath, result); err != nil {
+			return err
+		}
+		return errors.New("first observed error")
+	}}}
+	environment := perfreport.Environment{HostName: "udesk24", OS: "Ubuntu", LogicalCPUs: 4, MemoryBytes: 8 << 30}
+	var stdout, stderr bytes.Buffer
+	err := executePerformanceSuite(context.Background(), &stdout, &stderr, "run", progressPath, root, testSourceSHA, tests, false, reportPath, environment)
+	if err == nil {
+		t.Fatal("failed performance case returned success")
+	}
+	data, readErr := os.ReadFile(reportPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	for _, want := range []string{"Overall status | **FAIL**", "first observed error", "1.000", "2.000"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("partial report missing %q:\n%s", want, data)
 		}
 	}
 }

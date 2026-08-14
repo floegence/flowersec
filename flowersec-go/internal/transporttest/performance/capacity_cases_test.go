@@ -45,6 +45,9 @@ func TestFocusedProductionCapacityCase(t *testing.T) {
 	}
 	result, err := runCapacityCase(ctx, definition, productionCapacityContract(), endpoint, nil)
 	t.Logf("capacity result: %+v", result)
+	if reportErr := writeFocusedPerformanceResult(capacityPerformanceResult(definition, capacityContractForDefinition(definition), result, err)); reportErr != nil {
+		t.Fatal(reportErr)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

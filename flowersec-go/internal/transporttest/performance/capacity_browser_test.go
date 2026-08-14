@@ -91,6 +91,9 @@ func runFocusedBrowserCapacityCase(t *testing.T, ctx context.Context, definition
 		t.Fatalf("browser capacity result is invalid: %v: %s", err, browserCapacityFailureText(outputDirectory, stdout.String()))
 	}
 	contract := capacityContractForDefinition(definition)
+	if err := writeFocusedPerformanceResult(capacityPerformanceResult(definition, contract, result.Result, nil)); err != nil {
+		t.Fatal(err)
+	}
 	if result.Result.Succeeded != contract.Sessions || result.Result.ResidualSessions != 0 || result.Result.ResidualStreams != 0 {
 		t.Fatalf("browser capacity result does not satisfy the frozen workload: %+v", result.Result)
 	}

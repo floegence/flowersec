@@ -692,7 +692,10 @@ test("default and final Go gates use the maintained source and test runner", () 
   assert.match(makefile, /^test-resume:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test resume --suite acceptance$/m);
   assert.match(makefile, /^browser-smoke:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite browser-smoke$/m);
   assert.match(makefile, /^diagnostic:\n\t\$\(FLOWERSEC_TEST_HOST\) run --suite diagnostic$/m);
-  assert.match(makefile, /^performance:\n\t\$\(FLOWERSEC_TEST_HOST\) run --suite performance$/m);
+  assert.match(
+    makefile,
+    /^performance:\n\t@test -n "\$\(REPORT\)" \|\| \{ echo "REPORT=\/absolute\/path\/performance-report\.md is required" >&2; exit 2; \}\n\t\$\(FLOWERSEC_TEST_HOST\) run --suite performance --report "\$\(REPORT\)"$/m,
+  );
 });
 
 test("release stays publication-only while main push owns fast acceptance", () => {
@@ -719,6 +722,7 @@ test("release stays publication-only while main push owns fast acceptance", () =
   const push = pushScript.indexOf("git push origin");
   assert.ok(gate >= 0 && gate < push, "fast acceptance must precede push");
   assert.doesNotMatch(pushScript, /make (?:precommit|check)/);
+  assert.doesNotMatch(pushScript + releaseScript, /make performance|--suite performance|performance-report/);
   assert.doesNotMatch(pushScript, /evidence|receipt/);
 });
 

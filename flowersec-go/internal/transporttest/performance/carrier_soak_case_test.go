@@ -21,13 +21,28 @@ type carrierSoakContract struct {
 	MaxTaskGrowth      int
 }
 
+type carrierSoakResult struct {
+	Cycles          int
+	Baseline        transporttest.ResourceSnapshot
+	Finish          transporttest.ResourceSnapshot
+	RSSPeak         uint64
+	GoroutinePeak   int
+	OpenFDPeak      int
+	TaskPeak        int
+	RSSGrowth       uint64
+	GoroutineGrowth int
+	OpenFDGrowth    int
+	TaskGrowth      int
+	Resources       []transporttest.ResourceSnapshot
+}
+
 func TestProductionCarrierSoakContractIsFrozen(t *testing.T) {
 	contract := productionCarrierSoakContract()
 	if contract.Duration != 5*time.Minute || contract.CyclePeriod != time.Minute || contract.Cycles != 5 ||
 		contract.MaxRSSGrowth != 64<<20 || contract.MaxGoroutineGrowth != 64 || contract.MaxOpenFDGrowth != 16 || contract.MaxTaskGrowth != 64 {
 		t.Fatalf("carrier soak contract = %+v", contract)
 	}
-	if err := runProductionCarrierSoak(context.Background(), carrier.KindRawQUIC, contract); err == nil {
+	if _, err := runProductionCarrierSoak(context.Background(), carrier.KindRawQUIC, contract); err == nil {
 		t.Fatal("raw QUIC entered the non-migrating carrier soak")
 	}
 }
@@ -57,29 +72,36 @@ func TestFocusedProductionCarrierSoakCase(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(performanceTestContext, productionCarrierSoakContract().Duration+30*time.Second)
 	defer cancel()
-	if err := runProductionCarrierSoak(ctx, kind, productionCarrierSoakContract()); err != nil {
+	result, err := runProductionCarrierSoak(ctx, kind, productionCarrierSoakContract())
+	if reportErr := writeFocusedPerformanceResult(carrierSoakPerformanceResult(kind, result, productionCarrierSoakContract(), err)); reportErr != nil {
+		t.Fatal(reportErr)
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 }
 
-func runProductionCarrierSoak(ctx context.Context, kind carrier.Kind, contract carrierSoakContract) error {
+func runProductionCarrierSoak(ctx context.Context, kind carrier.Kind, contract carrierSoakContract) (result carrierSoakResult, resultErr error) {
 	if kind != carrier.KindWebSocket && kind != carrier.KindWebTransport {
-		return fmt.Errorf("carrier soak does not own %q", kind)
+		return result, fmt.Errorf("carrier soak does not own %q", kind)
 	}
 	if contract.Duration <= 0 || contract.CyclePeriod <= 0 || contract.Cycles < 1 ||
 		contract.Duration != time.Duration(contract.Cycles)*contract.CyclePeriod {
-		return fmt.Errorf("carrier soak contract is invalid: %+v", contract)
+		return result, fmt.Errorf("carrier soak contract is invalid: %+v", contract)
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	baseline, err := transporttest.CaptureResourceSnapshot()
 	if err != nil {
-		return fmt.Errorf("capture %s soak baseline: %w", kind, err)
+		return result, fmt.Errorf("capture %s soak baseline: %w", kind, err)
 	}
+	result.Baseline = baseline
+	result.RSSPeak, result.GoroutinePeak, result.OpenFDPeak, result.TaskPeak = baseline.RSSBytes, baseline.Goroutines, baseline.OpenFDs, baseline.Tasks
+	result.Resources = append(result.Resources, baseline)
 	endpoint, err := transporttest.OpenProductDirectEndpoint(ctx, kind)
 	if err != nil {
-		return fmt.Errorf("open %s soak endpoint: %w", kind, err)
+		return result, fmt.Errorf("open %s soak endpoint: %w", kind, err)
 	}
 	defer endpoint.Close()
 	started := time.Now()
@@ -103,32 +125,52 @@ func runProductionCarrierSoak(ctx context.Context, kind carrier.Kind, contract c
 		}
 		cancel()
 		if connectErr != nil {
-			return fmt.Errorf("cycle %d %s production reconnect: %w", cycle, kind, connectErr)
+			return result, fmt.Errorf("cycle %d %s production reconnect: %w", cycle, kind, connectErr)
 		}
 		if err := waitCapacityUntil(ctx, cycleDeadline, started.Add(contract.Duration)); err != nil {
-			return fmt.Errorf("cycle %d %s hold: %w", cycle, kind, err)
+			return result, fmt.Errorf("cycle %d %s hold: %w", cycle, kind, err)
 		}
+		snapshot, err := transporttest.CaptureResourceSnapshot()
+		if err != nil {
+			return result, fmt.Errorf("capture %s soak cycle %d: %w", kind, cycle, err)
+		}
+		result.Cycles++
+		result.Resources = append(result.Resources, snapshot)
+		result.RSSPeak = max(result.RSSPeak, snapshot.RSSBytes)
+		result.GoroutinePeak = max(result.GoroutinePeak, snapshot.Goroutines)
+		result.OpenFDPeak = max(result.OpenFDPeak, snapshot.OpenFDs)
+		result.TaskPeak = max(result.TaskPeak, snapshot.Tasks)
 	}
 	if err := endpoint.Close(); err != nil {
-		return fmt.Errorf("close %s soak endpoint: %w", kind, err)
+		return result, fmt.Errorf("close %s soak endpoint: %w", kind, err)
 	}
 	finish, err := transporttest.CaptureResourceSnapshot()
 	if err != nil {
-		return fmt.Errorf("capture %s soak cleanup: %w", kind, err)
+		return result, fmt.Errorf("capture %s soak cleanup: %w", kind, err)
 	}
-	if rss := positiveUint64Delta(finish.RSSBytes, baseline.RSSBytes); rss > contract.MaxRSSGrowth {
-		return fmt.Errorf("%s soak rss growth %d exceeds budget %d", kind, rss, contract.MaxRSSGrowth)
+	result.Finish = finish
+	result.Resources = append(result.Resources, finish)
+	result.RSSPeak = max(result.RSSPeak, finish.RSSBytes)
+	result.GoroutinePeak = max(result.GoroutinePeak, finish.Goroutines)
+	result.OpenFDPeak = max(result.OpenFDPeak, finish.OpenFDs)
+	result.TaskPeak = max(result.TaskPeak, finish.Tasks)
+	result.RSSGrowth = positiveUint64Delta(finish.RSSBytes, baseline.RSSBytes)
+	result.GoroutineGrowth = positiveIntDelta(finish.Goroutines, baseline.Goroutines)
+	result.OpenFDGrowth = positiveIntDelta(finish.OpenFDs, baseline.OpenFDs)
+	result.TaskGrowth = positiveIntDelta(finish.Tasks, baseline.Tasks)
+	if result.RSSGrowth > contract.MaxRSSGrowth {
+		return result, fmt.Errorf("%s soak rss growth %d exceeds budget %d", kind, result.RSSGrowth, contract.MaxRSSGrowth)
 	}
-	if goroutines := positiveIntDelta(finish.Goroutines, baseline.Goroutines); goroutines > contract.MaxGoroutineGrowth {
-		return fmt.Errorf("%s soak goroutine growth %d exceeds budget %d", kind, goroutines, contract.MaxGoroutineGrowth)
+	if result.GoroutineGrowth > contract.MaxGoroutineGrowth {
+		return result, fmt.Errorf("%s soak goroutine growth %d exceeds budget %d", kind, result.GoroutineGrowth, contract.MaxGoroutineGrowth)
 	}
-	if fds := positiveIntDelta(finish.OpenFDs, baseline.OpenFDs); fds > contract.MaxOpenFDGrowth {
-		return fmt.Errorf("%s soak fd growth %d exceeds budget %d", kind, fds, contract.MaxOpenFDGrowth)
+	if result.OpenFDGrowth > contract.MaxOpenFDGrowth {
+		return result, fmt.Errorf("%s soak fd growth %d exceeds budget %d", kind, result.OpenFDGrowth, contract.MaxOpenFDGrowth)
 	}
-	if tasks := positiveIntDelta(finish.Tasks, baseline.Tasks); tasks > contract.MaxTaskGrowth {
-		return fmt.Errorf("%s soak task growth %d exceeds budget %d", kind, tasks, contract.MaxTaskGrowth)
+	if result.TaskGrowth > contract.MaxTaskGrowth {
+		return result, fmt.Errorf("%s soak task growth %d exceeds budget %d", kind, result.TaskGrowth, contract.MaxTaskGrowth)
 	}
-	return nil
+	return result, nil
 }
 
 func holdCarrierSoakSession(ctx context.Context, pair *transporttest.ProductDirectPair, deadline time.Time) error {

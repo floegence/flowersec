@@ -136,8 +136,12 @@ func registry() []registeredTest {
 	tests = append(tests,
 		carrierSoakEntry("performance/soak/wss", "performance", "websocket"),
 		carrierSoakEntry("performance/soak/webtransport", "performance-optional", "webtransport"),
-		throughputEntry("performance/throughput/wss", "websocket"),
-		throughputEntry("performance/throughput/raw-quic", "raw-quic"),
+		throughputEntry("performance/single-connection/wss", "performance", "websocket", "single-connection", 2*time.Minute),
+		throughputEntry("performance/single-connection/raw-quic", "performance", "raw-quic", "single-connection", 2*time.Minute),
+		throughputEntry("performance/throughput/wss", "performance", "websocket", "streaming", 5*time.Minute),
+		throughputEntry("performance/throughput/raw-quic", "performance", "raw-quic", "streaming", 5*time.Minute),
+		throughputEntry("performance/single-connection/webtransport", "performance-optional", "webtransport", "single-connection", 2*time.Minute),
+		throughputEntry("performance/throughput/webtransport", "performance-optional", "webtransport", "streaming", 5*time.Minute),
 	)
 	return tests
 }
@@ -151,14 +155,15 @@ func flowersecWeaknetEntry(id, carrierName, path, scenario string) registeredTes
 	})
 }
 
-func throughputEntry(id, kind string) registeredTest {
-	return requiredPerformanceGoTestEntry(id, "performance", "TestFocusedProductionPayloadThroughputCase", []string{"FLOWERSEC_TEST_THROUGHPUT_CARRIER=" + kind}, 2*time.Minute)
+func throughputEntry(id, suite, kind, mode string, timeout time.Duration) registeredTest {
+	return requiredPerformanceGoTestEntry(id, suite, "TestFocusedProductionPayloadThroughputCase", []string{"FLOWERSEC_TEST_THROUGHPUT_CARRIER=" + kind, "FLOWERSEC_TEST_THROUGHPUT_MODE=" + mode, "FLOWERSEC_TEST_CASE_ID=" + id}, timeout)
 }
 
 func performanceCapacityEntry(id, suite, caseID string) registeredTest {
 	return registeredTest{ID: id, Suite: suite, Timeout: 5 * time.Minute, Run: func(ctx context.Context, run runContext) error {
 		arguments := []string{"-C", "flowersec-go", "test", "-json", "-timeout=5m", "-count=1", "-run", "^TestFocusedProductionCapacityCase$", "./internal/transporttest/performance"}
-		return runRequiredGoTest(ctx, run.Root, withRunID(performanceCapacityEnvironment(caseID), run.RunID), arguments, "./internal/transporttest/performance", "TestFocusedProductionCapacityCase")
+		environment := append(performanceCapacityEnvironment(caseID), "FLOWERSEC_TEST_RESULT_PATH="+run.ResultPath)
+		return runRequiredGoTest(ctx, run.Root, withRunID(environment, run.RunID), arguments, "./internal/transporttest/performance", "TestFocusedProductionCapacityCase")
 	}}
 }
 
@@ -177,6 +182,7 @@ func carrierSoakEntry(id, suite, kind string) registeredTest {
 func requiredPerformanceGoTestEntry(id, suite, testName string, environment []string, timeout time.Duration) registeredTest {
 	return registeredTest{ID: id, Suite: suite, Timeout: timeout, Run: func(ctx context.Context, run runContext) error {
 		arguments := []string{"-C", "flowersec-go", "test", "-json", "-timeout=" + timeout.String(), "-count=1", "-run", "^" + regexp.QuoteMeta(testName) + "$", "./internal/transporttest/performance"}
+		environment = append(append([]string(nil), environment...), "FLOWERSEC_TEST_RESULT_PATH="+run.ResultPath)
 		return runRequiredGoTest(ctx, run.Root, withRunID(environment, run.RunID), arguments, "./internal/transporttest/performance", testName)
 	}}
 }

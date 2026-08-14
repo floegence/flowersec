@@ -27,7 +27,8 @@ diagnostic:
 	$(FLOWERSEC_TEST_HOST) run --suite diagnostic
 
 performance:
-	$(FLOWERSEC_TEST_HOST) run --suite performance
+	@test -n "$(REPORT)" || { echo "REPORT=/absolute/path/performance-report.md is required" >&2; exit 2; }
+	$(FLOWERSEC_TEST_HOST) run --suite performance --report "$(REPORT)"
 
 go-test:
 	cd flowersec-go && go test -timeout=5m $$(../scripts/list-default-go-test-packages.sh)

@@ -36,13 +36,13 @@ test("local and external test targets remain separated", () => {
   assert.equal(coverageRecipe.trim(), "go -C flowersec-go run ./internal/cmd/flowersec-test run --suite coverage-race");
   const compatibilityRecipe = canonical.match(/^browser-compat:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.equal(compatibilityRecipe.trim(), "go -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-compat");
-  for (const [target, action, suite] of [
-    ["diagnostic", "run", "diagnostic"],
-    ["performance", "run", "performance"],
-  ]) {
-    const recipe = canonical.match(new RegExp(`^${target}:\\n((?:\\t.*\\n)+)`, "m"))?.[1] ?? "";
-    assert.equal(recipe.trim(), `$(FLOWERSEC_TEST_HOST) ${action} --suite ${suite}`);
-  }
+  const diagnosticRecipe = canonical.match(/^diagnostic:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.equal(diagnosticRecipe.trim(), "$(FLOWERSEC_TEST_HOST) run --suite diagnostic");
+  const performanceRecipe = canonical.match(/^performance:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.equal(performanceRecipe.trim(), [
+    '@test -n "$(REPORT)" || { echo "REPORT=/absolute/path/performance-report.md is required" >&2; exit 2; }',
+    '\t$(FLOWERSEC_TEST_HOST) run --suite performance --report "$(REPORT)"',
+  ].join("\n"));
   assert.match(canonical, /^test:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite acceptance$/m);
   assert.match(canonical, /^test-resume:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test resume --suite acceptance$/m);
   assert.match(canonical, /^precommit:\n\t\$\(MAKE\) precommit-source$/m);
