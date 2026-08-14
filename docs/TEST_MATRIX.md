@@ -10,6 +10,8 @@ instances, namespaces, faults, and temporary files that they create.
 | Security-negative parser rejection and bounded malformed-input handling | `testdata/transport_v2/security_negative_vectors.json`, consumed by `protocol/{go,typescript,swift,rust}` |
 | One-shot session lifecycle, stream FIN/reset/STOP_SENDING, DATAGRAM, close, and abort | Per-language memory carrier and native carrier contract tests |
 | ConnectionController scheduling, fresh artifact per attempt, retry disposition, cancellation, and no replay | Shared controller vectors executed by all four SDKs |
+| Client inbound RPC/notification handlers across real Controller generations | Go, Rust, and Node TypeScript loopback WebSocket tests; Swift and Browser remain unsupported |
+| Accepted-session RPC, notification, stream dispatch, rejection, concurrency, and cleanup | Go, Rust, and Node TypeScript Acceptor handler suites |
 | Required Go/Rust/Node WebSocket and raw QUIC direct matrix (18 client/server cells) | `interop/server-parity/direct-matrix` using production adapters and session engines |
 | Required Go/Rust/Node WebSocket and raw QUIC tunnel covering set (18 topologies) | `interop/server-parity/tunnel-matrix` using endpoint A, opaque relay runtime, and endpoint B |
 | Optional Go WebTransport direct adapter | Go carrier conformance and Chromium direct checks when the adapter is selected |

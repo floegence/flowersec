@@ -55,6 +55,58 @@ with `ArtifactLease`, and establish a session through `connect(...)`. A
 terminated session is never silently migrated or replayed; the controller
 creates a new session from a new invitation.
 
+### One-shot client
+
+```rust,no_run
+# async fn run(lease: flowersec::ArtifactLease, roots: Vec<Vec<u8>>) -> Result<(), Box<dyn std::error::Error>> {
+let mut handlers = flowersec::RpcHandlers::new();
+handlers.handle_rpc(7, MyRpcHandler)?;
+handlers.handle_notification(8, MyNotificationHandler)?;
+let options = flowersec::ConnectorOptions::new(roots)?
+    .with_rpc_handlers(handlers);
+let session = flowersec::connect(lease, options).await?;
+# Ok(()) }
+```
+
+### Long-lived client
+
+```rust,no_run
+# fn build(source: std::sync::Arc<dyn flowersec::ArtifactSource>, roots: Vec<Vec<u8>>) {
+let mut handlers = flowersec::RpcHandlers::new();
+handlers.handle_rpc(7, MyRpcHandler).unwrap();
+let connector = flowersec::ConnectorOptions::new(roots).unwrap()
+    .with_rpc_handlers(handlers);
+let controller = flowersec::ConnectionController::new(
+    source,
+    flowersec::ConnectionControllerOptions::new(connector),
+);
+controller.start();
+# }
+```
+
+Every Controller generation uses the same immutable callback definition and a
+fresh router. Work from a terminated Session is not migrated or replayed.
+
+### Accepted server Session
+
+```rust,no_run
+# async fn serve(acceptor: flowersec::Acceptor, artifact: flowersec::Artifact) -> Result<(), Box<dyn std::error::Error>> {
+let mut handlers = flowersec::SessionHandlers::new(Default::default())?;
+handlers.handle_rpc(7, MyRpcHandler)?;
+handlers.handle_notification(8, MyNotificationHandler)?;
+handlers.handle_stream("files/read", MyStreamHandler)?;
+let accepted = acceptor.accept_with_handlers(
+    &artifact,
+    handlers,
+    tokio_util::sync::CancellationToken::new(),
+).await?;
+accepted.serve(tokio_util::sync::CancellationToken::new()).await?;
+# Ok(()) }
+```
+
+`RpcHandlers` is client-only and has no stream API. `SessionHandlers` belongs
+to accepted server Sessions and keeps stream dispatch under `AcceptedSession`.
+
 Reliable stream shutdown is explicit: `close_write()` sends a graceful FIN and
 keeps the receive direction available, while `reset()` and `close()` abort both
 directions and release local stream capacity. A stream failure remains isolated

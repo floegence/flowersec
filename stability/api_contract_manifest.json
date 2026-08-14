@@ -172,6 +172,11 @@
           },
           {
             "kind": "type",
+            "expr": "flowersec.RPCHandlers",
+            "doc_token": "`flowersec.RPCHandlers`"
+          },
+          {
+            "kind": "type",
             "expr": "flowersec.SessionHandlers",
             "doc_token": "`flowersec.SessionHandlers`"
           },
@@ -340,6 +345,36 @@
             "kind": "func",
             "expr": "flowersec.Connect",
             "doc_token": "`flowersec.Connect(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewRPCHandlers",
+            "doc_token": "`flowersec.NewRPCHandlers()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.RPCHandlers).HandleRPC",
+            "doc_token": "`flowersec.RPCHandlers.HandleRPC(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.RPCHandlers).HandleNotification",
+            "doc_token": "`flowersec.RPCHandlers.HandleNotification(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.RPCHandlers).String",
+            "doc_token": "`flowersec.RPCHandlers.String()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.RPCHandlers).GoString",
+            "doc_token": "`flowersec.RPCHandlers.GoString()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.RPCHandlers).MarshalJSON",
+            "doc_token": "`flowersec.RPCHandlers.MarshalJSON()`"
           },
           {
             "kind": "func",
@@ -553,8 +588,8 @@
           },
           {
             "kind": "var",
-            "expr": "flowersec.ErrInvalidSessionHandlers",
-            "doc_token": "`flowersec.ErrInvalidSessionHandlers`"
+            "expr": "flowersec.ErrInvalidHandlerRegistration",
+            "doc_token": "`flowersec.ErrInvalidHandlerRegistration`"
           },
           {
             "kind": "var",
@@ -563,8 +598,8 @@
           },
           {
             "kind": "var",
-            "expr": "flowersec.ErrSessionHandlersFrozen",
-            "doc_token": "`flowersec.ErrSessionHandlersFrozen`"
+            "expr": "flowersec.ErrHandlerRegistryFrozen",
+            "doc_token": "`flowersec.ErrHandlerRegistryFrozen`"
           },
           {
             "kind": "type",
@@ -1250,7 +1285,9 @@
           "`connect(...)`",
           "`ConnectionController`",
           "`createAcceptor(...)`",
+          "`RPCHandlers`",
           "`SessionHandlers`",
+          "`HandlerRegistrationError`",
           "`AcceptedSession`"
         ],
         "runtime_exports": [
@@ -1261,10 +1298,11 @@
           "ConnectionControllerError",
           "AcceptedSession",
           "Acceptor",
+          "HandlerRegistrationError",
+          "RPCHandlers",
           "RuntimeAuthorizationRequest",
           "SessionError",
           "SessionHandlers",
-          "SessionHandlersError",
           "StreamMetadataError",
           "UnreliableMessageError",
           "connect",
@@ -2129,6 +2167,7 @@
       "`Acceptor`",
       "`AcceptorOptions`",
       "`AcceptedSession`",
+      "`RpcHandlers`",
       "`SessionHandlers`",
       "`SessionHandlerOptions`",
       "`RpcHandler`",
@@ -2172,6 +2211,10 @@
       "let _ = flowersec::AcceptedSession::session",
       "let _ = flowersec::AcceptedSession::serve",
       "let _ = std::mem::size_of::<flowersec::SessionHandlers>()",
+      "let _ = std::mem::size_of::<flowersec::RpcHandlers>()",
+      "let _ = flowersec::RpcHandlers::new",
+      "let _ = flowersec::RpcHandlers::handle_rpc",
+      "let _ = flowersec::RpcHandlers::handle_notification",
       "let _ = std::mem::size_of::<flowersec::SessionHandlerOptions>()",
       "let _ = flowersec::SessionHandlers::new",
       "let _ = flowersec::SessionHandlers::handle_rpc",
@@ -2190,6 +2233,7 @@
       "let _ = flowersec::ConnectErrorCode::InvalidInput.as_str()",
       "let _ = std::mem::size_of::<flowersec::ConnectorOptions>()",
       "let _ = flowersec::ConnectorOptions::new(vec![vec![1_u8]])",
+      "let _ = flowersec::ConnectorOptions::with_rpc_handlers",
       "let _ = flowersec::connect",
       "let _ = flowersec::connect_with_cancellation",
       "let _ = std::mem::size_of::<flowersec::IncomingStream>()",

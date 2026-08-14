@@ -9,5 +9,11 @@
     { "id": "reserved-rpc-kind", "unit": "flowersec.rpc.v2", "repeat": 1, "suffix": "", "valid": false },
     { "id": "application-kind", "unit": "files/read", "repeat": 1, "suffix": "", "valid": true }
   ],
-  "duplicate_kind": "files/read"
+  "duplicate_kind": "files/read",
+  "rpc_type_ids": [
+    { "id": "zero", "value": 0, "valid": false },
+    { "id": "minimum", "value": 1, "valid": true },
+    { "id": "maximum", "value": 4294967295, "valid": true }
+  ],
+  "duplicate_type_id": 1
 }

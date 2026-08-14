@@ -336,9 +336,10 @@ func TestCapabilityManifestRejectsUnverifiableServerClaims(t *testing.T) {
 
 	t.Run("supported server capability without entrypoint", func(t *testing.T) {
 		copy := cloneCapabilityManifest(t, manifest)
-		implementation := copy.PortableCapabilities[6].Implementations["go"]
+		capability := portableCapabilityByID(t, &copy, "server_acceptor_session")
+		implementation := capability.Implementations["go"]
 		implementation.Entrypoint = ""
-		copy.PortableCapabilities[6].Implementations["go"] = implementation
+		capability.Implementations["go"] = implementation
 		_, err := loadCapabilityManifest(writeCapabilityManifest(t, &copy))
 		if err == nil || !strings.Contains(err.Error(), "requires an entrypoint") {
 			t.Fatalf("unexpected error: %v", err)
@@ -363,10 +364,11 @@ func TestCapabilityManifestRejectsUnverifiableServerClaims(t *testing.T) {
 
 	t.Run("unsupported server capability needs only a stable reason", func(t *testing.T) {
 		copy := cloneCapabilityManifest(t, manifest)
-		implementation := copy.PortableCapabilities[6].Implementations["swift"]
+		capability := portableCapabilityByID(t, &copy, "server_acceptor_session")
+		implementation := capability.Implementations["swift"]
 		implementation.Entrypoint = ""
 		implementation.TestIDs = nil
-		copy.PortableCapabilities[6].Implementations["swift"] = implementation
+		capability.Implementations["swift"] = implementation
 		_, err := loadCapabilityManifest(writeCapabilityManifest(t, &copy))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -635,6 +637,17 @@ func cloneCapabilityManifest(t *testing.T, manifest *capabilityManifest) capabil
 		t.Fatal(err)
 	}
 	return copy
+}
+
+func portableCapabilityByID(t *testing.T, manifest *capabilityManifest, id string) *portableCapability {
+	t.Helper()
+	for index := range manifest.PortableCapabilities {
+		if manifest.PortableCapabilities[index].ID == id {
+			return &manifest.PortableCapabilities[index]
+		}
+	}
+	t.Fatalf("portable capability %q not found", id)
+	return nil
 }
 
 func writeCapabilityManifest(t *testing.T, manifest *capabilityManifest) string {

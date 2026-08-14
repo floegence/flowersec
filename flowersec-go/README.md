@@ -11,24 +11,67 @@ go get github.com/floegence/flowersec/flowersec-go/v2
 
 ## Public API
 
+### One-shot client
+
 ```go
 artifact, err := flowersec.ParseArtifact(encoded)
 lease, err := flowersec.NewArtifactLease(artifact, commitSpend)
-handlers, err := flowersec.NewSessionHandlers(flowersec.SessionHandlerOptions{})
-err = handlers.HandleRPC(typeID, rpcHandler)
-err = handlers.HandleStream(streamKind, streamHandler)
-options.Handlers = handlers
-session, err := flowersec.Connect(ctx, lease, options)
+rpcHandlers := flowersec.NewRPCHandlers()
+err = rpcHandlers.HandleRPC(typeID, rpcHandler)
+err = rpcHandlers.HandleNotification(notificationID, notificationHandler)
+session, err := flowersec.Connect(ctx, lease, flowersec.ConnectorOptions{
+    TrustRoots: trustRoots,
+    Origin: "https://app.example",
+    RPCHandlers: rpcHandlers,
+})
 metadata, err := flowersec.NewStreamMetadata(map[string]any{"request_id": "req-1"})
 stream, err := session.OpenStream(ctx, "example", metadata)
-err = handlers.Serve(ctx, session)
+```
 
+### Long-lived client
+
+```go
+rpcHandlers := flowersec.NewRPCHandlers()
+_ = rpcHandlers.HandleRPC(typeID, rpcHandler)
+controller, err := flowersec.NewConnectionController(source, flowersec.ConnectionControllerOptions{
+    Connector: flowersec.ConnectorOptions{
+        TrustRoots: trustRoots,
+        Origin: "https://app.example",
+        RPCHandlers: rpcHandlers,
+    },
+})
+controller.Start(ctx)
+snapshot := controller.Snapshot()
+```
+
+The same frozen handler definition is installed in every new Session. Each
+generation has a fresh router and old Session operations are never replayed.
+
+### Accepted server Session
+
+```go
+handlers, err := flowersec.NewSessionHandlers(flowersec.SessionHandlerOptions{})
+err = handlers.HandleRPC(typeID, rpcHandler)
+err = handlers.HandleNotification(notificationID, notificationHandler)
+err = handlers.HandleStream("files/read", streamHandler)
 acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
     AllowedOrigins: []string{"https://app.example"},
     Authorize: authorizeRuntime,
+    ResolveHandlers: func(context.Context, controlplane.RuntimeAuthorizationRequest) (*flowersec.SessionHandlers, error) {
+        return handlers, nil
+    },
     OnSession: serveSession,
 })
 httpServer.Handler = acceptor.Handler()
+```
+
+`SessionHandlers` belongs only to accepted server Sessions. The Acceptor
+creates a fresh RPC router and owns `SessionHandlers.Serve(...)` for each
+accepted Session.
+
+Additional server runtimes use the same server registry:
+
+```go
 
 tunnel, err := flowersec.NewTunnelRuntime(flowersec.TunnelRuntimeOptions{
     Listeners: []flowersec.TunnelListener{flowersec.NewWebSocketTunnelListener()},
@@ -42,7 +85,13 @@ proxy, err := flowersec.NewProxyServer(flowersec.ProxyServerOptions{
 err = proxy.Register(handlers)
 ```
 
-Register inbound RPC and stream handlers before connecting. Stream kinds are valid UTF-8 values from 1 through 255 encoded bytes; `flowersec.rpc.v2` is reserved. A valid connection attempt freezes both registration sets; later registrations return `ErrSessionHandlersFrozen`. `NewStreamMetadata(...)` validates and defensively copies metadata before a stream is opened; `EmptyStreamMetadata()` represents the empty value, and incoming streams expose the same `StreamMetadata` type. `SessionHandlers.Serve` owns the session lifecycle, supplies bounded stream metadata to application handlers, resets then closes the current stream when its `StreamHandler` returns an error, and continues serving unrelated streams. It also resets unhandled or excess streams. Connection selection and cryptographic state remain private to the SDK. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.
+RPC and notification registrations share one nonzero uint32 namespace. Consuming
+a registry freezes it; later registrations return `ErrHandlerRegistryFrozen`.
+Stream kinds are valid UTF-8 values from 1 through 255 encoded bytes;
+`flowersec.rpc.v2` is reserved. `NewStreamMetadata(...)` validates and
+defensively copies metadata before a stream is opened. Handler and connection
+state remain private, and public failures are bounded `ConnectError` and
+`SessionError` values.
 
 The executable `ExampleConnect` compiles the complete consumer lifecycle,
 including an atomically created and synchronized durable spend record. Reusing

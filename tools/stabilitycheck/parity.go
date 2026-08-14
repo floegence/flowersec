@@ -1216,7 +1216,7 @@ func validateDeploymentProfiles(contract deploymentProfilesContract, parity *ser
 			TransportRuntimeIDs: []string{"go_native", "rust_native", "typescript_node"},
 			RequiredRoles:       []string{"endpoint-client", "direct-server", "tunnel-runtime"}, RequiredCarriers: []string{"websocket", "raw-quic"},
 			RequiredPaths:         map[string][]string{"endpoint-client": {"direct", "tunnel"}, "direct-server": {"direct"}, "tunnel-runtime": {"tunnel"}},
-			RequiredCapabilityIDs: []string{"opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"},
+			RequiredCapabilityIDs: []string{"opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "client_rpc_handlers", "validated_stream_metadata", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"},
 			OptionalCarriers:      []string{"webtransport"}, RequiredTupleCount: 18, RequiredPathUnitCount: 24,
 		},
 		{

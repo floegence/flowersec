@@ -1,7 +1,7 @@
 use flowersec::{
     Acceptor, ArtifactLease, ArtifactSource, ArtifactSourceError, ConnectionController,
     ConnectionControllerOptions, ConnectorOptions, IncomingStream, NotificationHandler,
-    RetryDisposition, RpcError, RpcHandler, RpcPeer, RpcPeerExt, SessionError,
+    RetryDisposition, RpcError, RpcHandler, RpcHandlers, RpcPeer, RpcPeerExt, SessionError,
     SessionHandlerOptions, SessionHandlers, SessionTermination, StreamHandler, StreamMetadata,
     StreamMetadataError, TunnelAuthorizer, TunnelRuntime, TunnelRuntimeOptions,
     WebSocketAcceptorOptions, connect,
@@ -87,10 +87,14 @@ async fn compile_public_api(lease: ArtifactLease, peer: &dyn RpcPeer) {
     }
 }
 
-async fn compile_connector_handlers(lease: ArtifactLease, handlers: SessionHandlers) {
+async fn compile_connector_handlers(lease: ArtifactLease, mut handlers: RpcHandlers) {
+    handlers.handle_rpc(1, RpcWithoutDebug).unwrap();
+    handlers
+        .handle_notification(2, NotificationWithoutDebug)
+        .unwrap();
     let options = ConnectorOptions::new(vec![vec![1]])
         .expect("explicit trust roots")
-        .with_handlers(handlers);
+        .with_rpc_handlers(handlers);
     let _ = connect(lease, options).await;
 }
 

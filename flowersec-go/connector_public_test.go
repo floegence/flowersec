@@ -17,12 +17,12 @@ import (
 
 func TestConnectorPublicSurfaceIsCarrierNeutral(t *testing.T) {
 	optionsType := reflect.TypeOf(flowersec.ConnectorOptions{})
-	wantFields := []string{"TrustRoots", "Origin", "ConnectTimeout", "Handlers"}
+	wantFields := []string{"TrustRoots", "Origin", "ConnectTimeout", "RPCHandlers"}
 	if optionsType.NumField() != len(wantFields) {
 		t.Fatalf("ConnectorOptions has %d fields, want %d", optionsType.NumField(), len(wantFields))
 	}
-	if got, want := optionsType.Field(3).Type, reflect.TypeOf((*flowersec.SessionHandlers)(nil)); got != want {
-		t.Fatalf("ConnectorOptions.Handlers type = %v, want %v", got, want)
+	if got, want := optionsType.Field(3).Type, reflect.TypeOf((*flowersec.RPCHandlers)(nil)); got != want {
+		t.Fatalf("ConnectorOptions.RPCHandlers type = %v, want %v", got, want)
 	}
 	for index, want := range wantFields {
 		if got := optionsType.Field(index).Name; got != want {
@@ -37,6 +37,31 @@ func TestConnectorPublicSurfaceIsCarrierNeutral(t *testing.T) {
 	var connect func(context.Context, flowersec.ArtifactLease, flowersec.ConnectorOptions) (flowersec.Session, error) = flowersec.Connect
 	_ = options
 	_ = connect
+}
+
+func TestRPCHandlersPublicSurfaceIsClientRoleOnlyAndOpaque(t *testing.T) {
+	handlers := flowersec.NewRPCHandlers()
+	if handlers == nil {
+		t.Fatal("NewRPCHandlers() = nil")
+	}
+	wantMethods := map[string]bool{"GoString": true, "HandleNotification": true, "HandleRPC": true, "MarshalJSON": true, "String": true}
+	handlerType := reflect.TypeOf(handlers)
+	if handlerType.NumMethod() != len(wantMethods) {
+		t.Fatalf("RPCHandlers methods = %d, want %d", handlerType.NumMethod(), len(wantMethods))
+	}
+	for index := range handlerType.NumMethod() {
+		method := handlerType.Method(index)
+		if !wantMethods[method.Name] {
+			t.Fatalf("RPCHandlers unexpectedly exposes %s", method.Name)
+		}
+	}
+	if got, want := fmt.Sprintf("%v %#v", handlers, handlers), "Flowersec.RPCHandlers flowersec.RPCHandlers"; got != want {
+		t.Fatalf("RPCHandlers formatting = %q, want %q", got, want)
+	}
+	encoded, err := json.Marshal(handlers)
+	if err != nil || string(encoded) != "{}" {
+		t.Fatalf("RPCHandlers JSON = %s, %v", encoded, err)
+	}
 }
 
 func TestSessionTerminationPublicSurfaceAlignsWithPortableCore(t *testing.T) {
@@ -286,7 +311,7 @@ func TestConnectorRejectsInvalidCarrierNeutralOptions(t *testing.T) {
 		}
 	}
 	if _, err := flowersec.Connect(context.Background(), lease, flowersec.ConnectorOptions{
-		TrustRoots: fixtureTrustRoots(t), Origin: "https://client.example", Handlers: &flowersec.SessionHandlers{},
+		TrustRoots: fixtureTrustRoots(t), Origin: "https://client.example", RPCHandlers: &flowersec.RPCHandlers{},
 	}); !errors.Is(err, flowersec.ErrInvalidConnectorOptions) {
 		t.Fatalf("Connect zero handlers error = %v, want invalid options", err)
 	}

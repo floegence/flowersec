@@ -17,7 +17,7 @@
           "direct-server": ["direct"],
           "tunnel-runtime": ["tunnel"]
         },
-        "required_capability_ids": ["opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"],
+        "required_capability_ids": ["opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "client_rpc_handlers", "validated_stream_metadata", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"],
         "optional_carriers": ["webtransport"],
         "required_tuple_count": 18,
         "required_path_unit_count": 24
@@ -131,6 +131,17 @@
       }
     },
     {
+      "id": "client_rpc_handlers",
+      "layer": "portable_core",
+      "description": "Reusable inbound RPC and notification definitions for one-shot and controller-managed endpoint-client sessions, with a fresh router for every connection generation",
+      "implementations": {
+        "go": { "status": "supported", "entrypoint": "NewRPCHandlers/ConnectorOptions.RPCHandlers", "test_ids": ["controller/go-websocket-handlers"] },
+        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core/node RPCHandlers/SessionOptions.rpcHandlers/ConnectionControllerOptions.rpcHandlers", "test_ids": ["controller/typescript-real-network-restart"] },
+        "swift": { "status": "unsupported", "reason": "The Apple client runtime does not expose inbound request serving." },
+        "rust": { "status": "supported", "entrypoint": "flowersec::RpcHandlers/ConnectorOptions::with_rpc_handlers", "test_ids": ["controller/rust-websocket-handlers"] }
+      }
+    },
+    {
       "id": "server_acceptor_session",
       "layer": "server_integration",
       "description": "Carrier-neutral server admission establishes the same public Session contract without exposing carrier or wire state; each runtime profile declares its exact listener support.",
@@ -231,13 +242,6 @@
     }
   ],
   "runtime_specific_capabilities": [
-    {
-      "id": "go_rpc_request_handlers",
-      "layer": "language_convenience",
-      "owner": "go",
-      "reason": "Go exposes application request handler registration through SessionHandlers.",
-      "test_ids": ["protocol/go"]
-    },
     {
       "id": "browser_webtransport",
       "layer": "sdk_profile",

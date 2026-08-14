@@ -2,8 +2,9 @@ export { connect, createConnectionController } from "./connectSession.js";
 export {
   AcceptedSession,
   Acceptor,
+  HandlerRegistrationError,
+  RPCHandlers,
   SessionHandlers,
-  SessionHandlersError,
   createAcceptor,
 } from "./acceptor.js";
 export type {

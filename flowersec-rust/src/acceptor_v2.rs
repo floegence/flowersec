@@ -233,7 +233,8 @@ impl Acceptor {
         handlers: SessionHandlers,
         cancellation: CancellationToken,
     ) -> Result<AcceptedSession, AcceptError> {
-        let rpc_handler = handlers.rpc_handler();
+        let handlers = handlers.into_snapshot();
+        let rpc_handler = crate::session_handlers::rpc_router(handlers.rpc.clone());
         let session = self
             .accept_session(artifact, cancellation, Some(rpc_handler))
             .await?;

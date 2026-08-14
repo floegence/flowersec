@@ -137,8 +137,8 @@ func NewConnectionController(source ArtifactSource, options ConnectionController
 	if source == nil || !validConnectorPolicy(options.Connector) {
 		return nil, ErrInvalidConnectionController
 	}
-	if options.Connector.Handlers != nil {
-		options.Connector.Handlers.freeze()
+	if options.Connector.RPCHandlers != nil {
+		options.Connector.RPCHandlers.freeze()
 	}
 	return &ConnectionController{
 		source: source, options: options.Connector, maximumAttempts: options.MaximumAttempts, connect: Connect,

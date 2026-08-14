@@ -44,7 +44,7 @@ type ConnectorOptions struct {
 	TrustRoots     *x509.CertPool
 	Origin         string
 	ConnectTimeout time.Duration
-	Handlers       *SessionHandlers
+	RPCHandlers    *RPCHandlers
 }
 
 type connector struct {
@@ -247,9 +247,8 @@ func newConnector(lease ArtifactLease, options ConnectorOptions) (*connector, er
 		return nil, &ConnectError{code: ConnectInvalidOptions}
 	}
 	connectorOptions := make([]connectv2.ConnectorOption, 0, 1)
-	if options.Handlers != nil {
-		options.Handlers.freeze()
-		connectorOptions = append(connectorOptions, connectv2.WithRPCRouter(options.Handlers.rpcRouter()))
+	if options.RPCHandlers != nil {
+		connectorOptions = append(connectorOptions, connectv2.WithRPCRouter(newRPCRouter(options.RPCHandlers.freeze())))
 	}
 	inner := connectv2.NewConnector(connectv2.ArtifactLease{
 		Artifact: *lease.artifact.value, CommitSpend: lease.commitSpend,
@@ -265,7 +264,7 @@ func validConnectorOptions(options ConnectorOptions, rootlessLoopbackDirectOnly 
 func validConnectorPolicy(options ConnectorOptions) bool {
 	return (options.TrustRoots == nil || len(options.TrustRoots.Subjects()) != 0) &&
 		options.ConnectTimeout >= 0 && validOrigin(options.Origin) &&
-		(options.Handlers == nil || options.Handlers.valid())
+		(options.RPCHandlers == nil || options.RPCHandlers.valid())
 }
 
 func validOrigin(value string) bool {

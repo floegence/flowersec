@@ -10,9 +10,13 @@ import {
   ArtifactError,
   connect,
   createArtifactLease,
+  createConnectionController,
   createStreamMetadata,
   parseArtifact,
+  RPCHandlers,
 } from "../node/index.js";
+// @ts-expect-error Browser profiles do not expose native inbound RPC handlers.
+import { RPCHandlers as BrowserRPCHandlers } from "../browser/index.js";
 import { expect, test } from "vitest";
 
 type PingRequest = Readonly<{ nonce: string }>;
@@ -41,6 +45,11 @@ function typecheckPublicAPI(
   stream: ByteStream,
   metadata: StreamMetadata,
 ): void {
+  const rpcHandlers = new RPCHandlers();
+  rpcHandlers.handleRPC(9, async () => ({ payload: null }));
+  rpcHandlers.handleNotification(10, async () => undefined);
+  // @ts-expect-error Client RPC handlers cannot register application streams.
+  rpcHandlers.handleStream("invalid", async () => undefined);
   const result: Promise<RpcResult<PingResponse>> = peer.call<PingRequest, PingResponse>(
     7,
     { nonce: "n" },
@@ -54,8 +63,11 @@ function typecheckPublicAPI(
   unsubscribe();
   void session.openStream("typed", { metadata });
   void stream.kind;
-  void connect(lease, { origin: "https://client.example" });
+  void connect(lease, { origin: "https://client.example", rpcHandlers });
   void connect(lease, { origin: "https://client.example", connectTimeoutMs: 2_500 });
+  void createConnectionController({
+    acquire: async () => ({ kind: "lease", lease }),
+  }, { origin: "https://client.example", rpcHandlers });
   void createArtifactLease(parseArtifact("{}"), async () => {});
   void createStreamMetadata({ purpose: "typed", attempt: 1 });
   // @ts-expect-error stream metadata must be constructed and validated first.
@@ -73,6 +85,7 @@ function typecheckPublicAPI(
   void peer.call(7, { nonce: 1n }, decodePingResponse);
   // @ts-expect-error RPC notifications accept only JSON values.
   void peer.notify(8, undefined);
+  void BrowserRPCHandlers;
 }
 
 test("exposes the unversioned typed public API", () => {

@@ -18,8 +18,10 @@ import {
   type ConnectionControllerOptions as CoreConnectionControllerOptions,
 } from "../connectionController.js";
 import {
-  freezeSessionHandlersForConnector,
-  type SessionHandlers,
+  createRPCRouter,
+  freezeRPCHandlers,
+  type FrozenRPCHandlers,
+  type RPCHandlers,
 } from "./acceptor.js";
 import {
   createNativeRawQuicDriver,
@@ -37,7 +39,7 @@ export type SessionOptions = Readonly<{
   signal?: AbortSignal;
   connectTimeoutMs?: number;
   tls?: SessionTLSOptions;
-  handlers?: SessionHandlers;
+  rpcHandlers?: RPCHandlers;
 }>;
 
 export type ConnectionControllerOptions = Readonly<{
@@ -45,30 +47,49 @@ export type ConnectionControllerOptions = Readonly<{
   connectTimeoutMs?: number;
   tls?: SessionTLSOptions;
   maximumAttempts?: number;
+  rpcHandlers?: RPCHandlers;
 }>;
 
 export function createConnectionController(
   source: ArtifactSource,
   options: ConnectionControllerOptions,
 ): ConnectionController {
+  validateSessionOptions(options);
   const controllerOptions: CoreConnectionControllerOptions = options.maximumAttempts === undefined
     ? {}
     : { maximumAttempts: options.maximumAttempts };
-  return createConnectionControllerV2(
+  let rpcSnapshot: FrozenRPCHandlers | undefined;
+  const controller = createConnectionControllerV2(
     source,
-    async (lease, signal) => await connect(lease, {
+    async (lease, signal) => await connectWithRPCSnapshot(lease, {
       origin: options.origin,
       signal,
       ...(options.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: options.connectTimeoutMs }),
       ...(options.tls === undefined ? {} : { tls: options.tls }),
-    }),
+    }, rpcSnapshot),
     controllerOptions,
   );
+  rpcSnapshot = options.rpcHandlers === undefined
+    ? undefined
+    : freezeRPCHandlers(options.rpcHandlers);
+  return controller;
 }
 
 export async function connect(
   lease: ArtifactLease,
   options: SessionOptions,
+): Promise<Session> {
+  validateSessionOptions(options);
+  const rpcSnapshot = options.rpcHandlers === undefined
+    ? undefined
+    : freezeRPCHandlers(options.rpcHandlers);
+  return await connectWithRPCSnapshot(lease, options, rpcSnapshot);
+}
+
+async function connectWithRPCSnapshot(
+  lease: ArtifactLease,
+  options: SessionOptions,
+  rpcSnapshot: FrozenRPCHandlers | undefined,
 ): Promise<Session> {
   let origin: string;
   let wsFactory: ReturnType<typeof createNodeWsFactory>;
@@ -78,9 +99,9 @@ export async function connect(
   } catch {
     throw new ConnectError("invalid_options");
   }
-  const rpcRouter = options.handlers === undefined
+  const rpcRouter = rpcSnapshot === undefined
     ? undefined
-    : freezeSessionHandlersForConnector(options.handlers);
+    : createRPCRouter(rpcSnapshot);
   // WebSocket sessions do not require the optional native raw QUIC addon. Load
   // it only when a raw QUIC candidate is actually selected by the connector.
   const nativeAddon = tryLoadNativeTransportAddon();
@@ -113,6 +134,18 @@ export async function connect(
   );
   const result = await connector.connect(options.signal === undefined ? {} : { signal: options.signal });
   return projectSessionV2(result.session);
+}
+
+function validateSessionOptions(options: Readonly<{
+  origin: string;
+  tls?: SessionTLSOptions;
+}>): void {
+  try {
+    normalizeOrigin(options.origin);
+    createNodeWsFactory(options.tls);
+  } catch {
+    throw new ConnectError("invalid_options");
+  }
 }
 
 function normalizeOrigin(input: string): string {

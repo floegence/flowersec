@@ -363,6 +363,53 @@ fn handlers(
     handlers
 }
 
+fn rpc_handlers(
+    notifications: Arc<AtomicUsize>,
+    notification_received: Arc<Notify>,
+    executed: ExecutionLedger,
+) -> flowersec::RpcHandlers {
+    let mut handlers = flowersec::RpcHandlers::new();
+    handlers
+        .handle_rpc(
+            ECHO_RPC,
+            EchoRpc {
+                executed: executed.clone(),
+            },
+        )
+        .unwrap();
+    handlers
+        .handle_rpc(
+            COMPLETE_RPC,
+            BarrierRpc {
+                value: "complete",
+                count: notifications.clone(),
+                executed: executed.clone(),
+            },
+        )
+        .unwrap();
+    handlers
+        .handle_rpc(
+            DATAGRAM_READY_RPC,
+            BarrierRpc {
+                value: "datagram-ready",
+                count: notifications.clone(),
+                executed: executed.clone(),
+            },
+        )
+        .unwrap();
+    handlers
+        .handle_notification(
+            NOTIFY_RPC,
+            NotifyHandler {
+                count: notifications,
+                received: notification_received,
+                executed,
+            },
+        )
+        .unwrap();
+    handlers
+}
+
 fn root_cert() -> Vec<u8> {
     STANDARD.decode(TEST_CERT_DER_B64).unwrap()
 }
@@ -627,10 +674,9 @@ async fn run_client(carrier: &str, ready: Ready) {
     let lease = ArtifactLease::new(artifact, || async { Ok(()) });
     let mut options = ConnectorOptions::new(trust_roots)
         .unwrap()
-        .with_handlers(handlers(
+        .with_rpc_handlers(rpc_handlers(
             notifications.clone(),
             notification_received.clone(),
-            "direct",
             executed.clone(),
         ));
     if carrier == "websocket" {
@@ -890,7 +936,7 @@ fn tunnel_authorization(
 fn tunnel_connector_options(
     carrier: &str,
     relay: &RelayReady,
-    handlers: SessionHandlers,
+    handlers: flowersec::RpcHandlers,
 ) -> ConnectorOptions {
     let roots = relay
         .trust_roots_der
@@ -899,7 +945,7 @@ fn tunnel_connector_options(
         .collect();
     let mut options = ConnectorOptions::new(roots)
         .unwrap()
-        .with_handlers(handlers);
+        .with_rpc_handlers(handlers);
     if carrier == "websocket" {
         options = options.with_websocket_origin(relay.origin.clone()).unwrap();
     }
@@ -910,7 +956,7 @@ async fn connect_tunnel_artifact(
     carrier: &str,
     relay: &RelayReady,
     artifact_json: String,
-    handlers: SessionHandlers,
+    handlers: flowersec::RpcHandlers,
 ) -> Arc<dyn Session> {
     let artifact = Artifact::parse(artifact_json.as_bytes()).unwrap();
     let lease = ArtifactLease::new(artifact, || async { Ok(()) });
@@ -981,10 +1027,9 @@ async fn run_tunnel_endpoint_b(carrier: &str) {
         carrier,
         &envelope.relay,
         second_json,
-        handlers(
+        rpc_handlers(
             notifications.clone(),
             notification_received.clone(),
-            "tunnel",
             executed.clone(),
         ),
     )
@@ -1053,10 +1098,9 @@ async fn run_tunnel_endpoint_a(carrier: &str) {
         carrier,
         &ready.relay,
         ready.endpoint_a_artifact_json.clone(),
-        handlers(
+        rpc_handlers(
             notifications.clone(),
             notification_received.clone(),
-            "tunnel",
             executed.clone(),
         ),
     )

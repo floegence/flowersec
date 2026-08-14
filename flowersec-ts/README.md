@@ -33,6 +33,60 @@ Retry ownership belongs to `ConnectionController`; applications do not classify 
 
 When connector options omit a connection timeout, browser and Node.js connectors use the shared ten-second default.
 
+### One-shot Node client
+
+```ts
+import { RPCHandlers, connect } from "@floegence/flowersec-core/node";
+
+const rpcHandlers = new RPCHandlers();
+rpcHandlers.handleRPC(7, async (payload) => ({ payload }));
+rpcHandlers.handleNotification(8, (payload) => onNotice(payload));
+const session = await connect(lease, {
+  origin: "https://app.example",
+  rpcHandlers,
+});
+```
+
+### Long-lived Node client
+
+```ts
+import { RPCHandlers, createConnectionController } from "@floegence/flowersec-core/node";
+
+const rpcHandlers = new RPCHandlers();
+rpcHandlers.handleRPC(7, async (payload) => ({ payload }));
+const controller = createConnectionController(source, {
+  origin: "https://app.example",
+  rpcHandlers,
+});
+controller.start();
+const session = await controller.waitForSession();
+```
+
+The immutable callback definition applies to every generation, while each
+Session gets a fresh router. Terminated Session work is never replayed.
+
+### Accepted Node server Session
+
+```ts
+import { SessionHandlers, createAcceptor } from "@floegence/flowersec-core/node";
+
+const handlers = new SessionHandlers({ maxConcurrentStreams: 32 });
+handlers.handleRPC(7, async (payload) => ({ payload }));
+handlers.handleNotification(8, (payload) => onNotice(payload));
+handlers.handleStream("files/read", async (incoming) => serveFile(incoming));
+const acceptor = await createAcceptor({
+  listeners,
+  maxInboundStreams: 32,
+  authorize,
+  resolveHandlers: () => handlers,
+});
+const accepted = await acceptor.accept();
+await accepted.serve();
+```
+
+`RPCHandlers` is available only from the Node entrypoint and cannot register
+application streams. `SessionHandlers` is accepted-server-only.
+
 ## Connection Lifecycle
 
 The Browser and Node `connect(...)` operations are one-shot and never reconnect. Long-lived applications can create the runtime-specific `ConnectionController` with a refreshable `ArtifactSource`. Every attempt must return a fresh `ArtifactLease`; a one-time artifact or lease is not a controller source.

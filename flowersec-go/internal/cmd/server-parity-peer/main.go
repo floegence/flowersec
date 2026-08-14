@@ -242,7 +242,7 @@ func runServer(ctx context.Context, carrier string) error {
 	var activeStreams atomic.Int32
 	executed := newExecutionLedger()
 	sessionDone := make(chan error, 1)
-	handlers, notificationReceived, err := parityHandlers(&activeStreams, "direct", executed)
+	handlers, notificationReceived, err := paritySessionHandlers(&activeStreams, "direct", executed)
 	if err != nil {
 		return err
 	}
@@ -351,15 +351,16 @@ func runClient(ctx context.Context, carrier string) error {
 	}
 	var activeStreams atomic.Int32
 	executed := newExecutionLedger()
-	handlers, notificationReceived, err := parityHandlers(&activeStreams, "direct", executed)
+	handlers, notificationReceived, err := parityRPCHandlers(executed)
 	if err != nil {
 		return err
 	}
-	session, err := flowersec.Connect(ctx, lease, flowersec.ConnectorOptions{TrustRoots: roots, Origin: ready.Origin, Handlers: handlers})
+	session, err := flowersec.Connect(ctx, lease, flowersec.ConnectorOptions{TrustRoots: roots, Origin: ready.Origin, RPCHandlers: handlers})
 	if err != nil {
 		return err
 	}
 	executed.record("admission")
+	handlersDone := serveParityStreams(ctx, session, &activeStreams, "direct", executed)
 	if err := exerciseClient(ctx, session, carrier, notificationReceived, "direct", executed); err != nil {
 		_ = session.Close()
 		return fmt.Errorf("exercise client: %w", err)
@@ -368,6 +369,9 @@ func runClient(ctx context.Context, carrier string) error {
 		return err
 	}
 	executed.record("close")
+	if err := awaitSessionHandlers(handlersDone); err != nil {
+		return fmt.Errorf("client handlers: %w", err)
+	}
 	if activeStreams.Load() != 0 {
 		return fmt.Errorf("client cleanup incomplete: streams=%d", activeStreams.Load())
 	}
@@ -389,7 +393,7 @@ func runTunnelEndpointA(ctx context.Context, carrier string) error {
 
 	var activeStreams atomic.Int32
 	executed := newExecutionLedger()
-	handlers, notificationReceived, err := parityHandlers(&activeStreams, "tunnel", executed)
+	handlers, notificationReceived, err := parityRPCHandlers(executed)
 	if err != nil {
 		return err
 	}
@@ -398,7 +402,7 @@ func runTunnelEndpointA(ctx context.Context, carrier string) error {
 		return fmt.Errorf("connect tunnel endpoint A: %w", err)
 	}
 	executed.record("admission")
-	handlersDone := serveSessionHandlers(ctx, handlers, session)
+	handlersDone := serveParityStreams(ctx, session, &activeStreams, "tunnel", executed)
 	if err := exerciseClient(ctx, session, carrier, notificationReceived, "tunnel", executed); err != nil {
 		_ = session.Close()
 		return fmt.Errorf("exercise tunnel endpoint A: %w", err)
@@ -609,7 +613,7 @@ func runTunnelEndpointB(ctx context.Context, carrier string) error {
 
 	var activeStreams atomic.Int32
 	executed := newExecutionLedger()
-	handlers, notificationReceived, err := parityHandlers(&activeStreams, "tunnel", executed)
+	handlers, notificationReceived, err := parityRPCHandlers(executed)
 	if err != nil {
 		return err
 	}
@@ -618,7 +622,7 @@ func runTunnelEndpointB(ctx context.Context, carrier string) error {
 		return fmt.Errorf("connect tunnel endpoint B: %w", err)
 	}
 	executed.record("admission")
-	handlersDone := serveSessionHandlers(ctx, handlers, session)
+	handlersDone := serveParityStreams(ctx, session, &activeStreams, "tunnel", executed)
 	var exerciseErr error
 	if os.Getenv("FLOWERSEC_PARITY_CLIENT_PROFILE") != "" {
 		exerciseErr = exerciseExternalServer(ctx, session, executed)
@@ -672,7 +676,7 @@ func tunnelAuthorizations(first, second controlplane.IssuedArtifact) ([]tunnelAu
 	return items, nil
 }
 
-func connectTunnelArtifact(ctx context.Context, artifactJSON, trustPEM, artifactOrigin string, handlers *flowersec.SessionHandlers) (flowersec.Session, error) {
+func connectTunnelArtifact(ctx context.Context, artifactJSON, trustPEM, artifactOrigin string, handlers *flowersec.RPCHandlers) (flowersec.Session, error) {
 	artifact, err := flowersec.ParseArtifact([]byte(artifactJSON))
 	if err != nil {
 		return nil, err
@@ -685,13 +689,66 @@ func connectTunnelArtifact(ctx context.Context, artifactJSON, trustPEM, artifact
 	if !roots.AppendCertsFromPEM([]byte(trustPEM)) {
 		return nil, errors.New("invalid tunnel relay trust PEM")
 	}
-	return flowersec.Connect(ctx, lease, flowersec.ConnectorOptions{TrustRoots: roots, Origin: artifactOrigin, Handlers: handlers})
+	return flowersec.Connect(ctx, lease, flowersec.ConnectorOptions{TrustRoots: roots, Origin: artifactOrigin, RPCHandlers: handlers})
 }
 
-func serveSessionHandlers(ctx context.Context, handlers *flowersec.SessionHandlers, session flowersec.Session) <-chan error {
+func serveParityStreams(ctx context.Context, session flowersec.Session, activeStreams *atomic.Int32, streamCell string, executed *executionLedger) <-chan error {
 	done := make(chan error, 1)
-	go func() { done <- handlers.Serve(ctx, session) }()
+	go func() {
+		var active sync.WaitGroup
+		defer func() {
+			active.Wait()
+			close(done)
+		}()
+		for {
+			incoming, err := session.AcceptStream(ctx)
+			if err != nil {
+				done <- err
+				return
+			}
+			active.Add(1)
+			go func() {
+				defer active.Done()
+				if err := handleParityStream(incoming, activeStreams, streamCell, executed); err != nil {
+					_ = incoming.Stream.Reset()
+					_ = incoming.Stream.Close()
+					return
+				}
+				_ = incoming.Stream.CloseWrite()
+			}()
+		}
+	}()
 	return done
+}
+
+func handleParityStream(incoming flowersec.IncomingStream, activeStreams *atomic.Int32, streamCell string, executed *executionLedger) error {
+	switch incoming.Kind {
+	case echoKind:
+		activeStreams.Add(1)
+		defer activeStreams.Add(-1)
+		if incoming.Metadata.Values()["cell"] != streamCell {
+			return errors.New("invalid stream metadata")
+		}
+		executed.record("stream-metadata")
+		payload, err := io.ReadAll(incoming.Stream)
+		if err != nil || string(payload) != "hello" {
+			return errors.New("invalid stream payload")
+		}
+		if _, err := incoming.Stream.Write([]byte("world")); err != nil {
+			return err
+		}
+		executed.record("stream-fin")
+		return nil
+	case resetKind:
+		payload, err := io.ReadAll(incoming.Stream)
+		if err != nil || string(payload) != "reset" {
+			return errors.New("invalid reset stream payload")
+		}
+		executed.record("stream-reset")
+		return errors.New("intentional parity reset")
+	default:
+		return errors.New("unregistered parity stream")
+	}
 }
 
 func awaitSessionHandlers(done <-chan error) error {
@@ -804,7 +861,21 @@ func registerTunnelAuthorizer(ctx context.Context, registrationURL, authorizerUR
 	return nil
 }
 
-func parityHandlers(activeStreams *atomic.Int32, streamCell string, executed *executionLedger) (*flowersec.SessionHandlers, <-chan struct{}, error) {
+type parityRPCRegistrar interface {
+	HandleRPC(uint32, flowersec.RPCHandler) error
+	HandleNotification(uint32, flowersec.RPCNotificationHandler) error
+}
+
+func parityRPCHandlers(executed *executionLedger) (*flowersec.RPCHandlers, <-chan struct{}, error) {
+	notificationReceived := make(chan struct{}, 4)
+	handlers := flowersec.NewRPCHandlers()
+	if err := registerParityRPCHandlers(handlers, notificationReceived, executed); err != nil {
+		return nil, nil, err
+	}
+	return handlers, notificationReceived, nil
+}
+
+func paritySessionHandlers(activeStreams *atomic.Int32, streamCell string, executed *executionLedger) (*flowersec.SessionHandlers, <-chan struct{}, error) {
 	notificationReceived := make(chan struct{}, 4)
 	handlers, err := flowersec.NewSessionHandlers(flowersec.SessionHandlerOptions{OnError: func(err error) {
 		fmt.Fprintf(os.Stderr, "session handler error: %v\n", err)
@@ -812,6 +883,23 @@ func parityHandlers(activeStreams *atomic.Int32, streamCell string, executed *ex
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := registerParityRPCHandlers(handlers, notificationReceived, executed); err != nil {
+		return nil, nil, err
+	}
+	if err := handlers.HandleStream(echoKind, func(_ context.Context, incoming flowersec.IncomingStream) error {
+		return handleParityStream(incoming, activeStreams, streamCell, executed)
+	}); err != nil {
+		return nil, nil, err
+	}
+	if err := handlers.HandleStream(resetKind, func(_ context.Context, incoming flowersec.IncomingStream) error {
+		return handleParityStream(incoming, activeStreams, streamCell, executed)
+	}); err != nil {
+		return nil, nil, err
+	}
+	return handlers, notificationReceived, nil
+}
+
+func registerParityRPCHandlers(handlers parityRPCRegistrar, notificationReceived chan<- struct{}, executed *executionLedger) error {
 	if err := handlers.HandleRPC(echoRPC, func(_ context.Context, request json.RawMessage) (any, *flowersec.RPCError) {
 		var payload map[string]string
 		if json.Unmarshal(request, &payload) != nil || payload["value"] != "ping" {
@@ -820,7 +908,7 @@ func parityHandlers(activeStreams *atomic.Int32, streamCell string, executed *ex
 		executed.record("rpc")
 		return payload, nil
 	}); err != nil {
-		return nil, nil, err
+		return err
 	}
 	if err := handlers.HandleRPC(completeRPC, func(_ context.Context, request json.RawMessage) (any, *flowersec.RPCError) {
 		var payload map[string]string
@@ -834,7 +922,7 @@ func parityHandlers(activeStreams *atomic.Int32, streamCell string, executed *ex
 		}
 		return payload, nil
 	}); err != nil {
-		return nil, nil, err
+		return err
 	}
 	if err := handlers.HandleRPC(datagramRPC, func(_ context.Context, request json.RawMessage) (any, *flowersec.RPCError) {
 		var payload map[string]string
@@ -847,7 +935,7 @@ func parityHandlers(activeStreams *atomic.Int32, streamCell string, executed *ex
 		}
 		return payload, nil
 	}); err != nil {
-		return nil, nil, err
+		return err
 	}
 	if err := handlers.HandleNotification(notifyRPC, func(_ context.Context, request json.RawMessage) error {
 		var payload map[string]string
@@ -861,38 +949,9 @@ func parityHandlers(activeStreams *atomic.Int32, streamCell string, executed *ex
 		}
 		return nil
 	}); err != nil {
-		return nil, nil, err
-	}
-	if err := handlers.HandleStream(echoKind, func(_ context.Context, incoming flowersec.IncomingStream) error {
-		activeStreams.Add(1)
-		defer activeStreams.Add(-1)
-		if incoming.Metadata.Values()["cell"] != streamCell {
-			return errors.New("invalid stream metadata")
-		}
-		executed.record("stream-metadata")
-		payload, err := io.ReadAll(incoming.Stream)
-		if err != nil || string(payload) != "hello" {
-			return errors.New("invalid stream payload")
-		}
-		_, err = incoming.Stream.Write([]byte("world"))
-		if err == nil {
-			executed.record("stream-fin")
-		}
 		return err
-	}); err != nil {
-		return nil, nil, err
 	}
-	if err := handlers.HandleStream(resetKind, func(_ context.Context, incoming flowersec.IncomingStream) error {
-		payload, readErr := io.ReadAll(incoming.Stream)
-		if readErr != nil || string(payload) != "reset" {
-			return errors.New("invalid reset stream payload")
-		}
-		executed.record("stream-reset")
-		return errors.New("intentional parity reset")
-	}); err != nil {
-		return nil, nil, err
-	}
-	return handlers, notificationReceived, nil
+	return nil
 }
 
 func exerciseClient(ctx context.Context, session flowersec.Session, carrier string, notificationReceived <-chan struct{}, streamCell string, executed *executionLedger) error {

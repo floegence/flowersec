@@ -156,7 +156,7 @@ assert.match(main, /externalHostRoot = "\/var\/lib\/flowersec-test"/);
 assert.doesNotMatch(main, /\bsudo\b|runuser|SUDO_USER|reexec/i);
 assert.match(registry, /func registry\(\) \[\]registeredTest/);
 for (const id of [
-  "controller/go", "controller/go-real-network-restart", "controller/typescript", "controller/typescript-real-network-restart", "controller/rust", "controller/rust-raw-quic",
+  "controller/go", "controller/go-real-network-restart", "controller/go-websocket-handlers", "controller/typescript", "controller/typescript-real-network-restart", "controller/rust", "controller/rust-raw-quic", "controller/rust-websocket-handlers",
   "protocol/go", "protocol/typescript", "protocol/rust",
   "carrier/go-direct", "carrier/go-tunnel",
   "carrier/rust-websocket-direct", "carrier/rust-websocket-tunnel",
@@ -240,7 +240,7 @@ assert.deepEqual(deploymentProfiles.profiles[0], {
     "direct-server": ["direct"],
     "tunnel-runtime": ["tunnel"],
   },
-  required_capability_ids: ["opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "validated_stream_metadata", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"],
+  required_capability_ids: ["opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "client_rpc_handlers", "validated_stream_metadata", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"],
   optional_carriers: ["webtransport"],
   required_tuple_count: 18,
   required_path_unit_count: 24,

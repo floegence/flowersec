@@ -159,14 +159,14 @@ func TestSessionHandlersNotificationRegistrationIsBoundedAndFrozen(t *testing.T)
 		t.Fatalf("notification/RPC collision error = %v", err)
 	}
 	handlers.freeze()
-	if err := handlers.HandleNotification(43, handler); !errors.Is(err, ErrSessionHandlersFrozen) {
+	if err := handlers.HandleNotification(43, handler); !errors.Is(err, ErrHandlerRegistryFrozen) {
 		t.Fatalf("late HandleNotification() error = %v", err)
 	}
 }
 
 func TestSessionHandlersRejectInvalidAndDuplicateRegistrations(t *testing.T) {
-	if _, err := NewSessionHandlers(SessionHandlerOptions{MaxConcurrentStreams: maxConcurrentStreams + 1}); !errors.Is(err, ErrInvalidSessionHandlers) {
-		t.Fatalf("NewSessionHandlers() error = %v, want ErrInvalidSessionHandlers", err)
+	if _, err := NewSessionHandlers(SessionHandlerOptions{MaxConcurrentStreams: maxConcurrentStreams + 1}); !errors.Is(err, ErrInvalidHandlerRegistration) {
+		t.Fatalf("NewSessionHandlers() error = %v, want ErrInvalidHandlerRegistration", err)
 	}
 	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
 	if err != nil {
@@ -186,7 +186,7 @@ func TestSessionHandlersRejectInvalidAndDuplicateRegistrations(t *testing.T) {
 	if err := handlers.HandleRPC(7, rpcHandler); !errors.Is(err, ErrHandlerAlreadyExists) {
 		t.Fatalf("duplicate HandleRPC() error = %v", err)
 	}
-	if err := handlers.HandleRPC(0, rpcHandler); !errors.Is(err, ErrInvalidSessionHandlers) {
+	if err := handlers.HandleRPC(0, rpcHandler); !errors.Is(err, ErrInvalidHandlerRegistration) {
 		t.Fatalf("zero HandleRPC() error = %v", err)
 	}
 }
@@ -201,6 +201,12 @@ func TestSessionHandlersEnforceSharedStreamKindContract(t *testing.T) {
 			Valid  bool   `json:"valid"`
 		} `json:"stream_kinds"`
 		DuplicateKind string `json:"duplicate_kind"`
+		RPCTypeIDs    []struct {
+			ID    string `json:"id"`
+			Value uint32 `json:"value"`
+			Valid bool   `json:"valid"`
+		} `json:"rpc_type_ids"`
+		DuplicateTypeID uint32 `json:"duplicate_type_id"`
 	}
 	payload, err := os.ReadFile("../testdata/transport_v2/session_handler_vectors.json")
 	if err != nil {
@@ -221,8 +227,8 @@ func TestSessionHandlersEnforceSharedStreamKindContract(t *testing.T) {
 			if vector.Valid && err != nil {
 				t.Fatalf("HandleStream(%q) error = %v", vector.ID, err)
 			}
-			if !vector.Valid && !errors.Is(err, ErrInvalidSessionHandlers) {
-				t.Fatalf("HandleStream(%q) error = %v, want ErrInvalidSessionHandlers", vector.ID, err)
+			if !vector.Valid && !errors.Is(err, ErrInvalidHandlerRegistration) {
+				t.Fatalf("HandleStream(%q) error = %v, want ErrInvalidHandlerRegistration", vector.ID, err)
 			}
 		})
 	}
@@ -231,8 +237,8 @@ func TestSessionHandlersEnforceSharedStreamKindContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := handlers.HandleStream(invalidUTF8, streamHandler); !errors.Is(err, ErrInvalidSessionHandlers) {
-		t.Fatalf("invalid UTF-8 HandleStream() error = %v, want ErrInvalidSessionHandlers", err)
+	if err := handlers.HandleStream(invalidUTF8, streamHandler); !errors.Is(err, ErrInvalidHandlerRegistration) {
+		t.Fatalf("invalid UTF-8 HandleStream() error = %v, want ErrInvalidHandlerRegistration", err)
 	}
 	handlers, err = NewSessionHandlers(SessionHandlerOptions{})
 	if err != nil {
@@ -244,6 +250,20 @@ func TestSessionHandlersEnforceSharedStreamKindContract(t *testing.T) {
 	if err := handlers.HandleStream(vectors.DuplicateKind, streamHandler); !errors.Is(err, ErrHandlerAlreadyExists) {
 		t.Fatalf("duplicate HandleStream() error = %v, want ErrHandlerAlreadyExists", err)
 	}
+	for _, vector := range vectors.RPCTypeIDs {
+		rpcHandlers := NewRPCHandlers()
+		err := rpcHandlers.HandleRPC(vector.Value, func(context.Context, json.RawMessage) (any, *RPCError) { return nil, nil })
+		if (err == nil) != vector.Valid {
+			t.Fatalf("RPC type ID vector %s error = %v, valid = %t", vector.ID, err, vector.Valid)
+		}
+	}
+	rpcHandlers := NewRPCHandlers()
+	if err := rpcHandlers.HandleRPC(vectors.DuplicateTypeID, func(context.Context, json.RawMessage) (any, *RPCError) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := rpcHandlers.HandleNotification(vectors.DuplicateTypeID, func(context.Context, json.RawMessage) error { return nil }); !errors.Is(err, ErrHandlerAlreadyExists) {
+		t.Fatalf("fixture cross-role duplicate error = %v", err)
+	}
 }
 
 func TestSessionHandlersFreezeRPCAndStreamRegistrationsTogether(t *testing.T) {
@@ -252,11 +272,11 @@ func TestSessionHandlersFreezeRPCAndStreamRegistrationsTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	handlers.freeze()
-	if err := handlers.HandleStream("late", func(context.Context, IncomingStream) error { return nil }); !errors.Is(err, ErrSessionHandlersFrozen) {
-		t.Fatalf("late HandleStream() error = %v, want ErrSessionHandlersFrozen", err)
+	if err := handlers.HandleStream("late", func(context.Context, IncomingStream) error { return nil }); !errors.Is(err, ErrHandlerRegistryFrozen) {
+		t.Fatalf("late HandleStream() error = %v, want ErrHandlerRegistryFrozen", err)
 	}
-	if err := handlers.HandleRPC(9, func(context.Context, json.RawMessage) (any, *RPCError) { return nil, nil }); !errors.Is(err, ErrSessionHandlersFrozen) {
-		t.Fatalf("late HandleRPC() error = %v, want ErrSessionHandlersFrozen", err)
+	if err := handlers.HandleRPC(9, func(context.Context, json.RawMessage) (any, *RPCError) { return nil, nil }); !errors.Is(err, ErrHandlerRegistryFrozen) {
+		t.Fatalf("late HandleRPC() error = %v, want ErrHandlerRegistryFrozen", err)
 	}
 }
 

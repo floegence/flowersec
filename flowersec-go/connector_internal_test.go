@@ -90,23 +90,20 @@ func TestArtifactLeaseAllowsRetryAfterSpendFailure(t *testing.T) {
 	}
 }
 
-func TestConnectorFreezesHandlersOnlyAfterLocalValidation(t *testing.T) {
+func TestConnectorFreezesRPCHandlersOnlyAfterLocalValidation(t *testing.T) {
 	artifact := mustParseInternalFixtureArtifact(t)
 	lease, err := NewArtifactLease(artifact, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	handlers := NewRPCHandlers()
 	trustRoots := x509.NewCertPool()
 	trustRoots.AddCert(&x509.Certificate{RawSubject: []byte("test root")})
 
 	if _, err := newConnector(lease, ConnectorOptions{
-		TrustRoots: trustRoots,
-		Origin:     "invalid",
-		Handlers:   handlers,
+		TrustRoots:  trustRoots,
+		Origin:      "invalid",
+		RPCHandlers: handlers,
 	}); !errors.Is(err, ErrInvalidConnectorOptions) {
 		t.Fatalf("newConnector() error = %v, want invalid options", err)
 	}
@@ -117,14 +114,52 @@ func TestConnectorFreezesHandlersOnlyAfterLocalValidation(t *testing.T) {
 	}
 
 	if _, err := newConnector(lease, ConnectorOptions{
-		TrustRoots: trustRoots,
-		Origin:     "https://client.example",
-		Handlers:   handlers,
+		TrustRoots:  trustRoots,
+		Origin:      "https://client.example",
+		RPCHandlers: handlers,
 	}); err != nil {
 		t.Fatalf("newConnector() error = %v", err)
 	}
-	if err := handlers.HandleStream("late", func(context.Context, IncomingStream) error { return nil }); !errors.Is(err, ErrSessionHandlersFrozen) {
-		t.Fatalf("HandleStream() after valid connector = %v, want frozen", err)
+	if err := handlers.HandleNotification(2, func(context.Context, json.RawMessage) error { return nil }); !errors.Is(err, ErrHandlerRegistryFrozen) {
+		t.Fatalf("HandleNotification() after valid connector = %v, want frozen", err)
+	}
+}
+
+func TestRPCHandlersFreezeSharedNamespaceWithoutReplacingOriginal(t *testing.T) {
+	handlers := NewRPCHandlers()
+	original := func(context.Context, json.RawMessage) (any, *RPCError) { return "original", nil }
+	if err := handlers.HandleRPC(0, original); !errors.Is(err, ErrInvalidHandlerRegistration) {
+		t.Fatalf("zero HandleRPC() error = %v", err)
+	}
+	if err := handlers.HandleRPC(1, nil); !errors.Is(err, ErrInvalidHandlerRegistration) {
+		t.Fatalf("nil HandleRPC() error = %v", err)
+	}
+	if err := handlers.HandleRPC(1, original); err != nil {
+		t.Fatal(err)
+	}
+	if err := handlers.HandleNotification(^uint32(0), func(context.Context, json.RawMessage) error { return nil }); err != nil {
+		t.Fatalf("maximum type ID registration error = %v", err)
+	}
+	if err := handlers.HandleRPC(1, func(context.Context, json.RawMessage) (any, *RPCError) { return "replacement", nil }); !errors.Is(err, ErrHandlerAlreadyExists) {
+		t.Fatalf("duplicate HandleRPC() error = %v", err)
+	}
+	if err := handlers.HandleNotification(1, func(context.Context, json.RawMessage) error { return nil }); !errors.Is(err, ErrHandlerAlreadyExists) {
+		t.Fatalf("cross-role duplicate error = %v", err)
+	}
+
+	firstSnapshot := handlers.freeze()
+	if secondSnapshot := handlers.freeze(); secondSnapshot != firstSnapshot {
+		t.Fatal("repeated freeze returned a different snapshot")
+	}
+	response, rpcErr := firstSnapshot.requests[1](context.Background(), json.RawMessage(`null`))
+	if response != "original" || rpcErr != nil {
+		t.Fatalf("frozen original handler = %#v, %#v", response, rpcErr)
+	}
+	if firstRouter, secondRouter := newRPCRouter(firstSnapshot), newRPCRouter(firstSnapshot); firstRouter == secondRouter {
+		t.Fatal("two sessions received the same RPC router")
+	}
+	if err := handlers.HandleNotification(2, func(context.Context, json.RawMessage) error { return nil }); !errors.Is(err, ErrHandlerRegistryFrozen) {
+		t.Fatalf("registration after freeze error = %v", err)
 	}
 }
 

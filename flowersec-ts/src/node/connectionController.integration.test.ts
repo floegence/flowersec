@@ -10,6 +10,8 @@ import { afterAll, describe, expect, test } from "vitest";
 import type * as WS from "ws";
 
 import { createConnectionController } from "./connectSession.js";
+import { RPCHandlers } from "./acceptor.js";
+import { RpcRouter } from "../rpc/server.js";
 import { createArtifactLeaseV2 } from "../v2/artifactLease.js";
 import {
   AdmissionStatusV2,
@@ -33,8 +35,14 @@ type Fixture = Readonly<{
 
 type Peer = Readonly<{
   port: number;
+  session(): Promise<SessionV2>;
+  waitForPendingRPC(): Promise<void>;
   stop(): Promise<void>;
 }>;
+
+const CLIENT_RPC = 901;
+const CLIENT_NOTIFICATION = 902;
+const PENDING_SERVER_RPC = 903;
 
 const require = createRequire(import.meta.url);
 const { WebSocketServer } = require("ws") as typeof WS;
@@ -60,6 +68,16 @@ describe("Node ConnectionController real-network replacement", () => {
     let peer: Peer | undefined;
     let acquisitions = 0;
     let spendCount = 0;
+    let rpcCalls = 0;
+    let notifications = 0;
+    const rpcHandlers = new RPCHandlers();
+    rpcHandlers.handleRPC(CLIENT_RPC, async (payload) => {
+      rpcCalls += 1;
+      return { payload: { generation: rpcCalls, request: payload } };
+    });
+    rpcHandlers.handleNotification(CLIENT_NOTIFICATION, () => {
+      notifications += 1;
+    });
     const source = {
       acquire: async () => {
         peer = await startPeer();
@@ -71,9 +89,10 @@ describe("Node ConnectionController real-network replacement", () => {
         };
       },
     };
-  const controller = createConnectionController(source, {
+    const controller = createConnectionController(source, {
       origin: "https://client.example",
       tls: { ca: certificate },
+      rpcHandlers,
     });
     try {
       controller.start();
@@ -82,14 +101,22 @@ describe("Node ConnectionController real-network replacement", () => {
       expect(spendCount).toBe(1);
       if (peer === undefined) throw new Error("controller connected without a live peer");
       const firstPeer = peer;
+      const firstServerSession = await firstPeer.session();
+      await expect(firstServerSession.rpc.call(CLIENT_RPC, { phase: "first" }))
+        .resolves.toEqual({ payload: { generation: 1, request: { phase: "first" } } });
+      await firstServerSession.rpc.notify(CLIENT_NOTIFICATION, { phase: "first" });
+      await waitFor(() => notifications === 1);
 
       const oldStream = await first.openStream("restart-old");
       const pendingRead = oldStream.read().then(() => undefined, (error: unknown) => error);
+      const pendingRPC = first.rpc.call(PENDING_SERVER_RPC, { phase: "first" }, (payload) => payload);
+      await firstPeer.waitForPendingRPC();
 
       const oldTermination = first.waitTermination();
       await firstPeer.stop();
       await expect(oldTermination).resolves.toMatchObject({ error: { code: "closed" } });
       expect(await pendingRead).toMatchObject({ code: "closed" });
+      await expect(pendingRPC).rejects.toBeInstanceOf(SessionError);
       await expect(oldStream.write(Uint8Array.of(1))).rejects.toMatchObject({ code: "closed" });
       await expect(first.rpc.call(91, { request: "after-close" }, (payload) => payload))
         .rejects.toBeInstanceOf(SessionError);
@@ -100,6 +127,12 @@ describe("Node ConnectionController real-network replacement", () => {
       expect(acquisitions).toBe(2);
       expect(spendCount).toBe(2);
       if (peer === undefined) throw new Error("controller replaced session without a live peer");
+      const secondServerSession = await peer.session();
+      await expect(secondServerSession.rpc.call(CLIENT_RPC, { phase: "second" }))
+        .resolves.toEqual({ payload: { generation: 2, request: { phase: "second" } } });
+      await secondServerSession.rpc.notify(CLIENT_NOTIFICATION, { phase: "second" });
+      await waitFor(() => notifications === 2);
+      expect(rpcCalls).toBe(2);
 
       const freshStream = await replacement.openStream("restart-new");
       await freshStream.write(Uint8Array.of(2));
@@ -137,8 +170,20 @@ async function startPeer(): Promise<Peer> {
     },
   });
   const sessions = new Set<SessionV2>();
+  let resolveSession!: (session: SessionV2) => void;
+  const sessionReady = new Promise<SessionV2>((resolve) => { resolveSession = resolve; });
+  let resolvePendingRPC!: () => void;
+  const pendingRPCStarted = new Promise<void>((resolve) => { resolvePendingRPC = resolve; });
+  let releasePendingRPC!: () => void;
+  const pendingRPCRelease = new Promise<void>((resolve) => { releasePendingRPC = resolve; });
   wss.on("connection", (socket) => {
-    void servePeer(socket as never, sessions).catch(() => undefined);
+    void servePeer(
+      socket as never,
+      sessions,
+      resolveSession,
+      resolvePendingRPC,
+      pendingRPCRelease,
+    ).catch(() => undefined);
   });
   httpsServer.listen(0, "127.0.0.1");
   await once(httpsServer, "listening");
@@ -148,11 +193,14 @@ async function startPeer(): Promise<Peer> {
   let stopped = false;
   return {
     port: address.port,
+    async session() { return await sessionReady; },
+    async waitForPendingRPC() { await pendingRPCStarted; },
     async stop() {
       if (stopped) return;
       stopped = true;
       for (const socket of wss.clients) socket.terminate();
       for (const session of sessions) await session.close().catch(() => undefined);
+      releasePendingRPC();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       await new Promise<void>((resolve) => httpsServer.close(() => resolve()));
     },
@@ -162,20 +210,30 @@ async function startPeer(): Promise<Peer> {
 async function servePeer(
   socket: WS.WebSocket,
   sessions: Set<SessionV2>,
+  resolveSession: (session: SessionV2) => void,
+  resolvePendingRPC: () => void,
+  pendingRPCRelease: Promise<void>,
 ): Promise<void> {
   const transport = new WebSocketBinaryTransport(socket as never);
   const request = decodeFSB2RequestV2(await transport.readBinary());
   await transport.writeBinary(encodeFSA2ResponseV2({ status: AdmissionStatusV2.Success, reason: "" }));
   const artifact = decodeArtifactV2JSON(fixture.positive.find((entry) => entry.id === "direct-three-carriers")!.artifact_json);
+  const router = new RpcRouter();
+  router.register(PENDING_SERVER_RPC, async () => {
+    resolvePendingRPC();
+    await pendingRPCRelease;
+    return { payload: { late: true } };
+  });
   const session = await establishSessionV2(
     createWebSocketCarrierSessionV2(transport, {
       path: "direct",
       client: false,
       inboundBidirectionalStreamCapacity: artifact.session.max_inbound_streams + 2,
     }),
-    serverConfig(artifact, request),
+    serverConfig(artifact, request, router),
   );
   sessions.add(session);
+  resolveSession(session);
   try {
     await session.waitTermination();
   } finally {
@@ -193,6 +251,7 @@ function localArtifact(rawArtifact: string, url: string): string {
 function serverConfig(
   artifact: ArtifactV2,
   fsb2: ReturnType<typeof decodeFSB2RequestV2>,
+  rpcRouter: RpcRouter,
 ): SessionConfigV2 {
   return {
     role: "server",
@@ -208,6 +267,7 @@ function serverConfig(
     peerAdmissionBinding: fsb2.localAdmissionBinding,
     localEndpointInstanceID: "",
     expectedPeerEndpointInstanceID: "",
+    rpcRouter,
     runtime: nodeSessionRuntimeV2,
     deadlines: {
       establishTimeoutMs: artifact.session.establish_timeout_seconds * 1_000,
@@ -215,4 +275,12 @@ function serverConfig(
       rekeyCompletionTimeoutMs: artifact.session.rekey_completion_timeout_seconds * 1_000,
     },
   };
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for handler invocation");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }

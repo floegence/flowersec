@@ -18,7 +18,7 @@ use crate::{
         SessionConnectorV2,
     },
     raw_quic_v2::{RawQuicClientConfig, RawQuicLimits, RawQuicPathProfile, RawQuicSession},
-    session_handlers::SessionHandlers,
+    session_handlers::{RpcHandlerSnapshot, RpcHandlers, rpc_router},
     transport_v2::{CarrierKind, CarrierSessionV2, PathKind, Session, SessionRole},
     websocket_v2,
 };
@@ -32,7 +32,7 @@ pub struct ConnectorOptions {
     connect_timeout: Duration,
     close_flush_timeout: Option<Duration>,
     websocket_origin: Option<String>,
-    handlers: Option<Arc<SessionHandlers>>,
+    rpc_handlers: Option<Arc<RpcHandlerSnapshot>>,
 }
 
 impl fmt::Debug for ConnectorOptions {
@@ -46,7 +46,7 @@ impl fmt::Debug for ConnectorOptions {
             .field("connect_timeout", &self.connect_timeout)
             .field("close_flush_timeout", &self.close_flush_timeout)
             .field("websocket_origin", &self.websocket_origin)
-            .field("has_handlers", &self.handlers.is_some())
+            .field("has_rpc_handlers", &self.rpc_handlers.is_some())
             .finish()
     }
 }
@@ -65,7 +65,7 @@ impl ConnectorOptions {
             connect_timeout: Duration::from_secs(10),
             close_flush_timeout: None,
             websocket_origin: None,
-            handlers: None,
+            rpc_handlers: None,
         })
     }
 
@@ -125,8 +125,8 @@ impl ConnectorOptions {
     }
 
     /// Freezes inbound RPC and notification handlers before session establishment.
-    pub fn with_handlers(mut self, handlers: SessionHandlers) -> Self {
-        self.handlers = Some(Arc::new(handlers));
+    pub fn with_rpc_handlers(mut self, handlers: RpcHandlers) -> Self {
+        self.rpc_handlers = Some(handlers.into_snapshot());
         self
     }
 }
@@ -146,9 +146,9 @@ pub async fn connect_with_cancellation(
     cancellation: CancellationToken,
 ) -> Result<Arc<dyn Session>, ConnectError> {
     let rpc_handler = options
-        .handlers
+        .rpc_handlers
         .as_ref()
-        .map(|handlers| handlers.rpc_handler());
+        .map(|snapshot| rpc_router(snapshot.clone()));
     let connector_options = SessionConnectorOptionsV2 {
         connect_timeout: options.connect_timeout,
         close_flush_timeout: options.close_flush_timeout,

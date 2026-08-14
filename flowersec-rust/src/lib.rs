@@ -122,7 +122,7 @@ pub use controlplane::{
 pub use native_runtime_v2::{ConnectorOptions, connect, connect_with_cancellation};
 pub use proxy_server::{ProxyErrorReporter, ProxyServer, ProxyServerError, ProxyServerOptions};
 pub use session_handlers::{
-    AcceptedSession, HandlerRegistrationError, NotificationHandler, RpcHandler,
+    AcceptedSession, HandlerRegistrationError, NotificationHandler, RpcHandler, RpcHandlers,
     SessionHandlerOptions, SessionHandlers, StreamHandler,
 };
 pub use transport_v2::{

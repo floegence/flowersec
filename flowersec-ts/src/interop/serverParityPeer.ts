@@ -10,6 +10,7 @@ import {
   connect,
   Issuer,
   parseArtifact,
+  RPCHandlers,
   SessionError,
   SessionHandlers,
   type ByteStream,
@@ -147,7 +148,8 @@ class PeerInput {
 }
 
 type HandlerState = Readonly<{
-  handlers: SessionHandlers;
+  rpcHandlers: RPCHandlers;
+  sessionHandlers: SessionHandlers;
   notifications: SignalQueue;
   activeStreams: { value: number };
   executed: ExecutedCases;
@@ -166,38 +168,43 @@ class ExecutedCases {
 }
 
 function createHandlers(path: "direct" | "tunnel"): HandlerState {
-  const handlers = new SessionHandlers({ maxConcurrentStreams: 16 });
+  const rpcHandlers = new RPCHandlers();
+  const sessionHandlers = new SessionHandlers({ maxConcurrentStreams: 16 });
   const notifications = new SignalQueue();
   const activeStreams = { value: 0 };
   const executed = new ExecutedCases();
-  handlers.handleRPC(ECHO_RPC, async (payload) => {
-    if (!validValuePayload(payload, "ping"))
-      return { error: { code: 400, message: "invalid echo payload" } };
-    executed.record("rpc");
-    return { payload };
-  });
-  handlers.handleRPC(COMPLETE_RPC, async (payload) => {
-    if (!validValuePayload(payload, "complete"))
-      return { error: { code: 400, message: "invalid completion payload" } };
-    executed.record("rekey", "liveness");
-    notifications.push();
-    return { payload };
-  });
-  handlers.handleRPC(DATAGRAM_READY_RPC, async (payload) => {
-    if (!validValuePayload(payload, "datagram-ready"))
-      return {
-        error: { code: 400, message: "invalid datagram barrier payload" },
-      };
-    notifications.push();
-    return { payload };
-  });
-  handlers.handleNotification(NOTIFY_RPC, (payload) => {
-    if (!validValuePayload(payload, "notify"))
-      throw new Error("invalid notification payload");
-    executed.record("notification");
-    notifications.push();
-  });
-  handlers.handleStream(ECHO_KIND, async (incoming) => {
+  const registerRPC = (handlers: Pick<RPCHandlers, "handleRPC" | "handleNotification">) => {
+    handlers.handleRPC(ECHO_RPC, async (payload) => {
+      if (!validValuePayload(payload, "ping"))
+        return { error: { code: 400, message: "invalid echo payload" } };
+      executed.record("rpc");
+      return { payload };
+    });
+    handlers.handleRPC(COMPLETE_RPC, async (payload) => {
+      if (!validValuePayload(payload, "complete"))
+        return { error: { code: 400, message: "invalid completion payload" } };
+      executed.record("rekey", "liveness");
+      notifications.push();
+      return { payload };
+    });
+    handlers.handleRPC(DATAGRAM_READY_RPC, async (payload) => {
+      if (!validValuePayload(payload, "datagram-ready"))
+        return {
+          error: { code: 400, message: "invalid datagram barrier payload" },
+        };
+      notifications.push();
+      return { payload };
+    });
+    handlers.handleNotification(NOTIFY_RPC, (payload) => {
+      if (!validValuePayload(payload, "notify"))
+        throw new Error("invalid notification payload");
+      executed.record("notification");
+      notifications.push();
+    });
+  };
+  registerRPC(rpcHandlers);
+  registerRPC(sessionHandlers);
+  sessionHandlers.handleStream(ECHO_KIND, async (incoming) => {
     activeStreams.value++;
     try {
       if (incoming.metadata.values.cell !== path)
@@ -211,13 +218,13 @@ function createHandlers(path: "direct" | "tunnel"): HandlerState {
       activeStreams.value--;
     }
   });
-  handlers.handleStream(RESET_KIND, async (incoming) => {
+  sessionHandlers.handleStream(RESET_KIND, async (incoming) => {
     if (decoder.decode(await readAll(incoming.stream)) !== "reset")
       throw new Error("invalid reset stream payload");
     executed.record("stream-reset");
     throw new Error("intentional parity reset");
   });
-  return { handlers, notifications, activeStreams, executed };
+  return { rpcHandlers, sessionHandlers, notifications, activeStreams, executed };
 }
 
 function validValuePayload(payload: JsonValue, expected: string): boolean {
@@ -474,14 +481,14 @@ function pem(label: string, encoded: string): string {
 async function connectArtifact(
   artifactJSON: string,
   relay: Pick<RelayReady, "origin" | "trust_pem">,
-  handlers: SessionHandlers,
+  rpcHandlers: RPCHandlers,
 ): Promise<Session> {
   return await connect(
     createArtifactLease(parseArtifact(artifactJSON), async () => undefined),
     {
       origin: relay.origin,
       tls: { ca: relay.trust_pem },
-      handlers,
+      rpcHandlers,
     },
   );
 }
@@ -498,7 +505,7 @@ async function runServer(tls: TLSFixture, carrier: ParityCarrier): Promise<void>
         ? { decision: "reject" as const, reason: "invalid_credential" }
         : { decision: "allow" as const, artifact };
     },
-    resolveHandlers: () => state.handlers,
+    resolveHandlers: () => state.sessionHandlers,
   });
   try {
     const address = acceptor.addresses()[0];
@@ -557,7 +564,7 @@ async function runClient(input: PeerInput, carrier: ParityCarrier): Promise<void
   const session = await connectArtifact(
     ready.artifact_json,
     ready,
-    state.handlers,
+    state.rpcHandlers,
   );
   state.executed.record("admission");
   await exerciseClient(session, state, "direct", carrier);
@@ -694,7 +701,7 @@ async function runTunnelEndpointB(input: PeerInput, carrier: ParityCarrier): Pro
   if (command.type !== "connect")
     throw new Error("endpoint B did not receive connect command");
   const state = createHandlers("tunnel");
-  const session = await connectArtifact(secondJSON, relay, state.handlers);
+  const session = await connectArtifact(secondJSON, relay, state.rpcHandlers);
   state.executed.record("admission");
   if (process.env.FLOWERSEC_PARITY_CLIENT_PROFILE !== undefined) {
     await externalServer(session, state);
@@ -734,7 +741,7 @@ async function runTunnelEndpointA(input: PeerInput, carrier: ParityCarrier): Pro
   const session = await connectArtifact(
     ready.endpoint_a_artifact_json,
     ready.relay,
-    state.handlers,
+    state.rpcHandlers,
   );
   state.executed.record("admission");
   await exerciseClient(session, state, "tunnel", carrier);

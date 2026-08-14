@@ -65,12 +65,26 @@ export type SessionHandlerOptions = Readonly<{
   maxConcurrentStreams?: number;
 }>;
 
-export class SessionHandlersError extends Error {
+export class HandlerRegistrationError extends Error {
   constructor(
     readonly code: "invalid_handler" | "already_registered" | "frozen",
   ) {
-    super(`Flowersec session handler registration failed (code=${code})`);
-    this.name = "SessionHandlersError";
+    super(`Flowersec handler registration failed (code=${code})`);
+    this.name = "HandlerRegistrationError";
+  }
+}
+
+export class RPCHandlers {
+  constructor() {
+    rpcHandlerStates.set(this, createRPCHandlerState());
+  }
+
+  handleRPC(typeId: number, handler: RPCHandler): void {
+    registerRPC(mutableRPCHandlerState(this), typeId, handler);
+  }
+
+  handleNotification(typeId: number, handler: NotificationHandler): void {
+    registerNotification(mutableRPCHandlerState(this), typeId, handler);
   }
 }
 
@@ -83,92 +97,144 @@ export class SessionHandlers {
       maximum < 1 ||
       maximum > MAX_CONCURRENT_STREAMS
     ) {
-      throw new SessionHandlersError("invalid_handler");
+      throw new HandlerRegistrationError("invalid_handler");
     }
     sessionHandlerStates.set(this, {
       maxConcurrentStreams: maximum,
-      rpc: new Map(),
-      notifications: new Map(),
+      rpc: createRPCHandlerState(),
       streams: new Map(),
       frozen: false,
     });
   }
 
   handleRPC(typeId: number, handler: RPCHandler): void {
-    const state = mutableHandlerState(this);
-    if (
-      !Number.isSafeInteger(typeId) ||
-      typeId < 1 ||
-      typeId > 0xffff_ffff ||
-      typeof handler !== "function"
-    ) {
-      throw new SessionHandlersError("invalid_handler");
-    }
-    if (state.rpc.has(typeId))
-      throw new SessionHandlersError("already_registered");
-    if (state.notifications.has(typeId))
-      throw new SessionHandlersError("already_registered");
-    state.rpc.set(typeId, handler);
+    const state = mutableSessionHandlerState(this);
+    registerRPC(state.rpc, typeId, handler);
   }
 
   handleNotification(typeId: number, handler: NotificationHandler): void {
-    const state = mutableHandlerState(this);
-    if (
-      !Number.isSafeInteger(typeId) ||
-      typeId < 1 ||
-      typeId > 0xffff_ffff ||
-      typeof handler !== "function"
-    ) {
-      throw new SessionHandlersError("invalid_handler");
-    }
-    if (state.rpc.has(typeId) || state.notifications.has(typeId))
-      throw new SessionHandlersError("already_registered");
-    state.notifications.set(typeId, handler);
+    const state = mutableSessionHandlerState(this);
+    registerNotification(state.rpc, typeId, handler);
   }
 
   handleStream(kind: string, handler: StreamHandler): void {
-    const state = mutableHandlerState(this);
+    const state = mutableSessionHandlerState(this);
     if (
       kind.length < 1 ||
       encoder.encode(kind).length > 255 ||
       kind === "flowersec.rpc.v2" ||
       typeof handler !== "function"
     ) {
-      throw new SessionHandlersError("invalid_handler");
+      throw new HandlerRegistrationError("invalid_handler");
     }
     if (state.streams.has(kind))
-      throw new SessionHandlersError("already_registered");
+      throw new HandlerRegistrationError("already_registered");
     state.streams.set(kind, handler);
   }
 }
 
-type SessionHandlerState = {
-  maxConcurrentStreams: number;
-  rpc: Map<number, RPCHandler>;
+type RPCHandlerState = {
+  requests: Map<number, RPCHandler>;
   notifications: Map<number, NotificationHandler>;
-  streams: Map<string, StreamHandler>;
   frozen: boolean;
+  snapshot?: FrozenRPCHandlers;
 };
 
+type SessionHandlerState = {
+  maxConcurrentStreams: number;
+  rpc: RPCHandlerState;
+  streams: Map<string, StreamHandler>;
+  frozen: boolean;
+  snapshot?: FrozenSessionHandlers;
+};
+
+const rpcHandlerStates = new WeakMap<RPCHandlers, RPCHandlerState>();
 const sessionHandlerStates = new WeakMap<
   SessionHandlers,
   SessionHandlerState
 >();
 
-function mutableHandlerState(handlers: SessionHandlers): SessionHandlerState {
-  const state = sessionHandlerStates.get(handlers);
-  if (state === undefined) throw new SessionHandlersError("invalid_handler");
-  if (state.frozen) throw new SessionHandlersError("frozen");
+function createRPCHandlerState(): RPCHandlerState {
+  return { requests: new Map(), notifications: new Map(), frozen: false };
+}
+
+function mutableRPCHandlerState(handlers: RPCHandlers): RPCHandlerState {
+  const state = rpcHandlerStates.get(handlers);
+  if (state === undefined) throw new HandlerRegistrationError("invalid_handler");
+  if (state.frozen) throw new HandlerRegistrationError("frozen");
   return state;
 }
 
-function freezeHandlers(
-  handlers: SessionHandlers,
-  router: RpcRouter,
-): FrozenHandlers {
-  const state = mutableHandlerState(handlers);
+function mutableSessionHandlerState(handlers: SessionHandlers): SessionHandlerState {
+  const state = sessionHandlerStates.get(handlers);
+  if (state === undefined) throw new HandlerRegistrationError("invalid_handler");
+  if (state.frozen) throw new HandlerRegistrationError("frozen");
+  return state;
+}
+
+function registerRPC(state: RPCHandlerState, typeId: number, handler: RPCHandler): void {
+  validateRPCRegistration(typeId, handler);
+  if (state.requests.has(typeId) || state.notifications.has(typeId)) {
+    throw new HandlerRegistrationError("already_registered");
+  }
+  state.requests.set(typeId, handler);
+}
+
+function registerNotification(
+  state: RPCHandlerState,
+  typeId: number,
+  handler: NotificationHandler,
+): void {
+  validateRPCRegistration(typeId, handler);
+  if (state.requests.has(typeId) || state.notifications.has(typeId)) {
+    throw new HandlerRegistrationError("already_registered");
+  }
+  state.notifications.set(typeId, handler);
+}
+
+function validateRPCRegistration(typeId: number, handler: unknown): void {
+  if (
+    !Number.isSafeInteger(typeId)
+    || typeId < 1
+    || typeId > 0xffff_ffff
+    || typeof handler !== "function"
+  ) {
+    throw new HandlerRegistrationError("invalid_handler");
+  }
+}
+
+export type FrozenRPCHandlers = Readonly<{
+  requests: ReadonlyMap<number, RPCHandler>;
+  notifications: ReadonlyMap<number, NotificationHandler>;
+}>;
+
+/** @internal */
+export function freezeRPCHandlers(handlers: RPCHandlers): FrozenRPCHandlers {
+  const state = rpcHandlerStates.get(handlers);
+  if (state === undefined) throw new HandlerRegistrationError("invalid_handler");
+  if (state.snapshot !== undefined) return state.snapshot;
   state.frozen = true;
-  for (const [typeId, handler] of state.rpc) {
+  state.snapshot = Object.freeze({
+    requests: new Map(state.requests),
+    notifications: new Map(state.notifications),
+  });
+  return state.snapshot;
+}
+
+function freezeRPCHandlerState(state: RPCHandlerState): FrozenRPCHandlers {
+  if (state.snapshot !== undefined) return state.snapshot;
+  state.frozen = true;
+  state.snapshot = Object.freeze({
+    requests: new Map(state.requests),
+    notifications: new Map(state.notifications),
+  });
+  return state.snapshot;
+}
+
+/** @internal */
+export function createRPCRouter(snapshot: FrozenRPCHandlers): RpcRouter {
+  const router = new RpcRouter();
+  for (const [typeId, handler] of snapshot.requests) {
     router.register(typeId, async (payload) => {
       const result = await handler(
         payload as JsonValue,
@@ -179,26 +245,27 @@ function freezeHandlers(
       return { payload: result.payload };
     });
   }
-  for (const [typeId, handler] of state.notifications) {
+  for (const [typeId, handler] of snapshot.notifications) {
     router.onNotify(typeId, (payload) => {
       void Promise.resolve(
         handler(payload as JsonValue, Object.freeze({ typeId })),
       ).catch(() => undefined);
     });
   }
-  return Object.freeze({
+  return router;
+}
+
+function freezeSessionHandlers(handlers: SessionHandlers): FrozenSessionHandlers {
+  const state = sessionHandlerStates.get(handlers);
+  if (state === undefined) throw new HandlerRegistrationError("invalid_handler");
+  if (state.snapshot !== undefined) return state.snapshot;
+  state.frozen = true;
+  state.snapshot = Object.freeze({
+    rpc: freezeRPCHandlerState(state.rpc),
     maxConcurrentStreams: state.maxConcurrentStreams,
     streams: new Map(state.streams),
   });
-}
-
-/** @internal */
-export function freezeSessionHandlersForConnector(
-  handlers: SessionHandlers,
-): RpcRouter {
-  const router = new RpcRouter();
-  freezeHandlers(handlers, router);
-  return router;
+  return state.snapshot;
 }
 
 /** @internal */
@@ -206,7 +273,7 @@ export function registerSessionStreamsAtomically(
   handlers: SessionHandlers,
   entries: readonly (readonly [string, StreamHandler])[],
 ): void {
-  const state = mutableHandlerState(handlers);
+  const state = mutableSessionHandlerState(handlers);
   const pending = new Set<string>();
   for (const [kind, handler] of entries) {
     if (
@@ -215,15 +282,16 @@ export function registerSessionStreamsAtomically(
       kind === "flowersec.rpc.v2" ||
       typeof handler !== "function"
     )
-      throw new SessionHandlersError("invalid_handler");
+      throw new HandlerRegistrationError("invalid_handler");
     if (state.streams.has(kind) || pending.has(kind))
-      throw new SessionHandlersError("already_registered");
+      throw new HandlerRegistrationError("already_registered");
     pending.add(kind);
   }
   for (const [kind, handler] of entries) state.streams.set(kind, handler);
 }
 
-type FrozenHandlers = Readonly<{
+type FrozenSessionHandlers = Readonly<{
+  rpc: FrozenRPCHandlers;
   maxConcurrentStreams: number;
   streams: ReadonlyMap<string, StreamHandler>;
 }>;
@@ -321,7 +389,7 @@ export class AcceptedSession {
 
 type AcceptedSessionState = {
   session: Session;
-  handlers: FrozenHandlers;
+  handlers: FrozenSessionHandlers;
   release?: () => Promise<void> | void;
   closePromise?: Promise<void>;
   releasePromise?: Promise<void>;
@@ -339,7 +407,7 @@ function acceptedSessionState(accepted: AcceptedSession): AcceptedSessionState {
 
 function createAcceptedSession(
   session: Session,
-  handlers: FrozenHandlers,
+  handlers: FrozenSessionHandlers,
   release?: () => Promise<void> | void,
 ): AcceptedSession {
   const accepted = new (
@@ -379,7 +447,7 @@ export class Acceptor {
 type AuthorizedLeg = Readonly<{
   received: ReceivedSessionAdmissionV2;
   artifact: ArtifactV2;
-  handlers: FrozenHandlers;
+  handlers: FrozenSessionHandlers;
   router: RpcRouter;
   leaseId?: string;
 }>;
@@ -415,7 +483,6 @@ async function authorizeCarrier(
     ? decision.leaseId
     : undefined;
   try {
-    const router = new RpcRouter();
     const registry =
       state.options.resolveHandlers === undefined
         ? new SessionHandlers()
@@ -425,17 +492,18 @@ async function authorizeCarrier(
             })),
             state.abort.signal,
           );
+    const handlers = freezeSessionHandlers(registry);
     const leg: {
       received: ReceivedSessionAdmissionV2;
       artifact: ArtifactV2;
-      handlers: FrozenHandlers;
+      handlers: FrozenSessionHandlers;
       router: RpcRouter;
       leaseId?: string;
     } = {
       received,
       artifact: unwrapArtifact(decision.artifact),
-      handlers: freezeHandlers(registry, router),
-      router,
+      handlers,
+      router: createRPCRouter(handlers.rpc),
     };
     if (leaseId !== undefined) leg.leaseId = leaseId;
     return leg;
