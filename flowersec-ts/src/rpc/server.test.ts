@@ -251,6 +251,36 @@ describe("RpcServer", () => {
     expect(resp2.payload).toEqual({ ok: true });
   });
 
+  test("sanitizes invalid handler errors before writing a response", async () => {
+    const q = new ByteQueue();
+    const writes: Uint8Array[] = [];
+    const server = new RpcServer(makeTransport(q, async (b) => { writes.push(b); }));
+    const validASCII = "a".repeat(1_024);
+    const validMultibyte = "é".repeat(512);
+    const cases = [
+      { typeId: 1, error: { code: 7, message: validASCII }, expected: { code: 7, message: validASCII } },
+      { typeId: 2, error: { code: 7, message: validMultibyte }, expected: { code: 7, message: validMultibyte } },
+      { typeId: 3, error: { code: 0 }, expected: { code: 500, message: "internal error" } },
+      { typeId: 4, error: { code: 7, message: `${validASCII}a` }, expected: { code: 500, message: "internal error" } },
+      { typeId: 5, error: { code: 7, message: `${validMultibyte}a` }, expected: { code: 500, message: "internal error" } },
+      { typeId: 6, error: { code: 7, message: "\ud800" }, expected: { code: 500, message: "internal error" } },
+      { typeId: 7, error: { code: 7, internal: "secret" }, expected: { code: 500, message: "internal error" } },
+    ] as const;
+    for (const item of cases) {
+      server.register(item.typeId, async () => ({ payload: null, error: item.error as never }));
+      await q.write(await makeFrame({ type_id: item.typeId, request_id: item.typeId, response_to: 0, payload: null }));
+    }
+
+    const serve = server.serve();
+    await waitFor(() => writes.length === cases.length);
+    q.close(new Error("eof"));
+    await expect(serve).rejects.toThrow(/eof/);
+
+    for (const [index, item] of cases.entries()) {
+      expect(decodeEnvelope(writes[index]!).error, `type ${item.typeId}`).toEqual(item.expected);
+    }
+  });
+
   test("ignores response_to frames", async () => {
     const q = new ByteQueue();
     const writes: Uint8Array[] = [];

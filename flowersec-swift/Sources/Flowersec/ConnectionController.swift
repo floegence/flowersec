@@ -127,7 +127,10 @@ public actor ConnectionController {
   /// Returns current state immediately and then every controller-owned transition.
   public func updates() -> AsyncStream<ConnectionSnapshot> {
     let observerID = UUID()
-    let pair = AsyncStream.makeStream(of: ConnectionSnapshot.self)
+    let pair = AsyncStream.makeStream(
+      of: ConnectionSnapshot.self,
+      bufferingPolicy: .bufferingNewest(1)
+    )
     observers[observerID] = pair.continuation
     pair.continuation.yield(snapshot())
     pair.continuation.onTermination = { [weak self] _ in

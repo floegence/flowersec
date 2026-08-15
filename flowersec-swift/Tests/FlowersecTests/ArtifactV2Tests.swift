@@ -97,7 +97,7 @@ final class ArtifactV2Tests: XCTestCase {
     }
   }
 
-  func testArtifactLeaseAllowsRetryAfterDurableCommitFailure() async throws {
+  func testArtifactLeaseBurnsAfterDurableCommitFailure() async throws {
     let raw = try XCTUnwrap(loadVectors().positive.first?.artifactJSON)
     let artifact = try parseArtifact(Data(raw.utf8))
     let recorder = RetryingSpendRecorderV2()
@@ -111,15 +111,38 @@ final class ArtifactV2Tests: XCTestCase {
     } catch {
       XCTAssertEqual(error as? SpendTestErrorV2, .durabilityFailure)
     }
-    try await lease.commitSpend()
-    let attempts = await recorder.attemptCount()
-    XCTAssertEqual(attempts, 2)
     do {
       try await lease.commitSpend()
-      XCTFail("Expected a successfully committed lease to reject reuse")
+      XCTFail("Expected a failed commit attempt to burn the lease")
     } catch {
       XCTAssertEqual(error as? ArtifactLeaseError, .alreadyCommitted)
     }
+    let attempts = await recorder.attemptCount()
+    XCTAssertEqual(attempts, 1)
+  }
+
+  func testArtifactLeaseBurnsAfterSpendCancellation() async throws {
+    let raw = try XCTUnwrap(loadVectors().positive.first?.artifactJSON)
+    let artifact = try parseArtifact(Data(raw.utf8))
+    let recorder = CancelingSpendRecorderV2()
+    let lease = ArtifactLease(artifact: artifact) {
+      try await recorder.commit()
+    }
+
+    do {
+      try await lease.commitSpend()
+      XCTFail("Expected cancellation")
+    } catch is CancellationError {
+      // Expected.
+    }
+    do {
+      try await lease.commitSpend()
+      XCTFail("Expected a canceled commit attempt to burn the lease")
+    } catch {
+      XCTAssertEqual(error as? ArtifactLeaseError, .alreadyCommitted)
+    }
+    let attempts = await recorder.attemptCount()
+    XCTAssertEqual(attempts, 1)
   }
 
   func testArtifactLeaseAuthorizesExactlyOneConcurrentSpend() async throws {
@@ -179,6 +202,15 @@ private actor RetryingSpendRecorderV2 {
   func commit() throws {
     attempts += 1
     if attempts == 1 { throw SpendTestErrorV2.durabilityFailure }
+  }
+  func attemptCount() -> Int { attempts }
+}
+
+private actor CancelingSpendRecorderV2 {
+  private var attempts = 0
+  func commit() throws {
+    attempts += 1
+    throw CancellationError()
   }
   func attemptCount() -> Int { attempts }
 }

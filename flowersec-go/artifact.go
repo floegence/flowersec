@@ -100,18 +100,15 @@ func (lease ArtifactLease) commitSpend(ctx context.Context) error {
 		return errArtifactLeaseConsumed
 	}
 	lease.state.spending = true
+	lease.state.consumed = true
 	lease.state.mu.Unlock()
 
-	succeeded := false
 	defer func() {
 		lease.state.mu.Lock()
 		lease.state.spending = false
-		lease.state.consumed = succeeded
 		lease.state.mu.Unlock()
 	}()
-	err := lease.state.commitSpend(ctx)
-	succeeded = err == nil
-	return err
+	return lease.state.commitSpend(ctx)
 }
 
 // MarshalJSON prevents generic serialization from exposing lease internals.

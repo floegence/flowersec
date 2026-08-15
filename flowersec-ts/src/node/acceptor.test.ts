@@ -115,4 +115,28 @@ describe("RPCHandlers", () => {
       expect(String(error)).not.toContain(secret);
     }
   });
+
+  test("sanitizes invalid accepted-session RPC errors before router dispatch", async () => {
+    const validASCII = "a".repeat(1_024);
+    const validMultibyte = "é".repeat(512);
+    const cases = [
+      { name: "ASCII 1024 bytes", error: { code: 7, message: validASCII }, expected: { code: 7, message: validASCII } },
+      { name: "multibyte UTF-8 1024 bytes", error: { code: 7, message: validMultibyte }, expected: { code: 7, message: validMultibyte } },
+      { name: "zero code", error: { code: 0 }, expected: { code: 500, message: "handler failed" } },
+      { name: "ASCII 1025 bytes", error: { code: 7, message: `${validASCII}a` }, expected: { code: 500, message: "handler failed" } },
+      { name: "multibyte UTF-8 1025 bytes", error: { code: 7, message: `${validMultibyte}a` }, expected: { code: 500, message: "handler failed" } },
+      { name: "lone surrogate", error: { code: 7, message: "\ud800" }, expected: { code: 500, message: "handler failed" } },
+      { name: "extra error field", error: { code: 7, internal: "secret" }, expected: { code: 500, message: "handler failed" } },
+    ] as const;
+
+    for (const item of cases) {
+      const handlers = new RPCHandlers();
+      handlers.handleRPC(1, async () => ({ error: item.error }) as never);
+      const router = createRPCRouter(freezeRPCHandlers(handlers));
+      await expect(router.handler(1)?.(null), item.name).resolves.toEqual({
+        payload: null,
+        error: item.expected,
+      });
+    }
+  });
 });

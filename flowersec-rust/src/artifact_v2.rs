@@ -522,14 +522,13 @@ impl ArtifactLease {
         &self.artifact
     }
 
-    /// Marks the artifact spent only after the durable callback succeeds.
-    /// A failed callback remains retryable; a successful callback cannot repeat.
+    /// Permanently spends the artifact before starting the durable callback.
     pub(crate) async fn commit_spend(&mut self) -> Result<(), ArtifactSpendError> {
         if self.committed {
             return Err(ArtifactSpendError::AlreadyCommitted);
         }
-        (self.commit)().await?;
         self.committed = true;
+        (self.commit)().await?;
         Ok(())
     }
 
@@ -913,7 +912,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lease_commits_exactly_once_and_retries_failure() {
+    async fn lease_burns_on_first_spend_attempt() {
         let raw = include_str!("../../testdata/transport_v2/artifact_vectors.json");
         let value: serde_json::Value = serde_json::from_str(raw).unwrap();
         let artifact =
@@ -943,9 +942,6 @@ mod tests {
             lease.commit_spend().await,
             Err(ArtifactSpendError::CommitFailed)
         ));
-        assert!(!lease.is_committed());
-        assert_eq!(format!("{lease:?}"), expected_debug);
-        assert!(lease.commit_spend().await.is_ok());
         assert!(lease.is_committed());
         assert_eq!(format!("{lease:?}"), expected_debug);
         assert_eq!(
@@ -953,6 +949,36 @@ mod tests {
             Err(ArtifactSpendError::AlreadyCommitted)
         );
         assert_eq!(format!("{lease:?}"), expected_debug);
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn lease_burns_when_spend_future_is_dropped() {
+        let raw = include_str!("../../testdata/transport_v2/artifact_vectors.json");
+        let value: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let artifact =
+            Artifact::parse(value["positive"][0]["artifact_json"].as_str().unwrap()).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let mut lease = ArtifactLease::new(artifact, move || {
+            observed.fetch_add(1, Ordering::SeqCst);
+            std::future::pending::<Result<(), ArtifactSpendError>>()
+        });
+
+        let mut spend = Box::pin(lease.commit_spend());
+        tokio::select! {
+            biased;
+            result = &mut spend => panic!("spend unexpectedly completed: {result:?}"),
+            _ = tokio::task::yield_now() => {}
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        drop(spend);
+
+        assert!(lease.is_committed());
+        assert_eq!(
+            lease.commit_spend().await,
+            Err(ArtifactSpendError::AlreadyCommitted)
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

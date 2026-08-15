@@ -1,6 +1,8 @@
 import Foundation
 
-struct OpaqueSessionV2: Session {
+struct OpaqueSessionV2: Session, CustomStringConvertible, CustomDebugStringConvertible,
+  CustomReflectable
+{
   let rpc: any RPCPeer
 
   private let session: TransportV2Session
@@ -63,9 +65,15 @@ struct OpaqueSessionV2: Session {
       throw redactTransportErrorV2(error)
     }
   }
+
+  var description: String { "Flowersec.Session" }
+  var debugDescription: String { description }
+  var customMirror: Mirror { Mirror(self, unlabeledChildren: [Any]()) }
 }
 
-private struct RedactedByteStreamV2: ByteStream {
+private struct RedactedByteStreamV2: ByteStream, CustomStringConvertible,
+  CustomDebugStringConvertible, CustomReflectable
+{
   let kind: String
 
   private let stream: any ByteStream
@@ -115,9 +123,15 @@ private struct RedactedByteStreamV2: ByteStream {
     }
   }
   func terminalError() async -> SessionError? { await stream.terminalError() }
+
+  var description: String { "Flowersec.ByteStream" }
+  var debugDescription: String { description }
+  var customMirror: Mirror { Mirror(self, unlabeledChildren: [Any]()) }
 }
 
-private struct RedactedRPCPeerV2: RPCPeer {
+private struct RedactedRPCPeerV2: RPCPeer, CustomStringConvertible,
+  CustomDebugStringConvertible, CustomReflectable
+{
   let peer: any RPCPeer
 
   func call<Request: Encodable & Sendable, Response: Decodable & Sendable>(
@@ -154,15 +168,37 @@ private struct RedactedRPCPeerV2: RPCPeer {
     handler: @escaping @Sendable (Result<Payload, RPCNotificationError>) async throws -> Void
   ) async throws -> any RPCNotificationSubscription {
     do {
-      return try await peer.subscribeNotification(
-        typeID,
-        as: payloadType,
-        handler: handler
+      return RedactedRPCNotificationSubscriptionV2(
+        subscription: try await peer.subscribeNotification(
+          typeID,
+          as: payloadType,
+          handler: handler
+        )
       )
     } catch {
       throw redactTransportErrorV2(error)
     }
   }
+
+  var description: String { "Flowersec.RPCPeer" }
+  var debugDescription: String { description }
+  var customMirror: Mirror { Mirror(self, unlabeledChildren: [Any]()) }
+}
+
+private struct RedactedRPCNotificationSubscriptionV2: RPCNotificationSubscription,
+  CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable
+{
+  private let subscription: any RPCNotificationSubscription
+
+  init(subscription: any RPCNotificationSubscription) {
+    self.subscription = subscription
+  }
+
+  func cancel() async { await subscription.cancel() }
+
+  var description: String { "Flowersec.RPCNotificationSubscription" }
+  var debugDescription: String { description }
+  var customMirror: Mirror { Mirror(self, unlabeledChildren: [Any]()) }
 }
 
 func redactTransportErrorV2(_ error: any Error) -> SessionError {

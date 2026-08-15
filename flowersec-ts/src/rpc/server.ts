@@ -1,6 +1,6 @@
 import type { RpcEnvelope, RpcError } from "./wire.js";
 import { DEFAULT_MAX_JSON_FRAME_BYTES, readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
-import { assertRpcEnvelope } from "./validate.js";
+import { assertRpcEnvelope, assertRpcError } from "./validate.js";
 import { SDK_DEFAULTS } from "../defaults.js";
 
 // RpcHandler processes a request and returns a payload or error.
@@ -228,12 +228,17 @@ export class RpcServer {
   }
 
   private async writeResponse(request: RpcEnvelope, out: Awaited<ReturnType<RpcHandler>>): Promise<void> {
+    let error: RpcError | undefined;
+    if (out.error != null) {
+      try { error = assertRpcError(out.error); }
+      catch { error = { code: 500, message: "internal error" }; }
+    }
     const resp: RpcEnvelope = {
       type_id: request.type_id,
       request_id: 0,
       response_to: request.request_id,
       payload: out.payload,
-      ...(out.error != null ? { error: out.error } : {}),
+      ...(error != null ? { error } : {}),
     };
     await this.writeEnvelope(resp);
   }

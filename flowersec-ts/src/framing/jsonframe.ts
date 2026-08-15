@@ -4,7 +4,7 @@ import { SDK_DEFAULTS } from "../defaults.js";
 export const DEFAULT_MAX_JSON_FRAME_BYTES = SDK_DEFAULTS.rpc.maxJsonFrameBytes;
 
 const te = new TextEncoder();
-const td = new TextDecoder();
+const td = new TextDecoder("utf-8", { fatal: true });
 
 // JsonFramingError marks malformed or oversized frames.
 export class JsonFramingError extends Error {}
@@ -40,5 +40,11 @@ export async function readJsonFrame(readExactly: ReadExactlyFn | ReadExactlyLike
   const n = readU32be(hdr, 0);
   if (maxBytes > 0 && n > maxBytes) throw new JsonFramingError("frame too large");
   const payload = await read(n);
-  return JSON.parse(td.decode(payload));
+  let text: string;
+  try {
+    text = td.decode(payload);
+  } catch {
+    throw new JsonFramingError("invalid UTF-8");
+  }
+  return JSON.parse(text);
 }

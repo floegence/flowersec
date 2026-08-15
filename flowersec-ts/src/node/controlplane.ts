@@ -1,4 +1,4 @@
-import { randomBytes as nodeRandomBytes } from "node:crypto";
+import { randomBytes as nodeRandomBytes, timingSafeEqual } from "node:crypto";
 
 import {
   buildFSB2RequestV2,
@@ -506,7 +506,10 @@ function validTCPAddress(value: string): boolean {
   return port >= 1 && port <= 65_535;
 }
 function validObservedText(value: string): boolean { return value.length > 0 && value.length <= 512 && !/[\u0000-\u001f\u007f]/u.test(value); }
-function bytesEqual(a: Uint8Array, b: Uint8Array): boolean { return a.length === b.length && a.every((value, index) => value === b[index]); }
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 function strictObject(bytes: Uint8Array): Record<string, any> {
   let value: unknown;
   try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch { throw invalidInput(); }

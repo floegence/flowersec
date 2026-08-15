@@ -24,6 +24,73 @@ extension TransportV2CarrierStream {
 }
 
 final class TransportV2SessionTests: XCTestCase {
+  func testPublicWrappersKeepSessionStreamRPCAndSubscriptionOpaque() async throws {
+    let secret = "opaque-wrapper-secret-marker"
+    let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
+    let configs = try makeConfigs()
+    async let server = TransportV2Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV2Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+    let publicSession: any Session = OpaqueSessionV2(clientSession)
+    let opening = Task { try await publicSession.openStream(kind: secret) }
+    _ = try await serverSession.acceptStream()
+    let stream = try await opening.value
+    let reverseOpening = Task { try await serverSession.openStream(kind: "reverse-opaque") }
+    let incoming = try await publicSession.acceptStream()
+    _ = try await reverseOpening.value
+    let subscription = try await publicSession.rpc.subscribeNotification(
+      8_101,
+      as: String.self
+    ) { _ in
+      _ = secret
+    }
+
+    for (value, expected) in [
+      (publicSession as Any, "Flowersec.Session"),
+      (stream as Any, "Flowersec.ByteStream"),
+      (publicSession.rpc as Any, "Flowersec.RPCPeer"),
+      (subscription as Any, "Flowersec.RPCNotificationSubscription"),
+      (incoming.stream as Any, "Flowersec.ByteStream"),
+    ] {
+      XCTAssertTrue(Mirror(reflecting: value).children.isEmpty)
+      XCTAssertEqual(String(describing: value), expected)
+      XCTAssertEqual(String(reflecting: value), expected)
+      XCTAssertFalse(String(describing: value).contains(secret))
+      XCTAssertFalse(String(reflecting: value).contains(secret))
+    }
+
+    await subscription.cancel()
+    await subscription.cancel()
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
+  func testPublicByteStreamRejectsNonpositiveReadBeforeReadingPayload() async throws {
+    let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
+    let configs = try makeConfigs()
+    async let server = TransportV2Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV2Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+    let publicSession: any Session = OpaqueSessionV2(clientSession)
+    let opening = Task { try await publicSession.openStream(kind: "read-boundary") }
+    let incoming = try await serverSession.acceptStream()
+    let stream = try await opening.value
+
+    for invalid in [0, -1] {
+      do {
+        _ = try await stream.read(maxBytes: invalid)
+        XCTFail("read(maxBytes: \(invalid)) unexpectedly succeeded")
+      } catch let error as SessionError {
+        XCTAssertEqual(error, .operationFailed)
+      }
+    }
+    _ = try await incoming.stream.write(Data([0x42]))
+    let payload = try await stream.read(maxBytes: 1)
+    XCTAssertEqual(payload, Data([0x42]))
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
   func testSharedStreamKindVectorsMatchPortableSessionValidation() async throws {
     let url = packageRoot().appendingPathComponent(
       "testdata/transport_v2/session_handler_vectors.json")

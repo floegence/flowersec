@@ -5,8 +5,10 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,6 +124,139 @@ func TestRPC_ClientCallFailsWhenTransportCloses(t *testing.T) {
 		t.Fatal("timeout waiting for Call to return")
 	}
 }
+
+func TestRPCClientEnforcesApplicationErrorInvariantAtReceiveBoundary(t *testing.T) {
+	validASCII := strings.Repeat("a", 1024)
+	validMultibyte := strings.Repeat("é", 512)
+	tests := []struct {
+		name      string
+		payload   func(uint64) []byte
+		wantError bool
+	}{
+		{name: "ASCII 1024 bytes", payload: rpcErrorResponsePayload(t, map[string]any{"code": 7, "message": validASCII})},
+		{name: "multibyte UTF-8 1024 bytes", payload: rpcErrorResponsePayload(t, map[string]any{"code": 7, "message": validMultibyte})},
+		{name: "zero code", payload: rpcErrorResponsePayload(t, map[string]any{"code": 0}), wantError: true},
+		{name: "ASCII 1025 bytes", payload: rpcErrorResponsePayload(t, map[string]any{"code": 7, "message": validASCII + "a"}), wantError: true},
+		{name: "multibyte UTF-8 1025 bytes", payload: rpcErrorResponsePayload(t, map[string]any{"code": 7, "message": validMultibyte + "a"}), wantError: true},
+		{name: "extra error field", payload: rpcErrorResponsePayload(t, map[string]any{"code": 7, "internal": "secret"}), wantError: true},
+		{name: "malformed UTF-8", payload: func(requestID uint64) []byte {
+			prefix := []byte(fmt.Sprintf(`{"type_id":1,"request_id":0,"response_to":%d,"payload":null,"error":{"code":7,"message":"`, requestID))
+			return append(append(prefix, 0xff), []byte(`"}}`)...)
+		}, wantError: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clientStream, peerStream := net.Pipe()
+			defer peerStream.Close()
+			client := rpc.NewClient(clientStream)
+			defer client.Close()
+
+			peerDone := make(chan error, 1)
+			go func() {
+				requestBytes, err := jsonframe.ReadJSONFrame(peerStream, 1<<20)
+				if err != nil {
+					peerDone <- err
+					return
+				}
+				var request rpcv1.RpcEnvelope
+				if err := json.Unmarshal(requestBytes, &request); err != nil {
+					peerDone <- err
+					return
+				}
+				peerDone <- writeRawFrame(peerStream, test.payload(request.RequestId))
+			}()
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_, applicationError, err := client.Call(ctx, 1, json.RawMessage(`{}`))
+			if peerErr := <-peerDone; peerErr != nil {
+				t.Fatal(peerErr)
+			}
+			if test.wantError {
+				if err == nil || applicationError != nil {
+					t.Fatalf("Call() = application error %#v, transport error %v; want protocol failure", applicationError, err)
+				}
+				if errors.Is(err, context.DeadlineExceeded) {
+					t.Fatal("invalid application error was ignored until caller timeout")
+				}
+				return
+			}
+			if err != nil || applicationError == nil || applicationError.Code != 7 {
+				t.Fatalf("Call() = application error %#v, transport error %v", applicationError, err)
+			}
+		})
+	}
+}
+
+func rpcErrorResponsePayload(t *testing.T, rpcError any) func(uint64) []byte {
+	t.Helper()
+	return func(requestID uint64) []byte {
+		payload, err := json.Marshal(map[string]any{
+			"type_id": 1, "request_id": 0, "response_to": requestID,
+			"payload": nil, "error": rpcError,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return payload
+	}
+}
+
+func TestRPCServerSanitizesInvalidHandlerErrorsBeforeWrite(t *testing.T) {
+	validASCII := strings.Repeat("a", 1024)
+	validMultibyte := strings.Repeat("é", 512)
+	invalidUTF8 := string([]byte{0xff})
+	tests := []struct {
+		name        string
+		handlerErr  *rpcv1.RpcError
+		wantCode    uint32
+		wantMessage string
+	}{
+		{name: "ASCII 1024 bytes", handlerErr: &rpcv1.RpcError{Code: 7, Message: &validASCII}, wantCode: 7, wantMessage: validASCII},
+		{name: "multibyte UTF-8 1024 bytes", handlerErr: &rpcv1.RpcError{Code: 7, Message: &validMultibyte}, wantCode: 7, wantMessage: validMultibyte},
+		{name: "zero code", handlerErr: &rpcv1.RpcError{}, wantCode: 500, wantMessage: "internal error"},
+		{name: "ASCII 1025 bytes", handlerErr: &rpcv1.RpcError{Code: 7, Message: strPointer(validASCII + "a")}, wantCode: 500, wantMessage: "internal error"},
+		{name: "multibyte UTF-8 1025 bytes", handlerErr: &rpcv1.RpcError{Code: 7, Message: strPointer(validMultibyte + "a")}, wantCode: 500, wantMessage: "internal error"},
+		{name: "malformed UTF-8", handlerErr: &rpcv1.RpcError{Code: 7, Message: &invalidUTF8}, wantCode: 500, wantMessage: "internal error"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			serverStream, peerStream := net.Pipe()
+			defer peerStream.Close()
+			router := rpc.NewRouter()
+			router.Register(1, func(context.Context, json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
+				return json.RawMessage(`null`), test.handlerErr
+			})
+			server := rpc.NewServer(serverStream, router)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			serveDone := make(chan error, 1)
+			go func() { serveDone <- server.Serve(ctx) }()
+
+			if err := jsonframe.WriteJSONFrame(peerStream, rpcv1.RpcEnvelope{TypeId: 1, RequestId: 1, Payload: json.RawMessage(`{}`)}); err != nil {
+				t.Fatal(err)
+			}
+			responseBytes, err := jsonframe.ReadJSONFrame(peerStream, 1<<20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response rpcv1.RpcEnvelope
+			if err := json.Unmarshal(responseBytes, &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Error == nil || response.Error.Code != test.wantCode || response.Error.Message == nil || *response.Error.Message != test.wantMessage {
+				t.Fatalf("wire error = %#v, want code=%d message=%q", response.Error, test.wantCode, test.wantMessage)
+			}
+			cancel()
+			_ = peerStream.Close()
+			<-serveDone
+		})
+	}
+}
+
+func strPointer(value string) *string { return &value }
 
 func TestRPC_CallCancelDoesNotPanicOnLateResponse(t *testing.T) {
 	a, b := net.Pipe()

@@ -295,6 +295,24 @@ struct GatedCarrierStream {
 }
 
 #[derive(Debug)]
+struct ShortWriteCarrierSession {
+    inner: Arc<dyn CarrierSessionV2>,
+    enabled: Arc<AtomicBool>,
+    writes: Arc<AtomicUsize>,
+    fragment_written: Arc<Notify>,
+    release_write: Arc<Semaphore>,
+}
+
+#[derive(Debug)]
+struct ShortWriteCarrierStream {
+    inner: Arc<dyn CarrierStreamV2>,
+    enabled: Arc<AtomicBool>,
+    writes: Arc<AtomicUsize>,
+    fragment_written: Arc<Notify>,
+    release_write: Arc<Semaphore>,
+}
+
+#[derive(Debug)]
 struct FailingNthOpenCarrierSession {
     inner: Arc<dyn CarrierSessionV2>,
     opens: AtomicU64,
@@ -966,6 +984,80 @@ impl CarrierStreamV2 for GatedCarrierStream {
     }
 }
 
+#[async_trait::async_trait]
+impl CarrierSessionV2 for ShortWriteCarrierSession {
+    fn kind(&self) -> CarrierKind {
+        self.inner.kind()
+    }
+
+    fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+        self.inner.inbound_bidirectional_stream_capacity()
+    }
+
+    async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+        Ok(Arc::new(ShortWriteCarrierStream {
+            inner: self.inner.open_stream().await?,
+            enabled: self.enabled.clone(),
+            writes: self.writes.clone(),
+            fragment_written: self.fragment_written.clone(),
+            release_write: self.release_write.clone(),
+        }))
+    }
+
+    async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+        Ok(Arc::new(ShortWriteCarrierStream {
+            inner: self.inner.accept_stream().await?,
+            enabled: self.enabled.clone(),
+            writes: self.writes.clone(),
+            fragment_written: self.fragment_written.clone(),
+            release_write: self.release_write.clone(),
+        }))
+    }
+
+    async fn close(&self) -> io::Result<()> {
+        self.inner.close().await
+    }
+
+    fn abort(&self) {
+        self.inner.abort();
+    }
+}
+
+#[async_trait::async_trait]
+impl CarrierStreamV2 for ShortWriteCarrierStream {
+    async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(payload).await
+    }
+
+    async fn write(&self, payload: &[u8]) -> io::Result<usize> {
+        if !self.enabled.load(Ordering::Acquire) {
+            return self.inner.write(payload).await;
+        }
+        let written = self.inner.write(&payload[..payload.len().min(3)]).await?;
+        if self.writes.fetch_add(1, Ordering::AcqRel) == 0 {
+            self.fragment_written.notify_one();
+            self.release_write.acquire().await.unwrap().forget();
+        }
+        Ok(written)
+    }
+
+    async fn close_write(&self) -> io::Result<()> {
+        self.inner.close_write().await
+    }
+
+    async fn stop_sending(&self) -> io::Result<()> {
+        self.inner.stop_sending().await
+    }
+
+    async fn reset(&self) -> io::Result<()> {
+        self.inner.reset().await
+    }
+
+    async fn close(&self) -> io::Result<()> {
+        self.inner.close().await
+    }
+}
+
 #[derive(Debug)]
 struct EchoRpc;
 
@@ -981,6 +1073,322 @@ impl RpcHandlerV2 for EchoRpc {
     async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> Result<(), RpcError> {
         Ok(())
     }
+}
+
+#[derive(Debug)]
+struct GatedFirstRpc {
+    calls: AtomicUsize,
+    first_started: Arc<Notify>,
+    release_first: Arc<Semaphore>,
+}
+
+#[derive(Debug)]
+struct CountingNotifyRpc {
+    notifications: Arc<AtomicUsize>,
+    delivered: Arc<Notify>,
+}
+
+#[async_trait::async_trait]
+impl RpcHandlerV2 for CountingNotifyRpc {
+    async fn call(
+        &self,
+        _type_id: u32,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcError> {
+        Ok(request)
+    }
+
+    async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> Result<(), RpcError> {
+        self.notifications.fetch_add(1, Ordering::AcqRel);
+        self.delivered.notify_one();
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl RpcHandlerV2 for GatedFirstRpc {
+    async fn call(
+        &self,
+        _type_id: u32,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcError> {
+        if self.calls.fetch_add(1, Ordering::AcqRel) == 0 {
+            self.first_started.notify_one();
+            self.release_first.acquire().await.unwrap().forget();
+        }
+        Ok(request)
+    }
+
+    async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> Result<(), RpcError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn canceled_rpc_late_response_does_not_poison_next_call() {
+    let (client_carrier, server_carrier) = memory_carrier_pair_v2();
+    let first_started = Arc::new(Notify::new());
+    let release_first = Arc::new(Semaphore::new(0));
+    let handler = Arc::new(GatedFirstRpc {
+        calls: AtomicUsize::new(0),
+        first_started: first_started.clone(),
+        release_first: release_first.clone(),
+    });
+    let client_config = regression_config(SessionRole::Client, "rpc-caller-drop", 4, None);
+    let server_config = regression_config(
+        SessionRole::Server,
+        "rpc-caller-drop",
+        4,
+        Some(handler.clone()),
+    );
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+
+    let first = {
+        let client = client.clone();
+        tokio::spawn(async move { client.rpc().call(1, serde_json::json!({"call": 1})).await })
+    };
+    first_started.notified().await;
+    first.abort();
+    let second = {
+        let client = client.clone();
+        tokio::spawn(async move { client.rpc().call(1, serde_json::json!({"call": 2})).await })
+    };
+    tokio::task::yield_now().await;
+    assert_eq!(
+        handler.calls.load(Ordering::Acquire),
+        1,
+        "call-2 crossed serial ownership before response-1 drained"
+    );
+    release_first.add_permits(1);
+
+    let response = tokio::time::timeout(Duration::from_secs(1), second)
+        .await
+        .expect("call-2 remained blocked")
+        .expect("call-2 task")
+        .expect("late response poisoned call-2");
+    assert_eq!(response, serde_json::json!({"call": 2}));
+    assert_eq!(handler.calls.load(Ordering::Acquire), 2);
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn canceled_rpc_completes_a_partially_written_frame() {
+    let (client_inner, server_carrier) = memory_carrier_pair_v2();
+    let enabled = Arc::new(AtomicBool::new(false));
+    let writes = Arc::new(AtomicUsize::new(0));
+    let fragment_written = Arc::new(Notify::new());
+    let release_write = Arc::new(Semaphore::new(0));
+    let client_carrier: Arc<dyn CarrierSessionV2> = Arc::new(ShortWriteCarrierSession {
+        inner: client_inner,
+        enabled: enabled.clone(),
+        writes: writes.clone(),
+        fragment_written: fragment_written.clone(),
+        release_write: release_write.clone(),
+    });
+    let client_config = regression_config(SessionRole::Client, "rpc-partial-drop", 4, None);
+    let server_config = regression_config(
+        SessionRole::Server,
+        "rpc-partial-drop",
+        4,
+        Some(Arc::new(EchoRpc)),
+    );
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+    client
+        .rpc()
+        .call(1, serde_json::json!({"warmup": true}))
+        .await
+        .expect("warm up reserved RPC stream");
+
+    enabled.store(true, Ordering::Release);
+    let canceled = {
+        let client = client.clone();
+        tokio::spawn(async move {
+            client
+                .rpc()
+                .call(2, serde_json::json!({"payload": "x".repeat(256)}))
+                .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(1), fragment_written.notified())
+        .await
+        .expect("RPC frame never wrote its first short fragment");
+    canceled.abort();
+    release_write.add_permits(1);
+
+    let response = tokio::time::timeout(
+        Duration::from_secs(1),
+        client
+            .rpc()
+            .call(3, serde_json::json!({"after": "partial-drop"})),
+    )
+    .await
+    .expect("next RPC remained blocked")
+    .expect("partial frame poisoned the RPC stream");
+    assert_eq!(response["request"]["after"], "partial-drop");
+    assert!(writes.load(Ordering::Acquire) > 1);
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn canceled_rpc_notify_completes_a_partially_written_frame() {
+    let (client_inner, server_carrier) = memory_carrier_pair_v2();
+    let enabled = Arc::new(AtomicBool::new(false));
+    let writes = Arc::new(AtomicUsize::new(0));
+    let fragment_written = Arc::new(Notify::new());
+    let release_write = Arc::new(Semaphore::new(0));
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let delivered = Arc::new(Notify::new());
+    let client_carrier: Arc<dyn CarrierSessionV2> = Arc::new(ShortWriteCarrierSession {
+        inner: client_inner,
+        enabled: enabled.clone(),
+        writes: writes.clone(),
+        fragment_written: fragment_written.clone(),
+        release_write: release_write.clone(),
+    });
+    let client_config = regression_config(SessionRole::Client, "rpc-notify-partial-drop", 4, None);
+    let server_config = regression_config(
+        SessionRole::Server,
+        "rpc-notify-partial-drop",
+        4,
+        Some(Arc::new(CountingNotifyRpc {
+            notifications: notifications.clone(),
+            delivered: delivered.clone(),
+        })),
+    );
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+    client
+        .rpc()
+        .call(1, serde_json::json!({"warmup": true}))
+        .await
+        .expect("warm up reserved RPC stream");
+
+    enabled.store(true, Ordering::Release);
+    let canceled = {
+        let client = client.clone();
+        tokio::spawn(async move {
+            client
+                .rpc()
+                .notify(2, serde_json::json!({"payload": "x".repeat(256)}))
+                .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(1), fragment_written.notified())
+        .await
+        .expect("RPC notify frame never wrote its first short fragment");
+    canceled.abort();
+    release_write.add_permits(1);
+    tokio::time::timeout(Duration::from_secs(1), delivered.notified())
+        .await
+        .expect("dropped notify was not completed by the owned operation");
+    assert_eq!(notifications.load(Ordering::Acquire), 1);
+
+    let response = client
+        .rpc()
+        .call(3, serde_json::json!({"after": "notify-drop"}))
+        .await
+        .expect("partial notify poisoned the RPC stream");
+    assert_eq!(response["after"], "notify-drop");
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn rpc_dropped_before_serial_ownership_sends_no_request() {
+    let (client_carrier, server_carrier) = memory_carrier_pair_v2();
+    let first_started = Arc::new(Notify::new());
+    let release_first = Arc::new(Semaphore::new(0));
+    let handler = Arc::new(GatedFirstRpc {
+        calls: AtomicUsize::new(0),
+        first_started: first_started.clone(),
+        release_first: release_first.clone(),
+    });
+    let client_config = regression_config(SessionRole::Client, "rpc-pre-serial-drop", 4, None);
+    let server_config = regression_config(
+        SessionRole::Server,
+        "rpc-pre-serial-drop",
+        4,
+        Some(handler.clone()),
+    );
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+    let first = {
+        let client = client.clone();
+        tokio::spawn(async move { client.rpc().call(1, serde_json::json!({"call": 1})).await })
+    };
+    first_started.notified().await;
+    let waiting = {
+        let client = client.clone();
+        tokio::spawn(async move { client.rpc().call(1, serde_json::json!({"call": 2})).await })
+    };
+    tokio::task::yield_now().await;
+    waiting.abort();
+    release_first.add_permits(1);
+    first.await.expect("first task").expect("first response");
+    tokio::task::yield_now().await;
+    assert_eq!(handler.calls.load(Ordering::Acquire), 1);
+
+    let response = client
+        .rpc()
+        .call(1, serde_json::json!({"call": 3}))
+        .await
+        .expect("third response");
+    assert_eq!(response["call"], 3);
+    assert_eq!(handler.calls.load(Ordering::Acquire), 2);
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn session_close_terminates_and_waits_for_an_owned_rpc_operation() {
+    let (client_carrier, server_carrier) = memory_carrier_pair_v2();
+    let first_started = Arc::new(Notify::new());
+    let release_first = Arc::new(Semaphore::new(0));
+    let handler = Arc::new(GatedFirstRpc {
+        calls: AtomicUsize::new(0),
+        first_started: first_started.clone(),
+        release_first: release_first.clone(),
+    });
+    let client_config = regression_config(SessionRole::Client, "rpc-close-owned", 4, None);
+    let server_config = regression_config(SessionRole::Server, "rpc-close-owned", 4, Some(handler));
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+    let calling = {
+        let client = client.clone();
+        tokio::spawn(async move { client.rpc().call(1, serde_json::json!({"call": 1})).await })
+    };
+    first_started.notified().await;
+    tokio::time::timeout(Duration::from_secs(1), client.close())
+        .await
+        .expect("Session close did not wait for and terminate the active RPC operation")
+        .expect("close client");
+    assert!(calling.await.expect("RPC task").is_err());
+    release_first.add_permits(1);
+    server.close().await.expect("close server");
 }
 
 #[tokio::test]
@@ -1212,6 +1620,81 @@ async fn remote_rpc_application_error_preserves_bounded_semantics() {
             );
         }
         RpcCallError::Session(error) => panic!("application error collapsed into {error:?}"),
+    }
+
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[derive(Debug)]
+struct WireBoundaryRpcFailure;
+
+#[async_trait::async_trait]
+impl RpcHandlerV2 for WireBoundaryRpcFailure {
+    async fn call(
+        &self,
+        type_id: u32,
+        _request: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcError> {
+        let error = match type_id {
+            1 => RpcError {
+                code: 0,
+                message: None,
+            },
+            2 => RpcError {
+                code: 7,
+                message: Some("a".repeat(1_024)),
+            },
+            3 => RpcError {
+                code: 7,
+                message: Some("a".repeat(1_025)),
+            },
+            4 => RpcError {
+                code: 7,
+                message: Some("é".repeat(512)),
+            },
+            5 => RpcError {
+                code: 7,
+                message: Some(format!("{}a", "é".repeat(512))),
+            },
+            _ => unreachable!("unexpected RPC invariant case"),
+        };
+        Err(error)
+    }
+
+    async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> Result<(), RpcError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn rpc_receive_path_projects_invalid_application_errors_to_session_failure() {
+    let (client_carrier, server_carrier) = memory_carrier_pair_v2();
+    let client_config = regression_config(SessionRole::Client, "rpc-wire-error", 4, None);
+    let server_config = regression_config(
+        SessionRole::Server,
+        "rpc-wire-error",
+        4,
+        Some(Arc::new(WireBoundaryRpcFailure)),
+    );
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client");
+    let server = server.expect("server");
+
+    for type_id in [2, 4] {
+        assert!(matches!(
+            client.rpc().call(type_id, serde_json::Value::Null).await,
+            Err(RpcCallError::Application(error)) if error.code() == 7
+        ));
+    }
+    for type_id in [1, 3, 5] {
+        assert_eq!(
+            client.rpc().call(type_id, serde_json::Value::Null).await,
+            Err(RpcCallError::Session(SessionError::OperationFailed))
+        );
     }
 
     client.close().await.expect("close client");

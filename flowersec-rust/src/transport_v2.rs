@@ -1150,6 +1150,17 @@ mod tests {
             RpcError::from_wire(500, Some("x".repeat(RpcError::MAX_MESSAGE_BYTES + 1))),
             Err(SessionError::OperationFailed)
         );
+        assert!(RpcError::new(7, None).is_ok());
+        assert!(RpcError::new(7, Some("a".repeat(1_024))).is_ok());
+        assert!(RpcError::new(7, Some("é".repeat(512))).is_ok());
+        assert_eq!(
+            RpcError::new(7, Some("a".repeat(1_025))),
+            Err(SessionError::OperationFailed)
+        );
+        assert_eq!(
+            RpcError::new(7, Some(format!("{}a", "é".repeat(512)))),
+            Err(SessionError::OperationFailed)
+        );
     }
 
     #[test]

@@ -70,6 +70,13 @@ function decodeEnvelope(frame: Uint8Array): RpcEnvelope {
   return JSON.parse(new TextDecoder().decode(payload)) as RpcEnvelope;
 }
 
+function framePayload(payload: Uint8Array): Uint8Array {
+  const frame = new Uint8Array(4 + payload.length);
+  new DataView(frame.buffer).setUint32(0, payload.length);
+  frame.set(payload, 4);
+  return frame;
+}
+
 describe("RpcClient extra behavior", () => {
   test("abort while waiting cancels the call", async () => {
     const q = new ByteQueue();
@@ -175,6 +182,59 @@ describe("RpcClient extra behavior", () => {
     await expect(client.call(2, { ok: false })).resolves.toMatchObject({ error: { code: 500 } });
     await expect(client.call(3, { ok: false })).resolves.toMatchObject({ error: { code: 404 } });
 
+    client.close();
+    q.close(new Error("eof"));
+  });
+
+  test("enforces application error invariants at the receive boundary", async () => {
+    const validASCII = "a".repeat(1_024);
+    const validMultibyte = "é".repeat(512);
+    const cases = [
+      { name: "ASCII 1024 bytes", error: { code: 7, message: validASCII }, valid: true },
+      { name: "multibyte UTF-8 1024 bytes", error: { code: 7, message: validMultibyte }, valid: true },
+      { name: "zero code", error: { code: 0 }, valid: false },
+      { name: "ASCII 1025 bytes", error: { code: 7, message: `${validASCII}a` }, valid: false },
+      { name: "multibyte UTF-8 1025 bytes", error: { code: 7, message: `${validMultibyte}a` }, valid: false },
+      { name: "lone surrogate", error: { code: 7, message: "\ud800" }, valid: false },
+      { name: "extra error field", error: { code: 7, internal: "secret" }, valid: false },
+    ] as const;
+
+    for (const item of cases) {
+      const q = new ByteQueue();
+      const client = new RpcClient(q.readExactly.bind(q), async (frame) => {
+        const request = decodeEnvelope(frame);
+        await writeJsonFrame(q.write.bind(q), {
+          type_id: request.type_id,
+          request_id: 0,
+          response_to: request.request_id,
+          payload: null,
+          error: item.error as never,
+        });
+      });
+      const call = client.call(1, null);
+      if (item.valid) {
+        await expect(call, item.name).resolves.toEqual({ payload: null, error: item.error });
+      } else {
+        await expect(call, item.name).rejects.toThrow();
+      }
+      client.close();
+      q.close(new Error("eof"));
+    }
+
+    const q = new ByteQueue();
+    const client = new RpcClient(q.readExactly.bind(q), async (frame) => {
+      const request = decodeEnvelope(frame);
+      const prefix = new TextEncoder().encode(
+        `{"type_id":1,"request_id":0,"response_to":${request.request_id},"payload":null,"error":{"code":7,"message":"`,
+      );
+      const suffix = new TextEncoder().encode('"}}');
+      const payload = new Uint8Array(prefix.length + 1 + suffix.length);
+      payload.set(prefix);
+      payload[prefix.length] = 0xff;
+      payload.set(suffix, prefix.length + 1);
+      await q.write(framePayload(payload));
+    });
+    await expect(client.call(1, null), "malformed UTF-8").rejects.toThrow();
     client.close();
     q.close(new Error("eof"));
   });

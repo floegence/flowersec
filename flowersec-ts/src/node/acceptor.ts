@@ -1,5 +1,6 @@
 import { RpcRouter } from "../rpc/server.js";
 import type { RpcError as WireRpcError } from "../rpc/wire.js";
+import { assertRpcError } from "../rpc/validate.js";
 import {
   acceptReceivedSessionV2,
   receiveSessionAdmissionV2,
@@ -434,13 +435,31 @@ export class Acceptor {
 
   async close(): Promise<void> {
     const state = acceptorState(this);
-    state.abort.abort();
-    state.accepted.close();
-    await Promise.all(
-      state.listeners.map(async (listener) => await listener.close()),
-    );
-    await boundedCleanup(state.tasks, state.cleanupTimeoutMs);
-    state.tasks.clear();
+    if (state.lifecycle.completion === undefined) {
+      state.lifecycle.completion = closeAcceptor(state);
+    }
+    await withCleanupTimeout(state.lifecycle.completion, state.cleanupTimeoutMs);
+  }
+}
+
+const MAX_CONCURRENT_ADMISSIONS = 64;
+const MAX_PENDING_ACCEPTED_SESSIONS = 64;
+
+async function closeAcceptor(state: AcceptorState): Promise<void> {
+  state.abort.abort();
+  const queued = state.accepted.close();
+  const cleanup = await Promise.allSettled([
+    ...state.listeners.map(async (listener) => await listener.close()),
+    ...queued.map(async (accepted) => await accepted.close()),
+  ]);
+  while (state.tasks.size > 0) {
+    await Promise.allSettled([...state.tasks]);
+  }
+  if (
+    cleanup.some((result) => result.status === "rejected") ||
+    state.cleanupFailures.length > 0
+  ) {
+    throw new SessionError("operation_failed");
   }
 }
 
@@ -464,10 +483,7 @@ async function authorizeCarrier(
   const received = await receiveSessionAdmissionV2(carrier, state.abort.signal);
   const decoded = received.decoded;
   const request = runtimeAuthorizationRequestFromDecoded(decoded);
-  const decision = await abortableCallback(
-    state.options.authorize(request, { signal: state.abort.signal }),
-    state.abort.signal,
-  );
+  const decision = await state.options.authorize(request, { signal: state.abort.signal });
   if (decision.decision !== "allow") {
     return await rejectSessionAdmissionV2(
       received,
@@ -486,12 +502,7 @@ async function authorizeCarrier(
     const registry =
       state.options.resolveHandlers === undefined
         ? new SessionHandlers()
-        : await abortableCallback(
-            Promise.resolve(state.options.resolveHandlers(request, {
-              signal: state.abort.signal,
-            })),
-            state.abort.signal,
-          );
+        : await state.options.resolveHandlers(request, { signal: state.abort.signal });
     const handlers = freezeSessionHandlers(registry);
     const leg: {
       received: ReceivedSessionAdmissionV2;
@@ -533,6 +544,7 @@ async function processCarrier(
 ): Promise<void> {
   const leg = await authorizeCarrier(state, carrier);
   if (leg === undefined) return;
+  let releaseOwnedByAcceptedSession = false;
   try {
     if (
       leg.received.decoded.request.pathKind !== "direct" ||
@@ -541,13 +553,24 @@ async function processCarrier(
       await leg.received.carrier.close().catch(() => undefined);
       throw new SessionError("operation_failed");
     }
-    state.accepted.push(await establishDirect(
+    const accepted = await establishDirect(
       leg,
       state.abort.signal,
       leg.leaseId === undefined ? undefined : () => releaseLease(state, leg.leaseId),
-    ));
+    );
+    releaseOwnedByAcceptedSession = true;
+    if (state.accepted.push(accepted) === "rejected") {
+      try {
+        await accepted.close();
+      } catch (error) {
+        state.cleanupFailures.push(error);
+        throw error;
+      }
+    }
   } catch (error) {
-    await releaseLease(state, leg.leaseId).catch(() => undefined);
+    if (!releaseOwnedByAcceptedSession) {
+      await releaseLease(state, leg.leaseId).catch(() => undefined);
+    }
     throw error;
   }
 }
@@ -555,12 +578,20 @@ async function processCarrier(
 async function runAcceptLoop(state: AcceptorState): Promise<void> {
   while (!state.abort.signal.aborted) {
     try {
+      while (state.admissions.size >= MAX_CONCURRENT_ADMISSIONS) {
+        await Promise.race(state.admissions);
+        if (state.abort.signal.aborted) return;
+      }
       const carrier = await state.accept({ signal: state.abort.signal });
       const task = processCarrier(state, carrier)
         .catch(async () => {
           await carrier.close().catch(() => undefined);
         })
-        .finally(() => state.tasks.delete(task));
+        .finally(() => {
+          state.admissions.delete(task);
+          state.tasks.delete(task);
+        });
+      state.admissions.add(task);
       state.tasks.add(task);
     } catch (error) {
       if (!state.abort.signal.aborted)
@@ -582,16 +613,18 @@ class AcceptedQueue {
   >();
   private failure: Error | undefined;
 
-  push(value: AcceptedSession): void {
-    if (this.failure !== undefined) {
-      void value.close();
-      return;
-    }
+  push(value: AcceptedSession): "delivered" | "queued" | "rejected" {
+    if (this.failure !== undefined) return "rejected";
     const waiter = this.waiters.values().next().value;
-    if (waiter === undefined) this.values.push(value);
+    if (waiter === undefined) {
+      if (this.values.length >= MAX_PENDING_ACCEPTED_SESSIONS) return "rejected";
+      this.values.push(value);
+      return "queued";
+    }
     else {
       this.waiters.delete(waiter);
       waiter.resolve(value);
+      return "delivered";
     }
   }
 
@@ -628,8 +661,9 @@ class AcceptedQueue {
     this.waiters.clear();
   }
 
-  close(): void {
+  close(): readonly AcceptedSession[] {
     this.fail(new SessionError("closed"));
+    return this.values.splice(0);
   }
 }
 
@@ -643,7 +677,10 @@ type AcceptorState = Readonly<{
   accepted: AcceptedQueue;
   abort: AbortController;
   tasks: Set<Promise<void>>;
+  admissions: Set<Promise<void>>;
+  cleanupFailures: unknown[];
   cleanupTimeoutMs: number;
+  lifecycle: { completion?: Promise<void> };
   start(): void;
 }>;
 const acceptorStates = new WeakMap<Acceptor, AcceptorState>();
@@ -721,6 +758,7 @@ export async function createAcceptor(
   const accepted = new AcceptedQueue();
   const abort = new AbortController();
   const tasks = new Set<Promise<void>>();
+  const admissions = new Set<Promise<void>>();
   let started = false;
   const state: AcceptorState = {
     listeners,
@@ -729,7 +767,10 @@ export async function createAcceptor(
     accepted,
     abort,
     tasks,
+    admissions,
+    cleanupFailures: [],
     cleanupTimeoutMs,
+    lifecycle: {},
     start() {
       if (started) return;
       started = true;
@@ -741,59 +782,26 @@ export async function createAcceptor(
   return Object.freeze(acceptor);
 }
 
-async function boundedCleanup(tasks: ReadonlySet<Promise<void>>, timeoutMs: number): Promise<void> {
-  await Promise.race([
-    Promise.allSettled([...tasks]).then(() => undefined),
-    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
-  ]);
-}
-
-async function abortableCallback<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) throw signal.reason instanceof Error ? signal.reason : new SessionError("closed");
-  return await new Promise<T>((resolve, reject) => {
-    let settled = false;
-    const cleanup = () => signal.removeEventListener("abort", abort);
-    const abort = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(signal.reason instanceof Error ? signal.reason : new SessionError("closed"));
-    };
-    signal.addEventListener("abort", abort, { once: true });
-    void promise.then(
-      (value) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        resolve(value);
-      },
-      (error) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        reject(error);
-      },
-    );
-  });
+async function withCleanupTimeout(completion: Promise<void>, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      completion,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new SessionError("timeout")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 function validRPCError(
   error: Readonly<{ code: number; message?: string }>,
 ): WireRpcError {
-  if (
-    !Number.isSafeInteger(error.code) ||
-    error.code < 1 ||
-    error.code > 0xffff_ffff
-  ) {
+  try {
+    return assertRpcError(error);
+  } catch {
     return { code: 500, message: "handler failed" };
   }
-  if (
-    error.message !== undefined &&
-    encoder.encode(error.message).length > 1024
-  ) {
-    return { code: 500, message: "handler failed" };
-  }
-  return error.message === undefined
-    ? { code: error.code }
-    : { code: error.code, message: error.message };
 }

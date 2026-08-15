@@ -684,9 +684,9 @@ async fn establish_session_v2_inner(
         terminal: StdMutex::new(None),
         rpc: SessionRpcPeerV2 {
             session: OnceLock::new(),
-            serial: Mutex::new(()),
-            stream: Mutex::new(None),
-            read_buffer: Mutex::new(VecDeque::new()),
+            serial: Arc::new(Mutex::new(())),
+            stream: Arc::new(Mutex::new(None)),
+            read_buffer: Arc::new(Mutex::new(VecDeque::new())),
             next_request_id: AtomicU64::new(1),
             notifications: Arc::new(NotificationRegistryV2::default()),
         },
@@ -751,9 +751,9 @@ impl std::fmt::Debug for SelfSession {
 
 struct SessionRpcPeerV2 {
     session: OnceLock<Weak<SelfSession>>,
-    serial: Mutex<()>,
-    stream: Mutex<Option<Box<dyn ByteStream>>>,
-    read_buffer: Mutex<VecDeque<u8>>,
+    serial: Arc<Mutex<()>>,
+    stream: Arc<Mutex<Option<Box<dyn ByteStream>>>>,
+    read_buffer: Arc<Mutex<VecDeque<u8>>>,
     next_request_id: AtomicU64,
     notifications: Arc<NotificationRegistryV2>,
 }
@@ -2277,6 +2277,7 @@ async fn close_session_v2(session: &EncryptedSessionV2) -> io::Result<()> {
                 "Flowersec v2 carrier close timeout",
             )),
         };
+        let _rpc_operation = session.rpc.serial.lock().await;
         session.finish_closed();
         flush?;
         carrier?;
@@ -3820,7 +3821,7 @@ async fn rpc_call_v2(
     type_id: u32,
     request: serde_json::Value,
 ) -> Result<serde_json::Value, RpcCallError> {
-    let _serial = peer.serial.lock().await;
+    let serial = peer.serial.clone().lock_owned().await;
     let request_id = peer
         .next_request_id
         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
@@ -3839,7 +3840,31 @@ async fn rpc_call_v2(
         .get()
         .and_then(Weak::upgrade)
         .ok_or(RpcCallError::Session(SessionError::Closed))?;
-    let mut stream = peer.stream.lock().await;
+    if session.is_closed() {
+        return Err(RpcCallError::Session(SessionError::Closed));
+    }
+    let stream = peer.stream.clone();
+    let read_buffer = peer.read_buffer.clone();
+    let (sender, receiver) = oneshot::channel();
+    tokio::spawn(async move {
+        let result =
+            run_owned_rpc_call_v2(session, serial, stream, read_buffer, envelope, request_id).await;
+        let _ = sender.send(result);
+    });
+    receiver
+        .await
+        .map_err(|_| RpcCallError::Session(SessionError::Closed))?
+}
+
+async fn run_owned_rpc_call_v2(
+    session: Arc<SelfSession>,
+    _serial: OwnedMutexGuard<()>,
+    stream: Arc<Mutex<Option<Box<dyn ByteStream>>>>,
+    read_buffer: Arc<Mutex<VecDeque<u8>>>,
+    envelope: RpcEnvelopeWireV2,
+    request_id: u64,
+) -> Result<serde_json::Value, RpcCallError> {
+    let mut stream = stream.lock().await;
     if stream.is_none() {
         *stream = Some(
             open_reserved_rpc_stream_v2(&session)
@@ -3850,10 +3875,19 @@ async fn rpc_call_v2(
     let stream = stream
         .as_deref()
         .ok_or(RpcCallError::Session(SessionError::Closed))?;
-    write_rpc_frame_v2(stream, &envelope)
+    exchange_rpc_call_v2(stream, &read_buffer, &envelope, request_id).await
+}
+
+async fn exchange_rpc_call_v2(
+    stream: &dyn ByteStream,
+    read_buffer: &Mutex<VecDeque<u8>>,
+    envelope: &RpcEnvelopeWireV2,
+    request_id: u64,
+) -> Result<serde_json::Value, RpcCallError> {
+    write_rpc_frame_v2(stream, envelope)
         .await
         .map_err(|error| RpcCallError::Session(SessionError::from_io(&error)))?;
-    let response = read_rpc_frame_v2(stream, &peer.read_buffer)
+    let response = read_rpc_frame_v2(stream, read_buffer)
         .await
         .map_err(|error| RpcCallError::Session(SessionError::from_io(&error)))?;
     if response.response_to != request_id {
@@ -3872,13 +3906,32 @@ async fn rpc_notify_v2(
     type_id: u32,
     request: serde_json::Value,
 ) -> io::Result<()> {
-    let _serial = peer.serial.lock().await;
+    let serial = peer.serial.clone().lock_owned().await;
     let session = peer
         .session
         .get()
         .and_then(Weak::upgrade)
         .ok_or_else(closed)?;
-    let mut stream = peer.stream.lock().await;
+    if session.is_closed() {
+        return Err(closed());
+    }
+    let stream = peer.stream.clone();
+    let (sender, receiver) = oneshot::channel();
+    tokio::spawn(async move {
+        let result = run_owned_rpc_notify_v2(session, serial, stream, type_id, request).await;
+        let _ = sender.send(result);
+    });
+    receiver.await.map_err(|_| closed())?
+}
+
+async fn run_owned_rpc_notify_v2(
+    session: Arc<SelfSession>,
+    _serial: OwnedMutexGuard<()>,
+    stream: Arc<Mutex<Option<Box<dyn ByteStream>>>>,
+    type_id: u32,
+    request: serde_json::Value,
+) -> io::Result<()> {
+    let mut stream = stream.lock().await;
     if stream.is_none() {
         *stream = Some(open_reserved_rpc_stream_v2(&session).await?);
     }
@@ -4326,6 +4379,121 @@ async fn write_all_v2(stream: &Arc<dyn CarrierStreamV2>, mut payload: &[u8]) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug)]
+    struct RpcReadTestStream {
+        chunks: StdMutex<VecDeque<Bytes>>,
+    }
+
+    impl RpcReadTestStream {
+        fn new(payload: Vec<u8>) -> Self {
+            let mut frame = Vec::with_capacity(4 + payload.len());
+            frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+            frame.extend_from_slice(&payload);
+            Self {
+                chunks: StdMutex::new(VecDeque::from([Bytes::from(frame)])),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ByteStream for RpcReadTestStream {
+        fn internal_test_id(&self) -> u64 {
+            0
+        }
+
+        fn kind(&self) -> &str {
+            RESERVED_RPC_KIND
+        }
+
+        fn terminal_error(&self) -> Option<SessionError> {
+            None
+        }
+
+        async fn read(&self) -> Result<Option<Bytes>, SessionError> {
+            Ok(self.chunks.lock().unwrap().pop_front())
+        }
+
+        async fn write(&self, payload: Bytes) -> Result<usize, SessionError> {
+            Ok(payload.len())
+        }
+
+        async fn close_write(&self) -> Result<(), SessionError> {
+            Ok(())
+        }
+
+        async fn reset(&self) -> Result<(), SessionError> {
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<(), SessionError> {
+            Ok(())
+        }
+    }
+
+    async fn exchange_rpc_error_for_test(payload: Vec<u8>) -> Result<RpcError, SessionError> {
+        let stream = RpcReadTestStream::new(payload);
+        let request = RpcEnvelopeWireV2 {
+            type_id: 1,
+            request_id: 1,
+            response_to: 0,
+            payload: serde_json::Value::Null,
+            error: None,
+        };
+        match exchange_rpc_call_v2(&stream, &Mutex::new(VecDeque::new()), &request, 1).await {
+            Err(RpcCallError::Application(error)) => Ok(error),
+            Err(RpcCallError::Session(error)) => Err(error),
+            Ok(_) => Err(SessionError::OperationFailed),
+        }
+    }
+
+    fn rpc_error_payload(error: serde_json::Value) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "type_id": 1,
+            "request_id": 0,
+            "response_to": 1,
+            "payload": null,
+            "error": error,
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn rpc_receive_boundary_enforces_application_error_invariant() {
+        let ascii = "a".repeat(1_024);
+        let multibyte = "é".repeat(512);
+        for payload in [
+            rpc_error_payload(serde_json::json!({"code": 7})),
+            rpc_error_payload(serde_json::json!({"code": 7, "message": ascii})),
+            rpc_error_payload(serde_json::json!({"code": 7, "message": multibyte})),
+        ] {
+            assert_eq!(
+                exchange_rpc_error_for_test(payload).await.unwrap().code(),
+                7
+            );
+        }
+        for payload in [
+            rpc_error_payload(serde_json::json!({"code": 0})),
+            rpc_error_payload(serde_json::json!({"code": 7, "message": "a".repeat(1_025)})),
+            rpc_error_payload(
+                serde_json::json!({"code": 7, "message": format!("{}a", "é".repeat(512))}),
+            ),
+            rpc_error_payload(serde_json::json!({"code": 7, "internal": "secret"})),
+        ] {
+            assert_eq!(
+                exchange_rpc_error_for_test(payload).await,
+                Err(SessionError::OperationFailed)
+            );
+        }
+
+        let mut malformed = br#"{"type_id":1,"request_id":0,"response_to":1,"payload":null,"error":{"code":7,"message":""#.to_vec();
+        malformed.push(0xff);
+        malformed.extend_from_slice(br#""}}"#);
+        assert_eq!(
+            exchange_rpc_error_for_test(malformed).await,
+            Err(SessionError::OperationFailed)
+        );
+    }
 
     #[test]
     fn fixed_two_bit_ledger_advances_only_across_contiguous_terminal_slots() {

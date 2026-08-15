@@ -9,6 +9,41 @@ import { startBrowserModuleSite } from "./browser-module-site.js";
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = path.resolve(packageRoot, "..");
 
+test("Portable browsers run strict JSON frame UTF-8 validation", async ({ page }) => {
+  const site = await startBrowserModuleSite();
+  try {
+    await page.goto(site.origin, { waitUntil: "networkidle" });
+    const rejected = await page.evaluate(async () => {
+      const framing = await import("/dist/framing/jsonframe.js");
+      const payload = new Uint8Array([
+        ...new TextEncoder().encode('{"message":"'),
+        0xff,
+        ...new TextEncoder().encode('"}'),
+      ]);
+      const header = new Uint8Array(4);
+      new DataView(header.buffer).setUint32(0, payload.length);
+      const bytes = new Uint8Array(header.length + payload.length);
+      bytes.set(header);
+      bytes.set(payload, header.length);
+      let offset = 0;
+      const readExactly = async (length: number): Promise<Uint8Array> => {
+        const result = bytes.slice(offset, offset + length);
+        offset += length;
+        return result;
+      };
+      try {
+        await framing.readJsonFrame(readExactly, 1_024);
+        return false;
+      } catch (error) {
+        return error instanceof framing.JsonFramingError;
+      }
+    });
+    expect(rejected).toBe(true);
+  } finally {
+    await site.close();
+  }
+});
+
 test("Portable browsers run the self-contained WebSocket client contract", async ({ page, browserName }) => {
   test.setTimeout(60_000);
   const site = await startBrowserModuleSite();

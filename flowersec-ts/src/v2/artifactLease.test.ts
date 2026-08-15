@@ -49,7 +49,7 @@ describe("ArtifactV2 acquisition and durable spend leases", () => {
     expect(calls).toBe(1);
   });
 
-  test("allows durable spend retry after the callback fails", async () => {
+  test("burns the lease after the durable spend callback fails", async () => {
     let calls = 0;
     const lease = createArtifactLeaseV2(artifact, async () => {
       calls++;
@@ -57,8 +57,21 @@ describe("ArtifactV2 acquisition and durable spend leases", () => {
     });
 
     await expect(commitArtifactLeaseSpendV2(lease)).rejects.toThrow("durability failed");
-    await expect(commitArtifactLeaseSpendV2(lease)).resolves.toBeUndefined();
-    expect(calls).toBe(2);
+    await expect(commitArtifactLeaseSpendV2(lease)).rejects.toMatchObject({ code: "already_consumed" });
+    expect(calls).toBe(1);
   });
 
+  test("burns the lease after spend cancellation", async () => {
+    let calls = 0;
+    const controller = new AbortController();
+    controller.abort();
+    const lease = createArtifactLeaseV2(artifact, async (signal) => {
+      calls++;
+      if (signal?.aborted === true) throw new DOMException("aborted", "AbortError");
+    });
+
+    await expect(commitArtifactLeaseSpendV2(lease, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    await expect(commitArtifactLeaseSpendV2(lease)).rejects.toMatchObject({ code: "already_consumed" });
+    expect(calls).toBe(1);
+  });
 });

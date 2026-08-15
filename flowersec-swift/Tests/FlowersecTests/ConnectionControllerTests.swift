@@ -4,6 +4,25 @@ import XCTest
 @testable import Flowersec
 
 final class ConnectionControllerTests: XCTestCase {
+  func testUpdatesBufferOnlyTheLatestSnapshotAndFinishOnClose() async throws {
+    let controller = try ConnectionController(
+      source: AlwaysFailingArtifactSource(disposition: .terminal)
+    )
+    let updates = await controller.updates()
+    await controller.start()
+    let reachedFailed = await waitForState(.failed, controller: controller)
+    XCTAssertTrue(reachedFailed)
+
+    var iterator = updates.makeAsyncIterator()
+    let failed = await iterator.next()
+    XCTAssertEqual(failed?.state, .failed)
+    await controller.close()
+    let closed = await iterator.next()
+    XCTAssertEqual(closed?.state, .closed)
+    let finished = await iterator.next()
+    XCTAssertNil(finished)
+  }
+
   func testSharedControllerDefaultsBackoffAndInvariantsMatchTheImplementation() throws {
     let vectors = try loadConnectionControllerVectors()
     XCTAssertEqual(vectors.version, 2)

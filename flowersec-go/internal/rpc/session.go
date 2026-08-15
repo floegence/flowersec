@@ -9,6 +9,7 @@ import (
 	"io"
 	"strconv"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/framing/jsonframe"
@@ -18,6 +19,10 @@ import (
 const maxInvalidJSONFrames = 3
 
 const maxPortableRequestID uint64 = 1<<53 - 1
+
+const maxRPCErrorMessageBytes = 1024
+
+var errInvalidRPCApplicationError = errors.New("rpc invalid application error")
 
 const (
 	defaultMaxConcurrentRequests  = defaults.RPCMaxConcurrentRequests
@@ -203,6 +208,10 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 		env, err := decodeEnvelope(b)
 		if err != nil {
+			if errors.Is(err, errInvalidRPCApplicationError) {
+				_ = s.r.Close()
+				return errors.New("rpc invalid application error")
+			}
 			invalidJSONFrames++
 			if invalidJSONFrames >= maxInvalidJSONFrames {
 				_ = s.r.Close()
@@ -246,6 +255,7 @@ func (s *Server) handleRequest(ctx context.Context, env rpcv1.RpcEnvelope) {
 }
 
 func (s *Server) writeResponse(resp rpcv1.RpcEnvelope) {
+	resp.Error = sanitizeWireRPCError(resp.Error)
 	s.writeMu.Lock()
 	_ = jsonframe.WriteJSONFrame(s.r, resp)
 	s.writeMu.Unlock()
@@ -406,6 +416,11 @@ func (c *Client) readLoop() {
 		}
 		env, err := decodeEnvelope(b)
 		if err != nil {
+			if errors.Is(err, errInvalidRPCApplicationError) {
+				_ = c.r.Close()
+				c.closeAll(errors.New("rpc invalid application error"))
+				return
+			}
 			invalidJSONFrames++
 			if invalidJSONFrames >= maxInvalidJSONFrames {
 				_ = c.r.Close()
@@ -448,9 +463,13 @@ func (c *Client) readLoop() {
 }
 
 func decodeEnvelope(data []byte) (rpcv1.RpcEnvelope, error) {
+	if !utf8.Valid(data) {
+		return rpcv1.RpcEnvelope{}, fmt.Errorf("%w: invalid UTF-8", errInvalidRPCApplicationError)
+	}
 	var ids struct {
 		RequestID  json.RawMessage `json:"request_id"`
 		ResponseTo json.RawMessage `json:"response_to"`
+		Error      json.RawMessage `json:"error"`
 	}
 	if err := json.Unmarshal(data, &ids); err != nil {
 		return rpcv1.RpcEnvelope{}, err
@@ -463,6 +482,14 @@ func decodeEnvelope(data []byte) (rpcv1.RpcEnvelope, error) {
 	if err != nil {
 		return rpcv1.RpcEnvelope{}, err
 	}
+	if rawError := bytes.TrimSpace(ids.Error); len(rawError) > 0 && !bytes.Equal(rawError, []byte("null")) {
+		var rpcError rpcv1.RpcError
+		decoder := json.NewDecoder(bytes.NewReader(rawError))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&rpcError); err != nil || !validWireRPCError(&rpcError) {
+			return rpcv1.RpcEnvelope{}, fmt.Errorf("%w: invalid error payload", errInvalidRPCApplicationError)
+		}
+	}
 	var envelope rpcv1.RpcEnvelope
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return rpcv1.RpcEnvelope{}, err
@@ -470,6 +497,19 @@ func decodeEnvelope(data []byte) (rpcv1.RpcEnvelope, error) {
 	envelope.RequestId = requestID
 	envelope.ResponseTo = responseTo
 	return envelope, nil
+}
+
+func validWireRPCError(rpcError *rpcv1.RpcError) bool {
+	return rpcError != nil && rpcError.Code != 0 &&
+		(rpcError.Message == nil || len(*rpcError.Message) <= maxRPCErrorMessageBytes && utf8.ValidString(*rpcError.Message))
+}
+
+func sanitizeWireRPCError(rpcError *rpcv1.RpcError) *rpcv1.RpcError {
+	if rpcError == nil || validWireRPCError(rpcError) {
+		return rpcError
+	}
+	message := "internal error"
+	return &rpcv1.RpcError{Code: 500, Message: &message}
 }
 
 func parsePortableRequestID(name string, raw json.RawMessage) (uint64, error) {

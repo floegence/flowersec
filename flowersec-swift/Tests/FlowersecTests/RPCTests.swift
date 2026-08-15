@@ -16,6 +16,162 @@ final class FlowersecRPCTests: XCTestCase {
     XCTAssertEqual(decoded, envelope)
   }
 
+  func testEnvelopeEnforcesPortableInboundRPCErrorInvariant() throws {
+    func envelope(error: [String: Any]) throws -> Data {
+      try JSONSerialization.data(
+        withJSONObject: [
+          "type_id": 1,
+          "request_id": 0,
+          "response_to": 1,
+          "payload": [:],
+          "error": error,
+        ],
+        options: [.sortedKeys]
+      )
+    }
+
+    XCTAssertNoThrow(
+      try RPCEnvelope(
+        data: envelope(error: [
+          "code": 1,
+          "message": String(repeating: "a", count: 1_024),
+        ])))
+    XCTAssertNoThrow(
+      try RPCEnvelope(
+        data: envelope(error: [
+          "code": 1,
+          "message": String(repeating: "é", count: 512),
+        ])))
+    for (name, error) in [
+      ("zero-code", ["code": 0]),
+      (
+        "ascii-message-1025",
+        [
+          "code": 1,
+          "message": String(repeating: "a", count: 1_025),
+        ]
+      ),
+      (
+        "multibyte-message-1026",
+        [
+          "code": 1,
+          "message": String(repeating: "é", count: 513),
+        ]
+      ),
+      ("extra-error-field", ["code": 1, "internal": "secret"]),
+    ] as [(String, [String: Any])] {
+      XCTAssertThrowsError(try RPCEnvelope(data: envelope(error: error)), name)
+    }
+  }
+
+  func testClientEnforcesRPCErrorInvariantAtReceiveBoundary() async throws {
+    let validASCII = String(repeating: "a", count: 1_024)
+    let validMultibyte = String(repeating: "é", count: 512)
+
+    func responseData(requestID: UInt64, error: [String: Any]) throws -> Data {
+      try JSONSerialization.data(
+        withJSONObject: [
+          "type_id": 1,
+          "request_id": 0,
+          "response_to": NSNumber(value: requestID),
+          "payload": NSNull(),
+          "error": error,
+        ],
+        options: [.sortedKeys]
+      )
+    }
+
+    for (name, error) in [
+      ("ASCII 1024 bytes", ["code": 7, "message": validASCII]),
+      ("multibyte UTF-8 1024 bytes", ["code": 7, "message": validMultibyte]),
+    ] as [(String, [String: Any])] {
+      let stream = InMemoryRPCStream()
+      let client = RPCClient(stream: stream)
+      await client.start()
+      let call = Task {
+        let _: RPCReply = try await client.call(1, RPCRequest(value: name), timeout: .seconds(1))
+      }
+      let request = try await stream.nextWrittenEnvelope()
+      try await stream.pushRawFrame(responseData(requestID: request.requestID, error: error))
+      do {
+        try await call.value
+        XCTFail("Expected application error for \(name)")
+      } catch let applicationError as FlowersecRPCError {
+        XCTAssertEqual(applicationError.code, 7, name)
+        XCTAssertEqual(applicationError.message, error["message"] as? String, name)
+      }
+      await client.close()
+    }
+
+    let invalidCases =
+      [
+        ("zero code", ["code": 0]),
+        ("ASCII 1025 bytes", ["code": 7, "message": validASCII + "a"]),
+        ("multibyte UTF-8 1025 bytes", ["code": 7, "message": validMultibyte + "a"]),
+        ("extra error field", ["code": 7, "internal": "secret"]),
+      ] as [(String, [String: Any])]
+    for (name, error) in invalidCases {
+      let stream = InMemoryRPCStream()
+      let client = RPCClient(stream: stream)
+      await client.start()
+      let call = Task {
+        let _: RPCReply = try await client.call(1, RPCRequest(value: name), timeout: .seconds(1))
+      }
+      let request = try await stream.nextWrittenEnvelope()
+      try await stream.pushRawFrame(responseData(requestID: request.requestID, error: error))
+      do {
+        try await call.value
+        XCTFail("Expected protocol failure for \(name)")
+      } catch let failure as FlowersecError {
+        XCTAssertEqual(failure.stage, .rpc, name)
+        XCTAssertEqual(failure.code, .rpcFailed, name)
+      } catch {
+        XCTFail("Unexpected error for \(name): \(error)")
+      }
+      await client.close()
+    }
+
+    let stream = InMemoryRPCStream()
+    let client = RPCClient(stream: stream)
+    await client.start()
+    let malformedCall = Task {
+      let _: RPCReply = try await client.call(
+        1, RPCRequest(value: "malformed UTF-8"), timeout: .seconds(1)
+      )
+    }
+    let request = try await stream.nextWrittenEnvelope()
+    var malformed = Data(
+      "{\"type_id\":1,\"request_id\":0,\"response_to\":\(request.requestID),\"payload\":null,\"error\":{\"code\":7,\"message\":\""
+        .utf8
+    )
+    malformed.append(0xff)
+    malformed.append(Data("\"}}".utf8))
+    try await stream.pushRawFrame(malformed)
+    do {
+      try await malformedCall.value
+      XCTFail("Expected malformed UTF-8 protocol failure")
+    } catch let failure as FlowersecError {
+      XCTAssertEqual(failure.stage, .rpc)
+      XCTAssertEqual(failure.code, .rpcFailed)
+    } catch {
+      XCTFail("Unexpected malformed UTF-8 error: \(error)")
+    }
+    await client.close()
+  }
+
+  func testPublicRPCErrorFormattingAndReflectionHideApplicationMessage() {
+    let secret = "rpc-error-secret-marker"
+    let error = RPCError(code: 73, message: secret)
+    XCTAssertEqual(String(describing: error), "Flowersec.RPCError(code: 73)")
+    XCTAssertEqual(String(reflecting: error), "Flowersec.RPCError(code: 73)")
+    XCTAssertFalse(String(describing: error).contains(secret))
+    XCTAssertFalse(String(reflecting: error).contains(secret))
+    let children = Array(Mirror(reflecting: error).children)
+    XCTAssertEqual(children.count, 1)
+    XCTAssertEqual(children.first?.label, "code")
+    XCTAssertEqual(children.first?.value as? UInt32, 73)
+  }
+
   func testServerSendsTypedNotification() async throws {
     let stream = InMemoryByteStream()
     let server = try RPCServer(stream: stream, router: RPCRouter())
@@ -35,6 +191,58 @@ final class FlowersecRPCTests: XCTestCase {
       XCTFail("Expected a closed server error")
     } catch let error as FlowersecError {
       XCTAssertEqual(error.code, .notConnected)
+    }
+  }
+
+  func testServerSanitizesInvalidHandlerErrorsBeforeWritingResponse() async throws {
+    let validASCII = String(repeating: "a", count: 1_024)
+    let validMultibyte = String(repeating: "é", count: 512)
+    let cases: [(String, FlowersecRPCError, UInt32, String)] = [
+      ("ASCII 1024 bytes", FlowersecRPCError(code: 7, message: validASCII), 7, validASCII),
+      (
+        "multibyte UTF-8 1024 bytes", FlowersecRPCError(code: 7, message: validMultibyte), 7,
+        validMultibyte
+      ),
+      ("zero code", FlowersecRPCError(code: 0, message: "invalid"), 500, "internal error"),
+      (
+        "ASCII 1025 bytes", FlowersecRPCError(code: 7, message: validASCII + "a"), 500,
+        "internal error"
+      ),
+      (
+        "multibyte UTF-8 1025 bytes", FlowersecRPCError(code: 7, message: validMultibyte + "a"),
+        500, "internal error"
+      ),
+    ]
+
+    for (name, handlerError, expectedCode, expectedMessage) in cases {
+      let stream = InMemoryByteStream()
+      let router = RPCRouter()
+      await router.register(1) { (_: Data) async throws -> Data in
+        throw handlerError
+      }
+      let server = try RPCServer(stream: stream, router: router)
+      let serve = Task { try await server.serve() }
+      try await stream.pushJSONFrame(
+        RPCEnvelope(
+          typeID: 1,
+          requestID: 1,
+          responseTo: 0,
+          payload: Data("null".utf8),
+          error: nil
+        ).encoded()
+      )
+      let responseData = try await stream.nextWrittenJSONFrame()
+      let response = try XCTUnwrap(
+        JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+        name
+      )
+      let wireError = try XCTUnwrap(response["error"] as? [String: Any], name)
+      XCTAssertEqual((wireError["code"] as? NSNumber)?.uint32Value, expectedCode, name)
+      XCTAssertEqual(wireError["message"] as? String, expectedMessage, name)
+      XCTAssertEqual(Set(wireError.keys), ["code", "message"], name)
+      serve.cancel()
+      await server.close()
+      _ = try? await serve.value
     }
   }
 

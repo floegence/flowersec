@@ -1,7 +1,10 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, test } from "vitest";
 import {
   buildFSB2RequestV2,
   decodeArtifactV2JSON,
+  decodeFSB2RequestV2,
   encodeFSB2RequestV2,
 } from "../v2/artifact.js";
 import { base64urlEncode } from "../utils/base64url.js";
@@ -87,7 +90,55 @@ describe("Node control-plane public contract", () => {
       expected_peer_endpoint_instance_id: "endpoint-b",
       allow_replacement: true,
     });
-    expect(JSON.stringify(response)).not.toMatch(/session|psk|suite|secret/iu);
+    expect(Object.keys(response).sort()).toEqual([
+      "allow_replacement",
+      "credential_id",
+      "decision",
+      "expected_peer_endpoint_instance_id",
+      "expires_at",
+      "lease_id",
+    ]);
+    expect(Object.keys(response)).not.toEqual(expect.arrayContaining([
+      expect.stringMatching(/session|psk|suite|secret/iu),
+    ]));
+    const secretMarkers = [artifact.session.e2ee_psk_b64u, artifact.path.token];
+    for (const marker of secretMarkers) {
+      expect(Object.values(response)).not.toContain(marker);
+    }
+  });
+
+  test("compares bound admission requests with the Node constant-time primitive", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const issued = new Issuer().issueDirect({
+      session: { channelId: "constant-time", expiresAtUnixSeconds: now + 60 },
+      endpoints: createEndpointSet("wss://edge.example/flowersec/v2/direct"),
+      rendezvousGroupId: "constant-time-group",
+      listenerAudience: "constant-time-audience",
+      upstreamAddress: "127.0.0.1:9000",
+    });
+    const artifact = decodeArtifactV2JSON(issued.artifactJSON());
+    const candidate = artifact.path.candidates[0]!;
+    const raw = encodeFSB2RequestV2(buildFSB2RequestV2(artifact, candidate.id));
+    const decoded = decodeFSB2RequestV2(raw);
+    const authorize = (candidateRaw: Uint8Array) => authorizeRuntime(
+      RuntimeAuthorizationRequest.fromDecoded({ ...decoded, raw: candidateRaw }, candidate.carrier),
+      issued.authorizationRecord(),
+      "constant-time-lease",
+      now,
+    );
+
+    expect(() => authorize(raw.slice())).not.toThrow();
+    const first = raw.slice();
+    first[0] ^= 1;
+    expect(() => authorize(first)).toThrow();
+    const last = raw.slice();
+    last[last.length - 1] ^= 1;
+    expect(() => authorize(last)).toThrow();
+    expect(() => authorize(raw.subarray(0, raw.length - 1))).toThrow();
+
+    const source = readFileSync(new URL("./controlplane.ts", import.meta.url), "utf8");
+    expect(source).toMatch(/import\s*\{[^}]*timingSafeEqual[^}]*\}\s*from\s*["']node:crypto["']/su);
+    expect(source).toMatch(/return timingSafeEqual\(a, b\)/u);
   });
 
   test("strictly validates runtime requests and bounded reject/retry responses", () => {

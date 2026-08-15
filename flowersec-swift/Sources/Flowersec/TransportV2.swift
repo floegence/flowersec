@@ -325,7 +325,9 @@ public struct SessionTermination: Equatable, Sendable {
 ///
 /// This value carries only the remote application's semantic code and message;
 /// transport and carrier failures are returned as ``SessionError``.
-public struct RPCError: Error, Equatable, Sendable {
+public struct RPCError: Error, Equatable, Sendable, CustomStringConvertible,
+  CustomDebugStringConvertible, CustomReflectable
+{
   public let code: UInt32
   public let message: String
 
@@ -333,6 +335,10 @@ public struct RPCError: Error, Equatable, Sendable {
     self.code = code
     self.message = message
   }
+
+  public var description: String { "Flowersec.RPCError(code: \(code))" }
+  public var debugDescription: String { description }
+  public var customMirror: Mirror { Mirror(self, children: ["code": code]) }
 }
 
 /// A stable failure produced while decoding a peer-originated RPC notification.

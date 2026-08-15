@@ -92,6 +92,20 @@ describe("json framing", () => {
     await expect(readJsonFrame(q, 1024)).rejects.toBeInstanceOf(SyntaxError);
   });
 
+  test("readJsonFrame rejects malformed UTF-8 before JSON validation", async () => {
+    const q = new ByteQueue();
+    const payload = new Uint8Array([
+      ...new TextEncoder().encode('{"message":"'),
+      0xff,
+      ...new TextEncoder().encode('"}'),
+    ]);
+    const header = new Uint8Array(4);
+    new DataView(header.buffer).setUint32(0, payload.length);
+    await q.write(header);
+    await q.write(payload);
+    await expect(readJsonFrame(q, 1024)).rejects.toBeInstanceOf(JsonFramingError);
+  });
+
   test("readJsonFrame surfaces read errors (function form)", async () => {
     const q = new ByteQueue();
     const header = new Uint8Array([0, 0, 0, 2]);

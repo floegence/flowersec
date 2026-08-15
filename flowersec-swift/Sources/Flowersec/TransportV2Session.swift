@@ -1695,7 +1695,7 @@ private actor TransportV2ByteStream: ByteStream {
   }
 
   func read(maxBytes: Int) async throws -> Data? {
-    guard maxBytes > 0 else { return Data() }
+    guard maxBytes > 0 else { throw SessionError.operationFailed }
     while readBuffer.isEmpty {
       if remoteFIN { return nil }
       if let terminal { throw terminal }

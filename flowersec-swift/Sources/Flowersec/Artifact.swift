@@ -91,16 +91,16 @@ private actor ArtifactLeaseStateV2 {
 
     do {
       try await task.value
-      finish(attempt: attempt, succeeded: true)
+      finish(attempt: attempt)
     } catch {
-      finish(attempt: attempt, succeeded: false)
+      finish(attempt: attempt)
       throw error
     }
   }
 
-  private func finish(attempt: UInt64, succeeded: Bool) {
+  private func finish(attempt: UInt64) {
     guard case .committing(let activeAttempt, _) = state, activeAttempt == attempt else { return }
-    state = succeeded ? .committed : .idle
+    state = .committed
   }
 }
 

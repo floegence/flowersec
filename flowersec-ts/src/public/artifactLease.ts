@@ -55,12 +55,6 @@ export async function commitArtifactLeaseSpend(
 ): Promise<void> {
   const leaseState = artifactLeaseStates.get(lease);
   if (leaseState === undefined || leaseState.state !== "idle") throw new ArtifactLeaseError();
-  leaseState.state = "spending";
-  try {
-    await leaseState.commitSpend(signal);
-    leaseState.state = "consumed";
-  } catch (error) {
-    leaseState.state = "idle";
-    throw error;
-  }
+  leaseState.state = "consumed";
+  await leaseState.commitSpend(signal);
 }

@@ -366,7 +366,9 @@ internal struct RPCEnvelope: Equatable, Sendable {
     self.responseTo = responseTo
     if let rawError = root["error"], !(rawError is NSNull) {
       guard let errorObject = rawError as? [String: Any],
-        let code = Self.portableUInt32(errorObject["code"])
+        Set(errorObject.keys).isSubset(of: ["code", "message"]),
+        let code = Self.portableUInt32(errorObject["code"]),
+        code != 0
       else {
         throw FlowersecError.invalidRPC("RPC error payload is invalid.")
       }
@@ -374,7 +376,7 @@ internal struct RPCEnvelope: Equatable, Sendable {
         throw FlowersecError.invalidRPC("RPC error message is invalid.")
       }
       let message = (errorObject["message"] as? String) ?? "RPC request failed."
-      error = RPCErrorPayload(code: code, message: message)
+      error = try RPCErrorPayload(validatingCode: code, message: message)
     } else {
       error = nil
     }
@@ -392,6 +394,7 @@ internal struct RPCEnvelope: Equatable, Sendable {
       "payload": try Self.decodeRawJSONObject(payload),
     ]
     if let error {
+      let error = error.sanitizedForWire
       root["error"] = [
         "code": NSNumber(value: error.code),
         "message": error.message,
@@ -442,12 +445,29 @@ internal struct RPCEnvelope: Equatable, Sendable {
 }
 
 internal struct RPCErrorPayload: Equatable, Sendable {
+  private static let maximumMessageBytes = 1_024
+  private static let internalError = RPCErrorPayload(code: 500, message: "internal error")
+
   internal var code: UInt32
   internal var message: String
 
   internal init(code: UInt32, message: String) {
     self.code = code
     self.message = message
+  }
+
+  internal init(validatingCode code: UInt32, message: String) throws {
+    guard code != 0, message.utf8.count <= Self.maximumMessageBytes else {
+      throw FlowersecError.invalidRPC("RPC error payload is invalid.")
+    }
+    self.init(code: code, message: message)
+  }
+
+  internal var sanitizedForWire: RPCErrorPayload {
+    guard code != 0, message.utf8.count <= Self.maximumMessageBytes else {
+      return Self.internalError
+    }
+    return self
   }
 }
 

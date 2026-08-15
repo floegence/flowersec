@@ -125,14 +125,109 @@ describe("Node Acceptor handler lifecycle", () => {
       { origin: "https://app.example" },
     ).catch((error: unknown) => error);
     await started;
-    const closing = acceptor.close();
-    await expect(Promise.race([
-      closing.then(() => "closed" as const),
-      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 500)),
-    ])).resolves.toBe("closed");
+    const closing = [acceptor.close(), acceptor.close()];
+    await Promise.all(closing.map(async (completion) =>
+      await expect(completion).rejects.toMatchObject({ code: "timeout" })
+    ));
     releaseAuthorization();
-    await Promise.allSettled([accepted, client, closing]);
+    await Promise.allSettled([accepted, client]);
+    await Promise.all([
+      expect(acceptor.close()).resolves.toBeUndefined(),
+      expect(acceptor.close()).resolves.toBeUndefined(),
+    ]);
   });
+
+  test("bounds admissions and drains a full accepted queue with exactly-once release", async () => {
+    const raw = directWebSocketArtifact();
+    let activeAdmissions = 0;
+    let peakAdmissions = 0;
+    let admissionCount = 0;
+    let reachedLimit!: () => void;
+    const limitReached = new Promise<void>((resolve) => {
+      reachedLimit = resolve;
+    });
+    let releaseAdmissions!: () => void;
+    const admissionGate = new Promise<void>((resolve) => {
+      releaseAdmissions = resolve;
+    });
+    let rejectedReleaseStarted!: () => void;
+    const rejectedRelease = new Promise<void>((resolve) => {
+      rejectedReleaseStarted = resolve;
+    });
+    const releases = new Map<string, number>();
+    let artifact: ReturnType<typeof parseArtifact> | undefined;
+    const acceptor = await createAcceptor({
+      listeners: [{
+        carrier: "websocket",
+        path: "direct",
+        host: "127.0.0.1",
+        port: 0,
+        allowedOrigins: ["https://app.example"],
+      }],
+      maxInboundStreams: raw.session.max_inbound_streams,
+      cleanupTimeoutMs: 2_000,
+      authorize: async () => {
+        const ordinal = ++admissionCount;
+        activeAdmissions++;
+        peakAdmissions = Math.max(peakAdmissions, activeAdmissions);
+        if (activeAdmissions === 64) reachedLimit();
+        try {
+          if (ordinal <= 64) await admissionGate;
+          if (artifact === undefined) throw new Error("artifact is not ready");
+          return { decision: "allow", artifact, leaseId: `lease-${ordinal}` };
+        } finally {
+          activeAdmissions--;
+        }
+      },
+      release: async (leaseId) => {
+        releases.set(leaseId, (releases.get(leaseId) ?? 0) + 1);
+        if (leaseId === "lease-65") {
+          rejectedReleaseStarted();
+          throw new Error("injected rejected-queue release failure");
+        }
+      },
+    });
+    const address = acceptor.addresses()[0];
+    if (address === undefined) throw new Error("WebSocket listener did not bind");
+    const startController = new AbortController();
+    const start = acceptor.accept({ signal: startController.signal });
+    startController.abort();
+    await expect(start).rejects.toMatchObject({ code: "canceled" });
+    raw.path.candidates[0]!.url = `ws://127.0.0.1:${address.port}/flowersec/v2/direct`;
+    artifact = parseArtifact(JSON.stringify(raw));
+    const clients = Array.from({ length: 65 }, () => connect(
+      createArtifactLeaseV2(artifact!, async () => undefined),
+      { origin: "https://app.example" },
+    ).then(
+      (session) => ({ session }),
+      (error: unknown) => ({ error }),
+    ));
+
+    try {
+      await expect(Promise.race([
+        limitReached,
+        new Promise<never>((_, reject) => setTimeout(
+          () => reject(new Error(
+            `admission limit was never reached: active=${activeAdmissions}, total=${admissionCount}, peak=${peakAdmissions}`,
+          )),
+          1_000,
+        )),
+      ])).resolves.toBeUndefined();
+      expect(peakAdmissions).toBe(64);
+      releaseAdmissions();
+      await rejectedRelease;
+      await expect(acceptor.close()).rejects.toMatchObject({ code: "operation_failed" });
+      expect(releases.size).toBe(65);
+      expect([...releases.values()]).toEqual(Array.from({ length: 65 }, () => 1));
+    } finally {
+      releaseAdmissions();
+      await acceptor.close().catch(() => undefined);
+      const settled = await Promise.all(clients);
+      await Promise.allSettled(settled.flatMap((result) =>
+        "session" in result ? [result.session.close()] : []
+      ));
+    }
+  }, 15_000);
 
   test("freezes handlers before establishing a direct WebSocket Session", async () => {
     const raw = directWebSocketArtifact();

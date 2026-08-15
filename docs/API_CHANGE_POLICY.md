@@ -2,20 +2,14 @@
 
 Flowersec 2.4.1 maintains one carrier-neutral public contract across Go, TypeScript, Swift, and Rust. Public symbols, module paths, wire identifiers, and published artifacts follow the SemVer and immutable-tag rules.
 
-## Sources of Truth
+## Contract Authority
 
-- `docs/API_CONTRACT.md`
-- `docs/ERROR_MODEL.md`
-- `docs/TRANSPORT_V2_ARCHITECTURE.md`
-- `docs/TRANSPORT_V2_WIRE.md`
-- `stability/api_contract_manifest.json`
-- `stability/language_capabilities.json`
-- `stability/transport_v2_contract.json`
-- `stability/sdk_defaults.json`
-- `stability/connection_controller_recovery.json`
-- `testdata/transport_v2/`
+1. Wire and security invariants are defined by `docs/TRANSPORT_V2_WIRE.md`, `stability/transport_v2_contract.json`, and the shared wire and security fixtures under `testdata/transport_v2/`. Any conflict among them must be fixed rather than resolved by choosing one source.
+2. Public API, profiles, and defaults are defined by `stability/api_contract_manifest.json`, `stability/language_capabilities.json`, and `stability/sdk_defaults.json`. Controller recovery behavior is recorded in `stability/connection_controller_recovery.json`.
+3. Human-readable facts in `docs/API_CONTRACT.md`, `docs/ERROR_MODEL.md`, `docs/TRANSPORT_V2_ARCHITECTURE.md`, and the READMEs summarize the first two layers and do not create a separate contract.
+4. Tests execute these contracts; an incidental test behavior does not override an explicit product contract.
 
-The API manifest drives Go compile probes, packed TypeScript exports, Swift symbol checks, Rust compile probes, documentation tokens, and coverage thresholds. The language and Transport v2 manifests record portable behavior, explicit server/control-plane capability status, and executable test IDs.
+The current checks verify registered Go and Rust compile entries, registered TypeScript source entries and actual packed exports, the bidirectional Swift symbol surface, documentation tokens, and explicit forbidden surfaces. Languages that cannot yet be enumerated bidirectionally require a public-surface review in the same change. The language and Transport v2 manifests record portable behavior, explicit server/control-plane capability status, and executable test IDs.
 
 ## Public Boundary
 
@@ -29,13 +23,16 @@ Every public API change requires:
 - documentation and manifest updates in the same change;
 - focused behavior and negative API-surface tests;
 - cross-language fixture updates when serialization or wire behavior changes;
-- package, symbol, SemVer, and full integration gates before release.
+- focused tests and `make precommit` on the feature change;
+- the bounded `make test` acceptance run only by `scripts/push-main.sh` when pushing the final integrated `main` tip.
+
+Release performs version and ref validation, packaging, signing, publication, and registry readback. It does not run tests.
 
 Adding a public `Acceptor`, server admission, handler resolver, proxy server, or control-plane symbol is a SemVer minor capability. Documentation and internal fixes are patch changes. Published tags and artifacts are immutable.
 
 The loopback plaintext WebSocket profile is an explicit SDK capability. Only direct candidates addressed to `127.0.0.1` or `::1` may use `ws://`; tunnel candidates and non-loopback hosts use WSS and fail closed. Flowersec 2.4.1 enforces this profile during Go connector and Acceptor carrier readiness.
 
-The public surface is defined by `stability/api_contract_manifest.json`; package and source guards reject symbols outside that manifest.
+The reviewed public surface is recorded in `stability/api_contract_manifest.json`. Existing package, source, symbol, and forbidden-surface checks enforce the boundaries they can enumerate; public-surface review covers the remaining language-specific gaps.
 
 ## Transport Behavior
 
@@ -51,4 +48,4 @@ For every affected language or runtime, reviewers verify:
 2. Opaque boundaries and error redaction remain intact.
 3. Shared vectors and runtime capability facts match the implementation.
 4. Focused unit, package, and interoperability tests cover the changed behavior.
-5. `make check` passes on the final integrated commit before release.
+5. The feature passes focused tests and `make precommit`; the final main push passes the bounded acceptance run in `scripts/push-main.sh`.

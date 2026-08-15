@@ -69,7 +69,7 @@ func TestArtifactLeaseAuthorizesExactlyOneConcurrentSpend(t *testing.T) {
 	}
 }
 
-func TestArtifactLeaseAllowsRetryAfterSpendFailure(t *testing.T) {
+func TestArtifactLeaseBurnsAfterSpendFailure(t *testing.T) {
 	artifact := mustParseInternalFixtureArtifact(t)
 	attempts := 0
 	lease, err := NewArtifactLease(artifact, func(context.Context) error {
@@ -85,8 +85,34 @@ func TestArtifactLeaseAllowsRetryAfterSpendFailure(t *testing.T) {
 	if err := lease.commitSpend(context.Background()); err == nil {
 		t.Fatal("first commitSpend() error = nil")
 	}
-	if err := lease.commitSpend(context.Background()); err != nil {
-		t.Fatalf("retry commitSpend() error = %v", err)
+	if err := lease.commitSpend(context.Background()); !errors.Is(err, errArtifactLeaseConsumed) {
+		t.Fatalf("reused commitSpend() error = %v, want consumed", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("commit callback attempts = %d, want 1", attempts)
+	}
+}
+
+func TestArtifactLeaseBurnsAfterSpendCancellation(t *testing.T) {
+	artifact := mustParseInternalFixtureArtifact(t)
+	attempts := 0
+	lease, err := NewArtifactLease(artifact, func(ctx context.Context) error {
+		attempts++
+		return ctx.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := lease.commitSpend(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled commitSpend() error = %v, want canceled", err)
+	}
+	if err := lease.commitSpend(context.Background()); !errors.Is(err, errArtifactLeaseConsumed) {
+		t.Fatalf("reused commitSpend() error = %v, want consumed", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("commit callback attempts = %d, want 1", attempts)
 	}
 }
 
