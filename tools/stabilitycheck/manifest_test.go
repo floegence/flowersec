@@ -465,6 +465,46 @@ func TestMakefileStabilityCheckRunsEveryContractVerifier(t *testing.T) {
 	}
 }
 
+func TestRustCompileEntriesRequireSessionHandlersHandleStreamContract(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	m, err := loadManifest(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const stale = "let _ = flowersec::SessionHandlers::handle_stream::<String>"
+	const expected = "fn require_session_handlers_handle_stream<K, H>(handlers: &mut flowersec::SessionHandlers, kind: K, handler: H) -> Result<(), flowersec::HandlerRegistrationError> where K: Into<String>, H: flowersec::StreamHandler { handlers.handle_stream(kind, handler) }"
+	if slices.Contains(m.Rust.CompileEntries, stale) {
+		t.Fatalf("Rust compile entries retain stale handle_stream probe %q", stale)
+	}
+	count := 0
+	for _, entry := range m.Rust.CompileEntries {
+		if entry == expected {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("Rust compile entries contain handle_stream contract %d times, want 1", count)
+	}
+}
+
+func TestPrecommitRustRunsStabilityRustCheckExactlyOnce(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	start := strings.Index(text, "precommit-rust:")
+	end := strings.Index(text, "\nprecommit:")
+	if start < 0 || end <= start {
+		t.Fatal("Makefile must define precommit-rust before precommit")
+	}
+	recipe := text[start:end]
+	if count := strings.Count(recipe, "$(MAKE) stability-rust-check"); count != 1 {
+		t.Fatalf("precommit-rust runs stability-rust-check %d times, want 1:\n%s", count, recipe)
+	}
+}
+
 func TestRustToolchainVersionUsesDeclaredMSRV(t *testing.T) {
 	root := t.TempDir()
 	cratePath := "flowersec-rust"

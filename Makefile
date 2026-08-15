@@ -313,6 +313,7 @@ precommit-rust:
 	$(MAKE) rust-fmt-check
 	$(MAKE) rust-clippy
 	$(MAKE) rust-test-short
+	$(MAKE) stability-rust-check
 
 precommit:
 	$(MAKE) precommit-source

@@ -500,11 +500,8 @@ pub struct ArtifactLease {
 }
 
 impl std::fmt::Debug for ArtifactLease {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ArtifactLease")
-            .field("artifact", &self.artifact)
-            .field("committed", &self.committed)
-            .finish()
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ArtifactLease { <opaque> }")
     }
 }
 
@@ -940,17 +937,22 @@ mod tests {
                 }
             }
         });
+        let expected_debug = "ArtifactLease { <opaque> }";
+        assert_eq!(format!("{lease:?}"), expected_debug);
         assert!(matches!(
             lease.commit_spend().await,
             Err(ArtifactSpendError::CommitFailed)
         ));
         assert!(!lease.is_committed());
+        assert_eq!(format!("{lease:?}"), expected_debug);
         assert!(lease.commit_spend().await.is_ok());
         assert!(lease.is_committed());
+        assert_eq!(format!("{lease:?}"), expected_debug);
         assert_eq!(
             lease.commit_spend().await,
             Err(ArtifactSpendError::AlreadyCommitted)
         );
+        assert_eq!(format!("{lease:?}"), expected_debug);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 }
