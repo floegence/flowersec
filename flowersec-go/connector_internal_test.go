@@ -421,6 +421,19 @@ func TestRPCProjectionPreservesApplicationErrorAndRedactsTransportFailure(t *tes
 	}
 }
 
+func TestRPCProjectionMapsMalformedApplicationEnvelopeToOperationFailure(t *testing.T) {
+	const secret = "malformed-rpc-secret-marker"
+	peer := &opaqueRPCPeer{inner: staticRPCPeer{err: errors.New("rpc invalid application error: " + secret)}}
+	err := peer.Call(context.Background(), 7, struct{}{}, &struct{}{})
+	var sessionErr *SessionError
+	if !errors.As(err, &sessionErr) || sessionErr.Code() != SessionOperationFailed {
+		t.Fatalf("RPC malformed response = %#v, want %q", err, SessionOperationFailed)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("RPC malformed response exposed internal detail: %v", err)
+	}
+}
+
 type staticConnectorBackend struct {
 	result connectv2.Result
 	err    error

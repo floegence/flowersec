@@ -13,6 +13,17 @@
     "digest_label": "flowersec-v2-runtime-capability\u0000",
     "vectors": "testdata/transport_v2/capability_vectors.json"
   },
+  "rpc_application_error": {
+    "code": "nonzero_u32",
+    "message": {
+      "presence": "optional",
+      "encoding": "utf8",
+      "maximum_bytes": 1024
+    },
+    "shape": "exact",
+    "invalid_inbound": "session_operation_failure",
+    "invalid_outbound_handler_error": "existing_internal_application_error"
+  },
   "wire_fixtures": [
     {
       "id": "artifact_admission",
@@ -103,6 +114,19 @@
         { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift" },
         { "runtime": "swift_linux", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift" },
         { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift" }
+      ]
+    },
+    {
+      "id": "rpc_application_error",
+      "path": "testdata/transport_v2/rpc_error_vectors.json",
+      "runtime_consumers": [
+        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/internal/rpc/session_test.go" },
+        { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/rpc/validate.test.ts" },
+        { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/rpc/validate.test.ts" },
+        { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/session_v2.rs" },
+        { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/RPCTests.swift" },
+        { "runtime": "swift_linux", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/RPCTests.swift" },
+        { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/RPCTests.swift" }
       ]
     },
     {

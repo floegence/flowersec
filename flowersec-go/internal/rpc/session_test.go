@@ -3,11 +3,14 @@ package rpc_test
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -126,23 +129,56 @@ func TestRPC_ClientCallFailsWhenTransportCloses(t *testing.T) {
 }
 
 func TestRPCClientEnforcesApplicationErrorInvariantAtReceiveBoundary(t *testing.T) {
-	validASCII := strings.Repeat("a", 1024)
-	validMultibyte := strings.Repeat("é", 512)
+	fixture := loadRPCErrorVectors(t)
+	if fixture.MaximumMessageBytes != 1024 {
+		t.Fatalf("maximum_message_bytes = %d, want 1024", fixture.MaximumMessageBytes)
+	}
 	tests := []struct {
-		name      string
-		payload   func(uint64) []byte
-		wantError bool
-	}{
-		{name: "ASCII 1024 bytes", payload: rpcErrorResponsePayload(t, map[string]any{"code": 7, "message": validASCII})},
-		{name: "multibyte UTF-8 1024 bytes", payload: rpcErrorResponsePayload(t, map[string]any{"code": 7, "message": validMultibyte})},
-		{name: "zero code", payload: rpcErrorResponsePayload(t, map[string]any{"code": 0}), wantError: true},
-		{name: "ASCII 1025 bytes", payload: rpcErrorResponsePayload(t, map[string]any{"code": 7, "message": validASCII + "a"}), wantError: true},
-		{name: "multibyte UTF-8 1025 bytes", payload: rpcErrorResponsePayload(t, map[string]any{"code": 7, "message": validMultibyte + "a"}), wantError: true},
-		{name: "extra error field", payload: rpcErrorResponsePayload(t, map[string]any{"code": 7, "internal": "secret"}), wantError: true},
-		{name: "malformed UTF-8", payload: func(requestID uint64) []byte {
-			prefix := []byte(fmt.Sprintf(`{"type_id":1,"request_id":0,"response_to":%d,"payload":null,"error":{"code":7,"message":"`, requestID))
-			return append(append(prefix, 0xff), []byte(`"}}`)...)
-		}, wantError: true},
+		name        string
+		payload     func(uint64) []byte
+		valid       bool
+		wantCode    uint32
+		wantMessage *string
+	}{}
+	for _, vector := range fixture.Cases {
+		errorObject := map[string]any{"code": vector.Code}
+		message := strings.Repeat(vector.Message.Unit, vector.Message.Repeat) + vector.Message.Suffix
+		var wantMessage *string
+		if vector.Message.Presence == "present" {
+			errorObject["message"] = message
+			wantMessage = &message
+		}
+		if vector.ExtraField {
+			errorObject["internal"] = "secret"
+		}
+		tests = append(tests, struct {
+			name        string
+			payload     func(uint64) []byte
+			valid       bool
+			wantCode    uint32
+			wantMessage *string
+		}{vector.ID, rpcErrorResponsePayload(t, errorObject), vector.Valid, vector.Code, wantMessage})
+	}
+	for _, vector := range fixture.RawCases {
+		message, err := hex.DecodeString(vector.MessageHex)
+		if err != nil {
+			t.Fatalf("decode %s: %v", vector.ID, err)
+		}
+		tests = append(tests, struct {
+			name        string
+			payload     func(uint64) []byte
+			valid       bool
+			wantCode    uint32
+			wantMessage *string
+		}{
+			name: vector.ID,
+			payload: func(requestID uint64) []byte {
+				prefix := []byte(fmt.Sprintf(`{"type_id":1,"request_id":0,"response_to":%d,"payload":null,"error":{"code":%d,"message":"`, requestID, vector.Code))
+				return append(append(prefix, message...), []byte(`"}}`)...)
+			},
+			valid:    vector.Valid,
+			wantCode: vector.Code,
+		})
 	}
 
 	for _, test := range tests {
@@ -173,7 +209,7 @@ func TestRPCClientEnforcesApplicationErrorInvariantAtReceiveBoundary(t *testing.
 			if peerErr := <-peerDone; peerErr != nil {
 				t.Fatal(peerErr)
 			}
-			if test.wantError {
+			if !test.valid {
 				if err == nil || applicationError != nil {
 					t.Fatalf("Call() = application error %#v, transport error %v; want protocol failure", applicationError, err)
 				}
@@ -182,11 +218,59 @@ func TestRPCClientEnforcesApplicationErrorInvariantAtReceiveBoundary(t *testing.
 				}
 				return
 			}
-			if err != nil || applicationError == nil || applicationError.Code != 7 {
+			if err != nil || applicationError == nil || applicationError.Code != test.wantCode {
 				t.Fatalf("Call() = application error %#v, transport error %v", applicationError, err)
+			}
+			if test.wantMessage == nil {
+				if applicationError.Message != nil {
+					t.Fatalf("Call() message = %q, want absent", *applicationError.Message)
+				}
+			} else if applicationError.Message == nil || *applicationError.Message != *test.wantMessage {
+				t.Fatalf("Call() message = %#v, want %q", applicationError.Message, *test.wantMessage)
 			}
 		})
 	}
+}
+
+type rpcErrorVectorMessage struct {
+	Presence string `json:"presence"`
+	Unit     string `json:"unit"`
+	Repeat   int    `json:"repeat"`
+	Suffix   string `json:"suffix"`
+}
+
+type rpcErrorVector struct {
+	ID         string                `json:"id"`
+	Code       uint32                `json:"code"`
+	Message    rpcErrorVectorMessage `json:"message"`
+	ExtraField bool                  `json:"extra_field"`
+	Valid      bool                  `json:"valid"`
+}
+
+type rawRPCErrorVector struct {
+	ID         string `json:"id"`
+	Code       uint32 `json:"code"`
+	MessageHex string `json:"message_hex"`
+	Valid      bool   `json:"valid"`
+}
+
+type rpcErrorVectors struct {
+	MaximumMessageBytes int                 `json:"maximum_message_bytes"`
+	Cases               []rpcErrorVector    `json:"cases"`
+	RawCases            []rawRPCErrorVector `json:"raw_cases"`
+}
+
+func loadRPCErrorVectors(t *testing.T) rpcErrorVectors {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "testdata", "transport_v2", "rpc_error_vectors.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture rpcErrorVectors
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	return fixture
 }
 
 func rpcErrorResponsePayload(t *testing.T, rpcError any) func(uint64) []byte {

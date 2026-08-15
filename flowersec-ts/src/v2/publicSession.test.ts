@@ -120,6 +120,26 @@ describe("opaque public SessionV2 projection", () => {
     });
   });
 
+  test("projects a malformed inbound RPC response to a stable session failure", async () => {
+    const secret = "malformed-rpc-secret-marker";
+    const terminal = new Error("closed");
+    const internal = fakeSession(fakeStream(terminal), terminal);
+    internal.rpc.call = vi.fn().mockRejectedValue(
+      new Error(`invalid RPC application error: ${secret}`),
+    );
+    const session = projectSessionV2(internal);
+
+    let failure: unknown;
+    try {
+      await session.rpc.call(1, {}, decodeAccepted);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toEqual(new SessionError("operation_failed"));
+    expect(String(failure)).not.toContain(secret);
+    expect(failure).not.toHaveProperty("cause");
+  });
+
   test("rejects a successful RPC payload that its decoder does not accept", async () => {
     const terminal = new Error("closed");
     const internal = fakeSession(fakeStream(terminal), terminal);

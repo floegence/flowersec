@@ -324,6 +324,39 @@ final class TransportV2SessionTests: XCTestCase {
     try await serverSession.close()
   }
 
+  func testPublicRPCProjectionMapsMalformedResponseToOperationFailed() async throws {
+    let secret = "malformed-rpc-secret-marker"
+    let serverRouter = RPCRouter()
+    await serverRouter.register(23) { (_: SessionEcho) in secret }
+
+    var configs = try makeConfigs()
+    configs.server.rpcRouter = serverRouter
+    let clientConfig = configs.client
+    let serverConfig = configs.server
+    let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
+    async let server = TransportV2Session.establish(carrier: serverCarrier, config: serverConfig)
+    async let client = TransportV2Session.establish(carrier: clientCarrier, config: clientConfig)
+    let (clientSession, serverSession) = try await (client, server)
+    let publicSession: any Session = OpaqueSessionV2(clientSession)
+
+    do {
+      let _: SessionEcho = try await publicSession.rpc.call(
+        23,
+        SessionEcho(value: "request"),
+        as: SessionEcho.self,
+        timeout: .seconds(2)
+      )
+      XCTFail("malformed response unexpectedly crossed the public RPC facade")
+    } catch let error as SessionError {
+      XCTAssertEqual(error, .operationFailed)
+      XCTAssertFalse(String(describing: error).contains(secret))
+      XCTAssertTrue(Mirror(reflecting: error).children.isEmpty)
+    }
+
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
   func testPublicNotificationSubscriptionIsTypedDeterministicAndIsolated() async throws {
     let vectors = try JSONDecoder().decode(
       RPCNotificationVectors.self,

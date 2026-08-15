@@ -17,6 +17,14 @@ final class FlowersecRPCTests: XCTestCase {
   }
 
   func testEnvelopeEnforcesPortableInboundRPCErrorInvariant() throws {
+    let fixture = try JSONDecoder().decode(
+      SharedRPCErrorVectors.self,
+      from: Data(
+        contentsOf: packageRoot().appendingPathComponent(
+          "testdata/transport_v2/rpc_error_vectors.json"))
+    )
+    XCTAssertEqual(fixture.maximumMessageBytes, 1_024)
+
     func envelope(error: [String: Any]) throws -> Data {
       try JSONSerialization.data(
         withJSONObject: [
@@ -30,37 +38,39 @@ final class FlowersecRPCTests: XCTestCase {
       )
     }
 
-    XCTAssertNoThrow(
-      try RPCEnvelope(
-        data: envelope(error: [
-          "code": 1,
-          "message": String(repeating: "a", count: 1_024),
-        ])))
-    XCTAssertNoThrow(
-      try RPCEnvelope(
-        data: envelope(error: [
-          "code": 1,
-          "message": String(repeating: "é", count: 512),
-        ])))
-    for (name, error) in [
-      ("zero-code", ["code": 0]),
-      (
-        "ascii-message-1025",
-        [
-          "code": 1,
-          "message": String(repeating: "a", count: 1_025),
-        ]
-      ),
-      (
-        "multibyte-message-1026",
-        [
-          "code": 1,
-          "message": String(repeating: "é", count: 513),
-        ]
-      ),
-      ("extra-error-field", ["code": 1, "internal": "secret"]),
-    ] as [(String, [String: Any])] {
-      XCTAssertThrowsError(try RPCEnvelope(data: envelope(error: error)), name)
+    for vector in fixture.cases {
+      let message = String(repeating: vector.message.unit, count: vector.message.repeatCount)
+        + vector.message.suffix
+      var error: [String: Any] = ["code": NSNumber(value: vector.code)]
+      if vector.message.presence == "present" {
+        error["message"] = message
+      }
+      if vector.extraField {
+        error["internal"] = "secret"
+      }
+      if vector.valid {
+        let decoded = try RPCEnvelope(data: envelope(error: error))
+        XCTAssertEqual(decoded.error?.code, vector.code, vector.id)
+        if vector.message.presence == "present" {
+          XCTAssertEqual(decoded.error?.message, message, vector.id)
+        }
+      } else {
+        XCTAssertThrowsError(try RPCEnvelope(data: envelope(error: error)), vector.id)
+      }
+    }
+
+    for vector in fixture.rawCases {
+      var raw = Data(
+        "{\"type_id\":1,\"request_id\":0,\"response_to\":1,\"payload\":null,\"error\":{\"code\":\(vector.code),\"message\":\""
+          .utf8
+      )
+      raw.append(try decodeHex(vector.messageHex))
+      raw.append(Data("\"}}".utf8))
+      if vector.valid {
+        XCTAssertNoThrow(try RPCEnvelope(data: raw), vector.id)
+      } else {
+        XCTAssertThrowsError(try RPCEnvelope(data: raw), vector.id)
+      }
     }
   }
 
@@ -793,6 +803,74 @@ final class FlowersecRPCTests: XCTestCase {
     await client.close()
   }
 
+}
+
+private struct SharedRPCErrorVectors: Decodable {
+  var maximumMessageBytes: Int
+  var cases: [SharedRPCErrorVector]
+  var rawCases: [SharedRawRPCErrorVector]
+
+  enum CodingKeys: String, CodingKey {
+    case maximumMessageBytes = "maximum_message_bytes"
+    case cases
+    case rawCases = "raw_cases"
+  }
+}
+
+private struct SharedRPCErrorVector: Decodable {
+  var id: String
+  var code: UInt32
+  var message: SharedRPCErrorVectorMessage
+  var extraField: Bool
+  var valid: Bool
+
+  enum CodingKeys: String, CodingKey {
+    case id, code, message, valid
+    case extraField = "extra_field"
+  }
+}
+
+private struct SharedRPCErrorVectorMessage: Decodable {
+  var presence: String
+  var unit: String
+  var repeatCount: Int
+  var suffix: String
+
+  enum CodingKeys: String, CodingKey {
+    case presence, unit, suffix
+    case repeatCount = "repeat"
+  }
+}
+
+private struct SharedRawRPCErrorVector: Decodable {
+  var id: String
+  var code: UInt32
+  var messageHex: String
+  var valid: Bool
+
+  enum CodingKeys: String, CodingKey {
+    case id, code, valid
+    case messageHex = "message_hex"
+  }
+}
+
+private enum RPCFixtureError: Error {
+  case invalidHex
+}
+
+private func decodeHex(_ value: String) throws -> Data {
+  guard value.count.isMultiple(of: 2) else { throw RPCFixtureError.invalidHex }
+  var output = Data()
+  var index = value.startIndex
+  while index < value.endIndex {
+    let end = value.index(index, offsetBy: 2)
+    guard let byte = UInt8(value[index..<end], radix: 16) else {
+      throw RPCFixtureError.invalidHex
+    }
+    output.append(byte)
+    index = end
+  }
+  return output
 }
 
 private func notificationEnvelope(typeID: UInt32, value: String) throws -> RPCEnvelope {

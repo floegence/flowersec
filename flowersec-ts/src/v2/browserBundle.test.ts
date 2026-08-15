@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 
 describe("browser package graph", () => {
-  test("does not retain a bare tr46 module specifier", () => {
+  test("excludes Node-only and undeclared bare module specifiers", () => {
     const entry = fileURLToPath(new URL("../../dist/browser/index.js", import.meta.url));
     const pending = [entry];
     const visited = new Set<string>();
@@ -26,5 +26,6 @@ describe("browser package graph", () => {
     }
 
     expect(bareSpecifiers).not.toContain("tr46");
+    expect(bareSpecifiers).not.toContain("node:crypto");
   });
 });

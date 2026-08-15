@@ -1657,6 +1657,10 @@ impl RpcHandlerV2 for WireBoundaryRpcFailure {
                 code: 7,
                 message: Some(format!("{}a", "é".repeat(512))),
             },
+            6 => RpcError {
+                code: 7,
+                message: None,
+            },
             _ => unreachable!("unexpected RPC invariant case"),
         };
         Err(error)
@@ -1668,7 +1672,7 @@ impl RpcHandlerV2 for WireBoundaryRpcFailure {
 }
 
 #[tokio::test]
-async fn rpc_receive_path_projects_invalid_application_errors_to_session_failure() {
+async fn rpc_outbound_handler_errors_are_sanitized_before_wire() {
     let (client_carrier, server_carrier) = memory_carrier_pair_v2();
     let client_config = regression_config(SessionRole::Client, "rpc-wire-error", 4, None);
     let server_config = regression_config(
@@ -1684,17 +1688,27 @@ async fn rpc_receive_path_projects_invalid_application_errors_to_session_failure
     let client = client.expect("client");
     let server = server.expect("server");
 
-    for type_id in [2, 4] {
-        assert!(matches!(
-            client.rpc().call(type_id, serde_json::Value::Null).await,
-            Err(RpcCallError::Application(error)) if error.code() == 7
-        ));
+    for (type_id, expected_message) in [
+        (2, Some("a".repeat(1_024))),
+        (4, Some("é".repeat(512))),
+        (6, None),
+    ] {
+        match client.rpc().call(type_id, serde_json::Value::Null).await {
+            Err(RpcCallError::Application(error)) => {
+                assert_eq!(error.code(), 7);
+                assert_eq!(error.message(), expected_message.as_deref());
+            }
+            result => panic!("valid handler error was not preserved: {result:?}"),
+        }
     }
     for type_id in [1, 3, 5] {
-        assert_eq!(
-            client.rpc().call(type_id, serde_json::Value::Null).await,
-            Err(RpcCallError::Session(SessionError::OperationFailed))
-        );
+        match client.rpc().call(type_id, serde_json::Value::Null).await {
+            Err(RpcCallError::Application(error)) => {
+                assert_eq!(error.code(), 500);
+                assert_eq!(error.message(), Some("handler failed"));
+            }
+            result => panic!("invalid handler error was not sanitized: {result:?}"),
+        }
     }
 
     client.close().await.expect("close client");

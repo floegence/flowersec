@@ -137,7 +137,7 @@ describe("Node Acceptor handler lifecycle", () => {
     ]);
   });
 
-  test("bounds admissions and drains a full accepted queue with exactly-once release", async () => {
+  test("bounds admissions and cleanup failures while releasing every lease exactly once", async () => {
     const raw = directWebSocketArtifact();
     let activeAdmissions = 0;
     let peakAdmissions = 0;
@@ -150,9 +150,11 @@ describe("Node Acceptor handler lifecycle", () => {
     const admissionGate = new Promise<void>((resolve) => {
       releaseAdmissions = resolve;
     });
-    let rejectedReleaseStarted!: () => void;
-    const rejectedRelease = new Promise<void>((resolve) => {
-      rejectedReleaseStarted = resolve;
+    const rejectedSessionCount = 6;
+    let rejectedReleaseCount = 0;
+    let rejectedReleasesFinished!: () => void;
+    const rejectedReleases = new Promise<void>((resolve) => {
+      rejectedReleasesFinished = resolve;
     });
     const releases = new Map<string, number>();
     let artifact: ReturnType<typeof parseArtifact> | undefined;
@@ -181,9 +183,10 @@ describe("Node Acceptor handler lifecycle", () => {
       },
       release: async (leaseId) => {
         releases.set(leaseId, (releases.get(leaseId) ?? 0) + 1);
-        if (leaseId === "lease-65") {
-          rejectedReleaseStarted();
-          throw new Error("injected rejected-queue release failure");
+        if (Number.parseInt(leaseId.slice("lease-".length), 10) > 64) {
+          rejectedReleaseCount++;
+          if (rejectedReleaseCount === rejectedSessionCount) rejectedReleasesFinished();
+          throw new Error(`cleanup-secret-${leaseId}`);
         }
       },
     });
@@ -195,7 +198,7 @@ describe("Node Acceptor handler lifecycle", () => {
     await expect(start).rejects.toMatchObject({ code: "canceled" });
     raw.path.candidates[0]!.url = `ws://127.0.0.1:${address.port}/flowersec/v2/direct`;
     artifact = parseArtifact(JSON.stringify(raw));
-    const clients = Array.from({ length: 65 }, () => connect(
+    const clients = Array.from({ length: 64 + rejectedSessionCount }, () => connect(
       createArtifactLeaseV2(artifact!, async () => undefined),
       { origin: "https://app.example" },
     ).then(
@@ -215,10 +218,26 @@ describe("Node Acceptor handler lifecycle", () => {
       ])).resolves.toBeUndefined();
       expect(peakAdmissions).toBe(64);
       releaseAdmissions();
-      await rejectedRelease;
-      await expect(acceptor.close()).rejects.toMatchObject({ code: "operation_failed" });
-      expect(releases.size).toBe(65);
-      expect([...releases.values()]).toEqual(Array.from({ length: 65 }, () => 1));
+      await expect(Promise.race([
+        rejectedReleases,
+        new Promise<never>((_, reject) => setTimeout(
+          () => reject(new Error(`only ${rejectedReleaseCount} rejected sessions were released`)),
+          2_000,
+        )),
+      ])).resolves.toBeUndefined();
+      const closeFailures = await Promise.all([
+        acceptor.close().catch((error: unknown) => error),
+        acceptor.close().catch((error: unknown) => error),
+      ]);
+      for (const failure of closeFailures) {
+        expect(failure).toMatchObject({ code: "operation_failed" });
+        expect(failure).not.toHaveProperty("cause");
+        expect(String(failure)).not.toContain("cleanup-secret");
+      }
+      expect(releases.size).toBe(64 + rejectedSessionCount);
+      expect([...releases.values()]).toEqual(
+        Array.from({ length: 64 + rejectedSessionCount }, () => 1),
+      );
     } finally {
       releaseAdmissions();
       await acceptor.close().catch(() => undefined);

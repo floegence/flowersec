@@ -17,23 +17,24 @@ import (
 const transportV2ContractPath = "stability/transport_v2_contract.json"
 
 type transportV2Contract struct {
-	Version            int                            `json:"version"`
-	SessionProfile     string                         `json:"session_profile"`
-	Docs               transportV2Docs                `json:"docs"`
-	CapabilityCodec    transportV2CapabilityCodec     `json:"capability_codec"`
-	WireFixtures       []transportV2WireFixture       `json:"wire_fixtures"`
-	WireUnsupported    []transportV2UnsupportedReason `json:"wire_fixture_unsupported_reasons"`
-	Policies           transportV2Policies            `json:"policies"`
-	Carriers           []transportV2Carrier           `json:"carriers"`
-	Paths              []transportV2Path              `json:"paths"`
-	UnsupportedReasons []transportV2UnsupportedReason `json:"unsupported_reasons"`
-	Runtimes           []transportV2Runtime           `json:"runtimes"`
-	Lifecycles         transportV2Lifecycles          `json:"lifecycles"`
-	Ownership          transportV2Ownership           `json:"ownership"`
-	CarrierContract    transportV2CarrierContract     `json:"carrier_contract"`
-	ControllerContract transportV2ControllerContract  `json:"connection_controller_contract"`
-	GoDependencies     transportV2GoDependencies      `json:"go_native_dependencies"`
-	RustDependencies   transportV2RustDependencies    `json:"rust_native_dependencies"`
+	Version             int                            `json:"version"`
+	SessionProfile      string                         `json:"session_profile"`
+	Docs                transportV2Docs                `json:"docs"`
+	CapabilityCodec     transportV2CapabilityCodec     `json:"capability_codec"`
+	RPCApplicationError transportV2RPCApplicationError `json:"rpc_application_error"`
+	WireFixtures        []transportV2WireFixture       `json:"wire_fixtures"`
+	WireUnsupported     []transportV2UnsupportedReason `json:"wire_fixture_unsupported_reasons"`
+	Policies            transportV2Policies            `json:"policies"`
+	Carriers            []transportV2Carrier           `json:"carriers"`
+	Paths               []transportV2Path              `json:"paths"`
+	UnsupportedReasons  []transportV2UnsupportedReason `json:"unsupported_reasons"`
+	Runtimes            []transportV2Runtime           `json:"runtimes"`
+	Lifecycles          transportV2Lifecycles          `json:"lifecycles"`
+	Ownership           transportV2Ownership           `json:"ownership"`
+	CarrierContract     transportV2CarrierContract     `json:"carrier_contract"`
+	ControllerContract  transportV2ControllerContract  `json:"connection_controller_contract"`
+	GoDependencies      transportV2GoDependencies      `json:"go_native_dependencies"`
+	RustDependencies    transportV2RustDependencies    `json:"rust_native_dependencies"`
 }
 
 type transportV2Lifecycles struct {
@@ -92,6 +93,20 @@ type transportV2CapabilityCodec struct {
 	UnsupportedFields []string `json:"unsupported_fields"`
 	DigestLabel       string   `json:"digest_label"`
 	Vectors           string   `json:"vectors"`
+}
+
+type transportV2RPCApplicationError struct {
+	Code                        string                           `json:"code"`
+	Message                     transportV2RPCApplicationMessage `json:"message"`
+	Shape                       string                           `json:"shape"`
+	InvalidInbound              string                           `json:"invalid_inbound"`
+	InvalidOutboundHandlerError string                           `json:"invalid_outbound_handler_error"`
+}
+
+type transportV2RPCApplicationMessage struct {
+	Presence     string `json:"presence"`
+	Encoding     string `json:"encoding"`
+	MaximumBytes int    `json:"maximum_bytes"`
 }
 
 type transportV2Docs struct {
@@ -377,6 +392,19 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 		},
 		Unsupported: map[string]string{},
 	},
+	"rpc_application_error": {
+		Path: "testdata/transport_v2/rpc_error_vectors.json",
+		Consumers: map[string]transportV2WireConsumerExpectation{
+			"go_native":          {Source: "flowersec-go/internal/rpc/session_test.go", Tokens: []string{"rpc_error_vectors.json", "rpcErrorResponsePayload", "jsonframe.ReadJSONFrame"}},
+			"typescript_browser": {Source: "flowersec-ts/src/rpc/validate.test.ts", Tokens: []string{"rpc_error_vectors.json", "assertRpcEnvelope", "readJsonFrame"}},
+			"typescript_node":    {Source: "flowersec-ts/src/rpc/validate.test.ts", Tokens: []string{"rpc_error_vectors.json", "assertRpcEnvelope", "readJsonFrame"}},
+			"rust_native":        {Source: "flowersec-rust/src/session_v2.rs", Tokens: []string{"rpc_error_vectors.json", "exchange_rpc_call_v2", "RpcError::from_wire"}},
+			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/RPCTests.swift", Tokens: []string{"rpc_error_vectors.json", "RPCEnvelope(data:", "JSONSerialization"}},
+			"swift_linux":        {Source: "flowersec-swift/Tests/FlowersecTests/RPCTests.swift", Tokens: []string{"rpc_error_vectors.json", "RPCEnvelope(data:", "JSONSerialization"}},
+			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/RPCTests.swift", Tokens: []string{"rpc_error_vectors.json", "RPCEnvelope(data:", "JSONSerialization"}},
+		},
+		Unsupported: map[string]string{},
+	},
 	"session_wire": {
 		Path: "testdata/transport_v2/session_wire_vectors.json",
 		Consumers: map[string]transportV2WireConsumerExpectation{
@@ -458,6 +486,9 @@ func validateTransportV2Contract(repoRoot string, contract *transportV2Contract)
 	if err := validateTransportV2CapabilityCodec(repoRoot, contract); err != nil {
 		return err
 	}
+	if err := validateTransportV2RPCApplicationError(contract.RPCApplicationError); err != nil {
+		return err
+	}
 	if err := validateTransportV2WireFixtures(repoRoot, contract); err != nil {
 		return err
 	}
@@ -468,6 +499,19 @@ func validateTransportV2Contract(repoRoot string, contract *transportV2Contract)
 		return err
 	}
 	return validateTransportV2Docs(repoRoot, contract.Docs)
+}
+
+func validateTransportV2RPCApplicationError(contract transportV2RPCApplicationError) error {
+	if contract.Code != "nonzero_u32" ||
+		contract.Message.Presence != "optional" ||
+		contract.Message.Encoding != "utf8" ||
+		contract.Message.MaximumBytes != 1024 ||
+		contract.Shape != "exact" ||
+		contract.InvalidInbound != "session_operation_failure" ||
+		contract.InvalidOutboundHandlerError != "existing_internal_application_error" {
+		return errors.New("transport v2 RPC application error contract does not match the portable invariant")
+	}
+	return nil
 }
 
 func validateTransportV2Architecture(

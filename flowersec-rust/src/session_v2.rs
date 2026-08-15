@@ -3813,6 +3813,24 @@ struct RpcErrorWireV2 {
     message: Option<String>,
 }
 
+fn rpc_handler_error_to_wire_v2(error: RpcError) -> RpcErrorWireV2 {
+    if error.code == 0
+        || error
+            .message
+            .as_ref()
+            .is_some_and(|message| message.len() > RpcError::MAX_MESSAGE_BYTES)
+    {
+        return RpcErrorWireV2 {
+            code: 500,
+            message: Some("handler failed".into()),
+        };
+    }
+    RpcErrorWireV2 {
+        code: error.code,
+        message: error.message,
+    }
+}
+
 const MAX_RPC_FRAME_BYTES: usize = 1 << 20;
 const MAX_PORTABLE_RPC_ID: u64 = (1_u64 << 53) - 1;
 
@@ -3978,10 +3996,7 @@ async fn serve_rpc_stream_v2(session: &SelfSession, stream: StreamHandleV2) -> i
                     Ok(Ok(payload)) => (payload, None),
                     Ok(Err(error)) => (
                         serde_json::Value::Null,
-                        Some(RpcErrorWireV2 {
-                            code: error.code,
-                            message: error.message,
-                        }),
+                        Some(rpc_handler_error_to_wire_v2(error)),
                     ),
                     Err(_) => (
                         serde_json::Value::Null,
@@ -4458,41 +4473,91 @@ mod tests {
         .unwrap()
     }
 
+    #[derive(Deserialize)]
+    struct RpcErrorVectors {
+        maximum_message_bytes: usize,
+        cases: Vec<RpcErrorVector>,
+        raw_cases: Vec<RawRpcErrorVector>,
+    }
+
+    #[derive(Deserialize)]
+    struct RpcErrorVector {
+        id: String,
+        code: u32,
+        message: RpcErrorVectorMessage,
+        extra_field: bool,
+        valid: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct RpcErrorVectorMessage {
+        presence: String,
+        unit: String,
+        repeat: usize,
+        suffix: String,
+    }
+
+    #[derive(Deserialize)]
+    struct RawRpcErrorVector {
+        id: String,
+        code: u32,
+        message_hex: String,
+        valid: bool,
+    }
+
     #[tokio::test]
     async fn rpc_receive_boundary_enforces_application_error_invariant() {
-        let ascii = "a".repeat(1_024);
-        let multibyte = "é".repeat(512);
-        for payload in [
-            rpc_error_payload(serde_json::json!({"code": 7})),
-            rpc_error_payload(serde_json::json!({"code": 7, "message": ascii})),
-            rpc_error_payload(serde_json::json!({"code": 7, "message": multibyte})),
-        ] {
-            assert_eq!(
-                exchange_rpc_error_for_test(payload).await.unwrap().code(),
-                7
+        let fixture: RpcErrorVectors = serde_json::from_str(include_str!(
+            "../../testdata/transport_v2/rpc_error_vectors.json"
+        ))
+        .unwrap();
+        assert_eq!(fixture.maximum_message_bytes, RpcError::MAX_MESSAGE_BYTES);
+        for vector in fixture.cases {
+            let message = format!(
+                "{}{}",
+                vector.message.unit.repeat(vector.message.repeat),
+                vector.message.suffix
             );
-        }
-        for payload in [
-            rpc_error_payload(serde_json::json!({"code": 0})),
-            rpc_error_payload(serde_json::json!({"code": 7, "message": "a".repeat(1_025)})),
-            rpc_error_payload(
-                serde_json::json!({"code": 7, "message": format!("{}a", "é".repeat(512))}),
-            ),
-            rpc_error_payload(serde_json::json!({"code": 7, "internal": "secret"})),
-        ] {
-            assert_eq!(
-                exchange_rpc_error_for_test(payload).await,
-                Err(SessionError::OperationFailed)
-            );
+            let mut error =
+                serde_json::Map::from_iter([("code".into(), serde_json::Value::from(vector.code))]);
+            if vector.message.presence == "present" {
+                error.insert("message".into(), message.clone().into());
+            }
+            if vector.extra_field {
+                error.insert("internal".into(), "secret".into());
+            }
+            let result = exchange_rpc_error_for_test(rpc_error_payload(error.into())).await;
+            if vector.valid {
+                let error = result.unwrap_or_else(|failure| panic!("{}: {failure:?}", vector.id));
+                assert_eq!(error.code(), vector.code, "{}", vector.id);
+                let expected = (vector.message.presence == "present").then_some(message.as_str());
+                assert_eq!(error.message(), expected, "{}", vector.id);
+            } else {
+                assert_eq!(result, Err(SessionError::OperationFailed), "{}", vector.id);
+            }
         }
 
-        let mut malformed = br#"{"type_id":1,"request_id":0,"response_to":1,"payload":null,"error":{"code":7,"message":""#.to_vec();
-        malformed.push(0xff);
-        malformed.extend_from_slice(br#""}}"#);
-        assert_eq!(
-            exchange_rpc_error_for_test(malformed).await,
-            Err(SessionError::OperationFailed)
-        );
+        for vector in fixture.raw_cases {
+            let message = vector
+                .message_hex
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+                .collect::<Vec<_>>();
+            let mut malformed = format!(
+                r#"{{"type_id":1,"request_id":0,"response_to":1,"payload":null,"error":{{"code":{},"message":""#,
+                vector.code
+            )
+            .into_bytes();
+            malformed.extend_from_slice(&message);
+            malformed.extend_from_slice(br#""}}"#);
+            let result = exchange_rpc_error_for_test(malformed).await;
+            if vector.valid {
+                result.unwrap_or_else(|failure| panic!("{}: {failure:?}", vector.id));
+            } else {
+                assert_eq!(result, Err(SessionError::OperationFailed), "{}", vector.id);
+            }
+        }
     }
 
     #[test]

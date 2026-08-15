@@ -457,7 +457,7 @@ async function closeAcceptor(state: AcceptorState): Promise<void> {
   }
   if (
     cleanup.some((result) => result.status === "rejected") ||
-    state.cleanupFailures.length > 0
+    state.lifecycle.cleanupFailed
   ) {
     throw new SessionError("operation_failed");
   }
@@ -562,9 +562,9 @@ async function processCarrier(
     if (state.accepted.push(accepted) === "rejected") {
       try {
         await accepted.close();
-      } catch (error) {
-        state.cleanupFailures.push(error);
-        throw error;
+      } catch {
+        state.lifecycle.cleanupFailed = true;
+        throw new SessionError("operation_failed");
       }
     }
   } catch (error) {
@@ -678,9 +678,8 @@ type AcceptorState = Readonly<{
   abort: AbortController;
   tasks: Set<Promise<void>>;
   admissions: Set<Promise<void>>;
-  cleanupFailures: unknown[];
   cleanupTimeoutMs: number;
-  lifecycle: { completion?: Promise<void> };
+  lifecycle: { completion?: Promise<void>; cleanupFailed: boolean };
   start(): void;
 }>;
 const acceptorStates = new WeakMap<Acceptor, AcceptorState>();
@@ -768,9 +767,8 @@ export async function createAcceptor(
     abort,
     tasks,
     admissions,
-    cleanupFailures: [],
     cleanupTimeoutMs,
-    lifecycle: {},
+    lifecycle: { cleanupFailed: false },
     start() {
       if (started) return;
       started = true;

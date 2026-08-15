@@ -92,10 +92,30 @@ func TestSessionHandlersServeRegisteredRPC(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := handlers.HandleRPC(43, func(context.Context, json.RawMessage) (any, *RPCError) {
-		return nil, &RPCError{Message: "missing application code"}
-	}); err != nil {
-		t.Fatal(err)
+	validASCII := strings.Repeat("a", 1_024)
+	validMultibyte := strings.Repeat("é", 512)
+	wireErrorCases := []struct {
+		name        string
+		handlerErr  *RPCError
+		wantCode    uint32
+		wantMessage string
+	}{
+		{name: "zero code", handlerErr: &RPCError{Message: "missing application code"}, wantCode: 500, wantMessage: "handler failed"},
+		{name: "empty message", handlerErr: &RPCError{Code: 7}, wantCode: 7, wantMessage: ""},
+		{name: "ASCII at limit", handlerErr: &RPCError{Code: 7, Message: validASCII}, wantCode: 7, wantMessage: validASCII},
+		{name: "ASCII over limit", handlerErr: &RPCError{Code: 7, Message: validASCII + "a"}, wantCode: 500, wantMessage: "handler failed"},
+		{name: "multibyte at limit", handlerErr: &RPCError{Code: 7, Message: validMultibyte}, wantCode: 7, wantMessage: validMultibyte},
+		{name: "multibyte over limit", handlerErr: &RPCError{Code: 7, Message: validMultibyte + "a"}, wantCode: 500, wantMessage: "handler failed"},
+		{name: "invalid UTF-8", handlerErr: &RPCError{Code: 7, Message: string([]byte{0xff})}, wantCode: 500, wantMessage: "handler failed"},
+	}
+	for index, test := range wireErrorCases {
+		typeID := uint32(43 + index)
+		handlerErr := test.handlerErr
+		if err := handlers.HandleRPC(typeID, func(context.Context, json.RawMessage) (any, *RPCError) {
+			return nil, handlerErr
+		}); err != nil {
+			t.Fatalf("HandleRPC(%s) error = %v", test.name, err)
+		}
 	}
 
 	serverConn, clientConn := net.Pipe()
@@ -117,13 +137,21 @@ func TestSessionHandlersServeRegisteredRPC(t *testing.T) {
 	if string(payload) != `{"value":"input-ok"}` {
 		t.Fatalf("Call() payload = %s", payload)
 	}
-	for _, typeID := range []uint32{42, 43} {
+	payload, rpcErr, err = client.Call(ctx, 42, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Call(42) error = %v", err)
+	}
+	if string(payload) != "null" || rpcErr == nil || rpcErr.Code != 500 || rpcErr.Message == nil || *rpcErr.Message != "handler failed" {
+		t.Fatalf("Call(42) = payload %d bytes, error %#v", len(payload), rpcErr)
+	}
+	for index, test := range wireErrorCases {
+		typeID := uint32(43 + index)
 		payload, rpcErr, err := client.Call(ctx, typeID, json.RawMessage(`{}`))
 		if err != nil {
-			t.Fatalf("Call(%d) error = %v", typeID, err)
+			t.Fatalf("Call(%s) error = %v", test.name, err)
 		}
-		if string(payload) != "null" || rpcErr == nil || rpcErr.Code != 500 || rpcErr.Message == nil || *rpcErr.Message != "handler failed" {
-			t.Fatalf("Call(%d) = payload %d bytes, error %#v", typeID, len(payload), rpcErr)
+		if string(payload) != "null" || rpcErr == nil || rpcErr.Code != test.wantCode || rpcErr.Message == nil || *rpcErr.Message != test.wantMessage {
+			t.Fatalf("Call(%s) = payload %d bytes, error %#v", test.name, len(payload), rpcErr)
 		}
 	}
 }
