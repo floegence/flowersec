@@ -8,6 +8,11 @@ import (
 )
 
 func TestProxyServerPublicSurfaceIsApplicationOnly(t *testing.T) {
+	var legacyRegister func(*flowersec.ProxyServer, *flowersec.SessionHandlers) error = (*flowersec.ProxyServer).Register
+	var streamRegister func(*flowersec.ProxyServer, flowersec.StreamHandlerRegistrar) error = (*flowersec.ProxyServer).RegisterStreamHandlers
+	_ = legacyRegister
+	_ = streamRegister
+
 	allowedOptions := map[string]struct{}{
 		"Upstream": {}, "UpstreamOrigin": {}, "AllowedUpstreamHosts": {}, "AllowedOrigins": {},
 		"MaxConcurrentStreams": {}, "MaxJSONFrameBytes": {}, "MaxChunkBytes": {},
@@ -32,6 +37,7 @@ func TestProxyServerPublicSurfaceIsApplicationOnly(t *testing.T) {
 	for _, symbol := range []any{
 		flowersec.NewProxyServer,
 		(*flowersec.ProxyServer).Register,
+		(*flowersec.ProxyServer).RegisterStreamHandlers,
 		(*flowersec.ProxyServer).Close,
 		flowersec.ErrInvalidProxyServer,
 	} {

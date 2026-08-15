@@ -19,6 +19,14 @@ export { SessionError, UnreliableMessageError } from "./public/contract.js";
 export { createStreamMetadata, StreamMetadataError } from "./public/streamMetadata.js";
 export type { StreamMetadata } from "./public/streamMetadata.js";
 export {
+  HandlerRegistrationError,
+  StreamHandlers,
+} from "./public/streamHandlers.js";
+export type {
+  StreamHandler,
+  StreamHandlerOptions,
+} from "./public/streamHandlers.js";
+export {
   ArtifactLeaseError,
   createArtifactLease,
 } from "./public/artifactLease.js";

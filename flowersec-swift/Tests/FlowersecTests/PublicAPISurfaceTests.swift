@@ -4,6 +4,8 @@ import Testing
 
 struct PublicAPISurfaceTests {
   @Test func opaqueApplicationSurfaceCompilesWithoutTestableImport() async throws {
+    let streamHandlers = try StreamHandlers()
+    try streamHandlers.handleStream(kind: "health") { _ in }
     let metadata = try StreamMetadata([
       "operation": .string("health"),
       "attempt": .integer(1),

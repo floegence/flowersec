@@ -15,7 +15,6 @@ export type {
   RPCHandlerResult,
   NotificationHandler,
   SessionHandlerOptions,
-  StreamHandler,
 } from "./acceptor.js";
 export { TunnelRuntime, createTunnelRuntime } from "./tunnelRuntime.js";
 export type {
@@ -55,5 +54,5 @@ export type {
   TunnelIssueOptions,
 } from "./controlplane.js";
 export { ProxyServer, ProxyServerError } from "./proxyServer.js";
-export type { ProxyServerOptions } from "./proxyServer.js";
+export type { ProxyServerOptions, StreamHandlerRegistrar } from "./proxyServer.js";
 export * from "../facade.js";

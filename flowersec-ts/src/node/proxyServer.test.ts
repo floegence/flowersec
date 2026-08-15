@@ -4,6 +4,8 @@ import {
   ProxyServer,
   type ProxyServerOptions,
   SessionHandlers,
+  type StreamHandlerRegistrar,
+  StreamHandlers,
 } from "./index.js";
 
 test("exposes a native Node ProxyServer with bounded loopback upstream policy", async () => {
@@ -19,6 +21,29 @@ test("exposes a native Node ProxyServer with bounded loopback upstream policy", 
   expect(() => server.register(handlers)).not.toThrow();
   await expect(server.close()).resolves.toBeUndefined();
   await expect(server.close()).resolves.toBeUndefined();
+});
+
+test("registers atomically into role-neutral StreamHandlers", async () => {
+  const server = new ProxyServer({
+    upstream: "http://127.0.0.1:18080",
+    upstreamOrigin: "http://127.0.0.1:18080",
+  });
+  const handlers = new StreamHandlers();
+  expect(() => server.register(handlers)).not.toThrow();
+  expect(() => server.register(handlers)).toThrow(/handler_registration/u);
+  await server.close();
+});
+
+test("rejects a forged registrar without invoking caller-controlled code", async () => {
+  const server = new ProxyServer({
+    upstream: "http://127.0.0.1:18080",
+    upstreamOrigin: "http://127.0.0.1:18080",
+  });
+  const forged = Object.create(StreamHandlers.prototype) as StreamHandlerRegistrar;
+
+  expect(() => server.register(forged)).toThrow(/handler_registration/u);
+  expect(Object.getOwnPropertySymbols(StreamHandlers.prototype)).toEqual([]);
+  await server.close();
 });
 
 test("rejects upstream and header policies that could escape the configured authority", () => {

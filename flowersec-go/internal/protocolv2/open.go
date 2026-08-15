@@ -169,6 +169,12 @@ func validateOpenKind(kind string) error {
 	return nil
 }
 
+// ValidApplicationStreamKind reports whether kind satisfies the exact OPEN
+// wire contract shared by outgoing streams and handler registration.
+func ValidApplicationStreamKind(kind string) bool {
+	return validateOpenKind(kind) == nil
+}
+
 func openHashMismatch(got, want [32]byte) error {
 	if got != want {
 		return fmt.Errorf("OPEN hash mismatch")

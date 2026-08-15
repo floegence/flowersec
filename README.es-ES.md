@@ -82,6 +82,7 @@ Los cuatro SDK comparten el mismo modelo de sesión. El soporte varía cuando un
 | Enviar llamadas RPC y notificaciones | Sí | Sí | Sí | Sí |
 | Recibir notificaciones RPC | Sí | Sí | Sí | Sí |
 | Flujos de bytes fiables | Sí | Sí | Sí | Sí |
+| Atender flujos de aplicación en cualquier sesión | Sí | Sí | Sí | Sí |
 | Recuperación de conexiones duraderas | Sí | Sí | Sí | Sí |
 | Mensajes no fiables cuando estén disponibles | Sí | Sí | No | Sí |
 | Conexiones desde navegador | No | Sí | No | No |

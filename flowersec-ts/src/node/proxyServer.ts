@@ -5,10 +5,16 @@ import { SessionError } from "../public/contract.js";
 import { writeJsonFrame } from "../framing/jsonframe.js";
 import { ProxyByteReader, writeAll } from "../proxy/stream.js";
 import {
-  registerSessionStreamsAtomically,
-  SessionHandlers,
+  StreamHandlers,
+  registerStreamHandlersAtomically,
   type StreamHandler,
+} from "../public/streamHandlers.js";
+import {
+  SessionHandlers,
+  registerSessionStreamHandlersAtomically,
 } from "./acceptor.js";
+
+export type StreamHandlerRegistrar = StreamHandlers | SessionHandlers;
 
 const HTTP_KIND = "flowersec-proxy/http1";
 const WS_KIND = "flowersec-proxy/ws";
@@ -97,14 +103,20 @@ export class ProxyServer {
     this.#completion = new Promise<void>((resolve) => { this.#resolveCompletion = resolve; });
   }
 
-  register(handlers: SessionHandlers): void {
+  register(handlers: StreamHandlerRegistrar): void {
     if (this.#closed) throw new ProxyServerError("closed");
-    if (!(handlers instanceof SessionHandlers)) throw new ProxyServerError("handler_registration");
     try {
-      registerSessionStreamsAtomically(handlers, [
+      const registrations = [
         [HTTP_KIND, this.#httpHandler()],
         [WS_KIND, this.#webSocketHandler()],
-      ]);
+      ] as const;
+      if (handlers instanceof StreamHandlers) {
+        registerStreamHandlersAtomically(handlers, registrations);
+      } else if (handlers instanceof SessionHandlers) {
+        registerSessionStreamHandlersAtomically(handlers, registrations);
+      } else {
+        throw new TypeError("invalid Flowersec stream handler registrar");
+      }
     } catch (error) {
       this.#report(error);
       throw new ProxyServerError("handler_registration");

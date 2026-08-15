@@ -33,7 +33,8 @@ use url::Url;
 
 use crate::{
     HandlerRegistrationError, IncomingStream, SessionError, SessionHandlers, StreamHandler,
-    transport_v2::ByteStream, websocket_v2,
+    StreamHandlerRegistrar, session_handlers::register_stream_handlers, transport_v2::ByteStream,
+    websocket_v2,
 };
 
 const HTTP_KIND: &str = "flowersec-proxy/http1";
@@ -210,8 +211,23 @@ impl ProxyServer {
         })
     }
 
-    /// Atomically installs the HTTP and WebSocket application stream handlers.
+    /// Atomically installs the HTTP and WebSocket handlers on an accepted-session registry.
     pub fn register(&self, handlers: &mut SessionHandlers) -> Result<(), ProxyServerError> {
+        self.register_into(handlers)
+    }
+
+    /// Atomically installs the HTTP and WebSocket handlers on a carrier-neutral registry.
+    pub fn register_stream_handlers<R>(&self, handlers: &mut R) -> Result<(), ProxyServerError>
+    where
+        R: StreamHandlerRegistrar,
+    {
+        self.register_into(handlers)
+    }
+
+    fn register_into<R>(&self, handlers: &mut R) -> Result<(), ProxyServerError>
+    where
+        R: StreamHandlerRegistrar,
+    {
         if self.inner.closed.is_cancelled() {
             return Err(ProxyServerError::Closed);
         }
@@ -223,15 +239,17 @@ impl ProxyServer {
             inner: self.inner.clone(),
             protocol: Protocol::WebSocket,
         });
-        handlers
-            .handle_streams([
+        register_stream_handlers(
+            handlers,
+            vec![
                 (HTTP_KIND.to_owned(), http),
                 (WEBSOCKET_KIND.to_owned(), websocket),
-            ])
-            .map_err(|error| match error {
-                HandlerRegistrationError::AlreadyRegistered => ProxyServerError::AlreadyRegistered,
-                HandlerRegistrationError::Invalid => ProxyServerError::OperationFailed,
-            })
+            ],
+        )
+        .map_err(|error| match error {
+            HandlerRegistrationError::AlreadyRegistered => ProxyServerError::AlreadyRegistered,
+            HandlerRegistrationError::Invalid => ProxyServerError::OperationFailed,
+        })
     }
 
     /// Cancels active operations, waits for their cleanup, and rejects future dispatch.
@@ -1853,7 +1871,7 @@ mod tests {
             "http://127.0.0.1:8080".parse().expect("origin"),
         ))
         .expect("proxy server");
-        let mut handlers = SessionHandlers::new(crate::SessionHandlerOptions::default())
+        let mut handlers = crate::SessionHandlers::new(crate::SessionHandlerOptions::default())
             .expect("session handlers");
         handlers
             .handle_stream(WEBSOCKET_KIND, NoopHandler)

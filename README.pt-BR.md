@@ -82,6 +82,7 @@ Os quatro SDKs compartilham o mesmo modelo de sessão. O suporte varia quando um
 | Enviar chamadas RPC e notificações | Sim | Sim | Sim | Sim |
 | Receber notificações RPC | Sim | Sim | Sim | Sim |
 | Fluxos de bytes confiáveis | Sim | Sim | Sim | Sim |
+| Atender fluxos de aplicativo em qualquer sessão | Sim | Sim | Sim | Sim |
 | Recuperação de conexões duradouras | Sim | Sim | Sim | Sim |
 | Mensagens não confiáveis quando disponíveis | Sim | Sim | Não | Sim |
 | Conexões de navegador | Não | Sim | Não | Não |

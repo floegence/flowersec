@@ -45,6 +45,7 @@ The crate gives applications these building blocks:
 - `Artifact` and `ArtifactLease` for a short-lived, single-use connection invitation;
 - `connect(...)`, `ConnectError`, and `ConnectorOptions` for opening a session;
 - `Session`, `RpcPeer`, `ByteStream`, `IncomingStream`, and `StreamMetadata` for application traffic;
+- `StreamHandlers` for bounded application-stream dispatch on any established Session;
 - `ConnectionController` for reconnecting with a fresh invitation after a session ends;
 - `Acceptor`, `AcceptedSession`, and `SessionHandlers` for server-side sessions;
 - `TunnelRuntime` for authorized opaque relay pairing without application Session access;
@@ -85,6 +86,27 @@ controller.start();
 Every Controller generation uses the same immutable callback definition and a
 fresh router. Work from a terminated Session is not migrated or replayed.
 
+### Application streams on any Session
+
+```rust,no_run
+# async fn serve(session: &dyn flowersec::Session) -> Result<(), Box<dyn std::error::Error>> {
+let mut handlers = flowersec::StreamHandlers::new(Default::default())?;
+handlers.handle_stream("files/read", MyStreamHandler)?;
+handlers
+    .serve(session, tokio_util::sync::CancellationToken::new())
+    .await?;
+# Ok(()) }
+# struct MyStreamHandler;
+# #[async_trait::async_trait]
+# impl flowersec::StreamHandler for MyStreamHandler {
+#   async fn handle(&self, _: &flowersec::IncomingStream, _: tokio_util::sync::CancellationToken) -> Result<(), flowersec::SessionError> { Ok(()) }
+# }
+```
+
+Application stream kinds contain 1 through 128 canonical UTF-8 bytes and
+exclude the reserved `flowersec.rpc.v2` kind. Unknown, excess, failed, and
+panicked handler streams are reset without terminating unrelated dispatch.
+
 For the complete durable `ArtifactLease` spend workflow, see the
 [Rust cookbook](../examples/rust/README.md). The spend record must be committed
 before the connector can send connection credentials.
@@ -104,7 +126,8 @@ accepted.serve(tokio_util::sync::CancellationToken::new()).await?;
 ```
 
 `RpcHandlers` is client-only and has no stream API. `SessionHandlers` belongs
-to accepted server Sessions and keeps stream dispatch under `AcceptedSession`.
+to accepted server Sessions and composes the same stream dispatcher under
+`AcceptedSession`.
 
 Reliable stream shutdown is explicit: `close_write()` sends a graceful FIN and
 keeps the receive direction available, while `reset()` and `close()` abort both

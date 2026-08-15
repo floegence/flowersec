@@ -93,6 +93,7 @@ syntax without changing shared behavior.
 | Send RPC calls and notifications | Yes | Yes | Yes | Yes |
 | Receive RPC notifications | Yes | Yes | Yes | Yes |
 | Reliable byte streams | Yes | Yes | Yes | Yes |
+| Serve application streams on any Session | Yes | Yes | Yes | Yes |
 | Long-lived connection recovery | Yes | Yes | Yes | Yes |
 | Unreliable messages when available | Yes | Yes | No | Yes |
 | Browser connections | No | Yes | No | No |

@@ -104,6 +104,7 @@ final class SourceGuardTests: XCTestCase {
       "ConnectionController.swift",
       "Connector.swift",
       "RetryDisposition.swift",
+      "StreamHandlers.swift",
       "TransportV2.swift",
     ]
     for file in try swiftFiles(under: sourceRoot)

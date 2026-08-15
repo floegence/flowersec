@@ -767,19 +767,25 @@ function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
 
 function validateOpenKind(value: string): Uint8Array {
   const encoded = encoder.encode(value);
-  if (!validOpenUnicodeString(value, MAX_OPEN_KIND_BYTES, false)) {
+  if (!validApplicationStreamKind(value)) {
     throw new ProtocolV2Error("invalid OPEN kind");
   }
-  const scalars = Array.from(value);
+  return encoded;
+}
+
+/** @internal */
+export function validApplicationStreamKind(value: unknown): value is string {
   if (
+    typeof value !== "string" ||
+    !validOpenUnicodeString(value, MAX_OPEN_KIND_BYTES, false)
+  ) {
+    return false;
+  }
+  const scalars = Array.from(value);
+  return !(
     isUnicodeWhitespace(scalars[0]!.codePointAt(0)!) ||
     isUnicodeWhitespace(scalars.at(-1)!.codePointAt(0)!)
-  ) {
-    throw new ProtocolV2Error(
-      "OPEN kind has leading or trailing Unicode whitespace",
-    );
-  }
-  return encoded;
+  );
 }
 
 function canonicalMetadata(raw: Uint8Array, allowEmpty: boolean): Uint8Array {

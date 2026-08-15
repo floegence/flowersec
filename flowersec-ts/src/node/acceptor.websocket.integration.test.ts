@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, test } from "vitest";
 
+import { StreamHandlers } from "../facade.js";
 import { createArtifactLeaseV2 } from "../v2/artifactLease.js";
 import { parseArtifact } from "../v2/opaqueArtifact.js";
 import { createAcceptor, SessionHandlers } from "./acceptor.js";
@@ -112,6 +113,20 @@ describe("Node WebSocket Acceptor", () => {
       ));
       const accepted = await Promise.all(acceptedPromises);
       const serving = accepted.map((session) => session.serve().catch((error: unknown) => error));
+      const clientHandlers = new StreamHandlers();
+      clientHandlers.handleStream("node-client-inbound", async (incoming) => {
+        const payload = await incoming.stream.read();
+        if (payload === null) throw new Error("server stream ended before its payload");
+        await incoming.stream.write(payload);
+      });
+      const clientServing = clientHandlers.serve(clients[0]!).catch((error: unknown) => error);
+      const serverStream = await accepted[0]!.session.openStream("node-client-inbound");
+      await serverStream.write(new TextEncoder().encode("server-payload"));
+      await serverStream.closeWrite();
+      const clientEcho = await serverStream.read();
+      if (clientEcho === null) throw new Error("client stream ended before its payload");
+      expect(new TextDecoder().decode(clientEcho)).toBe("server-payload");
+      expect(await serverStream.read()).toBeNull();
       expect(await clients[0]!.rpc.call(17, { path: carrierPath }, (payload) => payload))
         .toEqual({ ok: true, payload: { path: carrierPath } });
       await clients[0]!.rpc.notify(18, { ready: true });
@@ -124,6 +139,7 @@ describe("Node WebSocket Acceptor", () => {
       expect(new TextDecoder().decode(echoed)).toBe("payload");
       expect(await stream.read()).toBeNull();
       await Promise.all(clients.map(async (client) => await client.close()));
+      await expect(clientServing).resolves.toMatchObject({ code: "closed" });
       for (const task of serving) await expect(task).resolves.toMatchObject({ code: "closed" });
       await Promise.all(accepted.map(async (session) => await session.close().catch(() => undefined)));
     } finally {

@@ -110,9 +110,20 @@ func NewProxyServer(options ProxyServerOptions) (*ProxyServer, error) {
 	}, nil
 }
 
-// Register installs the HTTP and WebSocket proxy handlers atomically. A
-// handler registry can contain at most one ProxyServer.
+// Register installs the HTTP and WebSocket proxy handlers on an accepted-
+// session registry. A handler registry can contain at most one ProxyServer.
 func (server *ProxyServer) Register(handlers *SessionHandlers) error {
+	return server.register(handlers)
+}
+
+// RegisterStreamHandlers installs the HTTP and WebSocket proxy handlers on a
+// carrier-neutral stream registry. A handler registry can contain at most one
+// ProxyServer.
+func (server *ProxyServer) RegisterStreamHandlers(handlers StreamHandlerRegistrar) error {
+	return server.register(handlers)
+}
+
+func (server *ProxyServer) register(handlers StreamHandlerRegistrar) error {
 	if server == nil || server.httpClient == nil || server.wsDialer == nil || handlers == nil {
 		return ErrInvalidProxyServer
 	}
@@ -121,7 +132,7 @@ func (server *ProxyServer) Register(handlers *SessionHandlers) error {
 	if server.closed {
 		return ErrInvalidProxyServer
 	}
-	err := handlers.handleStreams(map[string]StreamHandler{
+	err := handlers.registerStreams(map[string]StreamHandler{
 		proxyHTTPStreamKind: server.limit(func(ctx context.Context, incoming IncomingStream) error {
 			server.serveHTTP(ctx, incoming)
 			return nil

@@ -12,6 +12,12 @@ in Xcode or `Package.swift`, then select the `Flowersec` library product.
 
 Parse an opaque `Artifact` with `parseArtifact(...)`, bind it to a single-use `ArtifactLease`, and call `connect(lease:options:)` with `ConnectorOptions`. This one-shot connector creates exactly one `Session`; a terminated session never reconnects, migrates its streams, or replays its RPCs and writes. Applications use the same `Session`, `RPCPeer`, `ByteStream`, `IncomingStream`, and bounded `StreamMetadata` contracts as the other Flowersec SDKs. `StreamMetadata` validates during initialization and is the same value type used for outgoing and incoming stream metadata.
 
+`StreamHandlers` registers bounded application stream handlers and serves them
+on any established `Session`. It freezes on first use, accepts only the exact
+1-through-128-byte canonical OPEN kind contract, resets unknown, excess, and
+failed streams, and waits for active handler tasks during shutdown. The Apple
+profile does not expose a server `ProxyServer` or registrar.
+
 `RPCPeer.subscribeNotification(_:as:handler:)` registers before it returns and decodes every peer notification as the requested `Decodable & Sendable` type. The handler receives `.failure(.invalidPayload)` for invalid payloads, never unvalidated data. Throwing handlers are isolated from the RPC stream. The returned `RPCNotificationSubscription` has an async, idempotent `cancel()` operation, and closing the Session removes every remaining subscription.
 
 `ConnectError` and `SessionError` are closed redacted error sets. A remote application RPC failure is `RPCError` with only its semantic code and sanitized message. Connection selection, credentials, endpoint details, and cryptographic state are not public.

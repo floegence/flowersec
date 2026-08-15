@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use flowersec::{
     ProxyServer, ProxyServerError, ProxyServerOptions, SessionHandlerOptions, SessionHandlers,
+    StreamHandlerOptions, StreamHandlers,
 };
 
 #[tokio::test]
@@ -37,6 +38,15 @@ async fn proxy_server_public_api_is_application_session_only() {
         .expect("register proxy handlers");
     assert_eq!(
         server.register(&mut handlers),
+        Err(ProxyServerError::AlreadyRegistered)
+    );
+    let mut streams =
+        StreamHandlers::new(StreamHandlerOptions::default()).expect("create stream handlers");
+    server
+        .register_stream_handlers(&mut streams)
+        .expect("register proxy handlers into role-neutral registrar");
+    assert_eq!(
+        server.register_stream_handlers(&mut streams),
         Err(ProxyServerError::AlreadyRegistered)
     );
     server.close().await;

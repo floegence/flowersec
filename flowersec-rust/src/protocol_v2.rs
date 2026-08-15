@@ -1082,7 +1082,7 @@ fn label_with(label: &[u8], parts: &[&[u8]]) -> Vec<u8> {
     output
 }
 
-fn valid_open_kind(value: &str) -> bool {
+pub(crate) fn valid_open_kind(value: &str) -> bool {
     if !valid_open_unicode_string(value, MAX_OPEN_KIND_V2_BYTES, false) {
         return false;
     }

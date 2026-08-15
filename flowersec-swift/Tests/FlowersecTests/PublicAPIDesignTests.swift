@@ -32,11 +32,14 @@ func unversionedOneShotPublicAPICompiles() async throws {
         _ = try result.get()
       }
     }
+  let streamHandlers = try StreamHandlers()
+  try streamHandlers.handleStream(kind: "application.stream") { _ in }
 
   _ = parse
   _ = connectAttempt
   _ = rpcCall
   _ = notificationSubscription
+  _ = streamHandlers
 }
 
 @Test

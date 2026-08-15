@@ -13,8 +13,10 @@ describe("final public SDK names", () => {
   test("browser and node subpaths expose environment-neutral operations", () => {
     expect(typeof browser.connect).toBe("function");
     expect(typeof browser.createConnectionController).toBe("function");
+    expect(typeof browser.StreamHandlers).toBe("function");
     expect(typeof node.connect).toBe("function");
     expect(typeof node.createConnectionController).toBe("function");
+    expect(typeof node.StreamHandlers).toBe("function");
     expect("connectBrowserSession" in browser).toBe(false);
     expect("createBrowserConnectionController" in browser).toBe(false);
     expect("connectNodeSession" in node).toBe(false);

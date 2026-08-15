@@ -240,7 +240,7 @@ assert.deepEqual(deploymentProfiles.profiles[0], {
     "direct-server": ["direct"],
     "tunnel-runtime": ["tunnel"],
   },
-  required_capability_ids: ["opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "client_rpc_handlers", "validated_stream_metadata", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"],
+  required_capability_ids: ["opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "client_rpc_handlers", "validated_stream_metadata", "application_stream_handlers", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"],
   optional_carriers: ["webtransport"],
   required_tuple_count: 18,
   required_path_unit_count: 24,

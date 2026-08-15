@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 
 import {
   ConnectError,
+  StreamHandlers as BrowserStreamHandlers,
   createConnectionController as createBrowserConnectionController,
   type ArtifactSource as BrowserArtifactSource,
   type ConnectionControllerOptions as BrowserConnectionControllerOptions,
@@ -11,21 +12,34 @@ import {
 } from "../browser/index.js";
 import {
   createConnectionController as createNodeConnectionController,
+  StreamHandlers as NodeStreamHandlers,
   type ArtifactSource as NodeArtifactSource,
   type ConnectionController as NodeConnectionController,
   type ConnectionSnapshot as NodeConnectionSnapshot,
   type ConnectionControllerOptions as NodeConnectionControllerOptions,
   type RetryDisposition as NodeRetryDisposition,
+  type StreamHandlerRegistrar as NodeStreamHandlerRegistrar,
 } from "../node/index.js";
 // @ts-expect-error runtime capability descriptors are package-internal.
 import type { RuntimeCapabilityDescriptorV2 } from "../browser/index.js";
 // @ts-expect-error candidate factories are package-internal.
 import type { CandidateAttemptFactoryV2 } from "../node/index.js";
+// @ts-expect-error the sealed ProxyServer registrar is Node-only.
+import type { StreamHandlerRegistrar as BrowserStreamHandlerRegistrar } from "../browser/index.js";
+// @ts-expect-error the portable root does not expose the server registrar.
+import type { StreamHandlerRegistrar as RootStreamHandlerRegistrar } from "../facade.js";
+
+// @ts-expect-error only SDK-owned registries satisfy the nominal registrar.
+const forgedStreamHandlerRegistrar: NodeStreamHandlerRegistrar = {
+  handleStream() {},
+  async serve() {},
+};
 
 test("exports the final controller API from browser and Node entries", () => {
   expect(createBrowserConnectionController).toBeTypeOf("function");
   expect(createNodeConnectionController).toBeTypeOf("function");
   expect(ConnectError).toBeTypeOf("function");
+  expect(BrowserStreamHandlers).toBe(NodeStreamHandlers);
   void (undefined as unknown as BrowserArtifactSource);
   void (undefined as unknown as NodeArtifactSource);
   void (undefined as unknown as BrowserConnectionController);
@@ -38,4 +52,7 @@ test("exports the final controller API from browser and Node entries", () => {
   void nodeDisposition;
   void (undefined as unknown as RuntimeCapabilityDescriptorV2);
   void (undefined as unknown as CandidateAttemptFactoryV2);
+  void (undefined as unknown as BrowserStreamHandlerRegistrar);
+  void (undefined as unknown as RootStreamHandlerRegistrar);
+  void forgedStreamHandlerRegistrar;
 });

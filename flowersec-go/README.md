@@ -73,6 +73,11 @@ httpServer.Handler = acceptor.Handler()
 creates a fresh RPC router and owns `SessionHandlers.Serve(...)` for each
 accepted Session.
 
+For application streams on any established connector or accepted Session, use
+`NewStreamHandlers(...)`, register handlers with `HandleStream(...)`, and run
+`Serve(...)` under the Session owner's context. The same bounded dispatcher is
+composed by `SessionHandlers`.
+
 Additional server runtimes use the same server registry:
 
 ```go
@@ -87,12 +92,16 @@ proxy, err := flowersec.NewProxyServer(flowersec.ProxyServerOptions{
     Upstream: upstreamURL,
 })
 err = proxy.Register(handlers)
+
+streamHandlers, err := flowersec.NewStreamHandlers(flowersec.StreamHandlerOptions{})
+err = proxy.RegisterStreamHandlers(streamHandlers)
 ```
 
 RPC and notification registrations share one nonzero uint32 namespace. Consuming
 a registry freezes it; later registrations return `ErrHandlerRegistryFrozen`.
-Stream kinds are valid UTF-8 values from 1 through 255 encoded bytes;
-`flowersec.rpc.v2` is reserved. `NewStreamMetadata(...)` validates and
+Stream kinds contain 1 through 128 canonical UTF-8 bytes, reject leading or
+trailing Unicode whitespace, controls, and unassigned scalars, and reserve
+`flowersec.rpc.v2`. `NewStreamMetadata(...)` validates and
 defensively copies metadata before a stream is opened. Handler and connection
 state remain private, and public failures are bounded `ConnectError` and
 `SessionError` values.

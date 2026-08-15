@@ -82,6 +82,7 @@ Alle vier SDKs verwenden dasselbe Sitzungsmodell. Der Plattformumfang unterschei
 | RPC-Aufrufe und Benachrichtigungen senden | Ja | Ja | Ja | Ja |
 | RPC-Benachrichtigungen empfangen | Ja | Ja | Ja | Ja |
 | Zuverlässige Byte-Streams | Ja | Ja | Ja | Ja |
+| Anwendungs-Streams in jeder Sitzung bedienen | Ja | Ja | Ja | Ja |
 | Wiederherstellung langlebiger Verbindungen | Ja | Ja | Ja | Ja |
 | Unzuverlässige Nachrichten, wenn verfügbar | Ja | Ja | Nein | Ja |
 | Browserverbindungen | Nein | Ja | Nein | Nein |

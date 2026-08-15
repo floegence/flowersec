@@ -1,12 +1,14 @@
-//! Role-specific handler registration for client and accepted server sessions.
+//! Carrier-neutral stream dispatch and role-specific RPC handler registration.
 
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{collections::HashMap, fmt, panic::AssertUnwindSafe, sync::Arc};
 
 use async_trait::async_trait;
+use futures_util::FutureExt;
 use tokio::{sync::Semaphore, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    protocol_v2::valid_open_kind,
     session_v2::RpcHandlerV2,
     transport_v2::{IncomingStream, RpcError, Session, SessionError},
 };
@@ -17,6 +19,12 @@ const MAX_CONCURRENT_STREAMS: usize = 128;
 /// Bounded dispatch options for one accepted session.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SessionHandlerOptions {
+    pub max_concurrent_streams: usize,
+}
+
+/// Bounded dispatch options for application streams on any established session.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StreamHandlerOptions {
     pub max_concurrent_streams: usize,
 }
 
@@ -59,6 +67,133 @@ pub trait StreamHandler: Send + Sync + 'static {
         stream: &IncomingStream,
         cancellation: CancellationToken,
     ) -> Result<(), SessionError>;
+}
+
+mod sealed {
+    use std::sync::Arc;
+
+    use super::{HandlerRegistrationError, StreamHandler};
+
+    pub trait Sealed {
+        fn register_stream_handlers(
+            &mut self,
+            handlers: Vec<(String, Arc<dyn StreamHandler>)>,
+        ) -> Result<(), HandlerRegistrationError>;
+    }
+}
+
+/// Sealed application-stream registration boundary for SDK-owned servers.
+pub trait StreamHandlerRegistrar: sealed::Sealed {}
+
+/// Carrier-neutral application-stream registry and dispatcher.
+pub struct StreamHandlers {
+    max_concurrent_streams: usize,
+    streams: HashMap<String, Arc<dyn StreamHandler>>,
+    snapshot: Option<Arc<StreamHandlerSnapshot>>,
+}
+
+impl StreamHandlers {
+    pub fn new(options: StreamHandlerOptions) -> Result<Self, HandlerRegistrationError> {
+        let max_concurrent_streams = effective_stream_limit(options.max_concurrent_streams)?;
+        Ok(Self {
+            max_concurrent_streams,
+            streams: HashMap::new(),
+            snapshot: None,
+        })
+    }
+
+    pub fn handle_stream<K, H>(
+        &mut self,
+        kind: K,
+        handler: H,
+    ) -> Result<(), HandlerRegistrationError>
+    where
+        K: Into<String>,
+        H: StreamHandler,
+    {
+        sealed::Sealed::register_stream_handlers(self, vec![(kind.into(), Arc::new(handler))])
+    }
+
+    /// Serves application streams until cancellation or session termination.
+    /// The registry is frozen on first use.
+    pub async fn serve(
+        &mut self,
+        session: &dyn Session,
+        cancellation: CancellationToken,
+    ) -> Result<(), SessionError> {
+        let snapshot = self.snapshot();
+        serve_stream_snapshot(session, snapshot.as_ref(), cancellation).await
+    }
+
+    fn snapshot(&mut self) -> Arc<StreamHandlerSnapshot> {
+        if let Some(snapshot) = &self.snapshot {
+            return snapshot.clone();
+        }
+        let snapshot = Arc::new(StreamHandlerSnapshot {
+            streams: self.streams.clone(),
+            max_concurrent_streams: self.max_concurrent_streams,
+        });
+        self.snapshot = Some(snapshot.clone());
+        snapshot
+    }
+}
+
+impl sealed::Sealed for StreamHandlers {
+    fn register_stream_handlers(
+        &mut self,
+        handlers: Vec<(String, Arc<dyn StreamHandler>)>,
+    ) -> Result<(), HandlerRegistrationError> {
+        if self.snapshot.is_some() {
+            return Err(HandlerRegistrationError::Invalid);
+        }
+        validate_stream_registrations(&self.streams, &handlers)?;
+        self.streams.extend(handlers);
+        Ok(())
+    }
+}
+
+impl StreamHandlerRegistrar for StreamHandlers {}
+
+impl Default for StreamHandlers {
+    fn default() -> Self {
+        Self::new(StreamHandlerOptions::default()).expect("valid Flowersec defaults")
+    }
+}
+
+impl fmt::Debug for StreamHandlers {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("StreamHandlers { <opaque> }")
+    }
+}
+
+fn effective_stream_limit(value: usize) -> Result<usize, HandlerRegistrationError> {
+    let value = if value == 0 {
+        DEFAULT_MAX_CONCURRENT_STREAMS
+    } else {
+        value
+    };
+    if !(1..=MAX_CONCURRENT_STREAMS).contains(&value) {
+        return Err(HandlerRegistrationError::Invalid);
+    }
+    Ok(value)
+}
+
+fn validate_stream_registrations(
+    existing: &HashMap<String, Arc<dyn StreamHandler>>,
+    handlers: &[(String, Arc<dyn StreamHandler>)],
+) -> Result<(), HandlerRegistrationError> {
+    if handlers.is_empty() {
+        return Err(HandlerRegistrationError::Invalid);
+    }
+    for (index, (kind, _)) in handlers.iter().enumerate() {
+        if !valid_open_kind(kind) || kind == "flowersec.rpc.v2" {
+            return Err(HandlerRegistrationError::Invalid);
+        }
+        if existing.contains_key(kind) || handlers[..index].iter().any(|(seen, _)| seen == kind) {
+            return Err(HandlerRegistrationError::AlreadyRegistered);
+        }
+    }
+    Ok(())
 }
 
 /// Reusable inbound RPC and notification definitions for client sessions.
@@ -195,25 +330,17 @@ impl RpcHandlerV2 for RpcRouterAdapter {
 
 /// Immutable handler set consumed by [`crate::Acceptor::accept_with_handlers`].
 pub struct SessionHandlers {
-    max_concurrent_streams: usize,
     rpc: RpcHandlers,
-    streams: HashMap<String, Arc<dyn StreamHandler>>,
+    streams: StreamHandlers,
 }
 
 impl SessionHandlers {
     pub fn new(options: SessionHandlerOptions) -> Result<Self, HandlerRegistrationError> {
-        let max_concurrent_streams = if options.max_concurrent_streams == 0 {
-            DEFAULT_MAX_CONCURRENT_STREAMS
-        } else {
-            options.max_concurrent_streams
-        };
-        if !(1..=MAX_CONCURRENT_STREAMS).contains(&max_concurrent_streams) {
-            return Err(HandlerRegistrationError::Invalid);
-        }
         Ok(Self {
-            max_concurrent_streams,
             rpc: RpcHandlers::new(),
-            streams: HashMap::new(),
+            streams: StreamHandlers::new(StreamHandlerOptions {
+                max_concurrent_streams: options.max_concurrent_streams,
+            })?,
         })
     }
 
@@ -237,44 +364,7 @@ impl SessionHandlers {
         K: Into<String>,
         H: StreamHandler,
     {
-        let kind = kind.into();
-        if kind.is_empty() || kind.len() > 255 || kind == "flowersec.rpc.v2" {
-            return Err(HandlerRegistrationError::Invalid);
-        }
-        if self.streams.contains_key(&kind) {
-            return Err(HandlerRegistrationError::AlreadyRegistered);
-        }
-        self.streams.insert(kind, Arc::new(handler));
-        Ok(())
-    }
-
-    pub(crate) fn handle_streams(
-        &mut self,
-        handlers: impl IntoIterator<Item = (String, Arc<dyn StreamHandler>)>,
-    ) -> Result<(), HandlerRegistrationError> {
-        let handlers: Vec<_> = handlers.into_iter().collect();
-        for (kind, _) in &handlers {
-            if kind.is_empty()
-                || kind.len() > 255
-                || kind == "flowersec.rpc.v2"
-                || self.streams.contains_key(kind)
-            {
-                return Err(if self.streams.contains_key(kind) {
-                    HandlerRegistrationError::AlreadyRegistered
-                } else {
-                    HandlerRegistrationError::Invalid
-                });
-            }
-        }
-        if handlers
-            .iter()
-            .enumerate()
-            .any(|(index, (kind, _))| handlers[..index].iter().any(|(seen, _)| seen == kind))
-        {
-            return Err(HandlerRegistrationError::AlreadyRegistered);
-        }
-        self.streams.extend(handlers);
-        Ok(())
+        self.streams.handle_stream(kind, handler)
     }
 
     pub fn handle_notification<H>(
@@ -288,11 +378,10 @@ impl SessionHandlers {
         self.rpc.handle_notification(type_id, handler)
     }
 
-    pub(crate) fn into_snapshot(self) -> Arc<SessionHandlerSnapshot> {
+    pub(crate) fn into_snapshot(mut self) -> Arc<SessionHandlerSnapshot> {
         Arc::new(SessionHandlerSnapshot {
             rpc: self.rpc.into_snapshot(),
-            streams: self.streams,
-            max_concurrent_streams: self.max_concurrent_streams,
+            streams: self.streams.snapshot(),
         })
     }
 }
@@ -303,10 +392,32 @@ impl fmt::Debug for SessionHandlers {
     }
 }
 
-pub(crate) struct SessionHandlerSnapshot {
-    pub(crate) rpc: Arc<RpcHandlerSnapshot>,
+impl sealed::Sealed for SessionHandlers {
+    fn register_stream_handlers(
+        &mut self,
+        handlers: Vec<(String, Arc<dyn StreamHandler>)>,
+    ) -> Result<(), HandlerRegistrationError> {
+        sealed::Sealed::register_stream_handlers(&mut self.streams, handlers)
+    }
+}
+
+impl StreamHandlerRegistrar for SessionHandlers {}
+
+pub(crate) fn register_stream_handlers<R: StreamHandlerRegistrar>(
+    registrar: &mut R,
+    handlers: Vec<(String, Arc<dyn StreamHandler>)>,
+) -> Result<(), HandlerRegistrationError> {
+    sealed::Sealed::register_stream_handlers(registrar, handlers)
+}
+
+struct StreamHandlerSnapshot {
     streams: HashMap<String, Arc<dyn StreamHandler>>,
     max_concurrent_streams: usize,
+}
+
+pub(crate) struct SessionHandlerSnapshot {
+    pub(crate) rpc: Arc<RpcHandlerSnapshot>,
+    streams: Arc<StreamHandlerSnapshot>,
 }
 
 /// One accepted public session paired with its frozen handlers.
@@ -325,40 +436,57 @@ impl AcceptedSession {
     }
 
     pub async fn serve(&self, cancellation: CancellationToken) -> Result<(), SessionError> {
-        let permits = Arc::new(Semaphore::new(self.handlers.max_concurrent_streams));
-        let mut tasks = JoinSet::new();
-        let result = loop {
-            let incoming = tokio::select! {
-                _ = cancellation.cancelled() => break Err(SessionError::Canceled),
-                accepted = self.session.accept_stream() => accepted,
-            }?;
-            let Some(handler) = self.handlers.streams.get(incoming.kind()).cloned() else {
-                let _ = incoming.stream().reset().await;
-                continue;
-            };
-            let Ok(permit) = permits.clone().try_acquire_owned() else {
-                let _ = incoming.stream().reset().await;
-                continue;
-            };
-            let handler_cancellation = cancellation.child_token();
-            tasks.spawn(async move {
-                let _permit = permit;
-                let succeeded = handler
-                    .handle(&incoming, handler_cancellation)
-                    .await
-                    .is_ok();
-                if !succeeded {
-                    let _ = incoming.stream().reset().await;
-                } else {
-                    let _ = incoming.stream().close_write().await;
-                }
-            });
-        };
-        let _ = self.session.close().await;
-        tasks.abort_all();
-        while tasks.join_next().await.is_some() {}
-        result
+        serve_stream_snapshot(
+            self.session.as_ref(),
+            self.handlers.streams.as_ref(),
+            cancellation,
+        )
+        .await
     }
+}
+
+async fn serve_stream_snapshot(
+    session: &dyn Session,
+    handlers: &StreamHandlerSnapshot,
+    cancellation: CancellationToken,
+) -> Result<(), SessionError> {
+    let permits = Arc::new(Semaphore::new(handlers.max_concurrent_streams));
+    let mut tasks = JoinSet::new();
+    let handler_shutdown = cancellation.child_token();
+    let result = loop {
+        while tasks.try_join_next().is_some() {}
+        let incoming = tokio::select! {
+            _ = cancellation.cancelled() => break Err(SessionError::Canceled),
+            accepted = session.accept_stream() => accepted,
+        };
+        let incoming = match incoming {
+            Ok(incoming) => incoming,
+            Err(error) => break Err(error),
+        };
+        let Some(handler) = handlers.streams.get(incoming.kind()).cloned() else {
+            let _ = incoming.stream().reset().await;
+            continue;
+        };
+        let Ok(permit) = permits.clone().try_acquire_owned() else {
+            let _ = incoming.stream().reset().await;
+            continue;
+        };
+        let handler_cancellation = handler_shutdown.child_token();
+        tasks.spawn(async move {
+            let _permit = permit;
+            let succeeded = AssertUnwindSafe(handler.handle(&incoming, handler_cancellation))
+                .catch_unwind()
+                .await
+                .is_ok_and(|result| result.is_ok());
+            if !succeeded || incoming.stream().close_write().await.is_err() {
+                let _ = incoming.stream().reset().await;
+            }
+        });
+    };
+    handler_shutdown.cancel();
+    let _ = session.close().await;
+    while tasks.join_next().await.is_some() {}
+    result
 }
 
 impl fmt::Debug for AcceptedSession {
@@ -369,9 +497,21 @@ impl fmt::Debug for AcceptedSession {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+        time::Duration,
+    };
+
+    use bytes::Bytes;
+    use tokio::sync::{Mutex as AsyncMutex, Notify, mpsc};
 
     use super::*;
+    use crate::transport_v2::{
+        ByteStream, NotificationSubscription, RpcCallError, RpcPeer, SessionTermination,
+        StreamMetadata,
+    };
 
     #[derive(Debug)]
     struct NoopStreamHandler;
@@ -417,6 +557,353 @@ mod tests {
         ) -> Result<(), SessionError> {
             Ok(())
         }
+    }
+
+    #[derive(Debug)]
+    struct StreamTestRpcPeer;
+
+    #[async_trait]
+    impl RpcPeer for StreamTestRpcPeer {
+        async fn call(
+            &self,
+            _type_id: u32,
+            _request: serde_json::Value,
+        ) -> Result<serde_json::Value, RpcCallError> {
+            Err(RpcCallError::Session(SessionError::OperationFailed))
+        }
+
+        async fn notify(
+            &self,
+            _type_id: u32,
+            _request: serde_json::Value,
+        ) -> Result<(), SessionError> {
+            Err(SessionError::OperationFailed)
+        }
+
+        fn subscribe_notification(
+            &self,
+            _type_id: u32,
+            _handler: Arc<dyn Fn(serde_json::Value) + Send + Sync>,
+        ) -> Result<NotificationSubscription, SessionError> {
+            Err(SessionError::OperationFailed)
+        }
+    }
+
+    struct StreamTestSession {
+        rpc: StreamTestRpcPeer,
+        incoming: AsyncMutex<mpsc::UnboundedReceiver<Result<IncomingStream, SessionError>>>,
+        sender: mpsc::UnboundedSender<Result<IncomingStream, SessionError>>,
+        close_count: AtomicUsize,
+    }
+
+    impl StreamTestSession {
+        fn new() -> Self {
+            let (sender, incoming) = mpsc::unbounded_channel();
+            Self {
+                rpc: StreamTestRpcPeer,
+                incoming: AsyncMutex::new(incoming),
+                sender,
+                close_count: AtomicUsize::new(0),
+            }
+        }
+
+        fn enqueue(&self, incoming: Result<IncomingStream, SessionError>) {
+            self.sender
+                .send(incoming)
+                .expect("stream test session is open");
+        }
+    }
+
+    impl fmt::Debug for StreamTestSession {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("StreamTestSession")
+        }
+    }
+
+    #[async_trait]
+    impl Session for StreamTestSession {
+        fn rpc(&self) -> &dyn RpcPeer {
+            &self.rpc
+        }
+
+        async fn open_stream(
+            &self,
+            _kind: &str,
+            _metadata: StreamMetadata,
+        ) -> Result<Box<dyn ByteStream>, SessionError> {
+            Err(SessionError::OperationFailed)
+        }
+
+        async fn accept_stream(&self) -> Result<IncomingStream, SessionError> {
+            self.incoming
+                .lock()
+                .await
+                .recv()
+                .await
+                .unwrap_or(Err(SessionError::Closed))
+        }
+
+        async fn rekey(&self) -> Result<(), SessionError> {
+            Ok(())
+        }
+
+        async fn probe_liveness(&self) -> Result<Duration, SessionError> {
+            Ok(Duration::ZERO)
+        }
+
+        async fn wait_termination(&self) -> SessionTermination {
+            SessionTermination {
+                error: SessionError::Closed,
+            }
+        }
+
+        async fn close(&self) -> Result<(), SessionError> {
+            self.close_count.fetch_add(1, Ordering::SeqCst);
+            let _ = self.sender.send(Err(SessionError::Closed));
+            Ok(())
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct StreamTestState {
+        close_write_count: AtomicUsize,
+        reset_count: AtomicUsize,
+    }
+
+    #[derive(Debug)]
+    struct StreamTestByteStream {
+        kind: String,
+        state: Arc<StreamTestState>,
+        fail_close_write: bool,
+    }
+
+    #[async_trait]
+    impl ByteStream for StreamTestByteStream {
+        fn internal_test_id(&self) -> u64 {
+            1
+        }
+
+        fn kind(&self) -> &str {
+            &self.kind
+        }
+
+        fn terminal_error(&self) -> Option<SessionError> {
+            None
+        }
+
+        async fn read(&self) -> Result<Option<Bytes>, SessionError> {
+            Ok(None)
+        }
+
+        async fn write(&self, payload: Bytes) -> Result<usize, SessionError> {
+            Ok(payload.len())
+        }
+
+        async fn close_write(&self) -> Result<(), SessionError> {
+            self.state.close_write_count.fetch_add(1, Ordering::SeqCst);
+            if self.fail_close_write {
+                Err(SessionError::OperationFailed)
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn reset(&self) -> Result<(), SessionError> {
+            self.state.reset_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<(), SessionError> {
+            self.reset().await
+        }
+    }
+
+    fn stream_test_incoming(
+        kind: &str,
+        state: Arc<StreamTestState>,
+        fail_close_write: bool,
+    ) -> IncomingStream {
+        IncomingStream::new(
+            kind,
+            StreamMetadata::empty(),
+            Box::new(StreamTestByteStream {
+                kind: kind.to_owned(),
+                state,
+                fail_close_write,
+            }),
+        )
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum StreamTestBehavior {
+        Success,
+        Failure,
+        Panic,
+        WaitForCancellation,
+    }
+
+    #[derive(Debug)]
+    struct StreamTestHandler {
+        behavior: StreamTestBehavior,
+        started: Arc<Notify>,
+        completed: Arc<AtomicBool>,
+    }
+
+    impl StreamTestHandler {
+        fn new(behavior: StreamTestBehavior) -> Self {
+            Self {
+                behavior,
+                started: Arc::new(Notify::new()),
+                completed: Arc::new(AtomicBool::new(false)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl StreamHandler for StreamTestHandler {
+        async fn handle(
+            &self,
+            _stream: &IncomingStream,
+            cancellation: CancellationToken,
+        ) -> Result<(), SessionError> {
+            self.started.notify_one();
+            let result = match self.behavior {
+                StreamTestBehavior::Success => Ok(()),
+                StreamTestBehavior::Failure => Err(SessionError::OperationFailed),
+                StreamTestBehavior::Panic => panic!("stream test handler panic"),
+                StreamTestBehavior::WaitForCancellation => {
+                    cancellation.cancelled().await;
+                    Ok(())
+                }
+            };
+            self.completed.store(true, Ordering::SeqCst);
+            result
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_handlers_isolate_failures_and_continue_dispatch() {
+        let session = StreamTestSession::new();
+        let success = Arc::new(StreamTestState::default());
+        let failure = Arc::new(StreamTestState::default());
+        let panicked = Arc::new(StreamTestState::default());
+        let close_failure = Arc::new(StreamTestState::default());
+        let unknown = Arc::new(StreamTestState::default());
+        session.enqueue(Ok(stream_test_incoming("success", success.clone(), false)));
+        session.enqueue(Ok(stream_test_incoming("failure", failure.clone(), false)));
+        session.enqueue(Ok(stream_test_incoming("panic", panicked.clone(), false)));
+        session.enqueue(Ok(stream_test_incoming(
+            "close-failure",
+            close_failure.clone(),
+            true,
+        )));
+        session.enqueue(Ok(stream_test_incoming("unknown", unknown.clone(), false)));
+        session.enqueue(Err(SessionError::Closed));
+
+        let mut handlers = StreamHandlers::default();
+        handlers
+            .handle_stream(
+                "success",
+                StreamTestHandler::new(StreamTestBehavior::Success),
+            )
+            .expect("register success handler");
+        handlers
+            .handle_stream(
+                "failure",
+                StreamTestHandler::new(StreamTestBehavior::Failure),
+            )
+            .expect("register failure handler");
+        handlers
+            .handle_stream("panic", StreamTestHandler::new(StreamTestBehavior::Panic))
+            .expect("register panic handler");
+        handlers
+            .handle_stream(
+                "close-failure",
+                StreamTestHandler::new(StreamTestBehavior::Success),
+            )
+            .expect("register close failure handler");
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            handlers.serve(&session, CancellationToken::new()),
+        )
+        .await
+        .expect("stream serving cleanup timed out");
+        assert_eq!(result, Err(SessionError::Closed));
+        assert_eq!(session.close_count.load(Ordering::SeqCst), 1);
+        assert_eq!(success.close_write_count.load(Ordering::SeqCst), 1);
+        assert_eq!(success.reset_count.load(Ordering::SeqCst), 0);
+        assert_eq!(failure.reset_count.load(Ordering::SeqCst), 1);
+        assert_eq!(panicked.reset_count.load(Ordering::SeqCst), 1);
+        assert_eq!(close_failure.close_write_count.load(Ordering::SeqCst), 1);
+        assert_eq!(close_failure.reset_count.load(Ordering::SeqCst), 1);
+        assert_eq!(unknown.reset_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn stream_handlers_cancel_and_wait_for_active_handlers_on_session_termination() {
+        let session = StreamTestSession::new();
+        let active = Arc::new(StreamTestState::default());
+        session.enqueue(Ok(stream_test_incoming("held", active.clone(), false)));
+        session.enqueue(Err(SessionError::Closed));
+
+        let handler = StreamTestHandler::new(StreamTestBehavior::WaitForCancellation);
+        let completed = handler.completed.clone();
+        let mut handlers = StreamHandlers::default();
+        handlers
+            .handle_stream("held", handler)
+            .expect("register blocking handler");
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            handlers.serve(&session, CancellationToken::new()),
+        )
+        .await
+        .expect("session termination cleanup timed out");
+        assert_eq!(result, Err(SessionError::Closed));
+        assert!(completed.load(Ordering::SeqCst));
+        assert_eq!(session.close_count.load(Ordering::SeqCst), 1);
+        assert_eq!(active.close_write_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn stream_handlers_enforce_concurrency_and_wait_for_canceled_handlers() {
+        let session = StreamTestSession::new();
+        let active = Arc::new(StreamTestState::default());
+        let excess = Arc::new(StreamTestState::default());
+        session.enqueue(Ok(stream_test_incoming("held", active.clone(), false)));
+        session.enqueue(Ok(stream_test_incoming("held", excess.clone(), false)));
+
+        let handler = StreamTestHandler::new(StreamTestBehavior::WaitForCancellation);
+        let started = handler.started.clone();
+        let completed = handler.completed.clone();
+        let mut handlers = StreamHandlers::new(StreamHandlerOptions {
+            max_concurrent_streams: 1,
+        })
+        .expect("create bounded stream handlers");
+        handlers
+            .handle_stream("held", handler)
+            .expect("register blocking handler");
+        let cancellation = CancellationToken::new();
+        let serving = handlers.serve(&session, cancellation.clone());
+        let canceling = async {
+            started.notified().await;
+            while excess.reset_count.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+            cancellation.cancel();
+        };
+
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(serving, canceling)
+        })
+        .await
+        .expect("canceled stream serving cleanup timed out");
+        assert_eq!(result, Err(SessionError::Canceled));
+        assert!(completed.load(Ordering::SeqCst));
+        assert_eq!(session.close_count.load(Ordering::SeqCst), 1);
+        assert_eq!(active.close_write_count.load(Ordering::SeqCst), 1);
+        assert_eq!(excess.reset_count.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -491,7 +978,7 @@ mod tests {
             let mut handlers =
                 SessionHandlers::new(SessionHandlerOptions::default()).expect("create handlers");
             let kind = format!("{}{}", vector.unit.repeat(vector.repeat), vector.suffix);
-            let result = handlers.handle_stream(kind, NoopStreamHandler);
+            let result = handlers.handle_stream(kind.clone(), NoopStreamHandler);
             assert_eq!(
                 result.is_ok(),
                 vector.valid,
@@ -501,6 +988,14 @@ mod tests {
             if !vector.valid {
                 assert_eq!(result, Err(HandlerRegistrationError::Invalid));
             }
+            let mut portable = StreamHandlers::default();
+            let portable_result = portable.handle_stream(kind, NoopStreamHandler);
+            assert_eq!(
+                portable_result.is_ok(),
+                vector.valid,
+                "portable stream kind vector {}",
+                vector.id
+            );
         }
 
         let mut handlers =

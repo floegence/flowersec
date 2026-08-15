@@ -187,6 +187,21 @@
           },
           {
             "kind": "type",
+            "expr": "flowersec.StreamHandlers",
+            "doc_token": "`flowersec.StreamHandlers`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.StreamHandlerOptions",
+            "doc_token": "`flowersec.StreamHandlerOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.StreamHandlerRegistrar",
+            "doc_token": "`flowersec.StreamHandlerRegistrar`"
+          },
+          {
+            "kind": "type",
             "expr": "flowersec.StreamHandler",
             "doc_token": "`flowersec.StreamHandler`"
           },
@@ -375,6 +390,36 @@
             "kind": "method",
             "expr": "(*flowersec.RPCHandlers).MarshalJSON",
             "doc_token": "`flowersec.RPCHandlers.MarshalJSON()`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewStreamHandlers",
+            "doc_token": "`flowersec.NewStreamHandlers(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.StreamHandlers).HandleStream",
+            "doc_token": "`flowersec.StreamHandlers.HandleStream(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.StreamHandlers).Serve",
+            "doc_token": "`flowersec.StreamHandlers.Serve(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.StreamHandlers).String",
+            "doc_token": "`flowersec.StreamHandlers.String()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.StreamHandlers).GoString",
+            "doc_token": "`flowersec.StreamHandlers.GoString()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.StreamHandlers).MarshalJSON",
+            "doc_token": "`flowersec.StreamHandlers.MarshalJSON()`"
           },
           {
             "kind": "func",
@@ -745,6 +790,11 @@
             "kind": "method",
             "expr": "(*flowersec.ProxyServer).Register",
             "doc_token": "`flowersec.ProxyServer.Register(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ProxyServer).RegisterStreamHandlers",
+            "doc_token": "`flowersec.ProxyServer.RegisterStreamHandlers(...)`"
           },
           {
             "kind": "method",
@@ -1226,6 +1276,7 @@
           "`StreamMetadata`",
           "`UnreliableMessageError`",
           "`ConnectionController`",
+          "`StreamHandlers`",
           "`ConnectionSnapshot.retryDisposition`"
         ],
         "runtime_exports": [
@@ -1234,7 +1285,9 @@
           "ArtifactLeaseError",
           "ConnectError",
           "ConnectionControllerError",
+          "HandlerRegistrationError",
           "SessionError",
+          "StreamHandlers",
           "StreamMetadataError",
           "UnreliableMessageError",
           "createArtifactLease",
@@ -1257,6 +1310,7 @@
           "ConnectionControllerOptions",
           "ConnectionSnapshot",
           "ConnectionState",
+          "HandlerRegistrationError",
           "IncomingStream",
           "JsonObject",
           "JsonPrimitive",
@@ -1269,6 +1323,9 @@
           "SessionError",
           "SessionErrorCode",
           "SessionTermination",
+          "StreamHandler",
+          "StreamHandlerOptions",
+          "StreamHandlers",
           "StreamMetadata",
           "StreamMetadataError",
           "StreamOpenOptions",
@@ -1287,6 +1344,7 @@
           "`createAcceptor(...)`",
           "`RPCHandlers`",
           "`SessionHandlers`",
+          "`StreamHandlers`",
           "`HandlerRegistrationError`",
           "`AcceptedSession`"
         ],
@@ -1311,6 +1369,7 @@
           "RuntimeAuthorizationRequest",
           "SessionError",
           "SessionHandlers",
+          "StreamHandlers",
           "StreamMetadataError",
           "TunnelAuthorizationResponse",
           "TunnelRuntime",
@@ -1392,6 +1451,9 @@
           "StreamMetadataError",
           "StreamOpenOptions",
           "StreamHandler",
+          "StreamHandlerOptions",
+          "StreamHandlerRegistrar",
+          "StreamHandlers",
           "TunnelAuthorizationResponse",
           "TunnelAuthorizationDecision",
           "TunnelIssueOptions",
@@ -1409,7 +1471,8 @@
         "doc_tokens": [
           "`@floegence/flowersec-core/browser`",
           "`connect(...)`",
-          "`ConnectionController`"
+          "`ConnectionController`",
+          "`StreamHandlers`"
         ],
         "runtime_exports": [
           "Artifact",
@@ -1417,7 +1480,9 @@
           "ArtifactLeaseError",
           "ConnectError",
           "ConnectionControllerError",
+          "HandlerRegistrationError",
           "SessionError",
+          "StreamHandlers",
           "StreamMetadataError",
           "UnreliableMessageError",
           "connect",
@@ -1443,6 +1508,7 @@
           "ConnectionControllerOptions",
           "ConnectionSnapshot",
           "ConnectionState",
+          "HandlerRegistrationError",
           "IncomingStream",
           "JsonObject",
           "JsonPrimitive",
@@ -1455,6 +1521,9 @@
           "SessionError",
           "SessionErrorCode",
           "SessionTermination",
+          "StreamHandler",
+          "StreamHandlerOptions",
+          "StreamHandlers",
           "StreamMetadata",
           "StreamMetadataError",
           "StreamOpenOptions",
@@ -1541,6 +1610,7 @@
       "`SessionError`",
       "`ConnectionController`",
       "`ArtifactSource`",
+      "`StreamHandlers`",
       "`RetryDisposition`"
     ],
     "symbols": [
@@ -2218,6 +2288,71 @@
         "kind": "swift.method",
         "name": "ConnectionController.close()",
         "doc_token": ""
+      },
+      {
+        "kind": "swift.class",
+        "name": "StreamHandlers",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "HandlerRegistrationError",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "HandlerRegistrationError.alreadyRegistered",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "HandlerRegistrationError.frozen",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "HandlerRegistrationError.invalidHandler",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "StreamHandlerOptions.init(maxConcurrentStreams:onError:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "StreamHandlers.init(options:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "StreamHandlers.handleStream(kind:handler:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "StreamHandlers.serve(session:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "StreamHandlerOptions.maxConcurrentStreams",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "StreamHandlerOptions.onError",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "StreamHandlerOptions",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.typealias",
+        "name": "StreamHandler",
+        "doc_token": ""
       }
     ]
   },
@@ -2232,6 +2367,9 @@
       "`RpcHandlers`",
       "`SessionHandlers`",
       "`SessionHandlerOptions`",
+      "`StreamHandlers`",
+      "`StreamHandlerOptions`",
+      "`StreamHandlerRegistrar`",
       "`RpcHandler`",
       "`StreamHandler`",
       "`HandlerRegistrationError`",
@@ -2273,6 +2411,12 @@
       "let _ = flowersec::AcceptedSession::session",
       "let _ = flowersec::AcceptedSession::serve",
       "let _ = std::mem::size_of::<flowersec::SessionHandlers>()",
+      "let _ = std::mem::size_of::<flowersec::StreamHandlers>()",
+      "let _ = std::mem::size_of::<flowersec::StreamHandlerOptions>()",
+      "let _: Option<&dyn flowersec::StreamHandlerRegistrar> = None",
+      "let _ = flowersec::StreamHandlers::new",
+      "fn require_stream_handlers_handle_stream<K, H>(handlers: &mut flowersec::StreamHandlers, kind: K, handler: H) -> Result<(), flowersec::HandlerRegistrationError> where K: Into<String>, H: flowersec::StreamHandler { handlers.handle_stream(kind, handler) }",
+      "let _ = flowersec::StreamHandlers::serve",
       "let _ = std::mem::size_of::<flowersec::RpcHandlers>()",
       "let _ = flowersec::RpcHandlers::new",
       "fn require_rpc_handlers_handle_rpc<H>(handlers: &mut flowersec::RpcHandlers, type_id: u32, handler: H) -> Result<(), flowersec::HandlerRegistrationError> where H: flowersec::RpcHandler { handlers.handle_rpc(type_id, handler) }",

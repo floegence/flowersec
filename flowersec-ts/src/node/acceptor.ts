@@ -22,7 +22,6 @@ import {
 import { unwrapArtifact } from "../public/artifact.js";
 import {
   SessionError,
-  type IncomingStream,
   type JsonValue,
   type OperationOptions,
   type Session,
@@ -33,13 +32,22 @@ import {
   type DirectAuthorizationDecision,
   type RuntimeAuthorizationRequest,
 } from "./controlplane.js";
+import {
+  HandlerRegistrationError,
+  StreamHandlers,
+  freezeStreamHandlers,
+  registerStreamHandlersAtomically,
+  serveFrozenStreamHandlers,
+  type FrozenStreamHandlers,
+  type StreamHandler,
+  type StreamHandlerOptions,
+} from "../public/streamHandlers.js";
 
 export type { RuntimeAuthorizationRequest } from "./controlplane.js";
+export { HandlerRegistrationError } from "../public/streamHandlers.js";
+export type { StreamHandler } from "../public/streamHandlers.js";
 
-const DEFAULT_MAX_CONCURRENT_STREAMS = 64;
-const MAX_CONCURRENT_STREAMS = 128;
 const DEFAULT_CLEANUP_TIMEOUT_MS = 2_000;
-const encoder = new TextEncoder();
 
 export type AuthorizationDecision = DirectAuthorizationDecision;
 
@@ -57,23 +65,7 @@ export type NotificationHandler = (
   request: Readonly<{ typeId: number }>,
 ) => Promise<void> | void;
 
-export type StreamHandler = (
-  incoming: IncomingStream,
-  options: OperationOptions,
-) => Promise<void>;
-
-export type SessionHandlerOptions = Readonly<{
-  maxConcurrentStreams?: number;
-}>;
-
-export class HandlerRegistrationError extends Error {
-  constructor(
-    readonly code: "invalid_handler" | "already_registered" | "frozen",
-  ) {
-    super(`Flowersec handler registration failed (code=${code})`);
-    this.name = "HandlerRegistrationError";
-  }
-}
+export type SessionHandlerOptions = StreamHandlerOptions;
 
 export class RPCHandlers {
   constructor() {
@@ -90,20 +82,12 @@ export class RPCHandlers {
 }
 
 export class SessionHandlers {
+  declare private readonly streamHandlerRegistrarBrand: void;
+
   constructor(options: SessionHandlerOptions = {}) {
-    const maximum =
-      options.maxConcurrentStreams ?? DEFAULT_MAX_CONCURRENT_STREAMS;
-    if (
-      !Number.isSafeInteger(maximum) ||
-      maximum < 1 ||
-      maximum > MAX_CONCURRENT_STREAMS
-    ) {
-      throw new HandlerRegistrationError("invalid_handler");
-    }
     sessionHandlerStates.set(this, {
-      maxConcurrentStreams: maximum,
       rpc: createRPCHandlerState(),
-      streams: new Map(),
+      streams: new StreamHandlers(options),
       frozen: false,
     });
   }
@@ -120,17 +104,7 @@ export class SessionHandlers {
 
   handleStream(kind: string, handler: StreamHandler): void {
     const state = mutableSessionHandlerState(this);
-    if (
-      kind.length < 1 ||
-      encoder.encode(kind).length > 255 ||
-      kind === "flowersec.rpc.v2" ||
-      typeof handler !== "function"
-    ) {
-      throw new HandlerRegistrationError("invalid_handler");
-    }
-    if (state.streams.has(kind))
-      throw new HandlerRegistrationError("already_registered");
-    state.streams.set(kind, handler);
+    state.streams.handleStream(kind, handler);
   }
 }
 
@@ -142,9 +116,8 @@ type RPCHandlerState = {
 };
 
 type SessionHandlerState = {
-  maxConcurrentStreams: number;
   rpc: RPCHandlerState;
-  streams: Map<string, StreamHandler>;
+  streams: StreamHandlers;
   frozen: boolean;
   snapshot?: FrozenSessionHandlers;
 };
@@ -171,6 +144,15 @@ function mutableSessionHandlerState(handlers: SessionHandlers): SessionHandlerSt
   if (state === undefined) throw new HandlerRegistrationError("invalid_handler");
   if (state.frozen) throw new HandlerRegistrationError("frozen");
   return state;
+}
+
+/** @internal */
+export function registerSessionStreamHandlersAtomically(
+  handlers: SessionHandlers,
+  entries: readonly (readonly [string, StreamHandler])[],
+): void {
+  const state = mutableSessionHandlerState(handlers);
+  registerStreamHandlersAtomically(state.streams, entries);
 }
 
 function registerRPC(state: RPCHandlerState, typeId: number, handler: RPCHandler): void {
@@ -263,38 +245,14 @@ function freezeSessionHandlers(handlers: SessionHandlers): FrozenSessionHandlers
   state.frozen = true;
   state.snapshot = Object.freeze({
     rpc: freezeRPCHandlerState(state.rpc),
-    maxConcurrentStreams: state.maxConcurrentStreams,
-    streams: new Map(state.streams),
+    streams: freezeStreamHandlers(state.streams),
   });
   return state.snapshot;
 }
 
-/** @internal */
-export function registerSessionStreamsAtomically(
-  handlers: SessionHandlers,
-  entries: readonly (readonly [string, StreamHandler])[],
-): void {
-  const state = mutableSessionHandlerState(handlers);
-  const pending = new Set<string>();
-  for (const [kind, handler] of entries) {
-    if (
-      kind.length < 1 ||
-      encoder.encode(kind).length > 255 ||
-      kind === "flowersec.rpc.v2" ||
-      typeof handler !== "function"
-    )
-      throw new HandlerRegistrationError("invalid_handler");
-    if (state.streams.has(kind) || pending.has(kind))
-      throw new HandlerRegistrationError("already_registered");
-    pending.add(kind);
-  }
-  for (const [kind, handler] of entries) state.streams.set(kind, handler);
-}
-
 type FrozenSessionHandlers = Readonly<{
   rpc: FrozenRPCHandlers;
-  maxConcurrentStreams: number;
-  streams: ReadonlyMap<string, StreamHandler>;
+  streams: FrozenStreamHandlers;
 }>;
 
 export type AcceptorListener =
@@ -337,34 +295,13 @@ export class AcceptedSession {
   }
 
   async serve(options: OperationOptions = {}): Promise<void> {
-    const active = new Set<Promise<void>>();
     const state = acceptedSessionState(this);
-    try {
-      while (true) {
-        if (options.signal?.aborted) throw new SessionError("canceled");
-        const incoming = await this.session.acceptStream(options);
-        const handler = state.handlers.streams.get(incoming.kind);
-        if (
-          handler === undefined ||
-          active.size >= state.handlers.maxConcurrentStreams
-        ) {
-          await incoming.stream.reset();
-          continue;
-        }
-        const task = (async () => {
-          try {
-            await handler(incoming, options);
-            await incoming.stream.closeWrite();
-          } catch {
-            await incoming.stream.reset().catch(() => undefined);
-          }
-        })().finally(() => active.delete(task));
-        active.add(task);
-      }
-    } finally {
-      await this.close().catch(() => undefined);
-      await Promise.allSettled(active);
-    }
+    await serveFrozenStreamHandlers(
+      state.handlers.streams,
+      this.session,
+      options,
+      async () => await this.close(),
+    );
   }
 
   async close(): Promise<void> {

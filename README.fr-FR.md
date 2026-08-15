@@ -82,6 +82,7 @@ Les quatre SDK partagent le même modèle de session. La prise en charge varie l
 | Envoyer des appels RPC et des notifications | Oui | Oui | Oui | Oui |
 | Recevoir des notifications RPC | Oui | Oui | Oui | Oui |
 | Flux d'octets fiables | Oui | Oui | Oui | Oui |
+| Servir des flux applicatifs sur toute session | Oui | Oui | Oui | Oui |
 | Rétablissement des connexions durables | Oui | Oui | Oui | Oui |
 | Messages non fiables lorsqu'ils sont disponibles | Oui | Oui | Non | Oui |
 | Connexions depuis un navigateur | Non | Oui | Non | Non |

@@ -123,7 +123,8 @@ pub use native_runtime_v2::{ConnectorOptions, connect, connect_with_cancellation
 pub use proxy_server::{ProxyErrorReporter, ProxyServer, ProxyServerError, ProxyServerOptions};
 pub use session_handlers::{
     AcceptedSession, HandlerRegistrationError, NotificationHandler, RpcHandler, RpcHandlers,
-    SessionHandlerOptions, SessionHandlers, StreamHandler,
+    SessionHandlerOptions, SessionHandlers, StreamHandler, StreamHandlerOptions,
+    StreamHandlerRegistrar, StreamHandlers,
 };
 pub use transport_v2::{
     ByteStream, IncomingStream, JsonObject, NotificationSubscription, RpcCallError, RpcError,

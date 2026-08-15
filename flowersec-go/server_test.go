@@ -69,6 +69,139 @@ func TestSessionHandlersDispatchAcceptedStreamMetadata(t *testing.T) {
 	}
 }
 
+func TestStreamHandlersDispatchEstablishedConnectorSession(t *testing.T) {
+	stream := &serverTestStream{Reader: bytes.NewReader([]byte("request"))}
+	session := &serverTestSession{incoming: make(chan IncomingStream, 1), closed: make(chan struct{})}
+	session.incoming <- IncomingStream{Kind: "files/read", Metadata: EmptyStreamMetadata(), Stream: stream}
+
+	handled := make(chan struct{}, 1)
+	handlers, err := NewStreamHandlers(StreamHandlerOptions{MaxConcurrentStreams: 2})
+	if err != nil {
+		t.Fatalf("NewStreamHandlers() error = %v", err)
+	}
+	if err := handlers.HandleStream("files/read", func(context.Context, IncomingStream) error {
+		handled <- struct{}{}
+		return nil
+	}); err != nil {
+		t.Fatalf("HandleStream() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- handlers.Serve(ctx, session) }()
+	select {
+	case <-handled:
+	case <-time.After(time.Second):
+		t.Fatal("stream handler was not called")
+	}
+	if err := handlers.HandleStream("late", func(context.Context, IncomingStream) error { return nil }); !errors.Is(err, ErrHandlerRegistryFrozen) {
+		t.Fatalf("late HandleStream() error = %v, want ErrHandlerRegistryFrozen", err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Serve() error = %v, want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Serve() did not stop")
+	}
+	_, writeClosed, reset := stream.state()
+	if !writeClosed || reset {
+		t.Fatalf("stream writeClosed=%v reset=%v, want true/false", writeClosed, reset)
+	}
+}
+
+func TestStreamHandlersIsolateUnknownFailurePanicAndCloseWriteFailure(t *testing.T) {
+	unknown := &serverTestStream{Reader: bytes.NewReader(nil)}
+	failed := &serverTestStream{Reader: bytes.NewReader(nil)}
+	panicked := &serverTestStream{Reader: bytes.NewReader(nil)}
+	closeFailed := &serverTestStream{Reader: bytes.NewReader(nil), closeWriteErr: errors.New("close write failed")}
+	succeeded := &serverTestStream{Reader: bytes.NewReader(nil)}
+	session := &serverTestSession{incoming: make(chan IncomingStream, 5), closed: make(chan struct{})}
+	errorsCh := make(chan error, 4)
+	handlers, err := NewStreamHandlers(StreamHandlerOptions{
+		MaxConcurrentStreams: 5,
+		OnError:              func(err error) { errorsCh <- err },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handlers.HandleStream("failed", func(context.Context, IncomingStream) error {
+		return errors.New("handler failed")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := handlers.HandleStream("panicked", func(context.Context, IncomingStream) error {
+		panic("handler panic")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"close-failed", "succeeded"} {
+		if err := handlers.HandleStream(kind, func(context.Context, IncomingStream) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- handlers.Serve(ctx, session) }()
+	for _, incoming := range []IncomingStream{
+		{Kind: "unknown", Metadata: EmptyStreamMetadata(), Stream: unknown},
+		{Kind: "failed", Metadata: EmptyStreamMetadata(), Stream: failed},
+		{Kind: "panicked", Metadata: EmptyStreamMetadata(), Stream: panicked},
+		{Kind: "close-failed", Metadata: EmptyStreamMetadata(), Stream: closeFailed},
+		{Kind: "succeeded", Metadata: EmptyStreamMetadata(), Stream: succeeded},
+	} {
+		session.incoming <- incoming
+	}
+
+	for received := 0; received < 4; received++ {
+		select {
+		case reported := <-errorsCh:
+			var sessionErr *SessionError
+			if !errors.As(reported, &sessionErr) {
+				t.Fatalf("OnError() = %v, want sanitized SessionError", reported)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("stream failure was not reported")
+		}
+	}
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		_, succeededWriteClosed, _ := succeeded.state()
+		unknownClosed, _, unknownReset := unknown.state()
+		failedClosed, _, failedReset := failed.state()
+		panickedClosed, _, panickedReset := panicked.state()
+		closeFailedClosed, _, closeFailedReset := closeFailed.state()
+		if succeededWriteClosed && unknownClosed && unknownReset && failedClosed && failedReset &&
+			panickedClosed && panickedReset && closeFailedClosed && closeFailedReset {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	_, succeededWriteClosed, succeededReset := succeeded.state()
+	if !succeededWriteClosed || succeededReset {
+		t.Fatalf("successful stream writeClosed=%v reset=%v, want true/false", succeededWriteClosed, succeededReset)
+	}
+	for name, stream := range map[string]*serverTestStream{
+		"unknown": unknown, "failed": failed, "panicked": panicked, "close-failed": closeFailed,
+	} {
+		closed, _, reset := stream.state()
+		if !closed || !reset {
+			t.Fatalf("%s stream closed=%v reset=%v, want true/true", name, closed, reset)
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Serve() error = %v, want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Serve() did not stop")
+	}
+}
+
 func TestSessionHandlersServeRegisteredRPC(t *testing.T) {
 	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
 	if err != nil {
@@ -593,10 +726,11 @@ func (*blockingServerStream) TerminalError() *SessionError { return nil }
 
 type serverTestStream struct {
 	*bytes.Reader
-	mu          sync.Mutex
-	closed      bool
-	writeClosed bool
-	reset       bool
+	mu            sync.Mutex
+	closed        bool
+	writeClosed   bool
+	reset         bool
+	closeWriteErr error
 }
 
 func (stream *serverTestStream) Write(payload []byte) (int, error) { return len(payload), nil }
@@ -611,8 +745,9 @@ func (*serverTestStream) TerminalError() *SessionError { return nil }
 func (stream *serverTestStream) CloseWrite() error {
 	stream.mu.Lock()
 	stream.writeClosed = true
+	err := stream.closeWriteErr
 	stream.mu.Unlock()
-	return nil
+	return err
 }
 func (stream *serverTestStream) Reset() error {
 	stream.mu.Lock()
@@ -636,4 +771,11 @@ func ExampleSessionHandlers() {
 	_ = handlers.HandleStream("events", func(context.Context, IncomingStream) error { return nil })
 	fmt.Println(handlers)
 	// Output: Flowersec.SessionHandlers
+}
+
+func ExampleStreamHandlers() {
+	handlers, _ := NewStreamHandlers(StreamHandlerOptions{})
+	_ = handlers.HandleStream("events", func(context.Context, IncomingStream) error { return nil })
+	fmt.Println(handlers)
+	// Output: Flowersec.StreamHandlers
 }

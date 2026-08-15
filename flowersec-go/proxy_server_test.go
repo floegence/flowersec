@@ -346,6 +346,26 @@ func TestProxyServerRejectsUnsafeAndDuplicateRegistration(t *testing.T) {
 	}
 }
 
+func TestProxyServerRegistersIntoRoleNeutralStreamHandlers(t *testing.T) {
+	handlers, err := NewStreamHandlers(StreamHandlerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, err := NewProxyServer(ProxyServerOptions{
+		Upstream: "http://127.0.0.1:8080", UpstreamOrigin: "http://127.0.0.1:8080",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = proxy.Close() })
+	if err := proxy.RegisterStreamHandlers(handlers); err != nil {
+		t.Fatalf("ProxyServer.RegisterStreamHandlers(StreamHandlers) error = %v", err)
+	}
+	if err := proxy.RegisterStreamHandlers(handlers); !errors.Is(err, ErrInvalidProxyServer) {
+		t.Fatalf("duplicate ProxyServer.RegisterStreamHandlers(StreamHandlers) error = %v, want ErrInvalidProxyServer", err)
+	}
+}
+
 func serveProxyTestStream(t *testing.T, handlers *SessionHandlers, kind string) net.Conn {
 	t.Helper()
 	client, server := net.Pipe()

@@ -2,9 +2,9 @@ use flowersec::{
     Acceptor, ArtifactLease, ArtifactSource, ArtifactSourceError, ConnectionController,
     ConnectionControllerOptions, ConnectorOptions, IncomingStream, NotificationHandler,
     RetryDisposition, RpcError, RpcHandler, RpcHandlers, RpcPeer, RpcPeerExt, SessionError,
-    SessionHandlerOptions, SessionHandlers, SessionTermination, StreamHandler, StreamMetadata,
-    StreamMetadataError, TunnelAuthorizer, TunnelRuntime, TunnelRuntimeOptions,
-    WebSocketAcceptorOptions, connect,
+    SessionHandlerOptions, SessionHandlers, SessionTermination, StreamHandler,
+    StreamHandlerOptions, StreamHandlers, StreamMetadata, StreamMetadataError, TunnelAuthorizer,
+    TunnelRuntime, TunnelRuntimeOptions, WebSocketAcceptorOptions, connect,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -145,6 +145,12 @@ fn handler_registration_is_generic_and_does_not_require_debug_or_arc() {
     handlers
         .handle_stream("application.stream", StreamWithoutDebug)
         .unwrap();
+
+    let mut streams = StreamHandlers::new(StreamHandlerOptions::default()).unwrap();
+    streams
+        .handle_stream("client.application.stream", StreamWithoutDebug)
+        .unwrap();
+    assert_eq!(format!("{streams:?}"), "StreamHandlers { <opaque> }");
 }
 
 #[test]

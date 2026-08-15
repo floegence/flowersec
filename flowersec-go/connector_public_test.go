@@ -142,6 +142,50 @@ func TestSessionHandlersPublicSurfaceIsCarrierNeutralAndOpaque(t *testing.T) {
 	}
 }
 
+func TestStreamHandlersPublicSurfaceIsCarrierNeutralOpaqueAndSealed(t *testing.T) {
+	optionsType := reflect.TypeOf(flowersec.StreamHandlerOptions{})
+	wantFields := []string{"MaxConcurrentStreams", "OnError"}
+	if optionsType.NumField() != len(wantFields) {
+		t.Fatalf("StreamHandlerOptions fields = %d, want %d", optionsType.NumField(), len(wantFields))
+	}
+	for index, want := range wantFields {
+		if got := optionsType.Field(index).Name; got != want {
+			t.Fatalf("StreamHandlerOptions field %d = %q, want %q", index, got, want)
+		}
+	}
+	handlers, err := flowersec.NewStreamHandlers(flowersec.StreamHandlerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var registrar flowersec.StreamHandlerRegistrar = handlers
+	_ = registrar
+	wantMethods := map[string]bool{
+		"GoString": true, "HandleStream": true, "MarshalJSON": true, "Serve": true, "String": true,
+	}
+	handlerType := reflect.TypeOf(handlers)
+	if handlerType.NumMethod() != len(wantMethods) {
+		t.Fatalf("StreamHandlers methods = %d, want %d", handlerType.NumMethod(), len(wantMethods))
+	}
+	for index := range handlerType.NumMethod() {
+		method := handlerType.Method(index)
+		if !wantMethods[method.Name] {
+			t.Fatalf("StreamHandlers unexpectedly exposes %s", method.Name)
+		}
+		for _, forbidden := range []string{"Artifact", "Credential", "Admission", "Handshake", "Carrier", "QUIC", "WebTransport", "Yamux", "Wire"} {
+			if strings.Contains(method.Type.String(), forbidden) {
+				t.Fatalf("public stream handler signature %q exposes %q", method.Type, forbidden)
+			}
+		}
+	}
+	if got, want := fmt.Sprintf("%v %#v", handlers, handlers), "Flowersec.StreamHandlers flowersec.StreamHandlers"; got != want {
+		t.Fatalf("handlers formatting = %q, want %q", got, want)
+	}
+	encoded, err := json.Marshal(handlers)
+	if err != nil || string(encoded) != "{}" {
+		t.Fatalf("handlers JSON = %s, %v", encoded, err)
+	}
+}
+
 func TestUnreliableMessagePublicSurfaceIsOpaqueAndCarrierNeutral(t *testing.T) {
 	channel := reflect.TypeOf((*flowersec.UnreliableMessageChannel)(nil)).Elem()
 	if channel.NumMethod() != 3 {

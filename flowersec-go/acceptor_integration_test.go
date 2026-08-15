@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http/httptest"
@@ -96,6 +97,7 @@ func TestAcceptorEstablishesPlaintextLoopbackDirectSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	sessionStarted := make(chan struct{})
+	acceptedSession := make(chan flowersec.Session, 1)
 	releaseSession := make(chan struct{})
 	sessionFinished := make(chan struct{})
 	var released atomic.Int32
@@ -107,7 +109,8 @@ func TestAcceptorEstablishesPlaintextLoopbackDirectSession(t *testing.T) {
 		ResolveHandlers: func(context.Context, controlplane.RuntimeAuthorizationRequest) (*flowersec.SessionHandlers, error) {
 			return handlers, nil
 		},
-		OnSession: func(context.Context, flowersec.Session, string) error {
+		OnSession: func(_ context.Context, current flowersec.Session, _ string) error {
+			acceptedSession <- current
 			close(sessionStarted)
 			<-releaseSession
 			close(sessionFinished)
@@ -154,6 +157,42 @@ func TestAcceptorEstablishesPlaintextLoopbackDirectSession(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("plaintext loopback accepted session did not start")
 	}
+	clientHandlers, err := flowersec.NewStreamHandlers(flowersec.StreamHandlerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := clientHandlers.HandleStream("loopback-client-inbound", func(_ context.Context, incoming flowersec.IncomingStream) error {
+		payload, readErr := io.ReadAll(incoming.Stream)
+		if readErr != nil {
+			return readErr
+		}
+		_, writeErr := incoming.Stream.Write(append([]byte("client:"), payload...))
+		return writeErr
+	}); err != nil {
+		t.Fatal(err)
+	}
+	clientServeCtx, stopClientServe := context.WithCancel(ctx)
+	clientServeDone := make(chan error, 1)
+	go func() { clientServeDone <- clientHandlers.Serve(clientServeCtx, session) }()
+	serverSession := <-acceptedSession
+	serverOpened, err := serverSession.OpenStream(ctx, "loopback-client-inbound", flowersec.EmptyStreamMetadata())
+	if err != nil {
+		t.Fatalf("accepted Session OpenStream() error = %v", err)
+	}
+	if _, err := serverOpened.Write([]byte("server-stream")); err != nil {
+		t.Fatalf("accepted Session stream Write() error = %v", err)
+	}
+	if err := serverOpened.CloseWrite(); err != nil {
+		t.Fatalf("accepted Session stream CloseWrite() error = %v", err)
+	}
+	reversePayload, err := io.ReadAll(serverOpened)
+	if err != nil {
+		t.Fatalf("accepted Session stream Read() error = %v", err)
+	}
+	if got, want := string(reversePayload), "client:server-stream"; got != want {
+		t.Fatalf("accepted Session stream payload = %q, want %q", got, want)
+	}
+	_ = serverOpened.Close()
 	assertEchoRPC(t, session, "loopback")
 	if _, err := session.ProbeLiveness(ctx); err != nil {
 		t.Fatalf("plaintext loopback ProbeLiveness() error = %v", err)
@@ -177,6 +216,15 @@ func TestAcceptorEstablishesPlaintextLoopbackDirectSession(t *testing.T) {
 		t.Fatal("plaintext loopback stream handler did not receive payload")
 	}
 	_ = stream.Close()
+	stopClientServe()
+	select {
+	case err := <-clientServeDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("StreamHandlers.Serve() error = %v, want context cancellation", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("StreamHandlers.Serve did not stop")
+	}
 	close(releaseSession)
 	select {
 	case <-sessionFinished:

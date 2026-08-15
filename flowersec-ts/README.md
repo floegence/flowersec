@@ -65,6 +65,20 @@ const session = await controller.waitForSession();
 The immutable callback definition applies to every generation, while each
 Session gets a fresh router. Terminated Session work is never replayed.
 
+### Application streams on any Session
+
+```ts
+import { StreamHandlers } from "@floegence/flowersec-core";
+
+const streamHandlers = new StreamHandlers({ maxConcurrentStreams: 32 });
+streamHandlers.handleStream("files/read", async (incoming) => serveFile(incoming));
+await streamHandlers.serve(session);
+```
+
+The portable root, browser, and Node entrypoints share this dispatcher. The
+sealed registrar used by Node `ProxyServer.register(...)` is exported only from
+the Node entrypoint.
+
 For the complete durable `ArtifactLease` spend workflow, see the
 [TypeScript cookbook](../examples/ts/README.md). Node raw-QUIC-only artifacts
 may omit `origin`; providing an absolute HTTP(S) origin enables WebSocket
@@ -98,7 +112,7 @@ The Browser and Node `connect(...)` operations are one-shot and never reconnect.
 
 The controller has one scheduler and one in-flight attempt. Its states are `idle`, `connecting`, `connected`, `waiting`, `failed`, and `closed`; immutable snapshots expose `ConnectionSnapshot.retryDisposition` while the corresponding retry decision applies and clear it before a new attempt, after connection, and on close. Call `start()` once, observe snapshots with `subscribe(...)`, await an established session with `waitForSession(...)`, and use `retryNow()` only to wake a `waiting` controller. `close()` cancels acquisition, connection, and waiting before closing the current session.
 
-Node `SessionHandlers` accept application stream kinds whose UTF-8 encoding is 1 through 255 bytes and reserve `flowersec.rpc.v2` for Flowersec RPC. `AcceptedSession.serve(...)` half-closes successfully handled streams. A rejected handler Promise resets only that stream; the accept loop and unrelated streams continue.
+`StreamHandlers` and Node `SessionHandlers` accept application stream kinds containing 1 through 128 canonical UTF-8 bytes, reject leading or trailing Unicode whitespace, controls, and unassigned scalars, and reserve `flowersec.rpc.v2` for Flowersec RPC. Successful handlers half-close their stream. A rejected handler Promise resets only that stream; the accept loop and unrelated streams continue.
 
 Reliable streams apply bounded per-stream receive backpressure instead of buffering application data without limit. A slow consumer pauses carrier progress until reads release capacity; records retain carrier order, so a rekey behind backpressured DATA completes after the consumer resumes. `closeWrite()` sends the graceful FIN and keeps reads available. `reset()` and `close()` abort both directions. If a write is canceled or fails after its wire commit may have started, only that stream becomes terminal and cannot be reused.
 
