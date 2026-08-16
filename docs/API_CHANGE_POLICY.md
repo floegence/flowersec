@@ -1,6 +1,6 @@
 # Flowersec API Change Policy
 
-Flowersec 2.5.1 maintains one carrier-neutral public contract across Go, TypeScript, Swift, and Rust. Public symbols, module paths, wire identifiers, and published artifacts follow the SemVer and immutable-tag rules.
+Flowersec 2.5.2 maintains one carrier-neutral public contract across Go, TypeScript, Swift, and Rust. Public symbols, module paths, wire identifiers, and published artifacts follow the SemVer and immutable-tag rules.
 
 ## Contract Authority
 
@@ -30,7 +30,7 @@ Release performs version and ref validation, packaging, signing, publication, an
 
 Adding a public `Acceptor`, server admission, handler resolver, proxy server, or control-plane symbol is a SemVer minor capability. Documentation and internal fixes are patch changes. Published tags and artifacts are immutable.
 
-The loopback plaintext WebSocket profile is an explicit SDK capability. Only direct candidates addressed to `127.0.0.1` or `::1` may use `ws://`; tunnel candidates and non-loopback hosts use WSS and fail closed. Flowersec 2.5.1 enforces this profile during Go connector and Acceptor carrier readiness.
+The loopback plaintext WebSocket profile is an explicit SDK capability. Only direct candidates addressed to `127.0.0.1` or `::1` may use `ws://`; tunnel candidates and non-loopback hosts use WSS and fail closed. Flowersec 2.5.2 enforces this profile during Go connector and Acceptor carrier readiness.
 
 The reviewed public surface is recorded in `stability/api_contract_manifest.json`. Existing package, source, symbol, and forbidden-surface checks enforce the boundaries they can enumerate; public-surface review covers the remaining language-specific gaps.
 

@@ -19,11 +19,13 @@ import (
 )
 
 type fakeAuthorizationProvider struct {
-	response authorizationResponse
-	err      error
-	mu       sync.Mutex
-	released []string
-	requests []authorizationRequest
+	response        authorizationResponse
+	err             error
+	releaseStarted  chan<- string
+	releaseContinue <-chan struct{}
+	mu              sync.Mutex
+	released        []string
+	requests        []authorizationRequest
 }
 
 func (provider *fakeAuthorizationProvider) Authorize(_ context.Context, request authorizationRequest) (authorizationResponse, error) {
@@ -34,6 +36,12 @@ func (provider *fakeAuthorizationProvider) Authorize(_ context.Context, request 
 }
 
 func (provider *fakeAuthorizationProvider) Release(id string) {
+	if provider.releaseStarted != nil {
+		provider.releaseStarted <- id
+	}
+	if provider.releaseContinue != nil {
+		<-provider.releaseContinue
+	}
 	provider.mu.Lock()
 	provider.released = append(provider.released, id)
 	provider.mu.Unlock()

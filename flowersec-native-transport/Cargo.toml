@@ -1,6 +1,6 @@
 [package]
 name = "flowersec-native-transport"
-version = "2.5.1"
+version = "2.5.2"
 edition = "2024"
 rust-version = "1.88"
 description = "Flowersec-owned native transport primitives shared by Rust and Node runtimes"

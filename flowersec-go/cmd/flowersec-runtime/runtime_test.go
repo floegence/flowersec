@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"io"
 	"log"
@@ -32,18 +33,26 @@ import (
 
 func TestWSSDirectListenerTerminatesV2AndBridgesAuthorizedTCP(t *testing.T) {
 	upstream := startEchoServer(t)
+	releaseStarted := make(chan string, 1)
+	releaseContinue := make(chan struct{})
+	var releaseContinueOnce sync.Once
+	releaseCompletion := func() { releaseContinueOnce.Do(func() { close(releaseContinue) }) }
+	defer releaseCompletion()
 	contractWire := validAuthorizedSession(t, "channel-a", 4)
 	contract, err := contractWire.contract()
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := &fakeAuthorizationProvider{response: authorizationResponse{
-		Decision: "allow", CredentialID: "credential-a", LeaseID: "lease-a", ExpiresAt: time.Now().Add(time.Minute),
-		Direct: &directAuthorization{
-			Session:  contractWire,
-			Upstream: upstreamTarget{Network: "tcp", Address: upstream.Addr().String()},
+	provider := &fakeAuthorizationProvider{
+		releaseStarted: releaseStarted, releaseContinue: releaseContinue,
+		response: authorizationResponse{
+			Decision: "allow", CredentialID: "credential-a", LeaseID: "lease-a", ExpiresAt: time.Now().Add(time.Minute),
+			Direct: &directAuthorization{
+				Session:  contractWire,
+				Upstream: upstreamTarget{Network: "tcp", Address: upstream.Addr().String()},
+			},
 		},
-	}}
+	}
 	resources, err := carrierws.BindSessionResourcePolicy(carrierws.DefaultResourcePolicy(), 4)
 	if err != nil {
 		t.Fatal(err)
@@ -130,12 +139,47 @@ func TestWSSDirectListenerTerminatesV2AndBridgesAuthorizedTCP(t *testing.T) {
 	if len(provider.requests) != 1 || provider.requests[0].Carrier != string(carrier.KindWebSocket) {
 		t.Fatalf("authorization requests = %+v", provider.requests)
 	}
+	cancel()
+	select {
+	case leaseID := <-releaseStarted:
+		if leaseID != "lease-a" {
+			t.Fatalf("released lease = %q", leaseID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("direct WSS release did not start")
+	}
+	shutdownContext, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
+	defer shutdownCancel()
+	if err := server.Config.Shutdown(shutdownContext); err != nil {
+		t.Fatal(err)
+	}
+	waitDone := make(chan struct{})
+	go func() {
+		runtime.sessionWG.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+		t.Fatal("standalone runtime stopped before direct WSS lease release completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+	releaseCompletion()
+	select {
+	case <-waitDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("standalone runtime did not finish after direct WSS lease release")
+	}
 }
 
 func TestWSSStandaloneTunnelConsumesSecretFreeHTTPAuthorization(t *testing.T) {
 	var (
-		records  sync.Map
-		released atomic.Int32
+		records         sync.Map
+		released        atomic.Int32
+		releaseMu       sync.Mutex
+		releaseAttempts = make(map[string]int)
+		releaseStarted  = make(chan string, 2)
+		releaseContinue = make(chan struct{})
+		releaseOnce     sync.Once
 	)
 	authorizerServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
@@ -163,13 +207,34 @@ func TestWSSStandaloneTunnelConsumesSecretFreeHTTPAuthorization(t *testing.T) {
 			writer.Header().Set("Content-Type", "application/json")
 			_, _ = writer.Write(response.JSON())
 		case "/release":
+			var release struct {
+				LeaseID string `json:"lease_id"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&release); err != nil || release.LeaseID == "" {
+				http.Error(writer, "invalid release", http.StatusBadRequest)
+				return
+			}
+			releaseMu.Lock()
+			releaseAttempts[release.LeaseID]++
+			attempt := releaseAttempts[release.LeaseID]
+			releaseMu.Unlock()
+			if attempt == 1 {
+				http.Error(writer, "retry release", http.StatusServiceUnavailable)
+				return
+			}
+			releaseStarted <- release.LeaseID
+			<-releaseContinue
 			released.Add(1)
 			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}
 	}))
-	defer authorizerServer.Close()
+	releaseCompletion := func() { releaseOnce.Do(func() { close(releaseContinue) }) }
+	defer func() {
+		releaseCompletion()
+		authorizerServer.Close()
+	}()
 
 	provider := &httpAuthorizationProvider{
 		url: authorizerServer.URL + "/authorize", releaseURL: authorizerServer.URL + "/release",
@@ -256,15 +321,48 @@ func TestWSSStandaloneTunnelConsumesSecretFreeHTTPAuthorization(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	_ = firstResult.session.Close()
-	_ = secondResult.session.Close()
-	deadline := time.Now().Add(2 * time.Second)
-	for released.Load() != 2 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	cancel()
+	select {
+	case <-releaseStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("tunnel WSS release retry did not start")
+	}
+	shutdownContext, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
+	defer shutdownCancel()
+	if err := server.Config.Shutdown(shutdownContext); err != nil {
+		t.Fatal(err)
+	}
+	waitDone := make(chan struct{})
+	go func() {
+		runtime.sessionWG.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+		t.Fatal("standalone runtime stopped before tunnel WSS lease release retries completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+	releaseCompletion()
+	select {
+	case <-waitDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("standalone runtime did not finish after tunnel WSS lease releases")
 	}
 	if released.Load() != 2 {
 		t.Fatalf("released leases = %d, want 2", released.Load())
 	}
+	releaseMu.Lock()
+	defer releaseMu.Unlock()
+	if len(releaseAttempts) != 2 {
+		t.Fatalf("release attempt leases = %d, want 2", len(releaseAttempts))
+	}
+	for leaseID, attempts := range releaseAttempts {
+		if attempts != 2 {
+			t.Fatalf("release attempts for %q = %d, want 2", leaseID, attempts)
+		}
+	}
+	_ = firstResult.session.Close()
+	_ = secondResult.session.Close()
 }
 
 func TestRuntimeStartsAllListenersAndShutsDown(t *testing.T) {

@@ -292,6 +292,10 @@ func (runtime *runtimeServer) webSocketHandler(baseContext context.Context) http
 }
 
 func (runtime *runtimeServer) handleWebSocket(baseContext context.Context, writer http.ResponseWriter, request *http.Request, subprotocol string) {
+	// Track the handler before it can hijack the connection. Shutdown drains
+	// ordinary HTTP handlers, while sessionWG owns every hijacked WSS lifetime.
+	runtime.sessionWG.Add(1)
+	defer runtime.sessionWG.Done()
 	if request.Method != http.MethodGet || !runtime.originAllowed(request) {
 		http.Error(writer, "request rejected", http.StatusForbidden)
 		return
