@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"sync"
@@ -23,6 +24,9 @@ const (
 	reasonAuthorizationDenied      = "authorization_denied"
 	reasonAuthorizationUnavailable = "authorization_unavailable"
 	maxAuthorizationResponseBytes  = 64 << 10
+	maxReleaseAttempts             = 3
+	releaseRetryBaseDelay          = 100 * time.Millisecond
+	defaultReleaseAttemptTimeout   = 10 * time.Second
 )
 
 var (
@@ -88,6 +92,7 @@ type httpAuthorizationProvider struct {
 	releaseURL string
 	token      string
 	client     *http.Client
+	logger     *log.Logger
 }
 
 func newHTTPAuthorizationProvider(config AuthorizationConfig) (*httpAuthorizationProvider, error) {
@@ -101,7 +106,7 @@ func newHTTPAuthorizationProvider(config AuthorizationConfig) (*httpAuthorizatio
 	}
 	return &httpAuthorizationProvider{
 		url: config.URL, releaseURL: config.ReleaseURL, token: token,
-		client: &http.Client{Timeout: time.Duration(config.TimeoutSeconds) * time.Second},
+		client: &http.Client{Timeout: time.Duration(config.TimeoutSeconds) * time.Second}, logger: log.Default(),
 	}, nil
 }
 
@@ -148,31 +153,59 @@ func (provider *httpAuthorizationProvider) Authorize(ctx context.Context, input 
 }
 
 func (provider *httpAuthorizationProvider) Release(leaseID string) {
-	if leaseID == "" {
+	if provider == nil || leaseID == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), provider.client.Timeout)
-	defer cancel()
 	body, err := json.Marshal(struct {
 		LeaseID string `json:"lease_id"`
 	}{LeaseID: leaseID})
 	if err != nil {
 		return
 	}
+	for attempt := 0; attempt < maxReleaseAttempts; attempt++ {
+		if err = provider.releaseAttempt(body); err == nil {
+			return
+		}
+		if attempt+1 < maxReleaseAttempts {
+			time.Sleep(releaseRetryBaseDelay * time.Duration(1<<attempt))
+		}
+	}
+	logger := provider.logger
+	if logger == nil {
+		logger = log.Default()
+	}
+	logger.Printf("authorization lease %q release was not acknowledged after %d attempts: %v", leaseID, maxReleaseAttempts, err)
+}
+
+func (provider *httpAuthorizationProvider) releaseAttempt(body []byte) error {
+	if provider.client == nil {
+		return fmt.Errorf("%w: release client unavailable", ErrAuthorizationUnavailable)
+	}
+	timeout := provider.client.Timeout
+	if timeout <= 0 {
+		timeout = defaultReleaseAttemptTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, provider.releaseURL, bytes.NewReader(body))
 	if err != nil {
-		return
+		return fmt.Errorf("%w: create release request", ErrAuthorizationUnavailable)
 	}
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
 	if provider.token != "" {
 		request.Header.Set("Authorization", "Bearer "+provider.token)
 	}
 	response, err := provider.client.Do(request)
 	if err != nil {
-		return
+		return fmt.Errorf("%w: release request failed", ErrAuthorizationUnavailable)
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
 	_ = response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("%w: release returned HTTP status %d", ErrAuthorizationUnavailable, response.StatusCode)
+	}
+	return nil
 }
 
 type externalLease struct {
@@ -219,9 +252,22 @@ func authorizeDirect(ctx context.Context, provider authorizationProvider, decode
 	if err != nil {
 		return retryResponse(reasonAuthorizationUnavailable), nil, nil
 	}
+	var lease *externalLease
+	if decision.Decision == "allow" && decision.LeaseID != "" {
+		lease = &externalLease{provider: provider, id: decision.LeaseID}
+	}
+	releaseOnReturn := lease != nil
+	defer func() {
+		if releaseOnReturn {
+			lease.Release()
+		}
+	}()
 	response, allowed, err := admissionDecision(decision, reasons)
 	if err != nil || !allowed {
 		return response, nil, err
+	}
+	if lease == nil {
+		return artifactv2.AdmissionResponse{}, nil, ErrInvalidAuthorization
 	}
 	if decoded.Request.PathKind != artifactv2.PathDirect || decision.Direct == nil ||
 		decision.CredentialID == "" || decision.LeaseID == "" || decision.ExpiresAt.IsZero() || !decision.ExpiresAt.After(time.Now()) ||
@@ -235,7 +281,8 @@ func authorizeDirect(ctx context.Context, provider authorizationProvider, decode
 	if decision.Direct.Upstream.Network != "tcp" || decision.Direct.Upstream.Address == "" {
 		return artifactv2.AdmissionResponse{}, nil, ErrInvalidAuthorization
 	}
-	decision.Direct.lease = &externalLease{provider: provider, id: decision.LeaseID}
+	decision.Direct.lease = lease
+	releaseOnReturn = false
 	return response, decision.Direct, nil
 }
 
@@ -249,6 +296,16 @@ func tunnelAuthorizer(provider authorizationProvider, reasons artifactv2.ReasonR
 		if err != nil {
 			return tunnelv2.Authorization{}, &admissionv2.ResponseError{Status: artifactv2.AdmissionRetryable, Reason: reasonAuthorizationUnavailable}
 		}
+		var lease *externalLease
+		if decision.Decision == "allow" && decision.LeaseID != "" {
+			lease = &externalLease{provider: provider, id: decision.LeaseID}
+		}
+		releaseOnReturn := lease != nil
+		defer func() {
+			if releaseOnReturn {
+				lease.Release()
+			}
+		}()
 		response, allowed, err := admissionDecision(decision, reasons)
 		if err != nil {
 			return tunnelv2.Authorization{}, err
@@ -256,13 +313,16 @@ func tunnelAuthorizer(provider authorizationProvider, reasons artifactv2.ReasonR
 		if !allowed {
 			return tunnelv2.Authorization{}, &admissionv2.ResponseError{Status: response.Status, Reason: response.Reason}
 		}
+		if lease == nil {
+			return tunnelv2.Authorization{}, ErrInvalidAuthorization
+		}
 		if decoded == nil || decoded.Request.PathKind != artifactv2.PathTunnel || decision.Direct != nil ||
 			decision.CredentialID == "" || decision.LeaseID == "" || decision.ExpiresAt.IsZero() ||
 			decision.ExpectedPeerEndpointInstanceID == "" {
 			return tunnelv2.Authorization{}, ErrInvalidAuthorization
 		}
 		request := decoded.Request
-		return tunnelv2.Authorization{
+		authorization := tunnelv2.Authorization{
 			Claims: tunnelv2.VerifiedClaims{
 				CredentialID: decision.CredentialID, ChannelID: request.ChannelID, Profile: request.Profile,
 				RendezvousGroupID: request.RendezvousGroupID, SessionContractHash: request.SessionContractHash,
@@ -272,8 +332,10 @@ func tunnelAuthorizer(provider authorizationProvider, reasons artifactv2.ReasonR
 				AllowReplacement:               decision.AllowReplacement,
 			},
 			ExpiresAt: decision.ExpiresAt,
-			Lease:     &externalLease{provider: provider, id: decision.LeaseID},
-		}, nil
+			Lease:     lease,
+		}
+		releaseOnReturn = false
+		return authorization, nil
 	}
 }
 

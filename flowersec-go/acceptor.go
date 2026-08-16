@@ -31,6 +31,7 @@ import (
 const (
 	WebSocketDirectPath = "/flowersec/v2/direct"
 	WebSocketTunnelPath = "/flowersec/v2/tunnel"
+	leaseReleaseTimeout = 10 * time.Second
 )
 
 var ErrInvalidAcceptor = errors.New("invalid Flowersec acceptor")
@@ -208,6 +209,7 @@ func (acceptor *Acceptor) serveNativeDirect(ctx context.Context, native carrier.
 	var leaseID string
 	var router *internalrpc.Router
 	var serveHandlers func(context.Context, session.SessionV2) error
+	defer func() { acceptor.releaseLease(ctx, leaseID) }()
 	decoded, err = admissionv2.Serve(admissionContext, admission, acceptor.reasons(), func(authCtx context.Context, candidate *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
 		if candidate == nil || candidate.Request.PathKind != artifactv2.PathDirect {
 			return artifactv2.AdmissionResponse{}, ErrInvalidAcceptor
@@ -262,7 +264,6 @@ func (acceptor *Acceptor) serveNativeDirect(ctx context.Context, native carrier.
 	if accepted != nil {
 		_ = accepted.Close()
 	}
-	acceptor.releaseLease(ctx, leaseID)
 	return err
 }
 
@@ -322,6 +323,7 @@ func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http
 	var leaseID string
 	var router *internalrpc.Router
 	var serveHandlers func(context.Context, session.SessionV2) error
+	defer func() { acceptor.releaseLease(request.Context(), leaseID) }()
 	decoded, err = websocketadmission.Serve(ctx, connection, acceptor.reasons(), func(authCtx context.Context, candidate *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
 		if candidate == nil || candidate.Request.PathKind != artifactv2.PathDirect {
 			return artifactv2.AdmissionResponse{}, ErrInvalidAcceptor
@@ -379,7 +381,6 @@ func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http
 	if accepted != nil {
 		_ = accepted.Close()
 	}
-	acceptor.releaseLease(request.Context(), leaseID)
 }
 
 func acceptedHandlerSnapshot(handlers *SessionHandlers) (*internalrpc.Router, func(context.Context, session.SessionV2) error) {
@@ -430,7 +431,9 @@ func (acceptor *Acceptor) acquireDirect() bool {
 func (acceptor *Acceptor) releaseDirect() { <-acceptor.directSlots }
 func (acceptor *Acceptor) releaseLease(ctx context.Context, leaseID string) {
 	if acceptor.options.Release != nil && leaseID != "" {
-		acceptor.options.Release(ctx, leaseID)
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseReleaseTimeout)
+		defer cancel()
+		acceptor.options.Release(cleanupCtx, leaseID)
 	}
 }
 func (acceptor *Acceptor) reasons() artifactv2.ReasonRegistry {

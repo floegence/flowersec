@@ -82,6 +82,69 @@ func TestAcceptorResolvesHandlersBeforeDirectSessionEstablishment(t *testing.T) 
 	}
 }
 
+func TestAcceptorReleasesAuthorizedLeaseWhenHandlerResolutionFails(t *testing.T) {
+	t.Parallel()
+
+	var record controlplane.AuthorizationRecord
+	releases := make(chan struct {
+		leaseID string
+		ctxErr  error
+	}, 2)
+	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
+		AllowedOrigins: []string{"https://consumer.example"},
+		Authorize: func(_ context.Context, request controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
+			return controlplane.AuthorizeRuntime(request, record, "lease-handler-failure")
+		},
+		ResolveHandlers: func(context.Context, controlplane.RuntimeAuthorizationRequest) (*flowersec.SessionHandlers, error) {
+			return nil, errors.New("handler resolution failed")
+		},
+		Release: func(ctx context.Context, leaseID string) {
+			releases <- struct {
+				leaseID string
+				ctxErr  error
+			}{leaseID: leaseID, ctxErr: ctx.Err()}
+		},
+		OnSession: func(context.Context, flowersec.Session, string) error {
+			return errors.New("session must not start")
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewTLSServer(acceptor.Handler())
+	defer server.Close()
+
+	issued, err := controlplane.NewIssuer().IssueDirect(controlplane.DirectIssueOptions{
+		Session:           controlplane.SessionOptions{ChannelID: "handler-failure", ExpiresAt: time.Now().Add(time.Minute)},
+		Endpoints:         mustEndpointSet(t, websocketURL(server.URL, flowersec.WebSocketDirectPath)),
+		RendezvousGroupID: "handler-failure",
+		ListenerAudience:  "test",
+		UpstreamAddress:   "127.0.0.1:8080",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record = issued.AuthorizationRecord()
+
+	if session, connectErr := connectIssuedResult(server, issued, "https://consumer.example"); connectErr == nil {
+		_ = session.Close()
+		t.Fatal("connect error = nil, want handler resolution failure")
+	}
+	select {
+	case released := <-releases:
+		if released.leaseID != "lease-handler-failure" || released.ctxErr != nil {
+			t.Fatalf("release = %+v, want uncanceled exact lease", released)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("authorized lease was not released")
+	}
+	select {
+	case duplicate := <-releases:
+		t.Fatalf("duplicate release = %+v", duplicate)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestAcceptorEstablishesPlaintextLoopbackDirectSession(t *testing.T) {
 	var record controlplane.AuthorizationRecord
 	origins := []string{"pending"}

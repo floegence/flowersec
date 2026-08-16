@@ -106,17 +106,22 @@ func (runtime *TunnelRuntime) Serve(ctx context.Context) error {
 	serveCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errs := make(chan error, len(runtime.listeners))
-	var wait sync.WaitGroup
+	var listenerWait sync.WaitGroup
+	var sessionWait sync.WaitGroup
 	for _, listener := range runtime.listeners {
 		if listener.acceptorCarrier() == carrier.KindWebSocket {
 			continue
 		}
 		listener := listener
-		wait.Add(1)
+		listenerWait.Add(1)
 		go func() {
-			defer wait.Done()
+			defer listenerWait.Done()
 			err := listener.serve(serveCtx, func(sessionCtx context.Context, native carrier.Session) error {
-				go func() { _ = runtime.serveNative(sessionCtx, native) }()
+				sessionWait.Add(1)
+				go func() {
+					defer sessionWait.Done()
+					_ = runtime.serveNative(sessionCtx, native)
+				}()
 				return nil
 			})
 			if err != nil && !errors.Is(err, context.Canceled) {
@@ -134,7 +139,8 @@ func (runtime *TunnelRuntime) Serve(ctx context.Context) error {
 	for _, listener := range runtime.listeners {
 		result = errors.Join(result, listener.Close())
 	}
-	wait.Wait()
+	listenerWait.Wait()
+	sessionWait.Wait()
 	return result
 }
 

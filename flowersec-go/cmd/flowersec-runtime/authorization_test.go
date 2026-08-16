@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -80,6 +83,21 @@ func TestAuthorizeDirectConvertsProviderFailureToRetry(t *testing.T) {
 	}
 }
 
+func TestAuthorizeDirectReleasesAllowLeaseWhenContractIsInvalid(t *testing.T) {
+	provider := &fakeAuthorizationProvider{response: authorizationResponse{
+		Decision: "allow", CredentialID: "credential-a", LeaseID: "lease-invalid-direct", ExpiresAt: time.Now().Add(time.Minute),
+		Direct: &directAuthorization{Session: validAuthorizedSession(t, "wrong-channel", 32), Upstream: upstreamTarget{Network: "tcp", Address: "127.0.0.1:9000"}},
+	}}
+	decoded := &artifactv2.DecodedRequest{Raw: []byte("FSB2 fixture"), Request: artifactv2.Request{PathKind: artifactv2.PathDirect, ChannelID: "expected-channel"}}
+	ctx := withAuthorizationContext(context.Background(), authorizationContext{carrier: carrier.KindWebSocket, remoteAddress: "127.0.0.1:1"})
+	if _, authorization, err := authorizeDirect(ctx, provider, decoded, runtimeReasons(), 32); !errors.Is(err, ErrInvalidAuthorization) || authorization != nil {
+		t.Fatalf("invalid direct authorization = %+v, %v", authorization, err)
+	}
+	if len(provider.released) != 1 || provider.released[0] != "lease-invalid-direct" {
+		t.Fatalf("released leases = %v, want invalid direct lease", provider.released)
+	}
+}
+
 func TestTunnelAuthorizerBindsClaimsAndReleasesLeaseOnce(t *testing.T) {
 	provider := &fakeAuthorizationProvider{response: authorizationResponse{
 		Decision: "allow", CredentialID: "credential-a", LeaseID: "lease-a",
@@ -105,6 +123,21 @@ func TestTunnelAuthorizerBindsClaimsAndReleasesLeaseOnce(t *testing.T) {
 	}
 }
 
+func TestTunnelAuthorizerReleasesAllowLeaseWhenClaimsAreInvalid(t *testing.T) {
+	provider := &fakeAuthorizationProvider{response: authorizationResponse{
+		Decision: "allow", CredentialID: "credential-a", LeaseID: "lease-invalid-tunnel",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}}
+	decoded := &artifactv2.DecodedRequest{Raw: []byte("FSB2 fixture"), Request: artifactv2.Request{PathKind: artifactv2.PathTunnel}}
+	ctx := withAuthorizationContext(context.Background(), authorizationContext{carrier: carrier.KindWebSocket, remoteAddress: "127.0.0.1:2"})
+	if _, err := tunnelAuthorizer(provider, runtimeReasons())(ctx, decoded); !errors.Is(err, ErrInvalidAuthorization) {
+		t.Fatalf("invalid tunnel authorization error = %v", err)
+	}
+	if len(provider.released) != 1 || provider.released[0] != "lease-invalid-tunnel" {
+		t.Fatalf("released leases = %v, want invalid tunnel lease", provider.released)
+	}
+}
+
 func TestHTTPAuthorizationProviderAcceptsSecretFreeTunnelResponse(t *testing.T) {
 	expiresAt := time.Now().Add(time.Minute).UTC().Truncate(time.Second)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -120,6 +153,41 @@ func TestHTTPAuthorizationProviderAcceptsSecretFreeTunnelResponse(t *testing.T) 
 	}
 	if decision.Decision != "allow" || decision.CredentialID != "credential-a" || decision.ExpectedPeerEndpointInstanceID != "peer-b" || !decision.ExpiresAt.Equal(expiresAt) {
 		t.Fatalf("unexpected tunnel authorization: %+v", decision)
+	}
+}
+
+func TestHTTPAuthorizationProviderRetriesReleaseUntilAcknowledged(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		attempts++
+		if request.Method != http.MethodPost || request.Header.Get("Authorization") != "Bearer release-secret" {
+			http.Error(writer, "invalid request", http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			LeaseID string `json:"lease_id"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil || body.LeaseID != "lease-retry" {
+			http.Error(writer, "invalid body", http.StatusBadRequest)
+			return
+		}
+		if attempts < 3 {
+			http.Error(writer, "not committed", http.StatusServiceUnavailable)
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	provider := &httpAuthorizationProvider{
+		releaseURL: server.URL,
+		token:      "release-secret",
+		client:     server.Client(),
+		logger:     log.New(io.Discard, "", 0),
+	}
+	provider.Release("lease-retry")
+	if attempts != 3 {
+		t.Fatalf("release attempts = %d, want 3", attempts)
 	}
 }
 

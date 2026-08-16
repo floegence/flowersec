@@ -236,11 +236,13 @@ func (runtime *runtimeServer) serveNativeDirect(
 		authorization = allowed
 		return response, authorizeErr
 	})
+	if authorization != nil {
+		defer authorization.Release()
+	}
 	if err != nil || authorization == nil {
 		_ = carrierSession.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "admission rejected"})
 		return
 	}
-	defer authorization.Release()
 	runtime.serveAuthorizedDirect(ctx, carrierSession, decoded, authorization)
 }
 
@@ -332,11 +334,13 @@ func (runtime *runtimeServer) handleWebSocket(baseContext context.Context, write
 		authorization = allowed
 		return response, authorizeErr
 	})
+	if authorization != nil {
+		defer authorization.Release()
+	}
 	if err != nil || authorization == nil {
 		_ = connection.Close()
 		return
 	}
-	defer authorization.Release()
 	carrierSession, err := carrierws.NewAfterAdmission(connection, carrierws.ServerRole, subprotocol, runtime.wsResources)
 	if err != nil {
 		_ = connection.Close()
