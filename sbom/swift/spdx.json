@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-swift",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-swift/8d179ba65d4598bdeb169b3dbcc8732a8e0aa8fc724f228eacbb117ad49ce149",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-swift/1a8ba3adc252c3c72e7a5129a172b0c767a075161ac1d0379f0b257f091816fb",
   "creationInfo": {
     "created": "1970-01-01T00:00:00Z",
     "creators": [
@@ -13,19 +13,19 @@
   "packages": [
     {
       "name": "Flowersec",
-      "SPDXID": "SPDXRef-Package-9a04e0c2382ee2c61a84",
-      "versionInfo": "2.5.2",
+      "SPDXID": "SPDXRef-Package-a592b9d1d2dea6b97f80",
+      "versionInfo": "2.5.3",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: 8d179ba65d4598bdeb169b3dbcc8732a8e0aa8fc724f228eacbb117ad49ce149",
+      "comment": "Flowersec source inventory SHA-256: 1a8ba3adc252c3c72e7a5129a172b0c767a075161ac1d0379f0b257f091816fb",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:swift/Flowersec@2.5.2"
+          "referenceLocator": "pkg:swift/Flowersec@2.5.3"
         }
       ]
     },
@@ -153,20 +153,20 @@
     {
       "spdxElementId": "SPDXRef-DOCUMENT",
       "relationshipType": "DESCRIBES",
-      "relatedSpdxElement": "SPDXRef-Package-9a04e0c2382ee2c61a84"
+      "relatedSpdxElement": "SPDXRef-Package-a592b9d1d2dea6b97f80"
     },
     {
-      "spdxElementId": "SPDXRef-Package-9a04e0c2382ee2c61a84",
+      "spdxElementId": "SPDXRef-Package-a592b9d1d2dea6b97f80",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-419502d17340d5451b1c"
     },
     {
-      "spdxElementId": "SPDXRef-Package-9a04e0c2382ee2c61a84",
+      "spdxElementId": "SPDXRef-Package-a592b9d1d2dea6b97f80",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-0ffde91adf1f9a16bb0f"
     },
     {
-      "spdxElementId": "SPDXRef-Package-9a04e0c2382ee2c61a84",
+      "spdxElementId": "SPDXRef-Package-a592b9d1d2dea6b97f80",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-c0d4b20277ee969bbef6"
     },
