@@ -292,7 +292,7 @@ export class SessionV2 implements SessionV2Contract {
   private peerResponderFrozen = false;
   private responderChanged = deferred<void>();
   private idleWatchdogStarted = false;
-  private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  private idleTimerCancel: (() => void) | undefined;
   private readonly terminationState = deferred<SessionTerminationV2>();
   private readonly rpcRouter: RpcRouter;
 
@@ -1248,9 +1248,9 @@ export class SessionV2 implements SessionV2Contract {
     if (!this.idleWatchdogStarted || this.lifecycle !== "open") return;
     const timeoutMs = sessionIdleTimeoutMs(this.config);
     if (timeoutMs === 0) return;
-    if (this.idleTimer !== undefined) clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => {
-      this.idleTimer = undefined;
+    this.idleTimerCancel?.();
+    this.idleTimerCancel = scheduleLongTimeout(() => {
+      this.idleTimerCancel = undefined;
       this.fail(new SessionV2Error("timeout", "Flowersec v2 session idle timeout exceeded"));
     }, timeoutMs);
   }
@@ -1263,10 +1263,8 @@ export class SessionV2 implements SessionV2Contract {
     this.terminalError = error;
     this.lifecycle = "closed";
     this.terminationState.resolve({ error });
-    if (this.idleTimer !== undefined) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = undefined;
-    }
+    this.idleTimerCancel?.();
+    this.idleTimerCancel = undefined;
     this.incoming.fail(error);
     this.outboundPermits.fail(error);
     this.inboundPermits.fail(error);
@@ -2256,12 +2254,35 @@ function createSessionDeadline(config: SessionConfigV2, phase: SessionDeadlinePh
 
 function defaultDeadlineFactory(timeoutMs: number, phase: SessionDeadlinePhaseV2): SessionDeadlineHandleV2 {
   const controller = new AbortController();
-  const timer = setTimeout(() => {
+  const cancelTimer = scheduleLongTimeout(() => {
     controller.abort(new SessionV2Error("timeout", `${phase} deadline exceeded`));
   }, timeoutMs);
   return {
     signal: controller.signal,
-    cancel: () => clearTimeout(timer),
+    cancel: cancelTimer,
+  };
+}
+
+const MAX_NATIVE_TIMEOUT_MS = 2_147_483_647;
+
+// Node and browsers clamp setTimeout delays above a signed 32-bit integer.
+// Keep the public timeout range intact by scheduling the remaining duration in
+// bounded segments against a monotonic wall-clock deadline.
+function scheduleLongTimeout(callback: () => void, timeoutMs: number): () => void {
+  const clock = () => typeof performance !== "undefined" ? performance.now() : Date.now();
+  const deadline = clock() + timeoutMs;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let canceled = false;
+  const schedule = () => {
+    if (canceled) return;
+    const remaining = deadline - clock();
+    if (remaining <= 0) { callback(); return; }
+    timer = setTimeout(schedule, Math.min(remaining, MAX_NATIVE_TIMEOUT_MS));
+  };
+  schedule();
+  return () => {
+    canceled = true;
+    if (timer !== undefined) clearTimeout(timer);
   };
 }
 

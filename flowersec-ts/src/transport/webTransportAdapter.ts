@@ -370,6 +370,7 @@ class WebTransportDatagramAdapter implements CarrierUnreliableDatagramsV2 {
     this.terminalError = error;
     this.incoming.fail(error);
     void this.writable.abort(error).catch(() => undefined);
+    void this.readable.cancel(error).catch(() => undefined);
   }
 
   private assertOpen(): void {
@@ -455,7 +456,10 @@ class IncomingWebTransportStreamQueue {
 }
 
 class IncomingDatagramQueue {
+  private static readonly MAX_VALUES = 256;
+  private static readonly MAX_BYTES = 4 * 1024 * 1024;
   private readonly values: Uint8Array[] = [];
+  private bufferedBytes = 0;
   private readonly waiters = new Set<Readonly<{
     deliver(value: Uint8Array): void;
     fail(error: Error): void;
@@ -465,15 +469,25 @@ class IncomingDatagramQueue {
   push(value: Uint8Array): void {
     if (this.terminalError !== undefined) return;
     const waiter = this.waiters.values().next().value;
-    if (waiter === undefined) this.values.push(value);
-    else waiter.deliver(value);
+    if (waiter === undefined) {
+      // DATAGRAMs are lossy by contract. Drop an incoming value once the
+      // bounded queue budget is exhausted, while keeping the native reader
+      // drained so an unconsumed peer cannot grow memory without bound.
+      if (this.values.length >= IncomingDatagramQueue.MAX_VALUES ||
+          this.bufferedBytes + value.byteLength > IncomingDatagramQueue.MAX_BYTES) return;
+      this.values.push(value);
+      this.bufferedBytes += value.byteLength;
+    } else waiter.deliver(value);
   }
 
   shift(signal?: AbortSignal): Promise<Uint8Array> {
     if (signal?.aborted === true) return Promise.reject(abortedCarrierError(signal.reason));
     if (this.terminalError !== undefined) return Promise.reject(this.terminalError);
     const value = this.values.shift();
-    if (value !== undefined) return Promise.resolve(value);
+    if (value !== undefined) {
+      this.bufferedBytes -= value.byteLength;
+      return Promise.resolve(value);
+    }
     return new Promise((resolve, reject) => {
       let settled = false;
       const cleanup = () => {
@@ -505,6 +519,7 @@ class IncomingDatagramQueue {
     if (this.terminalError !== undefined) return;
     this.terminalError = error;
     this.values.length = 0;
+    this.bufferedBytes = 0;
     for (const waiter of [...this.waiters]) waiter.fail(error);
   }
 }

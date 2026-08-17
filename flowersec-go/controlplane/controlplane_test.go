@@ -67,6 +67,30 @@ func TestIssuerCreatesOpaqueDirectArtifactAndBoundRuntimeAuthorization(t *testin
 	}
 }
 
+func TestIssuerRoundsSubsecondExpiryUpToWireSecond(t *testing.T) {
+	now := time.Unix(1_800_000_000, 500_000_000)
+	issuer := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x61}, 128)), now)
+	endpoints, err := NewEndpointSet("wss://edge.example/flowersec/v2/direct")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := issuer.IssueDirect(DirectIssueOptions{
+		Session:   SessionOptions{ChannelID: "subsecond", ExpiresAt: now.Add(100 * time.Millisecond)},
+		Endpoints: endpoints, RendezvousGroupID: "group", ListenerAudience: "audience",
+		UpstreamAddress: "127.0.0.1:9000",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := artifactv2.DecodeArtifactJSON(bytes.NewReader(issued.ArtifactJSON()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := artifact.Session.InitExpireAtUnixSeconds, now.Unix()+1; got != want {
+		t.Fatalf("wire expiry = %d, want rounded-up second %d", got, want)
+	}
+}
+
 func TestIssuerAcceptsLoopbackPlainWebSocketOnlyForDirectArtifacts(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	issuer := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x52}, 128)), now)

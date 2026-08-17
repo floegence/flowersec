@@ -425,6 +425,13 @@ func (runtime *runtimeServer) bridgeDirectStream(ctx context.Context, stream ses
 		return
 	}
 	defer upstream.Close()
+	// A half-closed upstream may remain readable indefinitely. Cancellation
+	// must close both endpoints so either io.Copy is unblocked during shutdown.
+	stop := context.AfterFunc(ctx, func() {
+		_ = upstream.Close()
+		_ = stream.Close()
+	})
+	defer stop()
 	var copyWG sync.WaitGroup
 	copyWG.Add(2)
 	go func() {

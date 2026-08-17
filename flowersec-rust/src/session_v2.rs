@@ -3843,7 +3843,7 @@ async fn rpc_call_v2(
     let request_id = peer
         .next_request_id
         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
-            (value < MAX_PORTABLE_RPC_ID).then_some(value + 1)
+            (value <= MAX_PORTABLE_RPC_ID).then_some(value + 1)
         })
         .map_err(|_| RpcCallError::Session(SessionError::OperationFailed))?;
     let envelope = RpcEnvelopeWireV2 {
@@ -4077,7 +4077,11 @@ async fn read_rpc_frame_v2(
         let mut buffer = buffer.lock().await;
         buffer.drain(..length).collect::<Vec<_>>()
     };
-    serde_json::from_slice(&json).map_err(proto)
+    let envelope: RpcEnvelopeWireV2 = serde_json::from_slice(&json).map_err(proto)?;
+    if envelope.request_id > MAX_PORTABLE_RPC_ID || envelope.response_to > MAX_PORTABLE_RPC_ID {
+        return Err(invalid("RPC request ID exceeds portable range"));
+    }
+    Ok(envelope)
 }
 
 async fn fill_rpc_bytes_v2(

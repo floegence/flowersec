@@ -32,6 +32,7 @@ export class MessagePortByteStream implements ByteStream {
   private buffered = 0;
   private readBuffered = 0;
   private ended = false;
+  private writeClosed = false;
   private closed = false;
 
   constructor(private readonly port: MessagePort) {
@@ -63,6 +64,7 @@ export class MessagePortByteStream implements ByteStream {
 
   async write(data: Uint8Array, options: OperationOptions = {}): Promise<number> {
     if (this.closed || this.terminalError !== undefined) throw this.terminalError ?? new SessionError("closed");
+    if (this.writeClosed) throw new SessionError("operation_failed");
     if (options.signal?.aborted === true) throw new SessionError("canceled");
     if (data.length === 0) return 0;
     if (data.length > MAX_BRIDGE_CHUNK_BYTES || this.buffered + data.length > MAX_BRIDGE_BUFFER_BYTES) {
@@ -88,7 +90,8 @@ export class MessagePortByteStream implements ByteStream {
   }
 
   async closeWrite(): Promise<void> {
-    if (this.closed) return;
+    if (this.closed || this.writeClosed) return;
+    this.writeClosed = true;
     this.port.postMessage({ type: "end" } satisfies BridgeMessage);
   }
 
@@ -108,6 +111,10 @@ export class MessagePortByteStream implements ByteStream {
     if (value === null || typeof value !== "object" || !("type" in value)) return;
     const message = value as BridgeMessage;
     if (message.type === "chunk") {
+      if (this.ended || this.closed) {
+        this.fail(new SessionError("operation_failed"));
+        return;
+      }
       if (!Number.isSafeInteger(message.id) || !(message.data instanceof ArrayBuffer) || message.data.byteLength > MAX_BRIDGE_CHUNK_BYTES) {
         this.fail(new SessionError("operation_failed"));
         return;
@@ -137,6 +144,7 @@ export class MessagePortByteStream implements ByteStream {
       return;
     }
     if (message.type === "end") {
+      if (this.ended) return;
       this.ended = true;
       for (const waiter of this.readWaiters.splice(0)) waiter.resolve(null);
       return;
@@ -234,19 +242,32 @@ export function registerProxyAppWindow(options: RegisterProxyAppWindowOptions): 
     dispatchFetch,
     openWebSocketStream: async (path, openOptions = {}) => {
       if (disposed) throw new SessionError("closed");
+      if (openOptions.signal?.aborted === true) throw new SessionError("canceled");
       const channel = new MessageChannel();
       const response = new Promise<Readonly<{ stream: ByteStream; protocol: string }>>((resolve, reject) => {
-        const timer = setTimeout(() => { channel.port1.close(); reject(new SessionError("timeout")); }, 10_000);
+        let settled = false;
+        const finish = (error?: SessionError, opened?: Readonly<{ stream: ByteStream; protocol: string }>) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          openOptions.signal?.removeEventListener("abort", abort);
+          if (error !== undefined) { channel.port1.close(); reject(error); }
+          else resolve(opened!);
+        };
+        const abort = () => {
+          channel.port1.postMessage({ type: "reset" } satisfies BridgeMessage);
+          finish(new SessionError("canceled"));
+        };
+        const timer = setTimeout(() => finish(new SessionError("timeout")), 10_000);
         channel.port1.onmessage = (event) => {
           if (event.data?.type !== WEBSOCKET_ACK_MESSAGE) return;
-          clearTimeout(timer);
           if (event.data.ok !== true) {
-            channel.port1.close();
-            reject(new SessionError("operation_failed"));
+            finish(new SessionError("operation_failed"));
             return;
           }
-          resolve(Object.freeze({ stream: new MessagePortByteStream(channel.port1), protocol: typeof event.data.protocol === "string" ? event.data.protocol : "" }));
+          finish(undefined, Object.freeze({ stream: new MessagePortByteStream(channel.port1), protocol: typeof event.data.protocol === "string" ? event.data.protocol : "" }));
         };
+        openOptions.signal?.addEventListener("abort", abort, { once: true });
       });
       controller.postMessage({
         type: WEBSOCKET_OPEN_MESSAGE,
@@ -255,9 +276,6 @@ export function registerProxyAppWindow(options: RegisterProxyAppWindowOptions): 
         protocols: openOptions.protocols ?? [],
         ...(nonce === undefined ? {} : { capabilityNonce: nonce }),
       }, origin, [channel.port2]);
-      if (openOptions.signal !== undefined) {
-        openOptions.signal.addEventListener("abort", () => channel.port1.close(), { once: true });
-      }
       return await response;
     },
     dispose: () => { disposed = true; },
@@ -320,10 +338,25 @@ export function registerProxyControllerWindow(options: RegisterProxyControllerWi
     }
     if (event.data?.type === WEBSOCKET_OPEN_MESSAGE && event.data.version === 2) {
       void (async () => {
+        let canceled = false;
+        const openController = new AbortController();
+        port.onmessage = (message) => {
+          if ((message.data as BridgeMessage | undefined)?.type === "reset" ||
+              (message.data as BridgeMessage | undefined)?.type === "close") {
+            canceled = true;
+            openController.abort();
+            port.close();
+          }
+        };
         try {
           const opened = await options.runtime.openWebSocketStream(String(event.data.path ?? ""), {
             protocols: Array.isArray(event.data.protocols) ? event.data.protocols.map(String) : [],
+            signal: openController.signal,
           });
+          if (canceled) {
+            await opened.stream.reset();
+            return;
+          }
           port.postMessage({ type: WEBSOCKET_ACK_MESSAGE, ok: true, protocol: opened.protocol });
           await bridgeStreams(opened.stream, port);
         } catch {

@@ -35,6 +35,69 @@ func TestRPCClientCallTimeout(t *testing.T) {
 	}
 }
 
+func TestRPCClientNotificationHandlerCanCallWithoutBlockingReadLoop(t *testing.T) {
+	clientSide, peerSide := net.Pipe()
+	defer clientSide.Close()
+	defer peerSide.Close()
+	client := rpc.NewClient(clientSide)
+	defer client.Close()
+
+	callResult := make(chan error, 1)
+	client.OnNotify(9, func(payload json.RawMessage) {
+		if string(payload) != `{"request":true}` {
+			callResult <- errors.New("unexpected notification payload")
+			return
+		}
+		_, rpcErr, err := client.Call(context.Background(), 10, json.RawMessage(`{"nested":true}`))
+		if err == nil && rpcErr != nil {
+			err = errors.New("nested RPC returned an error")
+		}
+		callResult <- err
+	})
+
+	peerDone := make(chan error, 1)
+	go func() {
+		if err := jsonframe.WriteJSONFrame(peerSide, rpcv1.RpcEnvelope{TypeId: 9, Payload: json.RawMessage(`{"request":true}`)}); err != nil {
+			peerDone <- err
+			return
+		}
+		frame, err := jsonframe.ReadJSONFrame(peerSide, 1<<20)
+		if err != nil {
+			peerDone <- err
+			return
+		}
+		var request rpcv1.RpcEnvelope
+		if err := json.Unmarshal(frame, &request); err != nil {
+			peerDone <- err
+			return
+		}
+		if request.TypeId != 10 || request.RequestId == 0 {
+			peerDone <- errors.New("unexpected nested RPC request")
+			return
+		}
+		peerDone <- jsonframe.WriteJSONFrame(peerSide, rpcv1.RpcEnvelope{
+			TypeId: 10, ResponseTo: request.RequestId, Payload: json.RawMessage(`{"ok":true}`),
+		})
+	}()
+
+	select {
+	case err := <-callResult:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("notification handler did not complete nested RPC")
+	}
+	select {
+	case err := <-peerDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("peer did not process nested RPC")
+	}
+}
+
 func TestRPCServerNotificationHandlerErrorDoesNotStop(t *testing.T) {
 	a, b := net.Pipe()
 	defer a.Close()

@@ -171,6 +171,80 @@ func TestWSSDirectListenerTerminatesV2AndBridgesAuthorizedTCP(t *testing.T) {
 	}
 }
 
+func TestBridgeDirectStreamStopsWhenRuntimeCancelsAfterUpstreamFIN(t *testing.T) {
+	upstreamListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upstreamListener.Close()
+	upstreamEOF := make(chan struct{})
+	upstreamRelease := make(chan struct{})
+	go func() {
+		conn, acceptErr := upstreamListener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = io.Copy(io.Discard, conn)
+		close(upstreamEOF)
+		<-upstreamRelease
+	}()
+
+	streamListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer streamListener.Close()
+	streamClient, err := net.Dial("tcp", streamListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer streamClient.Close()
+	streamConn, err := streamListener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := &runtimeBridgeTestStream{Conn: streamConn}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	bridgeDone := make(chan struct{})
+	go func() {
+		defer close(bridgeDone)
+		runtime := &runtimeServer{}
+		runtime.bridgeDirectStream(ctx, stream, upstreamTarget{Network: "tcp", Address: upstreamListener.Addr().String()})
+	}()
+	if _, err := streamClient.Write([]byte("request")); err != nil {
+		t.Fatal(err)
+	}
+	if tcp, ok := streamClient.(*net.TCPConn); ok {
+		if err := tcp.CloseWrite(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case <-upstreamEOF:
+	case <-time.After(time.Second):
+		t.Fatal("upstream did not observe stream FIN")
+	}
+	cancel()
+	select {
+	case <-bridgeDone:
+	case <-time.After(time.Second):
+		t.Fatal("bridge did not stop after runtime cancellation")
+	}
+	close(upstreamRelease)
+}
+
+type runtimeBridgeTestStream struct{ net.Conn }
+
+func (*runtimeBridgeTestStream) ID() uint64           { return 1 }
+func (*runtimeBridgeTestStream) Kind() string         { return "test" }
+func (*runtimeBridgeTestStream) TerminalError() error { return nil }
+func (stream *runtimeBridgeTestStream) CloseWrite() error {
+	return stream.Conn.(*net.TCPConn).CloseWrite()
+}
+func (stream *runtimeBridgeTestStream) Reset() error { return stream.Close() }
+
 func TestWSSStandaloneTunnelConsumesSecretFreeHTTPAuthorization(t *testing.T) {
 	var (
 		records         sync.Map

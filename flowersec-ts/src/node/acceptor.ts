@@ -677,14 +677,30 @@ export async function createAcceptor(
     const abort = () => controller.abort(operation.signal?.reason);
     operation.signal?.addEventListener("abort", abort, { once: true });
     try {
-      return await Promise.any(
-        listeners.map(async (listener, index) => {
+      return await new Promise<CarrierSessionV2>((resolve, reject) => {
+        let settled = false;
+        let remaining = listeners.length;
+        const errors: unknown[] = [];
+        listeners.forEach((listener, index) => {
           const selected = listeners[(index + cursor) % listeners.length]!;
-          return await selected.accept({ signal: controller.signal });
-        }),
-      ).finally(() => {
-        cursor = (cursor + 1) % listeners.length;
-        controller.abort();
+          void selected.accept({ signal: controller.signal }).then((carrier) => {
+            if (!settled) {
+              settled = true;
+              cursor = (cursor + 1) % listeners.length;
+              controller.abort();
+              resolve(carrier);
+            } else {
+              carrier.abort({ code: 1000, reason: "accept race lost" });
+            }
+          }, (error: unknown) => {
+            errors.push(error);
+            remaining -= 1;
+            if (!settled && remaining === 0) {
+              settled = true;
+              reject(new AggregateError(errors, "all listeners failed to accept"));
+            }
+          });
+        });
       });
     } finally {
       operation.signal?.removeEventListener("abort", abort);

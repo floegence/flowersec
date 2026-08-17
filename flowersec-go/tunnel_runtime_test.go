@@ -42,6 +42,32 @@ func TestTunnelRuntimeServeWaitsForAcceptedNativeSessions(t *testing.T) {
 	}
 }
 
+func TestReleaseTunnelRuntimeLeaseHonorsCleanupDeadline(t *testing.T) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	releaseStarted := make(chan struct{})
+	releaseCanceled := make(chan struct{})
+	started := time.Now()
+	releaseTunnelRuntimeLease(cleanupCtx, func(ctx context.Context, _ string) {
+		close(releaseStarted)
+		<-ctx.Done()
+		close(releaseCanceled)
+	}, "lease")
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("lease release exceeded cleanup bound: %v", elapsed)
+	}
+	select {
+	case <-releaseStarted:
+	case <-time.After(time.Second):
+		t.Fatal("lease release callback did not start")
+	}
+	select {
+	case <-releaseCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("lease release callback did not observe cancellation")
+	}
+}
+
 type singleTunnelListener struct {
 	session carrier.Session
 }

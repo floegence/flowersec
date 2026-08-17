@@ -268,25 +268,55 @@ type Client struct {
 
 	writeMu sync.Mutex // Serializes writes on the stream.
 
-	mu      sync.Mutex                             // Guards pending/notify state.
-	nextID  uint64                                 // Next request ID to allocate.
-	pending map[uint64]chan rpcv1.RpcEnvelope      // Pending responses keyed by request ID.
-	notify  map[uint32]map[*notifyHandler]struct{} // Notification handlers by type ID.
-	closed  bool                                   // Closed flag for read/write paths.
-	lastErr error                                  // Sticky error from read loop.
+	mu           sync.Mutex                             // Guards pending/notify state.
+	nextID       uint64                                 // Next request ID to allocate.
+	pending      map[uint64]chan rpcv1.RpcEnvelope      // Pending responses keyed by request ID.
+	notify       map[uint32]map[*notifyHandler]struct{} // Notification handlers by type ID.
+	closed       bool                                   // Closed flag for read/write paths.
+	lastErr      error                                  // Sticky error from read loop.
+	notifyQueue  chan rpcv1.RpcEnvelope
+	notifyCtx    context.Context
+	notifyCancel context.CancelFunc
 }
 
 // NewClient creates an RPC client and starts its read loop.
 func NewClient(rwc io.ReadWriteCloser) *Client {
+	notifyCtx, notifyCancel := context.WithCancel(context.Background())
 	c := &Client{
-		r:       rwc,
-		maxLen:  jsonframe.DefaultMaxJSONFrameBytes,
-		nextID:  1,
-		pending: make(map[uint64]chan rpcv1.RpcEnvelope),
-		notify:  make(map[uint32]map[*notifyHandler]struct{}),
+		r:           rwc,
+		maxLen:      jsonframe.DefaultMaxJSONFrameBytes,
+		nextID:      1,
+		pending:     make(map[uint64]chan rpcv1.RpcEnvelope),
+		notify:      make(map[uint32]map[*notifyHandler]struct{}),
+		notifyQueue: make(chan rpcv1.RpcEnvelope, defaultMaxQueuedNotifications),
+		notifyCtx:   notifyCtx, notifyCancel: notifyCancel,
 	}
+	go c.notificationLoop()
 	go c.readLoop()
 	return c
+}
+
+func (c *Client) notificationLoop() {
+	for {
+		select {
+		case <-c.notifyCtx.Done():
+			return
+		case env := <-c.notifyQueue:
+			c.mu.Lock()
+			handlers := make([]*notifyHandler, 0, len(c.notify[env.TypeId]))
+			for h := range c.notify[env.TypeId] {
+				handlers = append(handlers, h)
+			}
+			c.mu.Unlock()
+			for _, h := range handlers {
+				go func(handler *notifyHandler, payload json.RawMessage) {
+					// User callbacks must not be able to crash the transport.
+					defer func() { _ = recover() }()
+					handler.fn(payload)
+				}(h, append(json.RawMessage(nil), env.Payload...))
+			}
+		}
+	}
 }
 
 // SetMaxFrameBytes caps incoming JSON frames.
@@ -432,20 +462,14 @@ func (c *Client) readLoop() {
 		invalidJSONFrames = 0
 		if env.ResponseTo == 0 {
 			if env.RequestId == 0 {
-				// Notification: fan out to registered handlers.
-				c.mu.Lock()
-				m := c.notify[env.TypeId]
-				handlers := make([]*notifyHandler, 0, len(m))
-				for h := range m {
-					handlers = append(handlers, h)
-				}
-				c.mu.Unlock()
-				for _, h := range handlers {
-					func() {
-						// User callbacks must not be able to crash the transport read loop.
-						defer func() { _ = recover() }()
-						h.fn(env.Payload)
-					}()
+				// Queue notifications so a callback cannot stall response delivery
+				// or deadlock by calling Client.Call synchronously.
+				select {
+				case c.notifyQueue <- env:
+				default:
+					_ = c.r.Close()
+					c.closeAll(errors.New("rpc notification queue exhausted"))
+					return
 				}
 			}
 			continue
@@ -541,13 +565,12 @@ func (c *Client) closeAll(err error) {
 		_ = id
 	}
 	c.mu.Unlock()
+	c.notifyCancel()
 	_ = err
 }
 
 func (c *Client) Close() error {
-	c.mu.Lock()
-	c.closed = true
-	c.mu.Unlock()
+	c.closeAll(io.ErrClosedPipe)
 	return c.r.Close()
 }
 

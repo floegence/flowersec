@@ -204,6 +204,16 @@ func (issuer *Issuer) session(options SessionOptions) (artifactv2.SessionContrac
 	if !expiresAt.After(now) || expiresAt.After(now.Add(maxArtifactLifetime)) {
 		return artifactv2.SessionContract{}, ErrInvalidControlPlaneInput
 	}
+	// The wire contract carries whole Unix seconds. Round future sub-second
+	// expiries up so issuance cannot create an immediately expired artifact.
+	expiresUnix := expiresAt.Unix()
+	if time.Unix(expiresUnix, 0).Before(expiresAt) {
+		expiresUnix++
+	}
+	normalizedExpiry := time.Unix(expiresUnix, 0).UTC()
+	if !normalizedExpiry.After(now) || normalizedExpiry.After(now.Add(maxArtifactLifetime)) {
+		return artifactv2.SessionContract{}, ErrInvalidControlPlaneInput
+	}
 	idle := options.IdleTimeout
 	if idle == 0 {
 		idle = defaultIdleTimeout
@@ -220,7 +230,7 @@ func (issuer *Issuer) session(options SessionOptions) (artifactv2.SessionContrac
 		return artifactv2.SessionContract{}, ErrIssuanceFailed
 	}
 	contract := artifactv2.SessionContract{
-		ChannelID: options.ChannelID, InitExpireAtUnixSeconds: expiresAt.Unix(),
+		ChannelID: options.ChannelID, InitExpireAtUnixSeconds: expiresUnix,
 		IdleTimeoutSeconds: uint32(idle / time.Second), EstablishTimeoutSeconds: 30,
 		RekeyPrepareTimeoutSeconds: 10, RekeyCompletionTimeoutSeconds: 30,
 		MaxInboundStreams: maxInbound, E2EEPSK: psk,

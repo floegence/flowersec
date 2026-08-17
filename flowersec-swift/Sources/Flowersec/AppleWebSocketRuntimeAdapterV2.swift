@@ -113,11 +113,25 @@ import Foundation
     }
 
     func readBinary() async throws -> Data {
-      guard !closed else { throw TransportV2CarrierError.closed }
-      let frame = try await socket.receive()
-      guard !closed else { throw TransportV2CarrierError.closed }
-      guard frame.operation == .binary else { throw SwiftRuntimeErrorV2.connectionFailed }
-      return frame.payload
+      while true {
+        guard !closed else { throw TransportV2CarrierError.closed }
+        let frame = try await socket.receive()
+        guard !closed else { throw TransportV2CarrierError.closed }
+        switch frame.operation {
+        case .binary:
+          return frame.payload
+        case .ping:
+          // Control frames are handled by the carrier and never enter Yamux.
+          try await socket.send(ProxyWebSocketFrame(operation: .pong, payload: frame.payload))
+        case .pong:
+          continue
+        case .close:
+          await close()
+          throw TransportV2CarrierError.closed
+        case .text:
+          throw SwiftRuntimeErrorV2.connectionFailed
+        }
+      }
     }
 
     func close() async {
