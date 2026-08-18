@@ -129,7 +129,76 @@ pub struct Acceptor {
     max_inbound_streams: u16,
     accept_timeout: Duration,
     accept_gate: AsyncMutex<()>,
-    registrations: Mutex<HashMap<[u8; 32], bool>>,
+    registrations: Mutex<RegistrationRegistry>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RegistrationState {
+    InFlight,
+    Consumed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Registration {
+    expires_at_unix_seconds: u64,
+    state: RegistrationState,
+}
+
+#[derive(Default)]
+struct RegistrationRegistry {
+    entries: HashMap<[u8; 32], Registration>,
+}
+
+impl RegistrationRegistry {
+    fn begin(
+        &mut self,
+        registration_id: [u8; 32],
+        expires_at_unix_seconds: u64,
+        now_unix_seconds: u64,
+    ) -> Result<(), AcceptErrorCode> {
+        self.prune_expired(now_unix_seconds);
+        if self.entries.contains_key(&registration_id) {
+            return Err(AcceptErrorCode::AlreadyRegistered);
+        }
+        if self
+            .entries
+            .values()
+            .any(|registration| registration.state == RegistrationState::InFlight)
+        {
+            return Err(AcceptErrorCode::Busy);
+        }
+        self.entries.insert(
+            registration_id,
+            Registration {
+                expires_at_unix_seconds,
+                state: RegistrationState::InFlight,
+            },
+        );
+        Ok(())
+    }
+
+    fn finish(&mut self, registration_id: &[u8; 32], succeeded: bool) {
+        if succeeded {
+            if let Some(registration) = self.entries.get_mut(registration_id) {
+                registration.state = RegistrationState::Consumed;
+            }
+        } else {
+            self.entries.remove(registration_id);
+        }
+    }
+
+    fn prune_expired(&mut self, now_unix_seconds: u64) {
+        let previous_len = self.entries.len();
+        self.entries.retain(|_, registration| {
+            registration.state == RegistrationState::InFlight
+                || registration.expires_at_unix_seconds > now_unix_seconds
+        });
+        if self.entries.len() != previous_len
+            && self.entries.capacity() > self.entries.len().saturating_mul(4).max(64)
+        {
+            self.entries.shrink_to(self.entries.len().max(64));
+        }
+    }
 }
 
 enum AcceptorListener {
@@ -180,7 +249,7 @@ impl Acceptor {
             max_inbound_streams: options.max_inbound_streams,
             accept_timeout: options.accept_timeout,
             accept_gate: AsyncMutex::new(()),
-            registrations: Mutex::new(HashMap::new()),
+            registrations: Mutex::new(RegistrationRegistry::default()),
         })
     }
 
@@ -213,7 +282,7 @@ impl Acceptor {
             max_inbound_streams: options.max_inbound_streams,
             accept_timeout: options.accept_timeout,
             accept_gate: AsyncMutex::new(()),
-            registrations: Mutex::new(HashMap::new()),
+            registrations: Mutex::new(RegistrationRegistry::default()),
         })
     }
 
@@ -270,13 +339,9 @@ impl Acceptor {
                 .registrations
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if registrations.contains_key(&plan.registration_id) {
-                return Err(error(AcceptErrorCode::AlreadyRegistered));
-            }
-            if registrations.values().any(|consumed| !consumed) {
-                return Err(error(AcceptErrorCode::Busy));
-            }
-            registrations.insert(plan.registration_id, false);
+            registrations
+                .begin(plan.registration_id, expiry, now)
+                .map_err(error)?;
         }
 
         let registration_id = plan.registration_id;
@@ -298,11 +363,7 @@ impl Acceptor {
             .registrations
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if result.is_ok() {
-            registrations.insert(registration_id, true);
-        } else {
-            registrations.remove(&registration_id);
-        }
+        registrations.finish(&registration_id, result.is_ok());
         result
     }
 
@@ -425,6 +486,12 @@ fn hash_acceptor_admissions(admissions: &[EncodedFsb2]) -> [u8; 32] {
 mod tests {
     use super::*;
 
+    fn registration_id(value: u64) -> [u8; 32] {
+        let mut registration_id = [0; 32];
+        registration_id[24..].copy_from_slice(&value.to_be_bytes());
+        registration_id
+    }
+
     #[test]
     fn public_accept_error_uses_canonical_code_strings() {
         assert_eq!(AcceptErrorCode::InvalidInput.as_str(), "invalid_input");
@@ -449,6 +516,63 @@ mod tests {
         assert_eq!(
             error(AcceptErrorCode::BindFailed).to_string(),
             "Flowersec session acceptance failed (code=bind_failed)"
+        );
+    }
+
+    #[test]
+    fn registration_registry_preserves_replay_and_in_flight_guards_until_expiry() {
+        let mut registrations = RegistrationRegistry::default();
+        let first = registration_id(1);
+        let second = registration_id(2);
+
+        assert_eq!(registrations.begin(first, 100, 10), Ok(()));
+        assert_eq!(
+            registrations.begin(first, 100, 10),
+            Err(AcceptErrorCode::AlreadyRegistered)
+        );
+        assert_eq!(
+            registrations.begin(second, 100, 10),
+            Err(AcceptErrorCode::Busy)
+        );
+        assert_eq!(
+            registrations.begin(second, 100, 100),
+            Err(AcceptErrorCode::Busy),
+            "expiry cleanup must not remove an in-flight registration"
+        );
+
+        registrations.finish(&first, true);
+        assert_eq!(
+            registrations.begin(first, 100, 10),
+            Err(AcceptErrorCode::AlreadyRegistered)
+        );
+        assert_eq!(registrations.begin(second, 100, 10), Ok(()));
+        registrations.finish(&second, false);
+        assert_eq!(registrations.begin(second, 100, 10), Ok(()));
+
+        registrations.finish(&second, true);
+        assert_eq!(registrations.begin(first, 200, 100), Ok(()));
+    }
+
+    #[test]
+    fn registration_registry_reclaims_expired_successes_and_peak_capacity() {
+        const REGISTRATIONS: u64 = 4_096;
+        let mut registrations = RegistrationRegistry::default();
+        for value in 0..REGISTRATIONS {
+            let registration_id = registration_id(value);
+            assert_eq!(registrations.begin(registration_id, 100, 10), Ok(()));
+            registrations.finish(&registration_id, true);
+        }
+        assert_eq!(registrations.entries.len(), REGISTRATIONS as usize);
+        let peak_capacity = registrations.entries.capacity();
+
+        assert_eq!(
+            registrations.begin(registration_id(REGISTRATIONS), 200, 100),
+            Ok(())
+        );
+        assert_eq!(registrations.entries.len(), 1);
+        assert!(
+            registrations.entries.capacity() < peak_capacity,
+            "expired registration storage retained its peak capacity"
         );
     }
 }

@@ -80,11 +80,33 @@ function normalizeTimeout(input: number | undefined): number {
   return input;
 }
 
+class InvalidProxyPathError extends TypeError {}
+
 function normalizePath(input: string): string {
-  if (input !== input.trim() || !input.startsWith("/") || input.startsWith("//") || /[\u0000-\u0020]/u.test(input) || input.includes("://")) {
-    throw new TypeError("proxy path must be an origin-relative path");
+  if (input !== input.trim() || !input.startsWith("/") || input.startsWith("//") || /[\u0000-\u0020]/u.test(input) || input.includes("://") || input.includes("#")) {
+    throw new InvalidProxyPathError("proxy path must be an origin-relative path");
   }
-  return input;
+  let parsed: URL;
+  try {
+    parsed = new URL(input, "https://flowersec.invalid/");
+  } catch {
+    throw new InvalidProxyPathError("proxy path must be an origin-relative path");
+  }
+  const pathname = normalizePercentEscapes(parsed.pathname, true).replace(/\/{2,}/gu, "/");
+  const search = normalizePercentEscapes(parsed.search, false);
+  return pathname + search;
+}
+
+function normalizePercentEscapes(input: string, rejectEncodedSeparators: boolean): string {
+  if (/%(?![0-9a-f]{2})/iu.test(input)) throw new InvalidProxyPathError("proxy path contains invalid percent encoding");
+  return input.replace(/%([0-9a-f]{2})/giu, (_match, hex: string) => {
+    const value = Number.parseInt(hex, 16);
+    if (rejectEncodedSeparators && (value === 0x2f || value === 0x5c)) {
+      throw new InvalidProxyPathError("proxy path contains an encoded separator");
+    }
+    const character = String.fromCharCode(value);
+    return /[A-Za-z0-9\-._~]/u.test(character) ? character : `%${hex.toUpperCase()}`;
+  });
 }
 
 function pathName(path: string): string {
@@ -204,6 +226,7 @@ class StreamAdmission {
   private readonly queue: Array<Readonly<{
     bytes: number;
     signal?: AbortSignal;
+    cleanup(): void;
     resolve(release: () => void): void;
     reject(error: Error): void;
   }>> = [];
@@ -225,18 +248,25 @@ class StreamAdmission {
       return Promise.reject(new SessionError("resource_exhausted"));
     }
     return new Promise((resolve, reject) => {
+      let cleaned = false;
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        signal?.removeEventListener("abort", onAbort);
+      };
       const entry = {
         bytes,
         ...(signal === undefined ? {} : { signal }),
-        resolve,
-        reject: (error: Error) => reject(error),
+        cleanup,
+        resolve: (release: () => void) => { cleanup(); resolve(release); },
+        reject: (error: Error) => { cleanup(); reject(error); },
       };
       const onAbort = () => {
         const index = this.queue.indexOf(entry);
         if (index < 0) return;
         this.queue.splice(index, 1);
         this.queuedBytes -= bytes;
-        reject(new SessionError("canceled"));
+        entry.reject(new SessionError("canceled"));
       };
       signal?.addEventListener("abort", onAbort, { once: true });
       this.queue.push(entry);
@@ -298,6 +328,7 @@ async function* readChunks(reader: ProxyByteReader, maxChunkBytes: number, maxBo
 
 function publicFailure(error: unknown): Readonly<{ status: number; code: string; message: string }> {
   if (error instanceof ProxyPolicyError) return { status: 403, code: "policy_denied", message: "proxy request denied" };
+  if (error instanceof InvalidProxyPathError) return { status: 400, code: "invalid_request", message: "invalid proxy request" };
   if (error instanceof SessionError && (error.code === "resource_exhausted" || error.code === "closed" || error.code === "going_away")) {
     return { status: 503, code: error.code, message: "proxy service unavailable" };
   }

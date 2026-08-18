@@ -13,6 +13,7 @@ import type {
 } from "./contract.js";
 import { SessionError } from "./contract.js";
 import { createStreamMetadataV2, streamMetadataValuesV2 } from "./streamMetadata.js";
+import { assertRpcTypeId } from "../rpc/validate.js";
 
 /** @internal */
 export function projectSessionV2(session: InternalSessionV2): SessionV2 {
@@ -113,6 +114,7 @@ function projectRpcPeerV2(
       options?: OperationOptionsV2,
     ): Promise<RpcResultV2<Response>> {
       try {
+        assertRpcTypeId(typeId);
         assertJsonValue(payload);
         const result = await peer.call(typeId, payload, options?.signal);
         if (result.error !== undefined) {
@@ -130,6 +132,7 @@ function projectRpcPeerV2(
       options?: OperationOptionsV2,
     ) {
       try {
+        assertRpcTypeId(typeId);
         assertJsonValue(payload);
         if (options?.signal?.aborted) throw options.signal.reason ?? new DOMException("The operation was aborted", "AbortError");
         await raceWithSignal(peer.notify(typeId, payload), options?.signal);
@@ -140,6 +143,7 @@ function projectRpcPeerV2(
       decodePayload: (payload: JsonValueV2) => Payload,
       handler: (payload: Payload) => void | Promise<void>,
     ) {
+      assertRpcTypeId(typeId);
       if (notificationOwner.closed) return () => undefined;
       const unsubscribe = peer.onNotify(typeId, (payload) => {
         let decoded: Payload;

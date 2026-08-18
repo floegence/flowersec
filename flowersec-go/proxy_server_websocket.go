@@ -76,85 +76,91 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 		closeOnce.Do(func() {
 			cancel()
 			_ = connection.Close()
+			_ = stream.Reset()
 		})
 	}
 	go func() {
-		for {
-			operation, payload, err := readProxyWebSocketFrame(stream, server.config.maxWSFrame)
-			if err == nil {
-				messageType := 0
-				switch operation {
-				case 1:
-					messageType = websocket.TextMessage
-				case 2:
-					messageType = websocket.BinaryMessage
-				case 8:
-					messageType = websocket.CloseMessage
-				case 9:
-					messageType = websocket.PingMessage
-				case 10:
-					messageType = websocket.PongMessage
-				default:
-					err = ErrInvalidProxyServer
-				}
+		errorsCh <- func() error {
+			for {
+				operation, payload, err := readProxyWebSocketFrame(stream, server.config.maxWSFrame)
 				if err == nil {
-					err = connection.WriteMessage(messageType, payload)
-				}
-				if err == nil && operation == 8 {
-					return
-				}
-			}
-			if err != nil {
-				errorsCh <- err
-				return
-			}
-		}
-	}()
-	go func() {
-		for {
-			messageType, payload, err := connection.ReadMessage()
-			operation := byte(0)
-			if err == nil {
-				switch messageType {
-				case websocket.TextMessage:
-					operation = 1
-				case websocket.BinaryMessage:
-					operation = 2
-				case websocket.CloseMessage:
-					operation = 8
-				case websocket.PingMessage:
-					operation = 9
-				case websocket.PongMessage:
-					operation = 10
-				default:
-					continue
-				}
-				err = writeProxyWebSocketFrame(stream, operation, payload, server.config.maxWSFrame)
-				if err == nil && operation == 8 {
-					return
-				}
-			} else {
-				var closeErr *websocket.CloseError
-				if errors.As(err, &closeErr) {
-					payload := proxyWebSocketClosePayload(closeErr.Code, closeErr.Text)
-					err = writeProxyWebSocketFrame(stream, 8, payload, server.config.maxWSFrame)
+					messageType := 0
+					switch operation {
+					case 1:
+						messageType = websocket.TextMessage
+					case 2:
+						messageType = websocket.BinaryMessage
+					case 8:
+						messageType = websocket.CloseMessage
+					case 9:
+						messageType = websocket.PingMessage
+					case 10:
+						messageType = websocket.PongMessage
+					default:
+						err = ErrInvalidProxyServer
+					}
 					if err == nil {
-						err = io.EOF
+						err = connection.WriteMessage(messageType, payload)
+					}
+					if err == nil && operation == 8 {
+						return nil
 					}
 				}
+				if err != nil {
+					return err
+				}
 			}
-			if err != nil {
-				errorsCh <- err
-				return
+		}()
+	}()
+	go func() {
+		errorsCh <- func() error {
+			for {
+				messageType, payload, err := connection.ReadMessage()
+				operation := byte(0)
+				if err == nil {
+					switch messageType {
+					case websocket.TextMessage:
+						operation = 1
+					case websocket.BinaryMessage:
+						operation = 2
+					case websocket.CloseMessage:
+						operation = 8
+					case websocket.PingMessage:
+						operation = 9
+					case websocket.PongMessage:
+						operation = 10
+					default:
+						continue
+					}
+					err = writeProxyWebSocketFrame(stream, operation, payload, server.config.maxWSFrame)
+					if err == nil && operation == 8 {
+						return nil
+					}
+				} else {
+					var closeErr *websocket.CloseError
+					if errors.As(err, &closeErr) {
+						payload := proxyWebSocketClosePayload(closeErr.Code, closeErr.Text)
+						err = writeProxyWebSocketFrame(stream, 8, payload, server.config.maxWSFrame)
+						if err == nil {
+							err = io.EOF
+						}
+					}
+				}
+				if err != nil {
+					return err
+				}
 			}
-		}
+		}()
 	}()
 	select {
 	case <-operationContext.Done():
 		closeBoth()
+		<-errorsCh
+		<-errorsCh
 		return operationContext.Err()
 	case err := <-errorsCh:
 		closeBoth()
+		<-errorsCh
 		if err != nil && !errors.Is(err, io.EOF) {
 			server.report(err)
 			return err

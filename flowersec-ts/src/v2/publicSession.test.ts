@@ -120,6 +120,43 @@ describe("opaque public SessionV2 projection", () => {
     });
   });
 
+  test("rejects invalid RPC type IDs before invoking the internal peer", async () => {
+    const terminal = new Error("closed");
+    const internal = fakeSession(fakeStream(terminal), terminal);
+    internal.rpc.call = vi.fn();
+    internal.rpc.notify = vi.fn();
+    internal.rpc.onNotify = vi.fn();
+    const session = projectSessionV2(internal);
+    for (const typeId of [-1, 0, 1.5, 0x1_0000_0000]) {
+      await expect(session.rpc.call(typeId, {}, decodeAccepted)).rejects.toEqual(new SessionError("operation_failed"));
+      await expect(session.rpc.notify(typeId, {})).rejects.toEqual(new SessionError("operation_failed"));
+      expect(() => session.rpc.onNotify(typeId, decodeAccepted, () => undefined)).toThrow(/typeId/);
+    }
+    expect(internal.rpc.call).not.toHaveBeenCalled();
+    expect(internal.rpc.notify).not.toHaveBeenCalled();
+    expect(internal.rpc.onNotify).not.toHaveBeenCalled();
+  });
+
+  test("accepts the maximum u32 RPC type ID at every public entry point", async () => {
+    const terminal = new Error("closed");
+    const internal = fakeSession(fakeStream(terminal), terminal);
+    Object.defineProperty(internal, "termination", { value: new Promise<never>(() => undefined) });
+    internal.rpc.call = vi.fn(async () => ({ payload: { accepted: true } }));
+    internal.rpc.notify = vi.fn(async () => undefined);
+    internal.rpc.onNotify = vi.fn(() => () => undefined);
+    const session = projectSessionV2(internal);
+    await expect(session.rpc.call(0xffff_ffff, {}, decodeAccepted)).resolves.toEqual({
+      ok: true,
+      payload: { accepted: true },
+    });
+    await expect(session.rpc.notify(0xffff_ffff, {})).resolves.toBeUndefined();
+    const unsubscribe = session.rpc.onNotify(0xffff_ffff, decodeAccepted, () => undefined);
+    unsubscribe();
+    expect(internal.rpc.call).toHaveBeenCalledWith(0xffff_ffff, {}, undefined);
+    expect(internal.rpc.notify).toHaveBeenCalledWith(0xffff_ffff, {});
+    expect(internal.rpc.onNotify).toHaveBeenCalledWith(0xffff_ffff, expect.any(Function));
+  });
+
   test("projects a malformed inbound RPC response to a stable session failure", async () => {
     const secret = "malformed-rpc-secret-marker";
     const terminal = new Error("closed");

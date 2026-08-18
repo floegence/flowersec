@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     fmt,
+    future::Future,
     pin::Pin,
     sync::{
         Arc,
@@ -47,6 +48,7 @@ pub(crate) const DEFAULT_MAX_WEBSOCKET_FRAME: usize = 1 << 20;
 pub(crate) const DEFAULT_MAX_CONCURRENT: usize = 64;
 pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const MAX_TIMEOUT: Duration = Duration::from_secs(300);
+const WEBSOCKET_ESTABLISH_TIMEOUT: Duration = Duration::from_secs(10);
 
 const FORBIDDEN_HEADERS: &[&str] = &[
     "authorization",
@@ -161,6 +163,7 @@ struct Config {
     max_chunk: usize,
     max_body: usize,
     max_websocket_frame: usize,
+    websocket_establish_timeout: Duration,
     default_timeout: Duration,
     max_timeout: Duration,
     request_headers: HashSet<String>,
@@ -426,6 +429,7 @@ fn compile_options(
             max_chunk,
             max_body,
             max_websocket_frame,
+            websocket_establish_timeout: WEBSOCKET_ESTABLISH_TIMEOUT,
             default_timeout,
             max_timeout,
             request_headers: normalize_header_set(options.extra_request_headers)?,
@@ -756,9 +760,11 @@ async fn serve_http(
     } else {
         Duration::from_millis(meta.timeout_ms).min(inner.config.max_timeout)
     };
-    let mut target = inner.config.upstream.clone();
-    target.set_path(path.path());
-    target.set_query(path.query());
+    let target = inner
+        .config
+        .upstream
+        .join(&path)
+        .map_err(|_| ProxyServerError::OperationFailed)?;
     let uri = if target.query().is_some() {
         format!("{}?{}", target.path(), target.query().unwrap_or_default())
     } else {
@@ -1052,6 +1058,21 @@ async fn serve_websocket(
     stream: &dyn ByteStream,
     cancellation: CancellationToken,
 ) -> Result<(), ProxyServerError> {
+    serve_websocket_with_establishment_timeout(
+        inner,
+        stream,
+        cancellation,
+        inner.config.websocket_establish_timeout,
+    )
+    .await
+}
+
+async fn serve_websocket_with_establishment_timeout(
+    inner: &Inner,
+    stream: &dyn ByteStream,
+    cancellation: CancellationToken,
+    establishment_timeout: Duration,
+) -> Result<(), ProxyServerError> {
     let mut reader = ProxyReader::new(stream);
     let open: WebSocketOpen = match read_json(&mut reader, inner.config.max_json, &cancellation)
         .await
@@ -1079,8 +1100,9 @@ async fn serve_websocket(
             "ws"
         })
         .map_err(|_| ProxyServerError::OperationFailed)?;
-    target.set_path(path.path());
-    target.set_query(path.query());
+    let target = target
+        .join(&path)
+        .map_err(|_| ProxyServerError::OperationFailed)?;
     let mut request = target
         .as_str()
         .into_client_request()
@@ -1114,10 +1136,13 @@ async fn serve_websocket(
     let port = target
         .port_or_known_default()
         .ok_or(ProxyServerError::OperationFailed)?;
-    let tcp = tokio::select! {
-        _ = cancellation.cancelled() => return Err(ProxyServerError::Closed),
-        connected = TcpStream::connect((host.as_str(), port)) => connected,
-    }
+    let establishment_deadline = Instant::now() + establishment_timeout;
+    let tcp = await_websocket_establishment(
+        establishment_deadline,
+        &cancellation,
+        TcpStream::connect((host.as_str(), port)),
+    )
+    .await?
     .map_err(|_| ProxyServerError::OperationFailed)?;
     if target.scheme() == "wss" {
         let server_name =
@@ -1126,23 +1151,46 @@ async fn serve_websocket(
             websocket_v2::client_tls(inner.config.upstream_trust_roots_der.clone())
                 .map_err(|_| ProxyServerError::OperationFailed)?,
         );
-        let tls = tokio::select! {
-            _ = cancellation.cancelled() => return Err(ProxyServerError::Closed),
-            connected = tls.connect(server_name, tcp) => connected,
-        }
+        let tls = await_websocket_establishment(
+            establishment_deadline,
+            &cancellation,
+            tls.connect(server_name, tcp),
+        )
+        .await?
         .map_err(|_| ProxyServerError::OperationFailed)?;
-        let connected = tokio::select! {
-            _ = cancellation.cancelled() => return Err(ProxyServerError::Closed),
-            connected = client_async_with_config(request, tls, Some(websocket_config)) => connected,
-        };
+        let connected = await_websocket_establishment(
+            establishment_deadline,
+            &cancellation,
+            client_async_with_config(request, tls, Some(websocket_config)),
+        )
+        .await?;
         return relay_connected_websocket(inner, stream, reader, cancellation, conn_id, connected)
             .await;
     }
-    let connected = tokio::select! {
-        _ = cancellation.cancelled() => return Err(ProxyServerError::Closed),
-        connected = client_async_with_config(request, tcp, Some(websocket_config)) => connected,
-    };
+    let connected = await_websocket_establishment(
+        establishment_deadline,
+        &cancellation,
+        client_async_with_config(request, tcp, Some(websocket_config)),
+    )
+    .await?;
     relay_connected_websocket(inner, stream, reader, cancellation, conn_id, connected).await
+}
+
+async fn await_websocket_establishment<F, T>(
+    deadline: Instant,
+    cancellation: &CancellationToken,
+    future: F,
+) -> Result<T, ProxyServerError>
+where
+    F: Future<Output = T>,
+{
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(ProxyServerError::Closed),
+        result = tokio::time::timeout_at(deadline, future) => {
+            result.map_err(|_| ProxyServerError::OperationFailed)
+        }
+    }
 }
 
 async fn relay_connected_websocket<S>(
@@ -1346,18 +1394,93 @@ fn decode_websocket_close(
     Ok(Some(tungstenite::protocol::CloseFrame { code, reason }))
 }
 
-fn normalize_path(raw: &str) -> Option<Url> {
+fn normalize_path(raw: &str) -> Option<String> {
     if raw.trim() != raw
         || !raw.starts_with('/')
         || raw.starts_with("//")
         || raw.contains("://")
+        || raw.contains('#')
         || raw.bytes().any(|byte| byte <= 0x20 || byte == 0x7f)
     {
         return None;
     }
-    let parsed = Url::parse(&format!("http://flowersec.invalid{raw}")).ok()?;
-    (parsed.host_str() == Some("flowersec.invalid") && parsed.fragment().is_none())
-        .then_some(parsed)
+    let (raw_path, raw_query) = raw
+        .split_once('?')
+        .map_or((raw, None), |(path, query)| (path, Some(query)));
+    let path = normalize_percent_escapes(raw_path, true)?.replace('\\', "/");
+    if path.starts_with("//") {
+        return None;
+    }
+    let path = clean_proxy_path(&path);
+    let query = match raw_query {
+        Some(query) => Some(normalize_percent_escapes(query, false)?),
+        None => None,
+    };
+    let mut canonical = path;
+    if let Some(query) = query {
+        canonical.push('?');
+        canonical.push_str(&query);
+    }
+    Some(canonical)
+}
+
+fn normalize_percent_escapes(raw: &str, reject_encoded_separators: bool) -> Option<String> {
+    let bytes = raw.as_bytes();
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut offset = 0;
+    while offset < bytes.len() {
+        if bytes[offset] != b'%' {
+            normalized.push(bytes[offset]);
+            offset += 1;
+            continue;
+        }
+        let high = decode_hex(*bytes.get(offset + 1)?)?;
+        let low = decode_hex(*bytes.get(offset + 2)?)?;
+        let value = high << 4 | low;
+        if reject_encoded_separators && matches!(value, b'/' | b'\\') {
+            return None;
+        }
+        if value.is_ascii_alphanumeric() || matches!(value, b'-' | b'.' | b'_' | b'~') {
+            normalized.push(value);
+        } else {
+            normalized.push(b'%');
+            normalized.push(HEX[(value >> 4) as usize]);
+            normalized.push(HEX[(value & 0x0f) as usize]);
+        }
+        offset += 3;
+    }
+    String::from_utf8(normalized).ok()
+}
+
+fn decode_hex(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+fn clean_proxy_path(path: &str) -> String {
+    let keep_trailing_slash = path.ends_with('/') || path.ends_with("/.") || path.ends_with("/..");
+    let mut segments = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            _ => segments.push(segment),
+        }
+    }
+    let mut canonical = String::from("/");
+    canonical.push_str(&segments.join("/"));
+    if keep_trailing_slash && canonical != "/" {
+        canonical.push('/');
+    }
+    canonical
 }
 
 fn validate_external_origin(raw: &str) -> Option<Url> {
@@ -1465,6 +1588,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 mod tests {
     use std::{
         collections::VecDeque,
+        future::pending,
         sync::{
             Mutex,
             atomic::{AtomicBool, Ordering},
@@ -1478,6 +1602,8 @@ mod tests {
     };
 
     use super::*;
+
+    const TEST_CERT_DER_B64: &str = "MIIBjzCCAUGgAwIBAgIUW8hQEpQsUJN9a6qqF2g6hsNpSm8wBQYDK2VwMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAeFw0yNjA3MjAxOTAxMjFaFw0zNjA3MTcxOTAxMjFaMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAqMAUGAytlcAMhAAihki/Jec+1EaC6E6PsSxjMYFAazrgkNiUIlbj/+A/0o4GkMIGhMB0GA1UdDgQWBBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAfBgNVHSMEGDAWgBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAsBgNVHREEJTAjgglsb2NhbGhvc3SHBH8AAAGHEAAAAAAAAAAAAAAAAAAAAAEwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAwwCgYIKwYBBQUHAwEwBQYDK2VwA0EArZng3XitiH2E1pW/NTxQvEOBXJYpYE8coQmLV4yTjfI43CWHMG6lIrwk/so67oe6Z2R4iHGjUm3Tuy50Fl8hBw==";
 
     #[derive(Debug)]
     struct TestStream {
@@ -1591,6 +1717,42 @@ mod tests {
         }
     }
 
+    #[test]
+    fn canonical_proxy_path_closes_policy_bypasses_before_upstream_use() {
+        for (raw, expected) in [
+            ("/safe/../admin?mode=raw", "/admin?mode=raw"),
+            ("/safe/./../admin", "/admin"),
+            ("/safe/%2e%2e/admin?mode=encoded", "/admin?mode=encoded"),
+            ("/safe\\..\\admin?mode=backslash", "/admin?mode=backslash"),
+            ("/%61dmin", "/admin"),
+            ("/safe//child?mode=double", "/safe/child?mode=double"),
+            ("/public/../api//items?q=%7euser", "/api/items?q=~user"),
+            ("/api?q=%2f%5c", "/api?q=%2F%5C"),
+            ("/api/a%20b?q=%2f", "/api/a%20b?q=%2F"),
+        ] {
+            assert_eq!(
+                normalize_path(raw).unwrap_or_else(|| panic!("rejected {raw}")),
+                expected,
+                "{raw}"
+            );
+        }
+
+        for raw in [
+            "/%2fadmin",
+            "/%2Fadmin",
+            "/%5cadmin",
+            "/%5Cadmin",
+            "/safe/%2f/admin",
+            "/\\evil.example/admin",
+            "/invalid%",
+            "/invalid%2",
+            "/invalid%zz",
+            "/admin#fragment",
+        ] {
+            assert!(normalize_path(raw).is_none(), "accepted unsafe path {raw}");
+        }
+    }
+
     #[tokio::test]
     async fn http_proxy_enforces_origin_host_cookie_header_and_body_policy() {
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -1614,6 +1776,10 @@ mod tests {
             let text = String::from_utf8(request)
                 .expect("request utf8")
                 .to_ascii_lowercase();
+            assert!(
+                text.starts_with("post /api/items?q=~user http/1.1\r\n"),
+                "{text}"
+            );
             assert!(text.contains(&format!("host: {address}\r\n")), "{text}");
             assert!(text.contains("x-forwarded-proto: https\r\n"), "{text}");
             assert!(text.contains("cookie: public=ok\r\n"), "{text}");
@@ -1628,7 +1794,8 @@ mod tests {
         .expect("proxy server");
         let stream = Arc::new(TestStream::new({
             let mut input = frame_json(serde_json::json!({
-                "v": 1, "request_id": "request-1", "method": "POST", "path": "/api?q=1",
+                "v": 1, "request_id": "request-1", "method": "POST",
+                "path": "/public/../api//items?q=%7euser",
                 "headers": [
                     {"name":"cookie", "value":"session=bad; private_key=no; public=ok"},
                     {"name":"authorization", "value":"Bearer secret"},
@@ -1676,6 +1843,14 @@ mod tests {
                 socket,
                 |request: &tungstenite::handshake::server::Request,
                  mut response: tungstenite::handshake::server::Response| {
+                    assert_eq!(
+                        request
+                            .uri()
+                            .path_and_query()
+                            .expect("canonical WebSocket target")
+                            .as_str(),
+                        "/api/items?q=~user"
+                    );
                     assert_eq!(
                         request.headers().get("origin").expect("origin"),
                         "http://127.0.0.1:8080"
@@ -1728,7 +1903,8 @@ mod tests {
         .expect("proxy server");
         let stream = Arc::new(TestStream::new({
             let mut input = frame_json(serde_json::json!({
-                "v": 1, "conn_id": "socket-1", "path": "/socket",
+                "v": 1, "conn_id": "socket-1",
+                "path": "/public/../api//items?q=%7euser",
                 "headers": [
                     {"name":"sec-websocket-protocol", "value":"chat"},
                     {"name":"x-request-id", "value":"visible"},
@@ -1832,6 +2008,126 @@ mod tests {
                 .await,
             Err(SessionError::Closed)
         );
+        upstream.abort();
+    }
+
+    #[tokio::test]
+    async fn websocket_tcp_stage_and_shared_establishment_budget_are_bounded() {
+        let cancellation = CancellationToken::new();
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(40);
+        await_websocket_establishment(deadline, &cancellation, async {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        })
+        .await
+        .expect("first establishment stage");
+        assert_eq!(
+            await_websocket_establishment(deadline, &cancellation, pending::<()>()).await,
+            Err(ProxyServerError::OperationFailed)
+        );
+        assert!(
+            started.elapsed() < Duration::from_millis(70),
+            "establishment stages reset the shared deadline"
+        );
+    }
+
+    #[tokio::test]
+    async fn websocket_tls_blackhole_is_bounded_by_the_establishment_deadline() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind TLS blackhole");
+        let address = listener.local_addr().expect("TLS blackhole address");
+        let upstream = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.expect("accept TLS connection");
+            pending::<()>().await;
+        });
+        let mut options = test_options(
+            format!("https://localhost:{}", address.port())
+                .parse()
+                .expect("WSS upstream URL"),
+        );
+        options.allowed_upstream_hosts = vec!["localhost".into()];
+        options.upstream_trust_roots_der = vec![STANDARD.decode(TEST_CERT_DER_B64).unwrap()];
+        let server = ProxyServer::new(options).expect("proxy server");
+        let stream = Arc::new(TestStream::new(frame_json(serde_json::json!({
+            "v": 1, "conn_id": "tls-blackhole", "path": "/socket", "headers": []
+        }))));
+
+        let started = Instant::now();
+        assert_eq!(
+            serve_websocket_with_establishment_timeout(
+                &server.inner,
+                &stream,
+                CancellationToken::new(),
+                Duration::from_millis(30),
+            )
+            .await,
+            Err(ProxyServerError::OperationFailed)
+        );
+        assert!(started.elapsed() < Duration::from_millis(150));
+        upstream.abort();
+    }
+
+    #[tokio::test]
+    async fn websocket_upgrade_blackholes_release_handler_permits() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Upgrade blackhole");
+        let address = listener.local_addr().expect("Upgrade blackhole address");
+        let (accepted_tx, mut accepted_rx) = tokio::sync::mpsc::unbounded_channel();
+        let upstream = tokio::spawn(async move {
+            loop {
+                let (socket, _) = listener.accept().await.expect("accept Upgrade connection");
+                accepted_tx.send(()).expect("record accepted connection");
+                tokio::spawn(async move {
+                    let _socket = socket;
+                    pending::<()>().await;
+                });
+            }
+        });
+        let mut options = test_options(
+            format!("http://{address}")
+                .parse()
+                .expect("WebSocket upstream URL"),
+        );
+        options.max_concurrent_streams = 1;
+        let mut server = ProxyServer::new(options).expect("proxy server");
+        Arc::get_mut(&mut server.inner)
+            .expect("unshared test server")
+            .config
+            .websocket_establish_timeout = Duration::from_millis(30);
+        let handler = ProxyHandler {
+            inner: server.inner.clone(),
+            protocol: Protocol::WebSocket,
+        };
+
+        for conn_id in ["upgrade-blackhole-1", "upgrade-blackhole-2"] {
+            let stream = Arc::new(TestStream::new(frame_json(serde_json::json!({
+                "v": 1, "conn_id": conn_id, "path": "/socket", "headers": []
+            }))));
+            let result = tokio::time::timeout(
+                Duration::from_millis(200),
+                handler.handle(
+                    &IncomingStream::new(
+                        WEBSOCKET_KIND,
+                        crate::StreamMetadata::empty(),
+                        Box::new(stream),
+                    ),
+                    CancellationToken::new(),
+                ),
+            )
+            .await
+            .expect("Upgrade blackhole converged");
+            assert_eq!(result, Err(SessionError::OperationFailed));
+            accepted_rx
+                .recv()
+                .await
+                .expect("connection reached upstream");
+            assert_eq!(server.inner.permits.available_permits(), 1);
+        }
+        server.close().await;
         upstream.abort();
     }
 

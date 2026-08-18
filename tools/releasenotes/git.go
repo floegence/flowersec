@@ -12,6 +12,7 @@ import (
 type commit struct {
 	Hash    string
 	Subject string
+	Body    string
 }
 
 func loadReleaseNotes(repoPath, currentTag, currentRef string) (*releaseNotes, error) {
@@ -109,7 +110,7 @@ func collectCommits(repoPath, currentRef, previousTag string) ([]commit, error) 
 	if previousTag != "" {
 		rangeSpec = previousTag + ".." + currentRef
 	}
-	out, err := gitOutput(repoPath, "log", "--no-merges", "--reverse", "--format=%H%x1f%s%x1e", rangeSpec)
+	out, err := gitOutput(repoPath, "log", "--no-merges", "--reverse", "--format=%H%x1f%s%x1f%b%x1e", rangeSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -121,13 +122,14 @@ func collectCommits(repoPath, currentRef, previousTag string) ([]commit, error) 
 		if entry == "" {
 			continue
 		}
-		fields := strings.Split(entry, "\x1f")
-		if len(fields) != 2 {
+		fields := strings.SplitN(entry, "\x1f", 3)
+		if len(fields) != 3 {
 			return nil, fmt.Errorf("unexpected git log record %q", entry)
 		}
 		commits = append(commits, commit{
 			Hash:    strings.TrimSpace(fields[0]),
 			Subject: strings.TrimSpace(fields[1]),
+			Body:    strings.TrimSpace(fields[2]),
 		})
 	}
 	return commits, nil

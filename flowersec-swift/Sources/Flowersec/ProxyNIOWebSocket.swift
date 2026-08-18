@@ -320,11 +320,17 @@
       let bytes: Int
     }
 
+    private struct Waiter {
+      let id: UInt64
+      let continuation: CheckedContinuation<ProxyWebSocketFrame, any Error>
+    }
+
     private let lock = NSLock()
     private let maxBufferedBytes: Int
     private var frames: [BufferedFrame] = []
     private var bufferedBytes = 0
-    private var waiters: [CheckedContinuation<ProxyWebSocketFrame, any Error>] = []
+    private var waiters: [Waiter] = []
+    private var nextWaiterID: UInt64 = 1
     private var failure: (any Error)?
 
     init(maxBufferedBytes: Int) {
@@ -337,7 +343,7 @@
       let accepted = lock.withLock { () -> Bool in
         guard failure == nil else { return false }
         if !waiters.isEmpty {
-          waiter = waiters.removeFirst()
+          waiter = waiters.removeFirst().continuation
           return true
         }
         guard frameBytes <= maxBufferedBytes - bufferedBytes else {
@@ -353,33 +359,53 @@
     }
 
     func receive() async throws -> ProxyWebSocketFrame {
-      return try await withCheckedThrowingContinuation { continuation in
-        var frame: ProxyWebSocketFrame?
-        var terminalError: (any Error)?
-        lock.withLock {
-          if !frames.isEmpty {
-            let buffered = frames.removeFirst()
-            bufferedBytes -= buffered.bytes
-            frame = buffered.frame
-          } else if let failure {
-            terminalError = failure
-          } else {
-            waiters.append(continuation)
+      let waiterID = lock.withLock { () -> UInt64 in
+        let value = nextWaiterID
+        nextWaiterID &+= 1
+        if nextWaiterID == 0 { nextWaiterID = 1 }
+        return value
+      }
+      return try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+          var frame: ProxyWebSocketFrame?
+          var terminalError: (any Error)?
+          lock.withLock {
+            if Task.isCancelled {
+              terminalError = CancellationError()
+            } else if !frames.isEmpty {
+              let buffered = frames.removeFirst()
+              bufferedBytes -= buffered.bytes
+              frame = buffered.frame
+            } else if let failure {
+              terminalError = failure
+            } else {
+              waiters.append(Waiter(id: waiterID, continuation: continuation))
+            }
+          }
+          if let frame {
+            continuation.resume(returning: frame)
+          } else if let terminalError {
+            continuation.resume(throwing: terminalError)
           }
         }
-        if let frame {
-          continuation.resume(returning: frame)
-        } else if let terminalError {
-          continuation.resume(throwing: terminalError)
-        }
+      } onCancel: {
+        cancel(waiterID)
       }
+    }
+
+    private func cancel(_ waiterID: UInt64) {
+      let continuation = lock.withLock { () -> CheckedContinuation<ProxyWebSocketFrame, any Error>? in
+        guard let index = waiters.firstIndex(where: { $0.id == waiterID }) else { return nil }
+        return waiters.remove(at: index).continuation
+      }
+      continuation?.resume(throwing: CancellationError())
     }
 
     func finish(_ error: any Error) {
       let current = lock.withLock { () -> [CheckedContinuation<ProxyWebSocketFrame, any Error>] in
         guard failure == nil else { return [] }
         failure = error
-        let current = waiters
+        let current = waiters.map(\.continuation)
         waiters.removeAll()
         return current
       }

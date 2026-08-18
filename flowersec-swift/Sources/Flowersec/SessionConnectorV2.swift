@@ -161,17 +161,39 @@ struct SessionConnectorV2: Sendable {
 
   func connect() async throws -> any Session {
     do {
-      return try await withThrowingTaskGroup(of: (any Session).self) { group in
-        group.addTask { try await connectWithoutDeadline() }
-        group.addTask {
+      let completion = ConnectorCompletionRaceV2<any Session>()
+      let operation = Task<any Session, Error> { try await connectWithoutDeadline() }
+      let timeout = Task<Void, Never> {
+        do {
           try await Task.sleep(for: options.connectTimeout)
-          throw ConnectError.timeout
+          if completion.resolve(.failure(ConnectError.timeout)) {
+            operation.cancel()
+          }
+        } catch {
+          return
         }
-        defer { group.cancelAll() }
-        guard let session = try await group.next() else {
-          throw ConnectorBoundaryErrorV2.runtimeFailed
+      }
+      Task {
+        let result: Result<any Session, Error>
+        do {
+          result = .success(try await operation.value)
+        } catch {
+          result = .failure(error)
         }
-        return session
+        if completion.resolve(result) {
+          timeout.cancel()
+        } else if case .success(let session) = result {
+          try? await session.close()
+        }
+      }
+      return try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+          completion.install(continuation)
+        }
+      } onCancel: {
+        operation.cancel()
+        timeout.cancel()
+        completion.resolve(.failure(CancellationError()))
       }
     } catch is CancellationError {
       throw ConnectError.canceled
@@ -357,5 +379,34 @@ struct SessionConnectorV2: Sendable {
       throw ConnectorBoundaryErrorV2.sessionFailed
     }
     return data
+  }
+}
+
+private final class ConnectorCompletionRaceV2<Value: Sendable>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<Value, Error>?
+  private var result: Result<Value, Error>?
+
+  func install(_ continuation: CheckedContinuation<Value, Error>) {
+    let resolved = lock.withLock { () -> Result<Value, Error>? in
+      if let result { return result }
+      self.continuation = continuation
+      return nil
+    }
+    if let resolved { continuation.resume(with: resolved) }
+  }
+
+  @discardableResult
+  func resolve(_ result: Result<Value, Error>) -> Bool {
+    var continuation: CheckedContinuation<Value, Error>?
+    let won = lock.withLock { () -> Bool in
+      guard self.result == nil else { return false }
+      self.result = result
+      continuation = self.continuation
+      self.continuation = nil
+      return true
+    }
+    continuation?.resume(with: result)
+    return won
   }
 }

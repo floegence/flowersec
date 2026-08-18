@@ -21,8 +21,9 @@ use std::{
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::Value;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinSet;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -34,6 +35,8 @@ use crate::{
 
 const MAX_ADMISSION_BYTES: usize = 32 * 1024;
 const CONTROL_HALF_CLOSE_GRACE: Duration = Duration::from_secs(2);
+const DEFAULT_ADMISSION_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_MAX_CONCURRENT_ADMISSIONS: usize = 1024;
 const FSA2_REJECT: u8 = 1;
 const FSA2_RETRY: u8 = 2;
 
@@ -60,6 +63,22 @@ pub struct TunnelRuntimeOptions {
     pub max_active_pairs: usize,
 }
 
+/// Bounds work performed before an authenticated tunnel leg enters pairing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TunnelAdmissionOptions {
+    pub admission_timeout: Duration,
+    pub max_concurrent_admissions: usize,
+}
+
+impl Default for TunnelAdmissionOptions {
+    fn default() -> Self {
+        Self {
+            admission_timeout: DEFAULT_ADMISSION_TIMEOUT,
+            max_concurrent_admissions: DEFAULT_MAX_CONCURRENT_ADMISSIONS,
+        }
+    }
+}
+
 impl fmt::Debug for TunnelRuntimeOptions {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -80,6 +99,7 @@ pub struct TunnelRuntime {
     listener: StdMutex<Option<Arc<TunnelListener>>>,
     authorizer: Arc<dyn TunnelAuthorizer>,
     options: TunnelRuntimeOptions,
+    admission_options: TunnelAdmissionOptions,
     state: Arc<TunnelState>,
 }
 
@@ -134,6 +154,9 @@ struct TunnelState {
     credentials: Mutex<HashMap<String, SystemTime>>,
     active_pairs: Mutex<usize>,
     active_carriers: Mutex<HashMap<u64, ActivePairCarriers>>,
+    admitting_carriers: Mutex<HashMap<u64, Arc<dyn CarrierSessionV2>>>,
+    admission_permits: Arc<Semaphore>,
+    next_admission_id: AtomicU64,
     next_pending_id: AtomicU64,
     next_pair_id: AtomicU64,
     active_tasks: AtomicUsize,
@@ -187,7 +210,20 @@ impl TunnelRuntime {
         options: TunnelRuntimeOptions,
         authorizer: Arc<dyn TunnelAuthorizer>,
     ) -> Result<Self, TunnelRuntimeError> {
+        Self::bind_raw_quic_with_admission_options(
+            options,
+            TunnelAdmissionOptions::default(),
+            authorizer,
+        )
+    }
+
+    pub fn bind_raw_quic_with_admission_options(
+        options: TunnelRuntimeOptions,
+        admission_options: TunnelAdmissionOptions,
+        authorizer: Arc<dyn TunnelAuthorizer>,
+    ) -> Result<Self, TunnelRuntimeError> {
         Self::validate_options(&options)?;
+        Self::validate_admission_options(admission_options)?;
         let limits =
             RawQuicLimits::for_session_v2(options.max_inbound_streams, options.pair_timeout)
                 .map_err(|_| TunnelRuntimeError::InvalidConfiguration)?;
@@ -204,24 +240,27 @@ impl TunnelRuntime {
             listener: StdMutex::new(Some(Arc::new(TunnelListener::RawQuic(listener)))),
             authorizer,
             options,
-            state: Arc::new(TunnelState {
-                pending: Mutex::new(HashMap::new()),
-                credentials: Mutex::new(HashMap::new()),
-                active_pairs: Mutex::new(0),
-                active_carriers: Mutex::new(HashMap::new()),
-                next_pending_id: AtomicU64::new(1),
-                next_pair_id: AtomicU64::new(1),
-                active_tasks: AtomicUsize::new(0),
-                tasks_done: Notify::new(),
-                active_accepts: AtomicUsize::new(0),
-                accepts_done: Notify::new(),
-                closed: CancellationToken::new(),
-            }),
+            admission_options,
+            state: Arc::new(TunnelState::new(
+                admission_options.max_concurrent_admissions,
+            )),
         })
     }
 
     pub fn bind_websocket(
         options: TunnelRuntimeOptions,
+        authorizer: Arc<dyn TunnelAuthorizer>,
+    ) -> Result<Self, TunnelRuntimeError> {
+        Self::bind_websocket_with_admission_options(
+            options,
+            TunnelAdmissionOptions::default(),
+            authorizer,
+        )
+    }
+
+    pub fn bind_websocket_with_admission_options(
+        options: TunnelRuntimeOptions,
+        admission_options: TunnelAdmissionOptions,
         authorizer: Arc<dyn TunnelAuthorizer>,
     ) -> Result<Self, TunnelRuntimeError> {
         if options.pair_timeout.is_zero()
@@ -231,6 +270,7 @@ impl TunnelRuntime {
         {
             return Err(TunnelRuntimeError::InvalidConfiguration);
         }
+        Self::validate_admission_options(admission_options)?;
         let capacity =
             crate::transport_v2::carrier_inbound_stream_limit_v2(options.max_inbound_streams)
                 .map_err(|_| TunnelRuntimeError::InvalidConfiguration)?;
@@ -246,19 +286,10 @@ impl TunnelRuntime {
             listener: StdMutex::new(Some(Arc::new(TunnelListener::WebSocket(listener)))),
             authorizer,
             options,
-            state: Arc::new(TunnelState {
-                pending: Mutex::new(HashMap::new()),
-                credentials: Mutex::new(HashMap::new()),
-                active_pairs: Mutex::new(0),
-                active_carriers: Mutex::new(HashMap::new()),
-                next_pending_id: AtomicU64::new(1),
-                next_pair_id: AtomicU64::new(1),
-                active_tasks: AtomicUsize::new(0),
-                tasks_done: Notify::new(),
-                active_accepts: AtomicUsize::new(0),
-                accepts_done: Notify::new(),
-                closed: CancellationToken::new(),
-            }),
+            admission_options,
+            state: Arc::new(TunnelState::new(
+                admission_options.max_concurrent_admissions,
+            )),
         })
     }
 
@@ -267,6 +298,18 @@ impl TunnelRuntime {
             || options.max_pending_legs == 0
             || options.max_active_pairs == 0
             || options.max_inbound_streams == 0
+        {
+            return Err(TunnelRuntimeError::InvalidConfiguration);
+        }
+        Ok(())
+    }
+
+    fn validate_admission_options(
+        options: TunnelAdmissionOptions,
+    ) -> Result<(), TunnelRuntimeError> {
+        if options.admission_timeout < Duration::from_millis(1)
+            || options.max_concurrent_admissions == 0
+            || options.max_concurrent_admissions > Semaphore::MAX_PERMITS
         {
             return Err(TunnelRuntimeError::InvalidConfiguration);
         }
@@ -314,18 +357,46 @@ impl TunnelRuntime {
             };
             match accepted {
                 Ok(accepted) if !self.state.closed.is_cancelled() => {
-                    let runtime = self.clone_for_task();
-                    spawn_tracked(self.state.clone(), async move {
-                        runtime
-                            .process(accepted.carrier, accepted.remote_address)
-                            .await
-                    });
+                    self.dispatch_admission(accepted).await;
                 }
                 Ok(accepted) => accepted.carrier.abort(),
                 Err(_) if self.state.closed.is_cancelled() => return Ok(()),
                 Err(_) => return Err(TunnelRuntimeError::Closed),
             }
         }
+    }
+
+    async fn dispatch_admission(&self, accepted: AcceptedTunnelCarrier) {
+        let Ok(permit) = self.state.admission_permits.clone().try_acquire_owned() else {
+            accepted.carrier.abort();
+            return;
+        };
+        let admission_id = self.state.next_admission_id.fetch_add(1, Ordering::Relaxed);
+        self.state
+            .admitting_carriers
+            .lock()
+            .await
+            .insert(admission_id, accepted.carrier.clone());
+        if self.state.closed.is_cancelled() {
+            self.state
+                .admitting_carriers
+                .lock()
+                .await
+                .remove(&admission_id);
+            accepted.carrier.abort();
+            return;
+        }
+        let runtime = self.clone_for_task();
+        spawn_tracked(self.state.clone(), async move {
+            runtime
+                .process(
+                    accepted.carrier,
+                    accepted.remote_address,
+                    admission_id,
+                    permit,
+                )
+                .await
+        });
     }
 
     pub async fn close(&self) {
@@ -335,6 +406,17 @@ impl TunnelRuntime {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take();
         wait_for_zero(&self.state.active_accepts, &self.state.accepts_done).await;
+        let admitting = self
+            .state
+            .admitting_carriers
+            .lock()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for carrier in admitting {
+            carrier.abort();
+        }
         let legs = {
             let mut pending = self.state.pending.lock().await;
             pending
@@ -343,7 +425,6 @@ impl TunnelRuntime {
                 .collect::<Vec<_>>()
         };
         for leg in legs {
-            let _ = send_fsa2(&*leg.admission, FSA2_REJECT, "runtime_closed").await;
             leg.carrier.abort();
             self.authorizer.release(&leg.lease_id).await;
         }
@@ -366,7 +447,29 @@ impl TunnelRuntime {
         TaskRuntime {
             authorizer: self.authorizer.clone(),
             options: self.options.clone_for_task(),
+            admission_options: self.admission_options,
             state: self.state.clone(),
+        }
+    }
+}
+
+impl TunnelState {
+    fn new(max_concurrent_admissions: usize) -> Self {
+        Self {
+            pending: Mutex::new(HashMap::new()),
+            credentials: Mutex::new(HashMap::new()),
+            active_pairs: Mutex::new(0),
+            active_carriers: Mutex::new(HashMap::new()),
+            admitting_carriers: Mutex::new(HashMap::new()),
+            admission_permits: Arc::new(Semaphore::new(max_concurrent_admissions)),
+            next_admission_id: AtomicU64::new(1),
+            next_pending_id: AtomicU64::new(1),
+            next_pair_id: AtomicU64::new(1),
+            active_tasks: AtomicUsize::new(0),
+            tasks_done: Notify::new(),
+            active_accepts: AtomicUsize::new(0),
+            accepts_done: Notify::new(),
+            closed: CancellationToken::new(),
         }
     }
 }
@@ -376,27 +479,46 @@ impl TunnelRuntime {
 struct TaskRuntime {
     authorizer: Arc<dyn TunnelAuthorizer>,
     options: TunnelRuntimeOptions,
+    admission_options: TunnelAdmissionOptions,
     state: Arc<TunnelState>,
 }
 
 impl TaskRuntime {
-    async fn process(self, carrier: Arc<dyn CarrierSessionV2>, remote_address: SocketAddr) {
-        let result = self.process_inner(carrier.clone(), remote_address).await;
+    async fn process(
+        self,
+        carrier: Arc<dyn CarrierSessionV2>,
+        remote_address: SocketAddr,
+        admission_id: u64,
+        permit: OwnedSemaphorePermit,
+    ) {
+        let deadline = Instant::now() + self.admission_options.admission_timeout;
+        let admitted = self.admit(carrier.clone(), remote_address, deadline).await;
+        self.state
+            .admitting_carriers
+            .lock()
+            .await
+            .remove(&admission_id);
+        drop(permit);
+        let result = match admitted {
+            Ok(leg) => self.register_leg(leg, deadline).await,
+            Err(error) => Err(error),
+        };
         if result.is_err() {
             carrier.abort();
         }
     }
 
-    async fn process_inner(
+    async fn admit(
         &self,
         carrier: Arc<dyn CarrierSessionV2>,
         remote_address: SocketAddr,
-    ) -> Result<(), TunnelRuntimeError> {
-        let admission = carrier
-            .accept_stream()
-            .await
+        deadline: Instant,
+    ) -> Result<Leg, TunnelRuntimeError> {
+        let admission = await_admission(deadline, &self.state.closed, carrier.accept_stream())
+            .await?
             .map_err(|_| TunnelRuntimeError::AdmissionFailed)?;
-        let raw = read_admission(&*admission).await?;
+        let raw =
+            await_admission(deadline, &self.state.closed, read_admission(&*admission)).await??;
         let carrier_name = match carrier.kind() {
             CarrierKind::Wss => "websocket",
             CarrierKind::RawQuic => "raw_quic",
@@ -414,77 +536,135 @@ impl TaskRuntime {
         let lookup = request.lookup_key().to_owned();
         {
             let now = SystemTime::now();
-            let mut credentials = self.state.credentials.lock().await;
+            let mut credentials =
+                await_admission(deadline, &self.state.closed, self.state.credentials.lock())
+                    .await?;
             credentials.retain(|_, expiry| *expiry > now);
             if credentials.contains_key(&lookup) {
-                let _ = send_fsa2(&*admission, FSA2_REJECT, "credential_replay").await;
+                let _ = await_admission(
+                    deadline,
+                    &self.state.closed,
+                    send_fsa2(&*admission, FSA2_REJECT, "credential_replay"),
+                )
+                .await;
                 return Err(TunnelRuntimeError::Rejected);
             }
             credentials.insert(lookup.clone(), now + self.options.pair_timeout);
         }
-        let response = match tokio::select! {
-            biased;
-            _ = self.state.closed.cancelled() => return Err(TunnelRuntimeError::Closed),
-            response = self.authorizer.authorize(request.clone()) => response,
-        } {
-            Ok(response) => response,
-            Err(_) => {
+        let response = match await_admission(
+            deadline,
+            &self.state.closed,
+            self.authorizer.authorize(request.clone()),
+        )
+        .await
+        {
+            Ok(Ok(response)) => response,
+            Ok(Err(_)) => {
                 self.state.credentials.lock().await.remove(&lookup);
-                let _ = send_fsa2(&*admission, FSA2_REJECT, "not_authorized").await;
+                let _ = await_admission(
+                    deadline,
+                    &self.state.closed,
+                    send_fsa2(&*admission, FSA2_REJECT, "not_authorized"),
+                )
+                .await;
                 return Err(TunnelRuntimeError::Rejected);
+            }
+            Err(error) => {
+                self.state.credentials.lock().await.remove(&lookup);
+                return Err(error);
             }
         };
         let claims = match TunnelAuthorizationDecision::parse(&response.json(), &lookup) {
             Ok(TunnelAuthorizationDecision::Allow(claims)) => claims,
             Ok(TunnelAuthorizationDecision::Deny { status, reason }) => {
                 self.state.credentials.lock().await.remove(&lookup);
-                let _ = send_fsa2(&*admission, status, &reason).await;
+                let _ = await_admission(
+                    deadline,
+                    &self.state.closed,
+                    send_fsa2(&*admission, status, &reason),
+                )
+                .await;
                 return Err(TunnelRuntimeError::Rejected);
             }
             Err(error) => {
                 self.state.credentials.lock().await.remove(&lookup);
-                let _ = send_fsa2(&*admission, FSA2_REJECT, "invalid_authorization").await;
+                let _ = await_admission(
+                    deadline,
+                    &self.state.closed,
+                    send_fsa2(&*admission, FSA2_REJECT, "invalid_authorization"),
+                )
+                .await;
                 return Err(error);
             }
         };
-        self.state
-            .credentials
-            .lock()
-            .await
-            .insert(lookup, claims.expires_at);
+        match await_admission(deadline, &self.state.closed, self.state.credentials.lock()).await {
+            Ok(mut credentials) => {
+                credentials.insert(lookup, claims.expires_at);
+            }
+            Err(error) => {
+                self.release_admission_lease(&claims.lease_id).await;
+                return Err(error);
+            }
+        }
         let value = match parse_fsb2_claims(&raw) {
             Ok(value) => value,
             Err(error) => {
-                self.authorizer.release(&claims.lease_id).await;
+                self.release_admission_lease(&claims.lease_id).await;
                 return Err(error);
             }
         };
         if value.role == 0 || value.role > 2 || value.endpoint == claims.expected_peer {
-            self.authorizer.release(&claims.lease_id).await;
-            let _ = send_fsa2(&*admission, FSA2_REJECT, "invalid_credential").await;
+            self.release_admission_lease(&claims.lease_id).await;
+            let _ = await_admission(
+                deadline,
+                &self.state.closed,
+                send_fsa2(&*admission, FSA2_REJECT, "invalid_credential"),
+            )
+            .await;
             return Err(TunnelRuntimeError::Rejected);
         }
         if carrier.kind() == CarrierKind::Wss
             && carrier.set_multiplexer_client(value.role == 2).is_err()
         {
-            self.authorizer.release(&claims.lease_id).await;
-            let _ = send_fsa2(&*admission, FSA2_REJECT, "invalid_carrier_state").await;
+            self.release_admission_lease(&claims.lease_id).await;
+            let _ = await_admission(
+                deadline,
+                &self.state.closed,
+                send_fsa2(&*admission, FSA2_REJECT, "invalid_carrier_state"),
+            )
+            .await;
             return Err(TunnelRuntimeError::AdmissionFailed);
         }
-        let key = AuthorityKey {
-            profile: value.profile.clone(),
-            channel: value.channel.clone(),
-            group: value.group.clone(),
-            audience: value.audience.clone(),
-        };
-        let mut leg = Some(Leg {
-            carrier: carrier.clone(),
+        Ok(Leg {
+            carrier,
             admission,
             claims: value,
             expected_peer: claims.expected_peer,
             lease_id: claims.lease_id,
             expires_at: claims.expires_at,
-        });
+        })
+    }
+
+    async fn release_admission_lease(&self, lease_id: &str) {
+        let _ = tokio::time::timeout(
+            self.admission_options.admission_timeout,
+            self.authorizer.release(lease_id),
+        )
+        .await;
+    }
+
+    async fn register_leg(
+        &self,
+        admitted: Leg,
+        admission_deadline: Instant,
+    ) -> Result<(), TunnelRuntimeError> {
+        let key = AuthorityKey {
+            profile: admitted.claims.profile.clone(),
+            channel: admitted.claims.channel.clone(),
+            group: admitted.claims.group.clone(),
+            audience: admitted.claims.audience.clone(),
+        };
+        let mut leg = Some(admitted);
         enum Registration {
             Pending {
                 generation_id: u64,
@@ -492,11 +672,12 @@ impl TaskRuntime {
             },
             Paired(Box<PendingEntry<Leg>>),
             Capacity,
+            Closed,
         }
         let registration = {
             let mut pending = self.state.pending.lock().await;
             if self.state.closed.is_cancelled() {
-                Registration::Capacity
+                Registration::Closed
             } else if let Some(peer) = pending.remove(&key) {
                 Registration::Paired(Box::new(peer))
             } else if pending.len() >= self.options.max_pending_legs {
@@ -519,9 +700,19 @@ impl TaskRuntime {
             }
         };
         let peer = match registration {
+            Registration::Closed => {
+                let leg = leg.expect("closed runtime keeps the unregistered leg");
+                self.authorizer.release(&leg.lease_id).await;
+                return Err(TunnelRuntimeError::Closed);
+            }
             Registration::Capacity => {
                 let leg = leg.expect("capacity keeps the unregistered leg");
-                let _ = send_fsa2(&*leg.admission, FSA2_RETRY, "capacity").await;
+                let _ = await_admission(
+                    admission_deadline,
+                    &self.state.closed,
+                    send_fsa2(&*leg.admission, FSA2_RETRY, "capacity"),
+                )
+                .await;
                 self.authorizer.release(&leg.lease_id).await;
                 return Err(TunnelRuntimeError::Capacity);
             }
@@ -535,6 +726,7 @@ impl TaskRuntime {
                 let state = self.state.clone();
                 let authorizer = self.authorizer.clone();
                 let timeout = self.options.pair_timeout.min(pending_lifetime);
+                let admission_response_timeout = self.admission_options.admission_timeout;
                 spawn_tracked(self.state.clone(), async move {
                     tokio::select! {
                         _ = state.closed.cancelled() => return,
@@ -545,7 +737,14 @@ impl TaskRuntime {
                         remove_pending_generation(&mut pending, &key, generation_id)
                     };
                     if let Some(leg) = leg {
-                        let _ = send_fsa2(&*leg.admission, FSA2_RETRY, "pair_timeout").await;
+                        let _ = tokio::select! {
+                            biased;
+                            _ = state.closed.cancelled() => Err(TunnelRuntimeError::Closed),
+                            result = tokio::time::timeout(
+                                admission_response_timeout,
+                                send_fsa2(&*leg.admission, FSA2_RETRY, "pair_timeout"),
+                            ) => result.unwrap_or(Err(TunnelRuntimeError::AdmissionFailed)),
+                        };
                         leg.carrier.abort();
                         authorizer.release(&leg.lease_id).await;
                     }
@@ -561,7 +760,12 @@ impl TaskRuntime {
             || leg.claims.endpoint != peer.value.expected_peer
         {
             self.state.pending.lock().await.insert(key, peer);
-            let _ = send_fsa2(&*leg.admission, FSA2_REJECT, "pair_mismatch").await;
+            let _ = await_admission(
+                admission_deadline,
+                &self.state.closed,
+                send_fsa2(&*leg.admission, FSA2_REJECT, "pair_mismatch"),
+            )
+            .await;
             self.authorizer.release(&leg.lease_id).await;
             return Err(TunnelRuntimeError::Rejected);
         }
@@ -569,7 +773,12 @@ impl TaskRuntime {
             let mut active = self.state.active_pairs.lock().await;
             if *active >= self.options.max_active_pairs {
                 self.state.pending.lock().await.insert(key, peer);
-                let _ = send_fsa2(&*leg.admission, FSA2_RETRY, "capacity").await;
+                let _ = await_admission(
+                    admission_deadline,
+                    &self.state.closed,
+                    send_fsa2(&*leg.admission, FSA2_RETRY, "capacity"),
+                )
+                .await;
                 self.authorizer.release(&leg.lease_id).await;
                 return Err(TunnelRuntimeError::Capacity);
             }
@@ -606,6 +815,23 @@ impl TaskRuntime {
             *active = active.saturating_sub(1);
         });
         Ok(())
+    }
+}
+
+async fn await_admission<F, T>(
+    deadline: Instant,
+    closed: &CancellationToken,
+    future: F,
+) -> Result<T, TunnelRuntimeError>
+where
+    F: Future<Output = T>,
+{
+    tokio::select! {
+        biased;
+        _ = closed.cancelled() => Err(TunnelRuntimeError::Closed),
+        result = tokio::time::timeout_at(deadline, future) => {
+            result.map_err(|_| TunnelRuntimeError::AdmissionFailed)
+        }
     }
 }
 
@@ -1063,7 +1289,145 @@ async fn copy_stream(
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        future::pending,
+        sync::atomic::{AtomicBool, Ordering},
+    };
+
+    use crate::session_v2::memory_carrier_pair_v2;
+
     use super::*;
+
+    #[derive(Debug)]
+    struct AbortProbeCarrier {
+        inner: Arc<dyn CarrierSessionV2>,
+        aborted: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl CarrierSessionV2 for AbortProbeCarrier {
+        fn kind(&self) -> CarrierKind {
+            self.inner.kind()
+        }
+
+        fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+            self.inner.inbound_bidirectional_stream_capacity()
+        }
+
+        async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+            self.inner.open_stream().await
+        }
+
+        async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+            self.inner.accept_stream().await
+        }
+
+        async fn close(&self) -> io::Result<()> {
+            self.inner.close().await
+        }
+
+        fn abort(&self) {
+            self.aborted.store(true, Ordering::SeqCst);
+            self.inner.abort();
+        }
+    }
+
+    #[derive(Debug)]
+    struct BlockingAuthorizer {
+        calls: AtomicUsize,
+        started: Notify,
+    }
+
+    #[async_trait]
+    impl TunnelAuthorizer for BlockingAuthorizer {
+        async fn authorize(
+            &self,
+            _request: RuntimeAuthorizationRequest,
+        ) -> Result<TunnelAuthorizationResponse, ControlPlaneError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.started.notify_waiters();
+            pending().await
+        }
+    }
+
+    fn test_runtime(
+        authorizer: Arc<dyn TunnelAuthorizer>,
+        admission_options: TunnelAdmissionOptions,
+    ) -> TunnelRuntime {
+        TunnelRuntime {
+            listener: StdMutex::new(None),
+            authorizer,
+            options: TunnelRuntimeOptions {
+                bind_address: "127.0.0.1:0".parse().unwrap(),
+                certificate_chain_der: Vec::new(),
+                private_key_der: Vec::new(),
+                allowed_origins: Vec::new(),
+                max_inbound_streams: 8,
+                pair_timeout: Duration::from_secs(1),
+                max_pending_legs: 8,
+                max_active_pairs: 4,
+            },
+            admission_options,
+            state: Arc::new(TunnelState::new(
+                admission_options.max_concurrent_admissions,
+            )),
+        }
+    }
+
+    async fn admission_carrier(
+        bytes: &[u8],
+        finish: bool,
+    ) -> (AcceptedTunnelCarrier, Arc<AtomicBool>) {
+        let (writer, reader) = memory_carrier_pair_v2();
+        let stream = writer.open_stream().await.expect("open admission stream");
+        if !bytes.is_empty() {
+            let mut offset = 0;
+            while offset < bytes.len() {
+                offset += stream
+                    .write(&bytes[offset..])
+                    .await
+                    .expect("write admission bytes");
+            }
+        }
+        if finish {
+            stream.close_write().await.expect("finish admission stream");
+        }
+        let aborted = Arc::new(AtomicBool::new(false));
+        (
+            AcceptedTunnelCarrier {
+                carrier: Arc::new(AbortProbeCarrier {
+                    inner: reader,
+                    aborted: aborted.clone(),
+                }),
+                remote_address: "127.0.0.1:12345".parse().unwrap(),
+            },
+            aborted,
+        )
+    }
+
+    async fn wait_for_abort(aborted: &AtomicBool) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !aborted.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("carrier abort converged");
+    }
+
+    async fn wait_for_authorizer_calls(authorizer: &BlockingAuthorizer, expected: usize) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let notified = authorizer.started.notified();
+                if authorizer.calls.load(Ordering::SeqCst) >= expected {
+                    return;
+                }
+                notified.await;
+            }
+        })
+        .await
+        .expect("authorizer call started");
+    }
 
     fn fsb2(profile: &str, candidate_set_hash: &str) -> Vec<u8> {
         let payload = serde_json::json!({
@@ -1075,6 +1439,9 @@ mod tests {
             "listener_audience": "audience",
             "session_contract_hash_b64u": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             "candidate_set_hash_b64u": candidate_set_hash,
+            "chosen_candidate_id": "candidate-a",
+            "candidates": [{"id": "candidate-a", "carrier": "raw_quic"}],
+            "attach_token": "test-token",
         });
         let payload = serde_json::to_vec(&payload).unwrap();
         let mut raw = b"FSB2\x02\x02\x00\x00".to_vec();
@@ -1118,5 +1485,98 @@ mod tests {
         assert!(pair_claims_match(&first, &matching));
         assert!(!pair_claims_match(&first, &other_profile));
         assert!(!pair_claims_match(&first, &other_candidates));
+    }
+
+    #[tokio::test]
+    async fn admission_timeout_aborts_silent_and_partial_carriers() {
+        let authorizer = Arc::new(BlockingAuthorizer {
+            calls: AtomicUsize::new(0),
+            started: Notify::new(),
+        });
+        let runtime = test_runtime(
+            authorizer.clone(),
+            TunnelAdmissionOptions {
+                admission_timeout: Duration::from_millis(25),
+                max_concurrent_admissions: 2,
+            },
+        );
+
+        let (silent, silent_aborted) = admission_carrier(&[], false).await;
+        runtime.dispatch_admission(silent).await;
+        let raw = fsb2("flowersec/2", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        let (partial, partial_aborted) = admission_carrier(&raw[..7], false).await;
+        runtime.dispatch_admission(partial).await;
+
+        wait_for_abort(&silent_aborted).await;
+        wait_for_abort(&partial_aborted).await;
+        assert_eq!(authorizer.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(runtime.state.admission_permits.available_permits(), 2);
+        assert!(runtime.state.admitting_carriers.lock().await.is_empty());
+        tokio::time::timeout(Duration::from_millis(100), runtime.close())
+            .await
+            .expect("runtime close converged after timed-out frames");
+    }
+
+    #[tokio::test]
+    async fn admission_capacity_and_shutdown_bound_blocking_authorizers() {
+        let authorizer = Arc::new(BlockingAuthorizer {
+            calls: AtomicUsize::new(0),
+            started: Notify::new(),
+        });
+        let runtime = test_runtime(
+            authorizer.clone(),
+            TunnelAdmissionOptions {
+                admission_timeout: Duration::from_millis(40),
+                max_concurrent_admissions: 1,
+            },
+        );
+        let raw = fsb2("flowersec/2", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+
+        let (first, first_aborted) = admission_carrier(&raw, true).await;
+        runtime.dispatch_admission(first).await;
+        wait_for_authorizer_calls(&authorizer, 1).await;
+
+        let (capacity, capacity_aborted) = admission_carrier(&raw, true).await;
+        runtime.dispatch_admission(capacity).await;
+        wait_for_abort(&capacity_aborted).await;
+        assert_eq!(authorizer.calls.load(Ordering::SeqCst), 1);
+
+        wait_for_abort(&first_aborted).await;
+        assert_eq!(runtime.state.admission_permits.available_permits(), 1);
+
+        let (recovered, recovered_aborted) = admission_carrier(&raw, true).await;
+        runtime.dispatch_admission(recovered).await;
+        wait_for_authorizer_calls(&authorizer, 2).await;
+        tokio::time::timeout(Duration::from_millis(100), runtime.close())
+            .await
+            .expect("runtime close canceled the blocked authorizer");
+        wait_for_abort(&recovered_aborted).await;
+        assert_eq!(runtime.state.admission_permits.available_permits(), 1);
+        assert!(runtime.state.admitting_carriers.lock().await.is_empty());
+    }
+
+    #[test]
+    fn admission_defaults_and_validation_match_the_shared_runtime_policy() {
+        assert_eq!(
+            TunnelAdmissionOptions::default(),
+            TunnelAdmissionOptions {
+                admission_timeout: Duration::from_secs(10),
+                max_concurrent_admissions: 1024,
+            }
+        );
+        assert!(
+            TunnelRuntime::validate_admission_options(TunnelAdmissionOptions {
+                admission_timeout: Duration::ZERO,
+                max_concurrent_admissions: 1,
+            })
+            .is_err()
+        );
+        assert!(
+            TunnelRuntime::validate_admission_options(TunnelAdmissionOptions {
+                admission_timeout: Duration::from_secs(1),
+                max_concurrent_admissions: 0,
+            })
+            .is_err()
+        );
     }
 }

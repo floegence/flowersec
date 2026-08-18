@@ -17,6 +17,8 @@ export type ProxyServiceWorkerScriptOptions = Readonly<{
   sameOriginOnly?: boolean;
   maxRequestBodyBytes?: number;
   maxInjectHTMLBytes?: number;
+  responseMetadataTimeoutMs?: number;
+  responseBodyInactivityTimeoutMs?: number;
   passthrough?: ProxyServiceWorkerPassthroughOptions;
   proxyPathPrefix?: string;
   stripProxyPathPrefix?: boolean;
@@ -33,6 +35,8 @@ type ServiceWorkerConfig = Readonly<{
   sameOriginOnly: boolean;
   maxRequestBodyBytes: number;
   maxInjectHTMLBytes: number;
+  responseMetadataTimeoutMs: number;
+  responseBodyInactivityTimeoutMs: number;
   passthroughPaths: readonly string[];
   passthroughPrefixes: readonly string[];
   proxyPathPrefix: string;
@@ -64,6 +68,12 @@ function bounded(name: string, value: number | undefined, fallback: number, maxi
   return result;
 }
 
+function optionalBounded(name: string, value: number | undefined, maximum: number): number {
+  const result = value ?? 0;
+  if (!Number.isSafeInteger(result) || result < 0 || result > maximum) throw new TypeError(`${name} is invalid`);
+  return result;
+}
+
 function token(name: string, value: string | undefined, fallback = ""): string {
   const result = value ?? fallback;
   if (result !== result.trim() || /[\u0000-\u0020\u007f]/u.test(result) || result.length > 512) throw new TypeError(`${name} is invalid`);
@@ -89,6 +99,8 @@ function normalizeOptions(options: ProxyServiceWorkerScriptOptions): ServiceWork
     sameOriginOnly: options.sameOriginOnly ?? true,
     maxRequestBodyBytes: bounded("maxRequestBodyBytes", options.maxRequestBodyBytes, 64 * 1024 * 1024, 256 * 1024 * 1024),
     maxInjectHTMLBytes: bounded("maxInjectHTMLBytes", options.maxInjectHTMLBytes, 8 * 1024 * 1024, 32 * 1024 * 1024),
+    responseMetadataTimeoutMs: bounded("responseMetadataTimeoutMs", options.responseMetadataTimeoutMs, 10_000, 300_000),
+    responseBodyInactivityTimeoutMs: optionalBounded("responseBodyInactivityTimeoutMs", options.responseBodyInactivityTimeoutMs, 300_000),
     passthroughPaths: strings("passthrough.paths", options.passthrough?.paths),
     passthroughPrefixes: strings("passthrough.prefixes", options.passthrough?.prefixes),
     proxyPathPrefix,
@@ -174,6 +186,7 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
       }
 
       let body: ArrayBuffer | undefined;
+      if (request.signal.aborted) return new Response("proxy request canceled", { status: 499 });
       if (request.method !== "GET" && request.method !== "HEAD") {
         const requestBody = await request.clone().arrayBuffer() as ArrayBuffer;
         if (requestBody.byteLength > config.maxRequestBodyBytes) return new Response("proxy request too large", { status: 413 });
@@ -184,13 +197,49 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
         let metadata: Readonly<{ status: number; headers: Headers }> | null = null;
         let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
         let finished = false;
-        const finishError = (status: number, message: string) => {
-          if (finished) return;
-          finished = true;
-          if (controller !== null) controller.error(new Error(message));
-          else resolve(new Response(message, { status }));
+        let remoteAbortSent = false;
+        let bodyInactivityTimer: ReturnType<typeof setTimeout> | undefined;
+        const abortRemote = () => {
+          if (remoteAbortSent) return;
+          remoteAbortSent = true;
+          try { channel.port1.postMessage({ type: "flowersec-proxy:abort" }); } catch { /* Port already failed. */ }
+        };
+        const cleanup = () => {
+          clearTimeout(metadataTimer);
+          clearTimeout(bodyInactivityTimer);
+          clearInterval(runtimeWatchdog);
+          request.signal.removeEventListener("abort", requestAborted);
           channel.port1.close();
         };
+        const finishError = (status: number, message: string, cancelRemote = false) => {
+          if (finished) return;
+          finished = true;
+          if (cancelRemote) abortRemote();
+          if (controller !== null) controller.error(new Error(message));
+          else resolve(new Response(message, { status }));
+          cleanup();
+        };
+        const requestAborted = () => finishError(499, "proxy request canceled", true);
+        const armBodyInactivityTimer = () => {
+          clearTimeout(bodyInactivityTimer);
+          if (config.responseBodyInactivityTimeoutMs === 0) return;
+          bodyInactivityTimer = setTimeout(
+            () => finishError(504, "proxy response body timed out", true),
+            config.responseBodyInactivityTimeoutMs,
+          );
+        };
+        const metadataTimer = setTimeout(
+          () => finishError(504, "proxy response timed out", true),
+          config.responseMetadataTimeoutMs,
+        );
+        const runtimeWatchdog = setInterval(() => {
+          void worker.clients.get(target.id).then((current: any) => {
+            if (current !== null || finished) return;
+            if (config.windowTarget === "registered_runtime") runtimeClientId = "";
+            finishError(503, "proxy runtime unavailable", true);
+          }).catch(() => finishError(503, "proxy runtime unavailable", true));
+        }, 250);
+        request.signal.addEventListener("abort", requestAborted, { once: true });
         channel.port1.onmessage = (message) => {
           const value = message.data as Record<string, unknown> | null;
           if (value === null || typeof value !== "object" || finished) return;
@@ -201,13 +250,20 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
               if (entry && typeof entry.name === "string" && typeof entry.value === "string") headers.append(entry.name, entry.value);
             }
             metadata = { status: value.status as number, headers };
+            clearTimeout(metadataTimer);
+            armBodyInactivityTimer();
             const stream = new ReadableStream<Uint8Array>({
               start(valueController) {
                 controller = valueController;
                 channel.port1.postMessage({ type: "flowersec-proxy:response_credit" });
               },
               pull() { channel.port1.postMessage({ type: "flowersec-proxy:response_credit" }); },
-              cancel() { channel.port1.postMessage({ type: "flowersec-proxy:abort" }); channel.port1.close(); },
+              cancel() {
+                if (finished) return;
+                finished = true;
+                abortRemote();
+                cleanup();
+              },
             });
             resolve(new Response(stream, { status: metadata.status, headers: metadata.headers }));
             return;
@@ -215,19 +271,20 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
           if (value.type === "flowersec-proxy:response_chunk") {
             if (controller === null || !(value.data instanceof ArrayBuffer)) return finishError(502, "invalid proxy response");
             controller.enqueue(new Uint8Array(value.data));
+            armBodyInactivityTimer();
             return;
           }
           if (value.type === "flowersec-proxy:response_end") {
             finished = true;
             controller?.close();
-            channel.port1.close();
+            cleanup();
             return;
           }
           if (value.type === "flowersec-proxy:response_error") {
             finishError(Number.isInteger(value.status) ? value.status as number : 502, typeof value.message === "string" ? value.message : "proxy request failed");
           }
         };
-        channel.port1.onmessageerror = () => finishError(502, "proxy request failed");
+        channel.port1.onmessageerror = () => finishError(502, "proxy request failed", true);
         const headers = Array.from(request.headers.entries() as Iterable<[string, string]>).map(([name, value]) => ({ name, value }));
         try {
           target.postMessage({
@@ -243,8 +300,7 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
           }, [channel.port2, ...(body === undefined ? [] : [body])]);
         } catch {
           if (config.windowTarget === "registered_runtime") runtimeClientId = "";
-          channel.port1.close();
-          resolve(new Response("proxy runtime unavailable", { status: 503 }));
+          finishError(503, "proxy runtime unavailable");
         }
       });
 

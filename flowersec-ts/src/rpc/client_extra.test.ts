@@ -78,6 +78,86 @@ function framePayload(payload: Uint8Array): Uint8Array {
 }
 
 describe("RpcClient extra behavior", () => {
+  test("rejects invalid public type IDs without wire normalization", async () => {
+    const q = new ByteQueue();
+    const writes: Uint8Array[] = [];
+    const client = new RpcClient(q.readExactly.bind(q), async (frame) => { writes.push(frame); });
+    for (const typeId of [-1, 0, 1.5, 0x1_0000_0000, Number.NaN]) {
+      await expect(client.call(typeId, null), `call ${typeId}`).rejects.toThrow(/typeId/);
+      await expect(client.notify(typeId, null), `notify ${typeId}`).rejects.toThrow(/typeId/);
+      expect(() => client.onNotify(typeId, () => undefined), `onNotify ${typeId}`).toThrow(/typeId/);
+    }
+    expect(() => client.onNotify(0xffff_ffff, () => undefined)).not.toThrow();
+    expect(writes).toEqual([]);
+    client.close();
+    q.close(new Error("eof"));
+  });
+
+  test("accepts the maximum u32 type ID at every client entry point", async () => {
+    const q = new ByteQueue();
+    const envelopes: RpcEnvelope[] = [];
+    const client = new RpcClient(q.readExactly.bind(q), async (frame) => {
+      const envelope = decodeEnvelope(frame);
+      envelopes.push(envelope);
+      if (envelope.request_id !== 0) {
+        await writeJsonFrame(q.write.bind(q), {
+          type_id: envelope.type_id,
+          request_id: 0,
+          response_to: envelope.request_id,
+          payload: "ok",
+        });
+      }
+    });
+    const unsubscribe = client.onNotify(0xffff_ffff, () => undefined);
+    await expect(client.notify(0xffff_ffff, "notification")).resolves.toBeUndefined();
+    await expect(client.call(0xffff_ffff, "request")).resolves.toEqual({ payload: "ok" });
+    expect(envelopes.map((envelope) => envelope.type_id)).toEqual([0xffff_ffff, 0xffff_ffff]);
+    unsubscribe();
+    client.close();
+    q.close(new Error("eof"));
+  });
+
+  test("rejects oversized request and notification frames before writing", async () => {
+    const q = new ByteQueue();
+    const writes: Uint8Array[] = [];
+    const client = new RpcClient(q.readExactly.bind(q), async (frame) => { writes.push(frame); });
+    const oversized = "x".repeat((1 << 20) + 1);
+    await expect(client.call(1, oversized)).rejects.toThrow(/frame too large/);
+    await expect(client.notify(1, oversized)).rejects.toThrow(/frame too large/);
+    expect(writes).toEqual([]);
+    client.close();
+    q.close(new Error("eof"));
+  });
+
+  test("accepts request and notification envelopes at the exact RPC frame boundary", async () => {
+    const q = new ByteQueue();
+    const frameLengths: number[] = [];
+    const client = new RpcClient(q.readExactly.bind(q), async (frame) => {
+      frameLengths.push(readU32be(frame, 0));
+      const request = decodeEnvelope(frame);
+      if (request.request_id !== 0) {
+        await writeJsonFrame(q.write.bind(q), {
+          type_id: request.type_id,
+          request_id: 0,
+          response_to: request.request_id,
+          payload: null,
+        });
+      }
+    });
+    const maximum = 1 << 20;
+    const requestOverhead = new TextEncoder().encode(JSON.stringify({
+      type_id: 1, request_id: 1, response_to: 0, payload: "",
+    })).length;
+    const notificationOverhead = new TextEncoder().encode(JSON.stringify({
+      type_id: 1, request_id: 0, response_to: 0, payload: "",
+    })).length;
+    await expect(client.call(1, "x".repeat(maximum - requestOverhead))).resolves.toEqual({ payload: null });
+    await expect(client.notify(1, "x".repeat(maximum - notificationOverhead))).resolves.toBeUndefined();
+    expect(frameLengths).toEqual([maximum, maximum]);
+    client.close();
+    q.close(new Error("eof"));
+  });
+
   test("abort while waiting cancels the call", async () => {
     const q = new ByteQueue();
     const client = new RpcClient(q.readExactly.bind(q), async () => {});

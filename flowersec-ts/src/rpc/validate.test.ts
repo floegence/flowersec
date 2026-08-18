@@ -31,6 +31,14 @@ const fixture = JSON.parse(readFileSync(
   }>[];
 }>;
 
+const envelopeFixture = JSON.parse(readFileSync(
+  new URL("../../../testdata/transport_v2/rpc_malformed_envelopes.json", import.meta.url),
+  "utf8",
+)) as Readonly<{
+  version: number;
+  vectors: readonly Readonly<{ id: string; valid: boolean; reason: string; envelope: unknown }>[];
+}>;
+
 const envelope = (error: unknown): unknown => ({
   type_id: 1,
   request_id: 0,
@@ -40,6 +48,14 @@ const envelope = (error: unknown): unknown => ({
 });
 
 describe("RPC envelope validation", () => {
+  test("consumes the shared strict envelope vectors", () => {
+    expect(envelopeFixture.version).toBe(1);
+    for (const vector of envelopeFixture.vectors) {
+      if (vector.valid) expect(() => assertRpcEnvelope(vector.envelope), vector.id).not.toThrow();
+      else expect(() => assertRpcEnvelope(vector.envelope), `${vector.id}: ${vector.reason}`).toThrow();
+    }
+  });
+
   test("enforces the shared portable inbound RPC error invariant", async () => {
     expect(fixture.maximum_message_bytes).toBe(1_024);
     for (const vector of fixture.cases) {

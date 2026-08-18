@@ -4,6 +4,29 @@ import XCTest
 @testable import Flowersec
 
 final class FlowersecRPCTests: XCTestCase {
+  func testEnvelopeConsumesSharedMalformedVectors() throws {
+    let root = try XCTUnwrap(
+      JSONSerialization.jsonObject(
+        with: Data(
+          contentsOf: packageRoot().appendingPathComponent(
+            "testdata/transport_v2/rpc_malformed_envelopes.json"))) as? [String: Any]
+    )
+    XCTAssertEqual((root["version"] as? NSNumber)?.intValue, 1)
+    let vectors = try XCTUnwrap(root["vectors"] as? [[String: Any]])
+    XCTAssertFalse(vectors.isEmpty)
+    for vector in vectors {
+      let id = try XCTUnwrap(vector["id"] as? String)
+      let valid = try XCTUnwrap(vector["valid"] as? Bool)
+      let envelope = try XCTUnwrap(vector["envelope"])
+      let data = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
+      if valid {
+        XCTAssertNoThrow(try RPCEnvelope(data: data), id)
+      } else {
+        XCTAssertThrowsError(try RPCEnvelope(data: data), id)
+      }
+    }
+  }
+
   func testEnvelopeRoundTripsNullErrorPayload() throws {
     let envelope = RPCEnvelope(
       typeID: 7,
@@ -202,6 +225,30 @@ final class FlowersecRPCTests: XCTestCase {
     } catch let error as FlowersecError {
       XCTAssertEqual(error.code, .notConnected)
     }
+  }
+
+  func testServerRejectsResponseEnvelopeOnRequestStream() async throws {
+    let stream = InMemoryByteStream()
+    let server = try RPCServer(stream: stream, router: RPCRouter())
+    let serve = Task { try await server.serve() }
+    try await stream.pushJSONFrame(
+      RPCEnvelope(
+        typeID: 1,
+        requestID: 0,
+        responseTo: 7,
+        payload: Data("null".utf8),
+        error: nil
+      ).encoded()
+    )
+
+    do {
+      try await serve.value
+      XCTFail("server accepted an RPC response on its request stream")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.stage, .rpc)
+      XCTAssertEqual(error.code, .rpcFailed)
+    }
+    await server.close()
   }
 
   func testServerSanitizesInvalidHandlerErrorsBeforeWritingResponse() async throws {

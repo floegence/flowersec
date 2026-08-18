@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { u32be } from "../utils/bin.js";
 import type { ByteStreamV2, SessionV2, StreamOpenOptionsV2 } from "../v2/contract.js";
@@ -77,6 +77,55 @@ async function collectPort(port: MessagePort, terminal: string): Promise<Record<
 }
 
 describe("SessionV2 proxy runtime", () => {
+  it("canonicalizes HTTP and WebSocket paths before applying policy and sending upstream", async () => {
+    for (const path of [
+      "/safe/../admin",
+      "/safe/./../admin",
+      "/safe/%2e%2e/admin",
+      "/safe\\..\\admin",
+      "/%61dmin",
+    ]) {
+      const session = new FakeSession([]);
+      const runtime = createProxyRuntime({ session, pathPolicy: { deniedPathPrefixes: ["/admin"] } });
+      const channel = new MessageChannel();
+      const collecting = collectPort(channel.port2, "flowersec-proxy:response_error");
+      runtime.dispatchFetch({ id: path, method: "GET", path, headers: [] }, channel.port1);
+      await expect(collecting).resolves.toEqual([
+        expect.objectContaining({ status: 403, code: "policy_denied" }),
+      ]);
+      expect(session.opens).toEqual([]);
+      await expect(runtime.openWebSocketStream(path)).rejects.toThrow(/denied/);
+      runtime.dispose();
+    }
+
+    const httpStream = new FakeStream([concat([
+      jsonFrame({ v: 1, request_id: "canonical", ok: true, status: 204, headers: [] }),
+      u32be(0),
+    ])]);
+    const wsStream = new FakeStream([jsonFrame({ v: 1, ok: true, protocol: "" })]);
+    const session = new FakeSession([httpStream, wsStream]);
+    const runtime = createProxyRuntime({ session, pathPolicy: { allowedPathPrefixes: ["/api"] } });
+    const channel = new MessageChannel();
+    const collecting = collectPort(channel.port2, "flowersec-proxy:response_end");
+    runtime.dispatchFetch({
+      id: "canonical", method: "GET", path: "/public/../api//items?q=%7euser", headers: [],
+    }, channel.port1);
+    await collecting;
+    expect(firstWrittenJSON(httpStream)).toMatchObject({ path: "/api/items?q=~user" });
+    await runtime.openWebSocketStream("/public/../api//socket?q=1");
+    expect(firstWrittenJSON(wsStream)).toMatchObject({ path: "/api/socket?q=1" });
+    for (const path of ["/api/%2fadmin", "/api/%5cadmin"]) {
+      const rejectedChannel = new MessageChannel();
+      const rejected = collectPort(rejectedChannel.port2, "flowersec-proxy:response_error");
+      runtime.dispatchFetch({ id: path, method: "GET", path, headers: [] }, rejectedChannel.port1);
+      await expect(rejected).resolves.toEqual([
+        expect.objectContaining({ status: 400, code: "invalid_request" }),
+      ]);
+      await expect(runtime.openWebSocketStream(path)).rejects.toThrow(/encoded separator/);
+    }
+    runtime.dispose();
+  });
+
   it("streams an HTTP request with partial writes and returns bounded response messages", async () => {
     const response = concat([
       jsonFrame({ v: 1, request_id: "request-1", ok: true, status: 201, headers: [{ name: "content-type", value: "text/plain" }] }),
@@ -174,7 +223,98 @@ describe("SessionV2 proxy runtime", () => {
     });
     runtime.dispose();
   });
+
+  it("removes queued admission abort listeners on dequeue and runtime close", async () => {
+    const add = vi.spyOn(AbortSignal.prototype, "addEventListener");
+    const remove = vi.spyOn(AbortSignal.prototype, "removeEventListener");
+    try {
+      const first = new ControlledReadStream();
+      const second = new FakeStream([concat([
+        jsonFrame({ v: 1, request_id: "second", ok: true, status: 204, headers: [] }),
+        u32be(0),
+      ])]);
+      const runtime = createProxyRuntime({
+        session: new FakeSession([first, second]),
+        maxConcurrentHttpStreams: 1,
+        maxQueuedHttpRequests: 2,
+      });
+      const firstChannel = new MessageChannel();
+      const secondChannel = new MessageChannel();
+      const abortedChannel = new MessageChannel();
+      const firstDone = collectPort(firstChannel.port2, "flowersec-proxy:response_end");
+      const secondDone = collectPort(secondChannel.port2, "flowersec-proxy:response_end");
+      const abortedDone = collectPort(abortedChannel.port2, "flowersec-proxy:response_error");
+      runtime.dispatchFetch({ id: "first", method: "GET", path: "/first", headers: [] }, firstChannel.port1);
+      runtime.dispatchFetch({ id: "second", method: "GET", path: "/second", headers: [] }, secondChannel.port1);
+      runtime.dispatchFetch({ id: "aborted", method: "GET", path: "/aborted", headers: [] }, abortedChannel.port1);
+      await eventLoopTurn();
+      abortedChannel.port2.postMessage({ type: "flowersec-proxy:abort" });
+      await expect(abortedDone).resolves.toEqual([
+        expect.objectContaining({ status: 499, code: "canceled" }),
+      ]);
+      first.respond(concat([
+        jsonFrame({ v: 1, request_id: "first", ok: true, status: 204, headers: [] }),
+        u32be(0),
+      ]));
+      await Promise.all([firstDone, secondDone]);
+      const addedAfterDequeue = add.mock.calls.filter(([type]) => type === "abort").length;
+      const removedAfterDequeue = remove.mock.calls.filter(([type]) => type === "abort").length;
+      expect(removedAfterDequeue).toBe(addedAfterDequeue);
+
+      const active = new ControlledReadStream();
+      const closingRuntime = createProxyRuntime({
+        session: new FakeSession([active]),
+        maxConcurrentHttpStreams: 1,
+        maxQueuedHttpRequests: 1,
+      });
+      const activeChannel = new MessageChannel();
+      const queuedChannel = new MessageChannel();
+      activeChannel.port2.start();
+      queuedChannel.port2.start();
+      closingRuntime.dispatchFetch({ id: "active", method: "GET", path: "/active", headers: [] }, activeChannel.port1);
+      closingRuntime.dispatchFetch({ id: "queued", method: "GET", path: "/queued", headers: [] }, queuedChannel.port1);
+      await eventLoopTurn();
+      closingRuntime.dispose();
+      await eventLoopTurn();
+      const totalAdded = add.mock.calls.filter(([type]) => type === "abort").length;
+      const totalRemoved = remove.mock.calls.filter(([type]) => type === "abort").length;
+      expect(totalRemoved).toBe(totalAdded);
+      active.respond(new Error("runtime closed"));
+      runtime.dispose();
+      activeChannel.port2.close();
+      queuedChannel.port2.close();
+    } finally {
+      add.mockRestore();
+      remove.mockRestore();
+    }
+  });
 });
+
+class ControlledReadStream extends FakeStream {
+  private resolveRead: ((value: Uint8Array | null) => void) | undefined;
+  private rejectRead: ((error: unknown) => void) | undefined;
+
+  constructor() { super([]); }
+
+  override async read(): Promise<Uint8Array | null> {
+    this.readCalls++;
+    return await new Promise<Uint8Array | null>((resolve, reject) => {
+      this.resolveRead = resolve;
+      this.rejectRead = reject;
+    });
+  }
+
+  respond(value: Uint8Array | Error): void {
+    if (value instanceof Error) this.rejectRead?.(value);
+    else this.resolveRead?.(value);
+  }
+}
+
+function firstWrittenJSON(stream: FakeStream): Record<string, unknown> {
+  const bytes = concat(stream.writes);
+  const length = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0);
+  return JSON.parse(new TextDecoder().decode(bytes.subarray(4, 4 + length))) as Record<string, unknown>;
+}
 
 async function nextPortMessage(port: MessagePort): Promise<Record<string, unknown>> {
   return await new Promise((resolve, reject) => {

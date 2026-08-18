@@ -2398,7 +2398,9 @@
       "`ConnectionController::wait_for_snapshot_change(...)`",
       "`ConnectionState`",
       "`ConnectionFailure`",
-      "`RetryDisposition`"
+      "`RetryDisposition`",
+      "`TunnelAdmissionOptions`",
+      "`bind_*_with_admission_options(...)`"
     ],
     "compile_entries": [
       "let _ = std::mem::size_of::<flowersec::AcceptError>()",
@@ -2410,6 +2412,9 @@
       "let _ = std::mem::size_of::<flowersec::AcceptedSession>()",
       "let _ = flowersec::AcceptedSession::session",
       "let _ = flowersec::AcceptedSession::serve",
+      "let _ = std::mem::size_of::<flowersec::TunnelAdmissionOptions>()",
+      "let _ = flowersec::TunnelRuntime::bind_websocket_with_admission_options",
+      "let _ = flowersec::TunnelRuntime::bind_raw_quic_with_admission_options",
       "let _ = std::mem::size_of::<flowersec::SessionHandlers>()",
       "let _ = std::mem::size_of::<flowersec::StreamHandlers>()",
       "let _ = std::mem::size_of::<flowersec::StreamHandlerOptions>()",

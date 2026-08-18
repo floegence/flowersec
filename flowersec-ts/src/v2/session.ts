@@ -1461,6 +1461,10 @@ class EncryptedStreamV2 implements ByteStreamV2 {
   markTerminal(error: Error): boolean {
     if (this.terminalError !== undefined) return false;
     this.terminalError = error;
+    const pendingSendRekey = this.pendingSendRekey;
+    this.pendingSendRekey = undefined;
+    pendingSendRekey?.armed.reject(error);
+    pendingSendRekey?.done.reject(error);
     this.opened.reject(error);
     this.data.fail(error);
     return true;

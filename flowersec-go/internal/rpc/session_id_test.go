@@ -178,6 +178,43 @@ func TestDecodeEnvelopeRequiresPortableIDFields(t *testing.T) {
 	}
 }
 
+func TestDecodeEnvelopeSharedMalformedVectors(t *testing.T) {
+	var vectors struct {
+		Version int `json:"version"`
+		Vectors []struct {
+			ID       string          `json:"id"`
+			Valid    bool            `json:"valid"`
+			Envelope json.RawMessage `json:"envelope"`
+		} `json:"vectors"`
+	}
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test path")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", ".."))
+	data, err := os.ReadFile(filepath.Join(root, "testdata/transport_v2/rpc_malformed_envelopes.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	if vectors.Version != 1 || len(vectors.Vectors) == 0 {
+		t.Fatalf("unexpected malformed envelope vectors: version=%d count=%d", vectors.Version, len(vectors.Vectors))
+	}
+	for _, vector := range vectors.Vectors {
+		t.Run(vector.ID, func(t *testing.T) {
+			_, err := decodeEnvelope(vector.Envelope)
+			if vector.Valid && err != nil {
+				t.Fatalf("valid envelope rejected: %v", err)
+			}
+			if !vector.Valid && err == nil {
+				t.Fatal("malformed envelope accepted")
+			}
+		})
+	}
+}
+
 func TestClientRequestIDUsesMaxSafeValueOnceThenFails(t *testing.T) {
 	client := &Client{
 		nextID:  maxPortableRequestID,

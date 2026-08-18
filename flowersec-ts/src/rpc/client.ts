@@ -1,6 +1,6 @@
 import type { RpcEnvelope, RpcError } from "./wire.js";
 import { DEFAULT_MAX_JSON_FRAME_BYTES, readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
-import { assertRpcEnvelope } from "./validate.js";
+import { assertRpcEnvelope, assertRpcTypeId } from "./validate.js";
 
 // Guard against precision loss when encoding request IDs as numbers.
 const MAX_SAFE_REQUEST_ID = BigInt(Number.MAX_SAFE_INTEGER);
@@ -29,11 +29,12 @@ export class RpcClient {
   // call sends a request and awaits a response or abort.
   async call(typeId: number, payload: unknown, signal?: AbortSignal): Promise<{ payload: unknown; error?: RpcError }> {
     if (this.closed) throw new Error("rpc client closed");
+    const validatedTypeId = assertRpcTypeId(typeId);
     if (this.nextId > MAX_SAFE_REQUEST_ID) throw new Error("request id overflow");
     const requestId = this.nextId;
     this.nextId += 1n;
     const env: RpcEnvelope = {
-      type_id: typeId >>> 0,
+      type_id: validatedTypeId,
       request_id: Number(requestId),
       response_to: 0,
       payload
@@ -42,7 +43,7 @@ export class RpcClient {
       this.pending.set(requestId, { resolve, reject });
     });
     try {
-      await writeJsonFrame(this.write, env);
+      await writeJsonFrame(this.write, env, DEFAULT_MAX_JSON_FRAME_BYTES);
     } catch (e) {
       this.pending.delete(requestId);
       throw e;
@@ -72,7 +73,7 @@ export class RpcClient {
 
   // onNotify registers a handler for incoming notifications.
   onNotify(typeId: number, handler: (payload: unknown) => void): () => void {
-    const tid = typeId >>> 0;
+    const tid = assertRpcTypeId(typeId);
     const set = this.notifyHandlers.get(tid) ?? new Set<(payload: unknown) => void>();
     set.add(handler);
     this.notifyHandlers.set(tid, set);
@@ -86,13 +87,14 @@ export class RpcClient {
   // notify sends a one-way notification to the peer.
   async notify(typeId: number, payload: unknown): Promise<void> {
     if (this.closed) throw new Error("rpc client closed");
+    const validatedTypeId = assertRpcTypeId(typeId);
     const env: RpcEnvelope = {
-      type_id: typeId >>> 0,
+      type_id: validatedTypeId,
       request_id: 0,
       response_to: 0,
       payload
     };
-    await writeJsonFrame(this.write, env);
+    await writeJsonFrame(this.write, env, DEFAULT_MAX_JSON_FRAME_BYTES);
   }
 
   private async readLoop(): Promise<void> {
@@ -102,7 +104,7 @@ export class RpcClient {
         if (v.response_to === 0) {
           // Notification: response_to=0 and request_id=0.
           if (v.request_id === 0) {
-            const set = this.notifyHandlers.get(v.type_id >>> 0);
+            const set = this.notifyHandlers.get(v.type_id);
             if (set != null) {
               for (const h of set) {
                 try {

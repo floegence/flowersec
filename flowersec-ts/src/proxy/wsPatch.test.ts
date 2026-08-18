@@ -37,30 +37,64 @@ class ControlledStream implements ByteStreamV2 {
   readonly kind = "test";
   terminalError = undefined;
   readonly writes: Uint8Array[] = [];
+  resetCalled = false;
+  closed = false;
+  failWrites = false;
   private readonly reads: Uint8Array[] = [];
-  private readonly waiters: Array<(value: Uint8Array) => void> = [];
+  private readonly waiters: Array<Readonly<{
+    resolve(value: Uint8Array): void;
+    reject(error: unknown): void;
+    signal?: AbortSignal;
+    onAbort?: () => void;
+  }>> = [];
+
+  constructor(private readonly observeAbort = false) {}
 
   push(value: Uint8Array): void {
     const waiter = this.waiters.shift();
     if (waiter === undefined) this.reads.push(value);
-    else waiter(value);
+    else {
+      waiter.signal?.removeEventListener("abort", waiter.onAbort!);
+      waiter.resolve(value);
+    }
   }
 
-  async read(_options?: OperationOptionsV2): Promise<Uint8Array | null> {
+  async read(options: OperationOptionsV2 = {}): Promise<Uint8Array | null> {
     const value = this.reads.shift();
     if (value !== undefined) return value;
-    return await new Promise<Uint8Array>((resolve) => this.waiters.push(resolve));
+    return await new Promise<Uint8Array>((resolve, reject) => {
+      const waiter: {
+        resolve(value: Uint8Array): void;
+        reject(error: unknown): void;
+        signal?: AbortSignal;
+        onAbort?: () => void;
+      } = { resolve, reject };
+      if (this.observeAbort && options.signal !== undefined) {
+        waiter.signal = options.signal;
+        waiter.onAbort = () => {
+          const index = this.waiters.indexOf(waiter);
+          if (index >= 0) this.waiters.splice(index, 1);
+          reject(options.signal?.reason ?? new Error("aborted"));
+        };
+        if (options.signal.aborted) waiter.onAbort();
+        else {
+          options.signal.addEventListener("abort", waiter.onAbort, { once: true });
+          this.waiters.push(waiter);
+        }
+      } else this.waiters.push(waiter);
+    });
   }
 
   async write(data: Uint8Array): Promise<number> {
+    if (this.failWrites) throw new Error("write failed");
     const count = Math.min(2, data.length);
     this.writes.push(data.subarray(0, count).slice());
     return count;
   }
 
   async closeWrite(): Promise<void> {}
-  async reset(): Promise<void> {}
-  async close(): Promise<void> {}
+  async reset(): Promise<void> { this.resetCalled = true; }
+  async close(): Promise<void> { this.closed = true; }
 }
 
 const limits: ProxyRuntimeLimits = {
@@ -128,6 +162,82 @@ function installBrowserGlobals(): void {
 }
 
 describe("WebSocket v2 proxy patch", () => {
+  it("completes a locally initiated close handshake without reporting 1006", async () => {
+    installBrowserGlobals();
+    const stream = new ControlledStream();
+    installWebSocketPatch({
+      runtime: { limits, openWebSocketStream: async () => ({ stream, protocol: "" }) },
+      shouldProxy: () => true,
+      closeHandshakeTimeoutMs: 100,
+    });
+    const socket = new WebSocket("wss://app.example/socket");
+    const events: string[] = [];
+    socket.addEventListener("error", () => events.push("error"));
+    socket.addEventListener("close", () => events.push("close"));
+    await new Promise<void>((resolve) => socket.addEventListener("open", () => resolve(), { once: true }));
+    socket.close(1000, "done");
+    await waitFor(() => writtenOpcodes(stream.writes).includes(8));
+    expect(socket.readyState).toBe(WebSocket.CLOSING);
+    expect(events).toEqual([]);
+    const closed = new Promise<CloseEvent>((resolve) => socket.addEventListener("close", (event) => resolve(event as CloseEvent), { once: true }));
+    stream.push(frame(8, concat([u16be(1000), new TextEncoder().encode("done")])));
+    const close = await closed;
+    expect(close).toMatchObject({ code: 1000, reason: "done", wasClean: true });
+    expect(events).toEqual(["close"]);
+    await waitFor(() => stream.closed);
+  });
+
+  it("reports timeout and close-frame write failures as error then unclean close", async () => {
+    for (const mode of ["timeout_ignores_abort", "timeout_observes_abort", "write_failure"] as const) {
+      installBrowserGlobals();
+      const stream = new ControlledStream(mode === "timeout_observes_abort");
+      installWebSocketPatch({
+        runtime: { limits, openWebSocketStream: async () => ({ stream, protocol: "" }) },
+        shouldProxy: () => true,
+        closeHandshakeTimeoutMs: 10,
+      });
+      const socket = new WebSocket("wss://app.example/socket");
+      const events: string[] = [];
+      socket.addEventListener("error", () => events.push("error"));
+      await new Promise<void>((resolve) => socket.addEventListener("open", () => resolve(), { once: true }));
+      if (mode === "write_failure") stream.failWrites = true;
+      const closed = new Promise<CloseEvent>((resolve) => socket.addEventListener("close", (event) => {
+        events.push("close");
+        resolve(event as CloseEvent);
+      }, { once: true }));
+      socket.close(1000);
+      await expect(closed).resolves.toMatchObject({ code: 1006, wasClean: false });
+      expect(events).toEqual(["error", "close"]);
+      expect(stream.resetCalled).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(events).toEqual(["error", "close"]);
+    }
+  });
+
+  it("completes a simultaneous local and peer close exactly once", async () => {
+    installBrowserGlobals();
+    const stream = new ControlledStream(true);
+    installWebSocketPatch({
+      runtime: { limits, openWebSocketStream: async () => ({ stream, protocol: "" }) },
+      shouldProxy: () => true,
+      closeHandshakeTimeoutMs: 100,
+    });
+    const socket = new WebSocket("wss://app.example/socket");
+    await new Promise<void>((resolve) => socket.addEventListener("open", () => resolve(), { once: true }));
+    const events: string[] = [];
+    socket.addEventListener("error", () => events.push("error"));
+    const closed = new Promise<CloseEvent>((resolve) => socket.addEventListener("close", (event) => {
+      events.push("close");
+      resolve(event as CloseEvent);
+    }));
+    socket.close(1000, "same-time");
+    stream.push(frame(8, concat([u16be(1000), new TextEncoder().encode("same-time")])));
+    await expect(closed).resolves.toMatchObject({ code: 1000, reason: "same-time", wasClean: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(events).toEqual(["close"]);
+    expect(writtenOpcodes(stream.writes).filter((opcode) => opcode === 8)).toHaveLength(1);
+  });
+
   it("proxies same-origin frames while preserving native cross-origin sockets", async () => {
     installBrowserGlobals();
     const stream = new ControlledStream();
@@ -174,7 +284,7 @@ describe("WebSocket v2 proxy patch", () => {
       frame(8, closePayload),
     ]));
     const closeEvent = await closed;
-    await waitFor(() => writtenOpcodes(stream.writes).length === 5);
+    await waitFor(() => writtenOpcodes(stream.writes).length === 6);
 
     expect(messages[0]).toBe("reply");
     expect(new Uint8Array(messages[1] as ArrayBuffer)).toEqual(new Uint8Array([9, 7]));
@@ -182,7 +292,7 @@ describe("WebSocket v2 proxy patch", () => {
     socket.removeEventListener("message", objectListener);
     socket.dispatchEvent(new MessageEvent("message", { data: "local" }));
     expect(objectListenerCalls).toBe(2);
-    expect(writtenOpcodes(stream.writes)).toEqual([1, 2, 2, 2, 10]);
+    expect(writtenOpcodes(stream.writes)).toEqual([1, 2, 2, 2, 10, 8]);
     expect(closeEvent).toMatchObject({ code: 1000, reason: "done", wasClean: true });
     expect(socket.readyState).toBe(WebSocket.CLOSED);
 

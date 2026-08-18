@@ -129,7 +129,9 @@ internal actor RPCServer {
       while !Task.isCancelled && !closed {
         let frame = try await FlowersecJSONFrame.read(from: stream)
         let envelope = try RPCEnvelope(data: frame)
-        guard envelope.responseTo == 0 else { continue }
+        guard envelope.responseTo == 0 else {
+          throw FlowersecError.invalidRPC("The peer sent an RPC response to the server.", path: path)
+        }
         if envelope.requestID == 0 {
           try enqueueNotification(envelope)
         } else {

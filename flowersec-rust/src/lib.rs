@@ -132,7 +132,8 @@ pub use transport_v2::{
     StreamMetadataError, UnreliableMessageChannel, UnreliableMessageError, UnreliableSendOutcome,
 };
 pub use tunnel_runtime_v2::{
-    TunnelAuthorizer, TunnelRuntime, TunnelRuntimeError, TunnelRuntimeOptions,
+    TunnelAdmissionOptions, TunnelAuthorizer, TunnelRuntime, TunnelRuntimeError,
+    TunnelRuntimeOptions,
 };
 
 #[cfg(test)]

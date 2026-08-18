@@ -35,6 +35,36 @@ func TestBuildReleaseNotesSkipsReleaseHousekeeping(t *testing.T) {
 	}
 }
 
+func TestBuildReleaseNotesPrefersReviewedCommitBody(t *testing.T) {
+	notes := buildReleaseNotes("flowersec-go/v2.5.4", "flowersec-go/v2.5.3", releaseKindGo, []commit{
+		{
+			Hash: "1", Subject: "fix: harden transport lifecycle",
+			Body: releaseNotesBegin + `
+Flowersec 2.5.4 tightens proxy security and bounded shutdown behavior across the SDKs.
+
+## Proxy security and lifecycle
+
+- Canonicalizes paths before policy checks.
+
+## Compatibility
+
+- No public API removals.
+` + releaseNotesEnd,
+		},
+	})
+
+	md := renderMarkdown(notes)
+	if !strings.Contains(md, "tightens proxy security") || !strings.Contains(md, "## Compatibility") {
+		t.Fatalf("reviewed release notes were not rendered:\n%s", md)
+	}
+	if strings.Contains(md, "Harden transport lifecycle") {
+		t.Fatalf("commit-title fallback leaked into reviewed release notes:\n%s", md)
+	}
+	if !strings.Contains(md, "## Release Assets") {
+		t.Fatalf("reviewed release notes must retain generated asset facts:\n%s", md)
+	}
+}
+
 func TestBuildSwiftReleaseNotesUsesRootTagAndSwiftPMAssets(t *testing.T) {
 	notes := buildReleaseNotes("0.19.11", "", releaseKindSwift, []commit{
 		{Hash: "1", Subject: "feat(swift): publish flowersec swift client"},

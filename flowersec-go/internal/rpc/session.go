@@ -221,7 +221,8 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 		invalidJSONFrames = 0
 		if env.ResponseTo != 0 {
-			continue
+			_ = s.r.Close()
+			return errors.New("rpc invalid response on server stream")
 		}
 		if env.RequestId == 0 {
 			// Notification: response_to=0 and request_id=0.
@@ -471,8 +472,11 @@ func (c *Client) readLoop() {
 					c.closeAll(errors.New("rpc notification queue exhausted"))
 					return
 				}
+				continue
 			}
-			continue
+			_ = c.r.Close()
+			c.closeAll(errors.New("rpc invalid request on client stream"))
+			return
 		}
 		c.mu.Lock()
 		ch := c.pending[env.ResponseTo]
@@ -490,23 +494,44 @@ func decodeEnvelope(data []byte) (rpcv1.RpcEnvelope, error) {
 	if !utf8.Valid(data) {
 		return rpcv1.RpcEnvelope{}, fmt.Errorf("%w: invalid UTF-8", errInvalidRPCApplicationError)
 	}
-	var ids struct {
-		RequestID  json.RawMessage `json:"request_id"`
-		ResponseTo json.RawMessage `json:"response_to"`
-		Error      json.RawMessage `json:"error"`
-	}
-	if err := json.Unmarshal(data, &ids); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
 		return rpcv1.RpcEnvelope{}, err
 	}
-	requestID, err := parsePortableRequestID("request_id", ids.RequestID)
+	if len(fields) < 4 || len(fields) > 5 {
+		return rpcv1.RpcEnvelope{}, fmt.Errorf("%w: invalid envelope fields", errInvalidRPCApplicationError)
+	}
+	for name := range fields {
+		switch name {
+		case "type_id", "request_id", "response_to", "payload", "error":
+		default:
+			return rpcv1.RpcEnvelope{}, fmt.Errorf("%w: unknown envelope field", errInvalidRPCApplicationError)
+		}
+	}
+	if _, ok := fields["payload"]; !ok {
+		return rpcv1.RpcEnvelope{}, fmt.Errorf("%w: missing payload", errInvalidRPCApplicationError)
+	}
+	typeID, err := parseNonzeroUint32("type_id", fields["type_id"])
 	if err != nil {
 		return rpcv1.RpcEnvelope{}, err
 	}
-	responseTo, err := parsePortableRequestID("response_to", ids.ResponseTo)
+	requestID, err := parsePortableRequestID("request_id", fields["request_id"])
 	if err != nil {
 		return rpcv1.RpcEnvelope{}, err
 	}
-	if rawError := bytes.TrimSpace(ids.Error); len(rawError) > 0 && !bytes.Equal(rawError, []byte("null")) {
+	responseTo, err := parsePortableRequestID("response_to", fields["response_to"])
+	if err != nil {
+		return rpcv1.RpcEnvelope{}, err
+	}
+	if requestID != 0 && responseTo != 0 {
+		return rpcv1.RpcEnvelope{}, fmt.Errorf("%w: request and response IDs are mutually exclusive", errInvalidRPCApplicationError)
+	}
+	rawError := bytes.TrimSpace(fields["error"])
+	hasError := len(rawError) > 0 && !bytes.Equal(rawError, []byte("null"))
+	if hasError {
+		if responseTo == 0 {
+			return rpcv1.RpcEnvelope{}, fmt.Errorf("%w: error is only valid on a response", errInvalidRPCApplicationError)
+		}
 		var rpcError rpcv1.RpcError
 		decoder := json.NewDecoder(bytes.NewReader(rawError))
 		decoder.DisallowUnknownFields()
@@ -518,9 +543,27 @@ func decodeEnvelope(data []byte) (rpcv1.RpcEnvelope, error) {
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return rpcv1.RpcEnvelope{}, err
 	}
+	envelope.TypeId = typeID
 	envelope.RequestId = requestID
 	envelope.ResponseTo = responseTo
 	return envelope, nil
+}
+
+func parseNonzeroUint32(name string, raw json.RawMessage) (uint32, error) {
+	value := bytes.TrimSpace(raw)
+	if len(value) == 0 {
+		return 0, fmt.Errorf("%w: missing %s", errInvalidRPCApplicationError, name)
+	}
+	for _, b := range value {
+		if b < '0' || b > '9' {
+			return 0, fmt.Errorf("%w: invalid %s", errInvalidRPCApplicationError, name)
+		}
+	}
+	parsed, err := strconv.ParseUint(string(value), 10, 32)
+	if err != nil || parsed == 0 {
+		return 0, fmt.Errorf("%w: invalid %s", errInvalidRPCApplicationError, name)
+	}
+	return uint32(parsed), nil
 }
 
 func validWireRPCError(rpcError *rpcv1.RpcError) bool {

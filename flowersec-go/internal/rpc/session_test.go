@@ -505,6 +505,54 @@ func TestRPC_ServerServeRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestRPCServerRejectsResponseEnvelopeOnRequestStream(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+
+	srv := rpc.NewServer(a, rpc.NewRouter())
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Serve(context.Background()) }()
+	if err := writeRawFrame(b, []byte(`{"type_id":1,"request_id":0,"response_to":1,"payload":null}`)); err != nil {
+		t.Fatalf("write response envelope: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "invalid response") {
+			t.Fatalf("Serve error = %v, want invalid response", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for server direction rejection")
+	}
+}
+
+func TestRPCClientRejectsRequestEnvelopeOnResponseStream(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+
+	client := rpc.NewClient(a)
+	defer client.Close()
+	peerReaderDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(io.Discard, b)
+		close(peerReaderDone)
+	}()
+	if err := writeRawFrame(b, []byte(`{"type_id":1,"request_id":1,"response_to":0,"payload":null}`)); err != nil {
+		t.Fatalf("write request envelope: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if err := client.Notify(1, json.RawMessage(`null`)); err != nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("client accepted request envelope on response stream")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func writeRawFrame(w io.Writer, payload []byte) error {
 	var hdr [4]byte
 	binary.BigEndian.PutUint32(hdr[:], uint32(len(payload)))

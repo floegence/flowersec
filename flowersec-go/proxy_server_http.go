@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	pathpkg "path"
 	"strings"
 	"sync"
 	"time"
@@ -251,11 +252,87 @@ func parseProxyPath(raw string) (*url.URL, error) {
 			return nil, ErrInvalidProxyServer
 		}
 	}
-	parsed, err := url.ParseRequestURI(raw)
+	rawPath := raw
+	query := ""
+	if separator := strings.IndexByte(raw, '?'); separator >= 0 {
+		rawPath, query = raw[:separator], raw[separator:]
+	}
+	lowerPath := strings.ToLower(rawPath)
+	if strings.Contains(lowerPath, "%2f") || strings.Contains(lowerPath, "%5c") {
+		return nil, ErrInvalidProxyServer
+	}
+	normalizedQuery, ok := normalizeProxyPercentEscapes(strings.TrimPrefix(query, "?"), false)
+	if !ok {
+		return nil, ErrInvalidProxyServer
+	}
+	if query != "" {
+		query = "?" + normalizedQuery
+	}
+	rawPath = strings.ReplaceAll(rawPath, "\\", "/")
+	if strings.HasPrefix(rawPath, "//") {
+		return nil, ErrInvalidProxyServer
+	}
+	for strings.Contains(rawPath, "//") {
+		rawPath = strings.ReplaceAll(rawPath, "//", "/")
+	}
+	parsed, err := url.ParseRequestURI(rawPath + query)
 	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Fragment != "" {
 		return nil, ErrInvalidProxyServer
 	}
+	keepTrailingSlash := strings.HasSuffix(parsed.Path, "/") || strings.HasSuffix(parsed.Path, "/.") || strings.HasSuffix(parsed.Path, "/..")
+	parsed.Path = pathpkg.Clean(parsed.Path)
+	if keepTrailingSlash && parsed.Path != "/" {
+		parsed.Path += "/"
+	}
+	parsed.RawPath = ""
 	return parsed, nil
+}
+
+func normalizeProxyPercentEscapes(raw string, rejectEncodedSeparators bool) (string, bool) {
+	const hex = "0123456789ABCDEF"
+	var builder strings.Builder
+	builder.Grow(len(raw))
+	for index := 0; index < len(raw); index++ {
+		if raw[index] != '%' {
+			builder.WriteByte(raw[index])
+			continue
+		}
+		if index+2 >= len(raw) {
+			return "", false
+		}
+		high, highOK := proxyHex(raw[index+1])
+		low, lowOK := proxyHex(raw[index+2])
+		if !highOK || !lowOK {
+			return "", false
+		}
+		value := high<<4 | low
+		if rejectEncodedSeparators && (value == '/' || value == '\\') {
+			return "", false
+		}
+		if (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z') ||
+			(value >= '0' && value <= '9') || strings.ContainsRune("-._~", rune(value)) {
+			builder.WriteByte(value)
+		} else {
+			builder.WriteByte('%')
+			builder.WriteByte(hex[value>>4])
+			builder.WriteByte(hex[value&0x0f])
+		}
+		index += 2
+	}
+	return builder.String(), true
+}
+
+func proxyHex(value byte) (byte, bool) {
+	switch {
+	case value >= '0' && value <= '9':
+		return value - '0', true
+	case value >= 'a' && value <= 'f':
+		return value - 'a' + 10, true
+	case value >= 'A' && value <= 'F':
+		return value - 'A' + 10, true
+	default:
+		return 0, false
+	}
 }
 
 func applyProxyExternalOrigin(request *http.Request, raw string, allowed map[string]struct{}) error {

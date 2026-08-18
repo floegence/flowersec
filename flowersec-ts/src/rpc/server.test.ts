@@ -306,6 +306,63 @@ describe("RpcServer", () => {
     await expect(server.serve(ctrl.signal)).rejects.toThrow(/aborted/);
   });
 
+  test("abort interrupts an in-flight transport read and closes ownership", async () => {
+    const q = new ByteQueue();
+    const close = vi.fn((error: unknown) => q.close(error));
+    const server = new RpcServer(makeTransport(q, async () => undefined, close));
+    const ctrl = new AbortController();
+    const serving = server.serve(ctrl.signal);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    ctrl.abort(new Error("in-flight abort"));
+    await expect(Promise.race([
+      serving,
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("serve remained pending")), 100)),
+    ])).rejects.toThrow(/in-flight abort/);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  test("abort settles workers without waiting for permanent application handlers", async () => {
+    for (const requestId of [1, 0]) {
+      const q = new ByteQueue();
+      let rejectHandler!: (error: unknown) => void;
+      const blocked = new Promise<never>((_resolve, reject) => { rejectHandler = reject; });
+      const close = vi.fn((error: unknown) => q.close(error));
+      const server = new RpcServer(makeTransport(q, async () => undefined, close));
+      server.register(1, async () => await blocked);
+      await q.write(await makeFrame({ type_id: 1, request_id: requestId, response_to: 0, payload: null }));
+      const ctrl = new AbortController();
+      const serving = server.serve(ctrl.signal);
+      await waitFor(() => q.reads() >= 2);
+      ctrl.abort(new Error("handler abort"));
+      await expect(Promise.race([
+        serving,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("serve remained pending")), 100)),
+      ])).rejects.toThrow(/handler abort/);
+      expect(close).toHaveBeenCalledTimes(1);
+
+      rejectHandler(new Error("late handler rejection"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  });
+
+  test("rejects oversized notifications and handler responses at the write boundary", async () => {
+    const q = new ByteQueue();
+    const writes: Uint8Array[] = [];
+    const close = vi.fn((error: unknown) => q.close(error));
+    const server = new RpcServer(makeTransport(q, async (frame) => { writes.push(frame); }, close));
+    const oversized = "x".repeat((1 << 20) + 1);
+    await expect(server.notify(1, oversized)).rejects.toThrow(/frame too large/);
+    expect(writes).toEqual([]);
+
+    const q2 = new ByteQueue();
+    const responseWrites: Uint8Array[] = [];
+    const responseServer = new RpcServer(makeTransport(q2, async (frame) => { responseWrites.push(frame); }));
+    responseServer.register(1, async () => ({ payload: oversized }));
+    await q2.write(await makeFrame({ type_id: 1, request_id: 1, response_to: 0, payload: null }));
+    await expect(responseServer.serve()).rejects.toThrow(/frame too large/);
+    expect(responseWrites).toEqual([]);
+  });
+
   test("write failures surface to caller", async () => {
     const q = new ByteQueue();
     const server = new RpcServer(makeTransport(q, async () => {
@@ -318,24 +375,19 @@ describe("RpcServer", () => {
     await expect(server.serve()).rejects.toThrow(/write failed/);
   });
 
-  test("register accepts typeId normalization", async () => {
+  test("server type IDs reject normalization aliases and accept max u32", async () => {
     const q = new ByteQueue();
     const writes: Uint8Array[] = [];
-    const server = new RpcServer(makeTransport(q, async (b) => {
-      writes.push(b);
-    }));
+    const server = new RpcServer(makeTransport(q, async (frame) => { writes.push(frame); }));
     const handler = vi.fn(async (payload) => ({ payload }));
-    server.register(-1, handler);
-
-    const req = await makeFrame({ type_id: 0xffffffff, request_id: 11, response_to: 0, payload: { x: 1 } });
-    await q.write(req);
-    const serve = server.serve();
-    await waitFor(() => writes.length === 1);
-    q.close(new Error("eof"));
-    await expect(serve).rejects.toThrow(/eof/);
-
-    expect(handler).toHaveBeenCalledTimes(1);
-    expect(writes.length).toBe(1);
+    expect(() => server.register(-1, handler)).toThrow(/typeId/);
+    expect(() => server.register(0, handler)).toThrow(/typeId/);
+    expect(() => server.register(1.5, handler)).toThrow(/typeId/);
+    expect(() => server.register(0x1_0000_0000, handler)).toThrow(/typeId/);
+    server.register(0xffffffff, handler);
+    await expect(server.notify(0xffff_ffff, null)).resolves.toBeUndefined();
+    expect(decodeEnvelope(writes[0]!).type_id).toBe(0xffff_ffff);
+    server.close();
   });
 
   test("notification queue overflow closes the RPC transport", async () => {
@@ -353,10 +405,11 @@ describe("RpcServer", () => {
     await q.write(await makeFrame({ type_id: 1, request_id: 0, response_to: 0, payload: 3 }));
 
     const serve = server.serve();
+    const rejectedServe = expect(serve).rejects.toThrow(/notification queue exhausted/);
     await waitFor(() => close.mock.calls.length === 1);
     expect(close).toHaveBeenCalledTimes(1);
     expect(close.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ message: "rpc notification queue exhausted" }));
     release();
-    await expect(serve).rejects.toThrow(/notification queue exhausted/);
+    await rejectedServe;
   });
 });

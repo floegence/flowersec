@@ -324,6 +324,68 @@ final class TransportV2SessionTests: XCTestCase {
     try await serverSession.close()
   }
 
+  func testConcurrentFirstRPCCallsShareOneReservedStream() async throws {
+    let serverRouter = RPCRouter()
+    await serverRouter.register(22) { (request: SessionEcho) in request }
+    var configs = try makeConfigs()
+    configs.server.rpcRouter = serverRouter
+    let clientConfig = configs.client
+    let serverConfig = configs.server
+    let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
+    async let server = TransportV2Session.establish(carrier: serverCarrier, config: serverConfig)
+    async let client = TransportV2Session.establish(carrier: clientCarrier, config: clientConfig)
+    let (clientSession, serverSession) = try await (client, server)
+    let baseline = await clientCarrier.openedStreamCount
+
+    try await withThrowingTaskGroup(of: SessionEcho.self) { group in
+      for index in 0..<32 {
+        group.addTask {
+          try await clientSession.rpc.call(
+            22,
+            SessionEcho(value: "call-\(index)"),
+            as: SessionEcho.self,
+            timeout: .seconds(2)
+          )
+        }
+      }
+      var values: Set<String> = []
+      for try await response in group { values.insert(response.value) }
+      XCTAssertEqual(values.count, 32)
+    }
+    let openedStreamCount = await clientCarrier.openedStreamCount
+    XCTAssertEqual(openedStreamCount, baseline + 1)
+
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
+  func testFailedRPCInitializationCanRetryDeterministically() async throws {
+    let serverRouter = RPCRouter()
+    await serverRouter.register(22) { (request: SessionEcho) in request }
+    var configs = try makeConfigs()
+    configs.server.rpcRouter = serverRouter
+    let clientConfig = configs.client
+    let serverConfig = configs.server
+    let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
+    let failOnce = FailSecondOpenCarrierSession(base: clientCarrier)
+    async let server = TransportV2Session.establish(carrier: serverCarrier, config: serverConfig)
+    async let client = TransportV2Session.establish(carrier: failOnce, config: clientConfig)
+    let (clientSession, serverSession) = try await (client, server)
+
+    do {
+      let _: SessionEcho = try await clientSession.rpc.call(
+        22, SessionEcho(value: "first"), as: SessionEcho.self, timeout: .seconds(1))
+      XCTFail("first RPC initialization unexpectedly succeeded")
+    } catch is CarrierOpenFailure {
+    }
+    let response: SessionEcho = try await clientSession.rpc.call(
+      22, SessionEcho(value: "retry"), as: SessionEcho.self, timeout: .seconds(2))
+    XCTAssertEqual(response, SessionEcho(value: "retry"))
+
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
   func testPublicRPCProjectionMapsMalformedResponseToOperationFailed() async throws {
     let secret = "malformed-rpc-secret-marker"
     let serverRouter = RPCRouter()

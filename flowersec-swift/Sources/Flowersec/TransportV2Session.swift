@@ -12,6 +12,11 @@ private enum TransportV2SessionLifecycle: Equatable, Sendable {
 }
 
 actor TransportV2Session {
+  private struct RPCClientInitialization {
+    let id: UInt64
+    let task: Task<RPCClient, Error>
+  }
+
   nonisolated let path: PathKind
   nonisolated let endpointInstanceID: String?
   nonisolated let rpc: any RPCPeer
@@ -59,6 +64,8 @@ actor TransportV2Session {
   private var nextIncomingWaiterID: UInt64 = 1
   private var pings: [UInt64: PingWaiterV2] = [:]
   private var rpcClient: RPCClient?
+  private var rpcClientInitialization: RPCClientInitialization?
+  private var nextRPCClientInitializationID: UInt64 = 1
   private var rpcServerClaimed = false
   private var rpcServerTask: Task<Void, Never>?
   private var rekeyInProgress = false
@@ -435,15 +442,52 @@ actor TransportV2Session {
 
   fileprivate func rpcClientForUse() async throws -> RPCClient {
     if let rpcClient { return rpcClient }
-    let stream = try await openStream(
-      kind: TransportV2ByteStream.reservedRPCStreamKind,
-      metadata: .empty,
-      internalRPC: true
-    )
-    let client = RPCClient(stream: TransportV2RPCStreamAdapter(stream: stream), path: rpcPath)
-    await client.start()
-    rpcClient = client
-    return client
+    guard !closing, !closed else { throw TransportV2SessionError.closed }
+    let initialization: RPCClientInitialization
+    if let current = rpcClientInitialization {
+      initialization = current
+    } else {
+      let id = nextRPCClientInitializationID
+      nextRPCClientInitializationID &+= 1
+      if nextRPCClientInitializationID == 0 { nextRPCClientInitializationID = 1 }
+      let task = Task<RPCClient, Error> {
+        let stream = try await self.openStream(
+          kind: TransportV2ByteStream.reservedRPCStreamKind,
+          metadata: .empty,
+          internalRPC: true
+        )
+        do {
+          try Task.checkCancellation()
+          let client = RPCClient(
+            stream: TransportV2RPCStreamAdapter(stream: stream), path: self.rpcPath)
+          await client.start()
+          try Task.checkCancellation()
+          return client
+        } catch {
+          try? await stream.reset()
+          throw error
+        }
+      }
+      initialization = RPCClientInitialization(id: id, task: task)
+      rpcClientInitialization = initialization
+    }
+    do {
+      let client = try await initialization.task.value
+      guard !closing, !closed else {
+        await client.close()
+        throw TransportV2SessionError.closed
+      }
+      if rpcClientInitialization?.id == initialization.id {
+        rpcClientInitialization = nil
+        rpcClient = client
+      }
+      return rpcClient ?? client
+    } catch {
+      if rpcClientInitialization?.id == initialization.id {
+        rpcClientInitialization = nil
+      }
+      throw error
+    }
   }
 
   fileprivate func subscribeNotification(
@@ -1483,10 +1527,12 @@ actor TransportV2Session {
     controlTask?.cancel()
     acceptTask?.cancel()
     rpcServerTask?.cancel()
+    rpcClientInitialization?.task.cancel()
     idleTask?.cancel()
     controlTask = nil
     acceptTask = nil
     rpcServerTask = nil
+    rpcClientInitialization = nil
     idleTask = nil
     rejectPendingOperationsForClosing(error: error)
     if let rpcClient {

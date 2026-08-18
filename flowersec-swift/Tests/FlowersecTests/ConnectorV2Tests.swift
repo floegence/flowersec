@@ -219,7 +219,7 @@ final class ConnectorV2Tests: XCTestCase {
     let clientSpend = ConnectorSpendCounter()
     let serverSpend = ConnectorSpendCounter()
     let options = ConnectorOptions(
-      connectTimeout: .seconds(5), trustRootsPEM: [tls.certificatePEM])
+      connectTimeout: .seconds(5), trustRootsPEM: [tls.caPEM])
     let clientLease = ArtifactLease(artifact: clientArtifact) { await clientSpend.commit() }
     let serverLease = ArtifactLease(artifact: serverArtifact) { await serverSpend.commit() }
     async let bridgeResult: Void = Self.bridgeTunnelLegs(accepted: accepted)
@@ -301,30 +301,36 @@ final class ConnectorV2Tests: XCTestCase {
     let spend = ConnectorSpendCounter()
     let lease = ArtifactLease(artifact: artifact) { await spend.commit() }
     let options = ConnectorOptions(
-      connectTimeout: .seconds(5), trustRootsPEM: [tls.certificatePEM])
-    async let serverSession = Self.establishServerSession(artifact: artifact, accepted: accepted)
-    async let clientSession = connect(lease: lease, options: options)
-    let (client, serverPeer) = try await (clientSession, serverSession)
+      connectTimeout: .seconds(5), trustRootsPEM: [tls.caPEM])
+    do {
+      async let serverSession = Self.establishServerSession(
+        artifact: artifact, accepted: accepted)
+      async let clientSession = connect(lease: lease, options: options)
+      let (client, serverPeer) = try await (clientSession, serverSession)
 
-    let outbound = try await client.openStream(kind: "wss-e2e")
-    let inbound = try await serverPeer.acceptStream()
-    _ = try await outbound.write(Data("client".utf8))
-    let received = try await inbound.stream.read(maxBytes: 32)
-    XCTAssertEqual(received, Data("client".utf8))
-    try await outbound.closeWrite()
-    let eof = try await inbound.stream.read(maxBytes: 1)
-    XCTAssertNil(eof)
-    let reverse = try await serverPeer.openStream(kind: "reverse")
-    let reverseInbound = try await client.acceptStream()
-    _ = try await reverse.write(Data("server".utf8))
-    let reverseReceived = try await reverseInbound.stream.read(maxBytes: 32)
-    XCTAssertEqual(reverseReceived, Data("server".utf8))
-    try await client.close()
-    try await serverPeer.close()
-    let spendCount = await spend.value()
-    let selectedProtocol = await accepted.protocolValue()
-    XCTAssertEqual(spendCount, 1)
-    XCTAssertEqual(selectedProtocol, expectedProtocol)
+      let outbound = try await client.openStream(kind: "wss-e2e")
+      let inbound = try await serverPeer.acceptStream()
+      _ = try await outbound.write(Data("client".utf8))
+      let received = try await inbound.stream.read(maxBytes: 32)
+      XCTAssertEqual(received, Data("client".utf8))
+      try await outbound.closeWrite()
+      let eof = try await inbound.stream.read(maxBytes: 1)
+      XCTAssertNil(eof)
+      let reverse = try await serverPeer.openStream(kind: "reverse")
+      let reverseInbound = try await client.acceptStream()
+      _ = try await reverse.write(Data("server".utf8))
+      let reverseReceived = try await reverseInbound.stream.read(maxBytes: 32)
+      XCTAssertEqual(reverseReceived, Data("server".utf8))
+      try await client.close()
+      try await serverPeer.close()
+      let spendCount = await spend.value()
+      let selectedProtocol = await accepted.protocolValue()
+      XCTAssertEqual(spendCount, 1)
+      XCTAssertEqual(selectedProtocol, expectedProtocol)
+    } catch {
+      await server.close()
+      throw error
+    }
     await server.close()
   }
 
@@ -441,6 +447,67 @@ final class ConnectorV2Tests: XCTestCase {
     }
     let recordedEvents = await events.values()
     XCTAssertEqual(recordedEvents, ["dial", "spend", "write", "read", "close"])
+  }
+
+  func testConnectTimeoutReturnsBeforeDurableSpendCompletesAndStillCleansUp() async throws {
+    let artifact = try loadArtifact()
+    let events = ConnectorEventRecorder()
+    let lease = ArtifactLease(artifact: artifact) {
+      await events.append("spend-start")
+      try await Task.sleep(for: .milliseconds(250))
+      await events.append("spend-finished")
+    }
+    let connector = try SessionConnectorV2(
+      lease: lease,
+      options: ConnectorOptions(connectTimeout: .milliseconds(20)),
+      runtime: ConnectorAdmissionRuntime(events: events)
+    )
+
+    let started = ContinuousClock.now
+    do {
+      _ = try await connector.connect()
+      XCTFail("slow durable spend unexpectedly established a session")
+    } catch {
+      XCTAssertEqual(error as? ConnectError, .timeout)
+    }
+    let elapsed = started.duration(to: .now)
+    XCTAssertLessThan(elapsed, .milliseconds(120))
+    let eventsAtTimeout = await events.values()
+    XCTAssertEqual(eventsAtTimeout, ["dial", "spend-start"])
+
+    try await Task.sleep(for: .milliseconds(300))
+    let settledEvents = await events.values()
+    XCTAssertEqual(settledEvents, ["dial", "spend-start", "spend-finished", "close"])
+  }
+
+  func testRealWSSFailureCancelsServerAcceptWithinDeadline() async throws {
+    let tls = try ConnectorTestTLS.load()
+    let accepted = ConnectorAcceptedTransport()
+    let raw = try loadArtifactJSON(index: 0)
+    let original = try parseArtifact(Data(raw.utf8)).value
+    let server = try await ConnectorWSSServer.start(
+      tls: tls, selectedProtocol: "flowersec.direct.v2", accepted: accepted)
+    let rewritten = raw.replacingOccurrences(
+      of: original.path.candidates.first(where: { $0.carrier == "websocket" })!.url,
+      with: "wss://localhost:\(server.port)/flowersec/v2/direct"
+    )
+    let artifact = try parseArtifact(Data(rewritten.utf8))
+    let started = ContinuousClock.now
+
+    do {
+      async let serverSession = Self.establishServerSession(
+        artifact: artifact, accepted: accepted)
+      async let clientSession = connect(
+        lease: ArtifactLease(artifact: artifact) {},
+        options: ConnectorOptions(connectTimeout: .milliseconds(250))
+      )
+      _ = try await (clientSession, serverSession)
+      XCTFail("untrusted WSS connection unexpectedly succeeded")
+    } catch {
+      XCTAssertEqual(error as? ConnectError, .connectionFailed)
+    }
+    XCTAssertLessThan(started.duration(to: .now), .seconds(1))
+    await server.close()
   }
 
   private func loadArtifact() throws -> Artifact {
@@ -858,16 +925,17 @@ private struct GoWSSInteropError: LocalizedError {
 }
 
 private struct ConnectorTestTLS {
-  let certificatePEM: Data
+  let caPEM: Data
   let certificate: NIOSSLCertificate
   let privateKey: NIOSSLPrivateKey
 
   static func load() throws -> Self {
     let resources = try XCTUnwrap(Bundle.module.resourceURL?.appendingPathComponent("Fixtures"))
+    let ca = try Data(contentsOf: resources.appendingPathComponent("self_signed_ca.pem"))
     let cert = try Data(contentsOf: resources.appendingPathComponent("self_signed_cert.pem"))
     let key = try Data(contentsOf: resources.appendingPathComponent("self_signed_key.pem"))
     return try Self(
-      certificatePEM: cert,
+      caPEM: ca,
       certificate: XCTUnwrap(NIOSSLCertificate.fromPEMBytes(Array(cert)).first),
       privateKey: NIOSSLPrivateKey(bytes: Array(key), format: .pem)
     )
@@ -875,15 +943,26 @@ private struct ConnectorTestTLS {
 }
 
 private actor ConnectorAcceptedTransport {
+  private struct Waiter {
+    let id: UInt64
+    let continuation: CheckedContinuation<ConnectorNIOBinaryTransport, Error>
+  }
+
   private var values: [ConnectorNIOBinaryTransport] = []
-  private var waiters: [CheckedContinuation<ConnectorNIOBinaryTransport, Error>] = []
+  private var waiters: [Waiter] = []
+  private var nextWaiterID: UInt64 = 1
+  private var closed = false
   private var selectedProtocol: String?
 
   func deliver(_ transport: ConnectorNIOBinaryTransport, protocolValue: String?) {
+    guard !closed else {
+      Task { await transport.close() }
+      return
+    }
     selectedProtocol = protocolValue
     if let waiter = waiters.first {
       waiters.removeFirst()
-      waiter.resume(returning: transport)
+      waiter.continuation.resume(returning: transport)
     } else {
       values.append(transport)
     }
@@ -891,21 +970,60 @@ private actor ConnectorAcceptedTransport {
 
   func accept() async throws -> ConnectorNIOBinaryTransport {
     if !values.isEmpty { return values.removeFirst() }
-    return try await withCheckedThrowingContinuation { waiters.append($0) }
+    if closed { throw ConnectorQueueError.closed }
+    let waiterID = nextWaiterID
+    nextWaiterID &+= 1
+    if nextWaiterID == 0 { nextWaiterID = 1 }
+    return try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        if Task.isCancelled {
+          continuation.resume(throwing: CancellationError())
+        } else if closed {
+          continuation.resume(throwing: ConnectorQueueError.closed)
+        } else {
+          waiters.append(Waiter(id: waiterID, continuation: continuation))
+        }
+      }
+    } onCancel: {
+      Task { await self.cancel(waiterID) }
+    }
   }
 
   func protocolValue() -> String? { selectedProtocol }
+
+  func finish() {
+    guard !closed else { return }
+    closed = true
+    let pending = waiters
+    let queued = values
+    waiters.removeAll()
+    values.removeAll()
+    for waiter in pending { waiter.continuation.resume(throwing: ConnectorQueueError.closed) }
+    for transport in queued { Task { await transport.close() } }
+  }
+
+  private func cancel(_ waiterID: UInt64) {
+    guard let index = waiters.firstIndex(where: { $0.id == waiterID }) else { return }
+    waiters.remove(at: index).continuation.resume(throwing: CancellationError())
+  }
 }
 
 private final class ConnectorWSSServer: @unchecked Sendable {
   let port: Int
   private let group: MultiThreadedEventLoopGroup
   private let channel: any Channel
+  private let accepted: ConnectorAcceptedTransport
 
-  private init(port: Int, group: MultiThreadedEventLoopGroup, channel: any Channel) {
+  private init(
+    port: Int,
+    group: MultiThreadedEventLoopGroup,
+    channel: any Channel,
+    accepted: ConnectorAcceptedTransport
+  ) {
     self.port = port
     self.group = group
     self.channel = channel
+    self.accepted = accepted
   }
 
   static func start(
@@ -979,10 +1097,12 @@ private final class ConnectorWSSServer: @unchecked Sendable {
         } catch { return channel.eventLoop.makeFailedFuture(error) }
       }.bind(host: "127.0.0.1", port: 0).get()
     return ConnectorWSSServer(
-      port: try XCTUnwrap(channel.localAddress?.port), group: group, channel: channel)
+      port: try XCTUnwrap(channel.localAddress?.port), group: group, channel: channel,
+      accepted: accepted)
   }
 
   func close() async {
+    await accepted.finish()
     try? await channel.close().get()
     try? await group.shutdownGracefully()
   }

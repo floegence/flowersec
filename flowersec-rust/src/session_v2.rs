@@ -4033,6 +4033,7 @@ async fn write_rpc_frame_v2(
     stream: &dyn ByteStream,
     envelope: &RpcEnvelopeWireV2,
 ) -> io::Result<()> {
+    validate_rpc_envelope_v2(envelope)?;
     let json = serde_json::to_vec(envelope).map_err(proto)?;
     if json.len() > MAX_RPC_FRAME_BYTES {
         return Err(invalid("RPC JSON frame too large"));
@@ -4078,10 +4079,30 @@ async fn read_rpc_frame_v2(
         buffer.drain(..length).collect::<Vec<_>>()
     };
     let envelope: RpcEnvelopeWireV2 = serde_json::from_slice(&json).map_err(proto)?;
+    validate_rpc_envelope_v2(&envelope)?;
+    Ok(envelope)
+}
+
+fn validate_rpc_envelope_v2(envelope: &RpcEnvelopeWireV2) -> io::Result<()> {
+    if envelope.type_id == 0 {
+        return Err(invalid("RPC type ID must be nonzero"));
+    }
     if envelope.request_id > MAX_PORTABLE_RPC_ID || envelope.response_to > MAX_PORTABLE_RPC_ID {
         return Err(invalid("RPC request ID exceeds portable range"));
     }
-    Ok(envelope)
+    if envelope.request_id != 0 && envelope.response_to != 0 {
+        return Err(invalid(
+            "RPC request and response IDs are mutually exclusive",
+        ));
+    }
+    if envelope.error.is_some() && envelope.response_to == 0 {
+        return Err(invalid("RPC error is only valid on a response"));
+    }
+    if let Some(error) = &envelope.error {
+        RpcError::from_wire(error.code, error.message.clone())
+            .map_err(|_| invalid("invalid RPC application error"))?;
+    }
+    Ok(())
 }
 
 async fn fill_rpc_bytes_v2(
@@ -4507,6 +4528,35 @@ mod tests {
         code: u32,
         message_hex: String,
         valid: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct RpcMalformedEnvelopeVectors {
+        version: u8,
+        vectors: Vec<RpcMalformedEnvelopeVector>,
+    }
+
+    #[derive(Deserialize)]
+    struct RpcMalformedEnvelopeVector {
+        id: String,
+        valid: bool,
+        envelope: serde_json::Value,
+    }
+
+    #[tokio::test]
+    async fn rpc_receive_boundary_matches_shared_malformed_envelope_vectors() {
+        let fixture: RpcMalformedEnvelopeVectors = serde_json::from_str(include_str!(
+            "../../testdata/transport_v2/rpc_malformed_envelopes.json"
+        ))
+        .expect("parse RPC malformed-envelope vectors");
+        assert_eq!(fixture.version, 1);
+        for vector in fixture.vectors {
+            let stream = RpcReadTestStream::new(
+                serde_json::to_vec(&vector.envelope).expect("encode RPC envelope vector"),
+            );
+            let result = read_rpc_frame_v2(&stream, &Mutex::new(VecDeque::new())).await;
+            assert_eq!(result.is_ok(), vector.valid, "{}: {result:?}", vector.id);
+        }
     }
 
     #[tokio::test]

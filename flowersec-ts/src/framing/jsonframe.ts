@@ -24,8 +24,9 @@ function normalizeReadExactly(readExactly: ReadExactlyFn | ReadExactlyLike): Rea
 }
 
 // writeJsonFrame encodes a JSON payload with a 4-byte length prefix.
-export async function writeJsonFrame(write: WriteFn | WriteLike, v: unknown): Promise<void> {
+export async function writeJsonFrame(write: WriteFn | WriteLike, v: unknown, maxBytes = 0): Promise<void> {
   const json = te.encode(JSON.stringify(v));
+  if (maxBytes > 0 && json.length > maxBytes) throw new JsonFramingError("frame too large");
   const hdr = u32be(json.length);
   const out = new Uint8Array(4 + json.length);
   out.set(hdr, 0);

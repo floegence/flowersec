@@ -27,6 +27,7 @@ type releaseNotes struct {
 	Version     string
 	Kind        releaseKind
 	Sections    []section
+	Reviewed    string
 }
 
 type releaseKind string
@@ -37,6 +38,7 @@ const (
 )
 
 func buildReleaseNotes(currentTag, previousTag string, kind releaseKind, commits []commit) *releaseNotes {
+	reviewed := reviewedReleaseNotes(commits)
 	features := make([]string, 0)
 	fixes := make([]string, 0)
 	auxiliary := make([]string, 0)
@@ -84,7 +86,32 @@ func buildReleaseNotes(currentTag, previousTag string, kind releaseKind, commits
 		Version:     versionFromTag(currentTag, kind),
 		Kind:        kind,
 		Sections:    sections,
+		Reviewed:    reviewed,
 	}
+}
+
+const (
+	releaseNotesBegin = "Flowersec-Release-Notes-Begin"
+	releaseNotesEnd   = "Flowersec-Release-Notes-End"
+)
+
+func reviewedReleaseNotes(commits []commit) string {
+	for index := len(commits) - 1; index >= 0; index-- {
+		body := commits[index].Body
+		begin := strings.Index(body, releaseNotesBegin)
+		if begin < 0 {
+			continue
+		}
+		body = body[begin+len(releaseNotesBegin):]
+		end := strings.Index(body, releaseNotesEnd)
+		if end < 0 {
+			continue
+		}
+		if notes := strings.TrimSpace(body[:end]); notes != "" {
+			return notes
+		}
+	}
+	return ""
 }
 
 func versionFromTag(tag string, kind releaseKind) string {
@@ -103,12 +130,17 @@ func renderMarkdown(notes *releaseNotes) string {
 		b.WriteString("Initial published release snapshot.\n\n")
 	}
 
-	for _, sec := range notes.Sections {
-		fmt.Fprintf(&b, "## %s\n\n", sec.Title)
-		for _, item := range sec.Items {
-			fmt.Fprintf(&b, "- %s\n", item)
+	if notes.Reviewed != "" {
+		b.WriteString(notes.Reviewed)
+		b.WriteString("\n\n")
+	} else {
+		for _, sec := range notes.Sections {
+			fmt.Fprintf(&b, "## %s\n\n", sec.Title)
+			for _, item := range sec.Items {
+				fmt.Fprintf(&b, "- %s\n", item)
+			}
+			b.WriteString("\n")
 		}
-		b.WriteString("\n")
 	}
 
 	fmt.Fprintf(&b, "## Release Assets\n\n")

@@ -3,8 +3,9 @@ use flowersec::{
     ConnectionControllerOptions, ConnectorOptions, IncomingStream, NotificationHandler,
     RetryDisposition, RpcError, RpcHandler, RpcHandlers, RpcPeer, RpcPeerExt, SessionError,
     SessionHandlerOptions, SessionHandlers, SessionTermination, StreamHandler,
-    StreamHandlerOptions, StreamHandlers, StreamMetadata, StreamMetadataError, TunnelAuthorizer,
-    TunnelRuntime, TunnelRuntimeOptions, WebSocketAcceptorOptions, connect,
+    StreamHandlerOptions, StreamHandlers, StreamMetadata, StreamMetadataError,
+    TunnelAdmissionOptions, TunnelAuthorizer, TunnelRuntime, TunnelRuntimeOptions,
+    WebSocketAcceptorOptions, connect,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -13,6 +14,7 @@ use std::{
     path::Path,
     process::Command,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -131,8 +133,24 @@ fn exposes_an_independent_opaque_tunnel_runtime() {
             .expect("bind opaque raw QUIC tunnel runtime");
         let _ = runtime.local_address();
     }
+    fn compile_bounded_runtime(
+        options: TunnelRuntimeOptions,
+        authorizer: Arc<dyn TunnelAuthorizer>,
+    ) {
+        let admission = TunnelAdmissionOptions {
+            admission_timeout: Duration::from_secs(5),
+            max_concurrent_admissions: 32,
+        };
+        let _ = TunnelRuntime::bind_websocket_with_admission_options(
+            options.clone(),
+            admission,
+            authorizer.clone(),
+        );
+        let _ = TunnelRuntime::bind_raw_quic_with_admission_options(options, admission, authorizer);
+    }
     let _ = compile_runtime;
     let _ = compile_raw_quic_runtime;
+    let _ = compile_bounded_runtime;
 }
 
 #[test]

@@ -9,6 +9,7 @@ class FakeSession {
   established: number[] = [];
   closed: number[] = [];
   blockWrites = false;
+  writeError: Error | undefined;
   private releaseWrite: (() => void) | undefined;
   private readonly windowWaiters: Array<() => void> = [];
   maxWriteQueueBytes = 4 * 1024 * 1024;
@@ -23,6 +24,7 @@ class FakeSession {
       this.blockWrites = false;
       await new Promise<void>((resolve) => { this.releaseWrite = resolve; });
     }
+    if (this.writeError !== undefined) throw this.writeError;
   }
 
   resumeWrite(): void { this.releaseWrite?.(); }
@@ -86,6 +88,61 @@ describe("YamuxStream", () => {
     expect(hdr.flags & FLAG_FIN).toBe(FLAG_FIN);
 
     await expect(stream.write(new Uint8Array([1]))).rejects.toThrow(/stream closed/);
+  });
+
+  test("concurrent and repeated close calls share one FIN write", async () => {
+    const session = new FakeSession();
+    session.blockWrites = true;
+    const stream = new YamuxStream(session as any, 1, "established");
+    const closes = [stream.close(), stream.close(), stream.close()];
+    while (session.writes.length === 0) await tick();
+    expect(session.writes).toHaveLength(1);
+    session.resumeWrite();
+    await Promise.all(closes);
+    await stream.close();
+    expect(session.writes.map((frame) => decodeHeader(frame, 0).flags & FLAG_FIN)).toEqual([FLAG_FIN]);
+  });
+
+  test("serializes FIN after an accepted write and rejects writes requested after close", async () => {
+    const session = new FakeSession();
+    session.blockWrites = true;
+    const stream = new YamuxStream(session as any, 1, "established");
+    const write = stream.write(new Uint8Array([1, 2, 3]));
+    while (session.writes.length === 0) await tick();
+    const close = stream.close();
+    await expect(stream.write(new Uint8Array([4]))).rejects.toThrow(/stream closed/);
+    expect(session.writes).toHaveLength(1);
+    session.resumeWrite();
+    await Promise.all([write, close]);
+    expect(session.writes.map((frame) => decodeHeader(frame, 0).type)).toEqual([TYPE_DATA, TYPE_WINDOW_UPDATE]);
+    expect(decodeHeader(session.writes[1]!, 0).flags & FLAG_FIN).toBe(FLAG_FIN);
+  });
+
+  test("shares a failed FIN write across concurrent and subsequent close calls", async () => {
+    const session = new FakeSession();
+    session.writeError = new Error("FIN write failed");
+    const stream = new YamuxStream(session as any, 1, "established");
+    const first = stream.close();
+    const second = stream.close();
+    await expect(first).rejects.toThrow(/FIN write failed/);
+    await expect(second).rejects.toThrow(/FIN write failed/);
+    await expect(stream.close()).rejects.toThrow(/FIN write failed/);
+    expect(session.writes).toHaveLength(1);
+    expect(decodeHeader(session.writes[0]!, 0).flags & FLAG_FIN).toBe(FLAG_FIN);
+  });
+
+  test("sends one FIN and finalizes when remote FIN races a queued local close", async () => {
+    const session = new FakeSession();
+    session.blockWrites = true;
+    const stream = new YamuxStream(session as any, 1, "established");
+    const writing = stream.write(new Uint8Array([1]));
+    while (session.writes.length === 0) await tick();
+    const closing = stream.close();
+    expect(stream.onData(new Uint8Array(), FLAG_FIN)).toBe(true);
+    session.resumeWrite();
+    await Promise.all([writing, closing]);
+    expect(session.writes.map((frame) => decodeHeader(frame, 0).flags & FLAG_FIN)).toEqual([0, FLAG_FIN]);
+    expect(session.closed).toEqual([1]);
   });
 
   test("recv window overflow resets stream", async () => {

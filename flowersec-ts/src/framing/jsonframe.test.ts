@@ -75,6 +75,14 @@ describe("json framing", () => {
     expect(JSON.parse(json)).toEqual({ ok: true });
   });
 
+  test("writeJsonFrame enforces an exact UTF-8 byte boundary when requested", async () => {
+    const writes: Uint8Array[] = [];
+    const write = async (value: Uint8Array) => { writes.push(value); };
+    await expect(writeJsonFrame(write, "a".repeat(14), 16)).resolves.toBeUndefined();
+    await expect(writeJsonFrame(write, "é".repeat(8), 17)).rejects.toBeInstanceOf(JsonFramingError);
+    expect(writes).toHaveLength(1);
+  });
+
   test("readJsonFrame rejects oversized frames (object form)", async () => {
     const q = new ByteQueue();
     const header = new Uint8Array([0, 0, 0, 5]);

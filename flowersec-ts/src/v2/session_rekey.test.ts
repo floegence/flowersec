@@ -148,7 +148,102 @@ describe("SessionV2 active-stream rekey", () => {
     expect(sessionInternals(client).nextTransition).toBe(3n);
     await client.close();
   });
+
+  test("terminal stream state rejects writes waiting for a rekey ACK", async () => {
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV2({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 10 });
+    const [client, server] = await Promise.all([
+      establishSessionV2(clientCarrier, config("client")),
+      establishSessionV2(serverCarrier, config("server")),
+    ]);
+    const opening = client.openStream("missing-rekey-ack");
+    await server.acceptStream();
+    const outgoing = await opening;
+    const internals = blockSendOnRekey(outgoing);
+
+    const writing = outgoing.write(encode("blocked behind rekey"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    internals.markTerminal(new Error("rekey completion failed"));
+
+    await expect(within(writing, "terminal rekey waiter")).rejects.toThrow(/rekey completion failed/);
+    expect(internals.pendingSendRekey).toBeUndefined();
+    await client.close();
+  });
+
+  test("local reset settles a write blocked on rekey completion", async () => {
+    const { client, outgoing } = await openStreamPair("local-reset-during-rekey");
+    const internals = blockSendOnRekey(outgoing);
+    const writing = outgoing.write(encode("blocked write"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const resetting = outgoing.reset();
+
+    await expect(within(writing, "write after local reset")).rejects.toThrow(/logical stream reset/);
+    await expect(within(resetting, "local reset completion")).resolves.toBeUndefined();
+    expect(internals.pendingSendRekey).toBeUndefined();
+    await client.close();
+  });
+
+  test("peer reset settles closeWrite blocked on rekey completion", async () => {
+    const { client, outgoing, incoming } = await openStreamPair("peer-reset-during-rekey");
+    const internals = blockSendOnRekey(outgoing);
+    const closingWrite = outgoing.closeWrite();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const resettingPeer = incoming.reset();
+
+    await expect(within(closingWrite, "closeWrite after peer reset")).rejects.toThrow(/stream reset/);
+    await expect(within(resettingPeer, "peer reset completion")).resolves.toBeUndefined();
+    expect(internals.pendingSendRekey).toBeUndefined();
+    await client.close();
+  });
+
+  test("session close settles write and closeWrite blocked on rekey completion", async () => {
+    const { client, outgoing } = await openStreamPair("session-close-during-rekey");
+    const internals = blockSendOnRekey(outgoing);
+    const writing = outgoing.write(encode("blocked write"));
+    const closingWrite = outgoing.closeWrite();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const closingSession = client.close();
+
+    await expect(within(writing, "write after session close")).rejects.toThrow(/session closed/i);
+    await expect(within(closingWrite, "closeWrite after session close")).rejects.toThrow(/session closed/i);
+    await expect(within(closingSession, "session close completion")).resolves.toBeUndefined();
+    expect(internals.pendingSendRekey).toBeUndefined();
+  });
 });
+
+async function openStreamPair(kind: string): Promise<Readonly<{
+  client: SessionV2;
+  outgoing: Awaited<ReturnType<SessionV2["openStream"]>>;
+  incoming: Awaited<ReturnType<SessionV2["acceptStream"]>>["stream"];
+}>> {
+  const [clientCarrier, serverCarrier] = createMemoryCarrierPairV2({
+    kind: "webtransport",
+    path: "direct",
+    inboundBidirectionalStreamCapacity: 10,
+  });
+  const [client, server] = await Promise.all([
+    establishSessionV2(clientCarrier, config("client")),
+    establishSessionV2(serverCarrier, config("server")),
+  ]);
+  const opening = client.openStream(kind);
+  const incoming = await server.acceptStream();
+  return { client, outgoing: await opening, incoming: incoming.stream };
+}
+
+function blockSendOnRekey(stream: Awaited<ReturnType<SessionV2["openStream"]>>): {
+  pendingSendRekey: unknown;
+  markTerminal(error: Error): boolean;
+} {
+  const armed = rejectableDeferred();
+  const done = rejectableDeferred();
+  void armed.promise.catch(() => undefined);
+  void done.promise.catch(() => undefined);
+  const internals = stream as unknown as {
+    pendingSendRekey: unknown;
+    markTerminal(error: Error): boolean;
+  };
+  internals.pendingSendRekey = { transition: 99n, epoch: 1, armed, done };
+  return internals;
+}
 
 class BlockingApplicationReadCarrier implements CarrierSessionV2 {
   readonly kind;
@@ -239,6 +334,22 @@ function deferred<T>(): Deferred<T> {
     };
   });
   return { promise, resolve, get settled() { return settled; } };
+}
+
+function rejectableDeferred(): Readonly<{
+  promise: Promise<void>;
+  resolve(): void;
+  reject(error: unknown): void;
+  readonly settled: boolean;
+}> {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  let settled = false;
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+    resolve = () => { if (!settled) { settled = true; resolvePromise(); } };
+    reject = (error) => { if (!settled) { settled = true; rejectPromise(error); } };
+  });
+  return { promise, resolve, reject, get settled() { return settled; } };
 }
 
 async function within<T>(operation: Promise<T>, label: string): Promise<T> {

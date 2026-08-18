@@ -60,6 +60,7 @@ export type WebSocketPatchOptions = Readonly<{
   shouldProxy?: (url: URL) => boolean;
   maxWsFrameBytes?: number;
   maxWsBufferedAmountBytes?: number;
+  closeHandshakeTimeoutMs?: number;
 }>;
 
 function limit(name: string, input: number | undefined, fallback: number): number {
@@ -75,6 +76,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
   const runtimeLimits = options.runtime.limits as Partial<ProxyRuntimeLimits>;
   const maxFrameBytes = limit("maxWsFrameBytes", options.maxWsFrameBytes, runtimeLimits.maxWsFrameBytes ?? 1024 * 1024);
   const maxBufferedBytes = limit("maxWsBufferedAmountBytes", options.maxWsBufferedAmountBytes, runtimeLimits.maxWsBufferedAmountBytes ?? 4 * 1024 * 1024);
+  const closeHandshakeTimeoutMs = limit("closeHandshakeTimeoutMs", options.closeHandshakeTimeoutMs, 5_000);
   const shouldProxy = options.shouldProxy ?? ((url: URL) => {
     const location = globalThis.location;
     if (location?.hostname === undefined || location.hostname === "") return false;
@@ -108,6 +110,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
     private readonly abort = new AbortController();
     private stream: ByteStream | undefined;
     private writes: Promise<void> = Promise.resolve();
+    private closeTimer: ReturnType<typeof setTimeout> | undefined;
 
     constructor(input: string | URL, protocols?: string | string[]) {
       const url = new URL(String(input), globalThis.location?.href);
@@ -156,11 +159,17 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
       }
       const reasonBytes = encoder.encode(reason);
       if (reasonBytes.length > 123) throw new DOMException("WebSocket close reason is too long", "SyntaxError");
+      if (this.readyState === ProxyWebSocket.CONNECTING || this.stream === undefined) {
+        this.fail();
+        return;
+      }
       this.readyState = ProxyWebSocket.CLOSING;
       const payload = code === undefined ? new Uint8Array() : new Uint8Array([...u16be(code), ...reasonBytes]);
-      this.writes = this.writes.then(async () => {
-        if (this.stream !== undefined) await writeFrame(this.stream, 8, payload, maxFrameBytes);
-      }).catch(() => undefined).finally(() => this.abort.abort());
+      const stream = this.stream;
+      this.closeTimer = setTimeout(() => this.fail(), closeHandshakeTimeoutMs);
+      this.writes = this.writes
+        .then(async () => await writeFrame(stream, 8, payload, maxFrameBytes))
+        .catch(() => this.fail());
     }
 
     private async connect(url: URL, protocols?: string | string[]): Promise<void> {
@@ -186,10 +195,17 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
         if (frame.opcode === 9) {
           this.writes = this.writes.then(async () => await writeFrame(stream, 10, frame.payload, maxFrameBytes)).catch(() => this.fail());
         } else if (frame.opcode === 8) {
+          if (frame.payload.length === 1) throw new Error("invalid WebSocket close frame");
           const code = frame.payload.length >= 2 ? readU16(frame.payload) : 1000;
           const reason = frame.payload.length > 2 ? decoder.decode(frame.payload.subarray(2)) : "";
-          this.readyState = ProxyWebSocket.CLOSED;
-          this.emit("close", new CloseEvent("close", { code, reason, wasClean: true }));
+          const peerInitiated = this.readyState === ProxyWebSocket.OPEN;
+          this.readyState = ProxyWebSocket.CLOSING;
+          if (this.closeTimer !== undefined) clearTimeout(this.closeTimer);
+          if (peerInitiated) {
+            this.writes = this.writes.then(async () => await writeFrame(stream, 8, frame.payload, maxFrameBytes));
+          }
+          await this.writes;
+          this.completeClose(code, reason);
           return;
         } else if (frame.opcode === 1) {
           this.emit("message", new MessageEvent("message", { data: decoder.decode(frame.payload) }));
@@ -210,12 +226,27 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
 
     private fail(): void {
       if (this.readyState === ProxyWebSocket.CLOSED) return;
+      if (this.closeTimer !== undefined) clearTimeout(this.closeTimer);
       this.readyState = ProxyWebSocket.CLOSED;
       this.bufferedAmount = 0;
       this.emit("error", new Event("error"));
       this.emit("close", new CloseEvent("close", { code: 1006, reason: "proxy WebSocket failed", wasClean: false }));
+      const stream = this.stream;
       this.stream = undefined;
       this.abort.abort();
+      void stream?.reset().catch(() => undefined);
+    }
+
+    private completeClose(code: number, reason: string): void {
+      if (this.readyState === ProxyWebSocket.CLOSED) return;
+      if (this.closeTimer !== undefined) clearTimeout(this.closeTimer);
+      this.readyState = ProxyWebSocket.CLOSED;
+      this.bufferedAmount = 0;
+      this.emit("close", new CloseEvent("close", { code, reason, wasClean: true }));
+      const stream = this.stream;
+      this.stream = undefined;
+      this.abort.abort();
+      void stream?.close().catch(() => stream.reset().catch(() => undefined));
     }
   }
 

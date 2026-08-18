@@ -46,6 +46,8 @@ export class YamuxStream {
   // Terminal error (reset/overflow) for the stream.
   private error: unknown = null;
   private resetTask: Promise<void> | undefined;
+  private closeTask: Promise<void> | undefined;
+  private closeRequested = false;
   private writeChain: Promise<void> = Promise.resolve();
   private writeQueueBytes = 0;
   private finalized = false;
@@ -112,6 +114,7 @@ export class YamuxStream {
 
   // write sends DATA frames, respecting the send window.
   async write(data: Uint8Array): Promise<void> {
+    if (this.closeRequested) throw new Error("stream closed");
     this.ensureWritable();
     const byteCount = data.byteLength;
     const nextQueueBytes = this.writeQueueBytes + byteCount;
@@ -155,9 +158,18 @@ export class YamuxStream {
   }
 
   // close sends FIN and transitions to local close.
-  async close(): Promise<void> {
-    if (this.state === "closed") return;
-    if (this.state === "reset") return;
+  close(): Promise<void> {
+    if (this.closeTask !== undefined) return this.closeTask;
+    if (this.state === "closed" || this.state === "reset" || this.state === "localClose") return Promise.resolve();
+    this.closeRequested = true;
+    const task = this.writeChain.then(async () => await this.closeSerial());
+    this.writeChain = task.catch(() => undefined);
+    this.closeTask = task;
+    return task;
+  }
+
+  private async closeSerial(): Promise<void> {
+    if (this.state === "closed" || this.state === "reset" || this.state === "localClose") return;
     const wasRemoteClose = this.state === "remoteClose";
     const flags = this.sendFlags() | FLAG_FIN;
     this.state = wasRemoteClose ? "closed" : "localClose";

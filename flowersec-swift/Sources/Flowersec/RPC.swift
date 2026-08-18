@@ -356,8 +356,13 @@ internal struct RPCEnvelope: Equatable, Sendable {
     guard
       let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
       let typeID = Self.portableUInt32(root["type_id"]),
+      typeID != 0,
       let requestID = Self.portableID(root["request_id"]),
-      let responseTo = Self.portableID(root["response_to"])
+      let responseTo = Self.portableID(root["response_to"]),
+      root.keys.contains("payload"),
+      Set(root.keys).isSubset(of: ["type_id", "request_id", "response_to", "payload", "error"]),
+      root.count == (root.keys.contains("error") ? 5 : 4),
+      requestID == 0 || responseTo == 0
     else {
       throw FlowersecError.invalidRPC("RPC envelope is invalid.")
     }
@@ -365,6 +370,9 @@ internal struct RPCEnvelope: Equatable, Sendable {
     self.requestID = requestID
     self.responseTo = responseTo
     if let rawError = root["error"], !(rawError is NSNull) {
+      guard requestID == 0, responseTo != 0 else {
+        throw FlowersecError.invalidRPC("RPC error is only valid on a response.")
+      }
       guard let errorObject = rawError as? [String: Any],
         Set(errorObject.keys).isSubset(of: ["code", "message"]),
         let code = Self.portableUInt32(errorObject["code"]),
@@ -380,7 +388,7 @@ internal struct RPCEnvelope: Equatable, Sendable {
     } else {
       error = nil
     }
-    payload = try Self.encodeRawJSONObject(root["payload"] ?? [:])
+    payload = try Self.encodeRawJSONObject(root["payload"] as Any)
   }
 
   internal func encoded() throws -> Data {

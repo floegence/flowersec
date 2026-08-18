@@ -9,16 +9,25 @@ const strictDecoder = new TextDecoder("utf-8", { fatal: true });
 // The wire format is JSON, so JS numbers are used. For u64 we enforce the safe integer range
 // to avoid silent precision loss on request/response correlation.
 export function assertRpcEnvelope(v: unknown): RpcEnvelope {
-  if (typeof v !== "object" || v == null) throw new Error("bad rpc envelope");
-  const o = v as any;
-  if (!isSafeU32Number(o.type_id)) throw new Error("bad rpc envelope: type_id");
+  if (typeof v !== "object" || v == null || Array.isArray(v)) throw new Error("bad rpc envelope");
+  const o = v as Record<string, unknown>;
+  const keys = Object.keys(o);
+  if (keys.some((key) => key !== "type_id" && key !== "request_id" && key !== "response_to" && key !== "payload" && key !== "error")) {
+    throw new Error("bad rpc envelope: shape");
+  }
+  if (!Object.prototype.hasOwnProperty.call(o, "payload")) throw new Error("bad rpc envelope: payload");
+  assertRpcTypeId(o.type_id);
   if (!isSafeU64Number(o.request_id)) throw new Error("bad rpc envelope: request_id");
   if (!isSafeU64Number(o.response_to)) throw new Error("bad rpc envelope: response_to");
-  // payload: unknown (JSON)
-  if (o.error != null) {
-    assertRpcError(o.error);
-  }
-  return o as RpcEnvelope;
+  if (o.request_id !== 0 && o.response_to !== 0) throw new Error("bad rpc envelope: request/response shape");
+  if (o.error != null && o.response_to === 0) throw new Error("bad rpc envelope: error shape");
+  if (o.error != null) assertRpcError(o.error);
+  return o as unknown as RpcEnvelope;
+}
+
+export function assertRpcTypeId(value: unknown): number {
+  if (!isSafeU32Number(value) || value === 0) throw new RangeError("RPC typeId must be a non-zero u32 integer");
+  return value;
 }
 
 export function assertRpcError(value: unknown): RpcError {

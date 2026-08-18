@@ -1,6 +1,6 @@
 import { RpcRouter } from "../rpc/server.js";
 import type { RpcError as WireRpcError } from "../rpc/wire.js";
-import { assertRpcError } from "../rpc/validate.js";
+import { assertRpcError, assertRpcTypeId } from "../rpc/validate.js";
 import {
   acceptReceivedSessionV2,
   receiveSessionAdmissionV2,
@@ -176,12 +176,12 @@ function registerNotification(
 }
 
 function validateRPCRegistration(typeId: number, handler: unknown): void {
-  if (
-    !Number.isSafeInteger(typeId)
-    || typeId < 1
-    || typeId > 0xffff_ffff
-    || typeof handler !== "function"
-  ) {
+  try {
+    assertRpcTypeId(typeId);
+  } catch {
+    throw new HandlerRegistrationError("invalid_handler");
+  }
+  if (typeof handler !== "function") {
     throw new HandlerRegistrationError("invalid_handler");
   }
 }

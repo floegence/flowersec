@@ -2,6 +2,7 @@ package flowersec
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -18,7 +19,7 @@ import (
 func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
 	var wantHost string
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.RequestURI() != "/files?id=7" {
+		if request.URL.RequestURI() != "/api/items?q=~user" {
 			t.Errorf("upstream path = %q", request.URL.RequestURI())
 		}
 		if request.Host != wantHost {
@@ -54,7 +55,7 @@ func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
 	client := serveProxyTestStream(t, handlers, proxyHTTPStreamKind)
 	if err := writeProxyJSON(client, proxyHTTPRequest{
 		Version: proxyWireVersion, RequestID: "request-1", Method: http.MethodGet,
-		Path: "/files?id=7", Headers: []proxyHeader{{Name: "accept", Value: "text/plain"}},
+		Path: "/public/../api//items?q=%7euser", Headers: []proxyHeader{{Name: "accept", Value: "text/plain"}},
 		ExternalOrigin: "https://app.example",
 	}); err != nil {
 		t.Fatal(err)
@@ -91,11 +92,46 @@ func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
 	}
 }
 
+func TestProxyServerCanonicalPathContract(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want string
+	}{
+		{raw: "/safe/../admin?mode=raw", want: "/admin?mode=raw"},
+		{raw: "/safe/%2e%2e/admin?mode=encoded", want: "/admin?mode=encoded"},
+		{raw: "/safe\\..\\admin?mode=backslash", want: "/admin?mode=backslash"},
+		{raw: "/safe//child?mode=double", want: "/safe/child?mode=double"},
+	}
+	for _, test := range tests {
+		t.Run(test.raw, func(t *testing.T) {
+			parsed, err := parseProxyPath(test.raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if parsed.RequestURI() != test.want {
+				t.Fatalf("canonical path = %q, want %q", parsed.RequestURI(), test.want)
+			}
+		})
+	}
+	for _, raw := range []string{
+		"/%2fadmin", "/%2Fadmin", "/%5cadmin", "/%5Cadmin", "/\\evil.example/admin",
+	} {
+		t.Run("reject "+raw, func(t *testing.T) {
+			if _, err := parseProxyPath(raw); err == nil {
+				t.Fatalf("unsafe encoded separator accepted: %q", raw)
+			}
+		})
+	}
+}
+
 func TestProxyServerWebSocketRoundTripUsesFlowersecWire(t *testing.T) {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(request *http.Request) bool { return request.Header.Get("Origin") != "" },
 	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.RequestURI() != "/api/socket?q=~user" {
+			t.Errorf("upstream WebSocket path = %q", request.URL.RequestURI())
+		}
 		connection, err := upgrader.Upgrade(writer, request, nil)
 		if err != nil {
 			return
@@ -127,7 +163,7 @@ func TestProxyServerWebSocketRoundTripUsesFlowersecWire(t *testing.T) {
 
 	client := serveProxyTestStream(t, handlers, proxyWSStreamKind)
 	if err := writeProxyJSON(client, proxyWebSocketOpen{
-		Version: proxyWireVersion, ConnID: "socket-1", Path: "/socket",
+		Version: proxyWireVersion, ConnID: "socket-1", Path: "/public/../api//socket?q=%7euser",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +183,145 @@ func TestProxyServerWebSocketRoundTripUsesFlowersecWire(t *testing.T) {
 	}
 	if operation != 2 || string(payload) != "echo" {
 		t.Fatalf("echo = %d %q", operation, payload)
+	}
+}
+
+func TestProxyServerWebSocketUpstreamCloseResetsOpenDownstreamAndJoinsRelays(t *testing.T) {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(request *http.Request) bool { return request.Header.Get("Origin") != "" },
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		connection, err := upgrader.Upgrade(writer, request, nil)
+		if err != nil {
+			return
+		}
+		defer connection.Close()
+		_ = connection.WriteMessage(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done"),
+		)
+	}))
+	defer upstream.Close()
+
+	proxy, err := NewProxyServer(ProxyServerOptions{
+		Upstream: upstream.URL, UpstreamOrigin: upstream.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
+	stream := &countingProxyServerTestStream{
+		proxyServerTestStream: proxyServerTestStream{Conn: server, kind: proxyWSStreamKind},
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- proxy.limit(proxy.serveWebSocket)(context.Background(), IncomingStream{
+			Kind: proxyWSStreamKind, Metadata: EmptyStreamMetadata(), Stream: stream,
+		})
+	}()
+
+	if err := writeProxyJSON(client, proxyWebSocketOpen{
+		Version: proxyWireVersion, ConnID: "upstream-close", Path: "/socket",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var opened proxyWebSocketResponse
+	if err := readProxyJSON(client, 1<<20, &opened); err != nil {
+		t.Fatal(err)
+	}
+	if !opened.OK {
+		t.Fatalf("open response = %+v", opened)
+	}
+	operation, payload, err := readProxyWebSocketFrame(client, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation != 8 || len(payload) < 2 || binary.BigEndian.Uint16(payload[:2]) != websocket.CloseNormalClosure {
+		t.Fatalf("close frame = operation %d payload %x", operation, payload)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WebSocket handler error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WebSocket handler did not join both relays")
+	}
+	if stream.resets.Load() != 1 {
+		t.Fatalf("stream Reset count = %d, want 1", stream.resets.Load())
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		_ = proxy.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("ProxyServer.Close did not converge after upstream WebSocket close")
+	}
+}
+
+func TestProxyServerWebSocketDownstreamCloseJoinsRelays(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	harness := newProxyWebSocketRelayHarness(t, func(connection *websocket.Conn) {
+		<-release
+	})
+
+	if err := harness.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	awaitProxyWebSocketRelayDone(t, harness.done)
+	if harness.stream.resets.Load() != 1 {
+		t.Fatalf("stream Reset count = %d, want 1", harness.stream.resets.Load())
+	}
+}
+
+func TestProxyServerWebSocketSimultaneousRelayErrorsJoinOnce(t *testing.T) {
+	trigger := make(chan struct{})
+	upstreamClosed := make(chan struct{})
+	harness := newProxyWebSocketRelayHarness(t, func(connection *websocket.Conn) {
+		<-trigger
+		_ = connection.UnderlyingConn().Close()
+		close(upstreamClosed)
+	})
+
+	close(trigger)
+	_ = harness.client.Close()
+	select {
+	case <-upstreamClosed:
+	case <-time.After(time.Second):
+		t.Fatal("upstream WebSocket did not close")
+	}
+	awaitProxyWebSocketRelayDone(t, harness.done)
+	if harness.stream.resets.Load() != 1 {
+		t.Fatalf("stream Reset count = %d, want 1", harness.stream.resets.Load())
+	}
+}
+
+func TestProxyServerCloseCancelsAndJoinsWebSocketRelays(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	harness := newProxyWebSocketRelayHarness(t, func(connection *websocket.Conn) {
+		<-release
+	})
+
+	closed := make(chan error, 1)
+	go func() { closed <- harness.proxy.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("ProxyServer.Close error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ProxyServer.Close did not join WebSocket relays")
+	}
+	awaitProxyWebSocketRelayDone(t, harness.done)
+	if harness.stream.resets.Load() != 1 {
+		t.Fatalf("stream Reset count = %d, want 1", harness.stream.resets.Load())
 	}
 }
 
@@ -390,6 +565,83 @@ func serveProxyTestStream(t *testing.T, handlers *SessionHandlers, kind string) 
 type proxyServerTestStream struct {
 	net.Conn
 	kind string
+}
+
+type countingProxyServerTestStream struct {
+	proxyServerTestStream
+	resets atomic.Int32
+}
+
+type proxyWebSocketRelayHarness struct {
+	proxy  *ProxyServer
+	client net.Conn
+	stream *countingProxyServerTestStream
+	done   <-chan error
+}
+
+func newProxyWebSocketRelayHarness(
+	t *testing.T,
+	handle func(*websocket.Conn),
+) proxyWebSocketRelayHarness {
+	t.Helper()
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(request *http.Request) bool { return request.Header.Get("Origin") != "" },
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		connection, err := upgrader.Upgrade(writer, request, nil)
+		if err != nil {
+			return
+		}
+		defer connection.Close()
+		handle(connection)
+	}))
+	t.Cleanup(upstream.Close)
+
+	proxy, err := NewProxyServer(ProxyServerOptions{
+		Upstream: upstream.URL, UpstreamOrigin: upstream.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = proxy.Close() })
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
+	stream := &countingProxyServerTestStream{
+		proxyServerTestStream: proxyServerTestStream{Conn: server, kind: proxyWSStreamKind},
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- proxy.limit(proxy.serveWebSocket)(context.Background(), IncomingStream{
+			Kind: proxyWSStreamKind, Metadata: EmptyStreamMetadata(), Stream: stream,
+		})
+	}()
+	if err := writeProxyJSON(client, proxyWebSocketOpen{
+		Version: proxyWireVersion, ConnID: "relay-harness", Path: "/socket",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var opened proxyWebSocketResponse
+	if err := readProxyJSON(client, 1<<20, &opened); err != nil {
+		t.Fatal(err)
+	}
+	if !opened.OK {
+		t.Fatalf("open response = %+v", opened)
+	}
+	return proxyWebSocketRelayHarness{proxy: proxy, client: client, stream: stream, done: done}
+}
+
+func awaitProxyWebSocketRelayDone(t *testing.T, done <-chan error) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("WebSocket handler did not join both relays")
+	}
+}
+
+func (stream *countingProxyServerTestStream) Reset() error {
+	stream.resets.Add(1)
+	return stream.Close()
 }
 
 type proxyResetTestStream struct {

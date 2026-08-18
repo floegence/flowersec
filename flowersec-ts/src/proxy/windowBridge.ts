@@ -27,7 +27,13 @@ export class MessagePortByteStream implements ByteStream {
   terminalError: SessionError | undefined;
   private readonly reads: Uint8Array[] = [];
   private readonly readWaiters: Array<Readonly<{ resolve(value: Uint8Array | null): void; reject(error: Error): void }>> = [];
-  private readonly writeWaiters = new Map<number, Readonly<{ resolve(): void; reject(error: Error): void }>>();
+  private readonly writeWaiters = new Map<number, Readonly<{
+    bytes: number;
+    signal?: AbortSignal;
+    onAbort?: () => void;
+    resolve(): void;
+    reject(error: Error): void;
+  }>>();
   private nextWrite = 1;
   private buffered = 0;
   private readBuffered = 0;
@@ -51,11 +57,16 @@ export class MessagePortByteStream implements ByteStream {
     if (this.ended) return null;
     if (this.terminalError !== undefined) throw this.terminalError;
     return await new Promise<Uint8Array | null>((resolve, reject) => {
-      const waiter = { resolve, reject };
+      const cleanup = () => options.signal?.removeEventListener("abort", onAbort);
+      const waiter = {
+        resolve: (value: Uint8Array | null) => { cleanup(); resolve(value); },
+        reject: (error: Error) => { cleanup(); reject(error); },
+      };
       const onAbort = () => {
         const index = this.readWaiters.indexOf(waiter);
-        if (index >= 0) this.readWaiters.splice(index, 1);
-        reject(new SessionError("canceled"));
+        if (index < 0) return;
+        this.readWaiters.splice(index, 1);
+        waiter.reject(new SessionError("canceled"));
       };
       options.signal?.addEventListener("abort", onAbort, { once: true });
       this.readWaiters.push(waiter);
@@ -74,16 +85,18 @@ export class MessagePortByteStream implements ByteStream {
     const copy = data.slice();
     this.buffered += copy.length;
     await new Promise<void>((resolve, reject) => {
+      const onAbort = () => this.settleWrite(id, new SessionError("canceled"));
       this.writeWaiters.set(id, {
-        resolve: () => { this.buffered -= copy.length; resolve(); },
-        reject: (error) => { this.buffered -= copy.length; reject(error); },
+        bytes: copy.length,
+        ...(options.signal === undefined ? {} : { signal: options.signal, onAbort }),
+        resolve,
+        reject,
       });
+      options.signal?.addEventListener("abort", onAbort, { once: true });
       try {
         this.port.postMessage({ type: "chunk", id, data: copy.buffer } satisfies BridgeMessage, [copy.buffer]);
       } catch {
-        this.writeWaiters.delete(id);
-        this.buffered -= copy.length;
-        reject(new SessionError("operation_failed"));
+        this.settleWrite(id, new SessionError("operation_failed"));
       }
     });
     return data.length;
@@ -136,11 +149,7 @@ export class MessagePortByteStream implements ByteStream {
       return;
     }
     if (message.type === "ack" && Number.isSafeInteger(message.id)) {
-      const waiter = this.writeWaiters.get(message.id!);
-      if (waiter !== undefined) {
-        this.writeWaiters.delete(message.id!);
-        waiter.resolve();
-      }
+      this.settleWrite(message.id!);
       return;
     }
     if (message.type === "end") {
@@ -160,8 +169,7 @@ export class MessagePortByteStream implements ByteStream {
     this.reads.length = 0;
     this.readBuffered = 0;
     for (const waiter of this.readWaiters.splice(0)) waiter.resolve(null);
-    for (const waiter of this.writeWaiters.values()) waiter.reject(new SessionError("closed"));
-    this.writeWaiters.clear();
+    for (const id of [...this.writeWaiters.keys()]) this.settleWrite(id, new SessionError("closed"));
     this.port.close();
   }
 
@@ -172,9 +180,18 @@ export class MessagePortByteStream implements ByteStream {
     this.reads.length = 0;
     this.readBuffered = 0;
     for (const waiter of this.readWaiters.splice(0)) waiter.reject(error);
-    for (const waiter of this.writeWaiters.values()) waiter.reject(error);
-    this.writeWaiters.clear();
+    for (const id of [...this.writeWaiters.keys()]) this.settleWrite(id, error);
     this.port.close();
+  }
+
+  private settleWrite(id: number, error?: Error): void {
+    const waiter = this.writeWaiters.get(id);
+    if (waiter === undefined) return;
+    this.writeWaiters.delete(id);
+    waiter.signal?.removeEventListener("abort", waiter.onAbort!);
+    this.buffered = Math.max(0, this.buffered - waiter.bytes);
+    if (error === undefined) waiter.resolve();
+    else waiter.reject(error);
   }
 }
 
@@ -297,26 +314,54 @@ export type RegisterProxyControllerWindowOptions = Readonly<{
 
 export type ProxyControllerWindowHandle = Readonly<{ dispose(): void }>;
 
-async function bridgeStreams(runtimeStream: ByteStream, port: MessagePort): Promise<void> {
+async function bridgeStreams(runtimeStream: ByteStream, port: MessagePort, signal?: AbortSignal): Promise<void> {
   const bridge = new MessagePortByteStream(port);
+  const controller = new AbortController();
+  let resetTask: Promise<unknown> | undefined;
+  const resetBoth = () => {
+    resetTask ??= Promise.allSettled([
+      Promise.resolve().then(async () => await runtimeStream.reset()),
+      Promise.resolve().then(async () => await bridge.reset()),
+    ]);
+    return resetTask;
+  };
+  const abort = () => {
+    controller.abort(signal?.reason ?? new SessionError("canceled"));
+    void resetBoth();
+  };
+  if (signal?.aborted === true) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
   const left = (async () => {
     while (true) {
-      const chunk = await runtimeStream.read();
+      const chunk = await runtimeStream.read({ signal: controller.signal });
       if (chunk === null) { await bridge.closeWrite(); return; }
-      await bridge.write(chunk);
+      await bridge.write(chunk, { signal: controller.signal });
     }
-  })();
+  })().catch((error) => { controller.abort(error); void resetBoth(); throw error; });
   const right = (async () => {
     while (true) {
-      const chunk = await bridge.read();
+      const chunk = await bridge.read({ signal: controller.signal });
       if (chunk === null) { await runtimeStream.closeWrite(); return; }
       let offset = 0;
-      while (offset < chunk.length) offset += await runtimeStream.write(chunk.subarray(offset));
+      while (offset < chunk.length) offset += await runtimeStream.write(chunk.subarray(offset), { signal: controller.signal });
     }
-  })();
-  await Promise.all([left, right]);
-  await runtimeStream.close();
-  await bridge.close();
+  })().catch((error) => { controller.abort(error); void resetBoth(); throw error; });
+  try {
+    const settled = await Promise.allSettled([left, right]);
+    const failure = settled.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failure !== undefined) {
+      await resetBoth();
+      throw failure.reason;
+    }
+    try {
+      await Promise.all([runtimeStream.close(), bridge.close()]);
+    } catch (error) {
+      await resetBoth();
+      throw error;
+    }
+  } finally {
+    signal?.removeEventListener("abort", abort);
+  }
 }
 
 export function registerProxyControllerWindow(options: RegisterProxyControllerWindowOptions): ProxyControllerWindowHandle {
@@ -327,6 +372,7 @@ export function registerProxyControllerWindow(options: RegisterProxyControllerWi
   }
   const nonce = capability(options.capabilityNonce);
   let disposed = false;
+  const active = new Set<AbortController>();
   const onMessage = (event: MessageEvent) => {
     if (disposed || !allowed.has(event.origin) || (options.expectedSource !== undefined && event.source !== options.expectedSource)) return;
     if (nonce !== undefined && event.data?.capabilityNonce !== nonce) return;
@@ -340,6 +386,7 @@ export function registerProxyControllerWindow(options: RegisterProxyControllerWi
       void (async () => {
         let canceled = false;
         const openController = new AbortController();
+        active.add(openController);
         port.onmessage = (message) => {
           if ((message.data as BridgeMessage | undefined)?.type === "reset" ||
               (message.data as BridgeMessage | undefined)?.type === "close") {
@@ -358,16 +405,24 @@ export function registerProxyControllerWindow(options: RegisterProxyControllerWi
             return;
           }
           port.postMessage({ type: WEBSOCKET_ACK_MESSAGE, ok: true, protocol: opened.protocol });
-          await bridgeStreams(opened.stream, port);
+          await bridgeStreams(opened.stream, port, openController.signal);
         } catch {
-          port.postMessage({ type: WEBSOCKET_ACK_MESSAGE, ok: false });
+          try { port.postMessage({ type: WEBSOCKET_ACK_MESSAGE, ok: false }); } catch { /* Port is already closed. */ }
           port.close();
+        } finally {
+          active.delete(openController);
         }
       })();
     }
   };
   target.addEventListener("message", onMessage);
-  return Object.freeze({ dispose: () => { disposed = true; target.removeEventListener("message", onMessage); } });
+  return Object.freeze({
+    dispose: () => {
+      disposed = true;
+      target.removeEventListener("message", onMessage);
+      for (const controller of active) controller.abort(new SessionError("closed"));
+    },
+  });
 }
 
 export type ProxyAppServiceWorkerControlOptions = Readonly<{

@@ -1,6 +1,6 @@
 import type { RpcEnvelope, RpcError } from "./wire.js";
 import { DEFAULT_MAX_JSON_FRAME_BYTES, readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
-import { assertRpcEnvelope, assertRpcError } from "./validate.js";
+import { assertRpcEnvelope, assertRpcError, assertRpcTypeId } from "./validate.js";
 import { SDK_DEFAULTS } from "../defaults.js";
 
 // RpcHandler processes a request and returns a payload or error.
@@ -31,15 +31,15 @@ export class RpcRouter {
   private readonly notifyHandlers = new Map<number, Set<(payload: unknown) => void>>();
 
   register(typeId: number, handler: RpcHandler): void {
-    this.handlers.set(typeId >>> 0, handler);
+    this.handlers.set(assertRpcTypeId(typeId), handler);
   }
 
   handler(typeId: number): RpcHandler | undefined {
-    return this.handlers.get(typeId >>> 0);
+    return this.handlers.get(assertRpcTypeId(typeId));
   }
 
   onNotify(typeId: number, handler: (payload: unknown) => void): () => void {
-    const normalized = typeId >>> 0;
+    const normalized = assertRpcTypeId(typeId);
     const handlers = this.notifyHandlers.get(normalized) ?? new Set();
     handlers.add(handler);
     this.notifyHandlers.set(normalized, handlers);
@@ -50,7 +50,7 @@ export class RpcRouter {
   }
 
   async dispatchNotification(typeId: number, payload: unknown): Promise<void> {
-    const normalized = typeId >>> 0;
+    const normalized = assertRpcTypeId(typeId);
     const requestHandler = this.handlers.get(normalized);
     if (requestHandler !== undefined) await requestHandler(payload);
     for (const handler of [...(this.notifyHandlers.get(normalized) ?? [])]) {
@@ -100,7 +100,7 @@ export class RpcServer {
   async notify(typeId: number, payload: unknown): Promise<void> {
     if (this.closed) throw new Error("rpc server closed");
     await this.writeEnvelope({
-      type_id: typeId >>> 0,
+      type_id: assertRpcTypeId(typeId),
       request_id: 0,
       response_to: 0,
       payload,
@@ -117,6 +117,7 @@ export class RpcServer {
       return await new Promise<never>(() => undefined);
     }));
     let failure: unknown;
+    const aborted = abortPromise(signal);
     try {
       while (!this.closed) {
         if (signal?.aborted) throw signal.reason ?? new Error("aborted");
@@ -124,6 +125,7 @@ export class RpcServer {
           readJsonFrame(this.transport.readExactly, DEFAULT_MAX_JSON_FRAME_BYTES),
           this.terminalSignal.then((error) => { throw error; }),
           workerFailure,
+          ...(aborted === undefined ? [] : [aborted.promise]),
         ]);
         const v = assertRpcEnvelope(next);
         if (v.response_to !== 0) continue;
@@ -146,6 +148,8 @@ export class RpcServer {
     } catch (err) {
       failure = err;
       this.terminalError = err;
+    } finally {
+      aborted?.cleanup();
     }
     let closeError: unknown;
     try {
@@ -189,14 +193,24 @@ export class RpcServer {
       const work = await this.nextWork(this.requests, this.requestWaiters);
       if (work == null) return;
       const v = work.envelope;
-      const h = this.router.handler(v.type_id);
-      let out: Awaited<ReturnType<RpcHandler>>;
-      if (h == null) out = { payload: null, error: { code: 404, message: "handler not found" } };
-      else {
-        try { out = await h(v.payload); }
-        catch { out = { payload: null, error: { code: 500, message: "internal error" } }; }
-      }
       try {
+        const h = this.router.handler(v.type_id);
+        let out: Awaited<ReturnType<RpcHandler>>;
+        if (h == null) out = { payload: null, error: { code: 404, message: "handler not found" } };
+        else {
+          const outcome = await Promise.race([
+            Promise.resolve().then(() => h(v.payload)).then(
+              (value) => ({ kind: "completed" as const, value }),
+              () => ({
+                kind: "completed" as const,
+                value: { payload: null, error: { code: 500, message: "internal error" } } as const,
+              }),
+            ),
+            this.terminalSignal.then(() => ({ kind: "terminated" as const })),
+          ]);
+          if (outcome.kind === "terminated") return;
+          out = outcome.value;
+        }
         if (this.closed) return;
         await this.writeResponse(v, out);
       } finally {
@@ -210,7 +224,11 @@ export class RpcServer {
       const work = await this.nextWork(this.notifications, this.notificationWaiters);
       if (work == null) return;
       const v = work.envelope;
-      await this.router.dispatchNotification(v.type_id, v.payload);
+      const completed = await Promise.race([
+        Promise.resolve().then(() => this.router.dispatchNotification(v.type_id, v.payload)).then(() => true),
+        this.terminalSignal.then(() => false),
+      ]);
+      if (!completed) return;
     }
   }
 
@@ -244,7 +262,7 @@ export class RpcServer {
   }
 
   private async writeEnvelope(envelope: RpcEnvelope): Promise<void> {
-    const write = this.writeChain.then(() => writeJsonFrame(this.transport.write, envelope));
+    const write = this.writeChain.then(() => writeJsonFrame(this.transport.write, envelope, DEFAULT_MAX_JSON_FRAME_BYTES));
     this.writeChain = write;
     try {
       await write;
@@ -253,6 +271,16 @@ export class RpcServer {
       throw error;
     }
   }
+}
+
+function abortPromise(signal: AbortSignal | undefined): Readonly<{ promise: Promise<never>; cleanup(): void }> | undefined {
+  if (signal === undefined || signal.aborted) return undefined;
+  let onAbort!: () => void;
+  const promise = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason ?? new Error("aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  return { promise, cleanup: () => signal.removeEventListener("abort", onAbort) };
 }
 
 function positiveInteger(value: number, name: string): number {
