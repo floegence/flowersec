@@ -389,6 +389,9 @@ public actor ConnectionController {
         break
       } catch let sourceFailure as ArtifactSourceFailure {
         let sourceAttemptFailure = ConnectionAttemptFailure.artifactSource(sourceFailure)
+        guard validRetryDisposition(sourceFailure.disposition) else {
+          return .terminal(.connection(.artifactInvalid))
+        }
         guard
           await scheduleRetry(
             after: sourceAttemptFailure, failures: &failures, attempts: attempts)
@@ -570,6 +573,10 @@ public actor ConnectionController {
     dispositionOverride: RetryDispositionV3? = nil
   ) async -> Bool {
     let disposition = dispositionOverride ?? attemptFailure.retryDisposition
+    guard validRetryDisposition(disposition) else {
+      fail(.connection(.artifactInvalid))
+      return false
+    }
     guard disposition != .terminal else {
       fail(attemptFailure)
       return false
@@ -660,6 +667,11 @@ public actor ConnectionController {
 
   nonisolated private func validRetryAfter(_ deadline: UInt64) -> Bool {
     deadline <= 253_402_300_799_999
+  }
+
+  nonisolated private func validRetryDisposition(_ disposition: RetryDispositionV3) -> Bool {
+    guard case .retryAfter(let deadline) = disposition else { return true }
+    return validRetryAfter(deadline)
   }
 
   nonisolated private func terminalFailure(

@@ -257,6 +257,32 @@ final class ConnectionControllerTests: XCTestCase {
     }
   }
 
+  func testReplacementInvalidRetryAfterWinsAtAttemptExhaustion() async throws {
+    let retired = AsyncCounterV3()
+    let source = ResultArtifactSourceV3([
+      .success(try lease(artifact: artifactV3(), retired: retired)),
+      .failure(
+        ArtifactSourceFailure(disposition: .retryAfter(253_402_300_800_000))),
+    ])
+    let controller = try ConnectionController(
+      source: source,
+      maximumAttempts: 2,
+      connectOneShot: { _, _ in throw ConnectError.transportSecurityFailed }
+    )
+
+    await controller.start()
+    let failed = await waitForState(.failed, controller: controller)
+    let snapshot = await controller.snapshot()
+    let acquisitions = await source.acquisitions
+    let retirements = await retired.value
+    XCTAssertTrue(failed)
+    XCTAssertEqual(snapshot.failure, .connection(.artifactInvalid))
+    XCTAssertEqual(snapshot.retryDisposition, .terminal)
+    XCTAssertEqual(acquisitions, 2)
+    XCTAssertEqual(retirements, 1)
+    await controller.close()
+  }
+
   func testBrowserOpaquePinFailureRefreshesOnceAndKeepsConnectionError() async throws {
     let expected = try controllerExpectedV3("browser-opaque-exhausted")
     let retired = AsyncCounterV3()
@@ -607,7 +633,7 @@ final class ConnectionControllerTests: XCTestCase {
       let source = ResultArtifactSourceV3([
         .failure(ArtifactSourceFailure(disposition: .retryAfter(deadline)))
       ])
-      let controller = try ConnectionController(source: source)
+      let controller = try ConnectionController(source: source, maximumAttempts: 1)
 
       await controller.start()
       let failed = await waitForState(.failed, controller: controller)
