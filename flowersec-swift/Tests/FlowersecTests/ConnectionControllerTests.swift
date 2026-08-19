@@ -81,6 +81,94 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertTrue(retirementCancelled)
   }
 
+  func testSpendCancellationDoesNotWaitForUncooperativeCallback() async throws {
+    let gate = UncooperativeSpendGateV3()
+    let lease = ArtifactLeaseV3(
+      artifact: try artifactV3(),
+      commitSpend: { await gate.wait() })
+    let claimed = try await lease.claim()
+    let finished = AsyncFlagV3()
+    let cancellationObserved = AsyncFlagV3()
+    let spending = Task {
+      do {
+        try await claimed.commitSpend()
+      } catch is CancellationError {
+        await cancellationObserved.set()
+      } catch {
+        XCTFail("unexpected spend error: \(error)")
+      }
+      await finished.set()
+    }
+
+    let spendStarted = await waitUntilV3 { await gate.started }
+    XCTAssertTrue(spendStarted)
+    spending.cancel()
+    let returnedBeforeRelease = await waitUntilV3(timeout: .milliseconds(500)) {
+      await finished.value
+    }
+    let canceledBeforeRelease = await cancellationObserved.value
+    let consumedBeforeRelease = await claimed.isConsumed
+    await gate.release()
+    _ = await spending.result
+
+    XCTAssertTrue(returnedBeforeRelease)
+    XCTAssertTrue(canceledBeforeRelease)
+    XCTAssertTrue(consumedBeforeRelease)
+    do {
+      _ = try await lease.claim()
+      XCTFail("a canceled spend must leave the lease unavailable")
+    } catch {
+      XCTAssertEqual(error as? ArtifactLeaseErrorV3, .unavailable)
+    }
+  }
+
+  func testCloseDoesNotWaitForUncooperativeSpendCallback() async throws {
+    let gate = UncooperativeSpendGateV3()
+    let cancellationObserved = AsyncFlagV3()
+    let tracked = ArtifactLeaseV3(
+      artifact: try artifactV3(),
+      commitSpend: { await gate.wait() })
+    let source = SequenceArtifactSourceV3([tracked])
+    let controller = try ConnectionController(
+      source: source,
+      connectOneShot: { lease, _ in
+        let claimed = try await lease.claim()
+        do {
+          try await claimed.commitSpend()
+        } catch is CancellationError {
+          await cancellationObserved.set()
+          throw CancellationError()
+        }
+        return ControllerSessionV3()
+      })
+    await controller.start()
+    let spendStarted = await waitUntilV3 { await gate.started }
+    XCTAssertTrue(spendStarted)
+
+    let closeFinished = AsyncFlagV3()
+    let closing = Task {
+      await controller.close()
+      await closeFinished.set()
+    }
+    let returnedBeforeRelease = await waitUntilV3(timeout: .milliseconds(500)) {
+      await closeFinished.value
+    }
+    let canceledBeforeRelease = await cancellationObserved.value
+    let snapshotBeforeRelease = await controller.snapshot()
+    await gate.release()
+    await closing.value
+
+    XCTAssertTrue(returnedBeforeRelease)
+    XCTAssertTrue(canceledBeforeRelease)
+    XCTAssertEqual(snapshotBeforeRelease.state, .closed)
+    do {
+      _ = try await tracked.claim()
+      XCTFail("the spend attempt must consume the controller lease")
+    } catch {
+      XCTAssertEqual(error as? ArtifactLeaseErrorV3, .unavailable)
+    }
+  }
+
   func testV3ControllerVectorsAndBackoffAreOwnedByTheDefaultController() throws {
     let root = try controllerVectorsV3()
     XCTAssertEqual(root["version"] as? Int, 3)
@@ -105,7 +193,8 @@ final class ConnectionControllerTests: XCTestCase {
       let driver = try XCTUnwrap(scenario["driver"] as? String)
       switch driver {
       case "policy-replacement", "candidate-capability-filter", "replacement-expiry",
-        "replacement-acquisition", "post-spend-retry", "lease-cancel-race", "attempt-exhaustion", "retry-after-clock",
+        "replacement-acquisition", "post-spend-retry", "lease-cancel-race",
+        "attempt-exhaustion", "retry-after-clock",
         "candidate-failure-aggregation", "failure-ordinal", "expiry-boundary", "cycle-reset",
         "retry-clock-boundary", "candidate-security-aggregation", "multi-trigger-replacement",
         "retire-cleanup", "quota-preservation", "attempt-saturation", "capability-barrier",
@@ -620,7 +709,8 @@ final class ConnectionControllerTests: XCTestCase {
   }
 
   func testExpiredReplacementBeforeRaceReturnsToPrimary() async throws {
-    try await runExpiredReplacementVector("replacement-expired-before-race-returns-primary", beforeRace: true)
+    try await runExpiredReplacementVector(
+      "replacement-expired-before-race-returns-primary", beforeRace: true)
   }
 
   private func runExpiredReplacementVector(_ id: String, beforeRace: Bool) async throws {
@@ -629,7 +719,9 @@ final class ConnectionControllerTests: XCTestCase {
     let spent = AsyncCounterV3()
     let source = SequenceArtifactSourceV3([
       try lease(artifact: artifactV3(), spent: spent, retired: retired),
-      try lease(artifact: beforeRace ? expiredArtifactV3() : changedPinArtifactV3(), spent: spent, retired: retired),
+      try lease(
+        artifact: beforeRace ? expiredArtifactV3() : changedPinArtifactV3(), spent: spent,
+        retired: retired),
       try lease(artifact: changedPinArtifactV3(), spent: spent, retired: retired),
     ])
     let calls = AsyncCounterV3()
@@ -1920,6 +2012,25 @@ private actor CancellationAwareRetireGateV3 {
       await Task.yield()
     }
     return entered
+  }
+}
+
+private actor UncooperativeSpendGateV3 {
+  private(set) var started = false
+  private var released = false
+  private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    started = true
+    guard !released else { return }
+    await withCheckedContinuation { releaseWaiters.append($0) }
+  }
+
+  func release() {
+    released = true
+    let currentReleaseWaiters = releaseWaiters
+    releaseWaiters.removeAll()
+    for waiter in currentReleaseWaiters { waiter.resume() }
   }
 }
 

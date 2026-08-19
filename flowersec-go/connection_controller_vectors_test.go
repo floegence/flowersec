@@ -2,7 +2,9 @@ package flowersec
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync/atomic"
 	"testing"
@@ -382,31 +384,67 @@ func runControllerVectorSecurityPriority(t *testing.T, scenario controllerVector
 	if !scenario.Expected.OrderIndependent || len(scenario.Input.Permutations) == 0 {
 		t.Fatal("security-priority vector must require non-empty order-independent permutations")
 	}
-	for _, permutation := range scenario.Input.Permutations {
-		securityFailure := false
-		for _, result := range permutation {
-			securityFailure = securityFailure || result == "tls_failed"
-		}
-		if !securityFailure {
-			t.Fatalf("permutation %v has no security failure", permutation)
-		}
+	for index, permutation := range scenario.Input.Permutations {
+		permutation := append([]string(nil), permutation...)
+		t.Run(fmt.Sprintf("permutation-%d", index), func(t *testing.T) {
+			artifact := mustParseInternalFixtureArtifact(t)
+			value := *artifact.value
+			value.Path.Candidates = append([]artifactv3.Candidate(nil), artifact.value.Path.Candidates[:len(permutation)]...)
+			lease := newControllerVectorLease(t, Artifact{value: &value})
+			source := &controllerTestSource{results: []controllerAcquireResult{{lease: lease.lease}}}
+			controller := newControllerForTest(t, source, 1)
+
+			results := make(map[string]string, len(permutation))
+			delays := make(map[string]time.Duration, len(permutation))
+			for order, result := range permutation {
+				candidate := value.Path.Candidates[order]
+				results[candidate.ID] = result
+				delays[candidate.ID] = time.Duration(order+1) * 5 * time.Millisecond
+			}
+			var transports atomic.Int32
+			dial := func(ctx context.Context, candidate artifactv3.Candidate, _ artifactv3.SessionContract, _ time.Time) (candidatev3.ReadyCarrier, error) {
+				transports.Add(1)
+				timer := time.NewTimer(delays[candidate.ID])
+				defer timer.Stop()
+				select {
+				case <-ctx.Done():
+					return nil, context.Cause(ctx)
+				case <-timer.C:
+				}
+				switch results[candidate.ID] {
+				case "tls_failed":
+					return nil, x509.CertificateInvalidError{Cert: &x509.Certificate{}, Reason: x509.Expired}
+				case "tls_unsupported":
+					_, err := transportsecurity.SnapshotPolicy(artifactv3.TLSPolicy{}, time.Now())
+					return nil, err
+				case "connection_failed":
+					return nil, errors.New("candidate connection failed")
+				default:
+					return nil, fmt.Errorf("unknown candidate result %q", results[candidate.ID])
+				}
+			}
+			factory, err := candidatev3.NewFactory(map[artifactv3.Carrier]candidatev3.Dial{
+				artifactv3.CarrierWebSocket: dial, artifactv3.CarrierRawQUIC: dial, artifactv3.CarrierWebTransport: dial,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			controller.connectDetailed = func(ctx context.Context, claimed claimedArtifactLease, _ ConnectorOptions, _ map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome) {
+				inner := connectv3.NewConnector(connectv3.ArtifactLease{
+					Artifact: *claimed.lease.artifact.value, CommitSpend: claimed.lease.commitSpend,
+				}, factory)
+				_, internalErr := inner.Connect(ctx)
+				return nil, analyzeControllerConnectOutcome(claimed, internalErr)
+			}
+			controller.Start(context.Background())
+			waitControllerState(t, controller, ConnectionFailed)
+			assertControllerVectorObserved(t, scenario.Expected, controllerVectorObservation(
+				controller, source.callCount(), len(permutation), int(transports.Load()), 0,
+				[]*controllerVectorLease{lease}, nil,
+			))
+			closeController(t, controller)
+		})
 	}
-	lease := newControllerVectorLease(t, controllerPolicyArtifact(t,
-		controllerPinPolicy("ERERERERERERERERERERERERERERERERERERERERERE")))
-	source := &controllerTestSource{results: []controllerAcquireResult{{lease: lease.lease}}}
-	controller := newControllerForTest(t, source, 1)
-	var connects atomic.Int32
-	controller.connectDetailed = func(context.Context, claimedArtifactLease, ConnectorOptions, map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome) {
-		connects.Add(int32(len(scenario.Input.Permutations[0])))
-		return nil, controllerConnectOutcome{err: &ConnectError{code: ConnectTransportSecurityFailed}}
-	}
-	controller.Start(context.Background())
-	waitControllerState(t, controller, ConnectionFailed)
-	assertControllerVectorObserved(t, scenario.Expected, controllerVectorObservation(
-		controller, source.callCount(), int(connects.Load()), int(connects.Load()), 0,
-		[]*controllerVectorLease{lease}, nil,
-	))
-	closeController(t, controller)
 }
 
 func runControllerVectorExtended(t *testing.T, scenario controllerVectorScenario) {

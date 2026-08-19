@@ -26,7 +26,8 @@ use crate::{
     tls_v3::NativeTlsPolicyV3,
     transport_v2::Session,
     transport_v3::{
-        CarrierSessionV3, CarrierStreamV3, PathKind, SessionRole, carrier_inbound_stream_limit_v3,
+        ALPN_DIRECT_V3, ALPN_TUNNEL_V3, CarrierSessionV3, CarrierStreamV3, PathKind, SessionRole,
+        carrier_inbound_stream_limit_v3,
     },
     websocket_v2::{self, SUBPROTOCOL_DIRECT_V3, SUBPROTOCOL_TUNNEL_V3, WebSocketError},
 };
@@ -198,9 +199,6 @@ impl ConnectorOptions {
 }
 
 const MAX_FSA3_BYTES: usize = 72;
-const ALPN_DIRECT_V3: &[u8] = b"flowersec-direct/3";
-const ALPN_TUNNEL_V3: &[u8] = b"flowersec-tunnel/3";
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CandidateFailureV3 {
     InvalidArtifact,
@@ -405,17 +403,20 @@ pub(crate) async fn connect_v3_with_cancellation_and_preparer(
         return Err(error);
     }
     let _ = claimed.retire().await;
-    Err(public_error(match aggregate {
-        CandidateFailureV3::InvalidArtifact => ConnectErrorCode::ArtifactInvalid,
-        CandidateFailureV3::Unsupported => ConnectErrorCode::TransportSecurityUnsupported,
-        CandidateFailureV3::PolicyExpired | CandidateFailureV3::Security => {
-            ConnectErrorCode::TransportSecurityFailed
+    let error = match aggregate {
+        CandidateFailureV3::InvalidArtifact => public_error(ConnectErrorCode::ArtifactInvalid),
+        CandidateFailureV3::Unsupported => {
+            public_error(ConnectErrorCode::TransportSecurityUnsupported)
         }
-        CandidateFailureV3::Canceled
-        | CandidateFailureV3::Timeout
-        | CandidateFailureV3::Connection => ConnectErrorCode::ConnectionFailed,
-    })
-    .with_v3_candidate_masks(policy_trigger_mask, failed_candidate_mask))
+        CandidateFailureV3::PolicyExpired | CandidateFailureV3::Security => {
+            public_error(ConnectErrorCode::TransportSecurityFailed)
+        }
+        CandidateFailureV3::Canceled => terminal_error(ConnectErrorCode::ConnectionFailed),
+        CandidateFailureV3::Timeout | CandidateFailureV3::Connection => {
+            public_error(ConnectErrorCode::ConnectionFailed)
+        }
+    };
+    Err(error.with_v3_candidate_masks(policy_trigger_mask, failed_candidate_mask))
 }
 
 async fn prepare_candidate(
@@ -1010,6 +1011,28 @@ mod tests {
 
     struct HangingCandidatePreparer {
         entered: Arc<tokio::sync::Notify>,
+    }
+
+    struct FailingCandidatePreparer {
+        failures: Vec<(&'static str, CandidateFailureV3)>,
+    }
+
+    impl CandidatePreparerV3 for FailingCandidatePreparer {
+        fn prepare<'a>(
+            &'a self,
+            candidate: &'a CanonicalCandidateV3,
+            _plan: &'a ConnectionPlanV3,
+            _options: &'a ConnectorOptions,
+            _deadline: tokio::time::Instant,
+            _cancellation: &'a CancellationToken,
+        ) -> CandidatePrepareFutureV3<'a> {
+            let failure = self
+                .failures
+                .iter()
+                .find_map(|(id, failure)| (candidate.id == *id).then_some(*failure))
+                .expect("test candidate has a configured failure");
+            Box::pin(async move { Err(failure) })
+        }
     }
 
     impl CandidatePreparerV3 for HangingCandidatePreparer {
@@ -1654,6 +1677,108 @@ mod tests {
         .await
         .expect("dropped one-shot did not run retire cleanup");
         assert!(reusable.claim().is_err(), "dropped claim became reusable");
+    }
+
+    #[tokio::test]
+    async fn canceled_candidate_failure_is_terminal_for_the_controller() {
+        let artifact = artifact_with_candidates(vec![json!({
+            "carrier": "raw_quic",
+            "id": "canceled",
+            "tls": {"mode": "ca"},
+            "url": "quic://127.0.0.1:443",
+            "wire_profile": "flowersec-direct/3"
+        })]);
+        let error = connect_v3_with_cancellation_and_preparer(
+            ArtifactLeaseV3::new(artifact, || async { Ok(()) }),
+            ConnectorOptions::new(),
+            CancellationToken::new(),
+            &FailingCandidatePreparer {
+                failures: vec![("canceled", CandidateFailureV3::Canceled)],
+            },
+        )
+        .await
+        .expect_err("canceled candidate preparation unexpectedly connected");
+
+        assert_eq!(error.code(), ConnectErrorCode::ConnectionFailed);
+        assert!(!error.controller_retryable());
+    }
+
+    #[tokio::test]
+    async fn cancellation_dominates_mixed_candidate_failures_and_is_terminal() {
+        let artifact = artifact_with_candidates(vec![
+            json!({
+                "carrier": "raw_quic",
+                "id": "security",
+                "tls": {"mode": "ca"},
+                "url": "quic://127.0.0.1:443",
+                "wire_profile": "flowersec-direct/3"
+            }),
+            json!({
+                "carrier": "raw_quic",
+                "id": "timeout",
+                "tls": {"mode": "ca"},
+                "url": "quic://127.0.0.1:444",
+                "wire_profile": "flowersec-direct/3"
+            }),
+            json!({
+                "carrier": "raw_quic",
+                "id": "connection",
+                "tls": {"mode": "ca"},
+                "url": "quic://127.0.0.1:445",
+                "wire_profile": "flowersec-direct/3"
+            }),
+            json!({
+                "carrier": "raw_quic",
+                "id": "canceled",
+                "tls": {"mode": "ca"},
+                "url": "quic://127.0.0.1:446",
+                "wire_profile": "flowersec-direct/3"
+            }),
+        ]);
+        let error = connect_v3_with_cancellation_and_preparer(
+            ArtifactLeaseV3::new(artifact, || async { Ok(()) }),
+            ConnectorOptions::new(),
+            CancellationToken::new(),
+            &FailingCandidatePreparer {
+                failures: vec![
+                    ("security", CandidateFailureV3::Security),
+                    ("timeout", CandidateFailureV3::Timeout),
+                    ("connection", CandidateFailureV3::Connection),
+                    ("canceled", CandidateFailureV3::Canceled),
+                ],
+            },
+        )
+        .await
+        .expect_err("mixed candidate failures unexpectedly connected");
+
+        assert_eq!(error.code(), ConnectErrorCode::ConnectionFailed);
+        assert!(!error.controller_retryable());
+    }
+
+    #[tokio::test]
+    async fn timeout_and_connection_candidate_failures_remain_controller_retryable() {
+        for failure in [CandidateFailureV3::Timeout, CandidateFailureV3::Connection] {
+            let artifact = artifact_with_candidates(vec![json!({
+                "carrier": "raw_quic",
+                "id": "failed",
+                "tls": {"mode": "ca"},
+                "url": "quic://127.0.0.1:443",
+                "wire_profile": "flowersec-direct/3"
+            })]);
+            let error = connect_v3_with_cancellation_and_preparer(
+                ArtifactLeaseV3::new(artifact, || async { Ok(()) }),
+                ConnectorOptions::new(),
+                CancellationToken::new(),
+                &FailingCandidatePreparer {
+                    failures: vec![("failed", failure)],
+                },
+            )
+            .await
+            .expect_err("failed candidate preparation unexpectedly connected");
+
+            assert_eq!(error.code(), ConnectErrorCode::ConnectionFailed);
+            assert!(error.controller_retryable(), "{failure:?}");
+        }
     }
 
     #[test]

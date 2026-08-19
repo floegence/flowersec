@@ -126,12 +126,20 @@ describe("transport v3 session connector", () => {
     try {
       const spend = vi.fn(async () => undefined);
       const retire = vi.fn(async () => undefined);
+      const lateClose = vi.fn(async () => await new Promise<void>(() => undefined));
+      const lateAbort = vi.fn();
+      let dialSignal: AbortSignal | undefined;
+      let resolveDial!: (ready: ReadyAdmissionTransportV3) => void;
+      const dial = new Promise<ReadyAdmissionTransportV3>((resolve) => { resolveDial = resolve; });
       const lease = createArtifactLeaseV3Internal(connectorArtifact, spend, retire);
       const connecting = connectArtifactLeaseV3(lease, {
         capabilitySnapshot: detectNodeRuntimeCapabilityV3,
         protocolRuntime: nodeSessionRuntimeV3,
         nowUnixSeconds: () => 1_900_000_000,
-        dial: async () => await new Promise<ReadyAdmissionTransportV3>(() => undefined),
+        dial: async (_candidate, _artifact, _attemptNow, _capability, signal) => {
+          dialSignal = signal;
+          return await dial;
+        },
       });
       const rejected = expect(connecting).rejects.toMatchObject({
         code: "connection_failed",
@@ -144,6 +152,21 @@ describe("transport v3 session connector", () => {
       expect(spend).not.toHaveBeenCalled();
       expect(retire).toHaveBeenCalledOnce();
       expect(artifactLeaseStateV3(lease)).toBe("retired");
+      expect(dialSignal?.aborted).toBe(true);
+
+      resolveDial({
+        candidate: connectorArtifact.path.candidates[0]!,
+        openAdmissionChannel: async () => { throw new Error("late dial must not open admission"); },
+        finalize: () => { throw new Error("late dial must not finalize"); },
+        close: lateClose,
+        abort: lateAbort,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(lateClose).toHaveBeenCalledOnce();
+      expect(lateAbort).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(SDK_DEFAULTS.transport.connectTimeoutMs);
+      expect(lateClose).toHaveBeenCalledOnce();
+      expect(lateAbort).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
     }
@@ -285,6 +308,67 @@ describe("transport v3 session connector", () => {
     expect(dial).not.toHaveBeenCalled();
     expect(spend).not.toHaveBeenCalled();
     expect(artifactLeaseStateV3(lease)).toBe("retired");
+  });
+
+  test("cleans a transport that resolves after caller cancellation exactly once", async () => {
+    const controller = new AbortController();
+    const addEventListener = vi.spyOn(controller.signal, "addEventListener");
+    const removeEventListener = vi.spyOn(controller.signal, "removeEventListener");
+    const lateClose = vi.fn(async () => await new Promise<void>(() => undefined));
+    const lateAbort = vi.fn();
+    const spend = vi.fn(async () => undefined);
+    const retire = vi.fn(async () => undefined);
+    let dialSignal: AbortSignal | undefined;
+    let markDialStarted!: () => void;
+    let resolveDial!: (ready: ReadyAdmissionTransportV3) => void;
+    const dialStarted = new Promise<void>((resolve) => { markDialStarted = resolve; });
+    const dial = new Promise<ReadyAdmissionTransportV3>((resolve) => { resolveDial = resolve; });
+    const lease = createArtifactLeaseV3Internal(connectorArtifact, spend, retire);
+    const connecting = connectArtifactLeaseV3(lease, {
+      capabilitySnapshot: detectNodeRuntimeCapabilityV3,
+      protocolRuntime: nodeSessionRuntimeV3,
+      nowUnixSeconds: () => 1_900_000_000,
+      dial: async (_candidate, _artifact, _attemptNow, _capability, signal) => {
+        dialSignal = signal;
+        markDialStarted();
+        return await dial;
+      },
+    }, controller.signal);
+
+    await dialStarted;
+    controller.abort(new Error("caller canceled"));
+    await expect(connecting).rejects.toMatchObject({
+      code: "connection_failed",
+      disposition: { kind: "terminal" },
+    });
+
+    expect(spend).not.toHaveBeenCalled();
+    expect(retire).toHaveBeenCalledOnce();
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
+    expect(dialSignal?.aborted).toBe(true);
+    const callerAbortListeners = addEventListener.mock.calls
+      .filter(([type]) => type === "abort")
+      .map(([, listener]) => listener);
+    expect(callerAbortListeners.length).toBeGreaterThan(0);
+    for (const listener of callerAbortListeners) {
+      expect(removeEventListener.mock.calls.some(([type, removed]) =>
+        type === "abort" && removed === listener)).toBe(true);
+    }
+
+    resolveDial({
+      candidate: connectorArtifact.path.candidates[0]!,
+      openAdmissionChannel: async () => { throw new Error("late dial must not open admission"); },
+      finalize: () => { throw new Error("late dial must not finalize"); },
+      close: lateClose,
+      abort: lateAbort,
+    });
+    await vi.waitFor(() => {
+      expect(lateClose).toHaveBeenCalledOnce();
+      expect(lateAbort).toHaveBeenCalledOnce();
+    });
+    await Promise.resolve();
+    expect(lateClose).toHaveBeenCalledOnce();
+    expect(lateAbort).toHaveBeenCalledOnce();
   });
 
   test("rejects an invalid Node connection timeout before claiming or spending", async () => {

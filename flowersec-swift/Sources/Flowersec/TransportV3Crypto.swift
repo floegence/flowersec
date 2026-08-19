@@ -351,27 +351,27 @@ enum TransportV3Crypto {
 
     var epochSecret = expand(
       pseudoRandomKey: sessionPRK,
-      info: labelWith("flowersec v3 epoch zero", Data([direction.rawValue])),
+      info: labelWith(TransportV3Contract.epochZeroLabel, Data([direction.rawValue])),
       outputByteCount: 32
     )
     var controlRoot = expand(
       pseudoRandomKey: epochSecret,
-      info: labelWith("flowersec v3 control root"),
+      info: labelWith(TransportV3Contract.controlRootLabel),
       outputByteCount: 32
     )
     var streamRoot = expand(
       pseudoRandomKey: epochSecret,
-      info: labelWith("flowersec v3 stream root"),
+      info: labelWith(TransportV3Contract.streamRootLabel),
       outputByteCount: 32
     )
     var setupRoot = expand(
       pseudoRandomKey: epochSecret,
-      info: labelWith("flowersec v3 setup root"),
+      info: labelWith(TransportV3Contract.setupRootLabel),
       outputByteCount: 32
     )
     var rekeyRoot = expand(
       pseudoRandomKey: epochSecret,
-      info: labelWith("flowersec v3 rekey root"),
+      info: labelWith(TransportV3Contract.rekeyRootLabel),
       outputByteCount: 32
     )
     let roots = EpochRootsV3(
@@ -410,7 +410,7 @@ enum TransportV3Crypto {
     var secret = expand(
       pseudoRandomKey: streamRoot,
       info: labelWith(
-        "flowersec v3 stream",
+        TransportV3Contract.streamLabel,
         h3,
         streamID,
         Data([direction.rawValue]),
@@ -420,12 +420,12 @@ enum TransportV3Crypto {
     )
     var recordKey = expand(
       pseudoRandomKey: secret,
-      info: labelWith("flowersec v3 record key"),
+      info: labelWith(TransportV3Contract.recordKeyLabel),
       outputByteCount: 32
     )
     var noncePrefix = expand(
       pseudoRandomKey: secret,
-      info: labelWith("flowersec v3 nonce"),
+      info: labelWith(TransportV3Contract.nonceLabel),
       outputByteCount: 4
     )
     let material = RecordMaterialV3(
@@ -447,7 +447,7 @@ enum TransportV3Crypto {
   ) throws -> RecordMaterialV3 {
     try deriveRecordMaterial(
       root: controlRoot,
-      label: "flowersec v3 control",
+      label: TransportV3Contract.controlLabel,
       h3: h3,
       logicalStreamID: 0,
       direction: direction,
@@ -469,7 +469,7 @@ enum TransportV3Crypto {
     return expand(
       pseudoRandomKey: rekeyRoot,
       info: labelWith(
-        "flowersec v3 next epoch",
+        TransportV3Contract.nextEpochLabel,
         h3,
         Data([direction.rawValue]),
         epoch
@@ -486,22 +486,22 @@ enum TransportV3Crypto {
       epochSecret: epochSecret,
       controlRoot: expand(
         pseudoRandomKey: epochSecret,
-        info: labelWith("flowersec v3 control root"),
+        info: labelWith(TransportV3Contract.controlRootLabel),
         outputByteCount: 32
       ),
       streamRoot: expand(
         pseudoRandomKey: epochSecret,
-        info: labelWith("flowersec v3 stream root"),
+        info: labelWith(TransportV3Contract.streamRootLabel),
         outputByteCount: 32
       ),
       setupRoot: expand(
         pseudoRandomKey: epochSecret,
-        info: labelWith("flowersec v3 setup root"),
+        info: labelWith(TransportV3Contract.setupRootLabel),
         outputByteCount: 32
       ),
       rekeyRoot: expand(
         pseudoRandomKey: epochSecret,
-        info: labelWith("flowersec v3 rekey root"),
+        info: labelWith(TransportV3Contract.rekeyRootLabel),
         outputByteCount: 32
       )
     )
@@ -520,23 +520,23 @@ enum TransportV3Crypto {
     epochBytes.appendUInt32BE(epoch)
     var root = expand(
       pseudoRandomKey: epochSecret,
-      info: labelWith("flowersec v3 unreliable root"),
+      info: labelWith(TransportV3Contract.unreliableRootLabel),
       outputByteCount: 32
     )
     var secret = expand(
       pseudoRandomKey: root,
       info: labelWith(
-        "flowersec v3 unreliable", h3, Data([direction.rawValue]), epochBytes),
+        TransportV3Contract.unreliableLabel, h3, Data([direction.rawValue]), epochBytes),
       outputByteCount: 32
     )
     var recordKey = expand(
       pseudoRandomKey: secret,
-      info: labelWith("flowersec v3 unreliable key"),
+      info: labelWith(TransportV3Contract.unreliableKeyLabel),
       outputByteCount: 32
     )
     var noncePrefix = expand(
       pseudoRandomKey: secret,
-      info: labelWith("flowersec v3 unreliable nonce"),
+      info: labelWith(TransportV3Contract.unreliableNonceLabel),
       outputByteCount: 4
     )
     let material = UnreliableMaterialV3(
@@ -622,7 +622,7 @@ enum TransportV3Crypto {
     var streamID = Data()
     streamID.appendUInt64BE(logicalStreamID)
     return try labelWith(
-      "flowersec-v3-record",
+      TransportV3Contract.recordDomain,
       h3,
       streamID,
       Data([direction.rawValue]),
@@ -742,7 +742,7 @@ enum TransportV3Crypto {
   ) throws -> Data {
     guard h3.count == 32 else { throw TransportV3CryptoError.invalidKeyMaterial }
     return try labelWith(
-      "flowersec-v3-unreliable", h3, Data([direction.rawValue]), header.encoded())
+      TransportV3Contract.unreliableDomain, h3, Data([direction.rawValue]), header.encoded())
   }
 
   static func sealUnreliable(
@@ -824,7 +824,7 @@ enum TransportV3Crypto {
   }
 
   private static func setupMACMessage(h3: Data, preface: SetupPrefaceV3) throws -> Data {
-    var message = labelWith("flowersec-v3-setup")
+    var message = labelWith(TransportV3Contract.setupDomain)
     message.append(h3)
     message.append(try preface.encoded().prefix(24))
     return message
@@ -860,12 +860,12 @@ enum TransportV3Crypto {
       secret: secret,
       recordKey: expand(
         pseudoRandomKey: secret,
-        info: labelWith("flowersec v3 record key"),
+        info: labelWith(TransportV3Contract.recordKeyLabel),
         outputByteCount: 32
       ),
       noncePrefix: expand(
         pseudoRandomKey: secret,
-        info: labelWith("flowersec v3 nonce"),
+        info: labelWith(TransportV3Contract.nonceLabel),
         outputByteCount: 4
       )
     )

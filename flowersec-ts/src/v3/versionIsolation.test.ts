@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { base64urlDecode } from "../utils/base64url.js";
 import { assertRpcEnvelope } from "../rpc/validate.js";
 import {
   canonicalizeCandidatesV3,
+  decodeArtifactV3JSON,
   decodeFSA3ResponseV3,
   decodeFSB3RequestV3,
 } from "./artifact.js";
@@ -24,6 +25,21 @@ import {
   sealUnreliableMessageDatagramV3,
 } from "./unreliableMessage.js";
 import type { DirectionV3, CipherSuiteV3 } from "./protocol.js";
+import { readyWebSocketAdmissionV3, type WebSocketLikeV3 } from "./runtimeAdapters.js";
+import { createNodeRawQuicClientV3 } from "../node/rawQuicAdapterV3.js";
+import type { NativeRawQuicConnectOptionsV3, NativeRawQuicDriverV3 } from "../node/nativeTransportAddon.js";
+import type { ArtifactV3 } from "./artifact.js";
+import type { NativeCarrierSessionV3 } from "./carrier.js";
+import {
+  FLOWERSEC_V3_ALPN,
+  FLOWERSEC_V3_CRYPTO_LABELS,
+  FLOWERSEC_V3_PATHS,
+  FLOWERSEC_V3_PROFILE,
+  FLOWERSEC_V3_WIRE_PROFILES,
+  FLOWERSEC_V3_WEBSOCKET_SUBPROTOCOLS,
+  alpnForPathV3,
+  websocketSubprotocolForPathV3,
+} from "./transportConstants.js";
 
 type IsolationFixture = Readonly<{
   version: number;
@@ -58,6 +74,19 @@ describe("transport v3 version isolation", () => {
     for (const mutation of fixture.profile_mutations) {
       expect(mutation.error_code).toBe("version_isolation");
       const kind = mutation.id === "tunnel" ? "tunnel" : "direct";
+      if (mutation.id === "session") {
+        expect(mutation.v3).toBe(FLOWERSEC_V3_PROFILE);
+        const artifactVector = JSON.parse(readFileSync(
+          new URL("../../../testdata/transport_v3/artifact_vectors.json", import.meta.url),
+          "utf8",
+        )).positive[0] as { artifact_json: string };
+        const artifactWire = JSON.parse(artifactVector.artifact_json);
+        artifactWire.profile = mutation.v2;
+        expect(() => decodeArtifactV3JSON(JSON.stringify(artifactWire))).toThrow();
+        continue;
+      } else {
+        expect(mutation.v3).toBe(kind === "direct" ? FLOWERSEC_V3_WIRE_PROFILES.direct : FLOWERSEC_V3_WIRE_PROFILES.tunnel);
+      }
       expect(() => canonicalizeCandidatesV3(kind, [candidate(
         `wss://example.com/flowersec/v3/${kind}`,
         mutation.v2,
@@ -65,22 +94,104 @@ describe("transport v3 version isolation", () => {
     }
     for (const mutation of fixture.path_mutations) {
       expect(mutation.error_code).toBe("version_isolation");
-      if (mutation.id.endsWith("-subprotocol")) continue;
-      const kind = mutation.id.endsWith("-tunnel") ? "tunnel" : "direct";
+      const kind = mutation.id.includes("-tunnel") ? "tunnel" : "direct";
+      if (mutation.id.endsWith("-subprotocol")) {
+        expect(mutation.v3).toBe(websocketSubprotocolForPathV3(kind));
+        expect(mutation.v2).toBe(mutation.v3.replace(/\.v3$/, ".v2"));
+        continue;
+      }
       const carrier = mutation.id.startsWith("webtransport") ? "webtransport" : "websocket";
       const validURL = carrier === "webtransport"
-        ? `https://example.com/flowersec/webtransport/v3/${kind}`
-        : `wss://example.com/flowersec/v3/${kind}`;
-      const invalidURL = validURL.replace("/v3/", "/v2/");
+        ? FLOWERSEC_V3_PATHS.webtransport[kind]
+        : FLOWERSEC_V3_PATHS.websocket[kind];
+      const invalidURL = mutation.v2;
+      expect(mutation.v3).toBe(validURL);
       expect(() => canonicalizeCandidatesV3(kind, [candidate(
-        invalidURL,
+        `${carrier === "webtransport" ? "https://" : "wss://"}example.com${invalidURL}`,
         `flowersec-${kind}/3`,
         carrier,
       )])).toThrow();
     }
-    for (const mutation of [...fixture.alpn_mutations, ...fixture.crypto_label_mutations]) {
+    for (const mutation of fixture.alpn_mutations) {
       expect(mutation.error_code).toBe("version_isolation");
+      const kind = mutation.id === "tunnel" ? "tunnel" : "direct";
+      expect(mutation.v3).toBe(alpnForPathV3(kind));
+      expect(mutation.v3).toBe(FLOWERSEC_V3_ALPN[kind]);
       expect(mutation.v3).not.toBe(mutation.v2);
+    }
+    const cryptoLabels: Readonly<Record<string, string>> = {
+      ...FLOWERSEC_V3_CRYPTO_LABELS,
+    };
+    expect(Object.keys(cryptoLabels).sort()).toEqual(
+      fixture.crypto_label_mutations.map(({ id }) => id).sort(),
+    );
+    for (const mutation of fixture.crypto_label_mutations) {
+      expect(mutation.error_code).toBe("version_isolation");
+      expect(cryptoLabels[mutation.id]).toBe(mutation.v3);
+      expect(mutation.v3).not.toBe(mutation.v2);
+    }
+  });
+
+  test("v2 WebSocket admission subprotocols are rejected by the production adapter", async () => {
+    for (const mutation of fixture.path_mutations.filter(({ id }) => id.endsWith("-subprotocol"))) {
+      const kind = mutation.id.endsWith("-tunnel-subprotocol") ? "tunnel" : "direct";
+      const artifactVector = JSON.parse(readFileSync(
+        new URL("../../../testdata/transport_v3/artifact_vectors.json", import.meta.url),
+        "utf8",
+      )).positive.find((vector: { artifact_json: string }) =>
+        JSON.parse(vector.artifact_json).path.kind === kind);
+      const artifact = decodeArtifactV3JSON(artifactVector.artifact_json);
+      const candidate = canonicalizeCandidatesV3(artifact.path.kind, artifact.path.candidates).candidates
+        .find(({ carrier }) => carrier === "websocket")!;
+      const socket = fakeSocket(1, mutation.v2);
+      await expect(readyWebSocketAdmissionV3(
+        candidate,
+        artifact,
+        socket,
+        new AbortController().signal,
+      )).rejects.toMatchObject({ code: "connection_failed" });
+      expect(socket.close).toHaveBeenCalledOnce();
+      expect(FLOWERSEC_V3_WEBSOCKET_SUBPROTOCOLS[kind]).toBe(mutation.v3);
+    }
+  });
+
+  test("raw QUIC adapter binds the candidate to the v3 ALPN profile", async () => {
+    const calls: NativeRawQuicConnectOptionsV3[] = [];
+    const driver: NativeRawQuicDriverV3 = {
+      connectRawQuic: async (options) => { calls.push(options); return {} as NativeCarrierSessionV3; },
+      bindRawQuic: async () => { throw new Error("unused"); },
+    };
+    const base = {
+      carrier: "raw_quic" as const,
+      id: "raw",
+      normalized_url: "quic://example.com:443",
+      tls: {
+        mode: "pin" as const,
+        pins: [{
+          algorithm: "sha-256" as const,
+          not_after_unix_s: 1_900_000_100,
+          value_b64u: Buffer.alloc(32, 7).toString("base64url"),
+        }],
+      },
+    };
+    for (const mutation of fixture.alpn_mutations) {
+      const kind = mutation.id === "tunnel" ? "tunnel" : "direct";
+      const artifact = {
+        path: { kind },
+        session: { max_inbound_streams: 1 },
+      } as unknown as ArtifactV3;
+      await createNodeRawQuicClientV3(driver, {
+        ...base,
+        wire_profile: FLOWERSEC_V3_ALPN[kind],
+      }, artifact, 1_900_000_000);
+      const accepted = calls.length;
+      await expect(createNodeRawQuicClientV3(driver, {
+        ...base,
+        wire_profile: mutation.v2,
+      }, artifact, 1_900_000_000)).rejects.toMatchObject({
+        code: "invalid_artifact",
+      });
+      expect(calls).toHaveLength(accepted);
     }
   });
 
@@ -92,7 +203,7 @@ describe("transport v3 version isolation", () => {
       const version = fromHex(frame.v2_version_hex);
       switch (frame.id) {
         case "fsb3":
-          expect(decodeFSB3RequestV3(valid).request.profile).toBe("flowersec/3");
+          expect(decodeFSB3RequestV3(valid).request.profile).toBe(FLOWERSEC_V3_PROFILE);
           expect(() => decodeFSB3RequestV3(magic)).toThrow();
           expect(() => decodeFSB3RequestV3(version)).toThrow();
           break;
@@ -162,7 +273,7 @@ describe("transport v3 version isolation", () => {
   test("inherited FSH3, OPEN, and RPC codecs remain production session codecs", () => {
     const handshake = fixture.frames.find((frame) => frame.id === "fsh3")!;
     const clientInit = decodeClientInitV3(fromHex(handshake.v3_hex));
-    expect(clientInit.profile).toBe("flowersec/3");
+    expect(clientInit.profile).toBe(FLOWERSEC_V3_PROFILE);
 
     const openFixture = JSON.parse(readFileSync(
       new URL("../../../testdata/transport_v3/open_unicode_vectors.json", import.meta.url), "utf8"),
@@ -182,3 +293,17 @@ describe("transport v3 version isolation", () => {
     expect((rpc.payload as { ratio: number }).ratio).toBe(1.5);
   });
 });
+
+function fakeSocket(readyState: number, protocol: string): WebSocketLikeV3 & Readonly<{ close: ReturnType<typeof vi.fn> }> {
+  const socket = {
+    binaryType: "",
+    readyState,
+    protocol,
+    bufferedAmount: 0,
+    send: vi.fn(),
+    close: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  } as unknown as WebSocketLikeV3 & Readonly<{ close: ReturnType<typeof vi.fn> }>;
+  return socket;
+}

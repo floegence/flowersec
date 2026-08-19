@@ -207,7 +207,7 @@ struct SessionConnectorV3: Sendable {
   ) async throws -> any Session {
     try Task.checkCancellation()
     let artifact = claimed.artifact
-    guard artifact.value.v == 3, artifact.value.profile == "flowersec/3" else {
+    guard artifact.value.v == 3, artifact.value.profile == TransportV3Contract.sessionProfile else {
       throw ConnectorBoundaryErrorV3.artifactInvalid
     }
     guard artifact.value.session.initExpireAtUnixSeconds > nowUnixSeconds() else {

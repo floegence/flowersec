@@ -15,8 +15,8 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     tls_v3::NativeTlsPolicyV3,
     transport_v3::{
-        CarrierKind, CarrierSessionV3, CarrierStreamV3, CarrierUnreliableMessageErrorV3,
-        carrier_inbound_stream_limit_v3,
+        ALPN_DIRECT_V3, ALPN_TUNNEL_V3, CarrierKind, CarrierSessionV3, CarrierStreamV3,
+        CarrierUnreliableMessageErrorV3, carrier_inbound_stream_limit_v3,
     },
 };
 
@@ -95,8 +95,8 @@ pub(crate) async fn dial(
         return Err(RawQuicDialFailureV3::Invalid);
     }
     let profile = match alpn {
-        b"flowersec-direct/3" => NativePathProfile::Direct,
-        b"flowersec-tunnel/3" => NativePathProfile::Tunnel,
+        ALPN_DIRECT_V3 => NativePathProfile::Direct,
+        ALPN_TUNNEL_V3 => NativePathProfile::Tunnel,
         _ => return Err(RawQuicDialFailureV3::Invalid),
     };
     let parsed = url::Url::parse(url).map_err(|_| RawQuicDialFailureV3::Invalid)?;
@@ -406,7 +406,7 @@ mod tests {
         let carrier = dial(
             &url,
             &policy,
-            b"flowersec-direct/3",
+            ALPN_DIRECT_V3,
             3,
             deadline,
             CancellationToken::new(),

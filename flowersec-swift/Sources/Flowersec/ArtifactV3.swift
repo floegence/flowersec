@@ -146,7 +146,7 @@ struct ClaimedArtifactLeaseV3: Sendable {
 private final class ControllerLeaseCapabilityV3: @unchecked Sendable {}
 
 private actor ArtifactLeaseStateV3 {
-  private enum State { case idle, claimed, spending, consumed, retired }
+  private enum State { case idle, claimed, consumed, retired }
 
   private let spend: @Sendable () async throws -> Void
   private let cleanup: @Sendable () async throws -> Void
@@ -185,28 +185,60 @@ private actor ArtifactLeaseStateV3 {
 
   func commitSpend() async throws {
     guard state == .claimed else { throw ArtifactLeaseErrorV3.unavailable }
-    state = .spending
-    do {
-      try await withTaskCancellationHandler {
-        try await spend()
-      } onCancel: {
-        Task { await self.markConsumedAfterCancellation() }
-      }
-      state = .consumed
-    } catch {
-      state = .consumed
-      throw error
-    }
-  }
+    state = .consumed
 
-  private func markConsumedAfterCancellation() {
-    if state == .spending { state = .consumed }
+    let completion = ArtifactSpendCompletionV3()
+    let spend = self.spend
+    let callback = Task.detached(priority: Task.currentPriority) {
+      let result: Result<Void, Error>
+      do {
+        result = .success(try await spend())
+      } catch {
+        result = .failure(error)
+      }
+      completion.resolve(result)
+    }
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        completion.install(continuation)
+      }
+    } onCancel: {
+      callback.cancel()
+      completion.resolve(.failure(CancellationError()))
+    }
   }
 
   func retire() async throws {
     guard state == .claimed else { throw ArtifactLeaseErrorV3.unavailable }
     state = .retired
     try await cleanup()
+  }
+}
+
+private final class ArtifactSpendCompletionV3: @unchecked Sendable {
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<Void, Error>?
+  private var result: Result<Void, Error>?
+
+  func install(_ continuation: CheckedContinuation<Void, Error>) {
+    let resolved = lock.withLock { () -> Result<Void, Error>? in
+      if let result { return result }
+      self.continuation = continuation
+      return nil
+    }
+    if let resolved { continuation.resume(with: resolved) }
+  }
+
+  func resolve(_ result: Result<Void, Error>) {
+    var continuation: CheckedContinuation<Void, Error>?
+    let won = lock.withLock {
+      guard self.result == nil else { return false }
+      self.result = result
+      continuation = self.continuation
+      self.continuation = nil
+      return true
+    }
+    if won { continuation?.resume(with: result) }
   }
 }
 
@@ -490,7 +522,7 @@ enum ArtifactCodecV3 {
   private static func validate(
     _ artifact: ArtifactWireV3, rawRoot: [String: Any]
   ) throws -> [CanonicalCandidateV3] {
-    guard artifact.v == 3, artifact.profile == "flowersec/3" else {
+    guard artifact.v == 3, artifact.profile == TransportV3Contract.sessionProfile else {
       throw ArtifactErrorV3.invalidArtifact
     }
     try validateSession(artifact.session)
@@ -519,7 +551,7 @@ enum ArtifactCodecV3 {
     for candidate in path.candidates {
       guard validCandidateID(candidate.id), ids.insert(candidate.id).inserted,
         ["websocket", "raw_quic", "webtransport"].contains(candidate.carrier),
-        candidate.wireProfile == "flowersec-\(path.kind)/3"
+        candidate.wireProfile == TransportV3Contract.wireProfile(for: path.kind)
       else { throw ArtifactErrorV3.invalidArtifact }
       try validateTLSPolicy(candidate.tls)
       let normalized = try normalizeURL(candidate.url, carrier: candidate.carrier, kind: path.kind)
@@ -580,7 +612,8 @@ enum ArtifactCodecV3 {
       "default_suite": session.defaultSuite,
       "establish_timeout_seconds": session.establishTimeoutSeconds,
       "idle_timeout_seconds": session.idleTimeoutSeconds,
-      "max_inbound_streams": session.maxInboundStreams, "profile": "flowersec/3",
+      "max_inbound_streams": session.maxInboundStreams,
+      "profile": TransportV3Contract.sessionProfile,
       "rekey_completion_timeout_seconds": session.rekeyCompletionTimeoutSeconds,
       "rekey_prepare_timeout_seconds": session.rekeyPrepareTimeoutSeconds,
       "selected_features": session.selectedFeatures,
@@ -660,13 +693,13 @@ enum ArtifactCodecV3 {
     let normalizedPath: String
     switch (carrier, scheme) {
     case ("websocket", "wss"):
-      normalizedPath = "/flowersec/v3/\(kind)"
+      normalizedPath = TransportV3Contract.webSocketPath(for: kind)
       guard path == normalizedPath else { throw ArtifactErrorV3.invalidArtifact }
     case ("raw_quic", "quic"):
       guard path.isEmpty || path == "/" else { throw ArtifactErrorV3.invalidArtifact }
       normalizedPath = ""
     case ("webtransport", "https"):
-      normalizedPath = "/flowersec/webtransport/v3/\(kind)"
+      normalizedPath = TransportV3Contract.webTransportPath(for: kind)
       guard path == normalizedPath else { throw ArtifactErrorV3.invalidArtifact }
     default: throw ArtifactErrorV3.invalidArtifact
     }

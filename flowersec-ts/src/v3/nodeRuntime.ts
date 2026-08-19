@@ -6,6 +6,11 @@ import type { WebSocketLike } from "../ws-client/binaryTransport.js";
 import type { CanonicalArtifactCandidateV3 } from "./artifact.js";
 import { defineRuntimeCapabilityDescriptorV3, type RuntimeCapabilityTupleV3 } from "./capability.js";
 import { snapshotTransportSecurityPolicyV3, TransportFailureV3, type TransportSecuritySnapshotV3 } from "./security.js";
+import {
+  FLOWERSEC_V3_PATHS,
+  FLOWERSEC_V3_WIRE_PROFILES,
+  websocketSubprotocolForPathV3,
+} from "./transportConstants.js";
 
 const websocketTuples = tuplesFor("websocket", false);
 const rawQuicTuples = tuplesFor("raw_quic", true);
@@ -150,10 +155,10 @@ export async function connectNodeWebSocketV3(
     socket.destroy();
     throw new TransportFailureV3("tls_unsupported");
   }
-  const subprotocol = candidate.wire_profile === "flowersec-direct/3"
-    ? "flowersec.direct.v3"
-    : candidate.wire_profile === "flowersec-tunnel/3"
-      ? "flowersec.tunnel.v3"
+  const subprotocol = candidate.wire_profile === FLOWERSEC_V3_WIRE_PROFILES.direct
+    ? websocketSubprotocolForPathV3("direct")
+    : candidate.wire_profile === FLOWERSEC_V3_WIRE_PROFILES.tunnel
+      ? websocketSubprotocolForPathV3("tunnel")
       : invalidProfile();
   let webSocket: NodeWebSocketV3;
   try {
@@ -253,8 +258,8 @@ function tuplesFor(carrier: "websocket" | "raw_quic", datagrams: boolean): reado
 }
 
 function pathFromProfile(profile: string): string {
-  if (profile === "flowersec-direct/3") return "/flowersec/v3/direct";
-  if (profile === "flowersec-tunnel/3") return "/flowersec/v3/tunnel";
+  if (profile === FLOWERSEC_V3_WIRE_PROFILES.direct) return FLOWERSEC_V3_PATHS.websocket.direct;
+  if (profile === FLOWERSEC_V3_WIRE_PROFILES.tunnel) return FLOWERSEC_V3_PATHS.websocket.tunnel;
   throw new TransportFailureV3("invalid_artifact");
 }
 

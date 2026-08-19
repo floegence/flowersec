@@ -13,6 +13,7 @@ import type {
 import { CipherSuiteV3 } from "./protocol.js";
 import type { DirectionV3 } from "./protocol.js";
 import { UnreliableMessageError } from "../public/contract.js";
+import { FLOWERSEC_V3_CRYPTO_LABELS } from "./transportConstants.js";
 
 export const UNRELIABLE_MESSAGES_FEATURE_V3 = 0x00000001;
 export const UNRELIABLE_MESSAGE_MAX_PLAINTEXT_BYTES_V3 = 976 as const;
@@ -130,7 +131,7 @@ class InternalUnreliableMessageChannelV3 implements UnreliableMessageChannelV3 {
       );
       const nonce = concat(material.noncePrefix, u64be(decoded.sequence));
       const aad = labelWith(
-        "flowersec-v3-unreliable",
+        FLOWERSEC_V3_CRYPTO_LABELS["unreliable-aad"],
         this.options.h3,
         byte(this.options.receiveDirection),
         wire.subarray(0, HEADER_BYTES),
@@ -206,18 +207,23 @@ export function deriveUnreliableMessageMaterialV3(
   direction: DirectionV3,
   epoch: number,
 ): UnreliableMessageMaterialV3 {
-  const unreliableRoot = expand(sha256, epochSecret, labelWith("flowersec v3 unreliable root"), 32);
+  const unreliableRoot = expand(
+    sha256,
+    epochSecret,
+    labelWith(FLOWERSEC_V3_CRYPTO_LABELS["unreliable-root"]),
+    32,
+  );
   const materialSecret = expand(
     sha256,
     unreliableRoot,
-    labelWith("flowersec v3 unreliable", h3, byte(direction), u32be(epoch)),
+    labelWith(FLOWERSEC_V3_CRYPTO_LABELS.unreliable, h3, byte(direction), u32be(epoch)),
     32,
   );
   return {
     unreliableRoot,
     materialSecret,
-    recordKey: expand(sha256, materialSecret, labelWith("flowersec v3 unreliable key"), 32),
-    noncePrefix: expand(sha256, materialSecret, labelWith("flowersec v3 unreliable nonce"), 4),
+    recordKey: expand(sha256, materialSecret, labelWith(FLOWERSEC_V3_CRYPTO_LABELS["unreliable-key"]), 32),
+    noncePrefix: expand(sha256, materialSecret, labelWith(FLOWERSEC_V3_CRYPTO_LABELS["unreliable-nonce"]), 4),
   };
 }
 
@@ -258,7 +264,12 @@ export function sealUnreliableMessageDatagramV3(
     options.epoch,
   );
   const nonce = concat(material.noncePrefix, u64be(options.sequence));
-  const aad = labelWith("flowersec-v3-unreliable", options.h3, byte(options.direction), header);
+  const aad = labelWith(
+    FLOWERSEC_V3_CRYPTO_LABELS["unreliable-aad"],
+    options.h3,
+    byte(options.direction),
+    header,
+  );
   const ciphertext = cipher(options.suite, material.recordKey, nonce, aad).encrypt(options.plaintext);
   return {
     material,

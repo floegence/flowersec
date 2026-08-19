@@ -83,10 +83,12 @@ struct RuntimeCapabilityDescriptorV3: Codable, Equatable, Sendable {
         let unsupported = object["unsupported"] as? [[String: Any]]
       else { throw ArtifactErrorV3.invalidArtifact }
       for tuple in tuples {
-        try exact(tuple, [
-          "carrier", "datagrams", "migration", "networkMode", "path", "reliableStreams",
-          "securityModes", "sessionRole",
-        ])
+        try exact(
+          tuple,
+          [
+            "carrier", "datagrams", "migration", "networkMode", "path", "reliableStreams",
+            "securityModes", "sessionRole",
+          ])
       }
       for item in unsupported { try exact(item, ["carrier", "reason"]) }
       let descriptor = try JSONDecoder().decode(RuntimeCapabilityDescriptorV3.self, from: data)
@@ -211,8 +213,12 @@ private func capabilityTokenV3(_ value: String) -> Bool {
 private func compareCapabilityTupleIdentityV3(
   _ lhs: RuntimeCapabilityTupleV3, _ rhs: RuntimeCapabilityTupleV3
 ) -> Int {
-  let left = [lhs.carrier.rawValue, lhs.networkMode.rawValue, lhs.sessionRole.rawValue, lhs.path.rawValue]
-  let right = [rhs.carrier.rawValue, rhs.networkMode.rawValue, rhs.sessionRole.rawValue, rhs.path.rawValue]
+  let left = [
+    lhs.carrier.rawValue, lhs.networkMode.rawValue, lhs.sessionRole.rawValue, lhs.path.rawValue,
+  ]
+  let right = [
+    rhs.carrier.rawValue, rhs.networkMode.rawValue, rhs.sessionRole.rawValue, rhs.path.rawValue,
+  ]
   for (lhs, rhs) in zip(left, right) {
     if lhs != rhs { return lhs < rhs ? -1 : 1 }
   }
@@ -229,7 +235,8 @@ private func validateCapabilityTupleV3(_ tuple: RuntimeCapabilityTupleV3) throws
   case .tunnel:
     validDeployment = tuple.networkMode == .dial
   }
-  let validModes = tuple.networkMode == .listen
+  let validModes =
+    tuple.networkMode == .listen
     ? tuple.securityModes.isEmpty
     : tuple.securityModes == ["ca"] || tuple.securityModes == ["pin"]
       || tuple.securityModes == ["ca", "pin"]
@@ -257,10 +264,11 @@ private func registeredCapabilityTuplesV3(
       securityModes: securityModes, sessionRole: .server),
   ]
   if includeListener {
-    tuples.append(RuntimeCapabilityTupleV3(
-      carrier: carrier, datagrams: datagrams, migration: false,
-      networkMode: .listen, path: .direct, reliableStreams: true,
-      securityModes: [], sessionRole: .server))
+    tuples.append(
+      RuntimeCapabilityTupleV3(
+        carrier: carrier, datagrams: datagrams, migration: false,
+        networkMode: .listen, path: .direct, reliableStreams: true,
+        securityModes: [], sessionRole: .server))
   }
   return tuples
 }
@@ -281,12 +289,16 @@ private func validateRegisteredCarrierV3(
 private func validateRegisteredRuntimeV3(_ descriptor: RuntimeCapabilityDescriptorV3) throws {
   let ca = ["ca"]
   let caPin = ["ca", "pin"]
-  let w4 = { registeredCapabilityTuplesV3(
-    carrier: .webSocket, datagrams: false, dialMigration: false,
-    includeListener: true, securityModes: $0) }
-  let w3 = { registeredCapabilityTuplesV3(
-    carrier: .webSocket, datagrams: false, dialMigration: false,
-    includeListener: false, securityModes: $0) }
+  let w4 = {
+    registeredCapabilityTuplesV3(
+      carrier: .webSocket, datagrams: false, dialMigration: false,
+      includeListener: true, securityModes: $0)
+  }
+  let w3 = {
+    registeredCapabilityTuplesV3(
+      carrier: .webSocket, datagrams: false, dialMigration: false,
+      includeListener: false, securityModes: $0)
+  }
   let q4m = registeredCapabilityTuplesV3(
     carrier: .rawQUIC, datagrams: true, dialMigration: true,
     includeListener: true, securityModes: caPin)
@@ -305,29 +317,58 @@ private func validateRegisteredRuntimeV3(_ descriptor: RuntimeCapabilityDescript
   let identity = "\(descriptor.language)/\(descriptor.runtime)"
   switch identity {
   case "go/native":
-    try validateRegisteredCarrierV3(descriptor, carrier: .rawQUIC, tupleSets: [q4m], unsupportedReasons: ["adapter_not_composed"])
-    try validateRegisteredCarrierV3(descriptor, carrier: .webSocket, tupleSets: [w4(caPin)], unsupportedReasons: ["adapter_not_composed"])
-    try validateRegisteredCarrierV3(descriptor, carrier: .webTransport, tupleSets: [h4], unsupportedReasons: ["adapter_not_composed"])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .rawQUIC, tupleSets: [q4m], unsupportedReasons: ["adapter_not_composed"])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .webSocket, tupleSets: [w4(caPin)],
+      unsupportedReasons: ["adapter_not_composed"])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .webTransport, tupleSets: [h4],
+      unsupportedReasons: ["adapter_not_composed"])
   case "typescript/browser":
-    try validateRegisteredCarrierV3(descriptor, carrier: .rawQUIC, tupleSets: [], unsupportedReasons: ["browser_no_raw_udp"])
-    try validateRegisteredCarrierV3(descriptor, carrier: .webSocket, tupleSets: [w3(ca)], unsupportedReasons: ["browser_websocket_api_unavailable"])
-    try validateRegisteredCarrierV3(descriptor, carrier: .webTransport, tupleSets: [h3ca, h3pin], unsupportedReasons: ["browser_webtransport_api_unavailable"])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .rawQUIC, tupleSets: [], unsupportedReasons: ["browser_no_raw_udp"])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .webSocket, tupleSets: [w3(ca)],
+      unsupportedReasons: ["browser_websocket_api_unavailable"])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .webTransport, tupleSets: [h3ca, h3pin],
+      unsupportedReasons: ["browser_webtransport_api_unavailable"])
   case "typescript/node":
-    try validateRegisteredCarrierV3(descriptor, carrier: .rawQUIC, tupleSets: [q4n], unsupportedReasons: ["node_native_transport_unavailable"])
-    try validateRegisteredCarrierV3(descriptor, carrier: .webSocket, tupleSets: [w4(caPin)], unsupportedReasons: [])
-    try validateRegisteredCarrierV3(descriptor, carrier: .webTransport, tupleSets: [], unsupportedReasons: ["node_webtransport_driver_unavailable"])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .rawQUIC, tupleSets: [q4n],
+      unsupportedReasons: ["node_native_transport_unavailable"])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .webSocket, tupleSets: [w4(caPin)], unsupportedReasons: [])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .webTransport, tupleSets: [],
+      unsupportedReasons: ["node_webtransport_driver_unavailable"])
   case "rust/native":
-    try validateRegisteredCarrierV3(descriptor, carrier: .rawQUIC, tupleSets: [q4m], unsupportedReasons: [])
-    try validateRegisteredCarrierV3(descriptor, carrier: .webSocket, tupleSets: [w4(caPin)], unsupportedReasons: [])
-    try validateRegisteredCarrierV3(descriptor, carrier: .webTransport, tupleSets: [], unsupportedReasons: ["driver_unavailable"])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .rawQUIC, tupleSets: [q4m], unsupportedReasons: [])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .webSocket, tupleSets: [w4(caPin)], unsupportedReasons: [])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .webTransport, tupleSets: [], unsupportedReasons: ["driver_unavailable"])
   case "swift/ios", "swift/macos":
-    try validateRegisteredCarrierV3(descriptor, carrier: .rawQUIC, tupleSets: [], unsupportedReasons: ["swift_apple_client_profile_excludes_raw_quic"])
-    try validateRegisteredCarrierV3(descriptor, carrier: .webSocket, tupleSets: [w3(caPin)], unsupportedReasons: [])
-    try validateRegisteredCarrierV3(descriptor, carrier: .webTransport, tupleSets: [], unsupportedReasons: ["swift_apple_client_profile_excludes_webtransport"])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .rawQUIC, tupleSets: [],
+      unsupportedReasons: ["swift_apple_client_profile_excludes_raw_quic"])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .webSocket, tupleSets: [w3(caPin)], unsupportedReasons: [])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .webTransport, tupleSets: [],
+      unsupportedReasons: ["swift_apple_client_profile_excludes_webtransport"])
   case "swift/linux":
-    try validateRegisteredCarrierV3(descriptor, carrier: .rawQUIC, tupleSets: [], unsupportedReasons: ["swift_apple_client_profile_excludes_raw_quic"])
-    try validateRegisteredCarrierV3(descriptor, carrier: .webSocket, tupleSets: [], unsupportedReasons: ["websocket_adapter_not_supported_on_linux"])
-    try validateRegisteredCarrierV3(descriptor, carrier: .webTransport, tupleSets: [], unsupportedReasons: ["swift_apple_client_profile_excludes_webtransport"])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .rawQUIC, tupleSets: [],
+      unsupportedReasons: ["swift_apple_client_profile_excludes_raw_quic"])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .webSocket, tupleSets: [],
+      unsupportedReasons: ["websocket_adapter_not_supported_on_linux"])
+    try validateRegisteredCarrierV3(
+      descriptor, carrier: .webTransport, tupleSets: [],
+      unsupportedReasons: ["swift_apple_client_profile_excludes_webtransport"])
   default:
     throw ArtifactErrorV3.invalidArtifact
   }
@@ -397,10 +438,60 @@ enum PinVerifierV3 {
 
 enum TransportV3Contract {
   static let frameMagics = ["FSB3", "FSA3", "FSC3", "FSH3", "FSS3", "FSR3", "FSD3"]
+  static let sessionProfile = "flowersec/3"
   static let directProfile = "flowersec-direct/3"
   static let tunnelProfile = "flowersec-tunnel/3"
   static let directWebSocketPath = "/flowersec/v3/direct"
   static let tunnelWebSocketPath = "/flowersec/v3/tunnel"
+  static let directWebTransportPath = "/flowersec/webtransport/v3/direct"
+  static let tunnelWebTransportPath = "/flowersec/webtransport/v3/tunnel"
   static let directWebSocketSubprotocol = "flowersec.direct.v3"
   static let tunnelWebSocketSubprotocol = "flowersec.tunnel.v3"
+
+  static func wireProfile(for kind: String) -> String {
+    switch kind {
+    case "direct": return directProfile
+    case "tunnel": return tunnelProfile
+    default: return ""
+    }
+  }
+
+  static func webSocketPath(for kind: String) -> String {
+    switch kind {
+    case "direct": return directWebSocketPath
+    case "tunnel": return tunnelWebSocketPath
+    default: return ""
+    }
+  }
+
+  static func webTransportPath(for kind: String) -> String {
+    switch kind {
+    case "direct": return directWebTransportPath
+    case "tunnel": return tunnelWebTransportPath
+    default: return ""
+    }
+  }
+
+  static let handshakeDomain = "flowersec-v3-handshake\0"
+  static let serverFinishedLabel = "flowersec v3 server finished"
+  static let clientFinishedLabel = "flowersec v3 client finished"
+  static let epochZeroLabel = "flowersec v3 epoch zero"
+  static let controlRootLabel = "flowersec v3 control root"
+  static let streamRootLabel = "flowersec v3 stream root"
+  static let setupRootLabel = "flowersec v3 setup root"
+  static let rekeyRootLabel = "flowersec v3 rekey root"
+  static let nextEpochLabel = "flowersec v3 next epoch"
+  static let streamLabel = "flowersec v3 stream"
+  static let controlLabel = "flowersec v3 control"
+  static let recordKeyLabel = "flowersec v3 record key"
+  static let nonceLabel = "flowersec v3 nonce"
+  static let unreliableRootLabel = "flowersec v3 unreliable root"
+  static let unreliableLabel = "flowersec v3 unreliable"
+  static let unreliableKeyLabel = "flowersec v3 unreliable key"
+  static let unreliableNonceLabel = "flowersec v3 unreliable nonce"
+  static let unreliableDomain = "flowersec-v3-unreliable"
+  static let setupDomain = "flowersec-v3-setup"
+  static let recordDomain = "flowersec-v3-record"
+  static let openDomain = "flowersec-v3-open\0"
+
 }

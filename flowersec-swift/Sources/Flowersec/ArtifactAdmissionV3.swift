@@ -43,7 +43,7 @@ enum AdmissionCodecV3 {
       "channel_id": value.session.channelID,
       "chosen_candidate_id": chosenCandidateID,
       "listener_audience": value.path.listenerAudience,
-      "profile": "flowersec/3",
+      "profile": TransportV3Contract.sessionProfile,
       "rendezvous_group_id": value.path.rendezvousGroupID,
       "session_contract_hash_b64u": value.session.contractHashBase64URL,
     ]
@@ -126,7 +126,7 @@ enum AdmissionCodecV3 {
       pathKind == "direct"
         ? common + ["routing_token"]
         : common + ["attach_token", "endpoint_instance_id", "role"])
-    guard object["profile"] as? String == "flowersec/3",
+    guard object["profile"] as? String == TransportV3Contract.sessionProfile,
       let channelID = object["channel_id"] as? String, registryID(channelID, maximum: 128),
       let groupID = object["rendezvous_group_id"] as? String, registryID(groupID, maximum: 128),
       let listener = object["listener_audience"] as? String, registryID(listener, maximum: 128),
@@ -155,15 +155,18 @@ enum AdmissionCodecV3 {
       let tls = try decodeTLSPolicy(tlsObject)
       let candidate = CanonicalCandidateV3(
         carrier: carrier, id: id, normalizedURL: normalizedURL, tls: tls, wireProfile: wireProfile)
-      guard try ArtifactCodecV3.normalizeURL(normalizedURL, carrier: carrier, kind: pathKind)
-        == normalizedURL,
+      guard
+        try ArtifactCodecV3.normalizeURL(normalizedURL, carrier: carrier, kind: pathKind)
+          == normalizedURL,
         endpoints.insert("\(carrier)\0\(pathKind)\0\(normalizedURL)").inserted,
         try FlowersecJCSV3.encode(candidate.object()).count <= 2_304
       else { throw AdmissionCodecErrorV3.invalid }
       candidates.append(candidate)
       previousID = id
     }
-    guard candidates.contains(where: { $0.id == chosen }) else { throw AdmissionCodecErrorV3.invalid }
+    guard candidates.contains(where: { $0.id == chosen }) else {
+      throw AdmissionCodecErrorV3.invalid
+    }
     let candidateSet = try FlowersecJCSV3.encode(candidates.map { $0.object() })
     guard candidateSet.count <= 12_288,
       FlowersecJCSV3.hashLP(domain: "flowersec-v3-candidates\0", canonical: candidateSet)
@@ -234,8 +237,9 @@ enum AdmissionCodecV3 {
         let notAfter = unsignedInteger(value["not_after_unix_s"]), notAfter > 0,
         previous.map({ $0 < ("sha-256", hash) }) ?? true
       else { throw AdmissionCodecErrorV3.invalid }
-      pins.append(CertificatePinWireV3(
-        algorithm: "sha-256", valueBase64URL: hash, notAfterUnixSeconds: notAfter))
+      pins.append(
+        CertificatePinWireV3(
+          algorithm: "sha-256", valueBase64URL: hash, notAfterUnixSeconds: notAfter))
       previous = ("sha-256", hash)
     }
     return TLSPolicyWireV3(mode: mode, pins: pins)
@@ -247,16 +251,20 @@ enum AdmissionCodecV3 {
 
   private static func registryID(_ value: String, maximum: Int) -> Bool {
     let bytes = Array(value.utf8)
-    return (1...maximum).contains(bytes.count) && bytes.allSatisfy {
-      (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
-        || $0 == 46 || $0 == 95 || $0 == 126 || $0 == 45
-    }
+    return (1...maximum).contains(bytes.count)
+      && bytes.allSatisfy {
+        (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
+          || $0 == 46 || $0 == 95 || $0 == 126 || $0 == 45
+      }
   }
 
   private static func candidateID(_ value: String) -> Bool {
     let bytes = Array(value.utf8)
-    return (1...64).contains(bytes.count) && ((97...122).contains(bytes[0]) || (48...57).contains(bytes[0]))
-      && bytes.allSatisfy { (97...122).contains($0) || (48...57).contains($0) || $0 == 46 || $0 == 95 || $0 == 45 }
+    return (1...64).contains(bytes.count)
+      && ((97...122).contains(bytes[0]) || (48...57).contains(bytes[0]))
+      && bytes.allSatisfy {
+        (97...122).contains($0) || (48...57).contains($0) || $0 == 46 || $0 == 95 || $0 == 45
+      }
   }
 
   private static func ascii(_ value: String, maximum: Int) -> Bool {

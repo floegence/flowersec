@@ -322,7 +322,7 @@ describe("Node Acceptor handler lifecycle", () => {
     const secondHandled = new Promise<string>((resolve) => {
       resolveSecond = resolve;
     });
-    const handlers = new SessionHandlers({ maxConcurrentStreams: 1 });
+    const handlers = new SessionHandlers({ maxConcurrentStreams: 2 });
     handlers.handleStream("handler-failure", async (incoming) => {
       const bytes = await incoming.stream.read();
       expect(bytes).not.toBeNull();

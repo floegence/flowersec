@@ -34,6 +34,25 @@ pub(crate) const MAX_UNRELIABLE_PLAINTEXT_V3_BYTES: usize = 976;
 pub(crate) const MAX_UNRELIABLE_WIRE_V3_BYTES: usize =
     UNRELIABLE_HEADER_V3_SIZE + MAX_UNRELIABLE_PLAINTEXT_V3_BYTES + AEAD_TAG_V3_SIZE;
 
+pub(crate) const EPOCH_ZERO_LABEL_V3: &[u8] = b"flowersec v3 epoch zero";
+pub(crate) const CONTROL_ROOT_LABEL_V3: &[u8] = b"flowersec v3 control root";
+pub(crate) const STREAM_ROOT_LABEL_V3: &[u8] = b"flowersec v3 stream root";
+pub(crate) const SETUP_ROOT_LABEL_V3: &[u8] = b"flowersec v3 setup root";
+pub(crate) const REKEY_ROOT_LABEL_V3: &[u8] = b"flowersec v3 rekey root";
+pub(crate) const NEXT_EPOCH_LABEL_V3: &[u8] = b"flowersec v3 next epoch";
+pub(crate) const STREAM_LABEL_V3: &[u8] = b"flowersec v3 stream";
+pub(crate) const CONTROL_LABEL_V3: &[u8] = b"flowersec v3 control";
+pub(crate) const RECORD_KEY_LABEL_V3: &[u8] = b"flowersec v3 record key";
+pub(crate) const NONCE_LABEL_V3: &[u8] = b"flowersec v3 nonce";
+pub(crate) const UNRELIABLE_ROOT_LABEL_V3: &[u8] = b"flowersec v3 unreliable root";
+pub(crate) const UNRELIABLE_LABEL_V3: &[u8] = b"flowersec v3 unreliable";
+pub(crate) const UNRELIABLE_KEY_LABEL_V3: &[u8] = b"flowersec v3 unreliable key";
+pub(crate) const UNRELIABLE_NONCE_LABEL_V3: &[u8] = b"flowersec v3 unreliable nonce";
+pub(crate) const UNRELIABLE_AAD_LABEL_V3: &[u8] = b"flowersec-v3-unreliable";
+pub(crate) const SETUP_MAC_LABEL_V3: &[u8] = b"flowersec-v3-setup";
+pub(crate) const RECORD_AAD_LABEL_V3: &[u8] = b"flowersec-v3-record";
+pub(crate) const OPEN_DOMAIN_V3: &[u8] = b"flowersec-v3-open\0";
+
 const MAX_OPEN_METADATA_DEPTH: usize = 4;
 const MAX_OPEN_METADATA_NODES: usize = 64;
 const MAX_OPEN_METADATA_KEYS: usize = 64;
@@ -557,17 +576,14 @@ pub fn derive_epoch_zero_v3(
 ) -> Result<EpochRootsV3, ProtocolV3Error> {
     let epoch_secret = expand_32(
         session_prk,
-        &label_with(b"flowersec v3 epoch zero", &[&[direction as u8]]),
+        &label_with(EPOCH_ZERO_LABEL_V3, &[&[direction as u8]]),
     )?;
     Ok(EpochRootsV3 {
         epoch_secret,
-        control_root: expand_32(
-            &epoch_secret,
-            &label_with(b"flowersec v3 control root", &[]),
-        )?,
-        stream_root: expand_32(&epoch_secret, &label_with(b"flowersec v3 stream root", &[]))?,
-        setup_root: expand_32(&epoch_secret, &label_with(b"flowersec v3 setup root", &[]))?,
-        rekey_root: expand_32(&epoch_secret, &label_with(b"flowersec v3 rekey root", &[]))?,
+        control_root: expand_32(&epoch_secret, &label_with(CONTROL_ROOT_LABEL_V3, &[]))?,
+        stream_root: expand_32(&epoch_secret, &label_with(STREAM_ROOT_LABEL_V3, &[]))?,
+        setup_root: expand_32(&epoch_secret, &label_with(SETUP_ROOT_LABEL_V3, &[]))?,
+        rekey_root: expand_32(&epoch_secret, &label_with(REKEY_ROOT_LABEL_V3, &[]))?,
     })
 }
 
@@ -587,14 +603,14 @@ pub fn derive_stream_material_v3(
     let secret = expand_32(
         stream_root,
         &label_with(
-            b"flowersec v3 stream",
+            STREAM_LABEL_V3,
             &[h3, &stream_id, &[direction as u8], &epoch_bytes],
         ),
     )?;
     Ok(RecordMaterialV3 {
         secret,
-        record_key: expand_32(&secret, &label_with(b"flowersec v3 record key", &[]))?,
-        nonce_prefix: expand_4(&secret, &label_with(b"flowersec v3 nonce", &[]))?,
+        record_key: expand_32(&secret, &label_with(RECORD_KEY_LABEL_V3, &[]))?,
+        nonce_prefix: expand_4(&secret, &label_with(NONCE_LABEL_V3, &[]))?,
     })
 }
 
@@ -609,14 +625,14 @@ pub fn derive_control_material_v3(
     let secret = expand_32(
         control_root,
         &label_with(
-            b"flowersec v3 control",
+            CONTROL_LABEL_V3,
             &[h3, &stream_id, &[direction as u8], &epoch_bytes],
         ),
     )?;
     Ok(RecordMaterialV3 {
         secret,
-        record_key: expand_32(&secret, &label_with(b"flowersec v3 record key", &[]))?,
-        nonce_prefix: expand_4(&secret, &label_with(b"flowersec v3 nonce", &[]))?,
+        record_key: expand_32(&secret, &label_with(RECORD_KEY_LABEL_V3, &[]))?,
+        nonce_prefix: expand_4(&secret, &label_with(NONCE_LABEL_V3, &[]))?,
     })
 }
 
@@ -628,21 +644,18 @@ pub(crate) fn derive_unreliable_material_v3(
 ) -> Result<UnreliableMaterialV3, ProtocolV3Error> {
     let unreliable_root = expand_32(
         roots.epoch_secret(),
-        &label_with(b"flowersec v3 unreliable root", &[]),
+        &label_with(UNRELIABLE_ROOT_LABEL_V3, &[]),
     )?;
     let material = expand_32(
         &unreliable_root,
         &label_with(
-            b"flowersec v3 unreliable",
+            UNRELIABLE_LABEL_V3,
             &[h3, &[direction as u8], &epoch.to_be_bytes()],
         ),
     )?;
     Ok(UnreliableMaterialV3 {
-        key: expand_32(&material, &label_with(b"flowersec v3 unreliable key", &[]))?,
-        nonce_prefix: expand_4(
-            &material,
-            &label_with(b"flowersec v3 unreliable nonce", &[]),
-        )?,
+        key: expand_32(&material, &label_with(UNRELIABLE_KEY_LABEL_V3, &[]))?,
+        nonce_prefix: expand_4(&material, &label_with(UNRELIABLE_NONCE_LABEL_V3, &[]))?,
     })
 }
 
@@ -662,7 +675,7 @@ pub(crate) fn seal_unreliable_v3(
     }
     let raw_header = header.encode()?;
     let aad = label_with(
-        b"flowersec-v3-unreliable",
+        UNRELIABLE_AAD_LABEL_V3,
         &[h3, &[direction as u8], &raw_header],
     );
     let nonce = record_nonce(material.nonce_prefix, header.sequence);
@@ -697,7 +710,7 @@ pub(crate) fn open_unreliable_v3(
     }
     let raw_header = header.encode()?;
     let aad = label_with(
-        b"flowersec-v3-unreliable",
+        UNRELIABLE_AAD_LABEL_V3,
         &[h3, &[direction as u8], &raw_header],
     );
     let nonce = record_nonce(material.nonce_prefix, header.sequence);
@@ -728,17 +741,14 @@ pub fn derive_next_epoch_v3(
     let epoch = next_epoch.to_be_bytes();
     let secret = expand_32(
         rekey_root,
-        &label_with(
-            b"flowersec v3 next epoch",
-            &[h3, &[direction as u8], &epoch],
-        ),
+        &label_with(NEXT_EPOCH_LABEL_V3, &[h3, &[direction as u8], &epoch]),
     )?;
     Ok(EpochRootsV3 {
         epoch_secret: secret,
-        control_root: expand_32(&secret, &label_with(b"flowersec v3 control root", &[]))?,
-        stream_root: expand_32(&secret, &label_with(b"flowersec v3 stream root", &[]))?,
-        setup_root: expand_32(&secret, &label_with(b"flowersec v3 setup root", &[]))?,
-        rekey_root: expand_32(&secret, &label_with(b"flowersec v3 rekey root", &[]))?,
+        control_root: expand_32(&secret, &label_with(CONTROL_ROOT_LABEL_V3, &[]))?,
+        stream_root: expand_32(&secret, &label_with(STREAM_ROOT_LABEL_V3, &[]))?,
+        setup_root: expand_32(&secret, &label_with(SETUP_ROOT_LABEL_V3, &[]))?,
+        rekey_root: expand_32(&secret, &label_with(REKEY_ROOT_LABEL_V3, &[]))?,
     })
 }
 
@@ -751,7 +761,7 @@ pub fn compute_setup_mac_v3(
     let raw = preface.encode()?;
     let mut mac = <Hmac<Sha256> as HmacKeyInit>::new_from_slice(setup_root)
         .map_err(|_| ProtocolV3Error::Crypto)?;
-    mac.update(&label_with(b"flowersec-v3-setup", &[]));
+    mac.update(&label_with(SETUP_MAC_LABEL_V3, &[]));
     mac.update(h3);
     mac.update(&raw[..24]);
     Ok(mac.finalize().into_bytes().into())
@@ -772,7 +782,7 @@ pub fn compute_fss3_hash_v3(raw: &[u8]) -> Result<[u8; 32], ProtocolV3Error> {
 pub fn compute_open_hash_v3(raw: &[u8]) -> Result<[u8; 32], ProtocolV3Error> {
     decode_open_payload_v3(raw)?;
     let mut hash = Sha256::new();
-    hash.update(b"flowersec-v3-open\0");
+    hash.update(OPEN_DOMAIN_V3);
     hash.update((raw.len() as u32).to_be_bytes());
     hash.update(raw);
     Ok(hash.finalize().into())
@@ -926,7 +936,7 @@ pub fn record_aad_v3(
     let stream_id = logical_stream_id.to_be_bytes();
     let raw_header = header.encode()?;
     Ok(label_with(
-        b"flowersec-v3-record",
+        RECORD_AAD_LABEL_V3,
         &[h3, &stream_id, &[direction as u8], &raw_header],
     ))
 }
@@ -1460,14 +1470,14 @@ mod unreliable_message_tests {
             );
             let root = expand_32(
                 roots.epoch_secret(),
-                &label_with(b"flowersec v3 unreliable root", &[]),
+                &label_with(UNRELIABLE_ROOT_LABEL_V3, &[]),
             )
             .unwrap();
             assert_eq!(root.as_slice(), decode("unreliable_root_b64u").as_slice());
             let secret = expand_32(
                 &root,
                 &label_with(
-                    b"flowersec v3 unreliable",
+                    UNRELIABLE_LABEL_V3,
                     &[&h3, &[direction as u8], &epoch.to_be_bytes()],
                 ),
             )
@@ -1495,7 +1505,7 @@ mod unreliable_message_tests {
             let raw_header = header.encode().unwrap();
             assert_eq!(hex_lower(&raw_header), vector["header_hex"]);
             let aad = label_with(
-                b"flowersec-v3-unreliable",
+                UNRELIABLE_AAD_LABEL_V3,
                 &[&h3, &[direction as u8], &raw_header],
             );
             assert_eq!(aad, decode("aad_b64u"));
@@ -1517,11 +1527,35 @@ mod unreliable_message_tests {
         let labels = fixture["crypto_label_mutations"].as_array().unwrap();
         assert!(!labels.is_empty());
         for mutation in labels {
+            let id = mutation["id"].as_str().unwrap();
             let v3 = mutation["v3"].as_str().unwrap();
             let v2 = mutation["v2"].as_str().unwrap();
-            assert_ne!(v3, v2);
-            assert!(v3.contains('3'), "v3 label lost its version domain");
-            assert!(!v3.contains('2'), "v3 label contains v2 domain");
+            let expected: Vec<u8> = match id {
+                "handshake" => crate::transport_v3::HANDSHAKE_DOMAIN_V3.to_vec(),
+                "server-finished" => crate::transport_v3::SERVER_FINISHED_LABEL_V3.to_vec(),
+                "client-finished" => crate::transport_v3::CLIENT_FINISHED_LABEL_V3.to_vec(),
+                "epoch-zero" => EPOCH_ZERO_LABEL_V3.to_vec(),
+                "control-root" => CONTROL_ROOT_LABEL_V3.to_vec(),
+                "stream-root" => STREAM_ROOT_LABEL_V3.to_vec(),
+                "setup-root" => SETUP_ROOT_LABEL_V3.to_vec(),
+                "rekey-root" => REKEY_ROOT_LABEL_V3.to_vec(),
+                "next-epoch" => NEXT_EPOCH_LABEL_V3.to_vec(),
+                "stream" => STREAM_LABEL_V3.to_vec(),
+                "control" => CONTROL_LABEL_V3.to_vec(),
+                "record-key" => RECORD_KEY_LABEL_V3.to_vec(),
+                "nonce" => NONCE_LABEL_V3.to_vec(),
+                "unreliable-root" => UNRELIABLE_ROOT_LABEL_V3.to_vec(),
+                "unreliable" => UNRELIABLE_LABEL_V3.to_vec(),
+                "unreliable-key" => UNRELIABLE_KEY_LABEL_V3.to_vec(),
+                "unreliable-nonce" => UNRELIABLE_NONCE_LABEL_V3.to_vec(),
+                "unreliable-aad" => UNRELIABLE_AAD_LABEL_V3.to_vec(),
+                "setup-mac" => [SETUP_MAC_LABEL_V3, b"\0"].concat(),
+                "record-aad" => [RECORD_AAD_LABEL_V3, b"\0"].concat(),
+                "open" => OPEN_DOMAIN_V3.to_vec(),
+                other => panic!("unknown crypto label mutation {other}"),
+            };
+            assert_eq!(v3.as_bytes(), expected.as_slice(), "{id} production label");
+            assert_ne!(v2.as_bytes(), expected.as_slice(), "{id} v2 label leaked");
         }
         let roots = derive_epoch_zero_v3(&[0x11; 32], DirectionV3::ClientToServer).unwrap();
         let peer = derive_epoch_zero_v3(&[0x12; 32], DirectionV3::ClientToServer).unwrap();

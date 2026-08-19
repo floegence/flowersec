@@ -113,7 +113,7 @@ struct OpenPayloadV3: Equatable, Sendable {
 func computeOpenHashV3(_ rawOpenPayload: Data) throws -> Data {
   _ = try OpenPayloadV3.decode(rawOpenPayload)
   guard rawOpenPayload.count <= UInt32.max else { throw OpenPayloadErrorV3.invalidPayload }
-  var preimage = Data("flowersec-v3-open\0".utf8)
+  var preimage = Data(TransportV3Contract.openDomain.utf8)
   preimage.appendUInt32BE(UInt32(rawOpenPayload.count))
   preimage.append(rawOpenPayload)
   return Data(SHA256.hash(data: preimage))

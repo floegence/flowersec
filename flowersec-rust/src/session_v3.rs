@@ -42,11 +42,12 @@ use crate::{
         verify_setup_mac_v3,
     },
     transport_v3::{
-        ByteStream, CarrierSessionV3, CarrierStreamV3, CarrierUnreliableMessageErrorV3,
-        IncomingStream, JsonObject, NotificationSubscription, PathKind, RpcCallError, RpcError,
-        RpcPeer, Session, SessionError, SessionRole, SessionTermination, StreamMetadata,
-        UnreliableMessageChannel, UnreliableMessageError, UnreliableSendOutcome,
-        carrier_inbound_stream_limit_v3,
+        ByteStream, CLIENT_FINISHED_LABEL_V3, CarrierSessionV3, CarrierStreamV3,
+        CarrierUnreliableMessageErrorV3, HANDSHAKE_DOMAIN_V3, IncomingStream, JsonObject,
+        NotificationSubscription, PathKind, RpcCallError, RpcError, RpcPeer,
+        SERVER_FINISHED_LABEL_V3, SESSION_PROFILE_V3, Session, SessionError, SessionRole,
+        SessionTermination, StreamMetadata, UnreliableMessageChannel, UnreliableMessageError,
+        UnreliableSendOutcome, carrier_inbound_stream_limit_v3,
     },
 };
 
@@ -1310,7 +1311,7 @@ async fn client_handshake_v3(
         client_role: 1,
         max_inbound_streams: config.max_inbound_streams,
         nonce_c_b64u: b64(&nonce),
-        profile: "flowersec/3".into(),
+        profile: SESSION_PROFILE_V3.into(),
         selected_features: locally_supported_features,
         session_contract_hash_b64u: b64(&config.session_contract_hash),
         suite: suite_id(config.suite),
@@ -1324,11 +1325,7 @@ async fn client_handshake_v3(
     let peer_public = decode_b64(&server.server_eph_pub_b64u)?;
     let shared = private.derive_shared_secret(&peer_public).map_err(proto)?;
     let handshake_prk = hkdf_extract_v3(&config.psk, shared.expose());
-    let h0 = hash_parts(&[
-        b"flowersec-v3-handshake\0",
-        &preface,
-        &length_prefix(&init_raw),
-    ]);
+    let h0 = hash_parts(&[HANDSHAKE_DOMAIN_V3, &preface, &length_prefix(&init_raw)]);
     let core = ServerCoreWire {
         handshake_id: server.handshake_id.clone(),
         max_inbound_streams: server.max_inbound_streams,
@@ -1341,7 +1338,7 @@ async fn client_handshake_v3(
     };
     let core_raw = handshake_frame_v3(2, &core)?;
     let h1 = hash_parts(&[&h0, &length_prefix(&core_raw)]);
-    let expected_server = confirm_v3(&handshake_prk, b"flowersec v3 server finished", &h1)?;
+    let expected_server = confirm_v3(&handshake_prk, SERVER_FINISHED_LABEL_V3, &h1)?;
     if decode_fixed_32(&server.server_confirm_b64u)? != expected_server {
         return Err(invalid("FSH3 server confirmation mismatch"));
     }
@@ -1354,7 +1351,7 @@ async fn client_handshake_v3(
         &length_prefix(&server_raw),
         &length_prefix(&client_core_raw),
     ]);
-    let client_confirm = confirm_v3(&handshake_prk, b"flowersec v3 client finished", &h2)?;
+    let client_confirm = confirm_v3(&handshake_prk, CLIENT_FINISHED_LABEL_V3, &h2)?;
     let finished = ClientFinishedWire {
         client_confirm_b64u: b64(&client_confirm),
         handshake_id: server.handshake_id,
@@ -1404,14 +1401,10 @@ async fn server_handshake_v3(
         server_eph_pub_b64u: b64(&public),
         session_contract_hash_b64u: b64(&config.session_contract_hash),
     };
-    let h0 = hash_parts(&[
-        b"flowersec-v3-handshake\0",
-        &preface,
-        &length_prefix(&init_raw),
-    ]);
+    let h0 = hash_parts(&[HANDSHAKE_DOMAIN_V3, &preface, &length_prefix(&init_raw)]);
     let core_raw = handshake_frame_v3(2, &core)?;
     let h1 = hash_parts(&[&h0, &length_prefix(&core_raw)]);
-    let confirm = confirm_v3(&handshake_prk, b"flowersec v3 server finished", &h1)?;
+    let confirm = confirm_v3(&handshake_prk, SERVER_FINISHED_LABEL_V3, &h1)?;
     let finished = ServerFinishedWire {
         handshake_id: core.handshake_id.clone(),
         max_inbound_streams: core.max_inbound_streams,
@@ -1441,7 +1434,7 @@ async fn server_handshake_v3(
         &length_prefix(&server_raw),
         &length_prefix(&client_core_raw),
     ]);
-    let expected_client = confirm_v3(&handshake_prk, b"flowersec v3 client finished", &h2)?;
+    let expected_client = confirm_v3(&handshake_prk, CLIENT_FINISHED_LABEL_V3, &h2)?;
     if decode_fixed_32(&client.client_confirm_b64u)? != expected_client {
         return Err(invalid("FSH3 client confirmation mismatch"));
     }
@@ -1454,7 +1447,7 @@ async fn server_handshake_v3(
 }
 
 fn validate_client_v3(init: &ClientInitWire, config: &SessionConfigV3) -> io::Result<()> {
-    if init.profile != "flowersec/3"
+    if init.profile != SESSION_PROFILE_V3
         || init.channel_id != config.channel_id
         || init.client_role != 1
         || init.suite != suite_id(config.suite)
@@ -5004,7 +4997,7 @@ mod tests {
         ))
         .expect("parse handshake vectors");
         assert_eq!(fixture["version"], 1);
-        assert_eq!(fixture["profile"], "flowersec/3");
+        assert_eq!(fixture["profile"], SESSION_PROFILE_V3);
 
         for vector in fixture["vectors"].as_array().expect("handshake vectors") {
             let id = vector["id"].as_str().expect("vector id");
@@ -5109,15 +5102,11 @@ mod tests {
                 vector,
                 "handshake_prk_hex",
             );
-            let h0 = hash_parts(&[
-                b"flowersec-v3-handshake\0",
-                &fsc3,
-                &length_prefix(&client_raw),
-            ]);
+            let h0 = hash_parts(&[HANDSHAKE_DOMAIN_V3, &fsc3, &length_prefix(&client_raw)]);
             assert_vector_hex(id, "h0", &h0, vector, "h0_hex");
             let h1 = hash_parts(&[&h0, &length_prefix(&server_core_raw)]);
             assert_vector_hex(id, "h1", &h1, vector, "h1_hex");
-            let server_confirm = confirm_v3(&handshake_prk, b"flowersec v3 server finished", &h1)
+            let server_confirm = confirm_v3(&handshake_prk, SERVER_FINISHED_LABEL_V3, &h1)
                 .expect("server confirmation");
             assert_vector_hex(
                 id,
@@ -5138,7 +5127,7 @@ mod tests {
                 &length_prefix(&client_core_raw),
             ]);
             assert_vector_hex(id, "h2", &h2, vector, "h2_hex");
-            let client_confirm = confirm_v3(&handshake_prk, b"flowersec v3 client finished", &h2)
+            let client_confirm = confirm_v3(&handshake_prk, CLIENT_FINISHED_LABEL_V3, &h2)
                 .expect("client confirmation");
             assert_vector_hex(
                 id,
@@ -5197,7 +5186,7 @@ mod tests {
         let parsed = read_frame(valid.clone()).await.unwrap();
         let client: ClientInitWire =
             canonical_handshake_v3(&parsed[HANDSHAKE_HEADER_BYTES..]).unwrap();
-        assert_eq!(client.profile, "flowersec/3");
+        assert_eq!(client.profile, SESSION_PROFILE_V3);
         for field in ["v2_magic_hex", "v2_version_hex"] {
             assert!(read_frame(vector_hex(fsh3, field)).await.is_err());
         }

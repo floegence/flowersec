@@ -119,10 +119,12 @@ struct TransportV3Tests {
     let artifact = try parseArtifactV3(Self.validArtifact())
     let started = AsyncStream<Void>.makeStream()
     let release = AsyncStream<Void>.makeStream()
-    let lease = ArtifactLeaseV3(artifact: artifact, commitSpend: {
-      started.continuation.yield(())
-      for await _ in release.stream { break }
-    })
+    let lease = ArtifactLeaseV3(
+      artifact: artifact,
+      commitSpend: {
+        started.continuation.yield(())
+        for await _ in release.stream { break }
+      })
     let claimed = try await lease.claim()
     let task = Task { try await claimed.commitSpend() }
     var iterator = started.stream.makeAsyncIterator()
@@ -130,7 +132,10 @@ struct TransportV3Tests {
     task.cancel()
     var consumed = false
     for _ in 0..<100 {
-      if await claimed.isConsumed { consumed = true; break }
+      if await claimed.isConsumed {
+        consumed = true
+        break
+      }
       await Task.yield()
     }
     #expect(consumed)
@@ -140,9 +145,11 @@ struct TransportV3Tests {
 
   @Test func failedSpendIsConsumed() async throws {
     let artifact = try parseArtifactV3(Self.validArtifact())
-    let lease = ArtifactLeaseV3(artifact: artifact, commitSpend: {
-      throw SpendFailureV3.durabilityUnavailable
-    })
+    let lease = ArtifactLeaseV3(
+      artifact: artifact,
+      commitSpend: {
+        throw SpendFailureV3.durabilityUnavailable
+      })
     let claimed = try await lease.claim()
     await #expect(throws: SpendFailureV3.durabilityUnavailable) {
       try await claimed.commitSpend()
@@ -389,10 +396,12 @@ struct TransportV3Tests {
     let artifactJSON = try #require(root["artifact_json"] as? String)
     let artifact = try parseArtifactV3(Data(artifactJSON.utf8))
     let candidateID = try #require(root["chosen_candidate_id"] as? String)
-    let admission = try AdmissionCodecV3.encodeFSB3(artifact: artifact, chosenCandidateID: candidateID)
+    let admission = try AdmissionCodecV3.encodeFSB3(
+      artifact: artifact, chosenCandidateID: candidateID)
     let expectedFrame = try Data(hexV3: #require(root["fsb3_hex"] as? String))
     let expectedBinding = try Data(hexV3: #require(root["admission_binding_hex"] as? String))
-    let expectedAdmissions = try Data(hexV3: #require(root["acceptor_admissions_hash_hex"] as? String))
+    let expectedAdmissions = try Data(
+      hexV3: #require(root["acceptor_admissions_hash_hex"] as? String))
     #expect(admission.frame == expectedFrame)
     #expect(admission.admissionBinding == expectedBinding)
     #expect(
@@ -448,16 +457,24 @@ struct TransportV3Tests {
     let profileMutations = try #require(root["profile_mutations"] as? [[String: Any]])
     for mutation in profileMutations {
       let id = try #require(mutation["id"] as? String)
+      let v3 = try #require(mutation["v3"] as? String)
       let v2 = try #require(mutation["v2"] as? String)
       if id == "tunnel" {
+        #expect(v3 == TransportV3Contract.tunnelProfile)
         #expect(v2 == "flowersec-tunnel/2")
-        #expect(v2 != "flowersec-tunnel/3")
         continue
       }
-      let marker = id == "session"
-        ? "\"profile\":\"flowersec/3\""
-        : "\"wire_profile\":\"flowersec-\(id)/3\""
-      let mutated = artifactText.replacingOccurrences(of: marker, with: marker.replacingOccurrences(of: "/3", with: "/2"))
+      if id == "direct" {
+        #expect(v3 == TransportV3Contract.directProfile)
+      } else {
+        #expect(v3 == TransportV3Contract.sessionProfile)
+      }
+      let marker =
+        id == "session"
+        ? "\"profile\":\"\(TransportV3Contract.sessionProfile)\""
+        : "\"wire_profile\":\"\(TransportV3Contract.wireProfile(for: id))\""
+      let mutated = artifactText.replacingOccurrences(
+        of: marker, with: marker.replacingOccurrences(of: "/3", with: "/2"))
       #expect(throws: ArtifactErrorV3.self, Comment(rawValue: "profile_mutations/\(id)")) {
         try parseArtifactV3(Data(mutated.utf8))
       }
@@ -465,24 +482,84 @@ struct TransportV3Tests {
     }
 
     let pathMutations = try #require(root["path_mutations"] as? [[String: Any]])
-    for mutation in pathMutations where !(mutation["id"] as? String ?? "").hasSuffix("-subprotocol") {
+    for mutation in pathMutations {
       let id = try #require(mutation["id"] as? String)
       let v3 = try #require(mutation["v3"] as? String)
       let v2 = try #require(mutation["v2"] as? String)
+      if id.hasSuffix("-subprotocol") {
+        let expected =
+          id.hasPrefix("websocket-direct")
+          ? TransportV3Contract.directWebSocketSubprotocol
+          : TransportV3Contract.tunnelWebSocketSubprotocol
+        #expect(v3 == expected, Comment(rawValue: "path_mutations/\(id)/v3"))
+        #expect(v2 != expected, Comment(rawValue: "path_mutations/\(id)/v2"))
+        continue
+      }
       let carrier = id.hasPrefix("webtransport") ? "webtransport" : "websocket"
       let kind = id.hasSuffix("-tunnel") ? "tunnel" : "direct"
-      #expect(try ArtifactCodecV3.normalizeURL("\(carrier == "webtransport" ? "https" : "wss")://example.com\(v3)", carrier: carrier, kind: kind).contains("/v3/"))
+      let expectedPath =
+        carrier == "webtransport"
+        ? TransportV3Contract.webTransportPath(for: kind)
+        : TransportV3Contract.webSocketPath(for: kind)
+      #expect(v3 == expectedPath, Comment(rawValue: "path_mutations/\(id)/v3"))
+      #expect(
+        try ArtifactCodecV3.normalizeURL(
+          "\(carrier == "webtransport" ? "https" : "wss")://example.com\(v3)",
+          carrier: carrier, kind: kind)
+          == "\(carrier == "webtransport" ? "https" : "wss")://example.com\(expectedPath)")
       #expect(throws: ArtifactErrorV3.self, Comment(rawValue: "path_mutations/\(id)")) {
-        try ArtifactCodecV3.normalizeURL("\(carrier == "webtransport" ? "https" : "wss")://example.com\(v2)", carrier: carrier, kind: kind)
+        try ArtifactCodecV3.normalizeURL(
+          "\(carrier == "webtransport" ? "https" : "wss")://example.com\(v2)", carrier: carrier,
+          kind: kind)
       }
     }
 
-    for field in ["alpn_mutations", "crypto_label_mutations"] {
-      let mutations = try #require(root[field] as? [[String: Any]])
-      for mutation in mutations {
-        #expect(mutation["error_code"] as? String == "version_isolation")
-        #expect(mutation["v3"] as? String != mutation["v2"] as? String)
+    let alpnMutations = try #require(root["alpn_mutations"] as? [[String: Any]])
+    for mutation in alpnMutations {
+      let id = try #require(mutation["id"] as? String)
+      let v3 = try #require(mutation["v3"] as? String)
+      let v2 = try #require(mutation["v2"] as? String)
+      let expected =
+        id == "direct"
+        ? TransportV3Contract.directProfile
+        : TransportV3Contract.tunnelProfile
+      #expect(v3 == expected, Comment(rawValue: "alpn_mutations/\(id)/v3"))
+      #expect(v2 != expected, Comment(rawValue: "alpn_mutations/\(id)/v2"))
+    }
+    let cryptoMutations = try #require(root["crypto_label_mutations"] as? [[String: Any]])
+    for mutation in cryptoMutations {
+      let id = try #require(mutation["id"] as? String)
+      let v3 = try #require(mutation["v3"] as? String)
+      let v2 = try #require(mutation["v2"] as? String)
+      let expected: String
+      switch id {
+      case "handshake": expected = TransportV3Contract.handshakeDomain
+      case "server-finished": expected = TransportV3Contract.serverFinishedLabel
+      case "client-finished": expected = TransportV3Contract.clientFinishedLabel
+      case "epoch-zero": expected = TransportV3Contract.epochZeroLabel
+      case "control-root": expected = TransportV3Contract.controlRootLabel
+      case "stream-root": expected = TransportV3Contract.streamRootLabel
+      case "setup-root": expected = TransportV3Contract.setupRootLabel
+      case "rekey-root": expected = TransportV3Contract.rekeyRootLabel
+      case "next-epoch": expected = TransportV3Contract.nextEpochLabel
+      case "stream": expected = TransportV3Contract.streamLabel
+      case "control": expected = TransportV3Contract.controlLabel
+      case "record-key": expected = TransportV3Contract.recordKeyLabel
+      case "nonce": expected = TransportV3Contract.nonceLabel
+      case "unreliable-root": expected = TransportV3Contract.unreliableRootLabel
+      case "unreliable": expected = TransportV3Contract.unreliableLabel
+      case "unreliable-key": expected = TransportV3Contract.unreliableKeyLabel
+      case "unreliable-nonce": expected = TransportV3Contract.unreliableNonceLabel
+      case "unreliable-aad": expected = TransportV3Contract.unreliableDomain
+      case "setup-mac": expected = TransportV3Contract.setupDomain + "\0"
+      case "record-aad": expected = TransportV3Contract.recordDomain + "\0"
+      case "open": expected = TransportV3Contract.openDomain
+      default:
+        Issue.record("unexpected crypto isolation label \(id)")
+        continue
       }
+      #expect(v3 == expected, Comment(rawValue: "crypto_label_mutations/\(id)/v3"))
+      #expect(v2 != expected, Comment(rawValue: "crypto_label_mutations/\(id)/v2"))
     }
   }
 

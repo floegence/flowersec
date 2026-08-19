@@ -11,6 +11,7 @@ import type {
   NativeRawQuicDriverV3,
 } from "./nativeTransportAddon.js";
 import { normalizeCertificateChain } from "./rawQuicAdapter.js";
+import { alpnForPathV3 } from "../v3/transportConstants.js";
 
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
 type NodeTLSRootsV3 = string | Uint8Array | readonly (string | Uint8Array)[];
@@ -27,6 +28,9 @@ export async function createNodeRawQuicClientV3(
   }> = {},
 ): Promise<NativeCarrierSessionV3> {
   if (candidate.carrier !== "raw_quic") throw new TransportFailureV3("invalid_artifact");
+  if (candidate.wire_profile !== alpnForPathV3(artifact.path.kind)) {
+    throw new TransportFailureV3("invalid_artifact");
+  }
   let url: URL;
   try {
     url = new URL(candidate.normalized_url);

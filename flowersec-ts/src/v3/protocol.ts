@@ -4,6 +4,8 @@ import { expand } from "@noble/hashes/hkdf.js";
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 
+import { FLOWERSEC_V3_CRYPTO_LABELS } from "./transportConstants.js";
+
 const encoder = new TextEncoder();
 const MAX_UINT32 = 0xffffffff;
 const MAX_UINT64 = (1n << 64n) - 1n;
@@ -192,7 +194,7 @@ export function deriveEpochZero(
   assertDirection(direction);
   const epochSecret = expand32(
     sessionPRK,
-    labelWith("flowersec v3 epoch zero", byte(direction)),
+    labelWith(FLOWERSEC_V3_CRYPTO_LABELS["epoch-zero"], byte(direction)),
   );
   return deriveEpochRoots(epochSecret);
 }
@@ -201,10 +203,10 @@ export function deriveEpochRoots(epochSecret: Uint8Array): EpochRootsV3 {
   assertBytes("epoch secret", epochSecret, 32);
   return {
     epochSecret: epochSecret.slice(),
-    controlRoot: expand32(epochSecret, labelWith("flowersec v3 control root")),
-    streamRoot: expand32(epochSecret, labelWith("flowersec v3 stream root")),
-    setupRoot: expand32(epochSecret, labelWith("flowersec v3 setup root")),
-    rekeyRoot: expand32(epochSecret, labelWith("flowersec v3 rekey root")),
+    controlRoot: expand32(epochSecret, labelWith(FLOWERSEC_V3_CRYPTO_LABELS["control-root"])),
+    streamRoot: expand32(epochSecret, labelWith(FLOWERSEC_V3_CRYPTO_LABELS["stream-root"])),
+    setupRoot: expand32(epochSecret, labelWith(FLOWERSEC_V3_CRYPTO_LABELS["setup-root"])),
+    rekeyRoot: expand32(epochSecret, labelWith(FLOWERSEC_V3_CRYPTO_LABELS["rekey-root"])),
   };
 }
 
@@ -220,7 +222,7 @@ export function deriveNextEpoch(
   assertU32("next epoch", nextEpoch);
   return expand32(
     rekeyRoot,
-    labelWith("flowersec v3 next epoch", h3, byte(direction), u32be(nextEpoch)),
+    labelWith(FLOWERSEC_V3_CRYPTO_LABELS["next-epoch"], h3, byte(direction), u32be(nextEpoch)),
   );
 }
 
@@ -239,7 +241,7 @@ export function deriveStreamMaterial(
   const secret = expand32(
     streamRoot,
     labelWith(
-      "flowersec v3 stream",
+      FLOWERSEC_V3_CRYPTO_LABELS.stream,
       h3,
       u64be(logicalStreamID),
       byte(direction),
@@ -248,8 +250,8 @@ export function deriveStreamMaterial(
   );
   return {
     secret,
-    recordKey: expand32(secret, labelWith("flowersec v3 record key")),
-    noncePrefix: expand(sha256, secret, labelWith("flowersec v3 nonce"), 4),
+    recordKey: expand32(secret, labelWith(FLOWERSEC_V3_CRYPTO_LABELS["record-key"])),
+    noncePrefix: expand(sha256, secret, labelWith(FLOWERSEC_V3_CRYPTO_LABELS.nonce), 4),
   };
 }
 
@@ -266,7 +268,7 @@ export function deriveControlMaterial(
   const secret = expand32(
     controlRoot,
     labelWith(
-      "flowersec v3 control",
+      FLOWERSEC_V3_CRYPTO_LABELS.control,
       h3,
       u64be(0n),
       byte(direction),
@@ -275,8 +277,8 @@ export function deriveControlMaterial(
   );
   return {
     secret,
-    recordKey: expand32(secret, labelWith("flowersec v3 record key")),
-    noncePrefix: expand(sha256, secret, labelWith("flowersec v3 nonce"), 4),
+    recordKey: expand32(secret, labelWith(FLOWERSEC_V3_CRYPTO_LABELS["record-key"])),
+    noncePrefix: expand(sha256, secret, labelWith(FLOWERSEC_V3_CRYPTO_LABELS.nonce), 4),
   };
 }
 
@@ -291,7 +293,7 @@ export function computeSetupMAC(
   return hmac(
     sha256,
     setupRoot,
-    labelWith("flowersec-v3-setup", h3, raw.subarray(0, 24)),
+    exactLabelWith(FLOWERSEC_V3_CRYPTO_LABELS["setup-mac"], h3, raw.subarray(0, 24)),
   );
 }
 
@@ -480,7 +482,11 @@ export function decodeOpenPayload(raw: Uint8Array): OpenPayloadV3 {
 
 export function computeOpenHashV3(rawOpenPayload: Uint8Array): Uint8Array {
   decodeOpenPayload(rawOpenPayload);
-  return sha256(concat(encoder.encode("flowersec-v3-open\0"), u32be(rawOpenPayload.length), rawOpenPayload));
+  return sha256(concat(
+    encoder.encode(FLOWERSEC_V3_CRYPTO_LABELS.open),
+    u32be(rawOpenPayload.length),
+    rawOpenPayload,
+  ));
 }
 
 export function encodeOpenACKV3(openHash: Uint8Array): Uint8Array {
@@ -541,8 +547,8 @@ export function buildRecordAAD(
   assertU64("logical stream ID", logicalStreamID);
   assertDirection(direction);
   decodeRecordHeader(rawHeader);
-  return labelWith(
-    "flowersec-v3-record",
+  return exactLabelWith(
+    FLOWERSEC_V3_CRYPTO_LABELS["record-aad"],
     h3,
     u64be(logicalStreamID),
     byte(direction),
@@ -680,6 +686,10 @@ function expand32(prk: Uint8Array, info: Uint8Array): Uint8Array {
 
 function labelWith(label: string, ...parts: Uint8Array[]): Uint8Array {
   return concat(encoder.encode(label), byte(0), ...parts);
+}
+
+function exactLabelWith(label: string, ...parts: Uint8Array[]): Uint8Array {
+  return concat(encoder.encode(label), ...parts);
 }
 
 function concat(...parts: Uint8Array[]): Uint8Array {

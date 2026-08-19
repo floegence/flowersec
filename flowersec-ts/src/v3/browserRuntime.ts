@@ -6,6 +6,7 @@ import {
   type WebTransportSessionLikeV3,
 } from "./webTransportCarrier.js";
 import type { NativeCarrierSessionV3 } from "./carrier.js";
+import { FLOWERSEC_V3_PATHS, FLOWERSEC_V3_WIRE_PROFILES } from "./transportConstants.js";
 
 const PIN_BROWSER_VERSION = "151.0.7922.34";
 
@@ -193,9 +194,7 @@ function tuplesFor(
 function validateNormalizedBrowserURL(raw: string, path: "direct" | "tunnel"): void {
   let parsed: URL;
   try { parsed = new URL(raw); } catch { throw new TransportFailureV3("invalid_artifact"); }
-  const expectedPath = path === "direct"
-    ? "/flowersec/webtransport/v3/direct"
-    : "/flowersec/webtransport/v3/tunnel";
+  const expectedPath = FLOWERSEC_V3_PATHS.webtransport[path];
   if (parsed.href !== raw || parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== "" ||
       parsed.pathname !== expectedPath || parsed.search !== "" || parsed.hash !== "") {
     throw new TransportFailureV3("invalid_artifact");
@@ -203,8 +202,8 @@ function validateNormalizedBrowserURL(raw: string, path: "direct" | "tunnel"): v
 }
 
 function pathFromProfile(profile: string): "direct" | "tunnel" {
-  if (profile === "flowersec-direct/3") return "direct";
-  if (profile === "flowersec-tunnel/3") return "tunnel";
+  if (profile === FLOWERSEC_V3_WIRE_PROFILES.direct) return "direct";
+  if (profile === FLOWERSEC_V3_WIRE_PROFILES.tunnel) return "tunnel";
   throw new TransportFailureV3("invalid_artifact");
 }
 

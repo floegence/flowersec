@@ -5,6 +5,7 @@ import { concatBytes, readU32be, u32be } from "../utils/bin.js";
 import { toASCII } from "../vendor/tr46.js";
 import { canonicalizeJCSV3, type JCSValue } from "./jcs.js";
 import { preflightJSONV3 } from "./jsonPreflight.js";
+import { FLOWERSEC_V3_PROFILE, wireProfileForPathV3 } from "./transportConstants.js";
 
 export type ArtifactCarrierV3 = "websocket" | "raw_quic" | "webtransport";
 export type ArtifactPathKindV3 = "direct" | "tunnel";
@@ -89,7 +90,7 @@ export type CorrelationContextV3 = Readonly<{
 
 export type ArtifactV3 = Readonly<{
   v: 3;
-  profile: "flowersec/3";
+  profile: typeof FLOWERSEC_V3_PROFILE;
   session: SessionContractV3;
   path: DirectArtifactPathV3 | TunnelArtifactPathV3;
   scoped: readonly ScopeMetadataV3[];
@@ -97,7 +98,7 @@ export type ArtifactV3 = Readonly<{
 }>;
 
 type CommonFSB3RequestV3 = Readonly<{
-  profile: "flowersec/3";
+  profile: typeof FLOWERSEC_V3_PROFILE;
   channel_id: string;
   session_contract_hash_b64u: string;
   rendezvous_group_id: string;
@@ -170,7 +171,7 @@ export type CanonicalCandidateSetV3 = LabeledHashV3 &
     candidates: readonly CanonicalArtifactCandidateV3[];
   }>;
 
-const PROFILE = "flowersec/3";
+const PROFILE = FLOWERSEC_V3_PROFILE;
 const MAX_ARTIFACT_JSON_BYTES = 65_536;
 const MAX_CANDIDATES = 4;
 const MAX_CANONICAL_CANDIDATE_BYTES = 2_304;
@@ -243,7 +244,7 @@ export function canonicalizeCandidatesV3(
     if (candidate.normalized_url !== undefined && candidate.normalized_url !== normalizedURL) {
       throw invalidCandidate("normalized URL mismatch");
     }
-    const wireProfile = `flowersec-${kind}/3`;
+    const wireProfile = wireProfileForPathV3(kind);
     if (candidate.wire_profile !== wireProfile) throw invalidCandidate("wire profile");
     validateTLSPolicy(candidate.tls, "invalid_candidate");
     const endpoint = `${candidate.carrier}\0${kind}\0${normalizedURL}`;
@@ -1096,7 +1097,7 @@ function decodeFSB3Value(pathKind: ArtifactPathKindV3, value: unknown): FSB3Requ
   }
   const candidates = decodeCanonicalCandidatesValue(wire.candidates);
   const common = {
-    profile: requireString(wire.profile, "profile", "invalid_fsb3") as "flowersec/3",
+    profile: requireString(wire.profile, "profile", "invalid_fsb3") as typeof FLOWERSEC_V3_PROFILE,
     channel_id: requireString(wire.channel_id, "channel ID", "invalid_fsb3"),
     session_contract_hash_b64u: requireString(wire.session_contract_hash_b64u, "session hash", "invalid_fsb3"),
     rendezvous_group_id: requireString(wire.rendezvous_group_id, "rendezvous group", "invalid_fsb3"),

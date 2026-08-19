@@ -7,6 +7,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { base64urlDecode, base64urlEncode } from "../utils/base64url.js";
 import { concatBytes, readU32be, u32be } from "../utils/bin.js";
 import { CipherSuiteV3, ProtocolV3Error } from "./protocol.js";
+import { FLOWERSEC_V3_CRYPTO_LABELS, FLOWERSEC_V3_PROFILE } from "./transportConstants.js";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -29,7 +30,7 @@ export type HandshakeFrameV3 = Readonly<{
 }>;
 
 export type ClientInitV3 = Readonly<{
-  profile: "flowersec/3";
+  profile: typeof FLOWERSEC_V3_PROFILE;
   channelID: string;
   sessionContractHash: Uint8Array;
   clientRole: 1;
@@ -161,7 +162,7 @@ export function decodeClientInitV3(raw: Uint8Array): ClientInitV3 {
     "session_contract_hash_b64u", "suite",
   ]);
   const message: ClientInitV3 = {
-    profile: requireString(value.profile) as "flowersec/3",
+    profile: requireString(value.profile) as typeof FLOWERSEC_V3_PROFILE,
     channelID: requireString(value.channel_id),
     sessionContractHash: decode32(value.session_contract_hash_b64u),
     clientRole: requireInteger(value.client_role, 1) as 1,
@@ -327,7 +328,7 @@ export function computeHandshakeH0V3(controlPrefaceRaw: Uint8Array, clientInitRa
   parseControlPrefaceV3(controlPrefaceRaw);
   decodeClientInitV3(clientInitRaw);
   return sha256(concatBytes([
-    encoder.encode("flowersec-v3-handshake\0"),
+    encoder.encode(FLOWERSEC_V3_CRYPTO_LABELS.handshake),
     controlPrefaceRaw,
     lengthPrefixed(clientInitRaw),
   ]));
@@ -341,7 +342,7 @@ export function computeHandshakeH1V3(h0: Uint8Array, serverCoreRaw: Uint8Array):
 }
 
 export function computeServerConfirmV3(handshakePRK: Uint8Array, h1: Uint8Array): Uint8Array {
-  return computeConfirm(handshakePRK, h1, "flowersec v3 server finished");
+  return computeConfirm(handshakePRK, h1, FLOWERSEC_V3_CRYPTO_LABELS["server-finished"]);
 }
 
 export function computeHandshakeH2V3(
@@ -358,7 +359,7 @@ export function computeHandshakeH2V3(
 }
 
 export function computeClientConfirmV3(handshakePRK: Uint8Array, h2: Uint8Array): Uint8Array {
-  return computeConfirm(handshakePRK, h2, "flowersec v3 client finished");
+  return computeConfirm(handshakePRK, h2, FLOWERSEC_V3_CRYPTO_LABELS["client-finished"]);
 }
 
 export function computeHandshakeH3V3(h2: Uint8Array, clientFinishedRaw: Uint8Array): Uint8Array {
@@ -415,7 +416,7 @@ function serverCoreWire(core: ServerFinishedCoreV3): Record<string, unknown> {
 
 function validateClientInit(message: ClientInitV3): void {
   if (
-    message.profile !== "flowersec/3" ||
+    message.profile !== FLOWERSEC_V3_PROFILE ||
     !validRegistryID(message.channelID, false) ||
     message.clientRole !== 1 ||
     (message.selectedFeatures & ~KNOWN_FEATURES_V3) !== 0 ||

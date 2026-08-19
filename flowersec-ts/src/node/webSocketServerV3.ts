@@ -7,6 +7,10 @@ import type { PathKind } from "../v3/contract.js";
 import { createServerWebSocketCarrierSessionV3 } from "../v3/webSocketCarrier.js";
 import { WebSocketBinaryTransport } from "../ws-client/binaryTransport.js";
 import { defaultWsMaxPayload } from "./wsDefaults.js";
+import {
+  FLOWERSEC_V3_PATHS,
+  websocketSubprotocolForPathV3,
+} from "../v3/transportConstants.js";
 
 export type NodeWebSocketListenerOptionsV3 = Readonly<{
   host: string;
@@ -27,8 +31,8 @@ export async function startNodeWebSocketListenerV3(
   options: NodeWebSocketListenerOptionsV3,
 ): Promise<NodeWebSocketListenerV3> {
   validateOptions(options);
-  const protocol = options.path === "direct" ? "flowersec.direct.v3" : "flowersec.tunnel.v3";
-  const endpoint = `/flowersec/v3/${options.path}`;
+  const protocol = websocketSubprotocolForPathV3(options.path);
+  const endpoint = FLOWERSEC_V3_PATHS.websocket[options.path];
   const require = createRequire(import.meta.url);
   const wsModule = require("ws") as any;
   const WebSocketServer = wsModule.WebSocketServer;

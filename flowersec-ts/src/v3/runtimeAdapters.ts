@@ -7,6 +7,7 @@ import {
 import type { ReadyAdmissionTransportV3 } from "./sessionConnector.js";
 import { TransportFailureV3 } from "./security.js";
 import { createWebSocketCarrierSessionV3 } from "./webSocketCarrier.js";
+import { websocketSubprotocolForPathV3 } from "./transportConstants.js";
 
 export type WebSocketLikeV3 = WebSocketLike & Readonly<{ protocol?: string }>;
 
@@ -16,7 +17,7 @@ export async function readyWebSocketAdmissionV3(
   socket: WebSocketLikeV3,
   signal: AbortSignal,
 ): Promise<ReadyAdmissionTransportV3> {
-  const subprotocol = artifact.path.kind === "direct" ? "flowersec.direct.v3" : "flowersec.tunnel.v3";
+  const subprotocol = websocketSubprotocolForPathV3(artifact.path.kind);
   await waitForWebSocketOpen(socket, subprotocol, signal);
   const transport = new WebSocketBinaryTransport(socket);
   let finalized = false;

@@ -35,9 +35,13 @@ import Foundation
       activePinHashes: [Data]?
     ) async throws -> any PreparedCarrierConnectionV3 {
       guard candidate.carrier == RuntimeCarrierV3.webSocket.rawValue,
-        let url = URL(string: candidate.normalizedURL), url.absoluteString == candidate.normalizedURL,
+        let url = URL(string: candidate.normalizedURL),
+        url.absoluteString == candidate.normalizedURL,
         url.scheme == "wss",
-        url.path == (path == .direct ? "/flowersec/v3/direct" : "/flowersec/v3/tunnel"),
+        url.path
+          == (path == .direct
+            ? TransportV3Contract.directWebSocketPath
+            : TransportV3Contract.tunnelWebSocketPath),
         url.query == nil, url.fragment == nil, url.user == nil, url.password == nil,
         let host = url.host, let origin = options.origin
       else { throw ConnectorBoundaryErrorV3.runtimeUnsupported }

@@ -14,6 +14,7 @@ import type {
 } from "./contract.js";
 import { CarrierError, type CarrierSessionV3, type CarrierStreamV3 } from "./carrier.js";
 import type { SessionContractV3 } from "./artifact.js";
+import { FLOWERSEC_V3_PROFILE } from "./transportConstants.js";
 import {
   computeClientConfirmV3,
   computeHandshakeH0V3,
@@ -1715,7 +1716,7 @@ async function clientHandshake(
   const key = generateEphemeralKeyV3(config.suite, config.runtime.entropy);
   const controlPreface = encodeControlPrefaceV3();
   const initRaw = encodeClientInitV3({
-    profile: "flowersec/3",
+    profile: FLOWERSEC_V3_PROFILE,
     channelID: config.channelID,
     sessionContractHash: config.sessionContractHash,
     clientRole: 1,

@@ -186,6 +186,14 @@ async function attemptClaimedArtifactLeaseWithinDeadlineV3(
     failure?: TransportFailureV3;
   }>>>();
   const controllers = new Map<number, AbortController>();
+  const preparedTransportCleanups = new Map<ReadyAdmissionTransportV3, Promise<void>>();
+  const cleanupPreparedTransport = (transport: ReadyAdmissionTransportV3): Promise<void> => {
+    const existing = preparedTransportCleanups.get(transport);
+    if (existing !== undefined) return existing;
+    const cleanup = closePreparedTransportV3(transport, context.signal);
+    preparedTransportCleanups.set(transport, cleanup);
+    return cleanup;
+  };
   let attemptNow: number;
   try {
     // A candidate race has one fixed wall-clock snapshot for every pin policy.
@@ -232,24 +240,34 @@ async function attemptClaimedArtifactLeaseWithinDeadlineV3(
   }
 
   let winner: ReadyAdmissionTransportV3 | undefined;
-  while (pending.size > 0 && winner === undefined) {
-    throwIfAborted(context.signal);
-    const result = await raceAbort(Promise.race(pending.values()), context.signal);
-    throwIfAborted(context.signal);
-    pending.delete(result.index);
-    if (result.ready !== undefined) winner = result.ready;
-    else {
-      const candidate = context.candidates[result.index]!;
-      failures.push({ candidate, failure: result.failure ?? new TransportFailureV3("connection_failed") });
+  try {
+    while (pending.size > 0 && winner === undefined) {
+      throwIfAborted(context.signal);
+      const result = await raceAbort(Promise.race(pending.values()), context.signal);
+      throwIfAborted(context.signal);
+      pending.delete(result.index);
+      if (result.ready !== undefined) winner = result.ready;
+      else {
+        const candidate = context.candidates[result.index]!;
+        failures.push({ candidate, failure: result.failure ?? new TransportFailureV3("connection_failed") });
+      }
+    }
+  } finally {
+    for (const [index, controller] of controllers) {
+      if (context.candidates[index] !== winner?.candidate) controller.abort(new Error("candidate lost race"));
+    }
+    for (const task of pending.values()) {
+      void task.then(async (result) => {
+        if (result.ready !== undefined && result.ready !== winner) {
+          await cleanupPreparedTransport(result.ready);
+        }
+      }).catch(() => undefined);
     }
   }
-  for (const [index, controller] of controllers) {
-    if (context.candidates[index] !== winner?.candidate) controller.abort(new Error("candidate lost race"));
-  }
   try {
-    await drainCandidateResultsV3([...pending.values()], winner, context.signal);
+    await drainCandidateResultsV3([...pending.values()], winner, cleanupPreparedTransport, context.signal);
   } catch (error) {
-    if (winner !== undefined) await closePreparedTransportV3(winner, context.signal);
+    if (winner !== undefined) await cleanupPreparedTransport(winner);
     throw error;
   }
   if (winner === undefined) {
@@ -290,7 +308,7 @@ async function attemptClaimedArtifactLeaseWithinDeadlineV3(
       throw error;
     }
   } catch (error) {
-    await closePreparedTransportV3(winner, context.signal);
+    await cleanupPreparedTransport(winner);
     throwIfAborted(context.signal);
     if (artifactLeaseStateV3(context.claim) === "claimed") {
       return { kind: "pre_spend_failure", error: publicPreSpendError(error) };
@@ -479,12 +497,13 @@ async function drainCandidateResultsV3(
     failure?: TransportFailureV3;
   }>>[],
   winner: ReadyAdmissionTransportV3 | undefined,
+  cleanupPreparedTransport: (transport: ReadyAdmissionTransportV3) => Promise<void>,
   signal: AbortSignal,
 ): Promise<void> {
   const drain = Promise.all(pending).then(async (results) => {
     await Promise.allSettled(results.map(async (result) => {
       if (result.ready !== undefined && result.ready !== winner) {
-        await closePreparedTransportV3(result.ready, signal);
+        await cleanupPreparedTransport(result.ready);
       }
     }));
   });

@@ -23,7 +23,9 @@ use std::{
 
 use crate::{
     protocol_v3::CipherSuiteV3,
-    transport_v3::{PathKind, SessionRole},
+    transport_v3::{
+        DIRECT_PROFILE_V3, PathKind, SESSION_PROFILE_V3, SessionRole, TUNNEL_PROFILE_V3,
+    },
 };
 
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
@@ -557,7 +559,7 @@ pub(crate) fn decode_direct_fsb3(raw: &[u8]) -> Result<(), ArtifactErrorV3> {
     let value = decode_fsb3_payload(raw, 1)?;
     let wire: DirectFsb3WireV3 =
         serde_json::from_value(value).map_err(|_| ArtifactErrorV3::Invalid)?;
-    if wire.profile != "flowersec/3"
+    if wire.profile != SESSION_PROFILE_V3
         || !valid_ascii(&wire.routing_token, 8192)
         || !valid_registry_id(&wire.channel_id, 128)
         || !valid_registry_id(&wire.listener_audience, 128)
@@ -569,7 +571,7 @@ pub(crate) fn decode_direct_fsb3(raw: &[u8]) -> Result<(), ArtifactErrorV3> {
     validate_fsb3_candidates(
         &wire.candidates,
         "direct",
-        "flowersec-direct/3",
+        DIRECT_PROFILE_V3,
         &wire.candidate_set_hash_b64u,
         &wire.chosen_candidate_id,
     )?;
@@ -583,7 +585,7 @@ pub(crate) fn decode_tunnel_fsb3(
     let value = decode_fsb3_payload(raw, 2)?;
     let wire: TunnelFsb3WireV3 =
         serde_json::from_value(value).map_err(|_| ArtifactErrorV3::Invalid)?;
-    if wire.profile != "flowersec/3"
+    if wire.profile != SESSION_PROFILE_V3
         || !matches!(wire.role, 1 | 2)
         || !valid_ascii(&wire.attach_token, 8192)
         || !valid_registry_id(&wire.channel_id, 128)
@@ -598,7 +600,7 @@ pub(crate) fn decode_tunnel_fsb3(
     let chosen = validate_fsb3_candidates(
         &wire.candidates,
         "tunnel",
-        "flowersec-tunnel/3",
+        TUNNEL_PROFILE_V3,
         &wire.candidate_set_hash_b64u,
         &wire.chosen_candidate_id,
     )?;
@@ -762,7 +764,7 @@ pub(crate) enum TransportSecurityFailureV3 {
 }
 
 fn validate_artifact(wire: &ArtifactWireV3) -> Result<Vec<CanonicalCandidateV3>, ArtifactErrorV3> {
-    if wire.v != 3 || wire.profile != "flowersec/3" {
+    if wire.v != 3 || wire.profile != SESSION_PROFILE_V3 {
         return Err(ArtifactErrorV3::Invalid);
     }
     validate_session(&wire.session)?;
@@ -853,7 +855,7 @@ fn validate_session(session: &SessionWireV3) -> Result<(), ArtifactErrorV3> {
         "allowed_suites": session.allowed_suites, "channel_id": session.channel_id,
         "default_suite": session.default_suite, "establish_timeout_seconds": session.establish_timeout_seconds,
         "idle_timeout_seconds": session.idle_timeout_seconds, "max_inbound_streams": session.max_inbound_streams,
-        "profile": "flowersec/3", "rekey_completion_timeout_seconds": session.rekey_completion_timeout_seconds,
+        "profile": SESSION_PROFILE_V3, "rekey_completion_timeout_seconds": session.rekey_completion_timeout_seconds,
         "rekey_prepare_timeout_seconds": session.rekey_prepare_timeout_seconds, "selected_features": session.selected_features,
     });
     let expected = hash_lp(b"flowersec-v3-session-contract\0", &jcs_value(&projection)?);
@@ -876,7 +878,12 @@ fn validate_candidates(
     for candidate in source {
         if !valid_candidate_id(&candidate.id)
             || !ids.insert(candidate.id.as_str())
-            || candidate.wire_profile != format!("flowersec-{kind}/3")
+            || candidate.wire_profile
+                != match kind {
+                    "direct" => DIRECT_PROFILE_V3,
+                    "tunnel" => TUNNEL_PROFILE_V3,
+                    _ => return Err(ArtifactErrorV3::Invalid),
+                }
         {
             return Err(ArtifactErrorV3::Invalid);
         }
@@ -1955,7 +1962,13 @@ mod tests {
         for mutation in fixture["profile_mutations"].as_array().unwrap() {
             let id = mutation["id"].as_str().unwrap();
             let v3 = mutation["v3"].as_str().unwrap();
-            assert!(v3.ends_with("/3"));
+            let expected = match id {
+                "session" => SESSION_PROFILE_V3,
+                "direct" => DIRECT_PROFILE_V3,
+                "tunnel" => TUNNEL_PROFILE_V3,
+                other => panic!("unknown profile mutation {other}"),
+            };
+            assert_eq!(v3, expected);
             let v2 = mutation["v2"].as_str().unwrap();
             let mut value = base.clone();
             match id {
@@ -1975,6 +1988,13 @@ mod tests {
             let v3 = mutation["v3"].as_str().unwrap();
             let v2 = mutation["v2"].as_str().unwrap();
             if id.ends_with("-subprotocol") {
+                let expected = match id {
+                    "websocket-direct-subprotocol" => crate::websocket_v2::SUBPROTOCOL_DIRECT_V3,
+                    "websocket-tunnel-subprotocol" => crate::websocket_v2::SUBPROTOCOL_TUNNEL_V3,
+                    other => panic!("unknown subprotocol mutation {other}"),
+                };
+                assert_eq!(v3, expected);
+                assert_ne!(v2, expected);
                 continue;
             }
             let carrier = if id.starts_with("webtransport") {
@@ -1992,6 +2012,14 @@ mod tests {
             } else {
                 "https"
             };
+            if carrier == CarrierWireV3::Websocket {
+                let expected = if kind == "direct" {
+                    crate::websocket_v2::DIRECT_PATH_V3
+                } else {
+                    crate::websocket_v2::TUNNEL_PATH_V3
+                };
+                assert_eq!(v3, expected, "{id} production path");
+            }
             let valid = format!("{scheme}://example.com{v3}");
             assert!(
                 normalize_url_v3(kind, carrier, &valid).is_ok(),

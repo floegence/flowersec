@@ -101,7 +101,9 @@ func TestArtifactLeaseBurnsAfterSpendFailure(t *testing.T) {
 func TestArtifactLeaseBurnsAfterSpendCancellation(t *testing.T) {
 	artifact := mustParseInternalFixtureArtifact(t)
 	attempts := 0
+	callbackDone := make(chan struct{})
 	lease, err := NewArtifactLease(artifact, func(ctx context.Context) error {
+		defer close(callbackDone)
 		attempts++
 		return ctx.Err()
 	})
@@ -119,6 +121,7 @@ func TestArtifactLeaseBurnsAfterSpendCancellation(t *testing.T) {
 	if err := lease.commitSpend(context.Background()); !errors.Is(err, errArtifactLeaseConsumed) {
 		t.Fatalf("reused commitSpend() error = %v, want consumed", err)
 	}
+	<-callbackDone
 	if attempts != 1 {
 		t.Fatalf("commit callback attempts = %d, want 1", attempts)
 	}

@@ -364,7 +364,7 @@ impl ConnectionController {
         let _close = self.close_lock.lock().await;
         self.inner.cancellation.cancel();
         self.inner.retry_wake.notify_waiters();
-        self.inner.start_close_workflow(self.inner.finish_closed());
+        self.inner.start_close_workflow();
         let task = lock(&self.task).take();
         self.inner.start_scheduler_join_workflow(task);
         self.inner.wait_close_completion().await;
@@ -458,25 +458,25 @@ impl ControllerInner {
             state.status.last_failure = Some(failure);
         })
     }
-    fn finish_closed(&self) -> Option<Arc<dyn Session>> {
-        let current = {
+    fn start_close_workflow(self: &Arc<Self>) {
+        // Claim the workflow while holding the state lock so a scheduler close
+        // cannot publish completion before the caller has taken the session.
+        let (session, changed) = {
             let mut state = lock(&self.state);
-            if state.status.state == ConnectionState::Closed {
-                return None;
+            if self.close_workflow_started.swap(true, Ordering::AcqRel) {
+                return;
             }
-            state.status.state = ConnectionState::Closed;
-            state.status.next_retry_at = None;
-            state.status.retry_not_before = None;
-            state.status.revision = state.status.revision.saturating_add(1);
-            state.current.take()
+            let changed = state.status.state != ConnectionState::Closed;
+            if changed {
+                state.status.state = ConnectionState::Closed;
+                state.status.next_retry_at = None;
+                state.status.retry_not_before = None;
+                state.status.revision = state.status.revision.saturating_add(1);
+            }
+            (state.current.take(), changed)
         };
-        self.changed.notify_waiters();
-        current
-    }
-
-    fn start_close_workflow(self: &Arc<Self>, session: Option<Arc<dyn Session>>) {
-        if self.close_workflow_started.swap(true, Ordering::AcqRel) {
-            return;
+        if changed {
+            self.changed.notify_waiters();
         }
         let Some(session) = session else {
             self.close_complete.store(true, Ordering::Release);
@@ -1169,7 +1169,7 @@ fn next_clock_delay(monotonic_delay: Duration, wall_delay: Duration) -> Duration
 }
 
 async fn close_inner(inner: &Arc<ControllerInner>) {
-    inner.start_close_workflow(inner.finish_closed());
+    inner.start_close_workflow();
     inner.wait_close_completion().await;
 }
 
@@ -2334,6 +2334,7 @@ mod tests {
     struct BlockingCloseSession {
         entered: Arc<Notify>,
         release: Arc<Notify>,
+        close_calls: Arc<AtomicU64>,
     }
 
     #[async_trait]
@@ -2367,6 +2368,7 @@ mod tests {
         }
 
         async fn close(&self) -> Result<(), SessionError> {
+            self.close_calls.fetch_add(1, Ordering::SeqCst);
             self.entered.notify_one();
             self.release.notified().await;
             Ok(())
@@ -2377,9 +2379,11 @@ mod tests {
     async fn concurrent_controller_close_waits_for_session_cleanup() {
         let entered = Arc::new(Notify::new());
         let release = Arc::new(Notify::new());
+        let close_calls = Arc::new(AtomicU64::new(0));
         let session = Arc::new(BlockingCloseSession {
             entered: entered.clone(),
             release: release.clone(),
+            close_calls: close_calls.clone(),
         });
         let source = Arc::new(QueueSource::new([Ok(test_lease(
             pin_only_artifact([0x11; 32]),
@@ -2415,15 +2419,18 @@ mod tests {
         release.notify_one();
         first.await;
         second.await;
+        assert_eq!(close_calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
     async fn canceled_first_controller_close_leaves_owned_cleanup_for_later_close() {
         let entered = Arc::new(Notify::new());
         let release = Arc::new(Notify::new());
+        let close_calls = Arc::new(AtomicU64::new(0));
         let session = Arc::new(BlockingCloseSession {
             entered: entered.clone(),
             release: release.clone(),
+            close_calls: close_calls.clone(),
         });
         let source = Arc::new(QueueSource::new([Ok(test_lease(
             pin_only_artifact([0x11; 32]),
@@ -2466,6 +2473,71 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(500), &mut second)
             .await
             .expect("later controller close remained blocked after release");
+        assert_eq!(close_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn scheduler_and_explicit_close_atomically_claim_one_cleanup_workflow() {
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let close_calls = Arc::new(AtomicU64::new(0));
+        let session: Arc<dyn Session> = Arc::new(BlockingCloseSession {
+            entered: entered.clone(),
+            release: release.clone(),
+            close_calls: close_calls.clone(),
+        });
+        let controller = ConnectionController::new_with_connector(
+            Arc::new(QueueSource::new([])),
+            test_options(Some(1)),
+            Arc::new(|_lease, _options, _cancellation| {
+                Box::pin(async {
+                    Err(ConnectError::from_terminal_runtime_code(
+                        ConnectErrorCode::ConnectionFailed,
+                    ))
+                })
+            }),
+        );
+        {
+            let mut state = lock(&controller.inner.state);
+            state.status.state = ConnectionState::Connected;
+            state.current = Some(session);
+        }
+
+        let barrier = Arc::new(tokio::sync::Barrier::new(3));
+        let scheduler_inner = controller.inner.clone();
+        let scheduler_barrier = barrier.clone();
+        let scheduler = tokio::spawn(async move {
+            scheduler_barrier.wait().await;
+            close_inner(&scheduler_inner).await;
+        });
+        let explicit_inner = controller.inner.clone();
+        let explicit_barrier = barrier.clone();
+        let explicit = tokio::spawn(async move {
+            explicit_barrier.wait().await;
+            explicit_inner.start_close_workflow();
+            explicit_inner.wait_close_completion().await;
+        });
+        barrier.wait().await;
+
+        tokio::time::timeout(Duration::from_millis(250), entered.notified())
+            .await
+            .expect("session cleanup did not start");
+        assert_eq!(close_calls.load(Ordering::SeqCst), 1);
+        assert!(!scheduler.is_finished());
+        assert!(!explicit.is_finished());
+
+        release.notify_one();
+        tokio::time::timeout(Duration::from_millis(500), scheduler)
+            .await
+            .expect("scheduler close remained blocked after cleanup")
+            .expect("scheduler close task panicked");
+        tokio::time::timeout(Duration::from_millis(500), explicit)
+            .await
+            .expect("explicit close remained blocked after cleanup")
+            .expect("explicit close task panicked");
+        assert_eq!(close_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(controller.status().state, ConnectionState::Closed);
+        assert!(controller.current_session().is_none());
     }
 
     fn pin_only_artifact(pin: [u8; 32]) -> ArtifactV3 {

@@ -87,6 +87,14 @@ pub(crate) enum CarrierUnreliableMessageErrorV3 {
 }
 
 pub(crate) const MAX_LOGICAL_INBOUND_STREAMS_V3: u16 = 128;
+pub(crate) const SESSION_PROFILE_V3: &str = "flowersec/3";
+pub(crate) const DIRECT_PROFILE_V3: &str = "flowersec-direct/3";
+pub(crate) const TUNNEL_PROFILE_V3: &str = "flowersec-tunnel/3";
+pub(crate) const ALPN_DIRECT_V3: &[u8] = b"flowersec-direct/3";
+pub(crate) const ALPN_TUNNEL_V3: &[u8] = b"flowersec-tunnel/3";
+pub(crate) const HANDSHAKE_DOMAIN_V3: &[u8] = b"flowersec-v3-handshake\0";
+pub(crate) const SERVER_FINISHED_LABEL_V3: &[u8] = b"flowersec v3 server finished";
+pub(crate) const CLIENT_FINISHED_LABEL_V3: &[u8] = b"flowersec v3 client finished";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub(crate) enum CarrierStreamLimitErrorV3 {
@@ -668,31 +676,6 @@ pub(crate) fn verify_pinned_leaf(
 pub(crate) const V3_FRAME_MAGICS: [[u8; 4]; 7] = [
     *b"FSB3", *b"FSA3", *b"FSC3", *b"FSH3", *b"FSS3", *b"FSR3", *b"FSD3",
 ];
-pub(crate) const V3_CRYPTO_DOMAINS: [&[u8]; 22] = [
-    b"flowersec-v3-session-contract\0",
-    b"flowersec-v3-candidates\0",
-    b"flowersec-v3-admission\0",
-    b"flowersec-v3-runtime-capability\0",
-    b"flowersec-v3-handshake\0",
-    b"flowersec v3 server finished",
-    b"flowersec v3 client finished",
-    b"flowersec v3 epoch zero",
-    b"flowersec v3 control root",
-    b"flowersec v3 stream root",
-    b"flowersec v3 setup root",
-    b"flowersec v3 rekey root",
-    b"flowersec v3 next epoch",
-    b"flowersec v3 stream",
-    b"flowersec v3 control",
-    b"flowersec v3 record key",
-    b"flowersec v3 nonce",
-    b"flowersec v3 unreliable root",
-    b"flowersec v3 unreliable",
-    b"flowersec v3 unreliable key",
-    b"flowersec v3 unreliable nonce",
-    b"flowersec-v3-unreliable",
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -748,11 +731,6 @@ mod tests {
         assert!(canonical.contains("\"securityModes\":[\"ca\",\"pin\"]"));
         assert_ne!(descriptor.digest().unwrap(), [0; 32]);
         assert!(V3_FRAME_MAGICS.iter().all(|magic| magic[3] == b'3'));
-        assert!(
-            V3_CRYPTO_DOMAINS
-                .iter()
-                .all(|domain| !domain.windows(2).any(|pair| pair == b"v2"))
-        );
     }
 
     #[test]

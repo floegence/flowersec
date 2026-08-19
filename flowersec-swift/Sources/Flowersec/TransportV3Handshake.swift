@@ -237,7 +237,7 @@ enum TransportV3Handshake {
     )
     try require(timingSafeEqual(handshakePRK, vector.handshakePRK))
     let h0 = hash(
-      Data("flowersec-v3-handshake\0".utf8),
+      Data(TransportV3Contract.handshakeDomain.utf8),
       vector.fsc3,
       lengthPrefixed(vector.clientInit)
     )
@@ -245,7 +245,7 @@ enum TransportV3Handshake {
     let h1 = hash(h0, lengthPrefixed(vector.serverCore))
     try require(h1 == vector.h1)
     let serverConfirm = confirm(
-      label: "flowersec v3 server finished",
+      label: TransportV3Contract.serverFinishedLabel,
       prk: handshakePRK,
       transcript: h1
     )
@@ -262,7 +262,7 @@ enum TransportV3Handshake {
     )
     try require(h2 == vector.h2)
     let clientConfirm = confirm(
-      label: "flowersec v3 client finished",
+      label: TransportV3Contract.clientFinishedLabel,
       prk: handshakePRK,
       transcript: h2
     )
@@ -345,7 +345,7 @@ enum TransportV3Handshake {
       channelID: config.channelID,
       maxInboundStreams: config.maxInboundStreams,
       nonceCB64u: try Data.secureRandom(count: 32).base64URLEncodedString(),
-      profile: "flowersec/3",
+      profile: TransportV3Contract.sessionProfile,
       selectedFeatures: 0,
       sessionContractHashB64u: config.sessionContractHash.base64URLEncodedString(),
       suite: config.suite.rawValue
@@ -360,14 +360,14 @@ enum TransportV3Handshake {
     let serverPublic = try decodePublicKey(server.serverEphPubB64u, suite: config.suite)
     let shared = try key.sharedSecret(peer: serverPublic)
     let handshakePRK = FlowersecHKDF.extractSHA256(salt: config.psk, inputKeyMaterial: shared)
-    let h0 = hash(Data("flowersec-v3-handshake\0".utf8), fsc3, lengthPrefixed(initRaw))
+    let h0 = hash(Data(TransportV3Contract.handshakeDomain.utf8), fsc3, lengthPrefixed(initRaw))
     let serverCoreRaw = try frame(type: 2, value: server.core)
     let h1 = hash(h0, lengthPrefixed(serverCoreRaw))
     guard
       let serverConfirm = canonicalBase64(server.serverConfirmB64u, count: 32),
       timingSafeEqual(
         serverConfirm,
-        confirm(label: "flowersec v3 server finished", prk: handshakePRK, transcript: h1))
+        confirm(label: TransportV3Contract.serverFinishedLabel, prk: handshakePRK, transcript: h1))
     else { throw TransportV3SessionError.handshakeFailed }
 
     let handshakeID = try requireCanonicalBase64(server.handshakeID, range: 16...32)
@@ -378,7 +378,7 @@ enum TransportV3Handshake {
     let h2 = hash(h1, lengthPrefixed(serverRaw), lengthPrefixed(clientCoreRaw))
     let finished = ClientFinishedWire(
       clientConfirmB64u: confirm(
-        label: "flowersec v3 client finished",
+        label: TransportV3Contract.clientFinishedLabel,
         prk: handshakePRK,
         transcript: h2
       ).base64URLEncodedString(),
@@ -417,13 +417,13 @@ enum TransportV3Handshake {
       serverEphPubB64u: key.publicKey.base64URLEncodedString(),
       sessionContractHashB64u: config.sessionContractHash.base64URLEncodedString()
     )
-    let h0 = hash(Data("flowersec-v3-handshake\0".utf8), fsc3, lengthPrefixed(clientRaw))
+    let h0 = hash(Data(TransportV3Contract.handshakeDomain.utf8), fsc3, lengthPrefixed(clientRaw))
     let coreRaw = try frame(type: 2, value: core)
     let h1 = hash(h0, lengthPrefixed(coreRaw))
     let server = ServerFinishedWire(
       core: core,
       serverConfirmB64u: confirm(
-        label: "flowersec v3 server finished",
+        label: TransportV3Contract.serverFinishedLabel,
         prk: handshakePRK,
         transcript: h1
       ).base64URLEncodedString()
@@ -449,7 +449,7 @@ enum TransportV3Handshake {
       let clientConfirm = canonicalBase64(clientFinished.clientConfirmB64u, count: 32),
       timingSafeEqual(
         clientConfirm,
-        confirm(label: "flowersec v3 client finished", prk: handshakePRK, transcript: h2))
+        confirm(label: TransportV3Contract.clientFinishedLabel, prk: handshakePRK, transcript: h2))
     else { throw TransportV3SessionError.handshakeFailed }
     let h3 = hash(h2, lengthPrefixed(clientFinishedRaw))
     return TransportV3HandshakeMaterial(
@@ -463,7 +463,7 @@ enum TransportV3Handshake {
     config: TransportV3SessionConfig
   ) throws {
     guard
-      message.profile == "flowersec/3",
+      message.profile == TransportV3Contract.sessionProfile,
       message.channelID == config.channelID,
       message.clientRole == 1,
       message.suite == config.suite.rawValue,
