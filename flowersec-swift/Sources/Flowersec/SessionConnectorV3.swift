@@ -78,6 +78,8 @@ struct SessionConnectorV3: Sendable {
       return try await connectWithDeadline()
     } catch is CancellationError {
       throw ConnectError.canceled
+    } catch is ArtifactLeaseErrorV3 {
+      throw ConnectError.artifactInvalid
     } catch ConnectorBoundaryErrorV3.artifactInvalid {
       throw ConnectError.artifactInvalid
     } catch ConnectorBoundaryErrorV3.runtimeUnsupported {
@@ -133,6 +135,10 @@ struct SessionConnectorV3: Sendable {
     } catch is CancellationError {
       throw ControllerConnectFailureV3.connection(
         .canceled, .terminal, policyTriggerIDs: [], opaquePolicyTriggerIDs: [], failedIDs: [])
+    } catch is ArtifactLeaseErrorV3 {
+      throw ControllerConnectFailureV3.connection(
+        .artifactInvalid, .terminal, policyTriggerIDs: [], opaquePolicyTriggerIDs: [],
+        failedIDs: [])
     } catch {
       throw ControllerConnectFailureV3.connection(
         .connectionFailed, .retryable, policyTriggerIDs: [], opaquePolicyTriggerIDs: [],

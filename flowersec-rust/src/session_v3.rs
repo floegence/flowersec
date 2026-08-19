@@ -2947,10 +2947,8 @@ async fn open_stream_with_capacity_v3(
             return Err(proto(error));
         }
     };
-    match response {
-        InnerRecordTypeV3::OpenAck if payload == open_hash => {
-            mark_outbound_resolved_v3(session, id).await?;
-        }
+    let accepted = match response {
+        InnerRecordTypeV3::OpenAck if payload == open_hash => true,
         InnerRecordTypeV3::OpenReject => {
             let _reason = match validate_open_reject_payload_v3(&payload, &open_hash) {
                 Ok(reason) => reason,
@@ -2978,11 +2976,7 @@ async fn open_stream_with_capacity_v3(
                 ),
             ));
         }
-    }
-    if !local_open_allowed_after_goaway_v3(session, id) {
-        guard.abandon().await;
-        return Err(going_away());
-    }
+    };
     let stream = Arc::new(EncryptedStreamV3 {
         session: Arc::downgrade(&owner),
         carrier,
@@ -3018,6 +3012,15 @@ async fn open_stream_with_capacity_v3(
         .lock()
         .expect("stream registry poisoned")
         .insert(id, Arc::downgrade(&stream));
+    if !local_open_allowed_after_goaway_v3(session, id) {
+        guard.abandon().await;
+        return Err(going_away());
+    }
+    if accepted {
+        // Publish the stream before resolving the open. The peer may start a
+        // rekey as soon as it observes the corresponding OpenAck.
+        mark_outbound_resolved_v3(session, id).await?;
+    }
     guard.disarm();
     Ok(Box::new(StreamHandleV3(stream)))
 }
@@ -3363,6 +3366,9 @@ impl EncryptedStreamV3 {
                 BufferedReadPopV3::Terminal => return Err(terminal_error_v3(&session)),
                 BufferedReadPopV3::Empty => {}
             }
+            if self.remote_fin.load(Ordering::Acquire) {
+                return Ok(None);
+            }
             let _read_lock = tokio::select! {
                 biased;
                 _ = &mut reset_changed => return Err(io::Error::new(
@@ -3386,6 +3392,9 @@ impl EncryptedStreamV3 {
                 BufferedReadPopV3::Item(item) => return Ok(item),
                 BufferedReadPopV3::Terminal => return Err(terminal_error_v3(&session)),
                 BufferedReadPopV3::Empty => {}
+            }
+            if self.remote_fin.load(Ordering::Acquire) {
+                return Ok(None);
             }
             let (kind, payload, epoch, sequence) = tokio::select! {
                 biased;
@@ -3521,6 +3530,9 @@ impl EncryptedStreamV3 {
                 read = self.read_lock.lock() => {
                     let _read = read;
                     if *self.recv_update.lock().await == Some((transition, next_epoch)) {
+                        return Ok(());
+                    }
+                    if self.remote_fin.load(Ordering::Acquire) {
                         return Ok(());
                     }
                     let (kind, payload, epoch, sequence) =
@@ -3791,16 +3803,10 @@ async fn accept_one_stream_v3(
     };
     let ack = compute_open_hash_v3(&open_raw).map_err(proto)?;
     let send_epoch = session.state.lock().await.send_epoch;
-    write_stream_record_v3(
-        &session,
-        &carrier,
-        id,
-        send_epoch,
-        0,
-        InnerRecordTypeV3::OpenAck,
-        &ack,
-    )
-    .await?;
+    // Publish the peer ledger and stream before exposing OpenAck. An immediate
+    // rekey may observe the ACK as soon as it is written and must include this
+    // stream in its key-update barrier.
+    session.peer_ledger.lock().await.mark_terminal(id)?;
     let stream = Arc::new(EncryptedStreamV3 {
         session: Arc::downgrade(&session),
         carrier,
@@ -3836,7 +3842,16 @@ async fn accept_one_stream_v3(
         .lock()
         .expect("stream registry poisoned")
         .insert(id, Arc::downgrade(&stream));
-    session.peer_ledger.lock().await.mark_terminal(id)?;
+    write_stream_record_v3(
+        &session,
+        &stream.carrier,
+        id,
+        send_epoch,
+        0,
+        InnerRecordTypeV3::OpenAck,
+        &ack,
+    )
+    .await?;
     if reserved_rpc {
         drop(responder);
         return serve_rpc_stream_v3(&session, StreamHandleV3(stream)).await;
@@ -4801,6 +4816,16 @@ mod tests {
     }
 
     #[test]
+    fn peer_ledger_commits_before_open_ack_visibility() {
+        let mut ledger = StreamLedgerV3::new(StreamOpenerRoleV3::Client);
+        ledger.mark_fss3(1).unwrap();
+        assert_eq!(ledger.frontier(), 0);
+
+        ledger.mark_terminal(1).unwrap();
+        assert_eq!(ledger.frontier(), 1);
+    }
+
+    #[test]
     fn stream_send_sequence_exhaustion_fails_closed_without_wrap() {
         let sequence = AtomicU64::new(u64::MAX - 1);
 
@@ -5055,6 +5080,78 @@ mod tests {
             noncanonical.push(b' ');
             assert!(canonical_handshake_v3::<ClientInitWire>(&noncanonical).is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn version_isolation_handshake_frames_reject_v2_mutations_and_inherit_codecs() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/transport_v3/version_isolation_vectors.json"
+        ))
+        .unwrap();
+        let frames = fixture["frames"].as_array().unwrap();
+        let fsc3 = vector_hex(
+            frames.iter().find(|frame| frame["id"] == "fsc3").unwrap(),
+            "v3_hex",
+        );
+        assert_eq!(fsc3, control_preface_v3());
+        for field in ["v2_magic_hex", "v2_version_hex"] {
+            let mutated = vector_hex(
+                frames.iter().find(|frame| frame["id"] == "fsc3").unwrap(),
+                field,
+            );
+            assert_ne!(mutated, control_preface_v3());
+        }
+
+        async fn read_frame(raw: Vec<u8>) -> io::Result<Vec<u8>> {
+            let (left, right) = tokio::io::duplex(4096);
+            let reader: Arc<dyn CarrierStreamV3> = Arc::new(MemoryCarrierStreamV3::new(left));
+            let writer = MemoryCarrierStreamV3::new(right);
+            writer.write(&raw).await?;
+            writer.close_write().await?;
+            read_handshake_frame_v3(&reader, 1).await
+        }
+        let fsh3 = frames.iter().find(|frame| frame["id"] == "fsh3").unwrap();
+        let valid = vector_hex(fsh3, "v3_hex");
+        let parsed = read_frame(valid.clone()).await.unwrap();
+        let client: ClientInitWire =
+            canonical_handshake_v3(&parsed[HANDSHAKE_HEADER_BYTES..]).unwrap();
+        assert_eq!(client.profile, "flowersec/3");
+        for field in ["v2_magic_hex", "v2_version_hex"] {
+            assert!(read_frame(vector_hex(fsh3, field)).await.is_err());
+        }
+
+        let open_fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/transport_v3/open_unicode_vectors.json"
+        ))
+        .unwrap();
+        let open_id = fixture["inherited_codecs"]["open"]["vector_id"]
+            .as_str()
+            .unwrap();
+        let open = open_fixture["positive"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|vector| vector["id"] == open_id)
+            .unwrap();
+        let payload = OpenPayloadV3::new(
+            1,
+            [0; 32],
+            open["kind"].as_str().unwrap().to_owned(),
+            open["metadata_json"].as_str().unwrap().as_bytes().to_vec(),
+        );
+        let encoded = encode_open_payload_v3(&payload).unwrap();
+        let decoded = decode_open_payload_v3(&encoded).unwrap();
+        assert_eq!(decoded.kind(), payload.kind());
+        assert_eq!(decoded.metadata(), payload.metadata());
+
+        let envelope: RpcEnvelopeWireV3 = serde_json::from_str(
+            fixture["inherited_codecs"]["rpc"]["envelope_json"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        validate_rpc_envelope_v3(&envelope).unwrap();
+        assert_eq!(envelope.payload["ratio"].as_f64(), Some(1.5));
     }
 
     fn vector_hex(vector: &serde_json::Value, field: &str) -> Vec<u8> {

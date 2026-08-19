@@ -1508,6 +1508,7 @@ actor TransportV3Session {
     do {
       guard isCurrentClose(generation) else { return }
       controlTerminalCommitted = true
+      let hadSentGoAway = sentGoAway
       let lastAccepted: UInt64
       let terminalGoAwayReason: UInt16
       if sentGoAway {
@@ -1520,14 +1521,19 @@ actor TransportV3Session {
         sentGoAwayLastAccepted = lastAccepted
         sentGoAwayReason = terminalGoAwayReason
       }
-      let goAway = try encodeControl(
-        .goAway,
-        payload: idReasonPayload(id: lastAccepted, reason: terminalGoAwayReason)
-      )
+      var terminalRecords: [Data] = []
+      if !hadSentGoAway {
+        let goAway = try encodeControl(
+          .goAway,
+          payload: idReasonPayload(id: lastAccepted, reason: terminalGoAwayReason)
+        )
+        terminalRecords.append(goAway)
+      }
       var payload = Data()
       payload.appendUInt16BE(closeReason)
       let sessionClose = try encodeControl(.sessionClose, payload: payload)
-      try await controlWriter.writeTerminal([goAway, sessionClose])
+      terminalRecords.append(sessionClose)
+      try await controlWriter.writeTerminal(terminalRecords)
       if terminalError == .closed { await waitForPeerSessionClose() }
     } catch {
       controlTerminalCommitted = true

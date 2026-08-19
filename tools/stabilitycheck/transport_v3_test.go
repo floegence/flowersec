@@ -16,7 +16,7 @@ func TestTransportV3RegistryAndSourceConsumers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if registry.Version != 3 || len(registry.WireFixtures) != 13 {
+	if registry.Version != 3 || len(registry.WireFixtures) != 15 {
 		t.Fatal("unexpected transport v3 registry summary")
 	}
 }

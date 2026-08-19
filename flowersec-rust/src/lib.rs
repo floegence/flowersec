@@ -134,11 +134,11 @@ pub use connection_controller::{
     ArtifactSource, ArtifactSourceError, ConnectionController, ConnectionControllerOptions,
     ConnectionFailure, ConnectionSnapshot, ConnectionState, RetryDisposition,
 };
-pub use connector_v2::{ConnectError, ConnectErrorCode};
-pub use connector_v3::connect_v3 as connect;
-pub use connector_v3::connect_v3_with_cancellation as connect_with_cancellation;
+pub use connector_v3::{
+    ConnectError, ConnectErrorCode, ConnectorOptions, connect_v3 as connect,
+    connect_v3_with_cancellation as connect_with_cancellation,
+};
 pub use connector_v3::{connect_v3, connect_v3_with_cancellation};
-pub use native_runtime_v2::ConnectorOptions;
 pub use proxy_server::{ProxyErrorReporter, ProxyServer, ProxyServerError, ProxyServerOptions};
 pub use session_handlers::{
     AcceptedSession, HandlerRegistrationError, NotificationHandler, RpcHandler, RpcHandlers,

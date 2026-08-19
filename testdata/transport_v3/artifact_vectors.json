@@ -128,6 +128,31 @@
         }
       ],
       "acceptor_admissions_hash_hex": "ef0a0d28e55478fc2611ab84022bfdbd12601e7b67d8b97611ad807f95a71600"
+    },
+    {
+      "id": "direct-single-candidate",
+      "path_kind": "direct",
+      "artifact_json": "{\"correlation\":{\"tags\":[{\"key\":\"trace\",\"value\":\"transport-v3-vector\"}],\"v\":3},\"path\":{\"candidates\":[{\"carrier\":\"websocket\",\"id\":\"w-ca\",\"tls\":{\"mode\":\"ca\"},\"url\":\"WSS://EXAMPLE.com:443/flowersec/v3/direct\",\"wire_profile\":\"flowersec-direct/3\"}],\"kind\":\"direct\",\"listener_audience\":\"listener-3\",\"rendezvous_group_id\":\"group-3\",\"routing_token\":\"routing-token-v3\"},\"profile\":\"flowersec/3\",\"scoped\":[{\"critical\":true,\"payload\":{\"😀\":[-9007199254740991,9007199254740991,true,null,\"portable\"],\"\":{\"nested\":\"utf16-key-order\"}},\"scope\":\"security.context\",\"scope_version\":1}],\"session\":{\"allowed_suites\":[1,2],\"channel_id\":\"channel-3\",\"contract_hash_b64u\":\"jY2ao2i8vNuV6mj-Gtqrw7oqBVmggMY4Yih3Uj8Wv2Y\",\"default_suite\":1,\"e2ee_psk_b64u\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\",\"establish_timeout_seconds\":30,\"idle_timeout_seconds\":60,\"init_expire_at_unix_s\":2000000000,\"max_inbound_streams\":64,\"rekey_completion_timeout_seconds\":30,\"rekey_prepare_timeout_seconds\":10,\"selected_features\":0},\"v\":3}",
+      "session_canonical_json": "{\"allowed_suites\":[1,2],\"channel_id\":\"channel-3\",\"default_suite\":1,\"establish_timeout_seconds\":30,\"idle_timeout_seconds\":60,\"max_inbound_streams\":64,\"profile\":\"flowersec/3\",\"rekey_completion_timeout_seconds\":30,\"rekey_prepare_timeout_seconds\":10,\"selected_features\":0}",
+      "session_contract_hash_b64u": "jY2ao2i8vNuV6mj-Gtqrw7oqBVmggMY4Yih3Uj8Wv2Y",
+      "candidates_canonical_json": "[{\"carrier\":\"websocket\",\"id\":\"w-ca\",\"normalized_url\":\"wss://example.com/flowersec/v3/direct\",\"tls\":{\"mode\":\"ca\"},\"wire_profile\":\"flowersec-direct/3\"}]",
+      "candidate_set_hash_b64u": "fZ51sTWZGmATrtEbj2a7R3Lmp5H23Xk07y9hFqHIFQc",
+      "tls_policy_digests": [
+        {
+          "candidate_id": "w-ca",
+          "canonical_json": "{\"mode\":\"ca\"}",
+          "digest_hex": "159ff104c0658dbecfe3bca1933a07e4b63ccedb816b4006035ea7d12edeeb60",
+          "digest_b64u": "FZ_xBMBljb7P47yhkzoH5LY8ztuBa0AGA16n0S7e62A"
+        }
+      ],
+      "winners": [
+        {
+          "candidate_id": "w-ca",
+          "fsb3_hex": "4653423303010000000001ea7b2263616e6469646174655f7365745f686173685f62363475223a22665a35317354575a476d4154727445626a32613752334c6d7035483233586b303779396846714849465163222c2263616e64696461746573223a5b7b2263617272696572223a22776562736f636b6574222c226964223a22772d6361222c226e6f726d616c697a65645f75726c223a227773733a2f2f6578616d706c652e636f6d2f666c6f7765727365632f76332f646972656374222c22746c73223a7b226d6f6465223a226361227d2c22776972655f70726f66696c65223a22666c6f7765727365632d6469726563742f33227d5d2c226368616e6e656c5f6964223a226368616e6e656c2d33222c2263686f73656e5f63616e6469646174655f6964223a22772d6361222c226c697374656e65725f61756469656e6365223a226c697374656e65722d33222c2270726f66696c65223a22666c6f7765727365632f33222c2272656e64657a766f75735f67726f75705f6964223a2267726f75702d33222c22726f7574696e675f746f6b656e223a22726f7574696e672d746f6b656e2d7633222c2273657373696f6e5f636f6e74726163745f686173685f62363475223a226a5932616f326938764e7556366d6a2d4774717277376f7142566d67674d593459696833556a3857763259227d",
+          "admission_binding_hex": "8d450e94af0cbbbc834e2e1edc982d6aac7e712237a896efea32b58df100bbdd"
+        }
+      ],
+      "acceptor_admissions_hash_hex": "5bf1f083aa7a061229cd2ec8a5bad5c16676778d2eba1baf40d7f25462e65aea"
     }
   ],
   "scalar_boundaries": [

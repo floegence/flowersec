@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -398,6 +398,77 @@ test("Chromium WebTransport delegates CA trust without certificate hashes", asyn
     await site.close();
   }
 });
+
+test("Firefox reports explicit v3 WebTransport pin capability as unsupported", async ({ page, browserName }) => {
+  expect(browserName).toBe("firefox");
+  await verifyProductionWebTransportUnsupported(page);
+});
+
+test("WebKit reports explicit v3 WebTransport pin capability as unsupported", async ({ page, browserName }) => {
+  expect(browserName).toBe("webkit");
+  await verifyProductionWebTransportUnsupported(page);
+});
+
+async function verifyProductionWebTransportUnsupported(page: Page): Promise<void> {
+  const site = await startBrowserModuleSite();
+  try {
+    await page.goto(site.origin, { waitUntil: "networkidle" });
+    const result = await page.evaluate(async (artifactJSON) => {
+      const sdk = await import("/dist/browser/index.js");
+      const runtime = await import("/dist/v3/browserRuntime.js");
+      const capability = (await runtime.BrowserRuntimeCapabilityRegistryV3.create()).snapshot();
+      const publicCodes = [
+        "artifact_invalid",
+        "expired_artifact",
+        "transport_security_unsupported",
+        "transport_security_failed",
+        "connection_failed",
+      ];
+      let spendCount = 0;
+      try {
+        const session = await sdk.connect(sdk.createArtifactLease(
+          sdk.parseArtifact(artifactJSON),
+          async () => { spendCount += 1; },
+        ));
+        await session.close().catch(() => undefined);
+        return { connected: true, spendCount };
+      } catch (error) {
+        if (!(error instanceof sdk.ConnectError)) throw error;
+        return {
+          connected: false,
+          spendCount,
+          capability: {
+            webTransportSecurityModes: capability.tuples
+              .filter(({ carrier }) => carrier === "webtransport")
+              .map(({ securityModes }) => securityModes),
+            unsupported: capability.unsupported,
+          },
+          error: {
+            code: error.code,
+            disposition: error.disposition.kind,
+            belongsToFixedPublicSet: publicCodes.includes(error.code),
+          },
+        };
+      }
+    }, singleWebTransportArtifact("pin"));
+
+    expect(result).toEqual({
+      connected: false,
+      spendCount: 0,
+      capability: {
+        webTransportSecurityModes: [["ca"], ["ca"], ["ca"]],
+        unsupported: [{ carrier: "raw_quic", reason: "browser_no_raw_udp" }],
+      },
+      error: {
+        code: "transport_security_unsupported",
+        disposition: "terminal",
+        belongsToFixedPublicSet: true,
+      },
+    });
+  } finally {
+    await site.close();
+  }
+}
 
 function captureStderr(peer: ReturnType<typeof spawn>): string[] {
   const stderr: string[] = [];

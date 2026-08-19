@@ -47,6 +47,13 @@ assert.equal(registry.frame_family.bootstrap, "FSB3");
 assert.equal(registry.frame_family.datagram, "FSD3");
 assert.deepEqual(registry.tls_policy.modes, ["ca", "pin"]);
 assert.equal(registry.tls_policy.mode_fallback, false);
+assert.equal(registry.capability.first_release_emits_adapter_not_composed, false);
+assert.deepEqual(registry.capability.dynamic_conversions, [
+  { runtime: "typescript/browser", trigger: "websocket_api_unavailable", carrier: "websocket", from: ["W3", ["ca"]], to: ["unsupported", "browser_websocket_api_unavailable"] },
+  { runtime: "typescript/browser", trigger: "webtransport_api_unavailable", carrier: "webtransport", from: ["H3", ["ca"]], to: ["unsupported", "browser_webtransport_api_unavailable"] },
+  { runtime: "typescript/node", trigger: "native_addon_unavailable", carrier: "raw_quic", from: ["Q4N", ["ca", "pin"]], to: ["unsupported", "node_native_transport_unavailable"] },
+  { runtime: "typescript/browser", trigger: "pin_provider_not_registered", carrier: "webtransport", from: ["H3", ["ca", "pin"]], to: ["H3", ["ca"]] },
+]);
 assert.equal(registry.controller.maximum_policy_sensitive_replacement_leases_per_cycle, 1);
 assert.deepEqual(registry.url_normalization.forbidden_characters, ["\\", "?", "#", "%"]);
 assert.deepEqual(registry.lease.terminal_states, ["consumed", "retired"]);
@@ -118,18 +125,30 @@ assert.deepEqual(new Set(registry.wire_fixtures.map((fixture) => fixture.id)), n
   "datagram",
   "handshake",
   "idna",
+  "issuer_admission",
   "open_unicode",
   "rpc_error",
   "rpc_malformed_envelopes",
   "rpc_notifications",
   "session_handlers",
   "session_wire",
+  "version_isolation",
 ]));
+for (const fixture of registry.wire_fixtures) {
+  assert.deepEqual(Object.keys(fixture.consumers).sort(), ["go", "rust", "swift", "typescript"],
+    `${fixture.id} consumer languages`);
+  for (const consumer of Object.values(fixture.consumers).flat()) {
+    assert(fs.existsSync(path.join(root, consumer)), `${fixture.id} missing consumer ${consumer}`);
+  }
+}
 
 const artifacts = json("testdata/transport_v3/artifact_vectors.json");
 assert.equal(artifacts.version, 3);
 assert.equal(artifacts.profile, "flowersec/3");
-assert(artifacts.positive.every((vector) => vector.winners.length === 4));
+assert.deepEqual(
+  artifacts.positive.map((vector) => [vector.id, vector.winners.length]),
+  [["direct-mixed-security", 4], ["tunnel-mixed-security", 4], ["direct-single-candidate", 1]],
+);
 const declaredPinCounts = new Set();
 for (const vector of artifacts.positive) {
   const artifact = JSON.parse(vector.artifact_json);
@@ -357,6 +376,35 @@ for (const vector of handshake.vectors) {
   assert(vector.fsc3_hex.startsWith("4653433303"));
   assert(vector.client_init_hex.startsWith("4653483303"));
 }
+
+const versionIsolation = json("testdata/transport_v3/version_isolation_vectors.json");
+assert.equal(versionIsolation.version, 3);
+assert.equal(versionIsolation.source.design_sha256, registry.design.sha256);
+assert.equal(versionIsolation.source.rules_are_not_extended_by_vectors, true);
+assert.deepEqual(versionIsolation.frames.map((frame) => frame.id), [
+  "fsb3", "fsa3", "fsc3", "fsh3", "fss3", "fsr3", "fsd3",
+]);
+for (const frame of versionIsolation.frames) {
+  const v3 = Buffer.from(frame.v3_hex, "hex");
+  const v2Magic = Buffer.from(frame.v2_magic_hex, "hex");
+  const v2Version = Buffer.from(frame.v2_version_hex, "hex");
+  assert.equal(v2Magic.length, v3.length, `${frame.id} magic mutation length`);
+  assert.equal(v2Version.length, v3.length, `${frame.id} version mutation length`);
+  assert.equal(v3[3], 0x33, `${frame.id} v3 magic suffix`);
+  assert.equal(v2Magic[3], 0x32, `${frame.id} v2 magic mutation`);
+  assert.equal(v3[4], 3, `${frame.id} v3 version`);
+  assert.equal(v2Version[4], 2, `${frame.id} v2 version mutation`);
+  assert.deepEqual(v2Magic.subarray(0, 3), v3.subarray(0, 3), `${frame.id} magic prefix`);
+  assert.deepEqual(v2Magic.subarray(4), v3.subarray(4), `${frame.id} magic mutation scope`);
+  assert.deepEqual(v2Version.subarray(0, 4), v3.subarray(0, 4), `${frame.id} version prefix`);
+  assert.deepEqual(v2Version.subarray(5), v3.subarray(5), `${frame.id} version mutation scope`);
+  assert.notEqual(frame.v3_hex, frame.v2_magic_hex, `${frame.id} magic isolation`);
+  assert.notEqual(frame.v3_hex, frame.v2_version_hex, `${frame.id} version isolation`);
+}
+assert.equal(versionIsolation.inherited_codecs.fsh3.inherited_codec_from, "transport_v2");
+assert.equal(versionIsolation.inherited_codecs.open.inherited_codec_from, "transport_v2");
+assert.equal(versionIsolation.inherited_codecs.rpc.inherited_codec_from, "transport_v2");
+assert.match(versionIsolation.inherited_codecs.rpc.envelope_json, /"ratio":1\.5/);
 
 const forbiddenCrypto = /flowersec v2 (?:server finished|client finished|epoch zero|control root|stream root|setup root|rekey root|next epoch|stream|control|record key|nonce|unreliable)|flowersec-v2-(?:handshake|setup|record|open|unreliable)/;
 function walk(relative) {

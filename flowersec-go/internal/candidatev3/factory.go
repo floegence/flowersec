@@ -54,17 +54,18 @@ func NewFactory(dialers map[artifactv3.Carrier]Dial) (*Factory, error) {
 		}
 		copyDialers[kind] = dial
 	}
-	kinds := make([]carrier.Kind, 0, len(copyDialers))
 	for kind := range copyDialers {
-		carrierKind, ok := carrierKind(kind)
+		_, ok := carrierKind(kind)
 		if !ok {
 			return nil, ErrMissingRuntimeAdapter
 		}
-		kinds = append(kinds, carrierKind)
 	}
+	// The published go/native descriptor is the fixed full carrier profile.
+	// Test-only factories may omit a dialer, but that omission must not become
+	// a runtime capability claim or a new unsupported reason on the wire.
 	return &Factory{
 		dialers:      copyDialers,
-		capabilities: runtimev3.GoCapabilitiesForCarriers(kinds...),
+		capabilities: runtimev3.GoCapabilities(),
 	}, nil
 }
 

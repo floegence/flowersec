@@ -1450,6 +1450,39 @@ final class TransportV3SessionTests: XCTestCase {
     try await serverSession.close()
   }
 
+  func testCloseAfterGoAwayWritesOnlySessionCloseOnControlWire() async throws {
+    let clientEvents = CloseCarrierEventsV3()
+    let serverEvents = CloseCarrierEventsV3()
+    let (clientBase, serverBase) = MemoryCarrierSession.pair()
+    let clientCarrier = ObservedCloseCarrierSessionV3(
+      base: clientBase, events: clientEvents, observedOpen: 1)
+    let serverCarrier = ObservedCloseCarrierSessionV3(
+      base: serverBase, events: serverEvents, observedAccept: 1)
+    var configs = try makeConfigs()
+    configs.client.deadlines.closeFlush = .seconds(1)
+    configs.server.deadlines.closeFlush = .seconds(1)
+    let clientConfig = configs.client
+    let serverConfig = configs.server
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: serverConfig)
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: clientConfig)
+    let (clientSession, serverSession) = try await (client, server)
+    await clientEvents.enable()
+    await serverEvents.enable()
+
+    try await serverSession.sendGoAway(reason: 2)
+    let goAwayWritten = await serverEvents.waitForWrites(1)
+    XCTAssertTrue(goAwayWritten)
+    try await serverSession.close()
+
+    let serverTerminal = await serverSession.waitClosed()
+    let serverOutbound = await serverEvents.outboundEvents()
+    let clientTerminal = await clientSession.waitClosed()
+    XCTAssertEqual(serverTerminal, .closed)
+    XCTAssertEqual(serverOutbound, [.write, .write, .closeWrite, .carrierClose])
+    XCTAssertEqual(clientTerminal, .closed)
+    try await clientSession.close()
+  }
+
   func testGoAwayRejectsWrongParityFutureAndChangedBoundaries() throws {
     var state = ReceivedGoAwayStateV3()
     XCTAssertThrowsError(

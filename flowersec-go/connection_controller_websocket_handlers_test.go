@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -122,7 +121,7 @@ func TestConnectionControllerWebSocketHandlersSurviveTwoGenerations(t *testing.T
 }
 
 type webSocketHandlerGeneration struct {
-	server         *httptest.Server
+	server         *controllerWebSocketTestServer
 	session        chan Session
 	pendingStarted chan struct{}
 	pendingRelease chan struct{}
@@ -185,9 +184,10 @@ func (source *webSocketHandlerRestartSource) Acquire(ctx context.Context) (Artif
 	if err != nil {
 		return ArtifactLease{}, NewTerminalArtifactSourceError(err)
 	}
-	generation.server = httptest.NewUnstartedServer(acceptor.Handler())
-	generation.server.TLS = source.serverTLS.Clone()
-	generation.server.StartTLS()
+	generation.server, err = startControllerWebSocketTestServer(acceptor.Handler(), source.serverTLS.Clone())
+	if err != nil {
+		return ArtifactLease{}, NewTerminalArtifactSourceError(err)
+	}
 	endpoint := "wss" + strings.TrimPrefix(generation.server.URL, "https") + WebSocketDirectPath
 	endpoints, err := controlplane.NewEndpointSet(controlplane.EndpointConfig{
 		ID: "websocket", URL: endpoint, TLS: controlplane.CAPolicy(),

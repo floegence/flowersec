@@ -59,7 +59,7 @@ struct RuntimeCapabilityDescriptorV3: Codable, Equatable, Sendable {
   let unsupported: [UnsupportedRuntimeCarrierV3]
 
   func canonicalJSON() throws -> Data {
-    try validate()
+    try validateWireDescriptor()
     return try FlowersecJCSV3.encode([
       "language": language, "runtime": runtime, "schemaVersion": schemaVersion,
       "tuples": tuples.map { $0.object() }, "unsupported": unsupported.map { $0.object() },
@@ -90,7 +90,7 @@ struct RuntimeCapabilityDescriptorV3: Codable, Equatable, Sendable {
       }
       for item in unsupported { try exact(item, ["carrier", "reason"]) }
       let descriptor = try JSONDecoder().decode(RuntimeCapabilityDescriptorV3.self, from: data)
-      try descriptor.validate()
+      try descriptor.validateWireDescriptor()
       return descriptor
     } catch let error as ArtifactErrorV3 {
       throw error
@@ -99,11 +99,44 @@ struct RuntimeCapabilityDescriptorV3: Codable, Equatable, Sendable {
     }
   }
 
-  private func validate() throws {
-    guard schemaVersion == 3, language == "swift", ["ios", "macos", "linux"].contains(runtime)
+  func validateLocalRuntimeProfile(_ expectedRuntime: String) throws {
+    try validateWireDescriptor()
+    guard language == "swift", runtime == expectedRuntime,
+      self == RuntimeCapabilitiesV3.uncheckedProfile(for: expectedRuntime)
     else { throw ArtifactErrorV3.invalidArtifact }
-    let expected = RuntimeCapabilitiesV3.forRuntime(runtime)
-    guard self == expected else { throw ArtifactErrorV3.invalidArtifact }
+  }
+
+  private func validateWireDescriptor() throws {
+    guard schemaVersion == 3, capabilityTokenV3(language), capabilityTokenV3(runtime),
+      !tuples.isEmpty || !unsupported.isEmpty
+    else { throw ArtifactErrorV3.invalidArtifact }
+
+    var previousTuple: RuntimeCapabilityTupleV3?
+    for tuple in tuples {
+      try validateCapabilityTupleV3(tuple)
+      if let previousTuple, compareCapabilityTupleIdentityV3(previousTuple, tuple) >= 0 {
+        throw ArtifactErrorV3.invalidArtifact
+      }
+      previousTuple = tuple
+    }
+    var previousUnsupported: RuntimeCarrierV3?
+    for item in unsupported {
+      guard registeredUnsupportedReasonV3(item.reason),
+        !tuples.contains(where: { $0.carrier == item.carrier })
+      else { throw ArtifactErrorV3.invalidArtifact }
+      if let previousUnsupported,
+        previousUnsupported.rawValue >= item.carrier.rawValue
+      {
+        throw ArtifactErrorV3.invalidArtifact
+      }
+      previousUnsupported = item.carrier
+    }
+    for carrier in [RuntimeCarrierV3.rawQUIC, .webSocket, .webTransport] {
+      let supported = tuples.contains(where: { $0.carrier == carrier })
+      let unavailable = unsupported.contains(where: { $0.carrier == carrier })
+      guard supported != unavailable else { throw ArtifactErrorV3.invalidArtifact }
+    }
+    try validateRegisteredRuntimeV3(self)
   }
 
   private static func exact(_ object: [String: Any], _ expected: [String]) throws {
@@ -112,18 +145,23 @@ struct RuntimeCapabilityDescriptorV3: Codable, Equatable, Sendable {
 }
 
 enum RuntimeCapabilitiesV3 {
-  static let iOS = apple(runtime: "ios")
-  static let macOS = apple(runtime: "macos")
-  static let linux = RuntimeCapabilityDescriptorV3(
-    language: "swift", runtime: "linux", schemaVersion: 3, tuples: [],
-    unsupported: [
-      UnsupportedRuntimeCarrierV3(
-        carrier: .rawQUIC, reason: "swift_apple_client_profile_excludes_raw_quic"),
-      UnsupportedRuntimeCarrierV3(
-        carrier: .webSocket, reason: "websocket_adapter_not_supported_on_linux"),
-      UnsupportedRuntimeCarrierV3(
-        carrier: .webTransport, reason: "swift_apple_client_profile_excludes_webtransport"),
-    ])
+  static let iOS = fixedProfile(for: "ios")
+  static let macOS = fixedProfile(for: "macos")
+  static let linux = fixedProfile(for: "linux")
+
+  fileprivate static func uncheckedProfile(for runtime: String) -> RuntimeCapabilityDescriptorV3 {
+    if runtime == "ios" || runtime == "macos" { return apple(runtime: runtime) }
+    return RuntimeCapabilityDescriptorV3(
+      language: "swift", runtime: "linux", schemaVersion: 3, tuples: [],
+      unsupported: [
+        UnsupportedRuntimeCarrierV3(
+          carrier: .rawQUIC, reason: "swift_apple_client_profile_excludes_raw_quic"),
+        UnsupportedRuntimeCarrierV3(
+          carrier: .webSocket, reason: "websocket_adapter_not_supported_on_linux"),
+        UnsupportedRuntimeCarrierV3(
+          carrier: .webTransport, reason: "swift_apple_client_profile_excludes_webtransport"),
+      ])
+  }
 
   static func forRuntime(_ runtime: String) -> RuntimeCapabilityDescriptorV3 {
     switch runtime {
@@ -131,6 +169,12 @@ enum RuntimeCapabilitiesV3 {
     case "macos": macOS
     default: linux
     }
+  }
+
+  private static func fixedProfile(for runtime: String) -> RuntimeCapabilityDescriptorV3 {
+    let descriptor = uncheckedProfile(for: runtime)
+    precondition((try? descriptor.validateLocalRuntimeProfile(runtime)) != nil)
+    return descriptor
   }
 
   private static func apple(runtime: String) -> RuntimeCapabilityDescriptorV3 {
@@ -154,6 +198,154 @@ enum RuntimeCapabilitiesV3 {
           carrier: .webTransport, reason: "swift_apple_client_profile_excludes_webtransport"),
       ])
   }
+}
+
+private func capabilityTokenV3(_ value: String) -> Bool {
+  let bytes = Array(value.utf8)
+  guard !bytes.isEmpty, bytes.count <= 128, (97...122).contains(bytes[0]) else { return false }
+  return bytes.dropFirst().allSatisfy {
+    (97...122).contains($0) || (48...57).contains($0) || $0 == 95
+  }
+}
+
+private func compareCapabilityTupleIdentityV3(
+  _ lhs: RuntimeCapabilityTupleV3, _ rhs: RuntimeCapabilityTupleV3
+) -> Int {
+  let left = [lhs.carrier.rawValue, lhs.networkMode.rawValue, lhs.sessionRole.rawValue, lhs.path.rawValue]
+  let right = [rhs.carrier.rawValue, rhs.networkMode.rawValue, rhs.sessionRole.rawValue, rhs.path.rawValue]
+  for (lhs, rhs) in zip(left, right) {
+    if lhs != rhs { return lhs < rhs ? -1 : 1 }
+  }
+  return 0
+}
+
+private func validateCapabilityTupleV3(_ tuple: RuntimeCapabilityTupleV3) throws {
+  let validDeployment: Bool
+  switch tuple.path {
+  case .direct:
+    validDeployment =
+      (tuple.networkMode == .dial && tuple.sessionRole == .client)
+      || (tuple.networkMode == .listen && tuple.sessionRole == .server)
+  case .tunnel:
+    validDeployment = tuple.networkMode == .dial
+  }
+  let validModes = tuple.networkMode == .listen
+    ? tuple.securityModes.isEmpty
+    : tuple.securityModes == ["ca"] || tuple.securityModes == ["pin"]
+      || tuple.securityModes == ["ca", "pin"]
+  guard tuple.reliableStreams, validDeployment, validModes,
+    tuple.carrier != .webSocket || (!tuple.datagrams && !tuple.migration)
+  else { throw ArtifactErrorV3.invalidArtifact }
+}
+
+private func registeredCapabilityTuplesV3(
+  carrier: RuntimeCarrierV3, datagrams: Bool, dialMigration: Bool,
+  includeListener: Bool, securityModes: [String]
+) -> [RuntimeCapabilityTupleV3] {
+  var tuples = [
+    RuntimeCapabilityTupleV3(
+      carrier: carrier, datagrams: datagrams, migration: dialMigration,
+      networkMode: .dial, path: .direct, reliableStreams: true,
+      securityModes: securityModes, sessionRole: .client),
+    RuntimeCapabilityTupleV3(
+      carrier: carrier, datagrams: datagrams, migration: dialMigration,
+      networkMode: .dial, path: .tunnel, reliableStreams: true,
+      securityModes: securityModes, sessionRole: .client),
+    RuntimeCapabilityTupleV3(
+      carrier: carrier, datagrams: datagrams, migration: dialMigration,
+      networkMode: .dial, path: .tunnel, reliableStreams: true,
+      securityModes: securityModes, sessionRole: .server),
+  ]
+  if includeListener {
+    tuples.append(RuntimeCapabilityTupleV3(
+      carrier: carrier, datagrams: datagrams, migration: false,
+      networkMode: .listen, path: .direct, reliableStreams: true,
+      securityModes: [], sessionRole: .server))
+  }
+  return tuples
+}
+
+private func validateRegisteredCarrierV3(
+  _ descriptor: RuntimeCapabilityDescriptorV3, carrier: RuntimeCarrierV3,
+  tupleSets: [[RuntimeCapabilityTupleV3]], unsupportedReasons: [String]
+) throws {
+  let actual = descriptor.tuples.filter { $0.carrier == carrier }
+  if let item = descriptor.unsupported.first(where: { $0.carrier == carrier }) {
+    guard actual.isEmpty, unsupportedReasons.contains(item.reason)
+    else { throw ArtifactErrorV3.invalidArtifact }
+  } else {
+    guard tupleSets.contains(actual) else { throw ArtifactErrorV3.invalidArtifact }
+  }
+}
+
+private func validateRegisteredRuntimeV3(_ descriptor: RuntimeCapabilityDescriptorV3) throws {
+  let ca = ["ca"]
+  let caPin = ["ca", "pin"]
+  let w4 = { registeredCapabilityTuplesV3(
+    carrier: .webSocket, datagrams: false, dialMigration: false,
+    includeListener: true, securityModes: $0) }
+  let w3 = { registeredCapabilityTuplesV3(
+    carrier: .webSocket, datagrams: false, dialMigration: false,
+    includeListener: false, securityModes: $0) }
+  let q4m = registeredCapabilityTuplesV3(
+    carrier: .rawQUIC, datagrams: true, dialMigration: true,
+    includeListener: true, securityModes: caPin)
+  let q4n = registeredCapabilityTuplesV3(
+    carrier: .rawQUIC, datagrams: true, dialMigration: false,
+    includeListener: true, securityModes: caPin)
+  let h4 = registeredCapabilityTuplesV3(
+    carrier: .webTransport, datagrams: true, dialMigration: false,
+    includeListener: true, securityModes: caPin)
+  let h3ca = registeredCapabilityTuplesV3(
+    carrier: .webTransport, datagrams: true, dialMigration: false,
+    includeListener: false, securityModes: ca)
+  let h3pin = registeredCapabilityTuplesV3(
+    carrier: .webTransport, datagrams: true, dialMigration: false,
+    includeListener: false, securityModes: caPin)
+  let identity = "\(descriptor.language)/\(descriptor.runtime)"
+  switch identity {
+  case "go/native":
+    try validateRegisteredCarrierV3(descriptor, carrier: .rawQUIC, tupleSets: [q4m], unsupportedReasons: ["adapter_not_composed"])
+    try validateRegisteredCarrierV3(descriptor, carrier: .webSocket, tupleSets: [w4(caPin)], unsupportedReasons: ["adapter_not_composed"])
+    try validateRegisteredCarrierV3(descriptor, carrier: .webTransport, tupleSets: [h4], unsupportedReasons: ["adapter_not_composed"])
+  case "typescript/browser":
+    try validateRegisteredCarrierV3(descriptor, carrier: .rawQUIC, tupleSets: [], unsupportedReasons: ["browser_no_raw_udp"])
+    try validateRegisteredCarrierV3(descriptor, carrier: .webSocket, tupleSets: [w3(ca)], unsupportedReasons: ["browser_websocket_api_unavailable"])
+    try validateRegisteredCarrierV3(descriptor, carrier: .webTransport, tupleSets: [h3ca, h3pin], unsupportedReasons: ["browser_webtransport_api_unavailable"])
+  case "typescript/node":
+    try validateRegisteredCarrierV3(descriptor, carrier: .rawQUIC, tupleSets: [q4n], unsupportedReasons: ["node_native_transport_unavailable"])
+    try validateRegisteredCarrierV3(descriptor, carrier: .webSocket, tupleSets: [w4(caPin)], unsupportedReasons: [])
+    try validateRegisteredCarrierV3(descriptor, carrier: .webTransport, tupleSets: [], unsupportedReasons: ["node_webtransport_driver_unavailable"])
+  case "rust/native":
+    try validateRegisteredCarrierV3(descriptor, carrier: .rawQUIC, tupleSets: [q4m], unsupportedReasons: [])
+    try validateRegisteredCarrierV3(descriptor, carrier: .webSocket, tupleSets: [w4(caPin)], unsupportedReasons: [])
+    try validateRegisteredCarrierV3(descriptor, carrier: .webTransport, tupleSets: [], unsupportedReasons: ["driver_unavailable"])
+  case "swift/ios", "swift/macos":
+    try validateRegisteredCarrierV3(descriptor, carrier: .rawQUIC, tupleSets: [], unsupportedReasons: ["swift_apple_client_profile_excludes_raw_quic"])
+    try validateRegisteredCarrierV3(descriptor, carrier: .webSocket, tupleSets: [w3(caPin)], unsupportedReasons: [])
+    try validateRegisteredCarrierV3(descriptor, carrier: .webTransport, tupleSets: [], unsupportedReasons: ["swift_apple_client_profile_excludes_webtransport"])
+  case "swift/linux":
+    try validateRegisteredCarrierV3(descriptor, carrier: .rawQUIC, tupleSets: [], unsupportedReasons: ["swift_apple_client_profile_excludes_raw_quic"])
+    try validateRegisteredCarrierV3(descriptor, carrier: .webSocket, tupleSets: [], unsupportedReasons: ["websocket_adapter_not_supported_on_linux"])
+    try validateRegisteredCarrierV3(descriptor, carrier: .webTransport, tupleSets: [], unsupportedReasons: ["swift_apple_client_profile_excludes_webtransport"])
+  default:
+    throw ArtifactErrorV3.invalidArtifact
+  }
+}
+
+private func registeredUnsupportedReasonV3(_ value: String) -> Bool {
+  [
+    "adapter_not_composed",
+    "browser_no_raw_udp",
+    "browser_websocket_api_unavailable",
+    "browser_webtransport_api_unavailable",
+    "driver_unavailable",
+    "node_native_transport_unavailable",
+    "node_webtransport_driver_unavailable",
+    "swift_apple_client_profile_excludes_raw_quic",
+    "swift_apple_client_profile_excludes_webtransport",
+    "websocket_adapter_not_supported_on_linux",
+  ].contains(value)
 }
 
 enum LeafPublicKeyV3: Equatable, Sendable { case ecdsaP256, other }

@@ -1013,15 +1013,21 @@ export class SessionV3 implements SessionV3Contract {
       ));
       this.sendRoots.set(nextEpoch, nextRoots);
       this.preparingSendEpoch = nextEpoch;
-      const transition = this.nextTransition++;
       const watermark = this.nextLogicalID > 2n ? this.nextLogicalID - 2n : 0n;
       await this.waitOutboundFrontier(watermark, prepareSignal.signal);
+      // Do not consume a transition id until preparation has completed and
+      // the caller has not cancelled the operation.
+      throwIfAborted(options.signal);
       prepareSignal.cancel();
       prepareDeadline.cancel();
       completionDeadline = createSessionDeadline(this.config, "rekey_completion");
-      completionSignal = combineSignals(options.signal, completionDeadline.signal);
+      // Once preparation has committed, caller cancellation only cancels the
+      // caller's wait (the outer rekey() race), while this operation continues
+      // under its bounded completion deadline.
+      completionSignal = combineSignals(completionDeadline.signal);
       committed = true;
       throwIfAborted(completionSignal.signal);
+      const transition = this.nextTransition++;
       const payload = concat(u64(transition), u32(nextEpoch), u64(watermark));
       const active = [...this.streams.values()].filter((stream) => stream.canRekeySend());
       const updates = active.map((stream) => stream.startSendRekey(transition, nextEpoch));
@@ -1314,6 +1320,9 @@ export class SessionV3 implements SessionV3Contract {
     if (this.lifecycle === "closed") return;
     this.controlTerminalSealed = true;
     this.beginClosing();
+    const pendingSessionRekey = this.pendingSessionRekey;
+    this.pendingSessionRekey = undefined;
+    pendingSessionRekey?.acknowledged.reject(error);
     const normalPeerCarrierClose = this.sessionCloseCommitted && error instanceof CarrierError && error.code === "closed";
     if (normalPeerCarrierClose) this.peerSessionClose.resolve();
     this.terminalError = error;

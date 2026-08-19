@@ -1,8 +1,11 @@
 //! Strict Flowersec v3 native connector.
 
 use std::{
+    fmt,
+    future::Future,
+    pin::Pin,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use futures_util::{StreamExt as _, stream::FuturesUnordered};
@@ -15,10 +18,9 @@ use crate::{
         AdmissionStatusV3, ArtifactLeaseV3, CanonicalCandidateV3, CarrierWireV3, ConnectionPlanV3,
         TlsPolicyWireV3, decode_fsa3, decode32,
     },
-    connector_v2::{ConnectError, ConnectErrorCode},
-    native_runtime_v2::ConnectorOptions,
+    native_runtime_v2::ConnectorOptions as ConnectorOptionsV2,
     raw_quic_v3::{self, RawQuicDialFailureV3},
-    session_handlers::rpc_router_v3,
+    session_handlers::{RpcHandlerSnapshot, RpcHandlers, rpc_router_v3},
     session_v3::{SessionConfigV3, SessionDeadlinesV3, establish_session_v3},
     tls_v3::NativeTlsPolicyV3,
     transport_v2::Session,
@@ -28,12 +30,178 @@ use crate::{
     websocket_v2::{self, SUBPROTOCOL_DIRECT_V3, SUBPROTOCOL_TUNNEL_V3, WebSocketError},
 };
 
+/// Stable, redacted Flowersec v3 connection failure code.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConnectErrorCode {
+    ArtifactInvalid,
+    Expired,
+    TransportSecurityUnsupported,
+    TransportSecurityFailed,
+    ConnectionFailed,
+}
+
+impl ConnectErrorCode {
+    /// Returns the canonical public v3 code string.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ArtifactInvalid => "artifact_invalid",
+            Self::Expired => "expired_artifact",
+            Self::TransportSecurityUnsupported => "transport_security_unsupported",
+            Self::TransportSecurityFailed => "transport_security_failed",
+            Self::ConnectionFailed => "connection_failed",
+        }
+    }
+}
+
+impl fmt::Display for ConnectErrorCode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// A redacted v3 connection failure with a closed five-code public surface.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("Flowersec connection failed (code={code})")]
+pub struct ConnectError {
+    code: ConnectErrorCode,
+    controller_retryable: bool,
+    policy_trigger_mask: u8,
+    failed_candidate_mask: u8,
+}
+
+impl ConnectError {
+    pub const fn code(&self) -> ConnectErrorCode {
+        self.code
+    }
+
+    /// Returns the canonical public v3 code string.
+    pub const fn as_str(&self) -> &'static str {
+        self.code.as_str()
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn from_runtime_code(code: ConnectErrorCode) -> Self {
+        public_error(code)
+    }
+
+    pub(crate) const fn from_terminal_runtime_code(code: ConnectErrorCode) -> Self {
+        terminal_error(code)
+    }
+
+    pub(crate) const fn controller_retryable(&self) -> bool {
+        self.controller_retryable
+    }
+
+    pub(crate) const fn with_v3_candidate_masks(
+        mut self,
+        policy_trigger_mask: u8,
+        failed_candidate_mask: u8,
+    ) -> Self {
+        self.policy_trigger_mask = policy_trigger_mask;
+        self.failed_candidate_mask = failed_candidate_mask;
+        self
+    }
+
+    pub(crate) const fn v3_policy_trigger_mask(&self) -> u8 {
+        self.policy_trigger_mask
+    }
+
+    pub(crate) const fn v3_failed_candidate_mask(&self) -> u8 {
+        self.failed_candidate_mask
+    }
+}
+
+/// Native v3 connector trust, handler, and lifecycle configuration.
+#[derive(Clone)]
+pub struct ConnectorOptions {
+    inner: ConnectorOptionsV2,
+}
+
+impl fmt::Debug for ConnectorOptions {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ConnectorOptions")
+            .field("inner", &self.inner)
+            .finish()
+    }
+}
+
+impl ConnectorOptions {
+    /// Creates v3 connector options with the shared ten-second deadline.
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self {
+            inner: ConnectorOptionsV2::new(),
+        }
+    }
+
+    pub fn with_trust_roots_der(mut self, roots: Vec<Vec<u8>>) -> Result<Self, ConnectError> {
+        self.inner = self
+            .inner
+            .with_trust_roots_der(roots)
+            .map_err(|_| terminal_error(ConnectErrorCode::ArtifactInvalid))?;
+        Ok(self)
+    }
+
+    pub fn with_connect_timeout(mut self, timeout: Duration) -> Result<Self, ConnectError> {
+        self.inner = self
+            .inner
+            .with_connect_timeout(timeout)
+            .map_err(|_| terminal_error(ConnectErrorCode::ArtifactInvalid))?;
+        Ok(self)
+    }
+
+    pub fn with_close_flush_timeout(mut self, timeout: Duration) -> Result<Self, ConnectError> {
+        self.inner = self
+            .inner
+            .with_close_flush_timeout(timeout)
+            .map_err(|_| terminal_error(ConnectErrorCode::ArtifactInvalid))?;
+        Ok(self)
+    }
+
+    pub fn with_websocket_origin(
+        mut self,
+        origin: impl Into<String>,
+    ) -> Result<Self, ConnectError> {
+        self.inner = self
+            .inner
+            .with_websocket_origin(origin)
+            .map_err(|_| terminal_error(ConnectErrorCode::ArtifactInvalid))?;
+        Ok(self)
+    }
+
+    pub fn with_rpc_handlers(mut self, handlers: RpcHandlers) -> Self {
+        self.inner = self.inner.with_rpc_handlers(handlers);
+        self
+    }
+
+    pub fn trust_roots_der(&self) -> &[Vec<u8>] {
+        self.inner.trust_roots_der()
+    }
+
+    pub const fn connect_timeout(&self) -> Duration {
+        self.inner.connect_timeout()
+    }
+
+    pub(crate) const fn close_flush_timeout(&self) -> Option<Duration> {
+        self.inner.close_flush_timeout()
+    }
+
+    pub(crate) fn websocket_origin(&self) -> Option<&str> {
+        self.inner.websocket_origin()
+    }
+
+    pub(crate) fn rpc_handler_snapshot(&self) -> Option<Arc<RpcHandlerSnapshot>> {
+        self.inner.rpc_handler_snapshot()
+    }
+}
+
 const MAX_FSA3_BYTES: usize = 72;
 const ALPN_DIRECT_V3: &[u8] = b"flowersec-direct/3";
 const ALPN_TUNNEL_V3: &[u8] = b"flowersec-tunnel/3";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CandidateFailureV3 {
+pub(crate) enum CandidateFailureV3 {
     InvalidArtifact,
     Unsupported,
     PolicyExpired,
@@ -41,6 +209,42 @@ enum CandidateFailureV3 {
     Connection,
     Canceled,
     Timeout,
+}
+
+pub(crate) type CandidatePrepareFutureV3<'a> = Pin<
+    Box<dyn Future<Output = Result<Arc<dyn CarrierSessionV3>, CandidateFailureV3>> + Send + 'a>,
+>;
+
+pub(crate) trait CandidatePreparerV3: Send + Sync {
+    fn prepare<'a>(
+        &'a self,
+        candidate: &'a CanonicalCandidateV3,
+        plan: &'a ConnectionPlanV3,
+        options: &'a ConnectorOptions,
+        deadline: tokio::time::Instant,
+        cancellation: &'a CancellationToken,
+    ) -> CandidatePrepareFutureV3<'a>;
+}
+
+struct ProductionCandidatePreparerV3;
+
+impl CandidatePreparerV3 for ProductionCandidatePreparerV3 {
+    fn prepare<'a>(
+        &'a self,
+        candidate: &'a CanonicalCandidateV3,
+        plan: &'a ConnectionPlanV3,
+        options: &'a ConnectorOptions,
+        deadline: tokio::time::Instant,
+        cancellation: &'a CancellationToken,
+    ) -> CandidatePrepareFutureV3<'a> {
+        Box::pin(prepare_candidate(
+            candidate,
+            plan,
+            options,
+            deadline,
+            cancellation,
+        ))
+    }
 }
 
 /// Establishes one strict v3 session from a single-use artifact lease.
@@ -57,12 +261,27 @@ pub async fn connect_v3_with_cancellation(
     options: ConnectorOptions,
     cancellation: CancellationToken,
 ) -> Result<Arc<dyn Session>, ConnectError> {
+    connect_v3_with_cancellation_and_preparer(
+        lease,
+        options,
+        cancellation,
+        &ProductionCandidatePreparerV3,
+    )
+    .await
+}
+
+pub(crate) async fn connect_v3_with_cancellation_and_preparer(
+    lease: ArtifactLeaseV3,
+    options: ConnectorOptions,
+    cancellation: CancellationToken,
+    preparer: &dyn CandidatePreparerV3,
+) -> Result<Arc<dyn Session>, ConnectError> {
     if cancellation.is_cancelled() {
-        return Err(public_error(ConnectErrorCode::Canceled));
+        return Err(terminal_error(ConnectErrorCode::ConnectionFailed));
     }
     let claimed = lease
         .claim()
-        .map_err(|_| public_error(ConnectErrorCode::SpendFailed))?;
+        .map_err(|_| terminal_error(ConnectErrorCode::ArtifactInvalid))?;
     let plan = match claimed.artifact().connection_plan() {
         Ok(plan) => plan,
         Err(_) => {
@@ -112,14 +331,15 @@ pub async fn connect_v3_with_cancellation(
             (
                 candidate_index,
                 candidate,
-                prepare_candidate(
-                    snapshot,
-                    plan_ref,
-                    options_ref,
-                    deadline,
-                    &attempt_cancellation,
-                )
-                .await,
+                preparer
+                    .prepare(
+                        snapshot,
+                        plan_ref,
+                        options_ref,
+                        deadline,
+                        &attempt_cancellation,
+                    )
+                    .await,
             )
         });
     }
@@ -184,9 +404,9 @@ pub async fn connect_v3_with_cancellation(
         CandidateFailureV3::PolicyExpired | CandidateFailureV3::Security => {
             ConnectErrorCode::TransportSecurityFailed
         }
-        CandidateFailureV3::Canceled => ConnectErrorCode::Canceled,
-        CandidateFailureV3::Timeout => ConnectErrorCode::Timeout,
-        CandidateFailureV3::Connection => ConnectErrorCode::DialFailed,
+        CandidateFailureV3::Canceled
+        | CandidateFailureV3::Timeout
+        | CandidateFailureV3::Connection => ConnectErrorCode::ConnectionFailed,
     })
     .with_v3_candidate_masks(policy_trigger_mask, failed_candidate_mask))
 }
@@ -365,12 +585,12 @@ async fn admit_and_establish(
     let spent = tokio::select! {
         biased;
         result = &mut spend => result,
-        _ = cancellation.cancelled() => return Err(public_error(ConnectErrorCode::Canceled)),
-        _ = tokio::time::sleep_until(deadline) => return Err(public_error(ConnectErrorCode::Timeout)),
+        _ = cancellation.cancelled() => return Err(terminal_error(ConnectErrorCode::ConnectionFailed)),
+        _ = tokio::time::sleep_until(deadline) => return Err(public_error(ConnectErrorCode::ConnectionFailed)),
     };
     spent
-        .map_err(|_| public_error(ConnectErrorCode::SpendFailed))?
-        .map_err(|_| public_error(ConnectErrorCode::SpendFailed))?;
+        .map_err(|_| public_error(ConnectErrorCode::ConnectionFailed))?
+        .map_err(|_| public_error(ConnectErrorCode::ConnectionFailed))?;
     require_active(deadline, cancellation)?;
     // A spend may complete across the initiation expiry boundary. The lease is
     // already consumed, but the credential must never be sent after expiry.
@@ -378,33 +598,33 @@ async fn admit_and_establish(
 
     let admission = tokio::select! {
         biased;
-        _ = cancellation.cancelled() => return Err(public_error(ConnectErrorCode::Canceled)),
+        _ = cancellation.cancelled() => return Err(terminal_error(ConnectErrorCode::ConnectionFailed)),
         result = tokio::time::timeout_at(deadline, carrier.open_stream()) => {
             result
-                .map_err(|_| public_error(ConnectErrorCode::Timeout))?
-                .map_err(|_| public_error(ConnectErrorCode::DialFailed))?
+                .map_err(|_| public_error(ConnectErrorCode::ConnectionFailed))?
+                .map_err(|_| public_error(ConnectErrorCode::ConnectionFailed))?
         }
     };
     write_all(admission.as_ref(), &fsb3.raw, deadline, cancellation).await?;
     tokio::select! {
         biased;
-        _ = cancellation.cancelled() => return Err(public_error(ConnectErrorCode::Canceled)),
+        _ = cancellation.cancelled() => return Err(terminal_error(ConnectErrorCode::ConnectionFailed)),
         result = tokio::time::timeout_at(deadline, admission.close_write_delivered()) => {
             result
-                .map_err(|_| public_error(ConnectErrorCode::Timeout))?
-                .map_err(|_| public_error(ConnectErrorCode::DialFailed))?;
+                .map_err(|_| public_error(ConnectErrorCode::ConnectionFailed))?
+                .map_err(|_| public_error(ConnectErrorCode::ConnectionFailed))?;
         }
     }
     let response = read_to_end(admission.as_ref(), deadline, cancellation).await?;
     let response =
-        decode_fsa3(&response).map_err(|_| public_error(ConnectErrorCode::DialFailed))?;
+        decode_fsa3(&response).map_err(|_| public_error(ConnectErrorCode::ConnectionFailed))?;
     if response.status != AdmissionStatusV3::Success {
         return Err(admission_failure(response.status));
     }
     if candidate.carrier == CarrierWireV3::Websocket {
         carrier
             .set_multiplexer_client(plan.role == SessionRole::Client)
-            .map_err(|_| public_error(ConnectErrorCode::DialFailed))?;
+            .map_err(|_| public_error(ConnectErrorCode::ConnectionFailed))?;
     }
     let rpc_handler = options.rpc_handler_snapshot().map(rpc_router_v3);
     let mut deadlines = SessionDeadlinesV3 {
@@ -434,11 +654,10 @@ async fn admit_and_establish(
     };
     tokio::select! {
         biased;
-        _ = cancellation.cancelled() => Err(public_error(ConnectErrorCode::Canceled)),
+        _ = cancellation.cancelled() => Err(terminal_error(ConnectErrorCode::ConnectionFailed)),
         result = tokio::time::timeout_at(deadline, establish_session_v3(carrier, config)) => {
             match result {
-                Err(_) => Err(public_error(ConnectErrorCode::Timeout)),
-                Ok(Err(_)) => Err(public_error(ConnectErrorCode::HandshakeFailed)),
+                Err(_) | Ok(Err(_)) => Err(public_error(ConnectErrorCode::ConnectionFailed)),
                 Ok(Ok(session)) => Ok(session),
             }
         }
@@ -479,15 +698,15 @@ async fn write_all(
     while !payload.is_empty() {
         let written = tokio::select! {
             biased;
-            _ = cancellation.cancelled() => return Err(public_error(ConnectErrorCode::Canceled)),
+            _ = cancellation.cancelled() => return Err(terminal_error(ConnectErrorCode::ConnectionFailed)),
             result = tokio::time::timeout_at(deadline, stream.write(payload)) => {
                 result
-                    .map_err(|_| public_error(ConnectErrorCode::Timeout))?
-                    .map_err(|_| public_error(ConnectErrorCode::DialFailed))?
+                    .map_err(|_| public_error(ConnectErrorCode::ConnectionFailed))?
+                    .map_err(|_| public_error(ConnectErrorCode::ConnectionFailed))?
             }
         };
         if written == 0 {
-            return Err(public_error(ConnectErrorCode::DialFailed));
+            return Err(public_error(ConnectErrorCode::ConnectionFailed));
         }
         payload = &payload[written..];
     }
@@ -504,18 +723,18 @@ async fn read_to_end(
     loop {
         let count = tokio::select! {
             biased;
-            _ = cancellation.cancelled() => return Err(public_error(ConnectErrorCode::Canceled)),
+            _ = cancellation.cancelled() => return Err(terminal_error(ConnectErrorCode::ConnectionFailed)),
             result = tokio::time::timeout_at(deadline, stream.read(&mut buffer)) => {
                 result
-                    .map_err(|_| public_error(ConnectErrorCode::Timeout))?
-                    .map_err(|_| public_error(ConnectErrorCode::DialFailed))?
+                    .map_err(|_| public_error(ConnectErrorCode::ConnectionFailed))?
+                    .map_err(|_| public_error(ConnectErrorCode::ConnectionFailed))?
             }
         };
         if count == 0 {
             return Ok(output);
         }
         if output.len().saturating_add(count) > MAX_FSA3_BYTES {
-            return Err(public_error(ConnectErrorCode::DialFailed));
+            return Err(public_error(ConnectErrorCode::ConnectionFailed));
         }
         output.extend_from_slice(&buffer[..count]);
     }
@@ -524,9 +743,9 @@ async fn read_to_end(
 fn admission_failure(status: AdmissionStatusV3) -> ConnectError {
     match status {
         AdmissionStatusV3::Reject => {
-            ConnectError::from_terminal_runtime_code(ConnectErrorCode::DialFailed)
+            ConnectError::from_terminal_runtime_code(ConnectErrorCode::ConnectionFailed)
         }
-        AdmissionStatusV3::Retryable => public_error(ConnectErrorCode::DialFailed),
+        AdmissionStatusV3::Retryable => public_error(ConnectErrorCode::ConnectionFailed),
         AdmissionStatusV3::Success => unreachable!("success admission has no failure"),
     }
 }
@@ -562,9 +781,9 @@ fn require_active(
     cancellation: &CancellationToken,
 ) -> Result<(), ConnectError> {
     if cancellation.is_cancelled() {
-        Err(public_error(ConnectErrorCode::Canceled))
+        Err(terminal_error(ConnectErrorCode::ConnectionFailed))
     } else if tokio::time::Instant::now() >= deadline {
-        Err(public_error(ConnectErrorCode::Timeout))
+        Err(public_error(ConnectErrorCode::ConnectionFailed))
     } else {
         Ok(())
     }
@@ -578,13 +797,33 @@ fn unix_seconds() -> u64 {
 }
 
 const fn public_error(code: ConnectErrorCode) -> ConnectError {
-    ConnectError::from_runtime_code(code)
+    ConnectError {
+        code,
+        controller_retryable: matches!(
+            code,
+            ConnectErrorCode::Expired | ConnectErrorCode::ConnectionFailed
+        ),
+        policy_trigger_mask: 0,
+        failed_candidate_mask: 0,
+    }
+}
+
+const fn terminal_error(code: ConnectErrorCode) -> ConnectError {
+    ConnectError {
+        code,
+        controller_retryable: false,
+        policy_trigger_mask: 0,
+        failed_candidate_mask: 0,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
+        io::{BufRead as _, BufReader},
         net::{Ipv4Addr, SocketAddr},
+        path::Path,
+        process::{Child, Command, Stdio},
         sync::{
             Arc,
             atomic::{AtomicUsize, Ordering},
@@ -593,7 +832,10 @@ mod tests {
     };
 
     use async_trait::async_trait;
-    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use base64::{
+        Engine as _,
+        engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    };
     use bytes::Bytes;
     use cert_test_builder::{
         BasicConstraints, Certificate, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer,
@@ -732,7 +974,9 @@ mod tests {
         )
         .await;
 
-        assert_eq!(result.unwrap_err().code(), ConnectErrorCode::Timeout);
+        let error = result.unwrap_err();
+        assert_eq!(error.code(), ConnectErrorCode::ConnectionFailed);
+        assert!(error.controller_retryable());
         assert_eq!(carrier.aborts.load(Ordering::SeqCst), 1);
     }
 
@@ -741,7 +985,9 @@ mod tests {
         let (result, carrier) =
             run_hanging_admission(HangingAdmissionPhase::Open, Duration::from_secs(1), true).await;
 
-        assert_eq!(result.unwrap_err().code(), ConnectErrorCode::Canceled);
+        let error = result.unwrap_err();
+        assert_eq!(error.code(), ConnectErrorCode::ConnectionFailed);
+        assert!(!error.controller_retryable());
         assert_eq!(carrier.aborts.load(Ordering::SeqCst), 1);
     }
 
@@ -754,7 +1000,9 @@ mod tests {
         )
         .await;
 
-        assert_eq!(result.unwrap_err().code(), ConnectErrorCode::Timeout);
+        let error = result.unwrap_err();
+        assert_eq!(error.code(), ConnectErrorCode::ConnectionFailed);
+        assert!(error.controller_retryable());
         assert_eq!(carrier.aborts.load(Ordering::SeqCst), 1);
     }
 
@@ -767,7 +1015,9 @@ mod tests {
         )
         .await;
 
-        assert_eq!(result.unwrap_err().code(), ConnectErrorCode::Canceled);
+        let error = result.unwrap_err();
+        assert_eq!(error.code(), ConnectErrorCode::ConnectionFailed);
+        assert!(!error.controller_retryable());
         assert_eq!(carrier.aborts.load(Ordering::SeqCst), 1);
     }
 
@@ -866,17 +1116,74 @@ mod tests {
         let _ = tokio::join!(session.close(), server.close());
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn native_pin_provider_matrix_rejects_hash_matched_leaf_with_invalid_tls_proof() {
+        for carrier in ["websocket", "raw_quic"] {
+            let peer = InvalidProofPeer::start(carrier);
+            let pin = URL_SAFE_NO_PAD.encode(Sha256::digest(&peer.leaf_der));
+            let port = peer
+                .address
+                .rsplit_once(':')
+                .unwrap()
+                .1
+                .parse::<u16>()
+                .unwrap();
+            let (url, origin) = match carrier {
+                "websocket" => (
+                    format!("wss://localhost:{port}/flowersec/v3/direct"),
+                    Some("https://app.example"),
+                ),
+                "raw_quic" => (format!("quic://localhost:{port}"), None),
+                _ => unreachable!(),
+            };
+            let artifact = artifact_with_candidates(vec![json!({
+                "carrier": carrier,
+                "id": format!("{carrier}-invalid-proof"),
+                "tls": {"mode": "pin", "pins": [{
+                    "algorithm": "sha-256",
+                    "not_after_unix_s": unix_seconds() + 600,
+                    "value_b64u": pin
+                }]},
+                "url": url,
+                "wire_profile": "flowersec-direct/3"
+            })]);
+            let spends = Arc::new(AtomicUsize::new(0));
+            let spend_counter = spends.clone();
+            let lease = ArtifactLeaseV3::new(artifact, move || {
+                let spend_counter = spend_counter.clone();
+                async move {
+                    spend_counter.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
+            let mut options = ConnectorOptions::new()
+                .with_connect_timeout(Duration::from_secs(3))
+                .unwrap();
+            if let Some(origin) = origin {
+                options = options.with_websocket_origin(origin).unwrap();
+            }
+            let error = connect_v3(lease, options).await.unwrap_err();
+            assert_eq!(
+                error.code(),
+                ConnectErrorCode::TransportSecurityFailed,
+                "{carrier}"
+            );
+            assert!(!error.controller_retryable(), "{carrier}");
+            assert_eq!(spends.load(Ordering::SeqCst), 0, "{carrier}");
+        }
+    }
+
     #[test]
     fn fsa3_reject_is_terminal_but_retryable_is_controller_retryable() {
         assert!(!admission_failure(AdmissionStatusV3::Reject).controller_retryable());
         assert!(admission_failure(AdmissionStatusV3::Retryable).controller_retryable());
         assert_eq!(
             admission_failure(AdmissionStatusV3::Reject).code(),
-            ConnectErrorCode::DialFailed
+            ConnectErrorCode::ConnectionFailed
         );
         assert_eq!(
             admission_failure(AdmissionStatusV3::Retryable).code(),
-            ConnectErrorCode::DialFailed
+            ConnectErrorCode::ConnectionFailed
         );
     }
 
@@ -1274,6 +1581,50 @@ mod tests {
     }
 
     struct TestTunnelAuthorizer;
+
+    struct InvalidProofPeer {
+        child: Child,
+        address: String,
+        leaf_der: Vec<u8>,
+    }
+
+    impl InvalidProofPeer {
+        fn start(carrier: &str) -> Self {
+            let go_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../flowersec-go");
+            let mut child = Command::new("go")
+                .args([
+                    "run",
+                    "./internal/cmd/invalid-proof-peer",
+                    "--carrier",
+                    carrier,
+                ])
+                .current_dir(go_root)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap();
+            let mut line = String::new();
+            BufReader::new(child.stdout.take().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let ready: Value = serde_json::from_str(&line).unwrap();
+            Self {
+                child,
+                address: ready["address"].as_str().unwrap().to_owned(),
+                leaf_der: STANDARD
+                    .decode(ready["leaf_der_base64"].as_str().unwrap())
+                    .unwrap(),
+            }
+        }
+    }
+
+    impl Drop for InvalidProofPeer {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
 
     #[async_trait]
     impl TunnelAuthorizer for TestTunnelAuthorizer {

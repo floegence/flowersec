@@ -44,8 +44,10 @@ func unversionedOneShotPublicAPICompiles() async throws {
 
 @Test
 func retryDispositionsMatchPortableContract() {
-  #expect(ConnectError.invalidOptions.retryDisposition == .terminal)
+  #expect(ConnectErrorV2.invalidOptions.retryDisposition == .terminal)
   #expect(ConnectError.expiredArtifact.retryDisposition == .retryable)
+  #expect(ConnectError.canceled.code == .connectionFailed)
+  #expect(ConnectError.canceled.retryDisposition == .terminal)
   #expect(SessionError.canceled.retryDisposition == .terminal)
   #expect(SessionError.closed.retryDisposition == .retryable)
 

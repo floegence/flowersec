@@ -375,11 +375,11 @@ func TestPublicErrorsPreserveStableCancellationAndDeadlineCauses(t *testing.T) {
 	for _, test := range []struct {
 		name        string
 		internal    error
-		connectCode ConnectErrorCode
+		disposition RetryDispositionKind
 		sessionCode SessionErrorCode
 	}{
-		{name: "canceled", internal: context.Canceled, connectCode: ConnectCanceled, sessionCode: SessionCanceled},
-		{name: "deadline", internal: context.DeadlineExceeded, connectCode: ConnectTimeout, sessionCode: SessionTimeout},
+		{name: "canceled", internal: context.Canceled, disposition: RetryDispositionTerminal, sessionCode: SessionCanceled},
+		{name: "deadline", internal: context.DeadlineExceeded, disposition: RetryDispositionRetryable, sessionCode: SessionTimeout},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			connectErr := redactConnectError(test.internal)
@@ -387,8 +387,11 @@ func TestPublicErrorsPreserveStableCancellationAndDeadlineCauses(t *testing.T) {
 				t.Fatalf("connect error causes = %v, want ErrConnectionFailed and %v", connectErr, test.internal)
 			}
 			var projectedConnect *ConnectError
-			if !errors.As(connectErr, &projectedConnect) || projectedConnect.Code() != test.connectCode {
-				t.Fatalf("connect error = %#v, want code %q", projectedConnect, test.connectCode)
+			if !errors.As(connectErr, &projectedConnect) || projectedConnect.Code() != ConnectConnectionFailed {
+				t.Fatalf("connect error = %#v, want code %q", projectedConnect, ConnectConnectionFailed)
+			}
+			if got := projectedConnect.RetryDisposition().Kind; got != test.disposition {
+				t.Fatalf("connect disposition = %q, want %q", got, test.disposition)
 			}
 
 			sessionErr := redactSessionError(test.internal)

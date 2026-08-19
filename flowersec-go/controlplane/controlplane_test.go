@@ -3,9 +3,11 @@ package controlplane
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +66,141 @@ func TestIssuerCreatesOpaqueDirectArtifactAndBoundRuntimeAuthorization(t *testin
 	}
 	if _, present := wire["artifact"]; present || strings.Contains(string(response.JSON()), "e2ee_psk_b64u") {
 		t.Fatalf("authorization response leaked artifact fields: %s", response.JSON())
+	}
+}
+
+func TestRuntimeAuthorizationReturnsExactRetryAtArtifactExpiry(t *testing.T) {
+	issuedAt := time.Unix(1_800_000_000, 0).UTC()
+	expiresAt := issuedAt.Add(time.Minute)
+	issuer := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x5a}, 512)), issuedAt)
+	directEndpoints, err := NewEndpointSet(caEndpoint("websocket", "wss://edge.example/flowersec/v3/direct"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct, err := issuer.IssueDirect(DirectIssueOptions{
+		Session: SessionOptions{ChannelID: "expired-direct", ExpiresAt: expiresAt}, Endpoints: directEndpoints,
+		RendezvousGroupID: "expired-direct-group", ListenerAudience: "expired-direct-audience",
+		UpstreamAddress: "127.0.0.1:9000",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunnelEndpoints, err := NewEndpointSet(caEndpoint("websocket", "wss://edge.example/flowersec/v3/tunnel"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := issuer.IssueTunnelPair(TunnelIssueOptions{
+		Session: SessionOptions{ChannelID: "expired-tunnel", ExpiresAt: expiresAt}, Endpoints: tunnelEndpoints,
+		RendezvousGroupID: "expired-tunnel-group", ListenerAudience: "expired-tunnel-audience",
+		FirstEndpointID: "expired-endpoint-a", SecondEndpointID: "expired-endpoint-b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const want = `{"decision":"retry","reason":"expired_artifact","credential_id":"","lease_id":"","expires_at":"0001-01-01T00:00:00Z","direct":null}`
+	for _, test := range []struct {
+		name      string
+		issued    IssuedArtifact
+		authorize func(RuntimeAuthorizationRequest, AuthorizationRecord) ([]byte, error)
+	}{
+		{
+			name: "direct", issued: direct,
+			authorize: func(request RuntimeAuthorizationRequest, record AuthorizationRecord) ([]byte, error) {
+				response, err := authorizeRuntimeAt(request, record, "lease-expired-direct", expiresAt)
+				return response.JSON(), err
+			},
+		},
+		{
+			name: "tunnel", issued: pair.First,
+			authorize: func(request RuntimeAuthorizationRequest, record AuthorizationRecord) ([]byte, error) {
+				response, err := authorizeTunnelRuntimeAt(request, record, "lease-expired-tunnel", expiresAt)
+				return response.JSON(), err
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			encodedRecord, err := test.issued.AuthorizationRecord().Encode()
+			if err != nil {
+				t.Fatal(err)
+			}
+			record, err := ParseAuthorizationRecord(encodedRecord)
+			if err != nil {
+				t.Fatal(err)
+			}
+			requestBody := runtimeRequestBody(t, record, "websocket", "")
+			request, err := ParseRuntimeAuthorizationRequest(requestBody)
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := test.authorize(request, record)
+			if err != nil {
+				t.Fatalf("expired artifact returned an input error: %v", err)
+			}
+			if string(encoded) != want {
+				t.Fatalf("expired artifact response = %s, want %s", encoded, want)
+			}
+		})
+	}
+}
+
+func TestProductionIssuerMatchesSharedAdmissionHashVector(t *testing.T) {
+	var fixture struct {
+		ArtifactJSON              string `json:"artifact_json"`
+		ChosenCandidateID         string `json:"chosen_candidate_id"`
+		FSB3Hex                   string `json:"fsb3_hex"`
+		AdmissionBindingHex       string `json:"admission_binding_hex"`
+		AcceptorAdmissionsHashHex string `json:"acceptor_admissions_hash_hex"`
+	}
+	raw, err := os.ReadFile("../../testdata/transport_v3/go_issuer_admission_vectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_800_000_000, 0).UTC()
+	endpoints, err := NewEndpointSet(caEndpoint("issuer-ws", "wss://issuer.example/flowersec/v3/direct"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x42}, 128)), now).IssueDirect(DirectIssueOptions{
+		Session:   SessionOptions{ChannelID: "issuer-shared", ExpiresAt: now.Add(time.Minute)},
+		Endpoints: endpoints, RendezvousGroupID: "issuer-group", ListenerAudience: "issuer-audience",
+		UpstreamAddress: "127.0.0.1:9000",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(issued.ArtifactJSON()) != fixture.ArtifactJSON {
+		t.Fatal("Go production issuer artifact differs from shared fixture")
+	}
+	artifact, err := artifactv3.DecodeArtifactJSON(bytes.NewReader(issued.ArtifactJSON()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := artifactv3.BuildRequest(*artifact, fixture.ChosenCandidateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := artifactv3.MarshalRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualHex := hex.EncodeToString(frame)
+	if actualHex != fixture.FSB3Hex {
+		t.Fatalf("Go production FSB3 differs: got %d hex chars want %d", len(actualHex), len(fixture.FSB3Hex))
+	}
+	binding := artifactv3.AdmissionBinding(frame)
+	if hex.EncodeToString(binding[:]) != fixture.AdmissionBindingHex {
+		t.Fatal("Go admission binding differs from shared fixture")
+	}
+	acceptor, err := artifactv3.AcceptorAdmissionsHash([][]byte{frame})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hex.EncodeToString(acceptor[:]) != fixture.AcceptorAdmissionsHashHex {
+		t.Fatal("Go acceptor admissions hash differs from shared fixture")
 	}
 }
 

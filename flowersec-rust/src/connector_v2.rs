@@ -66,8 +66,6 @@ impl fmt::Display for ConnectErrorCode {
 pub struct ConnectError {
     code: ConnectErrorCode,
     controller_retryable: bool,
-    v3_policy_trigger_mask: u8,
-    v3_failed_candidate_mask: u8,
 }
 
 impl ConnectError {
@@ -79,30 +77,8 @@ impl ConnectError {
         error(code)
     }
 
-    pub(crate) const fn from_terminal_runtime_code(code: ConnectErrorCode) -> Self {
-        terminal_error(code)
-    }
-
     pub(crate) const fn controller_retryable(&self) -> bool {
         self.controller_retryable
-    }
-
-    pub(crate) const fn with_v3_candidate_masks(
-        mut self,
-        policy_trigger_mask: u8,
-        failed_candidate_mask: u8,
-    ) -> Self {
-        self.v3_policy_trigger_mask = policy_trigger_mask;
-        self.v3_failed_candidate_mask = failed_candidate_mask;
-        self
-    }
-
-    pub(crate) const fn v3_policy_trigger_mask(&self) -> u8 {
-        self.v3_policy_trigger_mask
-    }
-
-    pub(crate) const fn v3_failed_candidate_mask(&self) -> u8 {
-        self.v3_failed_candidate_mask
     }
 
     /// Returns the stable public code string for this redacted connection failure.
@@ -371,8 +347,6 @@ const fn error(code: ConnectErrorCode) -> ConnectError {
                 | ConnectErrorCode::TransportSecurityFailed
                 | ConnectErrorCode::Canceled
         ),
-        v3_policy_trigger_mask: 0,
-        v3_failed_candidate_mask: 0,
     }
 }
 
@@ -380,8 +354,6 @@ const fn terminal_error(code: ConnectErrorCode) -> ConnectError {
     ConnectError {
         code,
         controller_retryable: false,
-        v3_policy_trigger_mask: 0,
-        v3_failed_candidate_mask: 0,
     }
 }
 

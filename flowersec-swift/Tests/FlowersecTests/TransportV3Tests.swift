@@ -347,6 +347,67 @@ struct TransportV3Tests {
     }
   }
 
+  @Test func consumesGoProductionIssuerAdmissionVector() throws {
+    let root = try Self.loadVectorObject("go_issuer_admission_vectors.json")
+    let artifactJSON = try #require(root["artifact_json"] as? String)
+    let artifact = try parseArtifactV3(Data(artifactJSON.utf8))
+    let candidateID = try #require(root["chosen_candidate_id"] as? String)
+    let admission = try AdmissionCodecV3.encodeFSB3(artifact: artifact, chosenCandidateID: candidateID)
+    let expectedFrame = try Data(hexV3: #require(root["fsb3_hex"] as? String))
+    let expectedBinding = try Data(hexV3: #require(root["admission_binding_hex"] as? String))
+    let expectedAdmissions = try Data(hexV3: #require(root["acceptor_admissions_hash_hex"] as? String))
+    #expect(admission.frame == expectedFrame)
+    #expect(admission.admissionBinding == expectedBinding)
+    #expect(
+      try AdmissionCodecV3.acceptorAdmissionsHash([admission]) == expectedAdmissions)
+  }
+
+  @Test func versionIsolationVectorsRejectV2MutationsAtProductionBoundaries() throws {
+    let root = try Self.loadVectorObject("version_isolation_vectors.json")
+    let frames = try #require(root["frames"] as? [[String: Any]])
+    #expect(root["version"] as? Int == 3)
+
+    for frame in frames {
+      let id = try #require(frame["id"] as? String)
+      let valid = try Data(hexV3: #require(frame["v3_hex"] as? String))
+      let magic = try Data(hexV3: #require(frame["v2_magic_hex"] as? String))
+      let version = try Data(hexV3: #require(frame["v2_version_hex"] as? String))
+      switch id {
+      case "fsb3":
+        #expect(throws: AdmissionCodecErrorV3.self) { try AdmissionCodecV3.decodeFSB3(magic) }
+        #expect(throws: AdmissionCodecErrorV3.self) { try AdmissionCodecV3.decodeFSB3(version) }
+        _ = try AdmissionCodecV3.decodeFSB3(valid)
+      case "fsa3":
+        #expect(throws: AdmissionCodecErrorV3.self) { try AdmissionCodecV3.decodeFSA3(magic) }
+        #expect(throws: AdmissionCodecErrorV3.self) { try AdmissionCodecV3.decodeFSA3(version) }
+        _ = try AdmissionCodecV3.decodeFSA3(valid)
+      case "fsc3":
+        #expect(valid == TransportV3Handshake.controlPreface())
+        #expect(magic != TransportV3Handshake.controlPreface())
+        #expect(version != TransportV3Handshake.controlPreface())
+      case "fss3":
+        #expect(throws: TransportV3CryptoError.self) { try SetupPrefaceV3(encoded: magic) }
+        #expect(throws: TransportV3CryptoError.self) { try SetupPrefaceV3(encoded: version) }
+        _ = try SetupPrefaceV3(encoded: valid)
+      case "fsr3":
+        #expect(throws: TransportV3CryptoError.self) { try RecordHeaderV3(encoded: magic) }
+        #expect(throws: TransportV3CryptoError.self) { try RecordHeaderV3(encoded: version) }
+        _ = try RecordHeaderV3(encoded: valid)
+      case "fsd3":
+        #expect(throws: TransportV3CryptoError.self) { try UnreliableHeaderV3(encoded: magic) }
+        #expect(throws: TransportV3CryptoError.self) { try UnreliableHeaderV3(encoded: version) }
+        _ = try UnreliableHeaderV3(encoded: valid)
+      case "fsh3":
+        // FSH3's canonical JSON decoder is exercised by the shared handshake suite.
+        #expect(valid.prefix(5) == Data([0x46, 0x53, 0x48, 0x33, 0x03]))
+        #expect(magic.prefix(5) != valid.prefix(5))
+        #expect(version.prefix(5) != valid.prefix(5))
+      default:
+        Issue.record("unexpected isolation frame \(id)")
+      }
+    }
+  }
+
   @Test func sharedDatagramVectorsFreezeFSD3WireCryptoAndErrors() throws {
     let fixture = try Self.loadVectorObject("datagram_vectors.json")
     #expect(fixture["schema_version"] as? Int == 3)
@@ -492,15 +553,16 @@ struct TransportV3Tests {
       let name = try #require(vector["name"] as? String)
       #expect(names.insert(name).inserted, Comment(rawValue: "duplicate \(name)"))
       let canonical = try #require(vector["canonical_json"] as? String)
-      let value = try JSONSerialization.jsonObject(with: Data(canonical.utf8))
-      let reproduced = try FlowersecJCSV3.encode(value)
+      let descriptor = try RuntimeCapabilityDescriptorV3.decode(Data(canonical.utf8))
+      let reproduced = try descriptor.canonicalJSON()
       #expect(reproduced == Data(canonical.utf8), Comment(rawValue: name))
       let expectedDigest = try Data(hexV3: #require(vector["digest_hex"] as? String))
       #expect(
         FlowersecJCSV3.hashLP(
           domain: "flowersec-v3-runtime-capability\0", canonical: reproduced)
           == expectedDigest,
-        Comment(rawValue: name))
+        Comment(rawValue: "\(name) production capability domain"))
+      #expect(try descriptor.digest() == expectedDigest, Comment(rawValue: name))
     }
     #expect(names == expectedNames)
     for (name, capability) in [
@@ -513,6 +575,13 @@ struct TransportV3Tests {
       let digest = try #require(vector["digest_hex"] as? String)
       #expect(try capability.canonicalJSON() == Data(canonical.utf8), Comment(rawValue: name))
       #expect(try capability.digest() == Data(hexV3: digest), Comment(rawValue: name))
+      try capability.validateLocalRuntimeProfile(String(name.dropFirst("swift-".count)))
+    }
+    let go = try #require(vectors.first(where: { $0["name"] as? String == "go-native" }))
+    let decodedGo = try RuntimeCapabilityDescriptorV3.decode(
+      Data(try #require(go["canonical_json"] as? String).utf8))
+    #expect(throws: ArtifactErrorV3.self) {
+      try decodedGo.validateLocalRuntimeProfile("macos")
     }
     let invalid = try #require(root["invalid"] as? [[String: Any]])
     #expect(invalid.count >= 20)

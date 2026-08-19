@@ -515,28 +515,8 @@
           },
           {
             "kind": "const",
-            "expr": "flowersec.ConnectInvalidInput",
-            "doc_token": "`flowersec.ConnectInvalidInput`"
-          },
-          {
-            "kind": "const",
-            "expr": "flowersec.ConnectInvalidOptions",
-            "doc_token": "`flowersec.ConnectInvalidOptions`"
-          },
-          {
-            "kind": "const",
-            "expr": "flowersec.ConnectCanceled",
-            "doc_token": "`flowersec.ConnectCanceled`"
-          },
-          {
-            "kind": "const",
             "expr": "flowersec.ConnectExpired",
             "doc_token": "`flowersec.ConnectExpired`"
-          },
-          {
-            "kind": "const",
-            "expr": "flowersec.ConnectTimeout",
-            "doc_token": "`flowersec.ConnectTimeout`"
           },
           {
             "kind": "const",
@@ -717,6 +697,46 @@
             "kind": "method",
             "expr": "(*flowersec.Acceptor).Serve",
             "doc_token": "`flowersec.Acceptor.Serve(...)`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.WebSocketHTTPServerOptions",
+            "doc_token": "`flowersec.WebSocketHTTPServerOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.WebSocketHTTPServer",
+            "doc_token": "`flowersec.WebSocketHTTPServer`"
+          },
+          {
+            "kind": "var",
+            "expr": "flowersec.ErrInvalidWebSocketServer",
+            "doc_token": "`flowersec.ErrInvalidWebSocketServer`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewWebSocketHTTPServer",
+            "doc_token": "`flowersec.NewWebSocketHTTPServer(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.WebSocketHTTPServer).Serve",
+            "doc_token": "`flowersec.WebSocketHTTPServer.Serve(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.WebSocketHTTPServer).ListenAndServe",
+            "doc_token": "`flowersec.WebSocketHTTPServer.ListenAndServe(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.WebSocketHTTPServer).Shutdown",
+            "doc_token": "`flowersec.WebSocketHTTPServer.Shutdown(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.WebSocketHTTPServer).Close",
+            "doc_token": "`flowersec.WebSocketHTTPServer.Close()`"
           },
           {
             "kind": "func",
@@ -1835,7 +1855,12 @@
       },
       {
         "kind": "swift.enum",
-        "name": "ConnectError",
+        "name": "ConnectErrorCode",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ConnectErrorV2",
         "doc_token": ""
       },
       {
@@ -1895,47 +1920,72 @@
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectError.artifactInvalid",
+        "name": "ConnectErrorCode.artifactInvalid",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectError.canceled",
+        "name": "ConnectErrorCode.connectionFailed",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectError.connectionFailed",
+        "name": "ConnectErrorCode.expiredArtifact",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectError.expiredArtifact",
+        "name": "ConnectErrorCode.transportSecurityFailed",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectError.invalidOptions",
+        "name": "ConnectErrorCode.transportSecurityUnsupported",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectError.runtimeUnsupported",
+        "name": "ConnectErrorV2.artifactInvalid",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectError.transportSecurityFailed",
+        "name": "ConnectErrorV2.canceled",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectError.transportSecurityUnsupported",
+        "name": "ConnectErrorV2.connectionFailed",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectError.timeout",
+        "name": "ConnectErrorV2.expiredArtifact",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectErrorV2.invalidOptions",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectErrorV2.runtimeUnsupported",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectErrorV2.timeout",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectErrorV2.transportSecurityFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectErrorV2.transportSecurityUnsupported",
         "doc_token": ""
       },
       {
@@ -2070,7 +2120,12 @@
       },
       {
         "kind": "swift.init",
-        "name": "ConnectError.init(rawValue:)",
+        "name": "ConnectErrorCode.init(rawValue:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ConnectErrorV2.init(rawValue:)",
         "doc_token": ""
       },
       {
@@ -2364,6 +2419,31 @@
         "doc_token": ""
       },
       {
+        "kind": "swift.type.property",
+        "name": "ConnectError.artifactInvalid",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "ConnectError.connectionFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "ConnectError.expiredArtifact",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "ConnectError.transportSecurityFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "ConnectError.transportSecurityUnsupported",
+        "doc_token": ""
+      },
+      {
         "kind": "swift.protocol",
         "name": "ArtifactSource",
         "doc_token": ""
@@ -2415,12 +2495,12 @@
       },
       {
         "kind": "swift.property",
-        "name": "ConnectError.retryDisposition",
+        "name": "ConnectError.code",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "SessionError.retryDisposition",
+        "name": "ConnectError.retryDisposition",
         "doc_token": ""
       },
       {
@@ -2430,7 +2510,22 @@
       },
       {
         "kind": "swift.property",
+        "name": "ConnectErrorV2.retryDisposition",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "SessionError.retryDisposition",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
         "name": "SessionError.retryDispositionV3",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ConnectError",
         "doc_token": ""
       },
       {
@@ -2885,6 +2980,11 @@
       },
       {
         "kind": "swift.typealias",
+        "name": "ConnectErrorV3",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.typealias",
         "name": "StreamHandler",
         "doc_token": ""
       }
@@ -3022,7 +3122,7 @@
       "let _ = std::mem::size_of::<flowersec::ConnectError>()",
       "let _ = std::mem::size_of::<flowersec::ConnectErrorCode>()",
       "let _: fn(&flowersec::ConnectError) -> &'static str = flowersec::ConnectError::as_str",
-      "let _ = flowersec::ConnectErrorCode::InvalidInput.as_str()",
+      "let _ = flowersec::ConnectErrorCode::ArtifactInvalid.as_str()",
       "let _ = std::mem::size_of::<flowersec::ConnectorOptions>()",
       "let _ = flowersec::ConnectorOptions::new()",
       "let _ = flowersec::ConnectorOptions::with_trust_roots_der",

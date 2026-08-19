@@ -92,17 +92,15 @@ func NewGoNativeFactory(config GoNativeConfig) (*Factory, error) {
 		return nil, err
 	}
 	dialers[artifactv3.CarrierRawQUIC] = rawQUICDial
-	if config.Origin != "" {
-		webTransportDial, err := NewWebTransportCarrierDial(WebTransportDialConfig{
-			TLSConfig: tlsConfig.Clone(),
-			Limits:    quicbase.DefaultLimits(),
-			Origin:    config.Origin,
-		})
-		if err != nil {
-			return nil, err
-		}
-		dialers[artifactv3.CarrierWebTransport] = webTransportDial
+	webTransportDial, err := NewWebTransportCarrierDial(WebTransportDialConfig{
+		TLSConfig: tlsConfig.Clone(),
+		Limits:    quicbase.DefaultLimits(),
+		Origin:    config.Origin,
+	})
+	if err != nil {
+		return nil, err
 	}
+	dialers[artifactv3.CarrierWebTransport] = webTransportDial
 	return NewFactory(dialers)
 }
 

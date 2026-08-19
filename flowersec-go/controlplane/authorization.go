@@ -247,6 +247,10 @@ type runtimeAuthorizationResponseWire struct {
 // artifact before producing an allow response. The caller must atomically
 // reserve the one-time record and provide its durable lease ID first.
 func AuthorizeRuntime(request RuntimeAuthorizationRequest, record AuthorizationRecord, leaseID string) (AuthorizationResponse, error) {
+	return authorizeRuntimeAt(request, record, leaseID, time.Now())
+}
+
+func authorizeRuntimeAt(request RuntimeAuthorizationRequest, record AuthorizationRecord, leaseID string, now time.Time) (AuthorizationResponse, error) {
 	if request.decoded == nil || request.decoded.Request.PathKind != artifactv3.PathDirect ||
 		request.lookupKey == "" || !leaseIDPattern.MatchString(leaseID) || record.validate() != nil ||
 		record.artifact.Path.Kind != artifactv3.PathDirect ||
@@ -254,8 +258,11 @@ func AuthorizeRuntime(request RuntimeAuthorizationRequest, record AuthorizationR
 		return AuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
 	artifact := record.artifact
-	if time.Now().Unix() >= artifact.Session.InitExpireAtUnixSeconds {
-		return AuthorizationResponse{}, ErrInvalidControlPlaneInput
+	if now.Unix() >= artifact.Session.InitExpireAtUnixSeconds {
+		// Expiry is an admission outcome, not malformed control-plane input.
+		// Preserve the FSA3 retryable response so the server can reject the
+		// already-authenticated request without silently closing the carrier.
+		return RejectRuntime("expired_artifact", true)
 	}
 	expected, err := artifactv3.BuildRequest(*artifact, request.decoded.Request.ChosenCandidateID)
 	if err != nil {
@@ -283,6 +290,10 @@ func AuthorizeRuntime(request RuntimeAuthorizationRequest, record AuthorizationR
 // AuthorizeTunnelRuntime verifies one tunnel admission and returns only the
 // claims required to pair and forward opaque carrier streams.
 func AuthorizeTunnelRuntime(request RuntimeAuthorizationRequest, record AuthorizationRecord, leaseID string) (TunnelAuthorizationResponse, error) {
+	return authorizeTunnelRuntimeAt(request, record, leaseID, time.Now())
+}
+
+func authorizeTunnelRuntimeAt(request RuntimeAuthorizationRequest, record AuthorizationRecord, leaseID string, now time.Time) (TunnelAuthorizationResponse, error) {
 	if request.decoded == nil || request.decoded.Request.PathKind != artifactv3.PathTunnel ||
 		request.lookupKey == "" || !leaseIDPattern.MatchString(leaseID) || record.validate() != nil ||
 		record.artifact.Path.Kind != artifactv3.PathTunnel ||
@@ -290,8 +301,8 @@ func AuthorizeTunnelRuntime(request RuntimeAuthorizationRequest, record Authoriz
 		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
 	artifact := record.artifact
-	if time.Now().Unix() >= artifact.Session.InitExpireAtUnixSeconds {
-		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
+	if now.Unix() >= artifact.Session.InitExpireAtUnixSeconds {
+		return RejectTunnelRuntime("expired_artifact", true)
 	}
 	expected, err := artifactv3.BuildRequest(*artifact, request.decoded.Request.ChosenCandidateID)
 	if err != nil {

@@ -92,10 +92,32 @@ const urlFixture = JSON.parse(readFileSync(
   new URL("../../../testdata/transport_v3/idna_vectors.json", import.meta.url),
   "utf8",
 )) as IDNAFixture;
+const goIssuerFixture = JSON.parse(readFileSync(
+  new URL("../../../testdata/transport_v3/go_issuer_admission_vectors.json", import.meta.url),
+  "utf8",
+)) as Readonly<{
+  artifact_json: string;
+  chosen_candidate_id: string;
+  fsb3_hex: string;
+  admission_binding_hex: string;
+  acceptor_admissions_hash_hex: string;
+}>;
 const hex = (value: Uint8Array): string => Buffer.from(value).toString("hex");
 const fromHex = (value: string): Uint8Array => new Uint8Array(Buffer.from(value, "hex"));
 
 describe("transport v3 artifact, TLS policy, and admission", () => {
+  test("consumes the deterministic Go production issuer admission vector", () => {
+    const artifact = decodeArtifactV3JSON(goIssuerFixture.artifact_json);
+    const frame = encodeFSB3RequestV3(buildFSB3RequestV3(
+      artifact,
+      goIssuerFixture.chosen_candidate_id,
+    ));
+    expect(hex(frame)).toBe(goIssuerFixture.fsb3_hex);
+    expect(hex(admissionBindingV3(frame))).toBe(goIssuerFixture.admission_binding_hex);
+    expect(hex(acceptorAdmissionsHashV3(new Map([[goIssuerFixture.chosen_candidate_id, frame]]))))
+      .toBe(goIssuerFixture.acceptor_admissions_hash_hex);
+  });
+
   test("matches every canonical hash, FSB3, and admission vector", () => {
     for (const vector of fixture.positive) {
       const artifact = decodeArtifactV3JSON(vector.artifact_json);

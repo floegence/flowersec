@@ -45,12 +45,12 @@ func TestPlaywrightTitleMatchesAUniqueTitleInsideTheFullTestName(t *testing.T) {
 	}
 }
 
-func TestVitestEntryUsesRepositoryConfigFromTheRunnerRoot(t *testing.T) {
+func TestVitestEntryScopesDiscoveryToTheCurrentTypeScriptPackage(t *testing.T) {
 	entry := vitestEntry("test/typescript", "acceptance", "src/example.test.ts", "exact title")
 	if entry.ID != "test/typescript" || entry.Suite != "acceptance" || entry.Timeout != 5*time.Minute {
 		t.Fatalf("entry identity = %+v", entry)
 	}
-	want := []string{"--prefix", "flowersec-ts", "exec", "--", "vitest", "run", "--config", "flowersec-ts/vitest.config.ts", "flowersec-ts/src/example.test.ts", "-t", "(^|\\s)exact title$"}
+	want := []string{"--prefix", "flowersec-ts", "exec", "--", "vitest", "run", "--root", "flowersec-ts", "--config", "vitest.config.ts", "src/example.test.ts", "-t", "(^|\\s)exact title$"}
 	if got := vitestArguments("src/example.test.ts", "exact title"); strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("vitest arguments = %q, want %q", got, want)
 	}

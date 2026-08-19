@@ -85,15 +85,20 @@ func NewTunnelRuntime(options TunnelRuntimeOptions) (*TunnelRuntime, error) {
 	return runtime, nil
 }
 
+// Handler returns the tunnel WebSocket boundary. Installing it directly on a
+// caller-owned http.Server fails closed; use NewWebSocketHTTPServer so TLS
+// policy is fixed before the handshake.
 func (runtime *TunnelRuntime) Handler() http.Handler {
 	mux := http.NewServeMux()
+	webSocket := false
 	for _, listener := range runtime.listeners {
 		if listener.acceptorCarrier() == carrier.KindWebSocket {
+			webSocket = true
 			mux.HandleFunc(WebSocketTunnelPath, runtime.handleWebSocket)
 			break
 		}
 	}
-	return mux
+	return &webSocketBoundary{handler: mux, enabled: webSocket}
 }
 
 func (runtime *TunnelRuntime) Serve(ctx context.Context) error {

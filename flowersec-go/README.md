@@ -66,12 +66,18 @@ acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
     },
     OnSession: serveSession,
 })
-httpServer.Handler = acceptor.Handler()
+httpServer, err := flowersec.NewWebSocketHTTPServer(flowersec.WebSocketHTTPServerOptions{
+    Handler: acceptor.Handler(), TLSConfig: tlsConfig,
+})
+listener, err := net.Listen("tcp", ":8443")
+go httpServer.Serve(listener)
 ```
 
 `SessionHandlers` belongs only to accepted server Sessions. The Acceptor
 creates a fresh RPC router and owns `SessionHandlers.Serve(...)` for each
-accepted Session.
+accepted Session. `Handler()` is intentionally fail-closed when installed on a
+caller-owned `http.Server`; `NewWebSocketHTTPServer(...)` owns the TLS boundary,
+forces TLS 1.3 only, and disables session tickets before the first handshake.
 
 For application streams on any established connector or accepted Session, use
 `NewStreamHandlers(...)`, register handlers with `HandleStream(...)`, and run
@@ -86,7 +92,11 @@ tunnel, err := flowersec.NewTunnelRuntime(flowersec.TunnelRuntimeOptions{
     Listeners: []flowersec.TunnelListener{flowersec.NewWebSocketTunnelListener()},
     Authorize: authorizeTunnelRuntime,
 })
-httpServer.Handler = tunnel.Handler()
+httpServer, err := flowersec.NewWebSocketHTTPServer(flowersec.WebSocketHTTPServerOptions{
+    Handler: tunnel.Handler(), TLSConfig: tlsConfig,
+})
+listener, err := net.Listen("tcp", ":8443")
+go httpServer.Serve(listener)
 
 proxy, err := flowersec.NewProxyServer(flowersec.ProxyServerOptions{
     Upstream: upstreamURL,

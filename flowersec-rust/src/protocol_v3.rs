@@ -1273,6 +1273,50 @@ mod unreliable_message_tests {
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
     #[test]
+    fn version_isolation_protocol_frames_reject_v2_mutations() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/transport_v3/version_isolation_vectors.json"
+        ))
+        .unwrap();
+        for frame in fixture["frames"].as_array().unwrap() {
+            let id = frame["id"].as_str().unwrap();
+            if !matches!(id, "fss3" | "fsr3" | "fsd3") {
+                continue;
+            }
+            let decode = |field: &str| {
+                frame[field]
+                    .as_str()
+                    .unwrap()
+                    .as_bytes()
+                    .chunks_exact(2)
+                    .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+                    .collect::<Vec<_>>()
+            };
+            let valid = decode("v3_hex");
+            let magic = decode("v2_magic_hex");
+            let version = decode("v2_version_hex");
+            match id {
+                "fss3" => {
+                    SetupPrefaceV3::decode(&valid).unwrap();
+                    assert!(SetupPrefaceV3::decode(&magic).is_err());
+                    assert!(SetupPrefaceV3::decode(&version).is_err());
+                }
+                "fsr3" => {
+                    RecordHeaderV3::decode(&valid).unwrap();
+                    assert!(RecordHeaderV3::decode(&magic).is_err());
+                    assert!(RecordHeaderV3::decode(&version).is_err());
+                }
+                "fsd3" => {
+                    UnreliableHeaderV3::decode(&valid).unwrap();
+                    assert!(UnreliableHeaderV3::decode(&magic).is_err());
+                    assert!(UnreliableHeaderV3::decode(&version).is_err());
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
     fn fsd3_header_and_domain_separated_aead_are_strict() {
         let session_prk = [0x31; 32];
         let h3 = [0x42; 32];

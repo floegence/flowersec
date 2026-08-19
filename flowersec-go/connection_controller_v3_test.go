@@ -91,7 +91,7 @@ func TestConnectionControllerWaitUsesInjectedWallAndMonotonicClocks(t *testing.T
 type testControllerClock struct {
 	mu          sync.Mutex
 	wall        time.Time
-	mono        time.Duration
+	mono        uint64
 	timers      []*testControllerTimer
 	delayValues []time.Duration
 }
@@ -101,8 +101,8 @@ type testControllerTimer struct {
 	stopped bool
 }
 
-func newTestControllerClock(wall time.Time, monotonic time.Duration) *testControllerClock {
-	return &testControllerClock{wall: wall, mono: monotonic}
+func newTestControllerClock(wall time.Time, monotonicMilliseconds uint64) *testControllerClock {
+	return &testControllerClock{wall: wall, mono: monotonicMilliseconds}
 }
 
 func (clock *testControllerClock) options() controllerClock {
@@ -112,7 +112,7 @@ func (clock *testControllerClock) options() controllerClock {
 			defer clock.mu.Unlock()
 			return clock.wall
 		},
-		monotonicNow: func() time.Duration {
+		monotonicNowMilliseconds: func() uint64 {
 			clock.mu.Lock()
 			defer clock.mu.Unlock()
 			return clock.mono
@@ -136,8 +136,18 @@ func (clock *testControllerClock) options() controllerClock {
 func (clock *testControllerClock) advance(wallMilliseconds int64, monotonicMilliseconds int64) {
 	clock.mu.Lock()
 	clock.wall = clock.wall.Add(time.Duration(wallMilliseconds) * time.Millisecond)
-	clock.mono += time.Duration(monotonicMilliseconds) * time.Millisecond
+	if monotonicMilliseconds >= 0 {
+		clock.mono = saturatingControllerAdd(clock.mono, uint64(monotonicMilliseconds))
+	} else {
+		clock.mono -= min(clock.mono, uint64(-monotonicMilliseconds))
+	}
 	clock.mu.Unlock()
+}
+
+func (clock *testControllerClock) values() (int64, uint64) {
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	return clock.wall.UnixMilli(), clock.mono
 }
 
 func (clock *testControllerClock) waitForTimer(t *testing.T, index int) {
@@ -589,8 +599,8 @@ func TestArtifactLeaseConcurrentOneShotAndControllerClaimHasOnePublicLoser(t *te
 				snapshot.Failure.Disposition.Kind != RetryDispositionTerminal {
 				t.Fatalf("iteration %d: controller failure = %+v, want artifact_invalid/terminal", iteration, snapshot.Failure)
 			}
-			if connectErrorCode(oneShotErr) != ConnectInvalidOptions || controllerCalls.Load() != 0 {
-				t.Fatalf("iteration %d: one-shot error/controller calls = %v/%d, want invalid_options/0", iteration, oneShotErr, controllerCalls.Load())
+			if connectErrorCode(oneShotErr) != ConnectArtifactInvalid || controllerCalls.Load() != 0 {
+				t.Fatalf("iteration %d: one-shot error/controller calls = %v/%d, want artifact_invalid/0", iteration, oneShotErr, controllerCalls.Load())
 			}
 		default:
 			t.Fatalf("iteration %d: controller state = %s", iteration, snapshot.State)

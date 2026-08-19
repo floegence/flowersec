@@ -187,7 +187,7 @@ type pendingRekey struct {
 type pendingStreamRekey struct {
 	transition uint64
 	epoch      uint32
-	armed      chan struct{}
+	armed      chan error
 	done       chan struct{}
 	once       sync.Once
 }

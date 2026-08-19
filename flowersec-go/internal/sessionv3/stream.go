@@ -956,12 +956,13 @@ func (s *encryptedStream) startSendRekey(transition uint64, epoch uint32) *pendi
 	pending := &pendingStreamRekey{
 		transition: transition,
 		epoch:      epoch,
-		armed:      make(chan struct{}),
+		armed:      make(chan error, 1),
 		done:       make(chan struct{}),
 	}
 	s.sendRekeyMu.Lock()
 	if s.sendRekey != nil {
 		s.sendRekeyMu.Unlock()
+		pending.armed <- ErrSessionProtocol
 		pending.complete()
 		s.session.fail(ErrSessionProtocol)
 		return pending
@@ -994,7 +995,7 @@ func (s *encryptedStream) runSendRekey(pending *pendingStreamRekey) {
 		}
 		s.sendRekeyMu.Unlock()
 		s.sendMu.Unlock()
-		close(pending.armed)
+		pending.armed <- nil
 		pending.complete()
 		return
 	}
@@ -1002,14 +1003,13 @@ func (s *encryptedStream) runSendRekey(pending *pendingStreamRekey) {
 	if s.sendRekey != pending {
 		s.sendRekeyMu.Unlock()
 		s.sendMu.Unlock()
-		close(pending.armed)
+		pending.armed <- ErrSessionProtocol
 		pending.complete()
 		s.session.fail(ErrSessionProtocol)
 		return
 	}
 	s.sendRekey = pending
 	s.sendRekeyMu.Unlock()
-	close(pending.armed)
 
 	var payload [12]byte
 	binary.BigEndian.PutUint64(payload[0:8], pending.transition)
@@ -1022,6 +1022,7 @@ func (s *encryptedStream) runSendRekey(pending *pendingStreamRekey) {
 	}
 	s.sendMu.Unlock()
 	if err != nil {
+		pending.armed <- err
 		s.sendRekeyMu.Lock()
 		if s.sendRekey == pending {
 			s.sendRekey = nil
@@ -1029,7 +1030,11 @@ func (s *encryptedStream) runSendRekey(pending *pendingStreamRekey) {
 		s.sendRekeyMu.Unlock()
 		pending.complete()
 		s.session.fail(err)
+		return
 	}
+	// Rekey may publish the session-level update only after this stream-level
+	// update has been committed to its carrier.
+	pending.armed <- nil
 }
 
 func (p *pendingStreamRekey) complete() {

@@ -23,7 +23,7 @@ import { createAcceptorV3 } from "./acceptorV3.js";
 import { createTunnelRuntimeV3 } from "./tunnelRuntimeV3.js";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -179,6 +179,47 @@ describe("Node native raw QUIC driver", () => {
     } finally {
       await listener?.close();
       rmSync(directory, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  test("rejects a hash-matched leaf with an invalid TLS proof before FSB3 or lease spend", async () => {
+    const peer = await startInvalidProofPeer();
+    let spends = 0;
+    const port = Number(peer.address.slice(peer.address.lastIndexOf(":") + 1));
+    const digest = createHash("sha256").update(peer.leafDER).digest("base64url");
+    const artifact = {
+      ...V3_DIRECT_BASE,
+      path: {
+        ...V3_DIRECT_BASE.path,
+        candidates: [{
+          carrier: "raw_quic",
+          id: "q-invalid-proof",
+          url: `quic://localhost:${port}`,
+          tls: {
+            mode: "pin",
+            pins: [{
+              algorithm: "sha-256",
+              value_b64u: digest,
+              not_after_unix_s: Math.floor(Date.now() / 1_000) + 3_600,
+            }],
+          },
+          wire_profile: "flowersec-direct/3",
+        } satisfies ArtifactCandidateV3],
+      },
+    } as ArtifactV3;
+    try {
+      await expect(connectV3(createArtifactLeaseV3Internal(
+        artifact,
+        async () => { spends += 1; },
+      ), {
+        connectTimeoutMs: 3_000,
+      })).rejects.toMatchObject({
+        code: "transport_security_failed",
+        disposition: { kind: "terminal" },
+      });
+      expect(spends).toBe(0);
+    } finally {
+      peer.stop();
     }
   }, 20_000);
   test("runs stream, FIN, datagram, cancellation, and cleanup through N-API", async () => {
@@ -681,4 +722,50 @@ function v3RawQuicCandidate(port: number, path: "direct" | "tunnel"): ArtifactCa
 
 function v3Lease(artifact: ArtifactV3) {
   return createArtifactLeaseV3Internal(artifact, async () => undefined);
+}
+
+async function startInvalidProofPeer() {
+  const child = spawn("go", [
+    "run", "./internal/cmd/invalid-proof-peer", "--carrier", "raw_quic",
+  ], {
+    cwd: new URL("../../../flowersec-go/", import.meta.url),
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  child.stdin.end();
+  const stderr: string[] = [];
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => { stderr.push(chunk); });
+  const line = await firstJSONLine(child, stderr);
+  const ready = JSON.parse(line) as Readonly<{ address: string; leaf_der_base64: string }>;
+  return {
+    address: ready.address,
+    leafDER: Buffer.from(ready.leaf_der_base64, "base64"),
+    stop: () => { if (child.exitCode === null) child.kill(); },
+  };
+}
+
+async function firstJSONLine(child: ChildProcessWithoutNullStreams, stderr: string[]): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    let stdout = "";
+    let settled = false;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    child.once("error", fail);
+    child.once("exit", (code) => {
+      if (!settled) fail(new Error(`invalid-proof peer exited ${String(code)}: ${stderr.join("")}`));
+    });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      if (settled) return;
+      stdout += chunk;
+      const newline = stdout.indexOf("\n");
+      if (newline >= 0) {
+        settled = true;
+        resolve(stdout.slice(0, newline));
+      }
+    });
+  });
 }

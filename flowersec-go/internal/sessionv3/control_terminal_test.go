@@ -68,6 +68,89 @@ func TestReceiveRekeySuppressionRollsBackOnlyOwnedRoot(t *testing.T) {
 	}
 }
 
+func TestReceiveRekeyPublishesEpochBeforeACKExposureAndUnreliableMessage(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	control := newRekeyPublicationControlStream(ctx)
+
+	var sessionPRK [32]byte
+	var h3 [32]byte
+	for index := range sessionPRK {
+		sessionPRK[index] = byte(index + 1)
+		h3[index] = byte(0xa0 + index)
+	}
+	session, err := newEngineSession(nil, control, Config{
+		Role: RoleClient, Path: PathDirect, Suite: protocolv3.SuiteChaCha20Poly1305,
+		MaxInboundStreams: 1, RekeyCompletionTimeout: time.Second,
+	}, handshakeMaterial{h3: h3, sessionPRK: sessionPRK})
+	if err != nil {
+		t.Fatal(err)
+	}
+	control.ctx = session.ctx
+	session.unreliable = newUnreliableChannel(session, nil)
+
+	var observeErr error
+	control.observe = func(_ []byte) {
+		session.cryptoMu.RLock()
+		receiveEpoch := session.recvSessionEpoch
+		receiveRoots, rootsPublished := session.recvRoots[1]
+		session.cryptoMu.RUnlock()
+		if receiveEpoch != 1 || !rootsPublished {
+			observeErr = fmt.Errorf("ACK write observed receive epoch=%d roots_published=%t, want epoch=1 and published roots", receiveEpoch, rootsPublished)
+			return
+		}
+
+		plaintext := []byte("epoch-one")
+		header := protocolv3.UnreliableHeader{
+			Epoch: 1, Sequence: 1, ExpiresAtUnixMS: uint64(time.Now().Add(time.Minute).UnixMilli()),
+			CiphertextLength: uint32(len(plaintext) + protocolv3.AEADTagBytes),
+		}
+		material, deriveErr := protocolv3.DeriveUnreliableMaterial(receiveRoots.EpochSecret, session.h3, session.recvDir, header.Epoch)
+		if deriveErr != nil {
+			observeErr = deriveErr
+			return
+		}
+		ciphertext, sealErr := protocolv3.SealUnreliable(session.config.Suite, material, session.h3, session.recvDir, header, plaintext)
+		if sealErr != nil {
+			observeErr = sealErr
+			return
+		}
+		rawHeader, marshalErr := header.MarshalBinary()
+		if marshalErr != nil {
+			observeErr = marshalErr
+			return
+		}
+		wire := append(rawHeader, ciphertext...)
+		opened, accepted := session.unreliable.open(wire, time.Now())
+		if !accepted || !slices.Equal(opened, plaintext) {
+			observeErr = fmt.Errorf("epoch-one unreliable open accepted=%t plaintext=%q, want accepted epoch-one payload %q", accepted, opened, plaintext)
+		}
+	}
+	session.startControlWriter()
+	defer func() {
+		session.cancel(ErrSessionClosed)
+		session.wg.Wait()
+	}()
+
+	var update [20]byte
+	binary.BigEndian.PutUint64(update[0:8], 1)
+	binary.BigEndian.PutUint32(update[8:12], 1)
+	done := make(chan error, 1)
+	go func() { done <- session.handleSessionUpdate(update[:]) }()
+
+	select {
+	case <-control.writeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("session rekey ACK was not exposed to the control writer")
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("receive session rekey: %v", err)
+	}
+	if observeErr != nil {
+		t.Fatalf("receive rekey publication observed at ACK exposure: %v", observeErr)
+	}
+}
+
 func TestTerminalCloseOmitsPriorGoAwayAndPreservesTuple(t *testing.T) {
 	session := newControlActorUnitSession(t, 1)
 	session.ledger = protocolv3.NewStreamLedger(protocolv3.RoleServer, protocolv3.MaxStreamLedgerSlots)
@@ -195,6 +278,43 @@ type terminalControlStream struct {
 	firstWrite    sync.Once
 	mu            sync.Mutex
 	events        []string
+}
+
+type rekeyPublicationControlStream struct {
+	ctx          context.Context
+	writeStarted chan struct{}
+	releaseWrite chan struct{}
+	firstWrite   sync.Once
+	observe      func([]byte)
+}
+
+func newRekeyPublicationControlStream(ctx context.Context) *rekeyPublicationControlStream {
+	return &rekeyPublicationControlStream{
+		ctx: ctx, writeStarted: make(chan struct{}), releaseWrite: make(chan struct{}),
+	}
+}
+
+func (stream *rekeyPublicationControlStream) Read([]byte) (int, error) { return 0, io.EOF }
+
+func (stream *rekeyPublicationControlStream) Write(payload []byte) (int, error) {
+	if stream.observe != nil {
+		stream.observe(payload)
+	}
+	stream.firstWrite.Do(func() { close(stream.writeStarted) })
+	select {
+	case <-stream.releaseWrite:
+		return len(payload), nil
+	case <-stream.ctx.Done():
+		return 0, stream.ctx.Err()
+	}
+}
+
+func (stream *rekeyPublicationControlStream) CloseWrite() error  { return nil }
+func (stream *rekeyPublicationControlStream) StopSending() error { return nil }
+func (stream *rekeyPublicationControlStream) Reset() error       { return nil }
+func (stream *rekeyPublicationControlStream) Close() error       { return nil }
+func (stream *rekeyPublicationControlStream) Context() context.Context {
+	return stream.ctx
 }
 
 func newTerminalControlStream(ctx context.Context) *terminalControlStream {

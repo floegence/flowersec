@@ -147,17 +147,21 @@ final class SourceGuardTests: XCTestCase {
       XCTAssertFalse(transport.contains(declaration), "public API must not restore \(declaration)")
     }
     let options = try XCTUnwrap(structBody(named: "ConnectorOptions", in: connector))
-    let connectError = try XCTUnwrap(enumBody(named: "ConnectError", in: connector))
+    let connectError = try XCTUnwrap(enumBody(named: "ConnectErrorCode", in: connector))
     XCTAssertFalse(
       options.contains("admissionReasons"),
       "ConnectorOptions must not expose admission reason registries"
     )
-    for errorCase in ["case unsupportedCarrier", "case admissionRejected"] {
-      XCTAssertFalse(
-        connectError.contains(errorCase),
-        "ConnectError must not expose \(errorCase)"
-      )
-    }
+    let publicCodes = connectError.split(separator: "\n").filter {
+      $0.trimmingCharacters(in: .whitespaces).hasPrefix("case ")
+    }.map { $0.trimmingCharacters(in: .whitespaces) }
+    XCTAssertEqual(publicCodes, [
+      "case artifactInvalid = \"artifact_invalid\"",
+      "case expiredArtifact = \"expired_artifact\"",
+      "case transportSecurityUnsupported = \"transport_security_unsupported\"",
+      "case transportSecurityFailed = \"transport_security_failed\"",
+      "case connectionFailed = \"connection_failed\"",
+    ])
 
     let byteStream = try XCTUnwrap(protocolBody(named: "ByteStream", in: transport))
     let session = try XCTUnwrap(protocolBody(named: "Session", in: transport))

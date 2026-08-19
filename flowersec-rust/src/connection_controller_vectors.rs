@@ -1,5 +1,6 @@
 use std::{
     collections::{HashSet, VecDeque},
+    num::NonZeroU64,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -17,6 +18,11 @@ use tokio_util::sync::CancellationToken;
 use super::*;
 use crate::{
     ArtifactSpendErrorV3,
+    artifact_v3::{CanonicalCandidateV3, ConnectionPlanV3},
+    connector_v3::{
+        CandidateFailureV3, CandidatePrepareFutureV3, CandidatePreparerV3,
+        connect_v3_with_cancellation_and_preparer,
+    },
     transport_v2::{ByteStream, IncomingStream, RpcPeer, SessionTermination, StreamMetadata},
 };
 
@@ -404,7 +410,7 @@ fn vector_connector(
                 ConnectorOutcome::WaitForCancellation => {
                     cancellation.cancelled().await;
                     Err(ConnectError::from_runtime_code(
-                        ConnectErrorCode::DialFailed,
+                        ConnectErrorCode::ConnectionFailed,
                     ))
                 }
             }
@@ -418,7 +424,7 @@ async fn spend(lease: ArtifactLeaseV3) -> Result<(), ConnectError> {
         .map_err(|_| ConnectError::from_runtime_code(ConnectErrorCode::ArtifactInvalid))?
         .commit_spend()
         .await
-        .map_err(|_| ConnectError::from_runtime_code(ConnectErrorCode::SpendFailed))?;
+        .map_err(|_| ConnectError::from_runtime_code(ConnectErrorCode::ConnectionFailed))?;
     Ok(())
 }
 
@@ -721,7 +727,7 @@ async fn run_policy_replacement(scenario: &ScenarioV3) {
     let metrics = Arc::new(ConnectorMetrics::default());
     let opaque = scenario.input["trigger"].as_str() == Some("browser_pin_opaque");
     let code = if opaque {
-        ConnectErrorCode::DialFailed
+        ConnectErrorCode::ConnectionFailed
     } else {
         ConnectErrorCode::TransportSecurityFailed
     };
@@ -772,34 +778,112 @@ async fn run_policy_replacement(scenario: &ScenarioV3) {
 }
 
 async fn run_capability_filter(scenario: &ScenarioV3) {
-    let lease = TrackedLease::new(ca_artifact());
+    if scenario.driver != "capability-barrier" {
+        let lease = TrackedLease::new(ca_artifact());
+        let source = Arc::new(VectorSource::new([primary(&lease)]));
+        let metrics = Arc::new(ConnectorMetrics::default());
+        let controller = ConnectionController::new_with_connector(
+            source.clone(),
+            test_options(None),
+            vector_connector(
+                [ConnectorAction {
+                    attempts: 1,
+                    transports: 0,
+                    allowed_candidate_ids: None,
+                    outcome: ConnectorOutcome::Error(ConnectError::from_runtime_code(
+                        ConnectErrorCode::TransportSecurityUnsupported,
+                    )),
+                }],
+                metrics.clone(),
+            ),
+        );
+        controller.start();
+        let status = wait_for_state(&controller, ConnectionState::Failed).await;
+        assert_observed(
+            scenario,
+            observe(status, &source, &metrics, &[&lease], vec![]),
+        );
+        controller.close().await;
+        return;
+    }
+
+    let lease = TrackedLease::new(pin_artifact([0x11; 32]));
     let source = Arc::new(VectorSource::new([primary(&lease)]));
-    let metrics = Arc::new(ConnectorMetrics::default());
+    let arrived = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let invalidated = Arc::new(AtomicBool::new(false));
+    let preparer = Arc::new(BarrierCandidatePreparer {
+        arrived: Arc::clone(&arrived),
+        release: Arc::clone(&release),
+        invalidated: Arc::clone(&invalidated),
+    });
+    let mut options = ConnectorOptions::new();
+    options = options
+        .with_websocket_origin("https://example.org")
+        .expect("origin");
     let controller = ConnectionController::new_with_connector(
         source.clone(),
-        test_options(None),
-        vector_connector(
-            [ConnectorAction {
-                attempts: 1,
-                transports: 0,
-                allowed_candidate_ids: None,
-                outcome: ConnectorOutcome::Error(ConnectError::from_runtime_code(
-                    ConnectErrorCode::TransportSecurityUnsupported,
-                )),
-            }],
-            metrics.clone(),
-        ),
+        ConnectionControllerOptions::new(options)
+            .with_maximum_attempts(NonZeroU64::new(1).expect("nonzero")),
+        Arc::new({
+            let preparer = Arc::clone(&preparer);
+            move |lease, options, cancellation| {
+                let preparer = Arc::clone(&preparer);
+                Box::pin(async move {
+                    connect_v3_with_cancellation_and_preparer(
+                        lease,
+                        options,
+                        cancellation,
+                        preparer.as_ref(),
+                    )
+                    .await
+                })
+            }
+        }),
     );
     controller.start();
+    arrived.notified().await;
+    assert!(!invalidated.swap(true, Ordering::AcqRel));
+    release.notify_one();
     let status = wait_for_state(&controller, ConnectionState::Failed).await;
-    if scenario.driver == "capability-barrier" {
-        assert_eq!(scenario.expected.capability_rechecked, Some(true));
-    }
-    assert_observed(
-        scenario,
-        observe(status, &source, &metrics, &[&lease], vec![]),
-    );
+    assert_eq!(scenario.expected.capability_rechecked, Some(true));
+    assert!(matches!(
+        status.last_failure,
+        Some(ConnectionFailure::Connect {
+            code: ConnectErrorCode::TransportSecurityUnsupported,
+            disposition: RetryDisposition::Terminal,
+        })
+    ));
+    assert_eq!(lease.spends.load(Ordering::SeqCst), 0);
+    assert_eq!(lease.retires.load(Ordering::SeqCst), 1);
     controller.close().await;
+}
+
+struct BarrierCandidatePreparer {
+    arrived: Arc<Notify>,
+    release: Arc<Notify>,
+    invalidated: Arc<AtomicBool>,
+}
+
+impl CandidatePreparerV3 for BarrierCandidatePreparer {
+    fn prepare<'a>(
+        &'a self,
+        _candidate: &'a CanonicalCandidateV3,
+        _plan: &'a ConnectionPlanV3,
+        _options: &'a ConnectorOptions,
+        _deadline: tokio::time::Instant,
+        _cancellation: &'a CancellationToken,
+    ) -> CandidatePrepareFutureV3<'a> {
+        Box::pin(async move {
+            self.arrived.notify_one();
+            self.release.notified().await;
+            if self.invalidated.load(Ordering::Acquire) {
+                Err(CandidateFailureV3::Unsupported)
+            } else {
+                Err(CandidateFailureV3::Connection)
+            }
+        })
+    }
 }
 
 async fn run_replacement_expiry(scenario: &ScenarioV3) {
@@ -892,7 +976,7 @@ async fn run_post_spend_retry(scenario: &ScenarioV3) {
                     transports: 1,
                     allowed_candidate_ids: None,
                     outcome: ConnectorOutcome::SpendThenError(ConnectError::from_runtime_code(
-                        ConnectErrorCode::HandshakeFailed,
+                        ConnectErrorCode::ConnectionFailed,
                     )),
                 },
                 ConnectorAction {
@@ -1154,7 +1238,7 @@ async fn run_failure_ordinal(scenario: &ScenarioV3) {
                 transports: attempts,
                 allowed_candidate_ids: None,
                 outcome: ConnectorOutcome::Error(ConnectError::from_runtime_code(
-                    ConnectErrorCode::DialFailed,
+                    ConnectErrorCode::ConnectionFailed,
                 )),
             }],
             metrics.clone(),
@@ -1234,7 +1318,7 @@ async fn run_cycle_reset(scenario: &ScenarioV3) {
                     transports: 1,
                     allowed_candidate_ids: None,
                     outcome: ConnectorOutcome::Error(ConnectError::from_runtime_code(
-                        ConnectErrorCode::DialFailed,
+                        ConnectErrorCode::ConnectionFailed,
                     )),
                 },
                 ConnectorAction {
@@ -1527,7 +1611,7 @@ async fn run_retire_cleanup(scenario: &ScenarioV3) {
                     transports: 1,
                     allowed_candidate_ids: None,
                     outcome: ConnectorOutcome::Error(ConnectError::from_runtime_code(
-                        ConnectErrorCode::DialFailed,
+                        ConnectErrorCode::ConnectionFailed,
                     )),
                 },
                 ConnectorAction {
@@ -1578,7 +1662,7 @@ async fn run_quota_preservation(scenario: &ScenarioV3) {
                     transports: 1,
                     allowed_candidate_ids: None,
                     outcome: ConnectorOutcome::Error(ConnectError::from_runtime_code(
-                        ConnectErrorCode::DialFailed,
+                        ConnectErrorCode::ConnectionFailed,
                     )),
                 },
                 ConnectorAction {
@@ -1660,9 +1744,9 @@ async fn run_admission_boundary(scenario: &ScenarioV3) {
     let metrics = Arc::new(ConnectorMetrics::default());
     let terminal = admission_result == "fsa_reject";
     let admission_error = if terminal {
-        ConnectError::from_terminal_runtime_code(ConnectErrorCode::DialFailed)
+        ConnectError::from_terminal_runtime_code(ConnectErrorCode::ConnectionFailed)
     } else {
-        ConnectError::from_runtime_code(ConnectErrorCode::DialFailed)
+        ConnectError::from_runtime_code(ConnectErrorCode::ConnectionFailed)
     };
     let mut actions = Vec::new();
     if phase == "replacement" {
@@ -1720,10 +1804,10 @@ async fn run_duplicate_lease(scenario: &ScenarioV3) {
     let metrics = Arc::new(ConnectorMetrics::default());
     let outcome = match terminal {
         "consumed" => ConnectorOutcome::SpendThenError(ConnectError::from_runtime_code(
-            ConnectErrorCode::DialFailed,
+            ConnectErrorCode::ConnectionFailed,
         )),
         "retired" => ConnectorOutcome::Error(ConnectError::from_runtime_code(
-            ConnectErrorCode::DialFailed,
+            ConnectErrorCode::ConnectionFailed,
         )),
         value => panic!("unknown repeated terminal state {value}"),
     };

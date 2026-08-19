@@ -493,8 +493,10 @@ public actor ConnectionController {
       !policyIdentity(lease.artifact, provenance: provenance).pins.isEmpty
     else { return false }
     switch failure {
-    case .connection(.transportSecurityFailed): return !provenance.policyTriggerIDs.isEmpty
-    case .connection(.connectionFailed): return !provenance.opaquePolicyTriggerIDs.isEmpty
+    case .connection(let error) where error == .transportSecurityFailed:
+      return !provenance.policyTriggerIDs.isEmpty
+    case .connection(let error) where error.code == .connectionFailed:
+      return !provenance.opaquePolicyTriggerIDs.isEmpty
     default: return false
     }
   }

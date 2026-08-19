@@ -633,10 +633,10 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 		}
 	}
 	for _, streamPending := range pending.streams {
-		if err := s.waitRekeySignal(prepareContext, streamPending.armed); err != nil {
+		if err := s.waitStreamRekeyCommit(prepareContext, streamPending.armed); err != nil {
 			s.clearPendingRekey(pending)
 			s.fail(fmt.Errorf("%w: %v", ErrRekey, err))
-			return err
+			return fmt.Errorf("%w: %v", ErrRekey, err)
 		}
 	}
 	if err := s.sendControl(protocolv3.InnerSessionKeyUpdate, pending.payload[:]); err != nil {
@@ -840,6 +840,17 @@ func (s *engineSession) waitRekeySignal(ctx context.Context, signal <-chan struc
 	select {
 	case <-signal:
 		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.ctx.Done():
+		return s.sessionError()
+	}
+}
+
+func (s *engineSession) waitStreamRekeyCommit(ctx context.Context, signal <-chan error) error {
+	select {
+	case err := <-signal:
+		return err
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-s.ctx.Done():

@@ -202,11 +202,11 @@ function nodeCountPayload(nodes) {
   throw new Error(`unsupported scoped node target ${nodes}`);
 }
 
-function artifactVector(kind) {
+function artifactVector(kind, selectedCandidates) {
   const session = buildSession();
   const wire = `flowersec-${kind}/3`;
   const suffix = kind === "direct" ? "direct" : "tunnel";
-  const candidates = [
+  const candidates = selectedCandidates ?? [
     {
       id: "w-ca",
       carrier: "websocket",
@@ -315,6 +315,13 @@ function artifactVector(kind) {
 const direct = artifactVector("direct");
 const directObject = JSON.parse(direct.artifact_json);
 const baseCandidate = directObject.path.candidates[0];
+const directSingle = {
+  ...artifactVector("direct", [{
+    ...baseCandidate,
+    normalized_url: "wss://example.com/flowersec/v3/direct",
+  }]),
+  id: "direct-single-candidate",
+};
 const tunnel = artifactVector("tunnel");
 const tunnelObject = JSON.parse(tunnel.artifact_json);
 
@@ -441,7 +448,7 @@ const artifactVectors = {
     admission_binding_label: "flowersec-v3-admission\u0000",
     acceptor_admissions_label: "flowersec-v3-acceptor-admissions\u0000",
   },
-  positive: [direct, tunnel],
+  positive: [direct, tunnel, directSingle],
   scalar_boundaries: [
     artifactBoundary("session-channel-id-min", directObject, (artifact) => { artifact.session.channel_id = "a"; }),
     artifactBoundary("session-channel-id-max", directObject, (artifact) => { artifact.session.channel_id = "a".repeat(128); }),
@@ -746,6 +753,55 @@ const artifactVectors = {
   ],
 };
 write("artifact_vectors.json", artifactVectors);
+
+const handshakeFixtures = JSON.parse(readFileSync(join(root, "handshake_vectors.json"), "utf8"));
+const cryptoFixtures = JSON.parse(readFileSync(join(root, "crypto_vectors.json"), "utf8"));
+const datagramFixtures = JSON.parse(readFileSync(join(root, "datagram_vectors.json"), "utf8"));
+const isolationFrame = (id, hex) => {
+  const value = Buffer.from(hex, "hex");
+  const magic = Buffer.from(value);
+  magic[3] = 0x32;
+  const version = Buffer.from(value);
+  version[4] = 2;
+  return { id, v3_hex: hex, v2_magic_hex: magic.toString("hex"), v2_version_hex: version.toString("hex") };
+};
+const isolationSourceFrame = direct.winners.find(({ candidate_id }) => candidate_id === "w-ca").fsb3_hex;
+write("version_isolation_vectors.json", {
+  version: 3,
+  source: {
+    design_sha256: "236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba",
+    producer: "testdata/transport_v3/generate_contract_vectors.mjs",
+    rules_are_not_extended_by_vectors: true,
+  },
+  frames: [
+    isolationFrame("fsb3", isolationSourceFrame),
+    isolationFrame("fsa3", fsa3(1, "invalid_token")),
+    isolationFrame("fsc3", handshakeFixtures.vectors[0].fsc3_hex),
+    isolationFrame("fsh3", handshakeFixtures.vectors[0].client_init_hex),
+    isolationFrame("fss3", cryptoFixtures.vectors[0].fss3_hex),
+    isolationFrame("fsr3", cryptoFixtures.vectors[0].fsr3_header_hex),
+    isolationFrame("fsd3", datagramFixtures.vectors[0].header_hex),
+  ],
+  inherited_codecs: {
+    fsh3: {
+      fixture: "handshake_vectors.json",
+      frame_id: "x25519-direct",
+      inherited_codec_from: "transport_v2",
+      semantic: "FSH3 keeps the inherited canonical handshake JSON codec after versioned framing replacement",
+    },
+    open: {
+      fixture: "open_unicode_vectors.json",
+      vector_id: "minimal-string-escaping",
+      inherited_codec_from: "transport_v2",
+      semantic: "OPEN keeps the inherited non-JCS session codec and is not artifact JCS input",
+    },
+    rpc: {
+      inherited_codec_from: "transport_v2",
+      envelope_json: "{\"payload\":{\"ratio\":1.5},\"request_id\":1,\"response_to\":0,\"type_id\":7}",
+      semantic: "RPC keeps the inherited application JSON value domain; float payload is not artifact JCS",
+    },
+  },
+});
 
 const W4 = [
   ["dial", "direct", "client", true, false, false],

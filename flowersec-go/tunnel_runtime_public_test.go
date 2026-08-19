@@ -74,8 +74,8 @@ func TestAcceptorDoesNotServeTunnelRoute(t *testing.T) {
 	request.Header.Set("Origin", "https://app.example")
 	response := httptest.NewRecorder()
 	acceptor.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("Acceptor tunnel route status = %d, want 404", response.Code)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("Acceptor tunnel route status = %d, want fail-closed 403", response.Code)
 	}
 }
 

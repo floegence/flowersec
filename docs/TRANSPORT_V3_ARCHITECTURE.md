@@ -161,8 +161,15 @@ The initial support matrix is:
 | swift/linux | websocket_adapter_not_supported_on_linux | swift_apple_client_profile_excludes_raw_quic | swift_apple_client_profile_excludes_webtransport |
 
 The complete tuple booleans and ordering are frozen in capability vectors.
-Runtime absence can remove only the registered carrier tuple set and must use
-its registered reason. A candidate whose mode is absent from its exact dial
+The first release permits only four dynamic conversions: browser WebSocket API
+absence removes W3 with `browser_websocket_api_unavailable`; browser
+WebTransport API absence removes H3 with
+`browser_webtransport_api_unavailable`; an unloaded Node native addon removes
+Q4N with `node_native_transport_unavailable`; and a browser pin allowlist miss
+keeps H3 but reduces its dial security modes to CA only. No other runtime
+absence may remove tuples, change booleans/security modes, or invent a reason;
+`adapter_not_composed` remains a registry token but is not emitted by the
+first-release descriptor. A candidate whose mode is absent from its exact dial
 tuple is skipped as tls_unsupported before transport construction.
 
 The descriptor digest is:

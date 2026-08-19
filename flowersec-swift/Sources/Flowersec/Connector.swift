@@ -16,7 +16,8 @@ public struct ConnectorOptions: Sendable {
   }
 }
 
-public enum ConnectError: String, Error, Equatable, Sendable {
+/// Explicit legacy Transport v2 connection errors.
+public enum ConnectErrorV2: String, Error, Equatable, Sendable {
   case invalidOptions = "invalid_options"
   case artifactInvalid = "artifact_invalid"
   case runtimeUnsupported = "runtime_unsupported"
@@ -27,6 +28,43 @@ public enum ConnectError: String, Error, Equatable, Sendable {
   case timeout
   case connectionFailed = "connection_failed"
 }
+
+/// The complete public Transport v3 connection error code set.
+public enum ConnectErrorCode: String, CaseIterable, Equatable, Sendable {
+  case artifactInvalid = "artifact_invalid"
+  case expiredArtifact = "expired_artifact"
+  case transportSecurityUnsupported = "transport_security_unsupported"
+  case transportSecurityFailed = "transport_security_failed"
+  case connectionFailed = "connection_failed"
+}
+
+/// A stable, redacted Transport v3 connection failure.
+public struct ConnectError: Error, Equatable, Sendable {
+  public let code: ConnectErrorCode
+  public let retryDisposition: RetryDispositionV3
+
+  public static let artifactInvalid = ConnectError(.artifactInvalid, .terminal)
+  public static let expiredArtifact = ConnectError(.expiredArtifact, .retryable)
+  public static let transportSecurityUnsupported = ConnectError(
+    .transportSecurityUnsupported, .terminal)
+  public static let transportSecurityFailed = ConnectError(.transportSecurityFailed, .terminal)
+  public static let connectionFailed = ConnectError(.connectionFailed, .retryable)
+
+  public var retryDispositionV3: RetryDispositionV3 { retryDisposition }
+
+  internal static let invalidOptions = artifactInvalid
+  internal static let runtimeUnsupported = transportSecurityUnsupported
+  internal static let canceled = ConnectError(.connectionFailed, .terminal)
+  internal static let timeout = connectionFailed
+  internal static let terminalConnectionFailed = ConnectError(.connectionFailed, .terminal)
+
+  private init(_ code: ConnectErrorCode, _ retryDisposition: RetryDispositionV3) {
+    self.code = code
+    self.retryDisposition = retryDisposition
+  }
+}
+
+public typealias ConnectErrorV3 = ConnectError
 
 /// Establishes an explicit legacy Transport v2 session.
 public func connectV2(
@@ -40,7 +78,7 @@ public func connectV2(
       runtime: AppleWebSocketRuntimeAdapterV2()
     ).connect()
   #else
-    throw ConnectError.runtimeUnsupported
+    throw ConnectErrorV2.runtimeUnsupported
   #endif
 }
 

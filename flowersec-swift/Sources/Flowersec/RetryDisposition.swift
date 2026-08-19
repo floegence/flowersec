@@ -11,7 +11,7 @@ public enum RetryDisposition: Equatable, Sendable {
   case retryAfter(Date)
 }
 
-extension ConnectError {
+extension ConnectErrorV2 {
   public var retryDisposition: RetryDisposition {
     switch self {
     case .invalidOptions, .artifactInvalid, .runtimeUnsupported,
@@ -41,18 +41,6 @@ public enum RetryDispositionV3: Equatable, Sendable {
   case terminal
   case retryable
   case retryAfter(UInt64)
-}
-
-extension ConnectError {
-  public var retryDispositionV3: RetryDispositionV3 {
-    switch self {
-    case .invalidOptions, .artifactInvalid, .runtimeUnsupported,
-      .transportSecurityUnsupported, .transportSecurityFailed, .canceled:
-      return .terminal
-    case .expiredArtifact, .timeout, .connectionFailed:
-      return .retryable
-    }
-  }
 }
 
 extension SessionError {

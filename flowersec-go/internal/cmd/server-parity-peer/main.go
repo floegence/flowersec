@@ -193,7 +193,7 @@ func runServer(ctx context.Context, carrier string) error {
 	}
 	var listener flowersec.DirectListener
 	var endpoint string
-	var httpServer *http.Server
+	var webSocketServer *flowersec.WebSocketHTTPServer
 	var httpListener net.Listener
 	switch carrier {
 	case "websocket":
@@ -278,8 +278,14 @@ func runServer(ctx context.Context, carrier string) error {
 	defer stopServe()
 	serveDone := make(chan error, 1)
 	if carrier == "websocket" {
-		httpServer = &http.Server{Handler: acceptor.Handler(), ReadHeaderTimeout: 5 * time.Second, TLSConfig: tlsConfig}
-		go func() { serveDone <- httpServer.Serve(tls.NewListener(httpListener, tlsConfig)) }()
+		webSocketServer, err = flowersec.NewWebSocketHTTPServer(flowersec.WebSocketHTTPServerOptions{
+			Handler: acceptor.Handler(), TLSConfig: tlsConfig, ReadHeaderTimeout: 5 * time.Second,
+		})
+		if err != nil {
+			_ = httpListener.Close()
+			return err
+		}
+		go func() { serveDone <- webSocketServer.Serve(httpListener) }()
 	} else {
 		go func() { serveDone <- acceptor.Serve(serveCtx) }()
 	}
@@ -293,9 +299,9 @@ func runServer(ctx context.Context, carrier string) error {
 		err = ctx.Err()
 	}
 	stopServe()
-	if httpServer != nil {
+	if webSocketServer != nil {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = httpServer.Shutdown(shutdownCtx)
+		_ = webSocketServer.Shutdown(shutdownCtx)
 		shutdownCancel()
 	}
 	select {
@@ -524,10 +530,18 @@ func runTunnelRelay(ctx context.Context, carrier string) error {
 	defer stop()
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- runtime.Serve(serveCtx) }()
-	var httpServer *http.Server
+	var webSocketServer *flowersec.WebSocketHTTPServer
+	var webSocketServeDone chan error
 	if carrier == "websocket" {
-		httpServer = &http.Server{Handler: runtime.Handler(), ReadHeaderTimeout: 5 * time.Second, TLSConfig: tlsConfig}
-		go func() { _ = httpServer.Serve(tls.NewListener(httpListener, tlsConfig)) }()
+		webSocketServer, err = flowersec.NewWebSocketHTTPServer(flowersec.WebSocketHTTPServerOptions{
+			Handler: runtime.Handler(), TLSConfig: tlsConfig, ReadHeaderTimeout: 5 * time.Second,
+		})
+		if err != nil {
+			_ = httpListener.Close()
+			return err
+		}
+		webSocketServeDone = make(chan error, 1)
+		go func() { webSocketServeDone <- webSocketServer.Serve(httpListener) }()
 	}
 	var closeCommand struct {
 		Type string `json:"type"`
@@ -538,15 +552,25 @@ func runTunnelRelay(ctx context.Context, carrier string) error {
 	executed.record("close")
 	stop()
 	executed.record("cancel")
-	if httpServer != nil {
+	if webSocketServer != nil {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = httpServer.Shutdown(shutdownCtx)
+		_ = webSocketServer.Shutdown(shutdownCtx)
 		shutdownCancel()
 	}
 	select {
 	case <-serveDone:
 	case <-time.After(3 * time.Second):
 		return errors.New("tunnel relay cleanup timed out")
+	}
+	if webSocketServeDone != nil {
+		select {
+		case serveErr := <-webSocketServeDone:
+			if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+				return serveErr
+			}
+		case <-time.After(3 * time.Second):
+			return errors.New("tunnel relay WebSocket listener cleanup timed out")
+		}
 	}
 	mu.Lock()
 	releasedCount := len(released)

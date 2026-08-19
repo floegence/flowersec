@@ -97,9 +97,11 @@ func registry() []registeredTest {
 		browserSmokeEntry("compat/v2/browser/chromium-tunnel-wt-wss", "Chromium WebTransport tunnel bridges to production Go wss"),
 		browserSmokeEntry("compat/v2/browser/chromium-tunnel-wt-quic", "Chromium WebTransport tunnel bridges to production Go raw_quic"),
 		browserCompatibilityEntry("compat/v2/browser/firefox/webtransport-capability", "firefox", "Firefox reports unsupported native WebTransport connection"),
+		browserCompatibilityEntry("browser/firefox/webtransport-pin-capability", "firefox", "Firefox reports explicit v3 WebTransport pin capability as unsupported"),
 		browserCompatibilityEntry("browser/firefox/websocket/self-contained", "firefox", "Portable browsers run the v3 WebSocket client contract"),
 		browserCompatibilityEntry("compat/v2/browser/firefox/websocket/self-contained", "firefox", "Portable browsers run the explicit v2 compatibility WebSocket client contract"),
 		browserCompatibilityEntry("compat/v2/browser/webkit/webtransport-capability", "webkit", "WebKit reports unsupported native WebTransport DATAGRAM surface"),
+		browserCompatibilityEntry("browser/webkit/webtransport-pin-capability", "webkit", "WebKit reports explicit v3 WebTransport pin capability as unsupported"),
 		browserCompatibilityEntry("browser/webkit/websocket/self-contained", "webkit", "Portable browsers run the v3 WebSocket client contract"),
 		browserCompatibilityEntry("compat/v2/browser/webkit/websocket/self-contained", "webkit", "Portable browsers run the explicit v2 compatibility WebSocket client contract"),
 		commandEntry("coverage/go", "coverage-race", 10*time.Minute, "make", "go-cover-check"),
@@ -278,7 +280,7 @@ func vitestEntry(id, suite, file, title string) registeredTest {
 }
 
 func vitestArguments(file, title string) []string {
-	arguments := []string{"--prefix", "flowersec-ts", "exec", "--", "vitest", "run", "--config", "flowersec-ts/vitest.config.ts", "flowersec-ts/" + file}
+	arguments := []string{"--prefix", "flowersec-ts", "exec", "--", "vitest", "run", "--root", "flowersec-ts", "--config", "vitest.config.ts", file}
 	if title != "" {
 		arguments = append(arguments, "-t", exactTitle(title))
 	}

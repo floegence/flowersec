@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/candidatev3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transportsecurity"
 )
 
 type controllerVectorObserved struct {
@@ -310,41 +313,7 @@ func runControllerVectorAttemptExhaustion(t *testing.T, scenario controllerVecto
 }
 
 func runControllerVectorRetryAfter(t *testing.T, scenario controllerVectorScenario) {
-	assertControllerVectorClock(t, scenario)
-	tracked := newControllerVectorLease(t, controllerPolicyArtifact(t,
-		controllerPinPolicy("ERERERERERERERERERERERERERERERERERERERERERE")))
-	retryAt := time.Now().Add(80 * time.Millisecond).UnixMilli()
-	failure, err := NewRetryAfterArtifactSourceError(errors.New("rate limited"), retryAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := &controllerTestSource{results: []controllerAcquireResult{{failure: failure}, {lease: tracked.lease}}}
-	controller := newControllerForTest(t, source, 0)
-	session := newControllerTestSession(SessionClosed)
-	var connects atomic.Int32
-	controller.connectDetailed = func(ctx context.Context, claimed claimedArtifactLease, _ ConnectorOptions, _ map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome) {
-		connects.Add(1)
-		if err := claimed.lease.commitSpend(ctx); err != nil {
-			t.Fatal(err)
-		}
-		return session, controllerConnectOutcome{spendStarted: claimed.spendStarted()}
-	}
-	controller.Start(context.Background())
-	waitControllerState(t, controller, ConnectionWaiting)
-	wantRetryNow := scenario.Expected.RetryNowAllowedBeforeDeadline != nil && *scenario.Expected.RetryNowAllowedBeforeDeadline
-	if got := controller.RetryNow(); got != wantRetryNow {
-		t.Fatalf("RetryNow before wall deadline = %v, want %v", got, wantRetryNow)
-	}
-	waitControllerSession(t, controller, session)
-	acquired := source.acquisitionTimes()
-	if len(acquired) != 2 || acquired[1].UnixMilli() < retryAt {
-		t.Fatalf("retry_after acquisitions = %v, deadline %v", acquired, retryAt)
-	}
-	assertControllerVectorObserved(t, scenario.Expected, controllerVectorObservation(
-		controller, source.callCount(), int(connects.Load()), int(connects.Load()), 0,
-		[]*controllerVectorLease{tracked}, scenario.Expected.RetryDelaysMS,
-	))
-	closeController(t, controller)
+	runControllerVectorSchedulerClock(t, scenario, true)
 }
 
 func runControllerVectorSecurityPriority(t *testing.T, scenario controllerVectorScenario) {
@@ -511,23 +480,7 @@ func runControllerVectorCycleReset(t *testing.T, scenario controllerVectorScenar
 }
 
 func runControllerVectorClockBoundary(t *testing.T, scenario controllerVectorScenario) {
-	if scenario.Expected.TimerSaturated {
-		if scenario.Input.MonotonicStartMS != int64(maxSafeControllerInteger-1) ||
-			scenario.Expected.MonotonicEndMS != int64(maxSafeControllerInteger) ||
-			!scenario.Expected.CounterSaturated && scenario.Expected.RetryDelaysMS[0] != 1 {
-			t.Fatalf("invalid timer saturation vector: %+v", scenario)
-		}
-		return
-	}
-	assertControllerVectorClock(t, scenario)
-	for _, delay := range scenario.Expected.RetryDelaysMS {
-		if delay > scenario.Expected.MaximumWallRereadMS && scenario.Expected.MaximumWallRereadMS != 0 {
-			t.Fatalf("wall reread delay %d exceeds %d", delay, scenario.Expected.MaximumWallRereadMS)
-		}
-		if delay > 1000 {
-			t.Fatalf("wall-clock reread delay = %dms, want <=1000ms", delay)
-		}
-	}
+	runControllerVectorSchedulerClock(t, scenario, false)
 }
 
 func runControllerVectorCASecurity(t *testing.T, scenario controllerVectorScenario) {
@@ -674,7 +627,73 @@ func runControllerVectorCapabilityBarrier(t *testing.T, scenario controllerVecto
 	if !scenario.Expected.CapabilityRechecked {
 		t.Fatal("capability vector must require the pre-TLS invalidation barrier")
 	}
-	runControllerVectorAllUnsupported(t, scenario)
+	artifact := mustParseInternalFixtureArtifact(t)
+	var qpin artifactv3.Candidate
+	for _, candidate := range artifact.value.Path.Candidates {
+		if candidate.ID == "q-pin" {
+			qpin = candidate
+			break
+		}
+	}
+	if qpin.ID == "" {
+		t.Fatal("fixture q-pin candidate is missing")
+	}
+	artifact.value.Path.Candidates = []artifactv3.Candidate{qpin}
+	lease := newControllerVectorLease(t, artifact)
+	source := &controllerTestSource{results: []controllerAcquireResult{{lease: lease.lease}}}
+	arrived := make(chan struct{})
+	release := make(chan struct{})
+	var invalidated atomic.Bool
+	var dialCalls atomic.Int32
+	factory, err := candidatev3.NewFactory(map[artifactv3.Carrier]candidatev3.Dial{
+		artifactv3.CarrierWebSocket: func(context.Context, artifactv3.Candidate, artifactv3.SessionContract, time.Time) (candidatev3.ReadyCarrier, error) {
+			return nil, errors.New("unused carrier")
+		},
+		artifactv3.CarrierRawQUIC: func(ctx context.Context, candidate artifactv3.Candidate, contract artifactv3.SessionContract, now time.Time) (candidatev3.ReadyCarrier, error) {
+			dialCalls.Add(1)
+			close(arrived)
+			<-release
+			if !invalidated.Load() {
+				return nil, errors.New("capability barrier released before invalidation")
+			}
+			_, policyErr := transportsecurity.SnapshotPolicy(artifactv3.TLSPolicy{}, now)
+			return nil, policyErr
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staticSnapshot := factory.Capabilities()
+	controller := newControllerForTest(t, source, 1)
+	controller.connectDetailed = func(ctx context.Context, claimed claimedArtifactLease, _ ConnectorOptions, _ map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome) {
+		inner := connectv3.NewConnector(connectv3.ArtifactLease{
+			Artifact:    *claimed.lease.artifact.value,
+			CommitSpend: claimed.lease.commitSpend,
+		}, factory, connectv3.WithCandidateFilter(func(candidate artifactv3.Candidate) bool {
+			return candidate.ID == "q-pin"
+		}))
+		_, internalErr := inner.Connect(ctx)
+		return nil, analyzeControllerConnectOutcome(claimed, internalErr)
+	}
+	controller.Start(context.Background())
+	select {
+	case <-arrived:
+	case <-time.After(time.Second):
+		t.Fatal("production candidate adapter did not reach pre-TLS boundary")
+	}
+	invalidated.Store(true)
+	close(release)
+	waitControllerState(t, controller, ConnectionFailed)
+	if dialCalls.Load() != 1 {
+		t.Fatalf("production dial calls = %d, want 1", dialCalls.Load())
+	}
+	if !reflect.DeepEqual(factory.Capabilities(), staticSnapshot) {
+		t.Fatal("static Go capability snapshot changed during adapter invalidation")
+	}
+	assertControllerVectorObserved(t, scenario.Expected, controllerVectorObservation(
+		controller, source.callCount(), 1, 0, 0, []*controllerVectorLease{lease}, nil,
+	))
+	closeController(t, controller)
 }
 
 func runControllerVectorAdmissionBoundary(t *testing.T, scenario controllerVectorScenario) {
@@ -842,34 +861,109 @@ func assertControllerVectorRetryDelays(t *testing.T, expected []int, failureOrdi
 	}
 }
 
-func assertControllerVectorClock(t *testing.T, scenario controllerVectorScenario) {
+func runControllerVectorSchedulerClock(t *testing.T, scenario controllerVectorScenario, establish bool) {
 	t.Helper()
-	if scenario.Input.FailureOrdinal != 0 &&
+	if scenario.Input.FailureOrdinal == 0 || scenario.Input.MonotonicStartMS < 0 ||
 		int64(connectionControllerBackoff(scenario.Input.FailureOrdinal)/time.Millisecond) != scenario.Input.BackoffMS {
 		t.Fatalf("clock backoff/failure ordinal = %d/%d", scenario.Input.BackoffMS, scenario.Input.FailureOrdinal)
 	}
-	wall := scenario.Input.WallStartMS
-	monotonic := scenario.Input.MonotonicStartMS
-	monotonicDeadline := monotonic + scenario.Input.BackoffMS
-	observedSleeps := make([]int, 0, len(scenario.Input.WallAdvancesMS))
-	for index, wallAdvance := range scenario.Input.WallAdvancesMS {
-		remaining := scenario.Input.RetryAfterUnixMS - wall
-		if remaining > int64(time.Second/time.Millisecond) {
-			remaining = int64(time.Second / time.Millisecond)
-		}
-		if monotonicRemaining := monotonicDeadline - monotonic; monotonicRemaining > 0 && monotonicRemaining < remaining {
-			remaining = monotonicRemaining
-		}
-		observedSleeps = append(observedSleeps, int(remaining))
-		wall += wallAdvance
-		if index < len(scenario.Input.MonotonicAdvancesMS) {
-			monotonic += scenario.Input.MonotonicAdvancesMS[index]
+	if len(scenario.Input.WallAdvancesMS) != len(scenario.Input.MonotonicAdvancesMS) ||
+		len(scenario.Expected.RetryDelaysMS) != len(scenario.Input.WallAdvancesMS) {
+		t.Fatalf("clock vector advance/delay lengths differ: %+v", scenario)
+	}
+
+	retryAfter, err := NewRetryAfterArtifactSourceError(
+		errors.New("vector retry-after"), scenario.Input.RetryAfterUnixMS,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := make([]controllerAcquireResult, 0, scenario.Input.FailureOrdinal+1)
+	for ordinal := uint64(1); ordinal < scenario.Input.FailureOrdinal; ordinal++ {
+		results = append(results, controllerAcquireResult{
+			failure: NewRetryableArtifactSourceError(errors.New("vector retryable")),
+		})
+	}
+	results = append(results, controllerAcquireResult{failure: retryAfter})
+
+	var tracked *controllerVectorLease
+	var session *controllerTestSession
+	blockedAcquire := make(chan struct{})
+	if establish {
+		tracked = newControllerVectorLease(t, controllerPolicyArtifact(t,
+			controllerPinPolicy("ERERERERERERERERERERERERERERERERERERERERERE")))
+		results = append(results, controllerAcquireResult{lease: tracked.lease})
+		session = newControllerTestSession(SessionClosed)
+	} else {
+		results = append(results, controllerAcquireResult{waitForCancel: true, started: blockedAcquire})
+	}
+
+	source := &controllerTestSource{results: results}
+	controller := newControllerForTest(t, source, 0)
+	clock := newTestControllerClock(
+		time.UnixMilli(scenario.Input.WallStartMS), uint64(scenario.Input.MonotonicStartMS),
+	)
+	controller.clock = clock.options()
+	var connects atomic.Int32
+	if establish {
+		controller.connectDetailed = func(ctx context.Context, claimed claimedArtifactLease, _ ConnectorOptions, _ map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome) {
+			connects.Add(1)
+			if err := claimed.lease.commitSpend(ctx); err != nil {
+				t.Fatal(err)
+			}
+			return session, controllerConnectOutcome{spendStarted: claimed.spendStarted()}
 		}
 	}
-	if !reflect.DeepEqual(observedSleeps, scenario.Expected.RetryDelaysMS) ||
-		wall != scenario.Expected.WallEndMS || monotonic != scenario.Expected.MonotonicEndMS {
-		t.Fatalf("clock result sleeps/wall/monotonic = %v/%d/%d, want %v/%d/%d",
-			observedSleeps, wall, monotonic, scenario.Expected.RetryDelaysMS,
-			scenario.Expected.WallEndMS, scenario.Expected.MonotonicEndMS)
+	controller.Start(context.Background())
+
+	targetTimer := int(scenario.Input.FailureOrdinal - 1)
+	for timerIndex := 0; timerIndex < targetTimer; timerIndex++ {
+		clock.waitForTimer(t, timerIndex)
+		if !controller.RetryNow() {
+			t.Fatalf("could not bypass pre-target retry %d", timerIndex+1)
+		}
 	}
+	clock.waitForTimer(t, targetTimer)
+	if scenario.Input.RetryAfterUnixMS > scenario.Input.WallStartMS && controller.RetryNow() {
+		t.Fatal("RetryNow crossed the production absolute retry-after gate")
+	}
+	for index, expectedDelay := range scenario.Expected.RetryDelaysMS {
+		clock.waitForTimer(t, targetTimer+index)
+		delays := clock.delays()
+		if got := delays[targetTimer+index]; got != time.Duration(expectedDelay)*time.Millisecond {
+			t.Fatalf("production timer %d delay = %v, want %dms", index, got, expectedDelay)
+		}
+		clock.advance(
+			scenario.Input.WallAdvancesMS[index], scenario.Input.MonotonicAdvancesMS[index],
+		)
+		clock.fireTimer(targetTimer + index)
+	}
+
+	if establish {
+		waitControllerSession(t, controller, session)
+		assertControllerVectorObserved(t, scenario.Expected, controllerVectorObservation(
+			controller, source.callCount(), int(connects.Load()), int(connects.Load()), 0,
+			[]*controllerVectorLease{tracked}, scenario.Expected.RetryDelaysMS,
+		))
+	} else if scenario.Expected.FinalState == string(ConnectionConnecting) {
+		select {
+		case <-blockedAcquire:
+		case <-time.After(time.Second):
+			t.Fatal("production scheduler did not begin the post-deadline acquisition")
+		}
+		waitControllerState(t, controller, ConnectionConnecting)
+	} else {
+		clock.waitForTimer(t, targetTimer+len(scenario.Expected.RetryDelaysMS))
+		waitControllerState(t, controller, ConnectionWaiting)
+	}
+
+	wallEnd, monotonicEnd := clock.values()
+	if wallEnd != scenario.Expected.WallEndMS || monotonicEnd != uint64(scenario.Expected.MonotonicEndMS) {
+		t.Fatalf("production clock end wall/monotonic = %d/%d, want %d/%d",
+			wallEnd, monotonicEnd, scenario.Expected.WallEndMS, scenario.Expected.MonotonicEndMS)
+	}
+	if scenario.Expected.TimerSaturated && monotonicEnd != maxSafeControllerInteger {
+		t.Fatalf("production monotonic deadline did not saturate: %d", monotonicEnd)
+	}
+	closeController(t, controller)
 }

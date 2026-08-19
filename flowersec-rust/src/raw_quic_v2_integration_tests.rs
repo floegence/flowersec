@@ -13,8 +13,7 @@ use crate::raw_quic_v2::{
     RawQuicListener, RawQuicPathProfile, RawQuicServerConfig, RawQuicSession, RawQuicStream,
 };
 use crate::{
-    ConnectorOptions, IncomingStream, RpcHandler, SessionHandlerOptions, SessionHandlers,
-    StreamHandler,
+    IncomingStream, RpcHandler, SessionHandlerOptions, SessionHandlers, StreamHandler,
     acceptor_v2::{AcceptErrorCode as AcceptErrorCodeV2, Acceptor, AcceptorOptions},
     admission_v2::{AdmissionCommitErrorV2, AdmissionCommitV2, CandidateAttemptV2},
     artifact_v2::{Artifact, ArtifactLease},
@@ -23,7 +22,7 @@ use crate::{
         ConnectionControllerV2, ConnectionStateV2,
     },
     connector_v2::RuntimeFailureV2,
-    native_runtime_v2::{connect, dial_resolved_raw_quic},
+    native_runtime_v2::{ConnectorOptions, connect, dial_resolved_raw_quic},
     protocol_v2::CipherSuiteV2,
     session_v2::{RpcHandlerV2, SessionConfigV2, establish_session_v2},
     transport_v2::{

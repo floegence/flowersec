@@ -9,6 +9,8 @@ instances, namespaces, faults, and temporary files that they create.
 | Artifact parsing, admission binding, wire vectors, and error vectors | Shared machine-readable vectors executed by Go, Rust, Swift, and TypeScript contract tests |
 | Security-negative parser rejection and bounded malformed-input handling | `testdata/transport_v3/` negative vectors, consumed by Go, TypeScript, Swift, and Rust v3 contract tests |
 | TLS policy canonicalization, candidate identity, candidate-set hash, FSB3, and admission binding | `testdata/transport_v3/artifact_vectors.json` and per-language v3 codec suites |
+| Go issuer artifact, FSB3, admission binding, and acceptor-admissions hash parity | `testdata/transport_v3/go_issuer_admission_vectors.json`, produced by the Go issuer and consumed by Go, TypeScript, Rust, and Swift |
+| Strict v2/v3 frame and codec isolation | `testdata/transport_v3/version_isolation_vectors.json`, consumed by production decoders and inherited codec suites in Go, TypeScript, Rust, and Swift |
 | CA, private-CA, self-signed pin, mismatch, expiry, and overlap rotation | Production transport-security adapters and real TLS handshake suites in each supported runtime |
 | Runtime security-mode capability and unsupported-candidate filtering | `testdata/transport_v3/capability_vectors.json`, production adapter capability tests, and Chromium provider tests |
 | One-shot session lifecycle, stream FIN/reset/STOP_SENDING, DATAGRAM, close, and abort | Per-language memory carrier and native carrier contract tests |

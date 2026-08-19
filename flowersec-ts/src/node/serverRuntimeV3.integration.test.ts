@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -170,6 +170,32 @@ networkDescribe("Node production server runtime v3", () => {
       await acceptor.close();
     }
   }, 15_000);
+
+  test("rejects a hash-matched leaf with an invalid TLS proof before FSB3 or lease spend", async () => {
+    const peer = await startInvalidProofPeer("websocket");
+    let spends = 0;
+    const artifact = directPinArtifact(
+      Number(peer.address.slice(peer.address.lastIndexOf(":") + 1)),
+      Math.floor(Date.now() / 1_000) + 3_600,
+      createHash("sha256").update(peer.leafDER).digest("base64url"),
+    );
+    try {
+      await expect(connectV3(createArtifactLeaseV3Internal(
+        artifact,
+        async () => { spends += 1; },
+      ), {
+        origin: "https://app.example",
+        connectTimeoutMs: 3_000,
+      })).rejects.toMatchObject({
+        code: "transport_security_failed",
+        disposition: { kind: "terminal" },
+      });
+      expect(spends).toBe(0);
+      await peer.wait();
+    } finally {
+      peer.stop();
+    }
+  }, 20_000);
 
   test("reuses frozen client RPC handlers with a fresh router across v3 controller generations", async () => {
     let authorizedArtifact!: ArtifactV3;
@@ -353,7 +379,11 @@ function directFailoverArtifact(port: number): ArtifactV3 {
   } as ArtifactV3;
 }
 
-function directPinArtifact(port: number, notAfterUnixSeconds: number): ArtifactV3 {
+function directPinArtifact(
+  port: number,
+  notAfterUnixSeconds: number,
+  pinDigest = leafDigest,
+): ArtifactV3 {
   return {
     ...directBase,
     path: {
@@ -365,13 +395,72 @@ function directPinArtifact(port: number, notAfterUnixSeconds: number): ArtifactV
           mode: "pin",
           pins: [{
             algorithm: "sha-256",
-            value_b64u: leafDigest,
+            value_b64u: pinDigest,
             not_after_unix_s: notAfterUnixSeconds,
           }],
         },
       }],
     },
   } as ArtifactV3;
+}
+
+async function startInvalidProofPeer(carrier: "websocket" | "raw_quic") {
+  const child = spawn("go", [
+    "run", "./internal/cmd/invalid-proof-peer", "--carrier", carrier,
+  ], {
+    cwd: new URL("../../../flowersec-go/", import.meta.url),
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  child.stdin.end();
+  const stderr: string[] = [];
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => { stderr.push(chunk); });
+  const line = await firstJSONLine(child, stderr);
+  const ready = JSON.parse(line) as Readonly<{ address: string; leaf_der_base64: string }>;
+  return {
+    address: ready.address,
+    leafDER: Buffer.from(ready.leaf_der_base64, "base64"),
+    wait: async () => await waitForPeer(child, stderr),
+    stop: () => { if (child.exitCode === null) child.kill(); },
+  };
+}
+
+async function firstJSONLine(child: ChildProcessWithoutNullStreams, stderr: string[]): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    let stdout = "";
+    let settled = false;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    child.once("error", fail);
+    child.once("exit", (code) => {
+      if (!settled) fail(new Error(`invalid-proof peer exited ${String(code)}: ${stderr.join("")}`));
+    });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      if (settled) return;
+      stdout += chunk;
+      const newline = stdout.indexOf("\n");
+      if (newline >= 0) {
+        settled = true;
+        resolve(stdout.slice(0, newline));
+      }
+    });
+  });
+}
+
+async function waitForPeer(child: ChildProcessWithoutNullStreams, stderr: string[]): Promise<void> {
+  if (child.exitCode !== null) {
+    if (child.exitCode !== 0) throw new Error(`invalid-proof peer exited ${child.exitCode}: ${stderr.join("")}`);
+    return;
+  }
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", resolve);
+  });
+  if (code !== 0) throw new Error(`invalid-proof peer exited ${String(code)}: ${stderr.join("")}`);
 }
 
 function directArtifactGeneration(port: number, generation: number): ArtifactV3 {

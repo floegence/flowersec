@@ -152,7 +152,7 @@ struct SessionConnectorV2: Sendable {
     do {
       try runtime.validate(options: options)
     } catch {
-      throw ConnectError.invalidOptions
+      throw ConnectErrorV2.invalidOptions
     }
     self.lease = lease
     self.options = options
@@ -166,7 +166,7 @@ struct SessionConnectorV2: Sendable {
       let timeout = Task<Void, Never> {
         do {
           try await Task.sleep(for: options.connectTimeout)
-          if completion.resolve(.failure(ConnectError.timeout)) {
+          if completion.resolve(.failure(ConnectErrorV2.timeout)) {
             operation.cancel()
           }
         } catch {
@@ -196,13 +196,13 @@ struct SessionConnectorV2: Sendable {
         completion.resolve(.failure(CancellationError()))
       }
     } catch is CancellationError {
-      throw ConnectError.canceled
+      throw ConnectErrorV2.canceled
     } catch ConnectorBoundaryErrorV2.runtimeUnsupported {
-      throw ConnectError.runtimeUnsupported
-    } catch let error as ConnectError {
+      throw ConnectErrorV2.runtimeUnsupported
+    } catch let error as ConnectErrorV2 {
       throw error
     } catch {
-      throw ConnectError.connectionFailed
+      throw ConnectErrorV2.connectionFailed
     }
   }
 
@@ -210,7 +210,7 @@ struct SessionConnectorV2: Sendable {
     try Task.checkCancellation()
     let artifact = lease.artifact.value
     guard artifact.session.initExpireAtUnixSeconds > Int64(Date().timeIntervalSince1970) else {
-      throw ConnectError.expiredArtifact
+      throw ConnectErrorV2.expiredArtifact
     }
     let candidateSet = try AdmissionCodecV2.canonicalizeCandidates(lease.artifact)
     let path: PathKind = artifact.path.kind == "direct" ? .direct : .tunnel
@@ -326,17 +326,17 @@ struct SessionConnectorV2: Sendable {
   }
 
   private static func validate(_ options: ConnectorOptions, artifact: ArtifactWireV2) throws {
-    guard options.connectTimeout > .zero else { throw ConnectError.invalidOptions }
+    guard options.connectTimeout > .zero else { throw ConnectErrorV2.invalidOptions }
     if let origin = options.origin {
       guard let value = URLComponents(string: origin),
         value.host != nil, value.user == nil, value.password == nil,
         value.path.isEmpty || value.path == "/", value.query == nil, value.fragment == nil
-      else { throw ConnectError.invalidOptions }
+      else { throw ConnectErrorV2.invalidOptions }
       let secureOrigin = value.scheme == "https"
       let loopbackPlaintextOrigin = value.scheme == "http"
         && (value.host == "127.0.0.1" || value.host == "::1")
         && rootlessLoopbackDirectOnly(artifact)
-      guard secureOrigin || loopbackPlaintextOrigin else { throw ConnectError.invalidOptions }
+      guard secureOrigin || loopbackPlaintextOrigin else { throw ConnectErrorV2.invalidOptions }
     }
   }
 

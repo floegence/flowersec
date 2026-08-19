@@ -21,7 +21,14 @@ import {
   type ControllerClockV3,
 } from "./controller.js";
 import { decodeArtifactV3JSON, type ArtifactV3 } from "./artifact.js";
+import {
+  BrowserRuntimeCapabilityRegistryV3,
+  createBrowserWebTransportCarrierV3,
+} from "./browserRuntime.js";
 import { detectNodeRuntimeCapabilityV3 } from "./nodeRuntime.js";
+import { nodeSessionRuntimeV3 } from "./nodeSessionRuntime.js";
+import { readyNativeAdmissionV3 } from "./runtimeAdapters.js";
+import { attemptClaimedArtifactLeaseV3, type SessionConnectorRuntimeV3 } from "./sessionConnector.js";
 import {
   ConnectErrorV3,
   TransportFailureV3,
@@ -473,23 +480,69 @@ async function runAttemptSaturation(scenario: ControllerScenario): Promise<void>
 }
 
 async function runCapabilityBarrier(scenario: ControllerScenario): Promise<void> {
-  const tracker = new VectorTracker([baseArtifact]);
+  const artifact = singleCandidateArtifact(baseArtifact, "t-pin");
+  let constructorCalls = 0;
+  class UnexpectedWebTransport {
+    constructor() {
+      constructorCalls += 1;
+      throw new Error("the live capability gate must run before WebTransport construction");
+    }
+  }
+  const registry = await BrowserRuntimeCapabilityRegistryV3.create({
+    WebSocket: class {},
+    WebTransport: UnexpectedWebTransport,
+    navigator: {
+      userAgentData: {
+        async getHighEntropyValues() {
+          return { fullVersionList: [{ brand: "Chromium", version: "151.0.7922.34" }] };
+        },
+      },
+    },
+  });
+  expect(registry.pinEnabled()).toBe(true);
+
+  let releaseDial!: () => void;
+  const dialReleased = new Promise<void>((resolve) => { releaseDial = resolve; });
+  let signalDialArrived!: () => void;
+  const dialArrived = new Promise<void>((resolve) => { signalDialArrived = resolve; });
+  const runtime: SessionConnectorRuntimeV3 = {
+    capabilitySnapshot: () => registry.snapshot(),
+    protocolRuntime: nodeSessionRuntimeV3,
+    dial: async (candidate, acquiredArtifact, attemptNow, capability, signal) => {
+      signalDialArrived();
+      await dialReleased;
+      const carrier = await createBrowserWebTransportCarrierV3(
+        candidate,
+        attemptNow,
+        capability,
+        registry,
+        acquiredArtifact.session.max_inbound_streams + 2,
+        signal,
+      );
+      return readyNativeAdmissionV3(candidate, carrier);
+    },
+  };
+  const tracker = new VectorTracker([artifact]);
   let snapshots = 0;
   const controller = createConnectionControllerV3(tracker.source(), async (context) => {
-    tracker.recordConnector(context, 1, 0);
-    return { kind: "candidate_failures", failures: [{
-      candidate: context.candidates[0]!,
-      failure: new TransportFailureV3("tls_unsupported"),
-    }] };
+    tracker.recordConnector(context, context.candidates.length, 0);
+    return await attemptClaimedArtifactLeaseV3(context, runtime);
   }, {
     ...controllerOptions(1),
     capabilitySnapshot: () => {
       snapshots += 1;
-      return detectNodeRuntimeCapabilityV3();
+      return registry.snapshot();
     },
   });
+
+  controller.start();
+  await dialArrived;
+  expect(registry.invalidatePinSupport()).toBe(true);
+  releaseDial();
   await finishControllerScenario(controller, scenario, tracker);
   expect(snapshots).toBe(1);
+  expect(registry.pinEnabled()).toBe(false);
+  expect(constructorCalls).toBe(0);
   expect(scenario.expected.capability_rechecked).toBe(true);
 }
 

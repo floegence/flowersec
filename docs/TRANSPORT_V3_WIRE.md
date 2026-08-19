@@ -5,10 +5,15 @@ Status: final
 Version: 3.0.0
 
 This is the normative English wire specification for Flowersec Transport v3.
-The machine-readable companion is stability/transport_v3_contract.json. An
-implementation MUST fail closed if the registry, vectors, or this document
-disagree. MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY have the meanings from
-RFC 2119 and RFC 8174.
+Its normative source is the final Chinese design at
+`/Volumes/JianDisk/code/floegence/flowersec-v3-transport-security-design.zh-CN.md`,
+version 3.0.0, baseline commit
+`026cb52d116d2a04de50d0f0621fff57c7657120`. This document is its complete
+English transcription. The machine-readable registry and vectors are derived
+artifacts: an implementation MUST fail closed if they disagree with this
+transcription, but they MUST NOT replace a general rule from the source
+design. MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY have the meanings from RFC
+2119 and RFC 8174.
 
 ## 1. Fixed Identifiers
 
@@ -297,9 +302,12 @@ never FSA3 reasons.
 ## 8. Remaining Frame and Crypto Family
 
 The remaining magic values are FSC3, FSH3, FSS3, FSR3, and FSD3, each with
-version byte 3. Lengths, offsets, ordering, limits, and reserved values are
-frozen by testdata/transport_v3. Wrong magic, version, route, ALPN,
-subprotocol, reserved data, truncation, or trailing data fails closed.
+version byte 3. Their general framing rules, inherited codec rules, lengths,
+offsets, ordering, limits, and reserved values are fixed by the source design
+and the v2 baseline it explicitly inherits. `testdata/transport_v3` records the
+derived exact vectors and negative examples; it cannot narrow or replace those
+general rules. Wrong magic, version, route, ALPN, subprotocol, reserved data,
+truncation, or trailing data fails closed.
 
 The v3 path exclusively uses these domain labels:
 

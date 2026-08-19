@@ -128,7 +128,7 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	if err := validateTransportV3FixtureShapes(repoRoot); err != nil {
 		return err
 	}
-	wantedFixtures := []string{"artifact_admission", "capability", "controller", "crypto", "datagram", "handshake", "idna", "open_unicode", "rpc_error", "rpc_malformed_envelopes", "rpc_notifications", "session_handlers", "session_wire"}
+	wantedFixtures := []string{"artifact_admission", "capability", "controller", "crypto", "datagram", "handshake", "idna", "issuer_admission", "open_unicode", "rpc_error", "rpc_malformed_envelopes", "rpc_notifications", "session_handlers", "session_wire", "version_isolation"}
 	gotFixtures := make([]string, 0, len(registry.WireFixtures))
 	for _, fixture := range registry.WireFixtures {
 		gotFixtures = append(gotFixtures, fixture.ID)
@@ -230,6 +230,22 @@ func validateTransportV3ConsumerEvidence(fixtureID, language, body string) error
 			"inherited_codec_from", "transport_contract_version",
 			"alreadyRegistered", "RPCEnvelope(data:", "router.register",
 		}
+	case "issuer_admission/go":
+		required = []string{"go_issuer_admission_vectors.json", "acceptor_admissions_hash_hex", "IssueDirect"}
+	case "issuer_admission/typescript":
+		required = []string{"go_issuer_admission_vectors.json", "acceptor_admissions_hash_hex", "encodeFSB3"}
+	case "issuer_admission/rust":
+		required = []string{"go_issuer_admission_vectors.json", "acceptor_admissions_hash_hex", "encode_fsb3"}
+	case "issuer_admission/swift":
+		required = []string{"go_issuer_admission_vectors.json", "acceptor_admissions_hash_hex", "encodeFSB3"}
+	case "version_isolation/go":
+		required = []string{"version_isolation_vectors.json", "v2_magic_hex", "v2_version_hex", "assertRejects"}
+	case "version_isolation/typescript":
+		required = []string{"version_isolation_vectors.json", "v2_magic_hex", "v2_version_hex", "toThrow"}
+	case "version_isolation/rust":
+		required = []string{"version_isolation_vectors.json", "v2_magic_hex", "v2_version_hex", "version_isolation"}
+	case "version_isolation/swift":
+		required = []string{"version_isolation_vectors.json", "v2_magic_hex", "v2_version_hex", "versionIsolationVectorsRejectV2Mutations"}
 	default:
 		return nil
 	}

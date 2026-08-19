@@ -7,7 +7,7 @@ struct RetryDispositionContractTests {
   @Test func dispositionsMatchSharedRecoveryContract() throws {
     let document = try loadContract()
     try verifyCases(document["connect"], language: "swift") { code in
-      try #require(ConnectError(rawValue: code)).retryDisposition
+      try #require(ConnectErrorV2(rawValue: code)).retryDisposition
     }
     try verifyCases(document["session"], language: "swift") { code in
       try #require(SessionError(rawValue: code)).retryDisposition

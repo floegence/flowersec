@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -49,8 +48,8 @@ func TestAcceptorResolvesHandlersBeforeDirectSessionEstablishment(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewTLSServer(acceptor.Handler())
-	defer server.Close()
+	serverTLS, _ := acceptorListenerTLS(t)
+	server := newWebSocketTestServer(t, acceptor.Handler(), serverTLS)
 
 	issued, err := controlplane.NewIssuer().IssueDirect(controlplane.DirectIssueOptions{
 		Session:           controlplane.SessionOptions{ChannelID: "direct-handler", ExpiresAt: time.Now().Add(time.Minute)},
@@ -110,8 +109,8 @@ func TestAcceptorReleasesAuthorizedLeaseWhenHandlerResolutionFails(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewTLSServer(acceptor.Handler())
-	defer server.Close()
+	serverTLS, _ := acceptorListenerTLS(t)
+	server := newWebSocketTestServer(t, acceptor.Handler(), serverTLS)
 
 	issued, err := controlplane.NewIssuer().IssueDirect(controlplane.DirectIssueOptions{
 		Session:           controlplane.SessionOptions{ChannelID: "handler-failure", ExpiresAt: time.Now().Add(time.Minute)},
@@ -174,8 +173,8 @@ func TestTunnelRuntimeBridgesOpaqueEndpointSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewTLSServer(runtime.Handler())
-	defer server.Close()
+	serverTLS, _ := acceptorListenerTLS(t)
+	server := newWebSocketTestServer(t, runtime.Handler(), serverTLS)
 
 	pair, err := controlplane.NewIssuer().IssueTunnelPair(controlplane.TunnelIssueOptions{
 		Session:           controlplane.SessionOptions{ChannelID: "tunnel-handlers", ExpiresAt: time.Now().Add(time.Minute)},
@@ -249,7 +248,7 @@ func echoHandlers(t *testing.T, name string) *flowersec.SessionHandlers {
 	return handlers
 }
 
-func connectIssued(t *testing.T, server *httptest.Server, issued controlplane.IssuedArtifact, origin string) flowersec.Session {
+func connectIssued(t *testing.T, server *websocketTestServer, issued controlplane.IssuedArtifact, origin string) flowersec.Session {
 	t.Helper()
 	session, err := connectIssuedResult(server, issued, origin)
 	if err != nil {
@@ -258,7 +257,7 @@ func connectIssued(t *testing.T, server *httptest.Server, issued controlplane.Is
 	return session
 }
 
-func connectIssuedResult(server *httptest.Server, issued controlplane.IssuedArtifact, origin string) (flowersec.Session, error) {
+func connectIssuedResult(server *websocketTestServer, issued controlplane.IssuedArtifact, origin string) (flowersec.Session, error) {
 	artifact, err := flowersec.ParseArtifact(issued.ArtifactJSON())
 	if err != nil {
 		return nil, err

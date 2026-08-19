@@ -205,7 +205,7 @@ fn public_error_codes_expose_direct_stable_strings() {
     let connect_error = ConnectorOptions::new()
         .with_trust_roots_der(vec![])
         .expect_err("empty trust roots are invalid");
-    assert_eq!(connect_error.as_str(), "invalid_input");
+    assert_eq!(connect_error.as_str(), "artifact_invalid");
     assert_eq!(SessionError::Timeout.as_str(), "timeout");
     assert_eq!(SessionError::GoingAway.as_str(), "going_away");
     assert_eq!(SessionError::StreamRejected.as_str(), "stream_rejected");

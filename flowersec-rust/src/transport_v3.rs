@@ -216,6 +216,16 @@ impl RuntimeCapabilityDescriptorV3 {
         self.validate()?;
         jcs_serialize(self)
     }
+    pub(crate) fn decode(input: &[u8]) -> Result<Self, ArtifactErrorV3> {
+        crate::artifact_v3::reject_duplicate_json_keys(input)?;
+        let descriptor: Self =
+            serde_json::from_slice(input).map_err(|_| ArtifactErrorV3::Invalid)?;
+        let canonical = descriptor.canonical_json()?;
+        if canonical != input {
+            return Err(ArtifactErrorV3::Invalid);
+        }
+        Ok(descriptor)
+    }
     pub(crate) fn digest(&self) -> Result<[u8; 32], ArtifactErrorV3> {
         Ok(hash_lp(
             b"flowersec-v3-runtime-capability\0",
@@ -224,11 +234,389 @@ impl RuntimeCapabilityDescriptorV3 {
     }
 
     fn validate(&self) -> Result<(), ArtifactErrorV3> {
+        if self.schema_version != 3
+            || !capability_token(&self.language)
+            || !capability_token(&self.runtime)
+            || self.tuples.len() + self.unsupported.len() == 0
+        {
+            return Err(ArtifactErrorV3::Invalid);
+        }
+
+        let mut previous_tuple: Option<&RuntimeCapabilityTupleV3> = None;
+        for tuple in &self.tuples {
+            validate_capability_tuple(tuple)?;
+            if previous_tuple.is_some_and(|previous| {
+                capability_tuple_identity(previous) >= capability_tuple_identity(tuple)
+            }) {
+                return Err(ArtifactErrorV3::Invalid);
+            }
+            previous_tuple = Some(tuple);
+        }
+        let mut previous_unsupported: Option<CarrierV3> = None;
+        for unsupported in &self.unsupported {
+            if !registered_unsupported_reason(&unsupported.reason)
+                || previous_unsupported.is_some_and(|previous| previous >= unsupported.carrier)
+                || self
+                    .tuples
+                    .iter()
+                    .any(|tuple| tuple.carrier == unsupported.carrier)
+            {
+                return Err(ArtifactErrorV3::Invalid);
+            }
+            previous_unsupported = Some(unsupported.carrier);
+        }
+        for carrier in [
+            CarrierV3::RawQuic,
+            CarrierV3::Websocket,
+            CarrierV3::Webtransport,
+        ] {
+            let supported = self.tuples.iter().any(|tuple| tuple.carrier == carrier);
+            let unsupported = self.unsupported.iter().any(|item| item.carrier == carrier);
+            if supported == unsupported {
+                return Err(ArtifactErrorV3::Invalid);
+            }
+        }
+
+        validate_registered_runtime(self)
+    }
+
+    fn validate_local_rust_profile(&self) -> Result<(), ArtifactErrorV3> {
         if self != &Self::native_rust() {
             return Err(ArtifactErrorV3::Invalid);
         }
-        Ok(())
+        self.validate()
     }
+}
+
+fn capability_token(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 128
+        && bytes[0].is_ascii_lowercase()
+        && bytes[1..]
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_')
+}
+
+fn capability_tuple_identity(
+    tuple: &RuntimeCapabilityTupleV3,
+) -> (CarrierV3, NetworkModeV3, SessionRoleV3, PathV3) {
+    (
+        tuple.carrier,
+        tuple.network_mode,
+        tuple.session_role,
+        tuple.path,
+    )
+}
+
+fn validate_capability_tuple(tuple: &RuntimeCapabilityTupleV3) -> Result<(), ArtifactErrorV3> {
+    let valid_deployment = match tuple.path {
+        PathV3::Direct => {
+            (tuple.network_mode == NetworkModeV3::Dial
+                && tuple.session_role == SessionRoleV3::Client)
+                || (tuple.network_mode == NetworkModeV3::Listen
+                    && tuple.session_role == SessionRoleV3::Server)
+        }
+        PathV3::Tunnel => tuple.network_mode == NetworkModeV3::Dial,
+    };
+    let valid_modes = if tuple.network_mode == NetworkModeV3::Listen {
+        tuple.security_modes.is_empty()
+    } else {
+        matches!(tuple.security_modes.as_slice(), [mode] if mode == "ca" || mode == "pin")
+            || tuple.security_modes == ["ca", "pin"]
+    };
+    if !tuple.reliable_streams
+        || !valid_deployment
+        || !valid_modes
+        || (tuple.carrier == CarrierV3::Websocket && (tuple.datagrams || tuple.migration))
+    {
+        return Err(ArtifactErrorV3::Invalid);
+    }
+    Ok(())
+}
+
+fn registered_tuples(
+    carrier: CarrierV3,
+    datagrams: bool,
+    dial_migration: bool,
+    include_listener: bool,
+    security_modes: &[&str],
+) -> Vec<RuntimeCapabilityTupleV3> {
+    let tuple =
+        |network_mode, path, session_role, migration, modes: &[&str]| RuntimeCapabilityTupleV3 {
+            carrier,
+            datagrams,
+            migration,
+            network_mode,
+            path,
+            reliable_streams: true,
+            security_modes: modes.iter().map(|mode| (*mode).into()).collect(),
+            session_role,
+        };
+    let mut tuples = vec![
+        tuple(
+            NetworkModeV3::Dial,
+            PathV3::Direct,
+            SessionRoleV3::Client,
+            dial_migration,
+            security_modes,
+        ),
+        tuple(
+            NetworkModeV3::Dial,
+            PathV3::Tunnel,
+            SessionRoleV3::Client,
+            dial_migration,
+            security_modes,
+        ),
+        tuple(
+            NetworkModeV3::Dial,
+            PathV3::Tunnel,
+            SessionRoleV3::Server,
+            dial_migration,
+            security_modes,
+        ),
+    ];
+    if include_listener {
+        tuples.push(tuple(
+            NetworkModeV3::Listen,
+            PathV3::Direct,
+            SessionRoleV3::Server,
+            false,
+            &[],
+        ));
+    }
+    tuples
+}
+
+fn validate_registered_carrier(
+    descriptor: &RuntimeCapabilityDescriptorV3,
+    carrier: CarrierV3,
+    tuple_sets: Vec<Vec<RuntimeCapabilityTupleV3>>,
+    unsupported_reasons: &[&str],
+) -> Result<(), ArtifactErrorV3> {
+    let actual = descriptor
+        .tuples
+        .iter()
+        .filter(|tuple| tuple.carrier == carrier)
+        .cloned()
+        .collect::<Vec<_>>();
+    if let Some(unsupported) = descriptor
+        .unsupported
+        .iter()
+        .find(|unsupported| unsupported.carrier == carrier)
+    {
+        if !actual.is_empty() || !unsupported_reasons.contains(&unsupported.reason.as_str()) {
+            return Err(ArtifactErrorV3::Invalid);
+        }
+    } else if !tuple_sets.iter().any(|expected| expected == &actual) {
+        return Err(ArtifactErrorV3::Invalid);
+    }
+    Ok(())
+}
+
+fn validate_registered_runtime(
+    descriptor: &RuntimeCapabilityDescriptorV3,
+) -> Result<(), ArtifactErrorV3> {
+    let ca = &["ca"];
+    let ca_pin = &["ca", "pin"];
+    let id = (descriptor.language.as_str(), descriptor.runtime.as_str());
+    let adapter_absent = &["adapter_not_composed"];
+    match id {
+        ("go", "native") => {
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::RawQuic,
+                vec![registered_tuples(
+                    CarrierV3::RawQuic,
+                    true,
+                    true,
+                    true,
+                    ca_pin,
+                )],
+                adapter_absent,
+            )?;
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::Websocket,
+                vec![registered_tuples(
+                    CarrierV3::Websocket,
+                    false,
+                    false,
+                    true,
+                    ca_pin,
+                )],
+                adapter_absent,
+            )?;
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::Webtransport,
+                vec![registered_tuples(
+                    CarrierV3::Webtransport,
+                    true,
+                    false,
+                    true,
+                    ca_pin,
+                )],
+                adapter_absent,
+            )
+        }
+        ("typescript", "browser") => {
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::RawQuic,
+                vec![],
+                &["browser_no_raw_udp"],
+            )?;
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::Websocket,
+                vec![registered_tuples(
+                    CarrierV3::Websocket,
+                    false,
+                    false,
+                    false,
+                    ca,
+                )],
+                &["browser_websocket_api_unavailable"],
+            )?;
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::Webtransport,
+                vec![
+                    registered_tuples(CarrierV3::Webtransport, true, false, false, ca),
+                    registered_tuples(CarrierV3::Webtransport, true, false, false, ca_pin),
+                ],
+                &["browser_webtransport_api_unavailable"],
+            )
+        }
+        ("typescript", "node") => {
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::RawQuic,
+                vec![registered_tuples(
+                    CarrierV3::RawQuic,
+                    true,
+                    false,
+                    true,
+                    ca_pin,
+                )],
+                &["node_native_transport_unavailable"],
+            )?;
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::Websocket,
+                vec![registered_tuples(
+                    CarrierV3::Websocket,
+                    false,
+                    false,
+                    true,
+                    ca_pin,
+                )],
+                &[],
+            )?;
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::Webtransport,
+                vec![],
+                &["node_webtransport_driver_unavailable"],
+            )
+        }
+        ("rust", "native") => {
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::RawQuic,
+                vec![registered_tuples(
+                    CarrierV3::RawQuic,
+                    true,
+                    true,
+                    true,
+                    ca_pin,
+                )],
+                &[],
+            )?;
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::Websocket,
+                vec![registered_tuples(
+                    CarrierV3::Websocket,
+                    false,
+                    false,
+                    true,
+                    ca_pin,
+                )],
+                &[],
+            )?;
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::Webtransport,
+                vec![],
+                &["driver_unavailable"],
+            )
+        }
+        ("swift", "ios" | "macos") => {
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::RawQuic,
+                vec![],
+                &["swift_apple_client_profile_excludes_raw_quic"],
+            )?;
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::Websocket,
+                vec![registered_tuples(
+                    CarrierV3::Websocket,
+                    false,
+                    false,
+                    false,
+                    ca_pin,
+                )],
+                &[],
+            )?;
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::Webtransport,
+                vec![],
+                &["swift_apple_client_profile_excludes_webtransport"],
+            )
+        }
+        ("swift", "linux") => {
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::RawQuic,
+                vec![],
+                &["swift_apple_client_profile_excludes_raw_quic"],
+            )?;
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::Websocket,
+                vec![],
+                &["websocket_adapter_not_supported_on_linux"],
+            )?;
+            validate_registered_carrier(
+                descriptor,
+                CarrierV3::Webtransport,
+                vec![],
+                &["swift_apple_client_profile_excludes_webtransport"],
+            )
+        }
+        _ => Err(ArtifactErrorV3::Invalid),
+    }
+}
+
+fn registered_unsupported_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "adapter_not_composed"
+            | "browser_no_raw_udp"
+            | "browser_websocket_api_unavailable"
+            | "browser_webtransport_api_unavailable"
+            | "driver_unavailable"
+            | "node_native_transport_unavailable"
+            | "node_webtransport_driver_unavailable"
+            | "swift_apple_client_profile_excludes_raw_quic"
+            | "swift_apple_client_profile_excludes_webtransport"
+            | "websocket_adapter_not_supported_on_linux"
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -308,7 +696,7 @@ pub(crate) const V3_CRYPTO_DOMAINS: [&[u8]; 22] = [
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artifact_v3::{jcs_value, reject_duplicate_json_keys};
+    use crate::artifact_v3::acceptor_admissions_hash;
     use std::collections::HashSet;
 
     #[derive(Deserialize)]
@@ -331,6 +719,15 @@ mod tests {
         error_code: String,
     }
 
+    #[derive(Deserialize)]
+    struct GoIssuerAdmissionVectorV3 {
+        artifact_json: String,
+        chosen_candidate_id: String,
+        fsb3_hex: String,
+        admission_binding_hex: String,
+        acceptor_admissions_hash_hex: String,
+    }
+
     fn decode_hex(value: &str) -> Vec<u8> {
         assert!(value.len().is_multiple_of(2));
         value
@@ -345,6 +742,7 @@ mod tests {
     #[test]
     fn native_capability_is_strict_and_domain_separated() {
         let descriptor = RuntimeCapabilityDescriptorV3::native_rust();
+        descriptor.validate_local_rust_profile().unwrap();
         let canonical = String::from_utf8(descriptor.canonical_json().unwrap()).unwrap();
         assert!(canonical.contains("\"schemaVersion\":3"));
         assert!(canonical.contains("\"securityModes\":[\"ca\",\"pin\"]"));
@@ -473,10 +871,12 @@ mod tests {
                 "duplicate {}",
                 vector.name
             );
-            let value: serde_json::Value = serde_json::from_str(&vector.canonical_json)
-                .unwrap_or_else(|error| panic!("{}: {error}", vector.name));
-            let canonical =
-                jcs_value(&value).unwrap_or_else(|error| panic!("{}: {error:?}", vector.name));
+            let descriptor =
+                RuntimeCapabilityDescriptorV3::decode(vector.canonical_json.as_bytes())
+                    .unwrap_or_else(|error| panic!("{}: {error:?}", vector.name));
+            let canonical = descriptor
+                .canonical_json()
+                .unwrap_or_else(|error| panic!("{}: {error:?}", vector.name));
             assert_eq!(
                 canonical,
                 vector.canonical_json.as_bytes(),
@@ -484,7 +884,7 @@ mod tests {
                 vector.name
             );
             assert_eq!(
-                hash_lp(b"flowersec-v3-runtime-capability\0", &canonical).as_slice(),
+                descriptor.digest().unwrap().as_slice(),
                 decode_hex(&vector.digest_hex),
                 "{} digest",
                 vector.name
@@ -493,20 +893,11 @@ mod tests {
         assert_eq!(names, expected_names);
         assert!(vectors.invalid.len() >= 20);
         for vector in &vectors.invalid {
-            let bytes = vector.value.as_bytes();
-            let rejected = reject_duplicate_json_keys(bytes).is_err()
-                || serde_json::from_slice::<RuntimeCapabilityDescriptorV3>(bytes)
-                    .and_then(|descriptor| {
-                        descriptor.canonical_json().map_err(|_| {
-                            serde_json::Error::io(std::io::Error::other("invalid capability"))
-                        })
-                    })
-                    .is_err()
-                || serde_json::from_slice::<serde_json::Value>(bytes)
-                    .ok()
-                    .and_then(|value| jcs_value(&value).ok())
-                    .is_none_or(|canonical| canonical != bytes);
-            assert!(rejected, "{} unexpectedly accepted", vector.id);
+            assert!(
+                RuntimeCapabilityDescriptorV3::decode(vector.value.as_bytes()).is_err(),
+                "{} unexpectedly accepted",
+                vector.id
+            );
             assert_eq!(vector.error_code, "invalid_capability");
         }
         let vector = vectors
@@ -522,6 +913,28 @@ mod tests {
         assert_eq!(
             descriptor.digest().unwrap().as_slice(),
             decode_hex(&vector.digest_hex)
+        );
+    }
+
+    #[test]
+    fn consumes_go_production_issuer_admission_vector() {
+        let vector: GoIssuerAdmissionVectorV3 = serde_json::from_str(include_str!(
+            "../../testdata/transport_v3/go_issuer_admission_vectors.json"
+        ))
+        .expect("parse Go issuer admission vector");
+        let artifact = crate::artifact_v3::ArtifactV3::parse(vector.artifact_json.as_bytes())
+            .expect("decode Go-issued artifact");
+        let frame = artifact
+            .encode_fsb3(&vector.chosen_candidate_id)
+            .expect("encode Go-issued FSB3");
+        assert_eq!(frame.raw, decode_hex(&vector.fsb3_hex));
+        assert_eq!(
+            frame.binding,
+            decode_hex(&vector.admission_binding_hex).as_slice()
+        );
+        assert_eq!(
+            acceptor_admissions_hash(&[frame]).unwrap().as_slice(),
+            decode_hex(&vector.acceptor_admissions_hash_hex)
         );
     }
 }

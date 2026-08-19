@@ -84,6 +84,9 @@ final class ConnectionControllerTests: XCTestCase {
   func testV3ControllerVectorsAndBackoffAreOwnedByTheDefaultController() throws {
     let root = try controllerVectorsV3()
     XCTAssertEqual(root["version"] as? Int, 3)
+    XCTAssertEqual(
+      root["public_errors"] as? [String],
+      ConnectErrorCode.allCases.map(\.rawValue))
     let defaults = try XCTUnwrap(root["defaults"] as? [String: Any])
     XCTAssertEqual(defaults["initial_backoff_ms"] as? Int, 250)
     XCTAssertEqual(defaults["maximum_backoff_ms"] as? Int, 30_000)
@@ -1311,14 +1314,17 @@ final class ConnectionControllerTests: XCTestCase {
         ).connectForController()
       })
     await controller.start()
+    await runtime.waitForPrepareArrival()
+    await runtime.invalidateAndRelease()
     let failed = await waitForState(.failed, controller: controller)
     XCTAssertTrue(failed, id)
     let snapshot = await controller.snapshot()
     let preparations = await runtime.prepareCount
+    let transports = await runtime.transportCount
     let retirements = await retired.value
     XCTAssertEqual(snapshot.failure, .connection(.transportSecurityUnsupported), id)
     XCTAssertEqual(preparations, expected["connect_attempts"] as? Int, id)
-    XCTAssertEqual(expected["transports_created"] as? Int, 0, id)
+    XCTAssertEqual(transports, expected["transports_created"] as? Int, id)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
     XCTAssertEqual(expected["capability_rechecked"] as? Bool, true, id)
     await controller.close()
@@ -1657,6 +1663,11 @@ private actor NeverArtifactSourceV3: ArtifactSource {
 private actor CapabilityInvalidatingRuntimeV3: RuntimeCarrierAdapterV3 {
   nonisolated let capabilities = RuntimeCapabilitiesV3.macOS
   private(set) var prepareCount = 0
+  private(set) var transportCount = 0
+  private var prepareArrived = false
+  private var invalidated = false
+  private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
+  private var releaseWaiter: CheckedContinuation<Void, Never>?
 
   nonisolated func validate(options: ConnectorOptions) throws {}
 
@@ -1668,7 +1679,35 @@ private actor CapabilityInvalidatingRuntimeV3: RuntimeCarrierAdapterV3 {
     activePinHashes: [Data]?
   ) async throws -> any PreparedCarrierConnectionV3 {
     prepareCount += 1
+    prepareArrived = true
+    let waiters = arrivalWaiters
+    arrivalWaiters.removeAll()
+    for waiter in waiters { waiter.resume() }
+    await withCheckedContinuation { continuation in
+      if invalidated {
+        continuation.resume()
+      } else {
+        precondition(releaseWaiter == nil)
+        releaseWaiter = continuation
+      }
+    }
+    guard invalidated else {
+      transportCount += 1
+      throw ConnectorBoundaryErrorV3.runtimeFailed
+    }
     throw ConnectorBoundaryErrorV3.runtimeUnsupported
+  }
+
+  func waitForPrepareArrival() async {
+    if prepareArrived { return }
+    await withCheckedContinuation { arrivalWaiters.append($0) }
+  }
+
+  func invalidateAndRelease() {
+    invalidated = true
+    let waiter = releaseWaiter
+    releaseWaiter = nil
+    waiter?.resume()
   }
 }
 

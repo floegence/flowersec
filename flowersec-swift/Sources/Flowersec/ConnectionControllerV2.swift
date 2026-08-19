@@ -33,7 +33,7 @@ public enum ConnectionStateV2: String, Equatable, Sendable {
 public enum ConnectionAttemptFailureV2: Error, Equatable, Sendable {
   case artifactSource(ArtifactSourceFailureV2)
   case unknownArtifactSource
-  case connection(ConnectError)
+  case connection(ConnectErrorV2)
   case session(SessionError)
 
   public var retryDisposition: RetryDisposition {
@@ -225,7 +225,7 @@ public actor ConnectionControllerV2 {
         try Task.checkCancellation()
         do {
           return try await connectOneShot(lease, options)
-        } catch let error as ConnectError {
+        } catch let error as ConnectErrorV2 {
           throw ConnectionAttemptFailureV2.connection(error)
         } catch is CancellationError {
           throw CancellationError()

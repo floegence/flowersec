@@ -274,6 +274,9 @@ func acceptorNativeAdmissionStream(ctx context.Context, native carrier.Session) 
 	return native.AcceptStream(ctx)
 }
 
+// Handler returns the direct WebSocket boundary. Installing it directly on a
+// caller-owned http.Server fails closed; use NewWebSocketHTTPServer so TLS
+// policy is fixed before the handshake.
 func (acceptor *Acceptor) Handler() http.Handler {
 	mux := http.NewServeMux()
 	direct := len(acceptor.listeners) == 0
@@ -286,7 +289,7 @@ func (acceptor *Acceptor) Handler() http.Handler {
 	if direct {
 		mux.HandleFunc(WebSocketDirectPath, acceptor.handleDirect)
 	}
-	return mux
+	return &webSocketBoundary{handler: mux, enabled: direct}
 }
 
 func (acceptor *Acceptor) allowedOrigin(request *http.Request) bool {

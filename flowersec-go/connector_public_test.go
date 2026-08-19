@@ -263,13 +263,11 @@ func TestConnectErrorPublicSnapshotContainsNoInternalDetail(t *testing.T) {
 		t.Fatalf("nil ConnectError code = %q, want %q", err.Code(), flowersec.ConnectConnectionFailed)
 	}
 	wantCodes := map[flowersec.ConnectErrorCode]string{
-		flowersec.ConnectArtifactInvalid:  "artifact_invalid",
-		flowersec.ConnectInvalidInput:     "invalid_input",
-		flowersec.ConnectInvalidOptions:   "invalid_options",
-		flowersec.ConnectCanceled:         "canceled",
-		flowersec.ConnectTimeout:          "timeout",
-		flowersec.ConnectExpired:          "expired_artifact",
-		flowersec.ConnectConnectionFailed: "connection_failed",
+		flowersec.ConnectArtifactInvalid:              "artifact_invalid",
+		flowersec.ConnectExpired:                      "expired_artifact",
+		flowersec.ConnectTransportSecurityUnsupported: "transport_security_unsupported",
+		flowersec.ConnectTransportSecurityFailed:      "transport_security_failed",
+		flowersec.ConnectConnectionFailed:             "connection_failed",
 	}
 	for code, want := range wantCodes {
 		if got := code.String(); got != want {
@@ -318,8 +316,8 @@ func TestConnectorRejectsInvalidCarrierNeutralOptions(t *testing.T) {
 		t.Fatal("Connect error = nil, want invalid options")
 	} else {
 		var connectErr *flowersec.ConnectError
-		if !errors.As(err, &connectErr) || connectErr.Code() != flowersec.ConnectInvalidOptions {
-			t.Fatalf("Connect error = %#v, want ConnectInvalidOptions", err)
+		if !errors.As(err, &connectErr) || connectErr.Code() != flowersec.ConnectArtifactInvalid {
+			t.Fatalf("Connect error = %#v, want ConnectArtifactInvalid", err)
 		}
 		if !errors.Is(err, flowersec.ErrInvalidConnectorOptions) {
 			t.Fatalf("Connect error = %v, want errors.Is ErrInvalidConnectorOptions", err)

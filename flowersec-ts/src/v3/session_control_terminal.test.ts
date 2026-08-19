@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { createMemoryCarrierPairV3, type CarrierSessionV3, type CarrierStreamV3 } from "./carrier.js";
 import type { OperationOptionsV3 } from "./contract.js";
 import { CipherSuiteV3, InnerTypeV3 } from "./protocol.js";
-import { establishSessionV3, type SessionConfigV3, type SessionV3 } from "./session.js";
+import { establishSessionV3, SessionV3Error, type SessionConfigV3, type SessionV3 } from "./session.js";
 import { nodeSessionRuntimeV3 } from "./nodeSessionRuntime.js";
 
 function config(role: "client" | "server"): SessionConfigV3 {
@@ -91,6 +91,103 @@ describe("SessionV3 control terminal serialization", () => {
     await client.close();
     await server.waitTermination();
   });
+
+  test("does not consume a session rekey transition when prepare is cancelled", async () => {
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, config("client")),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const internals = sessionInternals(client);
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const controller = new AbortController();
+    const originalWait = internals.waitOutboundFrontier;
+    internals.waitOutboundFrontier = async (_watermark, signal) => {
+      entered.resolve();
+      await abortableWait(release.promise, signal);
+    };
+    try {
+      const operation = client.rekey({ signal: controller.signal });
+      await entered.promise;
+      controller.abort(new SessionV3Error("aborted", "test cancellation"));
+      await expect(operation).rejects.toMatchObject({ code: "aborted" });
+      expect(internals.nextTransition).toBe(1n);
+    } finally {
+      release.resolve();
+      internals.waitOutboundFrontier = originalWait;
+      await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+    }
+  });
+
+  test("caller cancellation after rekey commit does not terminate the session", async () => {
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, config("client")),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const serverInternals = sessionInternals(server);
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const originalSendResponse = serverInternals.sendControlResponse.bind(server);
+    serverInternals.sendControlResponse = async (type, payload) => {
+      if (type === InnerTypeV3.SessionKeyUpdateACK) {
+        entered.resolve();
+        await release.promise;
+      }
+      return await originalSendResponse(type, payload);
+    };
+    const controller = new AbortController();
+    const operation = client.rekey({ signal: controller.signal });
+    await entered.promise;
+    controller.abort(new SessionV3Error("aborted", "test cancellation"));
+    await expect(operation).rejects.toMatchObject({ code: "aborted" });
+    release.resolve();
+    const internals = sessionInternals(client);
+    await waitFor(() => internals.sendEpoch === 1 && internals.pendingSessionRekey === undefined);
+    expect(client.terminalError).toBeUndefined();
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
+  test("session failure rejects and clears a pending session rekey ACK immediately", async () => {
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, config("client")),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const serverInternals = sessionInternals(server);
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const originalSendResponse = serverInternals.sendControlResponse.bind(server);
+    serverInternals.sendControlResponse = async (type, payload) => {
+      if (type === InnerTypeV3.SessionKeyUpdateACK) {
+        entered.resolve();
+        await release.promise;
+      }
+      return await originalSendResponse(type, payload);
+    };
+    const operation = client.rekey();
+    await entered.promise;
+    const clientInternals = sessionInternals(client);
+    expect(clientInternals.pendingSessionRekey).toBeDefined();
+    clientInternals.fail(new SessionV3Error("closed", "test failure"), false);
+    await expect(operation).rejects.toMatchObject({ code: "closed" });
+    expect(clientInternals.pendingSessionRekey).toBeUndefined();
+    release.resolve();
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
 });
 
 type SessionInternals = {
@@ -102,10 +199,35 @@ type SessionInternals = {
   receiveTransition: bigint;
   pendingReceiveEpoch: number | undefined;
   receiveRoots: Map<number, unknown>;
+  nextTransition: bigint;
+  sendEpoch: number;
+  pendingSessionRekey: unknown;
+  waitOutboundFrontier(watermark: bigint, signal: AbortSignal): Promise<void>;
+  fail(error: Error, abortCarrier?: boolean): void;
 };
 
 function sessionInternals(session: SessionV3): SessionInternals {
   return session as unknown as SessionInternals;
+}
+
+async function abortableWait<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw signal.reason;
+  return await new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    void promise.then(
+      (value) => { signal.removeEventListener("abort", abort); resolve(value); },
+      (error) => { signal.removeEventListener("abort", abort); reject(error); },
+    );
+  });
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for session rekey");
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 class TerminalOrderingCarrier implements CarrierSessionV3 {

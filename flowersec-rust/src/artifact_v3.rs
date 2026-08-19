@@ -1864,6 +1864,31 @@ mod tests {
     }
 
     #[test]
+    fn version_isolation_admission_frames_reject_v2_mutations() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../testdata/transport_v3/version_isolation_vectors.json"
+        ))
+        .unwrap();
+        for frame in fixture["frames"].as_array().unwrap() {
+            let id = frame["id"].as_str().unwrap();
+            if id == "fsb3" || id == "fsa3" {
+                let valid = decode_hex(frame["v3_hex"].as_str().unwrap());
+                let magic = decode_hex(frame["v2_magic_hex"].as_str().unwrap());
+                let version = decode_hex(frame["v2_version_hex"].as_str().unwrap());
+                if id == "fsb3" {
+                    decode_direct_fsb3(&valid).unwrap();
+                    assert!(decode_direct_fsb3(&magic).is_err());
+                    assert!(decode_direct_fsb3(&version).is_err());
+                } else {
+                    decode_fsa3(&valid).unwrap();
+                    assert!(decode_fsa3(&magic).is_err());
+                    assert!(decode_fsa3(&version).is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn tunnel_fsb3_decoder_revalidates_the_complete_candidate_projection() {
         let raw = tunnel_fsb3_vector();
         let decoded = decode_tunnel_fsb3(&raw, CarrierWireV3::RawQuic).unwrap();

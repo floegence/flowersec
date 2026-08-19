@@ -2163,6 +2163,10 @@ async fn bidirectional_open_data_fin_and_consecutive_rekey() {
     );
     opened.close_write().await.expect("FIN");
     assert_eq!(incoming.stream().read().await.expect("peer FIN"), None);
+    assert_eq!(
+        incoming.stream().read().await.expect("repeat peer FIN"),
+        None
+    );
     client.close().await.expect("close client");
     server.close().await.expect("close server");
 }

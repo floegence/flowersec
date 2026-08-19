@@ -11,12 +11,12 @@ use std::{
 use async_trait::async_trait;
 use flowersec::v2::{
     Acceptor, Artifact, ArtifactLease, ArtifactSource, ArtifactSourceError, ConnectionController,
-    ConnectionControllerOptions, ConnectionState, DirectIssueOptions, EndpointSet, Issuer,
-    SessionOptions, WebSocketAcceptorOptions,
+    ConnectionControllerOptions, ConnectionState, ConnectorOptions, DirectIssueOptions,
+    EndpointSet, Issuer, SessionOptions, WebSocketAcceptorOptions,
 };
 use flowersec::{
-    AcceptedSession, ConnectorOptions, HandlerRegistrationError, NotificationHandler, RpcError,
-    RpcHandler, RpcHandlers, Session, SessionHandlerOptions, SessionHandlers,
+    AcceptedSession, HandlerRegistrationError, NotificationHandler, RpcError, RpcHandler,
+    RpcHandlers, Session, SessionHandlerOptions, SessionHandlers,
 };
 use tokio::sync::{Notify, oneshot};
 use tokio_util::sync::CancellationToken;

@@ -124,6 +124,27 @@ final class ConnectorV2Tests: XCTestCase {
       XCTAssertEqual(spendCount, 0)
     }
 
+    func testProductionV3HashMatchedLeafWithInvalidTLSProofFailsBeforeLeaseSpend() async throws {
+      let peer = try InvalidProofPeer.start()
+      defer { peer.stop() }
+      let artifact = try v3WebSocketArtifact(
+        port: peer.port,
+        tls: pinPolicyV3(
+          hash: Data(SHA256.hash(data: peer.leafDER)), expiresIn: 3_600))
+      let spend = ConnectorSpendCounter()
+      do {
+        _ = try await connectV3(
+          lease: ArtifactLeaseV3(artifact: artifact) { await spend.commit() },
+          options: ConnectorOptions(
+            origin: "https://client.example", connectTimeout: .seconds(3)))
+        XCTFail("invalid TLS proof unexpectedly established a session")
+      } catch {
+        XCTAssertEqual(error as? ConnectError, .transportSecurityFailed)
+      }
+      let spendCount = await spend.value()
+      XCTAssertEqual(spendCount, 0)
+    }
+
     func testProductionV3PinNetworkFailureRemainsOrdinaryConnectionFailure() async throws {
       let artifact = try v3WebSocketArtifact(
         port: 9,
@@ -331,7 +352,8 @@ final class ConnectorV2Tests: XCTestCase {
       _ = try await connector.connect()
       XCTFail("late preparations unexpectedly established a session")
     } catch {
-      XCTAssertEqual(error as? ConnectError, .timeout)
+      XCTAssertEqual((error as? ConnectError)?.code, .connectionFailed)
+      XCTAssertEqual((error as? ConnectError)?.retryDisposition, .retryable)
     }
     XCTAssertLessThan(started.duration(to: .now), .milliseconds(120))
     let spendCountAfterTimeout = await spent.value()
@@ -373,7 +395,8 @@ final class ConnectorV2Tests: XCTestCase {
       _ = try await connecting.value
       XCTFail("cancelled preparations unexpectedly established a session")
     } catch {
-      XCTAssertEqual(error as? ConnectError, .canceled)
+      XCTAssertEqual((error as? ConnectError)?.code, .connectionFailed)
+      XCTAssertEqual((error as? ConnectError)?.retryDisposition, .terminal)
     }
     let spendCountAfterCancellation = await spent.value()
     XCTAssertEqual(spendCountAfterCancellation, 0)
@@ -455,7 +478,8 @@ final class ConnectorV2Tests: XCTestCase {
       _ = try await connector.connect()
       XCTFail("hanging admission unexpectedly established a session")
     } catch {
-      XCTAssertEqual(error as? ConnectError, .timeout)
+      XCTAssertEqual((error as? ConnectError)?.code, .connectionFailed)
+      XCTAssertEqual((error as? ConnectError)?.retryDisposition, .retryable)
     }
     XCTAssertLessThan(started.duration(to: .now), .milliseconds(120))
     let settled = await waitUntilConnectorV3(timeout: .milliseconds(500)) {
@@ -890,7 +914,7 @@ final class ConnectorV2Tests: XCTestCase {
         options: ConnectorOptions(origin: "http://example.com"))
       XCTFail("invalid public options unexpectedly established a session")
     } catch {
-      XCTAssertEqual(error as? ConnectError, .invalidOptions)
+      XCTAssertEqual(error as? ConnectErrorV2, .invalidOptions)
     }
   }
 
@@ -908,7 +932,7 @@ final class ConnectorV2Tests: XCTestCase {
       _ = try await connector.connect()
       XCTFail("admission rejection unexpectedly established a session")
     } catch {
-      XCTAssertEqual(error as? ConnectError, .connectionFailed)
+      XCTAssertEqual(error as? ConnectErrorV2, .connectionFailed)
     }
     let recordedEvents = await events.values()
     XCTAssertEqual(recordedEvents, ["dial", "spend", "write", "read", "close"])
@@ -933,7 +957,7 @@ final class ConnectorV2Tests: XCTestCase {
       _ = try await connector.connect()
       XCTFail("slow durable spend unexpectedly established a session")
     } catch {
-      XCTAssertEqual(error as? ConnectError, .timeout)
+      XCTAssertEqual(error as? ConnectErrorV2, .timeout)
     }
     let elapsed = started.duration(to: .now)
     XCTAssertLessThan(elapsed, .milliseconds(120))
@@ -969,7 +993,7 @@ final class ConnectorV2Tests: XCTestCase {
       _ = try await (clientSession, serverSession)
       XCTFail("untrusted WSS connection unexpectedly succeeded")
     } catch {
-      XCTAssertEqual(error as? ConnectError, .connectionFailed)
+      XCTAssertEqual(error as? ConnectErrorV2, .connectionFailed)
     }
     XCTAssertLessThan(started.duration(to: .now), .seconds(1))
     await server.close()
@@ -1518,6 +1542,68 @@ private struct ConnectorTestTLS {
     }
   #endif
 }
+
+#if os(macOS) || os(iOS)
+  private final class InvalidProofPeer: @unchecked Sendable {
+    let process: Process
+    let port: Int
+    let leafDER: Data
+
+    static func start() throws -> Self {
+      let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent()
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+      process.arguments = [
+        "go", "run", "./internal/cmd/invalid-proof-peer", "--carrier", "websocket",
+      ]
+      process.currentDirectoryURL = root.appendingPathComponent("flowersec-go")
+      process.standardInput = FileHandle.nullDevice
+      let output = Pipe()
+      process.standardOutput = output
+      process.standardError = FileHandle.standardError
+      try process.run()
+      let line = try readLine(from: output.fileHandleForReading)
+      guard let bytes = line.data(using: .utf8),
+        let json = try JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+        let address = json["address"] as? String,
+        let port = Int(address.split(separator: ":").last ?? ""),
+        let encoded = json["leaf_der_base64"] as? String,
+        let leafDER = Data(base64Encoded: encoded)
+      else {
+        process.terminate()
+        throw ConnectorGeneratedTLSError.failed("invalid-proof peer emitted malformed readiness")
+      }
+      return Self(process: process, port: port, leafDER: leafDER)
+    }
+
+    private init(process: Process, port: Int, leafDER: Data) {
+      self.process = process
+      self.port = port
+      self.leafDER = leafDER
+    }
+
+    func stop() {
+      if process.isRunning { process.terminate() }
+      process.waitUntilExit()
+    }
+  }
+
+  private func readLine(from handle: FileHandle) throws -> String {
+    var bytes = Data()
+    while true {
+      let chunk = try handle.read(upToCount: 1) ?? Data()
+      if chunk.isEmpty { break }
+      bytes.append(chunk)
+      if chunk == Data([0x0A]) { break }
+    }
+    guard let line = String(data: bytes, encoding: .utf8), !line.isEmpty else {
+      throw ConnectorGeneratedTLSError.failed("invalid-proof peer did not emit readiness")
+    }
+    return line
+  }
+#endif
 
 private enum ConnectorGeneratedTLSError: Error {
   case failed(String)

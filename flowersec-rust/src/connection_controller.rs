@@ -815,7 +815,10 @@ async fn acquire_lease(
             {
                 let _ = claimed.retire().await;
             }
-            return Err(connect_failure(ConnectErrorCode::Canceled, RetryDisposition::Terminal));
+            return Err(connect_failure(
+                ConnectErrorCode::ConnectionFailed,
+                RetryDisposition::Terminal,
+            ));
         },
         result = &mut acquisition => result,
     };
@@ -1161,6 +1164,7 @@ mod tests {
     #[derive(Deserialize)]
     struct ControllerVectorsV3 {
         version: u64,
+        public_errors: Vec<String>,
         defaults: DefaultsV3,
         backoff_vectors: Vec<BackoffV3>,
         scenarios: Vec<ScenarioV3>,
@@ -1237,6 +1241,17 @@ mod tests {
         ))
         .expect("parse Flowersec v3 controller vectors");
         assert_eq!(vectors.version, 3);
+        assert_eq!(
+            vectors.public_errors,
+            [
+                ConnectErrorCode::ArtifactInvalid,
+                ConnectErrorCode::Expired,
+                ConnectErrorCode::TransportSecurityUnsupported,
+                ConnectErrorCode::TransportSecurityFailed,
+                ConnectErrorCode::ConnectionFailed,
+            ]
+            .map(ConnectErrorCode::as_str)
+        );
         assert_eq!(vectors.defaults.initial_backoff_ms, 250);
         assert_eq!(vectors.defaults.maximum_backoff_ms, 30_000);
         assert_eq!(
@@ -1779,7 +1794,7 @@ mod tests {
         assert_eq!(
             status.last_failure,
             Some(connect_failure(
-                ConnectErrorCode::DialFailed,
+                ConnectErrorCode::ConnectionFailed,
                 RetryDisposition::Terminal
             ))
         );
@@ -2061,7 +2076,7 @@ mod tests {
                     )
                     .with_v3_candidate_masks(1, 1)),
                     ConnectorStep::PreSpendConnection => Err(ConnectError::from_runtime_code(
-                        ConnectErrorCode::DialFailed,
+                        ConnectErrorCode::ConnectionFailed,
                     )),
                     ConnectorStep::PreSpendExpired => {
                         Err(ConnectError::from_runtime_code(ConnectErrorCode::Expired))
@@ -2069,7 +2084,7 @@ mod tests {
                     ConnectorStep::PostSpendRetryable => {
                         spend_lease(lease).await?;
                         Err(ConnectError::from_runtime_code(
-                            ConnectErrorCode::HandshakeFailed,
+                            ConnectErrorCode::ConnectionFailed,
                         ))
                     }
                     ConnectorStep::Success => {
@@ -2088,7 +2103,7 @@ mod tests {
         claimed
             .commit_spend()
             .await
-            .map_err(|_| ConnectError::from_runtime_code(ConnectErrorCode::SpendFailed))?;
+            .map_err(|_| ConnectError::from_runtime_code(ConnectErrorCode::ConnectionFailed))?;
         Ok(())
     }
 

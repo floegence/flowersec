@@ -400,6 +400,13 @@
       "swift/macos": {"websocket": ["W3", ["ca", "pin"]], "raw_quic": ["unsupported", "swift_apple_client_profile_excludes_raw_quic"], "webtransport": ["unsupported", "swift_apple_client_profile_excludes_webtransport"]},
       "swift/linux": {"websocket": ["unsupported", "websocket_adapter_not_supported_on_linux"], "raw_quic": ["unsupported", "swift_apple_client_profile_excludes_raw_quic"], "webtransport": ["unsupported", "swift_apple_client_profile_excludes_webtransport"]}
     },
+    "first_release_emits_adapter_not_composed": false,
+    "dynamic_conversions": [
+      {"runtime": "typescript/browser", "trigger": "websocket_api_unavailable", "carrier": "websocket", "from": ["W3", ["ca"]], "to": ["unsupported", "browser_websocket_api_unavailable"]},
+      {"runtime": "typescript/browser", "trigger": "webtransport_api_unavailable", "carrier": "webtransport", "from": ["H3", ["ca"]], "to": ["unsupported", "browser_webtransport_api_unavailable"]},
+      {"runtime": "typescript/node", "trigger": "native_addon_unavailable", "carrier": "raw_quic", "from": ["Q4N", ["ca", "pin"]], "to": ["unsupported", "node_native_transport_unavailable"]},
+      {"runtime": "typescript/browser", "trigger": "pin_provider_not_registered", "carrier": "webtransport", "from": ["H3", ["ca", "pin"]], "to": ["H3", ["ca"]]}
+    ],
     "browser_pin_provider": {
       "family": "Chromium",
       "full_version": "151.0.7922.34",
@@ -511,6 +518,12 @@
       "rust": ["flowersec-rust/src/artifact_v3.rs"],
       "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift"]
     }},
+    {"id": "issuer_admission", "path": "testdata/transport_v3/go_issuer_admission_vectors.json", "consumers": {
+      "go": ["flowersec-go/controlplane/controlplane_test.go"],
+      "typescript": ["flowersec-ts/src/v3/artifact.test.ts"],
+      "rust": ["flowersec-rust/src/transport_v3.rs"],
+      "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift"]
+    }},
     {"id": "capability", "path": "testdata/transport_v3/capability_vectors.json", "consumers": {
       "go": ["flowersec-go/internal/runtimev3/capability_vectors_test.go"],
       "typescript": ["flowersec-ts/src/v3/capability.test.ts"],
@@ -582,6 +595,12 @@
       "typescript": ["flowersec-ts/src/v3/openWire.test.ts"],
       "rust": ["flowersec-rust/src/session_v3.rs"],
       "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3SessionTests.swift"]
+    }},
+    {"id": "version_isolation", "path": "testdata/transport_v3/version_isolation_vectors.json", "consumers": {
+      "go": ["flowersec-go/internal/protocolv3/version_isolation_vectors_test.go", "flowersec-go/internal/rpc/version_isolation_vectors_test.go"],
+      "typescript": ["flowersec-ts/src/v3/versionIsolation.test.ts"],
+      "rust": ["flowersec-rust/src/artifact_v3.rs", "flowersec-rust/src/protocol_v3.rs", "flowersec-rust/src/session_v3.rs"],
+      "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift"]
     }}
   ],
   "version_isolation": {

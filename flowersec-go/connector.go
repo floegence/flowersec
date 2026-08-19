@@ -32,10 +32,6 @@ var (
 type ConnectErrorCode string
 
 const (
-	ConnectInvalidInput                 ConnectErrorCode = "invalid_input"
-	ConnectInvalidOptions               ConnectErrorCode = "invalid_options"
-	ConnectCanceled                     ConnectErrorCode = "canceled"
-	ConnectTimeout                      ConnectErrorCode = "timeout"
 	ConnectArtifactInvalid              ConnectErrorCode = "artifact_invalid"
 	ConnectExpired                      ConnectErrorCode = "expired_artifact"
 	ConnectTransportSecurityUnsupported ConnectErrorCode = "transport_security_unsupported"
@@ -124,18 +120,29 @@ type RPCPeer interface {
 
 // ConnectError is the redacted, stable public connection failure.
 type ConnectError struct {
-	code ConnectErrorCode
+	code        ConnectErrorCode
+	disposition RetryDisposition
+	detail      connectErrorDetail
 }
+
+type connectErrorDetail uint8
+
+const (
+	connectErrorDetailNone connectErrorDetail = iota
+	connectErrorDetailInvalidOptions
+	connectErrorDetailCanceled
+	connectErrorDetailTimeout
+)
 
 func (err *ConnectError) Error() string {
 	if err == nil {
 		return "<nil>"
 	}
-	return "Flowersec connection failed (code=" + string(err.code) + ")"
+	return "Flowersec connection failed (code=" + string(err.Code()) + ")"
 }
 
 func (err *ConnectError) Unwrap() error {
-	if err != nil && err.Code() == ConnectInvalidOptions {
+	if err != nil && err.detail == connectErrorDetailInvalidOptions {
 		return ErrInvalidConnectorOptions
 	}
 	return ErrConnectionFailed
@@ -150,10 +157,10 @@ func (err *ConnectError) Is(target error) bool {
 	if err == nil {
 		return false
 	}
-	switch err.Code() {
-	case ConnectCanceled:
+	switch err.detail {
+	case connectErrorDetailCanceled:
 		return target == context.Canceled
-	case ConnectTimeout:
+	case connectErrorDetailTimeout:
 		return target == context.DeadlineExceeded
 	default:
 		return false
@@ -162,10 +169,16 @@ func (err *ConnectError) Is(target error) bool {
 
 // Code returns the closed, carrier-neutral connection outcome.
 func (err *ConnectError) Code() ConnectErrorCode {
-	if err == nil || err.code == "" {
+	if err == nil {
 		return ConnectConnectionFailed
 	}
-	return err.code
+	switch err.code {
+	case ConnectArtifactInvalid, ConnectExpired, ConnectTransportSecurityUnsupported,
+		ConnectTransportSecurityFailed, ConnectConnectionFailed:
+		return err.code
+	default:
+		return ConnectConnectionFailed
+	}
 }
 
 // SessionErrorCode is the closed failure set shared by sessions, RPC, and streams.
@@ -281,14 +294,20 @@ func newConnectorWithFilter(lease ArtifactLease, options ConnectorOptions, filte
 		return nil, &ConnectError{code: ConnectArtifactInvalid}
 	}
 	if !validConnectorOptions(options) {
-		return nil, &ConnectError{code: ConnectInvalidOptions}
+		return nil, &ConnectError{
+			code: ConnectArtifactInvalid, disposition: terminalDisposition(),
+			detail: connectErrorDetailInvalidOptions,
+		}
 	}
 	factory, err := candidatev3.NewGoNativeFactory(candidatev3.GoNativeConfig{
 		TrustRoots: options.TrustRoots,
 		Origin:     options.Origin,
 	})
 	if err != nil {
-		return nil, &ConnectError{code: ConnectInvalidOptions}
+		return nil, &ConnectError{
+			code: ConnectArtifactInvalid, disposition: terminalDisposition(),
+			detail: connectErrorDetailInvalidOptions,
+		}
 	}
 	connectorOptions := make([]connectv3.ConnectorOption, 0, 2)
 	if options.RPCHandlers != nil {
@@ -726,13 +745,22 @@ func redactConnectError(err error) error {
 		}
 		switch internal.Code {
 		case fserrors.CodeCanceled:
-			code = ConnectCanceled
+			return &ConnectError{
+				code: ConnectConnectionFailed, disposition: terminalDisposition(),
+				detail: connectErrorDetailCanceled,
+			}
 		case fserrors.CodeTimeout:
-			code = ConnectTimeout
+			return &ConnectError{
+				code: ConnectConnectionFailed, disposition: retryableDisposition(),
+				detail: connectErrorDetailTimeout,
+			}
 		case fserrors.CodeInvalidInput:
 			code = ConnectArtifactInvalid
 		case fserrors.CodeInvalidOption:
-			code = ConnectInvalidOptions
+			return &ConnectError{
+				code: ConnectArtifactInvalid, disposition: terminalDisposition(),
+				detail: connectErrorDetailInvalidOptions,
+			}
 		case fserrors.CodeUnsupportedCapability, fserrors.CodeTLSUnsupported:
 			code = ConnectTransportSecurityUnsupported
 		case fserrors.CodeTLSPolicyExpired, fserrors.CodeTLSFailed:
@@ -741,9 +769,15 @@ func redactConnectError(err error) error {
 		return &ConnectError{code: code}
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		code = ConnectTimeout
+		return &ConnectError{
+			code: ConnectConnectionFailed, disposition: retryableDisposition(),
+			detail: connectErrorDetailTimeout,
+		}
 	} else if errors.Is(err, context.Canceled) {
-		code = ConnectCanceled
+		return &ConnectError{
+			code: ConnectConnectionFailed, disposition: terminalDisposition(),
+			detail: connectErrorDetailCanceled,
+		}
 	}
 	return &ConnectError{code: code}
 }

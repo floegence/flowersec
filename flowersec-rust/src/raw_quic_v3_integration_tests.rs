@@ -271,7 +271,7 @@ impl TunnelAuthorizer for TestTunnelAuthorizer {
 }
 
 async fn rust_client_to_go_admission(profile: NativePathProfile) {
-    let (child, reader, address) = start_go_server("server", profile).await;
+    let (child, reader, _stderr, address) = start_go_server("server", profile).await;
     let native = dial_native(address, profile).await;
     let carrier = carrier_from_native_session(native);
     let artifact = interop_artifact(address, profile);
@@ -280,7 +280,7 @@ async fn rust_client_to_go_admission(profile: NativePathProfile) {
     let barrier = carrier.open_stream().await.unwrap();
     write_all(barrier.as_ref(), b"ACK").await;
     barrier.close_write_delivered().await.unwrap();
-    wait_go_server(child, reader).await;
+    wait_go_server(child, reader, _stderr).await;
     carrier.abort();
 }
 
@@ -300,7 +300,7 @@ async fn go_client_to_rust_admission(profile: NativePathProfile) {
 }
 
 async fn rust_client_to_go_session(profile: NativePathProfile) {
-    let (child, reader, address) = start_go_server("session-server", profile).await;
+    let (child, reader, _stderr, address) = start_go_server("session-server", profile).await;
     let artifact = interop_artifact(address, profile);
     let spends = Arc::new(AtomicUsize::new(0));
     let spend_capture = spends.clone();
@@ -319,7 +319,7 @@ async fn rust_client_to_go_session(profile: NativePathProfile) {
     tokio::time::timeout(Duration::from_secs(10), session.wait_termination())
         .await
         .expect("Go peer must close the established v3 session");
-    wait_go_server(child, reader).await;
+    wait_go_server(child, reader, _stderr).await;
     assert_eq!(spends.load(Ordering::SeqCst), 1);
 }
 
@@ -672,11 +672,18 @@ impl RpcHandlerV3 for InteropRpc {
 async fn start_go_server(
     mode: &str,
     profile: NativePathProfile,
-) -> (Child, BufReader<std::process::ChildStdout>, SocketAddr) {
+) -> (
+    Child,
+    BufReader<std::process::ChildStdout>,
+    BufReader<std::process::ChildStderr>,
+    SocketAddr,
+) {
     let mut command = go_peer_command(mode, None, profile);
     command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
     let mut child = command.spawn().expect("start Go v3 raw QUIC peer");
     let stdout = child.stdout.take().expect("Go peer stdout");
+    let stderr = child.stderr.take().expect("Go peer stderr");
     let (reader, ready) = tokio::task::spawn_blocking(move || {
         let mut reader = BufReader::new(stdout);
         let mut ready = String::new();
@@ -691,19 +698,28 @@ async fn start_go_server(
         .expect("Go READY prefix")
         .parse()
         .expect("Go peer address");
-    (child, reader, address)
+    (child, reader, BufReader::new(stderr), address)
 }
 
-async fn wait_go_server(mut child: Child, mut reader: BufReader<std::process::ChildStdout>) {
-    let (status, remainder) = tokio::task::spawn_blocking(move || {
+async fn wait_go_server(
+    mut child: Child,
+    mut reader: BufReader<std::process::ChildStdout>,
+    mut stderr: BufReader<std::process::ChildStderr>,
+) {
+    let (status, remainder, error_output) = tokio::task::spawn_blocking(move || {
         let status = child.wait().expect("wait Go peer");
         let mut remainder = String::new();
         reader.read_to_string(&mut remainder).unwrap();
-        (status, remainder)
+        let mut error_output = String::new();
+        stderr.read_to_string(&mut error_output).unwrap();
+        (status, remainder, error_output)
     })
     .await
     .unwrap();
-    assert!(status.success(), "Go peer failed: {remainder}");
+    assert!(
+        status.success(),
+        "Go peer failed: stdout={remainder} stderr={error_output}"
+    );
     assert!(remainder.contains("OK"), "Go peer output: {remainder}");
 }
 

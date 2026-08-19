@@ -41,9 +41,9 @@ type ConnectionControllerOptions struct {
 }
 
 type controllerClock struct {
-	wallNow      func() time.Time
-	monotonicNow func() time.Duration
-	newTimer     func(time.Duration) controllerTimer
+	wallNow                  func() time.Time
+	monotonicNowMilliseconds func() uint64
+	newTimer                 func(time.Duration) controllerTimer
 }
 
 type controllerTimer struct {
@@ -54,8 +54,14 @@ type controllerTimer struct {
 func realControllerClock() controllerClock {
 	origin := time.Now()
 	return controllerClock{
-		wallNow:      time.Now,
-		monotonicNow: func() time.Duration { return time.Since(origin) },
+		wallNow: time.Now,
+		monotonicNowMilliseconds: func() uint64 {
+			elapsed := time.Since(origin) / time.Millisecond
+			if elapsed <= 0 {
+				return 0
+			}
+			return min(uint64(elapsed), maxSafeControllerInteger)
+		},
 		newTimer: func(delay time.Duration) controllerTimer {
 			timer := time.NewTimer(delay)
 			return controllerTimer{channel: timer.C, stop: timer.Stop}
@@ -203,7 +209,7 @@ func NewConnectionController(source ArtifactSource, options ConnectionController
 		options.Connector.RPCHandlers.freeze()
 	}
 	clock := options.clock
-	if clock.wallNow == nil || clock.monotonicNow == nil || clock.newTimer == nil {
+	if clock.wallNow == nil || clock.monotonicNowMilliseconds == nil || clock.newTimer == nil {
 		clock = realControllerClock()
 	}
 	return &ConnectionController{
@@ -450,7 +456,7 @@ func (controller *ConnectionController) run(ctx context.Context) {
 				return
 			}
 			switch code {
-			case ConnectArtifactInvalid, ConnectInvalidInput, ConnectInvalidOptions:
+			case ConnectArtifactInvalid:
 				controller.fail(outcome.err, terminalDisposition())
 				return
 			}
@@ -627,6 +633,13 @@ func saturatingControllerIncrement(value uint64) uint64 {
 	return value + 1
 }
 
+func saturatingControllerAdd(value, delta uint64) uint64 {
+	if value >= maxSafeControllerInteger || delta >= maxSafeControllerInteger-value {
+		return maxSafeControllerInteger
+	}
+	return value + delta
+}
+
 func projectArtifactSourceFailure(sourceFailure *ArtifactSourceError) error {
 	if sourceFailure == nil {
 		return &ConnectError{code: ConnectArtifactInvalid}
@@ -712,10 +725,13 @@ drained:
 		Failure: connectionFailure(err, disposition),
 	})
 	controller.mu.Unlock()
-	monotonicDeadline := controller.clock.monotonicNow() + backoff
+	backoffMilliseconds := uint64(max(backoff/time.Millisecond, 0))
+	monotonicDeadline := saturatingControllerAdd(
+		controller.clock.monotonicNowMilliseconds(), backoffMilliseconds,
+	)
 	bypassBackoff := false
 	for {
-		monotonicNow := controller.clock.monotonicNow()
+		monotonicNow := controller.clock.monotonicNowMilliseconds()
 		wallNow := controller.clock.wallNow()
 		backoffSatisfied := bypassBackoff || monotonicNow >= monotonicDeadline
 		wallSatisfied := notBeforeUnixMilliseconds < 0 || wallNow.UnixMilli() >= notBeforeUnixMilliseconds
@@ -725,10 +741,11 @@ drained:
 			controller.mu.Unlock()
 			return true
 		}
-		delay := monotonicDeadline - monotonicNow
-		if backoffSatisfied || delay < 0 {
-			delay = 0
+		delayMilliseconds := uint64(0)
+		if !backoffSatisfied {
+			delayMilliseconds = monotonicDeadline - monotonicNow
 		}
+		delay := time.Duration(delayMilliseconds) * time.Millisecond
 		if !wallSatisfied {
 			wallDelayMilliseconds := notBeforeUnixMilliseconds - wallNow.UnixMilli()
 			wallDelay := time.Second

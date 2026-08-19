@@ -53,8 +53,11 @@ func (err *ConnectError) RetryDisposition() RetryDisposition {
 	if err == nil {
 		return terminalDisposition()
 	}
+	if err.disposition.valid() {
+		return err.disposition
+	}
 	switch err.Code() {
-	case ConnectExpired, ConnectTimeout, ConnectConnectionFailed:
+	case ConnectExpired, ConnectConnectionFailed:
 		return retryableDisposition()
 	default:
 		return terminalDisposition()

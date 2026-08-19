@@ -15,8 +15,12 @@ use tokio::{sync::Notify, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    ConnectError, ConnectErrorCode, ConnectorOptions, SessionError, artifact_v2::ArtifactLease,
-    native_runtime_v2::connect_with_cancellation, transport_v2::Session,
+    SessionError,
+    artifact_v2::ArtifactLease,
+    connector_v2::{ConnectError, ConnectErrorCode},
+    native_runtime_v2::ConnectorOptions,
+    native_runtime_v2::connect_with_cancellation,
+    transport_v2::Session,
 };
 
 const DEFAULT_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
