@@ -220,6 +220,11 @@ public actor ConnectionController {
 
       case .failed(
         let attemptFailure, let claimedLease, let dispositionOverride, let provenance):
+        if let dispositionOverride, !validRetryDisposition(dispositionOverride) {
+          if let claimedLease { await retire(claimedLease) }
+          fail(.connection(.artifactInvalid))
+          return
+        }
         if let claimedLease,
           await shouldRefreshPolicy(
             attemptFailure, lease: claimedLease, provenance: provenance)
@@ -382,11 +387,9 @@ public actor ConnectionController {
       failure = nil
       retryDisposition = nil
       publish()
+      let lease: ArtifactLeaseV3
       do {
-        let lease = try await source.acquireArtifact()
-        claimedLease = try await lease.claimForConnectionController()
-        replacementUsed = true
-        break
+        lease = try await source.acquireArtifact()
       } catch let sourceFailure as ArtifactSourceFailure {
         let sourceAttemptFailure = ConnectionAttemptFailure.artifactSource(sourceFailure)
         guard validRetryDisposition(sourceFailure.disposition) else {
@@ -402,6 +405,15 @@ public actor ConnectionController {
       } catch {
         return .terminal(.unknownArtifactSource)
       }
+      do {
+        claimedLease = try await lease.claimForConnectionController()
+      } catch is CancellationError {
+        return .terminal(.connection(.canceled))
+      } catch {
+        return .terminal(.connection(.artifactInvalid))
+      }
+      replacementUsed = true
+      break
     }
     guard !Task.isCancelled, state != .closed else {
       await retire(claimedLease)
@@ -436,6 +448,10 @@ public actor ConnectionController {
     } catch let error as ControllerConnectFailureV3 {
       switch error {
       case .connection(let publicError, let disposition, _, _, _):
+        guard validRetryDisposition(disposition) else {
+          if !(await claimedLease.isConsumed) { await retire(claimedLease) }
+          return .terminal(.connection(.artifactInvalid))
+        }
         if await claimedLease.isConsumed {
           return .retryPrimary(.connection(publicError), disposition)
         }

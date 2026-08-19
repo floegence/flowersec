@@ -283,6 +283,105 @@ final class ConnectionControllerTests: XCTestCase {
     await controller.close()
   }
 
+  func testReplacementLeaseClaimLoserIsArtifactInvalid() async throws {
+    let retired = AsyncCounterV3()
+    let repeated = try lease(artifact: artifactV3(), retired: retired)
+    let source = SequenceArtifactSourceV3([repeated, repeated])
+    let attempts = AsyncCounterV3()
+    let controller = try ConnectionController(
+      source: source,
+      connectOneShot: { _, _ in
+        _ = await attempts.increment()
+        throw ConnectError.transportSecurityFailed
+      }
+    )
+
+    await controller.start()
+    let failed = await waitForState(.failed, controller: controller)
+    let snapshot = await controller.snapshot()
+    let acquisitions = await source.acquisitions
+    let connectAttempts = await attempts.value
+    let retirements = await retired.value
+    XCTAssertTrue(failed)
+    XCTAssertEqual(snapshot.failure, .connection(.artifactInvalid))
+    XCTAssertEqual(snapshot.retryDisposition, .terminal)
+    XCTAssertEqual(acquisitions, 2)
+    XCTAssertEqual(connectAttempts, 1)
+    XCTAssertEqual(retirements, 1)
+    await controller.close()
+  }
+
+  func testPrimaryInvalidRetryAfterFailsBeforePolicyRefresh() async throws {
+    let retired = AsyncCounterV3()
+    let source = SequenceArtifactSourceV3([
+      try lease(artifact: artifactV3(), retired: retired)
+    ])
+    let attempts = AsyncCounterV3()
+    let controller = try ConnectionController(
+      source: source,
+      connectOneShot: { _, _ in
+        _ = await attempts.increment()
+        throw ControllerConnectFailureV3.connection(
+          .transportSecurityFailed,
+          .retryAfter(253_402_300_800_000),
+          policyTriggerIDs: ["w-pin"],
+          opaquePolicyTriggerIDs: [],
+          failedIDs: ["w-pin"])
+      }
+    )
+
+    await controller.start()
+    let failed = await waitForState(.failed, controller: controller)
+    let snapshot = await controller.snapshot()
+    let acquisitions = await source.acquisitions
+    let connectAttempts = await attempts.value
+    let retirements = await retired.value
+    XCTAssertTrue(failed)
+    XCTAssertEqual(snapshot.failure, .connection(.artifactInvalid))
+    XCTAssertEqual(snapshot.retryDisposition, .terminal)
+    XCTAssertEqual(acquisitions, 1)
+    XCTAssertEqual(connectAttempts, 1)
+    XCTAssertEqual(retirements, 1)
+    await controller.close()
+  }
+
+  func testReplacementInvalidRetryAfterFailsClosedBeforeRetry() async throws {
+    let retired = AsyncCounterV3()
+    let source = SequenceArtifactSourceV3([
+      try lease(artifact: artifactV3(), retired: retired),
+      try lease(artifact: changedPinArtifactV3(), retired: retired),
+    ])
+    let attempts = AsyncCounterV3()
+    let controller = try ConnectionController(
+      source: source,
+      connectOneShot: { _, _ in
+        if await attempts.increment() == 1 {
+          throw ConnectError.transportSecurityFailed
+        }
+        throw ControllerConnectFailureV3.connection(
+          .transportSecurityFailed,
+          .retryAfter(253_402_300_800_000),
+          policyTriggerIDs: [],
+          opaquePolicyTriggerIDs: [],
+          failedIDs: ["w-pin"])
+      }
+    )
+
+    await controller.start()
+    let failed = await waitForState(.failed, controller: controller)
+    let snapshot = await controller.snapshot()
+    let acquisitions = await source.acquisitions
+    let connectAttempts = await attempts.value
+    let retirements = await retired.value
+    XCTAssertTrue(failed)
+    XCTAssertEqual(snapshot.failure, .connection(.artifactInvalid))
+    XCTAssertEqual(snapshot.retryDisposition, .terminal)
+    XCTAssertEqual(acquisitions, 2)
+    XCTAssertEqual(connectAttempts, 2)
+    XCTAssertEqual(retirements, 2)
+    await controller.close()
+  }
+
   func testBrowserOpaquePinFailureRefreshesOnceAndKeepsConnectionError() async throws {
     let expected = try controllerExpectedV3("browser-opaque-exhausted")
     let retired = AsyncCounterV3()
