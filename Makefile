@@ -170,9 +170,11 @@ rust-clippy:
 
 rust-test:
 	cd flowersec-rust && rustup run 1.88.0 cargo test --all-features
+	rustup run 1.88.0 cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features
 
 rust-test-short:
 	cd flowersec-rust && rustup run 1.88.0 cargo test --all-features --lib
+	rustup run 1.88.0 cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features --lib
 
 rust-doc:
 	cd flowersec-rust && RUSTDOCFLAGS="-D warnings" rustup run 1.88.0 cargo doc --all-features --no-deps

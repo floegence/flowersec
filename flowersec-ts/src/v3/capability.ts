@@ -4,6 +4,7 @@ import { concatBytes, u32be } from "../utils/bin.js";
 import type { CarrierKind, PathKind } from "../public/contract.js";
 import { canonicalizeJCSV3, type JCSValue } from "./jcs.js";
 import { preflightJSONV3 } from "./jsonPreflight.js";
+import { FLOWERSEC_V3_CRYPTO_LABELS } from "./transportConstants.js";
 
 export type TransportSecurityModeV3 = "ca" | "pin";
 export type NetworkModeV3 = "dial" | "listen";
@@ -103,7 +104,7 @@ export function decodeRuntimeCapabilityDescriptorV3(raw: string | Uint8Array): R
 export function runtimeCapabilityDigestV3(descriptor: RuntimeCapabilityDescriptorV3): Uint8Array {
   const canonical = encoder.encode(encodeRuntimeCapabilityDescriptorV3(descriptor));
   return sha256(concatBytes([
-    encoder.encode("flowersec-v3-runtime-capability\0"),
+    encoder.encode(FLOWERSEC_V3_CRYPTO_LABELS["runtime-capability"]),
     u32be(canonical.length),
     canonical,
   ]));
@@ -252,9 +253,9 @@ function registeredTupleSets(id: string): Readonly<Record<CarrierKind, Registere
   switch (id) {
     case "go/native":
       return {
-        raw_quic: { tupleSets: [rawQuic4M], unsupportedReasons: ["adapter_not_composed"] },
-        websocket: { tupleSets: [websocket(caPin)], unsupportedReasons: ["adapter_not_composed"] },
-        webtransport: { tupleSets: [webTransport4], unsupportedReasons: ["adapter_not_composed"] },
+        raw_quic: { tupleSets: [rawQuic4M] },
+        websocket: { tupleSets: [websocket(caPin)] },
+        webtransport: { tupleSets: [webTransport4] },
       };
     case "typescript/browser":
       return {

@@ -20,7 +20,23 @@ import (
 
 func TestAllEligibleCandidatesUnsupportedCreatesNoTransport(t *testing.T) {
 	artifact := loadV3Artifact(t)
-	factory := &failureFactory{capabilities: runtimev3.GoCapabilitiesForCarriers(carrier.KindRawQUIC)}
+	capabilities := loadCapabilityVector(t, "typescript-browser-ca-only")
+	tupleIndex := 0
+	for _, tuple := range capabilities.Tuples {
+		if tuple.Carrier != carrier.KindWebSocket {
+			capabilities.Tuples[tupleIndex] = tuple
+			tupleIndex++
+		}
+	}
+	capabilities.Tuples = capabilities.Tuples[:tupleIndex]
+	capabilities.Unsupported = append(capabilities.Unsupported, runtimev3.UnsupportedCapability{
+		Carrier: carrier.KindWebSocket,
+		Reason:  "browser_websocket_api_unavailable",
+	})
+	if _, err := runtimev3.EncodeCapabilityDescriptor(capabilities); err != nil {
+		t.Fatalf("dynamic browser capability: %v", err)
+	}
+	factory := &failureFactory{capabilities: capabilities}
 	connector := connectv3.NewConnector(
 		connectv3.ArtifactLease{Artifact: artifact, CommitSpend: func(context.Context) error { return nil }},
 		factory,
@@ -38,6 +54,34 @@ func TestAllEligibleCandidatesUnsupportedCreatesNoTransport(t *testing.T) {
 		structured.Diagnostics[0].Code != fserrors.CodeTLSUnsupported {
 		t.Fatalf("unsupported diagnostics = %+v", structured.Diagnostics)
 	}
+}
+
+func loadCapabilityVector(t *testing.T, name string) runtimev3.CapabilityDescriptor {
+	t.Helper()
+	raw, err := os.ReadFile("../../../testdata/transport_v3/capability_vectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Vectors []struct {
+			Name          string `json:"name"`
+			CanonicalJSON string `json:"canonical_json"`
+		} `json:"vectors"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	for _, vector := range fixture.Vectors {
+		if vector.Name == name {
+			descriptor, err := runtimev3.DecodeCapabilityDescriptor([]byte(vector.CanonicalJSON))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return descriptor
+		}
+	}
+	t.Fatalf("capability vector %q is missing", name)
+	return runtimev3.CapabilityDescriptor{}
 }
 
 func TestAllExpiredPinsRemainPolicyExpiredForConnectorDiagnostics(t *testing.T) {

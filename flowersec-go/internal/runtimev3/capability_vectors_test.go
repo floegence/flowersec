@@ -31,7 +31,7 @@ func TestSharedCapabilityVectors(t *testing.T) {
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
 	}
-	if fixture.Version != 3 || fixture.DigestLabel != capabilityDigestLabel || len(fixture.Vectors) != 8 {
+	if fixture.Version != 3 || fixture.DigestLabel != CapabilityDigestLabelV3 || len(fixture.Vectors) != 8 {
 		t.Fatal("unexpected capability vector contract")
 	}
 	for _, vector := range fixture.Vectors {

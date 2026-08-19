@@ -67,7 +67,7 @@ enum AdmissionCodecV3 {
     frame.append(contentsOf: [3, pathCode, 0, 0])
     frame.appendUInt32BE(UInt32(canonical.count))
     frame.append(canonical)
-    var bindingInput = Data("flowersec-v3-admission\0".utf8)
+    var bindingInput = Data(TransportV3Contract.admissionLabel.utf8)
     bindingInput.append(frame)
     return EncodedFSB3(
       candidateID: chosenCandidateID, frame: frame,
@@ -82,7 +82,7 @@ enum AdmissionCodecV3 {
     guard zip(sorted, sorted.dropFirst()).allSatisfy({ $0.candidateID < $1.candidateID }) else {
       throw AdmissionCodecErrorV3.invalid
     }
-    var preimage = Data("flowersec-v3-acceptor-admissions\0".utf8)
+    var preimage = Data(TransportV3Contract.acceptorAdmissionsLabel.utf8)
     for admission in sorted {
       preimage.appendUInt32BE(UInt32(admission.frame.count))
       preimage.append(admission.frame)
@@ -169,7 +169,8 @@ enum AdmissionCodecV3 {
     }
     let candidateSet = try FlowersecJCSV3.encode(candidates.map { $0.object() })
     guard candidateSet.count <= 12_288,
-      FlowersecJCSV3.hashLP(domain: "flowersec-v3-candidates\0", canonical: candidateSet)
+      FlowersecJCSV3.hashLP(
+        domain: TransportV3Contract.candidatesLabel, canonical: candidateSet)
         == FlowersecJCSV3.canonical32(candidateHash)
     else { throw AdmissionCodecErrorV3.invalid }
     if pathKind == "direct" {
@@ -183,7 +184,7 @@ enum AdmissionCodecV3 {
         let role = unsignedInteger(object["role"]), role == 1 || role == 2
       else { throw AdmissionCodecErrorV3.invalid }
     }
-    var bindingInput = Data("flowersec-v3-admission\0".utf8)
+    var bindingInput = Data(TransportV3Contract.admissionLabel.utf8)
     bindingInput.append(frame)
     return DecodedFSB3(
       pathKind: pathKind, chosenCandidateID: chosen, frame: frame,

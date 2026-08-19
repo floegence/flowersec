@@ -148,6 +148,31 @@ final class ConnectorV2Tests: XCTestCase {
       XCTAssertEqual(spendCount, 0)
     }
 
+    func testProductionV3NIOSSLPinVerifierRejectsCertificateProfileMatrix() throws {
+      let material = try ConnectorTestTLS.load()
+      let p256DER = Data(try material.certificate.toDERBytes())
+      let p256Digest = Data(SHA256.hash(data: p256DER))
+      let p384 = try ConnectorTestTLS.makeCertificate(curve: "secp384r1", days: 2)
+      let p384DER = Data(try p384.toDERBytes())
+      let p384Digest = Data(SHA256.hash(data: p384DER))
+      let now = Int64(Date().timeIntervalSince1970)
+      let cases: [(String, NIOSSLCertificate, Data, Int64)] = [
+        ("overlong", material.certificate, p256Digest, now),
+        ("non-p256", p384, p384Digest, now),
+        ("not-yet-valid", material.certificate, p256Digest, Int64(material.certificate.notValidBefore) - 1),
+        ("expired", material.certificate, p256Digest, Int64(material.certificate.notValidAfter) + 1),
+      ]
+      for (_, certificate, digest, verificationTime) in cases {
+        do {
+          try NativeTLSPolicyAdapterV3.verifyPinnedCertificate(
+            certificate, activePins: [digest], nowUnixSeconds: verificationTime)
+          XCTFail("profile (name) unexpectedly passed")
+        } catch {
+          XCTAssertTrue(error is TransportSecurityFailureV3 || error is NativeTLSPolicyErrorV3)
+        }
+      }
+    }
+
     func testProductionV3PinNetworkFailureRemainsOrdinaryConnectionFailure() async throws {
       let artifact = try v3WebSocketArtifact(
         port: 9,
@@ -219,6 +244,55 @@ final class ConnectorV2Tests: XCTestCase {
         XCTAssertEqual(spendCount, 1)
         XCTAssertEqual(retireCount, 0)
         XCTAssertEqual(prepareCount, 1)
+      }
+    }
+  #endif
+
+  #if os(iOS)
+    func testProductionV3IOSAdapterBuildsPinnedTLSHandlerAndVerifiesLeaf() async throws {
+      let material = try ConnectorTestTLS.load()
+      let der = Data(try material.certificate.toDERBytes())
+      let pin = Data(SHA256.hash(data: der))
+      let policy = TransportSecurityPolicyV3.pin(
+        serverName: "localhost", activeLeafDERSHA256: [pin])
+
+      let handler = try NativeTLSPolicyAdapterV3.makeClientHandlerFactory(
+        policy: policy, serverHostname: "localhost")
+      _ = try handler.make()
+      // The shared fixture intentionally has a ten-year lifetime. The v3
+      // profile rejects it before pin comparison, proving the iOS callback
+      // remains fail-closed even when the leaf hash matches.
+      XCTAssertThrowsError(
+        try NativeTLSPolicyAdapterV3.verifyPinnedCertificate(
+          material.certificate,
+          activePins: [pin],
+          nowUnixSeconds: Int64(Date().timeIntervalSince1970))
+      ) { error in
+        XCTAssertEqual(error as? TransportSecurityFailureV3, .unknownTLS)
+      }
+
+      let candidate = CanonicalCandidateV3(
+        carrier: "websocket",
+        id: "ios-test",
+        normalizedURL: "wss://127.0.0.1:9/flowersec/v3/direct",
+        tls: TLSPolicyWireV3(
+          mode: "pin",
+          pins: [CertificatePinWireV3(
+            algorithm: "sha-256",
+            valueBase64URL: pin.base64URLEncodedStringV3(),
+            notAfterUnixSeconds: UInt64(Date().timeIntervalSince1970) + 3_600)]),
+        wireProfile: "flowersec-direct/3")
+      do {
+        _ = try await AppleWebSocketRuntimeAdapterV3().prepare(
+          candidate: candidate,
+          path: .direct,
+          role: .client,
+          options: ConnectorOptions(
+            origin: "https://client.example", connectTimeout: .milliseconds(100)),
+          activePinHashes: [pin])
+        XCTFail("closed endpoint unexpectedly established an iOS v3 carrier")
+      } catch let error as SwiftRuntimeErrorV3 {
+        XCTAssertEqual(error, .connectionFailed)
       }
     }
   #endif
@@ -540,7 +614,8 @@ final class ConnectorV2Tests: XCTestCase {
     #endif
   }
 
-  func testConnectionControllerV2ReplacesTerminatedGoWSSSessionWithoutReplay() async throws {
+  #if os(macOS)
+    func testConnectionControllerV2ReplacesTerminatedGoWSSSessionWithoutReplay() async throws {
     let scenario = try connectionControllerScenario(named: "connect_and_replace_after_termination")
     XCTAssertEqual(scenario.sessions, ["session-1", "session-2"])
     XCTAssertEqual(scenario.replay, [])
@@ -591,7 +666,8 @@ final class ConnectorV2Tests: XCTestCase {
     let sourceCounts = await source.counts()
     XCTAssertEqual(sourceCounts.acquisitions, 2)
     XCTAssertEqual(sourceCounts.spends, 2)
-  }
+    }
+  #endif
 
   func testRealLocalWSSDirectEndToEnd() async throws {
     try await exerciseRealWSS(vectorIndex: 0)
@@ -650,11 +726,12 @@ final class ConnectorV2Tests: XCTestCase {
     XCTAssertThrowsError(try parseArtifactV2(Data(nonLoopback.utf8)))
   }
 
-  func testRealGoWSSDirectEndToEnd() async throws {
-    try await exerciseGoWSS(path: "direct", vectorIndex: 0)
-  }
+  #if os(macOS)
+    func testRealGoWSSDirectEndToEnd() async throws {
+      try await exerciseGoWSS(path: "direct", vectorIndex: 0)
+    }
 
-  func testRealGoWSSPublicNotificationSubscription() async throws {
+    func testRealGoWSSPublicNotificationSubscription() async throws {
     let peer = try GoWSSPeer.start(path: "direct", serverNotify: true)
     defer { peer.stop() }
     let artifact = try goWSSArtifact(endpoint: peer.endpoint, vectorIndex: 0)
@@ -684,11 +761,12 @@ final class ConnectorV2Tests: XCTestCase {
 
     let result = peer.finish()
     XCTAssertEqual(result.status, 0, result.stderr)
-  }
+    }
 
-  func testRealGoWSSTunnelEndToEnd() async throws {
-    try await exerciseGoWSS(path: "tunnel", vectorIndex: 1)
-  }
+    func testRealGoWSSTunnelEndToEnd() async throws {
+      try await exerciseGoWSS(path: "tunnel", vectorIndex: 1)
+    }
+  #endif
 
   func testRealLocalWSSTunnelBridgesTwoAdmittedLegsEndToEnd() async throws {
     let tls = try ConnectorTestTLS.load()
@@ -1077,7 +1155,8 @@ final class ConnectorV2Tests: XCTestCase {
     )!
   }
 
-  private func exerciseGoWSS(path: String, vectorIndex: Int) async throws {
+  #if os(macOS)
+    private func exerciseGoWSS(path: String, vectorIndex: Int) async throws {
     let process = Process()
     let output = Pipe()
     let errors = Pipe()
@@ -1163,7 +1242,8 @@ final class ConnectorV2Tests: XCTestCase {
     process.waitUntilExit()
     let peerError = errors.fileHandleForReading.readDataToEndOfFile()
     XCTAssertEqual(process.terminationStatus, 0, String(decoding: peerError, as: UTF8.self))
-  }
+    }
+  #endif
 
   private func goWSSArtifact(endpoint: GoWSSEndpoint, vectorIndex: Int) throws -> ArtifactV2 {
     let source = try loadArtifactJSON(index: vectorIndex)
@@ -1355,6 +1435,7 @@ private struct GoWSSNotification: Codable, Equatable, Sendable {
   let state: String
 }
 
+#if os(macOS)
 private final class GoWSSPeer: @unchecked Sendable {
   let endpoint: GoWSSEndpoint
   private let process: Process
@@ -1436,6 +1517,7 @@ private final class GoWSSPeer: @unchecked Sendable {
     }
   }
 }
+#endif
 
 private actor ControllerGoWSSArtifactSourceV2: ArtifactSourceV2 {
   private var artifacts: [ArtifactV2]
@@ -1543,10 +1625,38 @@ private struct ConnectorTestTLS {
         privateKey: NIOSSLPrivateKey(bytes: Array(privateKeyPEM), format: .pem)
       )
     }
+
+    static func makeCertificate(curve: String, days: Int) throws -> NIOSSLCertificate {
+      let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("flowersec-swift-v3-profile-\(UUID().uuidString)", isDirectory: true)
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let certificateURL = directory.appendingPathComponent("leaf.pem")
+      let keyURL = directory.appendingPathComponent("leaf-key.pem")
+      let process = Process()
+      let errors = Pipe()
+      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+      process.arguments = [
+        "openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:\(curve)",
+        "-sha256", "-nodes", "-days", String(days), "-subj", "/CN=localhost",
+        "-addext", "basicConstraints=critical,CA:FALSE", "-addext", "keyUsage=critical,digitalSignature",
+        "-addext", "extendedKeyUsage=serverAuth", "-addext", "subjectAltName=DNS:localhost",
+        "-keyout", keyURL.path, "-out", certificateURL.path,
+      ]
+      process.standardOutput = FileHandle.nullDevice
+      process.standardError = errors
+      try process.run()
+      process.waitUntilExit()
+      guard process.terminationStatus == 0 else {
+        throw ConnectorGeneratedTLSError.failed(
+          String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "openssl profile")
+      }
+      return try XCTUnwrap(NIOSSLCertificate.fromPEMBytes(Array(Data(contentsOf: certificateURL))).first)
+    }
   #endif
 }
 
-#if os(macOS) || os(iOS)
+#if os(macOS)
   private final class InvalidProofPeer: @unchecked Sendable {
     let process: Process
     let temporaryDirectory: URL

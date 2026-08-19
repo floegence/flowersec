@@ -30,12 +30,20 @@ let leafCertificate: Buffer;
 let leafKey: Buffer;
 let expiredLeafCertificate: Buffer;
 let futureLeafCertificate: Buffer;
+let expiredLeafDigest: Buffer;
+let futureLeafDigest: Buffer;
 let pinCertificate: Buffer;
 let pinKey: Buffer;
 let pinDigest: Buffer;
 let nextPinCertificate: Buffer;
 let nextPinKey: Buffer;
 let nextPinDigest: Buffer;
+let rsaPinCertificate: Buffer;
+let rsaPinKey: Buffer;
+let rsaPinDigest: Buffer;
+let overlongPinCertificate: Buffer;
+let overlongPinKey: Buffer;
+let overlongPinDigest: Buffer;
 let legacyPinDER: Buffer;
 
 describe("transport v3 Node TLS verifier and WebSocket production path", () => {
@@ -47,12 +55,20 @@ describe("transport v3 Node TLS verifier and WebSocket production path", () => {
     leafKey = readFileSync(join(directory, "leaf.key"));
     expiredLeafCertificate = readFileSync(join(directory, "leaf-expired.pem"));
     futureLeafCertificate = readFileSync(join(directory, "leaf-future.pem"));
+    expiredLeafDigest = createHash("sha256").update(readFileSync(join(directory, "leaf-expired.der"))).digest();
+    futureLeafDigest = createHash("sha256").update(readFileSync(join(directory, "leaf-future.der"))).digest();
     pinCertificate = readFileSync(join(directory, "pin.pem"));
     pinKey = readFileSync(join(directory, "pin.key"));
     pinDigest = createHash("sha256").update(readFileSync(join(directory, "pin.der"))).digest();
     nextPinCertificate = readFileSync(join(directory, "pin-next.pem"));
     nextPinKey = readFileSync(join(directory, "pin-next.key"));
     nextPinDigest = createHash("sha256").update(readFileSync(join(directory, "pin-next.der"))).digest();
+    rsaPinCertificate = readFileSync(join(directory, "pin-rsa.pem"));
+    rsaPinKey = readFileSync(join(directory, "pin-rsa.key"));
+    rsaPinDigest = createHash("sha256").update(readFileSync(join(directory, "pin-rsa.der"))).digest();
+    overlongPinCertificate = readFileSync(join(directory, "pin-overlong.pem"));
+    overlongPinKey = readFileSync(join(directory, "pin-overlong.key"));
+    overlongPinDigest = createHash("sha256").update(readFileSync(join(directory, "pin-overlong.der"))).digest();
     legacyPinDER = certificateWithVersion(readFileSync(join(directory, "pin.der")), 1);
   });
 
@@ -181,6 +197,30 @@ describe("transport v3 Node TLS verifier and WebSocket production path", () => {
       } finally {
         await closeServer(nextServer);
       }
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test.each([
+    ["rsa", () => rsaPinCertificate, () => rsaPinKey, () => rsaPinDigest],
+    ["overlong", () => overlongPinCertificate, () => overlongPinKey, () => overlongPinDigest],
+    ["not-yet-valid", () => futureLeafCertificate, () => leafKey, () => futureLeafDigest],
+    ["expired", () => expiredLeafCertificate, () => leafKey, () => expiredLeafDigest],
+  ] as const)("rejects a hash-matched %s pin profile through the production TLS adapter", async (
+    _name,
+    certificate,
+    key,
+    digest,
+  ) => {
+    const server = createTLSServer({ cert: certificate(), key: key() });
+    const port = await listen(server);
+    try {
+      await expect(connectNodeTLSSocketV3(
+        websocketCandidate(port, pinPolicy(digest())),
+        nowSeconds(),
+        { timeoutMilliseconds: 2_000 },
+      )).rejects.toMatchObject({ code: "tls_failed", detail: "unknown" });
     } finally {
       await closeServer(server);
     }
@@ -328,6 +368,10 @@ function generateCertificates(target: string): void {
       "ca", "-batch", "-config", join(target, "ca.cnf"), "-in", join(target, "leaf.csr"),
       "-startdate", start, "-enddate", end, "-out", join(target, `leaf-${name}.pem`),
     ]);
+    runOpenSSL([
+      "x509", "-in", join(target, `leaf-${name}.pem`), "-outform", "DER",
+      "-out", join(target, `leaf-${name}.der`),
+    ]);
   }
   runOpenSSL(["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", join(target, "pin.key")]);
   runOpenSSL([
@@ -345,6 +389,30 @@ function generateCertificates(target: string): void {
     "-out", join(target, "pin-next.pem"),
   ]);
   runOpenSSL(["x509", "-in", join(target, "pin-next.pem"), "-outform", "DER", "-out", join(target, "pin-next.der")]);
+
+  runOpenSSL([
+    "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048",
+    "-out", join(target, "pin-rsa.key"),
+  ]);
+  runOpenSSL([
+    "req", "-x509", "-new", "-key", join(target, "pin-rsa.key"), "-sha256", "-days", "2",
+    "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
+    "-addext", "basicConstraints=critical,CA:FALSE", "-addext", "keyUsage=critical,digitalSignature",
+    "-out", join(target, "pin-rsa.pem"),
+  ]);
+  runOpenSSL(["x509", "-in", join(target, "pin-rsa.pem"), "-outform", "DER", "-out", join(target, "pin-rsa.der")]);
+
+  runOpenSSL(["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", join(target, "pin-overlong.key")]);
+  runOpenSSL([
+    "req", "-x509", "-new", "-key", join(target, "pin-overlong.key"), "-sha256", "-days", "30",
+    "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
+    "-addext", "basicConstraints=critical,CA:FALSE", "-addext", "keyUsage=critical,digitalSignature",
+    "-out", join(target, "pin-overlong.pem"),
+  ]);
+  runOpenSSL([
+    "x509", "-in", join(target, "pin-overlong.pem"), "-outform", "DER",
+    "-out", join(target, "pin-overlong.der"),
+  ]);
 
 }
 

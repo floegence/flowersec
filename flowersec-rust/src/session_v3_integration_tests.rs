@@ -4232,8 +4232,10 @@ async fn concurrent_close_waits_for_the_owned_close_workflow() {
         entered: entered.clone(),
         release: release.clone(),
     });
-    let client_config = regression_config(SessionRole::Client, "concurrent-close", 1, None);
-    let server_config = regression_config(SessionRole::Server, "concurrent-close", 1, None);
+    let mut client_config = regression_config(SessionRole::Client, "concurrent-close", 1, None);
+    let mut server_config = regression_config(SessionRole::Server, "concurrent-close", 1, None);
+    client_config.deadlines.close_flush = Duration::from_millis(500);
+    server_config.deadlines.close_flush = Duration::from_millis(500);
     let (client, server) = tokio::join!(
         establish_session_v3(client_carrier, client_config),
         establish_session_v3(server_carrier, server_config),

@@ -1531,6 +1531,10 @@ mod unreliable_message_tests {
             let v3 = mutation["v3"].as_str().unwrap();
             let v2 = mutation["v2"].as_str().unwrap();
             let expected: Vec<u8> = match id {
+                "session-contract" => crate::artifact_v3::SESSION_CONTRACT_LABEL_V3.to_vec(),
+                "candidates" => crate::artifact_v3::CANDIDATES_LABEL_V3.to_vec(),
+                "admission" => crate::artifact_v3::ADMISSION_LABEL_V3.to_vec(),
+                "runtime-capability" => crate::transport_v3::RUNTIME_CAPABILITY_LABEL_V3.to_vec(),
                 "handshake" => crate::transport_v3::HANDSHAKE_DOMAIN_V3.to_vec(),
                 "server-finished" => crate::transport_v3::SERVER_FINISHED_LABEL_V3.to_vec(),
                 "client-finished" => crate::transport_v3::CLIENT_FINISHED_LABEL_V3.to_vec(),
@@ -1552,6 +1556,7 @@ mod unreliable_message_tests {
                 "setup-mac" => [SETUP_MAC_LABEL_V3, b"\0"].concat(),
                 "record-aad" => [RECORD_AAD_LABEL_V3, b"\0"].concat(),
                 "open" => OPEN_DOMAIN_V3.to_vec(),
+                "acceptor-admissions" => crate::artifact_v3::ACCEPTOR_ADMISSIONS_LABEL_V3.to_vec(),
                 other => panic!("unknown crypto label mutation {other}"),
             };
             assert_eq!(v3.as_bytes(), expected.as_slice(), "{id} production label");

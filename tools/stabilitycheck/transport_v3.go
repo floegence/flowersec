@@ -45,6 +45,10 @@ type transportV3Registry struct {
 		SamePinRetry       bool `json:"same_pin_policy_retry"`
 		PinToCA            bool `json:"replacement_same_endpoint_pin_to_ca"`
 	} `json:"controller"`
+	Capability struct {
+		UnsupportedReasons                  []string `json:"unsupported_reasons"`
+		FirstReleaseEmitsAdapterNotComposed *bool    `json:"first_release_emits_adapter_not_composed"`
+	} `json:"capability"`
 	URLNormalization struct {
 		InputUTF8BytesMin             int      `json:"input_utf8_bytes_min"`
 		InputUTF8BytesMax             int      `json:"input_utf8_bytes_max"`
@@ -94,6 +98,95 @@ type transportV3IsolationMutation struct {
 	ErrorCode string `json:"error_code"`
 }
 
+type transportV3InvalidCapabilityVector struct {
+	ID        string `json:"id"`
+	Value     string `json:"value"`
+	ErrorCode string `json:"error_code"`
+}
+
+var transportV3CryptoLabelMutations = []transportV3IsolationMutation{
+	{ID: "session-contract", V3: "flowersec-v3-session-contract\x00", V2: "flowersec-v2-session-contract\x00", ErrorCode: "version_isolation"},
+	{ID: "candidates", V3: "flowersec-v3-candidates\x00", V2: "flowersec-v2-candidates\x00", ErrorCode: "version_isolation"},
+	{ID: "admission", V3: "flowersec-v3-admission\x00", V2: "flowersec-v2-admission\x00", ErrorCode: "version_isolation"},
+	{ID: "runtime-capability", V3: "flowersec-v3-runtime-capability\x00", V2: "flowersec-v2-runtime-capability\x00", ErrorCode: "version_isolation"},
+	{ID: "handshake", V3: "flowersec-v3-handshake\x00", V2: "flowersec-v2-handshake\x00", ErrorCode: "version_isolation"},
+	{ID: "server-finished", V3: "flowersec v3 server finished", V2: "flowersec v2 server finished", ErrorCode: "version_isolation"},
+	{ID: "client-finished", V3: "flowersec v3 client finished", V2: "flowersec v2 client finished", ErrorCode: "version_isolation"},
+	{ID: "epoch-zero", V3: "flowersec v3 epoch zero", V2: "flowersec v2 epoch zero", ErrorCode: "version_isolation"},
+	{ID: "control-root", V3: "flowersec v3 control root", V2: "flowersec v2 control root", ErrorCode: "version_isolation"},
+	{ID: "stream-root", V3: "flowersec v3 stream root", V2: "flowersec v2 stream root", ErrorCode: "version_isolation"},
+	{ID: "setup-root", V3: "flowersec v3 setup root", V2: "flowersec v2 setup root", ErrorCode: "version_isolation"},
+	{ID: "rekey-root", V3: "flowersec v3 rekey root", V2: "flowersec v2 rekey root", ErrorCode: "version_isolation"},
+	{ID: "next-epoch", V3: "flowersec v3 next epoch", V2: "flowersec v2 next epoch", ErrorCode: "version_isolation"},
+	{ID: "stream", V3: "flowersec v3 stream", V2: "flowersec v2 stream", ErrorCode: "version_isolation"},
+	{ID: "control", V3: "flowersec v3 control", V2: "flowersec v2 control", ErrorCode: "version_isolation"},
+	{ID: "record-key", V3: "flowersec v3 record key", V2: "flowersec v2 record key", ErrorCode: "version_isolation"},
+	{ID: "nonce", V3: "flowersec v3 nonce", V2: "flowersec v2 nonce", ErrorCode: "version_isolation"},
+	{ID: "unreliable-root", V3: "flowersec v3 unreliable root", V2: "flowersec v2 unreliable root", ErrorCode: "version_isolation"},
+	{ID: "unreliable", V3: "flowersec v3 unreliable", V2: "flowersec v2 unreliable", ErrorCode: "version_isolation"},
+	{ID: "unreliable-key", V3: "flowersec v3 unreliable key", V2: "flowersec v2 unreliable key", ErrorCode: "version_isolation"},
+	{ID: "unreliable-nonce", V3: "flowersec v3 unreliable nonce", V2: "flowersec v2 unreliable nonce", ErrorCode: "version_isolation"},
+	{ID: "unreliable-aad", V3: "flowersec-v3-unreliable", V2: "flowersec-v2-unreliable", ErrorCode: "version_isolation"},
+	{ID: "setup-mac", V3: "flowersec-v3-setup\x00", V2: "flowersec-v2-setup\x00", ErrorCode: "version_isolation"},
+	{ID: "record-aad", V3: "flowersec-v3-record\x00", V2: "flowersec-v2-record\x00", ErrorCode: "version_isolation"},
+	{ID: "open", V3: "flowersec-v3-open\x00", V2: "flowersec-v2-open\x00", ErrorCode: "version_isolation"},
+	{ID: "acceptor-admissions", V3: "flowersec-v3-acceptor-admissions\x00", V2: "flowersec-v2-acceptor-admissions\x00", ErrorCode: "version_isolation"},
+}
+
+func transportV3V2CryptoLabels() []string {
+	labels := make([]string, 0, len(transportV3CryptoLabelMutations))
+	for _, mutation := range transportV3CryptoLabelMutations {
+		labels = append(labels, mutation.V2)
+	}
+	return labels
+}
+
+func validateTransportV3AdapterNotComposedVector(vectors []transportV3InvalidCapabilityVector) error {
+	const vectorID = "adapter-not-composed-first-release"
+	found := false
+	for _, vector := range vectors {
+		if vector.ID != vectorID {
+			continue
+		}
+		if found {
+			return fmt.Errorf("v3 capability fixture duplicates %s", vectorID)
+		}
+		found = true
+		if vector.ErrorCode != "invalid_capability" {
+			return fmt.Errorf("v3 capability fixture %s has error code %q", vectorID, vector.ErrorCode)
+		}
+		var descriptor struct {
+			Language      string `json:"language"`
+			Runtime       string `json:"runtime"`
+			SchemaVersion int    `json:"schemaVersion"`
+			Tuples        []struct {
+				Carrier string `json:"carrier"`
+			} `json:"tuples"`
+			Unsupported []struct {
+				Carrier string `json:"carrier"`
+				Reason  string `json:"reason"`
+			} `json:"unsupported"`
+		}
+		if err := json.Unmarshal([]byte(vector.Value), &descriptor); err != nil {
+			return fmt.Errorf("decode v3 capability fixture %s: %w", vectorID, err)
+		}
+		if descriptor.Language != "go" || descriptor.Runtime != "native" || descriptor.SchemaVersion != 3 ||
+			len(descriptor.Tuples) != 8 || len(descriptor.Unsupported) != 1 ||
+			descriptor.Unsupported[0].Carrier != "webtransport" || descriptor.Unsupported[0].Reason != "adapter_not_composed" {
+			return fmt.Errorf("v3 capability fixture %s does not isolate the first-release reason rule", vectorID)
+		}
+		for _, tuple := range descriptor.Tuples {
+			if tuple.Carrier == "webtransport" {
+				return fmt.Errorf("v3 capability fixture %s overlaps its unsupported carrier", vectorID)
+			}
+		}
+	}
+	if !found {
+		return fmt.Errorf("v3 capability fixture omits %s", vectorID)
+	}
+	return nil
+}
+
 var transportV3ConsumerLanguages = []string{"go", "rust", "swift", "typescript"}
 
 var transportV3ForbiddenDomain = regexp.MustCompile(`(?i)(?:\b(?:FSB2|FSA2|FSC2|FSH2|FSS2|FSR2|FSD2)\b|flowersec(?:/2|[-.]direct/2|[-.]tunnel/2|[-.]v2)|flowersec(?:/v2|/webtransport/v2)/[a-z/]+|flowersec\.(?:direct|tunnel)\.v2|flowersec v2 (?:server finished|client finished|epoch zero|control root|stream root|setup root|rekey root|next epoch|stream|control|record key|nonce|unreliable)|flowersec-v2-(?:handshake|setup|record|open|unreliable))`)
@@ -141,6 +234,10 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	if !slices.Equal(registry.TLSPolicy.Modes, []string{"ca", "pin"}) || registry.TLSPolicy.ModeFallback || registry.Controller.MaximumReplacement != 1 || registry.Controller.SamePinRetry || registry.Controller.PinToCA {
 		return fmt.Errorf("%s TLS or replacement invariants drifted", transportV3ContractPath)
 	}
+	if !slices.Contains(registry.Capability.UnsupportedReasons, "adapter_not_composed") ||
+		registry.Capability.FirstReleaseEmitsAdapterNotComposed == nil || *registry.Capability.FirstReleaseEmitsAdapterNotComposed {
+		return fmt.Errorf("%s first-release capability reason invariants drifted", transportV3ContractPath)
+	}
 	if !slices.Equal(registry.URLNormalization.ForbiddenCharacters, []string{`\`, "?", "#", "%"}) {
 		return fmt.Errorf("%s URL forbidden characters drifted", transportV3ContractPath)
 	}
@@ -158,7 +255,8 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 		!slices.Equal(registry.VersionIsolation.V2Identifiers.Magic, []string{"FSB2", "FSA2", "FSC2", "FSH2", "FSS2", "FSR2", "FSD2"}) ||
 		!slices.Equal(registry.VersionIsolation.V2Identifiers.Profiles, []string{"flowersec/2", "flowersec-direct/2", "flowersec-tunnel/2"}) ||
 		!slices.Equal(registry.VersionIsolation.V2Identifiers.ALPN, []string{"flowersec-direct/2", "flowersec-tunnel/2"}) ||
-		len(registry.VersionIsolation.V2Identifiers.Paths) != 6 || len(registry.VersionIsolation.V2Identifiers.CryptoLabels) != 21 {
+		len(registry.VersionIsolation.V2Identifiers.Paths) != 6 ||
+		!slices.Equal(registry.VersionIsolation.V2Identifiers.CryptoLabels, transportV3V2CryptoLabels()) {
 		return fmt.Errorf("%s version isolation registry drifted", transportV3ContractPath)
 	}
 	if len(registry.Docs) != 2 {
@@ -335,7 +433,7 @@ func validateTransportV3FixtureShapes(repoRoot string) error {
 		return err
 	}
 	if len(isolation.Frames) != 7 || len(isolation.ProfileMutations) != 3 || len(isolation.PathMutations) != 6 ||
-		len(isolation.ALPNMutations) != 2 || len(isolation.CryptoLabelMutations) != 21 {
+		len(isolation.ALPNMutations) != 2 || !slices.Equal(isolation.CryptoLabelMutations, transportV3CryptoLabelMutations) {
 		return fmt.Errorf("v3 version-isolation fixture shape drifted")
 	}
 	for _, frame := range isolation.Frames {
@@ -407,6 +505,7 @@ func validateTransportV3FixtureShapes(repoRoot string) error {
 			CanonicalJSON string `json:"canonical_json"`
 			DigestHex     string `json:"digest_hex"`
 		} `json:"vectors"`
+		Invalid []transportV3InvalidCapabilityVector `json:"invalid"`
 	}
 	if err := read("capability_vectors.json", &capability); err != nil {
 		return err
@@ -422,9 +521,15 @@ func validateTransportV3FixtureShapes(repoRoot string) error {
 		if vector.CanonicalJSON == "" || vector.DigestHex == "" {
 			return fmt.Errorf("v3 capability fixture %s omits canonical/digest evidence", vector.Name)
 		}
+		if strings.Contains(vector.CanonicalJSON, `"reason":"adapter_not_composed"`) {
+			return fmt.Errorf("v3 first-release capability fixture %s emits adapter_not_composed", vector.Name)
+		}
 	}
 	if !slices.Equal(gotCapabilityNames, wantCapabilityNames) {
 		return fmt.Errorf("v3 capability fixture identities = %v, want %v", gotCapabilityNames, wantCapabilityNames)
+	}
+	if err := validateTransportV3AdapterNotComposedVector(capability.Invalid); err != nil {
+		return err
 	}
 
 	var idna struct {

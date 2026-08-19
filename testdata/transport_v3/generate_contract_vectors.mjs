@@ -843,6 +843,10 @@ const v2ALPNIdentifiers = [
   ["tunnel", "flowersec-tunnel/3", "flowersec-tunnel/2"],
 ].map(([id, v3, v2]) => ({ id, v3, v2, error_code: "version_isolation" }));
 const v2CryptoLabels = [
+  ["session-contract", "flowersec-v3-session-contract\0", "flowersec-v2-session-contract\0"],
+  ["candidates", "flowersec-v3-candidates\0", "flowersec-v2-candidates\0"],
+  ["admission", "flowersec-v3-admission\0", "flowersec-v2-admission\0"],
+  ["runtime-capability", "flowersec-v3-runtime-capability\0", "flowersec-v2-runtime-capability\0"],
   ["handshake", "flowersec-v3-handshake\0", "flowersec-v2-handshake\0"],
   ["server-finished", "flowersec v3 server finished", "flowersec v2 server finished"],
   ["client-finished", "flowersec v3 client finished", "flowersec v2 client finished"],
@@ -864,6 +868,7 @@ const v2CryptoLabels = [
   ["setup-mac", "flowersec-v3-setup\0", "flowersec-v2-setup\0"],
   ["record-aad", "flowersec-v3-record\0", "flowersec-v2-record\0"],
   ["open", "flowersec-v3-open\0", "flowersec-v2-open\0"],
+  ["acceptor-admissions", "flowersec-v3-acceptor-admissions\0", "flowersec-v2-acceptor-admissions\0"],
 ].map(([id, v3, v2]) => ({ id, v3, v2, error_code: "version_isolation" }));
 write("version_isolation_vectors.json", {
   version: 3,
@@ -1002,6 +1007,10 @@ function invalidCapability(id, mutate) {
 
 const capabilityInvalid = [
   invalidCapability("schema-version-v2", (value) => { value.schemaVersion = 2; }),
+  invalidCapability("adapter-not-composed-first-release", (value) => {
+    value.tuples = value.tuples.filter(({ carrier }) => carrier !== "webtransport");
+    value.unsupported = [{ carrier: "webtransport", reason: "adapter_not_composed" }];
+  }),
   invalidCapability("duplicate-tuple-identity", (value) => { value.tuples.splice(1, 0, structuredClone(value.tuples[0])); }),
   invalidCapability("dial-security-modes-empty", (value) => { value.tuples.find(({ networkMode }) => networkMode === "dial").securityModes = []; }),
   invalidCapability("listen-security-modes-ca", (value) => { value.tuples.find(({ networkMode }) => networkMode === "listen").securityModes = ["ca"]; }),

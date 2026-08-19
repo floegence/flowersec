@@ -152,6 +152,7 @@ func registry() []registeredTest {
 	if runtime.GOOS == "darwin" {
 		tests = append(tests,
 			commandEntry("connector/swift-v3", "acceptance", 5*time.Minute, "swift", "test", "--package-path", "flowersec-swift", "--filter", "ConnectorV2Tests/testProductionV3"),
+			commandEntry("connector/swift-v3/ios-simulator", "acceptance", 5*time.Minute, "xcodebuild", "-scheme", "Flowersec", "-destination", "platform=iOS Simulator,id=1FD0791F-2EA5-4C94-A160-DE91F5D87661", "-parallel-testing-enabled", "NO", "test", "-only-testing:FlowersecTests/ConnectorV2Tests/testProductionV3IOSAdapterBuildsPinnedTLSHandlerAndVerifiesLeaf", "CODE_SIGNING_ALLOWED=NO"),
 			commandEntryWithEnvironment("connector/swift-v3/interop/swift-go/wss/direct", "acceptance", 5*time.Minute, []string{"FLOWERSEC_PARITY_CLIENT_PROFILE=swift", "FLOWERSEC_PARITY_TEST_ID=interop/swift-go/wss/direct"}, "node", "scripts/test-server-parity-direct.mjs"),
 			commandEntry("controller/swift", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectionControllerTests"),
 			commandEntry("compat/v2/controller/swift", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ConnectionControllerV2Tests"),

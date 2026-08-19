@@ -533,6 +533,10 @@ struct TransportV3Tests {
       let v2 = try #require(mutation["v2"] as? String)
       let expected: String
       switch id {
+      case "session-contract": expected = TransportV3Contract.sessionContractLabel
+      case "candidates": expected = TransportV3Contract.candidatesLabel
+      case "admission": expected = TransportV3Contract.admissionLabel
+      case "runtime-capability": expected = TransportV3Contract.runtimeCapabilityLabel
       case "handshake": expected = TransportV3Contract.handshakeDomain
       case "server-finished": expected = TransportV3Contract.serverFinishedLabel
       case "client-finished": expected = TransportV3Contract.clientFinishedLabel
@@ -554,6 +558,7 @@ struct TransportV3Tests {
       case "setup-mac": expected = TransportV3Contract.setupDomain + "\0"
       case "record-aad": expected = TransportV3Contract.recordDomain + "\0"
       case "open": expected = TransportV3Contract.openDomain
+      case "acceptor-admissions": expected = TransportV3Contract.acceptorAdmissionsLabel
       default:
         Issue.record("unexpected crypto isolation label \(id)")
         continue

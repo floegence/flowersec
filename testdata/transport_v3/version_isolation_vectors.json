@@ -123,6 +123,30 @@
   ],
   "crypto_label_mutations": [
     {
+      "id": "session-contract",
+      "v3": "flowersec-v3-session-contract\u0000",
+      "v2": "flowersec-v2-session-contract\u0000",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "candidates",
+      "v3": "flowersec-v3-candidates\u0000",
+      "v2": "flowersec-v2-candidates\u0000",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "admission",
+      "v3": "flowersec-v3-admission\u0000",
+      "v2": "flowersec-v2-admission\u0000",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "runtime-capability",
+      "v3": "flowersec-v3-runtime-capability\u0000",
+      "v2": "flowersec-v2-runtime-capability\u0000",
+      "error_code": "version_isolation"
+    },
+    {
       "id": "handshake",
       "v3": "flowersec-v3-handshake\u0000",
       "v2": "flowersec-v2-handshake\u0000",
@@ -247,6 +271,12 @@
       "v3": "flowersec-v3-open\u0000",
       "v2": "flowersec-v2-open\u0000",
       "error_code": "version_isolation"
+    },
+    {
+      "id": "acceptor-admissions",
+      "v3": "flowersec-v3-acceptor-admissions\u0000",
+      "v2": "flowersec-v2-acceptor-admissions\u0000",
+      "error_code": "version_isolation"
     }
   ],
   "identifier_sets": {
@@ -360,6 +390,30 @@
       }
     ],
     "crypto_label": [
+      {
+        "id": "session-contract",
+        "v3": "flowersec-v3-session-contract\u0000",
+        "v2": "flowersec-v2-session-contract\u0000",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "candidates",
+        "v3": "flowersec-v3-candidates\u0000",
+        "v2": "flowersec-v2-candidates\u0000",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "admission",
+        "v3": "flowersec-v3-admission\u0000",
+        "v2": "flowersec-v2-admission\u0000",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "runtime-capability",
+        "v3": "flowersec-v3-runtime-capability\u0000",
+        "v2": "flowersec-v2-runtime-capability\u0000",
+        "error_code": "version_isolation"
+      },
       {
         "id": "handshake",
         "v3": "flowersec-v3-handshake\u0000",
@@ -484,6 +538,12 @@
         "id": "open",
         "v3": "flowersec-v3-open\u0000",
         "v2": "flowersec-v2-open\u0000",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "acceptor-admissions",
+        "v3": "flowersec-v3-acceptor-admissions\u0000",
+        "v2": "flowersec-v2-acceptor-admissions\u0000",
         "error_code": "version_isolation"
       }
     ]

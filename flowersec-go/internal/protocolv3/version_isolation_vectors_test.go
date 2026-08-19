@@ -22,6 +22,7 @@ import (
 	websocketv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocketv3"
 	webtransportv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/webtransportv3"
 	internalhkdf "github.com/floegence/flowersec/flowersec-go/v3/internal/hkdf"
+	runtimev3 "github.com/floegence/flowersec/flowersec-go/v3/internal/runtimev3"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -511,6 +512,104 @@ func bindVersionIsolationCryptoLabel(t *testing.T, id, label string, seed versio
 	var got []byte
 	var expected func(string) []byte
 	switch id {
+	case "session-contract":
+		artifact := loadVersionIsolationArtifact(t)
+		gotHash, _, err := artifactv3.ComputeSessionContractHash(artifact.Session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = gotHash[:]
+		expected = func(value string) []byte {
+			canonical, err := json.Marshal(struct {
+				AllowedSuites                 []uint16 `json:"allowed_suites"`
+				ChannelID                     string   `json:"channel_id"`
+				DefaultSuite                  uint16   `json:"default_suite"`
+				EstablishTimeoutSeconds       uint16   `json:"establish_timeout_seconds"`
+				IdleTimeoutSeconds            uint32   `json:"idle_timeout_seconds"`
+				MaxInboundStreams             uint16   `json:"max_inbound_streams"`
+				Profile                       string   `json:"profile"`
+				RekeyCompletionTimeoutSeconds uint16   `json:"rekey_completion_timeout_seconds"`
+				RekeyPrepareTimeoutSeconds    uint16   `json:"rekey_prepare_timeout_seconds"`
+				SelectedFeatures              uint32   `json:"selected_features"`
+			}{artifact.Session.AllowedSuites, artifact.Session.ChannelID, artifact.Session.DefaultSuite,
+				artifact.Session.EstablishTimeoutSeconds, artifact.Session.IdleTimeoutSeconds,
+				artifact.Session.MaxInboundStreams, artifactv3.Profile, artifact.Session.RekeyCompletionTimeoutSeconds,
+				artifact.Session.RekeyPrepareTimeoutSeconds, artifact.Session.SelectedFeatures})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return versionIsolationLabeledHash(value, canonical)
+		}
+	case "candidates":
+		artifact := loadVersionIsolationArtifact(t)
+		_, canonical, gotHash, err := artifactv3.CanonicalizeCandidates(artifact.Path.Kind, artifact.Path.Candidates)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = gotHash[:]
+		expected = func(value string) []byte { return versionIsolationLabeledHash(value, canonical) }
+	case "admission":
+		artifact := loadVersionIsolationArtifact(t)
+		request, err := artifactv3.BuildRequest(*artifact, artifact.Path.Candidates[0].ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		frame, err := artifactv3.MarshalRequest(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotHash := artifactv3.AdmissionBinding(frame)
+		got = gotHash[:]
+		expected = func(value string) []byte {
+			digest := sha256.Sum256(append([]byte(value), frame...))
+			return digest[:]
+		}
+	case "acceptor-admissions":
+		artifact := loadVersionIsolationArtifact(t)
+		candidates, _, _, err := artifactv3.CanonicalizeCandidates(artifact.Path.Kind, artifact.Path.Candidates)
+		if err != nil {
+			t.Fatal(err)
+		}
+		frames := make([][]byte, 0, len(candidates))
+		for _, candidate := range candidates {
+			request, err := artifactv3.BuildRequest(*artifact, candidate.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			frame, err := artifactv3.MarshalRequest(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			frames = append(frames, frame)
+		}
+		gotHash, err := artifactv3.AcceptorAdmissionsHash(frames)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = gotHash[:]
+		expected = func(value string) []byte {
+			input := []byte(value)
+			for _, frame := range frames {
+				var length [4]byte
+				binary.BigEndian.PutUint32(length[:], uint32(len(frame)))
+				input = append(input, length[:]...)
+				input = append(input, frame...)
+			}
+			digest := sha256.Sum256(input)
+			return digest[:]
+		}
+	case "runtime-capability":
+		descriptor := runtimev3.GoCapabilities()
+		gotHash, err := runtimev3.CapabilityDescriptorDigest(descriptor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = gotHash[:]
+		canonical, err := runtimev3.EncodeCapabilityDescriptor(descriptor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected = func(value string) []byte { return versionIsolationLabeledHash(value, canonical) }
 	case "handshake":
 		gotHash, err := ComputeHandshakeH0(seed.Control, seed.ClientInit)
 		if err != nil {
@@ -684,6 +783,12 @@ func bindVersionIsolationCryptoLabel(t *testing.T, id, label string, seed versio
 }
 
 func mustExpand(t *testing.T, prk [32]byte, info []byte) []byte { return mustExpandN(t, prk, info, 32) }
+
+func versionIsolationLabeledHash(label string, canonical []byte) []byte {
+	preimage := append([]byte(label), uint32Bytes(uint32(len(canonical)))...)
+	digest := sha256.Sum256(append(preimage, canonical...))
+	return digest[:]
+}
 
 func mustExpandN(t *testing.T, prk [32]byte, info []byte, length int) []byte {
 	t.Helper()

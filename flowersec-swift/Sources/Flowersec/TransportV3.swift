@@ -68,7 +68,7 @@ struct RuntimeCapabilityDescriptorV3: Codable, Equatable, Sendable {
 
   func digest() throws -> Data {
     FlowersecJCSV3.hashLP(
-      domain: "flowersec-v3-runtime-capability\0", canonical: try canonicalJSON())
+      domain: TransportV3Contract.runtimeCapabilityLabel, canonical: try canonicalJSON())
   }
 
   static func decode(_ data: Data) throws -> RuntimeCapabilityDescriptorV3 {
@@ -318,13 +318,11 @@ private func validateRegisteredRuntimeV3(_ descriptor: RuntimeCapabilityDescript
   switch identity {
   case "go/native":
     try validateRegisteredCarrierV3(
-      descriptor, carrier: .rawQUIC, tupleSets: [q4m], unsupportedReasons: ["adapter_not_composed"])
+      descriptor, carrier: .rawQUIC, tupleSets: [q4m], unsupportedReasons: [])
     try validateRegisteredCarrierV3(
-      descriptor, carrier: .webSocket, tupleSets: [w4(caPin)],
-      unsupportedReasons: ["adapter_not_composed"])
+      descriptor, carrier: .webSocket, tupleSets: [w4(caPin)], unsupportedReasons: [])
     try validateRegisteredCarrierV3(
-      descriptor, carrier: .webTransport, tupleSets: [h4],
-      unsupportedReasons: ["adapter_not_composed"])
+      descriptor, carrier: .webTransport, tupleSets: [h4], unsupportedReasons: [])
   case "typescript/browser":
     try validateRegisteredCarrierV3(
       descriptor, carrier: .rawQUIC, tupleSets: [], unsupportedReasons: ["browser_no_raw_udp"])
@@ -472,6 +470,10 @@ enum TransportV3Contract {
     }
   }
 
+  static let sessionContractLabel = "flowersec-v3-session-contract\0"
+  static let candidatesLabel = "flowersec-v3-candidates\0"
+  static let admissionLabel = "flowersec-v3-admission\0"
+  static let runtimeCapabilityLabel = "flowersec-v3-runtime-capability\0"
   static let handshakeDomain = "flowersec-v3-handshake\0"
   static let serverFinishedLabel = "flowersec v3 server finished"
   static let clientFinishedLabel = "flowersec v3 client finished"
@@ -493,5 +495,6 @@ enum TransportV3Contract {
   static let setupDomain = "flowersec-v3-setup"
   static let recordDomain = "flowersec-v3-record"
   static let openDomain = "flowersec-v3-open\0"
+  static let acceptorAdmissionsLabel = "flowersec-v3-acceptor-admissions\0"
 
 }

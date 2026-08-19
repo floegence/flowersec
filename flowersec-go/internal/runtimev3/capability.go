@@ -17,7 +17,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
 )
 
-const capabilityDigestLabel = "flowersec-v3-runtime-capability\x00"
+const CapabilityDigestLabelV3 = "flowersec-v3-runtime-capability\x00"
 
 var capabilityRegistryToken = regexp.MustCompile(`^[a-z][a-z0-9_]{0,127}$`)
 
@@ -140,16 +140,6 @@ func (t CapabilityTuple) validate() error {
 
 // GoCapabilities explicitly lists all implemented Go runtime routes.
 func GoCapabilities() CapabilityDescriptor {
-	return GoCapabilitiesForCarriers(
-		carrier.KindRawQUIC,
-		carrier.KindWebSocket,
-		carrier.KindWebTransport,
-	)
-}
-
-// GoCapabilitiesForCarriers describes the adapters composed into one Go
-// runtime. A carrier that was not composed is explicitly unsupported.
-func GoCapabilitiesForCarriers(kinds ...carrier.Kind) CapabilityDescriptor {
 	native := func(kind carrier.Kind, mode NetworkMode, role SessionRole, path carrier.Path) CapabilityTuple {
 		securityModes := []SecurityMode{}
 		if mode == NetworkDial {
@@ -163,7 +153,7 @@ func GoCapabilitiesForCarriers(kinds ...carrier.Kind) CapabilityDescriptor {
 			SecurityModes:   securityModes,
 		}
 	}
-	all := []CapabilityTuple{
+	tuples := []CapabilityTuple{
 		native(carrier.KindRawQUIC, NetworkDial, RoleClient, carrier.PathDirect),
 		native(carrier.KindRawQUIC, NetworkDial, RoleClient, carrier.PathTunnel),
 		native(carrier.KindRawQUIC, NetworkDial, RoleServer, carrier.PathTunnel),
@@ -177,25 +167,10 @@ func GoCapabilitiesForCarriers(kinds ...carrier.Kind) CapabilityDescriptor {
 		native(carrier.KindWebTransport, NetworkDial, RoleServer, carrier.PathTunnel),
 		native(carrier.KindWebTransport, NetworkListen, RoleServer, carrier.PathDirect),
 	}
-	supported := make(map[carrier.Kind]struct{}, len(kinds))
-	for _, kind := range kinds {
-		supported[kind] = struct{}{}
+	return CapabilityDescriptor{
+		Language: "go", Runtime: "native", SchemaVersion: 3,
+		Tuples: tuples, Unsupported: []UnsupportedCapability{},
 	}
-	descriptor := CapabilityDescriptor{Language: "go", Runtime: "native", SchemaVersion: 3}
-	for _, tuple := range all {
-		if _, ok := supported[tuple.Carrier]; ok {
-			descriptor.Tuples = append(descriptor.Tuples, tuple)
-		}
-	}
-	for _, kind := range []carrier.Kind{carrier.KindRawQUIC, carrier.KindWebSocket, carrier.KindWebTransport} {
-		if _, ok := supported[kind]; !ok {
-			descriptor.Unsupported = append(descriptor.Unsupported, UnsupportedCapability{
-				Carrier: kind,
-				Reason:  "adapter_not_composed",
-			})
-		}
-	}
-	return descriptor
 }
 
 type capabilityDescriptorWire struct {
@@ -329,7 +304,7 @@ func CapabilityDescriptorDigest(descriptor CapabilityDescriptor) ([32]byte, erro
 		return [32]byte{}, err
 	}
 	digest := sha256.New()
-	_, _ = digest.Write([]byte(capabilityDigestLabel))
+	_, _ = digest.Write([]byte(CapabilityDigestLabelV3))
 	_, _ = digest.Write(length[:])
 	_, _ = digest.Write(canonical)
 	var result [sha256.Size]byte
@@ -430,14 +405,12 @@ func registeredCarrierCapabilities(language, runtime string) (map[carrier.Kind]r
 	webTransport4 := registeredTuples(carrier.KindWebTransport, true, false, true, caPin)
 	webTransport3CA := registeredTuples(carrier.KindWebTransport, true, false, false, ca)
 	webTransport3Pin := registeredTuples(carrier.KindWebTransport, true, false, false, caPin)
-	adapterAbsent := []string{"adapter_not_composed"}
-
 	switch language + "/" + runtime {
 	case "go/native":
 		return map[carrier.Kind]registeredCarrierCapability{
-			carrier.KindRawQUIC:      {tupleSets: [][]CapabilityTuple{rawQUIC4M}, unsupportedReasons: adapterAbsent},
-			carrier.KindWebSocket:    {tupleSets: [][]CapabilityTuple{websocket4(caPin)}, unsupportedReasons: adapterAbsent},
-			carrier.KindWebTransport: {tupleSets: [][]CapabilityTuple{webTransport4}, unsupportedReasons: adapterAbsent},
+			carrier.KindRawQUIC:      {tupleSets: [][]CapabilityTuple{rawQUIC4M}},
+			carrier.KindWebSocket:    {tupleSets: [][]CapabilityTuple{websocket4(caPin)}},
+			carrier.KindWebTransport: {tupleSets: [][]CapabilityTuple{webTransport4}},
 		}, true
 	case "typescript/browser":
 		return map[carrier.Kind]registeredCarrierCapability{

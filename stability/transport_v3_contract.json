@@ -653,13 +653,16 @@
       ],
       "alpn": ["flowersec-direct/2", "flowersec-tunnel/2"],
       "crypto_labels": [
+        "flowersec-v2-session-contract\u0000", "flowersec-v2-candidates\u0000",
+        "flowersec-v2-admission\u0000", "flowersec-v2-runtime-capability\u0000",
         "flowersec-v2-handshake\u0000", "flowersec v2 server finished", "flowersec v2 client finished",
         "flowersec v2 epoch zero", "flowersec v2 control root", "flowersec v2 stream root",
         "flowersec v2 setup root", "flowersec v2 rekey root", "flowersec v2 next epoch",
         "flowersec v2 stream", "flowersec v2 control", "flowersec v2 record key", "flowersec v2 nonce",
         "flowersec v2 unreliable root", "flowersec v2 unreliable", "flowersec v2 unreliable key",
         "flowersec v2 unreliable nonce", "flowersec-v2-unreliable", "flowersec-v2-setup\u0000",
-        "flowersec-v2-record\u0000", "flowersec-v2-open\u0000"
+        "flowersec-v2-record\u0000", "flowersec-v2-open\u0000",
+        "flowersec-v2-acceptor-admissions\u0000"
       ]
     }
   }

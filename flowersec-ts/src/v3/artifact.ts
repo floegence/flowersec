@@ -5,7 +5,11 @@ import { concatBytes, readU32be, u32be } from "../utils/bin.js";
 import { toASCII } from "../vendor/tr46.js";
 import { canonicalizeJCSV3, type JCSValue } from "./jcs.js";
 import { preflightJSONV3 } from "./jsonPreflight.js";
-import { FLOWERSEC_V3_PROFILE, wireProfileForPathV3 } from "./transportConstants.js";
+import {
+  FLOWERSEC_V3_CRYPTO_LABELS,
+  FLOWERSEC_V3_PROFILE,
+  wireProfileForPathV3,
+} from "./transportConstants.js";
 
 export type ArtifactCarrierV3 = "websocket" | "raw_quic" | "webtransport";
 export type ArtifactPathKindV3 = "direct" | "tunnel";
@@ -215,7 +219,7 @@ export function computeSessionContractHashV3(session: SessionContractV3): Labele
     rekey_prepare_timeout_seconds: session.rekey_prepare_timeout_seconds,
     selected_features: session.selected_features,
   });
-  return labeledHash("flowersec-v3-session-contract\0", canonicalJSON);
+  return labeledHash(FLOWERSEC_V3_CRYPTO_LABELS["session-contract"], canonicalJSON);
 }
 
 export function canonicalizeCandidatesV3(
@@ -267,7 +271,10 @@ export function canonicalizeCandidatesV3(
   if (utf8Length(canonicalJSON) > MAX_CANONICAL_CANDIDATE_SET_BYTES) {
     throw invalidCandidate("canonical candidate set too large");
   }
-  return { candidates: canonical, ...labeledHash("flowersec-v3-candidates\0", canonicalJSON) };
+  return {
+    candidates: canonical,
+    ...labeledHash(FLOWERSEC_V3_CRYPTO_LABELS.candidates, canonicalJSON),
+  };
 }
 
 export function decodeArtifactV3JSON(raw: string | Uint8Array): ArtifactV3 {
@@ -433,7 +440,7 @@ export function decodeFSB3RequestV3(raw: Uint8Array): DecodedFSB3RequestV3 {
 }
 
 export function admissionBindingV3(rawFSB3: Uint8Array): Uint8Array {
-  return sha256(concatBytes([encoder.encode("flowersec-v3-admission\0"), rawFSB3]));
+  return sha256(concatBytes([encoder.encode(FLOWERSEC_V3_CRYPTO_LABELS.admission), rawFSB3]));
 }
 
 export function acceptorAdmissionsHashV3(framesByCandidateID: ReadonlyMap<string, Uint8Array>): Uint8Array {
@@ -442,7 +449,7 @@ export function acceptorAdmissionsHashV3(framesByCandidateID: ReadonlyMap<string
   }
   const ordered = [...framesByCandidateID.entries()].sort(([left], [right]) =>
     left < right ? -1 : left > right ? 1 : 0);
-  const parts: Uint8Array[] = [encoder.encode("flowersec-v3-acceptor-admissions\0")];
+  const parts: Uint8Array[] = [encoder.encode(FLOWERSEC_V3_CRYPTO_LABELS["acceptor-admissions"])];
   let previous = "";
   for (const [candidateID, frame] of ordered) {
     if (!candidateIDPattern.test(candidateID) || candidateID <= previous) throw invalidFSB3("candidate ordering");

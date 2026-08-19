@@ -9,6 +9,11 @@ import (
 	"slices"
 )
 
+const (
+	AdmissionBindingLabelV3   = "flowersec-v3-admission\x00"
+	AcceptorAdmissionsLabelV3 = "flowersec-v3-acceptor-admissions\x00"
+)
+
 type directRequestWire struct {
 	CandidateSetHashBase64URL    string               `json:"candidate_set_hash_b64u"`
 	Candidates                   []CanonicalCandidate `json:"candidates"`
@@ -148,8 +153,8 @@ func ParseRequest(raw []byte) (*DecodedRequest, error) {
 }
 
 func AdmissionBinding(rawFSB3 []byte) [32]byte {
-	preimage := make([]byte, 0, len("flowersec-v3-admission\x00")+len(rawFSB3))
-	preimage = append(preimage, "flowersec-v3-admission\x00"...)
+	preimage := make([]byte, 0, len(AdmissionBindingLabelV3)+len(rawFSB3))
+	preimage = append(preimage, AdmissionBindingLabelV3...)
 	preimage = append(preimage, rawFSB3...)
 	return sha256.Sum256(preimage)
 }
@@ -180,7 +185,7 @@ func AcceptorAdmissionsHash(rawFrames [][]byte) ([32]byte, error) {
 		return bytes.Compare([]byte(left.candidateID), []byte(right.candidateID))
 	})
 	digest := sha256.New()
-	_, _ = digest.Write([]byte("flowersec-v3-acceptor-admissions\x00"))
+	_, _ = digest.Write([]byte(AcceptorAdmissionsLabelV3))
 	var length [4]byte
 	for _, item := range admissions {
 		binary.BigEndian.PutUint32(length[:], uint32(len(item.raw)))

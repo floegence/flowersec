@@ -450,7 +450,7 @@ enum ArtifactCodecV3 {
       let candidateJSON = try FlowersecJCSV3.encode(candidateObjects)
       guard candidateJSON.count <= 12_288 else { throw ArtifactErrorV3.invalidArtifact }
       let candidateHash = FlowersecJCSV3.hashLP(
-        domain: "flowersec-v3-candidates\0", canonical: candidateJSON)
+        domain: TransportV3Contract.candidatesLabel, canonical: candidateJSON)
       return ArtifactV3(
         value: value,
         canonicalJSON: data,
@@ -619,7 +619,7 @@ enum ArtifactCodecV3 {
       "selected_features": session.selectedFeatures,
     ]
     let expected = try FlowersecJCSV3.hashLP(
-      domain: "flowersec-v3-session-contract\0", value: projection
+      domain: TransportV3Contract.sessionContractLabel, value: projection
     ).base64URLEncodedStringV3()
     guard expected == session.contractHashBase64URL else { throw ArtifactErrorV3.invalidArtifact }
   }

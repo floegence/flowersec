@@ -93,6 +93,7 @@ pub(crate) const TUNNEL_PROFILE_V3: &str = "flowersec-tunnel/3";
 pub(crate) const ALPN_DIRECT_V3: &[u8] = b"flowersec-direct/3";
 pub(crate) const ALPN_TUNNEL_V3: &[u8] = b"flowersec-tunnel/3";
 pub(crate) const HANDSHAKE_DOMAIN_V3: &[u8] = b"flowersec-v3-handshake\0";
+pub(crate) const RUNTIME_CAPABILITY_LABEL_V3: &[u8] = b"flowersec-v3-runtime-capability\0";
 pub(crate) const SERVER_FINISHED_LABEL_V3: &[u8] = b"flowersec v3 server finished";
 pub(crate) const CLIENT_FINISHED_LABEL_V3: &[u8] = b"flowersec v3 client finished";
 
@@ -236,7 +237,7 @@ impl RuntimeCapabilityDescriptorV3 {
     }
     pub(crate) fn digest(&self) -> Result<[u8; 32], ArtifactErrorV3> {
         Ok(hash_lp(
-            b"flowersec-v3-runtime-capability\0",
+            RUNTIME_CAPABILITY_LABEL_V3,
             &self.canonical_json()?,
         ))
     }
@@ -428,7 +429,6 @@ fn validate_registered_runtime(
     let ca = &["ca"];
     let ca_pin = &["ca", "pin"];
     let id = (descriptor.language.as_str(), descriptor.runtime.as_str());
-    let adapter_absent = &["adapter_not_composed"];
     match id {
         ("go", "native") => {
             validate_registered_carrier(
@@ -441,7 +441,7 @@ fn validate_registered_runtime(
                     true,
                     ca_pin,
                 )],
-                adapter_absent,
+                &[],
             )?;
             validate_registered_carrier(
                 descriptor,
@@ -453,7 +453,7 @@ fn validate_registered_runtime(
                     true,
                     ca_pin,
                 )],
-                adapter_absent,
+                &[],
             )?;
             validate_registered_carrier(
                 descriptor,
@@ -465,7 +465,7 @@ fn validate_registered_runtime(
                     true,
                     ca_pin,
                 )],
-                adapter_absent,
+                &[],
             )
         }
         ("typescript", "browser") => {

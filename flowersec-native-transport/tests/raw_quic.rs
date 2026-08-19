@@ -2,7 +2,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use cert_test_builder::{
     BasicConstraints, Certificate, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer,
-    KeyPair, KeyUsagePurpose,
+    KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, PKCS_ECDSA_P384_SHA384,
 };
 use flowersec_native_transport::{
     Cancellation, DatagramSendOutcome, PathProfile, ProtocolVersion, RawQuicClientConfig,
@@ -345,6 +345,70 @@ async fn v3_raw_quic_enforces_ca_pin_and_versioned_alpn() {
         matches!(mismatch, Err(RawQuicError::Handshake)),
         "v2/v3 ALPN mismatch returned {mismatch:?}"
     );
+}
+
+#[tokio::test]
+async fn v3_raw_quic_rejects_every_pinned_certificate_profile_variant() {
+    let now = OffsetDateTime::now_utc();
+    for (name, algorithm, not_before, not_after) in [
+        (
+            "non-p256",
+            &PKCS_ECDSA_P384_SHA384,
+            now - TimeDuration::minutes(1),
+            now + TimeDuration::hours(1),
+        ),
+        (
+            "overlong",
+            &PKCS_ECDSA_P256_SHA256,
+            now - TimeDuration::minutes(1),
+            now + TimeDuration::days(15),
+        ),
+        (
+            "not-yet-valid",
+            &PKCS_ECDSA_P256_SHA256,
+            now + TimeDuration::hours(1),
+            now + TimeDuration::hours(2),
+        ),
+        (
+            "expired",
+            &PKCS_ECDSA_P256_SHA256,
+            now - TimeDuration::hours(2),
+            now - TimeDuration::hours(1),
+        ),
+    ] {
+        let key = KeyPair::generate_for(algorithm).expect("profile key");
+        let mut params = CertificateParams::new(vec!["localhost".into()]).expect("params");
+        params.not_before = not_before;
+        params.not_after = not_after;
+        params.key_usages.push(KeyUsagePurpose::DigitalSignature);
+        params
+            .extended_key_usages
+            .push(ExtendedKeyUsagePurpose::ServerAuth);
+        let certificate = params.self_signed(&key).expect("certificate");
+        let leaf = certificate.der().clone();
+        let identity = TestIdentityV3 {
+            chain: vec![leaf.clone()],
+            leaf: leaf.clone(),
+            key: PrivatePkcs8KeyDer::from(key.serialize_der()).into(),
+        };
+        let pin: [u8; 32] = Sha256::digest(leaf.as_ref()).into();
+        let client = RawQuicClientConfig::new_v3_pin(PathProfile::Direct, vec![pin], limits())
+            .expect("pin client");
+        let server = RawQuicServerConfig::new_v3(
+            PathProfile::Direct,
+            identity.chain_der(),
+            identity.key_der(),
+            limits(),
+        )
+        .expect("server");
+        assert!(
+            matches!(
+                connect_pair(client, server).await,
+                Err(RawQuicError::PinCertificateInvalid)
+            ),
+            "profile {name} was not rejected before a session became ready"
+        );
+    }
 }
 
 struct TestIdentityV3 {

@@ -278,8 +278,15 @@
       "id": "swift_apple_websocket",
       "layer": "sdk_profile",
       "owner": "swift",
-      "reason": "The Swift production connector supports WSS direct and tunnel dialing on macOS and iOS.",
+      "reason": "The Swift production connector supports WSS direct and tunnel dialing on macOS.",
       "test_ids": ["connector/swift-v3/interop/swift-go/wss/direct"]
+    },
+    {
+      "id": "swift_ios_apple_websocket",
+      "layer": "sdk_profile",
+      "owner": "swift",
+      "reason": "The Swift production connector supports WSS direct and tunnel dialing on iOS.",
+      "test_ids": ["connector/swift-v3/ios-simulator"]
     },
     {
       "id": "go_negotiated_unreliable_messages",

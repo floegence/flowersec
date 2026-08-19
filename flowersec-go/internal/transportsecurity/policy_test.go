@@ -73,6 +73,39 @@ func TestSelfSignedPinPolicyCompletesRealTLSHandshakeWithoutCADowngrade(t *testi
 	}
 }
 
+func TestPinProviderRejectsCertificateProfileMatrixWithUnknownTLSFailure(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, test := range []struct {
+		name      string
+		curve     elliptic.Curve
+		notBefore time.Time
+		notAfter  time.Time
+	}{
+		{name: "non-p256", curve: elliptic.P384(), notBefore: now.Add(-time.Hour), notAfter: now.Add(time.Hour)},
+		{name: "overlong", curve: elliptic.P256(), notBefore: now.Add(-time.Hour), notAfter: now.Add(15 * 24 * time.Hour)},
+		{name: "not-yet-valid", curve: elliptic.P256(), notBefore: now.Add(time.Hour), notAfter: now.Add(2 * time.Hour)},
+		{name: "expired", curve: elliptic.P256(), notBefore: now.Add(-2 * time.Hour), notAfter: now.Add(-time.Hour)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, certificate := selfSignedPinTestMaterialWithProfile(
+				t, test.curve, test.notBefore, test.notAfter,
+			)
+			digest := sha256.Sum256(certificate.Raw)
+			policy := artifactv3.TLSPolicy{Mode: artifactv3.TLSModePin, Pins: []artifactv3.CertificatePin{{
+				Algorithm: "sha-256", ValueBase64URL: base64.RawURLEncoding.EncodeToString(digest[:]),
+				NotAfterUnixS: now.Add(time.Hour).Unix(),
+			}}}
+			config, err := BuildClientTLS(nil, "wss://localhost/flowersec/v3/direct", policy, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := realTLSHandshake(server, config); !IsDetail(err, FailureUnknown) {
+				t.Fatalf("profile failure = %v, want %s", err, FailureUnknown)
+			}
+		})
+	}
+}
+
 func TestPinPolicyRejectsPrivateCATrustEvenWhenRootsAreProvided(t *testing.T) {
 	now := time.Now().UTC()
 	server, roots := privateCATestMaterial(t, now)
@@ -379,8 +412,20 @@ func selfSignedPinTestMaterialWithValidity(
 	notBefore time.Time,
 	notAfter time.Time,
 ) (*tls.Config, *x509.Certificate) {
+	return selfSignedPinTestMaterialWithProfile(t, elliptic.P256(), notBefore, notAfter)
+}
+
+func selfSignedPinTestMaterialWithProfile(
+	t *testing.T,
+	curve elliptic.Curve,
+	notBefore time.Time,
+	notAfter time.Time,
+) (*tls.Config, *x509.Certificate) {
 	t.Helper()
-	key := testP256Key(t)
+	key, err := ecdsa.GenerateKey(curve, rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
 	template := testLeafTemplateWithValidity(3, notBefore, notAfter)
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {

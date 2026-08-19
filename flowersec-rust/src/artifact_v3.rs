@@ -33,6 +33,10 @@ const MAX_ARTIFACT_BYTES: usize = 65_536;
 const MAX_CANDIDATE_BYTES: usize = 2_304;
 const MAX_CANDIDATE_SET_BYTES: usize = 12_288;
 const MAX_FSB3_PAYLOAD_BYTES: usize = 32_768;
+pub(crate) const SESSION_CONTRACT_LABEL_V3: &[u8] = b"flowersec-v3-session-contract\0";
+pub(crate) const CANDIDATES_LABEL_V3: &[u8] = b"flowersec-v3-candidates\0";
+pub(crate) const ADMISSION_LABEL_V3: &[u8] = b"flowersec-v3-admission\0";
+pub(crate) const ACCEPTOR_ADMISSIONS_LABEL_V3: &[u8] = b"flowersec-v3-acceptor-admissions\0";
 const FORBIDDEN_FSA3_REASONS: &[&str] = &[
     "browser_pin_opaque",
     "ca_untrusted",
@@ -92,7 +96,7 @@ impl ArtifactV3 {
         if candidate_set_json.len() > MAX_CANDIDATE_SET_BYTES {
             return Err(ArtifactErrorV3::Invalid);
         }
-        let candidate_set_hash = hash_lp(b"flowersec-v3-candidates\0", &candidate_set_json);
+        let candidate_set_hash = hash_lp(CANDIDATES_LABEL_V3, &candidate_set_json);
         Ok(Self(
             Arc::new(ValidatedArtifactV3 {
                 canonical_json: canonical.into(),
@@ -270,7 +274,7 @@ impl ArtifactV3 {
         raw.extend_from_slice(&[3, path_code, 0, 0]);
         raw.extend_from_slice(&(payload.len() as u32).to_be_bytes());
         raw.extend_from_slice(&payload);
-        let mut preimage = b"flowersec-v3-admission\0".to_vec();
+        let mut preimage = ADMISSION_LABEL_V3.to_vec();
         preimage.extend_from_slice(&raw);
         Ok(EncodedFsb3 {
             raw,
@@ -302,7 +306,7 @@ pub(crate) fn acceptor_admissions_hash(
     {
         return Err(ArtifactErrorV3::Invalid);
     }
-    let mut preimage = b"flowersec-v3-acceptor-admissions\0".to_vec();
+    let mut preimage = ACCEPTOR_ADMISSIONS_LABEL_V3.to_vec();
     for frame in ordered {
         let length = u32::try_from(frame.raw.len()).map_err(|_| ArtifactErrorV3::Invalid)?;
         preimage.extend_from_slice(&length.to_be_bytes());
@@ -689,7 +693,7 @@ fn validate_fsb3_candidates<'a>(
     let candidate_set_json = jcs_serialize(candidates)?;
     if candidate_set_json.len() > MAX_CANDIDATE_SET_BYTES
         || decode32(candidate_set_hash_b64u)
-            != Some(hash_lp(b"flowersec-v3-candidates\0", &candidate_set_json))
+            != Some(hash_lp(CANDIDATES_LABEL_V3, &candidate_set_json))
     {
         return Err(ArtifactErrorV3::Invalid);
     }
@@ -858,7 +862,7 @@ fn validate_session(session: &SessionWireV3) -> Result<(), ArtifactErrorV3> {
         "profile": SESSION_PROFILE_V3, "rekey_completion_timeout_seconds": session.rekey_completion_timeout_seconds,
         "rekey_prepare_timeout_seconds": session.rekey_prepare_timeout_seconds, "selected_features": session.selected_features,
     });
-    let expected = hash_lp(b"flowersec-v3-session-contract\0", &jcs_value(&projection)?);
+    let expected = hash_lp(SESSION_CONTRACT_LABEL_V3, &jcs_value(&projection)?);
     if decode32(&session.contract_hash_b64u) != Some(expected) {
         return Err(ArtifactErrorV3::Invalid);
     }

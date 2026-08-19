@@ -26,6 +26,10 @@ export const FLOWERSEC_V3_ALPN = FLOWERSEC_V3_WIRE_PROFILES;
 
 /** The strings below are the exact v3 inputs to the protocol KDF/MAC helpers. */
 export const FLOWERSEC_V3_CRYPTO_LABELS = Object.freeze({
+  "session-contract": "flowersec-v3-session-contract\0",
+  candidates: "flowersec-v3-candidates\0",
+  admission: "flowersec-v3-admission\0",
+  "runtime-capability": "flowersec-v3-runtime-capability\0",
   handshake: "flowersec-v3-handshake\0",
   "server-finished": "flowersec v3 server finished",
   "client-finished": "flowersec v3 client finished",
@@ -47,6 +51,7 @@ export const FLOWERSEC_V3_CRYPTO_LABELS = Object.freeze({
   "setup-mac": "flowersec-v3-setup\0",
   "record-aad": "flowersec-v3-record\0",
   open: "flowersec-v3-open\0",
+  "acceptor-admissions": "flowersec-v3-acceptor-admissions\0",
 } as const);
 
 export function wireProfileForPathV3(path: "direct" | "tunnel"): string {

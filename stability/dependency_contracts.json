@@ -466,7 +466,7 @@
       "protocol": "websocket-rfc-6455",
       "publicApiOnly": true,
       "platforms": ["ios-arm64", "macos-arm64"],
-      "conformanceTests": ["connector/swift-v3"],
+      "conformanceTests": ["connector/swift-v3", "connector/swift-v3/ios-simulator"],
       "upgradeGroup": "swift-websocket-stack"
     },
     {
@@ -478,7 +478,7 @@
       "protocol": "tls-1.3",
       "publicApiOnly": true,
       "platforms": ["ios-arm64", "macos-arm64"],
-      "conformanceTests": ["connector/swift-v3"],
+      "conformanceTests": ["connector/swift-v3", "connector/swift-v3/ios-simulator"],
       "upgradeGroup": "swift-websocket-stack"
     }
   ]

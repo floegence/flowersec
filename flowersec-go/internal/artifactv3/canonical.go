@@ -21,6 +21,11 @@ var (
 	hexLabel           = regexp.MustCompile(`(?i)^0x[0-9a-f]*$`)
 )
 
+const (
+	SessionContractHashLabelV3 = "flowersec-v3-session-contract\x00"
+	CandidatesHashLabelV3      = "flowersec-v3-candidates\x00"
+)
+
 type sessionContractCanonical struct {
 	AllowedSuites                 []uint16 `json:"allowed_suites"`
 	ChannelID                     string   `json:"channel_id"`
@@ -53,7 +58,7 @@ func ComputeSessionContractHash(session SessionContract) ([32]byte, []byte, erro
 	if err != nil {
 		return [32]byte{}, nil, err
 	}
-	return hashCanonical("flowersec-v3-session-contract\x00", canonical), canonical, nil
+	return hashCanonical(SessionContractHashLabelV3, canonical), canonical, nil
 }
 
 func validateSessionFields(session SessionContract) error {
@@ -160,7 +165,7 @@ func CanonicalizeCandidates(kind PathKind, candidates []Candidate) ([]CanonicalC
 	if len(canonical) > MaxCanonicalCandidateSet {
 		return nil, nil, [32]byte{}, fmt.Errorf("%w: canonical candidate set too large", ErrInvalidCandidate)
 	}
-	return canonicalCandidates, canonical, hashCanonical("flowersec-v3-candidates\x00", canonical), nil
+	return canonicalCandidates, canonical, hashCanonical(CandidatesHashLabelV3, canonical), nil
 }
 
 func normalizeCandidateURL(kind PathKind, carrier Carrier, raw string) (string, error) {
