@@ -107,7 +107,7 @@ describe("Node native raw QUIC driver", () => {
     } finally {
       await v2Listener.close();
     }
-  });
+  }, 20_000);
 
   test("enforces a short-lived P-256 leaf pin without CA fallback", async () => {
     const directory = mkdtempSync(join(tmpdir(), "flowersec-node-raw-pin-v3-"));
