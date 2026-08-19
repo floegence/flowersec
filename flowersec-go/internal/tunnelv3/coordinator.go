@@ -146,6 +146,7 @@ type Coordinator struct {
 	pendingLegs int
 	activePairs int
 	admissions  chan struct{}
+	now         func() time.Time
 }
 
 type authorityKey struct {
@@ -229,6 +230,7 @@ func NewCoordinator(config Config, authorize Authorize) (*Coordinator, error) {
 		config: config, authorize: authorize,
 		groups: make(map[authorityKey]*pairGeneration), used: make(map[string]time.Time),
 		admissions: make(chan struct{}, config.MaxConcurrentAdmissions),
+		now:        time.Now,
 	}, nil
 }
 
@@ -267,7 +269,7 @@ func (coordinator *Coordinator) Serve(ctx context.Context, pending PendingLeg) e
 		}
 		return errors.Join(err, coordinator.rejectUnregistered(admissionCtx, pending, status, reason))
 	}
-	if err := validateAuthorization(decoded, authorization, time.Now()); err != nil {
+	if err := validateAuthorization(decoded, authorization, coordinator.now()); err != nil {
 		if authorization.Lease != nil {
 			authorization.Lease.Release()
 		}
@@ -384,7 +386,7 @@ func (coordinator *Coordinator) register(ctx context.Context, leg *admittedLeg) 
 }
 
 func (coordinator *Coordinator) registerClaimed(ctx context.Context, leg *admittedLeg, credentialClaimed bool) (*pairGeneration, error) {
-	now := time.Now()
+	now := coordinator.now()
 	claims := leg.authorization.Claims
 	key := keyFor(claims)
 
@@ -457,6 +459,14 @@ func (coordinator *Coordinator) registerClaimed(ctx context.Context, leg *admitt
 	}
 	if generation.timer != nil {
 		generation.timer.Stop()
+	}
+	activationNow := coordinator.now()
+	for _, pairedLeg := range generation.roles {
+		if !pairedLeg.authorization.ExpiresAt.After(activationNow) {
+			coordinator.mu.Unlock()
+			go coordinator.rejectGeneration(generation, ErrInvalidAuthorization, artifactv3.AdmissionReject, ReasonInvalidCredential)
+			return generation, nil
+		}
 	}
 	if err := coordinator.reserveActivePairLocked(); err != nil {
 		coordinator.mu.Unlock()

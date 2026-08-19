@@ -698,9 +698,29 @@ func (s *engineSession) handleSessionUpdate(payload []byte) error {
 	if err != nil {
 		return err
 	}
+	insertedNextRoots := false
+	receiveRekeyCommitted := false
 	s.cryptoMu.Lock()
-	s.recvRoots[nextEpoch] = nextRoots
+	if existing, exists := s.recvRoots[nextEpoch]; exists {
+		if existing != nextRoots {
+			s.cryptoMu.Unlock()
+			return ErrSessionProtocol
+		}
+	} else {
+		s.recvRoots[nextEpoch] = nextRoots
+		insertedNextRoots = true
+	}
 	s.cryptoMu.Unlock()
+	defer func() {
+		if !insertedNextRoots || receiveRekeyCommitted {
+			return
+		}
+		s.cryptoMu.Lock()
+		if existing, exists := s.recvRoots[nextEpoch]; exists && existing == nextRoots {
+			delete(s.recvRoots, nextEpoch)
+		}
+		s.cryptoMu.Unlock()
+	}()
 	completionContext, cancelCompletion := context.WithTimeout(s.ctx, s.config.RekeyCompletionTimeout)
 	stopDeadlineWatch := s.watchReceivedRekeyDeadline(completionContext)
 	defer func() {
@@ -736,6 +756,7 @@ func (s *engineSession) handleSessionUpdate(payload []byte) error {
 		s.cryptoMu.Lock()
 		s.recvSessionEpoch = nextEpoch
 		s.cryptoMu.Unlock()
+		receiveRekeyCommitted = true
 		s.recvTransition = transition
 		for _, stream := range streams {
 			stream.publishReceiveRekey(transition, nextEpoch)

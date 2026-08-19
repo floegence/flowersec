@@ -267,11 +267,126 @@ final class ConnectorV2Tests: XCTestCase {
     } catch {
       XCTAssertEqual(error as? ConnectError, .connectionFailed)
     }
+    let settled = await waitUntilConnectorV3(timeout: .milliseconds(500)) {
+      await recorder.snapshot().closed.count == 2
+    }
+    XCTAssertTrue(settled)
     let snapshot = await recorder.snapshot()
     let spendCount = await spent.value()
     XCTAssertEqual(snapshot.writes, ["w-pin"])
     XCTAssertEqual(snapshot.closed, ["w-ca", "w-pin"])
     XCTAssertEqual(spendCount, 1)
+  }
+
+  func testV3HangingPreparationLoserDoesNotDelayWinnerOrRetainLateConnection() async throws {
+    let recorder = CandidateRaceRecorderV3()
+    let gate = CandidatePrepareGateV3()
+    let spent = ConnectorSpendCounter()
+    let connector = try SessionConnectorV3(
+      lease: ArtifactLeaseV3(
+        artifact: try baseArtifactV3ForConnector(),
+        commitSpend: { await spent.commit() }),
+      options: ConnectorOptions(connectTimeout: .seconds(1)),
+      runtime: GatedCandidateRuntimeV3(
+        recorder: recorder, gate: gate, immediateCandidateID: "w-pin")
+    )
+
+    let started = ContinuousClock.now
+    do {
+      _ = try await connector.connect()
+      XCTFail("recording winner unexpectedly established a session")
+    } catch {
+      XCTAssertEqual(error as? ConnectError, .connectionFailed)
+    }
+    XCTAssertLessThan(started.duration(to: .now), .milliseconds(250))
+    let spendCount = await spent.value()
+    let winnerSnapshot = await recorder.snapshot()
+    XCTAssertEqual(spendCount, 1)
+    XCTAssertEqual(winnerSnapshot.writes, ["w-pin"])
+    XCTAssertEqual(winnerSnapshot.closed, ["w-pin"])
+
+    await gate.release()
+    let loserClosed = await waitUntilConnectorV3(timeout: .milliseconds(500)) {
+      await recorder.snapshot().closed == ["w-ca", "w-pin"]
+    }
+    XCTAssertTrue(loserClosed)
+  }
+
+  func testV3TimeoutBeforeLatePreparationsSpendsNothingAndClosesReturnedConnections()
+    async throws
+  {
+    let recorder = CandidateRaceRecorderV3()
+    let gate = CandidatePrepareGateV3()
+    let spent = ConnectorSpendCounter()
+    let connector = try SessionConnectorV3(
+      lease: ArtifactLeaseV3(
+        artifact: try baseArtifactV3ForConnector(),
+        commitSpend: { await spent.commit() }),
+      options: ConnectorOptions(connectTimeout: .milliseconds(20)),
+      runtime: GatedCandidateRuntimeV3(recorder: recorder, gate: gate)
+    )
+
+    let started = ContinuousClock.now
+    do {
+      _ = try await connector.connect()
+      XCTFail("late preparations unexpectedly established a session")
+    } catch {
+      XCTAssertEqual(error as? ConnectError, .timeout)
+    }
+    XCTAssertLessThan(started.duration(to: .now), .milliseconds(120))
+    let spendCountAfterTimeout = await spent.value()
+    XCTAssertEqual(spendCountAfterTimeout, 0)
+    let timedOutSnapshot = await recorder.snapshot()
+    XCTAssertTrue(timedOutSnapshot.writes.isEmpty)
+    XCTAssertTrue(timedOutSnapshot.closed.isEmpty)
+
+    await gate.release()
+    let lateConnectionsClosed = await waitUntilConnectorV3(timeout: .milliseconds(500)) {
+      await recorder.snapshot().closed == ["w-ca", "w-pin"]
+    }
+    XCTAssertTrue(lateConnectionsClosed)
+    let finalSpendCount = await spent.value()
+    XCTAssertEqual(finalSpendCount, 0)
+  }
+
+  func testV3CancellationBeforeLatePreparationsSpendsNothingAndClosesReturnedConnections()
+    async throws
+  {
+    let recorder = CandidateRaceRecorderV3()
+    let gate = CandidatePrepareGateV3()
+    let spent = ConnectorSpendCounter()
+    let connector = try SessionConnectorV3(
+      lease: ArtifactLeaseV3(
+        artifact: try baseArtifactV3ForConnector(),
+        commitSpend: { await spent.commit() }),
+      options: ConnectorOptions(connectTimeout: .seconds(1)),
+      runtime: GatedCandidateRuntimeV3(recorder: recorder, gate: gate)
+    )
+    let connecting = Task { try await connector.connect() }
+    let bothPreparing = await waitUntilConnectorV3(timeout: .milliseconds(500)) {
+      await gate.arrivalCount == 2
+    }
+    XCTAssertTrue(bothPreparing)
+
+    connecting.cancel()
+    do {
+      _ = try await connecting.value
+      XCTFail("cancelled preparations unexpectedly established a session")
+    } catch {
+      XCTAssertEqual(error as? ConnectError, .canceled)
+    }
+    let spendCountAfterCancellation = await spent.value()
+    XCTAssertEqual(spendCountAfterCancellation, 0)
+
+    await gate.release()
+    let lateConnectionsClosed = await waitUntilConnectorV3(timeout: .milliseconds(500)) {
+      await recorder.snapshot().closed == ["w-ca", "w-pin"]
+    }
+    XCTAssertTrue(lateConnectionsClosed)
+    let canceledSnapshot = await recorder.snapshot()
+    XCTAssertTrue(canceledSnapshot.writes.isEmpty)
+    let finalSpendCount = await spent.value()
+    XCTAssertEqual(finalSpendCount, 0)
   }
 
   func testV3NoWinnerRaceEndExpiryOverridesCandidateFailures() async throws {
@@ -1541,6 +1656,62 @@ private actor CandidateRaceRuntimeV3: RuntimeCarrierAdapterV3 {
     if failAll { throw ConnectorBoundaryErrorV3.runtimeFailed }
     if candidate.id == slowCandidateID {
       try? await Task.sleep(for: .milliseconds(25))
+    }
+    return CandidateRacePreparedConnectionV3(candidateID: candidate.id, recorder: recorder)
+  }
+}
+
+private actor CandidatePrepareGateV3 {
+  private var arrivals = Set<String>()
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+  private var released = false
+
+  var arrivalCount: Int { arrivals.count }
+
+  func wait(candidateID: String) async {
+    arrivals.insert(candidateID)
+    guard !released else { return }
+    await withCheckedContinuation { continuation in
+      waiters.append(continuation)
+    }
+  }
+
+  func release() {
+    guard !released else { return }
+    released = true
+    let pending = waiters
+    waiters.removeAll()
+    for waiter in pending { waiter.resume() }
+  }
+}
+
+private struct GatedCandidateRuntimeV3: RuntimeCarrierAdapterV3 {
+  let capabilities = RuntimeCapabilitiesV3.macOS
+  let recorder: CandidateRaceRecorderV3
+  let gate: CandidatePrepareGateV3
+  let immediateCandidateID: String?
+
+  init(
+    recorder: CandidateRaceRecorderV3,
+    gate: CandidatePrepareGateV3,
+    immediateCandidateID: String? = nil
+  ) {
+    self.recorder = recorder
+    self.gate = gate
+    self.immediateCandidateID = immediateCandidateID
+  }
+
+  func validate(options: ConnectorOptions) throws {}
+
+  func prepare(
+    candidate: CanonicalCandidateV3,
+    path: PathKind,
+    role: SessionRoleV3,
+    options: ConnectorOptions,
+    activePinHashes: [Data]?
+  ) async throws -> any PreparedCarrierConnectionV3 {
+    if candidate.id != immediateCandidateID {
+      await gate.wait(candidateID: candidate.id)
     }
     return CandidateRacePreparedConnectionV3(candidateID: candidate.id, recorder: recorder)
   }

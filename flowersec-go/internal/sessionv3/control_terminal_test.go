@@ -2,7 +2,9 @@ package sessionv3
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"runtime"
 	"slices"
@@ -12,6 +14,84 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
 )
+
+func TestReceiveRekeySuppressionRollsBackOnlyOwnedRoot(t *testing.T) {
+	for _, preexisting := range []bool{false, true} {
+		t.Run(fmt.Sprintf("preexisting=%t", preexisting), func(t *testing.T) {
+			var sessionPRK [32]byte
+			for index := range sessionPRK {
+				sessionPRK[index] = byte(index + 1)
+			}
+			session, err := newEngineSession(nil, nil, Config{
+				Suite: protocolv3.SuiteChaCha20Poly1305, MaxInboundStreams: 1,
+				RekeyCompletionTimeout: time.Second,
+			}, handshakeMaterial{sessionPRK: sessionPRK})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer session.cancel(ErrSessionClosed)
+
+			session.cryptoMu.RLock()
+			currentRoots := session.recvRoots[0]
+			session.cryptoMu.RUnlock()
+			nextSecret, err := protocolv3.DeriveNextEpoch(currentRoots.RekeyRoot, session.h3, session.recvDir, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			nextRoots, err := protocolv3.DeriveEpochRoots(nextSecret)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if preexisting {
+				session.cryptoMu.Lock()
+				session.recvRoots[1] = nextRoots
+				session.cryptoMu.Unlock()
+			}
+
+			session.beginClosing()
+			var payload [20]byte
+			binary.BigEndian.PutUint64(payload[0:8], 1)
+			binary.BigEndian.PutUint32(payload[8:12], 1)
+			if err := session.handleSessionUpdate(payload[:]); err != nil {
+				t.Fatal(err)
+			}
+			session.cryptoMu.RLock()
+			retainedRoots, retained := session.recvRoots[1]
+			session.cryptoMu.RUnlock()
+			if retained != preexisting {
+				t.Fatalf("next receive root retained = %t, want %t", retained, preexisting)
+			}
+			if retained && retainedRoots != nextRoots {
+				t.Fatal("preexisting receive root changed")
+			}
+		})
+	}
+}
+
+func TestTerminalCloseOmitsPriorGoAwayAndPreservesTuple(t *testing.T) {
+	session := newControlActorUnitSession(t, 1)
+	session.ledger = protocolv3.NewStreamLedger(protocolv3.RoleServer, protocolv3.MaxStreamLedgerSlots)
+	for _, logicalID := range []uint64{2, 4, 6} {
+		if err := session.ledger.PeerReset(logicalID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := session.sendGoAway(5); err != nil {
+		t.Fatal(err)
+	}
+	payload := session.localGoAwayPayload(1)
+	lastAccepted, reason, err := parseIDReason(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lastAccepted != 6 || reason != 5 {
+		t.Fatalf("replayed GOAWAY = frontier:%d reason:%d, want frontier:6 reason:5", lastAccepted, reason)
+	}
+	if payload := session.localTerminalGoAwayPayload(1); payload != nil {
+		t.Fatalf("terminal GOAWAY after prior send = %x, want omitted", payload)
+	}
+}
 
 func TestControlTerminalSealOrdersQueuedCleanupBeforeSessionCloseAndFIN(t *testing.T) {
 	session := newControlActorUnitSession(t, 1)

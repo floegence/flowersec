@@ -49,6 +49,7 @@ actor TransportV3Session {
   private var peerLedger: TransportV3StreamLedger
   private var sentGoAway = false
   private var sentGoAwayLastAccepted: UInt64 = 0
+  private var sentGoAwayReason: UInt16 = 0
   private var receivedGoAway = ReceivedGoAwayStateV3()
   private var activeOpenOperations = 0
   private var openOperationWaiters: [UInt64: CheckedContinuation<Void, Error>] = [:]
@@ -385,11 +386,14 @@ actor TransportV3Session {
   func sendGoAway(reason: UInt16) async throws {
     guard reason != 0 else { throw TransportV3SessionError.protocolViolation }
     let lastAccepted = peerHighWatermark()
-    if sentGoAway, sentGoAwayLastAccepted != lastAccepted {
+    if sentGoAway,
+      sentGoAwayLastAccepted != lastAccepted || sentGoAwayReason != reason
+    {
       throw TransportV3SessionError.protocolViolation
     }
     sentGoAway = true
     sentGoAwayLastAccepted = lastAccepted
+    sentGoAwayReason = reason
     try await sendControl(.goAway, payload: idReasonPayload(id: lastAccepted, reason: reason))
   }
 
@@ -1504,15 +1508,21 @@ actor TransportV3Session {
     do {
       guard isCurrentClose(generation) else { return }
       controlTerminalCommitted = true
-      let lastAccepted = peerHighWatermark()
-      if sentGoAway, sentGoAwayLastAccepted != lastAccepted {
-        throw TransportV3SessionError.protocolViolation
+      let lastAccepted: UInt64
+      let terminalGoAwayReason: UInt16
+      if sentGoAway {
+        lastAccepted = sentGoAwayLastAccepted
+        terminalGoAwayReason = sentGoAwayReason
+      } else {
+        lastAccepted = peerHighWatermark()
+        terminalGoAwayReason = goAwayReason
+        sentGoAway = true
+        sentGoAwayLastAccepted = lastAccepted
+        sentGoAwayReason = terminalGoAwayReason
       }
-      sentGoAway = true
-      sentGoAwayLastAccepted = lastAccepted
       let goAway = try encodeControl(
         .goAway,
-        payload: idReasonPayload(id: lastAccepted, reason: goAwayReason)
+        payload: idReasonPayload(id: lastAccepted, reason: terminalGoAwayReason)
       )
       var payload = Data()
       payload.appendUInt16BE(closeReason)
@@ -1728,11 +1738,14 @@ actor TransportV3Session {
   }
 
   func goAwayStateForTesting() -> (
-    sentLastAccepted: UInt64?, receivedLastAccepted: UInt64?
+    sentLastAccepted: UInt64?, sentReason: UInt16?, receivedLastAccepted: UInt64?,
+    receivedReason: UInt16?
   ) {
     (
       sentGoAway ? sentGoAwayLastAccepted : nil,
-      receivedGoAway.lastAccepted
+      sentGoAway ? sentGoAwayReason : nil,
+      receivedGoAway.lastAccepted,
+      receivedGoAway.reason
     )
   }
 
@@ -2524,6 +2537,7 @@ func validateOpenRejectV3(payload: Data, expectedOpenHash: Data) throws -> UInt1
 
 struct ReceivedGoAwayStateV3 {
   private(set) var lastAccepted: UInt64?
+  private(set) var reason: UInt16?
 
   var wasReceived: Bool { lastAccepted != nil }
 
@@ -2541,10 +2555,13 @@ struct ReceivedGoAwayStateV3 {
     guard reason != 0, validBoundary else {
       throw TransportV3ProtocolStateError.invalidTransition
     }
-    if let existing = self.lastAccepted, existing != lastAccepted {
+    if let existing = self.lastAccepted,
+      existing != lastAccepted || self.reason != reason
+    {
       throw TransportV3ProtocolStateError.invalidTransition
     }
     self.lastAccepted = lastAccepted
+    self.reason = reason
   }
 
   func allows(_ id: UInt64) -> Bool {

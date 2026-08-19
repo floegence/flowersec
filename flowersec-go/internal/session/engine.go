@@ -119,7 +119,9 @@ type engineSession struct {
 	goAwayLastAccepted     uint64
 	receivedGoAway         bool
 	sentGoAway             bool
+	sentGoAwayCommitted    bool
 	sentGoAwayLastAccepted uint64
+	sentGoAwayReason       uint16
 	peerSessionClose       chan struct{}
 	peerSessionCloseOnce   sync.Once
 	peerCloseOwned         atomic.Bool
@@ -450,7 +452,7 @@ func (s *engineSession) Close() error {
 		s.beginClosing()
 		closeContext, cancelClose := context.WithTimeout(context.Background(), sessionCloseFlushTimeout)
 		defer cancelClose()
-		protocolErr := s.closeControlTerminal(closeContext, s.localGoAwayPayload(1))
+		protocolErr := s.closeControlTerminal(closeContext, s.localTerminalGoAwayPayload(1))
 		select {
 		case <-s.peerSessionClose:
 		case <-s.carrier.Termination():
@@ -819,17 +821,38 @@ func (s *engineSession) notifyResponderChangedLocked() {
 
 func (s *engineSession) sendGoAway(reason uint16) error {
 	payload := s.localGoAwayPayload(reason)
-	return s.sendControl(protocolv2.InnerGoAway, payload)
+	return s.commitControl(protocolv2.InnerGoAway, payload, func() error {
+		s.openMu.Lock()
+		s.sentGoAwayCommitted = true
+		s.openMu.Unlock()
+		return nil
+	})
 }
 
 func (s *engineSession) localGoAwayPayload(reason uint16) []byte {
 	lastAccepted := s.peerResolvedFrontier()
 	s.openMu.Lock()
+	if s.sentGoAway {
+		payload := marshalIDReason(s.sentGoAwayLastAccepted, s.sentGoAwayReason)
+		s.openMu.Unlock()
+		return payload
+	}
 	s.goingAway = true
 	s.sentGoAway = true
 	s.sentGoAwayLastAccepted = lastAccepted
+	s.sentGoAwayReason = reason
 	s.openMu.Unlock()
 	return marshalIDReason(lastAccepted, reason)
+}
+
+func (s *engineSession) localTerminalGoAwayPayload(reason uint16) []byte {
+	s.openMu.Lock()
+	alreadySent := s.sentGoAwayCommitted
+	s.openMu.Unlock()
+	if alreadySent {
+		return nil
+	}
+	return s.localGoAwayPayload(reason)
 }
 
 func (s *engineSession) exhaustRekeyCounter() error {

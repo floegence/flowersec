@@ -969,6 +969,12 @@ impl Session for SelfSession {
     fn internal_test_inbound_available_permits(&self) -> usize {
         self.inbound_permits.available_permits()
     }
+    #[cfg(test)]
+    async fn internal_test_send_goaway(&self, reason: u16) -> Result<(), SessionError> {
+        send_goaway_v2(self, reason)
+            .await
+            .map_err(|error| SessionError::from_io(&error))
+    }
     fn rpc(&self) -> &dyn RpcPeer {
         &self.rpc
     }
@@ -2171,31 +2177,36 @@ async fn receive_rekey_inner_v2(session: &EncryptedSessionV2, payload: &[u8]) ->
     for stream in &streams {
         stream.await_stream_update(transition, next).await?;
     }
-    let acknowledged =
-        send_control_response_v2(session, InnerRecordTypeV2::SessionKeyUpdateAck, payload).await?;
-    if !acknowledged {
+    let _control_write = session.control_write.lock().await;
+    if session.is_closed() {
         if inserted_receive_root {
             let mut state = session.state.lock().await;
             state.recv_roots.remove(&next);
         }
         return Ok(());
     }
-    {
-        let mut state = session.state.lock().await;
-        state.recv_epoch = next;
-    }
-    session.recv_transition.store(transition, Ordering::Release);
-    for stream in streams {
+    for stream in &streams {
         let mut update = stream.recv_update.lock().await;
         if *update == Some((transition, next)) {
             *update = None;
         }
     }
-    if !session.rekeying.load(Ordering::Acquire) {
+    {
         let mut state = session.state.lock().await;
+        state.recv_epoch = next;
         let recv_epoch = state.recv_epoch;
         let control_recv_epoch = state.control_recv_epoch;
-        retain_receive_epoch_roots_v2(&mut state.recv_roots, recv_epoch, control_recv_epoch);
+        if !session.rekeying.load(Ordering::Acquire) {
+            retain_receive_epoch_roots_v2(&mut state.recv_roots, recv_epoch, control_recv_epoch);
+        }
+    }
+    session.recv_transition.store(transition, Ordering::Release);
+    if let Err(error) =
+        write_control_locked_v2(session, InnerRecordTypeV2::SessionKeyUpdateAck, payload).await
+    {
+        let returned = io::Error::new(error.kind(), error.to_string());
+        fail_session_v2(session, error);
+        return Err(returned);
     }
     Ok(())
 }
@@ -2325,12 +2336,15 @@ async fn write_goaway_locked_v2(session: &EncryptedSessionV2, reason: u16) -> io
     if reason == 0 {
         return Err(invalid("invalid GOAWAY reason"));
     }
+    if session.sent_goaway.load(Ordering::Acquire) {
+        return Ok(());
+    }
     let last = session.peer_ledger.lock().await.frontier();
-    session.sent_goaway.store(true, Ordering::Release);
-    session.sent_goaway_last.store(last, Ordering::Release);
     let mut payload = [0; 10];
     payload[..8].copy_from_slice(&last.to_be_bytes());
     payload[8..].copy_from_slice(&reason.to_be_bytes());
+    session.sent_goaway_last.store(last, Ordering::Relaxed);
+    session.sent_goaway.store(true, Ordering::Release);
     write_control_locked_v2(session, InnerRecordTypeV2::GoAway, &payload).await
 }
 

@@ -1019,6 +1019,10 @@ pub trait Session: fmt::Debug + Send + Sync + 'static {
     fn internal_test_inbound_available_permits(&self) -> usize {
         0
     }
+    #[cfg(test)]
+    async fn internal_test_send_goaway(&self, _reason: u16) -> Result<(), SessionError> {
+        Err(SessionError::OperationFailed)
+    }
     /// Borrows the session's carrier-neutral RPC peer.
     fn rpc(&self) -> &dyn RpcPeer;
     /// Borrows unreliable message access after FSH2 negotiation and READY.

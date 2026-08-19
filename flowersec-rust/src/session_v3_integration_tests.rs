@@ -21,7 +21,7 @@ use crate::{
     },
 };
 use bytes::Bytes;
-use tokio::sync::{Notify, Semaphore};
+use tokio::sync::{Mutex as TokioMutex, Notify, Semaphore, mpsc};
 
 #[tokio::test]
 async fn exact_handshake_and_ready_boundary_establish_a_memory_pair() {
@@ -334,6 +334,133 @@ struct GatedUnreliableCarrierSession {
     started: Arc<AtomicUsize>,
     started_notify: Arc<Notify>,
     release: Arc<Semaphore>,
+}
+
+#[derive(Debug)]
+struct TestDatagramCarrierSession {
+    inner: Arc<dyn CarrierSessionV3>,
+    outgoing: mpsc::UnboundedSender<Bytes>,
+    incoming: TokioMutex<mpsc::UnboundedReceiver<Bytes>>,
+    streams: AtomicU64,
+    control_post_write_gate: Option<Arc<PostWriteGate>>,
+}
+
+#[derive(Debug)]
+struct PostWriteGate {
+    enabled: AtomicBool,
+    writes: AtomicU64,
+    block_on: u64,
+    entered: Notify,
+    release: Semaphore,
+}
+
+#[derive(Debug)]
+struct PostWriteGatedCarrierStream {
+    inner: Arc<dyn CarrierStreamV3>,
+    gate: Arc<PostWriteGate>,
+}
+
+impl TestDatagramCarrierSession {
+    fn wrap_control(&self, stream: Arc<dyn CarrierStreamV3>) -> Arc<dyn CarrierStreamV3> {
+        if self.streams.fetch_add(1, Ordering::AcqRel) == 0 {
+            if let Some(gate) = &self.control_post_write_gate {
+                return Arc::new(PostWriteGatedCarrierStream {
+                    inner: stream,
+                    gate: gate.clone(),
+                });
+            }
+        }
+        stream
+    }
+}
+
+#[async_trait::async_trait]
+impl CarrierSessionV3 for TestDatagramCarrierSession {
+    fn kind(&self) -> CarrierKind {
+        self.inner.kind()
+    }
+
+    fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+        self.inner.inbound_bidirectional_stream_capacity()
+    }
+
+    async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV3>> {
+        Ok(self.wrap_control(self.inner.open_stream().await?))
+    }
+
+    async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV3>> {
+        Ok(self.wrap_control(self.inner.accept_stream().await?))
+    }
+
+    fn unreliable_message_max_size(&self) -> Option<usize> {
+        Some(65_535)
+    }
+
+    async fn send_unreliable_message(
+        &self,
+        payload: Bytes,
+    ) -> Result<(), CarrierUnreliableMessageErrorV3> {
+        self.outgoing
+            .send(payload)
+            .map_err(|_| CarrierUnreliableMessageErrorV3::Closed)
+    }
+
+    async fn receive_unreliable_message(&self) -> Result<Bytes, CarrierUnreliableMessageErrorV3> {
+        self.incoming
+            .lock()
+            .await
+            .recv()
+            .await
+            .ok_or(CarrierUnreliableMessageErrorV3::Closed)
+    }
+
+    async fn close(&self) -> io::Result<()> {
+        self.inner.close().await
+    }
+
+    fn abort(&self) {
+        self.inner.abort();
+    }
+}
+
+#[async_trait::async_trait]
+impl CarrierStreamV3 for PostWriteGatedCarrierStream {
+    async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(payload).await
+    }
+
+    async fn write(&self, payload: &[u8]) -> io::Result<usize> {
+        let written = self.inner.write(payload).await?;
+        if self.gate.enabled.load(Ordering::Acquire) {
+            let ordinal = self.gate.writes.fetch_add(1, Ordering::AcqRel) + 1;
+            if ordinal == self.gate.block_on {
+                self.gate.entered.notify_one();
+                self.gate
+                    .release
+                    .acquire()
+                    .await
+                    .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "write gate closed"))?
+                    .forget();
+            }
+        }
+        Ok(written)
+    }
+
+    async fn close_write(&self) -> io::Result<()> {
+        self.inner.close_write().await
+    }
+
+    async fn stop_sending(&self) -> io::Result<()> {
+        self.inner.stop_sending().await
+    }
+
+    async fn reset(&self) -> io::Result<()> {
+        self.inner.reset().await
+    }
+
+    async fn close(&self) -> io::Result<()> {
+        self.inner.close().await
+    }
 }
 
 #[async_trait::async_trait]
@@ -3296,6 +3423,123 @@ async fn close_flush_is_bounded_when_the_control_stream_stalls() {
     assert_eq!(error, SessionError::Timeout);
     gate.store(false, Ordering::Release);
     let _ = server.close().await;
+}
+
+#[tokio::test]
+async fn receive_rekey_commits_before_the_ack_is_exposed_to_unreliable_delivery() {
+    let (client_inner, server_inner) = memory_carrier_pair_for_logical(1);
+    let (client_to_server_tx, client_to_server_rx) = mpsc::unbounded_channel();
+    let (server_to_client_tx, server_to_client_rx) = mpsc::unbounded_channel();
+    let server_gate = Arc::new(PostWriteGate {
+        enabled: AtomicBool::new(false),
+        writes: AtomicU64::new(0),
+        block_on: 1,
+        entered: Notify::new(),
+        release: Semaphore::new(0),
+    });
+    let client_carrier: Arc<dyn CarrierSessionV3> = Arc::new(TestDatagramCarrierSession {
+        inner: client_inner,
+        outgoing: client_to_server_tx,
+        incoming: TokioMutex::new(server_to_client_rx),
+        streams: AtomicU64::new(0),
+        control_post_write_gate: None,
+    });
+    let server_carrier: Arc<dyn CarrierSessionV3> = Arc::new(TestDatagramCarrierSession {
+        inner: server_inner,
+        outgoing: server_to_client_tx,
+        incoming: TokioMutex::new(client_to_server_rx),
+        streams: AtomicU64::new(0),
+        control_post_write_gate: Some(server_gate.clone()),
+    });
+    let mut client_config =
+        regression_config(SessionRole::Client, "rekey-ack-publication", 1, None);
+    client_config.deadlines.rekey_completion = Duration::from_millis(500);
+    let mut server_config =
+        regression_config(SessionRole::Server, "rekey-ack-publication", 1, None);
+    server_config.deadlines.rekey_completion = Duration::from_millis(500);
+    let (client, server) = tokio::join!(
+        establish_session_v3(client_carrier, client_config),
+        establish_session_v3(server_carrier, server_config),
+    );
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
+    server_gate.enabled.store(true, Ordering::Release);
+
+    let rekeying = tokio::spawn({
+        let client = client.clone();
+        async move { client.rekey().await }
+    });
+    tokio::time::timeout(Duration::from_secs(1), server_gate.entered.notified())
+        .await
+        .expect("server rekey ACK was not exposed before its write returned");
+    tokio::time::timeout(Duration::from_secs(1), rekeying)
+        .await
+        .expect("client did not receive the exposed rekey ACK")
+        .expect("join client rekey")
+        .expect("client rekey");
+
+    client
+        .unreliable_messages()
+        .expect("negotiated unreliable channel")
+        .send(
+            Bytes::from_static(b"epoch-one"),
+            SystemTime::now() + Duration::from_secs(30),
+        )
+        .await
+        .expect("send epoch-one unreliable message");
+    let received = tokio::time::timeout(
+        Duration::from_millis(250),
+        server
+            .unreliable_messages()
+            .expect("negotiated unreliable channel")
+            .receive(),
+    )
+    .await
+    .expect("receiver dropped a valid post-ACK epoch-one message")
+    .expect("receive epoch-one unreliable message");
+    assert_eq!(received, Bytes::from_static(b"epoch-one"));
+
+    server_gate.release.add_permits(1);
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn close_omits_a_duplicate_goaway_after_a_prior_goaway() {
+    let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
+    let enabled = Arc::new(AtomicBool::new(false));
+    let writes = Arc::new(AtomicU64::new(0));
+    let client_carrier: Arc<dyn CarrierSessionV3> = Arc::new(BlockingNthWriteCarrierSession {
+        inner: client_inner,
+        enabled: enabled.clone(),
+        writes: writes.clone(),
+        block_on: u64::MAX,
+        entered: Arc::new(Notify::new()),
+        release: Arc::new(Notify::new()),
+    });
+    let client_config = regression_config(SessionRole::Client, "idempotent-goaway", 1, None);
+    let server_config = regression_config(SessionRole::Server, "idempotent-goaway", 1, None);
+    let (client, server) = tokio::join!(
+        establish_session_v3(client_carrier, client_config),
+        establish_session_v3(server_carrier, server_config),
+    );
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
+    writes.store(0, Ordering::Release);
+    enabled.store(true, Ordering::Release);
+
+    client
+        .internal_test_send_goaway(5)
+        .await
+        .expect("send prior GOAWAY");
+    assert_eq!(writes.load(Ordering::Acquire), 1);
+    client.close().await.expect("close after prior GOAWAY");
+    assert_eq!(
+        writes.load(Ordering::Acquire),
+        2,
+        "close must add only SESSION_CLOSE after a prior GOAWAY"
+    );
+    server.close().await.expect("close server");
 }
 
 #[tokio::test]

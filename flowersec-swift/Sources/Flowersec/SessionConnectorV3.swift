@@ -240,37 +240,44 @@ struct SessionConnectorV3: Sendable {
         throw ConnectorBoundaryErrorV3.artifactInvalid
       }
     }
-    var winner: (CanonicalCandidateV3, any PreparedCarrierConnectionV3)?
-    await withTaskGroup(of: CandidatePreparationOutcomeV3.self) { group in
-      for attempt in attempts {
-        group.addTask {
-          do {
-            let connection = try await runtime.prepare(
-              candidate: attempt.candidate, path: path, role: role, options: options,
-              activePinHashes: attempt.activePinHashes)
-            return .prepared(attempt.candidate, connection)
-          } catch ConnectorBoundaryErrorV3.policyExpired {
-            return .failed(attempt.candidate, security: true)
-          } catch ConnectorBoundaryErrorV3.securityFailed {
-            return .failed(attempt.candidate, security: true)
-          } catch ConnectorBoundaryErrorV3.browserPinOpaque {
-            return .opaque(attempt.candidate)
-          } catch ConnectorBoundaryErrorV3.runtimeUnsupported {
-            return .unsupported(attempt.candidate)
-          } catch {
-            return .failed(attempt.candidate, security: false)
-          }
+    let race = CandidatePreparationRaceV3(
+      candidateCount: attempts.count, connectionBox: connectionBox)
+    for attempt in attempts {
+      let task = Task {
+        let outcome: CandidatePreparationOutcomeV3
+        do {
+          let connection = try await runtime.prepare(
+            candidate: attempt.candidate, path: path, role: role, options: options,
+            activePinHashes: attempt.activePinHashes)
+          outcome = .prepared(attempt.candidate, connection)
+        } catch ConnectorBoundaryErrorV3.policyExpired {
+          outcome = .failed(attempt.candidate, security: true)
+        } catch ConnectorBoundaryErrorV3.securityFailed {
+          outcome = .failed(attempt.candidate, security: true)
+        } catch ConnectorBoundaryErrorV3.browserPinOpaque {
+          outcome = .opaque(attempt.candidate)
+        } catch ConnectorBoundaryErrorV3.runtimeUnsupported {
+          outcome = .unsupported(attempt.candidate)
+        } catch {
+          outcome = .failed(attempt.candidate, security: false)
+        }
+        if let lateConnection = race.submit(outcome) {
+          await lateConnection.close()
         }
       }
-      while let outcome = await group.next() {
+      race.register(task)
+    }
+    let resolution = try await race.wait()
+    let winner: (CanonicalCandidateV3, any PreparedCarrierConnectionV3)?
+    switch resolution {
+    case .winner(let candidate, let connection):
+      winner = (candidate, connection)
+    case .failed(let outcomes):
+      winner = nil
+      for outcome in outcomes {
         switch outcome {
-        case .prepared(let candidate, let connection):
-          if winner == nil {
-            winner = (candidate, connection)
-            group.cancelAll()
-          } else {
-            await connection.close()
-          }
+        case .prepared:
+          preconditionFailure("a prepared candidate cannot be reported as a failure")
         case .failed(let candidate, let security):
           failedIDs.insert(candidate.id)
           if security {
@@ -287,6 +294,7 @@ struct SessionConnectorV3: Sendable {
         }
       }
     }
+    try Task.checkCancellation()
     guard artifact.value.session.initExpireAtUnixSeconds > nowUnixSeconds() else {
       if let winner { await winner.1.close() }
       throw ConnectError.expiredArtifact
@@ -302,13 +310,14 @@ struct SessionConnectorV3: Sendable {
       if !sawOrdinaryFailure { throw ConnectorBoundaryErrorV3.runtimeUnsupported }
       throw ConnectorBoundaryErrorV3.runtimeFailed
     }
-    connectionBox.set(connection)
     do {
+      try Task.checkCancellation()
       let admission = try AdmissionCodecV3.encodeFSB3(
         artifact: artifact, chosenCandidateID: candidate.id)
       guard artifact.value.session.initExpireAtUnixSeconds > nowUnixSeconds() else {
         throw ConnectError.expiredArtifact
       }
+      try Task.checkCancellation()
       try await claimed.commitSpend()
       try Task.checkCancellation()
       guard artifact.value.session.initExpireAtUnixSeconds > nowUnixSeconds() else {
@@ -339,6 +348,7 @@ struct SessionConnectorV3: Sendable {
       connectionBox.clear()
       return OpaqueSessionV3(session)
     } catch {
+      connectionBox.clear()
       await connection.close()
       throw error
     }
@@ -398,18 +408,122 @@ private enum CandidatePreparationOutcomeV3: Sendable {
   case unsupported(CanonicalCandidateV3)
 }
 
+private enum CandidatePreparationResolutionV3: Sendable {
+  case winner(CanonicalCandidateV3, any PreparedCarrierConnectionV3)
+  case failed([CandidatePreparationOutcomeV3])
+}
+
+private final class CandidatePreparationRaceV3: @unchecked Sendable {
+  private let lock = NSLock()
+  private let connectionBox: PreparedConnectionCloseBoxV3
+  private var remaining: Int
+  private var failures: [CandidatePreparationOutcomeV3] = []
+  private var tasks: [Task<Void, Never>] = []
+  private var continuation: CheckedContinuation<CandidatePreparationResolutionV3, Error>?
+  private var result: Result<CandidatePreparationResolutionV3, Error>?
+
+  init(candidateCount: Int, connectionBox: PreparedConnectionCloseBoxV3) {
+    precondition(candidateCount >= 0)
+    self.remaining = candidateCount
+    self.connectionBox = connectionBox
+    if candidateCount == 0 { result = .success(.failed([])) }
+  }
+
+  func register(_ task: Task<Void, Never>) {
+    let cancelImmediately = lock.withLock {
+      guard result == nil else { return true }
+      tasks.append(task)
+      return false
+    }
+    if cancelImmediately { task.cancel() }
+  }
+
+  func submit(
+    _ outcome: CandidatePreparationOutcomeV3
+  ) -> (any PreparedCarrierConnectionV3)? {
+    var continuation: CheckedContinuation<CandidatePreparationResolutionV3, Error>?
+    var resolved: Result<CandidatePreparationResolutionV3, Error>?
+    var tasksToCancel: [Task<Void, Never>] = []
+    let connectionToClose = lock.withLock { () -> (any PreparedCarrierConnectionV3)? in
+      guard result == nil else {
+        if case .prepared(_, let connection) = outcome { return connection }
+        return nil
+      }
+      switch outcome {
+      case .prepared(let candidate, let connection):
+        guard connectionBox.accept(connection) else {
+          resolved = .failure(CancellationError())
+          result = resolved
+          continuation = self.continuation
+          self.continuation = nil
+          tasksToCancel = tasks
+          tasks.removeAll()
+          return connection
+        }
+        resolved = .success(.winner(candidate, connection))
+      case .failed, .opaque, .unsupported:
+        failures.append(outcome)
+        remaining -= 1
+        guard remaining == 0 else { return nil }
+        resolved = .success(.failed(failures))
+      }
+      result = resolved
+      continuation = self.continuation
+      self.continuation = nil
+      tasksToCancel = tasks
+      tasks.removeAll()
+      return nil
+    }
+    if let resolved { continuation?.resume(with: resolved) }
+    for task in tasksToCancel { task.cancel() }
+    return connectionToClose
+  }
+
+  func wait() async throws -> CandidatePreparationResolutionV3 {
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        let resolved = lock.withLock { () -> Result<CandidatePreparationResolutionV3, Error>? in
+          if let result { return result }
+          self.continuation = continuation
+          return nil
+        }
+        if let resolved { continuation.resume(with: resolved) }
+      }
+    } onCancel: {
+      cancel()
+    }
+  }
+
+  private func cancel() {
+    var continuation: CheckedContinuation<CandidatePreparationResolutionV3, Error>?
+    var tasksToCancel: [Task<Void, Never>] = []
+    let canceled = lock.withLock {
+      guard result == nil else { return false }
+      result = .failure(CancellationError())
+      continuation = self.continuation
+      self.continuation = nil
+      tasksToCancel = tasks
+      tasks.removeAll()
+      return true
+    }
+    guard canceled else { return }
+    connectionBox.close()
+    continuation?.resume(throwing: CancellationError())
+    for task in tasksToCancel { task.cancel() }
+  }
+}
+
 private final class PreparedConnectionCloseBoxV3: @unchecked Sendable {
   private let lock = NSLock()
   private var connection: (any PreparedCarrierConnectionV3)?
   private var closeRequested = false
 
-  func set(_ connection: any PreparedCarrierConnectionV3) {
-    let closeImmediately = lock.withLock {
-      if closeRequested { return true }
+  func accept(_ connection: any PreparedCarrierConnectionV3) -> Bool {
+    lock.withLock {
+      guard !closeRequested, self.connection == nil else { return false }
       self.connection = connection
-      return false
+      return true
     }
-    if closeImmediately { Task { await connection.close() } }
   }
 
   func clear() {

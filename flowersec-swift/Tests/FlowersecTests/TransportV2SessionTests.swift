@@ -1394,7 +1394,16 @@ final class TransportV2SessionTests: XCTestCase {
     let serverState = await serverSession.goAwayStateForTesting()
     let clientState = await clientSession.goAwayStateForTesting()
     XCTAssertEqual(serverState.sentLastAccepted, 1)
+    XCTAssertEqual(serverState.sentReason, 2)
     XCTAssertEqual(clientState.receivedLastAccepted, 1)
+    XCTAssertEqual(clientState.receivedReason, 2)
+
+    try await serverSession.close()
+    let clientTerminal = await clientSession.waitClosed()
+    let terminalClientState = await clientSession.goAwayStateForTesting()
+    XCTAssertEqual(clientTerminal, .closed)
+    XCTAssertEqual(terminalClientState.receivedLastAccepted, 1)
+    XCTAssertEqual(terminalClientState.receivedReason, 2)
     try await clientSession.close()
     try await serverSession.close()
   }
@@ -1409,6 +1418,9 @@ final class TransportV2SessionTests: XCTestCase {
     )
     try state.accept(lastAccepted: 3, reason: 2, localRole: .client, localHighWatermark: 3)
     try state.accept(lastAccepted: 3, reason: 2, localRole: .client, localHighWatermark: 3)
+    XCTAssertThrowsError(
+      try state.accept(lastAccepted: 3, reason: 3, localRole: .client, localHighWatermark: 3)
+    )
     XCTAssertThrowsError(
       try state.accept(lastAccepted: 1, reason: 2, localRole: .client, localHighWatermark: 3)
     )
