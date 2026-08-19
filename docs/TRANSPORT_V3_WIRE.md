@@ -299,6 +299,14 @@ big-endian reason length and reason. Success reason is empty. Other reasons
 match [a-z][a-z0-9_]* and come from the admission registry. TLS errors are
 never FSA3 reasons.
 
+When a server receives a complete FSB3 whose initiation expiry has been reached
+(`server_wall_now >= init_expire_at_unix_s`), it sends a retryable FSA3 with the
+audited reason `expired_artifact` and does not admit the session. This server
+admission response is distinct from the client's local expiry checks. A client
+must project any remote FSA3 rejection to its redacted admission failure and
+must not manufacture the local public `expired_artifact` code solely from the
+remote reason string; only its own trusted clock can classify local expiry.
+
 ## 8. Remaining Frame and Crypto Family
 
 The remaining magic values are FSC3, FSH3, FSS3, FSR3, and FSD3, each with

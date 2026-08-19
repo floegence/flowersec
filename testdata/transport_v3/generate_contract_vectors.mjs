@@ -357,7 +357,11 @@ function artifactMutation(id, mutate) {
 }
 
 function rawArtifactMutation(id, mutate) {
-  const value = structuredClone(directObject);
+  return rawArtifactMutationFrom(id, directObject, mutate);
+}
+
+function rawArtifactMutationFrom(id, source, mutate) {
+  const value = structuredClone(source);
   mutate(value);
   return { id, kind: "artifact_json", value: canonicalJSON(value), error_code: "invalid_artifact" };
 }
@@ -514,7 +518,7 @@ const artifactVectors = {
   scalar_coverage: {
     "artifact.v": ["direct-mixed-security", "artifact-wrong-version"],
     "artifact.profile": ["direct-mixed-security", "v2-profile-cross-version"],
-    "session.channel_id": ["session-channel-id-min", "session-channel-id-max", "session-channel-empty", "session-channel-invalid-character"],
+    "session.channel_id": ["session-channel-id-min", "session-channel-id-max", "session-channel-empty", "session-channel-invalid-character", "session-channel-non-ascii", "session-channel-too-long"],
     "session.init_expire_at_unix_s": ["session-init-expiry-min", "session-init-expiry-max", "session-init-expiry-zero"],
     "session.idle_timeout_seconds": ["session-idle-timeout-min", "session-idle-timeout-max", "session-idle-timeout-negative", "session-idle-timeout-too-large"],
     "session.establish_timeout_seconds": ["direct-mixed-security", "session-establish-timeout-not-fixed"],
@@ -525,14 +529,14 @@ const artifactVectors = {
     "session.default_suite": ["session-single-suite", "session-default-suite-two", "session-default-not-allowed"],
     "session.selected_features": ["direct-mixed-security", "session-features-not-zero"],
     "session.contract_hash_b64u": ["direct-mixed-security", "session-contract-hash-mismatch"],
-    "path.rendezvous_group_id": ["direct-registry-identifiers-min", "direct-registry-identifiers-max"],
-    "path.listener_audience": ["direct-registry-identifiers-min", "direct-registry-identifiers-max"],
-    "path.routing_token": ["direct-routing-token-min", "direct-routing-token-max", "direct-routing-token-empty"],
-    "path.role": ["tunnel-role-min-identifiers-token", "tunnel-role-max-identifiers-token", "direct-cross-variant-role"],
-    "path.local_endpoint_instance_id": ["tunnel-role-min-identifiers-token", "tunnel-role-max-identifiers-token"],
-    "path.expected_peer_endpoint_instance_id": ["tunnel-role-min-identifiers-token", "tunnel-role-max-identifiers-token"],
-    "path.token": ["tunnel-role-min-identifiers-token", "tunnel-role-max-identifiers-token"],
-    "path.kind": ["direct-mixed-security", "tunnel-mixed-security", "v2-path-cross-version"],
+    "path.rendezvous_group_id": ["direct-registry-identifiers-min", "direct-registry-identifiers-max", "direct-rendezvous-group-empty", "direct-rendezvous-group-invalid-character", "direct-rendezvous-group-too-long", "direct-rendezvous-group-non-ascii"],
+    "path.listener_audience": ["direct-registry-identifiers-min", "direct-registry-identifiers-max", "direct-listener-audience-empty", "direct-listener-audience-invalid-character", "direct-listener-audience-too-long", "direct-listener-audience-non-ascii"],
+    "path.routing_token": ["direct-routing-token-min", "direct-routing-token-max", "direct-routing-token-empty", "direct-routing-token-too-long", "direct-routing-token-non-ascii"],
+    "path.role": ["tunnel-role-min-identifiers-token", "tunnel-role-max-identifiers-token", "direct-cross-variant-role", "tunnel-role-zero", "tunnel-role-three"],
+    "path.local_endpoint_instance_id": ["tunnel-role-min-identifiers-token", "tunnel-role-max-identifiers-token", "tunnel-local-endpoint-empty", "tunnel-local-endpoint-invalid-character", "tunnel-local-endpoint-too-long", "tunnel-local-endpoint-non-ascii", "tunnel-endpoint-identifiers-equal"],
+    "path.expected_peer_endpoint_instance_id": ["tunnel-role-min-identifiers-token", "tunnel-role-max-identifiers-token", "tunnel-peer-endpoint-empty", "tunnel-peer-endpoint-invalid-character", "tunnel-peer-endpoint-too-long", "tunnel-peer-endpoint-non-ascii", "tunnel-endpoint-identifiers-equal"],
+    "path.token": ["tunnel-role-min-identifiers-token", "tunnel-role-max-identifiers-token", "tunnel-token-empty", "tunnel-token-too-long", "tunnel-token-non-ascii"],
+    "path.kind": ["direct-mixed-security", "tunnel-mixed-security", "v2-path-cross-version", "path-kind-unknown"],
     "candidate.id": ["candidate-id-min", "candidate-id-max", "candidate-id-empty", "candidate-id-invalid-character"],
     "candidate.carrier": ["direct-mixed-security", "candidate-carrier-unknown"],
     "candidate.url": ["direct-mixed-security", "candidate-longest-dns-host", "candidate-url-query"],
@@ -540,9 +544,9 @@ const artifactVectors = {
     "scope.scope": ["scope-name-version-critical-min", "scope-name-version-critical-max", "scope-name-invalid"],
     "scope.scope_version": ["scope-name-version-critical-min", "scope-name-version-critical-max", "scope-version-zero"],
     "scope.critical": ["scope-name-version-critical-min", "scope-name-version-critical-max"],
-    "correlation.v": ["direct-mixed-security", "correlation-wrong-version"],
-    "correlation.tags[].key": ["correlation-key-value-min", "correlation-key-value-max", "correlation-tag-invalid-key"],
-    "correlation.tags[].value": ["correlation-key-value-min", "correlation-key-value-max", "correlation-tag-empty-value"],
+    "correlation.v": ["direct-mixed-security", "correlation-wrong-version", "correlation-version-noninteger"],
+    "correlation.tags[].key": ["correlation-key-value-min", "correlation-key-value-max", "correlation-tag-empty-key", "correlation-tag-invalid-key", "correlation-tag-key-too-long", "correlation-tag-key-non-ascii"],
+    "correlation.tags[].value": ["correlation-key-value-min", "correlation-key-value-max", "correlation-tag-empty-value", "correlation-tag-value-too-long", "correlation-tag-value-non-ascii"],
   },
   scoped_payload_boundaries: [
     scopedPayloadBoundary("scope-payload-canonical-bytes-max", payloadWithCanonicalBytes(4_096), true, true),
@@ -602,6 +606,7 @@ const artifactVectors = {
     { id: "success", status: 0, reason: "", frame_hex: fsa3(0, "") },
     { id: "reject-invalid-token", status: 1, reason: "invalid_token", frame_hex: fsa3(1, "invalid_token") },
     { id: "retry-capacity", status: 2, reason: "capacity", frame_hex: fsa3(2, "capacity") },
+    { id: "retry-expired-artifact", status: 2, reason: "expired_artifact", frame_hex: fsa3(2, "expired_artifact") },
   ],
   negative: [
     {
@@ -630,6 +635,8 @@ const artifactVectors = {
     rawArtifactMutation("artifact-wrong-version", (artifact) => { artifact.v = 2; }),
     rawArtifactMutation("session-channel-empty", (artifact) => { artifact.session.channel_id = ""; }),
     rawArtifactMutation("session-channel-invalid-character", (artifact) => { artifact.session.channel_id = "channel/3"; }),
+    rawArtifactMutation("session-channel-non-ascii", (artifact) => { artifact.session.channel_id = "caf\u00e9"; }),
+    rawArtifactMutation("session-channel-too-long", (artifact) => { artifact.session.channel_id = "a".repeat(129); }),
     rawArtifactMutation("session-init-expiry-zero", (artifact) => { artifact.session.init_expire_at_unix_s = 0; }),
     rawArtifactMutation("session-idle-timeout-negative", (artifact) => { artifact.session.idle_timeout_seconds = -1; }),
     rawArtifactMutation("session-idle-timeout-too-large", (artifact) => { artifact.session.idle_timeout_seconds = 4_294_967_296; }),
@@ -648,7 +655,34 @@ const artifactVectors = {
     rawArtifactMutation("session-features-not-zero", (artifact) => { artifact.session.selected_features = 1; }),
     rawArtifactMutation("session-contract-hash-mismatch", (artifact) => { artifact.session.contract_hash_b64u = Buffer.alloc(32).toString("base64url"); }),
     rawArtifactMutation("direct-routing-token-empty", (artifact) => { artifact.path.routing_token = ""; }),
+    rawArtifactMutation("direct-routing-token-too-long", (artifact) => { artifact.path.routing_token = "a".repeat(8_193); }),
+    rawArtifactMutation("direct-routing-token-non-ascii", (artifact) => { artifact.path.routing_token = "route-\u00e9"; }),
+    rawArtifactMutation("direct-rendezvous-group-empty", (artifact) => { artifact.path.rendezvous_group_id = ""; }),
+    rawArtifactMutation("direct-rendezvous-group-invalid-character", (artifact) => { artifact.path.rendezvous_group_id = "group/3"; }),
+    rawArtifactMutation("direct-rendezvous-group-too-long", (artifact) => { artifact.path.rendezvous_group_id = "a".repeat(129); }),
+    rawArtifactMutation("direct-rendezvous-group-non-ascii", (artifact) => { artifact.path.rendezvous_group_id = "\u7fa4\u7ec4"; }),
+    rawArtifactMutation("direct-listener-audience-empty", (artifact) => { artifact.path.listener_audience = ""; }),
+    rawArtifactMutation("direct-listener-audience-invalid-character", (artifact) => { artifact.path.listener_audience = "listener/3"; }),
+    rawArtifactMutation("direct-listener-audience-too-long", (artifact) => { artifact.path.listener_audience = "a".repeat(129); }),
+    rawArtifactMutation("direct-listener-audience-non-ascii", (artifact) => { artifact.path.listener_audience = "\u76d1\u542c"; }),
     rawArtifactMutation("direct-cross-variant-role", (artifact) => { artifact.path.role = 1; }),
+    rawArtifactMutationFrom("tunnel-role-zero", tunnelObject, (artifact) => { artifact.path.role = 0; }),
+    rawArtifactMutationFrom("tunnel-role-three", tunnelObject, (artifact) => { artifact.path.role = 3; }),
+    rawArtifactMutationFrom("tunnel-local-endpoint-empty", tunnelObject, (artifact) => { artifact.path.local_endpoint_instance_id = ""; }),
+    rawArtifactMutationFrom("tunnel-local-endpoint-invalid-character", tunnelObject, (artifact) => { artifact.path.local_endpoint_instance_id = "endpoint/client"; }),
+    rawArtifactMutationFrom("tunnel-local-endpoint-too-long", tunnelObject, (artifact) => { artifact.path.local_endpoint_instance_id = "a".repeat(129); }),
+    rawArtifactMutationFrom("tunnel-local-endpoint-non-ascii", tunnelObject, (artifact) => { artifact.path.local_endpoint_instance_id = "\u672c\u5730"; }),
+    rawArtifactMutationFrom("tunnel-peer-endpoint-empty", tunnelObject, (artifact) => { artifact.path.expected_peer_endpoint_instance_id = ""; }),
+    rawArtifactMutationFrom("tunnel-peer-endpoint-invalid-character", tunnelObject, (artifact) => { artifact.path.expected_peer_endpoint_instance_id = "endpoint/server"; }),
+    rawArtifactMutationFrom("tunnel-peer-endpoint-too-long", tunnelObject, (artifact) => { artifact.path.expected_peer_endpoint_instance_id = "a".repeat(129); }),
+    rawArtifactMutationFrom("tunnel-peer-endpoint-non-ascii", tunnelObject, (artifact) => { artifact.path.expected_peer_endpoint_instance_id = "\u8fdc\u7aef"; }),
+    rawArtifactMutationFrom("tunnel-endpoint-identifiers-equal", tunnelObject, (artifact) => {
+      artifact.path.expected_peer_endpoint_instance_id = artifact.path.local_endpoint_instance_id;
+    }),
+    rawArtifactMutationFrom("tunnel-token-empty", tunnelObject, (artifact) => { artifact.path.token = ""; }),
+    rawArtifactMutationFrom("tunnel-token-too-long", tunnelObject, (artifact) => { artifact.path.token = "a".repeat(8_193); }),
+    rawArtifactMutationFrom("tunnel-token-non-ascii", tunnelObject, (artifact) => { artifact.path.token = "attach-\u00e9"; }),
+    rawArtifactMutation("path-kind-unknown", (artifact) => { artifact.path.kind = "other"; }),
     rawArtifactMutation("candidate-count-zero", (artifact) => { artifact.path.candidates = []; }),
     rawArtifactMutation("candidate-count-five", (artifact) => {
       artifact.path.candidates.push({ ...artifact.path.candidates[0], id: "extra", url: "wss://extra.example/flowersec/v3/direct" });
@@ -741,11 +775,32 @@ const artifactVectors = {
       '"value":-9007199254740992',
     ),
     rawArtifactMutation("correlation-wrong-version", (artifact) => { artifact.correlation.v = 2; }),
+    textualArtifactMutation(
+      "correlation-version-noninteger",
+      (artifact) => { artifact.correlation.v = 3; },
+      '"v":3',
+      '"v":3.5',
+    ),
     rawArtifactMutation("correlation-tag-empty-value", (artifact) => {
       artifact.correlation.tags = [{ key: "request", value: "" }];
     }),
+    rawArtifactMutation("correlation-tag-value-too-long", (artifact) => {
+      artifact.correlation.tags = [{ key: "request", value: "v".repeat(129) }];
+    }),
+    rawArtifactMutation("correlation-tag-value-non-ascii", (artifact) => {
+      artifact.correlation.tags = [{ key: "request", value: "\u8bf7\u6c42" }];
+    }),
+    rawArtifactMutation("correlation-tag-empty-key", (artifact) => {
+      artifact.correlation.tags = [{ key: "", value: "request" }];
+    }),
     rawArtifactMutation("correlation-tag-invalid-key", (artifact) => {
       artifact.correlation.tags = [{ key: "Upper", value: "request" }];
+    }),
+    rawArtifactMutation("correlation-tag-key-too-long", (artifact) => {
+      artifact.correlation.tags = [{ key: `a${"b".repeat(32)}`, value: "request" }];
+    }),
+    rawArtifactMutation("correlation-tag-key-non-ascii", (artifact) => {
+      artifact.correlation.tags = [{ key: "\u8bf7\u6c42", value: "request" }];
     }),
     rawArtifactMutation("correlation-tag-duplicate", (artifact) => {
       artifact.correlation.tags = [{ key: "request", value: "a" }, { key: "request", value: "b" }];
@@ -1080,6 +1135,33 @@ const controllerVectors = {
         spend_callbacks: 1, retire_callbacks: 2,
         lease_terminal_states: ["retired", "retired", "consumed"], retry_delays_ms: [500],
         blocked_policy_remains_blocked: true,
+      },
+    },
+    {
+      id: "replacement-expired-before-race-returns-primary",
+      driver: "replacement-expiry",
+      steps: ["acquire_primary", "claim_A", "policy_trigger_A", "retire_A", "acquire_replacement_immediate", "claim_B", "B_expired_before_race", "retire_B", "wait_backoff_ordinal_2", "acquire_primary", "claim_C", "blocked_old_pin", "commit_spend_C", "established"],
+      input: { expiry_boundary: "before_race", wake_retry_manually: true },
+      expected: {
+        final_state: "connected", public_error: null, disposition: null,
+        acquisitions: 3, connect_attempts: 2, transports_created: 2,
+        replacement_acquisitions: 1, replacement_quota_used: 1,
+        spend_callbacks: 1, retire_callbacks: 2,
+        lease_terminal_states: ["retired", "retired", "consumed"], retry_delays_ms: [500],
+        blocked_policy_remains_blocked: true,
+      },
+    },
+    {
+      id: "replacement-acquisition-retryable-continues-search",
+      driver: "replacement-acquisition",
+      steps: ["acquire_primary", "claim_A", "policy_trigger_A", "retire_A", "acquire_replacement_retryable", "wait_backoff_ordinal_2", "acquire_replacement", "claim_B", "changed_pin", "tls_winner", "commit_spend_B", "established"],
+      input: { replacement_acquisition_failure: "retryable", wake_retry_manually: true },
+      expected: {
+        final_state: "connected", public_error: null, disposition: null,
+        acquisitions: 3, connect_attempts: 2, transports_created: 2,
+        replacement_acquisitions: 1, replacement_quota_used: 1,
+        spend_callbacks: 1, retire_callbacks: 1,
+        lease_terminal_states: ["retired", "consumed"], retry_delays_ms: [500],
       },
     },
     {
@@ -1467,6 +1549,8 @@ for (const name of inherited) {
         ["mixed-hex-last", "websocket", "direct", "wss://1.2.3.0x7f/flowersec/v3/direct"],
         ["dns-final-decimal", "websocket", "direct", "wss://example.1/flowersec/v3/direct"],
         ["dns-final-empty-hex", "websocket", "direct", "wss://example.0x/flowersec/v3/direct"],
+        ["dns-empty-label", "websocket", "direct", "wss://example..com/flowersec/v3/direct"],
+        ["dns-trailing-dot", "websocket", "direct", "wss://example.com./flowersec/v3/direct"],
         ["empty-url", "websocket", "direct", ""],
         ["empty-authority", "websocket", "direct", "wss:///flowersec/v3/direct"],
         ["empty-host", "websocket", "direct", "wss://:443/flowersec/v3/direct"],

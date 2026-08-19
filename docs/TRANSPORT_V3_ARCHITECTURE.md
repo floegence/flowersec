@@ -231,6 +231,13 @@ before scheduler entry. Multiple valid deadlines aggregate by maximum.
 Public errors never reveal URL, pin, certificate, native TLS text, credential,
 lease identity, or private FSA3 reason.
 
+When a server revalidates an FSB3 at or after its initiation expiry, it sends a
+retryable FSA3 with the audited `expired_artifact` reason and refuses admission.
+The client treats that as a remote redacted admission failure; it never derives
+the local public `expired_artifact` code from a remote reason string. The local
+code is produced only by the client's own trusted-clock checks before or after
+the candidate race, before FSB3, or at the local spend boundary.
+
 Static pin profile checks occur after a leaf is observable. A valid profile
 with unmatched hash may be pin_mismatch. A TLS failure before the leaf can be
 classified, an invalid profile, or a proof failure after hash match is unknown.

@@ -198,6 +198,24 @@
   },
   "url_normalization": {
     "forbidden_characters": ["\\", "?", "#", "%"],
+    "scheme_pattern": "^[A-Za-z][A-Za-z0-9+.-]*$",
+    "scheme_lowercase": true,
+    "authority_non_empty": true,
+    "authority_at_sign_forbidden": true,
+    "unbracketed_authority_max_colons": 1,
+    "userinfo_forbidden": true,
+    "ipv4": {
+      "ascii_digit_dot_requires_four_octets": true,
+      "octet_minimum": 0,
+      "octet_maximum": 255,
+      "leading_zero_forbidden": true
+    },
+    "dns": {
+      "empty_label_forbidden": true,
+      "trailing_dot_forbidden": true,
+      "label_bytes_max": 63,
+      "host_bytes_max": 253
+    },
     "allowed_production_schemes": ["wss", "quic", "https"],
     "default_port_omitted": 443,
     "idna": {
@@ -285,7 +303,8 @@
     "reserved_uint16": 0,
     "candidate_set_hash_formula": "SHA-256(label(candidate_set) || LP(JCS(canonical_candidates)))",
     "admission_binding_formula": "SHA-256(label(admission) || complete_FSB3)",
-    "acceptor_admissions_hash_formula": "SHA-256(label(acceptor_admissions) || LP(FSB3 sorted by chosen_candidate_id ASCII))",
+    "acceptor_admissions_hash_formula": "SHA-256(label(acceptor_admissions) || LP(complete_FSB3_1) || ... || LP(complete_FSB3_n))",
+    "acceptor_admissions_hash_order": "complete_FSB3 sorted by chosen_candidate_id ASCII, each frame independently length-prefixed",
     "acceptor_admissions_frames_min": 1,
     "acceptor_admissions_frames_max": 4,
     "tls_before_frame": true,
@@ -298,6 +317,7 @@
     "reason_bytes_max": 64,
     "reason_pattern": "^[a-z][a-z0-9_]*$",
     "success_reason": "",
+    "required_reason_status": {"expired_artifact": "retryable"},
     "reason_registry_required": true,
     "transport_security_reasons_forbidden": true
   },

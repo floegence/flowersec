@@ -126,6 +126,8 @@ func TestConnectionControllerSharedLifecycleVectors(t *testing.T) {
 		"browser-opaque-exhausted":                           runControllerVectorBrowserOpaque,
 		"all-unsupported":                                    runControllerVectorAllUnsupported,
 		"replacement-expired-returns-primary":                runControllerVectorReplacementExpired,
+		"replacement-expired-before-race-returns-primary":    runControllerVectorReplacementExpired,
+		"replacement-acquisition-retryable-continues-search": runControllerVectorReplacementAcquisitionRetryable,
 		"post-spend-retry-preserves-quota":                   runControllerVectorPostSpendRetry,
 		"lease-cancellation-first":                           runControllerVectorCancellationFirst,
 		"lease-delivery-first":                               runControllerVectorDeliveryFirst,

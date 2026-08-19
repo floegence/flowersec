@@ -97,6 +97,8 @@ const scenarioRunners: Readonly<Record<string, ScenarioRunner>> = Object.freeze(
   "browser-opaque-exhausted": runPolicyReplacement,
   "all-unsupported": runAllUnsupported,
   "replacement-expired-returns-primary": runReplacementExpired,
+  "replacement-expired-before-race-returns-primary": runReplacementExpired,
+  "replacement-acquisition-retryable-continues-search": runReplacementAcquisition,
   "post-spend-retry-preserves-quota": runPostSpendRetry,
   "lease-cancellation-first": runLeaseCancellation,
   "lease-delivery-first": runLeaseCancellation,
@@ -186,7 +188,10 @@ async function runAllUnsupported(scenario: ControllerScenario): Promise<void> {
 
 async function runReplacementExpired(scenario: ControllerScenario): Promise<void> {
   const changed = withChangedPin(baseArtifact);
-  const tracker = new VectorTracker([baseArtifact, changed, baseArtifact], undefined, new Set(), new Set([1]));
+  const replacement = scenario.input.expiry_boundary === "before_race"
+    ? withInitExpiry(changed, 1)
+    : changed;
+  const tracker = new VectorTracker([baseArtifact, replacement, baseArtifact], undefined, new Set(), new Set([1]));
   const source = tracker.source();
   let now = 1_900_000_000;
   let finalCandidateIDs: readonly string[] = [];
@@ -199,7 +204,7 @@ async function runReplacementExpired(scenario: ControllerScenario): Promise<void
   }, async (context) => {
     tracker.recordConnector(context, 1);
     if (tracker.connectAttempts === 1) return pinMismatch(context);
-    if (tracker.connectAttempts === 2) {
+    if (tracker.connectAttempts === 2 && scenario.input.expiry_boundary !== "before_race") {
       now = context.artifact.session.init_expire_at_unix_s;
       return ordinaryCandidateFailure(context);
     }
@@ -212,6 +217,34 @@ async function runReplacementExpired(scenario: ControllerScenario): Promise<void
   });
   await finishControllerScenario(controller, scenario, tracker, session);
   expect(finalCandidateIDs).not.toContain("t-pin");
+}
+
+async function runReplacementAcquisition(scenario: ControllerScenario): Promise<void> {
+  const changed = withChangedPin(baseArtifact);
+  const tracker = new VectorTracker([baseArtifact, changed], undefined, new Set(), new Set([1]));
+  const source = tracker.source();
+  let acquisition = 0;
+  const session = managedSession();
+  const controller = createConnectionControllerV3({
+    acquire: async () => {
+      acquisition += 1;
+      if (acquisition === 2) {
+        tracker.acquisitions += 1;
+        return {
+          kind: "failure" as const,
+          code: "connection_failed" as const,
+          disposition: { kind: "retryable" as const },
+        };
+      }
+      return await source.acquire();
+    },
+  }, async (context) => {
+    tracker.recordConnector(context, 1);
+    if (context.kind === "primary") return pinMismatch(context);
+    await commitArtifactLeaseSpendV3(context.claim);
+    return { kind: "established", session };
+  }, controllerOptions(scenario.expected.acquisitions, tracker.clock));
+  await finishControllerScenario(controller, scenario, tracker, session);
 }
 
 async function runPostSpendRetry(scenario: ControllerScenario): Promise<void> {
@@ -807,6 +840,12 @@ function withChangedPin(input: ArtifactV3): ArtifactV3 {
       }],
     },
   });
+  return output;
+}
+
+function withInitExpiry(input: ArtifactV3, expiry: number): ArtifactV3 {
+  const output = structuredClone(input) as ArtifactV3;
+  output.session.init_expire_at_unix_s = expiry;
   return output;
 }
 

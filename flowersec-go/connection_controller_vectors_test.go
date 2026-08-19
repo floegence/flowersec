@@ -149,7 +149,11 @@ func runControllerVectorReplacementExpired(t *testing.T, scenario controllerVect
 	oldPolicy := controllerPinPolicy("ERERERERERERERERERERERERERERERERERERERERERE")
 	newPolicy := controllerPinPolicy("gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIA")
 	primary := newControllerVectorLease(t, controllerPolicyArtifact(t, oldPolicy))
-	replacement := newControllerVectorLease(t, controllerPolicyArtifact(t, newPolicy))
+	replacementArtifact := controllerPolicyArtifact(t, newPolicy)
+	if scenario.Input.ExpiryBoundary == "before_race" {
+		replacementArtifact.value.Session.InitExpireAtUnixSeconds = 1
+	}
+	replacement := newControllerVectorLease(t, replacementArtifact)
 	nextArtifact := controllerPolicyArtifact(t, oldPolicy)
 	caCandidate := mustParseInternalFixtureArtifact(t).value.Path.Candidates[0]
 	caCandidate.TLS = artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA}
@@ -167,6 +171,21 @@ func runControllerVectorReplacementExpired(t *testing.T, scenario controllerVect
 		case 1:
 			return nil, controllerPinTriggerOutcome(claimed.lease.artifact.value)
 		case 2:
+			if scenario.Input.ExpiryBoundary == "before_race" {
+				artifact := claimed.lease.artifact.value
+				oldKey := endpointKey(artifact.Path.Kind, artifact.Path.Candidates[0])
+				caKey := endpointKey(artifact.Path.Kind, artifact.Path.Candidates[1])
+				if _, oldAllowed := allowed[oldKey]; oldAllowed {
+					t.Fatal("blocked old pin was eligible after replacement expiry")
+				}
+				if _, caAllowed := allowed[caKey]; !caAllowed || len(allowed) != 1 {
+					t.Fatalf("next primary allowed endpoints = %v, want unrelated CA only", allowed)
+				}
+				if err := claimed.lease.commitSpend(ctx); err != nil {
+					t.Fatal(err)
+				}
+				return session, controllerConnectOutcome{spendStarted: claimed.spendStarted()}
+			}
 			return nil, controllerConnectOutcome{err: &ConnectError{code: ConnectExpired}}
 		default:
 			artifact := claimed.lease.artifact.value
@@ -198,6 +217,49 @@ func runControllerVectorReplacementExpired(t *testing.T, scenario controllerVect
 	assertControllerVectorObserved(t, scenario.Expected, controllerVectorObservation(
 		controller, source.callCount(), int(connects.Load()), int(transports.Load()), 1,
 		[]*controllerVectorLease{primary, replacement, nextPrimary}, scenario.Expected.RetryDelaysMS,
+	))
+	closeController(t, controller)
+}
+
+func runControllerVectorReplacementAcquisitionRetryable(t *testing.T, scenario controllerVectorScenario) {
+	oldPolicy := controllerPinPolicy("ERERERERERERERERERERERERERERERERERERERERERE")
+	newPolicy := controllerPinPolicy("gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIA")
+	primary := newControllerVectorLease(t, controllerPolicyArtifact(t, oldPolicy))
+	replacement := newControllerVectorLease(t, controllerPolicyArtifact(t, newPolicy))
+	source := &controllerTestSource{results: []controllerAcquireResult{
+		{lease: primary.lease},
+		{failure: NewRetryableArtifactSourceError(errors.New("replacement acquisition retryable"))},
+		{lease: replacement.lease},
+	}}
+	controller := newControllerForTest(t, source, 0)
+	session := newControllerTestSession(SessionClosed)
+	var connects atomic.Int32
+	var transports atomic.Int32
+	controller.connectDetailed = func(ctx context.Context, claimed claimedArtifactLease, _ ConnectorOptions, allowed map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome) {
+		transports.Add(1)
+		switch connects.Add(1) {
+		case 1:
+			return nil, controllerPinTriggerOutcome(claimed.lease.artifact.value)
+		default:
+			if len(allowed) == 0 {
+				t.Fatal("replacement acquisition produced no eligible candidates")
+			}
+			if err := claimed.lease.commitSpend(ctx); err != nil {
+				t.Fatal(err)
+			}
+			return session, controllerConnectOutcome{spendStarted: claimed.spendStarted()}
+		}
+	}
+	controller.Start(context.Background())
+	waitControllerState(t, controller, ConnectionWaiting)
+	assertControllerVectorRetryDelays(t, scenario.Expected.RetryDelaysMS, 2)
+	if !scenario.Input.WakeRetryManually || !controller.RetryNow() {
+		t.Fatal("replacement acquisition retryable vector did not wake the retry backoff")
+	}
+	waitControllerSession(t, controller, session)
+	assertControllerVectorObserved(t, scenario.Expected, controllerVectorObservation(
+		controller, source.callCount(), int(connects.Load()), int(transports.Load()), 1,
+		[]*controllerVectorLease{primary, replacement}, scenario.Expected.RetryDelaysMS,
 	))
 	closeController(t, controller)
 }

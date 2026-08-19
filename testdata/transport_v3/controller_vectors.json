@@ -338,6 +338,92 @@
       }
     },
     {
+      "id": "replacement-expired-before-race-returns-primary",
+      "driver": "replacement-expiry",
+      "steps": [
+        "acquire_primary",
+        "claim_A",
+        "policy_trigger_A",
+        "retire_A",
+        "acquire_replacement_immediate",
+        "claim_B",
+        "B_expired_before_race",
+        "retire_B",
+        "wait_backoff_ordinal_2",
+        "acquire_primary",
+        "claim_C",
+        "blocked_old_pin",
+        "commit_spend_C",
+        "established"
+      ],
+      "input": {
+        "expiry_boundary": "before_race",
+        "wake_retry_manually": true
+      },
+      "expected": {
+        "final_state": "connected",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 3,
+        "connect_attempts": 2,
+        "transports_created": 2,
+        "replacement_acquisitions": 1,
+        "replacement_quota_used": 1,
+        "spend_callbacks": 1,
+        "retire_callbacks": 2,
+        "lease_terminal_states": [
+          "retired",
+          "retired",
+          "consumed"
+        ],
+        "retry_delays_ms": [
+          500
+        ],
+        "blocked_policy_remains_blocked": true
+      }
+    },
+    {
+      "id": "replacement-acquisition-retryable-continues-search",
+      "driver": "replacement-acquisition",
+      "steps": [
+        "acquire_primary",
+        "claim_A",
+        "policy_trigger_A",
+        "retire_A",
+        "acquire_replacement_retryable",
+        "wait_backoff_ordinal_2",
+        "acquire_replacement",
+        "claim_B",
+        "changed_pin",
+        "tls_winner",
+        "commit_spend_B",
+        "established"
+      ],
+      "input": {
+        "replacement_acquisition_failure": "retryable",
+        "wake_retry_manually": true
+      },
+      "expected": {
+        "final_state": "connected",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 3,
+        "connect_attempts": 2,
+        "transports_created": 2,
+        "replacement_acquisitions": 1,
+        "replacement_quota_used": 1,
+        "spend_callbacks": 1,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired",
+          "consumed"
+        ],
+        "retry_delays_ms": [
+          500
+        ]
+      }
+    },
+    {
       "id": "post-spend-retry-preserves-quota",
       "driver": "post-spend-retry",
       "steps": [

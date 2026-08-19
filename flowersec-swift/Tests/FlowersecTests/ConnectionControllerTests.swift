@@ -105,7 +105,7 @@ final class ConnectionControllerTests: XCTestCase {
       let driver = try XCTUnwrap(scenario["driver"] as? String)
       switch driver {
       case "policy-replacement", "candidate-capability-filter", "replacement-expiry",
-        "post-spend-retry", "lease-cancel-race", "attempt-exhaustion", "retry-after-clock",
+        "replacement-acquisition", "post-spend-retry", "lease-cancel-race", "attempt-exhaustion", "retry-after-clock",
         "candidate-failure-aggregation", "failure-ordinal", "expiry-boundary", "cycle-reset",
         "retry-clock-boundary", "candidate-security-aggregation", "multi-trigger-replacement",
         "retire-cleanup", "quota-preservation", "attempt-saturation", "capability-barrier",
@@ -616,12 +616,20 @@ final class ConnectionControllerTests: XCTestCase {
   }
 
   func testExpiredReplacementReturnsToPrimaryBackoffWithoutRestoringQuota() async throws {
-    let expected = try controllerExpectedV3("replacement-expired-returns-primary")
+    try await runExpiredReplacementVector("replacement-expired-returns-primary", beforeRace: false)
+  }
+
+  func testExpiredReplacementBeforeRaceReturnsToPrimary() async throws {
+    try await runExpiredReplacementVector("replacement-expired-before-race-returns-primary", beforeRace: true)
+  }
+
+  private func runExpiredReplacementVector(_ id: String, beforeRace: Bool) async throws {
+    let expected = try controllerExpectedV3(id)
     let retired = AsyncCounterV3()
     let spent = AsyncCounterV3()
     let source = SequenceArtifactSourceV3([
       try lease(artifact: artifactV3(), spent: spent, retired: retired),
-      try lease(artifact: changedPinArtifactV3(), spent: spent, retired: retired),
+      try lease(artifact: beforeRace ? expiredArtifactV3() : changedPinArtifactV3(), spent: spent, retired: retired),
       try lease(artifact: changedPinArtifactV3(), spent: spent, retired: retired),
     ])
     let calls = AsyncCounterV3()
@@ -631,7 +639,7 @@ final class ConnectionControllerTests: XCTestCase {
       connectOneShot: { lease, _ in
         switch await calls.increment() {
         case 1: throw ConnectError.transportSecurityFailed
-        case 2: throw ConnectError.expiredArtifact
+        case 2 where !beforeRace: throw ConnectError.expiredArtifact
         default:
           let claimed = try await lease.claim()
           try await claimed.commitSpend()
@@ -668,6 +676,49 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(expected["blocked_policy_remains_blocked"] as? Bool, true)
     XCTAssertTrue(expected["public_error"] is NSNull)
     XCTAssertTrue(expected["disposition"] is NSNull)
+    await controller.close()
+  }
+
+  func testRetryableReplacementAcquisitionContinuesSearch() async throws {
+    let expected = try controllerExpectedV3("replacement-acquisition-retryable-continues-search")
+    let retired = AsyncCounterV3()
+    let spent = AsyncCounterV3()
+    let source = ResultArtifactSourceV3([
+      .success(try lease(artifact: artifactV3(), spent: spent, retired: retired)),
+      .failure(ArtifactSourceFailure(disposition: .retryable)),
+      .success(try lease(artifact: changedPinArtifactV3(), spent: spent, retired: retired)),
+    ])
+    let calls = AsyncCounterV3()
+    let session = ControllerSessionV3()
+    let controller = try ConnectionController(
+      source: source,
+      connectOneShot: { lease, _ in
+        if await calls.increment() == 1 { throw ConnectError.transportSecurityFailed }
+        let claimed = try await lease.claim()
+        try await claimed.commitSpend()
+        return session
+      }
+    )
+    await controller.start()
+    let waiting = await waitForState(.waiting, controller: controller)
+    let woke = await controller.retryNow()
+    let connected = await waitForState(.connected, controller: controller)
+    let acquisitions = await source.acquisitions
+    let connectAttempts = await calls.value
+    let retirements = await retired.value
+    let spends = await spent.value
+    XCTAssertTrue(waiting)
+    XCTAssertTrue(woke)
+    XCTAssertTrue(connected)
+    XCTAssertEqual(acquisitions, expected["acquisitions"] as? Int)
+    XCTAssertEqual(connectAttempts, expected["connect_attempts"] as? Int)
+    XCTAssertEqual(connectAttempts, expected["transports_created"] as? Int)
+    XCTAssertEqual(expected["replacement_acquisitions"] as? Int, 1)
+    XCTAssertEqual(expected["replacement_quota_used"] as? Int, 1)
+    XCTAssertEqual(spends, expected["spend_callbacks"] as? Int)
+    XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int)
+    XCTAssertEqual(expected["lease_terminal_states"] as? [String], ["retired", "consumed"])
+    XCTAssertEqual(expected["retry_delays_ms"] as? [Int], [500])
     await controller.close()
   }
 
@@ -787,8 +838,8 @@ final class ConnectionControllerTests: XCTestCase {
     let root = try controllerVectorsV3()
     let scenarios = try XCTUnwrap(root["scenarios"] as? [[String: Any]])
     let ids = scenarios.compactMap { $0["id"] as? String }
-    XCTAssertEqual(ids.count, 37)
-    XCTAssertEqual(Set(ids).count, 37)
+    XCTAssertEqual(ids.count, 39)
+    XCTAssertEqual(Set(ids).count, 39)
 
     for id in ids {
       switch id {
@@ -802,6 +853,10 @@ final class ConnectionControllerTests: XCTestCase {
         try await testAllUnsupportedIsTerminalWithoutCreatingTransport()
       case "replacement-expired-returns-primary":
         try await testExpiredReplacementReturnsToPrimaryBackoffWithoutRestoringQuota()
+      case "replacement-expired-before-race-returns-primary":
+        try await testExpiredReplacementBeforeRaceReturnsToPrimary()
+      case "replacement-acquisition-retryable-continues-search":
+        try await testRetryableReplacementAcquisitionContinuesSearch()
       case "post-spend-retry-preserves-quota":
         try await testPostSpendRetryPreservesReplacementQuota()
       case "lease-cancellation-first", "lease-delivery-first":

@@ -581,12 +581,23 @@ async fn admit_and_establish(
         let _ = claimed.retire().await;
         return Err(error);
     }
+    // The owned task makes caller-future drops explicit. Cancellation aborts
+    // the callback; the lease guard still commits the irreversible consumed
+    // state because the durable result is then unknown.
     let mut spend: JoinHandle<_> = tokio::spawn(claimed.commit_spend());
     let spent = tokio::select! {
         biased;
         result = &mut spend => result,
-        _ = cancellation.cancelled() => return Err(terminal_error(ConnectErrorCode::ConnectionFailed)),
-        _ = tokio::time::sleep_until(deadline) => return Err(public_error(ConnectErrorCode::ConnectionFailed)),
+        _ = cancellation.cancelled() => {
+            spend.abort();
+            let _ = spend.await;
+            return Err(terminal_error(ConnectErrorCode::ConnectionFailed));
+        }
+        _ = tokio::time::sleep_until(deadline) => {
+            spend.abort();
+            let _ = spend.await;
+            return Err(public_error(ConnectErrorCode::ConnectionFailed));
+        }
     };
     spent
         .map_err(|_| public_error(ConnectErrorCode::ConnectionFailed))?
@@ -1019,6 +1030,64 @@ mod tests {
         assert_eq!(error.code(), ConnectErrorCode::ConnectionFailed);
         assert!(!error.controller_retryable());
         assert_eq!(carrier.aborts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn cancellation_bounds_an_in_flight_spend_and_consumes_the_lease() {
+        let artifact = artifact_with_candidates(vec![json!({
+            "carrier": "websocket",
+            "id": "ca",
+            "tls": {"mode": "ca"},
+            "url": "wss://127.0.0.1:443/flowersec/v3/direct",
+            "wire_profile": "flowersec-direct/3"
+        })]);
+        let plan = artifact.connection_plan().expect("valid connection plan");
+        let candidate = plan.candidates[0].clone();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let settled = Arc::new(AtomicUsize::new(0));
+        let spend_entered = entered.clone();
+        let spend_release = release.clone();
+        let spend_settled = settled.clone();
+        let lease = ArtifactLeaseV3::new(artifact, move || async move {
+            spend_entered.notify_one();
+            spend_release.notified().await;
+            spend_settled.store(1, Ordering::Release);
+            Ok(())
+        });
+        let observed_lease = lease.clone();
+        let claimed = lease.claim().expect("claim lease");
+        let carrier = Arc::new(HangingAdmissionCarrier {
+            phase: HangingAdmissionPhase::Open,
+            entered: Arc::new(tokio::sync::Semaphore::new(0)),
+            aborts: AtomicUsize::new(0),
+        });
+        let cancellation = CancellationToken::new();
+        let options = ConnectorOptions::new();
+        let mut operation = Box::pin(admit_candidate_and_establish(
+            claimed,
+            &candidate,
+            &plan,
+            carrier,
+            &options,
+            tokio::time::Instant::now() + Duration::from_secs(1),
+            &cancellation,
+        ));
+        tokio::select! {
+            _ = entered.notified() => {}
+            result = &mut operation => panic!("admission completed before spend cancellation: {result:?}"),
+        }
+        cancellation.cancel();
+        let result = tokio::time::timeout(Duration::from_millis(100), &mut operation)
+            .await
+            .expect("cancellation must bound the spend callback");
+        assert_eq!(
+            result.unwrap_err().code(),
+            ConnectErrorCode::ConnectionFailed
+        );
+        assert_eq!(settled.load(Ordering::Acquire), 0);
+        assert!(observed_lease.is_consumed_for_test());
+        release.notify_one();
     }
 
     async fn run_hanging_admission(

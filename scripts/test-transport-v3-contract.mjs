@@ -97,6 +97,7 @@ assert.equal(registry.controller.attempt_counter_saturates_at, Number.MAX_SAFE_I
 assert.deepEqual(registry.controller.blocked_policy_key, ["endpoint_key", "complete_declared_tls_policy_digest"]);
 assert.equal(registry.controller.replacement_same_endpoint_pin_to_ca, false);
 assert.deepEqual(registry.fsa3.statuses, { success: 0, reject: 1, retryable: 2 });
+assert.deepEqual(registry.fsa3.required_reason_status, { expired_artifact: "retryable" });
 assert.equal(registry.fsa3.transport_security_reasons_forbidden, true);
 assert.equal(registry.control_plane.redacted_input_error_text, "flowersec control-plane input is invalid");
 assert.equal(registry.control_plane.redacted_issuance_error_text, "flowersec artifact issuance failed");
@@ -104,6 +105,24 @@ assert.deepEqual(registry.control_plane.scheme_carrier_mapping, {
   wss: "websocket",
   quic: "raw_quic",
   https: "webtransport",
+});
+assert.equal(registry.url_normalization.scheme_pattern, "^[A-Za-z][A-Za-z0-9+.-]*$");
+assert.equal(registry.url_normalization.scheme_lowercase, true);
+assert.equal(registry.url_normalization.authority_non_empty, true);
+assert.equal(registry.url_normalization.userinfo_forbidden, true);
+assert.equal(registry.url_normalization.authority_at_sign_forbidden, true);
+assert.equal(registry.url_normalization.unbracketed_authority_max_colons, 1);
+assert.deepEqual(registry.url_normalization.ipv4, {
+  ascii_digit_dot_requires_four_octets: true,
+  octet_minimum: 0,
+  octet_maximum: 255,
+  leading_zero_forbidden: true,
+});
+assert.deepEqual(registry.url_normalization.dns, {
+  empty_label_forbidden: true,
+  trailing_dot_forbidden: true,
+  label_bytes_max: 63,
+  host_bytes_max: 253,
 });
 
 for (const relative of Object.values(registry.docs)) {
@@ -212,6 +231,7 @@ const requiredArtifactNegative = new Set([
   "scope-payload-fraction", "scope-payload-exponent", "scope-payload-negative-zero", "scope-payload-positive-safe-integer-overflow",
   "scope-payload-negative-safe-integer-overflow", "scope-duplicate",
   "correlation-tag-duplicate", "v2-profile-cross-version", "v2-path-cross-version",
+  "tunnel-endpoint-identifiers-equal", "tunnel-role-zero", "tunnel-token-non-ascii",
 ]);
 const artifactNegative = new Set(artifacts.negative.map((vector) => vector.id));
 for (const id of requiredArtifactNegative) assert(artifactNegative.has(id), `missing artifact rejection vector ${id}`);
@@ -269,6 +289,13 @@ for (const item of artifacts.fsa3) {
   assert.equal(frame.readUInt16BE(6), Buffer.byteLength(item.reason));
   assert.equal(frame.subarray(8).toString("ascii"), item.reason);
 }
+const expiredAdmission = artifacts.fsa3.find((item) => item.id === "retry-expired-artifact");
+assert.deepEqual(expiredAdmission, {
+  id: "retry-expired-artifact",
+  status: 2,
+  reason: "expired_artifact",
+  frame_hex: "4653413303020010657870697265645f6172746966616374",
+});
 
 const capabilities = json("testdata/transport_v3/capability_vectors.json");
 assert.equal(capabilities.version, 3);
@@ -302,6 +329,14 @@ assert.equal(controller.defaults.maximum_policy_sensitive_replacement_leases_per
 assert(controller.scenarios.some((item) => item.id === "pin-to-ca-filtered"));
 assert(controller.scenarios.some((item) => item.id === "lease-cancellation-first"));
 assert(controller.scenarios.some((item) => item.id === "post-spend-retry-preserves-quota"));
+assert(controller.scenarios.some((item) => item.id === "replacement-expired-before-race-returns-primary"));
+assert(controller.scenarios.some((item) => item.id === "replacement-acquisition-retryable-continues-search"));
+const replacementBeforeRace = controller.scenarios.find((item) => item.id === "replacement-expired-before-race-returns-primary");
+assert.equal(replacementBeforeRace.input.expiry_boundary, "before_race");
+assert.deepEqual(replacementBeforeRace.expected.lease_terminal_states, ["retired", "retired", "consumed"]);
+const replacementSearch = controller.scenarios.find((item) => item.id === "replacement-acquisition-retryable-continues-search");
+assert.equal(replacementSearch.input.replacement_acquisition_failure, "retryable");
+assert.deepEqual(replacementSearch.expected.retry_delays_ms, [500]);
 
 const idna = json("testdata/transport_v3/idna_vectors.json");
 assert.equal(idna.unicode_version, "15.1.0");
@@ -328,6 +363,8 @@ assert.deepEqual(idna.url_normalization.negative.map((item) => item.id), [
   "mixed-hex-last",
   "dns-final-decimal",
   "dns-final-empty-hex",
+  "dns-empty-label",
+  "dns-trailing-dot",
   "empty-url",
   "empty-authority",
   "empty-host",

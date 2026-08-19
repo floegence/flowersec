@@ -669,7 +669,13 @@ async fn run_scenario(scenario: &ScenarioV3) {
         "all-unsupported" | "capability-snapshot-invalidation-barrier" => {
             run_capability_filter(scenario).await
         }
-        "replacement-expired-returns-primary" => run_replacement_expiry(scenario).await,
+        "replacement-expired-returns-primary"
+        | "replacement-expired-before-race-returns-primary" => {
+            run_replacement_expiry(scenario).await
+        }
+        "replacement-acquisition-retryable-continues-search" => {
+            run_replacement_acquisition(scenario).await
+        }
         "post-spend-retry-preserves-quota" => run_post_spend_retry(scenario).await,
         "lease-cancellation-first" | "lease-delivery-first" => {
             run_lease_cancel_race(scenario).await
@@ -888,12 +894,100 @@ impl CandidatePreparerV3 for BarrierCandidatePreparer {
 
 async fn run_replacement_expiry(scenario: &ScenarioV3) {
     let first = TrackedLease::new(pin_artifact([0x11; 32]));
-    let replacement_lease = TrackedLease::new(pin_artifact([0x22; 32]));
+    let before_race = scenario.input["expiry_boundary"].as_str() == Some("before_race");
+    let replacement_lease = TrackedLease::new(if before_race {
+        pin_artifact_with_expiry([0x22; 32], 1)
+    } else {
+        pin_artifact([0x22; 32])
+    });
     let third = TrackedLease::new(pin_and_unrelated_ca_artifact([0x11; 32]));
     let source = Arc::new(VectorSource::new([
         primary(&first),
         replacement(&replacement_lease),
         primary(&third),
+    ]));
+    let metrics = Arc::new(ConnectorMetrics::default());
+    let controller = ConnectionController::new_with_connector(
+        source.clone(),
+        test_options(None),
+        vector_connector(
+            if before_race {
+                vec![
+                    ConnectorAction {
+                        attempts: 1,
+                        transports: 1,
+                        allowed_candidate_ids: None,
+                        outcome: ConnectorOutcome::Error(
+                            ConnectError::from_runtime_code(
+                                ConnectErrorCode::TransportSecurityFailed,
+                            )
+                            .with_v3_candidate_masks(1, 1),
+                        ),
+                    },
+                    ConnectorAction {
+                        attempts: 1,
+                        transports: 1,
+                        allowed_candidate_ids: Some(HashSet::from(["z-ca".to_owned()])),
+                        outcome: ConnectorOutcome::Success(ControlledSession::new()),
+                    },
+                ]
+            } else {
+                vec![
+                    ConnectorAction {
+                        attempts: 1,
+                        transports: 1,
+                        allowed_candidate_ids: None,
+                        outcome: ConnectorOutcome::Error(
+                            ConnectError::from_runtime_code(
+                                ConnectErrorCode::TransportSecurityFailed,
+                            )
+                            .with_v3_candidate_masks(1, 1),
+                        ),
+                    },
+                    ConnectorAction {
+                        attempts: 1,
+                        transports: 1,
+                        allowed_candidate_ids: Some(HashSet::from(["w-pin".to_owned()])),
+                        outcome: ConnectorOutcome::Error(ConnectError::from_runtime_code(
+                            ConnectErrorCode::Expired,
+                        )),
+                    },
+                    ConnectorAction {
+                        attempts: 1,
+                        transports: 1,
+                        allowed_candidate_ids: Some(HashSet::from(["z-ca".to_owned()])),
+                        outcome: ConnectorOutcome::Success(ControlledSession::new()),
+                    },
+                ]
+            },
+            metrics.clone(),
+        ),
+    );
+    controller.start();
+    let _ = wait_for_state(&controller, ConnectionState::Waiting).await;
+    assert!(controller.retry_now());
+    let status = wait_for_state(&controller, ConnectionState::Connected).await;
+    assert_eq!(scenario.expected.blocked_policy_remains_blocked, Some(true));
+    assert_observed(
+        scenario,
+        observe(
+            status,
+            &source,
+            &metrics,
+            &[&first, &replacement_lease, &third],
+            retry_delays([1]),
+        ),
+    );
+    controller.close().await;
+}
+
+async fn run_replacement_acquisition(scenario: &ScenarioV3) {
+    let first = TrackedLease::new(pin_artifact([0x11; 32]));
+    let replacement_lease = TrackedLease::new(pin_artifact([0x22; 32]));
+    let source = Arc::new(VectorSource::new([
+        primary(&first),
+        source_error(ArtifactSourceError::retryable()),
+        replacement(&replacement_lease),
     ]));
     let metrics = Arc::new(ConnectorMetrics::default());
     let controller = ConnectionController::new_with_connector(
@@ -914,14 +1008,6 @@ async fn run_replacement_expiry(scenario: &ScenarioV3) {
                     attempts: 1,
                     transports: 1,
                     allowed_candidate_ids: Some(HashSet::from(["w-pin".to_owned()])),
-                    outcome: ConnectorOutcome::Error(ConnectError::from_runtime_code(
-                        ConnectErrorCode::Expired,
-                    )),
-                },
-                ConnectorAction {
-                    attempts: 1,
-                    transports: 1,
-                    allowed_candidate_ids: Some(HashSet::from(["z-ca".to_owned()])),
                     outcome: ConnectorOutcome::Success(ControlledSession::new()),
                 },
             ],
@@ -932,14 +1018,13 @@ async fn run_replacement_expiry(scenario: &ScenarioV3) {
     let _ = wait_for_state(&controller, ConnectionState::Waiting).await;
     assert!(controller.retry_now());
     let status = wait_for_state(&controller, ConnectionState::Connected).await;
-    assert_eq!(scenario.expected.blocked_policy_remains_blocked, Some(true));
     assert_observed(
         scenario,
         observe(
             status,
             &source,
             &metrics,
-            &[&first, &replacement_lease, &third],
+            &[&first, &replacement_lease],
             retry_delays([1]),
         ),
     );
@@ -1841,6 +1926,18 @@ fn pin_artifact(pin: [u8; 32]) -> ArtifactV3 {
         "wss://pin.example.org/flowersec/v3/direct",
         pin
     )]))
+}
+
+fn pin_artifact_with_expiry(pin: [u8; 32], expires_at_unix_seconds: u64) -> ArtifactV3 {
+    let mut value = base_artifact_value();
+    value["session"]["init_expire_at_unix_s"] = expires_at_unix_seconds.into();
+    value["path"]["candidates"] = serde_json::json!([pin_candidate(
+        "w-pin",
+        "wss://pin.example.org/flowersec/v3/direct",
+        pin
+    )]);
+    ArtifactV3::parse(crate::artifact_v3::jcs_value(&value).expect("artifact JCS"))
+        .expect("valid expiring controller vector artifact")
 }
 
 fn ca_artifact() -> ArtifactV3 {

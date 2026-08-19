@@ -487,6 +487,8 @@ pub struct EncryptedSessionV3 {
     activity_generation: AtomicU64,
     activity_changed: Notify,
     lifecycle: AtomicU8,
+    close_complete: AtomicBool,
+    close_complete_changed: Notify,
     canceled: CancellationToken,
     terminal: StdMutex<Option<TerminalCauseV3>>,
     rpc: SessionRpcPeerV3,
@@ -539,6 +541,12 @@ impl EncryptedSessionV3 {
     fn finish_closed(&self) {
         self.lifecycle
             .store(SessionLifecycleV3::Closed as u8, Ordering::Release);
+    }
+
+    fn finish_close_workflow(&self) {
+        self.finish_closed();
+        self.close_complete.store(true, Ordering::Release);
+        self.close_complete_changed.notify_waiters();
     }
 
     fn terminate_stream_buffers(&self) {
@@ -684,6 +692,8 @@ async fn establish_session_v3_inner(
         activity_generation: AtomicU64::new(0),
         activity_changed: Notify::new(),
         lifecycle: AtomicU8::new(SessionLifecycleV3::Opening as u8),
+        close_complete: AtomicBool::new(false),
+        close_complete_changed: Notify::new(),
         canceled: CancellationToken::new(),
         terminal: StdMutex::new(None),
         rpc: SessionRpcPeerV3 {
@@ -2359,61 +2369,75 @@ async fn send_goaway_v3(session: &EncryptedSessionV3, reason: u16) -> io::Result
 }
 
 async fn close_session_v3(session: &EncryptedSessionV3) -> io::Result<()> {
-    if session.begin_closing() {
-        record_terminal_v3(session, &closed());
-        session.rpc.notifications.clear();
-        let deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
-        let flush = match tokio::time::timeout_at(deadline, async {
-            {
-                let _control_write = session.control_write.lock().await;
-                session
-                    .control_terminal_committed
-                    .store(true, Ordering::Release);
-                write_goaway_locked_v3(session, NORMAL_CLOSE_REASON_V3).await?;
-                write_control_locked_v3(
-                    session,
-                    InnerRecordTypeV3::SessionClose,
-                    &NORMAL_CLOSE_REASON_V3.to_be_bytes(),
-                )
-                .await?;
-                session.control.close_write_delivered().await?;
-            }
-            wait_for_peer_session_close_v3(session).await;
-            Ok(())
-        })
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "Flowersec v3 close flush timeout",
-            )),
-        };
-        session
-            .control_terminal_committed
-            .store(true, Ordering::Release);
-        session.terminate_stream_buffers();
-        session.canceled.cancel();
-        let carrier = match tokio::time::timeout_at(deadline, session.carrier.close()).await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => {
-                session.carrier.abort();
-                Err(error)
-            }
-            Err(_) => {
-                session.carrier.abort();
-                Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "Flowersec v3 carrier close timeout",
-                ))
-            }
-        };
-        let _rpc_operation = session.rpc.serial.lock().await;
-        session.finish_closed();
-        flush?;
-        carrier?;
+    if !session.begin_closing() {
+        if session.lifecycle() == SessionLifecycleV3::Closing {
+            wait_for_close_completion_v3(session).await;
+        }
+        return Ok(());
     }
-    Ok(())
+    record_terminal_v3(session, &closed());
+    session.rpc.notifications.clear();
+    let deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
+    let flush = match tokio::time::timeout_at(deadline, async {
+        {
+            let _control_write = session.control_write.lock().await;
+            session
+                .control_terminal_committed
+                .store(true, Ordering::Release);
+            write_goaway_locked_v3(session, NORMAL_CLOSE_REASON_V3).await?;
+            write_control_locked_v3(
+                session,
+                InnerRecordTypeV3::SessionClose,
+                &NORMAL_CLOSE_REASON_V3.to_be_bytes(),
+            )
+            .await?;
+            session.control.close_write_delivered().await?;
+        }
+        wait_for_peer_session_close_v3(session).await;
+        Ok(())
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "Flowersec v3 close flush timeout",
+        )),
+    };
+    session
+        .control_terminal_committed
+        .store(true, Ordering::Release);
+    session.terminate_stream_buffers();
+    session.canceled.cancel();
+    let carrier = match tokio::time::timeout_at(deadline, session.carrier.close()).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => {
+            session.carrier.abort();
+            Err(error)
+        }
+        Err(_) => {
+            session.carrier.abort();
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Flowersec v3 carrier close timeout",
+            ))
+        }
+    };
+    let _rpc_operation = session.rpc.serial.lock().await;
+    session.finish_close_workflow();
+    flush.and(carrier)
+}
+
+async fn wait_for_close_completion_v3(session: &EncryptedSessionV3) {
+    loop {
+        let changed = session.close_complete_changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        if session.close_complete.load(Ordering::Acquire) {
+            return;
+        }
+        changed.await;
+    }
 }
 
 async fn wait_for_peer_session_close_v3(session: &EncryptedSessionV3) {
@@ -2430,6 +2454,9 @@ async fn wait_for_peer_session_close_v3(session: &EncryptedSessionV3) {
 
 async fn close_peer_session_v3(session: &EncryptedSessionV3) {
     if !session.begin_closing() {
+        if session.lifecycle() == SessionLifecycleV3::Closing {
+            wait_for_close_completion_v3(session).await;
+        }
         return;
     }
     record_terminal_v3(session, &closed());
@@ -2459,7 +2486,7 @@ async fn close_peer_session_v3(session: &EncryptedSessionV3) {
     if !matches!(carrier, Ok(Ok(()))) {
         session.carrier.abort();
     }
-    session.finish_closed();
+    session.finish_close_workflow();
 }
 
 fn validate_session_close_payload_v3(payload: &[u8]) -> io::Result<()> {
@@ -2527,7 +2554,7 @@ async fn idle_watchdog_v3(session: Arc<SelfSession>) {
                     if !matches!(carrier, Ok(Ok(()))) {
                         session.carrier.abort();
                     }
-                    session.finish_closed();
+                    session.finish_close_workflow();
                 }
                 return;
             }
@@ -2545,7 +2572,7 @@ fn fail_session_v3(session: &EncryptedSessionV3, error: io::Error) {
             .control_terminal_committed
             .store(true, Ordering::Release);
         session.carrier.abort();
-        session.finish_closed();
+        session.finish_close_workflow();
     }
 }
 

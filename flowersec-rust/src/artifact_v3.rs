@@ -1579,6 +1579,11 @@ impl ArtifactLeaseV3 {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn is_consumed_for_test(&self) -> bool {
+        self.shared.state.load(Ordering::Acquire) == 3
+    }
+
     pub(crate) fn artifact_for_connector(&self) -> &ArtifactV3 {
         &self.artifact
     }
@@ -1624,6 +1629,17 @@ pub(crate) struct ClaimedArtifactLeaseV3 {
     shared: Arc<LeaseStateV3>,
     controller_capability: Option<Arc<AtomicBool>>,
 }
+
+struct SpendCompletionV3 {
+    shared: Arc<LeaseStateV3>,
+}
+
+impl Drop for SpendCompletionV3 {
+    fn drop(&mut self) {
+        self.shared.state.store(3, Ordering::Release);
+    }
+}
+
 impl ClaimedArtifactLeaseV3 {
     pub(crate) fn artifact(&self) -> &ArtifactV3 {
         &self.artifact
@@ -1641,7 +1657,7 @@ impl ClaimedArtifactLeaseV3 {
         }
     }
     pub(crate) fn is_consumed(&self) -> bool {
-        self.shared.state.load(Ordering::Acquire) == 3
+        matches!(self.shared.state.load(Ordering::Acquire), 2 | 3)
     }
     pub(crate) async fn commit_spend(
         self,
@@ -1650,6 +1666,9 @@ impl ClaimedArtifactLeaseV3 {
             .state
             .compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| ArtifactSpendErrorV3::Unavailable)?;
+        let completion = SpendCompletionV3 {
+            shared: self.shared.clone(),
+        };
         let callback = self
             .shared
             .spend
@@ -1658,7 +1677,7 @@ impl ClaimedArtifactLeaseV3 {
             .take()
             .ok_or(ArtifactSpendErrorV3::Unavailable)?;
         let result = callback().await;
-        self.shared.state.store(3, Ordering::Release);
+        drop(completion);
         result.map(|_| ConsumedArtifactLeaseV3 {
             _shared: self.shared,
         })

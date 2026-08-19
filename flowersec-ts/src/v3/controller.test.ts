@@ -79,6 +79,7 @@ describe("transport v3 controller, lease, and retry semantics", () => {
       "post-spend-retry",
       "quota-preservation",
       "replacement-expiry",
+      "replacement-acquisition",
       "retire-cleanup",
       "retry-after-clock",
       "retry-clock-boundary",

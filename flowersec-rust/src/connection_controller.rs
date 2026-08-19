@@ -14,7 +14,10 @@ use std::{
 };
 
 use async_trait::async_trait;
-use tokio::{sync::Notify, task::JoinHandle};
+use tokio::{
+    sync::{Mutex as AsyncMutex, Notify},
+    task::JoinHandle,
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -222,6 +225,7 @@ impl fmt::Debug for ControllerInner {
 pub struct ConnectionController {
     inner: Arc<ControllerInner>,
     task: Mutex<Option<JoinHandle<()>>>,
+    close_lock: AsyncMutex<()>,
 }
 
 impl fmt::Debug for ConnectionController {
@@ -286,6 +290,7 @@ impl ConnectionController {
                 }),
             }),
             task: Mutex::new(None),
+            close_lock: AsyncMutex::new(()),
         }
     }
 
@@ -342,6 +347,8 @@ impl ConnectionController {
     }
 
     pub async fn close(&self) {
+        // Serialize close callers so every caller waits for the same cleanup barrier.
+        let _close = self.close_lock.lock().await;
         self.inner.cancellation.cancel();
         self.inner.retry_wake.notify_waiters();
         if let Some(session) = self.inner.finish_closed() {
@@ -1292,6 +1299,7 @@ mod tests {
             "policy-replacement"
             | "candidate-capability-filter"
             | "replacement-expiry"
+            | "replacement-acquisition"
             | "post-spend-retry"
             | "lease-cancel-race"
             | "attempt-exhaustion"
@@ -2197,6 +2205,93 @@ mod tests {
         async fn close(&self) -> Result<(), SessionError> {
             Ok(())
         }
+    }
+
+    #[derive(Debug)]
+    struct BlockingCloseSession {
+        entered: Arc<Notify>,
+        release: Arc<Notify>,
+    }
+
+    #[async_trait]
+    impl Session for BlockingCloseSession {
+        fn rpc(&self) -> &dyn RpcPeer {
+            panic!("RPC is not used by controller tests")
+        }
+
+        async fn open_stream(
+            &self,
+            _kind: &str,
+            _metadata: StreamMetadata,
+        ) -> Result<Box<dyn ByteStream>, SessionError> {
+            Err(SessionError::OperationFailed)
+        }
+
+        async fn accept_stream(&self) -> Result<IncomingStream, SessionError> {
+            Err(SessionError::OperationFailed)
+        }
+
+        async fn rekey(&self) -> Result<(), SessionError> {
+            Err(SessionError::OperationFailed)
+        }
+
+        async fn probe_liveness(&self) -> Result<Duration, SessionError> {
+            Err(SessionError::OperationFailed)
+        }
+
+        async fn wait_termination(&self) -> SessionTermination {
+            std::future::pending().await
+        }
+
+        async fn close(&self) -> Result<(), SessionError> {
+            self.entered.notify_one();
+            self.release.notified().await;
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_controller_close_waits_for_session_cleanup() {
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let session = Arc::new(BlockingCloseSession {
+            entered: entered.clone(),
+            release: release.clone(),
+        });
+        let source = Arc::new(QueueSource::new([Ok(test_lease(
+            pin_only_artifact([0x11; 32]),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+        ))]));
+        let controller = ConnectionController::new_with_connector(
+            source,
+            test_options(Some(1)),
+            Arc::new(move |lease, _options, _cancellation| {
+                let session = session.clone();
+                Box::pin(async move {
+                    spend_lease(lease).await?;
+                    Ok(session as Arc<dyn Session>)
+                })
+            }),
+        );
+        controller.start();
+        wait_for_state(&controller, ConnectionState::Connected).await;
+
+        let mut first = Box::pin(controller.close());
+        tokio::select! {
+            _ = entered.notified() => {}
+            () = &mut first => panic!("controller close completed before session cleanup"),
+        }
+        let mut second = Box::pin(controller.close());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut second)
+                .await
+                .is_err(),
+            "concurrent controller close returned before cleanup"
+        );
+        release.notify_one();
+        first.await;
+        second.await;
     }
 
     fn pin_only_artifact(pin: [u8; 32]) -> ArtifactV3 {

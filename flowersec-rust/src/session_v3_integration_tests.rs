@@ -4218,6 +4218,62 @@ async fn close_flush_deadline_also_bounds_carrier_close() {
 }
 
 #[tokio::test]
+async fn concurrent_close_waits_for_the_owned_close_workflow() {
+    let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
+    let enabled = Arc::new(AtomicBool::new(false));
+    let writes = Arc::new(AtomicU64::new(0));
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let client_carrier: Arc<dyn CarrierSessionV3> = Arc::new(BlockingNthWriteCarrierSession {
+        inner: client_inner,
+        enabled: enabled.clone(),
+        writes,
+        block_on: 1,
+        entered: entered.clone(),
+        release: release.clone(),
+    });
+    let client_config = regression_config(SessionRole::Client, "concurrent-close", 1, None);
+    let server_config = regression_config(SessionRole::Server, "concurrent-close", 1, None);
+    let (client, server) = tokio::join!(
+        establish_session_v3(client_carrier, client_config),
+        establish_session_v3(server_carrier, server_config),
+    );
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
+
+    enabled.store(true, Ordering::Release);
+    let first = tokio::spawn({
+        let client = client.clone();
+        async move { client.close().await }
+    });
+    tokio::time::timeout(Duration::from_millis(250), entered.notified())
+        .await
+        .expect("first close did not enter the owned control flush");
+    let server_close = tokio::spawn({
+        let server = server.clone();
+        async move { server.close().await }
+    });
+    let second = tokio::spawn({
+        let client = client.clone();
+        async move { client.close().await }
+    });
+    let mut second = second;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut second)
+            .await
+            .is_err(),
+        "concurrent close returned before the owner completed"
+    );
+    release.notify_one();
+    first.await.expect("join first close").expect("first close");
+    second
+        .await
+        .expect("join second close")
+        .expect("second close");
+    let _ = server_close.await.expect("join server close");
+}
+
+#[tokio::test]
 async fn idle_timeout_drops_a_hanging_carrier_close_future() {
     let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
     let active_closes = Arc::new(AtomicU64::new(0));
