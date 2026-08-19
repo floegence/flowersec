@@ -1139,11 +1139,18 @@ actor TransportV2Session {
     let freezeWaiterID = allocateLifecycleWaiterID()
     try await freezeInboundResponders(peerInitiated: true, waiterID: freezeWaiterID)
     defer { unfreezeInboundResponders(peerInitiated: true) }
+    let hadReceiveRoot = receiveRoots[nextEpoch] != nil
     try prepareReceiveEpoch(nextEpoch)
     let activeStreams = Array(streams.values)
     for stream in activeStreams {
       try await stream.awaitReceiveRekey(transition: transition, nextEpoch: nextEpoch)
       guard !closed else { throw TransportV2SessionError.closed }
+    }
+    do {
+      try await sendControl(.sessionKeyUpdateACK, payload: payload)
+    } catch let error as TransportV2SessionError where error == .closed {
+      if !hadReceiveRoot { receiveRoots.removeValue(forKey: nextEpoch) }
+      return
     }
     receiveEpoch = nextEpoch
     receivedTransition = transition
@@ -1151,7 +1158,6 @@ actor TransportV2Session {
     for stream in activeStreams {
       await stream.publishReceiveRekey(transition: transition, nextEpoch: nextEpoch)
     }
-    try await sendControl(.sessionKeyUpdateACK, payload: payload)
   }
 
   private func expireReceiveRekey(transition: UInt64) async {

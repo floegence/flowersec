@@ -151,6 +151,26 @@ func TestTunnelAuthorizerReleasesAllowLeaseWhenClaimsAreInvalid(t *testing.T) {
 	}
 }
 
+func TestTunnelAuthorizerRejectsExpiredAllowBeforeReturningLease(t *testing.T) {
+	provider := &fakeAuthorizationProvider{response: authorizationResponse{
+		Decision: "allow", CredentialID: "credential-a", LeaseID: "lease-expired-tunnel",
+		ExpiresAt: time.Now().Add(-time.Second), ExpectedPeerEndpointInstanceID: "peer-b",
+	}}
+	decoded := &artifactv3.DecodedRequest{Raw: []byte("FSB3 fixture"), Request: artifactv3.Request{
+		PathKind: artifactv3.PathTunnel, Profile: artifactv3.Profile, ChannelID: "channel-a",
+		RendezvousGroupID: "group-a", ListenerAudience: "audience-a", Role: 1,
+		EndpointInstanceID: "peer-a", AttachToken: "attach-token",
+	}}
+	provider.response.CredentialID, _ = credentialIDFor(decoded)
+	ctx := withAuthorizationContext(context.Background(), authorizationContext{carrier: carrier.KindWebSocket, remoteAddress: "127.0.0.1:2"})
+	if _, err := tunnelAuthorizer(provider, runtimeReasons())(ctx, decoded); !errors.Is(err, ErrInvalidAuthorization) {
+		t.Fatalf("expired tunnel authorization error = %v", err)
+	}
+	if len(provider.released) != 1 || provider.released[0] != "lease-expired-tunnel" {
+		t.Fatalf("released leases = %v, want expired tunnel lease", provider.released)
+	}
+}
+
 func TestHTTPAuthorizationProviderAcceptsSecretFreeTunnelResponse(t *testing.T) {
 	expiresAt := time.Now().Add(time.Minute).UTC().Truncate(time.Second)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

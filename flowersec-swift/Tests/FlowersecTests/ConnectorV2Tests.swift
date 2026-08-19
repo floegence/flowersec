@@ -323,6 +323,35 @@ final class ConnectorV2Tests: XCTestCase {
     XCTAssertEqual(snapshot.closed, ["w-ca", "w-pin"])
   }
 
+  func testV3ConnectDeadlineClosesHangingAdmissionRead() async throws {
+    let recorder = HangingAdmissionRecorderV3()
+    let spent = ConnectorSpendCounter()
+    let connector = try SessionConnectorV3(
+      lease: ArtifactLeaseV3(
+        artifact: try baseArtifactV3ForConnector(),
+        commitSpend: { await spent.commit() }
+      ),
+      options: ConnectorOptions(connectTimeout: .milliseconds(20)),
+      runtime: HangingAdmissionRuntimeV3(recorder: recorder)
+    )
+
+    let started = ContinuousClock.now
+    do {
+      _ = try await connector.connect()
+      XCTFail("hanging admission unexpectedly established a session")
+    } catch {
+      XCTAssertEqual(error as? ConnectError, .timeout)
+    }
+    XCTAssertLessThan(started.duration(to: .now), .milliseconds(120))
+    let settled = await waitUntilConnectorV3(timeout: .milliseconds(500)) {
+      let snapshot = await recorder.snapshot()
+      return snapshot.reads == 1 && snapshot.closed == 2
+    }
+    XCTAssertTrue(settled)
+    let spendCount = await spent.value()
+    XCTAssertEqual(spendCount, 1)
+  }
+
   func testServerParityClientProfile() async throws {
     #if os(macOS)
       guard ProcessInfo.processInfo.environment["FLOWERSEC_PARITY_READY_BASE64"] != nil else { throw XCTSkip("server parity input is supplied by the parity runner") }
@@ -1515,6 +1544,88 @@ private actor CandidateRaceRuntimeV3: RuntimeCarrierAdapterV3 {
     }
     return CandidateRacePreparedConnectionV3(candidateID: candidate.id, recorder: recorder)
   }
+}
+
+private actor HangingAdmissionRecorderV3 {
+  struct Snapshot: Sendable {
+    let reads: Int
+    let closed: Int
+  }
+
+  private var reads = 0
+  private var closed = 0
+
+  func recordRead() { reads += 1 }
+  func recordClose() { closed += 1 }
+  func snapshot() -> Snapshot { Snapshot(reads: reads, closed: closed) }
+}
+
+private actor HangingAdmissionRuntimeV3: RuntimeCarrierAdapterV3 {
+  nonisolated let capabilities = RuntimeCapabilitiesV3.macOS
+  private let recorder: HangingAdmissionRecorderV3
+
+  init(recorder: HangingAdmissionRecorderV3) { self.recorder = recorder }
+
+  nonisolated func validate(options: ConnectorOptions) throws {}
+
+  func prepare(
+    candidate: CanonicalCandidateV3,
+    path: PathKind,
+    role: SessionRoleV3,
+    options: ConnectorOptions,
+    activePinHashes: [Data]?
+  ) async throws -> any PreparedCarrierConnectionV3 {
+    HangingAdmissionConnectionV3(recorder: recorder)
+  }
+}
+
+private actor HangingAdmissionConnectionV3: PreparedCarrierConnectionV3 {
+  nonisolated let carrier = CarrierKind.webSocket
+  private let recorder: HangingAdmissionRecorderV3
+  private var readWaiter: CheckedContinuation<Data, Error>?
+  private var closed = false
+
+  init(recorder: HangingAdmissionRecorderV3) { self.recorder = recorder }
+
+  func writeAdmission(_ frame: Data) async throws {
+    guard !closed else { throw ConnectorBoundaryErrorV3.runtimeFailed }
+  }
+
+  func readAdmission() async throws -> Data {
+    await recorder.recordRead()
+    return try await withCheckedThrowingContinuation { continuation in
+      if closed {
+        continuation.resume(throwing: ConnectorBoundaryErrorV3.runtimeFailed)
+      } else {
+        readWaiter = continuation
+      }
+    }
+  }
+
+  func makeCarrier(inboundCapacity: UInt16) async throws -> any TransportV3CarrierSession {
+    throw ConnectorBoundaryErrorV3.sessionFailed
+  }
+
+  func close() async {
+    guard !closed else { return }
+    closed = true
+    let waiter = readWaiter
+    readWaiter = nil
+    waiter?.resume(throwing: ConnectorBoundaryErrorV3.runtimeFailed)
+    await recorder.recordClose()
+  }
+}
+
+private func waitUntilConnectorV3(
+  timeout: Duration,
+  _ predicate: @escaping @Sendable () async -> Bool
+) async -> Bool {
+  let deadline = ContinuousClock.now.advanced(by: timeout)
+  while ContinuousClock.now < deadline {
+    if await predicate() { return true }
+    try? await Task.sleep(for: .milliseconds(2))
+  }
+  return await predicate()
 }
 
 private struct CandidateRacePreparedConnectionV3: PreparedCarrierConnectionV3 {

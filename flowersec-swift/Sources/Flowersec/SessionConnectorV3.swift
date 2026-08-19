@@ -141,30 +141,64 @@ struct SessionConnectorV3: Sendable {
   }
 
   private func connectWithDeadline() async throws -> any Session {
-    try await withThrowingTaskGroup(of: (any Session).self) { group in
-      group.addTask { try await connectWithoutDeadline() }
-      group.addTask {
+    let completion = ConnectorCompletionRaceV3<any Session>()
+    let connectionBox = PreparedConnectionCloseBoxV3()
+    let operation = Task<any Session, Error> {
+      try await connectWithoutDeadline(connectionBox: connectionBox)
+    }
+    let timeout = Task<Void, Never> {
+      do {
         try await Task.sleep(for: options.connectTimeout)
-        throw ConnectError.timeout
+        if completion.resolve(.failure(ConnectError.timeout)) {
+          operation.cancel()
+          connectionBox.close()
+        }
+      } catch {
+        return
       }
-      defer { group.cancelAll() }
-      guard let result = try await group.next() else { throw ConnectError.connectionFailed }
-      return result
+    }
+    Task {
+      let result: Result<any Session, Error>
+      do {
+        result = .success(try await operation.value)
+      } catch {
+        result = .failure(error)
+      }
+      if completion.resolve(result) {
+        timeout.cancel()
+      } else if case .success(let session) = result {
+        try? await session.close()
+      }
+    }
+    return try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        completion.install(continuation)
+      }
+    } onCancel: {
+      operation.cancel()
+      timeout.cancel()
+      connectionBox.close()
+      completion.resolve(.failure(CancellationError()))
     }
   }
 
-  private func connectWithoutDeadline() async throws -> any Session {
+  private func connectWithoutDeadline(
+    connectionBox: PreparedConnectionCloseBoxV3
+  ) async throws -> any Session {
     try Task.checkCancellation()
     let claimed = try await lease.claim()
     do {
-      return try await connectClaimed(claimed)
+      return try await connectClaimed(claimed, connectionBox: connectionBox)
     } catch {
       if !(await claimed.isConsumed) { try? await claimed.retire() }
       throw error
     }
   }
 
-  private func connectClaimed(_ claimed: ClaimedArtifactLeaseV3) async throws -> any Session {
+  private func connectClaimed(
+    _ claimed: ClaimedArtifactLeaseV3,
+    connectionBox: PreparedConnectionCloseBoxV3
+  ) async throws -> any Session {
     try Task.checkCancellation()
     let artifact = claimed.artifact
     guard artifact.value.v == 3, artifact.value.profile == "flowersec/3" else {
@@ -268,6 +302,7 @@ struct SessionConnectorV3: Sendable {
       if !sawOrdinaryFailure { throw ConnectorBoundaryErrorV3.runtimeUnsupported }
       throw ConnectorBoundaryErrorV3.runtimeFailed
     }
+    connectionBox.set(connection)
     do {
       let admission = try AdmissionCodecV3.encodeFSB3(
         artifact: artifact, chosenCandidateID: candidate.id)
@@ -301,6 +336,7 @@ struct SessionConnectorV3: Sendable {
         )
       )
       try Task.checkCancellation()
+      connectionBox.clear()
       return OpaqueSessionV3(session)
     } catch {
       await connection.close()
@@ -360,4 +396,62 @@ private enum CandidatePreparationOutcomeV3: Sendable {
   case failed(CanonicalCandidateV3, security: Bool)
   case opaque(CanonicalCandidateV3)
   case unsupported(CanonicalCandidateV3)
+}
+
+private final class PreparedConnectionCloseBoxV3: @unchecked Sendable {
+  private let lock = NSLock()
+  private var connection: (any PreparedCarrierConnectionV3)?
+  private var closeRequested = false
+
+  func set(_ connection: any PreparedCarrierConnectionV3) {
+    let closeImmediately = lock.withLock {
+      if closeRequested { return true }
+      self.connection = connection
+      return false
+    }
+    if closeImmediately { Task { await connection.close() } }
+  }
+
+  func clear() {
+    lock.withLock { connection = nil }
+  }
+
+  func close() {
+    let pending = lock.withLock {
+      closeRequested = true
+      let pending = connection
+      connection = nil
+      return pending
+    }
+    if let pending { Task { await pending.close() } }
+  }
+}
+
+private final class ConnectorCompletionRaceV3<Value: Sendable>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<Value, Error>?
+  private var result: Result<Value, Error>?
+
+  func install(_ continuation: CheckedContinuation<Value, Error>) {
+    let resolved = lock.withLock { () -> Result<Value, Error>? in
+      if let result { return result }
+      self.continuation = continuation
+      return nil
+    }
+    if let resolved { continuation.resume(with: resolved) }
+  }
+
+  @discardableResult
+  func resolve(_ result: Result<Value, Error>) -> Bool {
+    var continuation: CheckedContinuation<Value, Error>?
+    let won = lock.withLock { () -> Bool in
+      guard self.result == nil else { return false }
+      self.result = result
+      continuation = self.continuation
+      self.continuation = nil
+      return true
+    }
+    continuation?.resume(with: result)
+    return won
+  }
 }

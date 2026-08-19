@@ -336,7 +336,7 @@ func tunnelAuthorizer(provider authorizationProvider, reasons artifactv3.ReasonR
 			return tunnelv3.Authorization{}, ErrInvalidAuthorization
 		}
 		if decoded == nil || decoded.Request.PathKind != artifactv3.PathTunnel || decision.Direct != nil ||
-			!credentialIDMatches(decoded, decision.CredentialID) || decision.LeaseID == "" || decision.ExpiresAt.IsZero() ||
+			!credentialIDMatches(decoded, decision.CredentialID) || decision.LeaseID == "" || decision.ExpiresAt.IsZero() || !decision.ExpiresAt.After(time.Now()) ||
 			decision.ExpectedPeerEndpointInstanceID == "" {
 			return tunnelv3.Authorization{}, ErrInvalidAuthorization
 		}

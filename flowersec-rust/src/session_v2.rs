@@ -1616,12 +1616,14 @@ async fn send_control_response_v2(
     session: &EncryptedSessionV2,
     kind: InnerRecordTypeV2,
     payload: &[u8],
-) -> io::Result<()> {
+) -> io::Result<bool> {
     let _write = session.control_write.lock().await;
     if session.is_closed() {
-        return Ok(());
+        return Ok(false);
     }
-    write_control_locked_v2(session, kind, payload).await
+    write_control_locked_v2(session, kind, payload)
+        .await
+        .map(|()| true)
 }
 
 async fn send_control_cleanup_v2(
@@ -1768,7 +1770,9 @@ async fn control_loop_v2(session: Arc<SelfSession>) {
         };
         let handled = match kind {
             InnerRecordTypeV2::Ping => {
-                send_control_response_v2(&session, InnerRecordTypeV2::Pong, &payload).await
+                send_control_response_v2(&session, InnerRecordTypeV2::Pong, &payload)
+                    .await
+                    .map(|_| ())
             }
             InnerRecordTypeV2::Pong => {
                 if payload.len() != 8 {
@@ -2136,7 +2140,7 @@ async fn receive_rekey_inner_v2(session: &EncryptedSessionV2, payload: &[u8]) ->
     if transition == 0 || transition != expected_transition {
         return Err(invalid("non-consecutive receive transition"));
     }
-    {
+    let inserted_receive_root = {
         let mut state = session.state.lock().await;
         if next
             != state
@@ -2157,8 +2161,8 @@ async fn receive_rekey_inner_v2(session: &EncryptedSessionV2, payload: &[u8]) ->
             next,
         )
         .map_err(proto)?;
-        state.recv_roots.insert(next, next_roots);
-    }
+        state.recv_roots.insert(next, next_roots).is_none()
+    };
     let peer_frontier = session.peer_ledger.lock().await.frontier();
     if peer_frontier != watermark {
         return Err(invalid("rekey watermark does not match resolved frontier"));
@@ -2166,6 +2170,15 @@ async fn receive_rekey_inner_v2(session: &EncryptedSessionV2, payload: &[u8]) ->
     let streams = active_receive_streams_v2(session);
     for stream in &streams {
         stream.await_stream_update(transition, next).await?;
+    }
+    let acknowledged =
+        send_control_response_v2(session, InnerRecordTypeV2::SessionKeyUpdateAck, payload).await?;
+    if !acknowledged {
+        if inserted_receive_root {
+            let mut state = session.state.lock().await;
+            state.recv_roots.remove(&next);
+        }
+        return Ok(());
     }
     {
         let mut state = session.state.lock().await;
@@ -2178,7 +2191,6 @@ async fn receive_rekey_inner_v2(session: &EncryptedSessionV2, payload: &[u8]) ->
             *update = None;
         }
     }
-    send_control_response_v2(session, InnerRecordTypeV2::SessionKeyUpdateAck, payload).await?;
     if !session.rekeying.load(Ordering::Acquire) {
         let mut state = session.state.lock().await;
         let recv_epoch = state.recv_epoch;
