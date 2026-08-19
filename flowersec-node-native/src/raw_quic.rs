@@ -6,9 +6,9 @@ use std::{
 };
 
 use flowersec_native_transport::{
-    ApplicationClose, Cancellation, DatagramSendOutcome, PathProfile, RawQuicClientConfig,
-    RawQuicError, RawQuicLimits, RawQuicListener, RawQuicServerConfig, RawQuicSession,
-    RawQuicStream,
+    ApplicationClose, Cancellation, DatagramSendOutcome, PathProfile, ProtocolVersion,
+    RawQuicClientConfig, RawQuicError, RawQuicLimits, RawQuicListener, RawQuicServerConfig,
+    RawQuicSession, RawQuicStream,
 };
 use napi::{
     Error, Result, Status,
@@ -33,6 +33,19 @@ pub struct RawQuicConnectOptions {
 }
 
 #[napi(object)]
+pub struct RawQuicConnectOptionsV3 {
+    pub host: String,
+    pub port: u16,
+    pub server_name: String,
+    pub path: String,
+    pub tls_mode: String,
+    pub trust_roots_der: Option<Vec<Uint8Array>>,
+    pub active_leaf_der_sha256: Option<Vec<Uint8Array>>,
+    pub inbound_bidirectional_stream_capacity: u32,
+    pub handshake_timeout_ms: u32,
+}
+
+#[napi(object)]
 pub struct RawQuicBindOptions {
     pub host: String,
     pub port: u16,
@@ -51,8 +64,6 @@ pub struct RawQuicAddress {
 
 #[napi(js_name = "connectRawQuic")]
 pub fn connect_raw_quic(options: RawQuicConnectOptions) -> Result<RawQuicConnectOperation> {
-    let cancellation = Cancellation::new();
-    let task_cancellation = cancellation.clone();
     let profile = profile(&options.path)?;
     let limits = limits(
         options.inbound_bidirectional_stream_capacity,
@@ -68,15 +79,68 @@ pub fn connect_raw_quic(options: RawQuicConnectOptions) -> Result<RawQuicConnect
         limits,
     )
     .map_err(native_error)?;
+    connect_operation(options.host, options.port, options.server_name, config)
+}
+
+#[napi(js_name = "connectRawQuicV3")]
+pub fn connect_raw_quic_v3(options: RawQuicConnectOptionsV3) -> Result<RawQuicConnectOperation> {
+    let profile = profile(&options.path)?;
+    let limits = limits(
+        options.inbound_bidirectional_stream_capacity,
+        options.handshake_timeout_ms,
+    )?;
+    let config = match options.tls_mode.as_str() {
+        "ca" => {
+            if options.active_leaf_der_sha256.is_some() {
+                return Err(stable_error("invalid_tls_policy"));
+            }
+            let roots = options
+                .trust_roots_der
+                .ok_or_else(|| stable_error("invalid_tls_policy"))?
+                .into_iter()
+                .map(|root| root.to_vec())
+                .collect();
+            RawQuicClientConfig::new_v3_ca(profile, roots, limits)
+        }
+        "pin" => {
+            if options.trust_roots_der.is_some() {
+                return Err(stable_error("invalid_tls_policy"));
+            }
+            let pins = options
+                .active_leaf_der_sha256
+                .ok_or_else(|| stable_error("invalid_tls_policy"))?
+                .into_iter()
+                .map(|pin| {
+                    pin.as_ref()
+                        .try_into()
+                        .map_err(|_| stable_error("invalid_tls_policy"))
+                })
+                .collect::<Result<Vec<[u8; 32]>>>()?;
+            RawQuicClientConfig::new_v3_pin(profile, pins, limits)
+        }
+        _ => return Err(stable_error("invalid_tls_policy")),
+    }
+    .map_err(native_error)?;
+    connect_operation(options.host, options.port, options.server_name, config)
+}
+
+fn connect_operation(
+    host: String,
+    port: u16,
+    server_name: String,
+    config: RawQuicClientConfig,
+) -> Result<RawQuicConnectOperation> {
+    let cancellation = Cancellation::new();
+    let task_cancellation = cancellation.clone();
     let task = spawn_native(async move {
         let addresses = napi::tokio::select! {
             biased;
             _ = task_cancellation.cancelled() => return Err(RawQuicError::Canceled),
-            result = napi::tokio::net::lookup_host((options.host.as_str(), options.port)) => {
+            result = napi::tokio::net::lookup_host((host.as_str(), port)) => {
                 result.map_err(|_| RawQuicError::NoUsableAddress)?.collect::<Vec<_>>()
             }
         };
-        RawQuicSession::dial(addresses, options.server_name, config, &task_cancellation).await
+        RawQuicSession::dial(addresses, server_name, config, &task_cancellation).await
     });
     Ok(RawQuicConnectOperation {
         cancellation,
@@ -86,6 +150,18 @@ pub fn connect_raw_quic(options: RawQuicConnectOptions) -> Result<RawQuicConnect
 
 #[napi(js_name = "bindRawQuic")]
 pub async fn bind_raw_quic(options: RawQuicBindOptions) -> Result<RawQuicListenerBinding> {
+    bind_raw_quic_for_version(options, false).await
+}
+
+#[napi(js_name = "bindRawQuicV3")]
+pub async fn bind_raw_quic_v3(options: RawQuicBindOptions) -> Result<RawQuicListenerBinding> {
+    bind_raw_quic_for_version(options, true).await
+}
+
+async fn bind_raw_quic_for_version(
+    options: RawQuicBindOptions,
+    v3: bool,
+) -> Result<RawQuicListenerBinding> {
     let address = SocketAddr::new(
         options
             .host
@@ -97,16 +173,18 @@ pub async fn bind_raw_quic(options: RawQuicBindOptions) -> Result<RawQuicListene
         options.inbound_bidirectional_stream_capacity,
         options.handshake_timeout_ms.unwrap_or(10_000),
     )?;
-    let config = RawQuicServerConfig::new(
-        profile(&options.path)?,
-        options
-            .certificate_chain_der
-            .into_iter()
-            .map(|certificate| certificate.to_vec())
-            .collect(),
-        options.private_key_der.to_vec(),
-        limits,
-    )
+    let profile = profile(&options.path)?;
+    let certificate_chain = options
+        .certificate_chain_der
+        .into_iter()
+        .map(|certificate| certificate.to_vec())
+        .collect();
+    let private_key = options.private_key_der.to_vec();
+    let config = if v3 {
+        RawQuicServerConfig::new_v3(profile, certificate_chain, private_key, limits)
+    } else {
+        RawQuicServerConfig::new(profile, certificate_chain, private_key, limits)
+    }
     .map_err(native_error)?;
     let listener = RawQuicListener::bind(address, config).map_err(native_error)?;
     Ok(RawQuicListenerBinding {
@@ -239,6 +317,14 @@ impl RawQuicSessionBinding {
         match self.session.profile() {
             PathProfile::Direct => "direct",
             PathProfile::Tunnel => "tunnel",
+        }
+    }
+
+    #[napi(getter, js_name = "wireVersion")]
+    pub fn wire_version(&self) -> u32 {
+        match self.session.protocol_version() {
+            ProtocolVersion::V2 => 2,
+            ProtocolVersion::V3 => 3,
         }
     }
 
@@ -523,6 +609,9 @@ fn native_error(error: RawQuicError) -> Error {
         RawQuicError::NoUsableAddress => "name_resolution_failed",
         RawQuicError::Connect => "connect_failed",
         RawQuicError::Handshake => "handshake_failed",
+        RawQuicError::Timeout => "handshake_timeout",
+        RawQuicError::PinMismatch => "pin_mismatch",
+        RawQuicError::PinCertificateInvalid => "pin_certificate_invalid",
         RawQuicError::InvalidNegotiatedAlpn => "invalid_alpn",
         RawQuicError::Stream => "stream_failed",
         RawQuicError::DatagramUnavailable => "datagram_unavailable",

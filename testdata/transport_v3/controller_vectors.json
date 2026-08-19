@@ -1,0 +1,1513 @@
+{
+  "version": 3,
+  "defaults": {
+    "maximum_attempts": 0,
+    "initial_backoff_ms": 250,
+    "maximum_backoff_ms": 30000,
+    "jitter_ms": 0,
+    "wall_clock_recheck_max_interval_ms": 1000,
+    "maximum_retry_after_unix_ms": 253402300799999,
+    "maximum_policy_sensitive_replacement_leases_per_cycle": 1
+  },
+  "public_errors": [
+    "artifact_invalid",
+    "expired_artifact",
+    "transport_security_unsupported",
+    "transport_security_failed",
+    "connection_failed"
+  ],
+  "internal_transport_results": [
+    [
+      "invalid_artifact",
+      null,
+      "terminal"
+    ],
+    [
+      "expired_artifact",
+      null,
+      "acquire_primary"
+    ],
+    [
+      "tls_unsupported",
+      null,
+      "skip_candidate"
+    ],
+    [
+      "tls_policy_expired",
+      null,
+      "policy_refresh"
+    ],
+    [
+      "tls_failed",
+      "ca_untrusted",
+      "candidate_terminal"
+    ],
+    [
+      "tls_failed",
+      "pin_mismatch",
+      "policy_refresh"
+    ],
+    [
+      "tls_failed",
+      "unknown",
+      "policy_refresh_for_pin"
+    ],
+    [
+      "connection_failed",
+      "browser_pin_opaque",
+      "policy_sensitive_replacement"
+    ]
+  ],
+  "retry_after": {
+    "valid": [
+      0,
+      253402300799999
+    ],
+    "invalid": [
+      -1,
+      1.5,
+      "1000",
+      253402300800000,
+      "NaN",
+      "Infinity"
+    ],
+    "aggregate": "maximum_absolute_unix_ms"
+  },
+  "backoff_vectors": [
+    {
+      "consecutive_failure": 1,
+      "delay_ms": 250
+    },
+    {
+      "consecutive_failure": 2,
+      "delay_ms": 500
+    },
+    {
+      "consecutive_failure": 3,
+      "delay_ms": 1000
+    },
+    {
+      "consecutive_failure": 4,
+      "delay_ms": 2000
+    },
+    {
+      "consecutive_failure": 5,
+      "delay_ms": 4000
+    },
+    {
+      "consecutive_failure": 6,
+      "delay_ms": 8000
+    },
+    {
+      "consecutive_failure": 7,
+      "delay_ms": 16000
+    },
+    {
+      "consecutive_failure": 8,
+      "delay_ms": 30000
+    },
+    {
+      "consecutive_failure": 9,
+      "delay_ms": 30000
+    },
+    {
+      "consecutive_failure": 10,
+      "delay_ms": 30000
+    },
+    {
+      "consecutive_failure": 11,
+      "delay_ms": 30000
+    },
+    {
+      "consecutive_failure": 12,
+      "delay_ms": 30000
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "pin-mismatch-changed-pin-success",
+      "driver": "policy-replacement",
+      "steps": [
+        "acquire_primary",
+        "claim_A",
+        "pin_mismatch",
+        "retire_A",
+        "acquire_replacement_immediate",
+        "claim_B",
+        "changed_pin",
+        "tls_winner",
+        "commit_spend_B",
+        "established"
+      ],
+      "input": {
+        "replacement_policy": "changed_pin"
+      },
+      "expected": {
+        "final_state": "connected",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 2,
+        "connect_attempts": 2,
+        "transports_created": 2,
+        "replacement_acquisitions": 1,
+        "replacement_quota_used": 1,
+        "spend_callbacks": 1,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired",
+          "consumed"
+        ],
+        "retry_delays_ms": []
+      }
+    },
+    {
+      "id": "pin-mismatch-same-policy-terminal",
+      "driver": "policy-replacement",
+      "steps": [
+        "acquire_primary",
+        "claim_A",
+        "pin_mismatch",
+        "retire_A",
+        "acquire_replacement_immediate",
+        "claim_B",
+        "same_policy_digest",
+        "retire_B"
+      ],
+      "input": {
+        "replacement_policy": "same_pin"
+      },
+      "expected": {
+        "final_state": "failed",
+        "public_error": "transport_security_failed",
+        "disposition": "terminal",
+        "acquisitions": 2,
+        "connect_attempts": 1,
+        "transports_created": 1,
+        "replacement_acquisitions": 1,
+        "replacement_quota_used": 1,
+        "spend_callbacks": 0,
+        "retire_callbacks": 2,
+        "lease_terminal_states": [
+          "retired",
+          "retired"
+        ],
+        "retry_delays_ms": []
+      }
+    },
+    {
+      "id": "pin-to-ca-filtered",
+      "driver": "policy-replacement",
+      "steps": [
+        "pin_mismatch_A",
+        "replacement_same_endpoint_ca",
+        "filter_ca",
+        "empty_eligible_set",
+        "retire_B"
+      ],
+      "input": {
+        "replacement_policy": "ca"
+      },
+      "expected": {
+        "final_state": "failed",
+        "public_error": "transport_security_failed",
+        "disposition": "terminal",
+        "acquisitions": 2,
+        "connect_attempts": 1,
+        "transports_created": 1,
+        "replacement_acquisitions": 1,
+        "replacement_quota_used": 1,
+        "spend_callbacks": 0,
+        "retire_callbacks": 2,
+        "lease_terminal_states": [
+          "retired",
+          "retired"
+        ],
+        "retry_delays_ms": [],
+        "no_mode_downgrade": true
+      }
+    },
+    {
+      "id": "browser-opaque-exhausted",
+      "driver": "policy-replacement",
+      "steps": [
+        "browser_pin_opaque_A",
+        "retire_A",
+        "acquire_replacement_immediate",
+        "claim_B",
+        "replacement_same_digest",
+        "retire_B"
+      ],
+      "input": {
+        "replacement_policy": "same_pin",
+        "trigger": "browser_pin_opaque"
+      },
+      "expected": {
+        "final_state": "failed",
+        "public_error": "connection_failed",
+        "disposition": "terminal",
+        "acquisitions": 2,
+        "connect_attempts": 1,
+        "transports_created": 1,
+        "replacement_acquisitions": 1,
+        "replacement_quota_used": 1,
+        "spend_callbacks": 0,
+        "retire_callbacks": 2,
+        "lease_terminal_states": [
+          "retired",
+          "retired"
+        ],
+        "retry_delays_ms": [],
+        "tls_error_claimed": false
+      }
+    },
+    {
+      "id": "all-unsupported",
+      "driver": "candidate-capability-filter",
+      "steps": [
+        "acquire_primary",
+        "claim_A",
+        "skip_tls_unsupported",
+        "skip_tls_unsupported",
+        "retire_A"
+      ],
+      "input": {
+        "candidate_results": [
+          "tls_unsupported",
+          "tls_unsupported"
+        ]
+      },
+      "expected": {
+        "final_state": "failed",
+        "public_error": "transport_security_unsupported",
+        "disposition": "terminal",
+        "acquisitions": 1,
+        "connect_attempts": 1,
+        "transports_created": 0,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired"
+        ],
+        "retry_delays_ms": []
+      }
+    },
+    {
+      "id": "replacement-expired-returns-primary",
+      "driver": "replacement-expiry",
+      "steps": [
+        "acquire_primary",
+        "claim_A",
+        "policy_trigger_A",
+        "retire_A",
+        "acquire_replacement_immediate",
+        "claim_B",
+        "B_race_end_expired",
+        "retire_B",
+        "wait_backoff_ordinal_2",
+        "acquire_primary",
+        "claim_C",
+        "blocked_old_pin",
+        "commit_spend_C",
+        "established"
+      ],
+      "input": {
+        "wake_retry_manually": true
+      },
+      "expected": {
+        "final_state": "connected",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 3,
+        "connect_attempts": 3,
+        "transports_created": 3,
+        "replacement_acquisitions": 1,
+        "replacement_quota_used": 1,
+        "spend_callbacks": 1,
+        "retire_callbacks": 2,
+        "lease_terminal_states": [
+          "retired",
+          "retired",
+          "consumed"
+        ],
+        "retry_delays_ms": [
+          500
+        ],
+        "blocked_policy_remains_blocked": true
+      }
+    },
+    {
+      "id": "post-spend-retry-preserves-quota",
+      "driver": "post-spend-retry",
+      "steps": [
+        "acquire_primary",
+        "claim_A",
+        "policy_trigger_A",
+        "retire_A",
+        "acquire_replacement_immediate",
+        "claim_B",
+        "tls_winner_B",
+        "commit_spend_B",
+        "fsa_retryable",
+        "wait_backoff_ordinal_2",
+        "acquire_primary",
+        "claim_C",
+        "second_policy_trigger",
+        "retire_C",
+        "terminal"
+      ],
+      "input": {
+        "wake_retry_manually": true
+      },
+      "expected": {
+        "final_state": "failed",
+        "public_error": "transport_security_failed",
+        "disposition": "terminal",
+        "acquisitions": 3,
+        "connect_attempts": 3,
+        "transports_created": 3,
+        "replacement_acquisitions": 1,
+        "replacement_quota_used": 1,
+        "spend_callbacks": 1,
+        "retire_callbacks": 2,
+        "lease_terminal_states": [
+          "retired",
+          "consumed",
+          "retired"
+        ],
+        "retry_delays_ms": [
+          500
+        ]
+      }
+    },
+    {
+      "id": "lease-cancellation-first",
+      "driver": "lease-cancel-race",
+      "steps": [
+        "acquire_started",
+        "cancel_linearized",
+        "late_lease",
+        "source_claim",
+        "source_retire",
+        "close_cleanup_complete"
+      ],
+      "input": {
+        "linearization_winner": "cancellation"
+      },
+      "expected": {
+        "final_state": "closed",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 1,
+        "connect_attempts": 0,
+        "transports_created": 0,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired"
+        ],
+        "retry_delays_ms": []
+      }
+    },
+    {
+      "id": "lease-delivery-first",
+      "driver": "lease-cancel-race",
+      "steps": [
+        "lease_delivery_linearized",
+        "controller_claim",
+        "connect_started",
+        "cancel",
+        "controller_retire",
+        "close_cleanup_complete"
+      ],
+      "input": {
+        "linearization_winner": "delivery"
+      },
+      "expected": {
+        "final_state": "closed",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 1,
+        "connect_attempts": 1,
+        "transports_created": 1,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired"
+        ],
+        "retry_delays_ms": []
+      }
+    },
+    {
+      "id": "attempt-exhaustion",
+      "driver": "attempt-exhaustion",
+      "steps": [
+        "acquire_primary_failure",
+        "wait_backoff_ordinal_1",
+        "acquire_primary_failure",
+        "budget_exhausted"
+      ],
+      "input": {
+        "maximum_attempts": 2,
+        "wake_retry_manually": true
+      },
+      "expected": {
+        "final_state": "failed",
+        "public_error": "connection_failed",
+        "disposition": "terminal",
+        "acquisitions": 2,
+        "connect_attempts": 0,
+        "transports_created": 0,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 0,
+        "lease_terminal_states": [],
+        "retry_delays_ms": [
+          250
+        ]
+      }
+    },
+    {
+      "id": "retry-after-and-monotonic-backoff",
+      "driver": "retry-after-clock",
+      "steps": [
+        "acquire_primary_retry_after",
+        "wait_wall_recheck",
+        "reject_retry_now",
+        "advance_wall_and_monotonic",
+        "wait_wall_recheck",
+        "advance_wall_to_deadline",
+        "acquire_primary",
+        "claim_A",
+        "commit_spend_A",
+        "established"
+      ],
+      "input": {
+        "wall_start_ms": 1000,
+        "monotonic_start_ms": 0,
+        "retry_after_unix_ms": 5000,
+        "failure_ordinal": 1,
+        "backoff_ms": 250,
+        "wall_advances_ms": [
+          1000,
+          3000
+        ],
+        "monotonic_advances_ms": [
+          250,
+          0
+        ]
+      },
+      "expected": {
+        "final_state": "connected",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 2,
+        "connect_attempts": 1,
+        "transports_created": 1,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 1,
+        "retire_callbacks": 0,
+        "lease_terminal_states": [
+          "consumed"
+        ],
+        "retry_delays_ms": [
+          250,
+          1000
+        ],
+        "retry_now_allowed_before_deadline": false,
+        "wall_end_ms": 5000,
+        "monotonic_end_ms": 250
+      }
+    },
+    {
+      "id": "race-order-independent-security-priority",
+      "driver": "candidate-failure-aggregation",
+      "steps": [
+        "run_each_completion_permutation",
+        "aggregate_security_priority",
+        "project_public_failure"
+      ],
+      "input": {
+        "permutations": [
+          [
+            "tls_unsupported",
+            "connection_failed",
+            "tls_failed"
+          ],
+          [
+            "tls_failed",
+            "tls_unsupported",
+            "connection_failed"
+          ],
+          [
+            "connection_failed",
+            "tls_failed",
+            "tls_unsupported"
+          ]
+        ]
+      },
+      "expected": {
+        "final_state": "failed",
+        "public_error": "transport_security_failed",
+        "disposition": "terminal",
+        "acquisitions": 1,
+        "connect_attempts": 3,
+        "transports_created": 3,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired"
+        ],
+        "retry_delays_ms": [],
+        "order_independent": true
+      }
+    },
+    {
+      "id": "failure-ordinal-counts-attempt-once",
+      "driver": "failure-ordinal",
+      "steps": [
+        "candidate_A_fails",
+        "candidate_B_fails",
+        "aggregate_attempt_failure",
+        "increment_failure_ordinal_once",
+        "wait_backoff_ordinal_1"
+      ],
+      "input": {
+        "candidate_results": [
+          "connection_failed",
+          "connection_failed"
+        ]
+      },
+      "expected": {
+        "final_state": "waiting",
+        "public_error": "connection_failed",
+        "disposition": "retryable",
+        "acquisitions": 1,
+        "connect_attempts": 2,
+        "transports_created": 2,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired"
+        ],
+        "retry_delays_ms": [
+          250
+        ],
+        "failure_ordinal": 1
+      }
+    },
+    {
+      "id": "artifact-expiry-before-race",
+      "driver": "expiry-boundary",
+      "steps": [
+        "claim_A",
+        "observe_expired_before_race",
+        "retire_A",
+        "refresh_primary"
+      ],
+      "input": {
+        "expiry_boundary": "before_race"
+      },
+      "expected": {
+        "final_state": "waiting",
+        "public_error": "expired_artifact",
+        "disposition": "retryable",
+        "acquisitions": 1,
+        "connect_attempts": 0,
+        "transports_created": 0,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired"
+        ],
+        "retry_delays_ms": [
+          250
+        ],
+        "credential_bytes_written": 0
+      }
+    },
+    {
+      "id": "artifact-expiry-at-race-end",
+      "driver": "expiry-boundary",
+      "steps": [
+        "claim_A",
+        "start_candidate_race",
+        "select_tls_winner",
+        "observe_expired_at_race_end",
+        "abort_winner",
+        "retire_A",
+        "refresh_primary"
+      ],
+      "input": {
+        "expiry_boundary": "race_end"
+      },
+      "expected": {
+        "final_state": "waiting",
+        "public_error": "expired_artifact",
+        "disposition": "retryable",
+        "acquisitions": 1,
+        "connect_attempts": 1,
+        "transports_created": 1,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired"
+        ],
+        "retry_delays_ms": [
+          250
+        ],
+        "credential_bytes_written": 0
+      }
+    },
+    {
+      "id": "artifact-expiry-immediately-before-spend",
+      "driver": "expiry-boundary",
+      "steps": [
+        "claim_A",
+        "select_tls_winner",
+        "observe_expired_before_spend",
+        "abort_winner",
+        "retire_A",
+        "refresh_primary"
+      ],
+      "input": {
+        "expiry_boundary": "before_spend"
+      },
+      "expected": {
+        "final_state": "waiting",
+        "public_error": "expired_artifact",
+        "disposition": "retryable",
+        "acquisitions": 1,
+        "connect_attempts": 1,
+        "transports_created": 1,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired"
+        ],
+        "retry_delays_ms": [
+          250
+        ],
+        "credential_bytes_written": 0
+      }
+    },
+    {
+      "id": "artifact-expiry-after-spend",
+      "driver": "expiry-boundary",
+      "steps": [
+        "claim_A",
+        "select_tls_winner",
+        "commit_spend_A",
+        "observe_expired_after_spend",
+        "fail_without_reuse",
+        "refresh_primary"
+      ],
+      "input": {
+        "expiry_boundary": "after_spend"
+      },
+      "expected": {
+        "final_state": "waiting",
+        "public_error": "expired_artifact",
+        "disposition": "retryable",
+        "acquisitions": 1,
+        "connect_attempts": 1,
+        "transports_created": 1,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 1,
+        "retire_callbacks": 0,
+        "lease_terminal_states": [
+          "consumed"
+        ],
+        "retry_delays_ms": [
+          250
+        ],
+        "credential_bytes_written": 0
+      }
+    },
+    {
+      "id": "established-session-termination-resets-cycle",
+      "driver": "cycle-reset",
+      "steps": [
+        "ordinary_failure",
+        "wait_backoff_ordinal_1",
+        "establish_session",
+        "reset_failure_ordinal_and_quota",
+        "session_terminates",
+        "wait_backoff_ordinal_1",
+        "acquire_fresh_primary"
+      ],
+      "input": {
+        "wake_retry_manually": true
+      },
+      "expected": {
+        "final_state": "connected",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 3,
+        "connect_attempts": 3,
+        "transports_created": 3,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 2,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired",
+          "consumed",
+          "consumed"
+        ],
+        "retry_delays_ms": [
+          250,
+          250
+        ],
+        "failure_ordinal": 1
+      }
+    },
+    {
+      "id": "retry-after-wall-clock-forward-jump",
+      "driver": "retry-clock-boundary",
+      "steps": [
+        "wait_retry_after",
+        "wall_clock_jumps_forward",
+        "monotonic_backoff_satisfied",
+        "retry"
+      ],
+      "input": {
+        "wall_start_ms": 1000,
+        "monotonic_start_ms": 0,
+        "retry_after_unix_ms": 5000,
+        "failure_ordinal": 1,
+        "backoff_ms": 250,
+        "wall_advances_ms": [
+          5000
+        ],
+        "monotonic_advances_ms": [
+          250
+        ]
+      },
+      "expected": {
+        "final_state": "connecting",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 0,
+        "connect_attempts": 0,
+        "transports_created": 0,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 0,
+        "lease_terminal_states": [],
+        "retry_delays_ms": [
+          250
+        ],
+        "wall_end_ms": 6000,
+        "monotonic_end_ms": 250
+      }
+    },
+    {
+      "id": "retry-after-wall-clock-backward-jump",
+      "driver": "retry-clock-boundary",
+      "steps": [
+        "wait_retry_after",
+        "wall_clock_jumps_backward",
+        "reread_wall_within_1000",
+        "remain_waiting"
+      ],
+      "input": {
+        "wall_start_ms": 4000,
+        "monotonic_start_ms": 0,
+        "retry_after_unix_ms": 5000,
+        "failure_ordinal": 1,
+        "backoff_ms": 250,
+        "wall_advances_ms": [
+          -2000,
+          3000
+        ],
+        "monotonic_advances_ms": [
+          1000,
+          1000
+        ]
+      },
+      "expected": {
+        "final_state": "connecting",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 0,
+        "connect_attempts": 0,
+        "transports_created": 0,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 0,
+        "lease_terminal_states": [],
+        "retry_delays_ms": [
+          250,
+          1000
+        ],
+        "wall_end_ms": 5000,
+        "monotonic_end_ms": 2000
+      }
+    },
+    {
+      "id": "retry-after-wall-reread-bounded",
+      "driver": "retry-clock-boundary",
+      "steps": [
+        "wait_retry_after_far_future",
+        "sleep_at_most_1000",
+        "reread_wall"
+      ],
+      "input": {
+        "wall_start_ms": 0,
+        "monotonic_start_ms": 0,
+        "retry_after_unix_ms": 100000,
+        "failure_ordinal": 8,
+        "backoff_ms": 30000,
+        "wall_advances_ms": [
+          1000
+        ],
+        "monotonic_advances_ms": [
+          1000
+        ]
+      },
+      "expected": {
+        "final_state": "waiting",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 0,
+        "connect_attempts": 0,
+        "transports_created": 0,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 0,
+        "lease_terminal_states": [],
+        "retry_delays_ms": [
+          1000
+        ],
+        "wall_end_ms": 1000,
+        "monotonic_end_ms": 1000,
+        "maximum_wall_reread_ms": 1000
+      }
+    },
+    {
+      "id": "monotonic-timer-safe-integer-saturation",
+      "driver": "retry-clock-boundary",
+      "steps": [
+        "monotonic_near_safe_integer",
+        "add_backoff_saturating",
+        "sleep_remaining_one",
+        "reach_safe_integer"
+      ],
+      "input": {
+        "wall_start_ms": 0,
+        "monotonic_start_ms": 9007199254740990,
+        "retry_after_unix_ms": 0,
+        "failure_ordinal": 1,
+        "backoff_ms": 250,
+        "wall_advances_ms": [
+          0
+        ],
+        "monotonic_advances_ms": [
+          1
+        ]
+      },
+      "expected": {
+        "final_state": "connecting",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 0,
+        "connect_attempts": 0,
+        "transports_created": 0,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 0,
+        "lease_terminal_states": [],
+        "retry_delays_ms": [
+          1
+        ],
+        "wall_end_ms": 0,
+        "monotonic_end_ms": 9007199254740991,
+        "timer_saturated": true
+      }
+    },
+    {
+      "id": "single-ca-untrusted-terminal",
+      "driver": "candidate-security-aggregation",
+      "steps": [
+        "create_ca_transport",
+        "ca_verification_fails",
+        "aggregate_ca_untrusted",
+        "retire_A",
+        "terminal"
+      ],
+      "input": {
+        "candidate_results": [
+          "ca_untrusted"
+        ]
+      },
+      "expected": {
+        "final_state": "failed",
+        "public_error": "transport_security_failed",
+        "disposition": "terminal",
+        "acquisitions": 1,
+        "connect_attempts": 1,
+        "transports_created": 1,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired"
+        ],
+        "retry_delays_ms": [],
+        "tls_error_claimed": true
+      }
+    },
+    {
+      "id": "ca-untrusted-dominates-ordinary-failure",
+      "driver": "candidate-security-aggregation",
+      "steps": [
+        "race_ca_and_ordinary",
+        "ca_verification_fails",
+        "ordinary_dial_fails",
+        "aggregate_security_priority",
+        "retire_A",
+        "terminal"
+      ],
+      "input": {
+        "candidate_results": [
+          "ca_untrusted",
+          "connection_failed"
+        ]
+      },
+      "expected": {
+        "final_state": "failed",
+        "public_error": "transport_security_failed",
+        "disposition": "terminal",
+        "acquisitions": 1,
+        "connect_attempts": 2,
+        "transports_created": 2,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired"
+        ],
+        "retry_delays_ms": [],
+        "tls_error_claimed": true,
+        "order_independent": true
+      }
+    },
+    {
+      "id": "multiple-pin-trigger-endpoints-filtered",
+      "driver": "multi-trigger-replacement",
+      "steps": [
+        "pin_mismatch_endpoint_A",
+        "pin_mismatch_endpoint_B",
+        "retire_primary",
+        "acquire_one_replacement",
+        "require_changed_pin_for_A_and_B",
+        "filter_same_pin_and_ca",
+        "terminal"
+      ],
+      "input": {
+        "candidate_results": [
+          "pin_mismatch",
+          "pin_mismatch"
+        ]
+      },
+      "expected": {
+        "final_state": "failed",
+        "public_error": "transport_security_failed",
+        "disposition": "terminal",
+        "acquisitions": 2,
+        "connect_attempts": 2,
+        "transports_created": 2,
+        "replacement_acquisitions": 1,
+        "replacement_quota_used": 1,
+        "spend_callbacks": 0,
+        "retire_callbacks": 2,
+        "lease_terminal_states": [
+          "retired",
+          "retired"
+        ],
+        "retry_delays_ms": [],
+        "no_mode_downgrade": true
+      }
+    },
+    {
+      "id": "retire-cleanup-failure-does-not-retry-lease",
+      "driver": "retire-cleanup",
+      "steps": [
+        "claim_A",
+        "pre_spend_failure",
+        "retire_A",
+        "cleanup_fails",
+        "do_not_reuse_A",
+        "continue_with_fresh_lease"
+      ],
+      "input": {
+        "wake_retry_manually": true
+      },
+      "expected": {
+        "final_state": "connected",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 2,
+        "connect_attempts": 2,
+        "transports_created": 2,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 1,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired",
+          "consumed"
+        ],
+        "retry_delays_ms": [
+          250
+        ],
+        "cleanup_error_ignored": true
+      }
+    },
+    {
+      "id": "ordinary-retry-refresh-preserves-replacement-quota",
+      "driver": "quota-preservation",
+      "steps": [
+        "ordinary_failure_A",
+        "retire_A",
+        "wait_backoff_ordinal_1",
+        "acquire_fresh_primary_B",
+        "pin_mismatch_B",
+        "retire_B",
+        "acquire_replacement_C",
+        "changed_pin",
+        "commit_spend_C",
+        "established"
+      ],
+      "input": {
+        "wake_retry_manually": true
+      },
+      "expected": {
+        "final_state": "connected",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 3,
+        "connect_attempts": 3,
+        "transports_created": 3,
+        "replacement_acquisitions": 1,
+        "replacement_quota_used": 1,
+        "spend_callbacks": 1,
+        "retire_callbacks": 2,
+        "lease_terminal_states": [
+          "retired",
+          "retired",
+          "consumed"
+        ],
+        "retry_delays_ms": [
+          250
+        ]
+      }
+    },
+    {
+      "id": "attempt-counter-safe-integer-saturation",
+      "driver": "attempt-saturation",
+      "steps": [
+        "attempt_at_safe_integer",
+        "increment_saturating",
+        "remain_safe_integer"
+      ],
+      "input": {
+        "initial_attempt": 9007199254740991,
+        "maximum_attempts": 9007199254740991
+      },
+      "expected": {
+        "final_state": "connecting",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 0,
+        "connect_attempts": 0,
+        "transports_created": 0,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 0,
+        "lease_terminal_states": [],
+        "retry_delays_ms": [],
+        "attempt": 9007199254740991,
+        "counter_saturated": true
+      }
+    },
+    {
+      "id": "capability-snapshot-invalidation-barrier",
+      "driver": "capability-barrier",
+      "steps": [
+        "snapshot_capability",
+        "prepare_candidate",
+        "invalidate_runtime_capability",
+        "recheck_before_tls",
+        "abort_without_transport",
+        "retire_A"
+      ],
+      "input": {
+        "candidate_results": [
+          "tls_unsupported"
+        ]
+      },
+      "expected": {
+        "final_state": "failed",
+        "public_error": "transport_security_unsupported",
+        "disposition": "terminal",
+        "acquisitions": 1,
+        "connect_attempts": 1,
+        "transports_created": 0,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired"
+        ],
+        "retry_delays_ms": [],
+        "capability_rechecked": true
+      }
+    },
+    {
+      "id": "primary-fsa3-reject-consumes-spent",
+      "driver": "admission-spend-boundary",
+      "steps": [
+        "acquire_primary",
+        "claim_A",
+        "tls_winner",
+        "commit_spend_A",
+        "fsa_reject",
+        "classify"
+      ],
+      "input": {
+        "phase": "primary",
+        "admission_result": "fsa_reject"
+      },
+      "expected": {
+        "final_state": "failed",
+        "public_error": "connection_failed",
+        "disposition": "terminal",
+        "acquisitions": 1,
+        "connect_attempts": 1,
+        "transports_created": 1,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 1,
+        "retire_callbacks": 0,
+        "lease_terminal_states": [
+          "consumed"
+        ],
+        "retry_delays_ms": []
+      }
+    },
+    {
+      "id": "primary-fsa3-retryable-consumes-spent",
+      "driver": "admission-spend-boundary",
+      "steps": [
+        "acquire_primary",
+        "claim_A",
+        "tls_winner",
+        "commit_spend_A",
+        "fsa_retryable",
+        "classify"
+      ],
+      "input": {
+        "phase": "primary",
+        "admission_result": "fsa_retryable"
+      },
+      "expected": {
+        "final_state": "waiting",
+        "public_error": "connection_failed",
+        "disposition": "retryable",
+        "acquisitions": 1,
+        "connect_attempts": 1,
+        "transports_created": 1,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 1,
+        "retire_callbacks": 0,
+        "lease_terminal_states": [
+          "consumed"
+        ],
+        "retry_delays_ms": [
+          250
+        ]
+      }
+    },
+    {
+      "id": "replacement-fsa3-reject-consumes-spent",
+      "driver": "admission-spend-boundary",
+      "steps": [
+        "acquire_primary",
+        "claim_A",
+        "pin_mismatch",
+        "retire_A",
+        "acquire_replacement",
+        "claim_B",
+        "tls_winner",
+        "commit_spend_B",
+        "fsa_reject",
+        "classify"
+      ],
+      "input": {
+        "phase": "replacement",
+        "admission_result": "fsa_reject"
+      },
+      "expected": {
+        "final_state": "failed",
+        "public_error": "connection_failed",
+        "disposition": "terminal",
+        "acquisitions": 2,
+        "connect_attempts": 2,
+        "transports_created": 2,
+        "replacement_acquisitions": 1,
+        "replacement_quota_used": 1,
+        "spend_callbacks": 1,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired",
+          "consumed"
+        ],
+        "retry_delays_ms": []
+      }
+    },
+    {
+      "id": "replacement-fsa3-retryable-consumes-spent",
+      "driver": "admission-spend-boundary",
+      "steps": [
+        "acquire_primary",
+        "claim_A",
+        "pin_mismatch",
+        "retire_A",
+        "acquire_replacement",
+        "claim_B",
+        "tls_winner",
+        "commit_spend_B",
+        "fsa_retryable",
+        "classify"
+      ],
+      "input": {
+        "phase": "replacement",
+        "admission_result": "fsa_retryable"
+      },
+      "expected": {
+        "final_state": "waiting",
+        "public_error": "connection_failed",
+        "disposition": "retryable",
+        "acquisitions": 2,
+        "connect_attempts": 2,
+        "transports_created": 2,
+        "replacement_acquisitions": 1,
+        "replacement_quota_used": 1,
+        "spend_callbacks": 1,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired",
+          "consumed"
+        ],
+        "retry_delays_ms": [
+          500
+        ]
+      }
+    },
+    {
+      "id": "primary-fsh3-failure-consumes-spent",
+      "driver": "admission-spend-boundary",
+      "steps": [
+        "acquire_primary",
+        "claim_A",
+        "tls_winner",
+        "commit_spend_A",
+        "fsh_failure",
+        "classify"
+      ],
+      "input": {
+        "phase": "primary",
+        "admission_result": "fsh_failure"
+      },
+      "expected": {
+        "final_state": "waiting",
+        "public_error": "connection_failed",
+        "disposition": "retryable",
+        "acquisitions": 1,
+        "connect_attempts": 1,
+        "transports_created": 1,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 1,
+        "retire_callbacks": 0,
+        "lease_terminal_states": [
+          "consumed"
+        ],
+        "retry_delays_ms": [
+          250
+        ]
+      }
+    },
+    {
+      "id": "replacement-fsh3-failure-consumes-spent",
+      "driver": "admission-spend-boundary",
+      "steps": [
+        "acquire_primary",
+        "claim_A",
+        "pin_mismatch",
+        "retire_A",
+        "acquire_replacement",
+        "claim_B",
+        "tls_winner",
+        "commit_spend_B",
+        "fsh_failure",
+        "classify"
+      ],
+      "input": {
+        "phase": "replacement",
+        "admission_result": "fsh_failure"
+      },
+      "expected": {
+        "final_state": "waiting",
+        "public_error": "connection_failed",
+        "disposition": "retryable",
+        "acquisitions": 2,
+        "connect_attempts": 2,
+        "transports_created": 2,
+        "replacement_acquisitions": 1,
+        "replacement_quota_used": 1,
+        "spend_callbacks": 1,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired",
+          "consumed"
+        ],
+        "retry_delays_ms": [
+          500
+        ]
+      }
+    },
+    {
+      "id": "artifact-source-repeats-consumed-lease",
+      "driver": "duplicate-lease-identity",
+      "steps": [
+        "acquire_A",
+        "claim_A",
+        "commit_spend_A",
+        "retry",
+        "source_returns_A_again",
+        "claim_rejected",
+        "artifact_invalid_terminal"
+      ],
+      "input": {
+        "repeated_terminal_state": "consumed"
+      },
+      "expected": {
+        "final_state": "failed",
+        "public_error": "artifact_invalid",
+        "disposition": "terminal",
+        "acquisitions": 2,
+        "connect_attempts": 1,
+        "transports_created": 1,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 1,
+        "retire_callbacks": 0,
+        "lease_terminal_states": [
+          "consumed"
+        ],
+        "retry_delays_ms": [
+          250
+        ]
+      }
+    },
+    {
+      "id": "artifact-source-repeats-retired-lease",
+      "driver": "duplicate-lease-identity",
+      "steps": [
+        "acquire_A",
+        "claim_A",
+        "retire_A",
+        "retry",
+        "source_returns_A_again",
+        "claim_rejected",
+        "artifact_invalid_terminal"
+      ],
+      "input": {
+        "repeated_terminal_state": "retired"
+      },
+      "expected": {
+        "final_state": "failed",
+        "public_error": "artifact_invalid",
+        "disposition": "terminal",
+        "acquisitions": 2,
+        "connect_attempts": 1,
+        "transports_created": 1,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 0,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired"
+        ],
+        "retry_delays_ms": [
+          250
+        ]
+      }
+    }
+  ],
+  "lease_state_machine": {
+    "states": [
+      "idle",
+      "claimed",
+      "spending",
+      "consumed",
+      "retired"
+    ],
+    "transitions": [
+      [
+        "idle",
+        "claimed",
+        "claim"
+      ],
+      [
+        "claimed",
+        "spending",
+        "commitSpend"
+      ],
+      [
+        "spending",
+        "consumed",
+        "durable_result"
+      ],
+      [
+        "claimed",
+        "retired",
+        "retire"
+      ]
+    ],
+    "terminal_states": [
+      "consumed",
+      "retired"
+    ]
+  }
+}

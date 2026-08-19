@@ -20,7 +20,7 @@ origin, and a new durable receipt path:
 
 ```bash
 node examples/ts/node-client.mjs \
-  /secure/path/artifact-v2.json \
+  /secure/path/artifact-v3.json \
   https://app.example \
   /durable/state/artifact.spent \
   /secure/path/custom-root.pem

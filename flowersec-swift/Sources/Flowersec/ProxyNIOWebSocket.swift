@@ -18,13 +18,24 @@
       URL, [ProxyHeader], Int, Duration?
     ) async throws -> any ProxyUpstreamWebSocket
 
+  final class ProxyTLSClientHandler: @unchecked Sendable {
+    private let factory: @Sendable () throws -> NIOSSLClientHandler
+
+    init(factory: @escaping @Sendable () throws -> NIOSSLClientHandler) {
+      self.factory = factory
+    }
+
+    func make() throws -> NIOSSLClientHandler { try factory() }
+  }
+
   enum ProxyNIOWebSocketConnector {
     static func connect(
       url: URL,
       headers: [ProxyHeader],
       maxFrameBytes: Int,
       timeout: Duration?,
-      trustRoots: [NIOSSLCertificate]? = nil
+      trustRoots: [NIOSSLCertificate]? = nil,
+      tlsHandler: ProxyTLSClientHandler? = nil
     ) async throws -> any ProxyUpstreamWebSocket {
       guard let scheme = url.scheme?.lowercased(), scheme == "ws" || scheme == "wss",
         let host = url.host
@@ -91,16 +102,20 @@
         )
         do {
           if scheme == "wss" {
-            var tls = TLSConfiguration.makeClientConfiguration()
-            tls.minimumTLSVersion = .tlsv13
-            if let trustRoots { tls.trustRoots = .certificates(trustRoots) }
-            let context = try NIOSSLContext(configuration: tls)
-            try channel.pipeline.syncOperations.addHandler(
-              NIOSSLClientHandler(
-                context: context,
-                serverHostname: host
+            if let tlsHandler {
+              try channel.pipeline.syncOperations.addHandler(tlsHandler.make())
+            } else {
+              var tls = TLSConfiguration.makeClientConfiguration()
+              tls.minimumTLSVersion = .tlsv13
+              if let trustRoots { tls.trustRoots = .certificates(trustRoots) }
+              let context = try NIOSSLContext(configuration: tls)
+              try channel.pipeline.syncOperations.addHandler(
+                NIOSSLClientHandler(
+                  context: context,
+                  serverHostname: host
+                )
               )
-            )
+            }
           }
           try channel.pipeline.syncOperations.addHTTPClientHandlers(
             leftOverBytesStrategy: .forwardBytes,
@@ -249,7 +264,12 @@
     }
 
     func errorCaught(context: ChannelHandlerContext, error: any Error) {
-      connection.fail(error)
+      let tlsLocated =
+        error is NIOSSLError || error is BoringSSLError
+        || error is TransportSecurityFailureV3
+      connection.fail(
+        ProxyUpstreamFailure(.dial, error, tlsLocated: tlsLocated)
+      )
       context.close(promise: nil)
     }
 
@@ -394,7 +414,8 @@
     }
 
     private func cancel(_ waiterID: UInt64) {
-      let continuation = lock.withLock { () -> CheckedContinuation<ProxyWebSocketFrame, any Error>? in
+      let continuation = lock.withLock {
+        () -> CheckedContinuation<ProxyWebSocketFrame, any Error>? in
         guard let index = waiters.firstIndex(where: { $0.id == waiterID }) else { return nil }
         return waiters.remove(at: index).continuation
       }

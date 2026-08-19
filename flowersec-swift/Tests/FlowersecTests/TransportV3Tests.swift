@@ -1,0 +1,594 @@
+import Crypto
+import Foundation
+import Testing
+
+@testable import Flowersec
+
+@Suite("Transport v3 contract")
+struct TransportV3Tests {
+  @Test func strictArtifactCanonicalizationFSBAndDomainBinding() throws {
+    let artifact = try parseArtifactV3(Self.validArtifact())
+    #expect(
+      artifact.canonicalCandidates[0].normalizedURL == "wss://example.com/flowersec/v3/direct")
+    let encoded = try AdmissionCodecV3.encodeFSB3(artifact: artifact, chosenCandidateID: "a")
+    #expect(encoded.frame.prefix(5) == Data("FSB3".utf8) + Data([3]))
+    var expected = Data("flowersec-v3-admission\0".utf8)
+    expected.append(encoded.frame)
+    #expect(encoded.admissionBinding == Data(SHA256.hash(data: expected)))
+    #expect(throws: ArtifactErrorV3.self) {
+      try parseArtifactV3(Data([0x20]) + Self.validArtifact())
+    }
+  }
+
+  @Test func artifactJSONPreflightRejectsScopedAllocationBoundaries() {
+    let tooDeep =
+      "{\"value\":" + String(repeating: "[", count: 15) + "null"
+      + String(repeating: "]", count: 15) + "}"
+    let sixtyFourNulls = Array(repeating: "null", count: 64).joined(separator: ",")
+    let tooManyNodes =
+      "{\"a\":[\(sixtyFourNulls)],\"b\":[\(sixtyFourNulls)],"
+      + "\"c\":[\(sixtyFourNulls)],\"d\":[\(sixtyFourNulls)]}"
+    let tooManyMembers =
+      "{" + (0..<65).map { "\"k\($0)\":null" }.joined(separator: ",")
+      + "}"
+    let tooManyElements =
+      "{\"value\":["
+      + Array(repeating: "null", count: 65).joined(separator: ",") + "]}"
+    let oversizedKey = "{\"\(String(repeating: "k", count: 129))\":null}"
+    let oversizedString = "{\"value\":\"\(String(repeating: "x", count: 1_025))\"}"
+
+    for payload in [
+      tooDeep, tooManyNodes, tooManyMembers, tooManyElements, oversizedKey, oversizedString,
+    ] {
+      let document = Data("{\"scoped\":[{\"payload\":\(payload)}]}".utf8)
+      #expect(throws: JSONPreflightV3.ValidationError.self) {
+        try JSONPreflightV3.validateArtifact(document)
+      }
+    }
+  }
+
+  @Test func artifactFSB3AndCapabilityRejectNestedDuplicateKeysInPreflight() throws {
+    let artifactText = try #require(String(data: Self.validArtifact(), encoding: .utf8))
+    let duplicateArtifact = artifactText.replacingOccurrences(
+      of: "\"mode\":\"ca\"",
+      with: "\"mode\":\"ca\",\"m\\u006fde\":\"pin\"")
+    #expect(throws: JSONPreflightV3.ValidationError.self) {
+      try JSONPreflightV3.validateArtifact(Data(duplicateArtifact.utf8))
+    }
+    #expect(throws: ArtifactErrorV3.self) {
+      try parseArtifactV3(Data(duplicateArtifact.utf8))
+    }
+
+    let artifact = try parseArtifactV3(Self.validArtifact())
+    let admission = try AdmissionCodecV3.encodeFSB3(artifact: artifact, chosenCandidateID: "a")
+    let payloadText = try #require(String(data: admission.frame.dropFirst(12), encoding: .utf8))
+    let duplicatePayload = Data(
+      payloadText.replacingOccurrences(
+        of: "\"mode\":\"ca\"",
+        with: "\"mode\":\"ca\",\"m\\u006fde\":\"pin\""
+      ).utf8)
+    var duplicateFrame = Data(admission.frame.prefix(8))
+    duplicateFrame.appendUInt32BE(UInt32(duplicatePayload.count))
+    duplicateFrame.append(duplicatePayload)
+    #expect(throws: AdmissionCodecErrorV3.self) {
+      try AdmissionCodecV3.decodeFSB3(duplicateFrame)
+    }
+
+    let capability = try RuntimeCapabilitiesV3.macOS.canonicalJSON()
+    let capabilityText = try #require(String(data: capability, encoding: .utf8))
+    let duplicateCapability = capabilityText.replacingOccurrences(
+      of: "\"carrier\":\"websocket\"",
+      with: "\"carrier\":\"websocket\",\"carri\\u0065r\":\"websocket\"")
+    #expect(throws: ArtifactErrorV3.self) {
+      try RuntimeCapabilityDescriptorV3.decode(Data(duplicateCapability.utf8))
+    }
+  }
+
+  @Test func activePinsUseExclusiveExpiryAndDeclaredPolicyDigest() throws {
+    let first = Data(repeating: 1, count: 32).base64URLEncodedStringV3()
+    let second = Data(repeating: 2, count: 32).base64URLEncodedStringV3()
+    let candidate = CanonicalCandidateV3(
+      carrier: "websocket", id: "a", normalizedURL: "wss://example.com/flowersec/v3/direct",
+      tls: TLSPolicyWireV3(
+        mode: "pin",
+        pins: [
+          CertificatePinWireV3(
+            algorithm: "sha-256", valueBase64URL: first, notAfterUnixSeconds: 10),
+          CertificatePinWireV3(
+            algorithm: "sha-256", valueBase64URL: second, notAfterUnixSeconds: 20),
+        ]), wireProfile: "flowersec-direct/3")
+    #expect(try candidate.activePinHashes(at: 10) == [Data(repeating: 2, count: 32)])
+    #expect(throws: TransportSecurityFailureV3.tlsPolicyExpired) {
+      try candidate.activePinHashes(at: 20)
+    }
+    #expect(try candidate.tlsPolicyDigest().count == 32)
+  }
+
+  @Test func copiedLeaseHasOneOwnerAndTerminalSpend() async throws {
+    let artifact = try parseArtifactV3(Self.validArtifact())
+    let counter = CounterV3()
+    let lease = ArtifactLeaseV3(artifact: artifact, commitSpend: { await counter.increment() })
+    let claimed = try await lease.claim()
+    await #expect(throws: ArtifactLeaseErrorV3.unavailable) { try await lease.claim() }
+    try await claimed.commitSpend()
+    #expect(await counter.value == 1)
+    await #expect(throws: ArtifactLeaseErrorV3.unavailable) { try await lease.claim() }
+  }
+
+  @Test func capabilityAndPinVerifierAreStrict() throws {
+    let capability = RuntimeCapabilitiesV3.macOS
+    let canonical = try #require(String(data: capability.canonicalJSON(), encoding: .utf8))
+    #expect(canonical.contains("\"schemaVersion\":3"))
+    #expect(canonical.contains("\"securityModes\":[\"ca\",\"pin\"]"))
+    let der = Data("leaf".utf8)
+    let hash = Data(SHA256.hash(data: der))
+    let leaf = PresentedLeafCertificateV3(
+      der: der, x509Version: 3, notBeforeUnixSeconds: 10, notAfterUnixSeconds: 20,
+      publicKey: .ecdsaP256, tlsProofComplete: true)
+    try PinVerifierV3.verify(leaf: leaf, activePins: [hash], nowUnixSeconds: 10)
+    #expect(throws: TransportSecurityFailureV3.pinMismatch) {
+      try PinVerifierV3.verify(
+        leaf: leaf, activePins: [Data(repeating: 0, count: 32)], nowUnixSeconds: 10)
+    }
+    let legacyLeaf = PresentedLeafCertificateV3(
+      der: der, x509Version: 1, notBeforeUnixSeconds: 10, notAfterUnixSeconds: 20,
+      publicKey: .ecdsaP256, tlsProofComplete: true)
+    #expect(throws: TransportSecurityFailureV3.unknownTLS) {
+      try PinVerifierV3.verify(leaf: legacyLeaf, activePins: [hash], nowUnixSeconds: 10)
+    }
+  }
+
+  @Test func urlNormalizationRejectsPlaintextAndLegacyNumericHosts() throws {
+    #expect(
+      try ArtifactCodecV3.normalizeURL(
+        "wss://127.0.0.1:0443/flowersec/v3/direct", carrier: "websocket", kind: "direct")
+        == "wss://127.0.0.1/flowersec/v3/direct")
+    for value in [
+      "ws://127.0.0.1/flowersec/v3/direct", "wss://127.1/flowersec/v3/direct",
+      "wss://example.1/flowersec/v3/direct", "wss://example.0x/flowersec/v3/direct",
+    ] {
+      #expect(throws: ArtifactErrorV3.self) {
+        try ArtifactCodecV3.normalizeURL(value, carrier: "websocket", kind: "direct")
+      }
+    }
+  }
+
+  @Test func fsa3RejectsTransportSecurityReasons() {
+    for reason in [
+      "tls_failed", "tls_pin_mismatch", "tls_policy_expired", "tls_unsupported",
+      "transport_security_failed", "transport_security_unsupported",
+    ] {
+      var frame = Data("FSA3".utf8)
+      frame.append(contentsOf: [3, 1])
+      frame.appendUInt16BE(UInt16(reason.utf8.count))
+      frame.append(contentsOf: reason.utf8)
+      #expect(throws: AdmissionCodecErrorV3.invalid) {
+        try AdmissionCodecV3.decodeFSA3(frame)
+      }
+    }
+  }
+
+  @Test func sharedArtifactVectorsFreezeCanonicalizationAndAdmissionBytes() throws {
+    let vectors = try Self.loadVectorObject("artifact_vectors.json")
+    let positive = try #require(vectors["positive"] as? [[String: Any]])
+    for vector in positive {
+      let id = try #require(vector["id"] as? String)
+      let artifactJSON = try #require(vector["artifact_json"] as? String)
+      let artifact = try parseArtifactV3(Data(artifactJSON.utf8))
+      #expect(artifact.canonicalJSON == Data(artifactJSON.utf8), Comment(rawValue: id))
+      let artifactObject = try #require(
+        JSONSerialization.jsonObject(with: Data(artifactJSON.utf8)) as? [String: Any])
+      let session = try #require(artifactObject["session"] as? [String: Any])
+      let sessionProjection: [String: Any] = [
+        "allowed_suites": try #require(session["allowed_suites"]),
+        "channel_id": try #require(session["channel_id"]),
+        "default_suite": try #require(session["default_suite"]),
+        "establish_timeout_seconds": try #require(session["establish_timeout_seconds"]),
+        "idle_timeout_seconds": try #require(session["idle_timeout_seconds"]),
+        "max_inbound_streams": try #require(session["max_inbound_streams"]),
+        "profile": "flowersec/3",
+        "rekey_completion_timeout_seconds": try #require(
+          session["rekey_completion_timeout_seconds"]),
+        "rekey_prepare_timeout_seconds": try #require(session["rekey_prepare_timeout_seconds"]),
+        "selected_features": try #require(session["selected_features"]),
+      ]
+      let sessionCanonical = try FlowersecJCSV3.encode(sessionProjection)
+      let expectedSessionCanonical = try #require(vector["session_canonical_json"] as? String)
+      #expect(
+        sessionCanonical == Data(expectedSessionCanonical.utf8),
+        Comment(rawValue: "\(id) session canonical JSON"))
+      let expectedSessionHash = try #require(vector["session_contract_hash_b64u"] as? String)
+      #expect(
+        FlowersecJCSV3.hashLP(
+          domain: "flowersec-v3-session-contract\0", canonical: sessionCanonical
+        ).base64URLEncodedStringV3() == expectedSessionHash,
+        Comment(rawValue: "\(id) session contract hash"))
+      let candidateJSON = try #require(vector["candidates_canonical_json"] as? String)
+      #expect(artifact.candidateSetJSON == Data(candidateJSON.utf8), Comment(rawValue: id))
+      let candidateHash = try #require(vector["candidate_set_hash_b64u"] as? String)
+      #expect(artifact.candidateSetHash.base64URLEncodedStringV3() == candidateHash)
+
+      let digests = try #require(vector["tls_policy_digests"] as? [[String: Any]])
+      for digest in digests {
+        let candidateID = try #require(digest["candidate_id"] as? String)
+        let expected = try Data(hexV3: #require(digest["digest_hex"] as? String))
+        let candidate = try #require(
+          artifact.canonicalCandidates.first(where: { $0.id == candidateID }))
+        #expect(
+          try candidate.tlsPolicyDigest() == expected, Comment(rawValue: "\(id) \(candidateID)"))
+      }
+
+      let winnerVectors = try #require(vector["winners"] as? [[String: Any]])
+      var admissions: [EncodedFSB3] = []
+      for winner in winnerVectors {
+        let candidateID = try #require(winner["candidate_id"] as? String)
+        let admission = try AdmissionCodecV3.encodeFSB3(
+          artifact: artifact, chosenCandidateID: candidateID)
+        let expectedFrame = try Data(hexV3: #require(winner["fsb3_hex"] as? String))
+        let expectedBinding = try Data(
+          hexV3: #require(winner["admission_binding_hex"] as? String))
+        #expect(
+          admission.frame == expectedFrame,
+          Comment(rawValue: "\(id) \(candidateID) FSB3"))
+        #expect(
+          admission.admissionBinding == expectedBinding,
+          Comment(rawValue: "\(id) \(candidateID) binding"))
+        let decoded = try AdmissionCodecV3.decodeFSB3(expectedFrame)
+        #expect(decoded.chosenCandidateID == candidateID, Comment(rawValue: id))
+        #expect(decoded.frame == expectedFrame, Comment(rawValue: id))
+        #expect(decoded.admissionBinding == expectedBinding, Comment(rawValue: id))
+        admissions.append(admission)
+      }
+      let expectedAdmissionsHash = try Data(
+        hexV3: #require(vector["acceptor_admissions_hash_hex"] as? String))
+      #expect(
+        try AdmissionCodecV3.acceptorAdmissionsHash(admissions) == expectedAdmissionsHash,
+        Comment(rawValue: "\(id) acceptor hash"))
+    }
+
+    let negative = try #require(vectors["negative"] as? [[String: Any]])
+    let negativeIDs = Set(negative.compactMap { $0["id"] as? String })
+    #expect(negativeIDs.contains("scope-payload-positive-safe-integer-overflow"))
+    #expect(negativeIDs.contains("scope-payload-negative-safe-integer-overflow"))
+    for vector in negative {
+      let id = try #require(vector["id"] as? String)
+      let value = try #require(vector["value"] as? String)
+      #expect(throws: ArtifactErrorV3.self, Comment(rawValue: id)) {
+        try parseArtifactV3(Data(value.utf8))
+      }
+    }
+
+    for field in ["scalar_boundaries", "scoped_payload_boundaries"] {
+      let boundaries = try #require(vectors[field] as? [[String: Any]])
+      for vector in boundaries {
+        let id = try #require(vector["id"] as? String)
+        let accepted = try #require(vector["accepted"] as? Bool)
+        let value = Data(try #require(vector["artifact_json"] as? String).utf8)
+        if accepted {
+          let artifact = try parseArtifactV3(value)
+          #expect(artifact.canonicalJSON == value, Comment(rawValue: id))
+        } else {
+          #expect(throws: ArtifactErrorV3.self, Comment(rawValue: id)) {
+            try parseArtifactV3(value)
+          }
+        }
+      }
+    }
+
+    let artifactByteNegative = try #require(vectors["artifact_byte_negative"] as? [[String: Any]])
+    for vector in artifactByteNegative {
+      let id = try #require(vector["id"] as? String)
+      let value = try Data(hexV3: #require(vector["value_hex"] as? String))
+      #expect(throws: ArtifactErrorV3.self, Comment(rawValue: id)) { try parseArtifactV3(value) }
+    }
+    let fsb3Negative = try #require(vectors["fsb3_negative"] as? [[String: Any]])
+    for vector in fsb3Negative {
+      let id = try #require(vector["id"] as? String)
+      let value = try Data(hexV3: #require(vector["value_hex"] as? String))
+      #expect(throws: AdmissionCodecErrorV3.self, Comment(rawValue: id)) {
+        try AdmissionCodecV3.decodeFSB3(value)
+      }
+    }
+    let fsa3Negative = try #require(vectors["fsa3_negative"] as? [[String: Any]])
+    for vector in fsa3Negative {
+      let id = try #require(vector["id"] as? String)
+      let value = try Data(hexV3: #require(vector["value_hex"] as? String))
+      #expect(throws: AdmissionCodecErrorV3.self, Comment(rawValue: id)) {
+        try AdmissionCodecV3.decodeFSA3(value)
+      }
+    }
+
+    let fsaVectors = try #require(vectors["fsa3"] as? [[String: Any]])
+    for vector in fsaVectors {
+      let id = try #require(vector["id"] as? String)
+      let status = try #require(vector["status"] as? Int)
+      let reason = try #require(vector["reason"] as? String)
+      let decoded = try AdmissionCodecV3.decodeFSA3(
+        Data(hexV3: #require(vector["frame_hex"] as? String)))
+      #expect(decoded.status.rawValue == UInt8(status), Comment(rawValue: id))
+      #expect(decoded.reason == reason, Comment(rawValue: id))
+    }
+
+    let activePinSnapshots = try #require(vectors["active_pin_snapshots"] as? [[String: Any]])
+    for vector in activePinSnapshots {
+      let id = try #require(vector["id"] as? String)
+      let attemptNowValue = try #require(vector["attempt_now"] as? Int)
+      let attemptNow = try #require(UInt64(exactly: attemptNowValue))
+      let declared = try #require(vector["declared"] as? [String: Any])
+      let pins = try #require(declared["pins"] as? [[String: Any]])
+      let policy = TLSPolicyWireV3(
+        mode: try #require(declared["mode"] as? String),
+        pins: try pins.map { pin in
+          let notAfter = try #require(pin["not_after_unix_s"] as? Int)
+          return CertificatePinWireV3(
+            algorithm: try #require(pin["algorithm"] as? String),
+            valueBase64URL: try #require(pin["value_b64u"] as? String),
+            notAfterUnixSeconds: try #require(UInt64(exactly: notAfter)))
+        })
+      let candidate = CanonicalCandidateV3(
+        carrier: "websocket", id: "snapshot",
+        normalizedURL: "wss://example.com/flowersec/v3/direct", tls: policy,
+        wireProfile: "flowersec-direct/3")
+      let expectedActivePins = try #require(vector["active_value_b64u"] as? [String])
+      let result = try #require(vector["result"] as? String)
+      if result == "tls_policy_expired" {
+        #expect(expectedActivePins.isEmpty, Comment(rawValue: id))
+        #expect(throws: TransportSecurityFailureV3.tlsPolicyExpired, Comment(rawValue: id)) {
+          _ = try candidate.activePinHashes(at: attemptNow)
+        }
+      } else {
+        #expect(result == "attempt", Comment(rawValue: id))
+        let activePinResult = try candidate.activePinHashes(at: attemptNow)
+        let activePins = try #require(activePinResult)
+        #expect(
+          activePins.map { $0.base64URLEncodedStringV3() } == expectedActivePins,
+          Comment(rawValue: id))
+      }
+    }
+  }
+
+  @Test func sharedDatagramVectorsFreezeFSD3WireCryptoAndErrors() throws {
+    let fixture = try Self.loadVectorObject("datagram_vectors.json")
+    #expect(fixture["schema_version"] as? Int == 3)
+    let vectors = try #require(fixture["vectors"] as? [[String: Any]])
+    #expect(!vectors.isEmpty)
+
+    for vector in vectors {
+      let name = try #require(vector["name"] as? String)
+      func decode(_ field: String) throws -> Data {
+        let encoded = try #require(vector[field] as? String, Comment(rawValue: "\(name) \(field)"))
+        let value = try #require(
+          Data(base64URLEncoded: encoded), Comment(rawValue: "\(name) \(field)"))
+        #expect(value.base64URLEncodedString() == encoded, Comment(rawValue: "\(name) \(field)"))
+        return value
+      }
+
+      let suiteRaw = try #require(vector["suite"] as? Int)
+      let suite = try #require(TransportCipherSuiteV3(rawValue: UInt16(suiteRaw)))
+      let directionRaw = try #require(vector["direction"] as? Int)
+      let direction = try #require(TransportDirectionV3(rawValue: UInt8(directionRaw)))
+      let epochValue = try #require(vector["epoch"] as? Int)
+      let sequenceValue = try #require(vector["sequence"] as? Int)
+      let expiresAtValue = try #require(vector["expires_at_unix_ms"] as? Int)
+      let epoch = try #require(UInt32(exactly: epochValue))
+      let sequence = try #require(UInt64(exactly: sequenceValue))
+      let expiresAt = try #require(UInt64(exactly: expiresAtValue))
+      let sessionPRK = try decode("session_prk_b64u")
+      let h3 = try decode("h3_b64u")
+      let plaintext = try decode("plaintext_b64u")
+      let expectedEpochSecret = try decode("epoch_secret_b64u")
+      let expectedRoot = try decode("unreliable_root_b64u")
+      let expectedSecret = try decode("material_secret_b64u")
+      let expectedRecordKey = try decode("record_key_b64u")
+      let expectedNoncePrefix = try decode("nonce_prefix_b64u")
+      let expectedNonce = try decode("nonce_b64u")
+      let headerHex = try #require(vector["header_hex"] as? String)
+      let expectedHeader = try Data(hexV3: headerHex)
+      let expectedAAD = try decode("aad_b64u")
+      let expectedCiphertext = try decode("ciphertext_b64u")
+      let expectedWire = try decode("wire_b64u")
+
+      let epochZero = try TransportV3Crypto.deriveEpochZero(
+        sessionPRK: sessionPRK, direction: direction)
+      let epochSecret = try TransportV3Crypto.deriveNextEpoch(
+        rekeyRoot: epochZero.rekeyRoot,
+        h3: h3,
+        direction: direction,
+        nextEpoch: epoch
+      )
+      #expect(epochSecret == expectedEpochSecret, Comment(rawValue: name))
+      let material = try TransportV3Crypto.deriveUnreliableMaterial(
+        epochSecret: epochSecret, h3: h3, direction: direction, epoch: epoch)
+      #expect(material.root == expectedRoot, Comment(rawValue: name))
+      #expect(material.secret == expectedSecret, Comment(rawValue: name))
+      #expect(material.recordKey == expectedRecordKey, Comment(rawValue: name))
+      #expect(material.noncePrefix == expectedNoncePrefix, Comment(rawValue: name))
+      #expect(
+        try TransportV3Crypto.unreliableNonce(
+          noncePrefix: material.noncePrefix, sequence: sequence) == expectedNonce,
+        Comment(rawValue: name))
+
+      let header = UnreliableHeaderV3(
+        epoch: epoch,
+        sequence: sequence,
+        expiresAtUnixMilliseconds: expiresAt,
+        ciphertextLength: UInt32(plaintext.count + TransportV3Crypto.aeadTagBytes)
+      )
+      let encodedHeader = try header.encoded()
+      #expect(encodedHeader == expectedHeader, Comment(rawValue: name))
+      #expect(try UnreliableHeaderV3(encoded: encodedHeader) == header, Comment(rawValue: name))
+      #expect(
+        try TransportV3Crypto.unreliableAAD(h3: h3, direction: direction, header: header)
+          == expectedAAD,
+        Comment(rawValue: name))
+
+      let ciphertext = try TransportV3Crypto.sealUnreliable(
+        suite: suite,
+        material: material,
+        h3: h3,
+        direction: direction,
+        header: header,
+        plaintext: plaintext
+      )
+      #expect(ciphertext == expectedCiphertext, Comment(rawValue: name))
+      #expect(
+        try TransportV3Crypto.openUnreliable(
+          suite: suite,
+          material: material,
+          h3: h3,
+          direction: direction,
+          header: header,
+          ciphertext: ciphertext
+        ) == plaintext,
+        Comment(rawValue: name))
+      #expect(encodedHeader + ciphertext == expectedWire, Comment(rawValue: name))
+
+      var malformedHeader = encodedHeader
+      malformedHeader[5] = 1
+      #expect(throws: TransportV3CryptoError.invalidUnreliableMessage) {
+        try UnreliableHeaderV3(encoded: malformedHeader)
+      }
+      var tampered = ciphertext
+      tampered[tampered.startIndex] ^= 1
+      #expect(throws: TransportV3CryptoError.authenticationFailed) {
+        try TransportV3Crypto.openUnreliable(
+          suite: suite,
+          material: material,
+          h3: h3,
+          direction: direction,
+          header: header,
+          ciphertext: tampered
+        )
+      }
+      #expect(throws: TransportV3CryptoError.unreliableMessageTooLarge) {
+        try TransportV3Crypto.sealUnreliable(
+          suite: suite,
+          material: material,
+          h3: h3,
+          direction: direction,
+          header: header,
+          plaintext: Data()
+        )
+      }
+    }
+  }
+
+  @Test func sharedSwiftCapabilityVectorsMatchExactBytesAndDigests() throws {
+    let root = try Self.loadVectorObject("capability_vectors.json")
+    let vectors = try #require(root["vectors"] as? [[String: Any]])
+    let expectedNames: Set<String> = [
+      "go-native",
+      "typescript-browser-ca-only",
+      "typescript-browser-chromium-151.0.7922.34",
+      "typescript-node",
+      "rust-native",
+      "swift-ios",
+      "swift-macos",
+      "swift-linux",
+    ]
+    #expect(vectors.count == expectedNames.count)
+    var names = Set<String>()
+    for vector in vectors {
+      let name = try #require(vector["name"] as? String)
+      #expect(names.insert(name).inserted, Comment(rawValue: "duplicate \(name)"))
+      let canonical = try #require(vector["canonical_json"] as? String)
+      let value = try JSONSerialization.jsonObject(with: Data(canonical.utf8))
+      let reproduced = try FlowersecJCSV3.encode(value)
+      #expect(reproduced == Data(canonical.utf8), Comment(rawValue: name))
+      let expectedDigest = try Data(hexV3: #require(vector["digest_hex"] as? String))
+      #expect(
+        FlowersecJCSV3.hashLP(
+          domain: "flowersec-v3-runtime-capability\0", canonical: reproduced)
+          == expectedDigest,
+        Comment(rawValue: name))
+    }
+    #expect(names == expectedNames)
+    for (name, capability) in [
+      ("swift-ios", RuntimeCapabilitiesV3.iOS),
+      ("swift-macos", RuntimeCapabilitiesV3.macOS),
+      ("swift-linux", RuntimeCapabilitiesV3.linux),
+    ] {
+      let vector = try #require(vectors.first(where: { $0["name"] as? String == name }))
+      let canonical = try #require(vector["canonical_json"] as? String)
+      let digest = try #require(vector["digest_hex"] as? String)
+      #expect(try capability.canonicalJSON() == Data(canonical.utf8), Comment(rawValue: name))
+      #expect(try capability.digest() == Data(hexV3: digest), Comment(rawValue: name))
+    }
+    let invalid = try #require(root["invalid"] as? [[String: Any]])
+    #expect(invalid.count >= 20)
+    for vector in invalid {
+      let id = try #require(vector["id"] as? String)
+      let value = Data(try #require(vector["value"] as? String).utf8)
+      #expect(throws: ArtifactErrorV3.self, Comment(rawValue: id)) {
+        try RuntimeCapabilityDescriptorV3.decode(value)
+      }
+    }
+  }
+
+  private static func loadVectorObject(_ name: String) throws -> [String: Any] {
+    let url = packageRoot().appendingPathComponent("testdata/transport_v3/\(name)")
+    let root = try JSONSerialization.jsonObject(with: Data(contentsOf: url))
+    return try #require(root as? [String: Any])
+  }
+
+  private static func validArtifact() throws -> Data {
+    let projection: [String: Any] = [
+      "allowed_suites": [1], "channel_id": "channel", "default_suite": 1,
+      "establish_timeout_seconds": 30, "idle_timeout_seconds": 0,
+      "max_inbound_streams": 1, "profile": "flowersec/3",
+      "rekey_completion_timeout_seconds": 30, "rekey_prepare_timeout_seconds": 10,
+      "selected_features": 0,
+    ]
+    let contract = try FlowersecJCSV3.hashLP(
+      domain: "flowersec-v3-session-contract\0", value: projection
+    ).base64URLEncodedStringV3()
+    return try FlowersecJCSV3.encode([
+      "correlation": ["tags": [], "v": 3],
+      "path": [
+        "candidates": [
+          [
+            "carrier": "websocket", "id": "a", "tls": ["mode": "ca"],
+            "url": "wss://example.com:0443/flowersec/v3/direct",
+            "wire_profile": "flowersec-direct/3",
+          ]
+        ],
+        "kind": "direct", "listener_audience": "listener",
+        "rendezvous_group_id": "group", "routing_token": "token",
+      ],
+      "profile": "flowersec/3", "scoped": [],
+      "session": [
+        "allowed_suites": [1], "channel_id": "channel", "contract_hash_b64u": contract,
+        "default_suite": 1,
+        "e2ee_psk_b64u": Data(repeating: 7, count: 32).base64URLEncodedStringV3(),
+        "establish_timeout_seconds": 30, "idle_timeout_seconds": 0,
+        "init_expire_at_unix_s": 9_999_999_999, "max_inbound_streams": 1,
+        "rekey_completion_timeout_seconds": 30, "rekey_prepare_timeout_seconds": 10,
+        "selected_features": 0,
+      ],
+      "v": 3,
+    ])
+  }
+}
+
+extension Data {
+  fileprivate init(hexV3 value: String) throws {
+    guard value.count.isMultiple(of: 2) else { throw ArtifactErrorV3.invalidArtifact }
+    var bytes: [UInt8] = []
+    bytes.reserveCapacity(value.count / 2)
+    var index = value.startIndex
+    while index < value.endIndex {
+      let next = value.index(index, offsetBy: 2)
+      guard let byte = UInt8(value[index..<next], radix: 16) else {
+        throw ArtifactErrorV3.invalidArtifact
+      }
+      bytes.append(byte)
+      index = next
+    }
+    self.init(bytes)
+  }
+}
+
+private actor CounterV3 {
+  private(set) var value = 0
+  func increment() { value += 1 }
+}

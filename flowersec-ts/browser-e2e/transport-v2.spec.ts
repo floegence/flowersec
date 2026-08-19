@@ -44,63 +44,71 @@ test("Portable browsers run strict JSON frame UTF-8 validation", async ({ page }
   }
 });
 
-test("Portable browsers run the self-contained WebSocket client contract", async ({ page, browserName }) => {
-  test.setTimeout(60_000);
-  const site = await startBrowserModuleSite();
-  const peer = spawn(
-    "go",
-    ["run", "./internal/cmd/server-parity-peer", "server", "--carrier", "websocket"],
-    {
-      cwd: path.join(repositoryRoot, "flowersec-go"),
-      env: {
-        ...process.env,
-        FLOWERSEC_SERVER_PARITY_PEER: "1",
-        FLOWERSEC_PARITY_CLIENT_PROFILE: "browser",
-        FLOWERSEC_PARITY_ORIGIN: site.origin,
+for (const compatibility of [
+  { label: "v3", command: "server-parity-peer", useV2: false },
+  { label: "explicit v2 compatibility", command: "server-parity-peer-v2", useV2: true },
+] as const) {
+  test(`Portable browsers run the ${compatibility.label} WebSocket client contract`, async ({ page, browserName }) => {
+    test.setTimeout(60_000);
+    const site = await startBrowserModuleSite();
+    const peer = spawn(
+      "go",
+      ["run", `./internal/cmd/${compatibility.command}`, "server", "--carrier", "websocket"],
+      {
+        cwd: path.join(repositoryRoot, "flowersec-go"),
+        env: {
+          ...process.env,
+          FLOWERSEC_SERVER_PARITY_PEER: "1",
+          FLOWERSEC_PARITY_CLIENT_PROFILE: "browser",
+          FLOWERSEC_PARITY_ORIGIN: site.origin,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
       },
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
-  const stderr = captureStderr(peer);
-  try {
-    const ready = JSON.parse(await firstLine(peer.stdout)) as { artifact_json: string };
-    await page.goto(site.origin, { waitUntil: "networkidle" });
-    const result = await page.evaluate(async ({ artifactJSON, browser }) => {
-      const sdk = await import("/dist/browser/index.js");
-      const artifact = sdk.parseArtifact(artifactJSON);
-      const proxy = await import("/dist/proxy/index.js");
-      const handle = await proxy.connectProxyBrowser(sdk.createArtifactLease(artifact, async () => undefined));
-      const session = handle.session;
-      const echo = await session.rpc.call(7001, { value: "ping" }, (payload) => payload);
-      if (!echo.ok || echo.payload.value !== "ping") throw new Error("RPC echo failed");
-      await session.rpc.notify(7002, { value: "notify" });
-      const stream = await session.openStream("parity.echo", {
-        metadata: sdk.createStreamMetadata({ cell: "direct", browser }),
+    );
+    const stderr = captureStderr(peer);
+    try {
+      const ready = JSON.parse(await firstLine(peer.stdout)) as { artifact_json: string };
+      await page.goto(site.origin, { waitUntil: "networkidle" });
+      const result = await page.evaluate(async ({ artifactJSON, browser, useV2 }) => {
+        const sdk = await import("/dist/browser/index.js");
+        const session = useV2
+          ? await sdk.v2.connect(sdk.v2.createArtifactLease(sdk.v2.parseArtifact(artifactJSON), async () => undefined))
+          : await sdk.connect(sdk.createArtifactLease(sdk.parseArtifact(artifactJSON), async () => undefined));
+        const echo = await session.rpc.call(7001, { value: "ping" }, (payload) => payload);
+        if (!echo.ok || echo.payload.value !== "ping") throw new Error("RPC echo failed");
+        await session.rpc.notify(7002, { value: "notify" });
+        const stream = await session.openStream("parity.echo", {
+          metadata: sdk.createStreamMetadata({ cell: "direct", browser }),
+        });
+        await stream.write(new TextEncoder().encode("hello"));
+        await stream.closeWrite();
+        const response = new TextDecoder().decode(await stream.read());
+        const eof = await stream.read();
+        const reset = await session.openStream("parity.reset");
+        await reset.write(new TextEncoder().encode("reset"));
+        await reset.closeWrite();
+        let resetObserved = false;
+        try { await reset.read(); } catch { resetObserved = true; }
+        await session.rekey();
+        const liveness = await session.probeLiveness();
+        await session.close();
+        return { response, eof, resetObserved, liveness };
+      }, {
+        artifactJSON: ready.artifact_json,
+        browser: browserName,
+        useV2: compatibility.useV2,
+      }).catch((error: unknown) => {
+        throw new Error(`${error instanceof Error ? error.message : String(error)}\nGo WSS peer:\n${stderr.join("")}`);
       });
-      await stream.write(new TextEncoder().encode("hello"));
-      await stream.closeWrite();
-      const response = new TextDecoder().decode(await stream.read());
-      const eof = await stream.read();
-      const reset = await session.openStream("parity.reset");
-      await reset.write(new TextEncoder().encode("reset"));
-      await reset.closeWrite();
-      let resetObserved = false;
-      try { await reset.read(); } catch { resetObserved = true; }
-      await session.rekey();
-      const liveness = await session.probeLiveness();
-      await handle.dispose();
-      return { response, eof, resetObserved, liveness };
-    }, { artifactJSON: ready.artifact_json, browser: browserName }).catch((error: unknown) => {
-      throw new Error(`${error instanceof Error ? error.message : String(error)}\nGo WSS peer:\n${stderr.join("")}`);
-    });
-    expect(result).toMatchObject({ response: "world", eof: null, resetObserved: true });
-    expect(result.liveness).toBeGreaterThanOrEqual(0);
-    expect(await processExit(peer), stderr.join("")).toBe(0);
-  } finally {
-    await site.close();
-    await stopPeer(peer);
-  }
-});
+      expect(result).toMatchObject({ response: "world", eof: null, resetObserved: true });
+      expect(result.liveness).toBeGreaterThanOrEqual(0);
+      expect(await processExit(peer), stderr.join("")).toBe(0);
+    } finally {
+      await site.close();
+      await stopPeer(peer);
+    }
+  });
+}
 
 test("Chromium runs the direct WebTransport topology", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "requires Chromium");
@@ -122,7 +130,7 @@ test("Chromium WebTransport closes bounded concurrent streams after peer termina
     await page.goto(site.origin, { waitUntil: "networkidle" });
     const result = await page.evaluate(async (artifactJSON) => {
       const sdk = await import("/dist/browser/index.js");
-      const session = await sdk.connect(sdk.createArtifactLease(sdk.parseArtifact(artifactJSON), async () => undefined));
+      const session = await sdk.v2.connect(sdk.v2.createArtifactLease(sdk.v2.parseArtifact(artifactJSON), async () => undefined));
       const streams = await Promise.all([
         session.openStream("bounded-1"),
         session.openStream("bounded-2"),
@@ -195,11 +203,11 @@ async function runDirectWebTransport(page: Page): Promise<void> {
     await page.goto(site.origin, { waitUntil: "networkidle" });
     const result = await page.evaluate(async (artifactJSON) => {
       const sdk = await import("/dist/browser/index.js");
-      const artifact = sdk.parseArtifact(artifactJSON);
-      const lease = sdk.createArtifactLease(artifact, async () => undefined);
-      const session = await sdk.connect(lease).catch(async (error: unknown) => {
+      const artifact = sdk.v2.parseArtifact(artifactJSON);
+      const lease = sdk.v2.createArtifactLease(artifact, async () => undefined);
+      const session = await sdk.v2.connect(lease).catch(async (error: unknown) => {
         const internal = await import("/dist/utils/errors.js");
-        if (!(error instanceof sdk.ConnectError)) throw error;
+        if (!(error instanceof sdk.v2.ConnectError)) throw error;
         const details = internal.connectErrorDetailsInternal(error);
         throw new Error(JSON.stringify({
           publicCode: error.code,
@@ -261,11 +269,11 @@ async function runTunnelWebTransport(page: Page, opposite: "wss" | "raw_quic"): 
     await page.goto(site.origin, { waitUntil: "networkidle" });
     const result = await page.evaluate(async (artifactJSON) => {
       const sdk = await import("/dist/browser/index.js");
-      const artifact = sdk.parseArtifact(artifactJSON);
-      const lease = sdk.createArtifactLease(artifact, async () => undefined);
-      const session = await sdk.connect(lease).catch(async (error: unknown) => {
+      const artifact = sdk.v2.parseArtifact(artifactJSON);
+      const lease = sdk.v2.createArtifactLease(artifact, async () => undefined);
+      const session = await sdk.v2.connect(lease).catch(async (error: unknown) => {
         const internal = await import("/dist/utils/errors.js");
-        if (!(error instanceof sdk.ConnectError)) throw error;
+        if (!(error instanceof sdk.v2.ConnectError)) throw error;
         const details = internal.connectErrorDetailsInternal(error);
         throw new Error(JSON.stringify({
           publicCode: error.code,

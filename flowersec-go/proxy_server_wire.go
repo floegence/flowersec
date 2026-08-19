@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	internaljsonframe "github.com/floegence/flowersec/flowersec-go/v2/internal/framing/jsonframe"
+	internaljsonframe "github.com/floegence/flowersec/flowersec-go/v3/internal/framing/jsonframe"
 )
 
 var proxyHeaderName = regexp.MustCompile(`^[!#$%&'*+\-.^_` + "`" + `|~0-9A-Za-z]+$`)

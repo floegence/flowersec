@@ -20,7 +20,7 @@ a protected local file. Then run:
 
 ```bash
 cargo run --locked --manifest-path examples/rust/Cargo.toml -- \
-  artifact-v2 /secure/path/artifact.json
+  artifact-v3 /secure/path/artifact.json
 ```
 
 The command validates the artifact, prints only `Artifact { <opaque> }`, and
@@ -34,7 +34,7 @@ receipt path:
 
 ```bash
 cargo run --locked --manifest-path examples/rust/Cargo.toml -- \
-  connect-v2 /secure/path/artifact.json /secure/path/root.der \
+  connect-v3 /secure/path/artifact.json /secure/path/root.der \
   /durable/state/artifact.spent
 ```
 
@@ -63,7 +63,7 @@ cargo clippy --locked --manifest-path examples/rust/Cargo.toml \
   --all-targets -- -D warnings
 ```
 
-The integration test verifies artifact redaction. The compiled `connect-v2`
+The integration test verifies artifact redaction. The compiled `connect-v3`
 workflow uses trusted roots, durable single-use spend, the opaque connection
 boundary, typed RPC, notification subscription and delivery, reliable stream
 write/read/FIN, session liveness, and bounded close. The repository's maintained

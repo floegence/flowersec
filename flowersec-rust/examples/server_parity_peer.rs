@@ -12,14 +12,15 @@ use std::{
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
-use flowersec::controlplane::{ControlPlaneError, RuntimeAuthorizationRequest};
+use flowersec::v2::{
+    Acceptor, AcceptorOptions, Artifact, ArtifactLease, ConnectorOptions, ControlPlaneError,
+    DirectIssueOptions, EndpointSet, IssuedArtifact, Issuer, RuntimeAuthorizationRequest,
+    SessionOptions, TunnelAuthorizationResponse, TunnelAuthorizer, TunnelIssueOptions,
+    TunnelRuntime, TunnelRuntimeOptions, WebSocketAcceptorOptions, allow_tunnel_runtime, connect,
+};
 use flowersec::{
-    Acceptor, AcceptorOptions, Artifact, ArtifactLease, ConnectorOptions, DirectIssueOptions,
-    EndpointSet, IncomingStream, Issuer, NotificationHandler, RpcError, RpcHandler, Session,
-    SessionError, SessionHandlerOptions, SessionHandlers, StreamHandler, StreamMetadata,
-    TunnelAuthorizationResponse, TunnelAuthorizer, TunnelIssueOptions, TunnelRuntime,
-    TunnelRuntimeOptions, UnreliableSendOutcome, WebSocketAcceptorOptions, allow_tunnel_runtime,
-    connect,
+    IncomingStream, NotificationHandler, RpcError, RpcHandler, Session, SessionError,
+    SessionHandlerOptions, SessionHandlers, StreamHandler, StreamMetadata, UnreliableSendOutcome,
 };
 use rustls::pki_types::{CertificateDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
@@ -429,13 +430,13 @@ fn cert_pem(value: &[u8]) -> String {
     )
 }
 
-fn issue(carrier: &str, address: SocketAddr) -> flowersec::IssuedArtifact {
+fn issue(carrier: &str, address: SocketAddr) -> IssuedArtifact {
     let endpoint = match carrier {
         "websocket" => format!("wss://127.0.0.1:{}", address.port()),
         "raw-quic" => format!("quic://127.0.0.1:{}", address.port()),
         _ => panic!("unsupported carrier"),
     };
-    let mut session = flowersec::SessionOptions::new("rust-direct-parity");
+    let mut session = SessionOptions::new("rust-direct-parity");
     session.max_inbound_streams = 16;
     Issuer::new()
         .issue_direct(DirectIssueOptions {
@@ -899,7 +900,7 @@ fn artifact_tunnel_claims(artifact_json: &[u8]) -> (u64, String) {
 }
 
 fn tunnel_authorization(
-    issued: &flowersec::IssuedArtifact,
+    issued: &IssuedArtifact,
     carrier: &str,
     lease_id: &str,
 ) -> TunnelAuthorizationWire {
@@ -980,8 +981,7 @@ async fn run_tunnel_endpoint_b(carrier: &str) {
     {
         panic!("invalid tunnel endpoint B input");
     }
-    let mut session_options =
-        flowersec::SessionOptions::new(format!("parity-{}", envelope.topology.id));
+    let mut session_options = SessionOptions::new(format!("parity-{}", envelope.topology.id));
     session_options.max_inbound_streams = 16;
     session_options.expires_at = Some(SystemTime::now() + Duration::from_secs(60));
     let pair = Issuer::new()

@@ -11,13 +11,13 @@ import (
 	"net/http"
 	"sync"
 
-	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
 )
 
 type browserCapacityArtifact interface {
 	ArtifactJSON() string
 	Start(context.Context) error
-	AwaitServer(context.Context) (flowersession.SessionV2, error)
+	AwaitServer(context.Context) (flowersession.Session, error)
 	Cancel()
 }
 
@@ -31,7 +31,7 @@ type browserCapacityRecord struct {
 
 	mu      sync.Mutex
 	spent   bool
-	session flowersession.SessionV2
+	session flowersession.Session
 }
 
 func (record *browserCapacityRecord) markTerminated() {

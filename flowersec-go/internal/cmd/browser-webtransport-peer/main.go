@@ -24,27 +24,29 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/candidatev2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
-	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/candidatev2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/quicbase"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/rawquic"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocket"
+	carrierwt "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/webtransport"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/connectv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/session"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/tunnelv2"
 	"github.com/gorilla/websocket"
 )
 
 const testPrivateKeyBase64 = "d2VidHJhbnNwb3J0LWV4YW1wbGUtY2VydC1rZXktMDE="
 
 type endpoint struct {
-	URL             string `json:"url"`
-	CertificateHash string `json:"certificate_hash"`
-	ArtifactJSON    string `json:"artifact_json,omitempty"`
+	URL                      string `json:"url"`
+	CertificateHash          string `json:"certificate_hash"`
+	CertificateNotAfterUnixS int64  `json:"certificate_not_after_unix_s,omitempty"`
+	ArtifactJSON             string `json:"artifact_json,omitempty"`
 }
 
 func main() {
@@ -52,7 +54,14 @@ func main() {
 	oppositeFlag := flag.String("opposite", "", "mixed tunnel opposite carrier: wss or raw_quic")
 	faultedSessionsFlag := flag.Int("faulted-sessions", 0, "accept this many faulted WebTransport sessions and one stream per session")
 	dropTransportAfterStreamsFlag := flag.Int("drop-transport-after-streams", 0, "drop the UDP transport after accepting this many logical streams")
+	v3ProductDirectFlag := flag.Bool("v3-product-direct", false, "serve one production v3 direct WebTransport session")
+	v3PublicCAFlag := flag.Bool("v3-public-ca", false, "use deployment-provided public-CA TLS material in v3 product-direct mode")
+	originFlag := flag.String("origin", "", "exact browser Origin for v3 product-direct mode")
 	flag.Parse()
+	if *v3ProductDirectFlag {
+		must(runV3ProductDirect(*originFlag, *v3PublicCAFlag))
+		return
+	}
 	tlsConfig, certificateHash, err := testTLSConfig(time.Now())
 	must(err)
 	if *oppositeFlag != "" {
@@ -103,6 +112,91 @@ func main() {
 	case <-time.After(20 * time.Second):
 		must(errors.New("WebTransport interop peer timed out"))
 	}
+}
+
+func runV3ProductDirect(origin string, publicCA bool) error {
+	if origin == "" {
+		return errors.New("v3 product-direct mode requires an exact browser Origin")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var (
+		server              *transporttest.ProductDirectEndpoint
+		err                 error
+		certificateNotAfter int64
+	)
+	if publicCA {
+		candidateHost := os.Getenv("FLOWERSEC_BROWSER_PUBLIC_CA_HOST")
+		serverTLS, notAfter, tlsErr := publicCATLSConfig(
+			os.Getenv("FLOWERSEC_BROWSER_PUBLIC_CA_CERT"),
+			os.Getenv("FLOWERSEC_BROWSER_PUBLIC_CA_KEY"),
+		)
+		if tlsErr != nil {
+			return tlsErr
+		}
+		server, err = transporttest.OpenProductDirectBrowserEndpointAtWithTLS(
+			ctx, "127.0.0.1", candidateHost, origin, serverTLS,
+		)
+		certificateNotAfter = notAfter
+	} else {
+		server, err = transporttest.OpenProductDirectBrowserEndpointAt(ctx, "127.0.0.1", origin)
+	}
+	if err != nil {
+		return err
+	}
+	defer server.Close()
+	var issued *transporttest.ProductDirectBrowserArtifact
+	if publicCA {
+		issued, err = server.IssueBrowserCAArtifact()
+	} else {
+		issued, err = server.IssueBrowserArtifact()
+	}
+	if err != nil {
+		return err
+	}
+	defer issued.Cancel()
+	certificateHash, err := server.CertificateHashBase64URL()
+	if err != nil {
+		return err
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(endpoint{
+		URL: server.CandidateURL(), CertificateHash: certificateHash,
+		CertificateNotAfterUnixS: certificateNotAfter, ArtifactJSON: issued.ArtifactJSON(),
+	}); err != nil {
+		return err
+	}
+	established, err := issued.AwaitServer(ctx)
+	if err != nil {
+		return err
+	}
+	return established.Close()
+}
+
+func publicCATLSConfig(certificatePath, privateKeyPath string) (*tls.Config, int64, error) {
+	if certificatePath == "" || privateKeyPath == "" {
+		return nil, 0, errors.New("v3 public-CA mode requires certificate and private-key paths")
+	}
+	pair, err := tls.LoadX509KeyPair(certificatePath, privateKeyPath)
+	if err != nil || len(pair.Certificate) == 0 {
+		return nil, 0, errors.New("v3 public-CA TLS material is invalid")
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		return nil, 0, errors.New("v3 public-CA leaf certificate is invalid")
+	}
+	publicKey, ok := leaf.PublicKey.(*ecdsa.PublicKey)
+	now := time.Now()
+	if !ok || publicKey.Curve != elliptic.P256() || now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) ||
+		leaf.NotAfter.Sub(leaf.NotBefore) > 14*24*time.Hour {
+		return nil, 0, errors.New("v3 public-CA leaf does not satisfy the browser pin certificate profile")
+	}
+	pair.Leaf = leaf
+	return &tls.Config{
+		MinVersion:             tls.VersionTLS13,
+		MaxVersion:             tls.VersionTLS13,
+		SessionTicketsDisabled: true,
+		Certificates:           []tls.Certificate{pair},
+	}, leaf.NotAfter.Unix(), nil
 }
 
 func runFaultedSessionsPeer(tlsConfig *tls.Config, certificateHash, connectPath string, count int) error {

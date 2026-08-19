@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/framing/jsonframe"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v3/internal/rpcwire"
 )
 
 func TestRPC_NotificationAndRequest(t *testing.T) {
@@ -262,7 +262,7 @@ type rpcErrorVectors struct {
 
 func loadRPCErrorVectors(t *testing.T) rpcErrorVectors {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "testdata", "transport_v2", "rpc_error_vectors.json"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "testdata", "transport_v3", "rpc_error_vectors.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

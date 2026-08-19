@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     protocol_v2::valid_open_kind,
     session_v2::RpcHandlerV2,
+    session_v3::RpcHandlerV3,
     transport_v2::{IncomingStream, RpcError, Session, SessionError},
 };
 
@@ -287,6 +288,10 @@ pub(crate) fn rpc_router(snapshot: Arc<RpcHandlerSnapshot>) -> Arc<dyn RpcHandle
     Arc::new(RpcRouterAdapter::new(snapshot))
 }
 
+pub(crate) fn rpc_router_v3(snapshot: Arc<RpcHandlerSnapshot>) -> Arc<dyn RpcHandlerV3> {
+    Arc::new(RpcRouterAdapter::new(snapshot))
+}
+
 struct RpcRouterAdapter {
     snapshot: Arc<RpcHandlerSnapshot>,
 }
@@ -305,6 +310,31 @@ impl fmt::Debug for RpcRouterAdapter {
 
 #[async_trait]
 impl RpcHandlerV2 for RpcRouterAdapter {
+    async fn call(
+        &self,
+        type_id: u32,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcError> {
+        let handler = self.snapshot.requests.get(&type_id).ok_or_else(|| {
+            RpcError::new(404, Some("handler not found".into())).expect("valid RPC error")
+        })?;
+        handler.call(type_id, request).await
+    }
+
+    async fn notify(&self, type_id: u32, request: serde_json::Value) -> Result<(), RpcError> {
+        if let Some(handler) = self.snapshot.notifications.get(&type_id) {
+            return handler.handle_notification(type_id, request).await;
+        }
+        if let Some(handler) = self.snapshot.requests.get(&type_id) {
+            handler.notify(type_id, request).await
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[async_trait]
+impl RpcHandlerV3 for RpcRouterAdapter {
     async fn call(
         &self,
         type_id: u32,
@@ -969,62 +999,65 @@ mod tests {
 
     #[test]
     fn enforces_shared_utf8_stream_kind_contract() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../testdata/transport_v2/session_handler_vectors.json");
-        let vectors: StreamKindVectors =
-            serde_json::from_slice(&fs::read(path).expect("read session handler vectors"))
-                .expect("decode session handler vectors");
-        for vector in vectors.stream_kinds {
+        for version in ["v2", "v3"] {
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+                "../testdata/transport_{version}/session_handler_vectors.json"
+            ));
+            let vectors: StreamKindVectors =
+                serde_json::from_slice(&fs::read(path).expect("read session handler vectors"))
+                    .expect("decode session handler vectors");
+            for vector in vectors.stream_kinds {
+                let mut handlers = SessionHandlers::new(SessionHandlerOptions::default())
+                    .expect("create handlers");
+                let kind = format!("{}{}", vector.unit.repeat(vector.repeat), vector.suffix);
+                let result = handlers.handle_stream(kind.clone(), NoopStreamHandler);
+                assert_eq!(
+                    result.is_ok(),
+                    vector.valid,
+                    "{version} stream kind vector {}",
+                    vector.id
+                );
+                if !vector.valid {
+                    assert_eq!(result, Err(HandlerRegistrationError::Invalid));
+                }
+                let mut portable = StreamHandlers::default();
+                let portable_result = portable.handle_stream(kind, NoopStreamHandler);
+                assert_eq!(
+                    portable_result.is_ok(),
+                    vector.valid,
+                    "{version} portable stream kind vector {}",
+                    vector.id
+                );
+            }
+
             let mut handlers =
                 SessionHandlers::new(SessionHandlerOptions::default()).expect("create handlers");
-            let kind = format!("{}{}", vector.unit.repeat(vector.repeat), vector.suffix);
-            let result = handlers.handle_stream(kind.clone(), NoopStreamHandler);
+            handlers
+                .handle_stream(vectors.duplicate_kind.clone(), NoopStreamHandler)
+                .expect("register stream handler");
             assert_eq!(
-                result.is_ok(),
-                vector.valid,
-                "stream kind vector {}",
-                vector.id
+                handlers.handle_stream(vectors.duplicate_kind, NoopStreamHandler),
+                Err(HandlerRegistrationError::AlreadyRegistered)
             );
-            if !vector.valid {
-                assert_eq!(result, Err(HandlerRegistrationError::Invalid));
+
+            for vector in vectors.rpc_type_ids {
+                let mut handlers = RpcHandlers::new();
+                let result = handlers.handle_rpc(vector.value, ValueRpcHandler("fixture"));
+                assert_eq!(
+                    result.is_ok(),
+                    vector.valid,
+                    "{version} RPC type ID vector {}",
+                    vector.id
+                );
             }
-            let mut portable = StreamHandlers::default();
-            let portable_result = portable.handle_stream(kind, NoopStreamHandler);
-            assert_eq!(
-                portable_result.is_ok(),
-                vector.valid,
-                "portable stream kind vector {}",
-                vector.id
-            );
-        }
-
-        let mut handlers =
-            SessionHandlers::new(SessionHandlerOptions::default()).expect("create handlers");
-        handlers
-            .handle_stream(vectors.duplicate_kind.clone(), NoopStreamHandler)
-            .expect("register stream handler");
-        assert_eq!(
-            handlers.handle_stream(vectors.duplicate_kind, NoopStreamHandler),
-            Err(HandlerRegistrationError::AlreadyRegistered)
-        );
-
-        for vector in vectors.rpc_type_ids {
             let mut handlers = RpcHandlers::new();
-            let result = handlers.handle_rpc(vector.value, ValueRpcHandler("fixture"));
+            handlers
+                .handle_rpc(vectors.duplicate_type_id, ValueRpcHandler("original"))
+                .expect("register fixture duplicate type ID");
             assert_eq!(
-                result.is_ok(),
-                vector.valid,
-                "RPC type ID vector {}",
-                vector.id
+                handlers.handle_notification(vectors.duplicate_type_id, NoopNotificationHandler),
+                Err(HandlerRegistrationError::AlreadyRegistered)
             );
         }
-        let mut handlers = RpcHandlers::new();
-        handlers
-            .handle_rpc(vectors.duplicate_type_id, ValueRpcHandler("original"))
-            .expect("register fixture duplicate type ID");
-        assert_eq!(
-            handlers.handle_notification(vectors.duplicate_type_id, NoopNotificationHandler),
-            Err(HandlerRegistrationError::AlreadyRegistered)
-        );
     }
 }

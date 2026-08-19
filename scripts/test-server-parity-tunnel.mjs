@@ -15,6 +15,7 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const matrix = JSON.parse(await readFile(path.join(repositoryRoot, "stability/interop_matrix.json"), "utf8"));
 const clientProfile = process.env.FLOWERSEC_PARITY_CLIENT_PROFILE?.trim();
 const clientProfileTestID = process.env.FLOWERSEC_PARITY_TEST_ID?.trim();
+const clientProfileProtocol = clientProfileTestID?.startsWith("compat/v2/") ? "v2" : "v3";
 const runtimes = SERVER_PARITY_RUNTIMES;
 const carriers = SERVER_PARITY_CARRIERS;
 const endpointAs = selectedValues("FLOWERSEC_PARITY_ENDPOINT_AS", runtimes);
@@ -27,15 +28,19 @@ const datagramCarriers = new Set(["raw-quic"]);
 const forbiddenRelayKeys = /(?:artifact|session|psk|secret|handler)/i;
 const cellTimeoutMS = 60_000;
 
-const peers = {
-  go: { cwd: path.join(repositoryRoot, "flowersec-go"), command: "go", arguments: ["run", "./internal/cmd/server-parity-peer"] },
+const peersV2 = {
+  go: { cwd: path.join(repositoryRoot, "flowersec-go"), command: "go", arguments: ["run", "./internal/cmd/server-parity-peer-v2"] },
   rust: { cwd: repositoryRoot, command: "rustup", arguments: ["run", "1.88.0", "cargo", "run", "--quiet", "--manifest-path", "flowersec-rust/Cargo.toml", "--example", "server_parity_peer", "--"] },
   "node-typescript": { cwd: path.join(repositoryRoot, "flowersec-ts"), command: process.execPath, arguments: ["--import", "tsx", "src/interop/serverParityPeer.ts"] },
 };
+const peersV3 = {
+  go: { cwd: path.join(repositoryRoot, "flowersec-go"), command: "go", arguments: ["run", "./internal/cmd/server-parity-peer"] },
+};
+const peers = clientProfileProtocol === "v2" ? peersV2 : peersV3;
 
 validateTopologyContract(matrix.tunnel_topologies);
 const selectedTopologies = clientProfile === undefined
-  ? matrix.tunnel_topologies.filter((topology) => endpointAs.includes(topology.endpoint_a) && endpointBs.includes(topology.endpoint_b) && relayRuntimes.includes(topology.tunnel_runtime) && selectedCarriers.includes(topology.ingress_carrier_a))
+  ? matrix.tunnel_topologies.filter((topology) => topology.status === "supported" && endpointAs.includes(topology.endpoint_a) && endpointBs.includes(topology.endpoint_b) && relayRuntimes.includes(topology.tunnel_runtime) && selectedCarriers.includes(topology.ingress_carrier_a))
   : selectClientProfileTopology();
 const nativeAddon = await prepareServerParityNativeAddon(repositoryRoot, selectedTopologies.some((topology) =>
   [topology.endpoint_a, topology.endpoint_b, topology.tunnel_runtime].includes("node-typescript")
@@ -118,8 +123,8 @@ function selectClientProfileTopology() {
     throw new Error("FLOWERSEC_PARITY_CLIENT_PROFILE and FLOWERSEC_PARITY_TEST_ID must select a supported client-profile topology");
   }
   const cells = [
-    { profile: "browser", client: "typescript-browser", tunnel_runtime: "go", endpoint_b: "rust", carrier: "websocket", path: "tunnel", test_id: "browser/chromium/websocket/via-go-to-rust/tunnel" },
-    { profile: "swift", client: "swift", tunnel_runtime: "go", endpoint_b: "rust", carrier: "websocket", path: "tunnel", test_id: "interop/swift-via-go-to-rust/wss/tunnel" },
+    { profile: "browser", client: "typescript-browser", tunnel_runtime: "go", endpoint_b: "rust", carrier: "websocket", path: "tunnel", test_id: "compat/v2/browser/chromium/websocket/via-go-to-rust/tunnel" },
+    { profile: "swift", client: "swift", tunnel_runtime: "go", endpoint_b: "rust", carrier: "websocket", path: "tunnel", test_id: "compat/v2/interop/swift-via-go-to-rust/wss/tunnel" },
   ].filter((cell) => cell.profile === clientProfile && cell.test_id === clientProfileTestID);
   if (cells.length !== 1) throw new Error(`${clientProfileTestID}: client-profile tunnel cell is absent or ambiguous`);
   const cell = cells[0];
@@ -195,10 +200,11 @@ function startExternalClient(ready, browserPort) {
   if (clientProfile === "swift") {
     return startProcess("swift", ["test", "--filter", "ConnectorV2Tests/testServerParityClientProfile"], path.join(repositoryRoot, "flowersec-swift"), {
       FLOWERSEC_PARITY_READY_BASE64: encoded, FLOWERSEC_PARITY_PATH: "tunnel",
+      FLOWERSEC_PARITY_PROTOCOL: clientProfileProtocol,
     });
   }
   return startProcess("npm", ["--prefix", "flowersec-ts", "run", "test:browser:chromium", "--", "--grep", "Chromium runs the WebSocket client profile"], repositoryRoot, {
-    FLOWERSEC_PARITY_READY_BASE64: encoded, FLOWERSEC_PARITY_PATH: "tunnel", FLOWERSEC_BROWSER_SITE_PORT: String(browserPort),
+    FLOWERSEC_PARITY_READY_BASE64: encoded, FLOWERSEC_PARITY_PATH: "tunnel", FLOWERSEC_PARITY_PROTOCOL: clientProfileProtocol, FLOWERSEC_BROWSER_SITE_PORT: String(browserPort),
   });
 }
 
@@ -233,7 +239,6 @@ function validateTopologyContract(topologies) {
       if (!Array.isArray(topology.test_ids) || topology.test_ids.length !== 1 || "reason" in topology) throw new Error(`${topology.id}: supported topology must bind exactly one test ID and no reason`);
     } else if (topology.status === "unsupported") {
       if ((Array.isArray(topology.test_ids) && topology.test_ids.length !== 0) || typeof topology.reason !== "string" || topology.reason.length === 0) throw new Error(`${topology.id}: unsupported topology must carry only a reason`);
-      throw new Error(`${topology.id}: required tunnel topology cannot be unsupported`);
     } else {
       throw new Error(`${topology.id}: forbidden status ${String(topology.status)}`);
     }

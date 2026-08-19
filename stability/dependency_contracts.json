@@ -34,7 +34,7 @@
       "protocol": "quic-rfc-9000-rfc-9221",
       "publicApiOnly": true,
       "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],
-      "conformanceTests": ["carrier/go-direct", "interop/server-parity/direct-matrix"],
+      "conformanceTests": ["carrier/go-direct"],
       "upgradeGroup": "go-webtransport-stack"
     },
     {
@@ -46,7 +46,7 @@
       "protocol": "webtransport-over-http3",
       "publicApiOnly": true,
       "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],
-      "conformanceTests": ["carrier/go-direct", "browser/chromium/webtransport/direct"],
+      "conformanceTests": ["carrier/go-direct", "browser/chromium/webtransport/direct", "browser/chromium/webtransport/public-ca", "browser/chromium/webtransport/public-ca-wrong-pin-no-fallback"],
       "upgradeGroup": "go-webtransport-stack"
     },
     {
@@ -123,6 +123,18 @@
     },
     {
       "ecosystem": "cargo",
+      "package": "rustls-native-certs",
+      "boundary": "rust-platform-ca-roots",
+      "scope": "production",
+      "requiredCapabilities": ["platform-trust-roots", "explicit-ca-policy", "certificate-chain-validation"],
+      "protocol": "tls-1.3",
+      "publicApiOnly": true,
+      "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],
+      "conformanceTests": ["carrier/rust-tls13-handshake", "carrier/rust-tls-rejection", "carrier/rust-websocket-direct"],
+      "upgradeGroup": "rust-quic-tls-stack"
+    },
+    {
+      "ecosystem": "cargo",
       "package": "tokio-rustls",
       "boundary": "rust-websocket-tls",
       "scope": "production",
@@ -166,7 +178,7 @@
       "protocol": "http-1.1",
       "publicApiOnly": true,
       "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],
-      "conformanceTests": ["server/rust-proxy"],
+      "conformanceTests": ["compat/v2/server/rust-proxy"],
       "upgradeGroup": "rust-proxy-http"
     },
     {
@@ -178,7 +190,7 @@
       "protocol": "http-1.1",
       "publicApiOnly": true,
       "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],
-      "conformanceTests": ["server/rust-proxy"],
+      "conformanceTests": ["compat/v2/server/rust-proxy"],
       "upgradeGroup": "rust-proxy-http"
     },
     {
@@ -190,7 +202,7 @@
       "protocol": "http-1.1",
       "publicApiOnly": true,
       "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],
-      "conformanceTests": ["server/rust-proxy"],
+      "conformanceTests": ["compat/v2/server/rust-proxy"],
       "upgradeGroup": "rust-proxy-http"
     },
     {
@@ -202,7 +214,7 @@
       "protocol": "url-standard",
       "publicApiOnly": true,
       "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],
-      "conformanceTests": ["server/rust-proxy"],
+      "conformanceTests": ["compat/v2/server/rust-proxy"],
       "upgradeGroup": "rust-idna-stack"
     },
     {
@@ -250,7 +262,7 @@
       "protocol": "flowersec-v2-controlplane",
       "publicApiOnly": true,
       "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],
-      "conformanceTests": ["server/rust-controlplane"],
+      "conformanceTests": ["compat/v2/server/rust-controlplane"],
       "upgradeGroup": "rust-crypto-stack"
     },
     {
@@ -334,7 +346,7 @@
       "protocol": "flowersec-native-driver-v1",
       "publicApiOnly": true,
       "platforms": ["linux-amd64", "linux-arm64", "macos-arm64", "macos-amd64"],
-      "conformanceTests": ["interop/server-parity/direct-matrix", "interop/server-parity/tunnel-matrix"],
+      "conformanceTests": ["carrier/node-native-addon/lifecycle"],
       "upgradeGroup": "rust-node-native-driver"
     },
     {
@@ -346,7 +358,7 @@
       "protocol": "flowersec-native-driver-v1",
       "publicApiOnly": true,
       "platforms": ["linux-amd64", "linux-arm64", "macos-arm64", "macos-amd64"],
-      "conformanceTests": ["interop/server-parity/direct-matrix"],
+      "conformanceTests": ["carrier/node-native-addon/lifecycle"],
       "upgradeGroup": "rust-node-native-driver"
     },
     {
@@ -358,7 +370,7 @@
       "protocol": "napi-build-v2",
       "publicApiOnly": true,
       "platforms": ["linux-amd64", "linux-arm64", "macos-arm64", "macos-amd64"],
-      "conformanceTests": ["interop/server-parity/direct-matrix"],
+      "conformanceTests": ["carrier/node-native-addon/lifecycle"],
       "upgradeGroup": "rust-node-native-driver"
     },
     {
@@ -382,7 +394,7 @@
       "protocol": "flowersec-native-driver-v1",
       "publicApiOnly": true,
       "platforms": ["linux-amd64", "linux-arm64", "macos-arm64", "macos-amd64"],
-      "conformanceTests": ["interop/server-parity/direct-matrix", "interop/server-parity/tunnel-matrix"],
+      "conformanceTests": ["carrier/node-native-addon/lifecycle"],
       "upgradeGroup": "rust-node-native-driver"
     },
     {
@@ -406,7 +418,7 @@
       "protocol": "flowersec-v2-crypto",
       "publicApiOnly": true,
       "platforms": ["browser", "linux-amd64", "linux-arm64", "macos-arm64"],
-      "conformanceTests": ["protocol/typescript", "server/typescript-controlplane"],
+      "conformanceTests": ["protocol/typescript", "compat/v2/server/typescript-controlplane"],
       "upgradeGroup": "typescript-crypto-stack"
     },
     {
@@ -454,7 +466,7 @@
       "protocol": "websocket-rfc-6455",
       "publicApiOnly": true,
       "platforms": ["ios-arm64", "macos-arm64"],
-      "conformanceTests": ["interop/swift-go/wss/direct"],
+      "conformanceTests": ["connector/swift-v3"],
       "upgradeGroup": "swift-websocket-stack"
     },
     {
@@ -466,7 +478,7 @@
       "protocol": "tls-1.3",
       "publicApiOnly": true,
       "platforms": ["ios-arm64", "macos-arm64"],
-      "conformanceTests": ["interop/swift-go/wss/direct", "interop/swift-via-go-to-rust/wss/tunnel"],
+      "conformanceTests": ["connector/swift-v3"],
       "upgradeGroup": "swift-websocket-stack"
     }
   ]

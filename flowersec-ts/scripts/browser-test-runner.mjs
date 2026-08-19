@@ -87,7 +87,6 @@ export async function runBrowserWorkload(input, dependencies = {}) {
     await page.exposeBinding("__flowersecRecordDiagnostic", async (_source, value) => {
       if (typeof value === "string") recordDiagnostic(value);
     });
-    await installWebTransportCertificateHash(page, plan.certificate_hash, plan.browser);
     await navigateBrowserModule(page, site.origin);
     await preloadBrowserSDK(page);
 
@@ -104,7 +103,7 @@ export async function runBrowserWorkload(input, dependencies = {}) {
           ledger.admit(artifacts);
           result.stages.push({
             profile_id: stage.profile_id,
-            cold: await runColdPhase(page, artifacts, stage.cold, stage.cleanup_deadline_ms, plan.policy),
+            cold: await runColdPhase(page, artifacts, stage.cold, stage.cleanup_deadline_ms),
           });
         }
       } else {
@@ -115,7 +114,7 @@ export async function runBrowserWorkload(input, dependencies = {}) {
           count: plan.cold.operations,
         }, fetchImpl);
         ledger.admit(coldArtifacts);
-        result.cold = await runColdPhase(page, coldArtifacts, plan.cold, plan.cleanup_deadline_ms, plan.policy);
+        result.cold = await runColdPhase(page, coldArtifacts, plan.cold, plan.cleanup_deadline_ms);
 
         if (!plan.cold_diagnostic) {
           phase = "session";
@@ -168,7 +167,7 @@ export async function runBrowserWorkload(input, dependencies = {}) {
   return result;
 }
 
-export async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs, policy = "require_quic_family") {
+export async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs) {
   const phaseStartedAt = performance.now();
   const drainageController = new AbortController();
   const drainageTimer = setTimeout(
@@ -193,7 +192,6 @@ export async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs, pol
             item,
             ordinalValue,
             scheduledAtValue,
-            policy,
             connectDeadlineMs,
             connectDeadlineMessage,
             operationDeadlineMs,
@@ -218,27 +216,14 @@ export async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs, pol
                 sdk.parseArtifact(item.artifact_json),
                 async () => await globalThis.__flowersecCommitArtifactSpend(item.spend_token),
               );
-              session = await sdk.connect(lease, {
-                signal: controller.signal,
-                connectTimeoutMs: connectDeadlineMs,
-                policy,
-              });
+              session = await sdk.connect(lease, { signal: controller.signal });
             } catch (error) {
               try {
-                const internal = await import("/dist/utils/errors.js");
-                if (error instanceof internal.ConnectError) {
-                  const details = internal.connectErrorDetailsInternal(error);
+                if (error instanceof sdk.ConnectError) {
                   await globalThis.__flowersecRecordDiagnostic(JSON.stringify({
                     type: "connect",
                     public_code: error.code,
-                    internal_code: details.code,
-                    stage: details.stage,
-                    candidates: details.diagnostics.slice(0, 4).map((diagnostic) => ({
-                      carrier: diagnostic.carrier,
-                      stage: diagnostic.stage,
-                      code: diagnostic.code,
-                      message: diagnostic.message.slice(0, 256),
-                    })),
+                    disposition: error.disposition.kind,
                   }));
                 }
               } catch {
@@ -281,7 +266,6 @@ export async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs, pol
             item: artifacts[ordinal - 1],
             ordinalValue: ordinal,
             scheduledAtValue: scheduledAt,
-            policy,
             connectDeadlineMs,
             connectDeadlineMessage: connectDeadlineMs < cold.operation_deadline_ms
               ? "cold phase deadline exceeded"
@@ -304,7 +288,7 @@ export async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs, pol
 }
 
 export async function runSessionWorkload(page, artifact, plan) {
-  return await page.evaluate(async ({ item, profileID, policy, connectDeadlineMs, rpcPlan, bulkPlan, cleanupDeadlineMs }) => {
+  return await page.evaluate(async ({ item, profileID, connectDeadlineMs, rpcPlan, bulkPlan, cleanupDeadlineMs }) => {
     const peerStart = globalThis.__flowersecStartArtifact(item.spend_token);
     void peerStart.catch(() => undefined);
     const sdk = await import("/dist/browser/index.js");
@@ -318,7 +302,7 @@ export async function runSessionWorkload(page, artifact, plan) {
     let session;
     try {
       session = await withSignalDeadline(
-        (signal) => sdk.connect(lease, { signal, connectTimeoutMs: connectDeadlineMs, policy }),
+        (signal) => sdk.connect(lease, { signal }),
         connectDeadlineMs,
         "session connect deadline exceeded",
       );
@@ -593,7 +577,6 @@ export async function runSessionWorkload(page, artifact, plan) {
     item: artifact,
 	profileID: plan.profile_id,
 	connectDeadlineMs: plan.cold.phase_deadline_ms,
-	policy: plan.policy,
     rpcPlan: plan.rpc,
     bulkPlan: plan.bulk,
     cleanupDeadlineMs: plan.cleanup_deadline_ms,
@@ -838,27 +821,10 @@ function browserPage() {
 </head><body></body></html>`;
 }
 
-export async function installWebTransportCertificateHash(page, encodedHash, browser = "chromium", removeWebSocket = false) {
-  if (browser === "firefox") return;
-  if (browser !== "chromium") throw new TypeError("unsupported browser certificate adapter");
-  await page.addInitScript((value) => {
-    const encoded = typeof value === "string" ? value : value.encodedHash;
-    const NativeWebTransport = globalThis.WebTransport;
-    if (typeof NativeWebTransport !== "function") {
-      throw new Error("Chromium WebTransport capability is unavailable");
-    }
-    const standard = encoded.replaceAll("-", "+").replaceAll("_", "/");
-    const padded = standard + "=".repeat((4 - (standard.length % 4)) % 4);
-    const hash = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
-    globalThis.WebTransport = class extends NativeWebTransport {
-      constructor(url, options) {
-        super(url, { ...options, serverCertificateHashes: [{ algorithm: "sha-256", value: hash.slice() }] });
-      }
-    };
-    if (typeof value !== "string" && value.removeWebSocket) {
-      Object.defineProperty(globalThis, "WebSocket", { value: undefined, configurable: true });
-    }
-  }, removeWebSocket ? { encodedHash, removeWebSocket: true } : encodedHash);
+export async function disableBrowserWebSocket(page) {
+  await page.addInitScript(() => {
+    Object.defineProperty(globalThis, "WebSocket", { value: undefined, configurable: true });
+  });
 }
 
 function withTimeout(promise, milliseconds, name) {

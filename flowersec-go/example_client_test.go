@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
 )
 
 const (
@@ -25,7 +25,7 @@ type exampleValuePayload struct {
 }
 
 func ExampleConnect() {
-	artifactJSON, err := os.ReadFile(os.Getenv("FSEC_ARTIFACT_V2_PATH"))
+	artifactJSON, err := os.ReadFile(os.Getenv("FSEC_ARTIFACT_V3_PATH"))
 	if err != nil {
 		reportExampleError(err)
 		return
@@ -35,7 +35,7 @@ func ExampleConnect() {
 		reportExampleError(err)
 		return
 	}
-	receiptPath := os.Getenv("FSEC_SPEND_RECEIPT_V2_PATH")
+	receiptPath := os.Getenv("FSEC_SPEND_RECEIPT_V3_PATH")
 	lease, err := flowersec.NewArtifactLease(artifact, func(context.Context) error {
 		return commitSpendReceipt(receiptPath)
 	})
@@ -165,7 +165,7 @@ func commitSpendReceipt(path string) error {
 	if err != nil {
 		return err
 	}
-	_, writeErr := receipt.WriteString("flowersec-v2-artifact-spent\n")
+	_, writeErr := receipt.WriteString("flowersec-v3-artifact-spent\n")
 	if err := errors.Join(writeErr, receipt.Sync(), receipt.Close()); err != nil {
 		return err
 	}

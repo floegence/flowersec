@@ -15,6 +15,9 @@ const manifest = JSON.parse(
   fs.readFileSync(path.join(repoRoot, 'stability', 'api_contract_manifest.json'), 'utf8')
 );
 const artifactFixture = JSON.parse(
+  fs.readFileSync(path.join(repoRoot, 'testdata', 'transport_v3', 'artifact_vectors.json'), 'utf8')
+).positive[0].artifact_json;
+const v2ArtifactFixture = JSON.parse(
   fs.readFileSync(path.join(repoRoot, 'testdata', 'transport_v2', 'artifact_vectors.json'), 'utf8')
 ).positive[0].artifact_json;
 const forbiddenRuntimeExportsBySubpath = new Map([
@@ -198,12 +201,7 @@ function verifyInstalledDeclarationClosure() {
   const publicDeclarations = sources.join('\n');
   assert.doesNotMatch(
     publicDeclarations,
-    /\b[A-Za-z_$][A-Za-z0-9_$]*V2\b/u,
-    'exported declaration closure leaked a versioned SDK type',
-  );
-  assert.doesNotMatch(
-    publicDeclarations,
-    /(?:^|["'\/])(?:v2|connector)(?:["'\/]|\.)/u,
+    /(?:^|["'\/])connector(?:["'\/]|\.)/u,
     'exported declaration closure referenced an internal module',
   );
   assert.doesNotMatch(
@@ -219,6 +217,9 @@ function verifyInstalledPackage() {
     const lines = [
       `    const ${moduleVar} = await import(${JSON.stringify(subpath.specifier)});`
     ];
+    lines.push(
+      `    assert.deepEqual(Object.keys(${moduleVar}).sort(), ${JSON.stringify([...subpath.runtime_exports].sort())}, ${JSON.stringify(subpath.specifier + ' runtime export set drifted from the API contract manifest')});`
+    );
     for (const exportName of subpath.runtime_exports.filter((name) => !removedLegacyRuntimeExports.has(name))) {
       lines.push(
         `    assert.equal(Object.prototype.hasOwnProperty.call(${moduleVar}, ${JSON.stringify(exportName)}), true, ${JSON.stringify(subpath.specifier + ' missing export ' + exportName)});`
@@ -255,7 +256,9 @@ ${checks}
     const browser = await import('@floegence/flowersec-core/browser');
     const root = await import('@floegence/flowersec-core');
     assert.equal(root.ConnectError, browser.ConnectError);
-    const redacted = new root.ConnectError('connection_failed');
+    assert.equal(browser.connect, browser.connectV3);
+    assert.notEqual(browser.connect, browser.v2.connect);
+    const redacted = new root.ConnectError('connection_failed', { kind: 'terminal' });
     assert.deepEqual(
       { name: redacted.name, code: redacted.code },
       { name: 'ConnectError', code: 'connection_failed' },
@@ -269,12 +272,20 @@ ${checks}
     const artifact = root.parseArtifact(${JSON.stringify(artifactFixture)});
     assert.deepEqual(Object.keys(artifact), []);
     assert.equal(JSON.stringify(artifact), '{}');
-    assert.throws(() => root.createArtifactLease({}, async () => {}), /invalid Flowersec artifact handle/);
+    assert.throws(
+      () => root.createArtifactLease({}, async () => {}),
+      (error) => error?.name === 'ArtifactError' && error?.code === 'invalid_artifact',
+    );
     assert.equal(
       Object.prototype.hasOwnProperty.call(root.createArtifactLease(artifact, async () => {}), 'artifact'),
       false,
       'ArtifactLease must not expose its artifact',
     );
+    assert.throws(
+      () => root.parseArtifact(${JSON.stringify(v2ArtifactFixture)}),
+      (error) => error?.name === 'ArtifactError' && error?.code === 'invalid_artifact',
+    );
+    assert.deepEqual(Object.keys(root.v2.parseArtifact(${JSON.stringify(v2ArtifactFixture)})), []);
     assert.equal(Object.prototype.hasOwnProperty.call(browser, 'requestConnectArtifact'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(browser, 'requestEntryConnectArtifact'), false);
     assert.equal(browser.BROWSER_RUNTIME_CAPABILITY_V2, undefined);
@@ -283,6 +294,8 @@ ${checks}
     assert.equal(browser.runtimeCapabilityDigestHexV2, undefined);
 
     const node = await import('@floegence/flowersec-core/node');
+    assert.equal(node.connect, node.connectV3);
+    assert.notEqual(node.connect, node.v2.connect);
     assert.equal(node.NODE_RUNTIME_CAPABILITY_V2, undefined);
     assert.equal(node.BROWSER_RUNTIME_CAPABILITY_V2, undefined);
     assert.equal(root.BROWSER_RUNTIME_CAPABILITY_V2, undefined);
@@ -343,13 +356,16 @@ import {
   createConnectionController as createBrowserConnectionController,
   createArtifactLease as createBrowserArtifactLease,
   ConnectError as BrowserConnectError,
+  v2 as BrowserV2,
 } from '@floegence/flowersec-core/browser';
 import {
   connect as nodeConnect,
   createConnectionController as createNodeConnectionController,
   createArtifactLease as createNodeArtifactLease,
   ConnectError as NodeConnectError,
+  v2 as NodeV2,
 } from '@floegence/flowersec-core/node';
+import { v2 as RootV2 } from '@floegence/flowersec-core';
 import type {
   SessionOptions as BrowserSessionOptions,
   JsonPrimitive as BrowserJsonPrimitive,
@@ -539,6 +555,10 @@ void stream.id;
 void incoming.id;
 const accepted: ByteStream = incoming.stream;
 const lease: ArtifactLease = createArtifactLease(artifact, commitSpend);
+const v2Artifact = RootV2.parseArtifact(${JSON.stringify(v2ArtifactFixture)});
+const v2Lease = RootV2.createArtifactLease(v2Artifact, commitSpend);
+const v2BrowserSession: Promise<BrowserV2.Session> = BrowserV2.connect(v2Lease);
+const v2NodeSession: Promise<NodeV2.Session> = NodeV2.connect(v2Lease, { origin: 'https://app.example' });
 // @ts-expect-error ArtifactLease is an opaque spend boundary, not an artifact container.
 void lease.artifact;
 // @ts-expect-error ArtifactLease has no public constructor.
@@ -575,7 +595,7 @@ const nodeController = createNodeConnectionController(
 );
 declare const proxyRuntime: ProxyRuntime;
 const proxyOptions: ProxyRuntimeOptions = { session };
-const proxyHandle: Promise<ProxyBrowserHandle> = connectProxyBrowser(lease);
+const proxyHandle: Promise<ProxyBrowserHandle> = connectProxyBrowser(v2Lease);
 declare const proxyTypeInventory: readonly [
   EnsureServiceWorkerRuntimeRegisteredOptions,
   ProxyAppServiceWorkerControlOptions,
@@ -607,7 +627,7 @@ declare const proxyTypeInventory: readonly [
   ServiceWorkerControllerGuardRepairOptions,
   WebSocketPatchOptions,
 ];
-const connectError = new ConnectError('connection_failed');
+const connectError = new ConnectError('connection_failed', { kind: 'terminal' });
 // @ts-expect-error public connection errors expose only their closed code.
 void connectError.path;
 // @ts-expect-error public connection errors expose only their closed code.
@@ -635,6 +655,8 @@ void browserSession;
 void browserController;
 void nodeSession;
 void nodeController;
+void v2BrowserSession;
+void v2NodeSession;
 void proxyRuntime;
 void proxyOptions;
 void proxyHandle;

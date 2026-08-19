@@ -116,12 +116,13 @@ WebTransport est un adaptateur facultatif et ne fait pas partie du contrat de ca
 ## Sécurité
 
 - Les données applicatives sont chiffrées de bout en bout pour les sessions directes et relayées.
+- La politique de confiance TLS est liée à chaque candidat de transport v3. Les racines d'AC publiques ou fournies par le déploiement et les pins explicites de certificat feuille sont mutuellement exclusifs, sans dégradation après un échec.
 - Les invitations de connexion sont opaques, éphémères et à usage unique.
 - Les identifiants sont validés avant utilisation afin qu'une invitation consommée ne puisse pas être rejouée.
 - Les relais transmettent uniquement du trafic chiffré et ne terminent pas les sessions applicatives.
 - Les connexions invalides ou non prises en charge échouent de façon sûre avec des erreurs publiques limitées.
 
-Pour les détails du protocole et du modèle de menace, consultez le [contrat d'API](docs/API_CONTRACT.md), l'[architecture de transport](docs/TRANSPORT_V2_ARCHITECTURE.md) et le [modèle de menace](docs/THREAT_MODEL.md).
+Pour les détails du protocole et du modèle de menace, consultez le [contrat d'API](docs/API_CONTRACT.md), l'[architecture de transport](docs/TRANSPORT_V3_ARCHITECTURE.md) et le [modèle de menace](docs/THREAT_MODEL.md).
 
 <!-- readme-section:deploy-and-develop -->
 <a id="deploy-and-develop"></a>
@@ -130,7 +131,7 @@ Pour les détails du protocole et du modèle de menace, consultez le [contrat d'
 
 - [Contrat d'API](docs/API_CONTRACT.md) : comportement applicatif stable partagé par les SDK.
 - [Modèle d'erreur](docs/ERROR_MODEL.md) : erreurs publiques de connexion, de session et de RPC.
-- [Architecture de transport](docs/TRANSPORT_V2_ARCHITECTURE.md) : conception des connexions directes et relayées.
+- [Architecture de transport](docs/TRANSPORT_V3_ARCHITECTURE.md) : conception des connexions directes et relayées.
 - [Exemples](examples/README.md) : utilisation exécutable des SDK.
 
 Flowersec est disponible sous [licence MIT](LICENSE). Les paquets publiés et les notes de version sont disponibles dans les [versions GitHub](https://github.com/floegence/flowersec/releases).

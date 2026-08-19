@@ -82,7 +82,10 @@ the Node entrypoint.
 For the complete durable `ArtifactLease` spend workflow, see the
 [TypeScript cookbook](../examples/ts/README.md). Node raw-QUIC-only artifacts
 may omit `origin`; providing an absolute HTTP(S) origin enables WebSocket
-candidates. Secure raw QUIC still requires an explicit `tls.ca` trust root.
+candidates. CA candidates use platform or deployment-provided trust roots;
+pin candidates use only the complete active leaf-certificate SHA-256 pin set
+embedded in the opaque artifact. The connector never fetches pins or falls
+back between CA and pin modes.
 
 ### Accepted Node server Session
 
@@ -112,7 +115,7 @@ The Browser and Node `connect(...)` operations are one-shot and never reconnect.
 
 The controller has one scheduler and one in-flight attempt. Its states are `idle`, `connecting`, `connected`, `waiting`, `failed`, and `closed`; immutable snapshots expose `ConnectionSnapshot.retryDisposition` while the corresponding retry decision applies and clear it before a new attempt, after connection, and on close. Call `start()` once, observe snapshots with `subscribe(...)`, await an established session with `waitForSession(...)`, and use `retryNow()` only to wake a `waiting` controller. `close()` cancels acquisition, connection, and waiting before closing the current session.
 
-`StreamHandlers` and Node `SessionHandlers` accept application stream kinds containing 1 through 128 canonical UTF-8 bytes, reject leading or trailing Unicode whitespace, controls, and unassigned scalars, and reserve `flowersec.rpc.v2` for Flowersec RPC. Successful handlers half-close their stream. A rejected handler Promise resets only that stream; the accept loop and unrelated streams continue.
+`StreamHandlers` and Node `SessionHandlers` accept application stream kinds containing 1 through 128 canonical UTF-8 bytes, reject leading or trailing Unicode whitespace, controls, and unassigned scalars, and reserve `flowersec.rpc.v3` for Flowersec RPC. Successful handlers half-close their stream. A rejected handler Promise resets only that stream; the accept loop and unrelated streams continue.
 
 Reliable streams apply bounded per-stream receive backpressure instead of buffering application data without limit. A slow consumer pauses carrier progress until reads release capacity; records retain carrier order, so a rekey behind backpressured DATA completes after the consumer resumes. `closeWrite()` sends the graceful FIN and keeps reads available. `reset()` and `close()` abort both directions. If a write is canceled or fails after its wire commit may have started, only that stream becomes terminal and cannot be reused.
 
@@ -154,20 +157,21 @@ The proxy entrypoint accepts an opaque `ArtifactLease` or an already connected `
 ## Connection Notes
 
 Browser applications receive a ready `Session` from `connect(...)`. The browser
-connector supports WSS, restricted plaintext loopback WebSocket direct
-connections, and WebTransport when the browser exposes that API. WebTransport
-uses browser-owned HTTP/3 streams and is not available in the Node entrypoint.
+connector supports CA-authenticated WSS and pinned WebTransport when the
+browser exposes that API. WebTransport uses browser-owned HTTP/3 streams and
+is not available in the Node entrypoint. Production v3 accepts no plaintext
+carrier.
 
 Chromium does not support a WebTransport pooling option; each carrier creates an independent native WebTransport connection.
 
 Cold-connection diagnostics require every independent carrier to meet the declared deadline. A `dial_failed` result remains a test failure and is not hidden by pooling, retry, or timeout relaxation.
 
 Node.js applications receive the same `Session` contract from `connect(...)`.
-The Node connector supports WSS, restricted plaintext loopback WebSocket
-direct connections, and raw QUIC through the optional native package. WebSocket
-candidates require an absolute HTTP(S) `origin`; raw-QUIC-only artifacts may
-omit it. Custom certificate authorities can be supplied through `tls.ca`, and
-secure raw QUIC requires an explicit trust root.
+The Node connector supports WSS and raw QUIC through the optional native
+package. WebSocket candidates require an absolute HTTPS `origin`;
+raw-QUIC-only artifacts may omit it. CA candidates use platform or configured
+private roots. Pin candidates use their artifact-bound pin set and never
+downgrade to CA after a verification failure.
 
 The connectors choose an eligible connection path from the invitation. They do
 not expose transport selectors, candidate lists, or native carrier objects to application code.
@@ -180,4 +184,4 @@ npm test
 npm run verify:package
 ```
 
-See the [API contract](../docs/API_CONTRACT.md), [Transport v2 architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md), [threat model](../docs/THREAT_MODEL.md), and [error model](../docs/ERROR_MODEL.md).
+See the [API contract](../docs/API_CONTRACT.md), [Transport v3 architecture](../docs/TRANSPORT_V3_ARCHITECTURE.md), [v3 wire contract](../docs/TRANSPORT_V3_WIRE.md), [threat model](../docs/THREAT_MODEL.md), and [error model](../docs/ERROR_MODEL.md).

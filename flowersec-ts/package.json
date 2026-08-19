@@ -1,6 +1,6 @@
 {
   "name": "@floegence/flowersec-core",
-  "version": "2.5.4",
+  "version": "3.0.0",
   "description": "Flowersec core TypeScript library for carrier-neutral encrypted sessions and multiplexed streams.",
   "license": "MIT",
   "repository": {
@@ -63,7 +63,7 @@
     "ensure:browser": "node ./scripts/ensure-playwright-browsers.mjs chromium",
     "ensure:browser:firefox": "node ./scripts/ensure-playwright-browsers.mjs firefox",
     "ensure:browser:webkit": "node ./scripts/ensure-playwright-browsers.mjs webkit",
-    "test:coverage": "npm run build && vitest run --coverage",
+    "test:coverage": "npm run build && node ../scripts/server-parity-native-addon.mjs --test-coverage",
     "lint": "eslint .",
     "verify:package": "node ./scripts/verify-package-exports.mjs",
     "prepack": "npm run build",
@@ -77,7 +77,7 @@
     "ws": "^8.21.2"
   },
   "optionalDependencies": {
-    "@floegence/flowersec-node-native": "2.5.4"
+    "@floegence/flowersec-node-native": "3.0.0"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

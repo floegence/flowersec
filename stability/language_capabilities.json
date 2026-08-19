@@ -1,15 +1,15 @@
 {
-  "version": 2,
+  "version": 3,
   "languages": ["go", "typescript", "swift", "rust"],
   "capability_layers": ["portable_core", "server_integration", "control_plane", "sdk_profile", "language_convenience"],
   "deployment_profiles": {
-    "version": 1,
-    "application_wire": "shared_across_runtimes_and_carriers",
+    "version": 3,
+    "application_wire": "flowersec/3",
     "profiles": [
       {
         "id": "native-server-core",
         "claimed_runtimes": ["go", "rust", "node-typescript"],
-        "transport_runtime_ids": ["go_native", "rust_native", "typescript_node"],
+        "transport_runtime_ids": ["go/native", "rust/native", "typescript/node"],
         "required_roles": ["endpoint-client", "direct-server", "tunnel-runtime"],
         "required_carriers": ["websocket", "raw-quic"],
         "required_paths": {
@@ -17,7 +17,7 @@
           "direct-server": ["direct"],
           "tunnel-runtime": ["tunnel"]
         },
-        "required_capability_ids": ["opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "client_rpc_handlers", "validated_stream_metadata", "application_stream_handlers", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"],
+        "required_capability_ids": ["opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "client_rpc_handlers", "validated_stream_metadata", "application_stream_handlers", "connection_controller", "server_acceptor_session", "server_session_handlers", "server_admission_paths", "carrier_contract", "wire_security"],
         "optional_carriers": ["webtransport"],
         "required_tuple_count": 18,
         "required_path_unit_count": 24
@@ -25,7 +25,7 @@
       {
         "id": "browser-client",
         "claimed_runtimes": ["typescript-browser"],
-        "transport_runtime_ids": ["typescript_browser"],
+        "transport_runtime_ids": ["typescript/browser"],
         "required_roles": ["endpoint-client"],
         "required_carriers": ["websocket"],
         "required_paths": { "endpoint-client": ["direct", "tunnel"] },
@@ -37,7 +37,7 @@
       {
         "id": "apple-client",
         "claimed_runtimes": ["swift"],
-        "transport_runtime_ids": ["swift_ios", "swift_macos"],
+        "transport_runtime_ids": ["swift/ios", "swift/macos"],
         "required_roles": ["endpoint-client"],
         "required_carriers": ["websocket"],
         "required_paths": { "endpoint-client": ["direct", "tunnel"] },
@@ -67,7 +67,7 @@
     {
       "id": "opaque_artifact",
       "layer": "portable_core",
-      "description": "Strict Flowersec v2 artifact parsing behind an opaque application-facing value",
+      "description": "Strict Flowersec v3 artifact and TLS-policy parsing behind an opaque application-facing value",
       "implementations": {
         "go": { "status": "supported", "test_ids": ["protocol/go"] },
         "typescript": { "status": "supported", "test_ids": ["protocol/typescript"] },
@@ -81,15 +81,15 @@
       "description": "Lease-consuming direct and tunnel connection without exposing carrier credentials",
       "implementations": {
         "go": { "status": "supported", "test_ids": ["controller/go"] },
-        "typescript": { "status": "supported", "test_ids": ["controller/typescript-real-network-restart"] },
-        "swift": { "status": "supported", "test_ids": ["controller/swift-real-network-restart"] },
+        "typescript": { "status": "supported", "test_ids": ["server/typescript-acceptor"] },
+        "swift": { "status": "supported", "test_ids": ["connector/swift-v3"] },
         "rust": { "status": "supported", "test_ids": ["controller/rust"] }
       }
     },
     {
       "id": "secure_session",
       "layer": "portable_core",
-      "description": "Authenticated v2 sessions, bounded streams, rekey, cancellation, and close",
+      "description": "Authenticated v3 sessions, bounded streams, rekey, cancellation, and close",
       "implementations": {
         "go": { "status": "supported", "test_ids": ["protocol/go"] },
         "typescript": { "status": "supported", "test_ids": ["protocol/typescript"] },
@@ -100,7 +100,7 @@
     {
       "id": "rpc_call_notify",
       "layer": "portable_core",
-      "description": "Typed RPC calls, outbound notifications, and peer notification subscriptions over the reserved encrypted v2 stream kind",
+      "description": "Typed RPC calls, outbound notifications, and peer notification subscriptions over the reserved encrypted v3 stream kind",
       "implementations": {
         "go": { "status": "supported", "test_ids": ["protocol/go"] },
         "typescript": { "status": "supported", "test_ids": ["protocol/typescript"] },
@@ -147,9 +147,9 @@
       "description": "Reusable inbound RPC and notification definitions for one-shot and controller-managed endpoint-client sessions, with a fresh router for every connection generation",
       "implementations": {
         "go": { "status": "supported", "entrypoint": "NewRPCHandlers/ConnectorOptions.RPCHandlers", "test_ids": ["controller/go-websocket-handlers"] },
-        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core/node RPCHandlers/SessionOptions.rpcHandlers/ConnectionControllerOptions.rpcHandlers", "test_ids": ["controller/typescript-real-network-restart"] },
+        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core/node RPCHandlers/SessionOptions.rpcHandlers/ConnectionControllerOptions.rpcHandlers", "test_ids": ["controller/typescript-rpc-handlers-v3"] },
         "swift": { "status": "unsupported", "reason": "The Apple client runtime does not expose inbound request serving." },
-        "rust": { "status": "supported", "entrypoint": "flowersec::RpcHandlers/ConnectorOptions::with_rpc_handlers", "test_ids": ["controller/rust-websocket-handlers"] }
+        "rust": { "status": "supported", "entrypoint": "flowersec::RpcHandlers/ConnectorOptions::with_rpc_handlers", "test_ids": ["interop/rust-go/raw-quic/direct"] }
       }
     },
     {
@@ -177,12 +177,12 @@
     {
       "id": "controlplane_issue_authorize",
       "layer": "control_plane",
-      "description": "Opaque artifact issuance, durable authorization records, and runtime admission authorization.",
+      "description": "Go-owned v3 artifact issuance with structured TLS endpoints, durable authorization records, and runtime admission authorization.",
       "implementations": {
-        "go": { "status": "supported", "entrypoint": "flowersec-go/v2/controlplane", "test_ids": ["server/go-controlplane"] },
-        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core/node Issuer/AuthorizationRecord/RuntimeAuthorizationRequest/authorizeRuntime/authorizeTunnelRuntime", "test_ids": ["server/typescript-controlplane"] },
+        "go": { "status": "supported", "entrypoint": "flowersec-go/v3/controlplane", "test_ids": ["server/go-controlplane"] },
+        "typescript": { "status": "unsupported", "reason": "The TypeScript v3 SDK consumes issued artifacts and does not provide an issuer API." },
         "swift": { "status": "unsupported", "reason": "Control-plane persistence and atomic authorization are outside the Apple client SDK profile." },
-        "rust": { "status": "supported", "entrypoint": "flowersec::controlplane::Issuer/AuthorizationRecord/RuntimeAuthorizationRequest::authorize/authorize_tunnel", "test_ids": ["server/rust-controlplane"] }
+        "rust": { "status": "unsupported", "reason": "The Rust v3 SDK consumes issued artifacts and does not provide an issuer API." }
       }
     },
     {
@@ -201,32 +201,32 @@
       "layer": "server_integration",
       "description": "The TypeScript browser proxy runtime and each server ProxyServer share one bounded Session/ByteStream application protocol for HTTP and WebSocket forwarding.",
       "implementations": {
-        "go": { "status": "supported", "entrypoint": "flowersec.NewProxyServer/ProxyServer.Register(SessionHandlers)/ProxyServer.RegisterStreamHandlers(StreamHandlers)", "test_ids": ["interop/browser-proxy/server-matrix"] },
-        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core/node ProxyServer.register(StreamHandlers|SessionHandlers)/ProxyServerOptions and @floegence/flowersec-core/proxy createProxyRuntime", "test_ids": ["interop/browser-proxy/server-matrix"] },
+        "go": { "status": "unsupported", "reason": "The v3 transport release does not claim browser proxy interoperability." },
+        "typescript": { "status": "unsupported", "reason": "The default v3 Node.js export does not expose ProxyServer." },
         "swift": { "status": "unsupported", "reason": "The browser Service Worker and MessagePort APIs do not exist on the Apple SDK profile." },
-        "rust": { "status": "supported", "entrypoint": "flowersec::ProxyServer/ProxyServerOptions/register(SessionHandlers)/register_stream_handlers(StreamHandlers)", "test_ids": ["interop/browser-proxy/server-matrix"] }
+        "rust": { "status": "unsupported", "reason": "The v3 transport release does not claim browser proxy interoperability." }
       }
     },
     {
-      "id": "loopback_plaintext_websocket_direct",
+      "id": "compat/v2/loopback_plaintext_websocket_direct",
       "layer": "portable_core",
       "description": "Canonical artifact profile for restricted plaintext WebSocket direct candidates on exact loopback only; this entry records parsing semantics, not runtime carrier availability.",
       "implementations": {
-        "go": { "status": "supported", "entrypoint": "flowersec.ParseArtifact", "test_ids": ["protocol/go"] },
-        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core parseArtifact", "test_ids": ["protocol/typescript"] },
-        "swift": { "status": "supported", "entrypoint": "Flowersec Artifact parser", "test_ids": ["protocol/swift"] },
-        "rust": { "status": "supported", "entrypoint": "flowersec artifact parser", "test_ids": ["protocol/rust"] }
+        "go": { "status": "supported", "entrypoint": "flowersec.ParseArtifactV2", "test_ids": ["compat/v2/protocol/go"] },
+        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core/v2 parseArtifact", "test_ids": ["compat/v2/protocol/typescript"] },
+        "swift": { "status": "supported", "entrypoint": "Flowersec v2 artifact parser", "test_ids": ["compat/v2/protocol/swift"] },
+        "rust": { "status": "supported", "entrypoint": "flowersec v2 artifact parser", "test_ids": ["compat/v2/protocol/rust"] }
       }
     },
     {
-      "id": "loopback_plaintext_websocket_direct_runtime",
+      "id": "compat/v2/loopback_plaintext_websocket_direct_runtime",
       "layer": "server_integration",
       "description": "Runtime connection profile that permits plaintext only for the exact direct subprotocol when the underlying TCP local and remote addresses are both loopback; tunnel, non-loopback, missing-address, and wrong-subprotocol connections fail closed.",
       "implementations": {
-        "go": { "status": "supported", "entrypoint": "flowersec.Connect and flowersec.Acceptor.Handler", "test_ids": ["carrier/go-loopback-plaintext-direct"] },
-        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core/node connect and browser WebSocket connector", "test_ids": ["carrier/typescript-loopback-plaintext-direct"] },
-        "swift": { "status": "supported", "entrypoint": "Flowersec Apple WebSocket connector", "test_ids": ["carrier/swift-loopback-plaintext-direct"] },
-        "rust": { "status": "supported", "entrypoint": "flowersec::connect/Acceptor::bind_websocket", "test_ids": ["carrier/rust-websocket-direct"] }
+        "go": { "status": "supported", "entrypoint": "flowersec v2 connector and acceptor", "test_ids": ["compat/v2/carrier/go-loopback-plaintext-direct"] },
+        "typescript": { "status": "supported", "entrypoint": "@floegence/flowersec-core/v2 WebSocket connector", "test_ids": ["compat/v2/carrier/typescript-loopback-plaintext-direct"] },
+        "swift": { "status": "supported", "entrypoint": "Flowersec v2 Apple WebSocket connector", "test_ids": ["compat/v2/carrier/swift-loopback-plaintext-direct"] },
+        "rust": { "status": "supported", "entrypoint": "flowersec v2 WebSocket connector and acceptor", "test_ids": ["compat/v2/carrier/rust-loopback-plaintext-direct"] }
       }
     },
     {
@@ -243,7 +243,7 @@
     {
       "id": "wire_security",
       "layer": "portable_core",
-      "description": "Canonical v2 handshake, record protection, admission binding, and Unicode validation",
+      "description": "Canonical v3 handshake, record protection, admission and TLS-policy binding, and Unicode validation",
       "implementations": {
         "go": { "status": "supported", "test_ids": ["protocol/go"] },
         "typescript": { "status": "supported", "test_ids": ["protocol/typescript"] },
@@ -279,7 +279,7 @@
       "layer": "sdk_profile",
       "owner": "swift",
       "reason": "The Swift production connector supports WSS direct and tunnel dialing on macOS and iOS.",
-      "test_ids": ["interop/swift-go/wss/direct"]
+      "test_ids": ["connector/swift-v3/interop/swift-go/wss/direct"]
     },
     {
       "id": "go_negotiated_unreliable_messages",
@@ -315,26 +315,26 @@
       { "runtime": "go", "deployment-role": "direct-server", "carrier": "raw-quic", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "flowersec.NewAcceptor/NewRawQUICDirectListener", "test_ids": ["server/go-acceptor"] },
       { "runtime": "go", "deployment-role": "tunnel-runtime", "carrier": "raw-quic", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "flowersec.NewTunnelRuntime/NewRawQUICTunnelListener", "test_ids": ["carrier/go-tunnel"] },
       { "runtime": "go", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "direct", "feature": "connect", "status": "supported", "entrypoint": "flowersec.Connect", "test_ids": ["carrier/go-direct"] },
-      { "runtime": "go", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "tunnel", "feature": "connect", "status": "unsupported", "reason": "No production tunnel runtime forwards WebTransport datagrams across paired legs." },
+      { "runtime": "go", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "tunnel", "feature": "connect", "status": "supported", "entrypoint": "flowersec.Connect", "test_ids": ["carrier/go-webtransport-tunnel"] },
       { "runtime": "go", "deployment-role": "direct-server", "carrier": "webtransport", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "flowersec.NewAcceptor/NewWebTransportDirectListener", "test_ids": ["server/go-acceptor"] },
-      { "runtime": "go", "deployment-role": "tunnel-runtime", "carrier": "webtransport", "path": "tunnel", "feature": "pair-forward", "status": "unsupported", "reason": "The Go opaque tunnel runtime does not forward WebTransport datagrams across paired legs." },
-      { "runtime": "go", "deployment-role": "control-plane", "carrier": "carrier-neutral", "path": "carrier-neutral", "feature": "issue-authorize", "status": "supported", "entrypoint": "flowersec-go/v2/controlplane", "test_ids": ["server/go-controlplane"] },
-      { "runtime": "go", "deployment-role": "proxy-server", "carrier": "carrier-neutral", "path": "direct", "feature": "proxy", "status": "supported", "entrypoint": "flowersec.NewProxyServer", "test_ids": ["server/go-proxy"] },
+      { "runtime": "go", "deployment-role": "tunnel-runtime", "carrier": "webtransport", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "flowersec.NewTunnelRuntime/NewWebTransportTunnelListener", "test_ids": ["carrier/go-webtransport-tunnel"] },
+      { "runtime": "go", "deployment-role": "control-plane", "carrier": "carrier-neutral", "path": "carrier-neutral", "feature": "issue-authorize", "status": "supported", "entrypoint": "flowersec-go/v3/controlplane", "test_ids": ["server/go-controlplane"] },
+      { "runtime": "go", "deployment-role": "proxy-server", "carrier": "carrier-neutral", "path": "direct", "feature": "proxy", "status": "unsupported", "reason": "No end-to-end v3 Session test exercises the Go proxy server role." },
 
       { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "websocket", "path": "direct", "feature": "connect", "status": "supported", "entrypoint": "@floegence/flowersec-core/node connect", "test_ids": ["interop/typescript-go/wss/direct"] },
       { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "websocket", "path": "tunnel", "feature": "connect", "status": "supported", "entrypoint": "@floegence/flowersec-core/node connect", "test_ids": ["interop/typescript-go/wss/tunnel"] },
       { "runtime": "node-typescript", "deployment-role": "direct-server", "carrier": "websocket", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "@floegence/flowersec-core/node createAcceptor", "test_ids": ["server/typescript-acceptor"] },
       { "runtime": "node-typescript", "deployment-role": "tunnel-runtime", "carrier": "websocket", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "@floegence/flowersec-core/node createTunnelRuntime", "test_ids": ["carrier/typescript-websocket-tunnel"] },
-      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "direct", "feature": "connect", "status": "supported", "entrypoint": "@floegence/flowersec-core/node connect", "test_ids": ["interop/server-parity/direct-matrix"] },
-      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "tunnel", "feature": "connect", "status": "supported", "entrypoint": "@floegence/flowersec-core/node connect", "test_ids": ["interop/server-parity/tunnel-matrix"] },
-      { "runtime": "node-typescript", "deployment-role": "direct-server", "carrier": "raw-quic", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "@floegence/flowersec-core/node createAcceptor", "test_ids": ["interop/server-parity/direct-matrix"] },
-      { "runtime": "node-typescript", "deployment-role": "tunnel-runtime", "carrier": "raw-quic", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "@floegence/flowersec-core/node createTunnelRuntime", "test_ids": ["interop/server-parity/tunnel-matrix"] },
+      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "direct", "feature": "connect", "status": "supported", "entrypoint": "@floegence/flowersec-core/node connect", "test_ids": ["server/typescript-raw-quic-direct"] },
+      { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "tunnel", "feature": "connect", "status": "supported", "entrypoint": "@floegence/flowersec-core/node connect", "test_ids": ["server/typescript-raw-quic-tunnel"] },
+      { "runtime": "node-typescript", "deployment-role": "direct-server", "carrier": "raw-quic", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "@floegence/flowersec-core/node createAcceptor", "test_ids": ["server/typescript-raw-quic-direct"] },
+      { "runtime": "node-typescript", "deployment-role": "tunnel-runtime", "carrier": "raw-quic", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "@floegence/flowersec-core/node createTunnelRuntime", "test_ids": ["server/typescript-raw-quic-tunnel"] },
       { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "direct", "feature": "connect", "status": "unsupported", "reason": "Node.js does not expose a production WebTransport adapter." },
       { "runtime": "node-typescript", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "tunnel", "feature": "connect", "status": "unsupported", "reason": "Node.js does not expose a production WebTransport adapter." },
       { "runtime": "node-typescript", "deployment-role": "direct-server", "carrier": "webtransport", "path": "direct", "feature": "accept", "status": "unsupported", "reason": "Node.js does not expose a production WebTransport adapter." },
       { "runtime": "node-typescript", "deployment-role": "tunnel-runtime", "carrier": "webtransport", "path": "tunnel", "feature": "pair-forward", "status": "unsupported", "reason": "Node.js does not expose a production WebTransport adapter." },
-      { "runtime": "node-typescript", "deployment-role": "control-plane", "carrier": "carrier-neutral", "path": "carrier-neutral", "feature": "issue-authorize", "status": "supported", "entrypoint": "@floegence/flowersec-core/node Issuer/authorizeRuntime", "test_ids": ["server/typescript-controlplane"] },
-      { "runtime": "node-typescript", "deployment-role": "proxy-server", "carrier": "carrier-neutral", "path": "direct", "feature": "proxy", "status": "supported", "entrypoint": "@floegence/flowersec-core/node ProxyServer", "test_ids": ["server/typescript-proxy"] },
+      { "runtime": "node-typescript", "deployment-role": "control-plane", "carrier": "carrier-neutral", "path": "carrier-neutral", "feature": "issue-authorize", "status": "unsupported", "reason": "The TypeScript v3 SDK consumes issued artifacts and does not provide an issuer API." },
+      { "runtime": "node-typescript", "deployment-role": "proxy-server", "carrier": "carrier-neutral", "path": "direct", "feature": "proxy", "status": "unsupported", "reason": "The default v3 Node.js export does not expose ProxyServer." },
 
       { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "websocket", "path": "direct", "feature": "connect", "status": "supported", "entrypoint": "flowersec::connect", "test_ids": ["carrier/rust-websocket-direct"] },
       { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "websocket", "path": "tunnel", "feature": "connect", "status": "supported", "entrypoint": "flowersec::connect", "test_ids": ["carrier/rust-websocket-tunnel"] },
@@ -342,20 +342,20 @@
       { "runtime": "rust", "deployment-role": "tunnel-runtime", "carrier": "websocket", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "flowersec::TunnelRuntime::bind_websocket", "test_ids": ["carrier/rust-websocket-tunnel"] },
       { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "direct", "feature": "connect", "status": "supported", "entrypoint": "flowersec::connect", "test_ids": ["interop/rust-go/raw-quic/direct"] },
       { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "raw-quic", "path": "tunnel", "feature": "connect", "status": "supported", "entrypoint": "flowersec::connect", "test_ids": ["interop/rust-go/raw-quic/tunnel"] },
-      { "runtime": "rust", "deployment-role": "direct-server", "carrier": "raw-quic", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "flowersec::Acceptor", "test_ids": ["server/rust-acceptor"] },
-      { "runtime": "rust", "deployment-role": "tunnel-runtime", "carrier": "raw-quic", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "flowersec::TunnelRuntime::bind_raw_quic", "test_ids": ["interop/rust-go/raw-quic/tunnel"] },
+      { "runtime": "rust", "deployment-role": "direct-server", "carrier": "raw-quic", "path": "direct", "feature": "accept", "status": "supported", "entrypoint": "flowersec::Acceptor", "test_ids": ["interop/go-rust/raw-quic/direct"] },
+      { "runtime": "rust", "deployment-role": "tunnel-runtime", "carrier": "raw-quic", "path": "tunnel", "feature": "pair-forward", "status": "supported", "entrypoint": "flowersec::TunnelRuntime::bind_raw_quic", "test_ids": ["carrier/rust-raw-quic-tunnel"] },
       { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "direct", "feature": "connect", "status": "unsupported", "reason": "Rust does not expose a production WebTransport adapter." },
       { "runtime": "rust", "deployment-role": "endpoint-client", "carrier": "webtransport", "path": "tunnel", "feature": "connect", "status": "unsupported", "reason": "Rust does not expose a production WebTransport adapter." },
       { "runtime": "rust", "deployment-role": "direct-server", "carrier": "webtransport", "path": "direct", "feature": "accept", "status": "unsupported", "reason": "Rust does not expose a production WebTransport adapter." },
       { "runtime": "rust", "deployment-role": "tunnel-runtime", "carrier": "webtransport", "path": "tunnel", "feature": "pair-forward", "status": "unsupported", "reason": "Rust does not expose a production WebTransport adapter." },
-      { "runtime": "rust", "deployment-role": "control-plane", "carrier": "carrier-neutral", "path": "carrier-neutral", "feature": "issue-authorize", "status": "supported", "entrypoint": "flowersec::controlplane", "test_ids": ["server/rust-controlplane"] },
-      { "runtime": "rust", "deployment-role": "proxy-server", "carrier": "carrier-neutral", "path": "direct", "feature": "proxy", "status": "supported", "entrypoint": "flowersec::ProxyServer", "test_ids": ["server/rust-proxy"] }
+      { "runtime": "rust", "deployment-role": "control-plane", "carrier": "carrier-neutral", "path": "carrier-neutral", "feature": "issue-authorize", "status": "unsupported", "reason": "The Rust v3 SDK consumes issued artifacts and does not provide an issuer API." },
+      { "runtime": "rust", "deployment-role": "proxy-server", "carrier": "carrier-neutral", "path": "direct", "feature": "proxy", "status": "unsupported", "reason": "No end-to-end v3 Session test exercises the Rust proxy server role." }
     ]
   },
   "shared_fixtures": [
     {
-      "id": "artifact_v2",
-      "path": "testdata/transport_v2/artifact_vectors.json",
+      "id": "artifact_admission_v3",
+      "path": "testdata/transport_v3/artifact_vectors.json",
       "consumers": {
         "go": ["protocol/go"],
         "typescript": ["protocol/typescript"],
@@ -364,8 +364,8 @@
       }
     },
     {
-      "id": "crypto_v2",
-      "path": "testdata/transport_v2/crypto_vectors.json",
+      "id": "capability_v3",
+      "path": "testdata/transport_v3/capability_vectors.json",
       "consumers": {
         "go": ["protocol/go"],
         "typescript": ["protocol/typescript"],
@@ -374,28 +374,8 @@
       }
     },
     {
-      "id": "handshake_v2",
-      "path": "testdata/transport_v2/handshake_vectors.json",
-      "consumers": {
-        "go": ["protocol/go"],
-        "typescript": ["protocol/typescript"],
-        "swift": ["protocol/swift"],
-        "rust": ["protocol/rust"]
-      }
-    },
-    {
-      "id": "open_unicode_v2",
-      "path": "testdata/transport_v2/open_unicode_vectors.json",
-      "consumers": {
-        "go": ["protocol/go"],
-        "typescript": ["protocol/typescript"],
-        "swift": ["protocol/swift"],
-        "rust": ["protocol/rust"]
-      }
-    },
-    {
-      "id": "connection_controller",
-      "path": "testdata/transport_v2/connection_controller_vectors.json",
+      "id": "controller_v3",
+      "path": "testdata/transport_v3/controller_vectors.json",
       "consumers": {
         "go": ["controller/go"],
         "typescript": ["controller/typescript"],
@@ -404,18 +384,8 @@
       }
     },
     {
-      "id": "session_handlers_v2",
-      "path": "testdata/transport_v2/session_handler_vectors.json",
-      "consumers": {
-        "go": ["server/go-acceptor"],
-        "typescript": ["server/typescript-acceptor"],
-        "swift": ["protocol/swift"],
-        "rust": ["server/rust-acceptor-handlers"]
-      }
-    },
-    {
-      "id": "session_wire_v2",
-      "path": "testdata/transport_v2/session_wire_vectors.json",
+      "id": "crypto_v3",
+      "path": "testdata/transport_v3/crypto_vectors.json",
       "consumers": {
         "go": ["protocol/go"],
         "typescript": ["protocol/typescript"],
@@ -424,8 +394,88 @@
       }
     },
     {
-      "id": "security_negative_v2",
-      "path": "testdata/transport_v2/security_negative_vectors.json",
+      "id": "datagram_v3",
+      "path": "testdata/transport_v3/datagram_vectors.json",
+      "consumers": {
+        "go": ["protocol/go"],
+        "typescript": ["protocol/typescript"],
+        "swift": ["protocol/swift"],
+        "rust": ["protocol/rust"]
+      }
+    },
+    {
+      "id": "handshake_v3",
+      "path": "testdata/transport_v3/handshake_vectors.json",
+      "consumers": {
+        "go": ["protocol/go"],
+        "typescript": ["protocol/typescript"],
+        "swift": ["protocol/swift"],
+        "rust": ["protocol/rust"]
+      }
+    },
+    {
+      "id": "idna_v3",
+      "path": "testdata/transport_v3/idna_vectors.json",
+      "consumers": {
+        "go": ["protocol/go"],
+        "typescript": ["protocol/typescript"],
+        "swift": ["protocol/swift"],
+        "rust": ["protocol/rust"]
+      }
+    },
+    {
+      "id": "open_unicode_v3",
+      "path": "testdata/transport_v3/open_unicode_vectors.json",
+      "consumers": {
+        "go": ["protocol/go"],
+        "typescript": ["protocol/typescript"],
+        "swift": ["protocol/swift"],
+        "rust": ["protocol/rust"]
+      }
+    },
+    {
+      "id": "rpc_error_v3",
+      "path": "testdata/transport_v3/rpc_error_vectors.json",
+      "consumers": {
+        "go": ["protocol/go"],
+        "typescript": ["protocol/typescript"],
+        "swift": ["protocol/swift"],
+        "rust": ["protocol/rust"]
+      }
+    },
+    {
+      "id": "rpc_malformed_envelopes_v3",
+      "path": "testdata/transport_v3/rpc_malformed_envelopes.json",
+      "consumers": {
+        "go": ["protocol/go"],
+        "typescript": ["protocol/typescript"],
+        "swift": ["protocol/swift"],
+        "rust": ["protocol/rust"]
+      }
+    },
+    {
+      "id": "rpc_notifications_v3",
+      "path": "testdata/transport_v3/rpc_notification_vectors.json",
+      "consumers": {
+        "go": ["protocol/go"],
+        "typescript": ["protocol/typescript"],
+        "swift": ["protocol/swift"],
+        "rust": ["protocol/rust"]
+      }
+    },
+    {
+      "id": "session_handlers_v3",
+      "path": "testdata/transport_v3/session_handler_vectors.json",
+      "consumers": {
+        "go": ["protocol/go"],
+        "typescript": ["protocol/typescript"],
+        "swift": ["protocol/swift"],
+        "rust": ["protocol/rust"]
+      }
+    },
+    {
+      "id": "session_wire_v3",
+      "path": "testdata/transport_v3/session_wire_vectors.json",
       "consumers": {
         "go": ["protocol/go"],
         "typescript": ["protocol/typescript"],

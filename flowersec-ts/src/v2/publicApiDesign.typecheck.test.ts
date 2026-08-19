@@ -5,7 +5,7 @@ import type {
   RpcResult,
   Session,
   StreamMetadata,
-} from "../node/index.js";
+} from "../node/v2.js";
 import {
   ArtifactError,
   connect,
@@ -14,9 +14,9 @@ import {
   createStreamMetadata,
   parseArtifact,
   RPCHandlers,
-} from "../node/index.js";
+} from "../node/v2.js";
 // @ts-expect-error Browser profiles do not expose native inbound RPC handlers.
-import { RPCHandlers as BrowserRPCHandlers } from "../browser/index.js";
+import { RPCHandlers as BrowserRPCHandlers } from "../browser/v2.js";
 import { expect, test } from "vitest";
 
 type PingRequest = Readonly<{ nonce: string }>;

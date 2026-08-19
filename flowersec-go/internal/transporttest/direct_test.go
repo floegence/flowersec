@@ -1,6 +1,7 @@
 package transporttest
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -11,17 +12,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	carrieryamux "github.com/floegence/flowersec/flowersec-go/v2/internal/mux/yamux"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	carrieryamux "github.com/floegence/flowersec/flowersec-go/v3/internal/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv2"
+	flowersessionv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -70,11 +72,11 @@ func TestEndpointAdmissionClaimsIssuedRequestExactlyOnce(t *testing.T) {
 	endpoint := &ProductDirectEndpoint{
 		ctx: context.Background(), pending: make(map[[32]byte]*admissionExpectation),
 	}
-	expected := &admissionExpectation{raw: []byte("issued-fsb2"), result: make(chan productServerResult, 1)}
+	expected := &admissionExpectation{raw: []byte("issued-fsb3"), result: make(chan productServerResult, 1)}
 	if _, err := endpoint.register(expected); err != nil {
 		t.Fatal(err)
 	}
-	request := &artifactv2.DecodedRequest{Raw: append([]byte(nil), expected.raw...)}
+	request := &artifactv3.DecodedRequest{Raw: append([]byte(nil), expected.raw...)}
 	if _, err := endpoint.authorize(context.Background(), request); err != nil {
 		t.Fatalf("first authorization: %v", err)
 	}
@@ -192,7 +194,7 @@ func TestBrowserBulkServerUsesNativeBidirectionalStreams(t *testing.T) {
 	}
 	defer pair.Close()
 	serverDone := make(chan error, 1)
-	go func() { serverDone <- ServeBrowserBulk(ctx, pair.Server, []int64{64 * 1024, 256 * 1024}) }()
+	go func() { serverDone <- ServeBrowserBulkV3(ctx, pair.Server, []int64{64 * 1024, 256 * 1024}) }()
 	for _, byteCount := range []int64{64 * 1024, 256 * 1024} {
 		metadata, err := flowersec.NewStreamMetadata(map[string]any{"direction": "client-to-server"})
 		if err != nil {
@@ -237,7 +239,7 @@ func TestBrowserNativeIsolationPreservesSiblingFIN(t *testing.T) {
 	}
 	defer pair.Close()
 	serverDone := make(chan error, 1)
-	go func() { serverDone <- ServeBrowserNativeIsolation(ctx, pair.Server) }()
+	go func() { serverDone <- ServeBrowserNativeIsolationV3(ctx, pair.Server) }()
 
 	streams := make([]releaseByteStream, 0, 4)
 	for index := range 4 {
@@ -333,7 +335,7 @@ func TestBrowserBulkServerFINAcknowledgesPeerReadCompletion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- serveBrowserBulkSessionPhase(ctx, session, 1024) }()
+	go func() { done <- serveBrowserBulkSessionPhaseV3(ctx, session, 1024) }()
 
 	prematureFIN := false
 	select {
@@ -361,7 +363,7 @@ func TestBrowserBulkServerWaitsForResponseBeforeFIN(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- serveBrowserBulkSessionPhase(ctx, session, 64*1024) }()
+	go func() { done <- serveBrowserBulkSessionPhaseV3(ctx, session, 64*1024) }()
 
 	select {
 	case <-stream.firstWrite:
@@ -474,6 +476,41 @@ func TestProductDirectBrowserEndpointRequiresConcreteOriginAndExposesCertificate
 	}
 }
 
+func TestProductDirectBrowserExternalTLSKeepsCandidateHostAndIssuesCAPolicy(t *testing.T) {
+	requireTransportIntegration(t)
+	serverTLS, _, err := localTLSForHost(carrier.KindWebTransport, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := OpenProductDirectBrowserEndpointAtWithTLS(
+		context.Background(),
+		"127.0.0.1",
+		"public-ca-test.example",
+		"http://127.0.0.1:9000",
+		serverTLS,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer endpoint.Close()
+	if !strings.HasPrefix(endpoint.CandidateURL(), "https://public-ca-test.example:") {
+		t.Fatalf("candidate URL = %q", endpoint.CandidateURL())
+	}
+	issued, err := endpoint.IssueBrowserCAArtifact()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer issued.Cancel()
+	decoded, err := artifactv3.DecodeArtifactJSON(bytes.NewBufferString(issued.ArtifactJSON()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Path.Candidates) != 1 || decoded.Path.Candidates[0].TLS.Mode != artifactv3.TLSModeCA ||
+		len(decoded.Path.Candidates[0].TLS.Pins) != 0 {
+		t.Fatalf("browser artifact TLS policy = %+v, want CA mode", decoded.Path.Candidates)
+	}
+}
+
 func TestWebTransportTestCertificateUsesBrowserCompatibleP256(t *testing.T) {
 	serverTLS, _, err := localTLSForHost(carrier.KindWebTransport, "127.0.0.1")
 	if err != nil {
@@ -533,8 +570,24 @@ func TestProductDirectBrowserArtifactsAreFreshAndCancelable(t *testing.T) {
 		if err := json.Unmarshal([]byte(issued.ArtifactJSON()), &value); err != nil {
 			t.Fatal(err)
 		}
-		if value["v"] != float64(2) {
+		if value["v"] != float64(3) {
 			t.Fatalf("artifact version = %v", value["v"])
+		}
+		decoded, err := artifactv3.DecodeArtifactJSON(bytes.NewBufferString(issued.ArtifactJSON()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(decoded.Path.Candidates) != 1 || decoded.Path.Candidates[0].TLS.Mode != artifactv3.TLSModePin ||
+			len(decoded.Path.Candidates[0].TLS.Pins) != 1 {
+			t.Fatalf("browser artifact TLS policy = %+v, want one pin", decoded.Path.Candidates)
+		}
+		pin := decoded.Path.Candidates[0].TLS.Pins[0]
+		if pin.ValueBase64URL != base64.RawURLEncoding.EncodeToString(endpoint.certificateHash[:]) {
+			t.Fatal("browser artifact pin does not match the served leaf certificate")
+		}
+		certificate, err := x509.ParseCertificate(endpoint.certificateDER)
+		if err != nil || pin.NotAfterUnixS != certificate.NotAfter.Unix() {
+			t.Fatalf("browser artifact pin expiry = %d, certificate = %v", pin.NotAfterUnixS, certificate)
 		}
 		issued.Cancel()
 		issued.Cancel()
@@ -667,13 +720,13 @@ type coordinatedBrowserWriteStream struct {
 }
 
 type singleBrowserBulkSession struct {
-	flowersession.SessionV2
-	stream flowersession.ByteStream
+	flowersessionv3.Session
+	stream flowersessionv3.ByteStream
 }
 
-func (session singleBrowserBulkSession) AcceptStream(context.Context) (flowersession.IncomingStream, error) {
-	return flowersession.IncomingStream{
-		Kind: "release-bulk", Metadata: flowersession.Metadata{"direction": "client-to-server"}, Stream: session.stream,
+func (session singleBrowserBulkSession) AcceptStream(context.Context) (flowersessionv3.IncomingStream, error) {
+	return flowersessionv3.IncomingStream{
+		Kind: "release-bulk", Metadata: flowersessionv3.Metadata{"direction": "client-to-server"}, Stream: session.stream,
 	}, nil
 }
 

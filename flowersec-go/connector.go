@@ -10,13 +10,17 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/candidatev2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/candidatev3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/session"
+	sessionv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
 )
 
 var (
@@ -28,12 +32,15 @@ var (
 type ConnectErrorCode string
 
 const (
-	ConnectInvalidInput     ConnectErrorCode = "invalid_input"
-	ConnectInvalidOptions   ConnectErrorCode = "invalid_options"
-	ConnectCanceled         ConnectErrorCode = "canceled"
-	ConnectTimeout          ConnectErrorCode = "timeout"
-	ConnectExpired          ConnectErrorCode = "expired_artifact"
-	ConnectConnectionFailed ConnectErrorCode = "connection_failed"
+	ConnectInvalidInput                 ConnectErrorCode = "invalid_input"
+	ConnectInvalidOptions               ConnectErrorCode = "invalid_options"
+	ConnectCanceled                     ConnectErrorCode = "canceled"
+	ConnectTimeout                      ConnectErrorCode = "timeout"
+	ConnectArtifactInvalid              ConnectErrorCode = "artifact_invalid"
+	ConnectExpired                      ConnectErrorCode = "expired_artifact"
+	ConnectTransportSecurityUnsupported ConnectErrorCode = "transport_security_unsupported"
+	ConnectTransportSecurityFailed      ConnectErrorCode = "transport_security_failed"
+	ConnectConnectionFailed             ConnectErrorCode = "connection_failed"
 )
 
 func (code ConnectErrorCode) String() string { return string(code) }
@@ -52,7 +59,7 @@ type connector struct {
 	timeout time.Duration
 }
 
-// Session is the carrier-neutral Flowersec v2 session contract.
+// Session is the carrier-neutral Flowersec v3 session contract.
 type Session interface {
 	RPC() RPCPeer
 	UnreliableMessages() (UnreliableMessageChannel, error)
@@ -217,48 +224,87 @@ func (err *SessionError) Code() SessionErrorCode {
 }
 
 type connectorBackend interface {
-	Connect(context.Context) (connectv2.Result, error)
+	Connect(context.Context) (connectv3.Result, error)
+}
+
+type transportEndpointKey struct {
+	carrier       artifactv3.Carrier
+	path          artifactv3.PathKind
+	normalizedURL string
+}
+
+type controllerConnectOutcome struct {
+	err               error
+	spendStarted      bool
+	retryDisposition  RetryDisposition
+	hasDisposition    bool
+	securityFailure   bool
+	opaqueTrigger     bool
+	triggerCandidates map[transportEndpointKey]artifactv3.Candidate
+	failedEndpoints   map[transportEndpointKey]struct{}
 }
 
 // Connect establishes one carrier-neutral session from a single-use artifact
 // lease. Carrier selection and connection-attempt state remain internal.
 func Connect(ctx context.Context, lease ArtifactLease, options ConnectorOptions) (Session, error) {
-	connector, err := newConnector(lease, options)
+	claimed, ok := lease.claimArtifact()
+	if !ok {
+		return nil, &ConnectError{code: ConnectArtifactInvalid}
+	}
+	return connectClaimed(ctx, claimed, options, nil)
+}
+
+func connectClaimed(
+	ctx context.Context,
+	claimed claimedArtifactLease,
+	options ConnectorOptions,
+	filter func(artifactv3.Candidate) bool,
+) (Session, error) {
+	connector, err := newConnectorWithFilter(claimed.lease, options, filter)
 	if err != nil {
+		_ = claimed.retire(context.WithoutCancel(nonNilContext(ctx)))
 		return nil, err
 	}
-	return connector.connect(ctx)
+	established, internalErr := connector.connectInternal(ctx)
+	if internalErr != nil && !claimed.spendStarted() {
+		_ = claimed.retire(context.WithoutCancel(nonNilContext(ctx)))
+	}
+	return established, redactConnectError(internalErr)
 }
 
 func newConnector(lease ArtifactLease, options ConnectorOptions) (*connector, error) {
+	return newConnectorWithFilter(lease, options, nil)
+}
+
+func newConnectorWithFilter(lease ArtifactLease, options ConnectorOptions, filter func(artifactv3.Candidate) bool) (*connector, error) {
 	if lease.artifact.value == nil || lease.state == nil || lease.state.commitSpend == nil {
-		return nil, &ConnectError{code: ConnectInvalidInput}
+		return nil, &ConnectError{code: ConnectArtifactInvalid}
 	}
-	rootlessLoopbackDirectOnly := candidatev2.RootlessLoopbackDirectOnly(*lease.artifact.value)
-	if !validConnectorOptions(options, rootlessLoopbackDirectOnly) {
+	if !validConnectorOptions(options) {
 		return nil, &ConnectError{code: ConnectInvalidOptions}
 	}
-	factory, err := candidatev2.NewGoNativeFactory(candidatev2.GoNativeConfig{
-		TrustRoots:                 options.TrustRoots,
-		Origin:                     options.Origin,
-		RootlessLoopbackDirectOnly: rootlessLoopbackDirectOnly && options.TrustRoots == nil,
+	factory, err := candidatev3.NewGoNativeFactory(candidatev3.GoNativeConfig{
+		TrustRoots: options.TrustRoots,
+		Origin:     options.Origin,
 	})
 	if err != nil {
 		return nil, &ConnectError{code: ConnectInvalidOptions}
 	}
-	connectorOptions := make([]connectv2.ConnectorOption, 0, 1)
+	connectorOptions := make([]connectv3.ConnectorOption, 0, 2)
 	if options.RPCHandlers != nil {
-		connectorOptions = append(connectorOptions, connectv2.WithRPCRouter(newRPCRouter(options.RPCHandlers.freeze())))
+		connectorOptions = append(connectorOptions, connectv3.WithRPCRouter(newRPCRouter(options.RPCHandlers.freeze())))
 	}
-	inner := connectv2.NewConnector(connectv2.ArtifactLease{
+	if filter != nil {
+		connectorOptions = append(connectorOptions, connectv3.WithCandidateFilter(filter))
+	}
+	inner := connectv3.NewConnector(connectv3.ArtifactLease{
 		Artifact: *lease.artifact.value, CommitSpend: lease.commitSpend,
 	}, factory, connectorOptions...)
 	return &connector{inner: inner, timeout: options.ConnectTimeout}, nil
 }
 
-func validConnectorOptions(options ConnectorOptions, rootlessLoopbackDirectOnly bool) bool {
-	validTrust := options.TrustRoots != nil && len(options.TrustRoots.Subjects()) != 0
-	return validConnectorPolicy(options) && (validTrust || (rootlessLoopbackDirectOnly && options.TrustRoots == nil))
+func validConnectorOptions(options ConnectorOptions) bool {
+	return validConnectorPolicy(options)
 }
 
 func validConnectorPolicy(options ConnectorOptions) bool {
@@ -278,8 +324,13 @@ func validOrigin(value string) bool {
 }
 
 func (connector *connector) connect(ctx context.Context) (Session, error) {
+	established, err := connector.connectInternal(ctx)
+	return established, redactConnectError(err)
+}
+
+func (connector *connector) connectInternal(ctx context.Context) (Session, error) {
 	if connector == nil || connector.inner == nil {
-		return nil, &ConnectError{code: ConnectInvalidOptions}
+		return nil, &fserrors.Error{Stage: fserrors.StageValidate, Code: fserrors.CodeInvalidOption, Err: ErrInvalidConnectorOptions}
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -295,12 +346,12 @@ func (connector *connector) connect(ctx context.Context) (Session, error) {
 	}
 	result, err := connector.inner.Connect(ctx)
 	if err != nil {
-		return nil, redactConnectError(err)
+		return nil, err
 	}
 	if result.Session == nil {
-		return nil, redactConnectError(ErrConnectionFailed)
+		return nil, ErrConnectionFailed
 	}
-	return &opaqueSession{inner: result.Session}, nil
+	return &opaqueSessionV3{inner: result.Session}, nil
 }
 
 type opaqueSession struct {
@@ -472,6 +523,147 @@ func (stream *opaqueByteStream) CloseWrite() error {
 
 func (stream *opaqueByteStream) Reset() error { return redactNilSessionError(stream.inner.Reset()) }
 
+type opaqueSessionV3 struct {
+	inner sessionv3.Session
+}
+
+func (*opaqueSessionV3) String() string   { return "Flowersec.Session" }
+func (*opaqueSessionV3) GoString() string { return "flowersec.Session" }
+
+func (current *opaqueSessionV3) RPC() RPCPeer { return &opaqueRPCPeerV3{inner: current.inner.RPC()} }
+
+func (current *opaqueSessionV3) UnreliableMessages() (UnreliableMessageChannel, error) {
+	channel, err := current.inner.UnreliableMessages()
+	if err != nil {
+		return nil, redactSessionError(err)
+	}
+	return &opaqueUnreliableMessageChannelV3{inner: channel}, nil
+}
+
+func (current *opaqueSessionV3) OpenStream(ctx context.Context, kind string, metadata StreamMetadata) (ByteStream, error) {
+	stream, err := current.inner.OpenStream(ctx, kind, sessionv3.Metadata(metadata.sessionValues()))
+	if err != nil {
+		return nil, redactSessionError(err)
+	}
+	return &opaqueByteStreamV3{inner: stream}, nil
+}
+
+func (current *opaqueSessionV3) AcceptStream(ctx context.Context) (IncomingStream, error) {
+	incoming, err := current.inner.AcceptStream(ctx)
+	if err != nil {
+		return IncomingStream{}, redactSessionError(err)
+	}
+	return IncomingStream{
+		Kind: incoming.Kind, Metadata: StreamMetadata{values: map[string]any(incoming.Metadata)},
+		Stream: &opaqueByteStreamV3{inner: incoming.Stream},
+	}, nil
+}
+
+func (current *opaqueSessionV3) Rekey(ctx context.Context) error {
+	return redactNilSessionError(current.inner.Rekey(ctx))
+}
+
+func (current *opaqueSessionV3) ProbeLiveness(ctx context.Context) (time.Duration, error) {
+	duration, err := current.inner.ProbeLiveness(ctx)
+	return duration, redactNilSessionError(err)
+}
+
+func (current *opaqueSessionV3) WaitTermination(ctx context.Context) (SessionTermination, error) {
+	err := current.inner.WaitClosed(ctx)
+	if err == nil {
+		return SessionTermination{Error: SessionError{code: SessionClosed}}, nil
+	}
+	projected := redactSessionError(err)
+	select {
+	case <-current.inner.Termination():
+		return SessionTermination{Error: *projected}, nil
+	default:
+	}
+	if projected.Code() == SessionCanceled || projected.Code() == SessionTimeout {
+		return SessionTermination{}, projected
+	}
+	return SessionTermination{Error: *projected}, nil
+}
+
+func (current *opaqueSessionV3) Close() error { return redactNilSessionError(current.inner.Close()) }
+
+type opaqueRPCPeerV3 struct{ inner sessionv3.RPCPeer }
+
+func (*opaqueRPCPeerV3) String() string   { return "Flowersec.RPCPeer" }
+func (*opaqueRPCPeerV3) GoString() string { return "flowersec.RPCPeer" }
+
+func (peer *opaqueRPCPeerV3) Call(ctx context.Context, typeID uint32, request, response any) error {
+	if peer == nil || peer.inner == nil {
+		return &SessionError{code: SessionClosed}
+	}
+	return redactRPCError(peer.inner.Call(ctx, typeID, request, response))
+}
+
+func (peer *opaqueRPCPeerV3) Notify(ctx context.Context, typeID uint32, request any) error {
+	if peer == nil || peer.inner == nil {
+		return &SessionError{code: SessionClosed}
+	}
+	return redactRPCError(peer.inner.Notify(ctx, typeID, request))
+}
+
+func (peer *opaqueRPCPeerV3) OnNotify(typeID uint32, handler func(context.Context, json.RawMessage)) func() {
+	if peer == nil || peer.inner == nil || handler == nil {
+		return func() {}
+	}
+	return peer.inner.OnNotify(typeID, func(ctx context.Context, payload []byte) {
+		defer func() { _ = recover() }()
+		handler(ctx, append(json.RawMessage(nil), payload...))
+	})
+}
+
+type opaqueUnreliableMessageChannelV3 struct {
+	inner sessionv3.UnreliableMessageChannel
+}
+
+func (*opaqueUnreliableMessageChannelV3) String() string { return "Flowersec.UnreliableMessageChannel" }
+func (*opaqueUnreliableMessageChannelV3) GoString() string {
+	return "flowersec.UnreliableMessageChannel"
+}
+func (channel *opaqueUnreliableMessageChannelV3) MaxMessageBytes() int {
+	return channel.inner.MaxMessageBytes()
+}
+func (channel *opaqueUnreliableMessageChannelV3) Send(ctx context.Context, payload []byte, options UnreliableSendOptions) (UnreliableSendStatus, error) {
+	status, err := channel.inner.Send(ctx, payload, sessionv3.UnreliableSendOptions{ExpiresAt: options.ExpiresAt})
+	return UnreliableSendStatus(status), redactNilSessionError(err)
+}
+func (channel *opaqueUnreliableMessageChannelV3) Receive(ctx context.Context) ([]byte, error) {
+	payload, err := channel.inner.Receive(ctx)
+	return payload, redactNilSessionError(err)
+}
+
+type opaqueByteStreamV3 struct{ inner sessionv3.ByteStream }
+
+func (*opaqueByteStreamV3) String() string   { return "Flowersec.ByteStream" }
+func (*opaqueByteStreamV3) GoString() string { return "flowersec.ByteStream" }
+func (stream *opaqueByteStreamV3) Read(buffer []byte) (int, error) {
+	count, err := stream.inner.Read(buffer)
+	if errors.Is(err, io.EOF) {
+		return count, io.EOF
+	}
+	return count, redactNilSessionError(err)
+}
+func (stream *opaqueByteStreamV3) Write(buffer []byte) (int, error) {
+	count, err := stream.inner.Write(buffer)
+	return count, redactNilSessionError(err)
+}
+func (stream *opaqueByteStreamV3) Close() error { return redactNilSessionError(stream.inner.Close()) }
+func (stream *opaqueByteStreamV3) Kind() string { return stream.inner.Kind() }
+func (stream *opaqueByteStreamV3) TerminalError() *SessionError {
+	if err := stream.inner.TerminalError(); err != nil {
+		return redactSessionError(err)
+	}
+	return nil
+}
+func (stream *opaqueByteStreamV3) CloseWrite() error {
+	return redactNilSessionError(stream.inner.CloseWrite())
+}
+func (stream *opaqueByteStreamV3) Reset() error { return redactNilSessionError(stream.inner.Reset()) }
+
 func redactNilSessionError(err error) error {
 	if err == nil {
 		return nil
@@ -497,35 +689,39 @@ func redactSessionError(err error) *SessionError {
 		code = SessionCanceled
 	case errors.Is(err, context.DeadlineExceeded):
 		code = SessionTimeout
-	case errors.Is(err, session.ErrSessionClosed):
+	case errors.Is(err, session.ErrSessionClosed), errors.Is(err, sessionv3.ErrSessionClosed):
 		code = SessionClosed
-	case errors.Is(err, session.ErrGoingAway):
+	case errors.Is(err, session.ErrGoingAway), errors.Is(err, sessionv3.ErrGoingAway):
 		code = SessionGoingAway
-	case errors.Is(err, session.ErrResourceExhausted):
+	case errors.Is(err, session.ErrResourceExhausted), errors.Is(err, sessionv3.ErrResourceExhausted):
 		code = SessionResourceExhausted
-	case errors.Is(err, session.ErrOpenRejected):
+	case errors.Is(err, session.ErrOpenRejected), errors.Is(err, sessionv3.ErrOpenRejected):
 		code = SessionStreamRejected
-	case errors.Is(err, protocolv2.ErrStreamReset):
+	case errors.Is(err, protocolv2.ErrStreamReset), errors.Is(err, protocolv3.ErrStreamReset):
 		code = SessionStreamReset
-	case errors.Is(err, session.ErrRekey), errors.Is(err, session.ErrRekeyInProgress):
+	case errors.Is(err, session.ErrRekey), errors.Is(err, session.ErrRekeyInProgress),
+		errors.Is(err, sessionv3.ErrRekey), errors.Is(err, sessionv3.ErrRekeyInProgress):
 		code = SessionRekeyFailed
-	case errors.Is(err, session.ErrLivenessProbe):
+	case errors.Is(err, session.ErrLivenessProbe), errors.Is(err, sessionv3.ErrLivenessProbe):
 		code = SessionLivenessFailed
-	case errors.Is(err, session.ErrUnreliableUnavailable):
+	case errors.Is(err, session.ErrUnreliableUnavailable), errors.Is(err, sessionv3.ErrUnreliableUnavailable):
 		code = SessionUnreliableUnavailable
-	case errors.Is(err, session.ErrUnreliableMessageTooLarge):
+	case errors.Is(err, session.ErrUnreliableMessageTooLarge), errors.Is(err, sessionv3.ErrUnreliableMessageTooLarge):
 		code = SessionUnreliableTooLarge
-	case errors.Is(err, session.ErrUnreliableDropped):
+	case errors.Is(err, session.ErrUnreliableDropped), errors.Is(err, sessionv3.ErrUnreliableDropped):
 		code = SessionUnreliableDropped
 	}
 	return &SessionError{code: code}
 }
 
 func redactConnectError(err error) error {
+	if err == nil {
+		return nil
+	}
 	code := ConnectConnectionFailed
 	var internal *fserrors.Error
 	if errors.As(err, &internal) {
-		if errors.Is(internal, connectv2.ErrArtifactExpired) {
+		if errors.Is(internal, connectv3.ErrArtifactExpired) {
 			return &ConnectError{code: ConnectExpired}
 		}
 		switch internal.Code {
@@ -534,9 +730,13 @@ func redactConnectError(err error) error {
 		case fserrors.CodeTimeout:
 			code = ConnectTimeout
 		case fserrors.CodeInvalidInput:
-			code = ConnectInvalidInput
+			code = ConnectArtifactInvalid
 		case fserrors.CodeInvalidOption:
 			code = ConnectInvalidOptions
+		case fserrors.CodeUnsupportedCapability, fserrors.CodeTLSUnsupported:
+			code = ConnectTransportSecurityUnsupported
+		case fserrors.CodeTLSPolicyExpired, fserrors.CodeTLSFailed:
+			code = ConnectTransportSecurityFailed
 		}
 		return &ConnectError{code: code}
 	}
@@ -546,4 +746,93 @@ func redactConnectError(err error) error {
 		code = ConnectCanceled
 	}
 	return &ConnectError{code: code}
+}
+
+func connectForController(
+	ctx context.Context,
+	claimed claimedArtifactLease,
+	options ConnectorOptions,
+	allowed map[transportEndpointKey]struct{},
+) (Session, controllerConnectOutcome) {
+	var filter func(artifactv3.Candidate) bool
+	if allowed != nil {
+		path := claimed.lease.artifact.value.Path.Kind
+		filter = func(candidate artifactv3.Candidate) bool {
+			_, ok := allowed[endpointKey(path, candidate)]
+			return ok
+		}
+	}
+	connector, err := newConnectorWithFilter(claimed.lease, options, filter)
+	if err != nil {
+		_ = claimed.retire(context.WithoutCancel(nonNilContext(ctx)))
+		return nil, controllerConnectOutcome{err: err}
+	}
+	established, internalErr := connector.connectInternal(ctx)
+	outcome := analyzeControllerConnectOutcome(claimed, internalErr)
+	if internalErr != nil && !outcome.spendStarted {
+		_ = claimed.retire(context.WithoutCancel(nonNilContext(ctx)))
+	}
+	return established, outcome
+}
+
+func analyzeControllerConnectOutcome(claimed claimedArtifactLease, internalErr error) controllerConnectOutcome {
+	outcome := controllerConnectOutcome{spendStarted: claimed.spendStarted()}
+	if internalErr == nil {
+		return outcome
+	}
+	outcome.err = redactConnectError(internalErr)
+	switch {
+	case errors.Is(internalErr, admissionv3.ErrAdmissionRejected):
+		outcome.retryDisposition = terminalDisposition()
+		outcome.hasDisposition = true
+	case errors.Is(internalErr, admissionv3.ErrAdmissionRetryable):
+		outcome.retryDisposition = retryableDisposition()
+		outcome.hasDisposition = true
+	}
+	artifact := claimed.lease.artifact.value
+	if artifact == nil {
+		return outcome
+	}
+	byID := make(map[string]artifactv3.Candidate, len(artifact.Path.Candidates))
+	outcome.failedEndpoints = make(map[transportEndpointKey]struct{}, len(artifact.Path.Candidates))
+	for _, candidate := range artifact.Path.Candidates {
+		byID[candidate.ID] = candidate
+		outcome.failedEndpoints[endpointKey(artifact.Path.Kind, candidate)] = struct{}{}
+	}
+	var internal *fserrors.Error
+	if !errors.As(internalErr, &internal) {
+		return outcome
+	}
+	outcome.securityFailure = internal.Code == fserrors.CodeTLSFailed || internal.Code == fserrors.CodeTLSPolicyExpired
+	for _, diagnostic := range internal.Diagnostics {
+		candidate, ok := byID[diagnostic.CandidateID]
+		if !ok || candidate.TLS.Mode != artifactv3.TLSModePin {
+			continue
+		}
+		securityTrigger := diagnostic.Code == fserrors.CodeTLSPolicyExpired ||
+			(diagnostic.Code == fserrors.CodeTLSFailed &&
+				(diagnostic.Detail == "" || diagnostic.Detail == "pin_mismatch" || diagnostic.Detail == "unknown"))
+		opaqueTrigger := diagnostic.Code == fserrors.CodeDialFailed && diagnostic.Detail == "browser_pin_opaque"
+		if !securityTrigger && !opaqueTrigger {
+			continue
+		}
+		if outcome.triggerCandidates == nil {
+			outcome.triggerCandidates = make(map[transportEndpointKey]artifactv3.Candidate)
+		}
+		outcome.triggerCandidates[endpointKey(artifact.Path.Kind, candidate)] = candidate
+		outcome.securityFailure = outcome.securityFailure || securityTrigger
+		outcome.opaqueTrigger = outcome.opaqueTrigger || opaqueTrigger
+	}
+	return outcome
+}
+
+func endpointKey(path artifactv3.PathKind, candidate artifactv3.Candidate) transportEndpointKey {
+	return transportEndpointKey{carrier: candidate.Carrier, path: path, normalizedURL: candidate.NormalizedURL}
+}
+
+func nonNilContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }

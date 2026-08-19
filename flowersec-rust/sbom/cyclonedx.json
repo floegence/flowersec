@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:bea36229-5ab0-53fa-895c-8aa09415741b",
+  "serialNumber": "urn:uuid:6146278c-1695-5ee4-8d2e-5295d3be86b7",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "flowersec",
-      "version": "2.5.4",
-      "purl": "pkg:cargo/flowersec@2.5.4",
-      "bom-ref": "pkg:cargo/flowersec@2.5.4"
+      "version": "3.0.0",
+      "purl": "pkg:cargo/flowersec@3.0.0",
+      "bom-ref": "pkg:cargo/flowersec@3.0.0"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "308ce3a2dd421245b940297e16fbb6cae9cc3d79e4835164e4304b5f7acd5ca8"
+        "value": "8146654f4a197f2c5a7d100c8e25ee624d6f7ea2a6a57da0bc318ab1653b4a5c"
       }
     ]
   },
@@ -96,6 +96,90 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "asn1-rs",
+      "version": "0.7.2",
+      "purl": "pkg:cargo/asn1-rs@0.7.2",
+      "bom-ref": "pkg:cargo/asn1-rs@0.7.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rusticata/asn1-rs.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "asn1-rs-derive",
+      "version": "0.6.0",
+      "purl": "pkg:cargo/asn1-rs-derive@0.6.0",
+      "bom-ref": "pkg:cargo/asn1-rs-derive@0.6.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rusticata/asn1-rs.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "asn1-rs-impl",
+      "version": "0.2.0",
+      "purl": "pkg:cargo/asn1-rs-impl@0.2.0",
+      "bom-ref": "pkg:cargo/asn1-rs-impl@0.2.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rusticata/asn1-rs.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -414,9 +498,9 @@
     {
       "type": "library",
       "name": "cc",
-      "version": "1.4.2",
-      "purl": "pkg:cargo/cc@1.4.2",
-      "bom-ref": "pkg:cargo/cc@1.4.2",
+      "version": "1.4.3",
+      "purl": "pkg:cargo/cc@1.4.3",
+      "bom-ref": "pkg:cargo/cc@1.4.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -600,6 +684,62 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "core-foundation",
+      "version": "0.10.1",
+      "purl": "pkg:cargo/core-foundation@0.10.1",
+      "bom-ref": "pkg:cargo/core-foundation@0.10.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/servo/core-foundation-rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "core-foundation-sys",
+      "version": "0.8.7",
+      "purl": "pkg:cargo/core-foundation-sys@0.8.7",
+      "bom-ref": "pkg:cargo/core-foundation-sys@0.8.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/servo/core-foundation-rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -945,6 +1085,34 @@
     },
     {
       "type": "library",
+      "name": "der-parser",
+      "version": "10.0.0",
+      "purl": "pkg:cargo/der-parser@10.0.0",
+      "bom-ref": "pkg:cargo/der-parser@10.0.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rusticata/der-parser.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "deranged",
       "version": "0.5.8",
       "purl": "pkg:cargo/deranged@0.5.8",
@@ -1014,6 +1182,34 @@
         {
           "type": "distribution",
           "url": "https://github.com/RustCrypto/traits"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "displaydoc",
+      "version": "0.2.7",
+      "purl": "pkg:cargo/displaydoc@0.2.7",
+      "bom-ref": "pkg:cargo/displaydoc@0.2.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/yaahc/displaydoc"
         }
       ],
       "properties": [
@@ -1142,9 +1338,9 @@
     {
       "type": "library",
       "name": "find-msvc-tools",
-      "version": "0.1.10",
-      "purl": "pkg:cargo/find-msvc-tools@0.1.10",
-      "bom-ref": "pkg:cargo/find-msvc-tools@0.1.10",
+      "version": "0.1.11",
+      "purl": "pkg:cargo/find-msvc-tools@0.1.11",
+      "bom-ref": "pkg:cargo/find-msvc-tools@0.1.11",
       "licenses": [
         {
           "expression": "MIT"
@@ -1198,9 +1394,9 @@
     {
       "type": "library",
       "name": "futures",
-      "version": "0.3.33",
-      "purl": "pkg:cargo/futures@0.3.33",
-      "bom-ref": "pkg:cargo/futures@0.3.33",
+      "version": "0.3.34",
+      "purl": "pkg:cargo/futures@0.3.34",
+      "bom-ref": "pkg:cargo/futures@0.3.34",
       "licenses": [
         {
           "expression": "MIT"
@@ -1226,9 +1422,9 @@
     {
       "type": "library",
       "name": "futures-channel",
-      "version": "0.3.33",
-      "purl": "pkg:cargo/futures-channel@0.3.33",
-      "bom-ref": "pkg:cargo/futures-channel@0.3.33",
+      "version": "0.3.34",
+      "purl": "pkg:cargo/futures-channel@0.3.34",
+      "bom-ref": "pkg:cargo/futures-channel@0.3.34",
       "licenses": [
         {
           "expression": "MIT"
@@ -1254,9 +1450,9 @@
     {
       "type": "library",
       "name": "futures-core",
-      "version": "0.3.33",
-      "purl": "pkg:cargo/futures-core@0.3.33",
-      "bom-ref": "pkg:cargo/futures-core@0.3.33",
+      "version": "0.3.34",
+      "purl": "pkg:cargo/futures-core@0.3.34",
+      "bom-ref": "pkg:cargo/futures-core@0.3.34",
       "licenses": [
         {
           "expression": "MIT"
@@ -1282,9 +1478,9 @@
     {
       "type": "library",
       "name": "futures-executor",
-      "version": "0.3.33",
-      "purl": "pkg:cargo/futures-executor@0.3.33",
-      "bom-ref": "pkg:cargo/futures-executor@0.3.33",
+      "version": "0.3.34",
+      "purl": "pkg:cargo/futures-executor@0.3.34",
+      "bom-ref": "pkg:cargo/futures-executor@0.3.34",
       "licenses": [
         {
           "expression": "MIT"
@@ -1310,9 +1506,9 @@
     {
       "type": "library",
       "name": "futures-io",
-      "version": "0.3.33",
-      "purl": "pkg:cargo/futures-io@0.3.33",
-      "bom-ref": "pkg:cargo/futures-io@0.3.33",
+      "version": "0.3.34",
+      "purl": "pkg:cargo/futures-io@0.3.34",
+      "bom-ref": "pkg:cargo/futures-io@0.3.34",
       "licenses": [
         {
           "expression": "MIT"
@@ -1338,9 +1534,9 @@
     {
       "type": "library",
       "name": "futures-macro",
-      "version": "0.3.33",
-      "purl": "pkg:cargo/futures-macro@0.3.33",
-      "bom-ref": "pkg:cargo/futures-macro@0.3.33",
+      "version": "0.3.34",
+      "purl": "pkg:cargo/futures-macro@0.3.34",
+      "bom-ref": "pkg:cargo/futures-macro@0.3.34",
       "licenses": [
         {
           "expression": "MIT"
@@ -1366,9 +1562,9 @@
     {
       "type": "library",
       "name": "futures-sink",
-      "version": "0.3.33",
-      "purl": "pkg:cargo/futures-sink@0.3.33",
-      "bom-ref": "pkg:cargo/futures-sink@0.3.33",
+      "version": "0.3.34",
+      "purl": "pkg:cargo/futures-sink@0.3.34",
+      "bom-ref": "pkg:cargo/futures-sink@0.3.34",
       "licenses": [
         {
           "expression": "MIT"
@@ -1394,9 +1590,9 @@
     {
       "type": "library",
       "name": "futures-task",
-      "version": "0.3.33",
-      "purl": "pkg:cargo/futures-task@0.3.33",
-      "bom-ref": "pkg:cargo/futures-task@0.3.33",
+      "version": "0.3.34",
+      "purl": "pkg:cargo/futures-task@0.3.34",
+      "bom-ref": "pkg:cargo/futures-task@0.3.34",
       "licenses": [
         {
           "expression": "MIT"
@@ -1422,9 +1618,9 @@
     {
       "type": "library",
       "name": "futures-util",
-      "version": "0.3.33",
-      "purl": "pkg:cargo/futures-util@0.3.33",
-      "bom-ref": "pkg:cargo/futures-util@0.3.33",
+      "version": "0.3.34",
+      "purl": "pkg:cargo/futures-util@0.3.34",
+      "bom-ref": "pkg:cargo/futures-util@0.3.34",
       "licenses": [
         {
           "expression": "MIT"
@@ -1730,9 +1926,9 @@
     {
       "type": "library",
       "name": "http-body-util",
-      "version": "0.1.4",
-      "purl": "pkg:cargo/http-body-util@0.1.4",
-      "bom-ref": "pkg:cargo/http-body-util@0.1.4",
+      "version": "0.1.5",
+      "purl": "pkg:cargo/http-body-util@0.1.5",
+      "bom-ref": "pkg:cargo/http-body-util@0.1.5",
       "licenses": [
         {
           "expression": "MIT"
@@ -2037,6 +2233,34 @@
     },
     {
       "type": "library",
+      "name": "lazy_static",
+      "version": "1.5.0",
+      "purl": "pkg:cargo/lazy_static@1.5.0",
+      "bom-ref": "pkg:cargo/lazy_static@1.5.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rust-lang-nursery/lazy-static.rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "libc",
       "version": "0.2.189",
       "purl": "pkg:cargo/libc@0.2.189",
@@ -2177,6 +2401,34 @@
     },
     {
       "type": "library",
+      "name": "minimal-lexical",
+      "version": "0.2.1",
+      "purl": "pkg:cargo/minimal-lexical@0.2.1",
+      "bom-ref": "pkg:cargo/minimal-lexical@0.2.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/Alexhuszagh/minimal-lexical"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "mio",
       "version": "1.2.2",
       "purl": "pkg:cargo/mio@1.2.2",
@@ -2233,6 +2485,62 @@
     },
     {
       "type": "library",
+      "name": "nom",
+      "version": "7.1.3",
+      "purl": "pkg:cargo/nom@7.1.3",
+      "bom-ref": "pkg:cargo/nom@7.1.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/Geal/nom"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "num-bigint",
+      "version": "0.4.8",
+      "purl": "pkg:cargo/num-bigint@0.4.8",
+      "bom-ref": "pkg:cargo/num-bigint@0.4.8",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rust-num/num-bigint"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "num-conv",
       "version": "0.2.2",
       "purl": "pkg:cargo/num-conv@0.2.2",
@@ -2246,6 +2554,34 @@
         {
           "type": "distribution",
           "url": "https://github.com/jhpratt/num-conv"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "num-integer",
+      "version": "0.1.47",
+      "purl": "pkg:cargo/num-integer@0.1.47",
+      "bom-ref": "pkg:cargo/num-integer@0.1.47",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rust-num/num-integer"
         }
       ],
       "properties": [
@@ -2289,6 +2625,34 @@
     },
     {
       "type": "library",
+      "name": "oid-registry",
+      "version": "0.8.1",
+      "purl": "pkg:cargo/oid-registry@0.8.1",
+      "bom-ref": "pkg:cargo/oid-registry@0.8.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rusticata/oid-registry.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "once_cell",
       "version": "1.21.4",
       "purl": "pkg:cargo/once_cell@1.21.4",
@@ -2302,6 +2666,34 @@
         {
           "type": "distribution",
           "url": "https://github.com/matklad/once_cell"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "openssl-probe",
+      "version": "0.2.1",
+      "purl": "pkg:cargo/openssl-probe@0.2.1",
+      "bom-ref": "pkg:cargo/openssl-probe@0.2.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rustls/openssl-probe"
         }
       ],
       "properties": [
@@ -2766,9 +3158,9 @@
     {
       "type": "library",
       "name": "quinn-proto",
-      "version": "0.11.16",
-      "purl": "pkg:cargo/quinn-proto@0.11.16",
-      "bom-ref": "pkg:cargo/quinn-proto@0.11.16",
+      "version": "0.11.17",
+      "purl": "pkg:cargo/quinn-proto@0.11.17",
+      "bom-ref": "pkg:cargo/quinn-proto@0.11.17",
       "licenses": [
         {
           "expression": "MIT"
@@ -3213,6 +3605,34 @@
     },
     {
       "type": "library",
+      "name": "rusticata-macros",
+      "version": "4.1.0",
+      "purl": "pkg:cargo/rusticata-macros@4.1.0",
+      "bom-ref": "pkg:cargo/rusticata-macros@4.1.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rusticata/rusticata-macros.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "rustls",
       "version": "0.23.43",
       "purl": "pkg:cargo/rustls@0.23.43",
@@ -3226,6 +3646,34 @@
         {
           "type": "distribution",
           "url": "https://github.com/rustls/rustls"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0 OR ISC OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rustls-native-certs",
+      "version": "0.8.4",
+      "purl": "pkg:cargo/rustls-native-certs@0.8.4",
+      "bom-ref": "pkg:cargo/rustls-native-certs@0.8.4",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rustls/rustls-native-certs"
         }
       ],
       "properties": [
@@ -3270,9 +3718,9 @@
     {
       "type": "library",
       "name": "rustls-webpki",
-      "version": "0.103.13",
-      "purl": "pkg:cargo/rustls-webpki@0.103.13",
-      "bom-ref": "pkg:cargo/rustls-webpki@0.103.13",
+      "version": "0.103.14",
+      "purl": "pkg:cargo/rustls-webpki@0.103.14",
+      "bom-ref": "pkg:cargo/rustls-webpki@0.103.14",
       "licenses": [
         {
           "expression": "ISC"
@@ -3316,6 +3764,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "schannel",
+      "version": "0.1.29",
+      "purl": "pkg:cargo/schannel@0.1.29",
+      "bom-ref": "pkg:cargo/schannel@0.1.29",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/steffengy/schannel-rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -3372,6 +3848,62 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "security-framework",
+      "version": "3.7.0",
+      "purl": "pkg:cargo/security-framework@3.7.0",
+      "bom-ref": "pkg:cargo/security-framework@3.7.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/kornelski/rust-security-framework"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "security-framework-sys",
+      "version": "2.17.0",
+      "purl": "pkg:cargo/security-framework-sys@2.17.0",
+      "bom-ref": "pkg:cargo/security-framework-sys@2.17.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/kornelski/rust-security-framework"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -3876,6 +4408,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "synstructure",
+      "version": "0.13.2",
+      "purl": "pkg:cargo/synstructure@0.13.2",
+      "bom-ref": "pkg:cargo/synstructure@0.13.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/mystor/synstructure"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -5285,6 +5845,34 @@
     },
     {
       "type": "library",
+      "name": "x509-parser",
+      "version": "0.18.1",
+      "purl": "pkg:cargo/x509-parser@0.18.1",
+      "bom-ref": "pkg:cargo/x509-parser@0.18.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rusticata/x509-parser.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "yamux",
       "version": "0.14.0",
       "purl": "pkg:cargo/yamux@0.14.0",
@@ -5454,16 +6042,16 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:cargo/flowersec@2.5.4",
+      "ref": "pkg:cargo/flowersec@3.0.0",
       "dependsOn": [
         "pkg:cargo/aes-gcm@0.11.0",
         "pkg:cargo/async-trait@0.1.92",
         "pkg:cargo/base64@0.23.1",
         "pkg:cargo/bytes@1.12.1",
-        "pkg:cargo/futures-util@0.3.33",
+        "pkg:cargo/futures-util@0.3.34",
         "pkg:cargo/hkdf@0.13.0",
         "pkg:cargo/hmac@0.13.0",
-        "pkg:cargo/http-body-util@0.1.4",
+        "pkg:cargo/http-body-util@0.1.5",
         "pkg:cargo/http@1.5.0",
         "pkg:cargo/hyper-util@0.1.20",
         "pkg:cargo/hyper@1.11.0",
@@ -5474,6 +6062,7 @@
         "pkg:cargo/quinn@0.11.11",
         "pkg:cargo/rand@0.10.2",
         "pkg:cargo/ring@0.17.14",
+        "pkg:cargo/rustls-native-certs@0.8.4",
         "pkg:cargo/rustls@0.23.43",
         "pkg:cargo/serde@1.0.229",
         "pkg:cargo/serde_json@1.0.151",
@@ -5488,6 +6077,7 @@
         "pkg:cargo/unicode-normalization@0.1.25",
         "pkg:cargo/url@2.5.8",
         "pkg:cargo/x25519-dalek@3.0.0",
+        "pkg:cargo/x509-parser@0.18.1",
         "pkg:cargo/yamux@0.14.0",
         "pkg:cargo/zeroize@1.9.0"
       ]
@@ -5516,6 +6106,36 @@
         "pkg:cargo/ctr@0.10.1",
         "pkg:cargo/ghash@0.6.0",
         "pkg:cargo/subtle@2.6.1"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/asn1-rs@0.7.2",
+      "dependsOn": [
+        "pkg:cargo/asn1-rs-derive@0.6.0",
+        "pkg:cargo/asn1-rs-impl@0.2.0",
+        "pkg:cargo/displaydoc@0.2.7",
+        "pkg:cargo/nom@7.1.3",
+        "pkg:cargo/num-traits@0.2.19",
+        "pkg:cargo/rusticata-macros@4.1.0",
+        "pkg:cargo/thiserror@2.0.20",
+        "pkg:cargo/time@0.3.55"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/asn1-rs-derive@0.6.0",
+      "dependsOn": [
+        "pkg:cargo/proc-macro2@1.0.107",
+        "pkg:cargo/quote@1.0.47",
+        "pkg:cargo/syn@2.0.119",
+        "pkg:cargo/synstructure@0.13.2"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/asn1-rs-impl@0.2.0",
+      "dependsOn": [
+        "pkg:cargo/proc-macro2@1.0.107",
+        "pkg:cargo/quote@1.0.47",
+        "pkg:cargo/syn@2.0.119"
       ]
     },
     {
@@ -5571,9 +6191,9 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/cc@1.4.2",
+      "ref": "pkg:cargo/cc@1.4.3",
       "dependsOn": [
-        "pkg:cargo/find-msvc-tools@0.1.10",
+        "pkg:cargo/find-msvc-tools@0.1.11",
         "pkg:cargo/shlex@2.0.1"
       ]
     },
@@ -5607,6 +6227,17 @@
     },
     {
       "ref": "pkg:cargo/const-oid@0.10.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/core-foundation@0.10.1",
+      "dependsOn": [
+        "pkg:cargo/core-foundation-sys@0.8.7",
+        "pkg:cargo/libc@0.2.189"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/core-foundation-sys@0.8.7",
       "dependsOn": []
     },
     {
@@ -5699,6 +6330,17 @@
       ]
     },
     {
+      "ref": "pkg:cargo/der-parser@10.0.0",
+      "dependsOn": [
+        "pkg:cargo/asn1-rs@0.7.2",
+        "pkg:cargo/displaydoc@0.2.7",
+        "pkg:cargo/nom@7.1.3",
+        "pkg:cargo/num-bigint@0.4.8",
+        "pkg:cargo/num-traits@0.2.19",
+        "pkg:cargo/rusticata-macros@4.1.0"
+      ]
+    },
+    {
       "ref": "pkg:cargo/deranged@0.5.8",
       "dependsOn": []
     },
@@ -5716,6 +6358,14 @@
         "pkg:cargo/const-oid@0.10.2",
         "pkg:cargo/crypto-common@0.2.2",
         "pkg:cargo/ctutils@0.4.2"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/displaydoc@0.2.7",
+      "dependsOn": [
+        "pkg:cargo/proc-macro2@1.0.107",
+        "pkg:cargo/quote@1.0.47",
+        "pkg:cargo/syn@3.0.3"
       ]
     },
     {
@@ -5761,7 +6411,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/find-msvc-tools@0.1.10",
+      "ref": "pkg:cargo/find-msvc-tools@0.1.11",
       "dependsOn": []
     },
     {
@@ -5771,65 +6421,65 @@
       ]
     },
     {
-      "ref": "pkg:cargo/futures@0.3.33",
+      "ref": "pkg:cargo/futures@0.3.34",
       "dependsOn": [
-        "pkg:cargo/futures-channel@0.3.33",
-        "pkg:cargo/futures-core@0.3.33",
-        "pkg:cargo/futures-executor@0.3.33",
-        "pkg:cargo/futures-io@0.3.33",
-        "pkg:cargo/futures-sink@0.3.33",
-        "pkg:cargo/futures-task@0.3.33",
-        "pkg:cargo/futures-util@0.3.33"
+        "pkg:cargo/futures-channel@0.3.34",
+        "pkg:cargo/futures-core@0.3.34",
+        "pkg:cargo/futures-executor@0.3.34",
+        "pkg:cargo/futures-io@0.3.34",
+        "pkg:cargo/futures-sink@0.3.34",
+        "pkg:cargo/futures-task@0.3.34",
+        "pkg:cargo/futures-util@0.3.34"
       ]
     },
     {
-      "ref": "pkg:cargo/futures-channel@0.3.33",
+      "ref": "pkg:cargo/futures-channel@0.3.34",
       "dependsOn": [
-        "pkg:cargo/futures-core@0.3.33",
-        "pkg:cargo/futures-sink@0.3.33"
+        "pkg:cargo/futures-core@0.3.34",
+        "pkg:cargo/futures-sink@0.3.34"
       ]
     },
     {
-      "ref": "pkg:cargo/futures-core@0.3.33",
+      "ref": "pkg:cargo/futures-core@0.3.34",
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/futures-executor@0.3.33",
+      "ref": "pkg:cargo/futures-executor@0.3.34",
       "dependsOn": [
-        "pkg:cargo/futures-core@0.3.33",
-        "pkg:cargo/futures-task@0.3.33",
-        "pkg:cargo/futures-util@0.3.33"
+        "pkg:cargo/futures-core@0.3.34",
+        "pkg:cargo/futures-task@0.3.34",
+        "pkg:cargo/futures-util@0.3.34"
       ]
     },
     {
-      "ref": "pkg:cargo/futures-io@0.3.33",
+      "ref": "pkg:cargo/futures-io@0.3.34",
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/futures-macro@0.3.33",
+      "ref": "pkg:cargo/futures-macro@0.3.34",
       "dependsOn": [
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@2.0.119"
+        "pkg:cargo/syn@3.0.3"
       ]
     },
     {
-      "ref": "pkg:cargo/futures-sink@0.3.33",
+      "ref": "pkg:cargo/futures-sink@0.3.34",
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/futures-task@0.3.33",
+      "ref": "pkg:cargo/futures-task@0.3.34",
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/futures-util@0.3.33",
+      "ref": "pkg:cargo/futures-util@0.3.34",
       "dependsOn": [
-        "pkg:cargo/futures-channel@0.3.33",
-        "pkg:cargo/futures-core@0.3.33",
-        "pkg:cargo/futures-io@0.3.33",
-        "pkg:cargo/futures-macro@0.3.33",
-        "pkg:cargo/futures-sink@0.3.33",
-        "pkg:cargo/futures-task@0.3.33",
+        "pkg:cargo/futures-channel@0.3.34",
+        "pkg:cargo/futures-core@0.3.34",
+        "pkg:cargo/futures-io@0.3.34",
+        "pkg:cargo/futures-macro@0.3.34",
+        "pkg:cargo/futures-sink@0.3.34",
+        "pkg:cargo/futures-task@0.3.34",
         "pkg:cargo/memchr@2.8.3",
         "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/slab@0.4.12"
@@ -5913,10 +6563,10 @@
       ]
     },
     {
-      "ref": "pkg:cargo/http-body-util@0.1.4",
+      "ref": "pkg:cargo/http-body-util@0.1.5",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
-        "pkg:cargo/futures-core@0.3.33",
+        "pkg:cargo/futures-core@0.3.34",
         "pkg:cargo/http-body@1.1.0",
         "pkg:cargo/http@1.5.0",
         "pkg:cargo/pin-project-lite@0.2.17"
@@ -5939,8 +6589,8 @@
       "dependsOn": [
         "pkg:cargo/atomic-waker@1.1.2",
         "pkg:cargo/bytes@1.12.1",
-        "pkg:cargo/futures-channel@0.3.33",
-        "pkg:cargo/futures-core@0.3.33",
+        "pkg:cargo/futures-channel@0.3.34",
+        "pkg:cargo/futures-core@0.3.34",
         "pkg:cargo/http-body@1.1.0",
         "pkg:cargo/http@1.5.0",
         "pkg:cargo/httparse@1.10.1",
@@ -5998,9 +6648,13 @@
       "ref": "pkg:cargo/js-sys@0.3.104",
       "dependsOn": [
         "pkg:cargo/cfg-if@1.0.4",
-        "pkg:cargo/futures-util@0.3.33",
+        "pkg:cargo/futures-util@0.3.34",
         "pkg:cargo/wasm-bindgen@0.2.127"
       ]
+    },
+    {
+      "ref": "pkg:cargo/lazy_static@1.5.0",
+      "dependsOn": []
     },
     {
       "ref": "pkg:cargo/libc@0.2.189",
@@ -6025,6 +6679,10 @@
       "dependsOn": []
     },
     {
+      "ref": "pkg:cargo/minimal-lexical@0.2.1",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:cargo/mio@1.2.2",
       "dependsOn": [
         "pkg:cargo/libc@0.2.189",
@@ -6037,8 +6695,28 @@
       "dependsOn": []
     },
     {
+      "ref": "pkg:cargo/nom@7.1.3",
+      "dependsOn": [
+        "pkg:cargo/memchr@2.8.3",
+        "pkg:cargo/minimal-lexical@0.2.1"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/num-bigint@0.4.8",
+      "dependsOn": [
+        "pkg:cargo/num-integer@0.1.47",
+        "pkg:cargo/num-traits@0.2.19"
+      ]
+    },
+    {
       "ref": "pkg:cargo/num-conv@0.2.2",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/num-integer@0.1.47",
+      "dependsOn": [
+        "pkg:cargo/num-traits@0.2.19"
+      ]
     },
     {
       "ref": "pkg:cargo/num-traits@0.2.19",
@@ -6047,7 +6725,17 @@
       ]
     },
     {
+      "ref": "pkg:cargo/oid-registry@0.8.1",
+      "dependsOn": [
+        "pkg:cargo/asn1-rs@0.7.2"
+      ]
+    },
+    {
       "ref": "pkg:cargo/once_cell@1.21.4",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/openssl-probe@0.2.1",
       "dependsOn": []
     },
     {
@@ -6163,7 +6851,7 @@
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/cfg_aliases@0.2.2",
         "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/quinn-proto@0.11.16",
+        "pkg:cargo/quinn-proto@0.11.17",
         "pkg:cargo/quinn-udp@0.5.15",
         "pkg:cargo/rustc-hash@2.1.3",
         "pkg:cargo/rustls@0.23.43",
@@ -6175,7 +6863,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/quinn-proto@0.11.16",
+      "ref": "pkg:cargo/quinn-proto@0.11.17",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/getrandom@0.4.3",
@@ -6272,7 +6960,7 @@
     {
       "ref": "pkg:cargo/ring@0.17.14",
       "dependsOn": [
-        "pkg:cargo/cc@1.4.2",
+        "pkg:cargo/cc@1.4.3",
         "pkg:cargo/cfg-if@1.0.4",
         "pkg:cargo/getrandom@0.2.17",
         "pkg:cargo/libc@0.2.189",
@@ -6291,14 +6979,29 @@
       "dependsOn": []
     },
     {
+      "ref": "pkg:cargo/rusticata-macros@4.1.0",
+      "dependsOn": [
+        "pkg:cargo/nom@7.1.3"
+      ]
+    },
+    {
       "ref": "pkg:cargo/rustls@0.23.43",
       "dependsOn": [
         "pkg:cargo/once_cell@1.21.4",
         "pkg:cargo/ring@0.17.14",
         "pkg:cargo/rustls-pki-types@1.15.1",
-        "pkg:cargo/rustls-webpki@0.103.13",
+        "pkg:cargo/rustls-webpki@0.103.14",
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/zeroize@1.9.0"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/rustls-native-certs@0.8.4",
+      "dependsOn": [
+        "pkg:cargo/openssl-probe@0.2.1",
+        "pkg:cargo/rustls-pki-types@1.15.1",
+        "pkg:cargo/schannel@0.1.29",
+        "pkg:cargo/security-framework@3.7.0"
       ]
     },
     {
@@ -6309,7 +7012,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/rustls-webpki@0.103.13",
+      "ref": "pkg:cargo/rustls-webpki@0.103.14",
       "dependsOn": [
         "pkg:cargo/ring@0.17.14",
         "pkg:cargo/rustls-pki-types@1.15.1",
@@ -6319,6 +7022,12 @@
     {
       "ref": "pkg:cargo/rustversion@1.0.23",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/schannel@0.1.29",
+      "dependsOn": [
+        "pkg:cargo/windows-sys@0.61.2"
+      ]
     },
     {
       "ref": "pkg:cargo/scopeguard@1.2.0",
@@ -6333,6 +7042,23 @@
         "pkg:cargo/hybrid-array@0.4.14",
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/zeroize@1.9.0"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/security-framework@3.7.0",
+      "dependsOn": [
+        "pkg:cargo/bitflags@2.13.1",
+        "pkg:cargo/core-foundation-sys@0.8.7",
+        "pkg:cargo/core-foundation@0.10.1",
+        "pkg:cargo/libc@0.2.189",
+        "pkg:cargo/security-framework-sys@2.17.0"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/security-framework-sys@2.17.0",
+      "dependsOn": [
+        "pkg:cargo/core-foundation-sys@0.8.7",
+        "pkg:cargo/libc@0.2.189"
       ]
     },
     {
@@ -6451,6 +7177,14 @@
       ]
     },
     {
+      "ref": "pkg:cargo/synstructure@0.13.2",
+      "dependsOn": [
+        "pkg:cargo/proc-macro2@1.0.107",
+        "pkg:cargo/quote@1.0.47",
+        "pkg:cargo/syn@2.0.119"
+      ]
+    },
+    {
       "ref": "pkg:cargo/thiserror@2.0.20",
       "dependsOn": [
         "pkg:cargo/thiserror-impl@2.0.20"
@@ -6526,7 +7260,7 @@
     {
       "ref": "pkg:cargo/tokio-tungstenite@0.28.0",
       "dependsOn": [
-        "pkg:cargo/futures-util@0.3.33",
+        "pkg:cargo/futures-util@0.3.34",
         "pkg:cargo/log@0.4.33",
         "pkg:cargo/tokio@1.53.1",
         "pkg:cargo/tungstenite@0.28.0"
@@ -6536,10 +7270,10 @@
       "ref": "pkg:cargo/tokio-util@0.7.19",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
-        "pkg:cargo/futures-core@0.3.33",
-        "pkg:cargo/futures-io@0.3.33",
-        "pkg:cargo/futures-sink@0.3.33",
-        "pkg:cargo/futures-util@0.3.33",
+        "pkg:cargo/futures-core@0.3.34",
+        "pkg:cargo/futures-io@0.3.34",
+        "pkg:cargo/futures-sink@0.3.34",
+        "pkg:cargo/futures-util@0.3.34",
         "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/tokio@1.53.1"
       ]
@@ -6768,9 +7502,24 @@
       ]
     },
     {
+      "ref": "pkg:cargo/x509-parser@0.18.1",
+      "dependsOn": [
+        "pkg:cargo/asn1-rs@0.7.2",
+        "pkg:cargo/data-encoding@2.11.1",
+        "pkg:cargo/der-parser@10.0.0",
+        "pkg:cargo/lazy_static@1.5.0",
+        "pkg:cargo/nom@7.1.3",
+        "pkg:cargo/oid-registry@0.8.1",
+        "pkg:cargo/ring@0.17.14",
+        "pkg:cargo/rusticata-macros@4.1.0",
+        "pkg:cargo/thiserror@2.0.20",
+        "pkg:cargo/time@0.3.55"
+      ]
+    },
+    {
       "ref": "pkg:cargo/yamux@0.14.0",
       "dependsOn": [
-        "pkg:cargo/futures@0.3.33",
+        "pkg:cargo/futures@0.3.34",
         "pkg:cargo/log@0.4.33",
         "pkg:cargo/nohash-hasher@0.2.0",
         "pkg:cargo/parking_lot@0.12.5",

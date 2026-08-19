@@ -1,0 +1,212 @@
+import type { OperationOptions, Session } from "../public/contract.js";
+import { projectSessionV3 } from "../v3/publicSession.js";
+import {
+  acceptCarrierSessionV3,
+  createAdmissionReasonRegistryV3,
+  type AdmissionAuthorizerV3,
+} from "../v3/serverAdmission.js";
+import { nodeSessionRuntimeV3 } from "../v3/nodeSessionRuntime.js";
+import type { CarrierSessionV3 } from "../v3/carrier.js";
+import {
+  createNativeRawQuicDriverV3,
+  loadNativeTransportAddon,
+} from "./nativeTransportAddon.js";
+import {
+  startNodeRawQuicListenerV3,
+  type NodeRawQuicListenerV3,
+} from "./rawQuicServerV3.js";
+import {
+  startNodeWebSocketListenerV3,
+  type NodeWebSocketListenerV3,
+} from "./webSocketServerV3.js";
+
+export type AcceptorListenerV3 =
+  | Readonly<{
+      carrier: "websocket";
+      path: "direct";
+      host: string;
+      port: number;
+      tls: Readonly<{ certificate: string; privateKey: string }>;
+      allowedOrigins: readonly string[];
+    }>
+  | Readonly<{
+      carrier: "raw_quic";
+      path: "direct";
+      host: string;
+      port: number;
+      tls: Readonly<{ certificate: string | Uint8Array; privateKey: string | Uint8Array }>;
+    }>;
+
+export type AcceptorOptionsV3 = Readonly<{
+  listeners: readonly AcceptorListenerV3[];
+  maxInboundStreams: number;
+  admissionReasons?: readonly string[];
+  authorize: AdmissionAuthorizerV3;
+  nowUnixSeconds?: () => number;
+}>;
+
+export class AcceptedSessionV3 {
+  private constructor(readonly session: Session) {}
+
+  async close(): Promise<void> {
+    await this.session.close();
+  }
+}
+
+export class AcceptorV3 {
+  private constructor() {}
+
+  addresses(): readonly Readonly<{ host: string; port: number }>[] {
+    return acceptorState(this).listeners.map((listener) => listener.address());
+  }
+
+  async accept(options: OperationOptions = {}): Promise<AcceptedSessionV3> {
+    const state = acceptorState(this);
+    if (state.closed) throw new Error("Flowersec v3 acceptor is closed");
+    const controller = new AbortController();
+    const unlinkExternal = linkAbort(options.signal, controller);
+    const unlinkClose = linkAbort(state.abort.signal, controller);
+    try {
+      const carrier = await acceptAny(state, controller.signal);
+      try {
+        const internal = await acceptCarrierSessionV3(carrier, state.authorize, {
+          runtime: nodeSessionRuntimeV3,
+          admissionReasons: state.admissionReasons,
+          ...(state.nowUnixSeconds === undefined ? {} : { nowUnixSeconds: state.nowUnixSeconds }),
+          signal: controller.signal,
+        });
+        return createAcceptedSessionV3(projectSessionV3(internal));
+      } catch (error) {
+        await carrier.close().catch(() => undefined);
+        throw error;
+      }
+    } finally {
+      unlinkExternal();
+      unlinkClose();
+    }
+  }
+
+  async close(): Promise<void> {
+    const state = acceptorState(this);
+    if (state.closed) return;
+    state.closed = true;
+    state.abort.abort(new Error("Flowersec v3 acceptor closed"));
+    const results = await Promise.allSettled(state.listeners.map(async (listener) => await listener.close()));
+    if (results.some(({ status }) => status === "rejected")) throw new Error("Flowersec v3 acceptor cleanup failed");
+  }
+}
+
+type ListenerV3 = NodeWebSocketListenerV3 | NodeRawQuicListenerV3;
+type AcceptorStateV3 = {
+  listeners: readonly ListenerV3[];
+  authorize: AdmissionAuthorizerV3;
+  admissionReasons: ReadonlySet<string>;
+  nowUnixSeconds?: () => number;
+  abort: AbortController;
+  closed: boolean;
+  cursor: number;
+};
+const acceptorStatesV3 = new WeakMap<AcceptorV3, AcceptorStateV3>();
+
+export async function createAcceptorV3(options: AcceptorOptionsV3): Promise<AcceptorV3> {
+  validateOptions(options);
+  const admissionReasons = createAdmissionReasonRegistryV3(
+    ["expired_artifact"],
+    options.admissionReasons,
+  );
+  const listeners: ListenerV3[] = [];
+  let rawDriver: ReturnType<typeof createNativeRawQuicDriverV3> | undefined;
+  try {
+    for (const listener of options.listeners) {
+      const running = listener.carrier === "websocket"
+        ? await startNodeWebSocketListenerV3({
+            ...listener,
+            inboundBidirectionalStreamCapacity: options.maxInboundStreams + 2,
+          })
+        : await startNodeRawQuicListenerV3(
+            rawDriver ??= createNativeRawQuicDriverV3(loadNativeTransportAddon()),
+            {
+              ...listener,
+              inboundBidirectionalStreamCapacity: options.maxInboundStreams + 2,
+            },
+          );
+      listeners.push(running);
+    }
+  } catch (error) {
+    await Promise.allSettled(listeners.map(async (listener) => await listener.close()));
+    throw error;
+  }
+  const acceptor = new (AcceptorV3 as unknown as { new(): AcceptorV3 })();
+  acceptorStatesV3.set(acceptor, {
+    listeners: Object.freeze(listeners),
+    authorize: options.authorize,
+    admissionReasons,
+    ...(options.nowUnixSeconds === undefined ? {} : { nowUnixSeconds: options.nowUnixSeconds }),
+    abort: new AbortController(),
+    closed: false,
+    cursor: 0,
+  });
+  return Object.freeze(acceptor);
+}
+
+function createAcceptedSessionV3(session: Session): AcceptedSessionV3 {
+  return Object.freeze(new (AcceptedSessionV3 as unknown as { new(session: Session): AcceptedSessionV3 })(session));
+}
+
+function acceptorState(value: AcceptorV3): AcceptorStateV3 {
+  const state = acceptorStatesV3.get(value);
+  if (state === undefined) throw new Error("invalid Flowersec v3 acceptor");
+  return state;
+}
+
+async function acceptAny(state: AcceptorStateV3, signal: AbortSignal): Promise<CarrierSessionV3> {
+  if (state.listeners.length === 1) return await state.listeners[0]!.accept({ signal });
+  const controller = new AbortController();
+  const unlink = linkAbort(signal, controller);
+  try {
+    return await new Promise<CarrierSessionV3>((resolve, reject) => {
+      let settled = false;
+      let remaining = state.listeners.length;
+      const errors: unknown[] = [];
+      state.listeners.forEach((_, index) => {
+        const selected = state.listeners[(index + state.cursor) % state.listeners.length]!;
+        void selected.accept({ signal: controller.signal }).then((carrier) => {
+          if (!settled) {
+            settled = true;
+            state.cursor = (state.cursor + 1) % state.listeners.length;
+            controller.abort(new Error("listener race complete"));
+            resolve(carrier);
+          } else {
+            carrier.abort({ code: 6, reason: "listener race lost" });
+          }
+        }, (error: unknown) => {
+          errors.push(error);
+          remaining -= 1;
+          if (!settled && remaining === 0) {
+            settled = true;
+            reject(new AggregateError(errors, "all Flowersec v3 listeners failed"));
+          }
+        });
+      });
+    });
+  } finally {
+    unlink();
+  }
+}
+
+function validateOptions(options: AcceptorOptionsV3): void {
+  if (options.listeners.length === 0 ||
+      !Number.isSafeInteger(options.maxInboundStreams) || options.maxInboundStreams < 1 ||
+      options.maxInboundStreams > 128 || typeof options.authorize !== "function" ||
+      options.listeners.some(({ path }) => path !== "direct")) {
+    throw new TypeError("invalid Flowersec v3 Acceptor options");
+  }
+}
+
+function linkAbort(source: AbortSignal | undefined, target: AbortController): () => void {
+  if (source === undefined) return () => undefined;
+  const abort = () => target.abort(source.reason);
+  source.addEventListener("abort", abort, { once: true });
+  if (source.aborted) abort();
+  return () => source.removeEventListener("abort", abort);
+}

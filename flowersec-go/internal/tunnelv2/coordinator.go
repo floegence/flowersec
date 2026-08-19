@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
 )
 
 const (

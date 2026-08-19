@@ -6,7 +6,7 @@ import type {
   Issuer,
   RuntimeAuthorizationRequest,
   TunnelRuntimeOptions,
-} from "./index.js";
+} from "./v2.js";
 import {
   authorizeRuntime,
   authorizeTunnelRuntime,

@@ -2,24 +2,15 @@ import { createInterface } from "node:readline";
 import { createPrivateKey, createPublicKey, X509Certificate } from "node:crypto";
 
 import {
-  createAcceptor,
-  createArtifactLease,
-  createEndpointSet,
   createStreamMetadata,
-  createTunnelRuntime,
-  connect,
-  Issuer,
-  parseArtifact,
-  RPCHandlers,
-  SessionError,
-  SessionHandlers,
-  type ByteStream,
-  type JsonValue,
-  type Session,
-  type TunnelAuthorizationDecision,
-  type AcceptorListener,
-  type TunnelRuntimeListener,
-} from "../node/index.js";
+} from "../public/streamMetadata.js";
+import { createAcceptor, RPCHandlers, SessionHandlers, type AcceptorListener } from "../node/acceptor.js";
+import { createTunnelRuntime, type TunnelAuthorizationDecision, type TunnelRuntimeListener } from "../node/tunnelRuntime.js";
+import { createArtifactLease } from "../public/artifactLease.js";
+import { parseArtifact } from "../public/artifact.js";
+import { connect } from "../node/connectSession.js";
+import { Issuer, createEndpointSet } from "../node/controlplane.js";
+import { SessionError, type ByteStream, type JsonValue, type Session } from "../public/contract.js";
 
 const RUNTIME = "node-typescript";
 const ORIGIN = process.env.FLOWERSEC_PARITY_ORIGIN ?? "https://client.example";

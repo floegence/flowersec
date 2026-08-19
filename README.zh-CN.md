@@ -116,12 +116,13 @@ WebTransport 是可选能力，不属于必需的 native-server carrier 合同�
 ## 安全
 
 - 直连和中继会话中的应用数据都采用端到端加密。
+- TLS 信任策略会绑定到每个 v3 传输候选项。公共或部署提供的 CA 根与显式叶证书 pin 互斥，失败后绝不降级。
 - 连接邀请不透明、有效期短且只能使用一次。
 - 凭据会在使用前完成核销，已消费的邀请无法重放。
 - 中继只转发加密流量，不会终止应用会话。
 - 无效或不受支持的连接尝试会安全失败，并只返回有限的公共错误信息。
 
-协议与威胁模型详情请阅读 [API 契约](docs/API_CONTRACT.md)、[传输架构](docs/TRANSPORT_V2_ARCHITECTURE.md)和[威胁模型](docs/THREAT_MODEL.md)。
+协议与威胁模型详情请阅读 [API 契约](docs/API_CONTRACT.md)、[传输架构](docs/TRANSPORT_V3_ARCHITECTURE.md)和[威胁模型](docs/THREAT_MODEL.md)。
 
 <!-- readme-section:deploy-and-develop -->
 <a id="deploy-and-develop"></a>
@@ -130,7 +131,7 @@ WebTransport 是可选能力，不属于必需的 native-server carrier 合同�
 
 - [API 契约](docs/API_CONTRACT.md)：各 SDK 共享的稳定应用行为。
 - [错误模型](docs/ERROR_MODEL.md)：公共连接、会话和 RPC 错误。
-- [传输架构](docs/TRANSPORT_V2_ARCHITECTURE.md)：直连与中继连接的设计。
+- [传输架构](docs/TRANSPORT_V3_ARCHITECTURE.md)：直连与中继连接的设计。
 - [示例](examples/README.md)：可运行的 SDK 用法。
 
 Flowersec 采用 [MIT License](LICENSE)。已发布的软件包和版本说明可在 [GitHub Releases](https://github.com/floegence/flowersec/releases)中查看。

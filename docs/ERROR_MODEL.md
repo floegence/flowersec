@@ -1,23 +1,71 @@
-# Flowersec v2 Error Model
+# Flowersec v3 Error Model
 
-Public connection and session failures expose only a stable bounded code. Error values and text do not contain artifacts, credentials, candidate URLs, selected carrier or path, connection stages, endpoint identities, logical stream IDs, peer payloads, key material, carrier handles, or ledger state.
+Public connection and session failures expose only stable, bounded codes. Error
+values and text do not contain artifacts, credentials, candidate URLs, TLS
+policies, certificate pins, selected carriers or paths, connection stages,
+endpoint identities, logical stream IDs, peer payloads, key material, carrier
+handles, lease identities, or native TLS diagnostics.
 
-Cancellation and deadlines preserve `context.Canceled` and `context.DeadlineExceeded` semantics where the language supports causal errors. Protocol, admission, transport, and cryptographic implementation errors are mapped to closed public outcomes before crossing an SDK boundary.
+Cancellation and deadlines preserve their language-native semantics where the
+SDK supports causal errors. Artifact, TLS, transport, admission, protocol, and
+cryptographic failures are mapped to closed public outcomes before crossing an
+SDK boundary. Applications do not classify error text or run a second
+Flowersec retry scheduler.
 
-Public connection input and option validation also crosses the connection boundary as a closed `ConnectError` value. The optional `ConnectionController` owns the structured recovery decision; applications do not classify error text or maintain a second Flowersec retry path.
+## Connection Boundary
 
-Remote RPC handlers may return a bounded application code and sanitized message. SDKs preserve that application outcome separately from transport and session failures; they never attach the underlying carrier or protocol cause.
+The cross-language v3 public connection codes are:
 
-Raw public error enums and code taxonomies are SDK-local because each runtime has different cancellation, TLS, and transport integration boundaries. The portable contract is the shared recovery decision plus the separation between remote RPC application errors and connection/session failures; consumers must not compare raw codes across languages.
+| Code | Meaning |
+| --- | --- |
+| `artifact_invalid` | The artifact, lease, source result, option, or adapter contract is invalid. |
+| `expired_artifact` | The exclusive initiation deadline has been reached. |
+| `transport_security_unsupported` | No declared candidate can be enforced by the runtime capability snapshot. |
+| `transport_security_failed` | A native CA or pin security failure could not be resolved by the single policy refresh. |
+| `connection_failed` | No candidate established a Session and no more specific public code is justified. |
 
-An error after durable artifact commitment never authorizes credential reuse. Cleanup errors may be joined internally for diagnostics, but public projections remain redacted.
+These public codes are distinct from internal transport-security results and
+from FSA3 admission reasons. TLS failures occur before durable spend and FSB3,
+and therefore are never represented as FSA3 reasons. Browser pin failures may
+remain opaque `connection_failed` results because browser APIs do not provide
+evidence for a more specific TLS classification.
 
-## Recovery decisions
+## Recovery Decisions
 
-Each SDK implements one `ConnectionController` above its one-shot connector. Failures crossing that controller carry one structured disposition backed by `stability/connection_controller_recovery.json`:
+Every SDK implements one `ConnectionController` above its one-shot connector.
+A controller failure carries exactly one validated disposition:
 
-- `terminal` ends the controller lifecycle.
-- `retryable` allows the controller to acquire a fresh artifact after deterministic backoff and establish a new session.
-- `retry_after` does the same but enforces an authoritative absolute not-before deadline.
+- `terminal` ends the current controller lifecycle.
+- `retryable` permits a fresh artifact acquisition after deterministic
+  monotonic backoff.
+- `retry_after` additionally requires a valid absolute Unix-millisecond
+  deadline before retry.
 
-No disposition authorizes reuse of a committed lease, migration of streams, or replay of RPCs and writes. Cancellation and invalid configuration are terminal. Temporary connection failures and retryable session termination may create a new attempt only through the controller's single scheduler. Applications provide a refreshable artifact source, restore application authentication and subscriptions after a new session is published, and never parse error text or run a second Flowersec retry loop.
+Invalid dispositions fail closed as `artifact_invalid / terminal`. Multiple
+ordinary candidate failures aggregate independently of completion order:
+the latest valid `retry_after` wins, then `retryable`, then `terminal`.
+`retryNow` may skip only an existing backoff and cannot cross a future absolute
+deadline.
+
+One connection cycle may obtain at most one policy-sensitive replacement
+lease. A pin trigger blocks the same endpoint and policy digest immediately.
+A replacement must keep that endpoint in pin mode with a changed complete
+declared policy; pin-to-CA replacement and retries of an old pin set are
+terminal. Unsupported candidates may be skipped in favor of other explicitly
+authorized endpoints, but no candidate changes security mode after failure.
+
+## Lease and Session Failures
+
+A claimed lease that fails before durable spend is retired. Once durable spend
+begins, every success, failure, cancellation, or uncertain outcome consumes the
+lease permanently. No disposition authorizes credential reuse.
+
+Remote RPC application errors remain separate from connection and session
+failures. They may contain only their bounded semantic code and sanitized
+message. Session replacement never migrates streams or replays RPC calls,
+notifications, or writes.
+
+The normative ordering, retry clocks, replacement state machine, and redaction
+requirements are defined in
+[`TRANSPORT_V3_ARCHITECTURE.md`](TRANSPORT_V3_ARCHITECTURE.md) and frozen by
+`stability/transport_v3_contract.json` plus the v3 controller vectors.

@@ -34,11 +34,16 @@ use tokio_tungstenite::{
 use tokio_util::{compat::TokioAsyncReadCompatExt, sync::CancellationToken};
 
 use crate::transport_v2::{CarrierKind, CarrierSessionV2, CarrierStreamV2};
+use crate::transport_v3::{CarrierKind as CarrierKindV3, CarrierSessionV3, CarrierStreamV3};
 
 pub(crate) const SUBPROTOCOL_DIRECT: &str = "flowersec.direct.v2";
 pub(crate) const SUBPROTOCOL_TUNNEL: &str = "flowersec.tunnel.v2";
+pub(crate) const SUBPROTOCOL_DIRECT_V3: &str = "flowersec.direct.v3";
+pub(crate) const SUBPROTOCOL_TUNNEL_V3: &str = "flowersec.tunnel.v3";
 const DIRECT_PATH: &str = "/flowersec/v2/direct";
 const TUNNEL_PATH: &str = "/flowersec/v2/tunnel";
+const DIRECT_PATH_V3: &str = "/flowersec/v3/direct";
+const TUNNEL_PATH_V3: &str = "/flowersec/v3/tunnel";
 const MAX_BINARY_MESSAGE_BYTES: usize = 256 * 1024 + 12;
 const MAX_QUEUED_MESSAGES: usize = 64;
 const YAMUX_BYTE_BUFFER_BYTES: usize = 512 * 1024;
@@ -51,6 +56,8 @@ pub(crate) enum WebSocketError {
     Bind(#[source] io::Error),
     #[error("WebSocket connection failed")]
     Connect,
+    #[error("WebSocket TLS failed")]
+    Tls(#[source] io::Error),
     #[error("WebSocket listener closed")]
     Closed,
 }
@@ -71,6 +78,56 @@ impl fmt::Debug for WebSocketListener {
 }
 
 impl WebSocketListener {
+    pub(crate) fn bind_direct_v3(
+        address: SocketAddr,
+        certificate_chain_der: Vec<Vec<u8>>,
+        private_key_der: Vec<u8>,
+        allowed_origins: Vec<String>,
+        capacity: u32,
+    ) -> Result<Self, WebSocketError> {
+        if !(3..=130).contains(&capacity)
+            || allowed_origins.is_empty()
+            || allowed_origins.iter().any(|origin| !valid_origin(origin))
+        {
+            return Err(WebSocketError::InvalidConfiguration);
+        }
+        let tls = server_tls(certificate_chain_der, private_key_der, true)?
+            .ok_or(WebSocketError::InvalidConfiguration)?;
+        Self::bind(
+            address,
+            Some(tls),
+            allowed_origins,
+            capacity,
+            DIRECT_PATH_V3,
+            SUBPROTOCOL_DIRECT_V3,
+        )
+    }
+
+    pub(crate) fn bind_tunnel_v3(
+        address: SocketAddr,
+        certificate_chain_der: Vec<Vec<u8>>,
+        private_key_der: Vec<u8>,
+        allowed_origins: Vec<String>,
+        capacity: u32,
+    ) -> Result<Self, WebSocketError> {
+        if !(3..=130).contains(&capacity)
+            || allowed_origins.is_empty()
+            || allowed_origins.iter().any(|origin| !valid_origin(origin))
+        {
+            return Err(WebSocketError::InvalidConfiguration);
+        }
+        let tls = server_tls(certificate_chain_der, private_key_der, true)?
+            .ok_or(WebSocketError::InvalidConfiguration)?;
+        Self::bind(
+            address,
+            Some(tls),
+            allowed_origins,
+            capacity,
+            TUNNEL_PATH_V3,
+            SUBPROTOCOL_TUNNEL_V3,
+        )
+    }
+
     pub(crate) fn bind_direct(
         address: SocketAddr,
         certificate_chain_der: Vec<Vec<u8>>,
@@ -84,7 +141,7 @@ impl WebSocketListener {
         {
             return Err(WebSocketError::InvalidConfiguration);
         }
-        let tls = server_tls(certificate_chain_der, private_key_der)?;
+        let tls = server_tls(certificate_chain_der, private_key_der, false)?;
         if tls.is_none() && !address.ip().is_loopback() {
             return Err(WebSocketError::InvalidConfiguration);
         }
@@ -111,7 +168,7 @@ impl WebSocketListener {
         {
             return Err(WebSocketError::InvalidConfiguration);
         }
-        let tls = server_tls(certificate_chain_der, private_key_der)?
+        let tls = server_tls(certificate_chain_der, private_key_der, false)?
             .ok_or(WebSocketError::InvalidConfiguration)?;
         Self::bind(
             address,
@@ -154,9 +211,29 @@ impl WebSocketListener {
         self.accept_with_peer().await.map(|(carrier, _)| carrier)
     }
 
+    pub(crate) async fn accept_v3(&self) -> Result<Arc<dyn CarrierSessionV3>, WebSocketError> {
+        self.accept_with_peer_v3().await.map(|(carrier, _)| carrier)
+    }
+
+    pub(crate) async fn accept_with_peer_v3(
+        &self,
+    ) -> Result<(Arc<dyn CarrierSessionV3>, SocketAddr), WebSocketError> {
+        self.accept_with_peer_raw()
+            .await
+            .map(|(carrier, peer)| (carrier as Arc<dyn CarrierSessionV3>, peer))
+    }
+
     pub(crate) async fn accept_with_peer(
         &self,
     ) -> Result<(Arc<dyn CarrierSessionV2>, SocketAddr), WebSocketError> {
+        self.accept_with_peer_raw()
+            .await
+            .map(|(carrier, peer)| (carrier as Arc<dyn CarrierSessionV2>, peer))
+    }
+
+    async fn accept_with_peer_raw(
+        &self,
+    ) -> Result<(Arc<WebSocketCarrier>, SocketAddr), WebSocketError> {
         loop {
             let (stream, peer) = self
                 .listener
@@ -204,7 +281,19 @@ impl WebSocketListener {
 fn server_tls(
     certificate_chain_der: Vec<Vec<u8>>,
     private_key_der: Vec<u8>,
+    strict_v3: bool,
 ) -> Result<Option<TlsAcceptor>, WebSocketError> {
+    Ok(
+        server_tls_config(certificate_chain_der, private_key_der, strict_v3)?
+            .map(|config| TlsAcceptor::from(Arc::new(config))),
+    )
+}
+
+fn server_tls_config(
+    certificate_chain_der: Vec<Vec<u8>>,
+    private_key_der: Vec<u8>,
+    strict_v3: bool,
+) -> Result<Option<rustls::ServerConfig>, WebSocketError> {
     if certificate_chain_der.is_empty() && private_key_der.is_empty() {
         return Ok(None);
     }
@@ -227,7 +316,11 @@ fn server_tls(
         )
         .map_err(|_| WebSocketError::InvalidConfiguration)?;
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
-    Ok(Some(TlsAcceptor::from(Arc::new(config))))
+    if strict_v3 {
+        config.max_early_data_size = 0;
+        config.send_tls13_tickets = 0;
+    }
+    Ok(Some(config))
 }
 
 async fn accept_server_websocket<S>(
@@ -314,7 +407,7 @@ pub(crate) async fn dial(
         "origin",
         HeaderValue::from_str(origin).map_err(|_| WebSocketError::InvalidConfiguration)?,
     );
-    if parsed.scheme() == "wss" {
+    let carrier = if parsed.scheme() == "wss" {
         let server_name = ServerName::try_from(host.to_owned())
             .map_err(|_| WebSocketError::InvalidConfiguration)?;
         let tls = TlsConnector::from(client_tls(trust_roots_der)?)
@@ -324,7 +417,66 @@ pub(crate) async fn dial(
         establish_client_websocket(request, tls, subprotocol, capacity).await
     } else {
         establish_client_websocket(request, stream, subprotocol, capacity).await
+    }?;
+    Ok(carrier as Arc<dyn CarrierSessionV2>)
+}
+
+pub(crate) async fn dial_v3(
+    url: &str,
+    subprotocol: &'static str,
+    origin: &str,
+    tls_config: Arc<rustls::ClientConfig>,
+    capacity: u32,
+) -> Result<Arc<dyn CarrierSessionV3>, WebSocketError> {
+    if !valid_origin(origin) || !(3..=130).contains(&capacity) {
+        return Err(WebSocketError::InvalidConfiguration);
     }
+    let parsed = url::Url::parse(url).map_err(|_| WebSocketError::InvalidConfiguration)?;
+    let expected_path = if subprotocol == SUBPROTOCOL_DIRECT_V3 {
+        DIRECT_PATH_V3
+    } else if subprotocol == SUBPROTOCOL_TUNNEL_V3 {
+        TUNNEL_PATH_V3
+    } else {
+        return Err(WebSocketError::InvalidConfiguration);
+    };
+    if parsed.as_str() != url
+        || parsed.scheme() != "wss"
+        || parsed.path() != expected_path
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return Err(WebSocketError::InvalidConfiguration);
+    }
+    let host = parsed
+        .host_str()
+        .ok_or(WebSocketError::InvalidConfiguration)?;
+    let port = parsed
+        .port_or_known_default()
+        .ok_or(WebSocketError::InvalidConfiguration)?;
+    let stream = TcpStream::connect((host, port))
+        .await
+        .map_err(|_| WebSocketError::Connect)?;
+    let mut request = url
+        .into_client_request()
+        .map_err(|_| WebSocketError::InvalidConfiguration)?;
+    request.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(subprotocol),
+    );
+    request.headers_mut().insert(
+        "origin",
+        HeaderValue::from_str(origin).map_err(|_| WebSocketError::InvalidConfiguration)?,
+    );
+    let server_name =
+        ServerName::try_from(host.to_owned()).map_err(|_| WebSocketError::InvalidConfiguration)?;
+    let tls = TlsConnector::from(tls_config)
+        .connect(server_name, stream)
+        .await
+        .map_err(WebSocketError::Tls)?;
+    let carrier = establish_client_websocket(request, tls, subprotocol, capacity).await?;
+    Ok(carrier as Arc<dyn CarrierSessionV3>)
 }
 
 async fn establish_client_websocket<S>(
@@ -332,7 +484,7 @@ async fn establish_client_websocket<S>(
     stream: S,
     subprotocol: &'static str,
     capacity: u32,
-) -> Result<Arc<dyn CarrierSessionV2>, WebSocketError>
+) -> Result<Arc<WebSocketCarrier>, WebSocketError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -507,7 +659,7 @@ impl fmt::Debug for WebSocketCarrier {
 }
 
 impl WebSocketCarrier {
-    fn pending(io: WebSocketIo, client: bool, capacity: u32) -> Arc<dyn CarrierSessionV2> {
+    fn pending(io: WebSocketIo, client: bool, capacity: u32) -> Arc<Self> {
         Arc::new(Self {
             state: Arc::new(WebSocketCarrierState {
                 io: Mutex::new(Some(io)),
@@ -546,7 +698,7 @@ impl WebSocketCarrier {
         Ok(active)
     }
 
-    fn admission_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+    fn admission_stream(&self) -> io::Result<Arc<WebSocketAdmissionStream>> {
         if self
             .state
             .admission_taken
@@ -595,16 +747,26 @@ impl CarrierSessionV2 for WebSocketCarrier {
     async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
         if self.state.admission_client && !self.state.admission_taken.load(Ordering::Acquire) {
             self.admission_stream()
+                .map(|stream| stream as Arc<dyn CarrierStreamV2>)
         } else {
-            self.mux().await?.open_stream().await
+            self.mux()
+                .await?
+                .open_stream()
+                .await
+                .map(|stream| stream as Arc<dyn CarrierStreamV2>)
         }
     }
 
     async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
         if !self.state.admission_client && !self.state.admission_taken.load(Ordering::Acquire) {
             self.admission_stream()
+                .map(|stream| stream as Arc<dyn CarrierStreamV2>)
         } else {
-            self.mux().await?.accept_stream().await
+            self.mux()
+                .await?
+                .accept_stream()
+                .await
+                .map(|stream| stream as Arc<dyn CarrierStreamV2>)
         }
     }
 
@@ -636,6 +798,55 @@ impl CarrierSessionV2 for WebSocketCarrier {
         {
             mux.cancellation.cancel();
         }
+    }
+}
+
+#[async_trait]
+impl CarrierSessionV3 for WebSocketCarrier {
+    fn kind(&self) -> CarrierKindV3 {
+        CarrierKindV3::Wss
+    }
+
+    fn set_multiplexer_client(&self, client: bool) -> io::Result<()> {
+        CarrierSessionV2::set_multiplexer_client(self, client)
+    }
+
+    fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+        self.state.capacity
+    }
+
+    async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV3>> {
+        if self.state.admission_client && !self.state.admission_taken.load(Ordering::Acquire) {
+            self.admission_stream()
+                .map(|stream| stream as Arc<dyn CarrierStreamV3>)
+        } else {
+            self.mux()
+                .await?
+                .open_stream()
+                .await
+                .map(|stream| stream as Arc<dyn CarrierStreamV3>)
+        }
+    }
+
+    async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV3>> {
+        if !self.state.admission_client && !self.state.admission_taken.load(Ordering::Acquire) {
+            self.admission_stream()
+                .map(|stream| stream as Arc<dyn CarrierStreamV3>)
+        } else {
+            self.mux()
+                .await?
+                .accept_stream()
+                .await
+                .map(|stream| stream as Arc<dyn CarrierStreamV3>)
+        }
+    }
+
+    async fn close(&self) -> io::Result<()> {
+        CarrierSessionV2::close(self).await
+    }
+
+    fn abort(&self) {
+        CarrierSessionV2::abort(self);
     }
 }
 
@@ -733,7 +944,7 @@ impl CarrierStreamV2 for WebSocketAdmissionStream {
     }
 
     async fn stop_sending(&self) -> io::Result<()> {
-        self.reset().await
+        CarrierStreamV2::reset(self).await
     }
 
     async fn reset(&self) -> io::Result<()> {
@@ -744,7 +955,34 @@ impl CarrierStreamV2 for WebSocketAdmissionStream {
     }
 
     async fn close(&self) -> io::Result<()> {
-        self.close_write().await
+        CarrierStreamV2::close_write(self).await
+    }
+}
+
+#[async_trait]
+impl CarrierStreamV3 for WebSocketAdmissionStream {
+    async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
+        CarrierStreamV2::read(self, payload).await
+    }
+
+    async fn write(&self, payload: &[u8]) -> io::Result<usize> {
+        CarrierStreamV2::write(self, payload).await
+    }
+
+    async fn close_write(&self) -> io::Result<()> {
+        CarrierStreamV2::close_write(self).await
+    }
+
+    async fn stop_sending(&self) -> io::Result<()> {
+        CarrierStreamV2::stop_sending(self).await
+    }
+
+    async fn reset(&self) -> io::Result<()> {
+        CarrierStreamV2::reset(self).await
+    }
+
+    async fn close(&self) -> io::Result<()> {
+        CarrierStreamV2::close(self).await
     }
 }
 
@@ -811,7 +1049,7 @@ impl WebSocketMuxSession {
         }))
     }
 
-    async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+    async fn open_stream(&self) -> io::Result<Arc<YamuxCarrierStream>> {
         let (sender, receiver) = oneshot::channel();
         self.commands
             .send(MuxCommand::Open(sender))
@@ -827,7 +1065,7 @@ impl WebSocketMuxSession {
         )))
     }
 
-    async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+    async fn accept_stream(&self) -> io::Result<Arc<YamuxCarrierStream>> {
         let stream = self.incoming.lock().await.recv().await.ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotConnected, "WebSocket carrier closed")
         })??;
@@ -1142,7 +1380,7 @@ impl CarrierStreamV2 for YamuxCarrierStream {
     }
 
     async fn close_write_delivered(&self) -> io::Result<()> {
-        self.close_write().await?;
+        CarrierStreamV2::close_write(self).await?;
         let (mux_flushed, mux_delivery) = oneshot::channel();
         self.mux_commands
             .send(MuxCommand::Flush(mux_flushed))
@@ -1183,6 +1421,59 @@ impl CarrierStreamV2 for YamuxCarrierStream {
     }
 
     async fn close(&self) -> io::Result<()> {
-        self.reset().await
+        CarrierStreamV2::reset(self).await
+    }
+}
+
+#[async_trait]
+impl CarrierStreamV3 for YamuxCarrierStream {
+    async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
+        CarrierStreamV2::read(self, payload).await
+    }
+
+    async fn write(&self, payload: &[u8]) -> io::Result<usize> {
+        CarrierStreamV2::write(self, payload).await
+    }
+
+    async fn close_write(&self) -> io::Result<()> {
+        CarrierStreamV2::close_write(self).await
+    }
+
+    async fn close_write_delivered(&self) -> io::Result<()> {
+        CarrierStreamV2::close_write_delivered(self).await
+    }
+
+    async fn stop_sending(&self) -> io::Result<()> {
+        CarrierStreamV2::stop_sending(self).await
+    }
+
+    async fn reset(&self) -> io::Result<()> {
+        CarrierStreamV2::reset(self).await
+    }
+
+    async fn close(&self) -> io::Result<()> {
+        CarrierStreamV2::close(self).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cert_test_builder::{CertificateParams, KeyPair};
+
+    use super::server_tls_config;
+
+    #[test]
+    fn v3_server_tls_disables_early_data_and_session_tickets() {
+        let key = KeyPair::generate().expect("generate test server key");
+        let certificate = CertificateParams::new(vec!["localhost".into()])
+            .expect("create test certificate parameters")
+            .self_signed(&key)
+            .expect("sign test certificate");
+        let config = server_tls_config(vec![certificate.der().to_vec()], key.serialize_der(), true)
+            .expect("build v3 WebSocket TLS configuration")
+            .expect("v3 WebSocket TLS configuration is present");
+
+        assert_eq!(config.max_early_data_size, 0);
+        assert_eq!(config.send_tls13_tickets, 0);
     }
 }

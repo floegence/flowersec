@@ -8,10 +8,11 @@ use std::{
 };
 
 use bytes::Bytes;
-use flowersec::{
-    Acceptor, Artifact, ArtifactLease, ConnectErrorCode, ConnectorOptions, DirectIssueOptions,
-    EndpointSet, Issuer, SessionOptions, StreamMetadata, WebSocketAcceptorOptions, connect,
+use flowersec::v2::{
+    Acceptor, Artifact, ArtifactLease, ConnectErrorCode, DirectIssueOptions, EndpointSet, Issuer,
+    SessionOptions, WebSocketAcceptorOptions, connect,
 };
+use flowersec::{ConnectorOptions, StreamMetadata};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

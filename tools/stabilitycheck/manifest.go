@@ -37,9 +37,9 @@ type docsManifest struct {
 	ChangePolicy      string   `json:"change_policy"`
 	Readme            string   `json:"readme"`
 	ErrorModel        string   `json:"error_model"`
-	TransportV2API    string   `json:"transport_v2_api"`
+	TransportV3API    string   `json:"transport_v3_api"`
 	CLITokens         []string `json:"cli_tokens"`
-	TransportV2Tokens []string `json:"transport_v2_tokens"`
+	TransportV3Tokens []string `json:"transport_v3_tokens"`
 }
 
 type goManifest struct {
@@ -145,7 +145,7 @@ func validateManifest(repoRoot string, m *manifest) error {
 	if m.Version != 1 {
 		return fmt.Errorf("unsupported manifest version %d", m.Version)
 	}
-	for _, p := range []string{m.Docs.APIContract, m.Docs.ChangePolicy, m.Docs.Readme, m.Docs.ErrorModel, m.Docs.TransportV2API} {
+	for _, p := range []string{m.Docs.APIContract, m.Docs.ChangePolicy, m.Docs.Readme, m.Docs.ErrorModel, m.Docs.TransportV3API} {
 		if strings.TrimSpace(p) == "" {
 			return errors.New("docs paths must not be empty")
 		}
@@ -156,10 +156,10 @@ func validateManifest(repoRoot string, m *manifest) error {
 	if err := requireUnique("docs.cli_tokens", m.Docs.CLITokens); err != nil {
 		return err
 	}
-	if len(m.Docs.TransportV2Tokens) == 0 {
-		return errors.New("docs.transport_v2_tokens must not be empty")
+	if len(m.Docs.TransportV3Tokens) == 0 {
+		return errors.New("docs.transport_v3_tokens must not be empty")
 	}
-	if err := requireUnique("docs.transport_v2_tokens", m.Docs.TransportV2Tokens); err != nil {
+	if err := requireUnique("docs.transport_v3_tokens", m.Docs.TransportV3Tokens); err != nil {
 		return err
 	}
 	if strings.TrimSpace(m.Go.ModulePath) == "" {
@@ -192,7 +192,7 @@ func validateManifest(repoRoot string, m *manifest) error {
 		if strings.TrimSpace(target.DocPackageToken) == "" {
 			return fmt.Errorf("go target %q doc_package_token must not be empty", target.Package)
 		}
-		if target.StabilityGroup != "" && target.StabilityGroup != "transport_v2" {
+		if target.StabilityGroup != "" && target.StabilityGroup != "transport_v3" {
 			return fmt.Errorf("go target %q has unsupported stability_group %q", target.Package, target.StabilityGroup)
 		}
 		if len(target.Entries) == 0 {
@@ -220,7 +220,7 @@ func validateManifest(repoRoot string, m *manifest) error {
 			if entry.Kind != "interface_method" && entry.Kind != "field" && strings.TrimSpace(entry.Signature) != "" {
 				return fmt.Errorf("go entry %q signature is only valid for interface_method or field", entry.Expr)
 			}
-			if entry.StabilityGroup != "" && entry.StabilityGroup != "transport_v2" {
+			if entry.StabilityGroup != "" && entry.StabilityGroup != "transport_v3" {
 				return fmt.Errorf("go entry %q has unsupported stability_group %q", entry.Expr, entry.StabilityGroup)
 			}
 			seenExpr = append(seenExpr, entry.Expr)

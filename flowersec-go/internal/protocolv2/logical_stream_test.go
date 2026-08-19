@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	protocolv2 "github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
+	protocolv2 "github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv2"
 )
 
 func TestOutboundLogicalStreamRequiresACKBeforeDataAndHalfCloses(t *testing.T) {

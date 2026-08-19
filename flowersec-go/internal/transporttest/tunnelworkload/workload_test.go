@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest"
 	"github.com/gorilla/websocket"
 )
 
@@ -102,7 +102,7 @@ func (stream *protocolWindowBulkStream) Read(payload []byte) (int, error) {
 	return stream.reader.Read(payload)
 }
 func (*protocolWindowBulkStream) Write(payload []byte) (int, error) {
-	if len(payload) > protocolv2.MaxDataBytes {
+	if len(payload) > protocolv3.MaxDataBytes {
 		return 0, io.ErrShortWrite
 	}
 	return len(payload), nil
@@ -124,7 +124,7 @@ func TestTransferExactRespectsProtocolFlowControlRecords(t *testing.T) {
 }
 
 type oneBulkStreamSession struct {
-	flowersession.SessionV2
+	flowersession.Session
 	opened   flowersession.ByteStream
 	incoming flowersession.IncomingStream
 	opens    atomic.Int32
@@ -290,10 +290,10 @@ func TestTunnelPhaseFailurePreservesStageDurationAndFirstError(t *testing.T) {
 func TestEstablishmentTimelineSeparatesTransportAdmissionAndPairing(t *testing.T) {
 	timeline := &establishmentTimeline{}
 	started := time.Date(2026, time.August, 5, 2, 0, 0, 0, time.UTC)
-	timeline.record(1, "client-leg", artifactv2.CarrierRawQUIC, "quic", started, started.Add(1200*time.Millisecond), nil)
-	timeline.record(2, "server-leg", artifactv2.CarrierWebSocket, "tcp_tls", started, started.Add(900*time.Millisecond), nil)
+	timeline.record(1, "client-leg", artifactv3.CarrierRawQUIC, "quic", started, started.Add(1200*time.Millisecond), nil)
+	timeline.record(2, "server-leg", artifactv3.CarrierWebSocket, "tcp_tls", started, started.Add(900*time.Millisecond), nil)
 	want := errors.New("admission stream reset: 0xf502")
-	timeline.record(1, "client-leg", artifactv2.CarrierRawQUIC, "admission", started.Add(1200*time.Millisecond), started.Add(2*time.Second), want)
+	timeline.record(1, "client-leg", artifactv3.CarrierRawQUIC, "admission", started.Add(1200*time.Millisecond), started.Add(2*time.Second), want)
 	timeline.record(0, "", "", "pairing", started, started.Add(2*time.Second), want)
 
 	diagnostic := timeline.compact()
@@ -313,13 +313,13 @@ func TestDiagnosticAttemptRecordsCarrierAndAdmissionFailures(t *testing.T) {
 	timeline := &establishmentTimeline{}
 	attempt := &diagnosticAttempt{
 		CandidateAttempt: &diagnosticContractAttempt{prepared: &diagnosticContractPrepared{err: want}},
-		timeline:         timeline, role: 1, candidate: artifactv2.Candidate{ID: "client-leg", Carrier: artifactv2.CarrierRawQUIC},
+		timeline:         timeline, role: 1, candidate: artifactv3.Candidate{ID: "client-leg", Carrier: artifactv3.CarrierRawQUIC},
 	}
 	prepared, err := attempt.Ready(context.Background())
 	if err != nil {
 		t.Fatalf("Ready: %v", err)
 	}
-	if _, err := prepared.Commit(context.Background(), func(context.Context) error { return nil }, []byte("FSB2")); !errors.Is(err, want) {
+	if _, err := prepared.Commit(context.Background(), func(context.Context) error { return nil }, []byte("FSB3")); !errors.Is(err, want) {
 		t.Fatalf("Commit error = %v, want %v", err, want)
 	}
 	diagnostic := timeline.compact()
@@ -331,10 +331,10 @@ func TestDiagnosticAttemptRecordsCarrierAndAdmissionFailures(t *testing.T) {
 }
 
 type diagnosticContractAttempt struct {
-	prepared connectv2.AdmissionCommit
+	prepared connectv3.AdmissionCommit
 }
 
-func (attempt *diagnosticContractAttempt) Ready(context.Context) (connectv2.AdmissionCommit, error) {
+func (attempt *diagnosticContractAttempt) Ready(context.Context) (connectv3.AdmissionCommit, error) {
 	return attempt.prepared, nil
 }
 
@@ -353,7 +353,7 @@ func (*diagnosticContractPrepared) Close(context.Context) error { return nil }
 var _ io.ReadWriteCloser = (*stalledBulkStream)(nil)
 
 type terminalCloseSession struct {
-	flowersession.SessionV2
+	flowersession.Session
 	closeErr   error
 	terminated chan struct{}
 	closeFn    func()
@@ -362,21 +362,21 @@ type terminalCloseSession struct {
 func (session *terminalCloseSession) Termination() <-chan struct{} { return session.terminated }
 
 func TestTunnelAdmissionRequestsMirrorCandidateSetAndPeerRoles(t *testing.T) {
-	contract, suffix, err := releaseContractWithStreams(protocolv2.SuiteChaCha20Poly1305, defaultMaxInboundStreams)
+	contract, suffix, err := releaseContractWithStreams(protocolv3.SuiteChaCha20Poly1305, defaultMaxInboundStreams)
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint := &Endpoint{candidates: []artifactv2.Candidate{
-		{ID: "client-leg", Carrier: artifactv2.CarrierRawQUIC, URL: "quic://127.0.0.1:10001", WireProfile: "flowersec-tunnel/2"},
-		{ID: "server-leg", Carrier: artifactv2.CarrierRawQUIC, URL: "quic://127.0.0.1:10002", WireProfile: "flowersec-tunnel/2"},
+	endpoint := &Endpoint{candidates: []artifactv3.Candidate{
+		{ID: "client-leg", Carrier: artifactv3.CarrierRawQUIC, URL: "quic://127.0.0.1:10001", WireProfile: "flowersec-tunnel/3", TLS: artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA}},
+		{ID: "server-leg", Carrier: artifactv3.CarrierRawQUIC, URL: "quic://127.0.0.1:10002", WireProfile: "flowersec-tunnel/3", TLS: artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA}},
 	}}
 	client := endpoint.artifact(contract, "group-"+suffix, 1, "client-"+suffix, "server-"+suffix, "token-c-"+suffix)
 	server := endpoint.artifact(contract, "group-"+suffix, 2, "server-"+suffix, "client-"+suffix, "token-s-"+suffix)
-	clientRequest, err := artifactv2.BuildRequest(client, "client-leg")
+	clientRequest, err := artifactv3.BuildRequest(client, "client-leg")
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverRequest, err := artifactv2.BuildRequest(server, "server-leg")
+	serverRequest, err := artifactv3.BuildRequest(server, "server-leg")
 	if err != nil {
 		t.Fatal(err)
 	}

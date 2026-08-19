@@ -34,19 +34,25 @@ internal actor RPCRouter {
 
   internal init() {}
 
-  internal func register(_ typeID: UInt32, handler: @escaping RPCHandler) {
+  @discardableResult
+  internal func register(_ typeID: UInt32, handler: @escaping RPCHandler) -> Bool {
+    guard typeID != 0, handlers[typeID] == nil else { return false }
     handlers[typeID] = handler
+    return true
   }
 
+  @discardableResult
   internal func register<Request: Decodable & Sendable, Response: Encodable & Sendable>(
     _ typeID: UInt32,
     handler: @escaping @Sendable (Request) async throws -> Response
-  ) {
+  ) -> Bool {
+    guard typeID != 0, handlers[typeID] == nil else { return false }
     handlers[typeID] = { payload in
       let request = try JSONDecoder.flowersecRPC.decode(Request.self, from: payload)
       let response = try await handler(request)
       return try JSONEncoder.flowersecRPC.encode(response)
     }
+    return true
   }
 
   fileprivate func handler(for typeID: UInt32) -> RPCHandler? {

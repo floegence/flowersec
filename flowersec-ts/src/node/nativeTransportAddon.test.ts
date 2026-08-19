@@ -6,6 +6,7 @@ import { describe, expect, test } from "vitest";
 
 import {
   createNativeRawQuicDriver,
+  createNativeRawQuicDriverV3,
   loadNativeTransportAddon,
   tryLoadNativeTransportAddon,
   type NativeTransportAddonBinding,
@@ -32,9 +33,11 @@ describe("native transport addon loader", () => {
   test("loads only the Flowersec-owned package and reports a stable missing-addon error", () => {
     const requested: string[] = [];
     const addon = Object.freeze({
-      contractVersion: () => 1,
+      contractVersion: () => 2,
       connectRawQuic: () => { throw new Error("unused"); },
       bindRawQuic: () => { throw new Error("unused"); },
+      connectRawQuicV3: () => { throw new Error("unused"); },
+      bindRawQuicV3: () => { throw new Error("unused"); },
     }) as unknown as NativeTransportAddonBinding;
     expect(loadNativeTransportAddon((specifier) => {
       requested.push(specifier);
@@ -56,9 +59,11 @@ describe("native transport addon loader", () => {
     const previousAddon = process.env.FLOWERSEC_SERVER_PARITY_NATIVE_ADDON;
     const requested: string[] = [];
     const addon = Object.freeze({
-      contractVersion: () => 1,
+      contractVersion: () => 2,
       connectRawQuic: () => { throw new Error("unused"); },
       bindRawQuic: () => { throw new Error("unused"); },
+      connectRawQuicV3: () => { throw new Error("unused"); },
+      bindRawQuicV3: () => { throw new Error("unused"); },
     }) as unknown as NativeTransportAddonBinding;
     try {
       process.env.FLOWERSEC_SERVER_PARITY_NATIVE_ADDON = "/tmp/flowersec-parity-addon.js";
@@ -88,6 +93,46 @@ describe("native transport addon loader", () => {
     })).toBeUndefined();
   });
 
+  test("rejects incomplete and wrong-version addon contracts", () => {
+    const complete = {
+      contractVersion: () => 2,
+      connectRawQuic: () => { throw new Error("unused"); },
+      bindRawQuic: () => { throw new Error("unused"); },
+      connectRawQuicV3: () => { throw new Error("unused"); },
+      bindRawQuicV3: () => { throw new Error("unused"); },
+    };
+    expect(tryLoadNativeTransportAddon(() => ({ ...complete, contractVersion: () => 1 }))).toBeUndefined();
+    expect(tryLoadNativeTransportAddon(() => ({
+      ...complete,
+      connectRawQuicV3: undefined,
+    }))).toBeUndefined();
+  });
+
+  test("rejects a v2 session returned by the v3 addon entrypoint", async () => {
+    let abortCalls = 0;
+    const session = {
+      ...nativeSessionBinding({}),
+      abort: () => { abortCalls += 1; },
+    };
+    const addon = {
+      contractVersion: () => 2,
+      connectRawQuicV3: () => ({ result: async () => session, cancel: () => undefined }),
+      bindRawQuicV3: () => { throw new Error("unused"); },
+    } as unknown as NativeTransportAddonBinding;
+
+    await expect(createNativeRawQuicDriverV3(addon).connectRawQuic({
+      host: "127.0.0.1",
+      port: 443,
+      serverName: "localhost",
+      path: "direct",
+      tlsMode: "pin",
+      activeLeafDerSha256: [new Uint8Array(32)],
+      inboundBidirectionalStreamCapacity: 3,
+      handshakeTimeoutMs: 1_000,
+    })).rejects.toMatchObject({ code: "native_transport_unavailable" });
+    expect(abortCalls).toBe(1);
+  });
+
   test("cancels a pending native connect without a fallback", async () => {
     let canceled = 0;
     const operation = {
@@ -95,7 +140,7 @@ describe("native transport addon loader", () => {
       cancel: () => { canceled += 1; },
     };
     const addon = {
-      contractVersion: () => 1,
+      contractVersion: () => 2,
       connectRawQuic: () => operation,
       bindRawQuic: () => { throw new Error("unused"); },
     } as unknown as NativeTransportAddonBinding;
@@ -120,6 +165,7 @@ describe("native transport addon loader", () => {
     const session = {
       kind: "raw_quic",
       path: "direct",
+      wireVersion: 2,
       inboundBidirectionalStreamCapacity: 3,
       localAddress: () => ({ host: "127.0.0.1", port: 1 }),
       peerAddress: () => ({ host: "127.0.0.1", port: 2 }),
@@ -132,7 +178,7 @@ describe("native transport addon loader", () => {
       abort: () => undefined,
     };
     const addon = {
-      contractVersion: () => 1,
+      contractVersion: () => 2,
       connectRawQuic: () => ({ result: async () => session, cancel: () => undefined }),
       bindRawQuic: () => { throw new Error("unused"); },
     } as unknown as NativeTransportAddonBinding;
@@ -162,7 +208,7 @@ describe("native transport addon loader", () => {
     };
     const session = nativeSessionBinding(stream);
     const addon = {
-      contractVersion: () => 1,
+      contractVersion: () => 2,
       connectRawQuic: () => ({ result: async () => session, cancel: () => undefined }),
       bindRawQuic: () => { throw new Error("unused"); },
     } as unknown as NativeTransportAddonBinding;
@@ -188,7 +234,7 @@ describe("native transport addon loader", () => {
     };
     const session = nativeSessionBinding(stream);
     const addon = {
-      contractVersion: () => 1,
+      contractVersion: () => 2,
       connectRawQuic: () => ({ result: async () => session, cancel: () => undefined }),
       bindRawQuic: () => { throw new Error("unused"); },
     } as unknown as NativeTransportAddonBinding;
@@ -218,7 +264,7 @@ describe("native transport addon loader", () => {
     };
     const session = nativeSessionBinding(stream);
     const addon = {
-      contractVersion: () => 1,
+      contractVersion: () => 2,
       connectRawQuic: () => ({ result: async () => session, cancel: () => undefined }),
       bindRawQuic: () => { throw new Error("unused"); },
     } as unknown as NativeTransportAddonBinding;
@@ -277,6 +323,7 @@ function nativeSessionBinding(stream: object) {
   return {
     kind: "raw_quic" as const,
     path: "direct" as const,
+    wireVersion: 2 as const,
     inboundBidirectionalStreamCapacity: 3,
     localAddress: () => ({ host: "127.0.0.1", port: 1 }),
     peerAddress: () => ({ host: "127.0.0.1", port: 2 }),

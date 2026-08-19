@@ -6,9 +6,9 @@ import Darwin
 import Glibc
 #endif
 
-func renderPublicContractV2() -> String {
+func renderPublicContractV3() -> String {
   return """
-    transport=v2
+    transport=v3
     session_api=opaque
 
     """
@@ -16,7 +16,7 @@ func renderPublicContractV2() -> String {
 
 func commitSpendReceipt(at path: String) throws {
   let receiptURL = URL(fileURLWithPath: path)
-  try Data("flowersec-v2-artifact-spent\n".utf8).write(
+  try Data("flowersec-v3-artifact-spent\n".utf8).write(
     to: receiptURL,
     options: .withoutOverwriting
   )
@@ -51,7 +51,7 @@ func syncDirectory(at directoryURL: URL) throws {
   }
 }
 
-func retryDispositionV2(for error: any Error) -> RetryDisposition? {
+func retryDispositionV3(for error: any Error) -> RetryDisposition? {
   if let connectError = error as? ConnectError {
     return connectError.retryDisposition
   }
@@ -145,11 +145,11 @@ private func readAll(from stream: any ByteStream) async throws -> Data {
 @main
 private enum FlowersecSwiftClientExample {
   static func main() async throws {
-    print(renderPublicContractV2(), terminator: "")
-    guard let artifactPath = ProcessInfo.processInfo.environment["FSEC_ARTIFACT_V2_PATH"] else {
+    print(renderPublicContractV3(), terminator: "")
+    guard let artifactPath = ProcessInfo.processInfo.environment["FSEC_ARTIFACT_V3_PATH"] else {
       return
     }
-    guard let receiptPath = ProcessInfo.processInfo.environment["FSEC_SPEND_RECEIPT_V2_PATH"] else {
+    guard let receiptPath = ProcessInfo.processInfo.environment["FSEC_SPEND_RECEIPT_V3_PATH"] else {
       throw ExampleConfigurationError.missingSpendReceiptPath
     }
     let artifact = try parseArtifact(Data(contentsOf: URL(fileURLWithPath: artifactPath)))
@@ -160,7 +160,7 @@ private enum FlowersecSwiftClientExample {
     do {
       session = try await connect(lease: lease)
     } catch {
-      if let disposition = retryDispositionV2(for: error) {
+      if let disposition = retryDispositionV3(for: error) {
         print("recovery=\(String(describing: disposition))")
       }
       throw error
@@ -168,7 +168,7 @@ private enum FlowersecSwiftClientExample {
     do {
       try await runApplicationWorkflow(session: session)
     } catch {
-      if let disposition = retryDispositionV2(for: error) {
+      if let disposition = retryDispositionV3(for: error) {
         print("recovery=\(String(describing: disposition))")
       }
       try? await session.close()

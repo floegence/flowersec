@@ -6,6 +6,10 @@ const externalParityRequested = process.env.FLOWERSEC_PARITY_READY_BASE64 !== un
 const chromiumTests = externalParityRequested
   ? /(Chromium (runs|WebTransport)|Portable browsers run)/
   : /(Chromium (?!runs the WebSocket client profile)(runs|WebTransport)|Portable browsers run)/;
+const publicCAHost = process.env.FLOWERSEC_BROWSER_PUBLIC_CA_HOST;
+if (publicCAHost !== undefined && !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/u.test(publicCAHost)) {
+  throw new Error("FLOWERSEC_BROWSER_PUBLIC_CA_HOST must be a canonical DNS hostname");
+}
 
 export default defineConfig({
   testDir: "./browser-e2e",
@@ -22,7 +26,13 @@ export default defineConfig({
       grep: chromiumTests,
       use: {
         browserName: "chromium",
-        channel: "chromium",
+        launchOptions: publicCAHost === undefined ? undefined : {
+          args: [
+            "--proxy-server=direct://",
+            "--proxy-bypass-list=*",
+            `--host-resolver-rules=MAP ${publicCAHost} 127.0.0.1`,
+          ],
+        },
       },
     },
     {

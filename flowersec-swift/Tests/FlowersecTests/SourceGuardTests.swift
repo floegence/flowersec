@@ -101,7 +101,9 @@ final class SourceGuardTests: XCTestCase {
     let sourceRoot = packageRoot().appendingPathComponent("flowersec-swift/Sources/Flowersec")
     let publicContractFiles: Set<String> = [
       "Artifact.swift",
+      "ArtifactV3.swift",
       "ConnectionController.swift",
+      "ConnectionControllerV2.swift",
       "Connector.swift",
       "RetryDisposition.swift",
       "StreamHandlers.swift",
@@ -217,6 +219,40 @@ final class SourceGuardTests: XCTestCase {
     ] {
       XCTAssertFalse(source.contains(symbol), "Swift SDK must not restore legacy symbol \(symbol)")
     }
+  }
+
+  func testV3ImplementationDoesNotReuseV2WireOrCryptoDomains() throws {
+    let sourceRoot = packageRoot().appendingPathComponent("flowersec-swift/Sources/Flowersec")
+    let v3Files = try swiftFiles(under: sourceRoot).filter {
+      $0.deletingPathExtension().lastPathComponent.hasSuffix("V3")
+    }
+    XCTAssertFalse(v3Files.isEmpty)
+    for file in v3Files {
+      let text = try String(contentsOf: file, encoding: .utf8)
+      for forbidden in ["TransportV2", "IDNAHostV2", "flowersec/2", "flowersec-v2", "flowersec v2"] {
+        XCTAssertFalse(text.contains(forbidden), "\(file.lastPathComponent) contains \(forbidden)")
+      }
+      for magic in ["FSC2", "FSH2", "FSS2", "FSR2", "FSD2"] {
+        XCTAssertFalse(text.contains(magic), "\(file.lastPathComponent) contains \(magic)")
+      }
+    }
+  }
+
+  func testUnversionedArtifactAndConnectorSurfaceIsStrictV3() throws {
+    let sourceRoot = packageRoot().appendingPathComponent("flowersec-swift/Sources/Flowersec")
+    let artifact = try String(
+      contentsOf: sourceRoot.appendingPathComponent("ArtifactV3.swift"), encoding: .utf8)
+    let connector = try String(
+      contentsOf: sourceRoot.appendingPathComponent("Connector.swift"), encoding: .utf8)
+
+    XCTAssertTrue(artifact.contains("public typealias Artifact = ArtifactV3"))
+    XCTAssertTrue(artifact.contains("public typealias ArtifactLease = ArtifactLeaseV3"))
+    XCTAssertTrue(
+      artifact.contains("public func parseArtifact(_ data: Data) throws -> Artifact"))
+    XCTAssertTrue(artifact.contains("try parseArtifactV3(data)"))
+    XCTAssertEqual(connector.components(separatedBy: "public func connect(").count - 1, 1)
+    XCTAssertTrue(connector.contains("lease: ArtifactLease,"))
+    XCTAssertTrue(connector.contains("try await connectV3(lease: lease, options: options)"))
   }
 
   private func swiftFiles(under root: URL) throws -> [URL] {

@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
@@ -24,14 +23,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
-	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
-	carrieryamux "github.com/floegence/flowersec/flowersec-go/v2/internal/mux/yamux"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/quicbase"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/rawquic"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocket"
+	carrierwt "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/webtransport"
+	carrieryamux "github.com/floegence/flowersec/flowersec-go/v3/internal/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv2"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/session"
 	gorillaws "github.com/gorilla/websocket"
 	"github.com/quic-go/quic-go/http3"
 )
@@ -411,21 +410,11 @@ func localTLSForHost(kind carrier.Kind, listenHost string) (*tls.Config, *tls.Co
 	default:
 		return nil, nil, fmt.Errorf("unsupported carrier %q", kind)
 	}
-	var publicKey any
-	var privateKey any
-	if kind == carrier.KindWebTransport {
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			return nil, nil, err
-		}
-		publicKey, privateKey = &key.PublicKey, key
-	} else {
-		keyPublic, keyPrivate, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			return nil, nil, err
-		}
-		publicKey, privateKey = keyPublic, keyPrivate
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
 	}
+	publicKey := &privateKey.PublicKey
 	serverName := "localhost"
 	ipAddresses := []net.IP{net.ParseIP("127.0.0.1")}
 	if listenHost != "" && listenHost != "127.0.0.1" {

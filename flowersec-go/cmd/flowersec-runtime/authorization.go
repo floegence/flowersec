@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -14,10 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/tunnelv3"
 )
 
 const (
@@ -40,7 +42,7 @@ type authorizationProvider interface {
 }
 
 type authorizationRequest struct {
-	FSB2Base64URL string `json:"fsb2_base64url"`
+	FSB3Base64URL string `json:"fsb3_base64url"`
 	Carrier       string `json:"carrier"`
 	RemoteAddress string `json:"remote_address"`
 }
@@ -59,7 +61,7 @@ type authorizationResponse struct {
 type directAuthorization struct {
 	Session  authorizedSessionContract `json:"session"`
 	Upstream upstreamTarget            `json:"upstream"`
-	lease    tunnelv2.Lease
+	lease    tunnelv3.Lease
 }
 
 func (authorization *directAuthorization) Release() {
@@ -229,21 +231,21 @@ func withAuthorizationContext(ctx context.Context, value authorizationContext) c
 	return context.WithValue(ctx, authorizationContextKey{}, value)
 }
 
-func requestForAuthorization(ctx context.Context, decoded *artifactv2.DecodedRequest) (authorizationRequest, error) {
+func requestForAuthorization(ctx context.Context, decoded *artifactv3.DecodedRequest) (authorizationRequest, error) {
 	if decoded == nil || len(decoded.Raw) == 0 {
 		return authorizationRequest{}, ErrInvalidAuthorization
 	}
 	transport, ok := ctx.Value(authorizationContextKey{}).(authorizationContext)
-	if !ok || transport.carrier.Validate() != nil {
+	if !ok || transport.carrier.Validate() != nil || transport.remoteAddress == "" {
 		return authorizationRequest{}, ErrInvalidAuthorization
 	}
 	return authorizationRequest{
-		FSB2Base64URL: base64.RawURLEncoding.EncodeToString(decoded.Raw),
+		FSB3Base64URL: base64.RawURLEncoding.EncodeToString(decoded.Raw),
 		Carrier:       string(transport.carrier), RemoteAddress: transport.remoteAddress,
 	}, nil
 }
 
-func authorizeDirect(ctx context.Context, provider authorizationProvider, decoded *artifactv2.DecodedRequest, reasons artifactv2.ReasonRegistry, maxInbound uint16) (artifactv2.AdmissionResponse, *directAuthorization, error) {
+func authorizeDirect(ctx context.Context, provider authorizationProvider, decoded *artifactv3.DecodedRequest, reasons artifactv3.ReasonRegistry, maxInbound uint16) (artifactv3.AdmissionResponse, *directAuthorization, error) {
 	input, err := requestForAuthorization(ctx, decoded)
 	if err != nil {
 		return retryResponse(reasonAuthorizationUnavailable), nil, nil
@@ -267,34 +269,34 @@ func authorizeDirect(ctx context.Context, provider authorizationProvider, decode
 		return response, nil, err
 	}
 	if lease == nil {
-		return artifactv2.AdmissionResponse{}, nil, ErrInvalidAuthorization
+		return artifactv3.AdmissionResponse{}, nil, ErrInvalidAuthorization
 	}
-	if decoded.Request.PathKind != artifactv2.PathDirect || decision.Direct == nil ||
-		decision.CredentialID == "" || decision.LeaseID == "" || decision.ExpiresAt.IsZero() || !decision.ExpiresAt.After(time.Now()) ||
+	if decoded.Request.PathKind != artifactv3.PathDirect || decision.Direct == nil ||
+		!credentialIDMatches(decoded, decision.CredentialID) || decision.LeaseID == "" || decision.ExpiresAt.IsZero() || !decision.ExpiresAt.After(time.Now()) ||
 		decision.ExpectedPeerEndpointInstanceID != "" || decision.AllowReplacement {
-		return artifactv2.AdmissionResponse{}, nil, ErrInvalidAuthorization
+		return artifactv3.AdmissionResponse{}, nil, ErrInvalidAuthorization
 	}
 	contract, err := decision.Direct.Session.contract()
 	if err != nil || contract.ChannelID != decoded.Request.ChannelID || contract.ContractHash != decoded.Request.SessionContractHash || contract.MaxInboundStreams != maxInbound || time.Now().Unix() >= contract.InitExpireAtUnixSeconds {
-		return artifactv2.AdmissionResponse{}, nil, ErrInvalidAuthorization
+		return artifactv3.AdmissionResponse{}, nil, ErrInvalidAuthorization
 	}
 	if decision.Direct.Upstream.Network != "tcp" || decision.Direct.Upstream.Address == "" {
-		return artifactv2.AdmissionResponse{}, nil, ErrInvalidAuthorization
+		return artifactv3.AdmissionResponse{}, nil, ErrInvalidAuthorization
 	}
 	decision.Direct.lease = lease
 	releaseOnReturn = false
 	return response, decision.Direct, nil
 }
 
-func tunnelAuthorizer(provider authorizationProvider, reasons artifactv2.ReasonRegistry) tunnelv2.Authorize {
-	return func(ctx context.Context, decoded *artifactv2.DecodedRequest) (tunnelv2.Authorization, error) {
+func tunnelAuthorizer(provider authorizationProvider, reasons artifactv3.ReasonRegistry) tunnelv3.Authorize {
+	return func(ctx context.Context, decoded *artifactv3.DecodedRequest) (tunnelv3.Authorization, error) {
 		input, err := requestForAuthorization(ctx, decoded)
 		if err != nil {
-			return tunnelv2.Authorization{}, &admissionv2.ResponseError{Status: artifactv2.AdmissionRetryable, Reason: reasonAuthorizationUnavailable}
+			return tunnelv3.Authorization{}, &admissionv3.ResponseError{Status: artifactv3.AdmissionRetryable, Reason: reasonAuthorizationUnavailable}
 		}
 		decision, err := provider.Authorize(ctx, input)
 		if err != nil {
-			return tunnelv2.Authorization{}, &admissionv2.ResponseError{Status: artifactv2.AdmissionRetryable, Reason: reasonAuthorizationUnavailable}
+			return tunnelv3.Authorization{}, &admissionv3.ResponseError{Status: artifactv3.AdmissionRetryable, Reason: reasonAuthorizationUnavailable}
 		}
 		var lease *externalLease
 		if decision.Decision == "allow" && decision.LeaseID != "" {
@@ -308,22 +310,22 @@ func tunnelAuthorizer(provider authorizationProvider, reasons artifactv2.ReasonR
 		}()
 		response, allowed, err := admissionDecision(decision, reasons)
 		if err != nil {
-			return tunnelv2.Authorization{}, err
+			return tunnelv3.Authorization{}, err
 		}
 		if !allowed {
-			return tunnelv2.Authorization{}, &admissionv2.ResponseError{Status: response.Status, Reason: response.Reason}
+			return tunnelv3.Authorization{}, &admissionv3.ResponseError{Status: response.Status, Reason: response.Reason}
 		}
 		if lease == nil {
-			return tunnelv2.Authorization{}, ErrInvalidAuthorization
+			return tunnelv3.Authorization{}, ErrInvalidAuthorization
 		}
-		if decoded == nil || decoded.Request.PathKind != artifactv2.PathTunnel || decision.Direct != nil ||
-			decision.CredentialID == "" || decision.LeaseID == "" || decision.ExpiresAt.IsZero() ||
+		if decoded == nil || decoded.Request.PathKind != artifactv3.PathTunnel || decision.Direct != nil ||
+			!credentialIDMatches(decoded, decision.CredentialID) || decision.LeaseID == "" || decision.ExpiresAt.IsZero() ||
 			decision.ExpectedPeerEndpointInstanceID == "" {
-			return tunnelv2.Authorization{}, ErrInvalidAuthorization
+			return tunnelv3.Authorization{}, ErrInvalidAuthorization
 		}
 		request := decoded.Request
-		authorization := tunnelv2.Authorization{
-			Claims: tunnelv2.VerifiedClaims{
+		authorization := tunnelv3.Authorization{
+			Claims: tunnelv3.VerifiedClaims{
 				CredentialID: decision.CredentialID, ChannelID: request.ChannelID, Profile: request.Profile,
 				RendezvousGroupID: request.RendezvousGroupID, SessionContractHash: request.SessionContractHash,
 				CandidateSetHash: request.CandidateSetHash, ListenerAudience: request.ListenerAudience,
@@ -339,37 +341,57 @@ func tunnelAuthorizer(provider authorizationProvider, reasons artifactv2.ReasonR
 	}
 }
 
-func admissionDecision(decision authorizationResponse, reasons artifactv2.ReasonRegistry) (artifactv2.AdmissionResponse, bool, error) {
+func credentialIDMatches(decoded *artifactv3.DecodedRequest, credentialID string) bool {
+	expected, ok := credentialIDFor(decoded)
+	return ok && credentialID != "" && subtle.ConstantTimeCompare([]byte(expected), []byte(credentialID)) == 1
+}
+
+func credentialIDFor(decoded *artifactv3.DecodedRequest) (string, bool) {
+	if decoded == nil {
+		return "", false
+	}
+	credential := decoded.Request.RoutingToken
+	if decoded.Request.PathKind == artifactv3.PathTunnel {
+		credential = decoded.Request.AttachToken
+	}
+	if credential == "" {
+		return "", false
+	}
+	digest := sha256.Sum256([]byte(credential))
+	return base64.RawURLEncoding.EncodeToString(digest[:]), true
+}
+
+func admissionDecision(decision authorizationResponse, reasons artifactv3.ReasonRegistry) (artifactv3.AdmissionResponse, bool, error) {
 	switch decision.Decision {
 	case "allow":
 		if decision.Reason != "" {
-			return artifactv2.AdmissionResponse{}, false, ErrInvalidAuthorization
+			return artifactv3.AdmissionResponse{}, false, ErrInvalidAuthorization
 		}
-		return artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, true, nil
+		return artifactv3.AdmissionResponse{Status: artifactv3.AdmissionSuccess}, true, nil
 	case "reject", "retry":
 		if _, ok := reasons[decision.Reason]; !ok {
-			return artifactv2.AdmissionResponse{}, false, ErrInvalidAuthorization
+			return artifactv3.AdmissionResponse{}, false, ErrInvalidAuthorization
 		}
-		status := artifactv2.AdmissionReject
+		status := artifactv3.AdmissionReject
 		if decision.Decision == "retry" {
-			status = artifactv2.AdmissionRetryable
+			status = artifactv3.AdmissionRetryable
 		}
-		return artifactv2.AdmissionResponse{Status: status, Reason: decision.Reason}, false, nil
+		return artifactv3.AdmissionResponse{Status: status, Reason: decision.Reason}, false, nil
 	default:
-		return artifactv2.AdmissionResponse{}, false, ErrInvalidAuthorization
+		return artifactv3.AdmissionResponse{}, false, ErrInvalidAuthorization
 	}
 }
 
-func retryResponse(reason string) artifactv2.AdmissionResponse {
-	return artifactv2.AdmissionResponse{Status: artifactv2.AdmissionRetryable, Reason: reason}
+func retryResponse(reason string) artifactv3.AdmissionResponse {
+	return artifactv3.AdmissionResponse{Status: artifactv3.AdmissionRetryable, Reason: reason}
 }
 
-func (wire authorizedSessionContract) contract() (artifactv2.SessionContract, error) {
+func (wire authorizedSessionContract) contract() (artifactv3.SessionContract, error) {
 	psk, err := base64.RawURLEncoding.DecodeString(wire.E2EEPSKBase64URL)
 	if err != nil || len(psk) != 32 {
-		return artifactv2.SessionContract{}, ErrInvalidAuthorization
+		return artifactv3.SessionContract{}, ErrInvalidAuthorization
 	}
-	contract := artifactv2.SessionContract{
+	contract := artifactv3.SessionContract{
 		ChannelID: wire.ChannelID, InitExpireAtUnixSeconds: wire.InitExpireAtUnixSeconds,
 		IdleTimeoutSeconds: wire.IdleTimeoutSeconds, EstablishTimeoutSeconds: wire.EstablishTimeoutSeconds,
 		RekeyPrepareTimeoutSeconds: wire.RekeyPrepareTimeoutSeconds, RekeyCompletionTimeoutSeconds: wire.RekeyCompletionTimeoutSeconds,
@@ -377,9 +399,9 @@ func (wire authorizedSessionContract) contract() (artifactv2.SessionContract, er
 		DefaultSuite: wire.DefaultSuite, SelectedFeatures: wire.SelectedFeatures,
 	}
 	copy(contract.E2EEPSK[:], psk)
-	hash, _, err := artifactv2.ComputeSessionContractHash(contract)
+	hash, _, err := artifactv3.ComputeSessionContractHash(contract)
 	if err != nil {
-		return artifactv2.SessionContract{}, ErrInvalidAuthorization
+		return artifactv3.SessionContract{}, ErrInvalidAuthorization
 	}
 	contract.ContractHash = hash
 	return contract, nil

@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
 )
 
 type fakeAuthorizationProvider struct {
@@ -57,21 +57,23 @@ func TestAuthorizeDirectBindsContractAndUpstream(t *testing.T) {
 		Decision: "allow", CredentialID: "credential-a", LeaseID: "lease-a", ExpiresAt: time.Now().Add(time.Minute),
 		Direct: &directAuthorization{Session: wire, Upstream: upstreamTarget{Network: "tcp", Address: "127.0.0.1:9000"}},
 	}}
-	decoded := &artifactv2.DecodedRequest{
-		Raw: []byte("FSB2 fixture"),
-		Request: artifactv2.Request{
-			PathKind: artifactv2.PathDirect, ChannelID: "channel-a", SessionContractHash: contract.ContractHash,
+	decoded := &artifactv3.DecodedRequest{
+		Raw: []byte("FSB3 fixture"),
+		Request: artifactv3.Request{
+			PathKind: artifactv3.PathDirect, ChannelID: "channel-a", SessionContractHash: contract.ContractHash,
+			RoutingToken: "routing-token",
 		},
 	}
-	ctx := withAuthorizationContext(context.Background(), authorizationContext{carrier: carrier.KindRawQUIC})
+	provider.response.CredentialID, _ = credentialIDFor(decoded)
+	ctx := withAuthorizationContext(context.Background(), authorizationContext{carrier: carrier.KindRawQUIC, remoteAddress: "127.0.0.1:1"})
 	response, authorization, err := authorizeDirect(ctx, provider, decoded, runtimeReasons(), 32)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.Status != artifactv2.AdmissionSuccess || authorization == nil || authorization.Upstream.Address != "127.0.0.1:9000" {
+	if response.Status != artifactv3.AdmissionSuccess || authorization == nil || authorization.Upstream.Address != "127.0.0.1:9000" {
 		t.Fatalf("unexpected authorization: %+v %+v", response, authorization)
 	}
-	if len(provider.requests) != 1 || provider.requests[0].Carrier != string(carrier.KindRawQUIC) || provider.requests[0].RemoteAddress != "" {
+	if len(provider.requests) != 1 || provider.requests[0].Carrier != string(carrier.KindRawQUIC) || provider.requests[0].RemoteAddress != "127.0.0.1:1" {
 		t.Fatalf("unexpected request: %+v", provider.requests)
 	}
 	authorization.Release()
@@ -83,10 +85,10 @@ func TestAuthorizeDirectBindsContractAndUpstream(t *testing.T) {
 
 func TestAuthorizeDirectConvertsProviderFailureToRetry(t *testing.T) {
 	provider := &fakeAuthorizationProvider{err: errors.New("offline")}
-	decoded := &artifactv2.DecodedRequest{Raw: []byte("FSB2 fixture")}
+	decoded := &artifactv3.DecodedRequest{Raw: []byte("FSB3 fixture")}
 	ctx := withAuthorizationContext(context.Background(), authorizationContext{carrier: carrier.KindWebSocket, remoteAddress: "127.0.0.1:1"})
 	response, authorization, err := authorizeDirect(ctx, provider, decoded, runtimeReasons(), 32)
-	if err != nil || authorization != nil || response.Status != artifactv2.AdmissionRetryable || response.Reason != reasonAuthorizationUnavailable {
+	if err != nil || authorization != nil || response.Status != artifactv3.AdmissionRetryable || response.Reason != reasonAuthorizationUnavailable {
 		t.Fatalf("unexpected retry result: %+v %+v %v", response, authorization, err)
 	}
 }
@@ -96,7 +98,7 @@ func TestAuthorizeDirectReleasesAllowLeaseWhenContractIsInvalid(t *testing.T) {
 		Decision: "allow", CredentialID: "credential-a", LeaseID: "lease-invalid-direct", ExpiresAt: time.Now().Add(time.Minute),
 		Direct: &directAuthorization{Session: validAuthorizedSession(t, "wrong-channel", 32), Upstream: upstreamTarget{Network: "tcp", Address: "127.0.0.1:9000"}},
 	}}
-	decoded := &artifactv2.DecodedRequest{Raw: []byte("FSB2 fixture"), Request: artifactv2.Request{PathKind: artifactv2.PathDirect, ChannelID: "expected-channel"}}
+	decoded := &artifactv3.DecodedRequest{Raw: []byte("FSB3 fixture"), Request: artifactv3.Request{PathKind: artifactv3.PathDirect, ChannelID: "expected-channel"}}
 	ctx := withAuthorizationContext(context.Background(), authorizationContext{carrier: carrier.KindWebSocket, remoteAddress: "127.0.0.1:1"})
 	if _, authorization, err := authorizeDirect(ctx, provider, decoded, runtimeReasons(), 32); !errors.Is(err, ErrInvalidAuthorization) || authorization != nil {
 		t.Fatalf("invalid direct authorization = %+v, %v", authorization, err)
@@ -111,17 +113,19 @@ func TestTunnelAuthorizerBindsClaimsAndReleasesLeaseOnce(t *testing.T) {
 		Decision: "allow", CredentialID: "credential-a", LeaseID: "lease-a",
 		ExpiresAt: time.Now().Add(time.Minute), ExpectedPeerEndpointInstanceID: "peer-b",
 	}}
-	decoded := &artifactv2.DecodedRequest{Raw: []byte("FSB2 fixture"), Request: artifactv2.Request{
-		PathKind: artifactv2.PathTunnel, Profile: artifactv2.Profile, ChannelID: "channel-a",
+	decoded := &artifactv3.DecodedRequest{Raw: []byte("FSB3 fixture"), Request: artifactv3.Request{
+		PathKind: artifactv3.PathTunnel, Profile: artifactv3.Profile, ChannelID: "channel-a",
 		RendezvousGroupID: "group-a", ListenerAudience: "audience-a", Role: 1,
-		EndpointInstanceID: "peer-a",
+		EndpointInstanceID: "peer-a", AttachToken: "attach-token",
 	}}
+	provider.response.CredentialID, _ = credentialIDFor(decoded)
 	ctx := withAuthorizationContext(context.Background(), authorizationContext{carrier: carrier.KindWebTransport, remoteAddress: "127.0.0.1:2"})
 	authorization, err := tunnelAuthorizer(provider, runtimeReasons())(ctx, decoded)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if authorization.Claims.CredentialID != "credential-a" || authorization.Claims.ExpectedPeerEndpointInstanceID != "peer-b" || authorization.Lease == nil {
+	expectedCredentialID, _ := credentialIDFor(decoded)
+	if authorization.Claims.CredentialID != expectedCredentialID || authorization.Claims.ExpectedPeerEndpointInstanceID != "peer-b" || authorization.Lease == nil {
 		t.Fatalf("unexpected claims: %+v", authorization.Claims)
 	}
 	authorization.Lease.Release()
@@ -136,7 +140,7 @@ func TestTunnelAuthorizerReleasesAllowLeaseWhenClaimsAreInvalid(t *testing.T) {
 		Decision: "allow", CredentialID: "credential-a", LeaseID: "lease-invalid-tunnel",
 		ExpiresAt: time.Now().Add(time.Minute),
 	}}
-	decoded := &artifactv2.DecodedRequest{Raw: []byte("FSB2 fixture"), Request: artifactv2.Request{PathKind: artifactv2.PathTunnel}}
+	decoded := &artifactv3.DecodedRequest{Raw: []byte("FSB3 fixture"), Request: artifactv3.Request{PathKind: artifactv3.PathTunnel}}
 	ctx := withAuthorizationContext(context.Background(), authorizationContext{carrier: carrier.KindWebSocket, remoteAddress: "127.0.0.1:2"})
 	if _, err := tunnelAuthorizer(provider, runtimeReasons())(ctx, decoded); !errors.Is(err, ErrInvalidAuthorization) {
 		t.Fatalf("invalid tunnel authorization error = %v", err)
@@ -155,7 +159,7 @@ func TestHTTPAuthorizationProviderAcceptsSecretFreeTunnelResponse(t *testing.T) 
 	defer server.Close()
 
 	provider := &httpAuthorizationProvider{url: server.URL, client: server.Client()}
-	decision, err := provider.Authorize(context.Background(), authorizationRequest{FSB2Base64URL: "RlNCMg", Carrier: "websocket"})
+	decision, err := provider.Authorize(context.Background(), authorizationRequest{FSB3Base64URL: "RlNCMw", Carrier: "websocket"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +211,7 @@ func TestHTTPAuthorizationProviderRejectsTunnelSessionOverclaim(t *testing.T) {
 	defer server.Close()
 
 	provider := &httpAuthorizationProvider{url: server.URL, client: server.Client()}
-	_, err := provider.Authorize(context.Background(), authorizationRequest{FSB2Base64URL: "RlNCMg", Carrier: "websocket"})
+	_, err := provider.Authorize(context.Background(), authorizationRequest{FSB3Base64URL: "RlNCMw", Carrier: "websocket"})
 	if !errors.Is(err, ErrInvalidAuthorization) {
 		t.Fatalf("session overclaim error = %v, want ErrInvalidAuthorization", err)
 	}
@@ -235,8 +239,8 @@ func validAuthorizedSession(t *testing.T, channel string, maxInbound uint16) aut
 	}
 }
 
-func runtimeReasons() artifactv2.ReasonRegistry {
-	return artifactv2.ReasonRegistry{
+func runtimeReasons() artifactv3.ReasonRegistry {
+	return artifactv3.ReasonRegistry{
 		reasonAuthorizationDenied: {}, reasonAuthorizationUnavailable: {}, "policy_denied": {},
 	}
 }

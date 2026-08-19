@@ -253,9 +253,9 @@ describe("Node Acceptor handler lifecycle", () => {
     const handlers = new SessionHandlers({ maxConcurrentStreams: 2 });
     handlers.handleRPC(17, async (payload) => ({ payload }));
     handlers.handleStream("accepted-handler", async (incoming) => {
-      expect(new TextDecoder().decode(await incoming.stream.read())).toBe(
-        "handled",
-      );
+      const payload = await incoming.stream.read();
+      expect(payload).not.toBeNull();
+      expect(new TextDecoder().decode(payload!)).toBe("handled");
     });
     const acceptor = await createAcceptor({
       listeners: [
@@ -316,7 +316,9 @@ describe("Node Acceptor handler lifecycle", () => {
     });
     const handlers = new SessionHandlers({ maxConcurrentStreams: 1 });
     handlers.handleStream("handler-failure", async (incoming) => {
-      const payload = new TextDecoder().decode(await incoming.stream.read());
+      const bytes = await incoming.stream.read();
+      expect(bytes).not.toBeNull();
+      const payload = new TextDecoder().decode(bytes!);
       calls++;
       if (calls === 1) throw new Error("application handler failed");
       resolveSecond(payload);

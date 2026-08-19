@@ -6,8 +6,12 @@ import {
   type NativeCarrierStreamV2,
 } from "../v2/carrier.js";
 import type { PathKind } from "../v2/contract.js";
+import type {
+  NativeCarrierSessionV3,
+  NativeCarrierStreamV3,
+} from "../v3/carrier.js";
 
-export const NATIVE_TRANSPORT_CONTRACT_VERSION = 1;
+export const NATIVE_TRANSPORT_CONTRACT_VERSION = 2;
 const NATIVE_PACKAGE = "@floegence/flowersec-node-native";
 const SERVER_PARITY_NATIVE_ADDON = "FLOWERSEC_SERVER_PARITY_NATIVE_ADDON";
 
@@ -31,6 +35,28 @@ export type NativeRawQuicBindOptions = Readonly<{
   handshakeTimeoutMs?: number;
 }>;
 
+type NativeRawQuicConnectOptionsV3Base = Readonly<{
+  host: string;
+  port: number;
+  serverName: string;
+  path: PathKind;
+  inboundBidirectionalStreamCapacity: number;
+  handshakeTimeoutMs: number;
+}>;
+
+export type NativeRawQuicConnectOptionsV3 = NativeRawQuicConnectOptionsV3Base & (
+  | Readonly<{
+      tlsMode: "ca";
+      trustRootsDer: readonly Uint8Array[];
+      activeLeafDerSha256?: never;
+    }>
+  | Readonly<{
+      tlsMode: "pin";
+      activeLeafDerSha256: readonly Uint8Array[];
+      trustRootsDer?: never;
+    }>
+);
+
 export type NativeRawQuicListener = Readonly<{
   address(): Readonly<{ host: string; port: number }>;
   accept(options?: Readonly<{ signal?: AbortSignal }>): Promise<NativeCarrierSessionV2>;
@@ -43,6 +69,20 @@ export type NativeRawQuicDriver = Readonly<{
     operation?: Readonly<{ signal?: AbortSignal }>,
   ): Promise<NativeCarrierSessionV2>;
   bindRawQuic(options: NativeRawQuicBindOptions): Promise<NativeRawQuicListener>;
+}>;
+
+export type NativeRawQuicListenerV3 = Readonly<{
+  address(): Readonly<{ host: string; port: number }>;
+  accept(options?: Readonly<{ signal?: AbortSignal }>): Promise<NativeCarrierSessionV3>;
+  close(): Promise<void>;
+}>;
+
+export type NativeRawQuicDriverV3 = Readonly<{
+  connectRawQuic(
+    options: NativeRawQuicConnectOptionsV3,
+    operation?: Readonly<{ signal?: AbortSignal }>,
+  ): Promise<NativeCarrierSessionV3>;
+  bindRawQuic(options: NativeRawQuicBindOptions): Promise<NativeRawQuicListenerV3>;
 }>;
 
 type NativeOperation<T> = Readonly<{
@@ -63,6 +103,7 @@ type NativeRawQuicStreamBinding = Readonly<{
 type NativeRawQuicSessionBinding = Readonly<{
   kind: "raw_quic";
   path: PathKind;
+  wireVersion: 2 | 3;
   inboundBidirectionalStreamCapacity: number;
   maxDatagramSize?: number;
   localAddress(): Readonly<{ host: string; port: number }>;
@@ -87,6 +128,8 @@ export type NativeTransportAddonBinding = Readonly<{
   contractVersion(): number;
   connectRawQuic(options: NativeRawQuicConnectOptions): NativeOperation<NativeRawQuicSessionBinding>;
   bindRawQuic(options: NativeRawQuicBindOptions): Promise<NativeRawQuicListenerBinding>;
+  connectRawQuicV3(options: NativeRawQuicConnectOptionsV3): NativeOperation<NativeRawQuicSessionBinding>;
+  bindRawQuicV3(options: NativeRawQuicBindOptions): Promise<NativeRawQuicListenerBinding>;
 }>;
 
 export type NativeTransportAddon = NativeTransportAddonBinding;
@@ -142,14 +185,36 @@ export function createNativeRawQuicDriver(
   return Object.freeze({
     async connectRawQuic(options, operation = {}) {
       const native = await settle(addon.connectRawQuic(options), operation.signal);
-      return wrapSession(native);
+      return wrapSession(native, 2);
     },
     async bindRawQuic(options) {
       const native = await addon.bindRawQuic(options);
       return Object.freeze({
         address: () => native.address(),
         accept: async (operation = {}) =>
-          wrapSession(await settle(native.accept(), operation.signal)),
+          wrapSession(await settle(native.accept(), operation.signal), 2),
+        async close() {
+          await native.close();
+        },
+      });
+    },
+  });
+}
+
+export function createNativeRawQuicDriverV3(
+  addon: NativeTransportAddonBinding = loadNativeTransportAddon(),
+): NativeRawQuicDriverV3 {
+  return Object.freeze({
+    async connectRawQuic(options, operation = {}) {
+      const native = await settle(addon.connectRawQuicV3(options), operation.signal);
+      return wrapSession(native, 3);
+    },
+    async bindRawQuic(options) {
+      const native = await addon.bindRawQuicV3(options);
+      return Object.freeze({
+        address: () => native.address(),
+        accept: async (operation = {}) =>
+          wrapSession(await settle(native.accept(), operation.signal), 3),
         async close() {
           await native.close();
         },
@@ -171,10 +236,19 @@ function isNativeTransportAddon(value: unknown): value is NativeTransportAddonBi
   }
   return contractVersion === NATIVE_TRANSPORT_CONTRACT_VERSION &&
     typeof candidate.connectRawQuic === "function" &&
-    typeof candidate.bindRawQuic === "function";
+    typeof candidate.bindRawQuic === "function" &&
+    typeof candidate.connectRawQuicV3 === "function" &&
+    typeof candidate.bindRawQuicV3 === "function";
 }
 
-function wrapSession(native: NativeRawQuicSessionBinding): NativeCarrierSessionV2 {
+function wrapSession(
+  native: NativeRawQuicSessionBinding,
+  expectedWireVersion: 2 | 3,
+): NativeCarrierSessionV2 & NativeCarrierSessionV3 {
+  if (native.wireVersion !== expectedWireVersion) {
+    native.abort();
+    throw new NativeTransportUnavailableError();
+  }
   const unreliableDatagrams = native.maxDatagramSize === undefined
     ? undefined
     : Object.freeze({
@@ -226,7 +300,7 @@ function wrapSession(native: NativeRawQuicSessionBinding): NativeCarrierSessionV
   });
 }
 
-function wrapStream(native: NativeRawQuicStreamBinding): NativeCarrierStreamV2 {
+function wrapStream(native: NativeRawQuicStreamBinding): NativeCarrierStreamV2 & NativeCarrierStreamV3 {
   return Object.freeze({
     read: async () => await nativeStreamCall(native.read()),
     write: async (data) => await nativeStreamCall(native.write(data)),

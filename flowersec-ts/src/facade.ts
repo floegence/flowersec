@@ -1,3 +1,12 @@
+import type { Session as PublicSession } from "./public/contract.js";
+import type {
+  ConnectionControllerOptionsV3 as CoreConnectionControllerOptionsV3,
+  ConnectionControllerSnapshotV3 as CoreConnectionControllerSnapshotV3,
+  ConnectionControllerV3 as CoreConnectionControllerV3,
+} from "./v3/connectionController.js";
+
+export * as v2 from "./v2/index.js";
+
 export type {
   ByteStream,
   IncomingStream,
@@ -27,22 +36,48 @@ export type {
   StreamHandlerOptions,
 } from "./public/streamHandlers.js";
 export {
-  ArtifactLeaseError,
-  createArtifactLease,
-} from "./public/artifactLease.js";
-export type { ArtifactLease } from "./public/artifactLease.js";
-export { Artifact, ArtifactError, parseArtifact } from "./public/artifact.js";
-export type { ArtifactErrorCode } from "./public/artifact.js";
-export type { ConnectErrorCode } from "./public/connectError.js";
-export { ConnectError } from "./public/connectError.js";
-export { ConnectionControllerError } from "./connectionController.js";
+  ArtifactHandleV3 as Artifact,
+  ArtifactHandleV3,
+  ArtifactParseErrorV3 as ArtifactError,
+  ArtifactParseErrorV3,
+  createArtifactLeaseV3 as createArtifactLease,
+  createArtifactLeaseV3,
+  parseArtifactV3 as parseArtifact,
+  parseArtifactV3,
+} from "./v3/publicApi.js";
 export type {
-  ArtifactSource,
-  ArtifactSourceResult,
-  ConnectionController,
-  ConnectionControllerFailure,
-  ConnectionControllerOptions,
-  ConnectionSnapshot,
-  ConnectionState,
-  RetryDisposition,
-} from "./connectionController.js";
+  ArtifactParseErrorCodeV3 as ArtifactErrorCode,
+  ArtifactParseErrorCodeV3,
+} from "./v3/publicApi.js";
+export {
+  ArtifactLeaseV3 as ArtifactLease,
+  ArtifactLeaseV3,
+  ArtifactLeaseV3Error as ArtifactLeaseError,
+  ArtifactLeaseV3Error,
+} from "./v3/artifactLease.js";
+export type {
+  ArtifactSourceResultV3 as ArtifactSourceResult,
+  ArtifactSourceResultV3,
+  ArtifactSourceV3 as ArtifactSource,
+  ArtifactSourceV3,
+  ConnectionControllerFailureV3 as ConnectionControllerFailure,
+  ConnectionControllerFailureV3,
+  ConnectionControllerSnapshotV3,
+  ConnectionControllerStateV3 as ConnectionState,
+  ConnectionControllerStateV3,
+  ConnectionControllerV3,
+} from "./v3/connectionController.js";
+export type ConnectionController = CoreConnectionControllerV3<PublicSession>;
+export type ConnectionSnapshot = CoreConnectionControllerSnapshotV3<PublicSession>;
+export type ConnectionControllerOptions = CoreConnectionControllerOptionsV3;
+export {
+  ConnectionControllerV3Error as ConnectionControllerError,
+  ConnectionControllerV3Error,
+} from "./v3/connectionController.js";
+export { ConnectErrorV3 as ConnectError, ConnectErrorV3 } from "./v3/security.js";
+export type {
+  PublicConnectErrorCodeV3 as ConnectErrorCode,
+  PublicConnectErrorCodeV3,
+  RetryDispositionV3 as RetryDisposition,
+  RetryDispositionV3,
+} from "./v3/security.js";

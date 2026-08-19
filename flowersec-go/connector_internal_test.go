@@ -13,17 +13,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
+	session "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
 )
 
 func mustParseInternalFixtureArtifact(t *testing.T) Artifact {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "testdata", "transport_v2", "artifact_vectors.json"))
+	raw, err := os.ReadFile(filepath.Join("..", "testdata", "transport_v3", "artifact_vectors.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +53,9 @@ func TestArtifactLeaseAuthorizesExactlyOneConcurrentSpend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !lease.claimForConnectionController() {
+		t.Fatal("lease claim failed")
+	}
 	first := make(chan error, 1)
 	go func() { first <- lease.commitSpend(context.Background()) }()
 	<-started
@@ -82,6 +84,9 @@ func TestArtifactLeaseBurnsAfterSpendFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !lease.claimForConnectionController() {
+		t.Fatal("lease claim failed")
+	}
 	if err := lease.commitSpend(context.Background()); err == nil {
 		t.Fatal("first commitSpend() error = nil")
 	}
@@ -102,6 +107,9 @@ func TestArtifactLeaseBurnsAfterSpendCancellation(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !lease.claimForConnectionController() {
+		t.Fatal("lease claim failed")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -205,41 +213,14 @@ func TestConnectorAllowsEmptyOriginForNonWebTransportProfiles(t *testing.T) {
 	}
 }
 
-func TestConnectorRequiresTrustRootsForEverySecureOrMixedCandidateSet(t *testing.T) {
+func TestConnectorUsesPlatformTrustRootsWhenNoPoolIsConfigured(t *testing.T) {
 	secure := mustParseInternalFixtureArtifact(t)
 	secureLease, err := NewArtifactLease(secure, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newConnector(secureLease, ConnectorOptions{}); !errors.Is(err, ErrInvalidConnectorOptions) {
-		t.Fatalf("secure rootless newConnector() error = %v, want invalid options", err)
-	}
-
-	plain := mustParseInternalFixtureArtifact(t)
-	plain.value.Path.Kind = artifactv2.PathDirect
-	plain.value.Path.Candidates = []artifactv2.Candidate{{
-		ID: "loopback", Carrier: artifactv2.CarrierWebSocket,
-		URL: "ws://127.0.0.1:23998/flowersec/v2/direct", WireProfile: "flowersec-direct/2",
-		NormalizedURL: "ws://127.0.0.1:23998/flowersec/v2/direct",
-	}}
-	plainLease, err := NewArtifactLease(plain, func(context.Context) error { return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := newConnector(plainLease, ConnectorOptions{}); err != nil {
-		t.Fatalf("plaintext loopback rootless newConnector() error = %v", err)
-	}
-
-	mixed := mustParseInternalFixtureArtifact(t)
-	secureCandidate := mixed.value.Path.Candidates[0]
-	mixed.value.Path.Kind = artifactv2.PathDirect
-	mixed.value.Path.Candidates = []artifactv2.Candidate{plain.value.Path.Candidates[0], secureCandidate}
-	mixedLease, err := NewArtifactLease(mixed, func(context.Context) error { return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := newConnector(mixedLease, ConnectorOptions{}); !errors.Is(err, ErrInvalidConnectorOptions) {
-		t.Fatalf("mixed rootless newConnector() error = %v, want invalid options", err)
+	if _, err := newConnector(secureLease, ConnectorOptions{}); err != nil {
+		t.Fatalf("platform-root newConnector() error = %v", err)
 	}
 }
 
@@ -265,13 +246,13 @@ func TestConnectorOriginIsAnExactHTTPOrigin(t *testing.T) {
 
 func TestConnectorMapsInternalResultToCarrierNeutralSession(t *testing.T) {
 	want := inertSession{path: session.PathTunnel}
-	connector := &connector{inner: staticConnectorBackend{result: connectv2.Result{Session: want}}}
+	connector := &connector{inner: staticConnectorBackend{result: connectv3.Result{Session: want}}}
 
 	got, err := connector.connect(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	opaque, ok := got.(*opaqueSession)
+	opaque, ok := got.(*opaqueSessionV3)
 	if !ok || opaque.inner != want {
 		t.Fatalf("Connect session = %#v, want carrier-neutral tunnel session", got)
 	}
@@ -290,7 +271,7 @@ func TestConnectorZeroTimeoutUsesSharedDefault(t *testing.T) {
 }
 
 func TestUnreliableUnavailableProjectsStablePublicCode(t *testing.T) {
-	current := &opaqueSession{inner: inertSession{path: session.PathDirect}}
+	current := &opaqueSessionV3{inner: inertSession{path: session.PathDirect}}
 	channel, err := current.UnreliableMessages()
 	if channel != nil {
 		t.Fatalf("channel = %#v, want nil", channel)
@@ -302,7 +283,7 @@ func TestUnreliableUnavailableProjectsStablePublicCode(t *testing.T) {
 }
 
 func TestWaitTerminationSeparatesTerminalCauseFromWaitCancellation(t *testing.T) {
-	closed := &opaqueSession{inner: inertSession{waitErr: session.ErrSessionClosed}}
+	closed := &opaqueSessionV3{inner: inertSession{waitErr: session.ErrSessionClosed}}
 	termination, err := closed.WaitTermination(context.Background())
 	if err != nil {
 		t.Fatalf("WaitTermination closed error = %v, want nil", err)
@@ -310,7 +291,7 @@ func TestWaitTerminationSeparatesTerminalCauseFromWaitCancellation(t *testing.T)
 	if termination.Error.Code() != SessionClosed {
 		t.Fatalf("WaitTermination closed = %#v, want SessionClosed", termination)
 	}
-	canceled := &opaqueSession{inner: inertSession{waitErr: context.Canceled}}
+	canceled := &opaqueSessionV3{inner: inertSession{waitErr: context.Canceled}}
 	termination, err = canceled.WaitTermination(context.Background())
 	if termination != (SessionTermination{}) {
 		t.Fatalf("WaitTermination canceled termination = %#v, want none", termination)
@@ -341,7 +322,7 @@ func TestConnectorProjectsArtifactExpiryWithoutInternalDetails(t *testing.T) {
 		fserrors.PathDirect,
 		fserrors.StageValidate,
 		fserrors.CodeTimeout,
-		errors.Join(connectv2.ErrArtifactExpired, errors.New("secret artifact detail")),
+		errors.Join(connectv3.ErrArtifactExpired, errors.New("secret artifact detail")),
 	)
 	connector := &connector{inner: staticConnectorBackend{err: internal}}
 
@@ -352,6 +333,41 @@ func TestConnectorProjectsArtifactExpiryWithoutInternalDetails(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "secret") {
 		t.Fatalf("Connect error leaked internal details: %q", err)
+	}
+}
+
+func TestControllerTreatsExpiredPinDiagnosticAsReplacementTrigger(t *testing.T) {
+	artifact := mustParseInternalFixtureArtifact(t)
+	candidate := artifact.value.Path.Candidates[1]
+	lease, err := NewArtifactLease(artifact, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok := lease.claimArtifact()
+	if !ok {
+		t.Fatal("artifact lease claim failed")
+	}
+	internalErr := &fserrors.Error{
+		Path:  fserrors.PathDirect,
+		Stage: fserrors.StageConnect,
+		Code:  fserrors.CodeTLSPolicyExpired,
+		Diagnostics: []fserrors.CandidateDiagnostic{{
+			CandidateID: candidate.ID,
+			Carrier:     string(candidate.Carrier),
+			Stage:       fserrors.StageValidate,
+			Code:        fserrors.CodeTLSPolicyExpired,
+			Detail:      "policy_expired",
+		}},
+	}
+	outcome := analyzeControllerConnectOutcome(claimed, internalErr)
+	if outcome.err == nil || connectErrorCode(outcome.err) != ConnectTransportSecurityFailed {
+		t.Fatalf("controller outcome error = %v, want transport_security_failed", outcome.err)
+	}
+	if !outcome.securityFailure || len(outcome.triggerCandidates) != 1 {
+		t.Fatalf("controller outcome = %+v, want security refresh trigger", outcome)
+	}
+	if _, ok := outcome.triggerCandidates[endpointKey(artifact.value.Path.Kind, candidate)]; !ok {
+		t.Fatalf("trigger candidates = %+v, want candidate %q", outcome.triggerCandidates, candidate.ID)
 	}
 }
 
@@ -384,7 +400,7 @@ func TestPublicErrorsPreserveStableCancellationAndDeadlineCauses(t *testing.T) {
 }
 
 func TestProtocolStreamResetProjectsStablePublicCode(t *testing.T) {
-	stream := &opaqueByteStream{inner: staticByteStream{err: protocolv2.ErrStreamReset}}
+	stream := &opaqueByteStreamV3{inner: staticByteStream{err: protocolv3.ErrStreamReset}}
 	err := stream.TerminalError()
 	if err.Code() != SessionStreamReset {
 		t.Fatalf("stream reset code = %q, want %q", err.Code(), SessionStreamReset)
@@ -397,7 +413,7 @@ func TestProtocolStreamResetProjectsStablePublicCode(t *testing.T) {
 }
 
 func TestPublicByteStreamPreservesEOF(t *testing.T) {
-	stream := &opaqueByteStream{inner: staticByteStream{err: io.EOF}}
+	stream := &opaqueByteStreamV3{inner: staticByteStream{err: io.EOF}}
 	if count, err := stream.Read(make([]byte, 1)); count != 0 || !errors.Is(err, io.EOF) {
 		t.Fatalf("Read = %d, %v, want 0, io.EOF", count, err)
 	}
@@ -435,18 +451,18 @@ func TestRPCProjectionMapsMalformedApplicationEnvelopeToOperationFailure(t *test
 }
 
 type staticConnectorBackend struct {
-	result connectv2.Result
+	result connectv3.Result
 	err    error
 }
 
 type deadlineConnectorBackend struct{ remaining time.Duration }
 
-func (backend *deadlineConnectorBackend) Connect(ctx context.Context) (connectv2.Result, error) {
+func (backend *deadlineConnectorBackend) Connect(ctx context.Context) (connectv3.Result, error) {
 	deadline, ok := ctx.Deadline()
 	if ok {
 		backend.remaining = time.Until(deadline)
 	}
-	return connectv2.Result{}, errors.New("stop after recording deadline")
+	return connectv3.Result{}, errors.New("stop after recording deadline")
 }
 
 type staticRPCPeer struct{ err error }
@@ -466,7 +482,7 @@ func (stream staticByteStream) Close() error              { return stream.err }
 func (stream staticByteStream) CloseWrite() error         { return stream.err }
 func (stream staticByteStream) Reset() error              { return stream.err }
 
-func (backend staticConnectorBackend) Connect(context.Context) (connectv2.Result, error) {
+func (backend staticConnectorBackend) Connect(context.Context) (connectv3.Result, error) {
 	return backend.result, backend.err
 }
 

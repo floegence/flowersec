@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
 )
 
 func TestSessionHandlersDispatchAcceptedStreamMetadata(t *testing.T) {
@@ -369,7 +369,7 @@ func TestSessionHandlersEnforceSharedStreamKindContract(t *testing.T) {
 		} `json:"rpc_type_ids"`
 		DuplicateTypeID uint32 `json:"duplicate_type_id"`
 	}
-	payload, err := os.ReadFile("../testdata/transport_v2/session_handler_vectors.json")
+	payload, err := os.ReadFile("../testdata/transport_v3/session_handler_vectors.json")
 	if err != nil {
 		t.Fatal(err)
 	}

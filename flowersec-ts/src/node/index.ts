@@ -1,58 +1,53 @@
-export { connect, createConnectionController } from "./connectSession.js";
 export {
-  AcceptedSession,
-  Acceptor,
-  HandlerRegistrationError,
-  RPCHandlers,
-  SessionHandlers,
-  createAcceptor,
-} from "./acceptor.js";
+  AcceptedSessionV3 as AcceptedSession,
+  AcceptedSessionV3,
+  AcceptorV3 as Acceptor,
+  AcceptorV3,
+  createAcceptorV3 as createAcceptor,
+  createAcceptorV3,
+} from "./acceptorV3.js";
 export type {
-  AcceptorListener,
-  AcceptorOptions,
-  AuthorizationDecision,
+  AcceptorListenerV3 as AcceptorListener,
+  AcceptorListenerV3,
+  AcceptorOptionsV3 as AcceptorOptions,
+  AcceptorOptionsV3,
+} from "./acceptorV3.js";
+export {
+  TunnelRuntimeV3 as TunnelRuntime,
+  TunnelRuntimeV3,
+  createTunnelRuntimeV3 as createTunnelRuntime,
+  createTunnelRuntimeV3,
+} from "./tunnelRuntimeV3.js";
+export type {
+  TunnelAuthorizationDecisionV3 as TunnelAuthorizationDecision,
+  TunnelAuthorizationDecisionV3,
+  TunnelRuntimeListenerV3 as TunnelRuntimeListener,
+  TunnelRuntimeListenerV3,
+  TunnelRuntimeOptionsV3 as TunnelRuntimeOptions,
+  TunnelRuntimeOptionsV3,
+} from "./tunnelRuntimeV3.js";
+export * from "../facade.js";
+export * as v2 from "./v2.js";
+import type { NodeTLSRootsV3 } from "./connectSessionV3.js";
+export {
+  connectV3 as connect,
+  connectV3,
+  createConnectionControllerV3 as createConnectionController,
+  createConnectionControllerV3,
+} from "./connectSessionV3.js";
+export type {
+  ConnectionControllerOptionsV3 as ConnectionControllerOptions,
+  ConnectionControllerOptionsV3,
+  NodeTLSRootsV3,
+  SessionOptionsV3 as SessionOptions,
+  SessionOptionsV3,
+} from "./connectSessionV3.js";
+export type SessionTLSOptions = Readonly<{
+  ca?: NodeTLSRootsV3;
+}>;
+export { RPCHandlers } from "./acceptor.js";
+export type {
+  NotificationHandler,
   RPCHandler,
   RPCHandlerResult,
-  NotificationHandler,
-  SessionHandlerOptions,
 } from "./acceptor.js";
-export { TunnelRuntime, createTunnelRuntime } from "./tunnelRuntime.js";
-export type {
-  TunnelAuthorizationDecision,
-  TunnelRuntimeListener,
-  TunnelRuntimeOptions,
-} from "./tunnelRuntime.js";
-export type {
-  ConnectionControllerOptions,
-  SessionOptions,
-  SessionTLSOptions,
-} from "./connectSession.js";
-export {
-  AuthorizationRecord,
-  AuthorizationResponse,
-  TunnelAuthorizationResponse,
-  ControlPlaneError,
-  EndpointSet,
-  IssuedArtifact,
-  Issuer,
-  RuntimeAuthorizationRequest,
-  authorizeRuntime,
-  authorizeTunnelRuntime,
-  createEndpointSet,
-  parseAuthorizationRecord,
-  parseRuntimeAuthorizationRequest,
-  rejectRuntime,
-  rejectTunnelRuntime,
-} from "./controlplane.js";
-export type {
-  ArtifactMetadata,
-  ControlPlaneErrorCode,
-  DirectIssueOptions,
-  IssuedTunnelPair,
-  Scope,
-  SessionOptions as ControlPlaneSessionOptions,
-  TunnelIssueOptions,
-} from "./controlplane.js";
-export { ProxyServer, ProxyServerError } from "./proxyServer.js";
-export type { ProxyServerOptions, StreamHandlerRegistrar } from "./proxyServer.js";
-export * from "../facade.js";

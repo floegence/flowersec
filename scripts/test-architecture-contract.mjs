@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import "./test-transport-v3-contract.mjs";
 import {
   generateDirectCellDimensions,
   generateTunnelTopologyDimensions,
@@ -42,7 +43,7 @@ for (const relative of maintainedDocumentation) {
 const currentDocumentation = maintainedDocumentation.map(read).join("\n");
 for (const token of [
   "ConnectionController", "NewAcceptor", "SessionHandlers",
-  "loopback plaintext WebSocket", "stability/language_capabilities.json",
+  "Production v3 has no plaintext", "stability/transport_v3_contract.json",
 ]) assert.match(currentDocumentation, new RegExp(escapeRegex(token)), `documentation misses current token ${token}`);
 
 const retiredPaths = [
@@ -102,8 +103,13 @@ const typescriptReadme = read("flowersec-ts/README.md");
 const directParityRunner = read("scripts/test-server-parity-direct.mjs");
 const tunnelParityRunner = read("scripts/test-server-parity-tunnel.mjs");
 const parityMatrixGenerator = read("scripts/server-parity-matrix.mjs");
+const browserExternalParity = read("flowersec-ts/browser-e2e/external-parity.spec.ts");
+const browserV3TransportTests = read("flowersec-ts/browser-e2e/transport-v3.spec.ts");
 const browserCarrier = read("flowersec-ts/src/browser/webTransportClient.ts") + read("flowersec-ts/src/transport/webTransportAdapter.ts");
 const browserCarrierTests = read("flowersec-ts/src/transport/webTransportAdapter.test.ts");
+const browserV3Carrier = read("flowersec-ts/src/v3/browserRuntime.ts");
+const browserV3CarrierTests = read("flowersec-ts/src/v3/capability.test.ts");
+const typescriptV3ArtifactTests = read("flowersec-ts/src/v3/artifact.test.ts");
 const browserAcceptanceRunner = read("flowersec-ts/scripts/browser-test-runner-core.mjs") + read("flowersec-ts/playwright.config.ts");
 const browserAcceptanceWorker = read("flowersec-ts/scripts/browser-test-runner.mjs");
 const playwrightConfig = read("flowersec-ts/playwright.config.ts");
@@ -116,6 +122,22 @@ for (const source of [browserCarrier, browserCarrierTests].map(stripComments)) {
   assert.doesNotMatch(source, /new\s+Constructor\s*\(\s*url\s*,/);
 }
 assert.match(browserCarrier, /new Constructor\(parsed\.href\)/);
+assert.match(browserV3Carrier, /policy\.mode === "ca"[\s\S]{0,120}new Constructor\(candidate\.normalized_url\)/,
+  "browser v3 CA mode must omit certificate hashes");
+assert.match(browserV3Carrier, /new Constructor\(candidate\.normalized_url, \{[\s\S]{0,120}serverCertificateHashes:/,
+  "browser v3 pin mode must use the production WebTransport certificate-hash option");
+assert.match(typescriptV3ArtifactTests, /testdata\/transport_v3\/idna_vectors\.json/,
+  "TypeScript v3 artifact tests must consume the shared URL normalization vectors");
+assert.match(typescriptV3ArtifactTests, /url_normalization\.positive[\s\S]*url_normalization\.negative/,
+  "TypeScript v3 artifact tests must consume every positive and negative URL normalization vector");
+assert.match(browserV3CarrierTests,
+  /shared WHATWG-roundtrip URL[\s\S]{0,1800}createBrowserWebTransportV3/,
+  "the production browser adapter must prove WHATWG roundtrip identity from the shared vectors");
+assert.match(browserV3TransportTests,
+  /Chromium WebTransport delegates CA trust without certificate hashes[\s\S]{0,2600}roundtripURL/,
+  "the registered Chromium production-adapter test must prove shared URL WHATWG roundtrip identity");
+assert.doesNotMatch(stripComments(browserV3Carrier), /allowPooling/,
+  "browser v3 must create an independent WebTransport per candidate attempt");
 assert.doesNotMatch(browserAcceptanceRunner, /ExtendQuicHandshakeTimeout|QuicHandshakeTimeout|MaxIdleTimeBeforeCryptoHandshake|force-fieldtrial|quic-client-connection-options/i);
 assert.doesNotMatch(browserAcceptanceWorker, /__flowersecCancelArtifact|expected_failure|assertFullyResolved|resolved\s*=\s*new Set/);
 assert.match(playwrightConfig, /ignoreHTTPSErrors:\s*true/,
@@ -137,16 +159,25 @@ const productionSourceFiles = spawnSync(
   { cwd: root, encoding: "utf8" },
 );
 assert.equal(productionSourceFiles.status, 0, productionSourceFiles.stderr);
-const productionSources = productionSourceFiles.stdout.trim().split("\n")
-  .filter((relative) => relative !== "" && !/(?:_test\.go|\.test\.ts)$/.test(relative))
-  .map(read)
-  .join("\n");
+const unifiedTransportSecurityVerifier = "flowersec-go/internal/transportsecurity/policy.go";
+const productionSourcePaths = productionSourceFiles.stdout.trim().split("\n")
+  .filter((relative) => relative !== "" && relative !== unifiedTransportSecurityVerifier && !/(?:_test\.go|\.test\.ts)$/.test(relative));
+const productionSources = productionSourcePaths.map(read).join("\n");
 assert.doesNotMatch(productionSources,
   /--ignore-certificate-errors|NODE_TLS_REJECT_UNAUTHORIZED|rejectUnauthorized\s*:\s*false|InsecureSkipVerify\s*:\s*true|\.InsecureSkipVerify\s*=\s*true|danger_accept_invalid_(?:certs|hostnames)\s*\(\s*true\s*\)/,
   "production source must not enable an insecure TLS verification fallback");
+const unifiedTransportSecuritySource = read(unifiedTransportSecurityVerifier);
+assert.equal((unifiedTransportSecuritySource.match(/config\.InsecureSkipVerify\s*=\s*true/g) ?? []).length, 1,
+  "only the unified Go pin verifier may use an explicit TLS verification bypass");
+assert.equal((unifiedTransportSecuritySource.match(/config\.VerifyConnection\s*=\s*func/g) ?? []).length, 1,
+  "only the unified Go pin verifier may install an isolated connection verifier");
+assert.match(unifiedTransportSecuritySource, /if config\.InsecureSkipVerify \{[\s\S]{0,160}FailureUnsupported/,
+  "the unified verifier must reject caller-supplied insecure TLS configuration");
+assert.match(unifiedTransportSecuritySource, /case artifactv3\.TLSModeCA:[\s\S]{0,2400}case artifactv3\.TLSModePin:/,
+  "the unified verifier must keep CA and pin decisions in separate explicit branches");
 assert.match(testMatrix, /release\/npm-consumer\/go-node-raw-quic\/direct-session/,
   "test matrix must identify the post-publication Go-to-Node registry consumer boundary");
-assert.match(apiChangePolicy, /WebTransport preserves transport-managed passive rebinding but does not expose application-managed active migration/,
+assert.match(apiChangePolicy, /WebTransport preserves transport-managed passive rebinding but does not expose\s+application-managed active migration/,
   "API policy must not overclaim WebTransport active migration");
 assert.match(main, /type progress struct \{\n\s*Plan\s+string\s+`json:"plan"`\n\s*SourceSHA\s+string\s+`json:"source_sha"`\n\s*Suite\s+string\s+`json:"suite"`\n\s*Completed\s+\[\]string\s+`json:"completed"`/);
 assert.match(main, /filepath\.Join\(stateDir, safeName\(\*suite\), "test-progress\.json"\)/);
@@ -156,21 +187,15 @@ assert.match(main, /externalHostRoot = "\/var\/lib\/flowersec-test"/);
 assert.doesNotMatch(main, /\bsudo\b|runuser|SUDO_USER|reexec/i);
 assert.match(registry, /func registry\(\) \[\]registeredTest/);
 for (const id of [
-  "controller/go", "controller/go-real-network-restart", "controller/go-websocket-handlers", "controller/typescript", "controller/typescript-real-network-restart", "controller/rust", "controller/rust-raw-quic", "controller/rust-websocket-handlers",
+  "controller/go", "controller/go-real-network-restart", "controller/go-websocket-handlers", "controller/typescript", "controller/rust", "controller/swift",
   "protocol/go", "protocol/typescript", "protocol/rust",
-  "carrier/go-direct", "carrier/go-tunnel",
-  "carrier/rust-websocket-direct", "carrier/rust-websocket-tunnel",
-  "server/typescript-acceptor",
-  "interop/typescript-go/wss/direct", "interop/typescript-go/wss/tunnel",
-  "interop/rust-go/raw-quic/direct", "interop/rust-go/raw-quic/tunnel",
-  "interop/go-rust/raw-quic/direct", "interop/go-rust/raw-quic/tunnel",
-  "interop/server-parity/direct-matrix", "interop/server-parity/tunnel-matrix",
-  "interop/swift-go/wss/direct",
-  "interop/swift-via-go-to-rust/wss/tunnel",
-  "browser/chromium/websocket/go/direct",
-  "browser/chromium/websocket/node/direct",
-  "browser/chromium/websocket/via-go-to-rust/tunnel",
-  "controller/swift-real-network-restart",
+  "carrier/go-direct", "carrier/go-tunnel", "carrier/go-webtransport-tunnel",
+  "carrier/rust-tls13-handshake", "carrier/rust-tls-rejection",
+  "browser/chromium/webtransport/direct", "browser/chromium/webtransport/pin-rejection",
+  "browser/chromium/webtransport/hash-constructor-unsupported", "browser/chromium/webtransport/ca-policy",
+  "browser/chromium/webtransport/public-ca", "browser/chromium/webtransport/public-ca-wrong-pin-no-fallback",
+  "compat/v2/protocol/go", "compat/v2/protocol/typescript", "compat/v2/protocol/rust", "compat/v2/protocol/swift",
+  "compat/v2/carrier/go-loopback-plaintext-direct", "compat/v2/carrier/typescript-loopback-plaintext-direct", "compat/v2/carrier/swift-loopback-plaintext-direct", "compat/v2/carrier/rust-loopback-plaintext-direct",
 ]) assert.match(registry, new RegExp(`"${escapeRegex(id)}"`));
 for (const retiredID of [
   "carrier/typescript-raw-quic-direct", "carrier/typescript-raw-quic-tunnel",
@@ -178,14 +203,14 @@ for (const retiredID of [
   "integration/typescript/node-webtransport", "carrier/typescript-webtransport-tunnel-runtime",
   "interop/typescript-go/webtransport/direct", "interop/typescript-go/webtransport/tunnel",
 ]) assert.doesNotMatch(registry, new RegExp(`"${escapeRegex(retiredID)}"`));
-assert.match(registry, /"server\/typescript-acceptor"[\s\S]*freezes handlers before establishing a direct WebSocket Session/);
+assert.match(registry, /"compat\/v2\/server\/typescript-acceptor"[\s\S]*freezes handlers before establishing a direct WebSocket Session/);
 assert.match(registry, /if runtime\.GOOS ===? "darwin"/);
 const acceptanceRegistry = registry.match(/func registry\(\)[\s\S]*?func browserSmokeEntry/)?.[0] ?? "";
 assert.doesNotMatch(acceptanceRegistry, /commandEntry\("browser\/[^"]+",\s*"acceptance"/);
 assert.match(registry, /browserSmokeEntry\("browser\/chromium\/webtransport\/direct"/);
 assert.match(registry, /func browserSmokeEntry[\s\S]*commandEntry\(id, "browser-smoke"/);
-assert.match(registry, /browserCompatibilityEntry\("browser\/firefox\/webtransport-capability"/);
-assert.match(registry, /browserCompatibilityEntry\("browser\/webkit\/webtransport-capability"/);
+assert.match(registry, /browserCompatibilityEntry\("compat\/v2\/browser\/firefox\/webtransport-capability"/);
+assert.match(registry, /browserCompatibilityEntry\("compat\/v2\/browser\/webkit\/webtransport-capability"/);
 assert.match(registry, /func browserCompatibilityEntry[\s\S]*commandEntry\(id, "browser-compat"/);
 assert.doesNotMatch(acceptanceRegistry, /--report|--artifact-dir|performance_manifest|case_registry|raw_execution/i);
 for (const [name, source] of [
@@ -205,18 +230,40 @@ for (const id of [
   "diagnostic/weaknet/raw-quic/direct", "diagnostic/weaknet/websocket/direct",
   "diagnostic/kernel/topology-lifecycle", "diagnostic/kernel/fault-schedules",
   "diagnostic/kernel/reorder-duplicate-outage", "diagnostic/kernel/socket-traversal",
+  "diagnostic/flowersec-v3-controller-weaknet/websocket/delay-jitter",
+  "diagnostic/flowersec-v3-controller-weaknet/websocket/periodic-loss",
+  "diagnostic/flowersec-v3-controller-weaknet/websocket/reorder",
+  "diagnostic/flowersec-v3-controller-weaknet/websocket/outage-reconnect",
+  "diagnostic/flowersec-v3-controller-weaknet/websocket/pin-rotation-refresh-backoff-lease",
+  "diagnostic/flowersec-v3-controller-weaknet/raw-quic/delay-jitter",
+  "diagnostic/flowersec-v3-controller-weaknet/raw-quic/periodic-loss",
+  "diagnostic/flowersec-v3-controller-weaknet/raw-quic/reorder",
+  "diagnostic/flowersec-v3-controller-weaknet/raw-quic/outage-reconnect",
+  "diagnostic/flowersec-v3-controller-weaknet/raw-quic/pin-rotation-refresh-backoff-lease",
 ]) assert.match(registry, new RegExp(`"${escapeRegex(id)}"`));
 assert.doesNotMatch(registry, /"diagnostic\/(?:protocol|browser|interop|weaknet|kernel-outage|quic)"/);
-assert.match(directParityRunner, /required[\s\S]{0,80}unsupported|unsupported[\s\S]{0,80}required/i,
-  "direct required matrix runner must reject unsupported cells");
-assert.match(tunnelParityRunner, /required[\s\S]{0,80}unsupported|unsupported[\s\S]{0,80}required/i,
-  "tunnel required matrix runner must reject unsupported topologies");
+assert.match(directParityRunner, /cell\.status === "supported"/,
+  "direct matrix runner must execute only supported cells");
+assert.match(tunnelParityRunner, /topology\.status === "supported"/,
+  "tunnel matrix runner must execute only supported topologies");
 assert.match(parityMatrixGenerator, /language_capabilities\.json/,
   "server parity dimensions must derive from the capability manifest");
 assert.match(directParityRunner, /FLOWERSEC_PARITY_CLIENT_PROFILE/,
   "the existing direct parity runner must own client-profile interop cells");
 assert.match(tunnelParityRunner, /FLOWERSEC_PARITY_CLIENT_PROFILE/,
   "the existing tunnel parity runner must own client-profile interop cells");
+for (const [name, runner] of [["direct", directParityRunner], ["tunnel", tunnelParityRunner]]) {
+  assert.match(runner, /clientProfileTestID\?\.startsWith\("compat\/v2\/"\) \? "v2" : "v3"/,
+    `${name} client-profile parity must select the protocol from its versioned registry ID`);
+  assert.match(runner, /server-parity-peer-v2/,
+    `${name} v2 compatibility parity must use a physically separate Go peer`);
+  assert.match(runner, /FLOWERSEC_PARITY_PROTOCOL: clientProfileProtocol/,
+    `${name} client-profile parity must pass the selected protocol to the external SDK`);
+}
+assert.match(browserExternalParity, /protocol === "v2"[\s\S]{0,200}sdk\.v2\.connect[\s\S]{0,300}sdk\.connect/,
+  "browser external parity must select only an explicit v2 or v3 SDK namespace");
+assert.match(registry, /browserSmokeEntry\("browser\/chromium\/websocket\/self-contained", "Portable browsers run the v3 WebSocket client contract"\)/);
+assert.match(registry, /browserSmokeEntry\("compat\/v2\/browser\/chromium\/websocket\/self-contained", "Portable browsers run the explicit v2 compatibility WebSocket client contract"\)/);
 
 const hostInit = read("scripts/test-host-init.sh");
 const hostEntry = read("scripts/test-host.sh");
@@ -224,15 +271,16 @@ const interopMatrix = JSON.parse(read("stability/interop_matrix.json"));
 const capabilityManifest = JSON.parse(read("stability/language_capabilities.json"));
 const registryIDs = new Set([...registry.matchAll(/(?:commandEntry|commandEntryWithEnvironment|vitestEntry|browserSmokeEntry|browserCompatibilityEntry|performanceCapacityEntry|privilegedGoTestEntry|throughputEntry|flowersecWeaknetEntry)\("([^"]+)"/g)].map((match) => match[1]));
 const deploymentProfiles = capabilityManifest.deployment_profiles;
-assert.equal(deploymentProfiles?.version, 1);
-assert.equal(deploymentProfiles?.application_wire, "shared_across_runtimes_and_carriers");
+assert.equal(capabilityManifest.version, 3);
+assert.equal(deploymentProfiles?.version, 3);
+assert.equal(deploymentProfiles?.application_wire, "flowersec/3");
 assert.deepEqual(deploymentProfiles?.profiles?.map(({ id }) => id), [
   "native-server-core", "browser-client", "apple-client", "webtransport-server",
 ]);
 assert.deepEqual(deploymentProfiles.profiles[0], {
   id: "native-server-core",
   claimed_runtimes: ["go", "rust", "node-typescript"],
-  transport_runtime_ids: ["go_native", "rust_native", "typescript_node"],
+  transport_runtime_ids: ["go/native", "rust/native", "typescript/node"],
   required_roles: ["endpoint-client", "direct-server", "tunnel-runtime"],
   required_carriers: ["websocket", "raw-quic"],
   required_paths: {
@@ -240,7 +288,7 @@ assert.deepEqual(deploymentProfiles.profiles[0], {
     "direct-server": ["direct"],
     "tunnel-runtime": ["tunnel"],
   },
-  required_capability_ids: ["opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "client_rpc_handlers", "validated_stream_metadata", "application_stream_handlers", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"],
+  required_capability_ids: ["opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "client_rpc_handlers", "validated_stream_metadata", "application_stream_handlers", "connection_controller", "server_acceptor_session", "server_session_handlers", "server_admission_paths", "carrier_contract", "wire_security"],
   optional_carriers: ["webtransport"],
   required_tuple_count: 18,
   required_path_unit_count: 24,
@@ -282,6 +330,14 @@ for (const runtime of serverRuntimes) for (const carrier of serverCarriers) for 
     }
   } else {
     parityContractProblems.push(`server unit ${key} has invalid status ${String(unit.status)}`);
+  }
+}
+for (const role of ["endpoint-client", "tunnel-runtime"]) {
+  const feature = role === "endpoint-client" ? "connect" : "pair-forward";
+  const key = `go/${role}/webtransport/tunnel/${feature}`;
+  const unit = parityUnitsByKey.get(key);
+  if (unit?.status !== "supported" || unit.test_ids?.length !== 1 || unit.test_ids[0] !== "carrier/go-webtransport-tunnel") {
+    parityContractProblems.push(`Go H4 unit ${key} is not bound to the production WebTransport tunnel test`);
   }
 }
 for (const [kind, cells] of [["direct", interopMatrix.direct_cells], ["tunnel", interopMatrix.tunnel_topologies]]) {
@@ -339,6 +395,10 @@ if (fs.existsSync(path.join(root, "flowersec-node-native/package.json"))) {
   if (JSON.stringify(nativePackage.optionalDependencies) !== JSON.stringify(expectedOptionalPackages)) {
     parityContractProblems.push("native addon wrapper does not declare the exact prebuilt package set");
   }
+  if (corePackage.scripts?.["test:coverage"] !==
+      "npm run build && node ../scripts/server-parity-native-addon.mjs --test-coverage") {
+    parityContractProblems.push("TypeScript coverage does not inject the source-built native addon");
+  }
   const platformContracts = {
     "darwin-arm64": { os: ["darwin"], cpu: ["arm64"] },
     "darwin-x64": { os: ["darwin"], cpu: ["x64"] },
@@ -370,9 +430,14 @@ assert.deepEqual(parityContractProblems, [], "server parity required tuple contr
 const interopCells = [...interopMatrix.direct_cells, ...interopMatrix.tunnel_topologies];
 assert.ok(interopMatrix.direct_cells.length > 0 && interopMatrix.tunnel_topologies.length > 0);
 for (const cell of interopCells) {
-  assert.equal(cell.status, "supported", `required interop cell ${cell.id} must be supported`);
-  assert.equal(cell.test_ids?.length, 1, `supported interop cell ${cell.id} must use one test ID`);
-  assert.equal("reason" in cell, false, `supported interop cell ${cell.id} must not carry a reason`);
+  assert.ok(["supported", "unsupported"].includes(cell.status), `interop cell ${cell.id} has invalid status`);
+  if (cell.status === "supported") {
+    assert.equal(cell.test_ids?.length, 1, `supported interop cell ${cell.id} must use one test ID`);
+    assert.equal("reason" in cell, false, `supported interop cell ${cell.id} must not carry a reason`);
+  } else {
+    assert.equal("test_ids" in cell, false, `unsupported interop cell ${cell.id} must not claim test IDs`);
+    assert.match(cell.reason ?? "", /^[A-Z][ -~]{7,238}[.!?]$/, `unsupported interop cell ${cell.id} must carry a stable English reason`);
+  }
   assert.equal("evidence" in cell, false, `interop cell ${cell.id} retains source evidence`);
   for (const id of cell.test_ids ?? []) assert.ok(registryIDs.has(id), `interop cell ${cell.id} references unknown test_id ${id}`);
 }

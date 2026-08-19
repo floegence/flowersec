@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-go",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-go/308ce3a2dd421245b940297e16fbb6cae9cc3d79e4835164e4304b5f7acd5ca8",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-go/8146654f4a197f2c5a7d100c8e25ee624d6f7ea2a6a57da0bc318ab1653b4a5c",
   "creationInfo": {
     "created": "1970-01-01T00:00:00Z",
     "creators": [
@@ -12,20 +12,20 @@
   },
   "packages": [
     {
-      "name": "github.com/floegence/flowersec/flowersec-go/v2",
-      "SPDXID": "SPDXRef-Package-8f3b5b3d30a72dcdf6cb",
-      "versionInfo": "v2.5.4",
+      "name": "github.com/floegence/flowersec/flowersec-go/v3",
+      "SPDXID": "SPDXRef-Package-c94c7f51b133eb1c15ec",
+      "versionInfo": "v3.0.0",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: 308ce3a2dd421245b940297e16fbb6cae9cc3d79e4835164e4304b5f7acd5ca8",
+      "comment": "Flowersec source inventory SHA-256: 8146654f4a197f2c5a7d100c8e25ee624d6f7ea2a6a57da0bc318ab1653b4a5c",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.5.4"
+          "referenceLocator": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v3@v3.0.0"
         }
       ]
     },
@@ -43,6 +43,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:golang/github.com/dunglas/httpsfv@v1.1.0"
+        }
+      ]
+    },
+    {
+      "name": "github.com/floegence/flowersec/flowersec-go/v2",
+      "SPDXID": "SPDXRef-Package-8f3b5b3d30a72dcdf6cb",
+      "versionInfo": "v2.5.4",
+      "downloadLocation": "https://github.com/floegence/flowersec/flowersec-go/v2",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.5.4"
         }
       ]
     },
@@ -221,7 +238,7 @@
     {
       "spdxElementId": "SPDXRef-DOCUMENT",
       "relationshipType": "DESCRIBES",
-      "relatedSpdxElement": "SPDXRef-Package-8f3b5b3d30a72dcdf6cb"
+      "relatedSpdxElement": "SPDXRef-Package-c94c7f51b133eb1c15ec"
     },
     {
       "spdxElementId": "SPDXRef-Package-8f3b5b3d30a72dcdf6cb",
@@ -275,6 +292,66 @@
     },
     {
       "spdxElementId": "SPDXRef-Package-8f3b5b3d30a72dcdf6cb",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-162d862bf8af5c7d46ec"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c94c7f51b133eb1c15ec",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-bc3674caec9cd11c212f"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c94c7f51b133eb1c15ec",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-8f3b5b3d30a72dcdf6cb"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c94c7f51b133eb1c15ec",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-bfe11923fb51569940c1"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c94c7f51b133eb1c15ec",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-17214501a636b91f79bd"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c94c7f51b133eb1c15ec",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-fb0f88559a26b25e7611"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c94c7f51b133eb1c15ec",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-27e2d4651628d1d8bff5"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c94c7f51b133eb1c15ec",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-6f6ccca9142493aebd02"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c94c7f51b133eb1c15ec",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-678bbcab36917e2a96e6"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c94c7f51b133eb1c15ec",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-47dc3b49c2ceaed88569"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c94c7f51b133eb1c15ec",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-eed3e494572f899420af"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c94c7f51b133eb1c15ec",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-a01a46cd0efdc2b02d99"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c94c7f51b133eb1c15ec",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-162d862bf8af5c7d46ec"
     },

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
 )
 
 func TestUnreliableMessagesRequireNegotiationAndNeverOpenReliableStreams(t *testing.T) {

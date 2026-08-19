@@ -3,8 +3,8 @@ package tunnelworkload
 import (
 	"testing"
 
-	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocketv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/tunnelv3"
 )
 
 func TestCapacityCoordinatorConfigHoldsExactReleaseSessionCount(t *testing.T) {
@@ -44,7 +44,7 @@ func TestStreamCapacityUsesTightBridgeCopyBufferOnly(t *testing.T) {
 	if capacity.MaxPendingLegs != 200 || capacity.MaxActivePairs != 100 || capacity.BridgeLimits.CopyBufferBytes != 4*1024 {
 		t.Fatalf("stream capacity coordinator = %+v", capacity)
 	}
-	if ordinary := tunnelv2.DefaultConfig().BridgeLimits.CopyBufferBytes; ordinary != 32*1024 {
+	if ordinary := tunnelv3.DefaultConfig().BridgeLimits.CopyBufferBytes; ordinary != 32*1024 {
 		t.Fatalf("ordinary tunnel copy buffer = %d", ordinary)
 	}
 }

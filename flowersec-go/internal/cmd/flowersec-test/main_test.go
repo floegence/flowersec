@@ -13,18 +13,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/perfreport"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/perfreport"
 )
 
 const testSourceSHA = "0123456789abcdef0123456789abcdef01234567"
 
-func TestExactTitleMatchesOnlyTheCompleteTitle(t *testing.T) {
+func TestExactTitleMatchesTheCompleteTitleWithAnOptionalSuitePrefix(t *testing.T) {
 	title := "runs direct admission and Session semantics over WSS"
 	pattern := regexp.MustCompile(exactTitle(title))
 	if !pattern.MatchString(title) {
 		t.Fatal("exact title did not match itself")
 	}
-	for _, value := range []string{"prefix " + title, title + " suffix"} {
+	if !pattern.MatchString("TypeScript-Go interoperability " + title) {
+		t.Fatal("exact title did not match the Vitest full-name suffix")
+	}
+	for _, value := range []string{"prefix" + title, title + " suffix", "similar " + title + " suffix"} {
 		if pattern.MatchString(value) {
 			t.Fatalf("exact title matched %q", value)
 		}
@@ -47,7 +50,7 @@ func TestVitestEntryUsesRepositoryConfigFromTheRunnerRoot(t *testing.T) {
 	if entry.ID != "test/typescript" || entry.Suite != "acceptance" || entry.Timeout != 5*time.Minute {
 		t.Fatalf("entry identity = %+v", entry)
 	}
-	want := []string{"--prefix", "flowersec-ts", "exec", "--", "vitest", "run", "--config", "flowersec-ts/vitest.config.ts", "flowersec-ts/src/example.test.ts", "-t", "^exact title$"}
+	want := []string{"--prefix", "flowersec-ts", "exec", "--", "vitest", "run", "--config", "flowersec-ts/vitest.config.ts", "flowersec-ts/src/example.test.ts", "-t", "(^|\\s)exact title$"}
 	if got := vitestArguments("src/example.test.ts", "exact title"); strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("vitest arguments = %q, want %q", got, want)
 	}

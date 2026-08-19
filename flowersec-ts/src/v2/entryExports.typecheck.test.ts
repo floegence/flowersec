@@ -4,6 +4,7 @@ import {
   ConnectError,
   StreamHandlers as BrowserStreamHandlers,
   createConnectionController as createBrowserConnectionController,
+  v2 as BrowserV2,
   type ArtifactSource as BrowserArtifactSource,
   type ConnectionControllerOptions as BrowserConnectionControllerOptions,
   type ConnectionController as BrowserConnectionController,
@@ -13,13 +14,14 @@ import {
 import {
   createConnectionController as createNodeConnectionController,
   StreamHandlers as NodeStreamHandlers,
+  v2 as NodeV2,
   type ArtifactSource as NodeArtifactSource,
   type ConnectionController as NodeConnectionController,
   type ConnectionSnapshot as NodeConnectionSnapshot,
   type ConnectionControllerOptions as NodeConnectionControllerOptions,
   type RetryDisposition as NodeRetryDisposition,
-  type StreamHandlerRegistrar as NodeStreamHandlerRegistrar,
 } from "../node/index.js";
+import type { StreamHandlerRegistrar as NodeStreamHandlerRegistrar } from "../node/v2.js";
 // @ts-expect-error runtime capability descriptors are package-internal.
 import type { RuntimeCapabilityDescriptorV2 } from "../browser/index.js";
 // @ts-expect-error candidate factories are package-internal.
@@ -40,6 +42,8 @@ test("exports the final controller API from browser and Node entries", () => {
   expect(createNodeConnectionController).toBeTypeOf("function");
   expect(ConnectError).toBeTypeOf("function");
   expect(BrowserStreamHandlers).toBe(NodeStreamHandlers);
+  expect(BrowserV2.connect).toBeTypeOf("function");
+  expect(NodeV2.connect).toBeTypeOf("function");
   void (undefined as unknown as BrowserArtifactSource);
   void (undefined as unknown as NodeArtifactSource);
   void (undefined as unknown as BrowserConnectionController);

@@ -16,12 +16,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/candidatev2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/candidatev3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/quicbase"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/connectv3"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest"
 )
 
 func TestBrowserTunnelTopologiesUseProductionWebTransportBrokerPath(t *testing.T) {
@@ -48,7 +48,7 @@ func TestBrowserTunnelTopologiesUseProductionWebTransportBrokerPath(t *testing.T
 			if err := issued.Start(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			artifact, err := artifactv2.DecodeArtifactJSON(strings.NewReader(issued.ArtifactJSON()))
+			artifact, err := artifactv3.DecodeArtifactJSON(strings.NewReader(issued.ArtifactJSON()))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -70,7 +70,7 @@ func TestBrowserTunnelTopologiesUseProductionWebTransportBrokerPath(t *testing.T
 			}
 
 			serverDone := make(chan error, 1)
-			go func() { serverDone <- transporttest.ServeBrowserBulk(ctx, serverSession, []int64{4096}) }()
+			go func() { serverDone <- transporttest.ServeBrowserBulkV3(ctx, serverSession, []int64{4096}) }()
 			if err := runBrowserBulkClient(ctx, browserSession, 4096); err != nil {
 				t.Fatal(err)
 			}
@@ -81,35 +81,35 @@ func TestBrowserTunnelTopologiesUseProductionWebTransportBrokerPath(t *testing.T
 	}
 }
 
-func connectBrowserWebTransport(t *testing.T, ctx context.Context, endpoint *BrowserEndpoint, artifact artifactv2.Artifact) flowersession.SessionV2 {
+func connectBrowserWebTransport(t *testing.T, ctx context.Context, endpoint *BrowserEndpoint, artifact artifactv3.Artifact) flowersession.Session {
 	t.Helper()
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: endpoint.roots, ServerName: "127.0.0.1"}
-	dial, err := candidatev2.NewWebTransportCarrierDial(candidatev2.WebTransportDialConfig{
+	dial, err := candidatev3.NewWebTransportCarrierDial(candidatev3.WebTransportDialConfig{
 		TLSConfig: tlsConfig, Limits: quicbase.DefaultLimits(), Origin: "https://127.0.0.1:9000",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	factory, err := candidatev2.NewFactory(map[artifactv2.Carrier]candidatev2.Dial{
-		artifactv2.CarrierWebTransport: dial,
+	factory, err := candidatev3.NewFactory(map[artifactv3.Carrier]candidatev3.Dial{
+		artifactv3.CarrierWebTransport: dial,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	connector := connectv2.NewConnector(connectv2.ArtifactLease{
+	connector := connectv3.NewConnector(connectv3.ArtifactLease{
 		Artifact: artifact, CommitSpend: func(context.Context) error { return nil },
 	}, factory)
 	result, err := connector.Connect(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Candidate.ID != "browser-leg" || result.Candidate.Carrier != artifactv2.CarrierWebTransport {
+	if result.Candidate.ID != "browser-leg" || result.Candidate.Carrier != artifactv3.CarrierWebTransport {
 		t.Fatalf("browser selected %+v", result.Candidate)
 	}
 	return result.Session
 }
 
-func runBrowserBulkClient(ctx context.Context, session flowersession.SessionV2, byteCount int64) error {
+func runBrowserBulkClient(ctx context.Context, session flowersession.Session, byteCount int64) error {
 	outgoing, err := session.OpenStream(ctx, "release-bulk", flowersession.Metadata{"direction": "client-to-server"})
 	if err != nil {
 		return err
@@ -190,7 +190,7 @@ func TestBrowserPeerAdmissionSignalsReadiness(t *testing.T) {
 	endpoint := &Endpoint{expectations: map[[sha256.Size]byte]*admissionExpectation{
 		sha256.Sum256(raw): expectation,
 	}}
-	decoded := &artifactv2.DecodedRequest{Raw: raw}
+	decoded := &artifactv3.DecodedRequest{Raw: raw}
 	if _, err := endpoint.authorize(context.Background(), decoded); err != nil {
 		t.Fatal(err)
 	}

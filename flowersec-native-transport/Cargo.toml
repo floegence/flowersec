@@ -1,6 +1,6 @@
 [package]
 name = "flowersec-native-transport"
-version = "2.5.4"
+version = "3.0.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Flowersec-owned native transport primitives shared by Rust and Node runtimes"
@@ -18,6 +18,13 @@ __flowersec_internal_test_support = []
 bytes = "1"
 quinn = { version = "=0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+sha2 = "0.11"
+subtle = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+x509-parser = "0.18"
+
+[dev-dependencies]
+cert_test_builder = { package = "rcgen", version = "0.14" }
+time = "0.3"

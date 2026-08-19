@@ -144,9 +144,11 @@ test("Rust native runtime owns carrier trust without implicit platform root stor
     manifest,
     /^tokio-tungstenite = \{ version = "[^"]+", default-features = false, features = \["connect"\] \}$/m,
   );
-  assert.match(readme, /TLS connection candidates require explicit, non-empty DER trust roots/u);
-  assert.match(readme, /plaintext direct WebSocket candidates do not require trust roots/u);
-  assert.match(readme, /no system trust\nstore is selected implicitly/u);
+  assert.match(readme, /CA candidates use platform trust roots by default/u);
+  assert.match(readme, /Pin candidates use\s+only the active leaf-certificate SHA-256 pins/u);
+  assert.match(readme, /never fall back to CA verification/u);
+  assert.match(readme, /No system trust store is selected\s+implicitly outside the explicit CA policy/u);
+  assert.doesNotMatch(readme, /plaintext direct WebSocket/u);
   assert.doesNotMatch(connector, /impl Default for ConnectorOptions/u);
   assert.doesNotMatch(connector, /trust_roots_der/u);
   assert.match(runtime, /pub fn new\(\) -> Self/u);

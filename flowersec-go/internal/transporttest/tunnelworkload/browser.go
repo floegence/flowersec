@@ -22,17 +22,17 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
-	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/quicbase"
+	carrierwt "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/webtransportv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v3/internal/rpcwire"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/tunnelv3"
 )
 
 // BrowserTopology identifies a Chromium WebTransport leg paired with one Go
@@ -70,7 +70,7 @@ type BrowserEndpoint struct {
 }
 
 type browserConnectResult struct {
-	session flowersession.SessionV2
+	session flowersession.Session
 	err     error
 }
 
@@ -79,7 +79,7 @@ type browserConnectResult struct {
 type BrowserArtifact struct {
 	endpoint           *Endpoint
 	rawJSON            string
-	serverArtifact     artifactv2.Artifact
+	serverArtifact     artifactv3.Artifact
 	browserExpectation *admissionExpectation
 	serverExpectation  *admissionExpectation
 	result             chan browserConnectResult
@@ -97,7 +97,7 @@ type BrowserArtifact struct {
 // Call IssueBrowserArtifact from a process whose default namespace is the
 // client namespace so the Go server-role leg and Chromium leg cross the link.
 func OpenBrowserEndpointAt(ctx context.Context, topology BrowserTopology, listenHost, browserOrigin string) (*BrowserEndpoint, error) {
-	return openBrowserEndpointAtWithCoordinator(ctx, topology, listenHost, browserOrigin, tunnelv2.Config{}, defaultMaxInboundStreams)
+	return openBrowserEndpointAtWithCoordinator(ctx, topology, listenHost, browserOrigin, tunnelv3.Config{}, defaultMaxInboundStreams)
 }
 
 // OpenBrowserReleaseEndpointAt binds browser tunnel pairing to the frozen
@@ -127,15 +127,15 @@ func OpenBrowserStreamCapacityEndpointAt(ctx context.Context, topology BrowserTo
 	return openBrowserEndpointAtWithCoordinator(ctx, topology, listenHost, browserOrigin, browserStreamCapacityCoordinatorConfig(), 128)
 }
 
-func browserStreamCapacityCoordinatorConfig() tunnelv2.Config {
-	config := tunnelv2.DefaultConfig()
+func browserStreamCapacityCoordinatorConfig() tunnelv3.Config {
+	config := tunnelv3.DefaultConfig()
 	config.MaxPendingLegs = 200
 	config.MaxActivePairs = 100
 	config.BridgeLimits.CopyBufferBytes = 4 * 1024
 	return config
 }
 
-func openBrowserEndpointAtWithCoordinator(ctx context.Context, topology BrowserTopology, listenHost, browserOrigin string, coordinatorConfig tunnelv2.Config, maxStreams uint16) (*BrowserEndpoint, error) {
+func openBrowserEndpointAtWithCoordinator(ctx context.Context, topology BrowserTopology, listenHost, browserOrigin string, coordinatorConfig tunnelv3.Config, maxStreams uint16) (*BrowserEndpoint, error) {
 	serverCarrier, err := topology.serverCarrier()
 	if err != nil {
 		return nil, err
@@ -156,11 +156,11 @@ func openBrowserEndpointAtWithCoordinator(ctx context.Context, topology BrowserT
 	}
 	endpointCtx, cancel := context.WithCancelCause(ctx)
 	endpoint := &Endpoint{
-		listenHost: listenHost, suite: protocolv2.SuiteChaCha20Poly1305, ctx: endpointCtx, cancel: cancel,
+		listenHost: listenHost, suite: protocolv3.SuiteChaCha20Poly1305, ctx: endpointCtx, cancel: cancel,
 		maxInboundStreams: maxStreams,
 		expectations:      make(map[[sha256.Size]byte]*admissionExpectation), closeDone: make(chan struct{}),
 	}
-	coordinator, err := tunnelv2.NewCoordinator(coordinatorConfig, endpoint.authorize)
+	coordinator, err := tunnelv3.NewCoordinator(coordinatorConfig, endpoint.authorize)
 	if err != nil {
 		cancel(err)
 		return nil, err
@@ -179,7 +179,24 @@ func openBrowserEndpointAtWithCoordinator(ctx context.Context, topology BrowserT
 		cleanupCancel()
 		return nil, err
 	}
-	endpoint.candidates = []artifactv2.Candidate{browserCandidate, serverCandidate}
+	leaf, err := x509.ParseCertificate(serverTLS.Certificates[0].Certificate[0])
+	if err != nil {
+		cancel(err)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = endpoint.closeListeners(cleanupCtx)
+		cleanupCancel()
+		return nil, err
+	}
+	digest := sha256.Sum256(leaf.Raw)
+	browserCandidate.TLS = artifactv3.TLSPolicy{
+		Mode: artifactv3.TLSModePin,
+		Pins: []artifactv3.CertificatePin{{
+			Algorithm:      "sha-256",
+			ValueBase64URL: base64.RawURLEncoding.EncodeToString(digest[:]),
+			NotAfterUnixS:  leaf.NotAfter.Unix(),
+		}},
+	}
+	endpoint.candidates = []artifactv3.Candidate{browserCandidate, serverCandidate}
 	factory, err := endpoint.newCandidateFactory(roots)
 	if err != nil {
 		cancel(err)
@@ -189,23 +206,22 @@ func openBrowserEndpointAtWithCoordinator(ctx context.Context, topology BrowserT
 		return nil, err
 	}
 	endpoint.factory = factory
-	digest := sha256.Sum256(serverTLS.Certificates[0].Certificate[0])
 	return &BrowserEndpoint{
 		endpoint: endpoint, topology: topology, certificateHash: digest,
 		certificateDER: append([]byte(nil), serverTLS.Certificates[0].Certificate[0]...), roots: roots,
 	}, nil
 }
 
-func (endpoint *Endpoint) startWebTransportListener(id string, serverTLS *tls.Config, allowedOrigin string) (artifactv2.Candidate, error) {
+func (endpoint *Endpoint) startWebTransportListener(id string, serverTLS *tls.Config, allowedOrigin string) (artifactv3.Candidate, error) {
 	limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), endpoint.maxInboundStreams)
 	if err != nil {
-		return artifactv2.Candidate{}, err
+		return artifactv3.Candidate{}, err
 	}
 	server, err := carrierwt.NewServer(serverTLS, limits, func(request *http.Request) bool {
 		return browserOriginAllowed(request.Header.Get("Origin"), allowedOrigin)
 	})
 	if err != nil {
-		return artifactv2.Candidate{}, err
+		return artifactv3.Candidate{}, err
 	}
 	server.SetHandler(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		session, upgradeErr := server.Upgrade(writer, request)
@@ -218,7 +234,7 @@ func (endpoint *Endpoint) startWebTransportListener(id string, serverTLS *tls.Co
 	packetConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(endpoint.listenHost)})
 	if err != nil {
 		_ = server.Close()
-		return artifactv2.Candidate{}, err
+		return artifactv3.Candidate{}, err
 	}
 	serveDone := make(chan error, 1)
 	endpoint.acceptWG.Add(1)
@@ -249,7 +265,10 @@ func (endpoint *Endpoint) startWebTransportListener(id string, serverTLS *tls.Co
 		Scheme: "https", Host: net.JoinHostPort(endpoint.listenHost, fmt.Sprint(packetConn.LocalAddr().(*net.UDPAddr).Port)),
 		Path: carrierwt.PathTunnel,
 	}).String()
-	return artifactv2.Candidate{ID: id, Carrier: artifactv2.CarrierWebTransport, URL: target, WireProfile: "flowersec-tunnel/2"}, nil
+	return artifactv3.Candidate{
+		ID: id, Carrier: artifactv3.CarrierWebTransport, URL: target,
+		WireProfile: "flowersec-tunnel/3",
+	}, nil
 }
 
 func (endpoint *Endpoint) serveWebTransport(session *carrierwt.Session) {
@@ -259,7 +278,7 @@ func (endpoint *Endpoint) serveWebTransport(session *carrierwt.Session) {
 		_ = session.Close()
 		return
 	}
-	pending, err := tunnelv2.NewNativeStreamLeg(session, stream)
+	pending, err := tunnelv3.NewNativeStreamLeg(session, stream)
 	if err != nil {
 		_ = session.Close()
 		return
@@ -316,7 +335,7 @@ func (endpoint *BrowserEndpoint) IssueBrowserArtifact() (*BrowserArtifact, error
 	if err := owner.register(browserExpectation, serverExpectation); err != nil {
 		return nil, err
 	}
-	rawJSON, err := artifactv2.MarshalArtifactJSON(browserArtifact)
+	rawJSON, err := artifactv3.MarshalArtifactJSON(browserArtifact)
 	if err != nil {
 		owner.unregister(browserExpectation, serverExpectation)
 		return nil, err
@@ -385,23 +404,23 @@ func deliverBrowserConnectResult(ctx context.Context, result chan<- browserConne
 
 func (endpoint *Endpoint) connectSelected(
 	ctx context.Context,
-	artifact artifactv2.Artifact,
+	artifact artifactv3.Artifact,
 	candidateID string,
 	echoRPC bool,
 	timeline *establishmentTimeline,
-) (flowersession.SessionV2, error) {
+) (flowersession.Session, error) {
 	factory := &selectedFactory{base: endpoint.factory, candidateID: candidateID, role: 2, timeline: timeline}
-	var connectorOptions []connectv2.ConnectorOption
+	var connectorOptions []connectv3.ConnectorOption
 	if echoRPC {
 		router := internalrpc.NewRouter()
 		router.Register(1, func(_ context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
 			return append(json.RawMessage(nil), payload...), nil
 		})
-		connectorOptions = append(connectorOptions, connectv2.WithRPCRouter(router))
+		connectorOptions = append(connectorOptions, connectv3.WithRPCRouter(router))
 	}
 	var spent atomic.Bool
 	started := time.Now()
-	connector := connectv2.NewConnector(connectv2.ArtifactLease{
+	connector := connectv3.NewConnector(connectv3.ArtifactLease{
 		Artifact: artifact,
 		CommitSpend: func(context.Context) error {
 			if !spent.CompareAndSwap(false, true) {
@@ -431,7 +450,7 @@ func (artifact *BrowserArtifact) ArtifactJSON() string {
 
 // AwaitServer returns the Go server-role encrypted session after Chromium has
 // completed admission and READY.
-func (artifact *BrowserArtifact) AwaitServer(ctx context.Context) (flowersession.SessionV2, error) {
+func (artifact *BrowserArtifact) AwaitServer(ctx context.Context) (flowersession.Session, error) {
 	if artifact == nil || artifact.endpoint == nil {
 		return nil, errors.New("browser tunnel artifact is not initialized")
 	}

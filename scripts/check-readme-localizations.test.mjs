@@ -6,10 +6,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  transportV2CommonReadmeLiterals,
-  transportV2ReadmeContracts,
-  validateTransportV2Readmes,
-} from "./readme-transport-v2-contract.mjs";
+  transportV3CommonReadmeLiterals,
+  transportV3ReadmeContracts,
+  validateTransportV3Readmes,
+} from "./readme-transport-v3-contract.mjs";
 import {
   extractInlineCodeLiterals,
   extractMarkdownShape,
@@ -18,24 +18,24 @@ import {
 function createTransportReadmeFixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-readme-contract-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  for (const [file, status] of Object.entries(transportV2ReadmeContracts)) {
+  for (const [file, status] of Object.entries(transportV3ReadmeContracts)) {
     const target = path.join(root, file);
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, `${transportV2CommonReadmeLiterals.join("\n")}\n${status}\n`);
+    fs.writeFileSync(target, `${transportV3CommonReadmeLiterals.join("\n")}\n${status}\n`);
   }
   return root;
 }
 
 test("README contract accepts the current user-facing support matrix", (t) => {
   const root = createTransportReadmeFixture(t);
-  assert.deepEqual(validateTransportV2Readmes(root), []);
+  assert.deepEqual(validateTransportV3Readmes(root), []);
 });
 
 test("README contract rejects a missing user-facing support description", (t) => {
   const root = createTransportReadmeFixture(t);
   const target = path.join(root, "flowersec-go/README.md");
   fs.writeFileSync(target, "Supports connections.\n");
-  assert.match(validateTransportV2Readmes(root).join("\n"), /flowersec-go\/README\.md.*user-facing support/);
+  assert.match(validateTransportV3Readmes(root).join("\n"), /flowersec-go\/README\.md.*user-facing support/);
 });
 
 test("README contract rejects overstated SDK support", (t) => {
@@ -44,11 +44,11 @@ test("README contract rejects overstated SDK support", (t) => {
   fs.writeFileSync(
     target,
     fs.readFileSync(target, "utf8").replace(
-      transportV2ReadmeContracts["flowersec-rust/README.md"],
+      transportV3ReadmeContracts["flowersec-rust/README.md"],
       "The native Rust runtime supports every connection type.",
     ),
   );
-  assert.match(validateTransportV2Readmes(root).join("\n"), /flowersec-rust\/README\.md.*user-facing support/);
+  assert.match(validateTransportV3Readmes(root).join("\n"), /flowersec-rust\/README\.md.*user-facing support/);
 });
 
 test("SDK README descriptions identify the final recovery owner", () => {
@@ -74,7 +74,7 @@ test("README support claims state optional WebTransport and native package bound
   assert.match(goReadme, /optional low-level listener adapter only/u);
   assert.match(goReadme, /not a supported endpoint-client\s+tunnel path or `TunnelRuntime` capability/u);
   assert.match(typescriptReadme, /Browser WebTransport is capability-dependent/u);
-  assert.match(typescriptReadme, /WebTransport\s+uses browser-owned HTTP\/3 streams and is not available in the Node entrypoint/u);
+  assert.match(typescriptReadme, /WebTransport\s+uses browser-owned HTTP\/3 streams and\s+is not available in the Node entrypoint/u);
   assert.match(nativeReadme, /macOS\s+arm64, macOS x64, Linux arm64 glibc, and Linux x64 glibc/u);
   assert.match(nativeReadme, /Windows and\s+musl packages are not published/u);
 });

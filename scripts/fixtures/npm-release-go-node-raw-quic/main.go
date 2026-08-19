@@ -19,8 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
-	"github.com/floegence/flowersec/flowersec-go/v2/controlplane"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
+	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
 )
 
 const (
@@ -52,7 +52,11 @@ func run() error {
 	}
 	defer listener.Close()
 
-	endpoints, err := controlplane.NewEndpointSet("quic://" + listener.Address())
+	endpoints, err := controlplane.NewEndpointSet(controlplane.EndpointConfig{
+		ID:  "raw-quic",
+		URL: "quic://" + listener.Address(),
+		TLS: controlplane.CAPolicy(),
+	})
 	if err != nil {
 		return fmt.Errorf("endpoint set: %w", err)
 	}

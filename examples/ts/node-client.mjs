@@ -30,7 +30,7 @@ const artifact = parseArtifact(await readFile(artifactPath));
 const lease = createArtifactLease(artifact, async () => {
   const receipt = await open(receiptPath, "wx", 0o600);
   try {
-    await receipt.writeFile("flowersec-v2-artifact-spent\n", "utf8");
+    await receipt.writeFile("flowersec-v3-artifact-spent\n", "utf8");
     await receipt.sync();
   } finally {
     await receipt.close();
@@ -43,14 +43,14 @@ const lease = createArtifactLease(artifact, async () => {
   }
 });
 const signal = AbortSignal.timeout(15_000);
-const tls = trustRootPath === undefined ? undefined : { ca: await readFile(trustRootPath) };
+const roots = trustRootPath === undefined ? undefined : await readFile(trustRootPath);
 let session;
 let unsubscribe = () => {};
 try {
   session = await connect(lease, {
     origin,
     signal,
-    ...(tls === undefined ? {} : { tls }),
+    ...(roots === undefined ? {} : { roots }),
   });
 } catch (error) {
   reportRecovery(error);

@@ -7,12 +7,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/defaults"
 )
 
 var (
 	ErrInvalidConnectionController = errors.New("invalid Flowersec connection controller")
 )
+
+const maxSafeControllerInteger uint64 = 9_007_199_254_740_991
 
 // ConnectionState is the complete lifecycle of a long-lived connection
 // intent. Each connected state contains a newly established one-shot Session.
@@ -32,6 +35,32 @@ const (
 type ConnectionControllerOptions struct {
 	Connector       ConnectorOptions
 	MaximumAttempts uint64
+	// clock is package-internal so deterministic scheduler tests can exercise
+	// wall-clock expiry and retry timing without weakening the public API.
+	clock controllerClock
+}
+
+type controllerClock struct {
+	wallNow      func() time.Time
+	monotonicNow func() time.Duration
+	newTimer     func(time.Duration) controllerTimer
+}
+
+type controllerTimer struct {
+	channel <-chan time.Time
+	stop    func() bool
+}
+
+func realControllerClock() controllerClock {
+	origin := time.Now()
+	return controllerClock{
+		wallNow:      time.Now,
+		monotonicNow: func() time.Duration { return time.Since(origin) },
+		newTimer: func(delay time.Duration) controllerTimer {
+			timer := time.NewTimer(delay)
+			return controllerTimer{channel: timer.C, stop: timer.Stop}
+		},
+	}
 }
 
 // ArtifactSource supplies one fresh, single-use lease for every controller
@@ -68,6 +97,10 @@ func (err *ArtifactSourceError) RetryDisposition() RetryDisposition {
 	return err.disposition
 }
 
+func (err *ArtifactSourceError) valid() bool {
+	return err != nil && err.disposition.valid()
+}
+
 // NewTerminalArtifactSourceError constructs a non-retryable source failure.
 func NewTerminalArtifactSourceError(cause error) *ArtifactSourceError {
 	return newArtifactSourceError(cause, terminalDisposition())
@@ -81,11 +114,11 @@ func NewRetryableArtifactSourceError(cause error) *ArtifactSourceError {
 
 // NewRetryAfterArtifactSourceError constructs a source failure with an
 // authoritative not-before deadline.
-func NewRetryAfterArtifactSourceError(cause error, retryAt time.Time) (*ArtifactSourceError, error) {
-	if retryAt.IsZero() {
+func NewRetryAfterArtifactSourceError(cause error, retryAtUnixMilliseconds int64) (*ArtifactSourceError, error) {
+	if !validRetryAfterUnixMilliseconds(retryAtUnixMilliseconds) {
 		return nil, ErrInvalidConnectionController
 	}
-	return newArtifactSourceError(cause, retryAfterDisposition(retryAt)), nil
+	return newArtifactSourceError(cause, retryAfterDisposition(retryAtUnixMilliseconds)), nil
 }
 
 func newArtifactSourceError(cause error, disposition RetryDisposition) *ArtifactSourceError {
@@ -111,6 +144,33 @@ type ConnectionSnapshot struct {
 }
 
 type connectionAttempt func(context.Context, ArtifactLease, ConnectorOptions) (Session, error)
+type controllerConnectionAttempt func(context.Context, claimedArtifactLease, ConnectorOptions, map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome)
+
+type controllerAcquisitionMode uint8
+
+const (
+	controllerAcquirePrimary controllerAcquisitionMode = iota
+	controllerAcquireReplacement
+)
+
+type blockedPinPolicy struct {
+	endpoint transportEndpointKey
+	digest   [32]byte
+}
+
+type controllerCycle struct {
+	attempts            uint64
+	consecutiveFailures uint64
+	mode                controllerAcquisitionMode
+	replacementUsed     bool
+	blocked             map[blockedPinPolicy]struct{}
+	replacementBasis    map[transportEndpointKey]artifactv3.Candidate
+	replacementFailed   map[transportEndpointKey]struct{}
+	triggered           map[transportEndpointKey]artifactv3.Candidate
+	securityTrigger     bool
+	opaqueTrigger       bool
+	lastFailure         error
+}
 
 // ConnectionController is the sole Flowersec session reconnect scheduler. It
 // never migrates streams or replays RPC calls, writes, or application work.
@@ -119,31 +179,38 @@ type ConnectionController struct {
 	options         ConnectorOptions
 	maximumAttempts uint64
 	connect         connectionAttempt
+	connectDetailed controllerConnectionAttempt
 
-	mu             sync.Mutex
-	snapshot       ConnectionSnapshot
-	changed        chan struct{}
-	retry          chan struct{}
-	retryNotBefore time.Time
-	cancel         context.CancelFunc
-	done           chan struct{}
-	started        bool
-	doneClosed     bool
+	mu                             sync.Mutex
+	snapshot                       ConnectionSnapshot
+	changed                        chan struct{}
+	retry                          chan struct{}
+	retryNotBeforeUnixMilliseconds int64
+	cancel                         context.CancelFunc
+	done                           chan struct{}
+	started                        bool
+	doneClosed                     bool
+	clock                          controllerClock
 }
 
 // NewConnectionController creates an idle controller over a refreshable
 // ArtifactSource.
 func NewConnectionController(source ArtifactSource, options ConnectionControllerOptions) (*ConnectionController, error) {
-	if source == nil || !validConnectorPolicy(options.Connector) {
+	if source == nil || !validConnectorPolicy(options.Connector) || options.MaximumAttempts > maxSafeControllerInteger {
 		return nil, ErrInvalidConnectionController
 	}
 	if options.Connector.RPCHandlers != nil {
 		options.Connector.RPCHandlers.freeze()
 	}
+	clock := options.clock
+	if clock.wallNow == nil || clock.monotonicNow == nil || clock.newTimer == nil {
+		clock = realControllerClock()
+	}
 	return &ConnectionController{
-		source: source, options: options.Connector, maximumAttempts: options.MaximumAttempts, connect: Connect,
-		snapshot: ConnectionSnapshot{State: ConnectionIdle},
-		changed:  make(chan struct{}), retry: make(chan struct{}, 1), done: make(chan struct{}),
+		source: source, options: options.Connector, maximumAttempts: options.MaximumAttempts,
+		snapshot: ConnectionSnapshot{State: ConnectionIdle}, retryNotBeforeUnixMilliseconds: -1,
+		changed: make(chan struct{}), retry: make(chan struct{}, 1), done: make(chan struct{}),
+		clock: clock,
 	}, nil
 }
 
@@ -217,7 +284,7 @@ func (controller *ConnectionController) RetryNow() bool {
 	}
 	controller.mu.Lock()
 	waiting := controller.snapshot.State == ConnectionWaiting &&
-		(controller.retryNotBefore.IsZero() || !time.Now().Before(controller.retryNotBefore))
+		(controller.retryNotBeforeUnixMilliseconds < 0 || controller.clock.wallNow().UnixMilli() >= controller.retryNotBeforeUnixMilliseconds)
 	if waiting {
 		select {
 		case controller.retry <- struct{}{}:
@@ -272,37 +339,95 @@ func (controller *ConnectionController) run(ctx context.Context) {
 		controller.mu.Unlock()
 	}()
 
-	var consecutiveFailures uint64
-	attemptsSinceConnected := uint64(1)
+	cycle := newControllerCycle()
 	for {
 		if ctx.Err() != nil {
 			controller.finishClosed()
 			return
 		}
+		if controller.maximumAttempts != 0 && cycle.attempts >= controller.maximumAttempts {
+			controller.fail(cycle.failureOrDefault(), terminalDisposition())
+			return
+		}
+		cycle.attempts = saturatingControllerIncrement(cycle.attempts)
+		controller.beginNextAttempt(cycle.attempts)
 		lease, sourceFailure := controller.source.Acquire(ctx)
+		if sourceFailure != nil && lease.present() {
+			claimed, claimedOK := lease.claimArtifact()
+			if claimedOK {
+				_ = claimed.retire(context.WithoutCancel(ctx))
+			}
+			if ctx.Err() != nil {
+				controller.finishClosed()
+				return
+			}
+			controller.fail(&ConnectError{code: ConnectArtifactInvalid}, terminalDisposition())
+			return
+		}
+		claimed, claimedOK := lease.claimArtifact()
 		if ctx.Err() != nil {
+			if claimedOK {
+				_ = claimed.retire(context.WithoutCancel(ctx))
+			}
 			controller.finishClosed()
 			return
 		}
 		if sourceFailure != nil {
-			consecutiveFailures++
-			if !controller.handleFailure(ctx, sourceFailure, sourceFailure.RetryDisposition(), consecutiveFailures, attemptsSinceConnected) {
+			cycle.consecutiveFailures = saturatingControllerIncrement(cycle.consecutiveFailures)
+			cycle.lastFailure = projectArtifactSourceFailure(sourceFailure)
+			disposition := sourceFailure.RetryDisposition()
+			if !sourceFailure.valid() {
+				cycle.lastFailure = &ConnectError{code: ConnectArtifactInvalid}
+				disposition = terminalDisposition()
+			}
+			if !controller.handleFailure(ctx, cycle.lastFailure, disposition, cycle.consecutiveFailures, cycle.attempts) {
 				return
 			}
-			attemptsSinceConnected++
-			controller.beginNextAttempt(attemptsSinceConnected)
 			continue
 		}
-		if lease.artifact.value == nil || lease.state == nil {
-			controller.fail(NewTerminalArtifactSourceError(ErrInvalidArtifact), terminalDisposition())
+		if !claimedOK || !claimed.valid() {
+			controller.fail(&ConnectError{code: ConnectArtifactInvalid}, terminalDisposition())
 			return
 		}
-		if !lease.claimForConnectionController() {
-			controller.fail(NewTerminalArtifactSourceError(errArtifactLeaseConsumed), terminalDisposition())
+		if cycle.mode == controllerAcquireReplacement {
+			cycle.replacementUsed = true
+		}
+		if claimed.lease.artifact.value.Session.InitExpireAtUnixSeconds <= controller.clock.wallNow().Unix() {
+			_ = claimed.retire(context.WithoutCancel(ctx))
+			cycle.consecutiveFailures = saturatingControllerIncrement(cycle.consecutiveFailures)
+			cycle.lastFailure = &ConnectError{code: ConnectExpired}
+			cycle.mode = controllerAcquirePrimary
+			if !controller.handleFailure(ctx, cycle.lastFailure, retryableDisposition(), cycle.consecutiveFailures, cycle.attempts) {
+				return
+			}
+			continue
+		}
+
+		allowed, eligibilityErr := cycle.eligibleCandidates(claimed.lease.artifact.value)
+		if eligibilityErr != nil {
+			_ = claimed.retire(context.WithoutCancel(ctx))
+			cycle.consecutiveFailures = saturatingControllerIncrement(cycle.consecutiveFailures)
+			cycle.lastFailure = eligibilityErr
+			controller.fail(eligibilityErr, terminalDisposition())
 			return
 		}
 
-		session, err := controller.connect(ctx, lease, controller.options)
+		var session Session
+		var outcome controllerConnectOutcome
+		if controller.connect != nil {
+			session, outcome.err = controller.connect(ctx, claimed.lease, controller.options)
+			outcome.spendStarted = claimed.spendStarted()
+			if outcome.err != nil && !outcome.spendStarted {
+				_ = claimed.retire(context.WithoutCancel(ctx))
+			}
+		} else if controller.connectDetailed != nil {
+			session, outcome = controller.connectDetailed(ctx, claimed, controller.options, allowed)
+			if outcome.err != nil && !outcome.spendStarted {
+				_ = claimed.retire(context.WithoutCancel(ctx))
+			}
+		} else {
+			session, outcome = connectForController(ctx, claimed, controller.options, allowed)
+		}
 		if ctx.Err() != nil {
 			if session != nil {
 				_ = session.Close()
@@ -310,14 +435,49 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			controller.finishClosed()
 			return
 		}
-		if err != nil {
-			consecutiveFailures++
-			disposition := connectErrorDisposition(err)
-			if !controller.handleFailure(ctx, err, disposition, consecutiveFailures, attemptsSinceConnected) {
+		if outcome.err != nil {
+			cycle.consecutiveFailures = saturatingControllerIncrement(cycle.consecutiveFailures)
+			cycle.lastFailure = outcome.err
+			code := connectErrorCode(outcome.err)
+			if len(outcome.triggerCandidates) != 0 && !outcome.spendStarted {
+				cycle.recordTriggers(claimed.lease.artifact.value, outcome)
+				if cycle.mode == controllerAcquirePrimary && !cycle.replacementUsed &&
+					(controller.maximumAttempts == 0 || cycle.attempts < controller.maximumAttempts) {
+					cycle.mode = controllerAcquireReplacement
+					continue
+				}
+				controller.fail(cycle.triggerFailure(), terminalDisposition())
 				return
 			}
-			attemptsSinceConnected++
-			controller.beginNextAttempt(attemptsSinceConnected)
+			switch code {
+			case ConnectArtifactInvalid, ConnectInvalidInput, ConnectInvalidOptions:
+				controller.fail(outcome.err, terminalDisposition())
+				return
+			}
+			if outcome.spendStarted {
+				cycle.mode = controllerAcquirePrimary
+			}
+			if cycle.mode == controllerAcquireReplacement && !outcome.spendStarted && code != ConnectExpired {
+				controller.fail(cycle.triggerFailure(), terminalDisposition())
+				return
+			}
+			switch code {
+			case ConnectTransportSecurityUnsupported:
+				controller.fail(outcome.err, terminalDisposition())
+				return
+			case ConnectTransportSecurityFailed:
+				controller.fail(outcome.err, terminalDisposition())
+				return
+			case ConnectExpired:
+				cycle.mode = controllerAcquirePrimary
+			}
+			disposition := connectErrorDisposition(outcome.err)
+			if outcome.hasDisposition {
+				disposition = outcome.retryDisposition
+			}
+			if !controller.handleFailure(ctx, outcome.err, disposition, cycle.consecutiveFailures, cycle.attempts) {
+				return
+			}
 			continue
 		}
 		if session == nil {
@@ -325,8 +485,7 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			return
 		}
 
-		consecutiveFailures = 0
-		attemptsSinceConnected = 0
+		cycle = newControllerCycle()
 		controller.publishConnected(session)
 		termination, waitErr := session.WaitTermination(ctx)
 		if ctx.Err() != nil {
@@ -334,7 +493,6 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			return
 		}
 		_ = session.Close()
-		consecutiveFailures = 1
 		var terminalError error
 		var disposition RetryDisposition
 		if waitErr != nil {
@@ -344,12 +502,151 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			terminalError = &termination.Error
 			disposition = termination.Error.RetryDisposition()
 		}
-		if !controller.handleFailure(ctx, terminalError, disposition, consecutiveFailures, attemptsSinceConnected) {
+		cycle.consecutiveFailures = 1
+		cycle.lastFailure = terminalError
+		if !controller.handleFailure(ctx, terminalError, disposition, cycle.consecutiveFailures, cycle.attempts) {
 			return
 		}
-		controller.beginNextAttempt(1)
-		attemptsSinceConnected = 1
 	}
+}
+
+func newControllerCycle() controllerCycle {
+	return controllerCycle{
+		mode:    controllerAcquirePrimary,
+		blocked: make(map[blockedPinPolicy]struct{}),
+	}
+}
+
+func (cycle *controllerCycle) failureOrDefault() error {
+	if cycle != nil && cycle.lastFailure != nil {
+		return cycle.lastFailure
+	}
+	return &ConnectError{code: ConnectConnectionFailed}
+}
+
+func (cycle *controllerCycle) triggerFailure() error {
+	if cycle != nil && cycle.securityTrigger {
+		return &ConnectError{code: ConnectTransportSecurityFailed}
+	}
+	return &ConnectError{code: ConnectConnectionFailed}
+}
+
+func (cycle *controllerCycle) recordTriggers(artifact *artifactv3.Artifact, outcome controllerConnectOutcome) {
+	if cycle == nil || artifact == nil {
+		return
+	}
+	cycle.replacementBasis = make(map[transportEndpointKey]artifactv3.Candidate, len(artifact.Path.Candidates))
+	for _, candidate := range artifact.Path.Candidates {
+		cycle.replacementBasis[endpointKey(artifact.Path.Kind, candidate)] = candidate
+	}
+	cycle.replacementFailed = make(map[transportEndpointKey]struct{}, len(outcome.failedEndpoints))
+	for key := range outcome.failedEndpoints {
+		cycle.replacementFailed[key] = struct{}{}
+	}
+	cycle.triggered = make(map[transportEndpointKey]artifactv3.Candidate, len(outcome.triggerCandidates))
+	for key, candidate := range outcome.triggerCandidates {
+		digest, err := artifactv3.TLSPolicyDigest(candidate.TLS)
+		if err != nil {
+			continue
+		}
+		cycle.triggered[key] = candidate
+		cycle.blocked[blockedPinPolicy{endpoint: key, digest: digest}] = struct{}{}
+	}
+	cycle.securityTrigger = cycle.securityTrigger || outcome.securityFailure
+	cycle.opaqueTrigger = cycle.opaqueTrigger || outcome.opaqueTrigger
+}
+
+func (cycle *controllerCycle) eligibleCandidates(artifact *artifactv3.Artifact) (map[transportEndpointKey]struct{}, error) {
+	if cycle == nil || artifact == nil {
+		return nil, &ConnectError{code: ConnectArtifactInvalid}
+	}
+	if cycle.mode == controllerAcquirePrimary {
+		if len(cycle.blocked) == 0 {
+			return nil, nil
+		}
+		allowed := make(map[transportEndpointKey]struct{}, len(artifact.Path.Candidates))
+		for _, candidate := range artifact.Path.Candidates {
+			key := endpointKey(artifact.Path.Kind, candidate)
+			if cycle.candidateAllowed(key, candidate) {
+				allowed[key] = struct{}{}
+			}
+		}
+		if len(allowed) == 0 {
+			return nil, cycle.triggerFailure()
+		}
+		return allowed, nil
+	}
+
+	allowed := make(map[transportEndpointKey]struct{}, len(artifact.Path.Candidates))
+	changedPin := false
+	for _, candidate := range artifact.Path.Candidates {
+		key := endpointKey(artifact.Path.Kind, candidate)
+		old, existed := cycle.replacementBasis[key]
+		_, failed := cycle.replacementFailed[key]
+		_, wasTriggered := cycle.triggered[key]
+		changed := false
+		if wasTriggered && candidate.TLS.Mode == artifactv3.TLSModePin {
+			oldDigest, oldErr := artifactv3.TLSPolicyDigest(old.TLS)
+			newDigest, newErr := artifactv3.TLSPolicyDigest(candidate.TLS)
+			changed = oldErr == nil && newErr == nil && oldDigest != newDigest
+			changedPin = changedPin || changed
+		}
+		inReplacementSet := changed || !existed || (existed && !failed)
+		if inReplacementSet && cycle.candidateAllowed(key, candidate) {
+			allowed[key] = struct{}{}
+		}
+	}
+	if !changedPin || len(allowed) == 0 {
+		return nil, cycle.triggerFailure()
+	}
+	return allowed, nil
+}
+
+func (cycle *controllerCycle) candidateAllowed(key transportEndpointKey, candidate artifactv3.Candidate) bool {
+	triggeredEndpoint := false
+	for blocked := range cycle.blocked {
+		if blocked.endpoint != key {
+			continue
+		}
+		triggeredEndpoint = true
+		if candidate.TLS.Mode == artifactv3.TLSModeCA {
+			return false
+		}
+		digest, err := artifactv3.TLSPolicyDigest(candidate.TLS)
+		if err != nil || digest == blocked.digest {
+			return false
+		}
+	}
+	return !triggeredEndpoint || candidate.TLS.Mode == artifactv3.TLSModePin
+}
+
+func saturatingControllerIncrement(value uint64) uint64 {
+	if value >= maxSafeControllerInteger {
+		return maxSafeControllerInteger
+	}
+	return value + 1
+}
+
+func projectArtifactSourceFailure(sourceFailure *ArtifactSourceError) error {
+	if sourceFailure == nil {
+		return &ConnectError{code: ConnectArtifactInvalid}
+	}
+	var connectError *ConnectError
+	if errors.As(sourceFailure.cause, &connectError) {
+		return &ConnectError{code: connectError.Code()}
+	}
+	if errors.Is(sourceFailure.cause, ErrInvalidArtifact) {
+		return &ConnectError{code: ConnectArtifactInvalid}
+	}
+	return &ConnectError{code: ConnectConnectionFailed}
+}
+
+func connectErrorCode(err error) ConnectErrorCode {
+	var connectError *ConnectError
+	if errors.As(err, &connectError) {
+		return connectError.Code()
+	}
+	return ConnectConnectionFailed
 }
 
 func (controller *ConnectionController) handleFailure(
@@ -360,27 +657,19 @@ func (controller *ConnectionController) handleFailure(
 	attemptsSinceConnected uint64,
 ) bool {
 	if !disposition.valid() {
+		err = &ConnectError{code: ConnectArtifactInvalid}
 		disposition = terminalDisposition()
 	}
 	if disposition.Kind == RetryDispositionTerminal ||
 		(controller.maximumAttempts != 0 && attemptsSinceConnected >= controller.maximumAttempts) {
-		controller.fail(err, disposition)
+		controller.fail(err, terminalDisposition())
 		return false
 	}
-	now := time.Now()
-	retryAt := now.Add(connectionControllerBackoff(failureOrdinal))
-	var notBefore time.Time
+	notBeforeUnixMilliseconds := int64(-1)
 	if disposition.Kind == RetryDispositionRetryAfter {
-		notBefore = disposition.RetryAt
-		if notBefore.After(retryAt) {
-			retryAt = notBefore
-		}
+		notBeforeUnixMilliseconds = disposition.RetryAtUnixMilliseconds
 	}
-	delay := retryAt.Sub(now)
-	if delay < 0 {
-		delay = 0
-	}
-	if !controller.wait(ctx, err, disposition, retryAt, notBefore, delay) {
+	if !controller.wait(ctx, err, disposition, notBeforeUnixMilliseconds, connectionControllerBackoff(failureOrdinal)) {
 		controller.finishClosed()
 		return false
 	}
@@ -405,9 +694,8 @@ func (controller *ConnectionController) wait(
 	ctx context.Context,
 	err error,
 	disposition RetryDisposition,
-	retryAt time.Time,
-	notBefore time.Time,
-	delay time.Duration,
+	notBeforeUnixMilliseconds int64,
+	backoff time.Duration,
 ) bool {
 	for {
 		select {
@@ -418,40 +706,60 @@ func (controller *ConnectionController) wait(
 	}
 drained:
 	controller.mu.Lock()
-	controller.retryNotBefore = notBefore
+	controller.retryNotBeforeUnixMilliseconds = notBeforeUnixMilliseconds
 	controller.setSnapshotLocked(ConnectionSnapshot{
 		State: ConnectionWaiting, Attempt: controller.snapshot.Attempt,
 		Failure: connectionFailure(err, disposition),
 	})
 	controller.mu.Unlock()
+	monotonicDeadline := controller.clock.monotonicNow() + backoff
+	bypassBackoff := false
 	for {
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return false
-		case <-controller.retry:
-			timer.Stop()
-			if notBefore.IsZero() || !time.Now().Before(notBefore) {
-				return true
-			}
-			retryAt = notBefore
-			delay = time.Until(notBefore)
-			if delay < 0 {
-				delay = 0
-			}
-		case <-timer.C:
+		monotonicNow := controller.clock.monotonicNow()
+		wallNow := controller.clock.wallNow()
+		backoffSatisfied := bypassBackoff || monotonicNow >= monotonicDeadline
+		wallSatisfied := notBeforeUnixMilliseconds < 0 || wallNow.UnixMilli() >= notBeforeUnixMilliseconds
+		if backoffSatisfied && wallSatisfied {
 			controller.mu.Lock()
-			controller.retryNotBefore = time.Time{}
+			controller.retryNotBeforeUnixMilliseconds = -1
 			controller.mu.Unlock()
 			return true
+		}
+		delay := monotonicDeadline - monotonicNow
+		if backoffSatisfied || delay < 0 {
+			delay = 0
+		}
+		if !wallSatisfied {
+			wallDelayMilliseconds := notBeforeUnixMilliseconds - wallNow.UnixMilli()
+			wallDelay := time.Second
+			if wallDelayMilliseconds < int64(time.Second/time.Millisecond) {
+				wallDelay = time.Duration(wallDelayMilliseconds) * time.Millisecond
+			}
+			if delay == 0 || wallDelay < delay {
+				delay = wallDelay
+			}
+			if delay > time.Second {
+				delay = time.Second
+			}
+		}
+		timer := controller.clock.newTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.stop()
+			return false
+		case <-controller.retry:
+			timer.stop()
+			if notBeforeUnixMilliseconds < 0 || controller.clock.wallNow().UnixMilli() >= notBeforeUnixMilliseconds {
+				bypassBackoff = true
+			}
+		case <-timer.channel:
 		}
 	}
 }
 
 func (controller *ConnectionController) beginNextAttempt(attempt uint64) {
 	controller.mu.Lock()
-	controller.retryNotBefore = time.Time{}
+	controller.retryNotBeforeUnixMilliseconds = -1
 	controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionConnecting, Attempt: attempt})
 	controller.mu.Unlock()
 }
@@ -474,7 +782,7 @@ func (controller *ConnectionController) fail(err error, disposition RetryDisposi
 func (controller *ConnectionController) finishClosed() {
 	controller.mu.Lock()
 	current := controller.snapshot.CurrentSession
-	controller.retryNotBefore = time.Time{}
+	controller.retryNotBeforeUnixMilliseconds = -1
 	controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionClosed, Attempt: controller.snapshot.Attempt})
 	controller.mu.Unlock()
 	if current != nil {

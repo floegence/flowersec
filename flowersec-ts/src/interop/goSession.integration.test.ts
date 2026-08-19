@@ -7,7 +7,7 @@ import {
   connect,
   createArtifactLease,
   parseArtifact,
-} from "../node/index.js";
+} from "../node/v2.js";
 
 const artifactFixture = JSON.parse(
   readFileSync(new URL("../../../testdata/transport_v2/artifact_vectors.json", import.meta.url), "utf8"),
@@ -46,7 +46,7 @@ async function runGoWSSSession(sessionPath: "direct" | "tunnel"): Promise<void> 
     };
     const webSocket = raw.path.candidates.find((candidate) => candidate.id === "w1");
     if (webSocket === undefined) throw new Error(`${sessionPath} WebSocket candidate is missing`);
-    webSocket.url = endpoint.url;
+    webSocket.url = endpoint.url.replace("localhost", "127.0.0.1");
     raw.path.candidates = [webSocket];
 
     phase = "connect";

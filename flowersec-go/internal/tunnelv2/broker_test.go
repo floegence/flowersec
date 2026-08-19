@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/tunnelv2"
 )
 
 func TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers(t *testing.T) {

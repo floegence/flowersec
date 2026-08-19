@@ -5,10 +5,11 @@ use std::{
     time::Duration,
 };
 
-use flowersec::{
-    Acceptor, Artifact, DirectIssueOptions, EndpointSet, Issuer, ProxyServer, ProxyServerOptions,
-    SessionHandlerOptions, SessionHandlers, SessionOptions, WebSocketAcceptorOptions,
+use flowersec::v2::{
+    Acceptor, Artifact, DirectIssueOptions, EndpointSet, Issuer, SessionOptions,
+    WebSocketAcceptorOptions,
 };
+use flowersec::{ProxyServer, ProxyServerOptions, SessionHandlerOptions, SessionHandlers};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use url::Url;

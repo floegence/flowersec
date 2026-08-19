@@ -10,15 +10,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/candidatev2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/candidatev3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/quicbase"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/rawquicv3"
+	carrierwsv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocketv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	flowersessionv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -47,8 +47,8 @@ type AdaptiveConnectOperation struct {
 }
 
 type adaptivePair struct {
-	client    flowersession.SessionV2
-	server    flowersession.SessionV2
+	client    flowersessionv3.Session
+	server    flowersessionv3.Session
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -108,22 +108,23 @@ func (endpoint *AdaptiveEndpoint) Connect(ctx context.Context) (*adaptivePair, [
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	contract, err := releaseSessionContract(protocolv2.SuiteChaCha20Poly1305)
+	contract, err := releaseSessionContractV3(protocolv3.SuiteChaCha20Poly1305)
 	if err != nil {
 		return nil, nil, "", 0, 0, err
 	}
-	artifact := directArtifact(endpoint.candidates[0].Kind, endpoint.endpoints[endpoint.candidates[0].ID].candidateURL, contract)
-	artifact.Path.Candidates = make([]artifactv2.Candidate, 0, len(endpoint.candidates))
+	artifact := directArtifactV3(endpoint.candidates[0].Kind, endpoint.endpoints[endpoint.candidates[0].ID].candidateURL, contract)
+	artifact.Path.Candidates = make([]artifactv3.Candidate, 0, len(endpoint.candidates))
 	for _, definition := range endpoint.candidates {
-		kind := artifactv2.CarrierWebSocket
+		kind := artifactv3.CarrierWebSocket
 		switch definition.Kind {
 		case carrier.KindRawQUIC:
-			kind = artifactv2.CarrierRawQUIC
+			kind = artifactv3.CarrierRawQUIC
 		case carrier.KindWebTransport:
-			kind = artifactv2.CarrierWebTransport
+			kind = artifactv3.CarrierWebTransport
 		}
-		artifact.Path.Candidates = append(artifact.Path.Candidates, artifactv2.Candidate{
-			ID: definition.ID, Carrier: kind, URL: endpoint.endpoints[definition.ID].candidateURL, WireProfile: rawquic.ALPNDirect,
+		artifact.Path.Candidates = append(artifact.Path.Candidates, artifactv3.Candidate{
+			ID: definition.ID, Carrier: kind, URL: endpoint.endpoints[definition.ID].candidateURL, WireProfile: rawquicv3.ALPNDirect,
+			TLS: artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA},
 		})
 	}
 
@@ -133,16 +134,16 @@ func (endpoint *AdaptiveEndpoint) Connect(ctx context.Context) (*adaptivePair, [
 		digest   [32]byte
 	}
 	type preparedRegistration struct {
-		candidate artifactv2.Candidate
+		candidate artifactv3.Candidate
 		raw       []byte
 	}
 	preparedRegistrations := make([]preparedRegistration, 0, len(artifact.Path.Candidates))
 	for _, candidate := range artifact.Path.Candidates {
-		request, buildErr := artifactv2.BuildRequest(artifact, candidate.ID)
+		request, buildErr := artifactv3.BuildRequest(artifact, candidate.ID)
 		if buildErr != nil {
 			return nil, nil, "", 0, 0, buildErr
 		}
-		raw, marshalErr := artifactv2.MarshalRequest(request)
+		raw, marshalErr := artifactv3.MarshalRequest(request)
 		if marshalErr != nil {
 			return nil, nil, "", 0, 0, marshalErr
 		}
@@ -173,27 +174,29 @@ func (endpoint *AdaptiveEndpoint) Connect(ctx context.Context) (*adaptivePair, [
 		}
 	}()
 
-	baseTLS := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: endpoint.trustRoots.Clone()}
+	baseTLS := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, RootCAs: endpoint.trustRoots.Clone()}
 	webSocketClient := *gorillaws.DefaultDialer
 	webSocketClient.TLSClientConfig = baseTLS.Clone()
-	webSocketDial, err := candidatev2.NewWebSocketCarrierDial(candidatev2.WebSocketDialConfig{Dialer: &webSocketClient, Resources: carrierws.DefaultResourcePolicy()})
-	if err != nil {
-		return nil, nil, "", 0, 0, err
-	}
-	rawQUICDial, err := candidatev2.NewRawQUICCarrierDial(candidatev2.RawQUICDialConfig{
-		TLSConfig: baseTLS.Clone(), Limits: quicbase.DefaultLimits(), Dial: rawquic.Dial,
+	webSocketDial, err := candidatev3.NewWebSocketCarrierDial(candidatev3.WebSocketDialConfig{
+		Dialer: &webSocketClient, Resources: carrierwsv3.DefaultResourcePolicy(), Origin: releaseRunnerOrigin,
 	})
 	if err != nil {
 		return nil, nil, "", 0, 0, err
 	}
-	webTransportDial, err := candidatev2.NewWebTransportCarrierDial(candidatev2.WebTransportDialConfig{
+	rawQUICDial, err := candidatev3.NewRawQUICCarrierDial(candidatev3.RawQUICDialConfig{
+		TLSConfig: baseTLS.Clone(), Limits: quicbase.DefaultLimits(), Dial: rawquicv3.Dial,
+	})
+	if err != nil {
+		return nil, nil, "", 0, 0, err
+	}
+	webTransportDial, err := candidatev3.NewWebTransportCarrierDial(candidatev3.WebTransportDialConfig{
 		TLSConfig: baseTLS.Clone(), Limits: quicbase.DefaultLimits(), Origin: releaseRunnerOrigin,
 	})
 	if err != nil {
 		return nil, nil, "", 0, 0, err
 	}
-	dials := map[artifactv2.Carrier]candidatev2.Dial{
-		artifactv2.CarrierWebSocket: webSocketDial, artifactv2.CarrierRawQUIC: rawQUICDial, artifactv2.CarrierWebTransport: webTransportDial,
+	dials := map[artifactv3.Carrier]candidatev3.Dial{
+		artifactv3.CarrierWebSocket: webSocketDial, artifactv3.CarrierRawQUIC: rawQUICDial, artifactv3.CarrierWebTransport: webTransportDial,
 	}
 	started := make(map[string]*atomic.Int32, len(endpoint.candidates))
 	for index, candidate := range endpoint.candidates {
@@ -201,17 +204,17 @@ func (endpoint *AdaptiveEndpoint) Connect(ctx context.Context) (*adaptivePair, [
 		started[candidate.ID] = counter
 		kind := artifact.Path.Candidates[index].Carrier
 		base := dials[kind]
-		dials[kind] = func(ctx context.Context, value artifactv2.Candidate, contract artifactv2.SessionContract) (candidatev2.ReadyCarrier, error) {
+		dials[kind] = func(ctx context.Context, value artifactv3.Candidate, contract artifactv3.SessionContract, attemptNow time.Time) (candidatev3.ReadyCarrier, error) {
 			started[value.ID].Add(1)
-			return base(ctx, value, contract)
+			return base(ctx, value, contract, attemptNow)
 		}
 	}
-	factory, err := candidatev2.NewFactory(dials)
+	factory, err := candidatev3.NewFactory(dials)
 	if err != nil {
 		return nil, nil, "", 0, 0, err
 	}
 	spends := &atomic.Int32{}
-	connector := connectv2.NewConnector(connectv2.ArtifactLease{
+	connector := connectv3.NewConnector(connectv3.ArtifactLease{
 		Artifact: artifact,
 		CommitSpend: func(context.Context) error {
 			if spends.Add(1) != 1 {

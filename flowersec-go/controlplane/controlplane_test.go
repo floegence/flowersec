@@ -10,15 +10,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
 )
 
 func TestIssuerCreatesOpaqueDirectArtifactAndBoundRuntimeAuthorization(t *testing.T) {
 	issuer := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x42}, 128)), time.Unix(1_800_000_000, 0))
 	endpoints, err := NewEndpointSet(
-		"wss://edge.example/flowersec/v2/direct",
-		"quic://edge.example",
-		"https://edge.example/flowersec/webtransport/v2/direct",
+		caEndpoint("websocket", "wss://edge.example/flowersec/v3/direct"),
+		caEndpoint("raw-quic", "quic://edge.example"),
+		caEndpoint("webtransport", "https://edge.example/flowersec/webtransport/v3/direct"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +35,7 @@ func TestIssuerCreatesOpaqueDirectArtifactAndBoundRuntimeAuthorization(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := artifactv2.DecodeArtifactJSON(bytes.NewReader(issued.ArtifactJSON())); err != nil {
+	if _, err := artifactv3.DecodeArtifactJSON(bytes.NewReader(issued.ArtifactJSON())); err != nil {
 		t.Fatalf("public artifact parse failed: %v", err)
 	}
 	encodedRecord, err := issued.AuthorizationRecord().Encode()
@@ -70,7 +70,7 @@ func TestIssuerCreatesOpaqueDirectArtifactAndBoundRuntimeAuthorization(t *testin
 func TestIssuerRoundsSubsecondExpiryUpToWireSecond(t *testing.T) {
 	now := time.Unix(1_800_000_000, 500_000_000)
 	issuer := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x61}, 128)), now)
-	endpoints, err := NewEndpointSet("wss://edge.example/flowersec/v2/direct")
+	endpoints, err := NewEndpointSet(caEndpoint("websocket", "wss://edge.example/flowersec/v3/direct"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestIssuerRoundsSubsecondExpiryUpToWireSecond(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifact, err := artifactv2.DecodeArtifactJSON(bytes.NewReader(issued.ArtifactJSON()))
+	artifact, err := artifactv3.DecodeArtifactJSON(bytes.NewReader(issued.ArtifactJSON()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,37 +91,23 @@ func TestIssuerRoundsSubsecondExpiryUpToWireSecond(t *testing.T) {
 	}
 }
 
-func TestIssuerAcceptsLoopbackPlainWebSocketOnlyForDirectArtifacts(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
-	issuer := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x52}, 128)), now)
-	loopback, err := NewEndpointSet("ws://127.0.0.1:23998/flowersec/v2/direct")
-	if err != nil {
-		t.Fatalf("NewEndpointSet loopback ws: %v", err)
-	}
-	if _, err := issuer.IssueDirect(DirectIssueOptions{
-		Session:   SessionOptions{ChannelID: "loopback", ExpiresAt: now.Add(time.Minute)},
-		Endpoints: loopback, RendezvousGroupID: "group", ListenerAudience: "audience",
-		UpstreamAddress: "127.0.0.1:23998",
-	}); err != nil {
-		t.Fatalf("loopback ws direct issuance: %v", err)
-	}
-	nonLoopback, err := NewEndpointSet("ws://edge.example:23998/flowersec/v2/direct")
-	if err != nil {
-		t.Fatalf("NewEndpointSet non-loopback ws: %v", err)
-	}
-	if _, err := issuer.IssueDirect(DirectIssueOptions{
-		Session:   SessionOptions{ChannelID: "non-loopback", ExpiresAt: now.Add(time.Minute)},
-		Endpoints: nonLoopback, RendezvousGroupID: "group", ListenerAudience: "audience",
-		UpstreamAddress: "127.0.0.1:23998",
-	}); err == nil {
-		t.Fatal("non-loopback plain ws direct issuance unexpectedly succeeded")
+func TestEndpointSetRejectsPlainWebSocketIncludingLoopback(t *testing.T) {
+	for _, rawURL := range []string{
+		"ws://127.0.0.1:23998/flowersec/v3/direct",
+		"ws://edge.example:23998/flowersec/v3/direct",
+	} {
+		_, err := NewEndpointSet(caEndpoint("websocket", rawURL))
+		var controlErr *ControlPlaneError
+		if !errors.As(err, &controlErr) || controlErr.Code() != InvalidEndpointURL || controlErr.FieldPath() != "endpoints[0].url" {
+			t.Fatalf("plain WebSocket error = %#v, want invalid_endpoint_url", err)
+		}
 	}
 }
 
 func TestControlPlaneBoundariesFailClosedAndRedactOpaqueValues(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	issuer := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x31}, 128)), now)
-	directEndpoints, err := NewEndpointSet("wss://edge.example/flowersec/v2/direct")
+	directEndpoints, err := NewEndpointSet(caEndpoint("websocket", "wss://edge.example/flowersec/v3/direct"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +187,7 @@ func TestControlPlaneBoundariesFailClosedAndRedactOpaqueValues(t *testing.T) {
 
 func TestIssuerRedactsRandomSourceFailure(t *testing.T) {
 	issuer := newIssuerForTest(errorReader{}, time.Unix(1_800_000_000, 0))
-	endpoints, err := NewEndpointSet("wss://edge.example/flowersec/v2/direct")
+	endpoints, err := NewEndpointSet(caEndpoint("websocket", "wss://edge.example/flowersec/v3/direct"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,6 +198,28 @@ func TestIssuerRedactsRandomSourceFailure(t *testing.T) {
 	})
 	if !errors.Is(err, ErrIssuanceFailed) || err.Error() != ErrIssuanceFailed.Error() {
 		t.Fatalf("random source error = %v, want stable redacted issuance failure", err)
+	}
+}
+
+func TestIssuerRedactsClockAndProviderFailures(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		issuer *Issuer
+	}{
+		{name: "missing clock", issuer: &Issuer{random: bytes.NewReader(make([]byte, 64))}},
+		{name: "zero clock", issuer: &Issuer{
+			random: bytes.NewReader(make([]byte, 64)),
+			now:    func() time.Time { return time.Time{} },
+		}},
+		{name: "missing random provider", issuer: &Issuer{now: time.Now}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := test.issuer.IssueDirect(DirectIssueOptions{})
+			if !errors.Is(err, ErrIssuanceFailed) || errors.Is(err, ErrInvalidControlPlaneInput) ||
+				err.Error() != ErrIssuanceFailed.Error() {
+				t.Fatalf("provider failure = %v, want stable redacted issuance failure", err)
+			}
+		})
 	}
 }
 
@@ -244,9 +252,9 @@ func (errorReader) Read([]byte) (int, error) { return 0, errors.New("secret prov
 func TestIssuerCreatesTunnelPairAndRejectsCrossRecordAuthorization(t *testing.T) {
 	issuer := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x24}, 256)), time.Unix(1_800_000_000, 0))
 	endpoints, err := NewEndpointSet(
-		"wss://tunnel.example/flowersec/v2/tunnel",
-		"quic://tunnel.example",
-		"https://tunnel.example/flowersec/webtransport/v2/tunnel",
+		caEndpoint("websocket", "wss://tunnel.example/flowersec/v3/tunnel"),
+		caEndpoint("raw-quic", "quic://tunnel.example"),
+		caEndpoint("webtransport", "https://tunnel.example/flowersec/webtransport/v3/tunnel"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -272,7 +280,7 @@ func TestIssuerCreatesTunnelPairAndRejectsCrossRecordAuthorization(t *testing.T)
 
 func TestTunnelRuntimeAuthorizationNeverContainsSessionSecrets(t *testing.T) {
 	issuer := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x25}, 256)), time.Unix(1_800_000_000, 0))
-	endpoints, err := NewEndpointSet("wss://tunnel.example/flowersec/v2/tunnel")
+	endpoints, err := NewEndpointSet(caEndpoint("websocket", "wss://tunnel.example/flowersec/v3/tunnel"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +314,7 @@ func TestTunnelRuntimeAuthorizationNeverContainsSessionSecrets(t *testing.T) {
 
 func TestAllowTunnelRuntimeBuildsSecretFreeResponseAfterExternalAuthorization(t *testing.T) {
 	issuer := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{0x26}, 256)), time.Unix(1_800_000_000, 0))
-	endpoints, err := NewEndpointSet("wss://tunnel.example/flowersec/v2/tunnel")
+	endpoints, err := NewEndpointSet(caEndpoint("websocket", "wss://tunnel.example/flowersec/v3/tunnel"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,11 +372,11 @@ func runtimeRequestForCandidate(t *testing.T, record AuthorizationRecord, candid
 
 func runtimeRequestBody(t *testing.T, record AuthorizationRecord, candidateID string, observedCarrier string) []byte {
 	t.Helper()
-	request, err := artifactv2.BuildRequest(*record.artifact, candidateID)
+	request, err := artifactv3.BuildRequest(*record.artifact, candidateID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := artifactv2.MarshalRequest(request)
+	raw, err := artifactv3.MarshalRequest(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +390,7 @@ func runtimeRequestBody(t *testing.T, record AuthorizationRecord, candidateID st
 		carrier = observedCarrier
 	}
 	body, err := json.Marshal(map[string]string{
-		"fsb2_base64url": base64.RawURLEncoding.EncodeToString(raw),
+		"fsb3_base64url": base64.RawURLEncoding.EncodeToString(raw),
 		"carrier":        carrier,
 		"remote_address": "198.51.100.10:50000",
 	})
@@ -390,4 +398,8 @@ func runtimeRequestBody(t *testing.T, record AuthorizationRecord, candidateID st
 		t.Fatal(err)
 	}
 	return body
+}
+
+func caEndpoint(id, rawURL string) EndpointConfig {
+	return EndpointConfig{ID: id, URL: rawURL, TLS: CAPolicy()}
 }

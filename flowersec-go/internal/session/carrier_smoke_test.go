@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/quicbase"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/rawquic"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocket"
 	gorillaws "github.com/gorilla/websocket"
 )
 

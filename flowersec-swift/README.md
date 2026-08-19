@@ -22,7 +22,7 @@ profile does not expose a server `ProxyServer` or registrar.
 
 `ConnectError` and `SessionError` are closed redacted error sets. A remote application RPC failure is `RPCError` with only its semantic code and sanitized message. Connection selection, credentials, endpoint details, and cryptographic state are not public.
 
-`ConnectError` and `SessionError` expose a structured `RetryDisposition`: `terminal`, `retryable`, or `retryAfter(Date)` with an absolute not-before time. Controller retry timing uses the shared fixed defaults; only `maximumAttempts` is public. `ConnectorOptions` uses the shared ten-second connection timeout when the caller omits it. Apple TLS uses the system trust store when `trustRootsPEM` is empty and accepts explicit PEM roots for private trust profiles. An HTTP origin is accepted only for an exact loopback origin when every artifact candidate is a plaintext loopback WebSocket direct candidate.
+v3 `ConnectError` and `SessionError` expose a structured `RetryDispositionV3`: `terminal`, `retryable`, or `retryAfter(UInt64)` carrying an exact absolute Unix-millisecond not-before deadline. Controller retry timing uses the shared fixed defaults; only `maximumAttempts` is public. `ConnectorOptions` uses the shared ten-second connection timeout when the caller omits it. Apple CA mode uses the system trust store when `trustRootsPEM` is empty and accepts explicit PEM roots for private trust profiles. Pin mode verifies only the complete active artifact-bound pin set and never falls back to CA. Production v3 accepts only TLS-protected candidates.
 
 For a long-lived connection, provide a refreshable `ArtifactSource` to `ConnectionController`. The controller is the sole Flowersec reconnect scheduler. Every attempt acquires a new single-use `ArtifactLease` and invokes the same one-shot connector to create a new session. Its public `idle`, `connecting`, `connected`, `waiting`, `failed`, and `closed` states expose the current session, attempt number, and last real attempt failure through snapshots and an update stream. `attempt` is the 1-based ordinal for the active connection cycle, so connected and waiting snapshots retain the ordinal of their successful session; it resets after the wait completes, immediately before the next cycle starts at 1. Backoff is deterministic (250 ms initial delay, multiplier 2, 30 s maximum, no jitter), attempts are unlimited by default, and a finite maximum is always explicit. Reaching that maximum stops the controller without replacing the owning acquisition, connection, or session failure with a policy wrapper. A `retryAfter` deadline and backoff both apply, so retry starts at the later instant; `retryNow()` returns whether it woke the current wait and never crosses that deadline. `close()` is idempotent, waits for controller-owned cleanup, and ignores subordinate session close failures. Applications provide artifacts, restore application authentication and subscriptions after a new session appears, and display state; they must not run a second Flowersec retry loop or infer retry behavior from error text.
 
@@ -35,11 +35,13 @@ It uses Swift-native async APIs and typed values around `Data`, `Duration`, and
 ## Connection Notes
 
 `connect(lease:options:)` establishes direct and relayed WebSocket sessions.
-WSS requires TLS 1.3. Plaintext is accepted only for exact loopback direct
-connections with the Flowersec WebSocket subprotocol. Raw QUIC and WebTransport
-are not implemented by the Swift runtime.
+WSS requires TLS 1.3 and exact v3 subprotocol negotiation. Raw QUIC and
+WebTransport are not implemented by the Swift runtime; their candidates are
+filtered as unsupported before a lease is spent.
 
-WebSocket connections require exact Flowersec v2 subprotocol negotiation. WSS requires TLS 1.3; plaintext is restricted to exact loopback direct candidates. See the [Transport v2 architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md) for the internal carrier contract.
+See the [Transport v3 architecture](../docs/TRANSPORT_V3_ARCHITECTURE.md) and
+[v3 wire contract](../docs/TRANSPORT_V3_WIRE.md) for the internal carrier and
+security contract.
 
 ## Cookbook
 

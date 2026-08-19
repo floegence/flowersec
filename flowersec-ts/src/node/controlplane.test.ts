@@ -17,7 +17,7 @@ import {
   authorizeRuntime,
   createEndpointSet,
   rejectRuntime,
-} from "./controlplane.js";
+} from "./v2.js";
 import type { AuthorizationDecision } from "./acceptor.js";
 
 describe("Node control-plane public contract", () => {
@@ -101,7 +101,10 @@ describe("Node control-plane public contract", () => {
     expect(Object.keys(response)).not.toEqual(expect.arrayContaining([
       expect.stringMatching(/session|psk|suite|secret/iu),
     ]));
-    const secretMarkers = [artifact.session.e2ee_psk_b64u, artifact.path.token];
+    const secretMarkers = [
+      artifact.session.e2ee_psk_b64u,
+      ...(artifact.path.kind === "tunnel" ? [artifact.path.token] : []),
+    ];
     for (const marker of secretMarkers) {
       expect(Object.values(response)).not.toContain(marker);
     }
@@ -129,10 +132,10 @@ describe("Node control-plane public contract", () => {
 
     expect(() => authorize(raw.slice())).not.toThrow();
     const first = raw.slice();
-    first[0] ^= 1;
+    first[0] = (first[0] ?? 0) ^ 1;
     expect(() => authorize(first)).toThrow();
     const last = raw.slice();
-    last[last.length - 1] ^= 1;
+    last[last.length - 1] = (last[last.length - 1] ?? 0) ^ 1;
     expect(() => authorize(last)).toThrow();
     expect(() => authorize(raw.subarray(0, raw.length - 1))).toThrow();
 

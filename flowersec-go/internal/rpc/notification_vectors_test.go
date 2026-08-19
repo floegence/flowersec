@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/framing/jsonframe"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v3/internal/rpcwire"
 )
 
 type notificationVectors struct {
@@ -89,7 +89,7 @@ func loadNotificationVectors(t *testing.T) notificationVectors {
 	if !ok {
 		t.Fatal("resolve notification vector test source")
 	}
-	path := filepath.Join(filepath.Dir(source), "..", "..", "..", "testdata", "transport_v2", "rpc_notification_vectors.json")
+	path := filepath.Join(filepath.Dir(source), "..", "..", "..", "testdata", "transport_v3", "rpc_notification_vectors.json")
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

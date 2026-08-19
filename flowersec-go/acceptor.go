@@ -15,22 +15,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/controlplane"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
-	websocketadmission "github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
-	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv3"
+	websocketadmission "github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv3/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocketv3"
+	carrierwt "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/webtransportv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
+	session "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
 	gorillaws "github.com/gorilla/websocket"
 )
 
 const (
-	WebSocketDirectPath = "/flowersec/v2/direct"
-	WebSocketTunnelPath = "/flowersec/v2/tunnel"
+	WebSocketDirectPath = "/flowersec/v3/direct"
+	WebSocketTunnelPath = "/flowersec/v3/tunnel"
 	leaseReleaseTimeout = 10 * time.Second
 )
 
@@ -204,39 +204,39 @@ func (acceptor *Acceptor) serveNativeDirect(ctx context.Context, native carrier.
 	if err != nil {
 		return err
 	}
-	var decoded *artifactv2.DecodedRequest
+	var decoded *artifactv3.DecodedRequest
 	var response controlplane.AuthorizationResponse
 	var leaseID string
 	var router *internalrpc.Router
-	var serveHandlers func(context.Context, session.SessionV2) error
+	var serveHandlers func(context.Context, session.Session) error
 	defer func() { acceptor.releaseLease(ctx, leaseID) }()
-	decoded, err = admissionv2.Serve(admissionContext, admission, acceptor.reasons(), func(authCtx context.Context, candidate *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
-		if candidate == nil || candidate.Request.PathKind != artifactv2.PathDirect {
-			return artifactv2.AdmissionResponse{}, ErrInvalidAcceptor
+	decoded, err = admissionv3.Serve(admissionContext, admission, acceptor.reasons(), func(authCtx context.Context, candidate *artifactv3.DecodedRequest) (artifactv3.AdmissionResponse, error) {
+		if candidate == nil || candidate.Request.PathKind != artifactv3.PathDirect {
+			return artifactv3.AdmissionResponse{}, ErrInvalidAcceptor
 		}
 		transport, ok := authCtx.Value(acceptorTransportContextKey{}).(acceptorTransportContext)
 		if !ok {
-			return artifactv2.AdmissionResponse{}, ErrInvalidAcceptor
+			return artifactv3.AdmissionResponse{}, ErrInvalidAcceptor
 		}
 		authRequest, parseErr := runtimeAuthorizationRequest(candidate, transport.carrier, transport.remoteAddress)
 		if parseErr != nil {
-			return artifactv2.AdmissionResponse{}, parseErr
+			return artifactv3.AdmissionResponse{}, parseErr
 		}
 		response, parseErr = acceptor.options.Authorize(authCtx, authRequest)
 		if parseErr != nil {
-			return artifactv2.AdmissionResponse{}, parseErr
+			return artifactv3.AdmissionResponse{}, parseErr
 		}
 		if decision, decisionErr := responseDecision(response); decisionErr != nil {
-			return artifactv2.AdmissionResponse{}, decisionErr
+			return artifactv3.AdmissionResponse{}, decisionErr
 		} else if decision == "allow" {
 			leaseID, parseErr = responseLeaseID(response)
 			if parseErr != nil {
-				return artifactv2.AdmissionResponse{}, parseErr
+				return artifactv3.AdmissionResponse{}, parseErr
 			}
 			if acceptor.options.ResolveHandlers != nil {
 				handlers, handlerErr := acceptor.options.ResolveHandlers(authCtx, authRequest)
 				if handlerErr != nil {
-					return artifactv2.AdmissionResponse{}, handlerErr
+					return artifactv3.AdmissionResponse{}, handlerErr
 				}
 				router, serveHandlers = acceptedHandlerSnapshot(handlers)
 			}
@@ -303,7 +303,7 @@ func (acceptor *Acceptor) allowedOrigin(request *http.Request) bool {
 }
 
 func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodGet || !acceptor.allowedOrigin(request) {
+	if request.Method != http.MethodGet || !acceptor.allowedOrigin(request) || carrierws.ValidateServerRequest(request) != nil {
 		http.Error(writer, "request rejected", http.StatusForbidden)
 		return
 	}
@@ -318,37 +318,37 @@ func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http
 	defer acceptor.releaseDirect()
 	ctx, cancel := context.WithTimeout(request.Context(), 10*time.Second)
 	defer cancel()
-	var decoded *artifactv2.DecodedRequest
+	var decoded *artifactv3.DecodedRequest
 	var response controlplane.AuthorizationResponse
 	var leaseID string
 	var router *internalrpc.Router
-	var serveHandlers func(context.Context, session.SessionV2) error
+	var serveHandlers func(context.Context, session.Session) error
 	defer func() { acceptor.releaseLease(request.Context(), leaseID) }()
-	decoded, err = websocketadmission.Serve(ctx, connection, acceptor.reasons(), func(authCtx context.Context, candidate *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
-		if candidate == nil || candidate.Request.PathKind != artifactv2.PathDirect {
-			return artifactv2.AdmissionResponse{}, ErrInvalidAcceptor
+	decoded, err = websocketadmission.Serve(ctx, connection, acceptor.reasons(), func(authCtx context.Context, candidate *artifactv3.DecodedRequest) (artifactv3.AdmissionResponse, error) {
+		if candidate == nil || candidate.Request.PathKind != artifactv3.PathDirect {
+			return artifactv3.AdmissionResponse{}, ErrInvalidAcceptor
 		}
 		authRequest, parseErr := runtimeAuthorizationRequest(candidate, "websocket", request.RemoteAddr)
 		if parseErr != nil {
-			return artifactv2.AdmissionResponse{}, parseErr
+			return artifactv3.AdmissionResponse{}, parseErr
 		}
 		response, parseErr = acceptor.options.Authorize(authCtx, authRequest)
 		if parseErr != nil {
-			return artifactv2.AdmissionResponse{}, parseErr
+			return artifactv3.AdmissionResponse{}, parseErr
 		}
 		decision, decisionErr := responseDecision(response)
 		if decisionErr != nil {
-			return artifactv2.AdmissionResponse{}, decisionErr
+			return artifactv3.AdmissionResponse{}, decisionErr
 		}
 		if decision == "allow" {
 			leaseID, parseErr = responseLeaseID(response)
 			if parseErr != nil {
-				return artifactv2.AdmissionResponse{}, parseErr
+				return artifactv3.AdmissionResponse{}, parseErr
 			}
 			if acceptor.options.ResolveHandlers != nil {
 				handlers, handlerErr := acceptor.options.ResolveHandlers(authCtx, authRequest)
 				if handlerErr != nil {
-					return artifactv2.AdmissionResponse{}, handlerErr
+					return artifactv3.AdmissionResponse{}, handlerErr
 				}
 				router, serveHandlers = acceptedHandlerSnapshot(handlers)
 			}
@@ -383,23 +383,23 @@ func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http
 	}
 }
 
-func acceptedHandlerSnapshot(handlers *SessionHandlers) (*internalrpc.Router, func(context.Context, session.SessionV2) error) {
+func acceptedHandlerSnapshot(handlers *SessionHandlers) (*internalrpc.Router, func(context.Context, session.Session) error) {
 	if handlers == nil {
 		return internalrpc.NewRouter(), nil
 	}
 	router := handlers.routerForAcceptedSession()
-	return router, func(ctx context.Context, current session.SessionV2) error {
-		return handlers.Serve(ctx, &opaqueSession{inner: current})
+	return router, func(ctx context.Context, current session.Session) error {
+		return handlers.Serve(ctx, &opaqueSessionV3{inner: current})
 	}
 }
 
-func (acceptor *Acceptor) runAcceptedSession(ctx context.Context, current session.SessionV2, endpointID string, serveHandlers func(context.Context, session.SessionV2) error) error {
+func (acceptor *Acceptor) runAcceptedSession(ctx context.Context, current session.Session, endpointID string, serveHandlers func(context.Context, session.Session) error) error {
 	if serveHandlers == nil {
-		return acceptor.options.OnSession(ctx, &opaqueSession{inner: current}, endpointID)
+		return acceptor.options.OnSession(ctx, &opaqueSessionV3{inner: current}, endpointID)
 	}
 	onSessionDone := make(chan error, 1)
 	handlersDone := make(chan error, 1)
-	go func() { onSessionDone <- acceptor.options.OnSession(ctx, &opaqueSession{inner: current}, endpointID) }()
+	go func() { onSessionDone <- acceptor.options.OnSession(ctx, &opaqueSessionV3{inner: current}, endpointID) }()
 	go func() { handlersDone <- serveHandlers(ctx, current) }()
 	var first error
 	select {
@@ -415,8 +415,8 @@ func (acceptor *Acceptor) runAcceptedSession(ctx context.Context, current sessio
 	return first
 }
 
-func establishAcceptedSession(ctx context.Context, carrierSession carrier.Session, contract artifactv2.SessionContract, path session.PathKind, role session.SessionRole, localEndpointID, expectedPeerEndpointID string, local, peer [32]byte, router *internalrpc.Router) (session.SessionV2, error) {
-	config := session.Config{Role: role, Path: path, ChannelID: contract.ChannelID, SessionContractHash: contract.ContractHash, Suite: protocolv2.Suite(contract.DefaultSuite), PSK: contract.E2EEPSK, MaxInboundStreams: contract.MaxInboundStreams, IdleTimeout: time.Duration(contract.IdleTimeoutSeconds) * time.Second, EstablishTimeout: time.Duration(contract.EstablishTimeoutSeconds) * time.Second, RekeyPrepareTimeout: time.Duration(contract.RekeyPrepareTimeoutSeconds) * time.Second, RekeyCompletionTimeout: time.Duration(contract.RekeyCompletionTimeoutSeconds) * time.Second, LocalEndpointInstanceID: localEndpointID, ExpectedPeerEndpointInstanceID: expectedPeerEndpointID, LocalAdmissionBinding: local, PeerAdmissionBinding: peer, RPCRouter: router}
+func establishAcceptedSession(ctx context.Context, carrierSession carrier.Session, contract artifactv3.SessionContract, path session.PathKind, role session.SessionRole, localEndpointID, expectedPeerEndpointID string, local, peer [32]byte, router *internalrpc.Router) (session.Session, error) {
+	config := session.Config{Role: role, Path: path, ChannelID: contract.ChannelID, SessionContractHash: contract.ContractHash, Suite: protocolv3.Suite(contract.DefaultSuite), PSK: contract.E2EEPSK, MaxInboundStreams: contract.MaxInboundStreams, IdleTimeout: time.Duration(contract.IdleTimeoutSeconds) * time.Second, EstablishTimeout: time.Duration(contract.EstablishTimeoutSeconds) * time.Second, RekeyPrepareTimeout: time.Duration(contract.RekeyPrepareTimeoutSeconds) * time.Second, RekeyCompletionTimeout: time.Duration(contract.RekeyCompletionTimeoutSeconds) * time.Second, LocalEndpointInstanceID: localEndpointID, ExpectedPeerEndpointInstanceID: expectedPeerEndpointID, LocalAdmissionBinding: local, PeerAdmissionBinding: peer, RPCRouter: router}
 	return session.Establish(ctx, carrierSession, config)
 }
 
@@ -436,8 +436,8 @@ func (acceptor *Acceptor) releaseLease(ctx context.Context, leaseID string) {
 		acceptor.options.Release(cleanupCtx, leaseID)
 	}
 }
-func (acceptor *Acceptor) reasons() artifactv2.ReasonRegistry {
-	return artifactv2.ReasonRegistry{"authorization_denied": {}, "authorization_unavailable": {}}
+func (acceptor *Acceptor) reasons() artifactv3.ReasonRegistry {
+	return artifactv3.ReasonRegistry{"authorization_denied": {}, "authorization_unavailable": {}}
 }
 
 type acceptorTransportContext struct {
@@ -447,16 +447,16 @@ type acceptorTransportContext struct {
 
 type acceptorTransportContextKey struct{}
 
-func runtimeAuthorizationRequest(decoded *artifactv2.DecodedRequest, observedCarrier, remoteAddress string) (controlplane.RuntimeAuthorizationRequest, error) {
+func runtimeAuthorizationRequest(decoded *artifactv3.DecodedRequest, observedCarrier, remoteAddress string) (controlplane.RuntimeAuthorizationRequest, error) {
 	if decoded == nil || len(decoded.Raw) == 0 || observedCarrier == "" || remoteAddress == "" {
 		return controlplane.RuntimeAuthorizationRequest{}, ErrInvalidAcceptor
 	}
 	encoded, err := json.Marshal(struct {
-		FSB2Base64URL string `json:"fsb2_base64url"`
+		FSB3Base64URL string `json:"fsb3_base64url"`
 		Carrier       string `json:"carrier"`
 		RemoteAddress string `json:"remote_address"`
 	}{
-		FSB2Base64URL: base64.RawURLEncoding.EncodeToString(decoded.Raw),
+		FSB3Base64URL: base64.RawURLEncoding.EncodeToString(decoded.Raw),
 		Carrier:       observedCarrier,
 		RemoteAddress: remoteAddress,
 	})
@@ -514,29 +514,29 @@ func responseDecision(response controlplane.AuthorizationResponse) (string, erro
 	}
 	return wire.Decision, nil
 }
-func responseAdmission(response controlplane.AuthorizationResponse) (artifactv2.AdmissionResponse, error) {
+func responseAdmission(response controlplane.AuthorizationResponse) (artifactv3.AdmissionResponse, error) {
 	wire, err := decodeAuthorizationResponse(response)
 	if err != nil {
-		return artifactv2.AdmissionResponse{}, err
+		return artifactv3.AdmissionResponse{}, err
 	}
 	switch wire.Decision {
 	case "allow":
-		return artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, nil
+		return artifactv3.AdmissionResponse{Status: artifactv3.AdmissionSuccess}, nil
 	case "retry":
-		return artifactv2.AdmissionResponse{Status: artifactv2.AdmissionRetryable, Reason: wire.Reason}, nil
+		return artifactv3.AdmissionResponse{Status: artifactv3.AdmissionRetryable, Reason: wire.Reason}, nil
 	case "reject":
-		return artifactv2.AdmissionResponse{Status: artifactv2.AdmissionReject, Reason: wire.Reason}, nil
+		return artifactv3.AdmissionResponse{Status: artifactv3.AdmissionReject, Reason: wire.Reason}, nil
 	default:
-		return artifactv2.AdmissionResponse{}, ErrInvalidAcceptor
+		return artifactv3.AdmissionResponse{}, ErrInvalidAcceptor
 	}
 }
 
-func (wire acceptorSessionWire) contract() (artifactv2.SessionContract, error) {
+func (wire acceptorSessionWire) contract() (artifactv3.SessionContract, error) {
 	psk, err := base64.RawURLEncoding.DecodeString(wire.E2EEPSKBase64URL)
 	if err != nil || len(psk) != 32 || wire.ChannelID == "" || wire.MaxInboundStreams == 0 {
-		return artifactv2.SessionContract{}, ErrInvalidAcceptor
+		return artifactv3.SessionContract{}, ErrInvalidAcceptor
 	}
-	contract := artifactv2.SessionContract{
+	contract := artifactv3.SessionContract{
 		ChannelID: wire.ChannelID, InitExpireAtUnixSeconds: wire.InitExpireAtUnixSeconds,
 		IdleTimeoutSeconds: wire.IdleTimeoutSeconds, EstablishTimeoutSeconds: wire.EstablishTimeoutSeconds,
 		RekeyPrepareTimeoutSeconds: wire.RekeyPrepareTimeoutSeconds, RekeyCompletionTimeoutSeconds: wire.RekeyCompletionTimeoutSeconds,
@@ -544,9 +544,9 @@ func (wire acceptorSessionWire) contract() (artifactv2.SessionContract, error) {
 		SelectedFeatures: wire.SelectedFeatures,
 	}
 	copy(contract.E2EEPSK[:], psk)
-	hash, _, err := artifactv2.ComputeSessionContractHash(contract)
+	hash, _, err := artifactv3.ComputeSessionContractHash(contract)
 	if err != nil {
-		return artifactv2.SessionContract{}, ErrInvalidAcceptor
+		return artifactv3.SessionContract{}, ErrInvalidAcceptor
 	}
 	contract.ContractHash = hash
 	return contract, nil

@@ -15,7 +15,7 @@ struct RetryDispositionContractTests {
   }
 
   @Test func retryAfterPreservesTheAbsoluteNotBeforeDeadline() {
-    let deadline = Date(timeIntervalSince1970: 2_000_000_000)
+    let deadline: UInt64 = 2_000_000_000_000
     let failure = ArtifactSourceFailure(disposition: .retryAfter(deadline))
     #expect(failure.disposition == .retryAfter(deadline))
   }

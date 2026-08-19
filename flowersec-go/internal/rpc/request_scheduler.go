@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v3/internal/rpcwire"
 )
 
 type requestScheduler struct {

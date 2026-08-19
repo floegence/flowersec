@@ -13,14 +13,17 @@ use crate::raw_quic_v2::{
     RawQuicListener, RawQuicPathProfile, RawQuicServerConfig, RawQuicSession, RawQuicStream,
 };
 use crate::{
-    Acceptor, AcceptorOptions, ArtifactSource, ArtifactSourceError, ConnectionController,
-    ConnectionControllerOptions, ConnectionState, ConnectorOptions, IncomingStream, RpcHandler,
-    SessionHandlerOptions, SessionHandlers, StreamHandler,
+    ConnectorOptions, IncomingStream, RpcHandler, SessionHandlerOptions, SessionHandlers,
+    StreamHandler,
+    acceptor_v2::{AcceptErrorCode as AcceptErrorCodeV2, Acceptor, AcceptorOptions},
     admission_v2::{AdmissionCommitErrorV2, AdmissionCommitV2, CandidateAttemptV2},
     artifact_v2::{Artifact, ArtifactLease},
-    connect,
+    connection_controller_v2::{
+        ArtifactSourceErrorV2, ArtifactSourceV2, ConnectionControllerOptionsV2,
+        ConnectionControllerV2, ConnectionStateV2,
+    },
     connector_v2::RuntimeFailureV2,
-    native_runtime_v2::dial_resolved_raw_quic,
+    native_runtime_v2::{connect, dial_resolved_raw_quic},
     protocol_v2::CipherSuiteV2,
     session_v2::{RpcHandlerV2, SessionConfigV2, establish_session_v2},
     transport_v2::{
@@ -365,11 +368,11 @@ struct FreshRawQuicArtifactSource {
 }
 
 #[async_trait]
-impl ArtifactSource for FreshRawQuicArtifactSource {
+impl ArtifactSourceV2 for FreshRawQuicArtifactSource {
     async fn acquire(
         &self,
         _cancellation: CancellationToken,
-    ) -> Result<ArtifactLease, ArtifactSourceError> {
+    ) -> Result<ArtifactLease, ArtifactSourceErrorV2> {
         let ordinal = self.acquisitions.fetch_add(1, Ordering::SeqCst) + 1;
         let mut artifact: serde_json::Value = serde_json::from_slice(&public_connector_artifact(
             self.address,
@@ -433,7 +436,8 @@ async fn connection_controller_replaces_terminated_raw_quic_session_without_repl
     let connector = ConnectorOptions::new()
         .with_trust_roots_der(vec![test_cert_der()])
         .expect("create controller connector options");
-    let controller = ConnectionController::new(source, ConnectionControllerOptions::new(connector));
+    let controller =
+        ConnectionControllerV2::new(source, ConnectionControllerOptionsV2::new(connector));
 
     let first_accept = tokio::spawn(establish_controller_server(listener.clone()));
     controller.start();
@@ -515,7 +519,7 @@ async fn connection_controller_replaces_terminated_raw_quic_session_without_repl
 }
 
 async fn wait_for_controller_session(
-    controller: &ConnectionController,
+    controller: &ConnectionControllerV2,
     previous: Option<&Arc<dyn crate::Session>>,
 ) -> Arc<dyn crate::Session> {
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -523,7 +527,7 @@ async fn wait_for_controller_session(
             let status = controller.status();
             assert_ne!(
                 status.state,
-                ConnectionState::Failed,
+                ConnectionStateV2::Failed,
                 "controller failed: {status:?}"
             );
             if let Some(session) = controller.current_session()
@@ -964,7 +968,7 @@ async fn public_acceptor_rejects_duplicate_registration_and_cancels_cleanly() {
             .await
             .expect_err("same admission with new correlation must fail")
             .code(),
-        crate::AcceptErrorCode::AlreadyRegistered
+        AcceptErrorCodeV2::AlreadyRegistered
     );
     assert_eq!(
         acceptor
@@ -972,7 +976,7 @@ async fn public_acceptor_rejects_duplicate_registration_and_cancels_cleanly() {
             .await
             .expect_err("second pending admission must fail")
             .code(),
-        crate::AcceptErrorCode::Busy
+        AcceptErrorCodeV2::Busy
     );
     cancellation.cancel();
     assert_eq!(
@@ -982,7 +986,7 @@ async fn public_acceptor_rejects_duplicate_registration_and_cancels_cleanly() {
             .expect("join canceled accept")
             .expect_err("canceled accept must fail")
             .code(),
-        crate::AcceptErrorCode::Canceled
+        AcceptErrorCodeV2::Canceled
     );
 }
 

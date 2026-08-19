@@ -16,7 +16,7 @@ import {
   normalizeBrowserCapacityPlan,
 } from "./browser-capacity-runner-core.mjs";
 import {
-  installWebTransportCertificateHash,
+  disableBrowserWebSocket,
   preloadBrowserSDK,
   startBrowserModuleSite,
 } from "./browser-test-runner.mjs";
@@ -145,12 +145,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
     await page.exposeBinding("__flowersecCapacityRecordDiagnostic", async (_source, value) => {
       recordBrowserDiagnostic(value);
     });
-    await installWebTransportCertificateHash(
-      page,
-      plan.certificate_hash,
-      "chromium",
-      plan.topology === "browser_tunnel_wt_wss",
-    );
+    if (plan.topology === "browser_tunnel_wt_wss") await disableBrowserWebSocket(page);
     await page.goto(site.origin, { waitUntil: "networkidle" });
     await preloadBrowserSDK(page);
     cdp = await context.newCDPSession(page);

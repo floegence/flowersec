@@ -22,10 +22,10 @@ import (
 	"syscall"
 	"time"
 
-	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest/linuxnetlab"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest/tunnelworkload"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest/linuxnetlab"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest/tunnelworkload"
 )
 
 type browserCapacityEndpointConfig struct {
@@ -743,11 +743,11 @@ func (session *browserCapacitySession) Close(ctx context.Context) error {
 	}
 }
 
-func closeBrowserCapacityServerSession(ctx context.Context, session flowersession.SessionV2) error {
+func closeBrowserCapacityServerSession(ctx context.Context, session flowersession.Session) error {
 	return closeBrowserCapacityServerSessionAfter(ctx, session, 2*time.Second)
 }
 
-func closeBrowserCapacityServerSessionAfter(ctx context.Context, session flowersession.SessionV2, peerTerminationGrace time.Duration) error {
+func closeBrowserCapacityServerSessionAfter(ctx context.Context, session flowersession.Session, peerTerminationGrace time.Duration) error {
 	if peerTerminationGrace <= 0 {
 		return errors.New("browser capacity peer termination grace must be positive")
 	}

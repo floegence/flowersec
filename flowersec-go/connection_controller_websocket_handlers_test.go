@@ -2,6 +2,7 @@ package flowersec
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"net/http/httptest"
 	"strings"
@@ -10,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/controlplane"
+	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
 )
 
 const (
@@ -20,7 +21,8 @@ const (
 )
 
 func TestConnectionControllerWebSocketHandlersSurviveTwoGenerations(t *testing.T) {
-	source := &webSocketHandlerRestartSource{}
+	serverTLS, trustRoots := controllerNetworkTLS(t)
+	source := &webSocketHandlerRestartSource{serverTLS: serverTLS}
 	var rpcCalls atomic.Int32
 	var notifications atomic.Int32
 	handlers := NewRPCHandlers()
@@ -40,7 +42,7 @@ func TestConnectionControllerWebSocketHandlersSurviveTwoGenerations(t *testing.T
 		t.Fatal(err)
 	}
 	controller, err := NewConnectionController(source, ConnectionControllerOptions{Connector: ConnectorOptions{
-		Origin: "https://client.example", ConnectTimeout: 5 * time.Second, RPCHandlers: handlers,
+		Origin: "https://client.example", TrustRoots: trustRoots, ConnectTimeout: 5 * time.Second, RPCHandlers: handlers,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -140,6 +142,7 @@ func (generation *webSocketHandlerGeneration) waitSession(t *testing.T) Session 
 type webSocketHandlerRestartSource struct {
 	mu          sync.Mutex
 	generations []*webSocketHandlerGeneration
+	serverTLS   *tls.Config
 }
 
 func (source *webSocketHandlerRestartSource) Acquire(ctx context.Context) (ArtifactLease, *ArtifactSourceError) {
@@ -182,9 +185,13 @@ func (source *webSocketHandlerRestartSource) Acquire(ctx context.Context) (Artif
 	if err != nil {
 		return ArtifactLease{}, NewTerminalArtifactSourceError(err)
 	}
-	generation.server = httptest.NewServer(acceptor.Handler())
-	endpoint := "ws" + strings.TrimPrefix(generation.server.URL, "http") + WebSocketDirectPath
-	endpoints, err := controlplane.NewEndpointSet(endpoint)
+	generation.server = httptest.NewUnstartedServer(acceptor.Handler())
+	generation.server.TLS = source.serverTLS.Clone()
+	generation.server.StartTLS()
+	endpoint := "wss" + strings.TrimPrefix(generation.server.URL, "https") + WebSocketDirectPath
+	endpoints, err := controlplane.NewEndpointSet(controlplane.EndpointConfig{
+		ID: "websocket", URL: endpoint, TLS: controlplane.CAPolicy(),
+	})
 	if err != nil {
 		generation.server.Close()
 		return ArtifactLease{}, NewTerminalArtifactSourceError(err)

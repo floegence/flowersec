@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"io"
 
-	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	flowersessionv2 "github.com/floegence/flowersec/flowersec-go/v3/internal/session"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
 )
 
 // ServeBrowserBulk serves the fixed bidirectional bulk phases used by the
 // Chromium test producer. RPC echo is already owned by the session router.
-func ServeBrowserBulk(ctx context.Context, session flowersession.SessionV2, bytesPerPhase []int64) error {
+func ServeBrowserBulkV3(ctx context.Context, session flowersession.Session, bytesPerPhase []int64) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -22,14 +23,14 @@ func ServeBrowserBulk(ctx context.Context, session flowersession.SessionV2, byte
 		if byteCount < 1 {
 			return fmt.Errorf("browser bulk phase %d has an invalid byte count", phase+1)
 		}
-		if err := serveBrowserBulkSessionPhase(ctx, session, byteCount); err != nil {
+		if err := serveBrowserBulkSessionPhaseV3(ctx, session, byteCount); err != nil {
 			return fmt.Errorf("browser bulk phase %d: %w", phase+1, err)
 		}
 	}
 	return nil
 }
 
-func serveBrowserBulkSessionPhase(ctx context.Context, session flowersession.SessionV2, byteCount int64) error {
+func serveBrowserBulkSessionPhaseV3(ctx context.Context, session flowersession.Session, byteCount int64) error {
 	incoming, err := session.AcceptStream(ctx)
 	if err != nil {
 		return fmt.Errorf("accept: %w", err)
@@ -45,7 +46,7 @@ func serveBrowserBulkSessionPhase(ctx context.Context, session flowersession.Ses
 
 // ServeBrowserNativeIsolation proves that one reset WebTransport stream does
 // not interrupt its three sibling streams or the session RPC router.
-func ServeBrowserNativeIsolation(ctx context.Context, session flowersession.SessionV2) error {
+func ServeBrowserNativeIsolationV3(ctx context.Context, session flowersession.Session) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -120,6 +121,40 @@ func ServeBrowserNativeIsolation(ctx context.Context, session flowersession.Sess
 		result = errors.Join(result, <-results)
 	}
 	return result
+}
+
+// ServeBrowserBulk keeps the v2 tunnel workload adapter available while the
+// production direct/browser path uses the explicit v3 entry point above.
+func ServeBrowserBulk(ctx context.Context, session flowersessionv2.SessionV2, bytesPerPhase []int64) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if session == nil || len(bytesPerPhase) == 0 {
+		return errors.New("browser bulk workload is not initialized")
+	}
+	for phase, byteCount := range bytesPerPhase {
+		if byteCount < 1 {
+			return fmt.Errorf("browser bulk phase %d has an invalid byte count", phase+1)
+		}
+		if err := serveBrowserBulkSessionPhase(ctx, session, byteCount); err != nil {
+			return fmt.Errorf("browser bulk phase %d: %w", phase+1, err)
+		}
+	}
+	return nil
+}
+
+func serveBrowserBulkSessionPhase(ctx context.Context, session flowersessionv2.SessionV2, byteCount int64) error {
+	incoming, err := session.AcceptStream(ctx)
+	if err != nil {
+		return fmt.Errorf("accept: %w", err)
+	}
+	if incoming.Kind != "release-bulk" || incoming.Metadata["direction"] != "client-to-server" {
+		_ = incoming.Stream.Reset()
+		return errors.New("metadata mismatch")
+	}
+	writeDone := make(chan error, 1)
+	go func() { writeDone <- writeExactFillData(ctx, incoming.Stream, byteCount, 0x5a) }()
+	return finishBrowserBulkPhase(ctx, incoming.Stream, incoming.Stream, writeDone, byteCount, true)
 }
 
 func serveBrowserBulkPhase(ctx context.Context, incoming, outgoing releaseByteStream, byteCount int64) error {

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/controlplane"
+	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
 )
 
 func TestOpaqueControlPlaneValuesExportNoImplementationFields(t *testing.T) {

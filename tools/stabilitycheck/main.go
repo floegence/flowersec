@@ -78,6 +78,7 @@ func run(args []string) error {
 func verifySource(repoRoot string, m *manifest) error {
 	checks := []func() error{
 		func() error { return verifyManifest(m) },
+		func() error { _, err := loadTransportV3Registry(repoRoot); return err },
 		func() error { return verifyDefaults(repoRoot) },
 		func() error { return verifyParity(repoRoot) },
 		func() error { return verifyPublicAPIDesign(repoRoot) },
@@ -104,6 +105,10 @@ func report(repoRoot string, m *manifest) error {
 	if err != nil {
 		return err
 	}
+	transportV3, err := loadTransportV3Registry(repoRoot)
+	if err != nil {
+		return err
+	}
 	fmt.Printf("manifest=%s\n", manifestPath)
 	fmt.Printf("go_targets=%d\n", len(m.Go.CompileTargets))
 	fmt.Printf("ts_subpaths=%d\n", len(m.TS.Subpaths))
@@ -117,6 +122,7 @@ func report(repoRoot string, m *manifest) error {
 	}
 	fmt.Printf("transport_v2_carriers=%d\n", len(transport.Carriers))
 	fmt.Printf("transport_v2_runtimes=%d\n", len(transport.Runtimes))
+	fmt.Printf("transport_v3_fixtures=%d\n", len(transportV3.WireFixtures))
 	return nil
 }
 
@@ -129,12 +135,12 @@ func verifyDocs(repoRoot string, m *manifest) error {
 	required := append([]string{}, m.Docs.CLITokens...)
 	required = append(required, "`docs/API_CHANGE_POLICY.md`", "`stability/api_contract_manifest.json`")
 	for _, target := range m.Go.CompileTargets {
-		if target.StabilityGroup == "transport_v2" {
+		if target.StabilityGroup == "transport_v3" {
 			continue
 		}
 		required = append(required, target.DocPackageToken)
 		for _, entry := range target.Entries {
-			if entry.StabilityGroup == "transport_v2" {
+			if entry.StabilityGroup == "transport_v3" {
 				continue
 			}
 			required = append(required, entry.DocToken)
@@ -150,18 +156,18 @@ func verifyDocs(repoRoot string, m *manifest) error {
 			return fmt.Errorf("%s missing token %s", m.Docs.APIContract, token)
 		}
 	}
-	v2Data, err := os.ReadFile(filepath.Join(repoRoot, m.Docs.TransportV2API))
+	v3Data, err := os.ReadFile(filepath.Join(repoRoot, m.Docs.TransportV3API))
 	if err != nil {
 		return err
 	}
-	for _, token := range m.Docs.TransportV2Tokens {
-		if !strings.Contains(string(v2Data), token) {
-			return fmt.Errorf("%s missing token %s", m.Docs.TransportV2API, token)
+	for _, token := range m.Docs.TransportV3Tokens {
+		if !strings.Contains(string(v3Data), token) {
+			return fmt.Errorf("%s missing token %s", m.Docs.TransportV3API, token)
 		}
 	}
 	fmt.Printf(
-		"docs OK: %d API tokens verified in %s and %d Transport v2 tokens verified in %s\n",
-		len(required), m.Docs.APIContract, len(m.Docs.TransportV2Tokens), m.Docs.TransportV2API,
+		"docs OK: %d API tokens verified in %s and %d Transport v3 tokens verified in %s\n",
+		len(required), m.Docs.APIContract, len(m.Docs.TransportV3Tokens), m.Docs.TransportV3API,
 	)
 	return nil
 }

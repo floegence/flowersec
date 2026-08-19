@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/controlplane"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocketv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/tunnelv3"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -36,7 +36,7 @@ type TunnelRuntimeOptions struct {
 type TunnelRuntime struct {
 	options     TunnelRuntimeOptions
 	resources   carrierws.ResourcePolicy
-	coordinator *tunnelv2.Coordinator
+	coordinator *tunnelv3.Coordinator
 	listeners   []registeredAcceptorListener
 }
 
@@ -70,14 +70,14 @@ func NewTunnelRuntime(options TunnelRuntimeOptions) (*TunnelRuntime, error) {
 		return nil, ErrInvalidTunnelRuntime
 	}
 	runtime := &TunnelRuntime{options: options, resources: resources, listeners: listeners}
-	config := tunnelv2.DefaultConfig()
+	config := tunnelv3.DefaultConfig()
 	if options.MaxPendingLegs != 0 {
 		config.MaxPendingLegs = options.MaxPendingLegs
 	}
 	if options.MaxActivePairs != 0 {
 		config.MaxActivePairs = options.MaxActivePairs
 	}
-	coordinator, err := tunnelv2.NewCoordinator(config, runtime.authorize)
+	coordinator, err := tunnelv3.NewCoordinator(config, runtime.authorize)
 	if err != nil {
 		return nil, ErrInvalidTunnelRuntime
 	}
@@ -159,7 +159,7 @@ func (runtime *TunnelRuntime) serveNative(ctx context.Context, native carrier.Se
 	if err != nil {
 		return err
 	}
-	leg, err := tunnelv2.NewNativeStreamLeg(native, stream)
+	leg, err := tunnelv3.NewNativeStreamLeg(native, stream)
 	if err != nil {
 		return err
 	}
@@ -167,7 +167,7 @@ func (runtime *TunnelRuntime) serveNative(ctx context.Context, native carrier.Se
 }
 
 func (runtime *TunnelRuntime) handleWebSocket(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodGet || !runtime.allowedOrigin(request) {
+	if request.Method != http.MethodGet || !runtime.allowedOrigin(request) || carrierws.ValidateServerRequest(request) != nil {
 		http.Error(writer, "request rejected", http.StatusForbidden)
 		return
 	}
@@ -175,7 +175,7 @@ func (runtime *TunnelRuntime) handleWebSocket(writer http.ResponseWriter, reques
 	if err != nil {
 		return
 	}
-	leg, err := tunnelv2.NewWebSocketPendingLeg(connection, runtime.resources)
+	leg, err := tunnelv3.NewWebSocketPendingLeg(connection, runtime.resources)
 	if err != nil {
 		_ = connection.Close()
 		return
@@ -198,18 +198,18 @@ func (runtime *TunnelRuntime) allowedOrigin(request *http.Request) bool {
 	return false
 }
 
-func (runtime *TunnelRuntime) authorize(ctx context.Context, decoded *artifactv2.DecodedRequest) (tunnelv2.Authorization, error) {
+func (runtime *TunnelRuntime) authorize(ctx context.Context, decoded *artifactv3.DecodedRequest) (tunnelv3.Authorization, error) {
 	transport, ok := ctx.Value(acceptorTransportContextKey{}).(acceptorTransportContext)
 	if !ok || decoded == nil {
-		return tunnelv2.Authorization{}, ErrInvalidTunnelRuntime
+		return tunnelv3.Authorization{}, ErrInvalidTunnelRuntime
 	}
 	request, err := runtimeAuthorizationRequest(decoded, transport.carrier, transport.remoteAddress)
 	if err != nil {
-		return tunnelv2.Authorization{}, err
+		return tunnelv3.Authorization{}, err
 	}
 	response, err := runtime.options.Authorize(ctx, request)
 	if err != nil {
-		return tunnelv2.Authorization{}, err
+		return tunnelv3.Authorization{}, err
 	}
 	var wire struct {
 		Decision                       string    `json:"decision"`
@@ -223,16 +223,16 @@ func (runtime *TunnelRuntime) authorize(ctx context.Context, decoded *artifactv2
 	decoder := json.NewDecoder(bytes.NewReader(response.JSON()))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
-		return tunnelv2.Authorization{}, ErrInvalidTunnelRuntime
+		return tunnelv3.Authorization{}, ErrInvalidTunnelRuntime
 	}
 	if wire.Decision != "allow" {
-		return tunnelv2.Authorization{}, &admissionv2.ResponseError{Status: artifactv2.AdmissionReject, Reason: wire.Reason}
+		return tunnelv3.Authorization{}, &admissionv3.ResponseError{Status: artifactv3.AdmissionReject, Reason: wire.Reason}
 	}
-	if wire.CredentialID == "" || wire.LeaseID == "" || wire.ExpectedPeerEndpointInstanceID == "" || wire.ExpiresAt.IsZero() {
-		return tunnelv2.Authorization{}, ErrInvalidTunnelRuntime
+	if wire.CredentialID == "" || wire.CredentialID != request.LookupKey() || wire.LeaseID == "" || wire.ExpectedPeerEndpointInstanceID == "" || wire.ExpiresAt.IsZero() {
+		return tunnelv3.Authorization{}, ErrInvalidTunnelRuntime
 	}
-	return tunnelv2.Authorization{
-		Claims: tunnelv2.VerifiedClaims{
+	return tunnelv3.Authorization{
+		Claims: tunnelv3.VerifiedClaims{
 			CredentialID: wire.CredentialID, ChannelID: decoded.Request.ChannelID, Profile: decoded.Request.Profile,
 			RendezvousGroupID: decoded.Request.RendezvousGroupID, SessionContractHash: decoded.Request.SessionContractHash,
 			CandidateSetHash: decoded.Request.CandidateSetHash, ListenerAudience: decoded.Request.ListenerAudience,

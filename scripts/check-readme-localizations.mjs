@@ -4,7 +4,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { validateTransportV2Readmes } from "./readme-transport-v2-contract.mjs";
+import { validateTransportV3Readmes } from "./readme-transport-v3-contract.mjs";
 import {
   extractInlineCodeLiterals,
   extractMarkdownShape,
@@ -87,7 +87,7 @@ const sourceLinks = JSON.stringify(extractLinkTargets(source));
 const sourceInlineCode = JSON.stringify(extractInlineCodeLiterals(source));
 const sourceMarkdownShape = JSON.stringify(extractMarkdownShape(source));
 const expectedHeadingLevels = JSON.stringify([1, ...manifest.sections.map((section) => section.level)]);
-const errors = validateTransportV2Readmes(repoRoot);
+const errors = validateTransportV3Readmes(repoRoot);
 
 const expectedRootReadmes = manifest.locales.map((locale) => locale.file).sort();
 const actualRootReadmes = readdirSync(repoRoot).filter((name) => /^README(?:\.[A-Za-z-]+)?\.md$/.test(name)).sort();

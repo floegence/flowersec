@@ -1,4 +1,4 @@
-use flowersec::Artifact;
+use flowersec::v2::Artifact;
 use serde::Deserialize;
 
 #[derive(Deserialize)]

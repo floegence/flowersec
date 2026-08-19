@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/idna15"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/idna15"
 )
 
 func TestLookupASCIIUsesFrozenUnicode15_1UTS46(t *testing.T) {
@@ -51,7 +51,7 @@ type fixture struct {
 
 func loadFixture(t *testing.T) fixture {
 	t.Helper()
-	data, err := os.ReadFile("../../../testdata/transport_v2/idna_vectors.json")
+	data, err := os.ReadFile("../../../testdata/transport_v3/idna_vectors.json")
 	if err != nil {
 		t.Fatal(err)
 	}

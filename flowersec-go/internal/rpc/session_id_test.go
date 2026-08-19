@@ -10,7 +10,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v3/internal/rpcwire"
 )
 
 func TestDecodeEnvelopeRPCErrorInvariant(t *testing.T) {
@@ -192,7 +192,7 @@ func TestDecodeEnvelopeSharedMalformedVectors(t *testing.T) {
 		t.Fatal("resolve test path")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", ".."))
-	data, err := os.ReadFile(filepath.Join(root, "testdata/transport_v2/rpc_malformed_envelopes.json"))
+	data, err := os.ReadFile(filepath.Join(root, "testdata/transport_v3/rpc_malformed_envelopes.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,91 +7,110 @@ import (
 	"errors"
 	"io"
 	"os"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/defaults"
 )
 
-type controllerVectorFile struct {
-	Version           int      `json:"version"`
-	States            []string `json:"states"`
-	RetryDispositions []string `json:"retry_dispositions"`
-	Defaults          struct {
-		InitialDelayMS int     `json:"initial_delay_ms"`
-		MaxDelayMS     int     `json:"max_delay_ms"`
-		Factor         uint64  `json:"factor"`
-		JitterRatio    float64 `json:"jitter_ratio"`
-		AttemptLimit   *uint64 `json:"attempt_limit"`
+type controllerV3VectorFile struct {
+	Version      int      `json:"version"`
+	PublicErrors []string `json:"public_errors"`
+	Defaults     struct {
+		MaximumAttempts                           uint64 `json:"maximum_attempts"`
+		InitialBackoffMS                          int    `json:"initial_backoff_ms"`
+		MaximumBackoffMS                          int    `json:"maximum_backoff_ms"`
+		JitterMS                                  int    `json:"jitter_ms"`
+		WallClockRecheckMaxIntervalMS             int    `json:"wall_clock_recheck_max_interval_ms"`
+		MaximumRetryAfterUnixMS                   int64  `json:"maximum_retry_after_unix_ms"`
+		MaximumPolicySensitiveReplacementPerCycle int    `json:"maximum_policy_sensitive_replacement_leases_per_cycle"`
 	} `json:"defaults"`
 	BackoffVectors []struct {
 		ConsecutiveFailure uint64 `json:"consecutive_failure"`
 		DelayMS            int    `json:"delay_ms"`
 	} `json:"backoff_vectors"`
-	Scenarios []struct {
-		Name                 string   `json:"name"`
-		Events               []string `json:"events"`
-		States               []string `json:"states"`
-		Sessions             []string `json:"sessions"`
-		Replay               []string `json:"replay"`
-		ClockStartUnixMS     *int64   `json:"clock_start_unix_ms"`
-		RetryAtUnixMS        *int64   `json:"retry_at_unix_ms"`
-		ArtifactAcquisitions *uint64  `json:"artifact_acquisitions"`
-		SchedulerCount       *uint64  `json:"scheduler_count"`
-		MaxInFlightAttempts  *uint64  `json:"max_in_flight_attempts"`
-		RetryNowResults      []bool   `json:"retry_now_results"`
-		CloseCalls           *uint64  `json:"close_calls"`
-		CleanupCalls         *uint64  `json:"cleanup_calls"`
-		Policy               *struct {
-			MaxAttempts uint64 `json:"max_attempts"`
-		} `json:"policy"`
-	} `json:"scenarios"`
-	Invariants struct {
-		OneShotArtifactController         string   `json:"one_shot_artifact_controller"`
-		FreshArtifactPerAttempt           bool     `json:"fresh_artifact_per_attempt"`
-		SingleScheduler                   bool     `json:"single_scheduler"`
-		SingleInFlightAttempt             bool     `json:"single_in_flight_attempt"`
-		StartIdempotent                   bool     `json:"start_idempotent"`
-		CloseIdempotent                   bool     `json:"close_idempotent"`
-		RetryNowOutsideWaiting            bool     `json:"retry_now_outside_waiting"`
-		RetryAfterBypass                  bool     `json:"retry_after_bypass"`
-		SubordinateCloseFailurePropagates bool     `json:"subordinate_close_failure_propagates"`
-		PublicRetryConfiguration          []string `json:"public_retry_configuration"`
-		OldStreamMigration                bool     `json:"old_stream_migration"`
-		RPCReplay                         bool     `json:"rpc_replay"`
-		WriteReplay                       bool     `json:"write_replay"`
-		CrossSessionExactlyOnce           bool     `json:"cross_session_exactly_once"`
-	} `json:"invariants"`
+	Scenarios []controllerVectorScenario `json:"scenarios"`
+}
+
+type controllerVectorScenario struct {
+	ID     string   `json:"id"`
+	Driver string   `json:"driver"`
+	Steps  []string `json:"steps"`
+	Input  struct {
+		ReplacementPolicy   string     `json:"replacement_policy"`
+		Trigger             string     `json:"trigger"`
+		ExpiryBoundary      string     `json:"expiry_boundary"`
+		Phase               string     `json:"phase"`
+		AdmissionResult     string     `json:"admission_result"`
+		RepeatedTerminal    string     `json:"repeated_terminal_state"`
+		CandidateResults    []string   `json:"candidate_results"`
+		WakeRetryManually   bool       `json:"wake_retry_manually"`
+		LinearizationWinner string     `json:"linearization_winner"`
+		MaximumAttempts     uint64     `json:"maximum_attempts"`
+		InitialAttempt      uint64     `json:"initial_attempt"`
+		FailureOrdinal      uint64     `json:"failure_ordinal"`
+		WallStartMS         int64      `json:"wall_start_ms"`
+		MonotonicStartMS    int64      `json:"monotonic_start_ms"`
+		RetryAfterUnixMS    int64      `json:"retry_after_unix_ms"`
+		BackoffMS           int64      `json:"backoff_ms"`
+		WallAdvancesMS      []int64    `json:"wall_advances_ms"`
+		MonotonicAdvancesMS []int64    `json:"monotonic_advances_ms"`
+		Permutations        [][]string `json:"permutations"`
+	} `json:"input"`
+	Expected controllerVectorExpected `json:"expected"`
+}
+
+type controllerVectorExpected struct {
+	FinalState                    string   `json:"final_state"`
+	PublicError                   *string  `json:"public_error"`
+	Disposition                   *string  `json:"disposition"`
+	Acquisitions                  int      `json:"acquisitions"`
+	ConnectAttempts               int      `json:"connect_attempts"`
+	TransportsCreated             int      `json:"transports_created"`
+	ReplacementAcquisitions       int      `json:"replacement_acquisitions"`
+	ReplacementQuotaUsed          int      `json:"replacement_quota_used"`
+	SpendCallbacks                int      `json:"spend_callbacks"`
+	RetireCallbacks               int      `json:"retire_callbacks"`
+	LeaseTerminalStates           []string `json:"lease_terminal_states"`
+	RetryDelaysMS                 []int    `json:"retry_delays_ms"`
+	NoModeDowngrade               bool     `json:"no_mode_downgrade"`
+	TLSErrorClaimed               *bool    `json:"tls_error_claimed"`
+	BlockedPolicyRemainsBlocked   bool     `json:"blocked_policy_remains_blocked"`
+	RetryNowAllowedBeforeDeadline *bool    `json:"retry_now_allowed_before_deadline"`
+	WallEndMS                     int64    `json:"wall_end_ms"`
+	MonotonicEndMS                int64    `json:"monotonic_end_ms"`
+	OrderIndependent              bool     `json:"order_independent"`
+	FailureOrdinal                uint64   `json:"failure_ordinal"`
+	CredentialBytesWritten        int      `json:"credential_bytes_written"`
+	MaximumWallRereadMS           int      `json:"maximum_wall_reread_ms"`
+	TimerSaturated                bool     `json:"timer_saturated"`
+	CleanupErrorIgnored           bool     `json:"cleanup_error_ignored"`
+	Attempt                       uint64   `json:"attempt"`
+	CounterSaturated              bool     `json:"counter_saturated"`
+	CapabilityRechecked           bool     `json:"capability_rechecked"`
 }
 
 func TestConnectionControllerSharedLifecycleVectors(t *testing.T) {
 	fixture := loadControllerVectors(t)
-	if fixture.Version != 2 {
-		t.Fatalf("vector version = %d, want 2", fixture.Version)
+	if fixture.Version != 3 {
+		t.Fatalf("vector version = %d, want 3", fixture.Version)
 	}
-	if got, want := fixture.States, []string{"idle", "connecting", "connected", "waiting", "failed", "closed"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("states = %v, want %v", got, want)
+	wantErrors := []string{"artifact_invalid", "expired_artifact", "transport_security_unsupported", "transport_security_failed", "connection_failed"}
+	if len(fixture.PublicErrors) != len(wantErrors) {
+		t.Fatalf("public errors = %v", fixture.PublicErrors)
 	}
-	if got, want := fixture.RetryDispositions, []string{"terminal", "retryable", "retry_after"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("retry dispositions = %v, want %v", got, want)
+	for index, want := range wantErrors {
+		if fixture.PublicErrors[index] != want {
+			t.Fatalf("public errors = %v, want %v", fixture.PublicErrors, wantErrors)
+		}
 	}
-	if fixture.Invariants.OneShotArtifactController != "forbidden" ||
-		!fixture.Invariants.FreshArtifactPerAttempt || !fixture.Invariants.SingleScheduler ||
-		!fixture.Invariants.SingleInFlightAttempt || !fixture.Invariants.StartIdempotent ||
-		!fixture.Invariants.CloseIdempotent || fixture.Invariants.RetryNowOutsideWaiting ||
-		fixture.Invariants.RetryAfterBypass || fixture.Invariants.SubordinateCloseFailurePropagates ||
-		!reflect.DeepEqual(fixture.Invariants.PublicRetryConfiguration, []string{"maximum_attempts"}) ||
-		fixture.Invariants.OldStreamMigration || fixture.Invariants.RPCReplay ||
-		fixture.Invariants.WriteReplay || fixture.Invariants.CrossSessionExactlyOnce {
-		t.Fatalf("invalid controller invariants: %+v", fixture.Invariants)
-	}
-
-	if defaults.ConnectionControllerInitialDelay != time.Duration(fixture.Defaults.InitialDelayMS)*time.Millisecond ||
-		defaults.ConnectionControllerMaxDelay != time.Duration(fixture.Defaults.MaxDelayMS)*time.Millisecond ||
-		defaults.ConnectionControllerBackoffFactor != fixture.Defaults.Factor ||
-		fixture.Defaults.JitterRatio != 0 || fixture.Defaults.AttemptLimit != nil {
+	if defaults.ConnectionControllerInitialDelay != time.Duration(fixture.Defaults.InitialBackoffMS)*time.Millisecond ||
+		defaults.ConnectionControllerMaxDelay != time.Duration(fixture.Defaults.MaximumBackoffMS)*time.Millisecond ||
+		fixture.Defaults.MaximumAttempts != 0 || fixture.Defaults.JitterMS != 0 ||
+		fixture.Defaults.WallClockRecheckMaxIntervalMS != 1000 ||
+		fixture.Defaults.MaximumRetryAfterUnixMS != maximumRetryAfterUnixMilliseconds ||
+		fixture.Defaults.MaximumPolicySensitiveReplacementPerCycle != 1 {
 		t.Fatalf("controller defaults do not match vectors: %+v", fixture.Defaults)
 	}
 	for _, vector := range fixture.BackoffVectors {
@@ -100,91 +119,102 @@ func TestConnectionControllerSharedLifecycleVectors(t *testing.T) {
 		}
 	}
 
-	scenarios := map[string]func(*testing.T){
-		"connect_and_replace_after_termination":   testControllerReplaceAfterTermination,
-		"retry_now_wakes_existing_wait":           testControllerRetryNow,
-		"repeated_start_is_idempotent":            testControllerRepeatedStart,
-		"start_after_close_stays_closed":          testControllerStartAfterClose,
-		"retry_now_outside_waiting_returns_false": testControllerRetryNowOutsideWaiting,
-		"retry_after_is_authoritative":            testControllerRetryAfter,
-		"terminal_failure":                        testControllerTerminalFailure,
-		"explicit_attempt_exhaustion":             testControllerAttemptExhaustion,
-		"close_cancels_single_attempt":            testControllerCloseCancelsAcquire,
-		"repeated_close_is_idempotent":            testControllerRepeatedClose,
-		"close_waits_for_owned_cleanup":           testControllerCloseWaitsForOwnedCleanup,
-		"subordinate_close_failure_is_ignored":    testControllerSubordinateCloseFailure,
+	runners := map[string]func(*testing.T, controllerVectorScenario){
+		"pin-mismatch-changed-pin-success":                   runControllerVectorChangedPin,
+		"pin-mismatch-same-policy-terminal":                  runControllerVectorSamePin,
+		"pin-to-ca-filtered":                                 runControllerVectorPinToCA,
+		"browser-opaque-exhausted":                           runControllerVectorBrowserOpaque,
+		"all-unsupported":                                    runControllerVectorAllUnsupported,
+		"replacement-expired-returns-primary":                runControllerVectorReplacementExpired,
+		"post-spend-retry-preserves-quota":                   runControllerVectorPostSpendRetry,
+		"lease-cancellation-first":                           runControllerVectorCancellationFirst,
+		"lease-delivery-first":                               runControllerVectorDeliveryFirst,
+		"attempt-exhaustion":                                 runControllerVectorAttemptExhaustion,
+		"retry-after-and-monotonic-backoff":                  runControllerVectorRetryAfter,
+		"race-order-independent-security-priority":           runControllerVectorSecurityPriority,
+		"failure-ordinal-counts-attempt-once":                runControllerVectorExtended,
+		"artifact-expiry-before-race":                        runControllerVectorExtended,
+		"artifact-expiry-at-race-end":                        runControllerVectorExtended,
+		"artifact-expiry-immediately-before-spend":           runControllerVectorExtended,
+		"artifact-expiry-after-spend":                        runControllerVectorExtended,
+		"established-session-termination-resets-cycle":       runControllerVectorExtended,
+		"retry-after-wall-clock-forward-jump":                runControllerVectorExtended,
+		"retry-after-wall-clock-backward-jump":               runControllerVectorExtended,
+		"retry-after-wall-reread-bounded":                    runControllerVectorExtended,
+		"monotonic-timer-safe-integer-saturation":            runControllerVectorExtended,
+		"single-ca-untrusted-terminal":                       runControllerVectorExtended,
+		"ca-untrusted-dominates-ordinary-failure":            runControllerVectorExtended,
+		"multiple-pin-trigger-endpoints-filtered":            runControllerVectorExtended,
+		"retire-cleanup-failure-does-not-retry-lease":        runControllerVectorExtended,
+		"ordinary-retry-refresh-preserves-replacement-quota": runControllerVectorExtended,
+		"attempt-counter-safe-integer-saturation":            runControllerVectorExtended,
+		"capability-snapshot-invalidation-barrier":           runControllerVectorExtended,
+		"primary-fsa3-reject-consumes-spent":                 runControllerVectorExtended,
+		"primary-fsa3-retryable-consumes-spent":              runControllerVectorExtended,
+		"replacement-fsa3-reject-consumes-spent":             runControllerVectorExtended,
+		"replacement-fsa3-retryable-consumes-spent":          runControllerVectorExtended,
+		"primary-fsh3-failure-consumes-spent":                runControllerVectorExtended,
+		"replacement-fsh3-failure-consumes-spent":            runControllerVectorExtended,
+		"artifact-source-repeats-consumed-lease":             runControllerVectorExtended,
+		"artifact-source-repeats-retired-lease":              runControllerVectorExtended,
 	}
-	if len(fixture.Scenarios) != len(scenarios) {
-		t.Fatalf("scenario count = %d, want %d", len(fixture.Scenarios), len(scenarios))
+	if len(fixture.Scenarios) != len(runners) {
+		t.Fatalf("scenario count = %d, want %d", len(fixture.Scenarios), len(runners))
 	}
-	for _, vector := range fixture.Scenarios {
-		validateControllerScenarioVector(t, vector.Name, vector.Events, vector.States, vector.Sessions, vector.Replay,
-			vector.ClockStartUnixMS, vector.RetryAtUnixMS, vector.ArtifactAcquisitions,
-			vector.SchedulerCount, vector.MaxInFlightAttempts, vector.Policy)
-		run, ok := scenarios[vector.Name]
+	for _, scenario := range fixture.Scenarios {
+		run, ok := runners[scenario.ID]
 		if !ok {
-			t.Fatalf("shared scenario %q has no Go executor", vector.Name)
+			t.Fatalf("unknown v3 controller scenario %q", scenario.ID)
 		}
-		t.Run(vector.Name, run)
-		delete(scenarios, vector.Name)
+		if scenario.Driver == "" || len(scenario.Steps) == 0 || scenario.Expected.FinalState == "" {
+			t.Fatalf("scenario %q has an incomplete executable contract", scenario.ID)
+		}
+		t.Run(scenario.ID, func(t *testing.T) { run(t, scenario) })
+		delete(runners, scenario.ID)
 	}
-	if len(scenarios) != 0 {
-		t.Fatalf("Go scenario executors missing from shared vectors: %v", reflect.ValueOf(scenarios).MapKeys())
+	if len(runners) != 0 {
+		t.Fatalf("missing v3 controller scenarios: %v", runners)
 	}
 }
 
-func validateControllerScenarioVector(t *testing.T, name string, events, states, sessions, replay []string,
-	clockStart, retryAt *int64, acquisitions, schedulers, inFlight *uint64, policy *struct {
-		MaxAttempts uint64 `json:"max_attempts"`
-	}) {
-	t.Helper()
-	expectedEvents := map[string][]string{
-		"connect_and_replace_after_termination":   {"start", "acquire:artifact-1", "connect:session-1", "terminate:retryable", "timer", "acquire:artifact-2", "connect:session-2"},
-		"retry_now_wakes_existing_wait":           {"start", "acquire:error:retryable", "retry_now", "acquire:artifact-1", "connect:session-1"},
-		"repeated_start_is_idempotent":            {"start", "start", "acquire:pending"},
-		"start_after_close_stays_closed":          {"close", "start"},
-		"retry_now_outside_waiting_returns_false": {"retry_now", "start", "acquire:pending", "retry_now", "close", "retry_now"},
-		"retry_after_is_authoritative":            {"start", "acquire:error:retry_after:1004000", "retry_now", "timer:1004000", "acquire:artifact-1", "connect:session-1"},
-		"terminal_failure":                        {"start", "acquire:error:terminal"},
-		"explicit_attempt_exhaustion":             {"start", "acquire:error:retryable", "timer", "acquire:error:retryable"},
-		"close_cancels_single_attempt":            {"start", "acquire:pending", "close"},
-		"repeated_close_is_idempotent":            {"start", "acquire:pending", "close", "close"},
-		"close_waits_for_owned_cleanup":           {"start", "acquire:artifact-1", "connect:pending", "close", "connect:session-1", "close:complete"},
-		"subordinate_close_failure_is_ignored":    {"start", "acquire:artifact-1", "connect:session-1", "close", "session_close:error", "close:complete"},
-	}
-	if !reflect.DeepEqual(events, expectedEvents[name]) || len(states) < 2 {
-		t.Fatalf("scenario %q events/states are incomplete: %v / %v", name, events, states)
-	}
-	switch name {
-	case "connect_and_replace_after_termination":
-		if !reflect.DeepEqual(sessions, []string{"session-1", "session-2"}) || len(replay) != 0 {
-			t.Fatalf("replacement scenario sessions/replay = %v/%v", sessions, replay)
-		}
-	case "retry_after_is_authoritative":
-		if clockStart == nil || retryAt == nil || *clockStart != 1_000_000 || *retryAt != 1_004_000 {
-			t.Fatalf("retry_after clock = %v/%v", clockStart, retryAt)
-		}
-	case "terminal_failure":
-		if acquisitions == nil || *acquisitions != 1 {
-			t.Fatalf("terminal acquisitions = %v", acquisitions)
-		}
-	case "explicit_attempt_exhaustion":
-		if acquisitions == nil || *acquisitions != 2 || policy == nil || policy.MaxAttempts != 2 {
-			t.Fatalf("exhaustion acquisitions/policy = %v/%v", acquisitions, policy)
-		}
-	case "retry_now_wakes_existing_wait", "repeated_start_is_idempotent":
-		if schedulers == nil || *schedulers != 1 || inFlight == nil || *inFlight != 1 {
-			t.Fatalf("retry_now scheduler/in-flight = %v/%v", schedulers, inFlight)
-		}
-	case "close_cancels_single_attempt":
-		if inFlight == nil || *inFlight != 1 {
-			t.Fatalf("close max in-flight = %v", inFlight)
-		}
-	case "start_after_close_stays_closed", "retry_now_outside_waiting_returns_false",
-		"repeated_close_is_idempotent", "close_waits_for_owned_cleanup",
-		"subordinate_close_failure_is_ignored":
-	default:
-		t.Fatalf("unknown controller scenario %q", name)
+func TestConnectionControllerRejectsTerminalLeaseWithSourceFailure(t *testing.T) {
+	for _, terminalState := range []string{"consumed", "retired"} {
+		t.Run(terminalState, func(t *testing.T) {
+			lease, _ := controllerTestLeases(t)
+			claimed, ok := lease.claimArtifact()
+			if !ok {
+				t.Fatal("claim terminal lease setup")
+			}
+			switch terminalState {
+			case "consumed":
+				if err := claimed.lease.commitSpend(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			case "retired":
+				if err := claimed.retire(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			source := &controllerTestSource{results: []controllerAcquireResult{{
+				lease:   lease,
+				failure: NewRetryableArtifactSourceError(errors.New("source contract violation")),
+			}}}
+			controller := newControllerForTest(t, source, 3)
+			startController(t, controller)
+			waitControllerState(t, controller, ConnectionFailed)
+			snapshot := controller.Snapshot()
+			if source.callCount() != 1 {
+				t.Fatalf("source calls = %d, want 1", source.callCount())
+			}
+			if snapshot.Failure == nil || connectErrorCode(snapshot.Failure.Error) != ConnectArtifactInvalid {
+				t.Fatalf("failure = %#v, want artifact_invalid", snapshot.Failure)
+			}
+			if snapshot.Failure.Disposition.Kind != RetryDispositionTerminal {
+				t.Fatalf("disposition = %#v, want terminal", snapshot.Failure.Disposition)
+			}
+			closeController(t, controller)
+		})
 	}
 }
 
@@ -319,7 +349,7 @@ func testControllerRetryNowOutsideWaiting(t *testing.T) {
 
 func testControllerRetryAfter(t *testing.T) {
 	firstLease, _ := controllerTestLeases(t)
-	retryAt := time.Now().Add(100 * time.Millisecond)
+	retryAt := time.Now().Add(100 * time.Millisecond).UnixMilli()
 	failure, err := NewRetryAfterArtifactSourceError(errors.New("source rate limited"), retryAt)
 	if err != nil {
 		t.Fatal(err)
@@ -340,7 +370,7 @@ func testControllerRetryAfter(t *testing.T) {
 	}
 	waitControllerState(t, controller, ConnectionConnected)
 	acquired := source.acquisitionTimes()
-	if len(acquired) != 2 || acquired[1].Before(retryAt) {
+	if len(acquired) != 2 || acquired[1].UnixMilli() < retryAt {
 		t.Fatalf("second acquisition at %v, want not before %v", acquired, retryAt)
 	}
 	closeController(t, controller)
@@ -370,6 +400,11 @@ func testControllerAttemptExhaustion(t *testing.T) {
 	waitControllerState(t, controller, ConnectionFailed)
 	if source.callCount() != 2 || source.maxInFlightCount() != 1 {
 		t.Fatalf("acquisitions = %d, max in-flight = %d, want 2 and 1", source.callCount(), source.maxInFlightCount())
+	}
+	snapshot := controller.Snapshot()
+	if snapshot.Failure == nil || connectErrorCode(snapshot.Failure.Error) != ConnectConnectionFailed ||
+		snapshot.Failure.Disposition.Kind != RetryDispositionTerminal {
+		t.Fatalf("attempt exhaustion failure = %+v, want connection_failed/terminal", snapshot.Failure)
 	}
 	closeController(t, controller)
 }
@@ -458,13 +493,13 @@ func testControllerSubordinateCloseFailure(t *testing.T) {
 	}
 }
 
-func loadControllerVectors(t *testing.T) controllerVectorFile {
+func loadControllerVectors(t *testing.T) controllerV3VectorFile {
 	t.Helper()
-	raw, err := os.ReadFile("../testdata/transport_v2/connection_controller_vectors.json")
+	raw, err := os.ReadFile("../testdata/transport_v3/controller_vectors.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var fixture controllerVectorFile
+	var fixture controllerV3VectorFile
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
 	}

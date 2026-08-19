@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/quicbase"
 	"github.com/quic-go/quic-go/http3"
 )
 

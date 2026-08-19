@@ -12,13 +12,13 @@ import (
 	"os/exec"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest/linuxnetlab"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest/tunnelworkload"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest/linuxnetlab"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest/tunnelworkload"
 	"golang.org/x/sys/unix"
 )
 
@@ -112,6 +112,7 @@ func shortCarrier(name string) string {
 func shortScenario(name string) string {
 	values := map[string]string{
 		"delay-jitter": "dj", "periodic-loss": "pl", "burst-loss": "bl", "outage": "ot",
+		"outage-reconnect": "or", "pin-rotation-refresh-backoff-lease": "pr", "reorder": "ro",
 		"mtu-large-payload": "mt", "rate-5mbps": "r5", "rate-1mbps": "r1", "reorder-duplicate": "rd", "representative": "rp",
 	}
 	return values[name]
@@ -128,6 +129,8 @@ func scenarioFor(name string) (weaknetScenario, error) {
 	switch name {
 	case "delay-jitter":
 		profile.EveryNth = 100_000
+	case "reorder":
+		profile.EveryNth, profile.ReorderPercent, profile.DuplicatePercent, profile.ReorderDelay = 100_000, 1, 0, 250*time.Millisecond
 	case "periodic-loss":
 		profile.EveryNth = 50
 	case "burst-loss":
@@ -136,6 +139,11 @@ func scenarioFor(name string) (weaknetScenario, error) {
 	case "outage":
 		profile.EveryNth, profile.OutageStart, profile.OutageDuration = 100_000, time.Second, 2*time.Second
 		scenario.expectOutage = true
+	case "outage-reconnect":
+		profile.EveryNth, profile.OutageStart, profile.OutageDuration = 100_000, time.Second, 2*time.Second
+		scenario.expectOutage = true
+	case "pin-rotation-refresh-backoff-lease":
+		profile.EveryNth = 100_000
 	case "mtu-large-payload":
 		profile.LinkMTU = 1500
 		scenario.payloadBytes = 2 << 20
@@ -238,15 +246,30 @@ func runDirect(ctx context.Context, carrierName string, config linuxnetlab.Confi
 		"FLOWERSEC_WEAKNET_SERVER_NAMESPACE="+config.ServerNamespace,
 		"FLOWERSEC_WEAKNET_SERVER_ADDRESS="+config.ServerAddress.Addr().String(),
 	)
+	if isControllerWeaknetScenario(scenarioName) {
+		command.Env = append(command.Env, "FLOWERSEC_WEAKNET_CONTROLLER=1")
+	}
 	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("run Flowersec direct weak-network worker: %w: %s", err, output)
 	}
 	return nil
 }
 
+func isControllerWeaknetScenario(name string) bool {
+	switch name {
+	case "delay-jitter", "periodic-loss", "reorder", "outage-reconnect", "pin-rotation-refresh-backoff-lease":
+		return true
+	default:
+		return false
+	}
+}
+
 func runDirectWorker(ctx context.Context, kind carrier.Kind, clientNamespace, serverNamespace, serverAddress string, scenario weaknetScenario) (resultErr error) {
 	if err := linuxnetlab.RequireCurrentNamespace(clientNamespace); err != nil {
 		return err
+	}
+	if os.Getenv("FLOWERSEC_WEAKNET_CONTROLLER") == "1" {
+		return runControllerDirectWorker(ctx, kind, clientNamespace, serverNamespace, serverAddress, os.Getenv("FLOWERSEC_WEAKNET_SCENARIO"))
 	}
 	var endpoint *transporttest.ProductDirectEndpoint
 	if err := linuxnetlab.InNamespace(serverNamespace, func() error {
@@ -300,6 +323,134 @@ func runDirectWorker(ctx context.Context, kind carrier.Kind, clientNamespace, se
 	return nil
 }
 
+func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNamespace, serverNamespace, serverAddress, scenarioName string) (resultErr error) {
+	if err := linuxnetlab.RequireCurrentNamespace(clientNamespace); err != nil {
+		return err
+	}
+	var endpoint *transporttest.ProductDirectEndpoint
+	if err := linuxnetlab.InNamespace(serverNamespace, func() error {
+		var openErr error
+		endpoint, openErr = transporttest.OpenProductDirectEndpointAt(ctx, kind, serverAddress)
+		return openErr
+	}); err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, endpoint.Close()) }()
+	plans := []transporttest.ControllerArtifactPlan{transporttest.ControllerPlanCurrentPin}
+	switch scenarioName {
+	case "pin-rotation-refresh-backoff-lease":
+		plans = []transporttest.ControllerArtifactPlan{transporttest.ControllerPlanUnavailable, transporttest.ControllerPlanStalePin, transporttest.ControllerPlanCurrentPin}
+	case "outage-reconnect":
+		plans = []transporttest.ControllerArtifactPlan{transporttest.ControllerPlanCurrentPin, transporttest.ControllerPlanCurrentPin}
+	}
+	source, err := transporttest.NewProductControllerArtifactSource(endpoint, plans)
+	if err != nil {
+		return err
+	}
+	controller, err := flowersec.NewConnectionController(source, flowersec.ConnectionControllerOptions{
+		Connector: endpoint.ProductControllerConnectorOptions(),
+	})
+	if err != nil {
+		return err
+	}
+	controller.Start(ctx)
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		resultErr = errors.Join(resultErr, controller.Close(closeCtx))
+		cancel()
+	}()
+	if err := waitForControllerState(ctx, controller, flowersec.ConnectionConnected); err != nil {
+		return err
+	}
+	serverIndex := source.AcquisitionCount() - 1
+	server, err := source.WaitServer(ctx, serverIndex)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, server.Close()) }()
+	client := controller.CurrentSession()
+	if client == nil {
+		return errors.New("controller connected without a client session")
+	}
+	if scenarioName == "pin-rotation-refresh-backoff-lease" {
+		times := source.AcquisitionTimes()
+		if len(times) < 3 || times[1].Sub(times[0]) < 200*time.Millisecond {
+			return fmt.Errorf("controller refresh backoff was not observed: %v", times)
+		}
+		if source.RetireCount(0) != 1 || source.RetireCount(1) != 1 || source.SpendCount(2) != 1 {
+			return fmt.Errorf("controller rotation lease finalization = retire(%d,%d) spend(%d)", source.RetireCount(0), source.RetireCount(1), source.SpendCount(2))
+		}
+	}
+	if err := transporttest.NewProductControllerPair(client, server).RoundTrip(ctx, bytes.Repeat([]byte("controller-weaknet"), 1024), []byte("controller-response")); err != nil {
+		return err
+	}
+	if scenarioName == "outage-reconnect" {
+		if err := waitForControllerOutageWindow(ctx, 3500*time.Millisecond); err != nil {
+			return err
+		}
+		if err := server.Close(); err != nil {
+			return err
+		}
+		if err := waitForControllerReplacement(ctx, controller, client); err != nil {
+			return err
+		}
+		serverIndex = source.AcquisitionCount() - 1
+		server, err = source.WaitServer(ctx, serverIndex)
+		if err != nil {
+			return err
+		}
+		if err := transporttest.NewProductControllerPair(controller.CurrentSession(), server).RoundTrip(ctx, []byte("reconnected"), []byte("reconnected-response")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func waitForControllerState(ctx context.Context, controller *flowersec.ConnectionController, want flowersec.ConnectionState) error {
+	for {
+		snapshot := controller.Snapshot()
+		if snapshot.State == want {
+			return nil
+		}
+		if snapshot.State == flowersec.ConnectionFailed || snapshot.State == flowersec.ConnectionClosed {
+			return fmt.Errorf("controller reached %s while waiting for %s: %v", snapshot.State, want, snapshot.Failure)
+		}
+		select {
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func waitForControllerReplacement(ctx context.Context, controller *flowersec.ConnectionController, previous flowersec.Session) error {
+	for {
+		snapshot := controller.Snapshot()
+		if snapshot.State == flowersec.ConnectionConnected && snapshot.CurrentSession != nil && snapshot.CurrentSession != previous {
+			return nil
+		}
+		if snapshot.State == flowersec.ConnectionFailed || snapshot.State == flowersec.ConnectionClosed {
+			return fmt.Errorf("controller reached %s while waiting for replacement: %v", snapshot.State, snapshot.Failure)
+		}
+		select {
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func waitForControllerOutageWindow(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+}
+
 func verifyDirectResetAndCancellation(ctx context.Context, pair *transporttest.ProductDirectPair) error {
 	stream, err := pair.Client.OpenStream(ctx, "weaknet-reset", flowersec.StreamMetadata{})
 	if err != nil {
@@ -344,7 +495,7 @@ func observePeerReset(ctx context.Context, stream peerResetReader) error {
 	}()
 	select {
 	case err := <-readResult:
-		if !errors.Is(err, protocolv2.ErrStreamReset) && !errors.Is(err, carrier.ErrStreamReset) {
+		if !errors.Is(err, protocolv3.ErrStreamReset) && !errors.Is(err, carrier.ErrStreamReset) {
 			return fmt.Errorf("Flowersec peer did not observe stream reset: %w", err)
 		}
 		return nil
@@ -375,7 +526,7 @@ func verifyOutageBehavior(ctx context.Context, pair *transporttest.ProductDirect
 	return nil
 }
 
-func roundTripUnreliable(ctx context.Context, client flowersec.Session, server flowersession.SessionV2) error {
+func roundTripUnreliable(ctx context.Context, client flowersec.Session, server flowersession.Session) error {
 	clientChannel, err := client.UnreliableMessages()
 	if err != nil {
 		return err
@@ -566,7 +717,7 @@ func validateObservation(scenario string, observation linuxnetlab.KernelFaultObs
 		if observation.Client.BurstLossPackets+observation.Server.BurstLossPackets == 0 {
 			return errors.New("burst loss was not observed")
 		}
-	case "outage":
+	case "outage", "outage-reconnect":
 		if observation.Client.OutageDropPackets+observation.Server.OutageDropPackets == 0 {
 			return errors.New("outage drops were not observed")
 		}
@@ -574,9 +725,13 @@ func validateObservation(scenario string, observation linuxnetlab.KernelFaultObs
 		if observation.Client.PeriodicLossPackets+observation.Server.PeriodicLossPackets == 0 {
 			return errors.New("representative tunnel periodic loss was not observed")
 		}
-	case "delay-jitter":
+	case "delay-jitter", "pin-rotation-refresh-backoff-lease":
 		if observation.Client.JitterPackets+observation.Server.JitterPackets == 0 {
 			return errors.New("jitter was not observed")
+		}
+	case "reorder":
+		if observation.Client.ReorderPackets+observation.Server.ReorderPackets == 0 {
+			return errors.New("reordering was not observed")
 		}
 	case "mtu-large-payload":
 		if observation.Client.Bytes+observation.Server.Bytes < 2<<20 {

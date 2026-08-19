@@ -14,7 +14,8 @@ public enum RetryDisposition: Equatable, Sendable {
 extension ConnectError {
   public var retryDisposition: RetryDisposition {
     switch self {
-    case .invalidOptions, .runtimeUnsupported, .canceled:
+    case .invalidOptions, .artifactInvalid, .runtimeUnsupported,
+      .transportSecurityUnsupported, .transportSecurityFailed, .canceled:
       return .terminal
     case .expiredArtifact, .timeout, .connectionFailed:
       return .retryable
@@ -24,6 +25,38 @@ extension ConnectError {
 
 extension SessionError {
   public var retryDisposition: RetryDisposition {
+    switch self {
+    case .canceled, .streamRejected, .operationFailed:
+      return .terminal
+    case .timeout, .closed, .goingAway, .resourceExhausted, .streamReset, .rekeyFailed,
+      .livenessFailed:
+      return .retryable
+    }
+  }
+}
+
+/// The v3 retry decision uses an exact Unix-millisecond deadline on every
+/// platform. The bounded integer avoids Date precision and rounding differences.
+public enum RetryDispositionV3: Equatable, Sendable {
+  case terminal
+  case retryable
+  case retryAfter(UInt64)
+}
+
+extension ConnectError {
+  public var retryDispositionV3: RetryDispositionV3 {
+    switch self {
+    case .invalidOptions, .artifactInvalid, .runtimeUnsupported,
+      .transportSecurityUnsupported, .transportSecurityFailed, .canceled:
+      return .terminal
+    case .expiredArtifact, .timeout, .connectionFailed:
+      return .retryable
+    }
+  }
+}
+
+extension SessionError {
+  public var retryDispositionV3: RetryDispositionV3 {
     switch self {
     case .canceled, .streamRejected, .operationFailed:
       return .terminal

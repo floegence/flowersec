@@ -12,9 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest"
 )
 
 var errInvalidTunnelColdWorkload = errors.New("invalid tunnel cold-connect workload")
@@ -494,7 +494,7 @@ func openBulkStreams(ctx context.Context, pair *Pair) (bulkStreams, time.Duratio
 	return streams, time.Since(started), nil
 }
 
-func acceptReleaseStream(ctx context.Context, session flowersession.SessionV2, result chan<- acceptedStream) {
+func acceptReleaseStream(ctx context.Context, session flowersession.Session, result chan<- acceptedStream) {
 	incoming, err := session.AcceptStream(ctx)
 	result <- acceptedStream{
 		kind: incoming.Kind, direction: fmt.Sprint(incoming.Metadata["direction"]), stream: incoming.Stream, err: err,
@@ -519,7 +519,7 @@ func transferExactPhase(ctx context.Context, writer, reader flowersession.ByteSt
 	stopCancellation := context.AfterFunc(ctx, reset)
 	defer stopCancellation()
 	go func() {
-		chunk := bytes.Repeat([]byte{fill}, protocolv2.MaxDataBytes)
+		chunk := bytes.Repeat([]byte{fill}, protocolv3.MaxDataBytes)
 		remaining := total
 		var writeErr error
 		for remaining > 0 {

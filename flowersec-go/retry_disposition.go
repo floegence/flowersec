@@ -1,6 +1,6 @@
 package flowersec
 
-import "time"
+const maximumRetryAfterUnixMilliseconds int64 = 253_402_300_799_999
 
 // RetryDispositionKind is the complete set of controller retry decisions.
 // Retry decisions are never inferred from error text or carrier identity.
@@ -13,11 +13,11 @@ const (
 )
 
 // RetryDisposition is the structured retry decision consumed by a
-// ConnectionController. RetryAt is required only for RetryAfter and is a
-// not-before wall-clock deadline.
+// ConnectionController. RetryAtUnixMilliseconds is required only for
+// RetryAfter and is an exact Unix wall-clock not-before deadline.
 type RetryDisposition struct {
-	Kind    RetryDispositionKind
-	RetryAt time.Time
+	Kind                    RetryDispositionKind
+	RetryAtUnixMilliseconds int64
 }
 
 func terminalDisposition() RetryDisposition {
@@ -28,19 +28,23 @@ func retryableDisposition() RetryDisposition {
 	return RetryDisposition{Kind: RetryDispositionRetryable}
 }
 
-func retryAfterDisposition(retryAt time.Time) RetryDisposition {
-	return RetryDisposition{Kind: RetryDispositionRetryAfter, RetryAt: retryAt}
+func retryAfterDisposition(retryAtUnixMilliseconds int64) RetryDisposition {
+	return RetryDisposition{Kind: RetryDispositionRetryAfter, RetryAtUnixMilliseconds: retryAtUnixMilliseconds}
 }
 
 func (disposition RetryDisposition) valid() bool {
 	switch disposition.Kind {
 	case RetryDispositionTerminal, RetryDispositionRetryable:
-		return disposition.RetryAt.IsZero()
+		return disposition.RetryAtUnixMilliseconds == 0
 	case RetryDispositionRetryAfter:
-		return !disposition.RetryAt.IsZero()
+		return validRetryAfterUnixMilliseconds(disposition.RetryAtUnixMilliseconds)
 	default:
 		return false
 	}
+}
+
+func validRetryAfterUnixMilliseconds(value int64) bool {
+	return value >= 0 && value <= maximumRetryAfterUnixMilliseconds
 }
 
 // RetryDisposition reports the structured recovery decision for a one-shot

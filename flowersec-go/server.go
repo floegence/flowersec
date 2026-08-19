@@ -7,9 +7,9 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	internaljsonframe "github.com/floegence/flowersec/flowersec-go/v2/internal/framing/jsonframe"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
-	rpcwire "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
+	internaljsonframe "github.com/floegence/flowersec/flowersec-go/v3/internal/framing/jsonframe"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
+	rpcwire "github.com/floegence/flowersec/flowersec-go/v3/internal/rpcwire"
 )
 
 const (

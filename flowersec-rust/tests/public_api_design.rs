@@ -1,11 +1,13 @@
+use flowersec::v2::{
+    Acceptor, TunnelAdmissionOptions, TunnelAuthorizer, TunnelRuntime, TunnelRuntimeOptions,
+    WebSocketAcceptorOptions,
+};
 use flowersec::{
-    Acceptor, ArtifactLease, ArtifactSource, ArtifactSourceError, ConnectionController,
+    ArtifactLease, ArtifactSource, ArtifactSourceError, ConnectionController,
     ConnectionControllerOptions, ConnectorOptions, IncomingStream, NotificationHandler,
     RetryDisposition, RpcError, RpcHandler, RpcHandlers, RpcPeer, RpcPeerExt, SessionError,
     SessionHandlerOptions, SessionHandlers, SessionTermination, StreamHandler,
-    StreamHandlerOptions, StreamHandlers, StreamMetadata, StreamMetadataError,
-    TunnelAdmissionOptions, TunnelAuthorizer, TunnelRuntime, TunnelRuntimeOptions,
-    WebSocketAcceptorOptions, connect,
+    StreamHandlerOptions, StreamHandlers, StreamMetadata, StreamMetadataError, connect,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -223,7 +225,7 @@ fn stream_metadata_is_validated_before_opening_a_stream() {
 
 #[test]
 fn artifact_lease_does_not_expose_spend_state() {
-    let source = include_str!("../src/artifact_v2.rs");
+    let source = include_str!("../src/artifact_v3.rs");
     assert!(!source.contains("pub fn is_committed"));
 }
 

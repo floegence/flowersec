@@ -141,16 +141,16 @@ func verifyPublicAPIDesign(repoRoot string) error {
 		}
 	}
 	for path := range map[string]struct{}{
-		"flowersec-go/connection_controller_test.go":                                   {},
-		"flowersec-ts/src/connectionController.vectors.test.ts":                        {},
-		"flowersec-rust/src/connection_controller.rs":                                  {},
-		"flowersec-swift/Tests/FlowersecTests/ConnectionControllerVectorSupport.swift": {},
+		"flowersec-go/connection_controller_test.go":                           {},
+		"flowersec-ts/src/v3/controller.test.ts":                               {},
+		"flowersec-rust/src/connection_controller.rs":                          {},
+		"flowersec-swift/Tests/FlowersecTests/ConnectionControllerTests.swift": {},
 	} {
 		source, err := read(path)
 		if err != nil {
 			return err
 		}
-		if !strings.Contains(source, "connection_controller_vectors.json") {
+		if !strings.Contains(source, "transport_v3") || !strings.Contains(source, "controller_vectors.json") {
 			return fmt.Errorf("%s does not consume shared connection controller vectors", path)
 		}
 	}

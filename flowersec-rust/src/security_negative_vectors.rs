@@ -29,7 +29,7 @@ fn shared_security_negative_vectors_reject_malformed_inputs() {
             hex_decode(&vector.value)
         };
         let accepted = match vector.kind.as_str() {
-            "artifact_json" => crate::Artifact::parse(raw).is_ok(),
+            "artifact_json" => crate::artifact_v2::Artifact::parse(raw).is_ok(),
             "fsa2_hex" => crate::admission_v2::security_accepts(&vector.kind, &raw),
             "fsr2_hex" | "open_hex" => crate::protocol_v2::security_accepts(&vector.kind, &raw),
             other => panic!("unknown security vector kind {other}"),

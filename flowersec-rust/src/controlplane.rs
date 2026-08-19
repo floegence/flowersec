@@ -9,7 +9,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::Artifact;
+use crate::artifact_v2::Artifact;
 
 const DEFAULT_ARTIFACT_LIFETIME: Duration = Duration::from_secs(60);
 const MAX_ARTIFACT_LIFETIME: Duration = Duration::from_secs(300);

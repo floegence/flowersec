@@ -19,6 +19,12 @@ function stableJson(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
+function goSourceArchiveVersion(modulePath) {
+  if (modulePath.endsWith("/v3")) return "v3.0.0-securityinventory";
+  if (modulePath.endsWith("/v2")) return "v2.0.0-securityinventory";
+  return "v0.0.0-securityinventory";
+}
+
 async function loadGenerator() {
   assert.ok(fs.existsSync(generatorPath), "scripts/generate-source-inventory.mjs must exist");
   return import(pathToFileURL(generatorPath));
@@ -170,6 +176,12 @@ test("source inventory output closure is explicit and package-local", async () =
       `release-compliance/${kind}/sbom/cyclonedx.json`,
     ]),
   ]);
+});
+
+test("Go source archive pseudo-versions match module path majors", () => {
+  assert.equal(goSourceArchiveVersion("example.com/flowersec/v3"), "v3.0.0-securityinventory");
+  assert.equal(goSourceArchiveVersion("example.com/flowersec/v2"), "v2.0.0-securityinventory");
+  assert.equal(goSourceArchiveVersion("example.com/flowersec"), "v0.0.0-securityinventory");
 });
 
 test("SPDX, CycloneDX, and notices are deterministic and preserve license decisions", async () => {
@@ -722,9 +734,7 @@ func main() {
       fs.copyFileSync(path.join(sourceRoot, repositoryRelative), destination);
     }
     const archive = path.join(root, `${relative.replaceAll("/", "-")}.zip`);
-    const archiveVersion = modulePath.endsWith("/v2")
-      ? "v2.0.0-securityinventory"
-      : "v0.0.0-securityinventory";
+    const archiveVersion = goSourceArchiveVersion(modulePath);
     run("go", ["run", ".", modulePath, archiveVersion, stagedModuleRoot, archive], {
       cwd: goZipTool,
       env: { GOWORK: "off" },

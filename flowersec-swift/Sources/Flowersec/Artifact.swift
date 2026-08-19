@@ -1,7 +1,7 @@
 import Crypto
 import Foundation
 
-public enum ArtifactError: Error, Equatable, Sendable {
+public enum ArtifactErrorV2: Error, Equatable, Sendable {
   case artifactTooLarge
   case invalidArtifact
   case invalidCandidate
@@ -11,24 +11,24 @@ public enum ArtifactError: Error, Equatable, Sendable {
 ///
 /// Wire credentials are intentionally unavailable to application code. Pass this
 /// handle to Flowersec session APIs instead of inspecting or serializing it.
-public final class Artifact: @unchecked Sendable, CustomStringConvertible,
+public final class ArtifactV2: @unchecked Sendable, CustomStringConvertible,
   CustomDebugStringConvertible, CustomReflectable
 {
   let value: ArtifactWireV2
 
   fileprivate init(value: ArtifactWireV2) { self.value = value }
 
-  public var description: String { "Flowersec.Artifact(<redacted>)" }
+  public var description: String { "Flowersec.ArtifactV2(<redacted>)" }
   public var debugDescription: String { description }
   public var customMirror: Mirror { Mirror(self, unlabeledChildren: [Any]()) }
 }
 
 /// Parses and fully validates a Transport v2 artifact without exposing its wire fields.
-public func parseArtifact(_ data: Data) throws -> Artifact {
+public func parseArtifactV2(_ data: Data) throws -> ArtifactV2 {
   try ArtifactCodecV2.decode(data)
 }
 
-public enum ArtifactLeaseError: Error, Equatable, Sendable {
+public enum ArtifactLeaseErrorV2: Error, Equatable, Sendable {
   case alreadyCommitted
 }
 
@@ -37,11 +37,11 @@ public enum ArtifactLeaseError: Error, Equatable, Sendable {
 /// The supplied `commitSpend` callback must durably publish SPENT before it
 /// returns successfully. The connector invokes it before writing the first
 /// credential-bearing byte; applications cannot invoke the transition directly.
-public struct ArtifactLease: Sendable {
-  let artifact: Artifact
+public struct ArtifactLeaseV2: Sendable {
+  let artifact: ArtifactV2
   private let state: ArtifactLeaseStateV2
 
-  public init(artifact: Artifact, commitSpend: @escaping @Sendable () async throws -> Void) {
+  public init(artifact: ArtifactV2, commitSpend: @escaping @Sendable () async throws -> Void) {
     self.artifact = artifact
     self.state = ArtifactLeaseStateV2(spend: commitSpend)
   }
@@ -79,9 +79,9 @@ private actor ArtifactLeaseStateV2 {
     let task: Task<Void, Error>
     switch state {
     case .committed:
-      throw ArtifactLeaseError.alreadyCommitted
+      throw ArtifactLeaseErrorV2.alreadyCommitted
     case .committing:
-      throw ArtifactLeaseError.alreadyCommitted
+      throw ArtifactLeaseErrorV2.alreadyCommitted
     case .idle:
       nextAttempt &+= 1
       attempt = nextAttempt
@@ -111,22 +111,22 @@ private enum ArtifactLeaseControllerError: Error {
 private enum ArtifactCodecV2 {
   static let maxBytes = 65_536
 
-  static func decode(_ data: Data) throws -> Artifact {
-    guard data.count <= maxBytes else { throw ArtifactError.artifactTooLarge }
+  static func decode(_ data: Data) throws -> ArtifactV2 {
+    guard data.count <= maxBytes else { throw ArtifactErrorV2.artifactTooLarge }
     do {
       try JSONDuplicateKeyScannerV2.validate(data)
       guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-        throw ArtifactError.invalidArtifact
+        throw ArtifactErrorV2.invalidArtifact
       }
       try exact(root, ["v", "profile", "session", "path", "scoped", "correlation"])
       try validateShapes(root)
       let value = try JSONDecoder().decode(ArtifactWireV2.self, from: data)
       try validate(value)
-      return Artifact(value: value)
-    } catch let error as ArtifactError {
+      return ArtifactV2(value: value)
+    } catch let error as ArtifactErrorV2 {
       throw error
     } catch {
-      throw ArtifactError.invalidArtifact
+      throw ArtifactErrorV2.invalidArtifact
     }
   }
 
@@ -138,7 +138,7 @@ private enum ArtifactCodecV2 {
       let correlation = root["correlation"] as? [String: Any],
       let candidates = path["candidates"] as? [[String: Any]],
       let tags = correlation["tags"] as? [[String: Any]]
-    else { throw ArtifactError.invalidArtifact }
+    else { throw ArtifactErrorV2.invalidArtifact }
     try exact(
       session,
       [
@@ -147,7 +147,7 @@ private enum ArtifactCodecV2 {
         "rekey_completion_timeout_seconds", "max_inbound_streams", "e2ee_psk_b64u",
         "allowed_suites", "default_suite", "selected_features", "contract_hash_b64u",
       ])
-    guard let kind = path["kind"] as? String else { throw ArtifactError.invalidArtifact }
+    guard let kind = path["kind"] as? String else { throw ArtifactErrorV2.invalidArtifact }
     if kind == "direct" {
       try exact(
         path, ["kind", "rendezvous_group_id", "listener_audience", "routing_token", "candidates"])
@@ -159,7 +159,7 @@ private enum ArtifactCodecV2 {
           "local_endpoint_instance_id", "expected_peer_endpoint_instance_id", "token", "candidates",
         ])
     } else {
-      throw ArtifactError.invalidArtifact
+      throw ArtifactErrorV2.invalidArtifact
     }
     for candidate in candidates { try exact(candidate, ["id", "carrier", "url", "wire_profile"]) }
     for scope in scopes { try exact(scope, ["scope", "scope_version", "critical", "payload"]) }
@@ -168,12 +168,12 @@ private enum ArtifactCodecV2 {
   }
 
   private static func exact(_ object: [String: Any], _ keys: Set<String>) throws {
-    guard Set(object.keys) == keys else { throw ArtifactError.invalidArtifact }
+    guard Set(object.keys) == keys else { throw ArtifactErrorV2.invalidArtifact }
   }
 
   private static func validate(_ artifact: ArtifactWireV2) throws {
     guard artifact.v == 2, artifact.profile == "flowersec/2" else {
-      throw ArtifactError.invalidArtifact
+      throw ArtifactErrorV2.invalidArtifact
     }
     let session = artifact.session
     guard
@@ -188,7 +188,7 @@ private enum ArtifactCodecV2 {
       Set(session.allowedSuites).count == session.allowedSuites.count,
       session.allowedSuites.allSatisfy({ $0 == 1 || $0 == 2 }),
       session.allowedSuites.contains(session.defaultSuite)
-    else { throw ArtifactError.invalidArtifact }
+    else { throw ArtifactErrorV2.invalidArtifact }
 
     let canonicalSession: [String: Any] = [
       "allowed_suites": session.allowedSuites, "channel_id": session.channelID,
@@ -207,17 +207,17 @@ private enum ArtifactCodecV2 {
     preimage.append(canonical)
     let expected = Data(SHA256.hash(data: preimage)).base64URLEncodedStringV2()
     guard expected == session.contractHashBase64URL else {
-      throw ArtifactError.invalidArtifact
+      throw ArtifactErrorV2.invalidArtifact
     }
 
     let path = artifact.path
     guard registry(path.rendezvousGroupID, max: 128), registry(path.listenerAudience, max: 128),
       (1...4).contains(path.candidates.count)
-    else { throw ArtifactError.invalidCandidate }
+    else { throw ArtifactErrorV2.invalidCandidate }
     switch path.kind {
     case "direct":
       guard ascii(path.routingToken ?? "", max: 8_192) else {
-        throw ArtifactError.invalidArtifact
+        throw ArtifactErrorV2.invalidArtifact
       }
     case "tunnel":
       guard path.role == 1 || path.role == 2,
@@ -225,8 +225,8 @@ private enum ArtifactCodecV2 {
         registry(path.expectedPeerEndpointInstanceID ?? "", max: 128),
         path.localEndpointInstanceID != path.expectedPeerEndpointInstanceID,
         ascii(path.token ?? "", max: 8_192)
-      else { throw ArtifactError.invalidArtifact }
-    default: throw ArtifactError.invalidArtifact
+      else { throw ArtifactErrorV2.invalidArtifact }
+    default: throw ArtifactErrorV2.invalidArtifact
     }
     var ids = Set<String>()
     for candidate in path.candidates {
@@ -235,24 +235,24 @@ private enum ArtifactCodecV2 {
         ["websocket", "raw_quic", "webtransport"].contains(candidate.carrier),
         candidate.wireProfile == "flowersec-\(path.kind)/2",
         validCandidateURL(candidate, kind: path.kind)
-      else { throw ArtifactError.invalidCandidate }
+      else { throw ArtifactErrorV2.invalidCandidate }
     }
-    guard artifact.scoped.count <= 8 else { throw ArtifactError.invalidArtifact }
+    guard artifact.scoped.count <= 8 else { throw ArtifactErrorV2.invalidArtifact }
     var scopeNames = Set<String>()
     for scope in artifact.scoped {
       guard scope.scope.range(of: "^[a-z][a-z0-9._-]{0,63}$", options: .regularExpression) != nil,
         scope.scopeVersion > 0, scopeNames.insert(scope.scope).inserted,
         try JSONEncoder().encode(scope.payload).count <= 4_096
-      else { throw ArtifactError.invalidArtifact }
+      else { throw ArtifactErrorV2.invalidArtifact }
     }
     guard artifact.correlation.v == 2, artifact.correlation.tags.count <= 8 else {
-      throw ArtifactError.invalidArtifact
+      throw ArtifactErrorV2.invalidArtifact
     }
     var tagNames = Set<String>()
     for tag in artifact.correlation.tags {
       guard tag.key.range(of: "^[a-z][a-z0-9._-]{0,31}$", options: .regularExpression) != nil,
         tagNames.insert(tag.key).inserted, ascii(tag.value, max: 128)
-      else { throw ArtifactError.invalidArtifact }
+      else { throw ArtifactErrorV2.invalidArtifact }
     }
   }
 
@@ -418,12 +418,12 @@ indirect enum ArtifactJSONValueV2: Codable, Sendable {
 private enum JSONDuplicateKeyScannerV2 {
   static func validate(_ data: Data) throws {
     guard let text = String(data: data, encoding: .utf8) else {
-      throw ArtifactError.invalidArtifact
+      throw ArtifactErrorV2.invalidArtifact
     }
     var parser = Parser(bytes: Array(text.utf8))
     try parser.value()
     parser.space()
-    guard parser.index == parser.bytes.count else { throw ArtifactError.invalidArtifact }
+    guard parser.index == parser.bytes.count else { throw ArtifactErrorV2.invalidArtifact }
   }
   private struct Parser {
     let bytes: [UInt8]
@@ -433,7 +433,7 @@ private enum JSONDuplicateKeyScannerV2 {
     }
     mutating func value() throws {
       space()
-      guard index < bytes.count else { throw ArtifactError.invalidArtifact }
+      guard index < bytes.count else { throw ArtifactErrorV2.invalidArtifact }
       switch bytes[index] {
       case 123: try object()
       case 91: try array()
@@ -449,13 +449,13 @@ private enum JSONDuplicateKeyScannerV2 {
       while true {
         space()
         let key = try string()
-        guard keys.insert(key).inserted else { throw ArtifactError.invalidArtifact }
+        guard keys.insert(key).inserted else { throw ArtifactErrorV2.invalidArtifact }
         space()
-        guard take(58) else { throw ArtifactError.invalidArtifact }
+        guard take(58) else { throw ArtifactErrorV2.invalidArtifact }
         try value()
         space()
         if take(125) { return }
-        guard take(44) else { throw ArtifactError.invalidArtifact }
+        guard take(44) else { throw ArtifactErrorV2.invalidArtifact }
       }
     }
     mutating func array() throws {
@@ -466,11 +466,11 @@ private enum JSONDuplicateKeyScannerV2 {
         try value()
         space()
         if take(93) { return }
-        guard take(44) else { throw ArtifactError.invalidArtifact }
+        guard take(44) else { throw ArtifactErrorV2.invalidArtifact }
       }
     }
     mutating func string() throws -> String {
-      guard take(34) else { throw ArtifactError.invalidArtifact }
+      guard take(34) else { throw ArtifactErrorV2.invalidArtifact }
       let start = index
       while index < bytes.count {
         if bytes[index] == 34 {
@@ -479,20 +479,20 @@ private enum JSONDuplicateKeyScannerV2 {
           quoted.append(34)
           index += 1
           guard let value = try? JSONDecoder().decode(String.self, from: quoted) else {
-            throw ArtifactError.invalidArtifact
+            throw ArtifactErrorV2.invalidArtifact
           }
           return value
         }
         if bytes[index] == 92 { index += 2 } else { index += 1 }
       }
-      throw ArtifactError.invalidArtifact
+      throw ArtifactErrorV2.invalidArtifact
     }
     mutating func scalar() throws {
       let start = index
       while index < bytes.count && ![44, 93, 125, 9, 10, 13, 32].contains(bytes[index]) {
         index += 1
       }
-      guard index > start else { throw ArtifactError.invalidArtifact }
+      guard index > start else { throw ArtifactErrorV2.invalidArtifact }
     }
     mutating func take(_ byte: UInt8) -> Bool {
       guard index < bytes.count, bytes[index] == byte else { return false }

@@ -7,7 +7,7 @@ import {
   ProxyServer,
   SessionHandlers,
   type AuthorizationRecord,
-} from "../node/index.js";
+} from "../node/v2.js";
 
 const ORIGIN = "https://app.example";
 const args = process.argv.slice(2);

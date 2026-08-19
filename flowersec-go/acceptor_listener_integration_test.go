@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
-	"github.com/floegence/flowersec/flowersec-go/v2/controlplane"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
+	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
 )
 
 func TestRawQUICAcceptorListenerEstablishesApplicationSession(t *testing.T) {
@@ -205,7 +205,7 @@ func TestWebTransportAcceptorListenerEstablishesApplicationSession(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint := "https://localhost:" + port + "/flowersec/webtransport/v2/direct"
+	endpoint := "https://localhost:" + port + "/flowersec/webtransport/v3/direct"
 	var record controlplane.AuthorizationRecord
 	var released atomic.Int32
 	started := make(chan struct{})

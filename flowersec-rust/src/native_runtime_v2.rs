@@ -118,6 +118,18 @@ impl ConnectorOptions {
         self.connect_timeout
     }
 
+    pub(crate) const fn close_flush_timeout(&self) -> Option<Duration> {
+        self.close_flush_timeout
+    }
+
+    pub(crate) fn websocket_origin(&self) -> Option<&str> {
+        self.websocket_origin.as_deref()
+    }
+
+    pub(crate) fn rpc_handler_snapshot(&self) -> Option<Arc<RpcHandlerSnapshot>> {
+        self.rpc_handlers.clone()
+    }
+
     /// Sets the exact HTTP Origin sent by native WebSocket candidates.
     pub fn with_websocket_origin(
         mut self,

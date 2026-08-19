@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"testing"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
 )
 
 func TestOpaqueArtifactAndLease(t *testing.T) {
@@ -50,7 +50,7 @@ func TestOpaqueArtifactRejectsMalformedAndForgedValues(t *testing.T) {
 func parseFixtureArtifact(t *testing.T) flowersec.Artifact {
 	t.Helper()
 	_, file, _, _ := runtime.Caller(0)
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "testdata", "transport_v2", "artifact_vectors.json"))
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "testdata", "transport_v3", "artifact_vectors.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,12 +3,38 @@ package flowersec_test
 import (
 	"context"
 	"crypto/tls"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"sync/atomic"
 	"testing"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
-	"github.com/floegence/flowersec/flowersec-go/v2/controlplane"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
+	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
 )
+
+func TestAcceptorHandlerRejectsResumedTLSBeforeAuthorization(t *testing.T) {
+	var authorized atomic.Int32
+	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
+		AllowedOrigins: []string{"https://app.example"},
+		Authorize: func(context.Context, controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
+			authorized.Add(1)
+			return controlplane.AuthorizationResponse{}, nil
+		},
+		OnSession: func(context.Context, flowersec.Session, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, flowersec.WebSocketDirectPath, nil)
+	request.Header.Set("Origin", "https://app.example")
+	request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, DidResume: true}
+	response := httptest.NewRecorder()
+	acceptor.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || authorized.Load() != 0 {
+		t.Fatalf("resumed request status/authorizations = %d/%d, want 403/0", response.Code, authorized.Load())
+	}
+}
 
 func TestAcceptorPublicSurfaceIsCarrierNeutral(t *testing.T) {
 	for _, value := range []any{flowersec.AcceptorOptions{}, flowersec.Acceptor{}} {

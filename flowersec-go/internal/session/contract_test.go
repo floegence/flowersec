@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/runtimev2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/runtimev2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/session"
 )
 
 type testByteStream struct{}

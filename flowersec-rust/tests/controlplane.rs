@@ -1,8 +1,8 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use flowersec::controlplane::{
+use flowersec::v2::{
     AuthorizationRecord, DirectIssueOptions, EndpointSet, Issuer, RuntimeAuthorizationRequest,
-    SessionOptions, TunnelIssueOptions, allow_tunnel_runtime, reject_tunnel_runtime,
-    retry_tunnel_runtime,
+    SessionOptions, TunnelIssueOptions, allow_tunnel_runtime, reject_runtime,
+    reject_tunnel_runtime, retry_runtime, retry_tunnel_runtime,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -33,8 +33,8 @@ fn controlplane_public_issuance_and_opaque_record_contract() {
         .authorize(&record, "lease-red")
         .expect("authorize runtime");
     assert!(String::from_utf8(allowed.json()).unwrap().contains("allow"));
-    assert!(flowersec::retry_runtime("temporarily_unavailable").is_ok());
-    assert!(flowersec::reject_runtime("not_authorized").is_ok());
+    assert!(retry_runtime("temporarily_unavailable").is_ok());
+    assert!(reject_runtime("not_authorized").is_ok());
     assert_eq!(
         serde_json::from_slice::<Value>(&reject_tunnel_runtime("not_authorized").unwrap().json())
             .unwrap(),

@@ -104,7 +104,7 @@ struct AdmittedCarrierV2: Sendable {
 }
 
 struct AdmissionCommitV2: Sendable {
-  let lease: ArtifactLease
+  let lease: ArtifactLeaseV2
   let attempt: CandidateAttemptV2
 
   func commit(inboundCapacity: UInt16) async throws -> AdmittedCarrierV2 {
@@ -139,12 +139,12 @@ struct AdmissionCommitV2: Sendable {
 }
 
 struct SessionConnectorV2: Sendable {
-  private let lease: ArtifactLease
+  private let lease: ArtifactLeaseV2
   private let options: ConnectorOptions
   private let runtime: any RuntimeCarrierAdapterV2
 
   init(
-    lease: ArtifactLease,
+    lease: ArtifactLeaseV2,
     options: ConnectorOptions,
     runtime: any RuntimeCarrierAdapterV2
   ) throws {

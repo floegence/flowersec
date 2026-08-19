@@ -10,6 +10,18 @@ export type RawQuicConnectOptions = Readonly<{
   handshakeTimeoutMs: number;
 }>;
 
+export type RawQuicConnectOptionsV3 = Readonly<{
+  host: string;
+  port: number;
+  serverName: string;
+  path: PathKind;
+  tlsMode: "ca" | "pin";
+  trustRootsDer?: readonly Uint8Array[];
+  activeLeafDerSha256?: readonly Uint8Array[];
+  inboundBidirectionalStreamCapacity: number;
+  handshakeTimeoutMs: number;
+}>;
+
 export type RawQuicBindOptions = Readonly<{
   host: string;
   port: number;
@@ -38,6 +50,7 @@ export interface RawQuicStream {
 export interface RawQuicSession {
   readonly kind: "raw_quic";
   readonly path: PathKind;
+  readonly wireVersion: 2 | 3;
   readonly inboundBidirectionalStreamCapacity: number;
   readonly maxDatagramSize?: number;
   localAddress(): Readonly<{ host: string; port: number }>;
@@ -61,3 +74,5 @@ export interface RawQuicListener {
 export function contractVersion(): number;
 export function connectRawQuic(options: RawQuicConnectOptions): NativeOperation<RawQuicSession>;
 export function bindRawQuic(options: RawQuicBindOptions): Promise<RawQuicListener>;
+export function connectRawQuicV3(options: RawQuicConnectOptionsV3): NativeOperation<RawQuicSession>;
+export function bindRawQuicV3(options: RawQuicBindOptions): Promise<RawQuicListener>;

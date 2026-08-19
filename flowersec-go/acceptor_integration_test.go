@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -14,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
-	"github.com/floegence/flowersec/flowersec-go/v2/controlplane"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
+	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
 )
 
 func TestAcceptorResolvesHandlersBeforeDirectSessionEstablishment(t *testing.T) {
@@ -145,160 +144,13 @@ func TestAcceptorReleasesAuthorizedLeaseWhenHandlerResolutionFails(t *testing.T)
 	}
 }
 
-func TestAcceptorEstablishesPlaintextLoopbackDirectSession(t *testing.T) {
-	var record controlplane.AuthorizationRecord
-	origins := []string{"pending"}
-	handlers := echoHandlers(t, "loopback")
-	streamPayload := make(chan []byte, 1)
-	if err := handlers.HandleStream("loopback-echo", func(_ context.Context, incoming flowersec.IncomingStream) error {
-		payload, err := io.ReadAll(incoming.Stream)
-		if err == nil {
-			streamPayload <- payload
-		}
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	sessionStarted := make(chan struct{})
-	acceptedSession := make(chan flowersec.Session, 1)
-	releaseSession := make(chan struct{})
-	sessionFinished := make(chan struct{})
-	var released atomic.Int32
-	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
-		AllowedOrigins: origins,
-		Authorize: func(_ context.Context, request controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
-			return controlplane.AuthorizeRuntime(request, record, "lease-loopback")
-		},
-		ResolveHandlers: func(context.Context, controlplane.RuntimeAuthorizationRequest) (*flowersec.SessionHandlers, error) {
-			return handlers, nil
-		},
-		OnSession: func(_ context.Context, current flowersec.Session, _ string) error {
-			acceptedSession <- current
-			close(sessionStarted)
-			<-releaseSession
-			close(sessionFinished)
-			return nil
-		},
-		Release: func(context.Context, string) { released.Add(1) },
+func TestAcceptorRejectsPlaintextLoopbackDirectArtifact(t *testing.T) {
+	_, err := controlplane.NewEndpointSet(controlplane.EndpointConfig{
+		ID: "loopback", URL: "ws://127.0.0.1/flowersec/v3/direct", TLS: controlplane.CAPolicy(),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(acceptor.Handler())
-	defer server.Close()
-	origins[0] = server.URL
-
-	issued, err := controlplane.NewIssuer().IssueDirect(controlplane.DirectIssueOptions{
-		Session:           controlplane.SessionOptions{ChannelID: "loopback-direct", ExpiresAt: time.Now().Add(time.Minute)},
-		Endpoints:         mustEndpointSet(t, "ws"+strings.TrimPrefix(server.URL, "http")+flowersec.WebSocketDirectPath),
-		RendezvousGroupID: "loopback-direct",
-		ListenerAudience:  "test",
-		UpstreamAddress:   server.Listener.Addr().String(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	record = issued.AuthorizationRecord()
-
-	artifact, err := flowersec.ParseArtifact(issued.ArtifactJSON())
-	if err != nil {
-		t.Fatal(err)
-	}
-	lease, err := flowersec.NewArtifactLease(artifact, func(context.Context) error { return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	session, err := flowersec.Connect(ctx, lease, flowersec.ConnectorOptions{Origin: server.URL})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer session.Close()
-	select {
-	case <-sessionStarted:
-	case <-ctx.Done():
-		t.Fatal("plaintext loopback accepted session did not start")
-	}
-	clientHandlers, err := flowersec.NewStreamHandlers(flowersec.StreamHandlerOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := clientHandlers.HandleStream("loopback-client-inbound", func(_ context.Context, incoming flowersec.IncomingStream) error {
-		payload, readErr := io.ReadAll(incoming.Stream)
-		if readErr != nil {
-			return readErr
-		}
-		_, writeErr := incoming.Stream.Write(append([]byte("client:"), payload...))
-		return writeErr
-	}); err != nil {
-		t.Fatal(err)
-	}
-	clientServeCtx, stopClientServe := context.WithCancel(ctx)
-	clientServeDone := make(chan error, 1)
-	go func() { clientServeDone <- clientHandlers.Serve(clientServeCtx, session) }()
-	serverSession := <-acceptedSession
-	serverOpened, err := serverSession.OpenStream(ctx, "loopback-client-inbound", flowersec.EmptyStreamMetadata())
-	if err != nil {
-		t.Fatalf("accepted Session OpenStream() error = %v", err)
-	}
-	if _, err := serverOpened.Write([]byte("server-stream")); err != nil {
-		t.Fatalf("accepted Session stream Write() error = %v", err)
-	}
-	if err := serverOpened.CloseWrite(); err != nil {
-		t.Fatalf("accepted Session stream CloseWrite() error = %v", err)
-	}
-	reversePayload, err := io.ReadAll(serverOpened)
-	if err != nil {
-		t.Fatalf("accepted Session stream Read() error = %v", err)
-	}
-	if got, want := string(reversePayload), "client:server-stream"; got != want {
-		t.Fatalf("accepted Session stream payload = %q, want %q", got, want)
-	}
-	_ = serverOpened.Close()
-	assertEchoRPC(t, session, "loopback")
-	if _, err := session.ProbeLiveness(ctx); err != nil {
-		t.Fatalf("plaintext loopback ProbeLiveness() error = %v", err)
-	}
-	stream, err := session.OpenStream(ctx, "loopback-echo", flowersec.EmptyStreamMetadata())
-	if err != nil {
-		t.Fatalf("plaintext loopback OpenStream() error = %v", err)
-	}
-	if _, err := stream.Write([]byte("loopback-stream")); err != nil {
-		t.Fatalf("plaintext loopback stream Write() error = %v", err)
-	}
-	if err := stream.CloseWrite(); err != nil {
-		t.Fatalf("plaintext loopback stream CloseWrite() error = %v", err)
-	}
-	select {
-	case payload := <-streamPayload:
-		if string(payload) != "loopback-stream" {
-			t.Fatalf("plaintext loopback stream payload = %q", payload)
-		}
-	case <-ctx.Done():
-		t.Fatal("plaintext loopback stream handler did not receive payload")
-	}
-	_ = stream.Close()
-	stopClientServe()
-	select {
-	case err := <-clientServeDone:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("StreamHandlers.Serve() error = %v, want context cancellation", err)
-		}
-	case <-ctx.Done():
-		t.Fatal("StreamHandlers.Serve did not stop")
-	}
-	close(releaseSession)
-	select {
-	case <-sessionFinished:
-	case <-ctx.Done():
-		t.Fatal("plaintext loopback accepted session did not finish")
-	}
-	for deadline := time.Now().Add(time.Second); released.Load() != 1 && time.Now().Before(deadline); {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if released.Load() != 1 {
-		t.Fatalf("plaintext loopback release count = %d, want 1", released.Load())
+	var typed *controlplane.ControlPlaneError
+	if !errors.As(err, &typed) || typed.Code() != controlplane.InvalidEndpointURL {
+		t.Fatalf("plaintext v3 endpoint error = %#v, want invalid_endpoint_url", err)
 	}
 }
 
@@ -437,7 +289,13 @@ func assertEchoRPC(t *testing.T, session flowersec.Session, want string) {
 
 func mustEndpointSet(t *testing.T, endpoints ...string) controlplane.EndpointSet {
 	t.Helper()
-	set, err := controlplane.NewEndpointSet(endpoints...)
+	configs := make([]controlplane.EndpointConfig, 0, len(endpoints))
+	for index, endpoint := range endpoints {
+		configs = append(configs, controlplane.EndpointConfig{
+			ID: fmt.Sprintf("endpoint-%d", index+1), URL: endpoint, TLS: controlplane.CAPolicy(),
+		})
+	}
+	set, err := controlplane.NewEndpointSet(configs...)
 	if err != nil {
 		t.Fatal(err)
 	}

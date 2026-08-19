@@ -7,16 +7,16 @@ final class ArtifactV2Tests: XCTestCase {
   func testSharedArtifactVectorsAcceptValidAndRejectInvalidArtifactJSON() throws {
     let vectors = try loadVectors()
     for item in vectors.positive {
-      XCTAssertNoThrow(try parseArtifact(Data(item.artifactJSON.utf8)), item.id)
+      XCTAssertNoThrow(try parseArtifactV2(Data(item.artifactJSON.utf8)), item.id)
     }
     for item in vectors.negative where item.kind == "artifact_json" {
-      XCTAssertThrowsError(try parseArtifact(Data(item.value.utf8)), item.id)
+      XCTAssertThrowsError(try parseArtifactV2(Data(item.value.utf8)), item.id)
     }
   }
 
   func testSharedCandidateAndFSB2VectorsMatchByteForByte() throws {
     for item in try loadVectors().positive {
-      let artifact = try parseArtifact(Data(item.artifactJSON.utf8))
+      let artifact = try parseArtifactV2(Data(item.artifactJSON.utf8))
       let candidateSet = try AdmissionCodecV2.canonicalizeCandidates(artifact)
       XCTAssertEqual(
         String(decoding: candidateSet.canonicalJSON, as: UTF8.self), item.candidatesCanonicalJSON,
@@ -67,10 +67,10 @@ final class ArtifactV2Tests: XCTestCase {
 
   func testOpaqueArtifactDescriptionAndMirrorDoNotRevealCredentials() throws {
     let raw = try XCTUnwrap(loadVectors().positive.first?.artifactJSON)
-    let artifact = try parseArtifact(Data(raw.utf8))
+    let artifact = try parseArtifactV2(Data(raw.utf8))
     let rendered = String(describing: artifact) + String(reflecting: artifact)
 
-    XCTAssertEqual(String(describing: artifact), "Flowersec.Artifact(<redacted>)")
+    XCTAssertEqual(String(describing: artifact), "Flowersec.ArtifactV2(<redacted>)")
     XCTAssertFalse(rendered.contains("routing-token"))
     XCTAssertFalse(rendered.contains("e2ee_psk_b64u"))
     XCTAssertFalse(rendered.contains("channel-1"))
@@ -78,9 +78,9 @@ final class ArtifactV2Tests: XCTestCase {
 
   func testArtifactLeaseExposesExplicitDurableSpendBoundary() async throws {
     let raw = try XCTUnwrap(loadVectors().positive.first?.artifactJSON)
-    let artifact = try parseArtifact(Data(raw.utf8))
+    let artifact = try parseArtifactV2(Data(raw.utf8))
     let recorder = SpendRecorderV2()
-    let lease = ArtifactLease(artifact: artifact) {
+    let lease = ArtifactLeaseV2(artifact: artifact) {
       await recorder.recordDurableSpend()
     }
 
@@ -93,15 +93,15 @@ final class ArtifactV2Tests: XCTestCase {
       try await lease.commitSpend()
       XCTFail("Expected a committed lease to reject reuse")
     } catch {
-      XCTAssertEqual(error as? ArtifactLeaseError, .alreadyCommitted)
+      XCTAssertEqual(error as? ArtifactLeaseErrorV2, .alreadyCommitted)
     }
   }
 
   func testArtifactLeaseBurnsAfterDurableCommitFailure() async throws {
     let raw = try XCTUnwrap(loadVectors().positive.first?.artifactJSON)
-    let artifact = try parseArtifact(Data(raw.utf8))
+    let artifact = try parseArtifactV2(Data(raw.utf8))
     let recorder = RetryingSpendRecorderV2()
-    let lease = ArtifactLease(artifact: artifact) {
+    let lease = ArtifactLeaseV2(artifact: artifact) {
       try await recorder.commit()
     }
 
@@ -115,7 +115,7 @@ final class ArtifactV2Tests: XCTestCase {
       try await lease.commitSpend()
       XCTFail("Expected a failed commit attempt to burn the lease")
     } catch {
-      XCTAssertEqual(error as? ArtifactLeaseError, .alreadyCommitted)
+      XCTAssertEqual(error as? ArtifactLeaseErrorV2, .alreadyCommitted)
     }
     let attempts = await recorder.attemptCount()
     XCTAssertEqual(attempts, 1)
@@ -123,9 +123,9 @@ final class ArtifactV2Tests: XCTestCase {
 
   func testArtifactLeaseBurnsAfterSpendCancellation() async throws {
     let raw = try XCTUnwrap(loadVectors().positive.first?.artifactJSON)
-    let artifact = try parseArtifact(Data(raw.utf8))
+    let artifact = try parseArtifactV2(Data(raw.utf8))
     let recorder = CancelingSpendRecorderV2()
-    let lease = ArtifactLease(artifact: artifact) {
+    let lease = ArtifactLeaseV2(artifact: artifact) {
       try await recorder.commit()
     }
 
@@ -139,7 +139,7 @@ final class ArtifactV2Tests: XCTestCase {
       try await lease.commitSpend()
       XCTFail("Expected a canceled commit attempt to burn the lease")
     } catch {
-      XCTAssertEqual(error as? ArtifactLeaseError, .alreadyCommitted)
+      XCTAssertEqual(error as? ArtifactLeaseErrorV2, .alreadyCommitted)
     }
     let attempts = await recorder.attemptCount()
     XCTAssertEqual(attempts, 1)
@@ -147,9 +147,9 @@ final class ArtifactV2Tests: XCTestCase {
 
   func testArtifactLeaseAuthorizesExactlyOneConcurrentSpend() async throws {
     let raw = try XCTUnwrap(loadVectors().positive.first?.artifactJSON)
-    let artifact = try parseArtifact(Data(raw.utf8))
+    let artifact = try parseArtifactV2(Data(raw.utf8))
     let gate = SpendGateV2()
-    let lease = ArtifactLease(artifact: artifact) {
+    let lease = ArtifactLeaseV2(artifact: artifact) {
       await gate.wait()
     }
 
@@ -160,7 +160,7 @@ final class ArtifactV2Tests: XCTestCase {
       try await second.value
       XCTFail("Expected concurrent lease reuse to fail")
     } catch {
-      XCTAssertEqual(error as? ArtifactLeaseError, .alreadyCommitted)
+      XCTAssertEqual(error as? ArtifactLeaseErrorV2, .alreadyCommitted)
     }
     await gate.release()
     try await first.value
@@ -172,13 +172,13 @@ final class ArtifactV2Tests: XCTestCase {
       of: "\"channel_id\":\"channel-1\"",
       with: "\"channel_id\":\"channel-1\",\"tenant_id\":\"secret\""
     )
-    XCTAssertThrowsError(try parseArtifact(Data(nestedUnknown.utf8)))
+    XCTAssertThrowsError(try parseArtifactV2(Data(nestedUnknown.utf8)))
 
     let escapedDuplicate = raw.replacingOccurrences(
       of: "\"profile\":\"flowersec/2\"",
       with: "\"profile\":\"flowersec/2\",\"pro\\u0066ile\":\"flowersec/2\""
     )
-    XCTAssertThrowsError(try parseArtifact(Data(escapedDuplicate.utf8)))
+    XCTAssertThrowsError(try parseArtifactV2(Data(escapedDuplicate.utf8)))
   }
 
   private func loadVectors() throws -> ArtifactVectorsV2 {
@@ -275,13 +275,13 @@ private struct ArtifactVectorsV2: Decodable {
 
 extension Data {
   fileprivate init(hexV2: String) throws {
-    guard hexV2.count.isMultiple(of: 2) else { throw ArtifactError.invalidArtifact }
+    guard hexV2.count.isMultiple(of: 2) else { throw ArtifactErrorV2.invalidArtifact }
     self.init()
     var index = hexV2.startIndex
     while index < hexV2.endIndex {
       let next = hexV2.index(index, offsetBy: 2)
       guard let byte = UInt8(hexV2[index..<next], radix: 16) else {
-        throw ArtifactError.invalidArtifact
+        throw ArtifactErrorV2.invalidArtifact
       }
       append(byte)
       index = next

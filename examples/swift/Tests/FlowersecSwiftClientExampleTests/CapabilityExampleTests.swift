@@ -3,10 +3,10 @@ import Foundation
 
 @testable import FlowersecSwiftClientExample
 
-@Test func exampleDescribesTheOpaqueV2Contract() {
+@Test func exampleDescribesTheOpaqueV3Contract() {
   #expect(
-    renderPublicContractV2() == """
-      transport=v2
+    renderPublicContractV3() == """
+      transport=v3
       session_api=opaque
 
       """)
@@ -21,7 +21,7 @@ import Foundation
 
   try commitSpendReceipt(at: receipt.path)
 
-  #expect(try Data(contentsOf: receipt) == Data("flowersec-v2-artifact-spent\n".utf8))
+  #expect(try Data(contentsOf: receipt) == Data("flowersec-v3-artifact-spent\n".utf8))
   let attributes = try FileManager.default.attributesOfItem(atPath: receipt.path)
   #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
   #expect(throws: (any Error).self) {

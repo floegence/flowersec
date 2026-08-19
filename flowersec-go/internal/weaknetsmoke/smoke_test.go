@@ -19,13 +19,14 @@ import (
 	"testing"
 	"time"
 
-	admissionws "github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/weaknet"
+	admissionws "github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv3/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/quicbase"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/rawquicv3"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocketv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transportsecurity"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/weaknet"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -77,13 +78,22 @@ func TestWeaknetWebSocketSmoke(t *testing.T) {
 func runRawQUICSmoke(t *testing.T) smokeCase {
 	t.Helper()
 	serverTLS, clientTLS := testTLS(t)
-	serverTLS.NextProtos = []string{rawquic.ALPNDirect}
-	clientTLS.NextProtos = []string{rawquic.ALPNDirect}
-	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS, quicbase.DefaultLimits())
+	serverTLS.NextProtos = []string{rawquicv3.ALPNDirect}
+	listener, err := rawquicv3.Listen("127.0.0.1:0", serverTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer listener.Close()
+	clientTLS, err = transportsecurity.BuildClientTLS(
+		clientTLS,
+		"quic://"+listener.Addr().String(),
+		artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientTLS.NextProtos = []string{rawquicv3.ALPNDirect}
 
 	front := listenUDP(t)
 	backend := listenUDP(t)
@@ -140,7 +150,7 @@ func runRawQUICSmoke(t *testing.T) smokeCase {
 		}
 		serverSessionCh <- session
 	}()
-	clientSession, err := rawquic.Dial(weaknetSmokeContext, front.LocalAddr().String(), clientTLS, quicbase.DefaultLimits())
+	clientSession, err := rawquicv3.Dial(weaknetSmokeContext, front.LocalAddr().String(), clientTLS, quicbase.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +168,7 @@ func runRawQUICSmoke(t *testing.T) smokeCase {
 	assertUDPSmokeCounters(t, forwardReport, true)
 	assertUDPSmokeCounters(t, reverseReport, false)
 	return smokeCase{
-		Profile: rawquic.ALPNDirect, Carrier: "raw_quic",
+		Profile: rawquicv3.ALPNDirect, Carrier: "raw_quic",
 		Assertions: []string{"real UDP PacketPump path", "scripted first-packet duplication", "counter conservation", "native reset isolation"},
 		Counters: []counterAssertion{
 			counterAssertionFromReport(forwardReport,
@@ -181,6 +191,7 @@ func runRawQUICSmoke(t *testing.T) smokeCase {
 
 func runWebSocketSmoke(t *testing.T) smokeCase {
 	t.Helper()
+	serverTLS, clientTLS := testTLS(t)
 	serverSessionCh := make(chan carrier.Session, 1)
 	serverErrCh := make(chan error, 1)
 	upgrader := gorillaws.Upgrader{Subprotocols: []string{carrierws.SubprotocolDirect}}
@@ -190,8 +201,8 @@ func runWebSocketSmoke(t *testing.T) smokeCase {
 			serverErrCh <- err
 			return
 		}
-		_, err = admissionws.Serve(weaknetSmokeContext, conn, nil, func(context.Context, *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
-			return artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, nil
+		_, err = admissionws.Serve(weaknetSmokeContext, conn, nil, func(context.Context, *artifactv3.DecodedRequest) (artifactv3.AdmissionResponse, error) {
+			return artifactv3.AdmissionResponse{Status: artifactv3.AdmissionSuccess}, nil
 		})
 		if err != nil {
 			serverErrCh <- err
@@ -205,6 +216,7 @@ func runWebSocketSmoke(t *testing.T) smokeCase {
 		serverSessionCh <- session
 	}))
 	backend.EnableHTTP2 = false
+	backend.TLS = serverTLS
 	backend.StartTLS()
 	defer backend.Close()
 
@@ -244,18 +256,26 @@ func runWebSocketSmoke(t *testing.T) smokeCase {
 		go func() { pumpDone[1] <- reverse.Run(pumpContext) }()
 	}()
 
-	dialer := gorillaws.Dialer{
-		Subprotocols: []string{carrierws.SubprotocolDirect},
-		TLSClientConfig: &tls.Config{
-			MinVersion: tls.VersionTLS13, InsecureSkipVerify: true, // Local smoke proxy only.
-		},
-	}
-	clientConn, _, err := dialer.DialContext(weaknetSmokeContext, "wss://"+front.Addr().String()+"/flowersec/v2/direct", nil)
+	dialURL := "wss://" + front.Addr().String() + "/flowersec/v3/direct"
+	clientTLS, err = transportsecurity.BuildClientTLS(
+		clientTLS,
+		dialURL,
+		artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA},
+		time.Now(),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rawFSB2 := validWebSocketFSB2(t)
-	if _, err := admissionws.Commit(weaknetSmokeContext, clientConn, rawFSB2, nil); err != nil {
+	dialer := gorillaws.Dialer{
+		Subprotocols:    []string{carrierws.SubprotocolDirect},
+		TLSClientConfig: clientTLS,
+	}
+	clientConn, _, err := dialer.DialContext(weaknetSmokeContext, dialURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawFSB3 := validWebSocketFSB3(t)
+	if _, err := admissionws.Commit(weaknetSmokeContext, clientConn, rawFSB3, nil); err != nil {
 		t.Fatal(err)
 	}
 	clientSession, err := carrierws.NewAfterAdmission(clientConn, carrierws.ClientRole, carrierws.SubprotocolDirect, carrierws.DefaultResourcePolicy())
@@ -283,7 +303,7 @@ func runWebSocketSmoke(t *testing.T) smokeCase {
 	assertByteSmokeCounters(t, serverToClientReport)
 	return smokeCase{
 		Profile: carrierws.SubprotocolDirect, Carrier: "wss",
-		Assertions: []string{"real TCP ConnPump path", "TLS 1.3 and WebSocket negotiation", "FSB2/FSA2 admission", "counter conservation", "Yamux reset isolation"},
+		Assertions: []string{"real TCP ConnPump path", "TLS 1.3 and WebSocket negotiation", "FSB3/FSA3 admission", "counter conservation", "Yamux reset isolation"},
 		Counters: []counterAssertion{
 			counterAssertionFromReport(clientToServerReport, nil, []relationExpectation{
 				{Left: "delay_units", Operator: "eq", Right: "input_units"},
@@ -562,9 +582,9 @@ func testTLS(t *testing.T) (*tls.Config, *tls.Config) {
 	return &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: "localhost"}
 }
 
-func validWebSocketFSB2(t *testing.T) []byte {
+func validWebSocketFSB3(t *testing.T) []byte {
 	t.Helper()
-	session := artifactv2.SessionContract{
+	session := artifactv3.SessionContract{
 		ChannelID: "weaknet-smoke", InitExpireAtUnixSeconds: time.Now().Add(time.Hour).Unix(), IdleTimeoutSeconds: 60,
 		EstablishTimeoutSeconds: 30, RekeyPrepareTimeoutSeconds: 10, RekeyCompletionTimeoutSeconds: 30,
 		MaxInboundStreams: 32, AllowedSuites: []uint16{1, 2}, DefaultSuite: 1,
@@ -572,24 +592,28 @@ func validWebSocketFSB2(t *testing.T) []byte {
 	for index := range session.E2EEPSK {
 		session.E2EEPSK[index] = byte(index + 1)
 	}
-	hash, _, err := artifactv2.ComputeSessionContractHash(session)
+	hash, _, err := artifactv3.ComputeSessionContractHash(session)
 	if err != nil {
 		t.Fatal(err)
 	}
 	session.ContractHash = hash
-	artifact := artifactv2.Artifact{
-		Version: 2, Profile: artifactv2.Profile, Session: session,
-		Path: artifactv2.ArtifactPath{
-			Kind: artifactv2.PathDirect, RendezvousGroupID: "weaknet-smoke", ListenerAudience: "local-listener", RoutingToken: "opaque",
-			Candidates: []artifactv2.Candidate{{ID: "w1", Carrier: artifactv2.CarrierWebSocket, URL: "wss://localhost/flowersec/v2/direct", WireProfile: rawquic.ALPNDirect}},
+	artifact := artifactv3.Artifact{
+		Version: 3, Profile: artifactv3.Profile, Session: session,
+		Path: artifactv3.ArtifactPath{
+			Kind: artifactv3.PathDirect, RendezvousGroupID: "weaknet-smoke", ListenerAudience: "local-listener", RoutingToken: "opaque",
+			Candidates: []artifactv3.Candidate{{
+				ID: "w1", Carrier: artifactv3.CarrierWebSocket,
+				URL: "wss://localhost/flowersec/v3/direct", WireProfile: rawquicv3.ALPNDirect,
+				TLS: artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA},
+			}},
 		},
-		Scoped: []artifactv2.ScopeMetadata{}, Correlation: artifactv2.CorrelationContext{Version: 2, Tags: []artifactv2.CorrelationTag{}},
+		Scoped: []artifactv3.ScopeMetadata{}, Correlation: artifactv3.CorrelationContext{Version: 3, Tags: []artifactv3.CorrelationTag{}},
 	}
-	request, err := artifactv2.BuildRequest(artifact, "w1")
+	request, err := artifactv3.BuildRequest(artifact, "w1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := artifactv2.MarshalRequest(request)
+	raw, err := artifactv3.MarshalRequest(request)
 	if err != nil {
 		t.Fatal(err)
 	}

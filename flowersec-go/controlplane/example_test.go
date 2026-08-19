@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/controlplane"
+	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
 )
 
 func ExampleIssuer_IssueTunnelPair() {
 	endpoints, err := controlplane.NewEndpointSet(
-		"wss://sessions.example/flowersec/v2/tunnel",
-		"quic://sessions.example",
-		"https://sessions.example/flowersec/webtransport/v2/tunnel",
+		controlplane.EndpointConfig{ID: "websocket", URL: "wss://sessions.example/flowersec/v3/tunnel", TLS: controlplane.CAPolicy()},
+		controlplane.EndpointConfig{ID: "raw-quic", URL: "quic://sessions.example", TLS: controlplane.CAPolicy()},
+		controlplane.EndpointConfig{ID: "webtransport", URL: "https://sessions.example/flowersec/webtransport/v3/tunnel", TLS: controlplane.CAPolicy()},
 	)
 	if err != nil {
 		panic(err)

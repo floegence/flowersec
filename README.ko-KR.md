@@ -116,12 +116,13 @@ WebTransport는 필수 native-server carrier가 아닌 선택적 adapter입니�
 ## 보안
 
 - 직접 및 릴레이 세션 모두 애플리케이션 데이터를 종단 간 암호화합니다.
+- TLS 신뢰 정책은 각 v3 전송 후보에 바인딩됩니다. 공개 또는 배포 제공 CA 루트와 명시적 리프 인증서 pin은 상호 배타적이며 실패 후 강등되지 않습니다.
 - 연결 초대는 불투명하고 수명이 짧으며 한 번만 사용할 수 있습니다.
 - 자격 증명은 사용 전에 소비 처리되어 이미 사용한 초대를 재사용할 수 없습니다.
 - 릴레이는 암호화된 트래픽만 전달하며 애플리케이션 세션을 종료하지 않습니다.
 - 유효하지 않거나 지원하지 않는 연결은 안전하게 실패하고 제한된 공개 오류만 반환합니다.
 
-프로토콜과 위협 모델의 자세한 내용은 [API 계약](docs/API_CONTRACT.md), [전송 아키텍처](docs/TRANSPORT_V2_ARCHITECTURE.md), [위협 모델](docs/THREAT_MODEL.md)을 참고하세요.
+프로토콜과 위협 모델의 자세한 내용은 [API 계약](docs/API_CONTRACT.md), [전송 아키텍처](docs/TRANSPORT_V3_ARCHITECTURE.md), [위협 모델](docs/THREAT_MODEL.md)을 참고하세요.
 
 <!-- readme-section:deploy-and-develop -->
 <a id="deploy-and-develop"></a>
@@ -130,7 +131,7 @@ WebTransport는 필수 native-server carrier가 아닌 선택적 adapter입니�
 
 - [API 계약](docs/API_CONTRACT.md): SDK가 공유하는 안정적인 애플리케이션 동작입니다.
 - [오류 모델](docs/ERROR_MODEL.md): 공개 연결, 세션, RPC 오류입니다.
-- [전송 아키텍처](docs/TRANSPORT_V2_ARCHITECTURE.md): 직접 및 릴레이 연결 설계입니다.
+- [전송 아키텍처](docs/TRANSPORT_V3_ARCHITECTURE.md): 직접 및 릴레이 연결 설계입니다.
 - [예제](examples/README.md): 실행 가능한 SDK 사용법입니다.
 
 Flowersec은 [MIT License](LICENSE)로 제공됩니다. 배포된 패키지와 릴리스 노트는 [GitHub Releases](https://github.com/floegence/flowersec/releases)에서 확인할 수 있습니다.

@@ -22,10 +22,10 @@ type StreamKindVectors = Readonly<{
 }>;
 
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
-const vectors = JSON.parse(readFileSync(
-  path.join(repositoryRoot, "testdata/transport_v2/session_handler_vectors.json"),
+const vectorFixtures = ([2, 3] as const).map((version) => JSON.parse(readFileSync(
+  path.join(repositoryRoot, `testdata/transport_v${version}/session_handler_vectors.json`),
   "utf8",
-)) as StreamKindVectors;
+)) as StreamKindVectors);
 
 function scriptedSession(incoming: readonly IncomingStream[]): {
   session: Session;
@@ -154,14 +154,17 @@ describe("StreamHandlers", () => {
   });
 
   test("applies the shared OPEN kind contract", () => {
-    for (const vector of vectors.stream_kinds) {
-      const handlers = new StreamHandlers();
-      const kind = vector.unit.repeat(vector.repeat) + vector.suffix;
-      const registration = (): void => handlers.handleStream(kind, async () => undefined);
-      if (vector.valid) expect(registration, vector.id).not.toThrow();
-      else expect(registration, vector.id).toThrowError(
-        expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
-      );
+    for (const [index, vectors] of vectorFixtures.entries()) {
+      for (const vector of vectors.stream_kinds) {
+        const handlers = new StreamHandlers();
+        const kind = vector.unit.repeat(vector.repeat) + vector.suffix;
+        const registration = (): void => handlers.handleStream(kind, async () => undefined);
+        const id = `v${index + 2}/${vector.id}`;
+        if (vector.valid) expect(registration, id).not.toThrow();
+        else expect(registration, id).toThrowError(
+          expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
+        );
+      }
     }
   });
 

@@ -76,7 +76,7 @@ func TestLanguageCapabilitiesDeclareNamedDeploymentProfiles(t *testing.T) {
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatal(err)
 	}
-	if document.DeploymentProfiles.ApplicationWire != "shared_across_runtimes_and_carriers" {
+	if document.DeploymentProfiles.ApplicationWire != "flowersec/3" {
 		t.Fatalf("deployment profile application wire = %q", document.DeploymentProfiles.ApplicationWire)
 	}
 	wantProfiles := []string{"native-server-core", "browser-client", "apple-client", "webtransport-server"}
@@ -114,8 +114,9 @@ func TestLanguageCapabilitiesDeclareNamedDeploymentProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transport.Policies.ProfileApplicationWire = "runtime_private_wire"
-	if err := validateDeploymentProfileTransportBindings(manifest.DeploymentProfiles, transport, manifest.ServerParityContract); err == nil || !strings.Contains(err.Error(), "application wire") {
+	invalidWire := manifest.DeploymentProfiles
+	invalidWire.ApplicationWire = "runtime_private_wire"
+	if err := validateDeploymentProfileTransportBindings(invalidWire, transport, manifest.ServerParityContract); err == nil || !strings.Contains(err.Error(), "flowersec/3") {
 		t.Fatalf("mutated profile wire validation error = %v", err)
 	}
 }
@@ -136,23 +137,23 @@ func TestDeploymentProfileTransportBindingsRequireExactRolePathTuple(t *testing.
 	cases := []struct {
 		name, runtime, carrier, network, role, path string
 	}{
-		{"native endpoint direct", "rust_native", "websocket", "dial", "client", "direct"},
-		{"native endpoint tunnel", "rust_native", "websocket", "dial", "client", "tunnel"},
-		{"native endpoint tunnel peer", "rust_native", "websocket", "dial", "server", "tunnel"},
-		{"native direct server", "rust_native", "websocket", "listen", "server", "direct"},
-		{"browser direct", "typescript_browser", "websocket", "dial", "client", "direct"},
-		{"browser tunnel", "typescript_browser", "websocket", "dial", "client", "tunnel"},
-		{"browser tunnel peer", "typescript_browser", "websocket", "dial", "server", "tunnel"},
-		{"apple direct", "swift_ios", "websocket", "dial", "client", "direct"},
-		{"apple tunnel", "swift_macos", "websocket", "dial", "client", "tunnel"},
-		{"apple tunnel peer", "swift_macos", "websocket", "dial", "server", "tunnel"},
+		{"native endpoint direct", "rust/native", "websocket", "dial", "client", "direct"},
+		{"native endpoint tunnel", "rust/native", "websocket", "dial", "client", "tunnel"},
+		{"native endpoint tunnel peer", "rust/native", "websocket", "dial", "server", "tunnel"},
+		{"native direct server", "rust/native", "websocket", "listen", "server", "direct"},
+		{"browser direct", "typescript/browser", "websocket", "dial", "client", "direct"},
+		{"browser tunnel", "typescript/browser", "websocket", "dial", "client", "tunnel"},
+		{"browser tunnel peer", "typescript/browser", "websocket", "dial", "server", "tunnel"},
+		{"apple direct", "swift/ios", "websocket", "dial", "client", "direct"},
+		{"apple tunnel", "swift/macos", "websocket", "dial", "client", "tunnel"},
+		{"apple tunnel peer", "swift/macos", "websocket", "dial", "server", "tunnel"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			mutated := *transport
 			mutated.Runtimes = slices.Clone(transport.Runtimes)
 			for i, runtime := range mutated.Runtimes {
-				if runtime.ID != testCase.runtime {
+				if runtime.ID != strings.ReplaceAll(testCase.runtime, "/", "_") {
 					continue
 				}
 				mutated.Runtimes[i].Tuples = slices.DeleteFunc(slices.Clone(runtime.Tuples), func(tuple transportV2RuntimeTuple) bool {
@@ -228,6 +229,28 @@ func TestServerParityCompletionObjectiveAllowsUnsupportedOptionalWebTransport(t 
 	if err := validateRequiredServerParityComplete(manifest.ServerParityContract); err != nil {
 		t.Fatalf("optional WebTransport blocked required server parity: %v", err)
 	}
+	for _, role := range []string{"endpoint-client", "tunnel-runtime"} {
+		unit := slices.IndexFunc(manifest.ServerParityContract.Units, func(unit serverParityUnit) bool {
+			return unit.Runtime == "go" && unit.Role == role && unit.Carrier == "webtransport" && unit.Path == "tunnel"
+		})
+		if unit < 0 || manifest.ServerParityContract.Units[unit].Status != "supported" || !slices.Equal(manifest.ServerParityContract.Units[unit].TestIDs, []string{"carrier/go-webtransport-tunnel"}) {
+			t.Fatalf("Go H4 %s WebTransport tunnel unit is not locked to production broker evidence", role)
+		}
+	}
+}
+
+func TestServerParityCompletionObjectiveAllowsUnsupportedNonGoControlPlane(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := loadCapabilityManifest(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRequiredServerParityComplete(manifest.ServerParityContract); err != nil {
+		t.Fatalf("design-approved control-plane exclusions blocked server parity: %v", err)
+	}
 }
 
 func TestSDKReadmesDescribePublicCapabilities(t *testing.T) {
@@ -298,10 +321,10 @@ func TestCapabilityManifestRequiresPortableContractsAndSharedFixtures(t *testing
 	t.Run("session handler fixture", func(t *testing.T) {
 		copy := cloneCapabilityManifest(t, manifest)
 		copy.SharedFixtures = slices.DeleteFunc(copy.SharedFixtures, func(fixture sharedFixture) bool {
-			return fixture.ID == "session_handlers_v2"
+			return fixture.ID == "session_handlers_v3"
 		})
 		_, err := loadCapabilityManifest(writeCapabilityManifest(t, &copy))
-		if err == nil || !strings.Contains(err.Error(), "missing required shared fixture session_handlers_v2") {
+		if err == nil || !strings.Contains(err.Error(), "missing required shared fixture session_handlers_v3") {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -448,7 +471,7 @@ func TestServerParityContractUsesSupportedAndUnsupportedBinary(t *testing.T) {
 	})
 }
 
-func TestRequiredInteropCellsCannotBeUnsupported(t *testing.T) {
+func TestInteropCellsRequireTruthfulSupportedAndUnsupportedMetadata(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
 		t.Fatal(err)
@@ -460,17 +483,19 @@ func TestRequiredInteropCellsCannotBeUnsupported(t *testing.T) {
 	cell := &matrix.DirectCells[0]
 	cell.Status = "unsupported"
 	cell.Reason = "This runtime does not expose the required production carrier."
-	if err := validateDirectInteropCells(matrix, map[string]struct{}{"interop/server-parity/direct-matrix": {}}); err == nil || !strings.Contains(err.Error(), "must not declare test_ids") {
+	cell.TestIDs = []string{"carrier/go-direct"}
+	if err := validateDirectInteropCells(matrix, map[string]struct{}{"carrier/go-direct": {}}); err == nil || !strings.Contains(err.Error(), "must not declare test_ids") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	cell.TestIDs = nil
-	if err := validateDirectInteropCells(matrix, map[string]struct{}{"interop/server-parity/direct-matrix": {}}); err == nil || !strings.Contains(err.Error(), "required interop cell") {
-		t.Fatalf("unsupported required direct cell error = %v", err)
+	if err := validateDirectInteropCells(matrix, matrixRegistryIDs(matrix)); err != nil {
+		t.Fatalf("truthful unsupported direct cell error = %v", err)
 	}
 	cell.Status = "supported"
 	cell.Reason = ""
+	registryIDs := matrixRegistryIDs(matrix)
 	cell.TestIDs = []string{"missing/test-id"}
-	if err := validateDirectInteropCells(matrix, map[string]struct{}{"interop/server-parity/direct-matrix": {}}); err == nil || !strings.Contains(err.Error(), "unknown registry test_id") {
+	if err := validateDirectInteropCells(matrix, registryIDs); err == nil || !strings.Contains(err.Error(), "unknown registry test_id") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -478,8 +503,8 @@ func TestRequiredInteropCellsCannotBeUnsupported(t *testing.T) {
 	topology.Status = "unsupported"
 	topology.TestIDs = nil
 	topology.Reason = "This runtime does not expose the required production carrier."
-	if err := validateTunnelInteropTopologies(matrix, map[string]struct{}{"interop/server-parity/tunnel-matrix": {}}); err == nil || !strings.Contains(err.Error(), "required tunnel topology") {
-		t.Fatalf("unsupported required tunnel topology error = %v", err)
+	if err := validateTunnelInteropTopologies(matrix, matrixRegistryIDs(matrix)); err != nil {
+		t.Fatalf("truthful unsupported tunnel topology error = %v", err)
 	}
 }
 
@@ -498,12 +523,25 @@ func TestTunnelInteropRequiresGeneratedPairwiseCoveringSet(t *testing.T) {
 			break
 		}
 	}
-	err = validateTunnelInteropTopologies(matrix, map[string]struct{}{
-		"interop/server-parity/tunnel-matrix": {},
-	})
+	err = validateTunnelInteropTopologies(matrix, matrixRegistryIDs(matrix))
 	if err == nil || !strings.Contains(err.Error(), "generated pairwise covering set") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func matrixRegistryIDs(matrix interopMatrix) map[string]struct{} {
+	ids := make(map[string]struct{})
+	for _, cell := range matrix.DirectCells {
+		for _, id := range cell.TestIDs {
+			ids[id] = struct{}{}
+		}
+	}
+	for _, topology := range matrix.TunnelTopologies {
+		for _, id := range topology.TestIDs {
+			ids[id] = struct{}{}
+		}
+	}
+	return ids
 }
 
 func TestRequiredInteropMatrixContainsOnlyWebSocketAndRawQUIC(t *testing.T) {
@@ -526,6 +564,27 @@ func TestRequiredInteropMatrixContainsOnlyWebSocketAndRawQUIC(t *testing.T) {
 	for _, topology := range matrix.TunnelTopologies {
 		if topology.IngressCarrierA == "webtransport" || topology.IngressCarrierB == "webtransport" {
 			t.Fatalf("optional WebTransport tunnel topology %s entered the required matrix", topology.ID)
+		}
+	}
+}
+
+func TestInteropMatrixDoesNotPromotePartialV3Evidence(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matrix interopMatrix
+	if err := decodeStrictJSONFile(filepath.Join(repoRoot, interopMatrixPath), &matrix); err != nil {
+		t.Fatal(err)
+	}
+	for _, cell := range matrix.DirectCells {
+		if cell.Status != "unsupported" || len(cell.TestIDs) != 0 || cell.Reason != "No release-gating v3 interoperability test exercises the complete executable case set for this cell." {
+			t.Fatalf("direct cell %s overclaims partial v3 evidence", cell.ID)
+		}
+	}
+	for _, topology := range matrix.TunnelTopologies {
+		if topology.Status != "unsupported" || len(topology.TestIDs) != 0 || topology.Reason != "No release-gating v3 interoperability test exercises the complete executable case set for this topology." {
+			t.Fatalf("tunnel topology %s overclaims partial v3 evidence", topology.ID)
 		}
 	}
 }

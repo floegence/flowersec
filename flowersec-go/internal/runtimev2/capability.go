@@ -14,7 +14,7 @@ import (
 	"regexp"
 	"slices"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
 )
 
 const capabilityDigestLabel = "flowersec-v2-runtime-capability\x00"

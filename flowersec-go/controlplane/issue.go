@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
 )
 
 const (
@@ -70,7 +70,7 @@ type TunnelIssueOptions struct {
 	SecondMetadata    ArtifactMetadata
 }
 
-// Issuer creates v2 artifacts using the system cryptographic random source.
+// Issuer creates v3 artifacts using the system cryptographic random source.
 type Issuer struct {
 	random io.Reader
 	now    func() time.Time
@@ -122,22 +122,29 @@ type IssuedTunnelPair struct {
 
 // IssueDirect creates one direct artifact and its matching opaque record.
 func (issuer *Issuer) IssueDirect(options DirectIssueOptions) (IssuedArtifact, error) {
-	contract, err := issuer.session(options.Session)
+	issuanceNow, err := issuer.issuanceTime()
 	if err != nil {
 		return IssuedArtifact{}, err
 	}
-	candidates, err := options.Endpoints.candidates(artifactv2.PathDirect)
-	if err != nil || !validTCPAddress(options.UpstreamAddress) {
+	contract, err := issuer.session(options.Session, issuanceNow)
+	if err != nil {
+		return IssuedArtifact{}, err
+	}
+	candidates, err := options.Endpoints.candidates(artifactv3.PathDirect, issuanceNow)
+	if err != nil {
+		return IssuedArtifact{}, err
+	}
+	if !validTCPAddress(options.UpstreamAddress) {
 		return IssuedArtifact{}, ErrInvalidControlPlaneInput
 	}
 	credential, err := issuer.credential()
 	if err != nil {
 		return IssuedArtifact{}, err
 	}
-	artifact := artifactv2.Artifact{
-		Version: 2, Profile: artifactv2.Profile, Session: contract,
-		Path: artifactv2.ArtifactPath{
-			Kind: artifactv2.PathDirect, RendezvousGroupID: options.RendezvousGroupID,
+	artifact := artifactv3.Artifact{
+		Version: 3, Profile: artifactv3.Profile, Session: contract,
+		Path: artifactv3.ArtifactPath{
+			Kind: artifactv3.PathDirect, RendezvousGroupID: options.RendezvousGroupID,
 			ListenerAudience: options.ListenerAudience, RoutingToken: credential, Candidates: candidates,
 		},
 	}
@@ -150,11 +157,15 @@ func (issuer *Issuer) IssueDirect(options DirectIssueOptions) (IssuedArtifact, e
 // IssueTunnelPair creates complementary artifacts with independent one-time
 // credentials and one shared encrypted session contract.
 func (issuer *Issuer) IssueTunnelPair(options TunnelIssueOptions) (IssuedTunnelPair, error) {
-	contract, err := issuer.session(options.Session)
+	issuanceNow, err := issuer.issuanceTime()
 	if err != nil {
 		return IssuedTunnelPair{}, err
 	}
-	candidates, err := options.Endpoints.candidates(artifactv2.PathTunnel)
+	contract, err := issuer.session(options.Session, issuanceNow)
+	if err != nil {
+		return IssuedTunnelPair{}, err
+	}
+	candidates, err := options.Endpoints.candidates(artifactv3.PathTunnel, issuanceNow)
 	if err != nil {
 		return IssuedTunnelPair{}, err
 	}
@@ -167,10 +178,10 @@ func (issuer *Issuer) IssueTunnelPair(options TunnelIssueOptions) (IssuedTunnelP
 		return IssuedTunnelPair{}, err
 	}
 	build := func(role uint8, local, peer, credential string, metadata ArtifactMetadata) (IssuedArtifact, error) {
-		artifact := artifactv2.Artifact{
-			Version: 2, Profile: artifactv2.Profile, Session: contract,
-			Path: artifactv2.ArtifactPath{
-				Kind: artifactv2.PathTunnel, RendezvousGroupID: options.RendezvousGroupID,
+		artifact := artifactv3.Artifact{
+			Version: 3, Profile: artifactv3.Profile, Session: contract,
+			Path: artifactv3.ArtifactPath{
+				Kind: artifactv3.PathTunnel, RendezvousGroupID: options.RendezvousGroupID,
 				ListenerAudience: options.ListenerAudience, Role: role,
 				LocalEndpointInstanceID: local, ExpectedPeerEndpointInstanceID: peer,
 				Token: credential, Candidates: slices.Clone(candidates),
@@ -192,17 +203,27 @@ func (issuer *Issuer) IssueTunnelPair(options TunnelIssueOptions) (IssuedTunnelP
 	return IssuedTunnelPair{First: first, Second: second}, nil
 }
 
-func (issuer *Issuer) session(options SessionOptions) (artifactv2.SessionContract, error) {
+func (issuer *Issuer) issuanceTime() (time.Time, error) {
 	if issuer == nil || issuer.random == nil || issuer.now == nil {
-		return artifactv2.SessionContract{}, ErrInvalidControlPlaneInput
+		return time.Time{}, ErrIssuanceFailed
 	}
 	now := issuer.now().UTC()
+	if now.IsZero() {
+		return time.Time{}, ErrIssuanceFailed
+	}
+	return now, nil
+}
+
+func (issuer *Issuer) session(options SessionOptions, now time.Time) (artifactv3.SessionContract, error) {
+	if issuer == nil || issuer.random == nil || now.IsZero() {
+		return artifactv3.SessionContract{}, ErrIssuanceFailed
+	}
 	expiresAt := options.ExpiresAt.UTC()
 	if options.ExpiresAt.IsZero() {
 		expiresAt = now.Add(defaultArtifactLifetime)
 	}
 	if !expiresAt.After(now) || expiresAt.After(now.Add(maxArtifactLifetime)) {
-		return artifactv2.SessionContract{}, ErrInvalidControlPlaneInput
+		return artifactv3.SessionContract{}, ErrInvalidControlPlaneInput
 	}
 	// The wire contract carries whole Unix seconds. Round future sub-second
 	// expiries up so issuance cannot create an immediately expired artifact.
@@ -212,14 +233,14 @@ func (issuer *Issuer) session(options SessionOptions) (artifactv2.SessionContrac
 	}
 	normalizedExpiry := time.Unix(expiresUnix, 0).UTC()
 	if !normalizedExpiry.After(now) || normalizedExpiry.After(now.Add(maxArtifactLifetime)) {
-		return artifactv2.SessionContract{}, ErrInvalidControlPlaneInput
+		return artifactv3.SessionContract{}, ErrInvalidControlPlaneInput
 	}
 	idle := options.IdleTimeout
 	if idle == 0 {
 		idle = defaultIdleTimeout
 	}
 	if idle < 0 || idle%time.Second != 0 || idle/time.Second > math.MaxUint32 {
-		return artifactv2.SessionContract{}, ErrInvalidControlPlaneInput
+		return artifactv3.SessionContract{}, ErrInvalidControlPlaneInput
 	}
 	maxInbound := options.MaxInboundStreams
 	if maxInbound == 0 {
@@ -227,18 +248,18 @@ func (issuer *Issuer) session(options SessionOptions) (artifactv2.SessionContrac
 	}
 	var psk [32]byte
 	if _, err := io.ReadFull(issuer.random, psk[:]); err != nil {
-		return artifactv2.SessionContract{}, ErrIssuanceFailed
+		return artifactv3.SessionContract{}, ErrIssuanceFailed
 	}
-	contract := artifactv2.SessionContract{
+	contract := artifactv3.SessionContract{
 		ChannelID: options.ChannelID, InitExpireAtUnixSeconds: expiresUnix,
 		IdleTimeoutSeconds: uint32(idle / time.Second), EstablishTimeoutSeconds: 30,
 		RekeyPrepareTimeoutSeconds: 10, RekeyCompletionTimeoutSeconds: 30,
 		MaxInboundStreams: maxInbound, E2EEPSK: psk,
 		AllowedSuites: []uint16{1, 2}, DefaultSuite: 1,
 	}
-	hash, _, err := artifactv2.ComputeSessionContractHash(contract)
+	hash, _, err := artifactv3.ComputeSessionContractHash(contract)
 	if err != nil {
-		return artifactv2.SessionContract{}, ErrInvalidControlPlaneInput
+		return artifactv3.SessionContract{}, ErrInvalidControlPlaneInput
 	}
 	contract.ContractHash = hash
 	return contract, nil
@@ -252,10 +273,10 @@ func (issuer *Issuer) credential() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(value[:]), nil
 }
 
-func applyMetadata(artifact *artifactv2.Artifact, metadata ArtifactMetadata) error {
-	artifact.Scoped = make([]artifactv2.ScopeMetadata, 0, len(metadata.Scopes))
+func applyMetadata(artifact *artifactv3.Artifact, metadata ArtifactMetadata) error {
+	artifact.Scoped = make([]artifactv3.ScopeMetadata, 0, len(metadata.Scopes))
 	for _, scope := range metadata.Scopes {
-		artifact.Scoped = append(artifact.Scoped, artifactv2.ScopeMetadata{
+		artifact.Scoped = append(artifact.Scoped, artifactv3.ScopeMetadata{
 			Scope: scope.Name, ScopeVersion: scope.Version, Critical: scope.Critical,
 			Payload: slices.Clone(scope.Payload),
 		})
@@ -265,18 +286,18 @@ func applyMetadata(artifact *artifactv2.Artifact, metadata ArtifactMetadata) err
 		keys = append(keys, key)
 	}
 	slices.Sort(keys)
-	artifact.Correlation = artifactv2.CorrelationContext{Version: 2, Tags: make([]artifactv2.CorrelationTag, 0, len(keys))}
+	artifact.Correlation = artifactv3.CorrelationContext{Version: 3, Tags: make([]artifactv3.CorrelationTag, 0, len(keys))}
 	for _, key := range keys {
-		artifact.Correlation.Tags = append(artifact.Correlation.Tags, artifactv2.CorrelationTag{Key: key, Value: metadata.CorrelationTags[key]})
+		artifact.Correlation.Tags = append(artifact.Correlation.Tags, artifactv3.CorrelationTag{Key: key, Value: metadata.CorrelationTags[key]})
 	}
-	if err := artifactv2.ValidateArtifact(*artifact); err != nil {
+	if err := artifactv3.ValidateArtifact(*artifact); err != nil {
 		return ErrInvalidControlPlaneInput
 	}
 	return nil
 }
 
-func issuedArtifact(artifact artifactv2.Artifact, directUpstream string, allowReplacement bool) (IssuedArtifact, error) {
-	encoded, err := artifactv2.MarshalArtifactJSON(artifact)
+func issuedArtifact(artifact artifactv3.Artifact, directUpstream string, allowReplacement bool) (IssuedArtifact, error) {
+	encoded, err := artifactv3.MarshalArtifactJSON(artifact)
 	if err != nil {
 		return IssuedArtifact{}, ErrInvalidControlPlaneInput
 	}

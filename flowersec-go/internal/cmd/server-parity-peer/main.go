@@ -24,8 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
-	"github.com/floegence/flowersec/flowersec-go/v2/controlplane"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
+	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
 )
 
 const (
@@ -226,7 +226,9 @@ func runServer(ctx context.Context, carrier string) error {
 		defer listener.Close()
 	}
 
-	endpoints, err := controlplane.NewEndpointSet(endpoint)
+	endpoints, err := controlplane.NewEndpointSet(controlplane.EndpointConfig{
+		ID: "websocket", URL: endpoint, TLS: controlplane.CAPolicy(),
+	})
 	if err != nil {
 		return err
 	}
@@ -573,7 +575,9 @@ func runTunnelEndpointB(ctx context.Context, carrier string) error {
 		return errors.New("invalid tunnel endpoint B input")
 	}
 
-	endpoints, err := controlplane.NewEndpointSet(relay.EndpointURL)
+	endpoints, err := controlplane.NewEndpointSet(controlplane.EndpointConfig{
+		ID: "websocket", URL: relay.EndpointURL, TLS: controlplane.CAPolicy(),
+	})
 	if err != nil {
 		return err
 	}

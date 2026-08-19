@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import type { ArtifactV2, CanonicalArtifactCandidateV2 } from "../../v2/artifact.js";
 import type { NativeCarrierSessionV2, NativeCarrierStreamV2 } from "../../v2/carrier.js";
 import { createRawQuicCandidateFactoryV2 } from "./rawQuicCandidate.js";
+import type { RawQuicClientFactoryV2 } from "./rawQuicCandidate.js";
 
 describe("raw QUIC candidate adapter", () => {
   test.each(["direct", "tunnel"] as const)(
@@ -10,7 +11,7 @@ describe("raw QUIC candidate adapter", () => {
     async (path) => {
       const admission = nativeStream();
       const carrier = nativeCarrier(path, admission);
-      const connect = vi.fn(async () => carrier.value);
+      const connect = vi.fn<RawQuicClientFactoryV2>(async () => carrier.value);
       const candidate = rawQuicCandidate();
       const attempt = createRawQuicCandidateFactoryV2(connect).create(candidate, artifact(path));
 

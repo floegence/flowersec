@@ -137,13 +137,14 @@ raw QUIC across Go, Rust, and Node.js.
 ## Security
 
 - Application data is encrypted end to end for both direct and relayed sessions.
+- TLS trust policy is bound to every v3 transport candidate. Public or deployment-provided CA roots and explicit leaf-certificate pins are mutually exclusive and never downgrade after failure.
 - Connection invitations are opaque, short-lived, and single-use.
 - Credentials are committed before use, so a consumed invitation cannot be replayed.
 - Relays forward encrypted traffic only; they do not terminate application sessions.
 - Invalid or unsupported connection attempts fail closed with bounded public errors.
 
 For protocol and threat-model details, read the [API contract](docs/API_CONTRACT.md),
-[transport architecture](docs/TRANSPORT_V2_ARCHITECTURE.md), and
+[transport architecture](docs/TRANSPORT_V3_ARCHITECTURE.md), and
 [threat model](docs/THREAT_MODEL.md).
 
 <!-- readme-section:deploy-and-develop -->
@@ -153,7 +154,7 @@ For protocol and threat-model details, read the [API contract](docs/API_CONTRACT
 
 - [API contract](docs/API_CONTRACT.md): the stable application-facing behavior shared by the SDKs.
 - [Error model](docs/ERROR_MODEL.md): public connection, session, and RPC failures.
-- [Transport architecture](docs/TRANSPORT_V2_ARCHITECTURE.md): direct and relayed connection design.
+- [Transport architecture](docs/TRANSPORT_V3_ARCHITECTURE.md): direct and relayed connection design.
 - [Examples](examples/README.md): runnable SDK usage.
 
 Flowersec is available under the [MIT License](LICENSE). Published packages and

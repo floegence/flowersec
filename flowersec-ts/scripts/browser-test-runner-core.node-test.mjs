@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  installWebTransportCertificateHash,
+  disableBrowserWebSocket,
   inspectFirefoxWebTransportCapability,
   navigateBrowserModule,
   runColdPhase,
@@ -165,10 +165,10 @@ test("binds held-session establishment to the cold phase deadline", async () => 
 
   await runSessionWorkload(page, {}, plan);
   assert.equal(payload.connectDeadlineMs, 30_000);
-  assert.equal(payload.policy, "require_quic_family");
+  assert.equal("policy" in payload, false);
   assert.match(
     evaluatorSource,
-    /connect\(lease, \{ signal, connectTimeoutMs: connectDeadlineMs, policy \}\)/,
+    /connect\(lease, \{ signal \}\)/,
   );
 });
 
@@ -193,7 +193,7 @@ test("binds every cold connection to its operation deadline", async () => {
   await runColdPhase(page, [{ artifact_json: "{}", spend_token: "spend-1" }], cold, 12_000);
   assert.equal(payload.operationDeadlineMs, 53_000);
   assert.ok(payload.connectDeadlineMs > 0 && payload.connectDeadlineMs <= 53_000);
-  assert.equal(payload.policy, "require_quic_family");
+  assert.equal("policy" in payload, false);
   const timerIndex = evaluatorSource.indexOf("const timer = setTimeout");
   const peerReadyIndex = evaluatorSource.indexOf("await Promise.race([peerStart, peerStartDeadline])");
   const connectIndex = evaluatorSource.indexOf("sdk.connect");
@@ -201,7 +201,7 @@ test("binds every cold connection to its operation deadline", async () => {
   assert.ok(peerReadyIndex < connectIndex, "the paired leg must be ready before the browser candidate connects");
   assert.match(
     evaluatorSource,
-    /connect\(lease, \{\s*signal: controller\.signal,\s*connectTimeoutMs: connectDeadlineMs,\s*policy,?\s*\}\)/,
+    /connect\(lease, \{ signal: controller\.signal \}\)/,
   );
 });
 
@@ -299,7 +299,7 @@ test("cold phase drains post-connect work after every connection meets the phase
   assert.ok(connectBudgets.every((budget) => budget > 0 && budget <= cold.operation_deadline_ms));
 });
 
-test("records bounded internal connect diagnostics before preserving the public failure", async () => {
+test("records only the public v3 connect classification before preserving the failure", async () => {
   let evaluatorSource = "";
   const page = {
     evaluate: async (operation) => {
@@ -314,13 +314,23 @@ test("records bounded internal connect diagnostics before preserving the public 
     { ...forcedPlan.cold, operations: 1, max_inflight: 1 },
     5_000,
   );
-  assert.match(evaluatorSource, /connectErrorDetailsInternal/);
+  assert.match(evaluatorSource, /error instanceof sdk\.ConnectError/);
   assert.match(evaluatorSource, /__flowersecRecordDiagnostic/);
-  assert.match(evaluatorSource, /diagnostic\.message\.slice\(0, 256\)/);
+  assert.match(evaluatorSource, /error\.disposition\.kind/);
   assert.match(evaluatorSource, /throw error/);
-  assert.doesNotMatch(evaluatorSource, /candidateId|normalized_url/);
+  assert.doesNotMatch(evaluatorSource, /connectErrorDetailsInternal|internal_code|candidates|candidateId|normalized_url/);
   const runnerSource = readFileSync(new URL("./browser-test-runner.mjs", import.meta.url), "utf8");
   assert.match(runnerSource, /exposeBinding\("__flowersecRecordDiagnostic"/);
+});
+
+test("production browser runners leave WebTransport certificate options to the SDK", () => {
+  const runnerSource = readFileSync(new URL("./browser-test-runner.mjs", import.meta.url), "utf8");
+  const capacitySource = readFileSync(new URL("./browser-capacity-controller.mjs", import.meta.url), "utf8");
+  const v3PlaywrightSource = readFileSync(new URL("../browser-e2e/transport-v3.spec.ts", import.meta.url), "utf8");
+  for (const source of [runnerSource, capacitySource, v3PlaywrightSource]) {
+    assert.doesNotMatch(source, /serverCertificateHashes/);
+    assert.doesNotMatch(source, /globalThis\.WebTransport\s*=/);
+  }
 });
 
 test("uses one native bidirectional stream for both bulk directions", async () => {
@@ -525,76 +535,29 @@ test("freezes Chromium tunnel capacity at exactly 1000 live sessions", () => {
   assert.ok(options.args.includes("--net-log-capture-mode=IncludeSensitive"));
 });
 
-test("gives every WebTransport constructor an independent certificate hash buffer", async () => {
+test("can disable the competing WebSocket candidate without replacing WebTransport", async () => {
   let initScript;
-  let initValue;
-  await installWebTransportCertificateHash({
-    addInitScript: async (script, value) => {
+  await disableBrowserWebSocket({
+    addInitScript: async (script) => {
       initScript = script;
-      initValue = value;
     },
-  }, forcedPlan.certificate_hash);
-
-  const original = globalThis.WebTransport;
-  const instances = [];
-  class NativeWebTransport {
-    constructor(_url, options) {
-      instances.push(options.serverCertificateHashes[0].value);
-    }
-  }
-  try {
-    globalThis.WebTransport = NativeWebTransport;
-    initScript(initValue);
-    const WrappedWebTransport = globalThis.WebTransport;
-    new WrappedWebTransport("https://192.0.2.1:443");
-    new WrappedWebTransport("https://192.0.2.1:443");
-    assert.equal(instances.length, 2);
-    assert.notStrictEqual(instances[0], instances[1]);
-    instances[0][0] ^= 0xff;
-    assert.notEqual(instances[0][0], instances[1][0]);
-  } finally {
-    if (original === undefined) delete globalThis.WebTransport;
-    else globalThis.WebTransport = original;
-  }
-});
-
-test("can disable the competing WebSocket candidate for pinned WT-WSS capacity", async () => {
-  let initScript;
-  let initValue;
-  await installWebTransportCertificateHash({
-    addInitScript: async (script, value) => {
-      initScript = script;
-      initValue = value;
-    },
-  }, forcedPlan.certificate_hash, "chromium", true);
+  });
 
   const originalWebTransport = globalThis.WebTransport;
   const originalWebSocket = globalThis.WebSocket;
-  class NativeWebTransport {
-    constructor(_url, options) {
-      assert.equal(options.serverCertificateHashes[0].algorithm, "sha-256");
-    }
-  }
+  class NativeWebTransport {}
   try {
     globalThis.WebTransport = NativeWebTransport;
     globalThis.WebSocket = class WebSocket {};
-    initScript(initValue);
+    initScript();
     assert.equal(globalThis.WebSocket, undefined);
-    new globalThis.WebTransport("https://198.18.0.1:443", {});
+    assert.equal(globalThis.WebTransport, NativeWebTransport);
   } finally {
     if (originalWebTransport === undefined) delete globalThis.WebTransport;
     else globalThis.WebTransport = originalWebTransport;
     if (originalWebSocket === undefined) delete globalThis.WebSocket;
     else globalThis.WebSocket = originalWebSocket;
   }
-});
-
-test("Firefox keeps the native WebTransport constructor", async () => {
-  let initScripts = 0;
-  await installWebTransportCertificateHash({
-    addInitScript: async () => { initScripts++; },
-  }, forcedPlan.certificate_hash, "firefox");
-  assert.equal(initScripts, 0);
 });
 
 test("Firefox runtime canary requires the complete WebTransport lifecycle surface", async () => {

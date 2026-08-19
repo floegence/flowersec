@@ -1,0 +1,395 @@
+{
+  "version": 1,
+  "unicode_version": "15.1.0",
+  "processing": "UTS #46 non-transitional, STD3, Bidi, ContextJ, DNS length",
+  "positive": [
+    {
+      "id": "ascii-case",
+      "input": "EXAMPLE.com",
+      "ascii": "example.com"
+    },
+    {
+      "id": "u-label",
+      "input": "münich.example",
+      "ascii": "xn--mnich-kva.example"
+    },
+    {
+      "id": "a-label",
+      "input": "xn--mnich-kva.example",
+      "ascii": "xn--mnich-kva.example"
+    },
+    {
+      "id": "deviation-nontransitional",
+      "input": "faß.de",
+      "ascii": "xn--fa-hia.de"
+    },
+    {
+      "id": "width-mapping",
+      "input": "ＦＯＯ.example",
+      "ascii": "foo.example"
+    },
+    {
+      "id": "unicode-15-1-extension-i",
+      "input": "𮯰.example",
+      "ascii": "xn--8g0n.example"
+    },
+    {
+      "id": "unicode-15-1-extension-i-alabel",
+      "input": "xn--8g0n.example",
+      "ascii": "xn--8g0n.example"
+    },
+    {
+      "id": "bidi",
+      "input": "مثال.إختبار",
+      "ascii": "xn--mgbh0fb.xn--kgbechtv"
+    },
+    {
+      "id": "contextj-valid",
+      "input": "نامه‌ای.example",
+      "ascii": "xn--mgba3gch31f060k.example"
+    }
+  ],
+  "negative": [
+    {
+      "id": "contextj",
+      "input": "a‌b.example"
+    },
+    {
+      "id": "unicode-15-1-disallowed-ids",
+      "input": "⿼.example"
+    },
+    {
+      "id": "invalid-alabel",
+      "input": "xn--.example"
+    },
+    {
+      "id": "terminal-dot",
+      "input": "example.com."
+    },
+    {
+      "id": "leading-hyphen",
+      "input": "-bad.example"
+    },
+    {
+      "id": "std3-underscore",
+      "input": "bad_.example"
+    },
+    {
+      "id": "empty-label",
+      "input": "bad..example"
+    },
+    {
+      "id": "bidi-mixed-direction",
+      "input": "aא.example"
+    },
+    {
+      "id": "label-too-long",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+    },
+    {
+      "id": "domain-too-long",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "id": "post-unicode-15-1-u-label",
+      "input": "Ᲊ.example"
+    },
+    {
+      "id": "post-unicode-15-1-a-label",
+      "input": "xn--c4f.example"
+    }
+  ],
+  "inherited_codec_from": "transport_v2",
+  "transport_contract_version": 3,
+  "url_normalization": {
+    "positive": [
+      {
+        "id": "canonical-ipv4",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "WSS://127.0.0.1:443/flowersec/v3/direct",
+        "normalized": "wss://127.0.0.1/flowersec/v3/direct",
+        "whatwg_roundtrip": true
+      },
+      {
+        "id": "unicode-host",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://bücher.example/flowersec/v3/direct",
+        "normalized": "wss://xn--bcher-kva.example/flowersec/v3/direct",
+        "whatwg_roundtrip": true
+      },
+      {
+        "id": "ipv6-rfc5952",
+        "carrier": "raw_quic",
+        "path_kind": "direct",
+        "input": "quic://[2001:0db8:0:0:0:0:0:1]:0443/",
+        "normalized": "quic://[2001:db8::1]",
+        "whatwg_roundtrip": true
+      },
+      {
+        "id": "non-default-port",
+        "carrier": "webtransport",
+        "path_kind": "tunnel",
+        "input": "HTTPS://EXAMPLE.COM:8443/flowersec/webtransport/v3/tunnel",
+        "normalized": "https://example.com:8443/flowersec/webtransport/v3/tunnel",
+        "whatwg_roundtrip": true
+      },
+      {
+        "id": "nonnumeric-final-dns-label",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://gateway.123a/flowersec/v3/direct",
+        "normalized": "wss://gateway.123a/flowersec/v3/direct",
+        "whatwg_roundtrip": true
+      }
+    ],
+    "negative": [
+      {
+        "id": "ipv4-leading-zero",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://127.0.0.01/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "ipv4-short",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://127.1/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "single-integer",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://2130706433/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "legacy-hex",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://0x7f000001/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "mixed-hex-first",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://0x7f.0.0.1/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "mixed-hex-last",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://1.2.3.0x7f/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "dns-final-decimal",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://example.1/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "dns-final-empty-hex",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://example.0x/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "empty-url",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "empty-authority",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss:///flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "empty-host",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://:443/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "empty-port",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://example.com:/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "zero-port",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://example.com:0/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "port-overflow",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://example.com:65536/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "nondigit-port",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://example.com:https/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "ipv6-unclosed-bracket",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://[2001:db8::1/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "ipv6-bracketless",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://2001:db8::1/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "ipv6-zone-id",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://[fe80::1%25en0]/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "ipv6-embedded-ipv4",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://[::ffff:192.0.2.128]/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "oversized-url",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "oversized-dns-label",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "oversized-dns-host",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "oversized-authority",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "websocket-scheme-mismatch",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "https://example.com/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "webtransport-scheme-mismatch",
+        "carrier": "webtransport",
+        "path_kind": "direct",
+        "input": "wss://example.com/flowersec/webtransport/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "raw-quic-scheme-mismatch",
+        "carrier": "raw_quic",
+        "path_kind": "direct",
+        "input": "wss://example.com",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "direct-path-mismatch",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://example.com/flowersec/v3/tunnel",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "tunnel-path-mismatch",
+        "carrier": "websocket",
+        "path_kind": "tunnel",
+        "input": "wss://example.com/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "webtransport-path-mismatch",
+        "carrier": "webtransport",
+        "path_kind": "direct",
+        "input": "https://example.com/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "raw-quic-path",
+        "carrier": "raw_quic",
+        "path_kind": "direct",
+        "input": "quic://example.com/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "percent-escape",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://example.com/%66lowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "userinfo",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://user@example.com/flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "query",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://example.com/flowersec/v3/direct?x=1",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "fragment",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://example.com/flowersec/v3/direct#x",
+        "error_code": "invalid_artifact"
+      },
+      {
+        "id": "backslash",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://example.com\\flowersec/v3/direct",
+        "error_code": "invalid_artifact"
+      }
+    ]
+  }
+}

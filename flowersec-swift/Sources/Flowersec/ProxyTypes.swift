@@ -348,15 +348,18 @@ enum ProxyUpstreamFailureKind: Sendable {
 struct ProxyUpstreamFailure: LocalizedError, Sendable {
   let kind: ProxyUpstreamFailureKind
   let message: String
+  let tlsLocated: Bool
 
-  init(_ kind: ProxyUpstreamFailureKind, _ error: any Error) {
+  init(_ kind: ProxyUpstreamFailureKind, _ error: any Error, tlsLocated: Bool = false) {
     self.kind = kind
     self.message = error.localizedDescription
+    self.tlsLocated = tlsLocated
   }
 
   init(_ kind: ProxyUpstreamFailureKind, message: String) {
     self.kind = kind
     self.message = message
+    self.tlsLocated = false
   }
 
   var errorDescription: String? { message }

@@ -531,6 +531,11 @@ fn map_native_error(error: NativeError) -> RawQuicError {
         NativeError::NoUsableAddress => RawQuicError::Connect("no usable address".into()),
         NativeError::Connect => RawQuicError::Connect("connection could not start".into()),
         NativeError::Handshake => RawQuicError::Handshake("handshake failed".into()),
+        NativeError::Timeout => RawQuicError::Handshake("handshake timed out".into()),
+        NativeError::PinMismatch => RawQuicError::Handshake("handshake failed".into()),
+        NativeError::PinCertificateInvalid => {
+            RawQuicError::InvalidCertificate("invalid certificate".into())
+        }
         NativeError::InvalidNegotiatedAlpn => RawQuicError::InvalidNegotiatedAlpn,
         NativeError::Stream => RawQuicError::Stream("stream failed".into()),
         NativeError::MigrationUnavailable => RawQuicError::MigrationUnavailable,
@@ -553,14 +558,17 @@ fn native_error_to_io(error: NativeError) -> io::Error {
         NativeError::InvalidLimits
         | NativeError::InvalidTrust
         | NativeError::InvalidServerIdentity
+        | NativeError::PinCertificateInvalid
         | NativeError::InvalidTls
         | NativeError::InvalidApplicationClose
         | NativeError::InvalidReadSize => io::Error::new(io::ErrorKind::InvalidInput, error),
         NativeError::NoUsableAddress
         | NativeError::Connect
         | NativeError::Handshake
+        | NativeError::PinMismatch
         | NativeError::InvalidNegotiatedAlpn
         | NativeError::Stream
         | NativeError::DatagramUnavailable => io::Error::other(error),
+        NativeError::Timeout => io::Error::new(io::ErrorKind::TimedOut, error),
     }
 }

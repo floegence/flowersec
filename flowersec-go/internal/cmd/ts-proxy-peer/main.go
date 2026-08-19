@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
-	"github.com/floegence/flowersec/flowersec-go/v2/controlplane"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
+	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
 )
 
 type endpoint struct {
@@ -96,7 +96,10 @@ func main() {
 	server := httptest.NewServer(acceptor.Handler())
 	defer server.Close()
 
-	endpoints, err := controlplane.NewEndpointSet("ws" + strings.TrimPrefix(server.URL, "http") + flowersec.WebSocketDirectPath)
+	endpoints, err := controlplane.NewEndpointSet(controlplane.EndpointConfig{
+		ID: "websocket", URL: "ws" + strings.TrimPrefix(server.URL, "http") + flowersec.WebSocketDirectPath,
+		TLS: controlplane.CAPolicy(),
+	})
 	fail(err)
 	issued, err := controlplane.NewIssuer().IssueDirect(controlplane.DirectIssueOptions{
 		Session: controlplane.SessionOptions{

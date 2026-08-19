@@ -47,10 +47,8 @@
         "cancel",
         "cleanup"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "go_to_go_raw_quic_direct",
@@ -71,10 +69,8 @@
         "cleanup",
         "datagram"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "go_to_rust_websocket_direct",
@@ -94,10 +90,8 @@
         "cancel",
         "cleanup"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "go_to_rust_raw_quic_direct",
@@ -118,10 +112,8 @@
         "cleanup",
         "datagram"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "go_to_node_websocket_direct",
@@ -141,10 +133,8 @@
         "cancel",
         "cleanup"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "go_to_node_raw_quic_direct",
@@ -165,10 +155,8 @@
         "cleanup",
         "datagram"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "rust_to_go_websocket_direct",
@@ -188,10 +176,8 @@
         "cancel",
         "cleanup"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "rust_to_go_raw_quic_direct",
@@ -212,10 +198,8 @@
         "cleanup",
         "datagram"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "rust_to_rust_websocket_direct",
@@ -235,10 +219,8 @@
         "cancel",
         "cleanup"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "rust_to_rust_raw_quic_direct",
@@ -259,10 +241,8 @@
         "cleanup",
         "datagram"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "rust_to_node_websocket_direct",
@@ -282,10 +262,8 @@
         "cancel",
         "cleanup"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "rust_to_node_raw_quic_direct",
@@ -306,10 +284,8 @@
         "cleanup",
         "datagram"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "node_to_go_websocket_direct",
@@ -329,10 +305,8 @@
         "cancel",
         "cleanup"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "node_to_go_raw_quic_direct",
@@ -353,10 +327,8 @@
         "cleanup",
         "datagram"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "node_to_rust_websocket_direct",
@@ -376,10 +348,8 @@
         "cancel",
         "cleanup"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "node_to_rust_raw_quic_direct",
@@ -400,10 +370,8 @@
         "cleanup",
         "datagram"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "node_to_node_websocket_direct",
@@ -423,10 +391,8 @@
         "cancel",
         "cleanup"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     },
     {
       "id": "node_to_node_raw_quic_direct",
@@ -447,10 +413,8 @@
         "cleanup",
         "datagram"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/direct-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     }
   ],
   "tunnel_topologies": [
@@ -476,10 +440,8 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "rust_via_go_to_rust_raw_quic_tunnel",
@@ -505,10 +467,8 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "go_via_go_to_go_raw_quic_tunnel",
@@ -534,10 +494,8 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "go_via_rust_to_rust_websocket_tunnel",
@@ -561,10 +519,8 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "go_via_rust_to_rust_raw_quic_tunnel",
@@ -590,10 +546,8 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "go_via_node_to_node_websocket_tunnel",
@@ -617,10 +571,8 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "go_via_node_to_node_raw_quic_tunnel",
@@ -646,10 +598,8 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "rust_via_node_to_go_websocket_tunnel",
@@ -673,10 +623,8 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "rust_via_node_to_go_raw_quic_tunnel",
@@ -702,10 +650,8 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "rust_via_go_to_rust_websocket_tunnel",
@@ -729,10 +675,8 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "rust_via_rust_to_node_websocket_tunnel",
@@ -756,10 +700,8 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "rust_via_rust_to_node_raw_quic_tunnel",
@@ -785,10 +727,8 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "node_via_rust_to_go_websocket_tunnel",
@@ -812,10 +752,8 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "node_via_rust_to_go_raw_quic_tunnel",
@@ -841,10 +779,8 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "node_via_node_to_rust_websocket_tunnel",
@@ -868,10 +804,8 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "node_via_node_to_rust_raw_quic_tunnel",
@@ -897,10 +831,8 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "node_via_go_to_node_websocket_tunnel",
@@ -924,10 +856,8 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     },
     {
       "id": "node_via_go_to_node_raw_quic_tunnel",
@@ -953,16 +883,14 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "supported",
-      "test_ids": [
-        "interop/server-parity/tunnel-matrix"
-      ]
+      "status": "unsupported",
+      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
     }
   ],
   "capability_coverage": {
     "opaque_artifact": {
       "fixtures": [
-        "artifact_v2"
+        "artifact_admission_v3"
       ],
       "cases": []
     },
@@ -974,7 +902,7 @@
     },
     "secure_session": {
       "fixtures": [
-        "session_wire_v2"
+        "session_wire_v3"
       ],
       "cases": [
         "stream-metadata",
@@ -994,7 +922,7 @@
     },
     "connection_controller": {
       "fixtures": [
-        "connection_controller"
+        "controller_v3"
       ],
       "cases": []
     },
@@ -1012,9 +940,9 @@
     },
     "wire_security": {
       "fixtures": [
-        "crypto_v2",
-        "handshake_v2",
-        "open_unicode_v2"
+        "crypto_v3",
+        "handshake_v3",
+        "open_unicode_v3"
       ],
       "cases": []
     }

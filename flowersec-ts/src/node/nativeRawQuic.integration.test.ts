@@ -4,7 +4,9 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import {
   createNativeRawQuicDriver,
+  createNativeRawQuicDriverV3,
   type NativeRawQuicDriver,
+  type NativeRawQuicDriverV3,
   type NativeRawQuicListener,
   type NativeTransportAddonBinding,
 } from "./nativeTransportAddon.js";
@@ -14,11 +16,31 @@ import { parseArtifact, type Artifact } from "../v2/opaqueArtifact.js";
 import { connect, createConnectionController } from "./connectSession.js";
 import { createAcceptor } from "./acceptor.js";
 import { createEndpointSet, Issuer } from "./controlplane.js";
+import { decodeArtifactV3JSON, type ArtifactCandidateV3, type ArtifactV3 } from "../v3/artifact.js";
+import { createArtifactLeaseV3Internal } from "../v3/artifactLease.js";
+import { connectV3 } from "./connectSessionV3.js";
+import { createAcceptorV3 } from "./acceptorV3.js";
+import { createTunnelRuntimeV3 } from "./tunnelRuntimeV3.js";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createNodeRawQuicClientV3 } from "./rawQuicAdapterV3.js";
 
 const CERTIFICATE_DER = Buffer.from("MIIBjzCCAUGgAwIBAgIUW8hQEpQsUJN9a6qqF2g6hsNpSm8wBQYDK2VwMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAeFw0yNjA3MjAxOTAxMjFaFw0zNjA3MTcxOTAxMjFaMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAqMAUGAytlcAMhAAihki/Jec+1EaC6E6PsSxjMYFAazrgkNiUIlbj/+A/0o4GkMIGhMB0GA1UdDgQWBBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAfBgNVHSMEGDAWgBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAsBgNVHREEJTAjgglsb2NhbGhvc3SHBH8AAAGHEAAAAAAAAAAAAAAAAAAAAAEwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAwwCgYIKwYBBQUHAwEwBQYDK2VwA0EArZng3XitiH2E1pW/NTxQvEOBXJYpYE8coQmLV4yTjfI43CWHMG6lIrwk/so67oe6Z2R4iHGjUm3Tuy50Fl8hBw==", "base64");
 const PRIVATE_KEY_DER = Buffer.from("MC4CAQAwBQYDK2VwBCIEICxYUWHqGoh0CBBohsaNg/NThm1n3UeWCzYuq6jS+Qi6", "base64");
 const CERTIFICATE_PEM = pem("CERTIFICATE", CERTIFICATE_DER);
 const PRIVATE_KEY_PEM = pem("PRIVATE KEY", PRIVATE_KEY_DER);
+const v3Fixture = JSON.parse(readFileSync(
+  new URL("../../../testdata/transport_v3/artifact_vectors.json", import.meta.url),
+  "utf8",
+)) as Readonly<{ positive: readonly Readonly<{ artifact_json: string }>[] }>;
+const V3_DIRECT_BASE = decodeArtifactV3JSON(v3Fixture.positive.find(({ artifact_json }) =>
+  JSON.parse(artifact_json).path.kind === "direct")!.artifact_json);
+const V3_TUNNEL_BASE = decodeArtifactV3JSON(v3Fixture.positive.find(({ artifact_json }) =>
+  JSON.parse(artifact_json).path.kind === "tunnel")!.artifact_json);
 let previousServerParityPeer: string | undefined;
 
 beforeAll(() => {
@@ -32,6 +54,133 @@ afterAll(() => {
 });
 
 describe("Node native raw QUIC driver", () => {
+  test("runs the explicit v3 addon entries with isolated ALPN", async () => {
+    const v3 = loadDriverV3();
+    const listener = await v3.bindRawQuic({
+      host: "127.0.0.1",
+      port: 0,
+      path: "direct",
+      certificateChainDer: [CERTIFICATE_DER],
+      privateKeyDer: PRIVATE_KEY_DER,
+      inboundBidirectionalStreamCapacity: 4,
+      handshakeTimeoutMs: 2_000,
+    });
+    let client: Awaited<ReturnType<typeof v3.connectRawQuic>> | undefined;
+    let server: Awaited<ReturnType<typeof listener.accept>> | undefined;
+    try {
+      const accepting = listener.accept();
+      const address = listener.address();
+      client = await v3.connectRawQuic({
+        host: address.host,
+        port: address.port,
+        serverName: "localhost",
+        path: "direct",
+        tlsMode: "ca",
+        trustRootsDer: [CERTIFICATE_DER],
+        inboundBidirectionalStreamCapacity: 4,
+        handshakeTimeoutMs: 2_000,
+      });
+      server = await accepting;
+      const outgoing = await client.openStream();
+      await outgoing.write(new Uint8Array([3]));
+      const incoming = await server.acceptStream();
+      expect(Array.from((await incoming.read())!)).toEqual([3]);
+    } finally {
+      client?.abort();
+      server?.abort();
+      await listener.close();
+    }
+
+    const v2Listener = await bindListener(loadDriver(), 4);
+    try {
+      const address = v2Listener.address();
+      await expect(v3.connectRawQuic({
+        host: address.host,
+        port: address.port,
+        serverName: "localhost",
+        path: "direct",
+        tlsMode: "ca",
+        trustRootsDer: [CERTIFICATE_DER],
+        inboundBidirectionalStreamCapacity: 4,
+        handshakeTimeoutMs: 2_000,
+      })).rejects.toThrow();
+    } finally {
+      await v2Listener.close();
+    }
+  });
+
+  test("enforces a short-lived P-256 leaf pin without CA fallback", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "flowersec-node-raw-pin-v3-"));
+    const driver = loadDriverV3();
+    let listener: Awaited<ReturnType<typeof driver.bindRawQuic>> | undefined;
+    try {
+      const certificatePath = join(directory, "leaf.pem");
+      const certificateDERPath = join(directory, "leaf.der");
+      const keyPath = join(directory, "leaf.key");
+      const keyDERPath = join(directory, "leaf-key.der");
+      runOpenSSL(["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", keyPath]);
+      runOpenSSL([
+        "req", "-x509", "-new", "-key", keyPath, "-sha256", "-days", "2",
+        "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
+        "-addext", "basicConstraints=critical,CA:FALSE", "-addext", "keyUsage=critical,digitalSignature",
+        "-out", certificatePath,
+      ]);
+      runOpenSSL(["x509", "-in", certificatePath, "-outform", "DER", "-out", certificateDERPath]);
+      runOpenSSL(["pkcs8", "-topk8", "-nocrypt", "-in", keyPath, "-outform", "DER", "-out", keyDERPath]);
+      const certificateDER = readFileSync(certificateDERPath);
+      const keyDER = readFileSync(keyDERPath);
+      const pin = createHash("sha256").update(certificateDER).digest();
+      listener = await driver.bindRawQuic({
+        host: "127.0.0.1",
+        port: 0,
+        path: "direct",
+        certificateChainDer: [certificateDER],
+        privateKeyDer: keyDER,
+        inboundBidirectionalStreamCapacity: 4,
+        handshakeTimeoutMs: 2_000,
+      });
+      const address = listener.address();
+      const artifact = {
+        path: { kind: "direct" },
+        session: { max_inbound_streams: 2 },
+      } as ArtifactV3;
+      const expires = Math.floor(Date.now() / 1_000) + 3_600;
+      const accepting = listener.accept();
+      const client = await createNodeRawQuicClientV3(driver, {
+        carrier: "raw_quic",
+        id: "q-pin",
+        normalized_url: `quic://localhost:${address.port}`,
+        tls: {
+          mode: "pin",
+          pins: [{ algorithm: "sha-256", value_b64u: pin.toString("base64url"), not_after_unix_s: expires }],
+        },
+        wire_profile: "flowersec-direct/3",
+      }, artifact, Math.floor(Date.now() / 1_000));
+      const server = await accepting;
+      client.abort();
+      server.abort();
+
+      const wrong = Buffer.from(pin);
+      wrong[0] = (wrong[0] ?? 0) ^ 0xff;
+      const rejectedServer = listener.accept().catch(() => undefined);
+      await expect(createNodeRawQuicClientV3(driver, {
+        carrier: "raw_quic",
+        id: "q-pin",
+        normalized_url: `quic://localhost:${address.port}`,
+        tls: {
+          mode: "pin",
+          pins: [{ algorithm: "sha-256", value_b64u: wrong.toString("base64url"), not_after_unix_s: expires }],
+        },
+        wire_profile: "flowersec-direct/3",
+      }, artifact, Math.floor(Date.now() / 1_000), {
+        roots: certificateDER,
+      })).rejects.toMatchObject({ code: "tls_failed", detail: "pin_mismatch" });
+      await rejectedServer;
+    } finally {
+      await listener?.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 20_000);
   test("runs stream, FIN, datagram, cancellation, and cleanup through N-API", async () => {
     const addonPath = process.env.FLOWERSEC_NATIVE_ADDON_PATH;
     if (addonPath === undefined) throw new Error("FLOWERSEC_NATIVE_ADDON_PATH is required");
@@ -184,6 +333,83 @@ describe("Node native raw QUIC driver", () => {
       await pair.cleanup();
     }
   });
+});
+
+describe("Node production raw QUIC runtime v3", () => {
+  test("connects and accepts direct raw QUIC through FSB3 and FSH3", async () => {
+    let artifact: ArtifactV3;
+    const acceptor = await createAcceptorV3({
+      listeners: [{
+        carrier: "raw_quic",
+        path: "direct",
+        host: "127.0.0.1",
+        port: 0,
+        tls: { certificate: CERTIFICATE_PEM, privateKey: PRIVATE_KEY_PEM },
+      }],
+      maxInboundStreams: V3_DIRECT_BASE.session.max_inbound_streams,
+      authorize: async (received) => {
+        expect(Buffer.from(received.raw.subarray(0, 4)).toString("ascii")).toBe("FSB3");
+        return { accepted: true, artifact };
+      },
+    });
+    const port = acceptor.addresses()[0]!.port;
+    artifact = v3DirectRawQuicArtifact(port);
+    try {
+      const [client, accepted] = await Promise.all([
+        connectV3(v3Lease(artifact), { roots: CERTIFICATE_DER }),
+        acceptor.accept(),
+      ]);
+      const opened = client.openStream("node-v3-raw-direct");
+      const incoming = await accepted.session.acceptStream();
+      const outgoing = await opened;
+      await outgoing.write(new Uint8Array([3, 0, 3]));
+      expect(await incoming.stream.read()).toEqual(new Uint8Array([3, 0, 3]));
+      await Promise.all([client.close(), accepted.close()]);
+    } finally {
+      await acceptor.close();
+    }
+  }, 20_000);
+
+  test("pairs raw QUIC tunnel roles through production v3 listeners", async () => {
+    const runtime = createTunnelRuntimeV3({
+      listeners: [{
+        carrier: "raw_quic",
+        host: "127.0.0.1",
+        port: 0,
+        tls: { certificate: CERTIFICATE_PEM, privateKey: PRIVATE_KEY_PEM },
+      }],
+      maxInboundStreams: V3_TUNNEL_BASE.session.max_inbound_streams,
+      authorize: async ({ request }) => ({
+        decision: "allow",
+        credentialId: createHash("sha256").update(request.pathKind === "tunnel" ? request.attach_token : "").digest("base64url"),
+        leaseId: `raw-lease-${request.pathKind === "tunnel" ? request.role : 0}`,
+        expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
+        expectedPeerEndpointInstanceId: request.pathKind === "tunnel" && request.role === 1
+          ? "endpoint-server"
+          : "endpoint-client",
+      }),
+    });
+    await runtime.start();
+    const port = runtime.addresses()[0]!.port;
+    try {
+      const [client, server] = await Promise.all([
+        connectV3(v3Lease(v3TunnelRawQuicArtifact(port, 1)), {
+          roots: CERTIFICATE_DER,
+        }),
+        connectV3(v3Lease(v3TunnelRawQuicArtifact(port, 2)), {
+          roots: CERTIFICATE_DER,
+        }),
+      ]);
+      const opened = client.openStream("node-v3-raw-tunnel");
+      const incoming = await server.acceptStream();
+      const outgoing = await opened;
+      await outgoing.write(new Uint8Array([3, 2, 1]));
+      expect(await incoming.stream.read()).toEqual(new Uint8Array([3, 2, 1]));
+      await Promise.all([client.close(), server.close()]);
+    } finally {
+      await runtime.close();
+    }
+  }, 20_000);
 });
 
 describe("Node public raw QUIC connector", () => {
@@ -342,6 +568,13 @@ function loadDriver(): NativeRawQuicDriver {
   return createNativeRawQuicDriver(addon);
 }
 
+function loadDriverV3(): NativeRawQuicDriverV3 {
+  const addonPath = process.env.FLOWERSEC_NATIVE_ADDON_PATH;
+  if (addonPath === undefined) throw new Error("FLOWERSEC_NATIVE_ADDON_PATH is required");
+  const addon = createRequire(import.meta.url)(addonPath) as NativeTransportAddonBinding;
+  return createNativeRawQuicDriverV3(addon);
+}
+
 async function bindListener(driver: NativeRawQuicDriver, capacity: number): Promise<NativeRawQuicListener> {
   return await driver.bindRawQuic({
     host: "127.0.0.1",
@@ -405,4 +638,47 @@ function pem(label: string, der: Uint8Array): string {
   const base64 = Buffer.from(der).toString("base64");
   const lines = base64.match(/.{1,64}/gu) ?? [];
   return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----\n`;
+}
+
+function runOpenSSL(args: readonly string[]): void {
+  execFileSync("openssl", [...args], { stdio: "ignore" });
+}
+
+function v3DirectRawQuicArtifact(port: number): ArtifactV3 {
+  return {
+    ...V3_DIRECT_BASE,
+    path: {
+      ...V3_DIRECT_BASE.path,
+      candidates: [v3RawQuicCandidate(port, "direct")],
+    },
+  } as ArtifactV3;
+}
+
+function v3TunnelRawQuicArtifact(port: number, role: 1 | 2): ArtifactV3 {
+  if (V3_TUNNEL_BASE.path.kind !== "tunnel") throw new Error("invalid tunnel fixture");
+  return {
+    ...V3_TUNNEL_BASE,
+    path: {
+      ...V3_TUNNEL_BASE.path,
+      role,
+      local_endpoint_instance_id: role === 1 ? "endpoint-client" : "endpoint-server",
+      expected_peer_endpoint_instance_id: role === 1 ? "endpoint-server" : "endpoint-client",
+      token: role === 1 ? "raw-attach-client-v3" : "raw-attach-server-v3",
+      candidates: [v3RawQuicCandidate(port, "tunnel")],
+    },
+  };
+}
+
+function v3RawQuicCandidate(port: number, path: "direct" | "tunnel"): ArtifactCandidateV3 {
+  return {
+    carrier: "raw_quic",
+    id: "q-ca",
+    url: `quic://localhost:${port}`,
+    tls: { mode: "ca" },
+    wire_profile: path === "direct" ? "flowersec-direct/3" : "flowersec-tunnel/3",
+  };
+}
+
+function v3Lease(artifact: ArtifactV3) {
+  return createArtifactLeaseV3Internal(artifact, async () => undefined);
 }

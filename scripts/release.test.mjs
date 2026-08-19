@@ -224,7 +224,7 @@ test("npm release readback verifies tarball integrity, manifest, platform metada
   assert.match(consumer, /openStream/);
   assert.match(consumer, /session\.close/);
   assert.match(consumer, /GOWORK/);
-  assert.match(consumer, /flowersec-go\/v2 v\$\{version\}/);
+  assert.match(consumer, /flowersec-go\/v3 v\$\{version\}/);
   assert.doesNotMatch(consumer, /flowersec-ts\/src|server-parity|interop_matrix/);
   assert.match(workflow, /actions\/setup-go/);
   const goConsumer = fs.readFileSync(
@@ -1802,8 +1802,8 @@ test("main push passes only the checked HEAD after the gate completes", (t) => {
 
 test("browser compatibility remains explicit and separate from Chromium smoke", () => {
   const registry = fs.readFileSync(path.join(sourceRoot, "flowersec-go/internal/cmd/flowersec-test/registry.go"), "utf8");
-  assert.match(registry, /browserCompatibilityEntry\("browser\/firefox\/webtransport-capability"/);
-  assert.match(registry, /browserCompatibilityEntry\("browser\/webkit\/webtransport-capability"/);
+  assert.match(registry, /browserCompatibilityEntry\("compat\/v2\/browser\/firefox\/webtransport-capability"/);
+  assert.match(registry, /browserCompatibilityEntry\("compat\/v2\/browser\/webkit\/webtransport-capability"/);
   assert.doesNotMatch(registry, /"diagnostic\/browser"/);
   const packageManifest = fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8");
   assert.match(packageManifest, /"test:browser": "npm run test:browser:chromium"/);

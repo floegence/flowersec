@@ -3,19 +3,35 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::{
         Arc, Mutex as StdMutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
     time::Duration,
 };
 
 use bytes::Bytes;
 use quinn::{Endpoint, VarInt};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::{
+    CertificateError, DigitallySignedStruct, Error as RustlsError, SignatureScheme,
+    client::{
+        Resumption,
+        danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    },
+    crypto::{WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature},
+    pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime},
+};
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq as _;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use x509_parser::{
+    oid_registry::{OID_EC_P256, OID_KEY_TYPE_EC_PUBLIC_KEY},
+    prelude::{FromDer, X509Certificate, X509Version},
+};
 
 pub const ALPN_DIRECT: &str = "flowersec-direct/2";
 pub const ALPN_TUNNEL: &str = "flowersec-tunnel/2";
+pub const ALPN_DIRECT_V3: &str = "flowersec-direct/3";
+pub const ALPN_TUNNEL_V3: &str = "flowersec-tunnel/3";
 
 const STREAM_RESET_CODE: u32 = 0x0000_f502;
 const SESSION_CLOSE_CODE: u32 = 0x0000_f500;
@@ -29,6 +45,115 @@ const DATAGRAM_SEND_BUDGET: usize = 64;
 const MAX_FLOWERSEC_DATAGRAM_BYTES: usize = 65_535;
 const DATAGRAM_SEND_BUFFER_BYTES: usize = DATAGRAM_SEND_BUDGET * MAX_FLOWERSEC_DATAGRAM_BYTES;
 const INITIAL_RTT: Duration = Duration::from_millis(250);
+const PIN_FAILURE_NONE: u8 = 0;
+const PIN_FAILURE_MISMATCH: u8 = 1;
+const PIN_FAILURE_PROFILE: u8 = 2;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+enum PinCertificateFailureV3 {
+    #[error("pinned certificate profile is invalid")]
+    InvalidProfile,
+    #[error("pinned certificate hash does not match")]
+    PinMismatch,
+}
+
+#[derive(Debug)]
+struct PinnedServerVerifierV3 {
+    active_leaf_der_sha256: Vec<[u8; 32]>,
+    supported: WebPkiSupportedAlgorithms,
+    failure: Arc<AtomicU8>,
+}
+
+impl ServerCertVerifier for PinnedServerVerifierV3 {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, RustlsError> {
+        match verify_pin_profile_v3(
+            end_entity.as_ref(),
+            &self.active_leaf_der_sha256,
+            now.as_secs(),
+        ) {
+            Ok(()) => Ok(ServerCertVerified::assertion()),
+            Err(error) => {
+                let code = match error {
+                    PinCertificateFailureV3::PinMismatch => PIN_FAILURE_MISMATCH,
+                    PinCertificateFailureV3::InvalidProfile => PIN_FAILURE_PROFILE,
+                };
+                self.failure.store(code, Ordering::Release);
+                Err(RustlsError::InvalidCertificate(CertificateError::Other(
+                    rustls::OtherError(Arc::new(error)),
+                )))
+            }
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signature: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, RustlsError> {
+        verify_tls12_signature(message, certificate, signature, &self.supported)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signature: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, RustlsError> {
+        verify_tls13_signature(message, certificate, signature, &self.supported)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.supported.supported_schemes()
+    }
+}
+
+fn verify_pin_profile_v3(
+    certificate_der: &[u8],
+    active_leaf_der_sha256: &[[u8; 32]],
+    now_unix_s: u64,
+) -> Result<(), PinCertificateFailureV3> {
+    let (remainder, certificate) = X509Certificate::from_der(certificate_der)
+        .map_err(|_| PinCertificateFailureV3::InvalidProfile)?;
+    let validity = certificate.validity();
+    let not_before = validity.not_before.timestamp();
+    let not_after = validity.not_after.timestamp();
+    let now = i64::try_from(now_unix_s).map_err(|_| PinCertificateFailureV3::InvalidProfile)?;
+    let spki = certificate.public_key();
+    let p256 = spki.algorithm.algorithm == OID_KEY_TYPE_EC_PUBLIC_KEY
+        && spki
+            .algorithm
+            .parameters
+            .as_ref()
+            .and_then(|parameters| parameters.as_oid().ok())
+            .is_some_and(|curve| curve == OID_EC_P256);
+    if !remainder.is_empty()
+        || certificate.version() != X509Version::V3
+        || now < not_before
+        || now >= not_after
+        || not_after
+            .checked_sub(not_before)
+            .is_none_or(|duration| duration > 1_209_600)
+        || !p256
+    {
+        return Err(PinCertificateFailureV3::InvalidProfile);
+    }
+    let digest: [u8; 32] = Sha256::digest(certificate_der).into();
+    if !active_leaf_der_sha256
+        .iter()
+        .any(|pin| bool::from(digest.ct_eq(pin)))
+    {
+        return Err(PinCertificateFailureV3::PinMismatch);
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PathProfile {
@@ -44,13 +169,39 @@ impl PathProfile {
         }
     }
 
-    fn from_alpn(alpn: &[u8]) -> Option<Self> {
+    pub const fn alpn_v3(self) -> &'static str {
+        match self {
+            Self::Direct => ALPN_DIRECT_V3,
+            Self::Tunnel => ALPN_TUNNEL_V3,
+        }
+    }
+
+    const fn alpn_for(self, version: ProtocolVersion) -> &'static str {
+        match version {
+            ProtocolVersion::V2 => self.alpn(),
+            ProtocolVersion::V3 => self.alpn_v3(),
+        }
+    }
+
+    fn from_alpn(alpn: &[u8]) -> Option<(ProtocolVersion, Self)> {
         match alpn {
-            value if value == ALPN_DIRECT.as_bytes() => Some(Self::Direct),
-            value if value == ALPN_TUNNEL.as_bytes() => Some(Self::Tunnel),
+            value if value == ALPN_DIRECT.as_bytes() => Some((ProtocolVersion::V2, Self::Direct)),
+            value if value == ALPN_TUNNEL.as_bytes() => Some((ProtocolVersion::V2, Self::Tunnel)),
+            value if value == ALPN_DIRECT_V3.as_bytes() => {
+                Some((ProtocolVersion::V3, Self::Direct))
+            }
+            value if value == ALPN_TUNNEL_V3.as_bytes() => {
+                Some((ProtocolVersion::V3, Self::Tunnel))
+            }
             _ => None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProtocolVersion {
+    V2,
+    V3,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -143,6 +294,12 @@ pub enum RawQuicError {
     Connect,
     #[error("raw QUIC handshake failed")]
     Handshake,
+    #[error("raw QUIC handshake timed out")]
+    Timeout,
+    #[error("raw QUIC pinned certificate does not match")]
+    PinMismatch,
+    #[error("raw QUIC pinned certificate profile is invalid")]
+    PinCertificateInvalid,
     #[error("raw QUIC negotiated an invalid ALPN")]
     InvalidNegotiatedAlpn,
     #[error("raw QUIC stream failed")]
@@ -195,12 +352,65 @@ impl Default for Cancellation {
 #[derive(Clone)]
 pub struct RawQuicClientConfig {
     profile: PathProfile,
+    version: ProtocolVersion,
     limits: RawQuicLimits,
     inner: quinn::ClientConfig,
+    pin_failure: Option<Arc<AtomicU8>>,
 }
 
 impl RawQuicClientConfig {
     pub fn new(
+        profile: PathProfile,
+        trust_roots_der: Vec<Vec<u8>>,
+        limits: RawQuicLimits,
+    ) -> Result<Self, RawQuicError> {
+        Self::new_ca(ProtocolVersion::V2, profile, trust_roots_der, limits)
+    }
+
+    pub fn new_v3_ca(
+        profile: PathProfile,
+        trust_roots_der: Vec<Vec<u8>>,
+        limits: RawQuicLimits,
+    ) -> Result<Self, RawQuicError> {
+        Self::new_ca(ProtocolVersion::V3, profile, trust_roots_der, limits)
+    }
+
+    pub fn new_v3_pin(
+        profile: PathProfile,
+        active_leaf_der_sha256: Vec<[u8; 32]>,
+        limits: RawQuicLimits,
+    ) -> Result<Self, RawQuicError> {
+        limits.validate()?;
+        if active_leaf_der_sha256.is_empty()
+            || active_leaf_der_sha256.len() > 4
+            || active_leaf_der_sha256
+                .iter()
+                .enumerate()
+                .any(|(index, pin)| active_leaf_der_sha256[..index].contains(pin))
+        {
+            return Err(RawQuicError::InvalidTls);
+        }
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let pin_failure = Arc::new(AtomicU8::new(PIN_FAILURE_NONE));
+        let verifier = PinnedServerVerifierV3 {
+            active_leaf_der_sha256,
+            supported: provider.signature_verification_algorithms,
+            failure: pin_failure.clone(),
+        };
+        let mut tls = rustls::ClientConfig::builder_with_provider(provider)
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .map_err(|_| RawQuicError::InvalidTls)?
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(verifier))
+            .with_no_client_auth();
+        tls.alpn_protocols = vec![profile.alpn_v3().as_bytes().to_vec()];
+        tls.enable_early_data = false;
+        tls.resumption = Resumption::disabled();
+        Self::from_tls(ProtocolVersion::V3, profile, limits, tls, Some(pin_failure))
+    }
+
+    fn new_ca(
+        version: ProtocolVersion,
         profile: PathProfile,
         trust_roots_der: Vec<Vec<u8>>,
         limits: RawQuicLimits,
@@ -221,17 +431,70 @@ impl RawQuicClientConfig {
             .map_err(|_| RawQuicError::InvalidTls)?
             .with_root_certificates(roots)
             .with_no_client_auth();
-        tls.alpn_protocols = vec![profile.alpn().as_bytes().to_vec()];
+        tls.alpn_protocols = vec![profile.alpn_for(version).as_bytes().to_vec()];
         tls.enable_early_data = false;
+        if version == ProtocolVersion::V3 {
+            tls.resumption = Resumption::disabled();
+        }
+        Self::from_tls(version, profile, limits, tls, None)
+    }
+
+    fn from_tls(
+        version: ProtocolVersion,
+        profile: PathProfile,
+        limits: RawQuicLimits,
+        tls: rustls::ClientConfig,
+        pin_failure: Option<Arc<AtomicU8>>,
+    ) -> Result<Self, RawQuicError> {
         let crypto = quinn::crypto::rustls::QuicClientConfig::try_from(tls)
             .map_err(|_| RawQuicError::InvalidTls)?;
         let mut inner = quinn::ClientConfig::new(Arc::new(crypto));
         inner.transport_config(Arc::new(transport_config(limits)?));
         Ok(Self {
             profile,
+            version,
             limits,
             inner,
+            pin_failure,
         })
+    }
+
+    fn reset_pin_failure(&self) {
+        if let Some(failure) = &self.pin_failure {
+            failure.store(PIN_FAILURE_NONE, Ordering::Release);
+        }
+    }
+
+    fn pin_error(&self) -> Option<RawQuicError> {
+        match self
+            .pin_failure
+            .as_ref()
+            .map_or(PIN_FAILURE_NONE, |failure| failure.load(Ordering::Acquire))
+        {
+            PIN_FAILURE_MISMATCH => Some(RawQuicError::PinMismatch),
+            PIN_FAILURE_PROFILE => Some(RawQuicError::PinCertificateInvalid),
+            _ => None,
+        }
+    }
+
+    fn connection_error(&self, error: &quinn::ConnectionError) -> RawQuicError {
+        if let Some(pin_error) = self.pin_error() {
+            return pin_error;
+        }
+        match error {
+            quinn::ConnectionError::TransportError(error)
+                if (0x100..0x200).contains(&u64::from(error.code)) =>
+            {
+                RawQuicError::Handshake
+            }
+            quinn::ConnectionError::ConnectionClosed(close)
+                if (0x100..0x200).contains(&u64::from(close.error_code)) =>
+            {
+                RawQuicError::Handshake
+            }
+            quinn::ConnectionError::TimedOut => RawQuicError::Timeout,
+            _ => RawQuicError::Connect,
+        }
     }
 
     #[cfg(feature = "__flowersec_internal_test_support")]
@@ -252,6 +515,7 @@ impl fmt::Debug for RawQuicClientConfig {
         formatter
             .debug_struct("RawQuicClientConfig")
             .field("profile", &self.profile)
+            .field("version", &self.version)
             .field("limits", &self.limits)
             .finish_non_exhaustive()
     }
@@ -259,12 +523,44 @@ impl fmt::Debug for RawQuicClientConfig {
 
 pub struct RawQuicServerConfig {
     profile: PathProfile,
+    version: ProtocolVersion,
     limits: RawQuicLimits,
     inner: quinn::ServerConfig,
 }
 
 impl RawQuicServerConfig {
     pub fn new(
+        profile: PathProfile,
+        certificate_chain_der: Vec<Vec<u8>>,
+        private_key_der: Vec<u8>,
+        limits: RawQuicLimits,
+    ) -> Result<Self, RawQuicError> {
+        Self::new_for_version(
+            ProtocolVersion::V2,
+            profile,
+            certificate_chain_der,
+            private_key_der,
+            limits,
+        )
+    }
+
+    pub fn new_v3(
+        profile: PathProfile,
+        certificate_chain_der: Vec<Vec<u8>>,
+        private_key_der: Vec<u8>,
+        limits: RawQuicLimits,
+    ) -> Result<Self, RawQuicError> {
+        Self::new_for_version(
+            ProtocolVersion::V3,
+            profile,
+            certificate_chain_der,
+            private_key_der,
+            limits,
+        )
+    }
+
+    fn new_for_version(
+        version: ProtocolVersion,
         profile: PathProfile,
         certificate_chain_der: Vec<Vec<u8>>,
         private_key_der: Vec<u8>,
@@ -287,14 +583,18 @@ impl RawQuicServerConfig {
             .with_no_client_auth()
             .with_single_cert(certificate_chain, private_key)
             .map_err(|_| RawQuicError::InvalidServerIdentity)?;
-        tls.alpn_protocols = vec![profile.alpn().as_bytes().to_vec()];
+        tls.alpn_protocols = vec![profile.alpn_for(version).as_bytes().to_vec()];
         tls.max_early_data_size = 0;
+        if version == ProtocolVersion::V3 {
+            tls.send_tls13_tickets = 0;
+        }
         let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls)
             .map_err(|_| RawQuicError::InvalidTls)?;
         let mut inner = quinn::ServerConfig::with_crypto(Arc::new(crypto));
         inner.transport_config(Arc::new(transport_config(limits)?));
         Ok(Self {
             profile,
+            version,
             limits,
             inner,
         })
@@ -306,6 +606,7 @@ impl fmt::Debug for RawQuicServerConfig {
         formatter
             .debug_struct("RawQuicServerConfig")
             .field("profile", &self.profile)
+            .field("version", &self.version)
             .field("limits", &self.limits)
             .finish_non_exhaustive()
     }
@@ -314,6 +615,7 @@ impl fmt::Debug for RawQuicServerConfig {
 pub struct RawQuicListener {
     endpoint: Endpoint,
     profile: PathProfile,
+    version: ProtocolVersion,
     limits: RawQuicLimits,
     closed: AtomicBool,
 }
@@ -324,6 +626,7 @@ impl RawQuicListener {
         Ok(Self {
             endpoint,
             profile: config.profile,
+            version: config.version,
             limits: config.limits,
             closed: AtomicBool::new(false),
         })
@@ -357,6 +660,7 @@ impl RawQuicListener {
             connection,
             self.endpoint.clone(),
             self.profile,
+            self.version,
             self.limits.max_inbound_bidirectional_streams,
             false,
             None,
@@ -382,6 +686,7 @@ impl fmt::Debug for RawQuicListener {
             .debug_struct("RawQuicListener")
             .field("local_address", &self.local_address().ok())
             .field("profile", &self.profile)
+            .field("version", &self.version)
             .field("closed", &self.closed.load(Ordering::Acquire))
             .finish_non_exhaustive()
     }
@@ -398,6 +703,7 @@ pub struct RawQuicSession {
     connection: quinn::Connection,
     endpoint: Endpoint,
     profile: PathProfile,
+    version: ProtocolVersion,
     inbound_bidirectional_stream_capacity: u32,
     migration_allowed: bool,
     migration_lock: Arc<StdMutex<()>>,
@@ -414,23 +720,32 @@ impl RawQuicSession {
         if remote_addresses.is_empty() {
             return Err(RawQuicError::NoUsableAddress);
         }
+        let deadline = tokio::time::Instant::now() + config.limits.handshake_idle_timeout;
         let mut last_error = RawQuicError::NoUsableAddress;
-        for remote in remote_addresses {
+        let total = remote_addresses.len();
+        for (index, remote) in remote_addresses.into_iter().enumerate() {
             if cancellation.is_canceled() {
                 return Err(RawQuicError::Canceled);
             }
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(preferred_dial_error(last_error, RawQuicError::Timeout));
+            }
+            let addresses_left = u32::try_from(total - index).unwrap_or(u32::MAX);
+            let mut attempt_config = config.clone();
+            attempt_config.limits.handshake_idle_timeout = remaining / addresses_left;
             match Self::dial_from(
                 unspecified_for(remote),
                 remote,
                 server_name.clone(),
-                config.clone(),
+                attempt_config,
                 cancellation,
             )
             .await
             {
                 Ok(session) => return Ok(session),
                 Err(RawQuicError::Canceled) => return Err(RawQuicError::Canceled),
-                Err(error) => last_error = error,
+                Err(error) => last_error = preferred_dial_error(last_error, error),
             }
         }
         Err(last_error)
@@ -443,22 +758,24 @@ impl RawQuicSession {
         config: RawQuicClientConfig,
         cancellation: &Cancellation,
     ) -> Result<Self, RawQuicError> {
+        config.reset_pin_failure();
         let endpoint = Endpoint::client(local_address).map_err(RawQuicError::Endpoint)?;
         let connecting = endpoint
-            .connect_with(config.inner, remote_address, &server_name)
+            .connect_with(config.inner.clone(), remote_address, &server_name)
             .map_err(|_| RawQuicError::Connect)?;
         let connection = tokio::select! {
             biased;
             _ = cancellation.inner.cancelled() => return Err(RawQuicError::Canceled),
             result = tokio::time::timeout(config.limits.handshake_idle_timeout, connecting) => {
-                result.map_err(|_| RawQuicError::Handshake)?
-                    .map_err(|_| RawQuicError::Handshake)?
+                result.map_err(|_| config.pin_error().unwrap_or(RawQuicError::Timeout))?
+                    .map_err(|error| config.connection_error(&error))?
             }
         };
         Self::from_connection(
             connection,
             endpoint,
             config.profile,
+            config.version,
             config.limits.max_inbound_bidirectional_streams,
             true,
             preferred_route_local_address(remote_address).ok(),
@@ -469,6 +786,7 @@ impl RawQuicSession {
         connection: quinn::Connection,
         endpoint: Endpoint,
         expected_profile: PathProfile,
+        expected_version: ProtocolVersion,
         inbound_bidirectional_stream_capacity: u32,
         migration_allowed: bool,
         observed_route_local_address: Option<SocketAddr>,
@@ -483,7 +801,7 @@ impl RawQuicSession {
                     .and_then(PathProfile::from_alpn)
             })
             .ok_or(RawQuicError::InvalidNegotiatedAlpn)?;
-        if negotiated != expected_profile {
+        if negotiated != (expected_version, expected_profile) {
             connection.close(
                 VarInt::from_u32(SESSION_CLOSE_CODE),
                 b"invalid negotiated ALPN",
@@ -493,7 +811,8 @@ impl RawQuicSession {
         Ok(Self {
             connection,
             endpoint,
-            profile: negotiated,
+            profile: negotiated.1,
+            version: negotiated.0,
             inbound_bidirectional_stream_capacity,
             migration_allowed,
             migration_lock: Arc::new(StdMutex::new(())),
@@ -503,6 +822,10 @@ impl RawQuicSession {
 
     pub const fn profile(&self) -> PathProfile {
         self.profile
+    }
+
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.version
     }
 
     pub const fn inbound_bidirectional_stream_capacity(&self) -> u32 {
@@ -969,6 +1292,25 @@ fn unspecified_for(remote: SocketAddr) -> SocketAddr {
     match remote.ip() {
         IpAddr::V4(_) => SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
         IpAddr::V6(_) => SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)),
+    }
+}
+
+fn preferred_dial_error(current: RawQuicError, next: RawQuicError) -> RawQuicError {
+    fn priority(error: &RawQuicError) -> u8 {
+        match error {
+            RawQuicError::PinMismatch
+            | RawQuicError::PinCertificateInvalid
+            | RawQuicError::Handshake
+            | RawQuicError::InvalidNegotiatedAlpn => 3,
+            RawQuicError::Timeout => 2,
+            RawQuicError::Connect | RawQuicError::Endpoint(_) | RawQuicError::NoUsableAddress => 1,
+            _ => 4,
+        }
+    }
+    if priority(&next) >= priority(&current) {
+        next
+    } else {
+        current
     }
 }
 

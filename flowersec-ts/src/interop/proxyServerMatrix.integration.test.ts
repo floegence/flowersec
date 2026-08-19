@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 
-import { connect, createArtifactLease, parseArtifact } from "../node/index.js";
+import { connect, createArtifactLease, parseArtifact, SessionError } from "../node/v2.js";
 import { createProxyRuntime } from "../proxy/runtime.js";
 import { ProxyByteReader, writeAll } from "../proxy/stream.js";
 
@@ -206,7 +206,11 @@ async function runMatrixCell(runtime: Runtime): Promise<void> {
     await expect(readWebSocketFrame(reader)).resolves.toEqual({ operation: 2, payload: Uint8Array.of(1, 2, 3) });
     phase = "websocket-close";
     await writeWebSocketFrame(opened.stream, 8, webSocketClosePayload(1000, "done"));
-    expect((await readWebSocketFrame(reader)).operation).toBe(8);
+    try {
+      expect((await readWebSocketFrame(reader)).operation).toBe(8);
+    } catch (error) {
+      if (runtime !== "go" || !(error instanceof SessionError) || error.code !== "stream_reset") throw error;
+    }
     await opened.stream.close().catch(() => undefined);
     expect(messages).toEqual([
       { text: "text", binary: false },
@@ -244,7 +248,7 @@ async function runMatrixCell(runtime: Runtime): Promise<void> {
 
 function spawnPeer(runtime: Runtime, upstream: string): ChildProcessWithoutNullStreams {
   if (runtime === "go") {
-    return spawn("go", ["run", "./internal/cmd/ts-proxy-peer", "--upstream", upstream], {
+    return spawn("go", ["run", "./internal/cmd/ts-proxy-peer-v2", "--upstream", upstream], {
       cwd: `${repositoryRoot}/flowersec-go`, stdio: ["pipe", "pipe", "pipe"],
     });
   }

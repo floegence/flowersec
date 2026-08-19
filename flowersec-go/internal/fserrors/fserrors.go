@@ -103,6 +103,9 @@ const (
 	CodeInvalidOption             Code = "invalid_option"
 	CodeResolveFailed             Code = "resolve_failed"
 	CodeUnsupportedCapability     Code = "unsupported_capability"
+	CodeTLSUnsupported            Code = "tls_unsupported"
+	CodeTLSPolicyExpired          Code = "tls_policy_expired"
+	CodeTLSFailed                 Code = "tls_failed"
 	CodeCredentialCommitFailed    Code = "credential_commit_failed"
 	CodeRandomFailed              Code = "random_failed"
 	CodeUpgradeFailed             Code = "upgrade_failed"
@@ -141,6 +144,9 @@ type CandidateDiagnostic struct {
 	Stage       Stage
 	Code        Code
 	Err         error
+	// Detail is restricted internal telemetry. Public SDK errors must never
+	// expose it or the underlying provider error.
+	Detail string
 }
 
 // Error is a structured, programmatically identifiable error for user-facing operations.

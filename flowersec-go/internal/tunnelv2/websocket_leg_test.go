@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
-	admissionws "github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv2"
+	admissionws "github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv2/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/tunnelv2"
 	gorillaws "github.com/gorilla/websocket"
 )
 

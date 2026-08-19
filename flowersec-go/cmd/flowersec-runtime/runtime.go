@@ -12,31 +12,31 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
-	websocketadmission "github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
-	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv3"
+	websocketadmission "github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv3/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/quicbase"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/rawquicv3"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocketv3"
+	carrierwt "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/webtransportv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	session "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/tunnelv3"
 	gorillaws "github.com/gorilla/websocket"
 )
 
 const (
-	webSocketDirectPath = "/flowersec/v2/direct"
-	webSocketTunnelPath = "/flowersec/v2/tunnel"
+	webSocketDirectPath = "/flowersec/v3/direct"
+	webSocketTunnelPath = "/flowersec/v3/tunnel"
 )
 
 type runtimeServer struct {
 	config      Config
 	tlsConfig   *tls.Config
 	authorizer  authorizationProvider
-	reasons     artifactv2.ReasonRegistry
-	coordinator *tunnelv2.Coordinator
+	reasons     artifactv3.ReasonRegistry
+	coordinator *tunnelv3.Coordinator
 	wsResources carrierws.ResourcePolicy
 	quicLimits  quicbase.Limits
 	directSlots chan struct{}
@@ -62,7 +62,7 @@ func newRuntimeServer(config Config, authorizer authorizationProvider, logger *l
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
-	reasons := tunnelv2.DefaultReasonRegistry()
+	reasons := tunnelv3.DefaultReasonRegistry()
 	reasons[reasonAuthorizationDenied] = struct{}{}
 	reasons[reasonAuthorizationUnavailable] = struct{}{}
 	for _, reason := range config.AdmissionReasons {
@@ -76,16 +76,19 @@ func newRuntimeServer(config Config, authorizer authorizationProvider, logger *l
 	if err != nil {
 		return nil, &ConfigError{Field: "max_inbound_streams", Err: err}
 	}
-	coordinatorConfig := tunnelv2.DefaultConfig()
+	coordinatorConfig := tunnelv3.DefaultConfig()
 	coordinatorConfig.Reasons = reasons
 	coordinatorConfig.AdmissionTimeout = config.admissionTimeout()
-	coordinator, err := tunnelv2.NewCoordinator(coordinatorConfig, tunnelAuthorizer(authorizer, reasons))
+	coordinator, err := tunnelv3.NewCoordinator(coordinatorConfig, tunnelAuthorizer(authorizer, reasons))
 	if err != nil {
 		return nil, err
 	}
 	return &runtimeServer{
 		config: config, tlsConfig: &tls.Config{
-			Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13,
+			Certificates:           []tls.Certificate{certificate},
+			MinVersion:             tls.VersionTLS13,
+			MaxVersion:             tls.VersionTLS13,
+			SessionTicketsDisabled: true,
 		},
 		authorizer: authorizer, reasons: reasons, coordinator: coordinator,
 		wsResources: wsResources, quicLimits: quicLimits,
@@ -105,13 +108,13 @@ func (runtime *runtimeServer) Serve(ctx context.Context) error {
 		return fmt.Errorf("listen WSS: %w", err)
 	}
 	runtime.addCloser(wssListener)
-	directQUIC, err := runtime.listenRawQUIC(runtime.config.Listeners.RawQUIC.Direct, rawquic.ALPNDirect)
+	directQUIC, err := runtime.listenRawQUIC(runtime.config.Listeners.RawQUIC.Direct, rawquicv3.ALPNDirect)
 	if err != nil {
 		runtime.closeListeners()
 		return fmt.Errorf("listen direct raw QUIC: %w", err)
 	}
 	runtime.addCloser(directQUIC)
-	tunnelQUIC, err := runtime.listenRawQUIC(runtime.config.Listeners.RawQUIC.Tunnel, rawquic.ALPNTunnel)
+	tunnelQUIC, err := runtime.listenRawQUIC(runtime.config.Listeners.RawQUIC.Tunnel, rawquicv3.ALPNTunnel)
 	if err != nil {
 		runtime.closeListeners()
 		return fmt.Errorf("listen tunnel raw QUIC: %w", err)
@@ -173,13 +176,13 @@ func (runtime *runtimeServer) runListener(serve func() error, errorsCh chan<- er
 	}
 }
 
-func (runtime *runtimeServer) listenRawQUIC(address, alpn string) (*rawquic.Listener, error) {
+func (runtime *runtimeServer) listenRawQUIC(address, alpn string) (*rawquicv3.Listener, error) {
 	tlsConfig := runtime.tlsConfig.Clone()
 	tlsConfig.NextProtos = []string{alpn}
-	return rawquic.Listen(address, tlsConfig, runtime.quicLimits)
+	return rawquicv3.Listen(address, tlsConfig, runtime.quicLimits)
 }
 
-func (runtime *runtimeServer) acceptRawQUIC(ctx context.Context, listener *rawquic.Listener) error {
+func (runtime *runtimeServer) acceptRawQUIC(ctx context.Context, listener *rawquicv3.Listener) error {
 	for {
 		carrierSession, err := listener.Accept(ctx)
 		if err != nil {
@@ -188,7 +191,9 @@ func (runtime *runtimeServer) acceptRawQUIC(ctx context.Context, listener *rawqu
 		runtime.sessionWG.Add(1)
 		go func() {
 			defer runtime.sessionWG.Done()
-			sessionContext := withAuthorizationContext(ctx, authorizationContext{carrier: carrier.KindRawQUIC})
+			sessionContext := withAuthorizationContext(ctx, authorizationContext{
+				carrier: carrier.KindRawQUIC, remoteAddress: carrierSession.RemoteAddr().String(),
+			})
 			if carrierSession.Path() == carrier.PathTunnel {
 				runtime.serveRawQUICTunnel(sessionContext, carrierSession)
 				return
@@ -198,9 +203,9 @@ func (runtime *runtimeServer) acceptRawQUIC(ctx context.Context, listener *rawqu
 	}
 }
 
-func (runtime *runtimeServer) serveRawQUICDirect(ctx context.Context, carrierSession *rawquic.Session) {
+func (runtime *runtimeServer) serveRawQUICDirect(ctx context.Context, carrierSession *rawquicv3.Session) {
 	runtime.serveNativeDirect(ctx, carrierSession, func(admissionContext context.Context) (carrier.Stream, error) {
-		return rawquic.AcceptAdmissionStream(admissionContext, carrierSession)
+		return rawquicv3.AcceptAdmissionStream(admissionContext, carrierSession)
 	})
 }
 
@@ -228,9 +233,9 @@ func (runtime *runtimeServer) serveNativeDirect(
 		return
 	}
 	var authorization *directAuthorization
-	decoded, err := admissionv2.Serve(admissionContext, admissionStream, runtime.reasons, func(authorizeContext context.Context, decoded *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
+	decoded, err := admissionv3.Serve(admissionContext, admissionStream, runtime.reasons, func(authorizeContext context.Context, decoded *artifactv3.DecodedRequest) (artifactv3.AdmissionResponse, error) {
 		if !chosenCarrierMatches(decoded, carrierSession.Kind()) {
-			return artifactv2.AdmissionResponse{}, ErrInvalidAuthorization
+			return artifactv3.AdmissionResponse{}, ErrInvalidAuthorization
 		}
 		response, allowed, authorizeErr := authorizeDirect(authorizeContext, runtime.authorizer, decoded, runtime.reasons, runtime.config.MaxInboundStreams)
 		authorization = allowed
@@ -246,9 +251,9 @@ func (runtime *runtimeServer) serveNativeDirect(
 	runtime.serveAuthorizedDirect(ctx, carrierSession, decoded, authorization)
 }
 
-func (runtime *runtimeServer) serveRawQUICTunnel(ctx context.Context, carrierSession *rawquic.Session) {
+func (runtime *runtimeServer) serveRawQUICTunnel(ctx context.Context, carrierSession *rawquicv3.Session) {
 	runtime.serveNativeTunnel(ctx, carrierSession, func(admissionContext context.Context) (carrier.Stream, error) {
-		return rawquic.AcceptAdmissionStream(admissionContext, carrierSession)
+		return rawquicv3.AcceptAdmissionStream(admissionContext, carrierSession)
 	})
 }
 
@@ -270,7 +275,7 @@ func (runtime *runtimeServer) serveNativeTunnel(
 		_ = carrierSession.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "admission failed"})
 		return
 	}
-	leg, err := tunnelv2.NewNativeStreamLeg(carrierSession, admissionStream)
+	leg, err := tunnelv3.NewNativeStreamLeg(carrierSession, admissionStream)
 	if err != nil {
 		_ = carrierSession.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "admission failed"})
 		return
@@ -296,7 +301,7 @@ func (runtime *runtimeServer) handleWebSocket(baseContext context.Context, write
 	// ordinary HTTP handlers, while sessionWG owns every hijacked WSS lifetime.
 	runtime.sessionWG.Add(1)
 	defer runtime.sessionWG.Done()
-	if request.Method != http.MethodGet || !runtime.originAllowed(request) {
+	if request.Method != http.MethodGet || !runtime.originAllowed(request) || carrierws.ValidateServerRequest(request) != nil {
 		http.Error(writer, "request rejected", http.StatusForbidden)
 		return
 	}
@@ -312,7 +317,7 @@ func (runtime *runtimeServer) handleWebSocket(baseContext context.Context, write
 		carrier: carrier.KindWebSocket, remoteAddress: request.RemoteAddr,
 	})
 	if subprotocol == carrierws.SubprotocolTunnel {
-		leg, err := tunnelv2.NewWebSocketPendingLeg(connection, runtime.wsResources)
+		leg, err := tunnelv3.NewWebSocketPendingLeg(connection, runtime.wsResources)
 		if err != nil {
 			_ = connection.Close()
 			return
@@ -330,9 +335,9 @@ func (runtime *runtimeServer) handleWebSocket(baseContext context.Context, write
 	admissionContext, cancel := context.WithTimeout(ctx, runtime.config.admissionTimeout())
 	defer cancel()
 	var authorization *directAuthorization
-	decoded, err := websocketadmission.Serve(admissionContext, connection, runtime.reasons, func(authorizeContext context.Context, decoded *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
+	decoded, err := websocketadmission.Serve(admissionContext, connection, runtime.reasons, func(authorizeContext context.Context, decoded *artifactv3.DecodedRequest) (artifactv3.AdmissionResponse, error) {
 		if !chosenCarrierMatches(decoded, carrier.KindWebSocket) {
-			return artifactv2.AdmissionResponse{}, ErrInvalidAuthorization
+			return artifactv3.AdmissionResponse{}, ErrInvalidAuthorization
 		}
 		response, allowed, authorizeErr := authorizeDirect(authorizeContext, runtime.authorizer, decoded, runtime.reasons, runtime.config.MaxInboundStreams)
 		authorization = allowed
@@ -383,7 +388,7 @@ func (runtime *runtimeServer) webTransportHandler(baseContext context.Context, s
 	return mux
 }
 
-func (runtime *runtimeServer) serveAuthorizedDirect(ctx context.Context, carrierSession carrier.Session, decoded *artifactv2.DecodedRequest, authorization *directAuthorization) {
+func (runtime *runtimeServer) serveAuthorizedDirect(ctx context.Context, carrierSession carrier.Session, decoded *artifactv3.DecodedRequest, authorization *directAuthorization) {
 	contract, err := authorization.Session.contract()
 	if err != nil {
 		_ = carrierSession.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "session contract rejected"})
@@ -391,7 +396,7 @@ func (runtime *runtimeServer) serveAuthorizedDirect(ctx context.Context, carrier
 	}
 	config := session.Config{
 		Role: session.RoleServer, Path: session.PathDirect, ChannelID: contract.ChannelID,
-		SessionContractHash: contract.ContractHash, Suite: protocolv2.Suite(contract.DefaultSuite),
+		SessionContractHash: contract.ContractHash, Suite: protocolv3.Suite(contract.DefaultSuite),
 		PSK: contract.E2EEPSK, MaxInboundStreams: contract.MaxInboundStreams,
 		IdleTimeout:            time.Duration(contract.IdleTimeoutSeconds) * time.Second,
 		EstablishTimeout:       time.Duration(contract.EstablishTimeoutSeconds) * time.Second,
@@ -459,15 +464,15 @@ func (runtime *runtimeServer) originAllowed(request *http.Request) bool {
 	return false
 }
 
-func chosenCarrierMatches(decoded *artifactv2.DecodedRequest, kind carrier.Kind) bool {
+func chosenCarrierMatches(decoded *artifactv3.DecodedRequest, kind carrier.Kind) bool {
 	if decoded == nil {
 		return false
 	}
-	want := artifactv2.CarrierWebSocket
+	want := artifactv3.CarrierWebSocket
 	if kind == carrier.KindRawQUIC {
-		want = artifactv2.CarrierRawQUIC
+		want = artifactv3.CarrierRawQUIC
 	} else if kind == carrier.KindWebTransport {
-		want = artifactv2.CarrierWebTransport
+		want = artifactv3.CarrierWebTransport
 	} else if kind != carrier.KindWebSocket {
 		return false
 	}
@@ -519,12 +524,12 @@ func (closer httpServerCloser) Close() error {
 
 func stableRuntimeError(err error) error {
 	switch {
-	case errors.Is(err, tunnelv2.ErrCapacity):
-		return tunnelv2.ErrCapacity
-	case errors.Is(err, tunnelv2.ErrPairTimeout):
-		return tunnelv2.ErrPairTimeout
-	case errors.Is(err, tunnelv2.ErrCredentialReplay):
-		return tunnelv2.ErrCredentialReplay
+	case errors.Is(err, tunnelv3.ErrCapacity):
+		return tunnelv3.ErrCapacity
+	case errors.Is(err, tunnelv3.ErrPairTimeout):
+		return tunnelv3.ErrPairTimeout
+	case errors.Is(err, tunnelv3.ErrCredentialReplay):
+		return tunnelv3.ErrCredentialReplay
 	default:
 		return errors.New("session failed")
 	}

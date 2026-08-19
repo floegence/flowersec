@@ -11,12 +11,12 @@ use std::{
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
-use flowersec::{
-    Artifact, ArtifactLease, AuthorizationRecord, ConnectorOptions, ControlPlaneError, EndpointSet,
-    Issuer, RuntimeAuthorizationRequest, SessionOptions, StreamMetadata,
-    TunnelAuthorizationResponse, TunnelAuthorizer, TunnelIssueOptions, TunnelRuntime,
-    TunnelRuntimeOptions, connect,
+use flowersec::v2::{
+    Artifact, ArtifactLease, AuthorizationRecord, ControlPlaneError, EndpointSet, Issuer,
+    RuntimeAuthorizationRequest, SessionOptions, TunnelAuthorizationResponse, TunnelAuthorizer,
+    TunnelIssueOptions, TunnelRuntime, TunnelRuntimeOptions, connect,
 };
+use flowersec::{ConnectorOptions, StreamMetadata};
 use tokio_util::sync::CancellationToken;
 
 const TEST_CERT_DER_B64: &str = "MIIBjzCCAUGgAwIBAgIUW8hQEpQsUJN9a6qqF2g6hsNpSm8wBQYDK2VwMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAeFw0yNjA3MjAxOTAxMjFaFw0zNjA3MTcxOTAxMjFaMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAqMAUGAytlcAMhAAihki/Jec+1EaC6E6PsSxjMYFAazrgkNiUIlbj/+A/0o4GkMIGhMB0GA1UdDgQWBBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAfBgNVHSMEGDAWgBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAsBgNVHREEJTAjgglsb2NhbGhvc3SHBH8AAAGHEAAAAAAAAAAAAAAAAAAAAAEwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAwwCgYIKwYBBQUHAwEwBQYDK2VwA0EArZng3XitiH2E1pW/NTxQvEOBXJYpYE8coQmLV4yTjfI43CWHMG6lIrwk/so67oe6Z2R4iHGjUm3Tuy50Fl8hBw==";

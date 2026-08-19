@@ -13,7 +13,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
 )
 
 const maxAuthorizationRecordBytes = 96 * 1024
@@ -23,7 +23,7 @@ var leaseIDPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{1,128}$`)
 // AuthorizationRecord is the opaque, secret server-side counterpart of one
 // issued artifact. Its explicit Encode method is the only persistence boundary.
 type AuthorizationRecord struct {
-	artifact         *artifactv2.Artifact
+	artifact         *artifactv3.Artifact
 	artifactJSON     []byte
 	lookupKey        string
 	directUpstream   string
@@ -38,7 +38,7 @@ type authorizationRecordWire struct {
 	AllowReplacement  bool   `json:"allow_replacement"`
 }
 
-func newAuthorizationRecord(artifact *artifactv2.Artifact, encoded []byte, directUpstream string, allowReplacement bool) (AuthorizationRecord, error) {
+func newAuthorizationRecord(artifact *artifactv3.Artifact, encoded []byte, directUpstream string, allowReplacement bool) (AuthorizationRecord, error) {
 	if artifact == nil || len(encoded) == 0 {
 		return AuthorizationRecord{}, ErrInvalidControlPlaneInput
 	}
@@ -46,7 +46,7 @@ func newAuthorizationRecord(artifact *artifactv2.Artifact, encoded []byte, direc
 	if credential == "" {
 		return AuthorizationRecord{}, ErrInvalidControlPlaneInput
 	}
-	if artifact.Path.Kind == artifactv2.PathDirect {
+	if artifact.Path.Kind == artifactv3.PathDirect {
 		if directUpstream == "" || allowReplacement {
 			return AuthorizationRecord{}, ErrInvalidControlPlaneInput
 		}
@@ -90,7 +90,7 @@ func ParseAuthorizationRecord(encoded []byte) (AuthorizationRecord, error) {
 	if err != nil {
 		return AuthorizationRecord{}, ErrInvalidControlPlaneInput
 	}
-	artifact, err := artifactv2.DecodeArtifactJSON(bytes.NewReader(artifactJSON))
+	artifact, err := artifactv3.DecodeArtifactJSON(bytes.NewReader(artifactJSON))
 	if err != nil {
 		return AuthorizationRecord{}, ErrInvalidControlPlaneInput
 	}
@@ -105,11 +105,11 @@ func (record AuthorizationRecord) validate() error {
 	if record.artifact == nil || len(record.artifactJSON) == 0 || record.lookupKey == "" {
 		return ErrInvalidControlPlaneInput
 	}
-	parsed, err := artifactv2.DecodeArtifactJSON(bytes.NewReader(record.artifactJSON))
+	parsed, err := artifactv3.DecodeArtifactJSON(bytes.NewReader(record.artifactJSON))
 	if err != nil || credentialLookupKey(artifactCredential(parsed)) != record.lookupKey {
 		return ErrInvalidControlPlaneInput
 	}
-	if record.artifact.Path.Kind == artifactv2.PathDirect {
+	if record.artifact.Path.Kind == artifactv3.PathDirect {
 		if record.directUpstream == "" || record.allowReplacement {
 			return ErrInvalidControlPlaneInput
 		}
@@ -126,19 +126,19 @@ func (AuthorizationRecord) MarshalJSON() ([]byte, error) { return []byte("{}"), 
 // RuntimeAuthorizationRequest is a validated opaque request received from the
 // flowersec-runtime HTTP authorizer callback.
 type RuntimeAuthorizationRequest struct {
-	decoded   *artifactv2.DecodedRequest
+	decoded   *artifactv3.DecodedRequest
 	lookupKey string
-	carrier   artifactv2.Carrier
+	carrier   artifactv3.Carrier
 }
 
 type runtimeAuthorizationRequestWire struct {
-	FSB2Base64URL string `json:"fsb2_base64url"`
+	FSB3Base64URL string `json:"fsb3_base64url"`
 	Carrier       string `json:"carrier"`
 	RemoteAddress string `json:"remote_address"`
 }
 
 // ParseRuntimeAuthorizationRequest validates the strict runtime request and
-// ensures its separately observed carrier matches the selected FSB2 candidate.
+// ensures its separately observed carrier matches the selected FSB3 candidate.
 func ParseRuntimeAuthorizationRequest(encoded []byte) (RuntimeAuthorizationRequest, error) {
 	if len(encoded) == 0 || len(encoded) > 64*1024 {
 		return RuntimeAuthorizationRequest{}, ErrInvalidControlPlaneInput
@@ -147,15 +147,15 @@ func ParseRuntimeAuthorizationRequest(encoded []byte) (RuntimeAuthorizationReque
 	if err := decodeStrict(encoded, &wire); err != nil || !validObservedText(wire.RemoteAddress, 512) {
 		return RuntimeAuthorizationRequest{}, ErrInvalidControlPlaneInput
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(wire.FSB2Base64URL)
+	raw, err := base64.RawURLEncoding.DecodeString(wire.FSB3Base64URL)
 	if err != nil {
 		return RuntimeAuthorizationRequest{}, ErrInvalidControlPlaneInput
 	}
-	decoded, err := artifactv2.ParseRequest(raw)
+	decoded, err := artifactv3.ParseRequest(raw)
 	if err != nil {
 		return RuntimeAuthorizationRequest{}, ErrInvalidControlPlaneInput
 	}
-	carrier := artifactv2.Carrier(wire.Carrier)
+	carrier := artifactv3.Carrier(wire.Carrier)
 	matchedCarrier := false
 	for _, candidate := range decoded.Request.Candidates {
 		if candidate.ID == decoded.Request.ChosenCandidateID && candidate.Carrier == carrier {
@@ -166,7 +166,7 @@ func ParseRuntimeAuthorizationRequest(encoded []byte) (RuntimeAuthorizationReque
 		return RuntimeAuthorizationRequest{}, ErrInvalidControlPlaneInput
 	}
 	credential := decoded.Request.RoutingToken
-	if decoded.Request.PathKind == artifactv2.PathTunnel {
+	if decoded.Request.PathKind == artifactv3.PathTunnel {
 		credential = decoded.Request.AttachToken
 	}
 	if credential == "" {
@@ -243,13 +243,13 @@ type runtimeAuthorizationResponseWire struct {
 	Direct       *directAuthorizationWire `json:"direct"`
 }
 
-// AuthorizeRuntime verifies the complete FSB2 bytes against the stored
+// AuthorizeRuntime verifies the complete FSB3 bytes against the stored
 // artifact before producing an allow response. The caller must atomically
 // reserve the one-time record and provide its durable lease ID first.
 func AuthorizeRuntime(request RuntimeAuthorizationRequest, record AuthorizationRecord, leaseID string) (AuthorizationResponse, error) {
-	if request.decoded == nil || request.decoded.Request.PathKind != artifactv2.PathDirect ||
+	if request.decoded == nil || request.decoded.Request.PathKind != artifactv3.PathDirect ||
 		request.lookupKey == "" || !leaseIDPattern.MatchString(leaseID) || record.validate() != nil ||
-		record.artifact.Path.Kind != artifactv2.PathDirect ||
+		record.artifact.Path.Kind != artifactv3.PathDirect ||
 		subtle.ConstantTimeCompare([]byte(request.lookupKey), []byte(record.lookupKey)) != 1 {
 		return AuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
@@ -257,11 +257,11 @@ func AuthorizeRuntime(request RuntimeAuthorizationRequest, record AuthorizationR
 	if time.Now().Unix() >= artifact.Session.InitExpireAtUnixSeconds {
 		return AuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
-	expected, err := artifactv2.BuildRequest(*artifact, request.decoded.Request.ChosenCandidateID)
+	expected, err := artifactv3.BuildRequest(*artifact, request.decoded.Request.ChosenCandidateID)
 	if err != nil {
 		return AuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
-	expectedRaw, err := artifactv2.MarshalRequest(expected)
+	expectedRaw, err := artifactv3.MarshalRequest(expected)
 	if err != nil || subtle.ConstantTimeCompare(expectedRaw, request.decoded.Raw) != 1 {
 		return AuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
@@ -283,9 +283,9 @@ func AuthorizeRuntime(request RuntimeAuthorizationRequest, record AuthorizationR
 // AuthorizeTunnelRuntime verifies one tunnel admission and returns only the
 // claims required to pair and forward opaque carrier streams.
 func AuthorizeTunnelRuntime(request RuntimeAuthorizationRequest, record AuthorizationRecord, leaseID string) (TunnelAuthorizationResponse, error) {
-	if request.decoded == nil || request.decoded.Request.PathKind != artifactv2.PathTunnel ||
+	if request.decoded == nil || request.decoded.Request.PathKind != artifactv3.PathTunnel ||
 		request.lookupKey == "" || !leaseIDPattern.MatchString(leaseID) || record.validate() != nil ||
-		record.artifact.Path.Kind != artifactv2.PathTunnel ||
+		record.artifact.Path.Kind != artifactv3.PathTunnel ||
 		subtle.ConstantTimeCompare([]byte(request.lookupKey), []byte(record.lookupKey)) != 1 {
 		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
@@ -293,11 +293,11 @@ func AuthorizeTunnelRuntime(request RuntimeAuthorizationRequest, record Authoriz
 	if time.Now().Unix() >= artifact.Session.InitExpireAtUnixSeconds {
 		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
-	expected, err := artifactv2.BuildRequest(*artifact, request.decoded.Request.ChosenCandidateID)
+	expected, err := artifactv3.BuildRequest(*artifact, request.decoded.Request.ChosenCandidateID)
 	if err != nil {
 		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
-	expectedRaw, err := artifactv2.MarshalRequest(expected)
+	expectedRaw, err := artifactv3.MarshalRequest(expected)
 	if err != nil || subtle.ConstantTimeCompare(expectedRaw, request.decoded.Raw) != 1 {
 		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
@@ -315,7 +315,7 @@ func AuthorizeTunnelRuntime(request RuntimeAuthorizationRequest, record Authoriz
 // boundary lets an untrusted relay consume only pairing and lease claims; it
 // never requires an Artifact, AuthorizationRecord, Session contract, or PSK.
 func AllowTunnelRuntime(request RuntimeAuthorizationRequest, leaseID string, expiresAt time.Time, expectedPeerEndpointInstanceID string, allowReplacement bool) (TunnelAuthorizationResponse, error) {
-	if request.decoded == nil || request.decoded.Request.PathKind != artifactv2.PathTunnel ||
+	if request.decoded == nil || request.decoded.Request.PathKind != artifactv3.PathTunnel ||
 		request.lookupKey == "" || !leaseIDPattern.MatchString(leaseID) ||
 		!leaseIDPattern.MatchString(expectedPeerEndpointInstanceID) ||
 		expectedPeerEndpointInstanceID == request.decoded.Request.EndpointInstanceID ||
@@ -355,15 +355,15 @@ func RejectTunnelRuntime(reason string, retryable bool) (TunnelAuthorizationResp
 // RejectRuntime creates a bounded reject or retry response for a reason token
 // that is also configured in flowersec-runtime's rejection reason registry.
 func RejectRuntime(reason string, retryable bool) (AuthorizationResponse, error) {
-	status := artifactv2.AdmissionReject
+	status := artifactv3.AdmissionReject
 	decision := "reject"
 	if retryable {
-		status = artifactv2.AdmissionRetryable
+		status = artifactv3.AdmissionRetryable
 		decision = "retry"
 	}
-	if _, err := artifactv2.MarshalResponse(
-		artifactv2.AdmissionResponse{Status: status, Reason: reason},
-		artifactv2.ReasonRegistry{reason: {}},
+	if _, err := artifactv3.MarshalResponse(
+		artifactv3.AdmissionResponse{Status: status, Reason: reason},
+		artifactv3.ReasonRegistry{reason: {}},
 	); err != nil {
 		return AuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
@@ -374,7 +374,7 @@ func RejectRuntime(reason string, retryable bool) (AuthorizationResponse, error)
 	return AuthorizationResponse{encoded: encoded}, nil
 }
 
-func sessionWire(session artifactv2.SessionContract) authorizedSessionWire {
+func sessionWire(session artifactv3.SessionContract) authorizedSessionWire {
 	return authorizedSessionWire{
 		ChannelID: session.ChannelID, InitExpireAtUnixSeconds: session.InitExpireAtUnixSeconds,
 		IdleTimeoutSeconds: session.IdleTimeoutSeconds, EstablishTimeoutSeconds: session.EstablishTimeoutSeconds,
@@ -387,14 +387,14 @@ func sessionWire(session artifactv2.SessionContract) authorizedSessionWire {
 	}
 }
 
-func artifactCredential(artifact *artifactv2.Artifact) string {
+func artifactCredential(artifact *artifactv3.Artifact) string {
 	if artifact == nil {
 		return ""
 	}
-	if artifact.Path.Kind == artifactv2.PathDirect {
+	if artifact.Path.Kind == artifactv3.PathDirect {
 		return artifact.Path.RoutingToken
 	}
-	if artifact.Path.Kind == artifactv2.PathTunnel {
+	if artifact.Path.Kind == artifactv3.PathTunnel {
 		return artifact.Path.Token
 	}
 	return ""

@@ -1,4 +1,4 @@
-// Package tunnelworkload runs production Flowersec v2 tunnel workloads for
+// Package tunnelworkload runs production Flowersec v3 tunnel workloads for
 // the privileged transport test producer.
 package tunnelworkload
 
@@ -23,21 +23,21 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/candidatev2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/runtimev2"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest/linuxnetlab"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/candidatev3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/quicbase"
+	rawquic "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/rawquicv3"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocketv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v3/internal/rpcwire"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/runtimev3"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest/linuxnetlab"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/tunnelv3"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -112,7 +112,7 @@ type establishmentTimeline struct {
 func (timeline *establishmentTimeline) record(
 	role uint8,
 	candidateID string,
-	carrierKind artifactv2.Carrier,
+	carrierKind artifactv3.Carrier,
 	stage string,
 	started, finished time.Time,
 	err error,
@@ -172,13 +172,13 @@ func compactStageFailure(err error) string {
 }
 
 type diagnosticAttempt struct {
-	connectv2.CandidateAttempt
+	connectv3.CandidateAttempt
 	timeline  *establishmentTimeline
 	role      uint8
-	candidate artifactv2.Candidate
+	candidate artifactv3.Candidate
 }
 
-func (attempt *diagnosticAttempt) Ready(ctx context.Context) (connectv2.AdmissionCommit, error) {
+func (attempt *diagnosticAttempt) Ready(ctx context.Context) (connectv3.AdmissionCommit, error) {
 	started := time.Now()
 	prepared, err := attempt.CandidateAttempt.Ready(ctx)
 	finished := time.Now()
@@ -195,19 +195,19 @@ func (attempt *diagnosticAttempt) Ready(ctx context.Context) (connectv2.Admissio
 }
 
 type diagnosticPrepared struct {
-	connectv2.AdmissionCommit
+	connectv3.AdmissionCommit
 	timeline  *establishmentTimeline
 	role      uint8
-	candidate artifactv2.Candidate
+	candidate artifactv3.Candidate
 }
 
 func (prepared *diagnosticPrepared) Commit(
 	ctx context.Context,
 	commitSpend func(context.Context) error,
-	fsb2 []byte,
+	fsb3 []byte,
 ) (carrier.Session, error) {
 	started := time.Now()
-	session, err := prepared.AdmissionCommit.Commit(ctx, commitSpend, fsb2)
+	session, err := prepared.AdmissionCommit.Commit(ctx, commitSpend, fsb3)
 	prepared.timeline.record(
 		prepared.role, prepared.candidate.ID, prepared.candidate.Carrier,
 		"admission", started, time.Now(), err,
@@ -215,11 +215,11 @@ func (prepared *diagnosticPrepared) Commit(
 	return session, err
 }
 
-func transportDiagnosticStage(carrierKind artifactv2.Carrier) string {
+func transportDiagnosticStage(carrierKind artifactv3.Carrier) string {
 	switch carrierKind {
-	case artifactv2.CarrierWebSocket:
+	case artifactv3.CarrierWebSocket:
 		return "tcp_tls"
-	case artifactv2.CarrierRawQUIC, artifactv2.CarrierWebTransport:
+	case artifactv3.CarrierRawQUIC, artifactv3.CarrierWebTransport:
 		return "quic"
 	default:
 		return "transport"
@@ -231,11 +231,11 @@ func transportDiagnosticStage(carrierKind artifactv2.Carrier) string {
 // the client namespace so both physical legs cross the configured link.
 type Endpoint struct {
 	topology            Topology
-	suite               protocolv2.Suite
+	suite               protocolv3.Suite
 	listenHost          string
-	candidates          []artifactv2.Candidate
-	factory             *candidatev2.Factory
-	coordinator         *tunnelv2.Coordinator
+	candidates          []artifactv3.Candidate
+	factory             *candidatev3.Factory
+	coordinator         *tunnelv3.Coordinator
 	maxInboundStreams   uint16
 	serverDialNamespace string
 
@@ -257,9 +257,9 @@ type Endpoint struct {
 
 // Pair owns two end-to-end encrypted sessions established through the tunnel.
 type Pair struct {
-	Client flowersession.SessionV2
-	Server flowersession.SessionV2
-	Suite  protocolv2.Suite
+	Client flowersession.Session
+	Server flowersession.Session
+	Suite  protocolv3.Suite
 
 	closeOnce sync.Once
 	closeErr  error
@@ -267,13 +267,13 @@ type Pair struct {
 
 // OpenEndpointAt binds both tunnel listeners to one concrete unicast address.
 func OpenEndpointAt(ctx context.Context, topology Topology, listenHost string) (*Endpoint, error) {
-	return OpenEndpointAtWithSuite(ctx, topology, listenHost, protocolv2.SuiteChaCha20Poly1305)
+	return OpenEndpointAtWithSuite(ctx, topology, listenHost, protocolv3.SuiteChaCha20Poly1305)
 }
 
 // OpenEndpointAtWithSuite binds both tunnel legs to the exact frozen E2EE
 // suite required by a release case.
-func OpenEndpointAtWithSuite(ctx context.Context, topology Topology, listenHost string, suite protocolv2.Suite) (*Endpoint, error) {
-	return openEndpointAtWithSuiteAndCoordinator(ctx, topology, listenHost, suite, tunnelv2.Config{})
+func OpenEndpointAtWithSuite(ctx context.Context, topology Topology, listenHost string, suite protocolv3.Suite) (*Endpoint, error) {
+	return openEndpointAtWithSuiteAndCoordinator(ctx, topology, listenHost, suite, tunnelv3.Config{})
 }
 
 // OpenTestEndpointAt binds the coordinator pairing deadline to the
@@ -283,7 +283,7 @@ func OpenTestEndpointAt(ctx context.Context, topology Topology, listenHost strin
 	if err != nil {
 		return nil, err
 	}
-	return openEndpointAtWithSuiteAndCoordinator(ctx, topology, listenHost, protocolv2.SuiteChaCha20Poly1305, config)
+	return openEndpointAtWithSuiteAndCoordinator(ctx, topology, listenHost, protocolv3.SuiteChaCha20Poly1305, config)
 }
 
 // SetEndpointDialNamespace binds both endpoint connector legs to one network
@@ -295,11 +295,11 @@ func (endpoint *Endpoint) SetEndpointDialNamespace(namespace string) {
 	}
 }
 
-func releaseCoordinatorConfig(plan transporttest.ProfilePlan) (tunnelv2.Config, error) {
+func releaseCoordinatorConfig(plan transporttest.ProfilePlan) (tunnelv3.Config, error) {
 	if plan.Cold.OperationDeadlineSeconds < 1 || plan.Cold.PhaseDeadlineSeconds < plan.Cold.OperationDeadlineSeconds {
-		return tunnelv2.Config{}, errors.New("release tunnel profile has invalid cold deadlines")
+		return tunnelv3.Config{}, errors.New("release tunnel profile has invalid cold deadlines")
 	}
-	config := tunnelv2.DefaultConfig()
+	config := tunnelv3.DefaultConfig()
 	config.PairTimeout = time.Duration(plan.Cold.PhaseDeadlineSeconds) * time.Second
 	config.AdmissionResponseTimeout = releaseEstablishTimeout
 	config.ActivationTimeout = releaseEstablishTimeout
@@ -314,10 +314,10 @@ func OpenCapacityEndpointAt(ctx context.Context, topology Topology, listenHost s
 	if err != nil {
 		return nil, err
 	}
-	return openEndpointAtWithSuiteAndCoordinator(ctx, topology, listenHost, protocolv2.SuiteChaCha20Poly1305, config)
+	return openEndpointAtWithSuiteAndCoordinator(ctx, topology, listenHost, protocolv3.SuiteChaCha20Poly1305, config)
 }
 
-func openEndpointAtWithSuiteAndCoordinator(ctx context.Context, topology Topology, listenHost string, suite protocolv2.Suite, coordinatorConfig tunnelv2.Config) (*Endpoint, error) {
+func openEndpointAtWithSuiteAndCoordinator(ctx context.Context, topology Topology, listenHost string, suite protocolv3.Suite, coordinatorConfig tunnelv3.Config) (*Endpoint, error) {
 	clientKind, serverKind, err := topology.Carriers()
 	if err != nil {
 		return nil, err
@@ -326,8 +326,8 @@ func openEndpointAtWithSuiteAndCoordinator(ctx context.Context, topology Topolog
 	if address == nil || address.IsUnspecified() || address.IsMulticast() {
 		return nil, errors.New("production tunnel endpoint requires a concrete unicast IP address")
 	}
-	if suite != protocolv2.SuiteChaCha20Poly1305 && suite != protocolv2.SuiteAES256GCM {
-		return nil, protocolv2.ErrInvalidSuite
+	if suite != protocolv3.SuiteChaCha20Poly1305 && suite != protocolv3.SuiteAES256GCM {
+		return nil, protocolv3.ErrInvalidSuite
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -342,7 +342,7 @@ func openEndpointAtWithSuiteAndCoordinator(ctx context.Context, topology Topolog
 		maxInboundStreams: defaultMaxInboundStreams,
 		expectations:      make(map[[sha256.Size]byte]*admissionExpectation), closeDone: make(chan struct{}),
 	}
-	coordinator, err := tunnelv2.NewCoordinator(coordinatorConfig, endpoint.authorize)
+	coordinator, err := tunnelv3.NewCoordinator(coordinatorConfig, endpoint.authorize)
 	if err != nil {
 		cancel(err)
 		return nil, err
@@ -361,7 +361,7 @@ func openEndpointAtWithSuiteAndCoordinator(ctx context.Context, topology Topolog
 		cleanupCancel()
 		return nil, err
 	}
-	endpoint.candidates = []artifactv2.Candidate{clientCandidate, serverCandidate}
+	endpoint.candidates = []artifactv3.Candidate{clientCandidate, serverCandidate}
 	factory, err := endpoint.newCandidateFactory(roots)
 	if err != nil {
 		cancel(err)
@@ -374,32 +374,32 @@ func openEndpointAtWithSuiteAndCoordinator(ctx context.Context, topology Topolog
 	return endpoint, nil
 }
 
-func capacityCoordinatorConfig(sessions int) (tunnelv2.Config, error) {
+func capacityCoordinatorConfig(sessions int) (tunnelv3.Config, error) {
 	if sessions != 1000 {
-		return tunnelv2.Config{}, errors.New("release tunnel capacity requires exactly 1000 sessions")
+		return tunnelv3.Config{}, errors.New("release tunnel capacity requires exactly 1000 sessions")
 	}
-	config := tunnelv2.DefaultConfig()
+	config := tunnelv3.DefaultConfig()
 	config.MaxPendingLegs = sessions * 2
 	config.MaxActivePairs = sessions
 	return config, nil
 }
 
-func (endpoint *Endpoint) startListener(id string, kind carrier.Kind, baseTLS *tls.Config) (artifactv2.Candidate, error) {
+func (endpoint *Endpoint) startListener(id string, kind carrier.Kind, baseTLS *tls.Config) (artifactv3.Candidate, error) {
 	switch kind {
 	case carrier.KindWebSocket:
 		return endpoint.startWebSocketListener(id, baseTLS.Clone())
 	case carrier.KindRawQUIC:
 		return endpoint.startRawQUICListener(id, baseTLS.Clone())
 	default:
-		return artifactv2.Candidate{}, fmt.Errorf("unsupported tunnel workload carrier %q", kind)
+		return artifactv3.Candidate{}, fmt.Errorf("unsupported tunnel workload carrier %q", kind)
 	}
 }
 
-func (endpoint *Endpoint) startWebSocketListener(id string, serverTLS *tls.Config) (artifactv2.Candidate, error) {
+func (endpoint *Endpoint) startWebSocketListener(id string, serverTLS *tls.Config) (artifactv3.Candidate, error) {
 	serverTLS.NextProtos = nil
 	listener, err := tls.Listen("tcp4", net.JoinHostPort(endpoint.listenHost, "0"), serverTLS)
 	if err != nil {
-		return artifactv2.Candidate{}, err
+		return artifactv3.Candidate{}, err
 	}
 	upgrader := gorillaws.Upgrader{Subprotocols: []string{carrierws.SubprotocolTunnel}}
 	httpServer := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -412,7 +412,7 @@ func (endpoint *Endpoint) startWebSocketListener(id string, serverTLS *tls.Confi
 			_ = connection.Close()
 			return
 		}
-		pending, pendingErr := tunnelv2.NewWebSocketPendingLeg(connection, resources)
+		pending, pendingErr := tunnelv3.NewWebSocketPendingLeg(connection, resources)
 		if pendingErr != nil {
 			_ = connection.Close()
 			return
@@ -441,22 +441,23 @@ func (endpoint *Endpoint) startWebSocketListener(id string, serverTLS *tls.Confi
 			return errors.Join(shutdownErr, context.Cause(ctx))
 		}
 	}})
-	return artifactv2.Candidate{
-		ID: id, Carrier: artifactv2.CarrierWebSocket,
-		URL:         "wss://" + net.JoinHostPort(endpoint.listenHost, fmt.Sprint(listener.Addr().(*net.TCPAddr).Port)) + "/flowersec/v2/tunnel",
+	return artifactv3.Candidate{
+		ID: id, Carrier: artifactv3.CarrierWebSocket,
+		URL:         "wss://" + net.JoinHostPort(endpoint.listenHost, fmt.Sprint(listener.Addr().(*net.TCPAddr).Port)) + "/flowersec/v3/tunnel",
 		WireProfile: rawquic.ALPNTunnel,
+		TLS:         artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA},
 	}, nil
 }
 
-func (endpoint *Endpoint) startRawQUICListener(id string, serverTLS *tls.Config) (artifactv2.Candidate, error) {
+func (endpoint *Endpoint) startRawQUICListener(id string, serverTLS *tls.Config) (artifactv3.Candidate, error) {
 	serverTLS.NextProtos = []string{rawquic.ALPNTunnel}
 	limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), endpoint.maxInboundStreams)
 	if err != nil {
-		return artifactv2.Candidate{}, err
+		return artifactv3.Candidate{}, err
 	}
 	listener, err := rawquic.Listen(net.JoinHostPort(endpoint.listenHost, "0"), serverTLS, limits)
 	if err != nil {
-		return artifactv2.Candidate{}, err
+		return artifactv3.Candidate{}, err
 	}
 	endpoint.acceptWG.Add(1)
 	go func() {
@@ -474,10 +475,11 @@ func (endpoint *Endpoint) startRawQUICListener(id string, serverTLS *tls.Config)
 		}
 	}()
 	endpoint.listeners = append(endpoint.listeners, listenerOwner{close: func(context.Context) error { return listener.Close() }})
-	return artifactv2.Candidate{
-		ID: id, Carrier: artifactv2.CarrierRawQUIC,
+	return artifactv3.Candidate{
+		ID: id, Carrier: artifactv3.CarrierRawQUIC,
 		URL:         "quic://" + net.JoinHostPort(endpoint.listenHost, fmt.Sprint(listener.Addr().(*net.UDPAddr).Port)),
 		WireProfile: rawquic.ALPNTunnel,
+		TLS:         artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA},
 	}, nil
 }
 
@@ -488,7 +490,7 @@ func (endpoint *Endpoint) serveRawQUIC(session *rawquic.Session) {
 		_ = session.Close()
 		return
 	}
-	pending, err := tunnelv2.NewNativeStreamLeg(session, stream)
+	pending, err := tunnelv3.NewNativeStreamLeg(session, stream)
 	if err != nil {
 		_ = session.Close()
 		return
@@ -496,7 +498,7 @@ func (endpoint *Endpoint) serveRawQUIC(session *rawquic.Session) {
 	_ = endpoint.coordinator.Serve(endpoint.ctx, pending)
 }
 
-func (endpoint *Endpoint) newCandidateFactory(roots *x509.CertPool) (*candidatev2.Factory, error) {
+func (endpoint *Endpoint) newCandidateFactory(roots *x509.CertPool) (*candidatev3.Factory, error) {
 	clientTLS := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: endpoint.listenHost}
 	webSocketResources, err := webSocketResourcesForSession(endpoint.maxInboundStreams)
 	if err != nil {
@@ -504,7 +506,7 @@ func (endpoint *Endpoint) newCandidateFactory(roots *x509.CertPool) (*candidatev
 	}
 	webSocketDialer := &gorillaws.Dialer{TLSClientConfig: clientTLS}
 	webSocketDialer.NetDialContext = endpoint.dialTCP
-	webSocketDial, err := candidatev2.NewWebSocketCarrierDial(candidatev2.WebSocketDialConfig{
+	webSocketDial, err := candidatev3.NewWebSocketCarrierDial(candidatev3.WebSocketDialConfig{
 		Dialer: webSocketDialer, Resources: webSocketResources,
 	})
 	if err != nil {
@@ -514,15 +516,15 @@ func (endpoint *Endpoint) newCandidateFactory(roots *x509.CertPool) (*candidatev
 	if err != nil {
 		return nil, err
 	}
-	rawQUICDial, err := candidatev2.NewRawQUICCarrierDial(candidatev2.RawQUICDialConfig{
+	rawQUICDial, err := candidatev3.NewRawQUICCarrierDial(candidatev3.RawQUICDialConfig{
 		TLSConfig: clientTLS, Limits: rawQUICLimits, Dial: endpoint.dialRawQUIC,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return candidatev2.NewFactory(map[artifactv2.Carrier]candidatev2.Dial{
-		artifactv2.CarrierWebSocket: webSocketDial,
-		artifactv2.CarrierRawQUIC:   rawQUICDial,
+	return candidatev3.NewFactory(map[artifactv3.Carrier]candidatev3.Dial{
+		artifactv3.CarrierWebSocket: webSocketDial,
+		artifactv3.CarrierRawQUIC:   rawQUICDial,
 	})
 }
 
@@ -606,25 +608,25 @@ func (endpoint *Endpoint) Connect(ctx context.Context) (*Pair, error) {
 	pairingStarted := time.Now()
 	type connectResult struct {
 		role    uint8
-		session flowersession.SessionV2
+		session flowersession.Session
 		err     error
 	}
 	results := make(chan connectResult, 2)
-	connectOne := func(role uint8, artifact artifactv2.Artifact, candidateID string) {
+	connectOne := func(role uint8, artifact artifactv3.Artifact, candidateID string) {
 		factory := &selectedFactory{
 			base: endpoint.factory, candidateID: candidateID,
 			role: role, timeline: timeline,
 		}
-		var connectorOptions []connectv2.ConnectorOption
+		var connectorOptions []connectv3.ConnectorOption
 		if role == 2 {
 			router := internalrpc.NewRouter()
 			router.Register(1, func(_ context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
 				return append(json.RawMessage(nil), payload...), nil
 			})
-			connectorOptions = append(connectorOptions, connectv2.WithRPCRouter(router))
+			connectorOptions = append(connectorOptions, connectv3.WithRPCRouter(router))
 		}
 		var spent atomic.Bool
-		connector := connectv2.NewConnector(connectv2.ArtifactLease{
+		connector := connectv3.NewConnector(connectv3.ArtifactLease{
 			Artifact: artifact,
 			CommitSpend: func(context.Context) error {
 				if !spent.CompareAndSwap(false, true) {
@@ -651,7 +653,7 @@ func (endpoint *Endpoint) Connect(ctx context.Context) (*Pair, error) {
 	}
 	go connectOne(1, clientArtifact, "client-leg")
 	go connectOne(2, serverArtifact, "server-leg")
-	pair := Pair{Suite: protocolv2.Suite(contract.DefaultSuite)}
+	pair := Pair{Suite: protocolv3.Suite(contract.DefaultSuite)}
 	var joined error
 	for range 2 {
 		result := <-results
@@ -676,22 +678,22 @@ func (endpoint *Endpoint) Connect(ctx context.Context) (*Pair, error) {
 }
 
 type selectedFactory struct {
-	base        *candidatev2.Factory
+	base        *candidatev3.Factory
 	candidateID string
-	carrier     artifactv2.Carrier
+	carrier     artifactv3.Carrier
 	role        uint8
 	timeline    *establishmentTimeline
 }
 
-func (factory *selectedFactory) Capabilities() runtimev2.CapabilityDescriptor {
+func (factory *selectedFactory) Capabilities() runtimev3.CapabilityDescriptor {
 	return factory.base.Capabilities()
 }
 
-func (factory *selectedFactory) NewAttempt(candidate artifactv2.Candidate, contract artifactv2.SessionContract) (connectv2.CandidateAttempt, error) {
+func (factory *selectedFactory) NewAttempt(candidate artifactv3.Candidate, contract artifactv3.SessionContract, attemptNow time.Time) (connectv3.CandidateAttempt, error) {
 	if candidate.ID != factory.candidateID {
 		return nil, errors.New("candidate belongs to the peer tunnel leg")
 	}
-	attempt, err := factory.base.NewAttempt(candidate, contract)
+	attempt, err := factory.base.NewAttempt(candidate, contract, attemptNow)
 	if err != nil {
 		return nil, err
 	}
@@ -701,25 +703,25 @@ func (factory *selectedFactory) NewAttempt(candidate artifactv2.Candidate, contr
 	}, nil
 }
 
-func (endpoint *Endpoint) artifact(contract artifactv2.SessionContract, group string, role uint8, local, peer, token string) artifactv2.Artifact {
-	return artifactv2.Artifact{
-		Version: 2, Profile: artifactv2.Profile, Session: contract,
-		Path: artifactv2.ArtifactPath{
-			Kind: artifactv2.PathTunnel, RendezvousGroupID: group, ListenerAudience: listenerAudience,
+func (endpoint *Endpoint) artifact(contract artifactv3.SessionContract, group string, role uint8, local, peer, token string) artifactv3.Artifact {
+	return artifactv3.Artifact{
+		Version: 3, Profile: artifactv3.Profile, Session: contract,
+		Path: artifactv3.ArtifactPath{
+			Kind: artifactv3.PathTunnel, RendezvousGroupID: group, ListenerAudience: listenerAudience,
 			Role: role, LocalEndpointInstanceID: local, ExpectedPeerEndpointInstanceID: peer,
-			Token: token, Candidates: append([]artifactv2.Candidate(nil), endpoint.candidates...),
+			Token: token, Candidates: append([]artifactv3.Candidate(nil), endpoint.candidates...),
 		},
-		Scoped:      []artifactv2.ScopeMetadata{},
-		Correlation: artifactv2.CorrelationContext{Version: 2, Tags: []artifactv2.CorrelationTag{}},
+		Scoped:      []artifactv3.ScopeMetadata{},
+		Correlation: artifactv3.CorrelationContext{Version: 3, Tags: []artifactv3.CorrelationTag{}},
 	}
 }
 
-func expectedRequest(artifact artifactv2.Artifact, candidateID string) ([]byte, error) {
-	request, err := artifactv2.BuildRequest(artifact, candidateID)
+func expectedRequest(artifact artifactv3.Artifact, candidateID string) ([]byte, error) {
+	request, err := artifactv3.BuildRequest(artifact, candidateID)
 	if err != nil {
 		return nil, err
 	}
-	return artifactv2.MarshalRequest(request)
+	return artifactv3.MarshalRequest(request)
 }
 
 func (endpoint *Endpoint) register(expectations ...*admissionExpectation) error {
@@ -751,9 +753,9 @@ func (endpoint *Endpoint) unregister(expectations ...*admissionExpectation) {
 	}
 }
 
-func (endpoint *Endpoint) authorize(_ context.Context, decoded *artifactv2.DecodedRequest) (tunnelv2.Authorization, error) {
+func (endpoint *Endpoint) authorize(_ context.Context, decoded *artifactv3.DecodedRequest) (tunnelv3.Authorization, error) {
 	if decoded == nil {
-		return tunnelv2.Authorization{}, errors.New("tunnel admission was not issued by this endpoint")
+		return tunnelv3.Authorization{}, errors.New("tunnel admission was not issued by this endpoint")
 	}
 	digest := sha256.Sum256(decoded.Raw)
 	endpoint.expectMu.Lock()
@@ -767,11 +769,11 @@ func (endpoint *Endpoint) authorize(_ context.Context, decoded *artifactv2.Decod
 	}
 	endpoint.expectMu.Unlock()
 	if !valid {
-		return tunnelv2.Authorization{}, errors.New("tunnel admission was not issued by this endpoint")
+		return tunnelv3.Authorization{}, errors.New("tunnel admission was not issued by this endpoint")
 	}
 	request := decoded.Request
-	return tunnelv2.Authorization{
-		Claims: tunnelv2.VerifiedClaims{
+	return tunnelv3.Authorization{
+		Claims: tunnelv3.VerifiedClaims{
 			CredentialID: request.AttachToken, ChannelID: request.ChannelID, Profile: request.Profile,
 			RendezvousGroupID: request.RendezvousGroupID, SessionContractHash: request.SessionContractHash,
 			CandidateSetHash: request.CandidateSetHash, ListenerAudience: request.ListenerAudience,
@@ -797,7 +799,7 @@ func (pair *Pair) Close(ctx context.Context) error {
 	pair.closeOnce.Do(func() {
 		sessions := []struct {
 			label   string
-			session flowersession.SessionV2
+			session flowersession.Session
 		}{
 			{label: "client", session: pair.Client},
 			{label: "server", session: pair.Server},
@@ -807,7 +809,7 @@ func (pair *Pair) Close(ctx context.Context) error {
 		for _, entry := range sessions {
 			if entry.session != nil {
 				closeCount++
-				go func(label string, session flowersession.SessionV2) {
+				go func(label string, session flowersession.Session) {
 					if err := transporttest.NormalizeCloseError(session.Close()); err != nil {
 						closeErrors <- fmt.Errorf("%s tunnel session close: %w", label, err)
 						return
@@ -879,28 +881,28 @@ func (endpoint *Endpoint) closeListeners(ctx context.Context) error {
 	return joined
 }
 
-func releaseContract(suite protocolv2.Suite) (artifactv2.SessionContract, string, error) {
+func releaseContract(suite protocolv3.Suite) (artifactv3.SessionContract, string, error) {
 	return releaseContractWithStreams(suite, defaultMaxInboundStreams)
 }
 
-func releaseContractWithStreams(suite protocolv2.Suite, maxStreams uint16) (artifactv2.SessionContract, string, error) {
+func releaseContractWithStreams(suite protocolv3.Suite, maxStreams uint16) (artifactv3.SessionContract, string, error) {
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
-		return artifactv2.SessionContract{}, "", err
+		return artifactv3.SessionContract{}, "", err
 	}
 	suffix := hex.EncodeToString(nonce[:])
-	contract := artifactv2.SessionContract{
+	contract := artifactv3.SessionContract{
 		ChannelID: "tunnel-" + suffix, InitExpireAtUnixSeconds: time.Now().Add(time.Hour).Unix(),
 		IdleTimeoutSeconds: 60, EstablishTimeoutSeconds: uint16(releaseEstablishTimeout / time.Second),
 		RekeyPrepareTimeoutSeconds: 10, RekeyCompletionTimeoutSeconds: 30,
 		MaxInboundStreams: maxStreams, AllowedSuites: []uint16{uint16(suite)}, DefaultSuite: uint16(suite),
 	}
 	if _, err := rand.Read(contract.E2EEPSK[:]); err != nil {
-		return artifactv2.SessionContract{}, "", err
+		return artifactv3.SessionContract{}, "", err
 	}
-	hash, _, err := artifactv2.ComputeSessionContractHash(contract)
+	hash, _, err := artifactv3.ComputeSessionContractHash(contract)
 	if err != nil {
-		return artifactv2.SessionContract{}, "", err
+		return artifactv3.SessionContract{}, "", err
 	}
 	contract.ContractHash = hash
 	return contract, suffix, nil

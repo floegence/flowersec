@@ -30,18 +30,25 @@ const vectors = JSON.parse(readFileSync(
   path.join(repositoryRoot, "testdata/transport_v2/session_handler_vectors.json"),
   "utf8",
 )) as StreamKindVectors;
+const vectorsV3 = JSON.parse(readFileSync(
+  path.join(repositoryRoot, "testdata/transport_v3/session_handler_vectors.json"),
+  "utf8",
+)) as StreamKindVectors;
 
 describe("SessionHandlers", () => {
   test("enforces the shared UTF-8 stream-kind registration contract", () => {
-    for (const vector of vectors.stream_kinds) {
-      const handlers = new SessionHandlers();
-      const kind = vector.unit.repeat(vector.repeat) + vector.suffix;
-      if (vector.valid) {
-        expect(() => handlers.handleStream(kind, async () => undefined), vector.id).not.toThrow();
-      } else {
-        expect(() => handlers.handleStream(kind, async () => undefined), vector.id).toThrowError(
-          expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
-        );
+    for (const [version, fixture] of [[2, vectors], [3, vectorsV3]] as const) {
+      for (const vector of fixture.stream_kinds) {
+        const handlers = new SessionHandlers();
+        const kind = vector.unit.repeat(vector.repeat) + vector.suffix;
+        const id = `v${version}/${vector.id}`;
+        if (vector.valid) {
+          expect(() => handlers.handleStream(kind, async () => undefined), id).not.toThrow();
+        } else {
+          expect(() => handlers.handleStream(kind, async () => undefined), id).toThrowError(
+            expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
+          );
+        }
       }
     }
 
@@ -68,13 +75,16 @@ describe("RPCHandlers", () => {
   test("enforces the nonzero uint32 shared namespace without replacing the first handler", async () => {
     const handlers = new RPCHandlers();
     const original = async () => ({ payload: "original" as const });
-    for (const vector of vectors.rpc_type_ids) {
-      const vectorHandlers = new RPCHandlers();
-      const registration = () => vectorHandlers.handleRPC(vector.value, original);
-      if (vector.valid) expect(registration, vector.id).not.toThrow();
-      else expect(registration, vector.id).toThrowError(
-        expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
-      );
+    for (const [version, fixture] of [[2, vectors], [3, vectorsV3]] as const) {
+      for (const vector of fixture.rpc_type_ids) {
+        const vectorHandlers = new RPCHandlers();
+        const registration = () => vectorHandlers.handleRPC(vector.value, original);
+        const id = `v${version}/${vector.id}`;
+        if (vector.valid) expect(registration, id).not.toThrow();
+        else expect(registration, id).toThrowError(
+          expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
+        );
+      }
     }
     expect(() => handlers.handleRPC(1, undefined as never)).toThrowError(
       expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),

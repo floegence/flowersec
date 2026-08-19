@@ -4,6 +4,7 @@ This file is generated from the canonical Flowersec source dependency inventory 
 Do not edit it manually. License decisions are reviewed by the repository source license policy.
 
 - github.com/dunglas/httpsfv v1.1.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/dunglas/httpsfv)
+- github.com/floegence/flowersec/flowersec-go/v2 v2.5.4 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec/flowersec-go/v2)
 - github.com/gorilla/websocket v1.5.3 (Declared: BSD-2-Clause; selected: BSD-2-Clause; source: https://github.com/gorilla/websocket)
 - github.com/libp2p/go-buffer-pool v0.0.2 (Declared: MIT; selected: MIT; source: https://github.com/libp2p/go-buffer-pool)
 - github.com/libp2p/go-yamux/v5 v5.1.0 (Declared: MPL-2.0; selected: MPL-2.0; source: https://github.com/libp2p/go-yamux/v5)

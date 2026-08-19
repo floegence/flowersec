@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/framing/jsonframe"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/framing/jsonframe"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v3/internal/rpcwire"
 )
 
 func TestNewServerWithOptionsRejectsInvalidLimits(t *testing.T) {

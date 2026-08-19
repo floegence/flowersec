@@ -19,15 +19,15 @@ import (
 	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
-	flowercontrol "github.com/floegence/flowersec/flowersec-go/v2/controlplane"
-	admissionws "github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
+	flowercontrol "github.com/floegence/flowersec/flowersec-go/v3/controlplane"
+	admissionws "github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv3/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocketv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	session "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/tunnelv3"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -74,14 +74,19 @@ func TestWSSDirectListenerTerminatesV2AndBridgesAuthorizedTCP(t *testing.T) {
 
 	wssURL := "wss" + strings.TrimPrefix(server.URL, "https") + webSocketDirectPath
 	artifact := validDirectArtifact(t, contract, wssURL)
-	request, err := artifactv2.BuildRequest(artifact, "wss-a")
+	request, err := artifactv3.BuildRequest(artifact, "wss-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	rawFSB2, err := artifactv2.MarshalRequest(request)
+	rawFSB3, err := artifactv3.MarshalRequest(request)
 	if err != nil {
 		t.Fatal(err)
 	}
+	decoded, err := artifactv3.ParseRequest(rawFSB3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.response.CredentialID, _ = credentialIDFor(decoded)
 	roots := x509.NewCertPool()
 	roots.AddCert(server.Certificate())
 	dialer := gorillaws.Dialer{
@@ -97,7 +102,7 @@ func TestWSSDirectListenerTerminatesV2AndBridgesAuthorizedTCP(t *testing.T) {
 		}
 		t.Fatal(err)
 	}
-	if _, err := admissionws.Commit(context.Background(), connection, rawFSB2, runtime.reasons); err != nil {
+	if _, err := admissionws.Commit(context.Background(), connection, rawFSB3, runtime.reasons); err != nil {
 		t.Fatal(err)
 	}
 	carrierSession, err := carrierws.NewAfterAdmission(connection, carrierws.ClientRole, carrierws.SubprotocolDirect, resources)
@@ -106,14 +111,14 @@ func TestWSSDirectListenerTerminatesV2AndBridgesAuthorizedTCP(t *testing.T) {
 	}
 	client, err := session.Establish(context.Background(), carrierSession, session.Config{
 		Role: session.RoleClient, Path: session.PathDirect, ChannelID: contract.ChannelID,
-		SessionContractHash: contract.ContractHash, Suite: protocolv2.Suite(contract.DefaultSuite),
+		SessionContractHash: contract.ContractHash, Suite: protocolv3.Suite(contract.DefaultSuite),
 		PSK: contract.E2EEPSK, MaxInboundStreams: contract.MaxInboundStreams,
 		IdleTimeout:            time.Duration(contract.IdleTimeoutSeconds) * time.Second,
 		EstablishTimeout:       time.Duration(contract.EstablishTimeoutSeconds) * time.Second,
 		RekeyPrepareTimeout:    time.Duration(contract.RekeyPrepareTimeoutSeconds) * time.Second,
 		RekeyCompletionTimeout: time.Duration(contract.RekeyCompletionTimeoutSeconds) * time.Second,
-		LocalAdmissionBinding:  artifactv2.AdmissionBinding(rawFSB2),
-		PeerAdmissionBinding:   artifactv2.AdmissionBinding(rawFSB2),
+		LocalAdmissionBinding:  artifactv3.AdmissionBinding(rawFSB3),
+		PeerAdmissionBinding:   artifactv3.AdmissionBinding(rawFSB3),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -320,7 +325,7 @@ func TestWSSStandaloneTunnelConsumesSecretFreeHTTPAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	reasons := runtimeReasons()
-	coordinator, err := tunnelv2.NewCoordinator(tunnelv2.DefaultConfig(), tunnelAuthorizer(provider, reasons))
+	coordinator, err := tunnelv3.NewCoordinator(tunnelv3.DefaultConfig(), tunnelAuthorizer(provider, reasons))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +342,9 @@ func TestWSSStandaloneTunnelConsumesSecretFreeHTTPAuthorization(t *testing.T) {
 	defer server.Close()
 
 	wssURL := "wss" + strings.TrimPrefix(server.URL, "https") + webSocketTunnelPath
-	endpoints, err := flowercontrol.NewEndpointSet(wssURL)
+	endpoints, err := flowercontrol.NewEndpointSet(flowercontrol.EndpointConfig{
+		ID: "websocket", URL: wssURL, TLS: flowercontrol.CAPolicy(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,6 +467,11 @@ func TestRuntimeStartsAllListenersAndShutsDown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if runtime.tlsConfig.MinVersion != tls.VersionTLS13 || runtime.tlsConfig.MaxVersion != tls.VersionTLS13 ||
+		!runtime.tlsConfig.SessionTicketsDisabled {
+		t.Fatalf("runtime TLS policy = min %x max %x tickets_disabled=%v, want TLS 1.3 only without tickets",
+			runtime.tlsConfig.MinVersion, runtime.tlsConfig.MaxVersion, runtime.tlsConfig.SessionTicketsDisabled)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- runtime.Serve(ctx) }()
@@ -475,18 +487,19 @@ func TestRuntimeStartsAllListenersAndShutsDown(t *testing.T) {
 	}
 }
 
-func validDirectArtifact(t *testing.T, contract artifactv2.SessionContract, wssURL string) artifactv2.Artifact {
+func validDirectArtifact(t *testing.T, contract artifactv3.SessionContract, wssURL string) artifactv3.Artifact {
 	t.Helper()
-	return artifactv2.Artifact{
-		Version: 2, Profile: artifactv2.Profile, Session: contract,
-		Path: artifactv2.ArtifactPath{
-			Kind: artifactv2.PathDirect, RendezvousGroupID: "group-a", ListenerAudience: "audience-a",
-			RoutingToken: "routing-token", Candidates: []artifactv2.Candidate{{
-				ID: "wss-a", Carrier: artifactv2.CarrierWebSocket, URL: wssURL, WireProfile: "flowersec-direct/2",
+	return artifactv3.Artifact{
+		Version: 3, Profile: artifactv3.Profile, Session: contract,
+		Path: artifactv3.ArtifactPath{
+			Kind: artifactv3.PathDirect, RendezvousGroupID: "group-a", ListenerAudience: "audience-a",
+			RoutingToken: "routing-token", Candidates: []artifactv3.Candidate{{
+				ID: "wss-a", Carrier: artifactv3.CarrierWebSocket, URL: wssURL, WireProfile: "flowersec-direct/3",
+				TLS: artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA},
 			}},
 		},
-		Scoped:      []artifactv2.ScopeMetadata{},
-		Correlation: artifactv2.CorrelationContext{Version: 2, Tags: []artifactv2.CorrelationTag{}},
+		Scoped:      []artifactv3.ScopeMetadata{},
+		Correlation: artifactv3.CorrelationContext{Version: 3, Tags: []artifactv3.CorrelationTag{}},
 	}
 }
 

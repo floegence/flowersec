@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
 )
 
 func TestRepresentativeScenarioConfiguresThePeriodicLossItValidates(t *testing.T) {
@@ -18,6 +18,20 @@ func TestRepresentativeScenarioConfiguresThePeriodicLossItValidates(t *testing.T
 	}
 	if scenario.profile.LossMode != "periodic" || scenario.profile.EveryNth != 100 || scenario.profile.OutageDuration != 0 {
 		t.Fatalf("representative profile = %+v", scenario.profile)
+	}
+}
+
+func TestControllerWeaknetScenariosHaveDistinctNamespaceSuffixes(t *testing.T) {
+	seen := map[string]string{}
+	for _, name := range []string{"delay-jitter", "periodic-loss", "reorder", "outage-reconnect", "pin-rotation-refresh-backoff-lease"} {
+		suffix := shortScenario(name)
+		if suffix == "" {
+			t.Fatalf("controller scenario %q has no namespace suffix", name)
+		}
+		if previous := seen[suffix]; previous != "" {
+			t.Fatalf("controller scenarios %q and %q share namespace suffix %q", previous, name, suffix)
+		}
+		seen[suffix] = name
 	}
 }
 
@@ -75,7 +89,7 @@ func (reader resetReader) Read([]byte) (int, error) { return 0, reader.err }
 func (resetReader) Close() error                    { return nil }
 
 func TestPeerResetObservationRequiresTheRemoteTerminalError(t *testing.T) {
-	if err := observePeerReset(context.Background(), resetReader{err: protocolv2.ErrStreamReset}); err != nil {
+	if err := observePeerReset(context.Background(), resetReader{err: protocolv3.ErrStreamReset}); err != nil {
 		t.Fatal(err)
 	}
 	if err := observePeerReset(context.Background(), resetReader{err: errors.New("closed without reset")}); err == nil {

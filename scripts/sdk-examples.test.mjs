@@ -13,7 +13,7 @@ function read(relativePath) {
 test("network-capable SDK examples require a durable spend receipt", () => {
   const swift = read("examples/swift/Sources/FlowersecSwiftClientExample/main.swift");
   assert.doesNotMatch(swift, /commitSpend:\s*\{\s*\}/, "Swift must not teach an empty durable-spend callback");
-  assert.match(swift, /FSEC_SPEND_RECEIPT_V2_PATH/);
+  assert.match(swift, /FSEC_SPEND_RECEIPT_V3_PATH/);
   assert.match(swift, /commitSpendReceipt/);
 
   const typescript = read("examples/ts/node-client.mjs");
@@ -74,7 +74,7 @@ test("consumer examples expose structured connection and session recovery", () =
     {
       name: "Swift",
       source: read("examples/swift/Sources/FlowersecSwiftClientExample/main.swift"),
-      classifiers: [/retryDispositionV2/],
+      classifiers: [/retryDispositionV3/],
     },
     {
       name: "Rust",
@@ -94,8 +94,10 @@ test("consumer examples expose structured connection and session recovery", () =
     rustReadme,
     /ConnectorOptions::new\(\)\s*\.with_trust_roots_der\(vec!\[root_der\]\)/u,
   );
-  assert.match(rustReadme, /TLS connection candidates require explicit, non-empty DER trust roots/u);
-  assert.match(rustReadme, /Exact-loopback\nplaintext direct WebSocket candidates do not require trust roots/u);
+  assert.match(rustReadme, /CA candidates use platform trust roots by default/u);
+  assert.match(rustReadme, /Pin candidates use\s+only the active leaf-certificate SHA-256 pins/u);
+  assert.match(rustReadme, /never fall back to CA verification/u);
+  assert.doesNotMatch(rustReadme, /plaintext direct WebSocket/u);
 });
 
 test("four SDK examples use the maintained parity application contract", () => {

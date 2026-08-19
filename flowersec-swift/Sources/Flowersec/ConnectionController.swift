@@ -1,23 +1,15 @@
+import Dispatch
 import Foundation
 
-/// Supplies one independently acquired, single-use artifact lease per connection attempt.
-///
-/// An ``ArtifactLease`` value is intentionally not accepted by ``ConnectionController``.
-/// Long-lived connections require a refreshable source because every new session must use a
-/// newly acquired artifact and perform a new admission.
+/// Supplies one fresh, independently spendable v3 artifact lease per attempt.
 public protocol ArtifactSource: Sendable {
-  func acquireArtifact() async throws -> ArtifactLease
+  func acquireArtifact() async throws -> ArtifactLeaseV3
 }
 
-/// The only artifact-source failures that opt into automatic retry.
-///
-/// Any other error thrown by ``ArtifactSource/acquireArtifact()`` is terminal.
 public struct ArtifactSourceFailure: Error, Equatable, Sendable {
-  public let disposition: RetryDisposition
+  public let disposition: RetryDispositionV3
 
-  public init(disposition: RetryDisposition) {
-    self.disposition = disposition
-  }
+  public init(disposition: RetryDispositionV3) { self.disposition = disposition }
 }
 
 public enum ConnectionState: String, Equatable, Sendable {
@@ -29,23 +21,18 @@ public enum ConnectionState: String, Equatable, Sendable {
   case closed
 }
 
-/// A redacted failure from the one operation owned by a connection attempt.
 public enum ConnectionAttemptFailure: Error, Equatable, Sendable {
   case artifactSource(ArtifactSourceFailure)
   case unknownArtifactSource
   case connection(ConnectError)
   case session(SessionError)
 
-  public var retryDisposition: RetryDisposition {
+  public var retryDisposition: RetryDispositionV3 {
     switch self {
-    case .artifactSource(let failure):
-      return failure.disposition
-    case .unknownArtifactSource:
-      return .terminal
-    case .connection(let error):
-      return error.retryDisposition
-    case .session(let error):
-      return error.retryDisposition
+    case .artifactSource(let failure): failure.disposition
+    case .unknownArtifactSource: .terminal
+    case .connection(let error): error.retryDispositionV3
+    case .session(let error): error.retryDispositionV3
     }
   }
 }
@@ -55,31 +42,33 @@ public struct ConnectionSnapshot: Sendable {
   public let attempt: UInt64
   public let currentSession: (any Session)?
   public let failure: ConnectionAttemptFailure?
+  public let retryDisposition: RetryDispositionV3?
 }
 
 public enum ConnectionControllerConfigurationError: Error, Equatable, Sendable {
   case invalidMaximumAttempts
 }
 
-/// Owns the complete reconnect lifecycle above the one-shot Flowersec connector.
-///
-/// Each successful attempt publishes a new, independent ``Session``. Operations and
-/// streams from an earlier session are never migrated or replayed into its replacement.
+/// Owns v3 artifact refresh, policy-sensitive replacement, retry, and sessions.
 public actor ConnectionController {
+  private static let maxSafeInteger: UInt64 = 9_007_199_254_740_991
   public private(set) var state: ConnectionState = .idle
   public private(set) var attempt: UInt64 = 0
   public private(set) var currentSession: (any Session)?
   public private(set) var failure: ConnectionAttemptFailure?
+  public private(set) var retryDisposition: RetryDispositionV3?
 
   private let source: any ArtifactSource
   private let options: ConnectorOptions
   private let maximumAttempts: UInt64?
-  private let connectOneShot: @Sendable (ArtifactLease, ConnectorOptions) async throws -> any Session
+  private let connectOneShot:
+    @Sendable (ArtifactLeaseV3, ConnectorOptions) async throws -> any Session
+  private let clock: ConnectionControllerClockV3
   private var scheduler: Task<Void, Never>?
-  private var inFlightAttempt: Task<any Session, Error>?
-  private var retryGate: ConnectionRetryGate?
+  private var inFlightAttempt: Task<AttemptOutcomeV3, Never>?
+  private var retryGate: ConnectionRetryGateV3?
   private var retryTimer: Task<Void, Never>?
-  private var retryNotBefore: RetryNotBefore?
+  private var retryNotBefore: RetryNotBeforeV3?
   private var observers: [UUID: AsyncStream<ConnectionSnapshot>.Continuation] = [:]
   private var closeTask: Task<Void, Never>?
 
@@ -88,12 +77,13 @@ public actor ConnectionController {
     options: ConnectorOptions = ConnectorOptions(),
     maximumAttempts: UInt64? = nil
   ) throws {
-    try Self.validate(maximumAttempts: maximumAttempts)
+    let normalizedMaximumAttempts = try Self.validate(maximumAttempts: maximumAttempts)
     self.source = source
     self.options = options
-    self.maximumAttempts = maximumAttempts
+    self.maximumAttempts = normalizedMaximumAttempts
+    self.clock = .live
     self.connectOneShot = { lease, options in
-      try await connect(lease: lease, options: options)
+      try await connectV3ForController(lease: lease, options: options)
     }
   }
 
@@ -101,65 +91,60 @@ public actor ConnectionController {
     source: any ArtifactSource,
     options: ConnectorOptions = ConnectorOptions(),
     maximumAttempts: UInt64? = nil,
-    connectOneShot: @escaping @Sendable (ArtifactLease, ConnectorOptions) async throws -> any Session
+    clock: ConnectionControllerClockV3 = .live,
+    initialAttempt: UInt64 = 0,
+    connectOneShot:
+      @escaping @Sendable (ArtifactLeaseV3, ConnectorOptions) async throws -> any Session
   ) throws {
-    try Self.validate(maximumAttempts: maximumAttempts)
+    let normalizedMaximumAttempts = try Self.validate(maximumAttempts: maximumAttempts)
     self.source = source
     self.options = options
-    self.maximumAttempts = maximumAttempts
+    self.maximumAttempts = normalizedMaximumAttempts
+    self.clock = clock
+    self.attempt = min(initialAttempt, Self.maxSafeInteger)
     self.connectOneShot = connectOneShot
   }
 
-  private static func validate(maximumAttempts: UInt64?) throws {
-    if maximumAttempts == 0 {
+  private static func validate(maximumAttempts: UInt64?) throws -> UInt64? {
+    guard let maximumAttempts else { return nil }
+    guard maximumAttempts <= maxSafeInteger else {
       throw ConnectionControllerConfigurationError.invalidMaximumAttempts
     }
+    return maximumAttempts == 0 ? nil : maximumAttempts
   }
 
-  /// Starts the single scheduler. Calls outside the idle state have no effect.
   public func start() {
     guard state == .idle, scheduler == nil else { return }
-    scheduler = Task { [weak self] in
-      await self?.run()
-    }
+    scheduler = Task { [weak self] in await self?.run() }
   }
 
-  /// Returns current state immediately and then every controller-owned transition.
   public func updates() -> AsyncStream<ConnectionSnapshot> {
-    let observerID = UUID()
+    let id = UUID()
     let pair = AsyncStream.makeStream(
-      of: ConnectionSnapshot.self,
-      bufferingPolicy: .bufferingNewest(1)
-    )
-    observers[observerID] = pair.continuation
+      of: ConnectionSnapshot.self, bufferingPolicy: .bufferingNewest(1))
+    observers[id] = pair.continuation
     pair.continuation.yield(snapshot())
     pair.continuation.onTermination = { [weak self] _ in
-      Task { await self?.removeObserver(observerID) }
+      Task { await self?.removeObserver(id) }
     }
     return pair.stream
   }
 
   public func snapshot() -> ConnectionSnapshot {
     ConnectionSnapshot(
-      state: state,
-      attempt: attempt,
-      currentSession: currentSession,
-      failure: failure
-    )
+      state: state, attempt: attempt, currentSession: currentSession, failure: failure,
+      retryDisposition: retryDisposition)
   }
 
-  /// Wakes only the scheduler's current wait. It never starts a second scheduler or attempt.
-  /// An explicit ``RetryDisposition/retryAfter(_:)`` deadline remains authoritative.
   public func retryNow() async -> Bool {
     guard state == .waiting, let retryGate else { return false }
-    let now = ContinuousClock.now
-    if let notBefore = retryNotBefore, notBefore.instant > now { return false }
+    if let notBefore = retryNotBefore,
+      wallNowMilliseconds(clock.wallNow()) < notBefore.wallDeadlineMilliseconds { return false }
     retryTimer?.cancel()
     await retryGate.wake()
     return true
   }
 
-  /// Permanently closes this controller and its current one-shot session.
   public func close() async {
     if let closeTask {
       await closeTask.value
@@ -169,7 +154,6 @@ public actor ConnectionController {
     let activeAttempt = inFlightAttempt
     let activeGate = retryGate
     let activeSession = currentSession
-
     state = .closed
     currentSession = nil
     failure = nil
@@ -177,13 +161,13 @@ public actor ConnectionController {
     inFlightAttempt = nil
     retryGate = nil
     retryNotBefore = nil
+    retryDisposition = nil
     retryTimer?.cancel()
     retryTimer = nil
     activeAttempt?.cancel()
     activeScheduler?.cancel()
     publish()
     finishObservers()
-
     let cleanup = Task {
       if let activeGate { await activeGate.wake() }
       try? await activeSession?.close()
@@ -195,59 +179,33 @@ public actor ConnectionController {
 
   private func run() async {
     var consecutiveFailures: UInt64 = 0
-    var attemptsSinceConnected: UInt64 = 0
-    while state != .closed {
+    var primaryAttempts: UInt64 = 0
+    var replacementUsed = false
+    var blockedPinPolicy = BlockedPinPolicyV3()
+    while state != .closed, !Task.isCancelled {
       state = .connecting
       failure = nil
-      attempt = incrementingWithoutOverflow(attempt)
-      attemptsSinceConnected = incrementingWithoutOverflow(attemptsSinceConnected)
+      retryDisposition = nil
+      attempt = increment(attempt)
+      primaryAttempts = increment(primaryAttempts)
       publish()
 
-      let source = self.source
-      let options = self.options
-      let connectOneShot = self.connectOneShot
-      let task = Task<any Session, Error> {
-        let lease: ArtifactLease
-        do {
-          lease = try await source.acquireArtifact()
-        } catch let failure as ArtifactSourceFailure {
-          throw ConnectionAttemptFailure.artifactSource(failure)
-        } catch is CancellationError {
-          throw CancellationError()
-        } catch {
-          throw ConnectionAttemptFailure.unknownArtifactSource
-        }
-        do {
-          try await lease.claimForConnectionController()
-        } catch {
-          throw ConnectionAttemptFailure.unknownArtifactSource
-        }
-        try Task.checkCancellation()
-        do {
-          return try await connectOneShot(lease, options)
-        } catch let error as ConnectError {
-          throw ConnectionAttemptFailure.connection(error)
-        } catch is CancellationError {
-          throw CancellationError()
-        } catch {
-          throw ConnectionAttemptFailure.connection(.connectionFailed)
-        }
+      let outcome = await runAttempt(blockedPinPolicy: blockedPinPolicy)
+      inFlightAttempt = nil
+      guard state != .closed, !Task.isCancelled else {
+        if case .failed(_, let lease?, _, _) = outcome { await retire(lease) }
+        return
       }
-      inFlightAttempt = task
-
-      do {
-        let session = try await task.value
-        inFlightAttempt = nil
-        guard state != .closed, !Task.isCancelled else {
-          try? await session.close()
-          return
-        }
+      switch outcome {
+      case .connected(let session):
         consecutiveFailures = 0
-        attemptsSinceConnected = 0
+        primaryAttempts = 0
+        replacementUsed = false
+        blockedPinPolicy = BlockedPinPolicyV3()
         currentSession = session
         state = .connected
+        retryDisposition = nil
         publish()
-
         let termination = await session.waitTermination()
         guard state != .closed, !Task.isCancelled else { return }
         currentSession = nil
@@ -256,96 +214,418 @@ public actor ConnectionController {
           await scheduleRetry(
             after: sessionFailure,
             failures: &consecutiveFailures,
-            attemptsSinceConnected: attemptsSinceConnected
-          )
-        else {
-          return
-        }
+            attempts: primaryAttempts)
+        else { return }
         attempt = 0
-      } catch is CancellationError {
-        inFlightAttempt = nil
-        if state != .closed {
-          fail(.connection(.canceled))
+
+      case .failed(
+        let attemptFailure, let claimedLease, let dispositionOverride, let provenance):
+        if let claimedLease,
+          await shouldRefreshPolicy(
+            attemptFailure, lease: claimedLease, provenance: provenance)
+        {
+          if replacementUsed {
+            await retire(claimedLease)
+            fail(.connection(publicError(for: attemptFailure)))
+            return
+          }
+          consecutiveFailures = increment(consecutiveFailures)
+          let trigger = policyIdentity(claimedLease.artifact, provenance: provenance!)
+          blockedPinPolicy.formUnion(trigger.pins, opaque: trigger.opaque)
+          await retire(claimedLease)
+          let replacement = await runReplacement(
+            trigger: trigger,
+            attempts: &primaryAttempts,
+            failures: &consecutiveFailures,
+            replacementUsed: &replacementUsed,
+            blockedPinPolicy: blockedPinPolicy)
+          switch replacement {
+          case .connected(let session):
+            consecutiveFailures = 0
+            primaryAttempts = 0
+            replacementUsed = false
+            blockedPinPolicy = BlockedPinPolicyV3()
+            currentSession = session
+            state = .connected
+            retryDisposition = nil
+            publish()
+            let termination = await session.waitTermination()
+            guard state != .closed, !Task.isCancelled else { return }
+            currentSession = nil
+            let sessionFailure = ConnectionAttemptFailure.session(termination.error)
+            guard
+              await scheduleRetry(
+                after: sessionFailure,
+                failures: &consecutiveFailures,
+                attempts: primaryAttempts)
+            else { return }
+            attempt = 0
+          case .retryPrimary(let failure, let replacementDisposition):
+            guard
+              await scheduleRetry(
+                after: failure,
+                failures: &consecutiveFailures,
+                attempts: primaryAttempts,
+                dispositionOverride: replacementDisposition)
+            else { return }
+          case .terminal(let failure):
+            fail(failure)
+            return
+          }
+          continue
         }
-        return
-      } catch let attemptFailure as ConnectionAttemptFailure {
-        inFlightAttempt = nil
-        guard state != .closed, !Task.isCancelled else { return }
+        if let claimedLease, !(await claimedLease.isConsumed) { await retire(claimedLease) }
         guard
           await scheduleRetry(
             after: attemptFailure,
             failures: &consecutiveFailures,
-            attemptsSinceConnected: attemptsSinceConnected
-          )
-        else {
-          return
-        }
-      } catch {
-        inFlightAttempt = nil
-        guard state != .closed, !Task.isCancelled else { return }
-        fail(.connection(.connectionFailed))
-        return
+            attempts: primaryAttempts,
+            dispositionOverride: dispositionOverride)
+        else { return }
       }
     }
+  }
+
+  private func runAttempt(blockedPinPolicy: BlockedPinPolicyV3) async -> AttemptOutcomeV3 {
+    let source = self.source
+    let options = self.options
+    let connectOneShot = self.connectOneShot
+    let task = Task<AttemptOutcomeV3, Never> {
+      let lease: ArtifactLeaseV3
+      do {
+        lease = try await source.acquireArtifact()
+      } catch let sourceFailure as ArtifactSourceFailure {
+        return .failed(.artifactSource(sourceFailure), nil, nil, nil)
+      } catch is CancellationError {
+        return .failed(.connection(.canceled), nil, nil, nil)
+      } catch {
+        return .failed(.unknownArtifactSource, nil, nil, nil)
+      }
+      let claimedLease: ClaimedArtifactLeaseV3
+      do {
+        claimedLease = try await lease.claimForConnectionController()
+      } catch {
+        return .failed(.connection(.artifactInvalid), nil, .terminal, nil)
+      }
+      guard !Task.isCancelled else {
+        return .failed(.connection(.canceled), claimedLease, nil, nil)
+      }
+      guard claimedLease.artifact.value.session.initExpireAtUnixSeconds > nowUnixSeconds() else {
+        return .failed(.connection(.expiredArtifact), claimedLease, .retryable, nil)
+      }
+      let candidateIDs = primaryCandidateIDs(
+        claimedLease.artifact, blockedPinPolicy: blockedPinPolicy)
+      guard !candidateIDs.isEmpty else {
+        let code: ConnectError = blockedPinPolicy.hasNativeTrigger
+          ? .transportSecurityFailed : .connectionFailed
+        return .failed(.connection(code), claimedLease, .terminal, nil)
+      }
+      let connectorArtifact = claimedLease.artifact.filteredForController(
+        candidateIDs: candidateIDs)
+      do {
+        return .connected(
+          try await connectOneShot(
+            claimedLease.connectorLease(artifact: connectorArtifact), options))
+      } catch let error as ConnectError {
+        let pinIDs = connectorArtifact.canonicalCandidates.filter { $0.tls.mode == "pin" }
+          .map(\.id)
+        let provenance =
+          error == .transportSecurityFailed && pinIDs.count == 1
+          ? CandidateFailureProvenanceV3(
+            policyTriggerIDs: Set(pinIDs),
+            opaquePolicyTriggerIDs: [],
+            failedIDs: Set(connectorArtifact.canonicalCandidates.map(\.id)))
+          : nil
+        return .failed(.connection(error), claimedLease, nil, provenance)
+      } catch let error as ControllerConnectFailureV3 {
+        switch error {
+        case .connection(
+          let publicError, let disposition, let policyTriggerIDs, let opaquePolicyTriggerIDs,
+          let failedIDs):
+          let provenance =
+            policyTriggerIDs.isEmpty && opaquePolicyTriggerIDs.isEmpty
+            ? nil
+            : CandidateFailureProvenanceV3(
+              policyTriggerIDs: policyTriggerIDs,
+              opaquePolicyTriggerIDs: opaquePolicyTriggerIDs,
+              failedIDs: failedIDs)
+          return .failed(.connection(publicError), claimedLease, disposition, provenance)
+        }
+      } catch is CancellationError {
+        return .failed(.connection(.canceled), claimedLease, nil, nil)
+      } catch {
+        return .failed(.connection(.connectionFailed), claimedLease, nil, nil)
+      }
+    }
+    inFlightAttempt = task
+    return await task.value
+  }
+
+  private func runReplacement(
+    trigger: PolicyIdentityV3,
+    attempts: inout UInt64,
+    failures: inout UInt64,
+    replacementUsed: inout Bool,
+    blockedPinPolicy: BlockedPinPolicyV3
+  ) async -> ReplacementOutcomeV3 {
+    guard !Task.isCancelled, state != .closed else {
+      return .terminal(.connection(.canceled))
+    }
+    let claimedLease: ClaimedArtifactLeaseV3
+    while true {
+      if let maximumAttempts, attempts >= maximumAttempts {
+        return .terminal(.connection(trigger.publicError))
+      }
+      attempt = increment(attempt)
+      attempts = increment(attempts)
+      state = .connecting
+      failure = nil
+      retryDisposition = nil
+      publish()
+      do {
+        let lease = try await source.acquireArtifact()
+        claimedLease = try await lease.claimForConnectionController()
+        replacementUsed = true
+        break
+      } catch let sourceFailure as ArtifactSourceFailure {
+        let sourceAttemptFailure = ConnectionAttemptFailure.artifactSource(sourceFailure)
+        guard
+          await scheduleRetry(
+            after: sourceAttemptFailure, failures: &failures, attempts: attempts)
+        else { return .terminal(terminalFailure(sourceAttemptFailure)) }
+        continue
+      } catch is CancellationError {
+        return .terminal(.connection(.canceled))
+      } catch {
+        return .terminal(.unknownArtifactSource)
+      }
+    }
+    guard !Task.isCancelled, state != .closed else {
+      await retire(claimedLease)
+      return .terminal(.connection(.canceled))
+    }
+    guard claimedLease.artifact.value.session.initExpireAtUnixSeconds > nowUnixSeconds() else {
+      await retire(claimedLease)
+      return .retryPrimary(.connection(.expiredArtifact), nil)
+    }
+    guard
+      let candidateIDs = replacementCandidateIDs(
+        claimedLease.artifact, after: trigger, blockedPinPolicy: blockedPinPolicy)
+    else {
+      await retire(claimedLease)
+      return .terminal(.connection(trigger.publicError))
+    }
+    let connectorArtifact = claimedLease.artifact.filteredForController(
+      candidateIDs: candidateIDs)
+    do {
+      return .connected(
+        try await connectOneShot(
+          claimedLease.connectorLease(artifact: connectorArtifact), options))
+    } catch let error as ConnectError {
+      if await claimedLease.isConsumed {
+        return .retryPrimary(.connection(error), nil)
+      }
+      await retire(claimedLease)
+      if error == .expiredArtifact {
+        return .retryPrimary(.connection(error), nil)
+      }
+      return .terminal(.connection(publicError(for: .connection(error))))
+    } catch let error as ControllerConnectFailureV3 {
+      switch error {
+      case .connection(let publicError, let disposition, _, _, _):
+        if await claimedLease.isConsumed {
+          return .retryPrimary(.connection(publicError), disposition)
+        }
+        await retire(claimedLease)
+        if publicError == .expiredArtifact {
+          return .retryPrimary(.connection(publicError), disposition)
+        }
+        return .terminal(.connection(publicError))
+      }
+    } catch {
+      if !(await claimedLease.isConsumed) { await retire(claimedLease) }
+      return .terminal(.connection(.connectionFailed))
+    }
+  }
+
+  private func shouldRefreshPolicy(
+    _ failure: ConnectionAttemptFailure, lease: ClaimedArtifactLeaseV3,
+    provenance: CandidateFailureProvenanceV3?
+  ) async -> Bool {
+    guard !(await lease.isConsumed), let provenance,
+      !policyIdentity(lease.artifact, provenance: provenance).pins.isEmpty
+    else { return false }
+    switch failure {
+    case .connection(.transportSecurityFailed): return !provenance.policyTriggerIDs.isEmpty
+    case .connection(.connectionFailed): return !provenance.opaquePolicyTriggerIDs.isEmpty
+    default: return false
+    }
+  }
+
+  private func policyIdentity(
+    _ artifact: ArtifactV3, provenance: CandidateFailureProvenanceV3
+  ) -> PolicyIdentityV3 {
+    let sourceEndpoints = Set(
+      artifact.canonicalCandidates.map { endpoint(for: $0, artifact: artifact) })
+    let failedEndpoints = Set(
+      artifact.canonicalCandidates.compactMap { candidate in
+        provenance.failedIDs.contains(candidate.id)
+          ? endpoint(for: candidate, artifact: artifact) : nil
+      })
+    let triggerIDs = provenance.policyTriggerIDs.union(provenance.opaquePolicyTriggerIDs)
+    let pins = artifact.canonicalCandidates.compactMap { candidate -> PinCandidateIdentityV3? in
+      guard triggerIDs.contains(candidate.id),
+        candidate.tls.mode == "pin", candidate.tls.pins != nil,
+        let digest = try? candidate.tlsPolicyDigest()
+      else { return nil }
+      return PinCandidateIdentityV3(
+        endpoint: endpoint(for: candidate, artifact: artifact),
+        digest: digest
+      )
+    }
+    return PolicyIdentityV3(
+      pins: pins,
+      triggerEndpoints: Set(pins.map(\.endpoint)),
+      failedEndpoints: failedEndpoints,
+      sourceEndpoints: sourceEndpoints,
+      publicError: provenance.policyTriggerIDs.isEmpty
+        ? .connectionFailed : .transportSecurityFailed,
+      opaque: provenance.policyTriggerIDs.isEmpty && !provenance.opaquePolicyTriggerIDs.isEmpty
+    )
+  }
+
+  private func replacementCandidateIDs(
+    _ artifact: ArtifactV3,
+    after trigger: PolicyIdentityV3,
+    blockedPinPolicy: BlockedPinPolicyV3
+  ) -> Set<String>? {
+    guard !trigger.pins.isEmpty else { return nil }
+    var changedPin = false
+    var eligible = Set<String>()
+    for candidate in artifact.canonicalCandidates {
+      let candidateEndpoint = endpoint(for: candidate, artifact: artifact)
+      if candidate.tls.mode == "ca" {
+        if trigger.triggerEndpoints.contains(candidateEndpoint) { continue }
+      } else {
+        guard candidate.tls.mode == "pin", let digest = try? candidate.tlsPolicyDigest()
+        else { continue }
+        let identity = PinCandidateIdentityV3(endpoint: candidateEndpoint, digest: digest)
+        let changedTrigger: Bool
+        if let old = trigger.pins.first(where: { $0.endpoint == identity.endpoint }) {
+          if old.digest == digest { continue }
+          changedTrigger = true
+        } else {
+          changedTrigger = false
+        }
+        if blockedPinPolicy.identities.contains(identity) { continue }
+        if changedTrigger {
+          changedPin = true
+          eligible.insert(candidate.id)
+          continue
+        }
+      }
+      if !trigger.sourceEndpoints.contains(candidateEndpoint)
+        || !trigger.failedEndpoints.contains(candidateEndpoint)
+      {
+        eligible.insert(candidate.id)
+      }
+    }
+    return changedPin && !eligible.isEmpty ? eligible : nil
+  }
+
+  nonisolated private func primaryCandidateIDs(
+    _ artifact: ArtifactV3,
+    blockedPinPolicy: BlockedPinPolicyV3
+  ) -> Set<String> {
+    Set(
+      artifact.canonicalCandidates.compactMap { candidate in
+        let candidateEndpoint = endpoint(for: candidate, artifact: artifact)
+        if candidate.tls.mode == "ca" {
+          return blockedPinPolicy.identities.contains { $0.endpoint == candidateEndpoint } ? nil : candidate.id
+        }
+        guard candidate.tls.mode == "pin", let digest = try? candidate.tlsPolicyDigest() else {
+          return candidate.id
+        }
+        let identity = PinCandidateIdentityV3(endpoint: candidateEndpoint, digest: digest)
+        return blockedPinPolicy.identities.contains(identity) ? nil : candidate.id
+      })
+  }
+
+  nonisolated private func endpoint(
+    for candidate: CanonicalCandidateV3, artifact: ArtifactV3
+  ) -> EndpointKeyV3 {
+    EndpointKeyV3(
+      carrier: candidate.carrier, path: artifact.value.path.kind, url: candidate.normalizedURL)
+  }
+
+  private func retire(_ lease: ClaimedArtifactLeaseV3) async {
+    try? await lease.retire()
   }
 
   private func scheduleRetry(
     after attemptFailure: ConnectionAttemptFailure,
     failures: inout UInt64,
-    attemptsSinceConnected: UInt64
+    attempts: UInt64,
+    alreadyCounted: Bool = false,
+    dispositionOverride: RetryDispositionV3? = nil
   ) async -> Bool {
-    let disposition = attemptFailure.retryDisposition
+    let disposition = dispositionOverride ?? attemptFailure.retryDisposition
     guard disposition != .terminal else {
       fail(attemptFailure)
       return false
     }
-    if let maximumAttempts,
-      attemptsSinceConnected >= maximumAttempts
-    {
-      fail(attemptFailure)
+    if let maximumAttempts, attempts >= maximumAttempts {
+      fail(terminalFailure(attemptFailure))
       return false
     }
-
-    failures = incrementingWithoutOverflow(failures)
-    let monotonicNow = ContinuousClock.now
-    let wallNow = Date()
-    let delay = backoff(failure: failures)
-    let backoffDeadline = monotonicNow.advanced(by: delay)
-    let mandatoryDeadline: RetryNotBefore?
+    if !alreadyCounted { failures = increment(failures) }
+    let monotonicNow = min(clock.monotonicMilliseconds(), Self.maxSafeInteger)
+    let backoffDeadline = saturatingAdd(
+      monotonicNow, milliseconds(backoff(failure: failures)))
+    let mandatory: RetryNotBeforeV3?
     switch disposition {
-    case .terminal:
-      return false
-    case .retryable:
-      mandatoryDeadline = nil
+    case .terminal: return false
+    case .retryable: mandatory = nil
     case .retryAfter(let deadline):
-      guard deadline.timeIntervalSinceReferenceDate.isFinite else {
-        fail(attemptFailure)
+      guard validRetryAfter(deadline) else {
+        fail(.connection(.artifactInvalid))
         return false
       }
-      mandatoryDeadline = RetryNotBefore(
-        instant: monotonicNow.advanced(
-          by: .seconds(max(0, deadline.timeIntervalSince(wallNow)))
-        )
-      )
+      mandatory = RetryNotBeforeV3(wallDeadlineMilliseconds: deadline)
     }
-    let scheduled = maxInstant(backoffDeadline, mandatoryDeadline?.instant)
-    return await waitForRetry(
-      until: scheduled,
-      notBefore: mandatoryDeadline
-    )
+    return await waitForRetry(backoffDeadline: backoffDeadline, notBefore: mandatory)
   }
 
   private func waitForRetry(
-    until deadline: ContinuousClock.Instant,
-    notBefore: RetryNotBefore?
+    backoffDeadline: UInt64, notBefore: RetryNotBeforeV3?
   ) async -> Bool {
-    let gate = ConnectionRetryGate()
+    let gate = ConnectionRetryGateV3()
     retryGate = gate
     retryNotBefore = notBefore
+    retryDisposition = notBefore.map { .retryAfter($0.wallDeadlineMilliseconds) } ?? .retryable
     state = .waiting
-    retryTimer = makeRetryTimer(deadline: deadline, gate: gate)
+    let clock = self.clock
+    retryTimer = Task {
+      while !Task.isCancelled {
+        let monotonicNow = min(clock.monotonicMilliseconds(), Self.maxSafeInteger)
+        let monotonicRemaining = backoffDeadline > monotonicNow
+          ? backoffDeadline - monotonicNow : 0
+        let wallRemaining: UInt64 = notBefore.map {
+          let now = wallNowMilliseconds(clock.wallNow())
+          return $0.wallDeadlineMilliseconds > now ? $0.wallDeadlineMilliseconds - now : 0
+        } ?? 0
+        if monotonicRemaining == 0, wallRemaining == 0 {
+          await gate.wake()
+          return
+        }
+        let nextDeadline = monotonicRemaining == 0
+          ? wallRemaining
+          : wallRemaining == 0 ? monotonicRemaining : min(monotonicRemaining, wallRemaining)
+        let remaining = min(nextDeadline, 1_000)
+        do { try await clock.sleep(.milliseconds(Int64(remaining))) } catch { return }
+      }
+    }
     publish()
-
     await gate.wait()
     retryTimer?.cancel()
     retryTimer = nil
@@ -354,92 +634,161 @@ public actor ConnectionController {
     return state != .closed && !Task.isCancelled
   }
 
-  private func makeRetryTimer(
-    deadline: ContinuousClock.Instant,
-    gate: ConnectionRetryGate
-  ) -> Task<Void, Never> {
-    Task {
-      do {
-        try await Task.sleep(until: deadline, clock: .continuous)
-      } catch {
-        return
-      }
-      await gate.wake()
-    }
-  }
-
   private func backoff(failure: UInt64) -> Duration {
-    let maximumDelay = FlowersecSDKDefaults.ConnectionController.maximumDelay
-    let multiplier = FlowersecSDKDefaults.ConnectionController.multiplier
     var delay = FlowersecSDKDefaults.ConnectionController.initialDelay
-    var remainingMultiplications = failure > 0 ? failure - 1 : 0
-    while remainingMultiplications > 0, delay < maximumDelay {
-      let factor = Double(multiplier)
-      if delay >= maximumDelay / factor {
-        return maximumDelay
+    let maximum = FlowersecSDKDefaults.ConnectionController.maximumDelay
+    var remaining = failure > 0 ? failure - 1 : 0
+    while remaining > 0, delay < maximum {
+      if delay >= maximum / Double(FlowersecSDKDefaults.ConnectionController.multiplier) {
+        return maximum
       }
-      delay = delay * factor
-      remainingMultiplications -= 1
+      delay = delay * Double(FlowersecSDKDefaults.ConnectionController.multiplier)
+      remaining -= 1
     }
     return delay
   }
 
-  private func fail(_ connectionFailure: ConnectionAttemptFailure) {
+  private func fail(_ value: ConnectionAttemptFailure) {
     guard state != .closed else { return }
     currentSession = nil
-    failure = connectionFailure
+    failure = value
+    retryDisposition = .terminal
     state = .failed
     scheduler = nil
     publish()
   }
 
+  nonisolated private func validRetryAfter(_ deadline: UInt64) -> Bool {
+    deadline <= 253_402_300_799_999
+  }
+
+  nonisolated private func terminalFailure(
+    _ value: ConnectionAttemptFailure
+  ) -> ConnectionAttemptFailure {
+    if case .artifactSource = value {
+      return .artifactSource(ArtifactSourceFailure(disposition: .terminal))
+    }
+    return value
+  }
+
+  private func publicError(for failure: ConnectionAttemptFailure) -> ConnectError {
+    if case .connection(let error) = failure { return error }
+    return .connectionFailed
+  }
+
   private func publish() {
     let value = snapshot()
-    for continuation in observers.values {
-      continuation.yield(value)
-    }
+    for observer in observers.values { observer.yield(value) }
   }
 
   private func finishObservers() {
-    for continuation in observers.values {
-      continuation.finish()
-    }
+    for observer in observers.values { observer.finish() }
     observers.removeAll()
   }
 
-  private func removeObserver(_ id: UUID) {
-    observers.removeValue(forKey: id)
+  private func removeObserver(_ id: UUID) { observers.removeValue(forKey: id) }
+
+  private func increment(_ value: UInt64) -> UInt64 {
+    value >= Self.maxSafeInteger ? Self.maxSafeInteger : value + 1
+  }
+  private func saturatingAdd(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+    let (sum, overflow) = lhs.addingReportingOverflow(rhs)
+    return overflow || sum > Self.maxSafeInteger ? Self.maxSafeInteger : sum
   }
 
-  private func maxInstant(
-    _ instant: ContinuousClock.Instant,
-    _ other: ContinuousClock.Instant?
-  ) -> ContinuousClock.Instant {
-    guard let other else { return instant }
-    return instant < other ? other : instant
+  private func milliseconds(_ duration: Duration) -> UInt64 {
+    let components = duration.components
+    guard components.seconds >= 0, components.attoseconds >= 0 else { return 0 }
+    return saturatingAdd(
+      UInt64(components.seconds) * 1_000,
+      UInt64(components.attoseconds) / 1_000_000_000_000_000)
   }
 
-  private func incrementingWithoutOverflow(_ value: UInt64) -> UInt64 {
-    value == .max ? .max : value + 1
+  private func nowUnixSeconds() -> UInt64 {
+    UInt64(max(0, clock.wallNow().timeIntervalSince1970))
+  }
+
+  private nonisolated func wallNowMilliseconds(_ date: Date) -> UInt64 {
+    let milliseconds = date.timeIntervalSince1970 * 1_000
+    guard milliseconds.isFinite, milliseconds > 0 else { return 0 }
+    return min(UInt64(milliseconds.rounded(.down)), Self.maxSafeInteger)
   }
 }
 
-private struct RetryNotBefore {
-  let instant: ContinuousClock.Instant
+struct ConnectionControllerClockV3: Sendable {
+  let wallNow: @Sendable () -> Date
+  let monotonicMilliseconds: @Sendable () -> UInt64
+  let sleep: @Sendable (Duration) async throws -> Void
+
+  static let live = ConnectionControllerClockV3(
+    wallNow: { Date() },
+    monotonicMilliseconds: {
+      DispatchTime.now().uptimeNanoseconds / 1_000_000
+    },
+    sleep: { duration in try await Task.sleep(for: duration) }
+  )
 }
 
-private actor ConnectionRetryGate {
+private enum AttemptOutcomeV3: Sendable {
+  case connected(any Session)
+  case failed(
+    ConnectionAttemptFailure, ClaimedArtifactLeaseV3?, RetryDispositionV3?,
+    CandidateFailureProvenanceV3?)
+}
+
+private enum ReplacementOutcomeV3: Sendable {
+  case connected(any Session)
+  case retryPrimary(ConnectionAttemptFailure, RetryDispositionV3?)
+  case terminal(ConnectionAttemptFailure)
+}
+
+private struct EndpointKeyV3: Hashable, Sendable {
+  let carrier: String
+  let path: String
+  let url: String
+}
+
+private struct PinCandidateIdentityV3: Hashable, Sendable {
+  let endpoint: EndpointKeyV3
+  let digest: Data
+}
+
+private struct PolicyIdentityV3: Sendable {
+  let pins: [PinCandidateIdentityV3]
+  let triggerEndpoints: Set<EndpointKeyV3>
+  let failedEndpoints: Set<EndpointKeyV3>
+  let sourceEndpoints: Set<EndpointKeyV3>
+  let publicError: ConnectError
+  let opaque: Bool
+}
+
+private struct BlockedPinPolicyV3: Sendable {
+  var identities: Set<PinCandidateIdentityV3> = []
+  var hasOpaqueTrigger = false
+  var hasNativeTrigger = false
+
+  mutating func formUnion(_ values: [PinCandidateIdentityV3], opaque: Bool) {
+    identities.formUnion(values)
+    if opaque { hasOpaqueTrigger = true } else { hasNativeTrigger = true }
+  }
+}
+
+private struct CandidateFailureProvenanceV3: Sendable {
+  let policyTriggerIDs: Set<String>
+  let opaquePolicyTriggerIDs: Set<String>
+  let failedIDs: Set<String>
+}
+
+private struct RetryNotBeforeV3: Sendable { let wallDeadlineMilliseconds: UInt64 }
+
+private actor ConnectionRetryGateV3 {
   private var finished = false
   private var waiter: CheckedContinuation<Void, Never>?
 
   func wait() async {
-    guard !finished else { return }
+    if finished { return }
     await withCheckedContinuation { continuation in
-      if finished {
-        continuation.resume()
-      } else {
-        waiter = continuation
-      }
+      if finished { continuation.resume() } else { waiter = continuation }
     }
   }
 

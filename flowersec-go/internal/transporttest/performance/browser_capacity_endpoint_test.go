@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest"
 )
 
 func TestBrowserCapacityArtifactBrokerSpendsExactlyOnceAndAuthenticatesTermination(t *testing.T) {
@@ -346,14 +346,14 @@ type fakeBrowserCapacityArtifact struct {
 func newFakeBrowserCapacityArtifact() *fakeBrowserCapacityArtifact {
 	return &fakeBrowserCapacityArtifact{session: newFakeBrowserServerSession()}
 }
-func (artifact *fakeBrowserCapacityArtifact) ArtifactJSON() string { return `{"version":2}` }
+func (artifact *fakeBrowserCapacityArtifact) ArtifactJSON() string { return `{"version":3}` }
 func (artifact *fakeBrowserCapacityArtifact) Start(context.Context) error {
 	artifact.mu.Lock()
 	artifact.starts++
 	artifact.mu.Unlock()
 	return nil
 }
-func (artifact *fakeBrowserCapacityArtifact) AwaitServer(context.Context) (flowersession.SessionV2, error) {
+func (artifact *fakeBrowserCapacityArtifact) AwaitServer(context.Context) (flowersession.Session, error) {
 	artifact.mu.Lock()
 	defer artifact.mu.Unlock()
 	if artifact.starts != 1 || artifact.canceled {

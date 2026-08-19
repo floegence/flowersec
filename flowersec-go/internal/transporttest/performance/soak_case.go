@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/quicbase"
+	rawquic "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/rawquicv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest"
 )
 
 var (
@@ -649,7 +649,7 @@ func soakTLS() (*tls.Config, *tls.Config, error) {
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(parsed)
-	server := &tls.Config{MinVersion: tls.VersionTLS13, NextProtos: []string{rawquic.ALPNDirect}, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: privateKey}}}
-	client := &tls.Config{MinVersion: tls.VersionTLS13, NextProtos: []string{rawquic.ALPNDirect}, RootCAs: roots, ServerName: "localhost"}
+	server := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, NextProtos: []string{rawquic.ALPNDirect}, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: privateKey}}}
+	client := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, NextProtos: []string{rawquic.ALPNDirect}, RootCAs: roots, ServerName: "localhost"}
 	return server, client, nil
 }

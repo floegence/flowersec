@@ -1,0 +1,593 @@
+{
+  "version": 3,
+  "status": "final",
+  "design": {
+    "version": "3.0.0",
+    "sha256": "236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba",
+    "baseline_commit": "026cb52d116d2a04de50d0f0621fff57c7657120"
+  },
+  "docs": {
+    "architecture": "docs/TRANSPORT_V3_ARCHITECTURE.md",
+    "wire": "docs/TRANSPORT_V3_WIRE.md"
+  },
+  "profiles": {
+    "session": "flowersec/3",
+    "direct": "flowersec-direct/3",
+    "tunnel": "flowersec-tunnel/3"
+  },
+  "routes": {
+    "direct_websocket_path": "/flowersec/v3/direct",
+    "tunnel_websocket_path": "/flowersec/v3/tunnel",
+    "direct_websocket_subprotocol": "flowersec.direct.v3",
+    "tunnel_websocket_subprotocol": "flowersec.tunnel.v3",
+    "direct_webtransport_path": "/flowersec/webtransport/v3/direct",
+    "tunnel_webtransport_path": "/flowersec/webtransport/v3/tunnel"
+  },
+  "frame_family": {
+    "version_byte": 3,
+    "bootstrap": "FSB3",
+    "admission": "FSA3",
+    "control": "FSC3",
+    "handshake": "FSH3",
+    "setup": "FSS3",
+    "record": "FSR3",
+    "datagram": "FSD3"
+  },
+  "domain_labels": {
+    "session_contract": "flowersec-v3-session-contract\u0000",
+    "candidate_set": "flowersec-v3-candidates\u0000",
+    "tls_policy": "flowersec-v3-tls-policy\u0000",
+    "admission": "flowersec-v3-admission\u0000",
+    "acceptor_admissions": "flowersec-v3-acceptor-admissions\u0000",
+    "runtime_capability": "flowersec-v3-runtime-capability\u0000",
+    "handshake": "flowersec-v3-handshake\u0000",
+    "server_finished": "flowersec v3 server finished",
+    "client_finished": "flowersec v3 client finished",
+    "epoch_zero": "flowersec v3 epoch zero",
+    "control_root": "flowersec v3 control root",
+    "stream_root": "flowersec v3 stream root",
+    "setup_root": "flowersec v3 setup root",
+    "rekey_root": "flowersec v3 rekey root",
+    "next_epoch": "flowersec v3 next epoch",
+    "stream": "flowersec v3 stream",
+    "control": "flowersec v3 control",
+    "record_key": "flowersec v3 record key",
+    "nonce": "flowersec v3 nonce",
+    "unreliable_root": "flowersec v3 unreliable root",
+    "unreliable": "flowersec v3 unreliable",
+    "unreliable_key": "flowersec v3 unreliable key",
+    "unreliable_nonce": "flowersec v3 unreliable nonce",
+    "unreliable_aad": "flowersec-v3-unreliable",
+    "setup_mac": "flowersec-v3-setup\u0000",
+    "record_aad": "flowersec-v3-record\u0000",
+    "open": "flowersec-v3-open\u0000"
+  },
+  "limits": {
+    "safe_integer_min": 0,
+    "safe_integer_max": 9007199254740991,
+    "artifact_bytes": 65536,
+    "candidates_min": 1,
+    "candidates_max": 4,
+    "canonical_candidate_bytes": 2304,
+    "canonical_candidate_set_bytes": 12288,
+    "fsb3_payload_bytes": 32768,
+    "candidate_url_bytes": 2048,
+    "candidate_id_bytes": 64,
+    "pins_min": 1,
+    "pins_max": 4,
+    "pin_certificate_validity_seconds": 1209600,
+    "fsa3_reason_bytes": 64,
+    "scopes_max": 8,
+    "correlation_tags_max": 8,
+    "scoped_payload_bytes": 4096,
+    "scoped_payload_depth": 16,
+    "scoped_payload_nodes": 256,
+    "scoped_payload_collection_items": 64,
+    "scoped_payload_key_bytes": 128,
+    "scoped_payload_string_bytes": 1024,
+    "retry_after_unix_ms_max": 253402300799999
+  },
+  "artifact_schema": {
+    "fields": ["v", "profile", "session", "path", "scoped", "correlation"],
+    "version": 3,
+    "profile": "flowersec/3",
+    "session_fields": [
+      "channel_id",
+      "init_expire_at_unix_s",
+      "idle_timeout_seconds",
+      "establish_timeout_seconds",
+      "rekey_prepare_timeout_seconds",
+      "rekey_completion_timeout_seconds",
+      "max_inbound_streams",
+      "e2ee_psk_b64u",
+      "allowed_suites",
+      "default_suite",
+      "selected_features",
+      "contract_hash_b64u"
+    ],
+    "direct_path_fields": [
+      "kind",
+      "rendezvous_group_id",
+      "listener_audience",
+      "routing_token",
+      "candidates"
+    ],
+    "tunnel_path_fields": [
+      "kind",
+      "rendezvous_group_id",
+      "listener_audience",
+      "role",
+      "local_endpoint_instance_id",
+      "expected_peer_endpoint_instance_id",
+      "token",
+      "candidates"
+    ],
+    "candidate_fields": ["id", "carrier", "url", "wire_profile", "tls"],
+    "canonical_candidate_fields": ["carrier", "id", "normalized_url", "tls", "wire_profile"],
+    "scope_fields": ["scope", "scope_version", "critical", "payload"],
+    "correlation_fields": ["v", "tags"],
+    "correlation_tag_fields": ["key", "value"],
+    "scalar_rules": {
+      "artifact.v": {"type": "integer", "const": 3},
+      "artifact.profile": {"type": "string", "const": "flowersec/3"},
+      "session.channel_id": {"type": "string", "pattern": "^[A-Za-z0-9._~-]+$", "utf8_bytes_min": 1, "utf8_bytes_max": 128},
+      "session.init_expire_at_unix_s": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "expiry": "exclusive"},
+      "session.idle_timeout_seconds": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+      "session.establish_timeout_seconds": {"type": "integer", "const": 30},
+      "session.rekey_prepare_timeout_seconds": {"type": "integer", "const": 10},
+      "session.rekey_completion_timeout_seconds": {"type": "integer", "const": 30},
+      "session.max_inbound_streams": {"type": "integer", "minimum": 1, "maximum": 128},
+      "session.e2ee_psk_b64u": {"type": "canonical_base64url", "decoded_bytes": 32},
+      "session.default_suite": {"type": "integer", "member_of": "session.allowed_suites"},
+      "session.selected_features": {"type": "integer", "const": 0},
+      "session.contract_hash_b64u": {"type": "canonical_base64url", "decoded_bytes": 32},
+      "path.rendezvous_group_id": {"type": "string", "pattern": "^[A-Za-z0-9._~-]+$", "utf8_bytes_min": 1, "utf8_bytes_max": 128},
+      "path.listener_audience": {"type": "string", "pattern": "^[A-Za-z0-9._~-]+$", "utf8_bytes_min": 1, "utf8_bytes_max": 128},
+      "path.routing_token": {"type": "ascii_string", "bytes_min": 1, "bytes_max": 8192},
+      "path.role": {"type": "integer", "enum": [1, 2]},
+      "path.local_endpoint_instance_id": {"type": "string", "pattern": "^[A-Za-z0-9._~-]+$", "utf8_bytes_min": 1, "utf8_bytes_max": 128},
+      "path.expected_peer_endpoint_instance_id": {"type": "string", "pattern": "^[A-Za-z0-9._~-]+$", "utf8_bytes_min": 1, "utf8_bytes_max": 128, "not_equal_to": "path.local_endpoint_instance_id"},
+      "path.token": {"type": "ascii_string", "bytes_min": 1, "bytes_max": 8192},
+      "path.kind": {"type": "string", "enum": ["direct", "tunnel"]},
+      "candidate.id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$", "utf8_bytes_min": 1, "utf8_bytes_max": 64},
+      "candidate.carrier": {"type": "string", "enum": ["websocket", "raw_quic", "webtransport"]},
+      "candidate.url": {"type": "string", "utf8_bytes_min": 1, "utf8_bytes_max": 2048},
+      "candidate.wire_profile": {"type": "string", "path_mapping": {"direct": "flowersec-direct/3", "tunnel": "flowersec-tunnel/3"}},
+      "scope.scope": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,63}$", "unique_in": "scoped"},
+      "scope.scope_version": {"type": "integer", "minimum": 1, "maximum": 65535},
+      "scope.critical": {"type": "boolean"},
+      "correlation.v": {"type": "integer", "const": 3},
+      "correlation.tags[].key": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,31}$", "unique_in": "correlation.tags"},
+      "correlation.tags[].value": {"type": "ascii_string", "bytes_min": 1, "bytes_max": 128}
+    },
+    "collection_rules": {
+      "path.candidates": {"items_min": 1, "items_max": 4, "unique_by": ["id", "endpoint_key"]},
+      "scoped": {"items_min": 0, "items_max": 8, "ordered": true, "unique_by": ["scope"]},
+      "correlation.tags": {"items_min": 0, "items_max": 8, "ordered": true, "unique_by": ["key"]},
+      "session.allowed_suites": {"items_min": 1, "strictly_ascending": true, "allowed_values": [1, 2]}
+    },
+    "scoped_payload_rules": {
+      "root_type": "object",
+      "value_types": ["object", "array", "string", "boolean", "null", "safe_integer"],
+      "safe_integer_min": -9007199254740991,
+      "safe_integer_max": 9007199254740991,
+      "jcs_utf8_bytes_max": 4096,
+      "depth_max": 16,
+      "nodes_max": 256,
+      "object_members_max": 64,
+      "array_elements_max": 64,
+      "key_utf8_bytes_max": 128,
+      "string_utf8_bytes_max": 1024,
+      "preallocation_limits_required": true
+    },
+    "allowed_suites": [1, 2],
+    "selected_features": 0,
+    "establish_timeout_seconds": 30,
+    "rekey_prepare_timeout_seconds": 10,
+    "rekey_completion_timeout_seconds": 30
+  },
+  "array_rules": {
+    "artifact.path.candidates": "input_order_preserved_until_canonicalization",
+    "canonical_candidates": "candidate_id_ascii_strictly_ascending",
+    "tls.pins": "algorithm_then_value_b64u_ascii_strictly_ascending",
+    "session.allowed_suites": "numeric_strictly_ascending",
+    "capability.tuples": "identity_ascii_strictly_ascending",
+    "capability.unsupported": "carrier_ascii_strictly_ascending",
+    "scoped": "ordered_unique_scope",
+    "correlation.tags": "ordered_unique_key"
+  },
+  "url_normalization": {
+    "forbidden_characters": ["\\", "?", "#", "%"],
+    "allowed_production_schemes": ["wss", "quic", "https"],
+    "default_port_omitted": 443,
+    "idna": {
+      "unicode_version": "15.1",
+      "profile": "UTS46 lookup",
+      "transitional": false,
+      "std3": true,
+      "check_hyphens": true,
+      "check_contextj": true,
+      "check_bidi": true,
+      "check_dns_length": true
+    },
+    "reject_ends_in_number": true,
+    "reject_ipv6_zone": true,
+    "reject_embedded_dotted_decimal_ipv6": true,
+    "browser_requires_whatwg_roundtrip_identity": true,
+    "carrier_rules": {
+      "websocket": {"scheme": "wss", "direct_path": "/flowersec/v3/direct", "tunnel_path": "/flowersec/v3/tunnel"},
+      "raw_quic": {"scheme": "quic", "accepted_paths": ["", "/"], "normalized_path": ""},
+      "webtransport": {"scheme": "https", "direct_path": "/flowersec/webtransport/v3/direct", "tunnel_path": "/flowersec/webtransport/v3/tunnel"}
+    },
+    "port": {"minimum": 1, "maximum": 65535, "canonical_decimal": true, "omit": 443},
+    "endpoint_key_fields": ["carrier", "path.kind", "normalized_url"]
+  },
+  "tls_policy": {
+    "modes": ["ca", "pin"],
+    "ca_fields": ["mode"],
+    "pin_fields": ["mode", "pins"],
+    "pin_item_fields": ["algorithm", "not_after_unix_s", "value_b64u"],
+    "algorithms": ["sha-256"],
+    "scalar_rules": {
+      "mode": {"type": "string", "enum": ["ca", "pin"]},
+      "pins[].algorithm": {"type": "string", "const": "sha-256"},
+      "pins[].value_b64u": {"type": "canonical_base64url", "decoded_bytes": 32},
+      "pins[].not_after_unix_s": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "expiry": "exclusive"}
+    },
+    "pin_collection": {"items_min": 1, "items_max": 4, "strict_order": ["algorithm_ascii", "value_b64u_ascii"], "unique_by": ["algorithm", "value_b64u"]},
+    "pin_hash_input": "leaf_x509_der",
+    "pin_hash_bytes": 32,
+    "pin_expiry": "exclusive",
+    "certificate_profile": {
+      "tls_versions": ["1.3"],
+      "zero_rtt": false,
+      "session_tickets": false,
+      "session_resumption": false,
+      "x509_version": 3,
+      "leaf_spki": "ecdsa_secp256r1",
+      "maximum_validity_seconds": 1209600
+    },
+    "ca_uses_platform_or_explicit_roots": true,
+    "private_ca_requires_deployment_roots": true,
+    "mode_fallback": false,
+    "sdk_pin_fetch": false
+  },
+  "fsb3": {
+    "direct_fields": [
+      "candidate_set_hash_b64u",
+      "candidates",
+      "channel_id",
+      "chosen_candidate_id",
+      "listener_audience",
+      "profile",
+      "rendezvous_group_id",
+      "routing_token",
+      "session_contract_hash_b64u"
+    ],
+    "tunnel_fields": [
+      "attach_token",
+      "candidate_set_hash_b64u",
+      "candidates",
+      "channel_id",
+      "chosen_candidate_id",
+      "endpoint_instance_id",
+      "listener_audience",
+      "profile",
+      "rendezvous_group_id",
+      "role",
+      "session_contract_hash_b64u"
+    ],
+    "canonical_codec": "RFC8785",
+    "frame_bytes": "12 + payload_length",
+    "payload_bytes_min": 1,
+    "payload_bytes_max": 32768,
+    "path_kind_bytes": {"direct": 1, "tunnel": 2},
+    "reserved_uint16": 0,
+    "candidate_set_hash_formula": "SHA-256(label(candidate_set) || LP(JCS(canonical_candidates)))",
+    "admission_binding_formula": "SHA-256(label(admission) || complete_FSB3)",
+    "acceptor_admissions_hash_formula": "SHA-256(label(acceptor_admissions) || LP(FSB3 sorted by chosen_candidate_id ASCII))",
+    "acceptor_admissions_frames_min": 1,
+    "acceptor_admissions_frames_max": 4,
+    "tls_before_frame": true,
+    "durable_spend_before_frame": true
+  },
+  "fsa3": {
+    "frame_bytes": "8 + reason_length",
+    "statuses": {"success": 0, "reject": 1, "retryable": 2},
+    "reason_bytes_min": 0,
+    "reason_bytes_max": 64,
+    "reason_pattern": "^[a-z][a-z0-9_]*$",
+    "success_reason": "",
+    "reason_registry_required": true,
+    "transport_security_reasons_forbidden": true
+  },
+  "capability": {
+    "schema_version": 3,
+    "descriptor_fields": ["language", "runtime", "schemaVersion", "tuples", "unsupported"],
+    "tuple_fields": [
+      "carrier",
+      "datagrams",
+      "migration",
+      "networkMode",
+      "path",
+      "reliableStreams",
+      "securityModes",
+      "sessionRole"
+    ],
+    "unsupported_fields": ["carrier", "reason"],
+    "scalar_rules": {
+      "language": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,127}$"},
+      "runtime": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,127}$"},
+      "schemaVersion": {"type": "integer", "const": 3},
+      "tuple.carrier": {"type": "string", "enum": ["raw_quic", "websocket", "webtransport"]},
+      "tuple.networkMode": {"type": "string", "enum": ["dial", "listen"]},
+      "tuple.path": {"type": "string", "enum": ["direct", "tunnel"]},
+      "tuple.sessionRole": {"type": "string", "enum": ["client", "server"]},
+      "tuple.reliableStreams": {"type": "boolean", "const": true},
+      "tuple.datagrams": {"type": "boolean"},
+      "tuple.migration": {"type": "boolean"},
+      "unsupported.carrier": {"type": "string", "enum": ["raw_quic", "websocket", "webtransport"]},
+      "unsupported.reason": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,127}$", "runtime_specific": true}
+    },
+    "security_modes_rules": {"dial_allowed": [["ca"], ["pin"], ["ca", "pin"]], "listen": [], "ordered": true, "unique": true},
+    "carriers": ["raw_quic", "websocket", "webtransport"],
+    "security_modes": ["ca", "pin"],
+    "runtime_identities": [
+      "go/native",
+      "typescript/browser",
+      "typescript/node",
+      "rust/native",
+      "swift/ios",
+      "swift/macos",
+      "swift/linux"
+    ],
+    "unsupported_reasons": [
+      "adapter_not_composed",
+      "browser_no_raw_udp",
+      "browser_websocket_api_unavailable",
+      "browser_webtransport_api_unavailable",
+      "node_native_transport_unavailable",
+      "node_webtransport_driver_unavailable",
+      "driver_unavailable",
+      "swift_apple_client_profile_excludes_raw_quic",
+      "websocket_adapter_not_supported_on_linux",
+      "swift_apple_client_profile_excludes_webtransport"
+    ],
+    "tuple_identity_fields": ["carrier", "networkMode", "sessionRole", "path"],
+    "tuple_identity_order": "ascii_strictly_ascending",
+    "closed_tuple_sets": {
+      "W4": [
+        ["dial", "direct", "client", true, false, false],
+        ["dial", "tunnel", "client", true, false, false],
+        ["dial", "tunnel", "server", true, false, false],
+        ["listen", "direct", "server", true, false, false]
+      ],
+      "W3": [
+        ["dial", "direct", "client", true, false, false],
+        ["dial", "tunnel", "client", true, false, false],
+        ["dial", "tunnel", "server", true, false, false]
+      ],
+      "Q4M": [
+        ["dial", "direct", "client", true, true, true],
+        ["dial", "tunnel", "client", true, true, true],
+        ["dial", "tunnel", "server", true, true, true],
+        ["listen", "direct", "server", true, true, false]
+      ],
+      "Q4N": [
+        ["dial", "direct", "client", true, true, false],
+        ["dial", "tunnel", "client", true, true, false],
+        ["dial", "tunnel", "server", true, true, false],
+        ["listen", "direct", "server", true, true, false]
+      ],
+      "H4": [
+        ["dial", "direct", "client", true, true, false],
+        ["dial", "tunnel", "client", true, true, false],
+        ["dial", "tunnel", "server", true, true, false],
+        ["listen", "direct", "server", true, true, false]
+      ],
+      "H3": [
+        ["dial", "direct", "client", true, true, false],
+        ["dial", "tunnel", "client", true, true, false],
+        ["dial", "tunnel", "server", true, true, false]
+      ]
+    },
+    "runtime_matrix": {
+      "go/native": {"websocket": ["W4", ["ca", "pin"]], "raw_quic": ["Q4M", ["ca", "pin"]], "webtransport": ["H4", ["ca", "pin"]]},
+      "typescript/browser": {"websocket": ["W3", ["ca"]], "raw_quic": ["unsupported", "browser_no_raw_udp"], "webtransport": ["H3", ["ca"]]},
+      "typescript/node": {"websocket": ["W4", ["ca", "pin"]], "raw_quic": ["Q4N", ["ca", "pin"]], "webtransport": ["unsupported", "node_webtransport_driver_unavailable"]},
+      "rust/native": {"websocket": ["W4", ["ca", "pin"]], "raw_quic": ["Q4M", ["ca", "pin"]], "webtransport": ["unsupported", "driver_unavailable"]},
+      "swift/ios": {"websocket": ["W3", ["ca", "pin"]], "raw_quic": ["unsupported", "swift_apple_client_profile_excludes_raw_quic"], "webtransport": ["unsupported", "swift_apple_client_profile_excludes_webtransport"]},
+      "swift/macos": {"websocket": ["W3", ["ca", "pin"]], "raw_quic": ["unsupported", "swift_apple_client_profile_excludes_raw_quic"], "webtransport": ["unsupported", "swift_apple_client_profile_excludes_webtransport"]},
+      "swift/linux": {"websocket": ["unsupported", "websocket_adapter_not_supported_on_linux"], "raw_quic": ["unsupported", "swift_apple_client_profile_excludes_raw_quic"], "webtransport": ["unsupported", "swift_apple_client_profile_excludes_webtransport"]}
+    },
+    "browser_pin_provider": {
+      "family": "Chromium",
+      "full_version": "151.0.7922.34",
+      "playwright_version": "1.62.1",
+      "default_state": "ca_only",
+      "not_supported_transition": "enabled_to_ca_only"
+    }
+  },
+  "transport_errors": {
+    "internal_codes": ["invalid_artifact", "expired_artifact", "tls_unsupported", "tls_policy_expired", "tls_failed", "connection_failed"],
+    "tls_details": ["ca_untrusted", "pin_mismatch", "unknown"],
+    "browser_marker": "browser_pin_opaque",
+    "public_codes": [
+      "artifact_invalid",
+      "expired_artifact",
+      "transport_security_unsupported",
+      "transport_security_failed",
+      "connection_failed"
+    ],
+    "public_dispositions": ["terminal", "retryable", "retry_after"],
+    "tls_errors_are_fsa3_reasons": false,
+    "public_errors_are_redacted": true
+  },
+  "controller": {
+    "initial_backoff_ms": 250,
+    "maximum_backoff_ms": 30000,
+    "jitter_ms": 0,
+    "wall_clock_recheck_max_interval_ms": 1000,
+    "maximum_policy_sensitive_replacement_leases_per_cycle": 1,
+    "same_pin_policy_retry": false,
+    "same_endpoint_pin_to_ca": false,
+    "failure_aggregation_order_independent": true,
+    "single_scheduler": true,
+    "replacement_first_acquire_has_no_backoff": true,
+    "maximum_attempts_min": 0,
+    "maximum_attempts_max": 9007199254740991,
+    "attempt_counter_saturates_at": 9007199254740991,
+    "failure_backoff_formula": "min(250 * 2^(consecutive_failures-1), 30000)",
+    "retry_after_requires_monotonic_backoff": true,
+    "retry_now_may_skip_backoff_only": true,
+    "session_established_resets_attempt_and_failure_counters": true,
+    "session_termination_starts_new_cycle": true,
+    "aggregate_priority": [
+      "invalid_artifact",
+      "expired_artifact",
+      "policy_refresh",
+      "transport_security_failed",
+      "browser_pin_opaque",
+      "all_unsupported",
+      "connection_failed",
+      "empty_terminal"
+    ],
+    "ordinary_disposition_order": ["latest_retry_after", "retryable", "terminal"],
+    "policy_refresh_triggers": ["tls_policy_expired", "pin_mismatch", "pin_tls_unknown", "browser_pin_opaque"],
+    "blocked_policy_key": ["endpoint_key", "complete_declared_tls_policy_digest"],
+    "replacement_requires_changed_pin_same_endpoint": true,
+    "replacement_same_endpoint_pin_to_ca": false
+  },
+  "lease": {
+    "states": ["idle", "claimed", "spending", "consumed", "retired"],
+    "transitions": [
+      ["idle", "claimed"],
+      ["claimed", "spending"],
+      ["spending", "consumed"],
+      ["claimed", "retired"]
+    ],
+    "terminal_states": ["consumed", "retired"],
+    "claim_is_shared_atomic": true,
+    "ownership_token_is_internal": true
+  },
+  "control_plane": {
+    "issuer_languages": ["go"],
+    "endpoint_fields": ["ID", "URL", "TLS"],
+    "tls_policy_zero_value_valid": false,
+    "pin_input": "sha256_fixed_32_bytes",
+    "sdk_fetches_pins": false,
+    "certificate_lifecycle_owner": "deployment_system",
+    "public_types": [
+      "EndpointConfig",
+      "TLSPolicy",
+      "CertificatePin",
+      "EndpointSet",
+      "ControlPlaneErrorCode",
+      "ControlPlaneError"
+    ],
+    "constructors": ["CAPolicy", "PinPolicy", "NewEndpointSet"],
+    "error_accessors": ["Error", "Code", "FieldPath", "Unwrap"],
+    "sentinels": ["ErrInvalidControlPlaneInput", "ErrIssuanceFailed"],
+    "redacted_input_error_text": "flowersec control-plane input is invalid",
+    "redacted_issuance_error_text": "flowersec artifact issuance failed",
+    "pin_field_paths": ["pins", "pins[<index>]", "pins[<index>].sha256", "pins[<index>].not_after"],
+    "endpoint_field_paths": ["endpoints", "endpoints[<index>]", "endpoints[<index>].id", "endpoints[<index>].url", "endpoints[<index>].tls", "endpoints[<index>].tls.pins[<index>].not_after"],
+    "scheme_carrier_mapping": {"wss": "websocket", "quic": "raw_quic", "https": "webtransport"},
+    "issuance_clock_samples": 1,
+    "issuance_requires_active_pin_per_pin_policy": true,
+    "error_codes": [
+      "invalid_endpoint_count",
+      "invalid_endpoint_id",
+      "invalid_endpoint_url",
+      "duplicate_endpoint",
+      "invalid_tls_policy",
+      "invalid_pin"
+    ]
+  },
+  "wire_fixtures": [
+    {"id": "artifact_admission", "path": "testdata/transport_v3/artifact_vectors.json", "consumers": {
+      "go": ["flowersec-go/internal/artifactv3/vectors_test.go", "flowersec-go/internal/transportsecurity/policy_test.go"],
+      "typescript": ["flowersec-ts/src/v3/artifact.test.ts"],
+      "rust": ["flowersec-rust/src/artifact_v3.rs"],
+      "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift"]
+    }},
+    {"id": "capability", "path": "testdata/transport_v3/capability_vectors.json", "consumers": {
+      "go": ["flowersec-go/internal/runtimev3/capability_vectors_test.go"],
+      "typescript": ["flowersec-ts/src/v3/capability.test.ts"],
+      "rust": ["flowersec-rust/src/transport_v3.rs"],
+      "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift"]
+    }},
+    {"id": "controller", "path": "testdata/transport_v3/controller_vectors.json", "consumers": {
+      "go": ["flowersec-go/connection_controller_test.go"],
+      "typescript": ["flowersec-ts/src/v3/controller.test.ts"],
+      "rust": ["flowersec-rust/src/connection_controller.rs"],
+      "swift": ["flowersec-swift/Tests/FlowersecTests/ConnectionControllerTests.swift"]
+    }},
+    {"id": "crypto", "path": "testdata/transport_v3/crypto_vectors.json", "consumers": {
+      "go": ["flowersec-go/internal/protocolv3/crypto_vectors_test.go"],
+      "typescript": ["flowersec-ts/src/v3/protocol.test.ts"],
+      "rust": ["flowersec-rust/src/transport_v3_crypto_integration_tests.rs"],
+      "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3CryptoTests.swift"]
+    }},
+    {"id": "datagram", "path": "testdata/transport_v3/datagram_vectors.json", "consumers": {
+      "go": ["flowersec-go/internal/protocolv3/unreliable_vectors_test.go"],
+      "typescript": ["flowersec-ts/src/v3/unreliableMessage.test.ts"],
+      "rust": ["flowersec-rust/src/protocol_v3.rs"],
+      "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift"]
+    }},
+    {"id": "handshake", "path": "testdata/transport_v3/handshake_vectors.json", "consumers": {
+      "go": ["flowersec-go/internal/protocolv3/handshake_vectors_test.go"],
+      "typescript": ["flowersec-ts/src/v3/handshake.test.ts"],
+      "rust": ["flowersec-rust/src/session_v3.rs"],
+      "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3HandshakeVectorTests.swift"]
+    }},
+    {"id": "idna", "path": "testdata/transport_v3/idna_vectors.json", "consumers": {
+      "go": ["flowersec-go/internal/artifactv3/vectors_test.go", "flowersec-go/internal/idna15/idna_test.go"],
+      "typescript": ["flowersec-ts/src/v3/artifact.test.ts"],
+      "rust": ["flowersec-rust/src/idna_v3_integration_tests.rs"],
+      "swift": ["flowersec-swift/Tests/FlowersecTests/IDNAHostV3Tests.swift"]
+    }},
+    {"id": "open_unicode", "path": "testdata/transport_v3/open_unicode_vectors.json", "consumers": {
+      "go": ["flowersec-go/internal/protocolv3/open_unicode_vectors_test.go"],
+      "typescript": ["flowersec-ts/src/v3/openWire.test.ts"],
+      "rust": ["flowersec-rust/src/open_v3_integration_tests.rs"],
+      "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3OpenTests.swift"]
+    }},
+    {"id": "rpc_error", "path": "testdata/transport_v3/rpc_error_vectors.json", "consumers": {
+      "go": ["flowersec-go/internal/rpc/session_test.go"],
+      "typescript": ["flowersec-ts/src/rpc/validate.test.ts"],
+      "rust": ["flowersec-rust/src/session_v3.rs"],
+      "swift": ["flowersec-swift/Tests/FlowersecTests/RPCTests.swift"]
+    }},
+    {"id": "rpc_malformed_envelopes", "path": "testdata/transport_v3/rpc_malformed_envelopes.json", "consumers": {
+      "go": ["flowersec-go/internal/rpc/session_id_test.go"],
+      "typescript": ["flowersec-ts/src/rpc/validate.test.ts"],
+      "rust": ["flowersec-rust/src/session_v3.rs"],
+      "swift": ["flowersec-swift/Tests/FlowersecTests/RPCTests.swift"]
+    }},
+    {"id": "rpc_notifications", "path": "testdata/transport_v3/rpc_notification_vectors.json", "consumers": {
+      "go": ["flowersec-go/internal/rpc/notification_vectors_test.go"],
+      "typescript": ["flowersec-ts/src/v3/publicSession.test.ts"],
+      "rust": ["flowersec-rust/src/session_v3_integration_tests.rs"],
+      "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3SessionTests.swift"]
+    }},
+    {"id": "session_handlers", "path": "testdata/transport_v3/session_handler_vectors.json", "consumers": {
+      "go": ["flowersec-go/server_test.go"],
+      "typescript": ["flowersec-ts/src/public/streamHandlers.test.ts", "flowersec-ts/src/node/acceptor.test.ts"],
+      "rust": ["flowersec-rust/src/session_handlers.rs"],
+      "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3SessionTests.swift"]
+    }},
+    {"id": "session_wire", "path": "testdata/transport_v3/session_wire_vectors.json", "consumers": {
+      "go": ["flowersec-go/internal/sessionv3/session_wire_vectors_test.go"],
+      "typescript": ["flowersec-ts/src/v3/openWire.test.ts"],
+      "rust": ["flowersec-rust/src/session_v3.rs"],
+      "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3SessionTests.swift"]
+    }}
+  ],
+  "version_isolation": {
+    "wire_negotiation": false,
+    "automatic_v2_fallback": false,
+    "v2_artifact_accepted_by_v3": false,
+    "v3_artifact_accepted_by_v2": false
+  }
+}

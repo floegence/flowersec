@@ -116,12 +116,13 @@ WebTransport は必須の native-server carrier ではなく、オプション�
 ## セキュリティ
 
 - 直接接続とリレー接続のどちらでも、アプリケーションデータはエンドツーエンドで暗号化されます。
+- TLS 信頼ポリシーは各 v3 トランスポート候補に結び付けられます。公開またはデプロイ提供の CA ルートと明示的なリーフ証明書 pin は排他的で、失敗後に降格しません。
 - 接続招待は不透明で、有効期間が短く、1 回だけ使用できます。
 - 認証情報は使用前に消費済みとして確定されるため、使用済み招待は再利用できません。
 - リレーは暗号化トラフィックだけを転送し、アプリケーションセッションを終端しません。
 - 無効または未対応の接続は安全に失敗し、公開エラーの情報量は制限されます。
 
-プロトコルと脅威モデルの詳細は、[API コントラクト](docs/API_CONTRACT.md)、[トランスポートアーキテクチャ](docs/TRANSPORT_V2_ARCHITECTURE.md)、[脅威モデル](docs/THREAT_MODEL.md)を参照してください。
+プロトコルと脅威モデルの詳細は、[API コントラクト](docs/API_CONTRACT.md)、[トランスポートアーキテクチャ](docs/TRANSPORT_V3_ARCHITECTURE.md)、[脅威モデル](docs/THREAT_MODEL.md)を参照してください。
 
 <!-- readme-section:deploy-and-develop -->
 <a id="deploy-and-develop"></a>
@@ -130,7 +131,7 @@ WebTransport は必須の native-server carrier ではなく、オプション�
 
 - [API コントラクト](docs/API_CONTRACT.md)：SDK 間で共有される安定したアプリケーション動作。
 - [エラーモデル](docs/ERROR_MODEL.md)：公開される接続、セッション、RPC エラー。
-- [トランスポートアーキテクチャ](docs/TRANSPORT_V2_ARCHITECTURE.md)：直接接続とリレー接続の設計。
+- [トランスポートアーキテクチャ](docs/TRANSPORT_V3_ARCHITECTURE.md)：直接接続とリレー接続の設計。
 - [サンプル](examples/README.md)：実行可能な SDK の使用例。
 
 Flowersec は [MIT License](LICENSE) で提供されます。公開済みパッケージとリリースノートは [GitHub Releases](https://github.com/floegence/flowersec/releases)で確認できます。

@@ -12,9 +12,11 @@ by default, and contains no Flowersec-authored `unsafe`.
 cargo add flowersec
 ```
 
-TLS connection candidates require explicit, non-empty DER trust roots. Exact-loopback
-plaintext direct WebSocket candidates do not require trust roots; no system trust
-store is selected implicitly:
+CA candidates use platform trust roots by default and may use explicit,
+non-empty DER roots for a deployment-provided private CA. Pin candidates use
+only the active leaf-certificate SHA-256 pins carried by the opaque artifact;
+they never fall back to CA verification. No system trust store is selected
+implicitly outside the explicit CA policy:
 
 ```rust,no_run
 # async fn connect_example(
@@ -32,11 +34,11 @@ let session = flowersec::connect(lease, options).await?;
 ## Supported Connections
 
 The native Rust runtime uses WebSocket and raw QUIC for direct and relayed client sessions,
-accepts both carriers for direct server sessions, and
-provides opaque tunnel listeners for both carriers. WebTransport is an optional
-adapter profile and the Rust runtime does not currently expose a production
-adapter. Connection selection, credentials, and protocol
-state stay inside the crate.
+with the strict v3 client profile. It does not expose a v3 acceptor, tunnel runtime, artifact
+issuer, or WebTransport adapter. Deployments issue v3 artifacts and operate v3
+server endpoints through the Go runtime. The explicit `flowersec::v2` namespace
+contains the supported v2 client, acceptor, issuer, and tunnel runtime. Connection
+selection, credentials, and protocol state stay inside the crate.
 
 ## Public API
 
@@ -47,9 +49,6 @@ The crate gives applications these building blocks:
 - `Session`, `RpcPeer`, `ByteStream`, `IncomingStream`, and `StreamMetadata` for application traffic;
 - `StreamHandlers` for bounded application-stream dispatch on any established Session;
 - `ConnectionController` for reconnecting with a fresh invitation after a session ends;
-- `Acceptor`, `AcceptedSession`, and `SessionHandlers` for server-side sessions;
-- `TunnelRuntime` for authorized opaque relay pairing without application Session access;
-- `controlplane::Issuer`, `AuthorizationRecord`, and runtime authorization types;
 - `ProxyServer` for bounded HTTP and WebSocket forwarding over application Sessions;
 - `UnreliableMessageChannel` when the negotiated connection supports it;
 - typed RPC helpers through `RpcPeerExt::call_typed(...)`.
@@ -104,17 +103,17 @@ handlers
 ```
 
 Application stream kinds contain 1 through 128 canonical UTF-8 bytes and
-exclude the reserved `flowersec.rpc.v2` kind. Unknown, excess, failed, and
+exclude the reserved `flowersec.rpc.v3` kind. Unknown, excess, failed, and
 panicked handler streams are reset without terminating unrelated dispatch.
 
 For the complete durable `ArtifactLease` spend workflow, see the
 [Rust cookbook](../examples/rust/README.md). The spend record must be committed
 before the connector can send connection credentials.
 
-### Accepted server Session
+### Explicit v2 server Session
 
 ```rust,no_run
-# async fn serve(acceptor: flowersec::Acceptor, artifact: flowersec::Artifact) -> Result<(), Box<dyn std::error::Error>> {
+# async fn serve(acceptor: flowersec::v2::Acceptor, artifact: flowersec::v2::Artifact) -> Result<(), Box<dyn std::error::Error>> {
 let handlers = flowersec::SessionHandlers::new(Default::default())?;
 let accepted = acceptor.accept_with_handlers(
     &artifact,
@@ -134,7 +133,7 @@ keeps the receive direction available, while `reset()` and `close()` abort both
 directions and release local stream capacity. A stream failure remains isolated
 from unrelated streams in the same Session.
 
-`Acceptor` accepts one pending invitation at a time. Use
+`flowersec::v2::Acceptor` accepts one pending v2 invitation at a time. Use
 `accept_with_handlers(...)` when the server owns inbound RPC and stream
 dispatch. A handler error affects only that stream, while unrelated streams
 continue to be served.
@@ -153,5 +152,5 @@ Artifacts are opaque and single-use. Public connection and session errors are
 bounded and redacted, and relays forward encrypted traffic without reading
 application data.
 
-See the [API contract](../docs/API_CONTRACT.md), [transport architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md),
+See the [API contract](../docs/API_CONTRACT.md), [transport architecture](../docs/TRANSPORT_V3_ARCHITECTURE.md), [v3 wire contract](../docs/TRANSPORT_V3_WIRE.md),
 [threat model](../docs/THREAT_MODEL.md), and [error model](../docs/ERROR_MODEL.md).

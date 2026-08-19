@@ -57,9 +57,9 @@ final class SecurityNegativeVectorsTests: XCTestCase {
     )
     let positives = try XCTUnwrap(document["positive"] as? [[String: Any]])
     let artifactJSON = try XCTUnwrap(positives.first?["artifact_json"] as? String)
-    XCTAssertNoThrow(try parseArtifact(Data(artifactJSON.utf8)))
+    XCTAssertNoThrow(try parseArtifactV2(Data(artifactJSON.utf8)))
     for (mutation, value) in boundedTextMutations(artifactJSON) {
-      XCTAssertThrowsError(try parseArtifact(Data(value.utf8)), "artifact/\(mutation)")
+      XCTAssertThrowsError(try parseArtifactV2(Data(value.utf8)), "artifact/\(mutation)")
     }
 
     let validEnvelope = Data("{\"payload\":{},\"request_id\":1,\"response_to\":0,\"type_id\":1}".utf8)
@@ -83,7 +83,7 @@ final class SecurityNegativeVectorsTests: XCTestCase {
 
   private func parse(_ kind: String, _ value: Data) throws {
     switch kind {
-    case "artifact_json": _ = try parseArtifact(value)
+    case "artifact_json": _ = try parseArtifactV2(value)
     case "fsa2_hex": _ = try AdmissionCodecV2.decodeFSA2(value)
     case "fsr2_hex": _ = try RecordHeaderV2(encoded: value)
     case "open_hex": _ = try OpenPayloadV2.decode(value)

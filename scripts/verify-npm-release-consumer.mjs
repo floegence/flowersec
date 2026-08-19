@@ -18,7 +18,7 @@ try {
   await execFileAsync("npm", ["install", "--ignore-scripts", "--audit=false", `@floegence/flowersec-core@${version}`, `@floegence/flowersec-node-native@${version}`], { cwd: root });
   const wrapper = await import(path.join(root, "node_modules/@floegence/flowersec-node-native/index.js"));
   const addon = wrapper.default ?? wrapper;
-  assert.equal(addon.contractVersion(), 1);
+  assert.equal(addon.contractVersion(), 2);
   const addonPath = path.join(root, "node_modules/@floegence/flowersec-node-native/index.js");
   await execFileAsync(process.execPath, [path.resolve("scripts/native-addon-smoke.mjs")], {
     env: { ...process.env, FLOWERSEC_NATIVE_ADDON_PATH: addonPath },
@@ -35,7 +35,7 @@ try {
     "",
     "go 1.26.6",
     "",
-    `require github.com/floegence/flowersec/flowersec-go/v2 v${version}`,
+    `require github.com/floegence/flowersec/flowersec-go/v3 v${version}`,
     "",
   ].join("\n"));
   const goEnvironment = { ...process.env, GOWORK: "off", GOTOOLCHAIN: "local" };

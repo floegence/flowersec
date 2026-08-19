@@ -1,0 +1,116 @@
+{
+  "stream_kinds": [
+    {
+      "id": "empty",
+      "unit": "",
+      "repeat": 0,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "one-byte",
+      "unit": "a",
+      "repeat": 1,
+      "suffix": "",
+      "valid": true
+    },
+    {
+      "id": "128-ascii-bytes",
+      "unit": "a",
+      "repeat": 128,
+      "suffix": "",
+      "valid": true
+    },
+    {
+      "id": "129-ascii-bytes",
+      "unit": "a",
+      "repeat": 129,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "128-multibyte-utf8-bytes",
+      "unit": "é",
+      "repeat": 64,
+      "suffix": "",
+      "valid": true
+    },
+    {
+      "id": "129-multibyte-utf8-bytes",
+      "unit": "é",
+      "repeat": 64,
+      "suffix": "a",
+      "valid": false
+    },
+    {
+      "id": "decomposed-nfc",
+      "unit": "é",
+      "repeat": 1,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "leading-whitespace",
+      "unit": " files",
+      "repeat": 1,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "trailing-whitespace",
+      "unit": "files ",
+      "repeat": 1,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "control-character",
+      "unit": "files\u0001",
+      "repeat": 1,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "unassigned-scalar",
+      "unit": "͸",
+      "repeat": 1,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "reserved-rpc-kind",
+      "unit": "flowersec.rpc.v2",
+      "repeat": 1,
+      "suffix": "",
+      "valid": false
+    },
+    {
+      "id": "application-kind",
+      "unit": "files/read",
+      "repeat": 1,
+      "suffix": "",
+      "valid": true
+    }
+  ],
+  "duplicate_kind": "files/read",
+  "rpc_type_ids": [
+    {
+      "id": "zero",
+      "value": 0,
+      "valid": false
+    },
+    {
+      "id": "minimum",
+      "value": 1,
+      "valid": true
+    },
+    {
+      "id": "maximum",
+      "value": 4294967295,
+      "valid": true
+    }
+  ],
+  "duplicate_type_id": 1,
+  "inherited_codec_from": "transport_v2",
+  "transport_contract_version": 3
+}

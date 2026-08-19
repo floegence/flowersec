@@ -11,6 +11,318 @@ import XCTest
 @testable import Flowersec
 
 final class ConnectorV2Tests: XCTestCase {
+  #if os(macOS)
+    func testProductionV3AdapterAcceptsConfiguredPrivateCA() async throws {
+      let tls = try ConnectorTestTLS.load()
+      let accepted = ConnectorAcceptedTransport()
+      let server = try await ConnectorWSSServer.start(
+        tls: tls, selectedProtocol: "flowersec.direct.v3", accepted: accepted)
+      defer { Task { await server.close() } }
+      let artifact = try v3WebSocketArtifact(port: server.port, tls: ["mode": "ca"])
+      let connection = try await AppleWebSocketRuntimeAdapterV3().prepare(
+        candidate: try XCTUnwrap(artifact.canonicalCandidates.first),
+        path: .direct,
+        role: .client,
+        options: ConnectorOptions(
+          origin: "https://client.example",
+          connectTimeout: .seconds(2),
+          trustRootsPEM: [tls.caPEM]
+        ),
+        activePinHashes: nil
+      )
+
+      XCTAssertEqual(connection.carrier, .webSocket)
+      await connection.close()
+    }
+
+    func testProductionV3AdapterAcceptsSelfSignedPinAndOverlap() async throws {
+      let oldTLS = try ConnectorTestTLS.makeShortLivedSelfSigned()
+      let newTLS = try ConnectorTestTLS.makeShortLivedSelfSigned()
+      let oldHash = Data(SHA256.hash(data: Data(try oldTLS.certificate.toDERBytes())))
+      let newHash = Data(SHA256.hash(data: Data(try newTLS.certificate.toDERBytes())))
+      XCTAssertNotEqual(oldHash, newHash)
+      let activeUntil = Int(Date().timeIntervalSince1970) + 3_600
+      let pins = [oldHash, newHash]
+        .map { $0.base64URLEncodedStringV3() }
+        .sorted()
+        .map {
+          [
+            "algorithm": "sha-256",
+            "not_after_unix_s": activeUntil,
+            "value_b64u": $0,
+          ] as [String: Any]
+        }
+      for material in [oldTLS, newTLS] {
+        let accepted = ConnectorAcceptedTransport()
+        let server = try await ConnectorWSSServer.start(
+          tls: material, selectedProtocol: "flowersec.direct.v3", accepted: accepted)
+        let artifact = try v3WebSocketArtifact(
+          port: server.port,
+          tls: ["mode": "pin", "pins": pins]
+        )
+        let connection = try await AppleWebSocketRuntimeAdapterV3().prepare(
+          candidate: try XCTUnwrap(artifact.canonicalCandidates.first),
+          path: .direct,
+          role: .client,
+          options: ConnectorOptions(
+            origin: "https://client.example", connectTimeout: .seconds(2)),
+          activePinHashes: [oldHash, newHash]
+        )
+
+        XCTAssertEqual(connection.carrier, .webSocket)
+        await connection.close()
+        await server.close()
+      }
+    }
+
+    func testV3UnsupportedCandidateCreatesNoTransportOrLeaseSpend() async throws {
+      let artifact = try v3WebSocketArtifact(port: 9, tls: ["mode": "ca"])
+      let runtime = UnsupportedCountingRuntimeV3()
+      let spend = ConnectorSpendCounter()
+      let connector = try SessionConnectorV3(
+        lease: ArtifactLeaseV3(artifact: artifact) { await spend.commit() },
+        options: ConnectorOptions(
+          origin: "https://client.example", connectTimeout: .milliseconds(250)),
+        runtime: runtime
+      )
+
+      do {
+        _ = try await connector.connect()
+        XCTFail("unsupported candidate unexpectedly created a transport")
+      } catch {
+        XCTAssertEqual(error as? ConnectError, .transportSecurityUnsupported)
+      }
+      let prepareCount = await runtime.prepareCount()
+      let spendCount = await spend.value()
+      XCTAssertEqual(prepareCount, 0)
+      XCTAssertEqual(spendCount, 0)
+    }
+
+    func testProductionV3PinMismatchFailsBeforeLeaseSpend() async throws {
+      let tls = try ConnectorTestTLS.makeShortLivedSelfSigned()
+      let accepted = ConnectorAcceptedTransport()
+      let server = try await ConnectorWSSServer.start(
+        tls: tls, selectedProtocol: "flowersec.direct.v3", accepted: accepted)
+      defer { Task { await server.close() } }
+      let artifact = try v3WebSocketArtifact(
+        port: server.port,
+        tls: pinPolicyV3(hash: Data(repeating: 0xA5, count: 32), expiresIn: 3_600)
+      )
+      let spend = ConnectorSpendCounter()
+      let lease = ArtifactLeaseV3(artifact: artifact) { await spend.commit() }
+
+      do {
+        _ = try await connectV3(
+          lease: lease,
+          options: ConnectorOptions(
+            origin: "https://client.example", connectTimeout: .seconds(2)))
+        XCTFail("mismatched pin unexpectedly established a carrier")
+      } catch {
+        XCTAssertEqual(error as? ConnectError, .transportSecurityFailed)
+      }
+      let spendCount = await spend.value()
+      XCTAssertEqual(spendCount, 0)
+    }
+
+    func testProductionV3PinNetworkFailureRemainsOrdinaryConnectionFailure() async throws {
+      let artifact = try v3WebSocketArtifact(
+        port: 9,
+        tls: pinPolicyV3(hash: Data(repeating: 0xA5, count: 32), expiresIn: 3_600)
+      )
+      do {
+        _ = try await connectV3(
+          lease: ArtifactLeaseV3(artifact: artifact) {},
+          options: ConnectorOptions(
+            origin: "https://client.example", connectTimeout: .milliseconds(250)))
+        XCTFail("closed endpoint unexpectedly established a carrier")
+      } catch {
+        XCTAssertEqual(error as? ConnectError, .connectionFailed)
+      }
+    }
+
+    func testProductionV3ExpiredPinsFailBeforeCreatingTransportOrSpending() async throws {
+      let artifact = try v3WebSocketArtifact(
+        port: 9,
+        tls: pinPolicyV3(hash: Data(repeating: 0xA5, count: 32), expiresIn: -1)
+      )
+      let spend = ConnectorSpendCounter()
+      let lease = ArtifactLeaseV3(artifact: artifact) { await spend.commit() }
+
+      do {
+        _ = try await connectV3(
+          lease: lease,
+          options: ConnectorOptions(
+            origin: "https://client.example", connectTimeout: .milliseconds(250)))
+        XCTFail("expired pin policy unexpectedly created a carrier")
+      } catch {
+        XCTAssertEqual(error as? ConnectError, .transportSecurityFailed)
+      }
+      let spendCount = await spend.value()
+      XCTAssertEqual(spendCount, 0)
+    }
+
+    func testV3FSA3RejectAndRetryablePreserveSpendAndControllerDisposition() async throws {
+      for status in [AdmissionStatusV3.reject, AdmissionStatusV3.retryable] {
+        let artifact = try v3WebSocketArtifact(port: 9, tls: ["mode": "ca"])
+        let spend = ConnectorSpendCounter()
+        let retire = ConnectorSpendCounter()
+        let runtime = FSAResponseRuntimeV3(status: status)
+        let connector = try SessionConnectorV3(
+          lease: ArtifactLeaseV3(
+            artifact: artifact,
+            commitSpend: { await spend.commit() },
+            retire: { await retire.commit() }
+          ),
+          options: ConnectorOptions(
+            origin: "https://client.example", connectTimeout: .milliseconds(250)),
+          runtime: runtime
+        )
+
+        do {
+          _ = try await connector.connectForController()
+          XCTFail("FSA3 failure unexpectedly established a session")
+        } catch let error as ControllerConnectFailureV3 {
+          let expectedDisposition: RetryDispositionV3 = status == .reject ? .terminal : .retryable
+          XCTAssertEqual(
+            error,
+          .connection(
+            .connectionFailed, expectedDisposition, policyTriggerIDs: [],
+            opaquePolicyTriggerIDs: [], failedIDs: []))
+        }
+        let spendCount = await spend.value()
+        let retireCount = await retire.value()
+        let prepareCount = await runtime.prepareCount()
+        XCTAssertEqual(spendCount, 1)
+        XCTAssertEqual(retireCount, 0)
+        XCTAssertEqual(prepareCount, 1)
+      }
+    }
+  #endif
+
+  func testV3ControllerFailureProvenanceIncludesOnlyAttemptedFailures() async throws {
+    let artifact = try baseArtifactV3ForConnector()
+    let runtime = CandidateFailureRuntimeV3()
+    let spend = ConnectorSpendCounter()
+    let connector = try SessionConnectorV3(
+      lease: ArtifactLeaseV3(
+        artifact: artifact,
+        commitSpend: { await spend.commit() }),
+      options: ConnectorOptions(
+        origin: "https://client.example", connectTimeout: .seconds(1)),
+      runtime: runtime
+    )
+
+    do {
+      _ = try await connector.connectForController()
+      XCTFail("failed candidates unexpectedly established a session")
+    } catch let error as ControllerConnectFailureV3 {
+      XCTAssertEqual(
+        error,
+        .connection(
+          .transportSecurityFailed, .terminal,
+          policyTriggerIDs: ["w-pin"], opaquePolicyTriggerIDs: [],
+          failedIDs: ["w-ca", "w-pin"]))
+    }
+    let preparedIDs = await runtime.preparedIDs()
+    let spendCount = await spend.value()
+    XCTAssertEqual(preparedIDs, ["w-ca", "w-pin"])
+    XCTAssertEqual(spendCount, 0)
+  }
+
+  func testV3BrowserOpaqueMarkerStaysOrdinaryButTriggersPinRefresh() async throws {
+    let connector = try SessionConnectorV3(
+      lease: ArtifactLeaseV3(artifact: try baseArtifactV3ForConnector()) {},
+      options: ConnectorOptions(connectTimeout: .seconds(1)),
+      runtime: OpaqueCandidateFailureRuntimeV3()
+    )
+
+    do {
+      _ = try await connector.connectForController()
+      XCTFail("opaque browser pin failures unexpectedly established a session")
+    } catch let error as ControllerConnectFailureV3 {
+      XCTAssertEqual(
+        error,
+        .connection(
+          .connectionFailed, .retryable, policyTriggerIDs: [],
+          opaquePolicyTriggerIDs: ["w-pin"], failedIDs: ["w-ca", "w-pin"]))
+    }
+  }
+
+  func testV3CandidatePreparationRacesAndClosesLateLoser() async throws {
+    let recorder = CandidateRaceRecorderV3()
+    let runtime = CandidateRaceRuntimeV3(recorder: recorder, slowCandidateID: "w-ca")
+    let spent = ConnectorSpendCounter()
+    let connector = try SessionConnectorV3(
+      lease: ArtifactLeaseV3(
+        artifact: try expiringArtifactV3ForConnector(at: 101),
+        commitSpend: { await spent.commit() }),
+      options: ConnectorOptions(connectTimeout: .seconds(1)),
+      runtime: runtime,
+      currentUnixSeconds: { 100 }
+    )
+
+    do {
+      _ = try await connector.connect()
+      XCTFail("recording connection unexpectedly established a session")
+    } catch {
+      XCTAssertEqual(error as? ConnectError, .connectionFailed)
+    }
+    let snapshot = await recorder.snapshot()
+    let spendCount = await spent.value()
+    XCTAssertEqual(snapshot.writes, ["w-pin"])
+    XCTAssertEqual(snapshot.closed, ["w-ca", "w-pin"])
+    XCTAssertEqual(spendCount, 1)
+  }
+
+  func testV3NoWinnerRaceEndExpiryOverridesCandidateFailures() async throws {
+    let recorder = CandidateRaceRecorderV3()
+    let clock = SteppingUnixClockV3(values: [100, 101])
+    let connector = try SessionConnectorV3(
+      lease: ArtifactLeaseV3(artifact: try expiringArtifactV3ForConnector(at: 101)) {},
+      options: ConnectorOptions(connectTimeout: .seconds(1)),
+      runtime: CandidateRaceRuntimeV3(recorder: recorder, failAll: true),
+      currentUnixSeconds: { clock.read() }
+    )
+
+    do {
+      _ = try await connector.connect()
+      XCTFail("expired all-failed race unexpectedly established a session")
+    } catch {
+      XCTAssertEqual(error as? ConnectError, .expiredArtifact)
+    }
+    let snapshot = await recorder.snapshot()
+    XCTAssertTrue(snapshot.writes.isEmpty)
+  }
+
+  func testV3ExpiryAfterSpendWritesNoFSB3Bytes() async throws {
+    let recorder = CandidateRaceRecorderV3()
+    let clock = MutableUnixClockV3(value: 100)
+    let spent = ConnectorSpendCounter()
+    let connector = try SessionConnectorV3(
+      lease: ArtifactLeaseV3(
+        artifact: try expiringArtifactV3ForConnector(at: 101),
+        commitSpend: {
+          await spent.commit()
+          clock.set(101)
+        }),
+      options: ConnectorOptions(connectTimeout: .seconds(1)),
+      runtime: CandidateRaceRuntimeV3(recorder: recorder),
+      currentUnixSeconds: { clock.read() }
+    )
+
+    do {
+      _ = try await connector.connect()
+      XCTFail("post-spend expired artifact unexpectedly wrote FSB3")
+    } catch {
+      XCTAssertEqual(error as? ConnectError, .expiredArtifact)
+    }
+    let snapshot = await recorder.snapshot()
+    let spendCount = await spent.value()
+    XCTAssertEqual(spendCount, 1)
+    XCTAssertTrue(snapshot.writes.isEmpty)
+    XCTAssertEqual(snapshot.closed, ["w-ca", "w-pin"])
+  }
+
   func testServerParityClientProfile() async throws {
     #if os(macOS)
       guard ProcessInfo.processInfo.environment["FLOWERSEC_PARITY_READY_BASE64"] != nil else { throw XCTSkip("server parity input is supplied by the parity runner") }
@@ -20,14 +332,23 @@ final class ConnectorV2Tests: XCTestCase {
         let artifactJSON = ready["artifact_json"] as? String,
         let trustPEM = ready["trust_pem"] as? String,
         let origin = ready["origin"] as? String,
+        let protocolVersion = ProcessInfo.processInfo.environment["FLOWERSEC_PARITY_PROTOCOL"],
+        protocolVersion == "v2" || protocolVersion == "v3",
         let path = ProcessInfo.processInfo.environment["FLOWERSEC_PARITY_PATH"],
         path == "direct" || path == "tunnel"
       else { throw XCTSkip("server parity input is supplied by the parity runner") }
-      let artifact = try parseArtifact(Data(artifactJSON.utf8))
-      let session = try await connect(
-        lease: ArtifactLease(artifact: artifact) {},
-        options: ConnectorOptions(origin: origin, connectTimeout: .seconds(5), trustRootsPEM: [Data(trustPEM.utf8)])
-      )
+      let options = ConnectorOptions(
+        origin: origin, connectTimeout: .seconds(5), trustRootsPEM: [Data(trustPEM.utf8)])
+      let session: any Session
+      if protocolVersion == "v2" {
+        session = try await connectV2(
+          lease: ArtifactLeaseV2(artifact: try parseArtifactV2(Data(artifactJSON.utf8))) {},
+          options: options)
+      } else {
+        session = try await connectV3(
+          lease: ArtifactLeaseV3(artifact: try parseArtifactV3(Data(artifactJSON.utf8))) {},
+          options: options)
+      }
       let echo: [String: String] = try await session.rpc.call(7001, ["value": "ping"], as: [String: String].self, timeout: .seconds(5))
       XCTAssertEqual(echo["value"], "ping")
       try await session.rpc.notify(7002, ["value": "notify"])
@@ -48,7 +369,7 @@ final class ConnectorV2Tests: XCTestCase {
     #endif
   }
 
-  func testConnectionControllerReplacesTerminatedGoWSSSessionWithoutReplay() async throws {
+  func testConnectionControllerV2ReplacesTerminatedGoWSSSessionWithoutReplay() async throws {
     let scenario = try connectionControllerScenario(named: "connect_and_replace_after_termination")
     XCTAssertEqual(scenario.sessions, ["session-1", "session-2"])
     XCTAssertEqual(scenario.replay, [])
@@ -58,8 +379,8 @@ final class ConnectorV2Tests: XCTestCase {
     defer { secondPeer.stop() }
     let firstArtifact = try goWSSArtifact(endpoint: firstPeer.endpoint, vectorIndex: 0)
     let secondArtifact = try goWSSArtifact(endpoint: secondPeer.endpoint, vectorIndex: 0)
-    let source = ControllerGoWSSArtifactSource(artifacts: [firstArtifact, secondArtifact])
-    let controller = try ConnectionController(
+    let source = ControllerGoWSSArtifactSourceV2(artifacts: [firstArtifact, secondArtifact])
+    let controller = try ConnectionControllerV2(
       source: source,
       options: ConnectorOptions(
         origin: "https://client.example",
@@ -108,7 +429,7 @@ final class ConnectorV2Tests: XCTestCase {
   func testLoopbackPlaintextDirectRuntimeContract() async throws {
     let accepted = ConnectorAcceptedTransport()
     let raw = try loadArtifactJSON(index: 0)
-    let original = try parseArtifact(Data(raw.utf8)).value
+    let original = try parseArtifactV2(Data(raw.utf8)).value
     let candidateURL = try XCTUnwrap(
       original.path.candidates.first(where: { $0.carrier == "websocket" })?.url)
     let server = try await ConnectorWSSServer.startPlaintext(
@@ -118,11 +439,11 @@ final class ConnectorV2Tests: XCTestCase {
       candidateURL: candidateURL,
       replacementURL: "ws://127.0.0.1:\(server.port)/flowersec/v2/direct"
     )
-    let artifact = try parseArtifact(Data(rewritten.utf8))
+    let artifact = try parseArtifactV2(Data(rewritten.utf8))
     let spend = ConnectorSpendCounter()
-    let lease = ArtifactLease(artifact: artifact) { await spend.commit() }
+    let lease = ArtifactLeaseV2(artifact: artifact) { await spend.commit() }
     async let serverSession = Self.establishServerSession(artifact: artifact, accepted: accepted)
-    async let clientSession = connect(
+    async let clientSession = connectV2(
       lease: lease,
       options: ConnectorOptions(origin: "http://127.0.0.1:\(server.port)", connectTimeout: .seconds(5))
     )
@@ -146,16 +467,16 @@ final class ConnectorV2Tests: XCTestCase {
     await server.close()
 
     let tunnelRaw = try loadArtifactJSON(index: 1)
-    let tunnel = try parseArtifact(Data(tunnelRaw.utf8)).value
+    let tunnel = try parseArtifactV2(Data(tunnelRaw.utf8)).value
     let tunnelCandidateURL = try XCTUnwrap(
       tunnel.path.candidates.first(where: { $0.carrier == "websocket" })?.url)
     let plaintextTunnel = try singleWebSocketArtifactJSON(
       raw: tunnelRaw,
       candidateURL: tunnelCandidateURL,
       replacementURL: "ws://127.0.0.1:\(server.port)/flowersec/v2/tunnel")
-    XCTAssertThrowsError(try parseArtifact(Data(plaintextTunnel.utf8)))
+    XCTAssertThrowsError(try parseArtifactV2(Data(plaintextTunnel.utf8)))
     let nonLoopback = rewritten.replacingOccurrences(of: "127.0.0.1", with: "192.0.2.10")
-    XCTAssertThrowsError(try parseArtifact(Data(nonLoopback.utf8)))
+    XCTAssertThrowsError(try parseArtifactV2(Data(nonLoopback.utf8)))
   }
 
   func testRealGoWSSDirectEndToEnd() async throws {
@@ -166,8 +487,8 @@ final class ConnectorV2Tests: XCTestCase {
     let peer = try GoWSSPeer.start(path: "direct", serverNotify: true)
     defer { peer.stop() }
     let artifact = try goWSSArtifact(endpoint: peer.endpoint, vectorIndex: 0)
-    let session = try await connect(
-      lease: ArtifactLease(artifact: artifact) {},
+    let session = try await connectV2(
+      lease: ArtifactLeaseV2(artifact: artifact) {},
       options: ConnectorOptions(
         origin: "https://client.example",
         connectTimeout: .seconds(5),
@@ -202,7 +523,7 @@ final class ConnectorV2Tests: XCTestCase {
     let tls = try ConnectorTestTLS.load()
     let accepted = ConnectorAcceptedTransport()
     let source = try loadArtifactJSON(index: 1)
-    let original = try parseArtifact(Data(source.utf8)).value
+    let original = try parseArtifactV2(Data(source.utf8)).value
     let server = try await ConnectorWSSServer.start(
       tls: tls, selectedProtocol: "flowersec.tunnel.v2", accepted: accepted)
     let candidateURL = original.path.candidates.first(where: { $0.carrier == "websocket" })!.url
@@ -214,17 +535,17 @@ final class ConnectorV2Tests: XCTestCase {
       .replacingOccurrences(of: "endpoint-client", with: "endpoint-swap")
       .replacingOccurrences(of: "endpoint-server", with: "endpoint-client")
       .replacingOccurrences(of: "endpoint-swap", with: "endpoint-server")
-    let clientArtifact = try parseArtifact(Data(clientRaw.utf8))
-    let serverArtifact = try parseArtifact(Data(serverRaw.utf8))
+    let clientArtifact = try parseArtifactV2(Data(clientRaw.utf8))
+    let serverArtifact = try parseArtifactV2(Data(serverRaw.utf8))
     let clientSpend = ConnectorSpendCounter()
     let serverSpend = ConnectorSpendCounter()
     let options = ConnectorOptions(
       connectTimeout: .seconds(5), trustRootsPEM: [tls.caPEM])
-    let clientLease = ArtifactLease(artifact: clientArtifact) { await clientSpend.commit() }
-    let serverLease = ArtifactLease(artifact: serverArtifact) { await serverSpend.commit() }
+    let clientLease = ArtifactLeaseV2(artifact: clientArtifact) { await clientSpend.commit() }
+    let serverLease = ArtifactLeaseV2(artifact: serverArtifact) { await serverSpend.commit() }
     async let bridgeResult: Void = Self.bridgeTunnelLegs(accepted: accepted)
-    async let clientResult = connect(lease: clientLease, options: options)
-    async let serverResult = connect(lease: serverLease, options: options)
+    async let clientResult = connectV2(lease: clientLease, options: options)
+    async let serverResult = connectV2(lease: serverLease, options: options)
     let (client, serverPeer) = try await (clientResult, serverResult)
 
     let outbound = try await client.openStream(kind: "tunnel-e2e")
@@ -288,7 +609,7 @@ final class ConnectorV2Tests: XCTestCase {
     let tls = try ConnectorTestTLS.load()
     let accepted = ConnectorAcceptedTransport()
     let raw = try loadArtifactJSON(index: vectorIndex)
-    let original = try parseArtifact(Data(raw.utf8)).value
+    let original = try parseArtifactV2(Data(raw.utf8)).value
     let expectedProtocol =
       original.path.kind == "direct" ? "flowersec.direct.v2" : "flowersec.tunnel.v2"
     let server = try await ConnectorWSSServer.start(
@@ -297,15 +618,15 @@ final class ConnectorV2Tests: XCTestCase {
       of: original.path.candidates.first(where: { $0.carrier == "websocket" })!.url,
       with: "wss://localhost:\(server.port)/flowersec/v2/\(original.path.kind)"
     )
-    let artifact = try parseArtifact(Data(rewritten.utf8))
+    let artifact = try parseArtifactV2(Data(rewritten.utf8))
     let spend = ConnectorSpendCounter()
-    let lease = ArtifactLease(artifact: artifact) { await spend.commit() }
+    let lease = ArtifactLeaseV2(artifact: artifact) { await spend.commit() }
     let options = ConnectorOptions(
       connectTimeout: .seconds(5), trustRootsPEM: [tls.caPEM])
     do {
       async let serverSession = Self.establishServerSession(
         artifact: artifact, accepted: accepted)
-      async let clientSession = connect(lease: lease, options: options)
+      async let clientSession = connectV2(lease: lease, options: options)
       let (client, serverPeer) = try await (clientSession, serverSession)
 
       let outbound = try await client.openStream(kind: "wss-e2e")
@@ -335,7 +656,7 @@ final class ConnectorV2Tests: XCTestCase {
   }
 
   private static func establishServerSession(
-    artifact: Artifact, accepted: ConnectorAcceptedTransport
+    artifact: ArtifactV2, accepted: ConnectorAcceptedTransport
   ) async throws -> TransportV2Session {
     let transport = try await accepted.accept()
     let fsb2 = try await transport.readBinary()
@@ -418,9 +739,9 @@ final class ConnectorV2Tests: XCTestCase {
 
   func testConnectRejectsInvalidPublicOptions() async throws {
     let artifact = try loadArtifact()
-    let lease = ArtifactLease(artifact: artifact) {}
+    let lease = ArtifactLeaseV2(artifact: artifact) {}
     do {
-      _ = try await connect(
+      _ = try await connectV2(
         lease: lease,
         options: ConnectorOptions(origin: "http://example.com"))
       XCTFail("invalid public options unexpectedly established a session")
@@ -432,7 +753,7 @@ final class ConnectorV2Tests: XCTestCase {
   func testConnectorCommitsSpendBeforeFSB2AndClosesAfterAdmissionReject() async throws {
     let artifact = try loadArtifact()
     let events = ConnectorEventRecorder()
-    let lease = ArtifactLease(artifact: artifact) { await events.append("spend") }
+    let lease = ArtifactLeaseV2(artifact: artifact) { await events.append("spend") }
     let connector = try SessionConnectorV2(
       lease: lease,
       options: ConnectorOptions(),
@@ -452,7 +773,7 @@ final class ConnectorV2Tests: XCTestCase {
   func testConnectTimeoutReturnsBeforeDurableSpendCompletesAndStillCleansUp() async throws {
     let artifact = try loadArtifact()
     let events = ConnectorEventRecorder()
-    let lease = ArtifactLease(artifact: artifact) {
+    let lease = ArtifactLeaseV2(artifact: artifact) {
       await events.append("spend-start")
       try await Task.sleep(for: .milliseconds(250))
       await events.append("spend-finished")
@@ -484,21 +805,21 @@ final class ConnectorV2Tests: XCTestCase {
     let tls = try ConnectorTestTLS.load()
     let accepted = ConnectorAcceptedTransport()
     let raw = try loadArtifactJSON(index: 0)
-    let original = try parseArtifact(Data(raw.utf8)).value
+    let original = try parseArtifactV2(Data(raw.utf8)).value
     let server = try await ConnectorWSSServer.start(
       tls: tls, selectedProtocol: "flowersec.direct.v2", accepted: accepted)
     let rewritten = raw.replacingOccurrences(
       of: original.path.candidates.first(where: { $0.carrier == "websocket" })!.url,
       with: "wss://localhost:\(server.port)/flowersec/v2/direct"
     )
-    let artifact = try parseArtifact(Data(rewritten.utf8))
+    let artifact = try parseArtifactV2(Data(rewritten.utf8))
     let started = ContinuousClock.now
 
     do {
       async let serverSession = Self.establishServerSession(
         artifact: artifact, accepted: accepted)
-      async let clientSession = connect(
-        lease: ArtifactLease(artifact: artifact) {},
+      async let clientSession = connectV2(
+        lease: ArtifactLeaseV2(artifact: artifact) {},
         options: ConnectorOptions(connectTimeout: .milliseconds(250))
       )
       _ = try await (clientSession, serverSession)
@@ -510,9 +831,49 @@ final class ConnectorV2Tests: XCTestCase {
     await server.close()
   }
 
-  private func loadArtifact() throws -> Artifact {
-    try parseArtifact(Data(loadArtifactJSON(index: 0).utf8))
+  private func loadArtifact() throws -> ArtifactV2 {
+    try parseArtifactV2(Data(loadArtifactJSON(index: 0).utf8))
   }
+
+  #if os(macOS)
+    private func v3WebSocketArtifact(
+      port: Int,
+      tls: [String: Any]
+    ) throws -> ArtifactV3 {
+      let url = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appendingPathComponent("testdata/transport_v3/artifact_vectors.json")
+      let vectors = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+      let positive = vectors["positive"] as! [[String: Any]]
+      var root = try JSONSerialization.jsonObject(
+        with: Data((positive[0]["artifact_json"] as! String).utf8)) as! [String: Any]
+      var path = root["path"] as! [String: Any]
+      path["candidates"] = [[
+        "carrier": "websocket",
+        "id": "w-local",
+        "tls": tls,
+        "url": "wss://localhost:\(port)/flowersec/v3/direct",
+        "wire_profile": "flowersec-direct/3",
+      ]]
+      root["path"] = path
+      var session = root["session"] as! [String: Any]
+      session["init_expire_at_unix_s"] = Int(Date().timeIntervalSince1970) + 3_600
+      root["session"] = session
+      return try parseArtifactV3(FlowersecJCSV3.encode(root))
+    }
+
+    private func pinPolicyV3(hash: Data, expiresIn seconds: Int) -> [String: Any] {
+      [
+        "mode": "pin",
+        "pins": [[
+          "algorithm": "sha-256",
+          "not_after_unix_s": Int(Date().timeIntervalSince1970) + seconds,
+          "value_b64u": hash.base64URLEncodedStringV3(),
+        ]],
+      ]
+    }
+  #endif
 
   private func loadArtifactJSON(index: Int) throws -> String {
     let url = URL(fileURLWithPath: #filePath)
@@ -575,7 +936,7 @@ final class ConnectorV2Tests: XCTestCase {
     webSocket["url"] = endpoint.url
     pathObject["candidates"] = [webSocket]
     wire["path"] = pathObject
-    let artifact = try parseArtifact(
+    let artifact = try parseArtifactV2(
       JSONSerialization.data(
         withJSONObject: wire, options: [.sortedKeys, .withoutEscapingSlashes])
     )
@@ -584,8 +945,8 @@ final class ConnectorV2Tests: XCTestCase {
     let clientStarted = ContinuousClock.now
     var clientOperation = "connect"
     do {
-      let session = try await connect(
-        lease: ArtifactLease(artifact: artifact) {},
+      let session = try await connectV2(
+        lease: ArtifactLeaseV2(artifact: artifact) {},
         options: ConnectorOptions(
           origin: "https://client.example",
           connectTimeout: .seconds(5),
@@ -633,7 +994,7 @@ final class ConnectorV2Tests: XCTestCase {
     XCTAssertEqual(process.terminationStatus, 0, String(decoding: peerError, as: UTF8.self))
   }
 
-  private func goWSSArtifact(endpoint: GoWSSEndpoint, vectorIndex: Int) throws -> Artifact {
+  private func goWSSArtifact(endpoint: GoWSSEndpoint, vectorIndex: Int) throws -> ArtifactV2 {
     let source = try loadArtifactJSON(index: vectorIndex)
     var wire = try XCTUnwrap(
       JSONSerialization.jsonObject(with: Data(source.utf8)) as? [String: Any])
@@ -643,7 +1004,7 @@ final class ConnectorV2Tests: XCTestCase {
     webSocket["url"] = endpoint.url
     pathObject["candidates"] = [webSocket]
     wire["path"] = pathObject
-    return try parseArtifact(
+    return try parseArtifactV2(
       JSONSerialization.data(
         withJSONObject: wire, options: [.sortedKeys, .withoutEscapingSlashes])
     )
@@ -667,8 +1028,8 @@ final class ConnectorV2Tests: XCTestCase {
   }
 
   private func waitForControllerSession(
-    _ controller: ConnectionController,
-    source: ControllerGoWSSArtifactSource,
+    _ controller: ConnectionControllerV2,
+    source: ControllerGoWSSArtifactSourceV2,
     afterAcquisitions minimumAcquisitions: Int
   ) async throws -> any Session {
     let deadline = ContinuousClock.now + .seconds(5)
@@ -708,6 +1069,22 @@ final class ConnectorV2Tests: XCTestCase {
       if chunk[0] == 0x0a { return buffered.dropLast() }
     }
   }
+}
+
+private func baseArtifactV3ForConnector() throws -> ArtifactV3 {
+  let url = packageRoot().appendingPathComponent("testdata/transport_v3/artifact_vectors.json")
+  let root = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+  let positive = root["positive"] as! [[String: Any]]
+  return try parseArtifactV3(Data((positive[0]["artifact_json"] as! String).utf8))
+}
+
+private func expiringArtifactV3ForConnector(at expiry: Int) throws -> ArtifactV3 {
+  let artifact = try baseArtifactV3ForConnector()
+  var root = try JSONSerialization.jsonObject(with: artifact.canonicalJSON) as! [String: Any]
+  var session = root["session"] as! [String: Any]
+  session["init_expire_at_unix_s"] = expiry
+  root["session"] = session
+  return try parseArtifactV3(FlowersecJCSV3.encode(root))
 }
 
 private struct ConnectorBinaryPair {
@@ -847,9 +1224,12 @@ private final class GoWSSPeer: @unchecked Sendable {
 
   func finish() -> (status: Int32, stderr: String) {
     if let result { return result }
-    process.waitUntilExit()
+    if !waitForExit(process, timeout: 5) {
+      process.terminate()
+      _ = waitForExit(process, timeout: 2)
+    }
     let value = (
-      status: process.terminationStatus,
+      status: process.isRunning ? -1 : process.terminationStatus,
       stderr: String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
     )
     result = value
@@ -859,8 +1239,20 @@ private final class GoWSSPeer: @unchecked Sendable {
   func stop() {
     if process.isRunning {
       process.terminate()
-      process.waitUntilExit()
+      _ = waitForExit(process, timeout: 2)
     }
+  }
+
+  private static func waitForExit(_ process: Process, timeout: TimeInterval) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while process.isRunning && Date() < deadline {
+      Thread.sleep(forTimeInterval: 0.01)
+    }
+    return !process.isRunning
+  }
+
+  private func waitForExit(_ process: Process, timeout: TimeInterval) -> Bool {
+    Self.waitForExit(process, timeout: timeout)
   }
 
   private static func readEndpointLine(_ handle: FileHandle) throws -> Data {
@@ -874,22 +1266,22 @@ private final class GoWSSPeer: @unchecked Sendable {
   }
 }
 
-private actor ControllerGoWSSArtifactSource: ArtifactSource {
-  private var artifacts: [Artifact]
+private actor ControllerGoWSSArtifactSourceV2: ArtifactSourceV2 {
+  private var artifacts: [ArtifactV2]
   private var acquisitions = 0
   private var spends = 0
 
-  init(artifacts: [Artifact]) {
+  init(artifacts: [ArtifactV2]) {
     self.artifacts = artifacts
   }
 
-  func acquireArtifact() throws -> ArtifactLease {
+  func acquireArtifact() throws -> ArtifactLeaseV2 {
     guard !artifacts.isEmpty else {
-      throw ArtifactSourceFailure(disposition: .terminal)
+      throw ArtifactSourceFailureV2(disposition: .terminal)
     }
     acquisitions += 1
     let artifact = artifacts.removeFirst()
-    return ArtifactLease(artifact: artifact) { await self.recordSpend() }
+    return ArtifactLeaseV2(artifact: artifact) { await self.recordSpend() }
   }
 
   func counts() -> (acquisitions: Int, spends: Int) {
@@ -905,7 +1297,7 @@ private enum ControllerGoWSSTestError: Error {
   case failed
   case peerClosed
   case timeout(
-    state: ConnectionState,
+    state: ConnectionStateV2,
     attempt: UInt64,
     hasCurrentSession: Bool,
     acquisitions: Int
@@ -940,6 +1332,253 @@ private struct ConnectorTestTLS {
       privateKey: NIOSSLPrivateKey(bytes: Array(key), format: .pem)
     )
   }
+
+  #if os(macOS)
+    static func makeShortLivedSelfSigned() throws -> Self {
+      let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("flowersec-swift-v3-tls-\(UUID().uuidString)", isDirectory: true)
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let certificateURL = directory.appendingPathComponent("leaf.pem")
+      let privateKeyURL = directory.appendingPathComponent("leaf-key.pem")
+      let process = Process()
+      let errors = Pipe()
+      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+      process.arguments = [
+        "openssl", "req", "-x509", "-newkey", "ec",
+        "-pkeyopt", "ec_paramgen_curve:P-256", "-sha256", "-nodes", "-days", "7",
+        "-subj", "/CN=localhost",
+        "-addext", "basicConstraints=critical,CA:FALSE",
+        "-addext", "keyUsage=critical,digitalSignature",
+        "-addext", "extendedKeyUsage=serverAuth",
+        "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
+        "-keyout", privateKeyURL.path,
+        "-out", certificateURL.path,
+      ]
+      process.standardOutput = FileHandle.nullDevice
+      process.standardError = errors
+      try process.run()
+      process.waitUntilExit()
+      let diagnostic = String(
+        data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+      guard process.terminationStatus == 0 else {
+        throw ConnectorGeneratedTLSError.failed(diagnostic)
+      }
+      let certificatePEM = try Data(contentsOf: certificateURL)
+      let privateKeyPEM = try Data(contentsOf: privateKeyURL)
+      return try Self(
+        caPEM: certificatePEM,
+        certificate: XCTUnwrap(NIOSSLCertificate.fromPEMBytes(Array(certificatePEM)).first),
+        privateKey: NIOSSLPrivateKey(bytes: Array(privateKeyPEM), format: .pem)
+      )
+    }
+  #endif
+}
+
+private enum ConnectorGeneratedTLSError: Error {
+  case failed(String)
+}
+
+private actor UnsupportedCountingRuntimeV3: RuntimeCarrierAdapterV3 {
+  nonisolated let capabilities = RuntimeCapabilitiesV3.linux
+  private var preparations = 0
+
+  nonisolated func validate(options: ConnectorOptions) throws {}
+
+  func prepare(
+    candidate: CanonicalCandidateV3,
+    path: PathKind,
+    role: SessionRoleV3,
+    options: ConnectorOptions,
+    activePinHashes: [Data]?
+  ) async throws -> any PreparedCarrierConnectionV3 {
+    preparations += 1
+    throw ConnectorBoundaryErrorV3.runtimeUnsupported
+  }
+
+  func prepareCount() -> Int { preparations }
+}
+
+private actor CandidateFailureRuntimeV3: RuntimeCarrierAdapterV3 {
+  nonisolated let capabilities = RuntimeCapabilitiesV3.macOS
+  private var candidateIDs = Set<String>()
+
+  nonisolated func validate(options: ConnectorOptions) throws {}
+
+  func prepare(
+    candidate: CanonicalCandidateV3,
+    path: PathKind,
+    role: SessionRoleV3,
+    options: ConnectorOptions,
+    activePinHashes: [Data]?
+  ) async throws -> any PreparedCarrierConnectionV3 {
+    candidateIDs.insert(candidate.id)
+    if candidate.id == "w-pin" { throw ConnectorBoundaryErrorV3.securityFailed }
+    throw ConnectorBoundaryErrorV3.runtimeFailed
+  }
+
+  func preparedIDs() -> Set<String> { candidateIDs }
+}
+
+private actor OpaqueCandidateFailureRuntimeV3: RuntimeCarrierAdapterV3 {
+  nonisolated let capabilities = RuntimeCapabilitiesV3.macOS
+
+  nonisolated func validate(options: ConnectorOptions) throws {}
+
+  func prepare(
+    candidate: CanonicalCandidateV3,
+    path: PathKind,
+    role: SessionRoleV3,
+    options: ConnectorOptions,
+    activePinHashes: [Data]?
+  ) async throws -> any PreparedCarrierConnectionV3 {
+    if candidate.id == "w-pin" { throw ConnectorBoundaryErrorV3.browserPinOpaque }
+    throw ConnectorBoundaryErrorV3.runtimeFailed
+  }
+}
+
+private final class MutableUnixClockV3: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value: UInt64
+
+  init(value: UInt64) { self.value = value }
+
+  func read() -> UInt64 { lock.withLock { value } }
+
+  func set(_ value: UInt64) { lock.withLock { self.value = value } }
+}
+
+private final class SteppingUnixClockV3: @unchecked Sendable {
+  private let lock = NSLock()
+  private var values: [UInt64]
+  private var last: UInt64
+
+  init(values: [UInt64]) {
+    precondition(!values.isEmpty)
+    self.values = values
+    self.last = values[0]
+  }
+
+  func read() -> UInt64 {
+    lock.withLock {
+      if !values.isEmpty { last = values.removeFirst() }
+      return last
+    }
+  }
+}
+
+private actor CandidateRaceRecorderV3 {
+  struct Snapshot: Sendable {
+    let writes: [String]
+    let closed: [String]
+  }
+
+  private var writes: [String] = []
+  private var closed = Set<String>()
+
+  func recordWrite(_ id: String) { writes.append(id) }
+  func recordClose(_ id: String) { closed.insert(id) }
+
+  func snapshot() -> Snapshot {
+    Snapshot(writes: writes, closed: closed.sorted())
+  }
+}
+
+private actor CandidateRaceRuntimeV3: RuntimeCarrierAdapterV3 {
+  nonisolated let capabilities = RuntimeCapabilitiesV3.macOS
+  private let recorder: CandidateRaceRecorderV3
+  private let slowCandidateID: String?
+  private let failAll: Bool
+
+  init(
+    recorder: CandidateRaceRecorderV3,
+    slowCandidateID: String? = nil,
+    failAll: Bool = false
+  ) {
+    self.recorder = recorder
+    self.slowCandidateID = slowCandidateID
+    self.failAll = failAll
+  }
+
+  nonisolated func validate(options: ConnectorOptions) throws {}
+
+  func prepare(
+    candidate: CanonicalCandidateV3,
+    path: PathKind,
+    role: SessionRoleV3,
+    options: ConnectorOptions,
+    activePinHashes: [Data]?
+  ) async throws -> any PreparedCarrierConnectionV3 {
+    if failAll { throw ConnectorBoundaryErrorV3.runtimeFailed }
+    if candidate.id == slowCandidateID {
+      try? await Task.sleep(for: .milliseconds(25))
+    }
+    return CandidateRacePreparedConnectionV3(candidateID: candidate.id, recorder: recorder)
+  }
+}
+
+private struct CandidateRacePreparedConnectionV3: PreparedCarrierConnectionV3 {
+  let carrier = CarrierKind.webSocket
+  let candidateID: String
+  let recorder: CandidateRaceRecorderV3
+
+  func writeAdmission(_ frame: Data) async throws {
+    await recorder.recordWrite(candidateID)
+    throw ConnectorBoundaryErrorV3.runtimeFailed
+  }
+
+  func readAdmission() async throws -> Data { throw ConnectorBoundaryErrorV3.runtimeFailed }
+
+  func makeCarrier(inboundCapacity: UInt16) async throws -> any TransportV3CarrierSession {
+    throw ConnectorBoundaryErrorV3.runtimeFailed
+  }
+
+  func close() async { await recorder.recordClose(candidateID) }
+}
+
+private actor FSAResponseRuntimeV3: RuntimeCarrierAdapterV3 {
+  nonisolated let capabilities = RuntimeCapabilitiesV3.macOS
+  private let status: AdmissionStatusV3
+  private var preparations = 0
+
+  init(status: AdmissionStatusV3) { self.status = status }
+
+  nonisolated func validate(options: ConnectorOptions) throws {}
+
+  func prepare(
+    candidate: CanonicalCandidateV3,
+    path: PathKind,
+    role: SessionRoleV3,
+    options: ConnectorOptions,
+    activePinHashes: [Data]?
+  ) async throws -> any PreparedCarrierConnectionV3 {
+    preparations += 1
+    return FSAResponsePreparedConnectionV3(status: status)
+  }
+
+  func prepareCount() -> Int { preparations }
+}
+
+private struct FSAResponsePreparedConnectionV3: PreparedCarrierConnectionV3 {
+  let carrier = CarrierKind.webSocket
+  let status: AdmissionStatusV3
+
+  func writeAdmission(_ frame: Data) async throws {}
+
+  func readAdmission() async throws -> Data {
+    let reason = status == .reject ? Data("reject".utf8) : Data("retryable".utf8)
+    var frame = Data([0x46, 0x53, 0x41, 0x33, 3, status.rawValue])
+    frame.append(UInt8((reason.count >> 8) & 0xff))
+    frame.append(UInt8(reason.count & 0xff))
+    frame.append(reason)
+    return frame
+  }
+
+  func makeCarrier(inboundCapacity: UInt16) async throws -> any TransportV3CarrierSession {
+    throw ConnectorBoundaryErrorV3.sessionFailed
+  }
+
+  func close() async {}
 }
 
 private actor ConnectorAcceptedTransport {
@@ -1053,6 +1692,8 @@ private final class ConnectorWSSServer: @unchecked Sendable {
         certificateChain: [.certificate(material.certificate)],
         privateKey: .privateKey(material.privateKey))
       tls.minimumTLSVersion = .tlsv13
+      tls.maximumTLSVersion = .tlsv13
+      tls.applicationProtocols = ["http/1.1"]
       context = try NIOSSLContext(configuration: tls)
     } else {
       context = nil

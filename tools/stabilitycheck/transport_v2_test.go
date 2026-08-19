@@ -101,7 +101,7 @@ func TestTransportV2ContractDeclaresSignedSliceZeroRegistry(t *testing.T) {
 	})
 }
 
-func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
+func TestTransportV3PublicAPIIsExplicitlyRegistered(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const goRoot = "github.com/floegence/flowersec/flowersec-go/v2"
+	const goRoot = "github.com/floegence/flowersec/flowersec-go/v3"
 	for _, expression := range []string{
 		"flowersec.Artifact", "flowersec.ArtifactLease", "flowersec.ParseArtifact",
 		"flowersec.NewArtifactLease", "flowersec.ConnectorOptions", "flowersec.Connect",
@@ -123,8 +123,8 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 
 	type rawManifest struct {
 		Docs struct {
-			TransportV2API    string   `json:"transport_v2_api"`
-			TransportV2Tokens []string `json:"transport_v2_tokens"`
+			TransportV3API    string   `json:"transport_v3_api"`
+			TransportV3Tokens []string `json:"transport_v3_tokens"`
 		} `json:"docs"`
 		TS struct {
 			Subpaths []struct {
@@ -141,8 +141,8 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatal(err)
 	}
-	if raw.Docs.TransportV2API == "" || !slices.Contains(raw.Docs.TransportV2Tokens, "`CarrierSession`") {
-		t.Fatalf("manifest docs must register the Transport v2 API document and CarrierSession token")
+	if raw.Docs.TransportV3API == "" || !slices.Contains(raw.Docs.TransportV3Tokens, "flowersec/3") {
+		t.Fatalf("manifest docs must register the Transport v3 API document and flowersec/3 token")
 	}
 	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", "Session")
 	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", "UnreliableMessageChannel")
@@ -185,7 +185,7 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 	})
 }
 
-func TestTransportV2GoExportsAreFullyRegistered(t *testing.T) {
+func TestTransportV3GoExportsAreFullyRegistered(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +196,7 @@ func TestTransportV2GoExportsAreFullyRegistered(t *testing.T) {
 	}
 
 	for _, target := range m.Go.CompileTargets {
-		if target.StabilityGroup != "transport_v2" {
+		if target.StabilityGroup != "transport_v3" {
 			continue
 		}
 		relativePackage := "."
@@ -204,7 +204,7 @@ func TestTransportV2GoExportsAreFullyRegistered(t *testing.T) {
 			relativePackage = strings.TrimPrefix(target.Package, m.Go.ModulePath+"/")
 		}
 		if relativePackage == target.Package {
-			t.Fatalf("transport v2 package %q is outside module %q", target.Package, m.Go.ModulePath)
+			t.Fatalf("transport v3 package %q is outside module %q", target.Package, m.Go.ModulePath)
 		}
 		exported, err := exportedGoExpressions(filepath.Join(repoRoot, "flowersec-go", filepath.FromSlash(relativePackage)), target.Alias)
 		if err != nil {
@@ -222,12 +222,12 @@ func TestTransportV2GoExportsAreFullyRegistered(t *testing.T) {
 		}
 		slices.Sort(missing)
 		if len(missing) != 0 {
-			t.Errorf("Go transport v2 manifest target %s is missing exported symbols: %s", target.Package, strings.Join(missing, ", "))
+			t.Errorf("Go transport v3 manifest target %s is missing exported symbols: %s", target.Package, strings.Join(missing, ", "))
 		}
 	}
 }
 
-func TestTransportV2PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
+func TestTransportV3PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
 		t.Fatal(err)
@@ -238,7 +238,7 @@ func TestTransportV2PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
 	}
 
 	expected := map[string][]string{
-		"github.com/floegence/flowersec/flowersec-go/v2": {
+		"github.com/floegence/flowersec/flowersec-go/v3": {
 			"flowersec.ByteStream.Read", "flowersec.ByteStream.Write", "flowersec.ByteStream.Close",
 			"flowersec.ByteStream.Kind", "flowersec.ByteStream.TerminalError",
 			"flowersec.ByteStream.CloseWrite", "flowersec.ByteStream.Reset",

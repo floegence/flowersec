@@ -6,7 +6,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
 )
 
 type testStream struct{}

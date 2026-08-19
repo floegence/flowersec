@@ -1,0 +1,4995 @@
+//! Carrier-neutral Flowersec v3 handshake and session engine.
+
+#![allow(dead_code)]
+
+use std::{
+    collections::{HashMap, VecDeque},
+    io,
+    sync::{
+        Arc, Mutex as StdMutex, OnceLock, Weak,
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
+    },
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+
+use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use bytes::Bytes;
+use futures_util::FutureExt;
+use hkdf::Hkdf;
+use hmac::{Hmac, KeyInit, Mac};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+#[cfg(test)]
+use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::sync::{Mutex, Notify, OwnedMutexGuard, Semaphore, mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
+
+#[cfg(test)]
+use crate::transport_v3::CarrierKind;
+use crate::{
+    crypto_v3::{Suite, generate_ephemeral_keypair},
+    protocol_v3::{
+        AEAD_TAG_V3_SIZE, CipherSuiteV3, DirectionV3, EpochRootsV3, INNER_HEADER_V3_SIZE,
+        InnerRecordTypeV3, MAX_DATA_V3_BYTES, MAX_UNRELIABLE_PLAINTEXT_V3_BYTES,
+        MAX_UNRELIABLE_WIRE_V3_BYTES, OpenPayloadV3, RECORD_HEADER_V3_SIZE, RecordHeaderV3,
+        SETUP_PREFACE_V3_SIZE, SetupPrefaceV3, StreamOpenerRoleV3, UNRELIABLE_HEADER_V3_SIZE,
+        UnreliableHeaderV3, compute_fss3_hash_v3, compute_open_hash_v3, compute_setup_mac_v3,
+        decode_inner_record_v3, decode_open_payload_v3, derive_control_material_v3,
+        derive_epoch_zero_v3, derive_next_epoch_v3, derive_stream_material_v3,
+        derive_unreliable_material_v3, encode_inner_record_v3, encode_open_payload_v3,
+        open_record_v3, open_unreliable_v3, seal_record_v3, seal_unreliable_v3,
+        verify_setup_mac_v3,
+    },
+    transport_v3::{
+        ByteStream, CarrierSessionV3, CarrierStreamV3, CarrierUnreliableMessageErrorV3,
+        IncomingStream, JsonObject, NotificationSubscription, PathKind, RpcCallError, RpcError,
+        RpcPeer, Session, SessionError, SessionRole, SessionTermination, StreamMetadata,
+        UnreliableMessageChannel, UnreliableMessageError, UnreliableSendOutcome,
+        carrier_inbound_stream_limit_v3,
+    },
+};
+
+const CONTROL_PREFACE_BYTES: usize = 16;
+const HANDSHAKE_HEADER_BYTES: usize = 12;
+pub(crate) const MAX_HANDSHAKE_PAYLOAD_BYTES: usize = 8_192;
+pub(crate) const MAX_BUFFERED_STREAM_BYTES_V3: usize = 4 * 1024 * 1024;
+const RESERVED_RPC_KIND: &str = "flowersec.rpc.v3";
+const MAX_LEDGER_SLOTS: u64 = 1_048_576;
+const NORMAL_CLOSE_REASON_V3: u16 = 1;
+const IDLE_TIMEOUT_REASON_V3: u16 = 4;
+pub(crate) const UNRELIABLE_MESSAGES_FEATURE_V1: u32 = 0x0000_0001;
+const KNOWN_FEATURES_V3: u32 = UNRELIABLE_MESSAGES_FEATURE_V1;
+const UNRELIABLE_SEND_BUDGET: usize = 64;
+
+/// Authenticated configuration for one side of a v3 session.
+#[derive(Clone)]
+pub struct SessionConfigV3 {
+    pub role: SessionRole,
+    pub path: PathKind,
+    pub channel_id: String,
+    pub session_contract_hash: [u8; 32],
+    pub suite: CipherSuiteV3,
+    pub psk: [u8; 32],
+    pub max_inbound_streams: u16,
+    /// Idle timeout copied from the signed `idle_timeout_seconds` contract.
+    /// Zero disables the application-level idle watchdog.
+    pub idle_timeout: Duration,
+    pub local_admission_binding: [u8; 32],
+    pub peer_admission_binding: Option<[u8; 32]>,
+    pub local_endpoint_instance_id: Option<String>,
+    pub expected_peer_endpoint_instance_id: Option<String>,
+    pub rpc_handler: Option<Arc<dyn RpcHandlerV3>>,
+    pub deadlines: SessionDeadlinesV3,
+}
+
+impl std::fmt::Debug for SessionConfigV3 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SessionConfigV3")
+            .field("role", &self.role)
+            .field("path", &self.path)
+            .field("channel_id", &self.channel_id)
+            .field("session_contract_hash", &self.session_contract_hash)
+            .field("suite", &self.suite)
+            .field("psk", &format_args!("[REDACTED]"))
+            .field("max_inbound_streams", &self.max_inbound_streams)
+            .field("idle_timeout", &self.idle_timeout)
+            .field("local_admission_binding", &format_args!("[REDACTED]"))
+            .field("peer_admission_binding", &format_args!("[REDACTED]"))
+            .field(
+                "local_endpoint_instance_id",
+                &self.local_endpoint_instance_id,
+            )
+            .field(
+                "expected_peer_endpoint_instance_id",
+                &self.expected_peer_endpoint_instance_id,
+            )
+            .field("has_rpc_handler", &self.rpc_handler.is_some())
+            .field("deadlines", &self.deadlines)
+            .finish()
+    }
+}
+
+/// Internal upper bounds. Callers may cancel their future earlier; after a
+/// rekey commit is written the owned completion task still uses this bound.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SessionDeadlinesV3 {
+    pub establish: Duration,
+    pub rekey_prepare: Duration,
+    pub rekey_completion: Duration,
+    /// Versioned upper bound for flushing GOAWAY and SESSION_CLOSE.
+    pub close_flush: Duration,
+}
+
+impl Default for SessionDeadlinesV3 {
+    fn default() -> Self {
+        Self {
+            establish: Duration::from_secs(30),
+            rekey_prepare: Duration::from_secs(10),
+            rekey_completion: Duration::from_secs(30),
+            close_flush: Duration::from_secs(7),
+        }
+    }
+}
+
+impl SessionConfigV3 {
+    fn validate(&self) -> io::Result<()> {
+        let endpoint_shape_is_valid = match self.path {
+            PathKind::Direct => {
+                self.local_endpoint_instance_id.is_none()
+                    && self.expected_peer_endpoint_instance_id.is_none()
+            }
+            PathKind::Tunnel => {
+                self.local_endpoint_instance_id
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+                    && self
+                        .expected_peer_endpoint_instance_id
+                        .as_deref()
+                        .is_some_and(|value| !value.is_empty())
+            }
+        };
+        carrier_inbound_stream_limit_v3(self.max_inbound_streams).map_err(io::Error::other)?;
+        if !endpoint_shape_is_valid
+            || self.channel_id.is_empty()
+            || self.channel_id.len() > 255
+            || self.deadlines.establish.is_zero()
+            || self.deadlines.rekey_prepare.is_zero()
+            || self.deadlines.rekey_completion.is_zero()
+            || self.deadlines.close_flush.is_zero()
+            || self
+                .local_endpoint_instance_id
+                .as_deref()
+                .is_some_and(str::is_empty)
+            || self
+                .expected_peer_endpoint_instance_id
+                .as_deref()
+                .is_some_and(str::is_empty)
+        {
+            return Err(invalid("invalid Flowersec v3 session configuration"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct HandshakeMaterialV3 {
+    h3: [u8; 32],
+    session_prk: [u8; 32],
+    negotiated_features: u32,
+}
+
+/// Application-owned bidirectional RPC dispatch for the reserved encrypted
+/// `flowersec.rpc.v3` logical stream kind.
+#[async_trait]
+pub trait RpcHandlerV3: Send + Sync + 'static {
+    async fn call(
+        &self,
+        type_id: u32,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcError>;
+    async fn notify(&self, type_id: u32, request: serde_json::Value) -> Result<(), RpcError>;
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClientInitWire {
+    channel_id: String,
+    client_admission_binding_b64u: String,
+    client_endpoint_instance_id: String,
+    client_eph_pub_b64u: String,
+    client_role: u8,
+    max_inbound_streams: u16,
+    nonce_c_b64u: String,
+    profile: String,
+    selected_features: u32,
+    session_contract_hash_b64u: String,
+    suite: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ServerCoreWire {
+    handshake_id: String,
+    max_inbound_streams: u16,
+    nonce_s_b64u: String,
+    selected_features: u32,
+    server_admission_binding_b64u: String,
+    server_endpoint_instance_id: String,
+    server_eph_pub_b64u: String,
+    session_contract_hash_b64u: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ServerFinishedWire {
+    handshake_id: String,
+    max_inbound_streams: u16,
+    nonce_s_b64u: String,
+    selected_features: u32,
+    server_admission_binding_b64u: String,
+    server_confirm_b64u: String,
+    server_endpoint_instance_id: String,
+    server_eph_pub_b64u: String,
+    session_contract_hash_b64u: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClientCoreWire {
+    handshake_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClientFinishedWire {
+    client_confirm_b64u: String,
+    handshake_id: String,
+}
+
+#[derive(Debug)]
+struct EngineStateV3 {
+    send_epoch: u32,
+    recv_epoch: u32,
+    send_roots: HashMap<u32, EpochRootsV3>,
+    recv_roots: HashMap<u32, EpochRootsV3>,
+    control_send_sequence: u64,
+    control_recv_epoch: u32,
+    control_recv_sequence: u64,
+}
+
+#[derive(Debug, Default)]
+struct InboundResponderStateV3 {
+    active: u64,
+    local_frozen: bool,
+    peer_frozen: bool,
+}
+
+#[derive(Debug, Default)]
+struct PendingPingsV3 {
+    entries: StdMutex<HashMap<u64, oneshot::Sender<Instant>>>,
+}
+
+impl PendingPingsV3 {
+    fn register(
+        self: &Arc<Self>,
+        nonce: u64,
+        sender: oneshot::Sender<Instant>,
+    ) -> io::Result<PendingPingGuardV3> {
+        let mut entries = self.entries.lock().expect("pending ping registry poisoned");
+        if nonce == 0 || entries.contains_key(&nonce) {
+            return Err(invalid("duplicate ping nonce"));
+        }
+        entries.insert(nonce, sender);
+        drop(entries);
+        Ok(PendingPingGuardV3 {
+            pings: self.clone(),
+            nonce,
+        })
+    }
+
+    fn take(&self, nonce: u64) -> Option<oneshot::Sender<Instant>> {
+        self.entries
+            .lock()
+            .expect("pending ping registry poisoned")
+            .remove(&nonce)
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries
+            .lock()
+            .expect("pending ping registry poisoned")
+            .len()
+    }
+}
+
+struct PendingPingGuardV3 {
+    pings: Arc<PendingPingsV3>,
+    nonce: u64,
+}
+
+impl Drop for PendingPingGuardV3 {
+    fn drop(&mut self) {
+        self.pings.take(self.nonce);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+enum LedgerStateV3 {
+    Unseen = 0,
+    AbandonedNoFss3 = 1,
+    OpenSeen = 2,
+    UsedOrTerminal = 3,
+}
+
+#[derive(Debug)]
+struct StreamLedgerV3 {
+    opener: StreamOpenerRoleV3,
+    states: Vec<u8>,
+    frontier: u64,
+}
+
+impl StreamLedgerV3 {
+    fn new(opener: StreamOpenerRoleV3) -> Self {
+        Self {
+            opener,
+            states: vec![0; (MAX_LEDGER_SLOTS / 4) as usize],
+            frontier: 0,
+        }
+    }
+
+    fn mark_fss3(&mut self, id: u64) -> io::Result<()> {
+        let index = self.index(id)?;
+        if self.state(index) != LedgerStateV3::Unseen {
+            return Err(invalid("duplicate logical stream ID"));
+        }
+        self.set(index, LedgerStateV3::OpenSeen);
+        Ok(())
+    }
+
+    fn mark_terminal(&mut self, id: u64) -> io::Result<()> {
+        let index = self.index(id)?;
+        match self.state(index) {
+            LedgerStateV3::OpenSeen => self.set(index, LedgerStateV3::UsedOrTerminal),
+            LedgerStateV3::UsedOrTerminal => return Ok(()),
+            LedgerStateV3::Unseen | LedgerStateV3::AbandonedNoFss3 => {
+                return Err(invalid("terminal stream was never opened"));
+            }
+        }
+        self.advance();
+        Ok(())
+    }
+
+    fn mark_peer_reset(&mut self, id: u64) -> io::Result<()> {
+        let index = self.index(id)?;
+        match self.state(index) {
+            LedgerStateV3::Unseen => self.set(index, LedgerStateV3::AbandonedNoFss3),
+            LedgerStateV3::OpenSeen => self.set(index, LedgerStateV3::UsedOrTerminal),
+            LedgerStateV3::AbandonedNoFss3 | LedgerStateV3::UsedOrTerminal => return Ok(()),
+        }
+        self.advance();
+        Ok(())
+    }
+
+    fn mark_late_fss3_for_abandoned(&mut self, id: u64) -> io::Result<()> {
+        let index = self.index(id)?;
+        if self.state(index) != LedgerStateV3::AbandonedNoFss3 {
+            return Err(invalid("duplicate logical stream ID"));
+        }
+        self.set(index, LedgerStateV3::UsedOrTerminal);
+        self.advance();
+        Ok(())
+    }
+
+    fn frontier(&self) -> u64 {
+        self.frontier
+    }
+
+    fn index(&self, id: u64) -> io::Result<u64> {
+        let valid = match self.opener {
+            StreamOpenerRoleV3::Client => id != 0 && id & 1 == 1,
+            StreamOpenerRoleV3::Server => id != 0 && id & 1 == 0,
+        };
+        if !valid {
+            return Err(invalid("invalid logical stream parity"));
+        }
+        let ordinal = match self.opener {
+            StreamOpenerRoleV3::Client => id / 2 + 1,
+            StreamOpenerRoleV3::Server => id / 2,
+        };
+        if ordinal == 0 || ordinal > MAX_LEDGER_SLOTS {
+            return Err(invalid("logical stream ledger exhausted"));
+        }
+        Ok(ordinal - 1)
+    }
+
+    fn state(&self, index: u64) -> LedgerStateV3 {
+        let shift = (index % 4) * 2;
+        match (self.states[(index / 4) as usize] >> shift) & 3 {
+            0 => LedgerStateV3::Unseen,
+            1 => LedgerStateV3::AbandonedNoFss3,
+            2 => LedgerStateV3::OpenSeen,
+            _ => LedgerStateV3::UsedOrTerminal,
+        }
+    }
+
+    fn set(&mut self, index: u64, state: LedgerStateV3) {
+        let byte = &mut self.states[(index / 4) as usize];
+        let shift = (index % 4) * 2;
+        *byte = (*byte & !(3 << shift)) | ((state as u8) << shift);
+    }
+
+    fn advance(&mut self) {
+        let mut next = if self.frontier == 0 {
+            match self.opener {
+                StreamOpenerRoleV3::Client => 1,
+                StreamOpenerRoleV3::Server => 2,
+            }
+        } else {
+            self.frontier.saturating_add(2)
+        };
+        while let Ok(index) = self.index(next) {
+            if !matches!(
+                self.state(index),
+                LedgerStateV3::AbandonedNoFss3 | LedgerStateV3::UsedOrTerminal
+            ) {
+                break;
+            }
+            self.frontier = next;
+            next = next.saturating_add(2);
+        }
+    }
+}
+
+/// Concrete carrier-neutral Flowersec v3 session.
+pub struct EncryptedSessionV3 {
+    carrier: Arc<dyn CarrierSessionV3>,
+    config: SessionConfigV3,
+    h3: [u8; 32],
+    send_direction: DirectionV3,
+    recv_direction: DirectionV3,
+    control: Arc<dyn CarrierStreamV3>,
+    state: Mutex<EngineStateV3>,
+    control_write: Mutex<()>,
+    open_lock: Arc<Mutex<()>>,
+    rekey_lock: Arc<Mutex<()>>,
+    rekeying: AtomicBool,
+    rekey_changed: Notify,
+    inbound_responders: StdMutex<InboundResponderStateV3>,
+    inbound_responders_changed: Notify,
+    next_stream_id: AtomicU64,
+    local_open_high_watermark: AtomicU64,
+    outbound_ledger: Mutex<StreamLedgerV3>,
+    peer_ledger: Mutex<StreamLedgerV3>,
+    outbound_ledger_changed: Notify,
+    next_transition: AtomicU64,
+    recv_transition: AtomicU64,
+    sent_goaway: AtomicBool,
+    sent_goaway_last: AtomicU64,
+    received_goaway: AtomicBool,
+    received_goaway_last: AtomicU64,
+    received_session_close: AtomicBool,
+    received_session_close_changed: Notify,
+    incoming_rx: Mutex<mpsc::Receiver<IncomingStream>>,
+    incoming_tx: mpsc::Sender<IncomingStream>,
+    outbound_permits: Arc<Semaphore>,
+    inbound_permits: Arc<Semaphore>,
+    inbound_rpc_opened: AtomicBool,
+    streams: StdMutex<HashMap<u64, Weak<EncryptedStreamV3>>>,
+    pings: Arc<PendingPingsV3>,
+    rekeys: Mutex<HashMap<u64, PendingSessionRekeyV3>>,
+    last_session_rekey_ack: Mutex<Option<[u8; 20]>>,
+    next_ping: AtomicU64,
+    activity_generation: AtomicU64,
+    activity_changed: Notify,
+    lifecycle: AtomicU8,
+    canceled: CancellationToken,
+    terminal: StdMutex<Option<TerminalCauseV3>>,
+    rpc: SessionRpcPeerV3,
+    unreliable: SessionUnreliableMessageChannelV3,
+    negotiated_features: u32,
+    unreliable_send_sequence: StdMutex<(u32, u64)>,
+    unreliable_send_budget: Semaphore,
+    unreliable_receive_lock: Mutex<()>,
+    unreliable_replay: StdMutex<HashMap<u32, ReplayWindowV3>>,
+    self_weak: OnceLock<Weak<SelfSession>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+enum SessionLifecycleV3 {
+    Opening = 0,
+    Open = 1,
+    Closing = 2,
+    Closed = 3,
+}
+
+impl EncryptedSessionV3 {
+    fn lifecycle(&self) -> SessionLifecycleV3 {
+        match self.lifecycle.load(Ordering::Acquire) {
+            0 => SessionLifecycleV3::Opening,
+            1 => SessionLifecycleV3::Open,
+            2 => SessionLifecycleV3::Closing,
+            _ => SessionLifecycleV3::Closed,
+        }
+    }
+
+    fn is_closed(&self) -> bool {
+        matches!(
+            self.lifecycle(),
+            SessionLifecycleV3::Closing | SessionLifecycleV3::Closed
+        )
+    }
+
+    fn begin_closing(&self) -> bool {
+        self.lifecycle
+            .compare_exchange(
+                SessionLifecycleV3::Open as u8,
+                SessionLifecycleV3::Closing as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    fn finish_closed(&self) {
+        self.lifecycle
+            .store(SessionLifecycleV3::Closed as u8, Ordering::Release);
+    }
+
+    fn terminate_stream_buffers(&self) {
+        let streams = self
+            .streams
+            .lock()
+            .expect("logical stream registry poisoned")
+            .values()
+            .filter_map(Weak::upgrade)
+            .collect::<Vec<_>>();
+        for stream in streams {
+            stream.buffered_reads.terminate();
+        }
+    }
+}
+
+impl std::fmt::Debug for EncryptedSessionV3 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("EncryptedSessionV3 { <opaque> }")
+    }
+}
+
+/// Establishes FSC3/FSH3 and verifies all authenticated bindings before
+/// returning a session.
+pub async fn establish_session_v3(
+    carrier: Arc<dyn CarrierSessionV3>,
+    config: SessionConfigV3,
+) -> io::Result<Arc<dyn Session>> {
+    config.validate()?;
+    let expected_carrier_limit =
+        carrier_inbound_stream_limit_v3(config.max_inbound_streams).map_err(io::Error::other)?;
+    if carrier.inbound_bidirectional_stream_capacity() != expected_carrier_limit {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "carrier stream limit does not match Session logical limit",
+        ));
+    }
+    let deadline = config.deadlines.establish;
+    tokio::time::timeout(deadline, establish_session_v3_inner(carrier, config))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Flowersec v3 establish timeout"))?
+}
+
+async fn establish_session_v3_inner(
+    carrier: Arc<dyn CarrierSessionV3>,
+    config: SessionConfigV3,
+) -> io::Result<Arc<dyn Session>> {
+    let locally_supported_features = if carrier
+        .unreliable_message_max_size()
+        .is_some_and(|maximum| maximum >= MAX_UNRELIABLE_WIRE_V3_BYTES)
+    {
+        UNRELIABLE_MESSAGES_FEATURE_V1
+    } else {
+        0
+    };
+    let (control, material) = match config.role {
+        SessionRole::Client => {
+            let control = carrier.open_stream().await?;
+            let material =
+                client_handshake_v3(&control, &config, locally_supported_features).await?;
+            (control, material)
+        }
+        SessionRole::Server => {
+            let control = carrier.accept_stream().await?;
+            let material =
+                server_handshake_v3(&control, &config, locally_supported_features).await?;
+            (control, material)
+        }
+    };
+    let (send_direction, recv_direction, send_role) = match config.role {
+        SessionRole::Client => (
+            DirectionV3::ClientToServer,
+            DirectionV3::ServerToClient,
+            StreamOpenerRoleV3::Client,
+        ),
+        SessionRole::Server => (
+            DirectionV3::ServerToClient,
+            DirectionV3::ClientToServer,
+            StreamOpenerRoleV3::Server,
+        ),
+    };
+    let send_zero = derive_epoch_zero_v3(&material.session_prk, send_direction).map_err(proto)?;
+    let recv_zero = derive_epoch_zero_v3(&material.session_prk, recv_direction).map_err(proto)?;
+    let (incoming_tx, incoming_rx) = mpsc::channel(usize::from(config.max_inbound_streams));
+    let mut send_roots = HashMap::new();
+    send_roots.insert(0, send_zero);
+    let mut recv_roots = HashMap::new();
+    recv_roots.insert(0, recv_zero);
+    let local_max_inbound_streams = config.max_inbound_streams;
+    let session = Arc::new(SelfSession(EncryptedSessionV3 {
+        carrier,
+        config,
+        h3: material.h3,
+        send_direction,
+        recv_direction,
+        control,
+        state: Mutex::new(EngineStateV3 {
+            send_epoch: 0,
+            recv_epoch: 0,
+            send_roots,
+            recv_roots,
+            control_send_sequence: 0,
+            control_recv_epoch: 0,
+            control_recv_sequence: 0,
+        }),
+        control_write: Mutex::new(()),
+        open_lock: Arc::new(Mutex::new(())),
+        rekey_lock: Arc::new(Mutex::new(())),
+        rekeying: AtomicBool::new(false),
+        rekey_changed: Notify::new(),
+        inbound_responders: StdMutex::new(InboundResponderStateV3::default()),
+        inbound_responders_changed: Notify::new(),
+        next_stream_id: AtomicU64::new(match send_role {
+            StreamOpenerRoleV3::Client => 1,
+            StreamOpenerRoleV3::Server => 2,
+        }),
+        local_open_high_watermark: AtomicU64::new(0),
+        outbound_ledger: Mutex::new(StreamLedgerV3::new(send_role)),
+        peer_ledger: Mutex::new(StreamLedgerV3::new(match send_role {
+            StreamOpenerRoleV3::Client => StreamOpenerRoleV3::Server,
+            StreamOpenerRoleV3::Server => StreamOpenerRoleV3::Client,
+        })),
+        outbound_ledger_changed: Notify::new(),
+        next_transition: AtomicU64::new(1),
+        recv_transition: AtomicU64::new(0),
+        sent_goaway: AtomicBool::new(false),
+        sent_goaway_last: AtomicU64::new(0),
+        received_goaway: AtomicBool::new(false),
+        received_goaway_last: AtomicU64::new(0),
+        received_session_close: AtomicBool::new(false),
+        received_session_close_changed: Notify::new(),
+        incoming_rx: Mutex::new(incoming_rx),
+        incoming_tx,
+        outbound_permits: Arc::new(Semaphore::new(usize::from(local_max_inbound_streams))),
+        inbound_permits: Arc::new(Semaphore::new(usize::from(local_max_inbound_streams))),
+        inbound_rpc_opened: AtomicBool::new(false),
+        streams: StdMutex::new(HashMap::new()),
+        pings: Arc::new(PendingPingsV3::default()),
+        rekeys: Mutex::new(HashMap::new()),
+        last_session_rekey_ack: Mutex::new(None),
+        next_ping: AtomicU64::new(1),
+        activity_generation: AtomicU64::new(0),
+        activity_changed: Notify::new(),
+        lifecycle: AtomicU8::new(SessionLifecycleV3::Opening as u8),
+        canceled: CancellationToken::new(),
+        terminal: StdMutex::new(None),
+        rpc: SessionRpcPeerV3 {
+            session: OnceLock::new(),
+            serial: Arc::new(Mutex::new(())),
+            stream: Arc::new(Mutex::new(None)),
+            read_buffer: Arc::new(Mutex::new(VecDeque::new())),
+            next_request_id: AtomicU64::new(1),
+            notifications: Arc::new(NotificationRegistryV3::default()),
+        },
+        unreliable: SessionUnreliableMessageChannelV3 {
+            session: OnceLock::new(),
+        },
+        negotiated_features: material.negotiated_features,
+        unreliable_send_sequence: StdMutex::new((0, 1)),
+        unreliable_send_budget: Semaphore::new(UNRELIABLE_SEND_BUDGET),
+        unreliable_receive_lock: Mutex::new(()),
+        unreliable_replay: StdMutex::new(HashMap::new()),
+        self_weak: OnceLock::new(),
+    }));
+    session
+        .self_weak
+        .set(Arc::downgrade(&session))
+        .expect("session self reference is initialized once");
+    session
+        .rpc
+        .session
+        .set(Arc::downgrade(&session))
+        .expect("RPC session reference is initialized once");
+    session
+        .unreliable
+        .session
+        .set(Arc::downgrade(&session))
+        .expect("unreliable message session reference is initialized once");
+    session
+        .lifecycle
+        .store(SessionLifecycleV3::Open as u8, Ordering::Release);
+    let accept_session = session.clone();
+    tokio::spawn(async move { accept_carrier_loop_v3(accept_session).await });
+    let control_session = session.clone();
+    tokio::spawn(async move { control_loop_v3(control_session).await });
+    if !session.config.idle_timeout.is_zero() {
+        let idle_session = session.clone();
+        tokio::spawn(async move { idle_watchdog_v3(idle_session).await });
+    }
+    Ok(session)
+}
+
+struct SelfSession(EncryptedSessionV3);
+
+#[derive(Clone, Debug)]
+struct TerminalCauseV3 {
+    kind: io::ErrorKind,
+    message: String,
+}
+
+impl std::ops::Deref for SelfSession {
+    type Target = EncryptedSessionV3;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SelfSession {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+struct SessionRpcPeerV3 {
+    session: OnceLock<Weak<SelfSession>>,
+    serial: Arc<Mutex<()>>,
+    stream: Arc<Mutex<Option<Box<dyn ByteStream>>>>,
+    read_buffer: Arc<Mutex<VecDeque<u8>>>,
+    next_request_id: AtomicU64,
+    notifications: Arc<NotificationRegistryV3>,
+}
+
+#[derive(Default)]
+struct NotificationRegistryV3 {
+    handlers: StdMutex<HashMap<u64, NotificationRegistrationV3>>,
+    next_id: AtomicU64,
+}
+
+type NotificationHandlerV3 = Arc<dyn Fn(serde_json::Value) + Send + Sync>;
+type NotificationRegistrationV3 = (u32, NotificationHandlerV3);
+
+impl std::fmt::Debug for NotificationRegistryV3 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("NotificationRegistryV3 { <opaque> }")
+    }
+}
+
+impl NotificationRegistryV3 {
+    fn subscribe(
+        self: &Arc<Self>,
+        type_id: u32,
+        handler: Arc<dyn Fn(serde_json::Value) + Send + Sync>,
+    ) -> NotificationSubscription {
+        let id = self
+            .next_id
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        self.handlers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(id, (type_id, handler));
+        let registry = Arc::clone(self);
+        NotificationSubscription::new(move || {
+            registry
+                .handlers
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(&id);
+        })
+    }
+
+    fn dispatch(&self, type_id: u32, payload: serde_json::Value) {
+        let handlers = self
+            .handlers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values()
+            .filter(|(registered, _)| *registered == type_id)
+            .map(|(_, handler)| Arc::clone(handler))
+            .collect::<Vec<_>>();
+        for handler in handlers {
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler(payload.clone())));
+            let _ = result;
+        }
+    }
+
+    fn clear(&self) {
+        self.handlers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
+}
+
+struct SessionUnreliableMessageChannelV3 {
+    session: OnceLock<Weak<SelfSession>>,
+}
+
+impl std::fmt::Debug for SessionUnreliableMessageChannelV3 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SessionUnreliableMessageChannelV3(..)")
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ReplayWindowV3 {
+    highest: Option<u64>,
+    seen: u128,
+}
+
+impl ReplayWindowV3 {
+    fn contains(&self, sequence: u64) -> bool {
+        let Some(highest) = self.highest else {
+            return false;
+        };
+        if sequence > highest {
+            return false;
+        }
+        let distance = highest - sequence;
+        distance >= 128 || self.seen & (1_u128 << distance) != 0
+    }
+
+    fn insert(&mut self, sequence: u64) {
+        match self.highest {
+            None => {
+                self.highest = Some(sequence);
+                self.seen = 1;
+            }
+            Some(highest) if sequence > highest => {
+                let distance = sequence - highest;
+                self.seen = if distance >= 128 {
+                    1
+                } else {
+                    (self.seen << distance) | 1
+                };
+                self.highest = Some(sequence);
+            }
+            Some(highest) => {
+                let distance = highest - sequence;
+                if distance < 128 {
+                    self.seen |= 1_u128 << distance;
+                }
+            }
+        }
+    }
+}
+
+struct PendingSessionRekeyV3 {
+    payload: [u8; 20],
+    sender: oneshot::Sender<()>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AckDispositionV3 {
+    Pending,
+    Duplicate,
+}
+
+fn classify_ack_v3<T: Eq>(
+    pending: Option<&T>,
+    last: Option<&T>,
+    received: &T,
+) -> io::Result<AckDispositionV3> {
+    if pending.is_some_and(|value| value == received) {
+        return Ok(AckDispositionV3::Pending);
+    }
+    if pending.is_none() && last.is_some_and(|value| value == received) {
+        return Ok(AckDispositionV3::Duplicate);
+    }
+    Err(invalid("unexpected rekey ACK"))
+}
+
+impl std::fmt::Debug for SessionRpcPeerV3 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SessionRpcPeerV3(..)")
+    }
+}
+
+#[async_trait]
+impl RpcPeer for SessionRpcPeerV3 {
+    async fn call(
+        &self,
+        type_id: u32,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcCallError> {
+        rpc_call_v3(self, type_id, request).await
+    }
+    async fn notify(&self, type_id: u32, request: serde_json::Value) -> Result<(), SessionError> {
+        rpc_notify_v3(self, type_id, request)
+            .await
+            .map_err(|error| SessionError::from_io(&error))
+    }
+
+    fn subscribe_notification(
+        &self,
+        type_id: u32,
+        handler: Arc<dyn Fn(serde_json::Value) + Send + Sync>,
+    ) -> Result<NotificationSubscription, SessionError> {
+        if type_id == 0 {
+            return Err(SessionError::OperationFailed);
+        }
+        Ok(self.notifications.subscribe(type_id, handler))
+    }
+}
+
+#[async_trait]
+impl UnreliableMessageChannel for SessionUnreliableMessageChannelV3 {
+    fn max_message_size(&self) -> usize {
+        MAX_UNRELIABLE_PLAINTEXT_V3_BYTES
+    }
+
+    async fn send(
+        &self,
+        payload: Bytes,
+        expires_at: SystemTime,
+    ) -> Result<UnreliableSendOutcome, UnreliableMessageError> {
+        let session = self
+            .session
+            .get()
+            .and_then(Weak::upgrade)
+            .ok_or(UnreliableMessageError::Closed)?;
+        send_unreliable_message_v3(&session, payload, expires_at).await
+    }
+
+    async fn receive(&self) -> Result<Bytes, UnreliableMessageError> {
+        let session = self
+            .session
+            .get()
+            .and_then(Weak::upgrade)
+            .ok_or(UnreliableMessageError::Closed)?;
+        receive_unreliable_message_v3(&session).await
+    }
+}
+
+#[async_trait]
+impl Session for SelfSession {
+    #[cfg(test)]
+    fn internal_test_inbound_available_permits(&self) -> usize {
+        self.inbound_permits.available_permits()
+    }
+    fn rpc(&self) -> &dyn RpcPeer {
+        &self.rpc
+    }
+    fn unreliable_messages(&self) -> Result<&dyn UnreliableMessageChannel, UnreliableMessageError> {
+        if self.negotiated_features & UNRELIABLE_MESSAGES_FEATURE_V1 == 0 {
+            return Err(UnreliableMessageError::Unavailable);
+        }
+        Ok(&self.unreliable)
+    }
+    async fn open_stream(
+        &self,
+        kind: &str,
+        metadata: StreamMetadata,
+    ) -> Result<Box<dyn ByteStream>, SessionError> {
+        if kind == RESERVED_RPC_KIND {
+            return Err(SessionError::OperationFailed);
+        }
+        open_stream_v3(self, kind, metadata.values().clone())
+            .await
+            .map_err(|error| SessionError::from_io(&error))
+    }
+    async fn accept_stream(&self) -> Result<IncomingStream, SessionError> {
+        let mut incoming = self.incoming_rx.lock().await;
+        tokio::select! {
+            biased;
+            _ = self.canceled.cancelled() => Err(terminal_error_v3(self)),
+            value = incoming.recv() => value.ok_or_else(|| terminal_error_v3(self)),
+        }
+        .map_err(|error| SessionError::from_io(&error))
+    }
+    async fn rekey(&self) -> Result<(), SessionError> {
+        rekey_v3(self).await.map_err(|error| {
+            let public = SessionError::from_io(&error);
+            match public {
+                SessionError::Canceled | SessionError::Closed | SessionError::GoingAway => public,
+                _ => SessionError::RekeyFailed,
+            }
+        })
+    }
+    async fn probe_liveness(&self) -> Result<Duration, SessionError> {
+        probe_v3(self).await.map_err(|error| {
+            let public = SessionError::from_io(&error);
+            match public {
+                SessionError::Canceled | SessionError::Closed | SessionError::GoingAway => public,
+                _ => SessionError::LivenessFailed,
+            }
+        })
+    }
+    async fn wait_termination(&self) -> SessionTermination {
+        self.canceled.cancelled().await;
+        SessionTermination {
+            error: SessionError::from_io(&terminal_error_v3(self)),
+        }
+    }
+    async fn close(&self) -> Result<(), SessionError> {
+        close_session_v3(self)
+            .await
+            .map_err(|error| SessionError::from_io(&error))
+    }
+}
+
+async fn send_unreliable_message_v3(
+    session: &SelfSession,
+    payload: Bytes,
+    expires_at: SystemTime,
+) -> Result<UnreliableSendOutcome, UnreliableMessageError> {
+    if session.negotiated_features & UNRELIABLE_MESSAGES_FEATURE_V1 == 0 {
+        return Err(UnreliableMessageError::Unavailable);
+    }
+    if payload.is_empty() {
+        return Err(UnreliableMessageError::InvalidInput);
+    }
+    if payload.len() > MAX_UNRELIABLE_PLAINTEXT_V3_BYTES {
+        return Err(UnreliableMessageError::TooLarge);
+    }
+    let expires_at_unix_ms = unix_millis(expires_at)?;
+    if expires_at_unix_ms <= unix_millis(SystemTime::now())? {
+        return Ok(UnreliableSendOutcome::DroppedExpired);
+    }
+    if session.is_closed() {
+        return Err(UnreliableMessageError::Closed);
+    }
+    let Ok(_send_permit) = session.unreliable_send_budget.try_acquire() else {
+        return Ok(UnreliableSendOutcome::DroppedBudget);
+    };
+    if expires_at_unix_ms <= unix_millis(SystemTime::now())? {
+        return Ok(UnreliableSendOutcome::DroppedExpired);
+    }
+
+    let wire = {
+        let state = session.state.lock().await;
+        let epoch = state.send_epoch;
+        let roots = state
+            .send_roots
+            .get(&epoch)
+            .ok_or(UnreliableMessageError::Failed)?;
+        let material =
+            derive_unreliable_material_v3(roots, &session.h3, session.send_direction, epoch)
+                .map_err(|_| UnreliableMessageError::Failed)?;
+        let sequence = {
+            let mut sequence = session
+                .unreliable_send_sequence
+                .lock()
+                .expect("unreliable send sequence lock poisoned");
+            if sequence.0 != epoch {
+                *sequence = (epoch, 1);
+            }
+            let value = sequence.1;
+            sequence.1 = value.checked_add(1).ok_or(UnreliableMessageError::Failed)?;
+            value
+        };
+        let header = UnreliableHeaderV3 {
+            epoch,
+            sequence,
+            expires_at_unix_ms,
+            ciphertext_length: (payload.len() + AEAD_TAG_V3_SIZE) as u32,
+        };
+        let raw_header = header
+            .encode()
+            .map_err(|_| UnreliableMessageError::Failed)?;
+        let ciphertext = seal_unreliable_v3(
+            session.config.suite,
+            &material,
+            &session.h3,
+            session.send_direction,
+            header,
+            &payload,
+        )
+        .map_err(|_| UnreliableMessageError::Failed)?;
+        let mut wire = Vec::with_capacity(raw_header.len() + ciphertext.len());
+        wire.extend_from_slice(&raw_header);
+        wire.extend_from_slice(&ciphertext);
+        Bytes::from(wire)
+    };
+
+    if let Err(error) = session.carrier.send_unreliable_message(wire).await {
+        return map_carrier_unreliable_send_error(error);
+    }
+    touch_activity_v3(session);
+    Ok(UnreliableSendOutcome::Accepted)
+}
+
+async fn receive_unreliable_message_v3(
+    session: &SelfSession,
+) -> Result<Bytes, UnreliableMessageError> {
+    if session.negotiated_features & UNRELIABLE_MESSAGES_FEATURE_V1 == 0 {
+        return Err(UnreliableMessageError::Unavailable);
+    }
+    let _receive = session.unreliable_receive_lock.lock().await;
+    loop {
+        let wire = tokio::select! {
+            biased;
+            _ = session.canceled.cancelled() => return Err(UnreliableMessageError::Closed),
+            result = session.carrier.receive_unreliable_message() => {
+                result.map_err(map_carrier_unreliable_error)?
+            }
+        };
+        if !(UNRELIABLE_HEADER_V3_SIZE + AEAD_TAG_V3_SIZE + 1..=MAX_UNRELIABLE_WIRE_V3_BYTES)
+            .contains(&wire.len())
+        {
+            continue;
+        }
+        let Ok(header) = UnreliableHeaderV3::decode(&wire[..UNRELIABLE_HEADER_V3_SIZE]) else {
+            continue;
+        };
+        if wire.len() != UNRELIABLE_HEADER_V3_SIZE + header.ciphertext_length as usize
+            || header.expires_at_unix_ms <= unix_millis(SystemTime::now())?
+        {
+            continue;
+        }
+        {
+            let replay = session
+                .unreliable_replay
+                .lock()
+                .expect("unreliable replay lock poisoned");
+            if replay
+                .get(&header.epoch)
+                .is_some_and(|window| window.contains(header.sequence))
+            {
+                continue;
+            }
+        }
+        let plaintext = {
+            let state = session.state.lock().await;
+            let Some(roots) = state.recv_roots.get(&header.epoch) else {
+                continue;
+            };
+            let Ok(material) = derive_unreliable_material_v3(
+                roots,
+                &session.h3,
+                session.recv_direction,
+                header.epoch,
+            ) else {
+                continue;
+            };
+            let Ok(plaintext) = open_unreliable_v3(
+                session.config.suite,
+                &material,
+                &session.h3,
+                session.recv_direction,
+                header,
+                &wire[UNRELIABLE_HEADER_V3_SIZE..],
+            ) else {
+                continue;
+            };
+            plaintext
+        };
+        if header.expires_at_unix_ms <= unix_millis(SystemTime::now())? {
+            continue;
+        }
+        session
+            .unreliable_replay
+            .lock()
+            .expect("unreliable replay lock poisoned")
+            .entry(header.epoch)
+            .or_default()
+            .insert(header.sequence);
+        touch_activity_v3(session);
+        return Ok(Bytes::from(plaintext));
+    }
+}
+
+fn unix_millis(value: SystemTime) -> Result<u64, UnreliableMessageError> {
+    let millis = value
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| UnreliableMessageError::InvalidInput)?
+        .as_millis();
+    u64::try_from(millis).map_err(|_| UnreliableMessageError::InvalidInput)
+}
+
+fn map_carrier_unreliable_error(error: CarrierUnreliableMessageErrorV3) -> UnreliableMessageError {
+    match error {
+        CarrierUnreliableMessageErrorV3::Unavailable => UnreliableMessageError::Unavailable,
+        CarrierUnreliableMessageErrorV3::TooLarge => UnreliableMessageError::TooLarge,
+        CarrierUnreliableMessageErrorV3::Dropped => UnreliableMessageError::DroppedBudget,
+        CarrierUnreliableMessageErrorV3::Closed => UnreliableMessageError::Closed,
+    }
+}
+
+fn map_carrier_unreliable_send_error(
+    error: CarrierUnreliableMessageErrorV3,
+) -> Result<UnreliableSendOutcome, UnreliableMessageError> {
+    match error {
+        CarrierUnreliableMessageErrorV3::Dropped => Ok(UnreliableSendOutcome::DroppedCarrier),
+        CarrierUnreliableMessageErrorV3::Unavailable => Err(UnreliableMessageError::Unavailable),
+        CarrierUnreliableMessageErrorV3::TooLarge => Err(UnreliableMessageError::TooLarge),
+        CarrierUnreliableMessageErrorV3::Closed => Err(UnreliableMessageError::Closed),
+    }
+}
+
+fn invalid(message: &'static str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message)
+}
+fn closed() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::ConnectionAborted,
+        "Flowersec v3 session closed",
+    )
+}
+
+fn record_terminal_v3(session: &EncryptedSessionV3, error: &io::Error) {
+    let mut terminal = session.terminal.lock().expect("terminal lock poisoned");
+    if terminal.is_none() {
+        *terminal = Some(TerminalCauseV3 {
+            kind: error.kind(),
+            message: error.to_string(),
+        });
+    }
+}
+
+fn terminal_error_v3(session: &EncryptedSessionV3) -> io::Error {
+    session
+        .terminal
+        .lock()
+        .expect("terminal lock poisoned")
+        .as_ref()
+        .map(|cause| io::Error::new(cause.kind, cause.message.clone()))
+        .unwrap_or_else(closed)
+}
+fn proto(error: impl std::fmt::Display) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, error.to_string())
+}
+
+async fn client_handshake_v3(
+    control: &Arc<dyn CarrierStreamV3>,
+    config: &SessionConfigV3,
+    locally_supported_features: u32,
+) -> io::Result<HandshakeMaterialV3> {
+    let (private, public) =
+        generate_ephemeral_keypair(handshake_suite(config.suite)).map_err(proto)?;
+    let mut nonce = [0; 32];
+    rand::fill(&mut nonce);
+    let preface = control_preface_v3();
+    let init = ClientInitWire {
+        channel_id: config.channel_id.clone(),
+        client_admission_binding_b64u: b64(&config.local_admission_binding),
+        client_endpoint_instance_id: config
+            .local_endpoint_instance_id
+            .clone()
+            .unwrap_or_default(),
+        client_eph_pub_b64u: b64(&public),
+        client_role: 1,
+        max_inbound_streams: config.max_inbound_streams,
+        nonce_c_b64u: b64(&nonce),
+        profile: "flowersec/3".into(),
+        selected_features: locally_supported_features,
+        session_contract_hash_b64u: b64(&config.session_contract_hash),
+        suite: suite_id(config.suite),
+    };
+    let init_raw = handshake_frame_v3(1, &init)?;
+    write_all_v3(control, &preface).await?;
+    write_all_v3(control, &init_raw).await?;
+    let server_raw = read_handshake_frame_v3(control, 2).await?;
+    let server: ServerFinishedWire = canonical_handshake_v3(&server_raw[HANDSHAKE_HEADER_BYTES..])?;
+    validate_server_v3(&server, config, locally_supported_features)?;
+    let peer_public = decode_b64(&server.server_eph_pub_b64u)?;
+    let shared = private.derive_shared_secret(&peer_public).map_err(proto)?;
+    let handshake_prk = hkdf_extract_v3(&config.psk, shared.expose());
+    let h0 = hash_parts(&[
+        b"flowersec-v3-handshake\0",
+        &preface,
+        &length_prefix(&init_raw),
+    ]);
+    let core = ServerCoreWire {
+        handshake_id: server.handshake_id.clone(),
+        max_inbound_streams: server.max_inbound_streams,
+        nonce_s_b64u: server.nonce_s_b64u.clone(),
+        selected_features: server.selected_features,
+        server_admission_binding_b64u: server.server_admission_binding_b64u.clone(),
+        server_endpoint_instance_id: server.server_endpoint_instance_id.clone(),
+        server_eph_pub_b64u: server.server_eph_pub_b64u.clone(),
+        session_contract_hash_b64u: server.session_contract_hash_b64u.clone(),
+    };
+    let core_raw = handshake_frame_v3(2, &core)?;
+    let h1 = hash_parts(&[&h0, &length_prefix(&core_raw)]);
+    let expected_server = confirm_v3(&handshake_prk, b"flowersec v3 server finished", &h1)?;
+    if decode_fixed_32(&server.server_confirm_b64u)? != expected_server {
+        return Err(invalid("FSH3 server confirmation mismatch"));
+    }
+    let client_core = ClientCoreWire {
+        handshake_id: server.handshake_id.clone(),
+    };
+    let client_core_raw = handshake_frame_v3(3, &client_core)?;
+    let h2 = hash_parts(&[
+        &h1,
+        &length_prefix(&server_raw),
+        &length_prefix(&client_core_raw),
+    ]);
+    let client_confirm = confirm_v3(&handshake_prk, b"flowersec v3 client finished", &h2)?;
+    let finished = ClientFinishedWire {
+        client_confirm_b64u: b64(&client_confirm),
+        handshake_id: server.handshake_id,
+    };
+    let finished_raw = handshake_frame_v3(3, &finished)?;
+    write_all_v3(control, &finished_raw).await?;
+    let h3 = hash_parts(&[&h2, &length_prefix(&finished_raw)]);
+    Ok(HandshakeMaterialV3 {
+        h3,
+        session_prk: hkdf_extract_v3(&h3, &handshake_prk),
+        negotiated_features: server.selected_features,
+    })
+}
+
+async fn server_handshake_v3(
+    control: &Arc<dyn CarrierStreamV3>,
+    config: &SessionConfigV3,
+    locally_supported_features: u32,
+) -> io::Result<HandshakeMaterialV3> {
+    let mut preface = [0; CONTROL_PREFACE_BYTES];
+    read_exact_v3(control, &mut preface).await?;
+    if preface != control_preface_v3() {
+        return Err(invalid("invalid FSC3 control preface"));
+    }
+    let init_raw = read_handshake_frame_v3(control, 1).await?;
+    let init: ClientInitWire = canonical_handshake_v3(&init_raw[HANDSHAKE_HEADER_BYTES..])?;
+    validate_client_v3(&init, config)?;
+    let (private, public) =
+        generate_ephemeral_keypair(handshake_suite(config.suite)).map_err(proto)?;
+    let peer_public = decode_b64(&init.client_eph_pub_b64u)?;
+    let shared = private.derive_shared_secret(&peer_public).map_err(proto)?;
+    let handshake_prk = hkdf_extract_v3(&config.psk, shared.expose());
+    let mut nonce = [0; 32];
+    let mut handshake_id = [0; 16];
+    rand::fill(&mut nonce);
+    rand::fill(&mut handshake_id);
+    let core = ServerCoreWire {
+        handshake_id: b64(&handshake_id),
+        max_inbound_streams: config.max_inbound_streams,
+        nonce_s_b64u: b64(&nonce),
+        selected_features: init.selected_features & locally_supported_features,
+        server_admission_binding_b64u: b64(&config.local_admission_binding),
+        server_endpoint_instance_id: config
+            .local_endpoint_instance_id
+            .clone()
+            .unwrap_or_default(),
+        server_eph_pub_b64u: b64(&public),
+        session_contract_hash_b64u: b64(&config.session_contract_hash),
+    };
+    let h0 = hash_parts(&[
+        b"flowersec-v3-handshake\0",
+        &preface,
+        &length_prefix(&init_raw),
+    ]);
+    let core_raw = handshake_frame_v3(2, &core)?;
+    let h1 = hash_parts(&[&h0, &length_prefix(&core_raw)]);
+    let confirm = confirm_v3(&handshake_prk, b"flowersec v3 server finished", &h1)?;
+    let finished = ServerFinishedWire {
+        handshake_id: core.handshake_id.clone(),
+        max_inbound_streams: core.max_inbound_streams,
+        nonce_s_b64u: core.nonce_s_b64u.clone(),
+        selected_features: core.selected_features,
+        server_admission_binding_b64u: core.server_admission_binding_b64u.clone(),
+        server_confirm_b64u: b64(&confirm),
+        server_endpoint_instance_id: core.server_endpoint_instance_id.clone(),
+        server_eph_pub_b64u: core.server_eph_pub_b64u.clone(),
+        session_contract_hash_b64u: core.session_contract_hash_b64u.clone(),
+    };
+    let server_raw = handshake_frame_v3(2, &finished)?;
+    write_all_v3(control, &server_raw).await?;
+    let client_raw = read_handshake_frame_v3(control, 3).await?;
+    let client: ClientFinishedWire = canonical_handshake_v3(&client_raw[HANDSHAKE_HEADER_BYTES..])?;
+    if client.handshake_id != core.handshake_id {
+        return Err(invalid("FSH3 handshake ID mismatch"));
+    }
+    let client_core_raw = handshake_frame_v3(
+        3,
+        &ClientCoreWire {
+            handshake_id: client.handshake_id.clone(),
+        },
+    )?;
+    let h2 = hash_parts(&[
+        &h1,
+        &length_prefix(&server_raw),
+        &length_prefix(&client_core_raw),
+    ]);
+    let expected_client = confirm_v3(&handshake_prk, b"flowersec v3 client finished", &h2)?;
+    if decode_fixed_32(&client.client_confirm_b64u)? != expected_client {
+        return Err(invalid("FSH3 client confirmation mismatch"));
+    }
+    let h3 = hash_parts(&[&h2, &length_prefix(&client_raw)]);
+    Ok(HandshakeMaterialV3 {
+        h3,
+        session_prk: hkdf_extract_v3(&h3, &handshake_prk),
+        negotiated_features: core.selected_features,
+    })
+}
+
+fn validate_client_v3(init: &ClientInitWire, config: &SessionConfigV3) -> io::Result<()> {
+    if init.profile != "flowersec/3"
+        || init.channel_id != config.channel_id
+        || init.client_role != 1
+        || init.suite != suite_id(config.suite)
+        || init.selected_features & !KNOWN_FEATURES_V3 != 0
+        || init.max_inbound_streams != config.max_inbound_streams
+        || decode_fixed_32(&init.session_contract_hash_b64u)? != config.session_contract_hash
+    {
+        return Err(invalid("invalid FSH3 CLIENT_INIT"));
+    }
+    validate_peer_binding_v3(&init.client_admission_binding_b64u, config)?;
+    validate_peer_endpoint_v3(&init.client_endpoint_instance_id, config)
+}
+
+fn validate_server_v3(
+    server: &ServerFinishedWire,
+    config: &SessionConfigV3,
+    offered_features: u32,
+) -> io::Result<()> {
+    if server.selected_features & !KNOWN_FEATURES_V3 != 0
+        || server.selected_features & !offered_features != 0
+        || server.max_inbound_streams != config.max_inbound_streams
+        || decode_fixed_32(&server.session_contract_hash_b64u)? != config.session_contract_hash
+        || decode_b64(&server.handshake_id)?.len() != 16
+    {
+        return Err(invalid("invalid FSH3 SERVER_FINISHED"));
+    }
+    validate_peer_binding_v3(&server.server_admission_binding_b64u, config)?;
+    validate_peer_endpoint_v3(&server.server_endpoint_instance_id, config)
+}
+
+fn validate_peer_binding_v3(encoded: &str, config: &SessionConfigV3) -> io::Result<()> {
+    let got = decode_fixed_32(encoded)?;
+    if got == [0; 32]
+        || config
+            .peer_admission_binding
+            .is_some_and(|expected| expected != got)
+    {
+        return Err(invalid("FSH3 admission binding mismatch"));
+    }
+    Ok(())
+}
+
+fn validate_peer_endpoint_v3(got: &str, config: &SessionConfigV3) -> io::Result<()> {
+    let valid = match config.path {
+        PathKind::Direct => got.is_empty(),
+        PathKind::Tunnel => config
+            .expected_peer_endpoint_instance_id
+            .as_deref()
+            .is_some_and(|expected| expected == got),
+    };
+    if !valid {
+        return Err(invalid("FSH3 endpoint instance mismatch"));
+    }
+    Ok(())
+}
+
+fn handshake_suite(suite: CipherSuiteV3) -> Suite {
+    match suite {
+        CipherSuiteV3::ChaCha20Poly1305 => Suite::X25519HkdfSha256Aes256Gcm,
+        CipherSuiteV3::Aes256Gcm => Suite::P256HkdfSha256Aes256Gcm,
+    }
+}
+fn suite_id(suite: CipherSuiteV3) -> u16 {
+    match suite {
+        CipherSuiteV3::ChaCha20Poly1305 => 1,
+        CipherSuiteV3::Aes256Gcm => 2,
+    }
+}
+fn control_preface_v3() -> [u8; CONTROL_PREFACE_BYTES] {
+    let mut raw = [0; CONTROL_PREFACE_BYTES];
+    raw[..4].copy_from_slice(b"FSC3");
+    raw[4] = 3;
+    raw[5] = 1;
+    raw
+}
+fn handshake_frame_v3<T: Serialize>(kind: u8, message: &T) -> io::Result<Vec<u8>> {
+    let payload = serde_json::to_vec(message).map_err(proto)?;
+    if payload.is_empty() || payload.len() > MAX_HANDSHAKE_PAYLOAD_BYTES {
+        return Err(invalid("FSH3 payload length"));
+    }
+    let mut raw = Vec::with_capacity(HANDSHAKE_HEADER_BYTES + payload.len());
+    raw.extend_from_slice(b"FSH3");
+    raw.extend_from_slice(&[3, kind, 0, 0]);
+    raw.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    raw.extend_from_slice(&payload);
+    Ok(raw)
+}
+async fn read_handshake_frame_v3(
+    control: &Arc<dyn CarrierStreamV3>,
+    kind: u8,
+) -> io::Result<Vec<u8>> {
+    let mut header = [0; HANDSHAKE_HEADER_BYTES];
+    read_exact_v3(control, &mut header).await?;
+    if &header[..4] != b"FSH3"
+        || header[4] != 3
+        || header[5] != kind
+        || header[6] != 0
+        || header[7] != 0
+    {
+        return Err(invalid("invalid FSH3 header"));
+    }
+    let length = u32::from_be_bytes(header[8..12].try_into().unwrap()) as usize;
+    if length == 0 || length > MAX_HANDSHAKE_PAYLOAD_BYTES {
+        return Err(invalid("invalid FSH3 length"));
+    }
+    let mut raw = header.to_vec();
+    raw.resize(HANDSHAKE_HEADER_BYTES + length, 0);
+    read_exact_v3(control, &mut raw[HANDSHAKE_HEADER_BYTES..]).await?;
+    Ok(raw)
+}
+fn canonical_handshake_v3<T>(payload: &[u8]) -> io::Result<T>
+where
+    T: serde::de::DeserializeOwned + Serialize,
+{
+    let value: T = serde_json::from_slice(payload).map_err(proto)?;
+    if serde_json::to_vec(&value).map_err(proto)? != payload {
+        return Err(invalid("non-canonical FSH3 JSON"));
+    }
+    Ok(value)
+}
+fn b64(raw: &[u8]) -> String {
+    URL_SAFE_NO_PAD.encode(raw)
+}
+fn decode_b64(value: &str) -> io::Result<Vec<u8>> {
+    let raw = URL_SAFE_NO_PAD.decode(value).map_err(proto)?;
+    if b64(&raw) != value {
+        return Err(invalid("non-canonical base64url"));
+    }
+    Ok(raw)
+}
+fn decode_fixed_32(value: &str) -> io::Result<[u8; 32]> {
+    decode_b64(value)?
+        .try_into()
+        .map_err(|_| invalid("expected 32-byte base64url value"))
+}
+fn length_prefix(raw: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + raw.len());
+    out.extend_from_slice(&(raw.len() as u32).to_be_bytes());
+    out.extend_from_slice(raw);
+    out
+}
+fn hash_parts(parts: &[&[u8]]) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    for part in parts {
+        hash.update(part);
+    }
+    hash.finalize().into()
+}
+fn hkdf_extract_v3(salt: &[u8], input: &[u8]) -> [u8; 32] {
+    let (prk, _) = Hkdf::<Sha256>::extract(Some(salt), input);
+    let mut out = [0; 32];
+    out.copy_from_slice(prk.as_ref());
+    out
+}
+fn confirm_v3(prk: &[u8; 32], label: &[u8], transcript: &[u8; 32]) -> io::Result<[u8; 32]> {
+    let mut info = label.to_vec();
+    info.extend_from_slice(transcript);
+    let hkdf = Hkdf::<Sha256>::from_prk(prk).map_err(proto)?;
+    let mut key = [0; 32];
+    hkdf.expand(&info, &mut key).map_err(proto)?;
+    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&key).map_err(proto)?;
+    mac.update(transcript);
+    Ok(mac.finalize().into_bytes().into())
+}
+
+async fn send_control_v3(
+    session: &EncryptedSessionV3,
+    kind: InnerRecordTypeV3,
+    payload: &[u8],
+) -> io::Result<()> {
+    let _write = session.control_write.lock().await;
+    let inner = encode_inner_record_v3(kind, payload).map_err(proto)?;
+    let (epoch, sequence, key, nonce) = {
+        let mut state = session.state.lock().await;
+        let epoch = state.send_epoch;
+        let sequence = state.control_send_sequence;
+        state.control_send_sequence = sequence
+            .checked_add(1)
+            .ok_or_else(|| invalid("control sequence exhausted"))?;
+        let roots = state
+            .send_roots
+            .get(&epoch)
+            .ok_or_else(|| invalid("missing send epoch roots"))?;
+        let material = derive_control_material_v3(
+            roots.control_root(),
+            &session.h3,
+            session.send_direction,
+            epoch,
+        )
+        .map_err(proto)?;
+        (
+            epoch,
+            sequence,
+            *material.record_key(),
+            *material.nonce_prefix(),
+        )
+    };
+    let header = RecordHeaderV3::new(epoch, sequence, (inner.len() + AEAD_TAG_V3_SIZE) as u32);
+    let ciphertext = seal_record_v3(
+        session.config.suite,
+        &key,
+        &nonce,
+        &session.h3,
+        0,
+        session.send_direction,
+        &header,
+        &inner,
+    )
+    .map_err(proto)?;
+    let raw_header = header.encode().map_err(proto)?;
+    let mut wire = Vec::with_capacity(raw_header.len() + ciphertext.len());
+    wire.extend_from_slice(&raw_header);
+    wire.extend_from_slice(&ciphertext);
+    write_all_v3(&session.control, &wire).await?;
+    touch_activity_v3(session);
+    Ok(())
+}
+
+async fn read_control_v3(session: &EncryptedSessionV3) -> io::Result<(InnerRecordTypeV3, Vec<u8>)> {
+    let mut raw_header = [0; RECORD_HEADER_V3_SIZE];
+    read_exact_v3(&session.control, &mut raw_header).await?;
+    let header = RecordHeaderV3::decode(&raw_header).map_err(proto)?;
+    let mut ciphertext = vec![0; header.ciphertext_length() as usize];
+    read_exact_v3(&session.control, &mut ciphertext).await?;
+    let (key, nonce) = {
+        let mut state = session.state.lock().await;
+        if header.epoch() == state.control_recv_epoch {
+            if header.sequence() != state.control_recv_sequence {
+                return Err(invalid("invalid control sequence"));
+            }
+            state.control_recv_sequence = state
+                .control_recv_sequence
+                .checked_add(1)
+                .ok_or_else(|| invalid("control sequence exhausted"))?;
+        } else if header.epoch() == state.recv_epoch
+            && header.epoch() == state.control_recv_epoch.saturating_add(1)
+            && header.sequence() == 0
+        {
+            state.control_recv_epoch = header.epoch();
+            state.control_recv_sequence = 1;
+        } else {
+            return Err(invalid("invalid control epoch"));
+        }
+        let roots = state
+            .recv_roots
+            .get(&header.epoch())
+            .ok_or_else(|| invalid("missing receive epoch roots"))?;
+        let material = derive_control_material_v3(
+            roots.control_root(),
+            &session.h3,
+            session.recv_direction,
+            header.epoch(),
+        )
+        .map_err(proto)?;
+        (*material.record_key(), *material.nonce_prefix())
+    };
+    let plaintext = open_record_v3(
+        session.config.suite,
+        &key,
+        &nonce,
+        &session.h3,
+        0,
+        session.recv_direction,
+        &header,
+        &ciphertext,
+    )
+    .map_err(proto)?;
+    let (kind, payload) = decode_inner_record_v3(&plaintext).map_err(proto)?;
+    touch_activity_v3(session);
+    Ok((kind, payload.to_vec()))
+}
+
+async fn control_loop_v3(session: Arc<SelfSession>) {
+    loop {
+        let result = read_control_v3(&session).await;
+        let (kind, payload) = match result {
+            Ok(value) => value,
+            Err(error) => {
+                fail_session_v3(&session, error);
+                return;
+            }
+        };
+        let handled = match kind {
+            InnerRecordTypeV3::Ping => {
+                send_control_v3(&session, InnerRecordTypeV3::Pong, &payload).await
+            }
+            InnerRecordTypeV3::Pong => {
+                if payload.len() != 8 {
+                    Err(invalid("invalid PONG"))
+                } else {
+                    let nonce = u64::from_be_bytes(payload[..8].try_into().unwrap());
+                    if let Some(waiter) = session.pings.take(nonce) {
+                        let _ = waiter.send(Instant::now());
+                    }
+                    Ok(())
+                }
+            }
+            InnerRecordTypeV3::SessionKeyUpdate => receive_rekey_v3(&session, &payload).await,
+            InnerRecordTypeV3::SessionKeyUpdateAck => {
+                if payload.len() != 20 {
+                    Err(invalid("invalid SESSION_KEY_UPDATE_ACK"))
+                } else {
+                    let transition = u64::from_be_bytes(payload[..8].try_into().unwrap());
+                    let received: [u8; 20] = payload.as_slice().try_into().unwrap();
+                    let disposition = {
+                        let rekeys = session.rekeys.lock().await;
+                        let last = session.last_session_rekey_ack.lock().await;
+                        classify_ack_v3(
+                            rekeys.get(&transition).map(|pending| &pending.payload),
+                            last.as_ref(),
+                            &received,
+                        )
+                    };
+                    match disposition {
+                        Ok(AckDispositionV3::Pending) => {
+                            match session.rekeys.lock().await.remove(&transition) {
+                                Some(pending) => {
+                                    *session.last_session_rekey_ack.lock().await = Some(received);
+                                    let _ = pending.sender.send(());
+                                    Ok(())
+                                }
+                                None => Err(invalid("missing pending rekey ACK")),
+                            }
+                        }
+                        Ok(AckDispositionV3::Duplicate) => Ok(()),
+                        Err(_) => Err(invalid("unexpected SESSION_KEY_UPDATE_ACK")),
+                    }
+                }
+            }
+            InnerRecordTypeV3::StreamReset => receive_stream_reset_v3(&session, &payload).await,
+            InnerRecordTypeV3::GoAway => receive_goaway_v3(&session, &payload).await,
+            InnerRecordTypeV3::SessionClose => match validate_session_close_payload_v3(&payload) {
+                Ok(()) => {
+                    session
+                        .received_session_close
+                        .store(true, Ordering::Release);
+                    session.received_session_close_changed.notify_waiters();
+                    close_peer_session_v3(&session).await;
+                    return;
+                }
+                Err(error) => Err(error),
+            },
+            _ => Err(invalid("unexpected control record")),
+        };
+        if let Err(error) = handled {
+            fail_session_v3(&session, error);
+            return;
+        }
+    }
+}
+
+async fn probe_v3(session: &EncryptedSessionV3) -> io::Result<Duration> {
+    confirm_control_delivery_v3(session).await
+}
+
+async fn confirm_control_delivery_v3(session: &EncryptedSessionV3) -> io::Result<Duration> {
+    if session.is_closed() {
+        return Err(closed());
+    }
+    let nonce = session.next_ping.fetch_add(1, Ordering::Relaxed);
+    let (tx, rx) = oneshot::channel();
+    let _pending = session.pings.register(nonce, tx)?;
+    let start = Instant::now();
+    send_control_v3(session, InnerRecordTypeV3::Ping, &nonce.to_be_bytes()).await?;
+    let end = tokio::select! {
+        _ = session.canceled.cancelled() => return Err(closed()),
+        result = tokio::time::timeout(Duration::from_secs(10), rx) => {
+            result
+                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Flowersec v3 liveness timeout"))?
+                .map_err(|_| closed())?
+        }
+    };
+    Ok(end.duration_since(start))
+}
+
+async fn rekey_v3(session: &EncryptedSessionV3) -> io::Result<()> {
+    let session = session
+        .self_weak
+        .get()
+        .and_then(Weak::upgrade)
+        .ok_or_else(closed)?;
+    let prepared = tokio::time::timeout(
+        session.config.deadlines.rekey_prepare,
+        prepare_rekey_v3(&session),
+    )
+    .await
+    .map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            "Flowersec v3 rekey prepare timeout",
+        )
+    })??;
+    // The prepared plan has no wire or epoch side effects. Ownership moves
+    // before the first irreversible rekey record can be written.
+    let (sender, receiver) = oneshot::channel();
+    tokio::spawn(async move {
+        let result = run_owned_rekey_v3(&session, prepared).await;
+        if let Err(error) = &result {
+            fail_session_v3(&session, io::Error::new(error.kind(), error.to_string()));
+        }
+        let _ = sender.send(result);
+    });
+    receiver.await.map_err(|_| closed())?
+}
+
+struct PreparedRekeyV3 {
+    transition: u64,
+    next_epoch: u32,
+    next_roots: EpochRootsV3,
+    streams: Vec<Arc<EncryptedStreamV3>>,
+    payload: [u8; 20],
+    _rekey_lock: OwnedMutexGuard<()>,
+    _open_lock: OwnedMutexGuard<()>,
+    _responder_freeze: InboundResponderFreezeGuardV3,
+    _activity: RekeyActivityGuardV3,
+}
+
+struct CommittedRekeyV3 {
+    transition: u64,
+    next_epoch: u32,
+    streams: Vec<Arc<EncryptedStreamV3>>,
+    session_ack: oneshot::Receiver<()>,
+}
+
+struct RekeyActivityGuardV3 {
+    session: Arc<SelfSession>,
+}
+
+impl RekeyActivityGuardV3 {
+    fn new(session: Arc<SelfSession>) -> Self {
+        session.rekeying.store(true, Ordering::Release);
+        Self { session }
+    }
+}
+
+impl Drop for RekeyActivityGuardV3 {
+    fn drop(&mut self) {
+        self.session.rekeying.store(false, Ordering::Release);
+        self.session.rekey_changed.notify_waiters();
+    }
+}
+
+async fn prepare_rekey_v3(session: &Arc<SelfSession>) -> io::Result<PreparedRekeyV3> {
+    let rekey_lock = session.rekey_lock.clone().lock_owned().await;
+    let open_lock = session.open_lock.clone().lock_owned().await;
+    if session.is_closed() {
+        return Err(terminal_error_v3(session));
+    }
+    let activity = RekeyActivityGuardV3::new(session.clone());
+    let responder_freeze = freeze_inbound_responders_v3(session, false).await?;
+    let watermark = session.local_open_high_watermark.load(Ordering::Acquire);
+    wait_outbound_frontier_v3(session, watermark).await?;
+    let (next_epoch, next_roots) = {
+        let state = session.state.lock().await;
+        let next = state
+            .send_epoch
+            .checked_add(1)
+            .ok_or_else(|| invalid("session epoch exhausted"))?;
+        let roots = state
+            .send_roots
+            .get(&state.send_epoch)
+            .ok_or_else(|| invalid("missing send epoch roots"))?;
+        let next_roots = derive_next_epoch_v3(
+            roots.rekey_root(),
+            &session.h3,
+            session.send_direction,
+            next,
+        )
+        .map_err(proto)?;
+        (next, next_roots)
+    };
+    let transition = session.next_transition.load(Ordering::Acquire);
+    if transition == 0 || transition.checked_add(1).is_none() {
+        return Err(invalid("rekey transition exhausted"));
+    }
+    let streams = active_send_streams_v3(session);
+    let mut payload = [0; 20];
+    payload[..8].copy_from_slice(&transition.to_be_bytes());
+    payload[8..12].copy_from_slice(&next_epoch.to_be_bytes());
+    payload[12..20].copy_from_slice(&watermark.to_be_bytes());
+    Ok(PreparedRekeyV3 {
+        transition,
+        next_epoch,
+        next_roots,
+        streams,
+        payload,
+        _rekey_lock: rekey_lock,
+        _open_lock: open_lock,
+        _responder_freeze: responder_freeze,
+        _activity: activity,
+    })
+}
+
+async fn run_owned_rekey_v3(session: &SelfSession, prepared: PreparedRekeyV3) -> io::Result<()> {
+    match tokio::time::timeout(
+        session.config.deadlines.rekey_completion,
+        commit_and_complete_rekey_v3(session, prepared),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "Flowersec v3 rekey completion timeout",
+        )),
+    }
+}
+
+async fn commit_and_complete_rekey_v3(
+    session: &EncryptedSessionV3,
+    prepared: PreparedRekeyV3,
+) -> io::Result<()> {
+    let next_transition = prepared
+        .transition
+        .checked_add(1)
+        .ok_or_else(|| invalid("rekey transition exhausted"))?;
+    session
+        .next_transition
+        .compare_exchange(
+            prepared.transition,
+            next_transition,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .map_err(|_| invalid("rekey transition changed during prepare"))?;
+    {
+        let mut state = session.state.lock().await;
+        if state
+            .send_epoch
+            .checked_add(1)
+            .ok_or_else(|| invalid("session epoch exhausted"))?
+            != prepared.next_epoch
+        {
+            return Err(invalid("session epoch changed during rekey prepare"));
+        }
+        state
+            .send_roots
+            .insert(prepared.next_epoch, prepared.next_roots.clone());
+    }
+    let (tx, rx) = oneshot::channel();
+    session.rekeys.lock().await.insert(
+        prepared.transition,
+        PendingSessionRekeyV3 {
+            payload: prepared.payload,
+            sender: tx,
+        },
+    );
+    for stream in &prepared.streams {
+        stream
+            .send_stream_update(prepared.transition, prepared.next_epoch)
+            .await?;
+    }
+    if let Err(error) = send_control_v3(
+        session,
+        InnerRecordTypeV3::SessionKeyUpdate,
+        &prepared.payload,
+    )
+    .await
+    {
+        session.rekeys.lock().await.remove(&prepared.transition);
+        return Err(error);
+    }
+    complete_rekey_v3(
+        session,
+        CommittedRekeyV3 {
+            transition: prepared.transition,
+            next_epoch: prepared.next_epoch,
+            streams: prepared.streams.clone(),
+            session_ack: rx,
+        },
+    )
+    .await
+}
+
+async fn wait_outbound_frontier_v3(session: &EncryptedSessionV3, watermark: u64) -> io::Result<()> {
+    loop {
+        let changed = session.outbound_ledger_changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        let frontier = session.outbound_ledger.lock().await.frontier();
+        if frontier == watermark {
+            return Ok(());
+        }
+        if frontier > watermark {
+            return Err(invalid("outbound ledger frontier exceeded watermark"));
+        }
+        tokio::select! {
+            _ = session.canceled.cancelled() => return Err(closed()),
+            () = &mut changed => {}
+        }
+    }
+}
+
+async fn complete_rekey_v3(
+    session: &EncryptedSessionV3,
+    prepared: CommittedRekeyV3,
+) -> io::Result<()> {
+    tokio::select! {
+        biased;
+        _ = session.canceled.cancelled() => return Err(terminal_error_v3(session)),
+        result = prepared.session_ack => result.map_err(|_| closed())?,
+    }
+    {
+        let mut state = session.state.lock().await;
+        state.send_epoch = prepared.next_epoch;
+        state.control_send_sequence = 0;
+    }
+    for stream in prepared.streams {
+        stream
+            .await_stream_update_ack(prepared.transition, prepared.next_epoch)
+            .await?;
+    }
+    {
+        let mut state = session.state.lock().await;
+        let current = state.send_epoch;
+        retain_current_epoch_roots_v3(&mut state.send_roots, current);
+        let current = state.recv_epoch;
+        retain_current_epoch_roots_v3(&mut state.recv_roots, current);
+    }
+    Ok(())
+}
+
+async fn receive_rekey_v3(session: &EncryptedSessionV3, payload: &[u8]) -> io::Result<()> {
+    tokio::time::timeout(session.config.deadlines.rekey_completion, async {
+        let _responder_freeze = freeze_inbound_responders_v3(session, true).await?;
+        receive_rekey_inner_v3(session, payload).await
+    })
+    .await
+    .map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            "Flowersec v3 peer rekey completion timeout",
+        )
+    })?
+}
+
+async fn receive_rekey_inner_v3(session: &EncryptedSessionV3, payload: &[u8]) -> io::Result<()> {
+    if payload.len() != 20 {
+        return Err(invalid("invalid SESSION_KEY_UPDATE"));
+    }
+    let transition = u64::from_be_bytes(payload[..8].try_into().unwrap());
+    let next = u32::from_be_bytes(payload[8..12].try_into().unwrap());
+    let watermark = u64::from_be_bytes(payload[12..20].try_into().unwrap());
+    let expected_transition = session
+        .recv_transition
+        .load(Ordering::Acquire)
+        .checked_add(1)
+        .ok_or_else(|| invalid("receive transition exhausted"))?;
+    if transition == 0 || transition != expected_transition {
+        return Err(invalid("non-consecutive receive transition"));
+    }
+    {
+        let mut state = session.state.lock().await;
+        if next
+            != state
+                .recv_epoch
+                .checked_add(1)
+                .ok_or_else(|| invalid("session epoch exhausted"))?
+        {
+            return Err(invalid("non-consecutive session epoch"));
+        }
+        let roots = state
+            .recv_roots
+            .get(&state.recv_epoch)
+            .ok_or_else(|| invalid("missing receive epoch roots"))?;
+        let next_roots = derive_next_epoch_v3(
+            roots.rekey_root(),
+            &session.h3,
+            session.recv_direction,
+            next,
+        )
+        .map_err(proto)?;
+        state.recv_roots.insert(next, next_roots);
+    }
+    let peer_frontier = session.peer_ledger.lock().await.frontier();
+    if peer_frontier != watermark {
+        return Err(invalid("rekey watermark does not match resolved frontier"));
+    }
+    let streams = active_receive_streams_v3(session);
+    for stream in &streams {
+        stream.await_stream_update(transition, next).await?;
+    }
+    {
+        let mut state = session.state.lock().await;
+        state.recv_epoch = next;
+    }
+    session.recv_transition.store(transition, Ordering::Release);
+    for stream in streams {
+        let mut update = stream.recv_update.lock().await;
+        if *update == Some((transition, next)) {
+            *update = None;
+        }
+    }
+    send_control_v3(session, InnerRecordTypeV3::SessionKeyUpdateAck, payload).await?;
+    if !session.rekeying.load(Ordering::Acquire) {
+        let mut state = session.state.lock().await;
+        let current = state.recv_epoch;
+        retain_current_epoch_roots_v3(&mut state.recv_roots, current);
+    }
+    Ok(())
+}
+
+fn retain_current_epoch_roots_v3(roots: &mut HashMap<u32, EpochRootsV3>, current: u32) {
+    roots.retain(|epoch, _| *epoch == current);
+}
+
+fn encode_stream_key_update_ack_v3(logical_id: u64, transition: u64, next_epoch: u32) -> [u8; 20] {
+    let mut payload = [0; 20];
+    payload[..8].copy_from_slice(&logical_id.to_be_bytes());
+    payload[8..16].copy_from_slice(&transition.to_be_bytes());
+    payload[16..].copy_from_slice(&next_epoch.to_be_bytes());
+    payload
+}
+
+fn decode_stream_key_update_ack_v3(payload: &[u8]) -> io::Result<(u64, u64, u32)> {
+    if payload.len() != 20 {
+        return Err(invalid("invalid STREAM_KEY_UPDATE_ACK"));
+    }
+    Ok((
+        u64::from_be_bytes(payload[..8].try_into().unwrap()),
+        u64::from_be_bytes(payload[8..16].try_into().unwrap()),
+        u32::from_be_bytes(payload[16..20].try_into().unwrap()),
+    ))
+}
+
+fn active_send_streams_v3(session: &EncryptedSessionV3) -> Vec<Arc<EncryptedStreamV3>> {
+    session
+        .streams
+        .lock()
+        .expect("stream registry poisoned")
+        .values()
+        .filter_map(Weak::upgrade)
+        .filter(|stream| {
+            !stream.reset.load(Ordering::Acquire) && !stream.local_fin.load(Ordering::Acquire)
+        })
+        .collect()
+}
+
+fn active_receive_streams_v3(session: &EncryptedSessionV3) -> Vec<Arc<EncryptedStreamV3>> {
+    session
+        .streams
+        .lock()
+        .expect("stream registry poisoned")
+        .values()
+        .filter_map(Weak::upgrade)
+        .filter(|stream| {
+            !stream.reset.load(Ordering::Acquire) && !stream.remote_fin.load(Ordering::Acquire)
+        })
+        .collect()
+}
+
+async fn receive_stream_reset_v3(session: &EncryptedSessionV3, payload: &[u8]) -> io::Result<()> {
+    let id = validate_stream_reset_payload_v3(payload)?;
+    let stream = session
+        .streams
+        .lock()
+        .expect("stream registry poisoned")
+        .get(&id)
+        .and_then(Weak::upgrade);
+    if let Some(stream) = stream {
+        let rekey_pending =
+            stream.send_update.lock().await.is_some() || stream.recv_update.lock().await.is_some();
+        stream.reset_local().await?;
+        if rekey_pending {
+            return Err(invalid("stream reset during rekey"));
+        }
+    }
+    if session.peer_ledger.lock().await.index(id).is_ok() {
+        session.peer_ledger.lock().await.mark_peer_reset(id)?;
+    } else if session.outbound_ledger.lock().await.index(id).is_ok() {
+        session.outbound_ledger.lock().await.mark_peer_reset(id)?;
+        session.outbound_ledger_changed.notify_waiters();
+    } else {
+        return Err(invalid("invalid STREAM_RESET logical stream ID"));
+    }
+    Ok(())
+}
+
+fn validate_stream_reset_payload_v3(payload: &[u8]) -> io::Result<u64> {
+    if payload.len() != 10 || u16::from_be_bytes(payload[8..].try_into().unwrap()) == 0 {
+        return Err(invalid("invalid STREAM_RESET"));
+    }
+    Ok(u64::from_be_bytes(payload[..8].try_into().unwrap()))
+}
+
+async fn receive_goaway_v3(session: &EncryptedSessionV3, payload: &[u8]) -> io::Result<()> {
+    if payload.len() != 10 {
+        return Err(invalid("invalid GOAWAY"));
+    }
+    let last = u64::from_be_bytes(payload[..8].try_into().unwrap());
+    let reason = u16::from_be_bytes(payload[8..10].try_into().unwrap());
+    let high = session.local_open_high_watermark.load(Ordering::Acquire);
+    let valid = valid_goaway_boundary_v3(session.config.role, last, high);
+    if reason == 0 || !valid {
+        return Err(invalid("invalid GOAWAY boundary"));
+    }
+    if session.received_goaway.swap(true, Ordering::AcqRel)
+        && session.received_goaway_last.load(Ordering::Acquire) != last
+    {
+        return Err(invalid("GOAWAY boundary changed"));
+    }
+    session.received_goaway_last.store(last, Ordering::Release);
+    Ok(())
+}
+
+fn valid_goaway_boundary_v3(role: SessionRole, last: u64, high: u64) -> bool {
+    last == 0
+        || (last <= high
+            && match role {
+                SessionRole::Client => last & 1 == 1,
+                SessionRole::Server => last & 1 == 0,
+            })
+}
+
+async fn send_goaway_v3(session: &EncryptedSessionV3, reason: u16) -> io::Result<()> {
+    if reason == 0 {
+        return Err(invalid("invalid GOAWAY reason"));
+    }
+    let last = session.peer_ledger.lock().await.frontier();
+    session.sent_goaway.store(true, Ordering::Release);
+    session.sent_goaway_last.store(last, Ordering::Release);
+    let mut payload = [0; 10];
+    payload[..8].copy_from_slice(&last.to_be_bytes());
+    payload[8..].copy_from_slice(&reason.to_be_bytes());
+    send_control_v3(session, InnerRecordTypeV3::GoAway, &payload).await
+}
+
+async fn close_session_v3(session: &EncryptedSessionV3) -> io::Result<()> {
+    if session.begin_closing() {
+        record_terminal_v3(session, &closed());
+        session.rpc.notifications.clear();
+        let deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
+        let flush = match tokio::time::timeout_at(deadline, async {
+            send_goaway_v3(session, NORMAL_CLOSE_REASON_V3).await?;
+            send_control_v3(
+                session,
+                InnerRecordTypeV3::SessionClose,
+                &NORMAL_CLOSE_REASON_V3.to_be_bytes(),
+            )
+            .await?;
+            session.control.close_write_delivered().await?;
+            wait_for_peer_session_close_v3(session).await;
+            Ok(())
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Flowersec v3 close flush timeout",
+            )),
+        };
+        session.terminate_stream_buffers();
+        session.canceled.cancel();
+        let carrier = match tokio::time::timeout_at(deadline, session.carrier.close()).await {
+            Ok(result) => result,
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Flowersec v3 carrier close timeout",
+            )),
+        };
+        let _rpc_operation = session.rpc.serial.lock().await;
+        session.finish_closed();
+        flush?;
+        carrier?;
+    }
+    Ok(())
+}
+
+async fn wait_for_peer_session_close_v3(session: &EncryptedSessionV3) {
+    loop {
+        let changed = session.received_session_close_changed.notified();
+        if session.received_session_close.load(Ordering::Acquire) {
+            return;
+        }
+        changed.await;
+    }
+}
+
+async fn close_peer_session_v3(session: &EncryptedSessionV3) {
+    if !session.begin_closing() {
+        return;
+    }
+    record_terminal_v3(session, &closed());
+    session.rpc.notifications.clear();
+    let deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
+    let reply = tokio::time::timeout_at(deadline, async {
+        send_control_v3(
+            session,
+            InnerRecordTypeV3::SessionClose,
+            &NORMAL_CLOSE_REASON_V3.to_be_bytes(),
+        )
+        .await?;
+        session.control.close_write_delivered().await
+    })
+    .await;
+    session.terminate_stream_buffers();
+    session.canceled.cancel();
+    let _ = reply;
+    let _ = tokio::time::timeout_at(deadline, session.carrier.close()).await;
+    session.finish_closed();
+}
+
+fn validate_session_close_payload_v3(payload: &[u8]) -> io::Result<()> {
+    if payload.len() != 2 || u16::from_be_bytes(payload.try_into().unwrap()) == 0 {
+        return Err(invalid("invalid SESSION_CLOSE reason"));
+    }
+    Ok(())
+}
+
+fn touch_activity_v3(session: &EncryptedSessionV3) {
+    session.activity_generation.fetch_add(1, Ordering::AcqRel);
+    session.activity_changed.notify_waiters();
+}
+
+async fn idle_watchdog_v3(session: Arc<SelfSession>) {
+    let idle_timeout = session.config.idle_timeout;
+    let mut observed = session.activity_generation.load(Ordering::Acquire);
+    loop {
+        let changed = session.activity_changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        let current = session.activity_generation.load(Ordering::Acquire);
+        if current != observed {
+            observed = current;
+            continue;
+        }
+        tokio::select! {
+            _ = session.canceled.cancelled() => return,
+            () = &mut changed => {
+                observed = session.activity_generation.load(Ordering::Acquire);
+            }
+            () = tokio::time::sleep(idle_timeout) => {
+                if session.activity_generation.load(Ordering::Acquire) != observed {
+                    observed = session.activity_generation.load(Ordering::Acquire);
+                    continue;
+                }
+                if session.begin_closing() {
+                    record_terminal_v3(
+                        &session,
+                        &io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "Flowersec v3 session idle timeout",
+                        ),
+                    );
+                    session.rpc.notifications.clear();
+                    session.terminate_stream_buffers();
+                    session.canceled.cancel();
+                    let _ = tokio::time::timeout(
+                        session.config.deadlines.close_flush,
+                        send_goaway_v3(&session, IDLE_TIMEOUT_REASON_V3),
+                    )
+                    .await;
+                    let _ = tokio::time::timeout(
+                        session.config.deadlines.close_flush,
+                        session.carrier.close(),
+                    )
+                    .await;
+                    session.finish_closed();
+                }
+                return;
+            }
+        }
+    }
+}
+
+fn fail_session_v3(session: &EncryptedSessionV3, error: io::Error) {
+    if session.begin_closing() {
+        record_terminal_v3(session, &error);
+        session.rpc.notifications.clear();
+        session.terminate_stream_buffers();
+        session.canceled.cancel();
+        session.carrier.abort();
+        session.finish_closed();
+    }
+}
+
+struct OutboundOpenGuardV3 {
+    session: Weak<SelfSession>,
+    id: u64,
+    carrier: Option<Arc<dyn CarrierStreamV3>>,
+    armed: bool,
+}
+
+impl OutboundOpenGuardV3 {
+    fn new(session: &Arc<SelfSession>, id: u64) -> Self {
+        Self {
+            session: Arc::downgrade(session),
+            id,
+            carrier: None,
+            armed: true,
+        }
+    }
+
+    fn set_carrier(&mut self, carrier: Arc<dyn CarrierStreamV3>) {
+        self.carrier = Some(carrier);
+    }
+
+    async fn abandon(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.armed = false;
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let id = self.id;
+        let carrier = self.carrier.clone();
+        let completion = tokio::spawn(async move {
+            commit_outbound_abandonment_v3(session, id, carrier).await;
+        });
+        let _ = completion.await;
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for OutboundOpenGuardV3 {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let id = self.id;
+        let carrier = self.carrier.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                commit_outbound_abandonment_v3(session, id, carrier).await;
+            });
+        }
+    }
+}
+
+async fn commit_outbound_abandonment_v3(
+    session: Arc<SelfSession>,
+    id: u64,
+    carrier: Option<Arc<dyn CarrierStreamV3>>,
+) {
+    if let Some(carrier) = carrier {
+        let _ = carrier.reset().await;
+    }
+    let mut payload = [0; 10];
+    payload[..8].copy_from_slice(&id.to_be_bytes());
+    payload[8..].copy_from_slice(&6_u16.to_be_bytes());
+    if let Err(error) = send_control_v3(&session, InnerRecordTypeV3::StreamReset, &payload).await {
+        if !session.is_closed() {
+            fail_session_v3(&session, error);
+        }
+        return;
+    }
+    if let Err(error) = session.outbound_ledger.lock().await.mark_terminal(id) {
+        fail_session_v3(&session, error);
+        return;
+    }
+    session.outbound_ledger_changed.notify_waiters();
+}
+
+struct EncryptedStreamV3 {
+    session: Weak<SelfSession>,
+    carrier: Arc<dyn CarrierStreamV3>,
+    id: u64,
+    kind: String,
+    send_epoch: AtomicU64,
+    send_sequence: AtomicU64,
+    recv_epoch: AtomicU64,
+    recv_sequence: AtomicU64,
+    prior_ack: Mutex<Option<(u32, u64)>>,
+    recv_update: Mutex<Option<(u64, u32)>>,
+    recv_update_changed: Notify,
+    send_update: Mutex<Option<(u64, u32)>>,
+    send_update_ack: Mutex<Option<(u64, u32)>>,
+    send_update_changed: Notify,
+    buffered_reads: BoundedReadQueueV3,
+    send_lock: Mutex<()>,
+    read_lock: Mutex<()>,
+    local_fin: AtomicBool,
+    remote_fin: AtomicBool,
+    reset: AtomicBool,
+    reset_changed: Notify,
+    reset_cleanup_done: AtomicBool,
+    reset_cleanup_changed: Notify,
+    reset_cleanup_error: StdMutex<Option<io::ErrorKind>>,
+    terminal: OnceLock<SessionError>,
+    _outbound_permit: StdMutex<Option<tokio::sync::OwnedSemaphorePermit>>,
+    _inbound_permit: StdMutex<Option<tokio::sync::OwnedSemaphorePermit>>,
+}
+
+#[derive(Default)]
+struct BoundedReadQueueStateV3 {
+    items: VecDeque<Option<Bytes>>,
+    bytes: usize,
+    terminal: bool,
+}
+
+#[derive(Default)]
+struct BoundedReadQueueV3 {
+    state: StdMutex<BoundedReadQueueStateV3>,
+    capacity_changed: Notify,
+    state_changed: Notify,
+}
+
+enum BufferedReadPushV3 {
+    Pushed,
+    Full(Bytes),
+    Terminal,
+}
+
+enum BufferedReadPopV3 {
+    Item(Option<Bytes>),
+    Empty,
+    Terminal,
+}
+
+impl BoundedReadQueueV3 {
+    fn pop(&self) -> BufferedReadPopV3 {
+        let mut state = self.state.lock().expect("buffered read queue poisoned");
+        if state.terminal {
+            return BufferedReadPopV3::Terminal;
+        }
+        let Some(item) = state.items.pop_front() else {
+            return BufferedReadPopV3::Empty;
+        };
+        let released_capacity = if let Some(data) = &item {
+            state.bytes -= data.len();
+            true
+        } else {
+            false
+        };
+        drop(state);
+        if released_capacity {
+            self.capacity_changed.notify_one();
+        }
+        BufferedReadPopV3::Item(item)
+    }
+
+    fn try_push_data(&self, data: Bytes) -> BufferedReadPushV3 {
+        let mut state = self.state.lock().expect("buffered read queue poisoned");
+        if state.terminal {
+            return BufferedReadPushV3::Terminal;
+        }
+        if state
+            .bytes
+            .checked_add(data.len())
+            .is_none_or(|bytes| bytes > MAX_BUFFERED_STREAM_BYTES_V3)
+        {
+            return BufferedReadPushV3::Full(data);
+        }
+        state.bytes += data.len();
+        state.items.push_back(Some(data));
+        drop(state);
+        self.state_changed.notify_waiters();
+        BufferedReadPushV3::Pushed
+    }
+
+    fn push_fin(&self) -> bool {
+        let mut state = self.state.lock().expect("buffered read queue poisoned");
+        if state.terminal {
+            return false;
+        }
+        state.items.push_back(None);
+        drop(state);
+        self.state_changed.notify_waiters();
+        true
+    }
+
+    fn terminate(&self) {
+        let mut state = self.state.lock().expect("buffered read queue poisoned");
+        state.terminal = true;
+        state.items.clear();
+        state.bytes = 0;
+        drop(state);
+        self.capacity_changed.notify_waiters();
+        self.state_changed.notify_waiters();
+    }
+
+    #[cfg(test)]
+    fn buffered_bytes(&self) -> usize {
+        self.state
+            .lock()
+            .expect("buffered read queue poisoned")
+            .bytes
+    }
+}
+
+impl std::fmt::Debug for EncryptedStreamV3 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("EncryptedStreamV3 { <opaque> }")
+    }
+}
+
+async fn open_stream_v3(
+    session: &SelfSession,
+    kind: &str,
+    metadata: JsonObject,
+) -> io::Result<Box<dyn ByteStream>> {
+    open_stream_with_capacity_v3(session, kind, metadata, true).await
+}
+
+async fn open_reserved_rpc_stream_v3(session: &SelfSession) -> io::Result<Box<dyn ByteStream>> {
+    open_stream_with_capacity_v3(session, RESERVED_RPC_KIND, JsonObject::new(), false).await
+}
+
+async fn open_stream_with_capacity_v3(
+    session: &SelfSession,
+    kind: &str,
+    metadata: JsonObject,
+    counts_toward_data_limit: bool,
+) -> io::Result<Box<dyn ByteStream>> {
+    if session.is_closed() {
+        return Err(closed());
+    }
+    let permit = if counts_toward_data_limit {
+        Some(tokio::select! {
+            biased;
+            _ = session.canceled.cancelled() => return Err(terminal_error_v3(session)),
+            permit = session.outbound_permits.clone().acquire_owned() => {
+                permit.map_err(|_| terminal_error_v3(session))?
+            }
+        })
+    } else {
+        None
+    };
+    let _open = session.open_lock.lock().await;
+    loop {
+        let changed = session.rekey_changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        if !session.rekeying.load(Ordering::Acquire) {
+            break;
+        }
+        tokio::select! {
+            biased;
+            _ = session.canceled.cancelled() => return Err(terminal_error_v3(session)),
+            () = &mut changed => {}
+        }
+    }
+    if session.is_closed() {
+        return Err(terminal_error_v3(session));
+    }
+    if session.received_goaway.load(Ordering::Acquire) {
+        return Err(going_away());
+    }
+    let id = session
+        .next_stream_id
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(2))
+        .map_err(|_| invalid("logical stream ID exhausted"))?;
+    if let Err(error) = session.outbound_ledger.lock().await.mark_fss3(id) {
+        let _ = send_goaway_v3(session, 5).await;
+        return Err(error);
+    }
+    session
+        .local_open_high_watermark
+        .store(id, Ordering::Release);
+    session.outbound_ledger_changed.notify_waiters();
+    let owner = session_arc(session)?;
+    let mut guard = OutboundOpenGuardV3::new(&owner, id);
+    let carrier = match session.carrier.open_stream().await {
+        Ok(carrier) => carrier,
+        Err(error) => {
+            guard.abandon().await;
+            return Err(error);
+        }
+    };
+    guard.set_carrier(carrier.clone());
+    if !local_open_allowed_after_goaway_v3(session, id) {
+        guard.abandon().await;
+        return Err(going_away());
+    }
+    let (epoch, receive_epoch, setup_root) = {
+        let state = session.state.lock().await;
+        let Some(roots) = state.send_roots.get(&state.send_epoch) else {
+            drop(state);
+            guard.abandon().await;
+            return Err(invalid("missing send roots"));
+        };
+        (state.send_epoch, state.recv_epoch, *roots.setup_root())
+    };
+    let role = match session.config.role {
+        SessionRole::Client => StreamOpenerRoleV3::Client,
+        SessionRole::Server => StreamOpenerRoleV3::Server,
+    };
+    let mut preface = SetupPrefaceV3::new(role, id, epoch);
+    let setup_mac = match compute_setup_mac_v3(&setup_root, &session.h3, &preface) {
+        Ok(value) => value,
+        Err(error) => {
+            guard.abandon().await;
+            return Err(proto(error));
+        }
+    };
+    preface.set_setup_mac(setup_mac);
+    let raw_preface = match preface.encode() {
+        Ok(value) => value,
+        Err(error) => {
+            guard.abandon().await;
+            return Err(proto(error));
+        }
+    };
+    if let Err(error) = write_all_v3(&carrier, &raw_preface).await {
+        guard.abandon().await;
+        return Err(error);
+    }
+    if !local_open_allowed_after_goaway_v3(session, id) {
+        guard.abandon().await;
+        return Err(going_away());
+    }
+    let fss3_hash = match compute_fss3_hash_v3(&raw_preface) {
+        Ok(value) => value,
+        Err(error) => {
+            guard.abandon().await;
+            return Err(proto(error));
+        }
+    };
+    let metadata_raw = match serde_json::to_vec(&metadata) {
+        Ok(value) => value,
+        Err(error) => {
+            guard.abandon().await;
+            return Err(proto(error));
+        }
+    };
+    let open = match encode_open_payload_v3(&OpenPayloadV3::new(
+        id,
+        fss3_hash,
+        kind.to_owned(),
+        metadata_raw,
+    )) {
+        Ok(value) => value,
+        Err(error) => {
+            guard.abandon().await;
+            return Err(proto(error));
+        }
+    };
+    if let Err(error) = write_stream_record_v3(
+        session,
+        &carrier,
+        id,
+        epoch,
+        0,
+        InnerRecordTypeV3::Open,
+        &open,
+    )
+    .await
+    {
+        guard.abandon().await;
+        return Err(error);
+    }
+    if !local_open_allowed_after_goaway_v3(session, id) {
+        guard.abandon().await;
+        return Err(going_away());
+    }
+    let (response, payload, response_epoch, response_sequence) =
+        match read_stream_record_v3(session, &carrier, id).await {
+            Ok(value) => value,
+            Err(error) => {
+                guard.abandon().await;
+                return Err(error);
+            }
+        };
+    if response_epoch != receive_epoch || response_sequence != 0 {
+        guard.abandon().await;
+        return Err(invalid("invalid OPEN response epoch/sequence"));
+    }
+    let open_hash = match compute_open_hash_v3(&open) {
+        Ok(value) => value,
+        Err(error) => {
+            guard.abandon().await;
+            return Err(proto(error));
+        }
+    };
+    match response {
+        InnerRecordTypeV3::OpenAck if payload == open_hash => {
+            mark_outbound_resolved_v3(session, id).await?;
+        }
+        InnerRecordTypeV3::OpenReject => {
+            let _reason = match validate_open_reject_payload_v3(&payload, &open_hash) {
+                Ok(reason) => reason,
+                Err(error) => {
+                    guard.abandon().await;
+                    return Err(error);
+                }
+            };
+            mark_outbound_resolved_v3(session, id).await?;
+            let _ = carrier.reset().await;
+            guard.disarm();
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "logical stream rejected",
+            ));
+        }
+        _ => {
+            guard.abandon().await;
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "invalid OPEN response kind={response:?} payload_len={} hash_match={}",
+                    payload.len(),
+                    payload == open_hash
+                ),
+            ));
+        }
+    }
+    if !local_open_allowed_after_goaway_v3(session, id) {
+        guard.abandon().await;
+        return Err(going_away());
+    }
+    let stream = Arc::new(EncryptedStreamV3 {
+        session: Arc::downgrade(&owner),
+        carrier,
+        id,
+        kind: kind.to_owned(),
+        send_epoch: AtomicU64::new(u64::from(epoch)),
+        send_sequence: AtomicU64::new(1),
+        recv_epoch: AtomicU64::new(u64::from(response_epoch)),
+        recv_sequence: AtomicU64::new(1),
+        prior_ack: Mutex::new(None),
+        recv_update: Mutex::new(None),
+        recv_update_changed: Notify::new(),
+        send_update: Mutex::new(None),
+        send_update_ack: Mutex::new(None),
+        send_update_changed: Notify::new(),
+        buffered_reads: BoundedReadQueueV3::default(),
+        send_lock: Mutex::new(()),
+        read_lock: Mutex::new(()),
+        local_fin: AtomicBool::new(false),
+        remote_fin: AtomicBool::new(false),
+        reset: AtomicBool::new(false),
+        reset_changed: Notify::new(),
+        reset_cleanup_done: AtomicBool::new(false),
+        reset_cleanup_changed: Notify::new(),
+        reset_cleanup_error: StdMutex::new(None),
+        terminal: OnceLock::new(),
+        _outbound_permit: StdMutex::new(permit),
+        _inbound_permit: StdMutex::new(None),
+    });
+    session
+        .streams
+        .lock()
+        .expect("stream registry poisoned")
+        .insert(id, Arc::downgrade(&stream));
+    guard.disarm();
+    Ok(Box::new(StreamHandleV3(stream)))
+}
+
+fn going_away() -> io::Error {
+    io::Error::new(io::ErrorKind::ConnectionAborted, "peer is going away")
+}
+
+fn local_open_allowed_after_goaway_v3(session: &EncryptedSessionV3, id: u64) -> bool {
+    !session.received_goaway.load(Ordering::Acquire)
+        || (session.received_goaway_last.load(Ordering::Acquire) != 0
+            && id <= session.received_goaway_last.load(Ordering::Acquire))
+}
+
+async fn mark_outbound_resolved_v3(session: &EncryptedSessionV3, id: u64) -> io::Result<()> {
+    session.outbound_ledger.lock().await.mark_terminal(id)?;
+    session.outbound_ledger_changed.notify_waiters();
+    Ok(())
+}
+
+// Public methods receive `&SelfSession`; recover the owning Arc from a weak
+// registry entry created during establishment without exposing self-references.
+fn session_arc(session: &SelfSession) -> io::Result<Arc<SelfSession>> {
+    session
+        .self_weak
+        .get()
+        .and_then(Weak::upgrade)
+        .ok_or_else(closed)
+}
+
+#[derive(Clone)]
+struct StreamHandleV3(Arc<EncryptedStreamV3>);
+
+impl std::fmt::Debug for StreamHandleV3 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+fn validate_open_reject_payload_v3(
+    payload: &[u8],
+    expected_open_hash: &[u8; 32],
+) -> io::Result<u16> {
+    if payload.len() != 34 || payload[..32] != expected_open_hash[..] {
+        return Err(invalid("invalid OPEN_REJECT hash"));
+    }
+    let reason = u16::from_be_bytes(payload[32..34].try_into().unwrap());
+    if reason == 0 {
+        return Err(invalid("invalid OPEN_REJECT reason"));
+    }
+    Ok(reason)
+}
+
+#[async_trait]
+impl ByteStream for StreamHandleV3 {
+    #[cfg(test)]
+    fn internal_test_id(&self) -> u64 {
+        self.0.id
+    }
+    #[cfg(test)]
+    fn internal_test_buffered_bytes(&self) -> usize {
+        self.0.buffered_reads.buffered_bytes()
+    }
+    fn kind(&self) -> &str {
+        &self.0.kind
+    }
+    fn terminal_error(&self) -> Option<SessionError> {
+        self.0.terminal_error()
+    }
+    async fn read(&self) -> Result<Option<Bytes>, SessionError> {
+        self.0
+            .read_next()
+            .await
+            .inspect_err(|error| self.0.record_terminal(error))
+            .map_err(|error| SessionError::from_io(&error))
+    }
+    async fn write(&self, payload: Bytes) -> Result<usize, SessionError> {
+        match self.0.write_data(payload).await {
+            Ok(written) => Ok(written),
+            Err(error) => {
+                self.0.record_terminal(&error);
+                let _ = self.0.reset_inner().await;
+                Err(SessionError::from_io(&error))
+            }
+        }
+    }
+    async fn close_write(&self) -> Result<(), SessionError> {
+        match self.0.close_write_inner().await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.0.record_terminal(&error);
+                let _ = self.0.reset_inner().await;
+                Err(SessionError::from_io(&error))
+            }
+        }
+    }
+    async fn reset(&self) -> Result<(), SessionError> {
+        self.0
+            .reset_inner()
+            .await
+            .map_err(|error| SessionError::from_io(&error))
+    }
+    async fn close(&self) -> Result<(), SessionError> {
+        self.0
+            .reset_inner()
+            .await
+            .map_err(|error| SessionError::from_io(&error))
+    }
+}
+
+impl EncryptedStreamV3 {
+    fn terminal_error(&self) -> Option<SessionError> {
+        if let Some(error) = self.terminal.get() {
+            return Some(*error);
+        }
+        if self.reset.load(Ordering::Acquire) {
+            return Some(SessionError::StreamReset);
+        }
+        let Some(session) = self.session.upgrade() else {
+            return Some(SessionError::Closed);
+        };
+        if !session.canceled.is_cancelled() {
+            return None;
+        }
+        let terminal = session.terminal.lock().expect("terminal lock poisoned");
+        Some(match terminal.as_ref().map(|cause| cause.kind) {
+            Some(io::ErrorKind::TimedOut) => SessionError::Timeout,
+            Some(io::ErrorKind::InvalidData | io::ErrorKind::PermissionDenied) => {
+                SessionError::OperationFailed
+            }
+            _ => SessionError::Closed,
+        })
+    }
+
+    fn record_terminal(&self, error: &io::Error) {
+        let redacted = match error.kind() {
+            io::ErrorKind::TimedOut => SessionError::Timeout,
+            io::ErrorKind::ConnectionReset => SessionError::StreamReset,
+            io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::NotConnected => SessionError::Closed,
+            _ => SessionError::OperationFailed,
+        };
+        let _ = self.terminal.set(redacted);
+    }
+
+    async fn write_data(&self, payload: Bytes) -> io::Result<usize> {
+        if payload.is_empty() {
+            return Ok(0);
+        }
+        let _lock = self.send_lock.lock().await;
+        if self.local_fin.load(Ordering::Acquire) || self.reset.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "logical stream send direction closed",
+            ));
+        }
+        let length = payload.len().min(MAX_DATA_V3_BYTES);
+        self.write_record_locked_cancelable(InnerRecordTypeV3::Data, &payload[..length])
+            .await?;
+        Ok(length)
+    }
+    async fn close_write_inner(&self) -> io::Result<()> {
+        let _lock = self.send_lock.lock().await;
+        if self.reset.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "logical stream reset",
+            ));
+        }
+        if !self.local_fin.load(Ordering::Acquire) {
+            let reset_changed = self.reset_changed.notified();
+            tokio::pin!(reset_changed);
+            reset_changed.as_mut().enable();
+            if self.reset.load(Ordering::Acquire) {
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "logical stream reset",
+                ));
+            }
+            tokio::select! {
+                biased;
+                _ = &mut reset_changed => return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "logical stream reset",
+                )),
+                result = async {
+                    self.write_record_locked(InnerRecordTypeV3::Fin, &[]).await?;
+                    self.carrier.close_write().await
+                } => result?,
+            }
+            self.local_fin.store(true, Ordering::Release);
+        }
+        self.release_if_clean();
+        Ok(())
+    }
+    async fn reset_inner(self: &Arc<Self>) -> io::Result<()> {
+        let _ = self.terminal.set(SessionError::StreamReset);
+        if !self.reset.swap(true, Ordering::AcqRel) {
+            self.buffered_reads.terminate();
+            self.reset_changed.notify_waiters();
+            let stream = self.clone();
+            tokio::spawn(async move { stream.finish_reset().await });
+        }
+        self.wait_reset_cleanup().await
+    }
+    async fn wait_reset_cleanup(&self) -> io::Result<()> {
+        loop {
+            let changed = self.reset_cleanup_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.reset_cleanup_done.load(Ordering::Acquire) {
+                break;
+            }
+            changed.await;
+        }
+        match *self
+            .reset_cleanup_error
+            .lock()
+            .expect("reset cleanup error lock poisoned")
+        {
+            Some(kind) => Err(io::Error::new(kind, "logical stream reset cleanup failed")),
+            None => Ok(()),
+        }
+    }
+    async fn finish_reset(self: Arc<Self>) {
+        if let Some(session) = self.session.upgrade() {
+            let mut payload = [0; 10];
+            payload[..8].copy_from_slice(&self.id.to_be_bytes());
+            payload[8..].copy_from_slice(&1_u16.to_be_bytes());
+            let result =
+                match send_control_v3(&session, InnerRecordTypeV3::StreamReset, &payload).await {
+                    Ok(()) if self.remote_fin.load(Ordering::Acquire) => {
+                        confirm_control_delivery_v3(&session).await.map(|_| ())
+                    }
+                    result => result,
+                };
+            if let Err(error) = result {
+                if !session.is_closed() {
+                    fail_session_v3(&session, io::Error::new(error.kind(), error.to_string()));
+                }
+            }
+        }
+        self.finish_physical_reset().await;
+    }
+    async fn finish_physical_reset(&self) {
+        let result = self.carrier.reset().await;
+        self.release_capacity();
+        if let Err(error) = result {
+            *self
+                .reset_cleanup_error
+                .lock()
+                .expect("reset cleanup error lock poisoned") = Some(error.kind());
+        }
+        self.reset_cleanup_done.store(true, Ordering::Release);
+        self.reset_cleanup_changed.notify_waiters();
+    }
+    async fn reset_local(self: &Arc<Self>) -> io::Result<()> {
+        let _ = self.terminal.set(SessionError::StreamReset);
+        if !self.reset.swap(true, Ordering::AcqRel) {
+            self.buffered_reads.terminate();
+            self.reset_changed.notify_waiters();
+            let stream = self.clone();
+            tokio::spawn(async move { stream.finish_physical_reset().await });
+        }
+        self.wait_reset_cleanup().await
+    }
+    async fn write_record(&self, kind: InnerRecordTypeV3, payload: &[u8]) -> io::Result<()> {
+        let _lock = self.send_lock.lock().await;
+        if self.reset.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "logical stream reset",
+            ));
+        }
+        self.write_record_locked_cancelable(kind, payload).await
+    }
+    async fn write_record_locked_cancelable(
+        &self,
+        kind: InnerRecordTypeV3,
+        payload: &[u8],
+    ) -> io::Result<()> {
+        let reset_changed = self.reset_changed.notified();
+        tokio::pin!(reset_changed);
+        reset_changed.as_mut().enable();
+        if self.reset.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "logical stream reset",
+            ));
+        }
+        tokio::select! {
+            biased;
+            _ = &mut reset_changed => Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "logical stream reset",
+            )),
+            result = self.write_record_locked(kind, payload) => result,
+        }
+    }
+    async fn write_record_locked(&self, kind: InnerRecordTypeV3, payload: &[u8]) -> io::Result<()> {
+        let session = self.session.upgrade().ok_or_else(closed)?;
+        let epoch = self.send_epoch.load(Ordering::Acquire) as u32;
+        let sequence = next_stream_send_sequence_v3(&self.send_sequence)?;
+        write_stream_record_v3(
+            &session,
+            &self.carrier,
+            self.id,
+            epoch,
+            sequence,
+            kind,
+            payload,
+        )
+        .await
+    }
+    async fn read_next(&self) -> io::Result<Option<Bytes>> {
+        let session = self.session.upgrade().ok_or_else(closed)?;
+        loop {
+            let state_changed = self.buffered_reads.state_changed.notified();
+            tokio::pin!(state_changed);
+            state_changed.as_mut().enable();
+            let reset_changed = self.reset_changed.notified();
+            tokio::pin!(reset_changed);
+            reset_changed.as_mut().enable();
+            if self.reset.load(Ordering::Acquire) {
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "logical stream reset",
+                ));
+            }
+            if session.canceled.is_cancelled() {
+                return Err(terminal_error_v3(&session));
+            }
+            match self.buffered_reads.pop() {
+                BufferedReadPopV3::Item(item) => return Ok(item),
+                BufferedReadPopV3::Terminal => return Err(terminal_error_v3(&session)),
+                BufferedReadPopV3::Empty => {}
+            }
+            let _read_lock = tokio::select! {
+                biased;
+                _ = &mut reset_changed => return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "logical stream reset",
+                )),
+                _ = session.canceled.cancelled() => return Err(terminal_error_v3(&session)),
+                _ = &mut state_changed => continue,
+                lock = self.read_lock.lock() => lock,
+            };
+            if self.reset.load(Ordering::Acquire) {
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "logical stream reset",
+                ));
+            }
+            if session.canceled.is_cancelled() {
+                return Err(terminal_error_v3(&session));
+            }
+            match self.buffered_reads.pop() {
+                BufferedReadPopV3::Item(item) => return Ok(item),
+                BufferedReadPopV3::Terminal => return Err(terminal_error_v3(&session)),
+                BufferedReadPopV3::Empty => {}
+            }
+            let (kind, payload, epoch, sequence) = tokio::select! {
+                biased;
+                _ = &mut reset_changed => return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "logical stream reset",
+                )),
+                _ = session.canceled.cancelled() => return Err(terminal_error_v3(&session)),
+                record = read_stream_record_v3(&session, &self.carrier, self.id) => record?,
+            };
+            let prior = *self.prior_ack.lock().await;
+            if kind == InnerRecordTypeV3::StreamKeyUpdateAck && prior == Some((epoch, sequence)) {
+                *self.prior_ack.lock().await = None;
+            } else {
+                self.accept_normal_header(epoch, sequence)?;
+            }
+            match kind {
+                InnerRecordTypeV3::Data => return Ok(Some(Bytes::from(payload))),
+                InnerRecordTypeV3::Fin => {
+                    self.remote_fin.store(true, Ordering::Release);
+                    self.release_if_clean();
+                    return Ok(None);
+                }
+                InnerRecordTypeV3::StreamKeyUpdate => {
+                    self.handle_stream_update_locked(&session, &payload).await?;
+                }
+                InnerRecordTypeV3::StreamKeyUpdateAck => {
+                    self.process_stream_update_ack(&payload).await?;
+                }
+                _ => return Err(invalid("unexpected logical stream record")),
+            }
+        }
+    }
+
+    fn accept_normal_header(&self, epoch: u32, sequence: u64) -> io::Result<()> {
+        let expected_epoch = self.recv_epoch.load(Ordering::Acquire) as u32;
+        let expected_sequence = self.recv_sequence.load(Ordering::Acquire);
+        if epoch != expected_epoch || sequence != expected_sequence {
+            return Err(invalid("logical stream epoch or sequence mismatch"));
+        }
+        self.recv_sequence
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+                value.checked_add(1)
+            })
+            .map_err(|_| invalid("logical stream receive sequence exhausted"))?;
+        Ok(())
+    }
+
+    fn release_if_clean(&self) {
+        if self.local_fin.load(Ordering::Acquire) && self.remote_fin.load(Ordering::Acquire) {
+            self.release_capacity();
+        }
+    }
+
+    fn release_capacity(&self) {
+        self._outbound_permit
+            .lock()
+            .expect("outbound permit lock poisoned")
+            .take();
+        self._inbound_permit
+            .lock()
+            .expect("inbound permit lock poisoned")
+            .take();
+    }
+
+    async fn buffer_read_data(
+        &self,
+        session: &EncryptedSessionV3,
+        mut data: Bytes,
+    ) -> io::Result<()> {
+        loop {
+            let capacity_changed = self.buffered_reads.capacity_changed.notified();
+            tokio::pin!(capacity_changed);
+            capacity_changed.as_mut().enable();
+            match self.buffered_reads.try_push_data(data) {
+                BufferedReadPushV3::Pushed => return Ok(()),
+                BufferedReadPushV3::Terminal => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::ConnectionReset,
+                        "logical stream reset",
+                    ));
+                }
+                BufferedReadPushV3::Full(pending) => data = pending,
+            }
+            tokio::select! {
+                biased;
+                _ = self.reset_changed.notified() => return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "logical stream reset",
+                )),
+                _ = session.canceled.cancelled() => return Err(terminal_error_v3(session)),
+                _ = &mut capacity_changed => {}
+            }
+        }
+    }
+
+    async fn send_stream_update(&self, transition: u64, next_epoch: u32) -> io::Result<()> {
+        {
+            let mut pending = self.send_update.lock().await;
+            if pending.is_some() {
+                return Err(invalid("stream rekey already pending"));
+            }
+            *pending = Some((transition, next_epoch));
+            *self.send_update_ack.lock().await = None;
+        }
+        let mut payload = [0; 12];
+        payload[..8].copy_from_slice(&transition.to_be_bytes());
+        payload[8..].copy_from_slice(&next_epoch.to_be_bytes());
+        if let Err(error) = self
+            .write_record(InnerRecordTypeV3::StreamKeyUpdate, &payload)
+            .await
+        {
+            *self.send_update.lock().await = None;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    async fn await_stream_update(&self, transition: u64, next_epoch: u32) -> io::Result<()> {
+        let session = self.session.upgrade().ok_or_else(closed)?;
+        loop {
+            if *self.recv_update.lock().await == Some((transition, next_epoch)) {
+                return Ok(());
+            }
+            let changed = self.recv_update_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            tokio::select! {
+                () = &mut changed => continue,
+                read = self.read_lock.lock() => {
+                    let _read = read;
+                    if *self.recv_update.lock().await == Some((transition, next_epoch)) {
+                        return Ok(());
+                    }
+                    let (kind, payload, epoch, sequence) =
+                        read_stream_record_v3(&session, &self.carrier, self.id).await?;
+                    self.accept_normal_header(epoch, sequence)?;
+                    match kind {
+                        InnerRecordTypeV3::Data => {
+                            self.buffer_read_data(&session, Bytes::from(payload)).await?
+                        }
+                        InnerRecordTypeV3::Fin => {
+                            self.remote_fin.store(true, Ordering::Release);
+                            if !self.buffered_reads.push_fin() {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::ConnectionReset,
+                                    "logical stream reset",
+                                ));
+                            }
+                            self.release_if_clean();
+                            return Ok(());
+                        }
+                        InnerRecordTypeV3::StreamKeyUpdate => {
+                            self.handle_stream_update_locked(&session, &payload).await?;
+                            if *self.recv_update.lock().await != Some((transition, next_epoch)) {
+                                return Err(invalid("stream rekey transition mismatch"));
+                            }
+                            return Ok(());
+                        }
+                        _ => return Err(invalid("unexpected record while awaiting stream rekey")),
+                    }
+                }
+            }
+        }
+    }
+
+    async fn handle_stream_update_locked(
+        &self,
+        session: &EncryptedSessionV3,
+        payload: &[u8],
+    ) -> io::Result<()> {
+        if payload.len() != 12 {
+            return Err(invalid("invalid STREAM_KEY_UPDATE"));
+        }
+        let transition = u64::from_be_bytes(payload[..8].try_into().unwrap());
+        let next_epoch = u32::from_be_bytes(payload[8..12].try_into().unwrap());
+        let current_epoch = self.recv_epoch.load(Ordering::Acquire) as u32;
+        if transition == 0
+            || next_epoch
+                != current_epoch
+                    .checked_add(1)
+                    .ok_or_else(|| invalid("stream epoch exhausted"))?
+        {
+            return Err(invalid("invalid stream rekey transition"));
+        }
+        if self.recv_update.lock().await.is_some() {
+            return Err(invalid("duplicate stream rekey transition"));
+        }
+        {
+            let mut state = session.state.lock().await;
+            if !state.recv_roots.contains_key(&next_epoch) {
+                let roots = state
+                    .recv_roots
+                    .get(&current_epoch)
+                    .ok_or_else(|| invalid("missing receive roots"))?;
+                let next = derive_next_epoch_v3(
+                    roots.rekey_root(),
+                    &session.h3,
+                    session.recv_direction,
+                    next_epoch,
+                )
+                .map_err(proto)?;
+                state.recv_roots.insert(next_epoch, next);
+            }
+        }
+        let prior_sequence = self.recv_sequence.load(Ordering::Acquire);
+        *self.prior_ack.lock().await = Some((current_epoch, prior_sequence));
+        self.recv_epoch
+            .store(u64::from(next_epoch), Ordering::Release);
+        self.recv_sequence.store(0, Ordering::Release);
+        *self.recv_update.lock().await = Some((transition, next_epoch));
+        self.recv_update_changed.notify_waiters();
+        let ack = encode_stream_key_update_ack_v3(self.id, transition, next_epoch);
+        self.write_record(InnerRecordTypeV3::StreamKeyUpdateAck, &ack)
+            .await
+    }
+
+    async fn await_stream_update_ack(&self, transition: u64, next_epoch: u32) -> io::Result<()> {
+        let session = self.session.upgrade().ok_or_else(closed)?;
+        loop {
+            if *self.send_update_ack.lock().await == Some((transition, next_epoch)) {
+                return Ok(());
+            }
+            let changed = self.send_update_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            tokio::select! {
+                () = &mut changed => continue,
+                read = self.read_lock.lock() => {
+                    let _read = read;
+                    if *self.send_update_ack.lock().await == Some((transition, next_epoch)) {
+                        return Ok(());
+                    }
+                    let (kind, payload, epoch, sequence) =
+                        read_stream_record_v3(&session, &self.carrier, self.id).await?;
+                    let prior = *self.prior_ack.lock().await;
+                    if kind == InnerRecordTypeV3::StreamKeyUpdateAck
+                        && prior == Some((epoch, sequence))
+                    {
+                        *self.prior_ack.lock().await = None;
+                    } else {
+                        self.accept_normal_header(epoch, sequence)?;
+                    }
+                    match kind {
+                        InnerRecordTypeV3::StreamKeyUpdateAck => {
+                            self.process_stream_update_ack(&payload).await?;
+                        }
+                        InnerRecordTypeV3::Data => {
+                            self.buffer_read_data(&session, Bytes::from(payload)).await?
+                        }
+                        InnerRecordTypeV3::Fin => {
+                            self.remote_fin.store(true, Ordering::Release);
+                            if !self.buffered_reads.push_fin() {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::ConnectionReset,
+                                    "logical stream reset",
+                                ));
+                            }
+                            self.release_if_clean();
+                        }
+                        InnerRecordTypeV3::StreamKeyUpdate => {
+                            self.handle_stream_update_locked(&session, &payload).await?;
+                        }
+                        _ => return Err(invalid("unexpected record while awaiting stream rekey ACK")),
+                    }
+                }
+            }
+        }
+    }
+
+    async fn process_stream_update_ack(&self, payload: &[u8]) -> io::Result<()> {
+        let (logical_id, transition, next_epoch) = decode_stream_key_update_ack_v3(payload)?;
+        if logical_id != self.id {
+            return Err(invalid("invalid STREAM_KEY_UPDATE_ACK"));
+        }
+        let pending = *self.send_update.lock().await;
+        let last = *self.send_update_ack.lock().await;
+        let received = (transition, next_epoch);
+        match classify_ack_v3(pending.as_ref(), last.as_ref(), &received) {
+            Ok(AckDispositionV3::Duplicate) => return Ok(()),
+            Ok(AckDispositionV3::Pending) => {}
+            Err(_) => return Err(invalid("unexpected STREAM_KEY_UPDATE_ACK")),
+        }
+        self.send_epoch
+            .store(u64::from(next_epoch), Ordering::Release);
+        self.send_sequence.store(0, Ordering::Release);
+        *self.send_update.lock().await = None;
+        *self.send_update_ack.lock().await = Some((transition, next_epoch));
+        self.send_update_changed.notify_waiters();
+        Ok(())
+    }
+}
+
+async fn accept_carrier_loop_v3(session: Arc<SelfSession>) {
+    loop {
+        tokio::select! {
+            _ = session.canceled.cancelled() => return,
+            accepted = session.carrier.accept_stream() => match accepted {
+                Ok(carrier) => {
+                    let session = session.clone();
+                    tokio::spawn(async move {
+                        if let Err(error) = accept_one_stream_v3(session.clone(), carrier).await {
+                            if !session.is_closed() { fail_session_v3(&session, error); }
+                        }
+                    });
+                }
+                Err(error) => { fail_session_v3(&session, error); return; }
+            }
+        }
+    }
+}
+
+async fn accept_one_stream_v3(
+    session: Arc<SelfSession>,
+    carrier: Arc<dyn CarrierStreamV3>,
+) -> io::Result<()> {
+    let responder = enter_inbound_responder_v3(&session).await?;
+    let mut raw_preface = [0; SETUP_PREFACE_V3_SIZE];
+    if read_exact_v3(&carrier, &mut raw_preface).await.is_err() {
+        let _ = carrier.reset().await;
+        return Ok(());
+    }
+    let preface = match SetupPrefaceV3::decode(&raw_preface) {
+        Ok(preface) => preface,
+        Err(_) => {
+            let _ = carrier.reset().await;
+            return Ok(());
+        }
+    };
+    let peer_role = match session.config.role {
+        SessionRole::Client => StreamOpenerRoleV3::Server,
+        SessionRole::Server => StreamOpenerRoleV3::Client,
+    };
+    if preface.opener_role() != peer_role {
+        let _ = carrier.reset().await;
+        return Ok(());
+    }
+    let setup_root = {
+        let state = session.state.lock().await;
+        if preface.initial_epoch() != state.recv_epoch {
+            return Err(invalid("invalid FSS3 epoch"));
+        }
+        let Some(roots) = state.recv_roots.get(&state.recv_epoch) else {
+            drop(state);
+            let _ = carrier.reset().await;
+            return Ok(());
+        };
+        *roots.setup_root()
+    };
+    if !verify_setup_mac_v3(&setup_root, &session.h3, &preface) {
+        let _ = carrier.reset().await;
+        return Ok(());
+    }
+    let id = preface.logical_stream_id();
+    if session.sent_goaway.load(Ordering::Acquire)
+        && (session.sent_goaway_last.load(Ordering::Acquire) == 0
+            || id > session.sent_goaway_last.load(Ordering::Acquire))
+    {
+        carrier.reset().await?;
+        return Ok(());
+    }
+    {
+        let mut ledger = session.peer_ledger.lock().await;
+        if ledger.state(ledger.index(id)?) == LedgerStateV3::AbandonedNoFss3 {
+            ledger.mark_late_fss3_for_abandoned(id)?;
+            drop(ledger);
+            carrier.reset().await?;
+            return Ok(());
+        }
+        ledger.mark_fss3(id)?;
+    }
+    let (kind, open_raw, epoch, sequence) = read_stream_record_v3(&session, &carrier, id).await?;
+    if kind != InnerRecordTypeV3::Open || epoch != preface.initial_epoch() || sequence != 0 {
+        return Err(invalid("invalid initial OPEN"));
+    }
+    let open = decode_open_payload_v3(&open_raw).map_err(proto)?;
+    let fss3_hash = compute_fss3_hash_v3(&raw_preface).map_err(proto)?;
+    if open.logical_stream_id() != id || open.fss3_hash() != &fss3_hash {
+        return Err(invalid("OPEN does not bind FSS3"));
+    }
+    let metadata: JsonObject = serde_json::from_slice(open.metadata()).map_err(proto)?;
+    let reserved_rpc = open.kind() == RESERVED_RPC_KIND;
+    let permit = if reserved_rpc {
+        if session
+            .inbound_rpc_opened
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            carrier.reset().await?;
+            return Err(invalid("duplicate reserved RPC stream"));
+        }
+        None
+    } else {
+        Some(tokio::select! {
+            _ = session.canceled.cancelled() => return Err(closed()),
+            permit = session.inbound_permits.clone().acquire_owned() => {
+                permit.map_err(|_| closed())?
+            }
+        })
+    };
+    let ack = compute_open_hash_v3(&open_raw).map_err(proto)?;
+    let send_epoch = session.state.lock().await.send_epoch;
+    write_stream_record_v3(
+        &session,
+        &carrier,
+        id,
+        send_epoch,
+        0,
+        InnerRecordTypeV3::OpenAck,
+        &ack,
+    )
+    .await?;
+    let stream = Arc::new(EncryptedStreamV3 {
+        session: Arc::downgrade(&session),
+        carrier,
+        id,
+        kind: open.kind().to_owned(),
+        send_epoch: AtomicU64::new(u64::from(send_epoch)),
+        send_sequence: AtomicU64::new(1),
+        recv_epoch: AtomicU64::new(u64::from(epoch)),
+        recv_sequence: AtomicU64::new(1),
+        prior_ack: Mutex::new(None),
+        recv_update: Mutex::new(None),
+        recv_update_changed: Notify::new(),
+        send_update: Mutex::new(None),
+        send_update_ack: Mutex::new(None),
+        send_update_changed: Notify::new(),
+        buffered_reads: BoundedReadQueueV3::default(),
+        send_lock: Mutex::new(()),
+        read_lock: Mutex::new(()),
+        local_fin: AtomicBool::new(false),
+        remote_fin: AtomicBool::new(false),
+        reset: AtomicBool::new(false),
+        reset_changed: Notify::new(),
+        reset_cleanup_done: AtomicBool::new(false),
+        reset_cleanup_changed: Notify::new(),
+        reset_cleanup_error: StdMutex::new(None),
+        terminal: OnceLock::new(),
+        _outbound_permit: StdMutex::new(None),
+        _inbound_permit: StdMutex::new(permit),
+    });
+    session
+        .streams
+        .lock()
+        .expect("stream registry poisoned")
+        .insert(id, Arc::downgrade(&stream));
+    session.peer_ledger.lock().await.mark_terminal(id)?;
+    if reserved_rpc {
+        drop(responder);
+        return serve_rpc_stream_v3(&session, StreamHandleV3(stream)).await;
+    }
+    session
+        .incoming_tx
+        .send(IncomingStream::new(
+            open.kind(),
+            StreamMetadata::from_validated(metadata),
+            Box::new(StreamHandleV3(stream)),
+        ))
+        .await
+        .map_err(|_| closed())
+}
+
+struct InboundResponderGuardV3 {
+    session: Weak<SelfSession>,
+}
+
+impl Drop for InboundResponderGuardV3 {
+    fn drop(&mut self) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let mut state = session
+            .inbound_responders
+            .lock()
+            .expect("inbound responder state poisoned");
+        state.active = state.active.saturating_sub(1);
+        drop(state);
+        session.inbound_responders_changed.notify_waiters();
+    }
+}
+
+struct InboundResponderFreezeGuardV3 {
+    session: Weak<SelfSession>,
+    peer: bool,
+}
+
+impl Drop for InboundResponderFreezeGuardV3 {
+    fn drop(&mut self) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let mut state = session
+            .inbound_responders
+            .lock()
+            .expect("inbound responder state poisoned");
+        if self.peer {
+            state.peer_frozen = false;
+        } else {
+            state.local_frozen = false;
+        }
+        drop(state);
+        session.inbound_responders_changed.notify_waiters();
+    }
+}
+
+async fn enter_inbound_responder_v3(
+    session: &Arc<SelfSession>,
+) -> io::Result<InboundResponderGuardV3> {
+    loop {
+        let changed = session.inbound_responders_changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        {
+            let mut state = session
+                .inbound_responders
+                .lock()
+                .expect("inbound responder state poisoned");
+            if !state.local_frozen && !state.peer_frozen {
+                state.active = state
+                    .active
+                    .checked_add(1)
+                    .ok_or_else(|| invalid("inbound responder count exhausted"))?;
+                return Ok(InboundResponderGuardV3 {
+                    session: Arc::downgrade(session),
+                });
+            }
+        }
+        tokio::select! {
+            _ = session.canceled.cancelled() => return Err(closed()),
+            () = &mut changed => {}
+        }
+    }
+}
+
+async fn freeze_inbound_responders_v3(
+    session: &EncryptedSessionV3,
+    peer: bool,
+) -> io::Result<InboundResponderFreezeGuardV3> {
+    let weak = session.self_weak.get().cloned().ok_or_else(closed)?;
+    {
+        let mut state = session
+            .inbound_responders
+            .lock()
+            .expect("inbound responder state poisoned");
+        if peer {
+            state.peer_frozen = true;
+        } else {
+            state.local_frozen = true;
+        }
+    }
+    session.inbound_responders_changed.notify_waiters();
+    let guard = InboundResponderFreezeGuardV3 {
+        session: weak,
+        peer,
+    };
+    loop {
+        let changed = session.inbound_responders_changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        if session
+            .inbound_responders
+            .lock()
+            .expect("inbound responder state poisoned")
+            .active
+            == 0
+        {
+            return Ok(guard);
+        }
+        tokio::select! {
+            _ = session.canceled.cancelled() => return Err(closed()),
+            () = &mut changed => {}
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RpcEnvelopeWireV3 {
+    type_id: u32,
+    request_id: u64,
+    response_to: u64,
+    payload: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<RpcErrorWireV3>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RpcErrorWireV3 {
+    code: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+fn rpc_handler_error_to_wire_v3(error: RpcError) -> RpcErrorWireV3 {
+    if error.code == 0
+        || error
+            .message
+            .as_ref()
+            .is_some_and(|message| message.len() > RpcError::MAX_MESSAGE_BYTES)
+    {
+        return RpcErrorWireV3 {
+            code: 500,
+            message: Some("handler failed".into()),
+        };
+    }
+    RpcErrorWireV3 {
+        code: error.code,
+        message: error.message,
+    }
+}
+
+const MAX_RPC_FRAME_BYTES: usize = 1 << 20;
+const MAX_PORTABLE_RPC_ID: u64 = (1_u64 << 53) - 1;
+
+async fn rpc_call_v3(
+    peer: &SessionRpcPeerV3,
+    type_id: u32,
+    request: serde_json::Value,
+) -> Result<serde_json::Value, RpcCallError> {
+    let serial = peer.serial.clone().lock_owned().await;
+    let request_id = peer
+        .next_request_id
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+            (value <= MAX_PORTABLE_RPC_ID).then_some(value + 1)
+        })
+        .map_err(|_| RpcCallError::Session(SessionError::OperationFailed))?;
+    let envelope = RpcEnvelopeWireV3 {
+        type_id,
+        request_id,
+        response_to: 0,
+        payload: request,
+        error: None,
+    };
+    let session = peer
+        .session
+        .get()
+        .and_then(Weak::upgrade)
+        .ok_or(RpcCallError::Session(SessionError::Closed))?;
+    if session.is_closed() {
+        return Err(RpcCallError::Session(SessionError::Closed));
+    }
+    let stream = peer.stream.clone();
+    let read_buffer = peer.read_buffer.clone();
+    let (sender, receiver) = oneshot::channel();
+    tokio::spawn(async move {
+        let result =
+            run_owned_rpc_call_v3(session, serial, stream, read_buffer, envelope, request_id).await;
+        let _ = sender.send(result);
+    });
+    receiver
+        .await
+        .map_err(|_| RpcCallError::Session(SessionError::Closed))?
+}
+
+async fn run_owned_rpc_call_v3(
+    session: Arc<SelfSession>,
+    _serial: OwnedMutexGuard<()>,
+    stream: Arc<Mutex<Option<Box<dyn ByteStream>>>>,
+    read_buffer: Arc<Mutex<VecDeque<u8>>>,
+    envelope: RpcEnvelopeWireV3,
+    request_id: u64,
+) -> Result<serde_json::Value, RpcCallError> {
+    let mut stream = stream.lock().await;
+    if stream.is_none() {
+        *stream = Some(
+            open_reserved_rpc_stream_v3(&session)
+                .await
+                .map_err(|error| RpcCallError::Session(SessionError::from_io(&error)))?,
+        );
+    }
+    let stream = stream
+        .as_deref()
+        .ok_or(RpcCallError::Session(SessionError::Closed))?;
+    exchange_rpc_call_v3(stream, &read_buffer, &envelope, request_id).await
+}
+
+async fn exchange_rpc_call_v3(
+    stream: &dyn ByteStream,
+    read_buffer: &Mutex<VecDeque<u8>>,
+    envelope: &RpcEnvelopeWireV3,
+    request_id: u64,
+) -> Result<serde_json::Value, RpcCallError> {
+    write_rpc_frame_v3(stream, envelope)
+        .await
+        .map_err(|error| RpcCallError::Session(SessionError::from_io(&error)))?;
+    let response = read_rpc_frame_v3(stream, read_buffer)
+        .await
+        .map_err(|error| RpcCallError::Session(SessionError::from_io(&error)))?;
+    if response.response_to != request_id {
+        return Err(RpcCallError::Session(SessionError::OperationFailed));
+    }
+    if let Some(error) = response.error {
+        let error =
+            RpcError::from_wire(error.code, error.message).map_err(RpcCallError::Session)?;
+        return Err(RpcCallError::Application(error));
+    }
+    Ok(response.payload)
+}
+
+async fn rpc_notify_v3(
+    peer: &SessionRpcPeerV3,
+    type_id: u32,
+    request: serde_json::Value,
+) -> io::Result<()> {
+    let serial = peer.serial.clone().lock_owned().await;
+    let session = peer
+        .session
+        .get()
+        .and_then(Weak::upgrade)
+        .ok_or_else(closed)?;
+    if session.is_closed() {
+        return Err(closed());
+    }
+    let stream = peer.stream.clone();
+    let (sender, receiver) = oneshot::channel();
+    tokio::spawn(async move {
+        let result = run_owned_rpc_notify_v3(session, serial, stream, type_id, request).await;
+        let _ = sender.send(result);
+    });
+    receiver.await.map_err(|_| closed())?
+}
+
+async fn run_owned_rpc_notify_v3(
+    session: Arc<SelfSession>,
+    _serial: OwnedMutexGuard<()>,
+    stream: Arc<Mutex<Option<Box<dyn ByteStream>>>>,
+    type_id: u32,
+    request: serde_json::Value,
+) -> io::Result<()> {
+    let mut stream = stream.lock().await;
+    if stream.is_none() {
+        *stream = Some(open_reserved_rpc_stream_v3(&session).await?);
+    }
+    write_rpc_frame_v3(
+        stream.as_deref().ok_or_else(closed)?,
+        &RpcEnvelopeWireV3 {
+            type_id,
+            request_id: 0,
+            response_to: 0,
+            payload: request,
+            error: None,
+        },
+    )
+    .await
+}
+
+async fn serve_rpc_stream_v3(session: &SelfSession, stream: StreamHandleV3) -> io::Result<()> {
+    let read_buffer = Mutex::new(VecDeque::new());
+    loop {
+        let request = read_rpc_frame_v3(&stream, &read_buffer).await?;
+        if request.response_to != 0 || request.error.is_some() {
+            return Err(invalid("invalid RPC request envelope"));
+        }
+        let handler = session.config.rpc_handler.as_ref();
+        if request.request_id == 0 {
+            session
+                .rpc
+                .notifications
+                .dispatch(request.type_id, request.payload.clone());
+            if let Some(handler) = handler {
+                let _ =
+                    std::panic::AssertUnwindSafe(handler.notify(request.type_id, request.payload))
+                        .catch_unwind()
+                        .await;
+            }
+            continue;
+        }
+        let (payload, error) = match handler {
+            Some(handler) => {
+                match std::panic::AssertUnwindSafe(handler.call(request.type_id, request.payload))
+                    .catch_unwind()
+                    .await
+                {
+                    Ok(Ok(payload)) => (payload, None),
+                    Ok(Err(error)) => (
+                        serde_json::Value::Null,
+                        Some(rpc_handler_error_to_wire_v3(error)),
+                    ),
+                    Err(_) => (
+                        serde_json::Value::Null,
+                        Some(RpcErrorWireV3 {
+                            code: 500,
+                            message: Some("handler failed".into()),
+                        }),
+                    ),
+                }
+            }
+            None => (
+                serde_json::Value::Null,
+                Some(RpcErrorWireV3 {
+                    code: 404,
+                    message: Some("handler not found".into()),
+                }),
+            ),
+        };
+        write_rpc_frame_v3(
+            &stream,
+            &RpcEnvelopeWireV3 {
+                type_id: request.type_id,
+                request_id: 0,
+                response_to: request.request_id,
+                payload,
+                error,
+            },
+        )
+        .await?;
+    }
+}
+
+async fn write_rpc_frame_v3(
+    stream: &dyn ByteStream,
+    envelope: &RpcEnvelopeWireV3,
+) -> io::Result<()> {
+    validate_rpc_envelope_v3(envelope)?;
+    let json = serde_json::to_vec(envelope).map_err(proto)?;
+    if json.len() > MAX_RPC_FRAME_BYTES {
+        return Err(invalid("RPC JSON frame too large"));
+    }
+    let mut raw = Vec::with_capacity(4 + json.len());
+    raw.extend_from_slice(&(json.len() as u32).to_be_bytes());
+    raw.extend_from_slice(&json);
+    let mut remaining = raw.as_slice();
+    while !remaining.is_empty() {
+        let written = stream.write(Bytes::copy_from_slice(remaining)).await?;
+        if written == 0 || written > remaining.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "RPC stream accepted no bytes",
+            ));
+        }
+        remaining = &remaining[written..];
+    }
+    Ok(())
+}
+
+async fn read_rpc_frame_v3(
+    stream: &dyn ByteStream,
+    buffer: &Mutex<VecDeque<u8>>,
+) -> io::Result<RpcEnvelopeWireV3> {
+    fill_rpc_bytes_v3(stream, buffer, 4).await?;
+    let length = {
+        let mut buffer = buffer.lock().await;
+        let header = [
+            buffer.pop_front().unwrap(),
+            buffer.pop_front().unwrap(),
+            buffer.pop_front().unwrap(),
+            buffer.pop_front().unwrap(),
+        ];
+        u32::from_be_bytes(header) as usize
+    };
+    if length > MAX_RPC_FRAME_BYTES {
+        return Err(invalid("RPC JSON frame too large"));
+    }
+    fill_rpc_bytes_v3(stream, buffer, length).await?;
+    let json = {
+        let mut buffer = buffer.lock().await;
+        buffer.drain(..length).collect::<Vec<_>>()
+    };
+    let envelope: RpcEnvelopeWireV3 = serde_json::from_slice(&json).map_err(proto)?;
+    validate_rpc_envelope_v3(&envelope)?;
+    Ok(envelope)
+}
+
+fn validate_rpc_envelope_v3(envelope: &RpcEnvelopeWireV3) -> io::Result<()> {
+    if envelope.type_id == 0 {
+        return Err(invalid("RPC type ID must be nonzero"));
+    }
+    if envelope.request_id > MAX_PORTABLE_RPC_ID || envelope.response_to > MAX_PORTABLE_RPC_ID {
+        return Err(invalid("RPC request ID exceeds portable range"));
+    }
+    if envelope.request_id != 0 && envelope.response_to != 0 {
+        return Err(invalid(
+            "RPC request and response IDs are mutually exclusive",
+        ));
+    }
+    if envelope.error.is_some() && envelope.response_to == 0 {
+        return Err(invalid("RPC error is only valid on a response"));
+    }
+    if let Some(error) = &envelope.error {
+        RpcError::from_wire(error.code, error.message.clone())
+            .map_err(|_| invalid("invalid RPC application error"))?;
+    }
+    Ok(())
+}
+
+async fn fill_rpc_bytes_v3(
+    stream: &dyn ByteStream,
+    buffer: &Mutex<VecDeque<u8>>,
+    needed: usize,
+) -> io::Result<()> {
+    while buffer.lock().await.len() < needed {
+        let chunk = stream
+            .read()
+            .await?
+            .ok_or_else(|| invalid("RPC stream truncated"))?;
+        buffer.lock().await.extend(chunk);
+    }
+    Ok(())
+}
+
+fn next_stream_send_sequence_v3(sequence: &AtomicU64) -> io::Result<u64> {
+    sequence
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+            value.checked_add(1)
+        })
+        .map_err(|_| invalid("logical stream send sequence exhausted"))
+}
+
+async fn write_stream_record_v3(
+    session: &EncryptedSessionV3,
+    carrier: &Arc<dyn CarrierStreamV3>,
+    id: u64,
+    epoch: u32,
+    sequence: u64,
+    kind: InnerRecordTypeV3,
+    payload: &[u8],
+) -> io::Result<()> {
+    let inner = encode_inner_record_v3(kind, payload).map_err(proto)?;
+    let (key, nonce) = {
+        let state = session.state.lock().await;
+        let roots = state
+            .send_roots
+            .get(&epoch)
+            .ok_or_else(|| invalid("missing stream send roots"))?;
+        let material = derive_stream_material_v3(
+            roots.stream_root(),
+            &session.h3,
+            id,
+            session.send_direction,
+            epoch,
+        )
+        .map_err(proto)?;
+        (*material.record_key(), *material.nonce_prefix())
+    };
+    let header = RecordHeaderV3::new(
+        epoch,
+        sequence,
+        (INNER_HEADER_V3_SIZE + payload.len() + AEAD_TAG_V3_SIZE) as u32,
+    );
+    let ciphertext = seal_record_v3(
+        session.config.suite,
+        &key,
+        &nonce,
+        &session.h3,
+        id,
+        session.send_direction,
+        &header,
+        &inner,
+    )
+    .map_err(proto)?;
+    let raw_header = header.encode().map_err(proto)?;
+    let mut wire = Vec::with_capacity(raw_header.len() + ciphertext.len());
+    wire.extend_from_slice(&raw_header);
+    wire.extend_from_slice(&ciphertext);
+    write_all_v3(carrier, &wire).await?;
+    touch_activity_v3(session);
+    Ok(())
+}
+
+async fn read_stream_record_v3(
+    session: &EncryptedSessionV3,
+    carrier: &Arc<dyn CarrierStreamV3>,
+    id: u64,
+) -> io::Result<(InnerRecordTypeV3, Vec<u8>, u32, u64)> {
+    let mut raw = [0; RECORD_HEADER_V3_SIZE];
+    read_exact_v3(carrier, &mut raw).await?;
+    let header = RecordHeaderV3::decode(&raw).map_err(proto)?;
+    let mut ciphertext = vec![0; header.ciphertext_length() as usize];
+    read_exact_v3(carrier, &mut ciphertext).await?;
+    let (key, nonce) = {
+        let state = session.state.lock().await;
+        let roots = state
+            .recv_roots
+            .get(&header.epoch())
+            .ok_or_else(|| invalid("missing stream receive roots"))?;
+        let material = derive_stream_material_v3(
+            roots.stream_root(),
+            &session.h3,
+            id,
+            session.recv_direction,
+            header.epoch(),
+        )
+        .map_err(proto)?;
+        (*material.record_key(), *material.nonce_prefix())
+    };
+    let plaintext = open_record_v3(
+        session.config.suite,
+        &key,
+        &nonce,
+        &session.h3,
+        id,
+        session.recv_direction,
+        &header,
+        &ciphertext,
+    )
+    .map_err(proto)?;
+    let (kind, payload) = decode_inner_record_v3(&plaintext).map_err(proto)?;
+    touch_activity_v3(session);
+    Ok((kind, payload.to_vec(), header.epoch(), header.sequence()))
+}
+
+/// Creates a deterministic in-process carrier pair for protocol tests.
+#[cfg(test)]
+pub fn memory_carrier_pair_v3() -> (Arc<dyn CarrierSessionV3>, Arc<dyn CarrierSessionV3>) {
+    memory_carrier_pair_v3_with_capacity(6)
+}
+
+/// Creates a deterministic carrier pair with an explicit physical capacity.
+#[cfg(test)]
+pub fn memory_carrier_pair_v3_with_capacity(
+    inbound_bidirectional_stream_capacity: u32,
+) -> (Arc<dyn CarrierSessionV3>, Arc<dyn CarrierSessionV3>) {
+    memory_carrier_pair_v3_with_capacities(inbound_bidirectional_stream_capacity, 256 * 1024)
+}
+
+/// Creates a deterministic carrier pair with explicit stream and byte capacities.
+#[cfg(test)]
+pub fn memory_carrier_pair_v3_with_capacities(
+    inbound_bidirectional_stream_capacity: u32,
+    stream_byte_capacity: usize,
+) -> (Arc<dyn CarrierSessionV3>, Arc<dyn CarrierSessionV3>) {
+    let (client_tx, client_rx) = mpsc::channel(64);
+    let (server_tx, server_rx) = mpsc::channel(64);
+    (
+        Arc::new(MemoryCarrierSessionV3 {
+            outgoing: server_tx,
+            incoming: Mutex::new(client_rx),
+            canceled: CancellationToken::new(),
+            inbound_bidirectional_stream_capacity,
+            stream_byte_capacity,
+        }),
+        Arc::new(MemoryCarrierSessionV3 {
+            outgoing: client_tx,
+            incoming: Mutex::new(server_rx),
+            canceled: CancellationToken::new(),
+            inbound_bidirectional_stream_capacity,
+            stream_byte_capacity,
+        }),
+    )
+}
+
+#[cfg(test)]
+struct MemoryCarrierSessionV3 {
+    outgoing: mpsc::Sender<Arc<dyn CarrierStreamV3>>,
+    incoming: Mutex<mpsc::Receiver<Arc<dyn CarrierStreamV3>>>,
+    canceled: CancellationToken,
+    inbound_bidirectional_stream_capacity: u32,
+    stream_byte_capacity: usize,
+}
+
+#[cfg(test)]
+impl std::fmt::Debug for MemoryCarrierSessionV3 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("MemoryCarrierSessionV3(..)")
+    }
+}
+
+#[cfg(test)]
+#[async_trait]
+impl CarrierSessionV3 for MemoryCarrierSessionV3 {
+    fn kind(&self) -> CarrierKind {
+        CarrierKind::RawQuic
+    }
+    fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+        self.inbound_bidirectional_stream_capacity
+    }
+    async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV3>> {
+        if self.canceled.is_cancelled() {
+            return Err(closed());
+        }
+        let (local, peer) = tokio::io::duplex(self.stream_byte_capacity);
+        let local: Arc<dyn CarrierStreamV3> = Arc::new(MemoryCarrierStreamV3::new(local));
+        let peer: Arc<dyn CarrierStreamV3> = Arc::new(MemoryCarrierStreamV3::new(peer));
+        self.outgoing.send(peer).await.map_err(|_| closed())?;
+        Ok(local)
+    }
+    async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV3>> {
+        let mut incoming = self.incoming.lock().await;
+        tokio::select! {
+            _ = self.canceled.cancelled() => Err(closed()),
+            value = incoming.recv() => value.ok_or_else(closed),
+        }
+    }
+    async fn close(&self) -> io::Result<()> {
+        self.canceled.cancel();
+        Ok(())
+    }
+    fn abort(&self) {
+        self.canceled.cancel();
+    }
+}
+
+#[cfg(test)]
+struct MemoryCarrierStreamV3 {
+    read: Mutex<ReadHalf<tokio::io::DuplexStream>>,
+    write: Mutex<WriteHalf<tokio::io::DuplexStream>>,
+    canceled: CancellationToken,
+    read_stopped: CancellationToken,
+    finished: AtomicBool,
+}
+
+#[cfg(test)]
+impl MemoryCarrierStreamV3 {
+    fn new(stream: tokio::io::DuplexStream) -> Self {
+        let (read, write) = tokio::io::split(stream);
+        Self {
+            read: Mutex::new(read),
+            write: Mutex::new(write),
+            canceled: CancellationToken::new(),
+            read_stopped: CancellationToken::new(),
+            finished: AtomicBool::new(false),
+        }
+    }
+}
+
+#[cfg(test)]
+impl std::fmt::Debug for MemoryCarrierStreamV3 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("MemoryCarrierStreamV3(..)")
+    }
+}
+
+#[cfg(test)]
+#[async_trait]
+impl CarrierStreamV3 for MemoryCarrierStreamV3 {
+    async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
+        let mut read = self.read.lock().await;
+        tokio::select! {
+            _ = self.canceled.cancelled() => Err(closed()),
+            _ = self.read_stopped.cancelled() => Err(closed()),
+            value = read.read(payload) => value,
+        }
+    }
+    async fn write(&self, payload: &[u8]) -> io::Result<usize> {
+        if self.finished.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "memory carrier FIN",
+            ));
+        }
+        let mut write = self.write.lock().await;
+        tokio::select! {
+            _ = self.canceled.cancelled() => Err(closed()),
+            value = write.write(payload) => value,
+        }
+    }
+    async fn close_write(&self) -> io::Result<()> {
+        if !self.finished.swap(true, Ordering::AcqRel) {
+            self.write.lock().await.shutdown().await?;
+        }
+        Ok(())
+    }
+    async fn stop_sending(&self) -> io::Result<()> {
+        self.read_stopped.cancel();
+        Ok(())
+    }
+    async fn reset(&self) -> io::Result<()> {
+        self.canceled.cancel();
+        Ok(())
+    }
+    async fn close(&self) -> io::Result<()> {
+        self.close_write().await
+    }
+}
+
+async fn read_exact_v3(
+    stream: &Arc<dyn CarrierStreamV3>,
+    mut payload: &mut [u8],
+) -> io::Result<()> {
+    while !payload.is_empty() {
+        let read = stream.read(payload).await?;
+        if read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "carrier stream truncated",
+            ));
+        }
+        payload = &mut payload[read..];
+    }
+    Ok(())
+}
+
+async fn write_all_v3(stream: &Arc<dyn CarrierStreamV3>, mut payload: &[u8]) -> io::Result<()> {
+    while !payload.is_empty() {
+        let written = stream.write(payload).await?;
+        if written == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "carrier accepted no bytes",
+            ));
+        }
+        payload = &payload[written..];
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct RpcReadTestStream {
+        chunks: StdMutex<VecDeque<Bytes>>,
+    }
+
+    impl RpcReadTestStream {
+        fn new(payload: Vec<u8>) -> Self {
+            let mut frame = Vec::with_capacity(4 + payload.len());
+            frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+            frame.extend_from_slice(&payload);
+            Self {
+                chunks: StdMutex::new(VecDeque::from([Bytes::from(frame)])),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ByteStream for RpcReadTestStream {
+        fn internal_test_id(&self) -> u64 {
+            0
+        }
+
+        fn kind(&self) -> &str {
+            RESERVED_RPC_KIND
+        }
+
+        fn terminal_error(&self) -> Option<SessionError> {
+            None
+        }
+
+        async fn read(&self) -> Result<Option<Bytes>, SessionError> {
+            Ok(self.chunks.lock().unwrap().pop_front())
+        }
+
+        async fn write(&self, payload: Bytes) -> Result<usize, SessionError> {
+            Ok(payload.len())
+        }
+
+        async fn close_write(&self) -> Result<(), SessionError> {
+            Ok(())
+        }
+
+        async fn reset(&self) -> Result<(), SessionError> {
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<(), SessionError> {
+            Ok(())
+        }
+    }
+
+    async fn exchange_rpc_error_for_test(payload: Vec<u8>) -> Result<RpcError, SessionError> {
+        let stream = RpcReadTestStream::new(payload);
+        let request = RpcEnvelopeWireV3 {
+            type_id: 1,
+            request_id: 1,
+            response_to: 0,
+            payload: serde_json::Value::Null,
+            error: None,
+        };
+        match exchange_rpc_call_v3(&stream, &Mutex::new(VecDeque::new()), &request, 1).await {
+            Err(RpcCallError::Application(error)) => Ok(error),
+            Err(RpcCallError::Session(error)) => Err(error),
+            Ok(_) => Err(SessionError::OperationFailed),
+        }
+    }
+
+    fn rpc_error_payload(error: serde_json::Value) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "type_id": 1,
+            "request_id": 0,
+            "response_to": 1,
+            "payload": null,
+            "error": error,
+        }))
+        .unwrap()
+    }
+
+    #[derive(Deserialize)]
+    struct RpcErrorVectors {
+        maximum_message_bytes: usize,
+        cases: Vec<RpcErrorVector>,
+        raw_cases: Vec<RawRpcErrorVector>,
+    }
+
+    #[derive(Deserialize)]
+    struct RpcErrorVector {
+        id: String,
+        code: u32,
+        message: RpcErrorVectorMessage,
+        extra_field: bool,
+        valid: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct RpcErrorVectorMessage {
+        presence: String,
+        unit: String,
+        repeat: usize,
+        suffix: String,
+    }
+
+    #[derive(Deserialize)]
+    struct RawRpcErrorVector {
+        id: String,
+        code: u32,
+        message_hex: String,
+        valid: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct RpcMalformedEnvelopeVectors {
+        version: u8,
+        vectors: Vec<RpcMalformedEnvelopeVector>,
+    }
+
+    #[derive(Deserialize)]
+    struct RpcMalformedEnvelopeVector {
+        id: String,
+        valid: bool,
+        envelope: serde_json::Value,
+    }
+
+    #[tokio::test]
+    async fn rpc_receive_boundary_matches_shared_malformed_envelope_vectors() {
+        let fixture: RpcMalformedEnvelopeVectors = serde_json::from_str(include_str!(
+            "../../testdata/transport_v3/rpc_malformed_envelopes.json"
+        ))
+        .expect("parse RPC malformed-envelope vectors");
+        assert_eq!(fixture.version, 1);
+        for vector in fixture.vectors {
+            let stream = RpcReadTestStream::new(
+                serde_json::to_vec(&vector.envelope).expect("encode RPC envelope vector"),
+            );
+            let result = read_rpc_frame_v3(&stream, &Mutex::new(VecDeque::new())).await;
+            assert_eq!(result.is_ok(), vector.valid, "{}: {result:?}", vector.id);
+        }
+    }
+
+    #[tokio::test]
+    async fn rpc_receive_boundary_enforces_application_error_invariant() {
+        let fixture: RpcErrorVectors = serde_json::from_str(include_str!(
+            "../../testdata/transport_v3/rpc_error_vectors.json"
+        ))
+        .unwrap();
+        assert_eq!(fixture.maximum_message_bytes, RpcError::MAX_MESSAGE_BYTES);
+        for vector in fixture.cases {
+            let message = format!(
+                "{}{}",
+                vector.message.unit.repeat(vector.message.repeat),
+                vector.message.suffix
+            );
+            let mut error =
+                serde_json::Map::from_iter([("code".into(), serde_json::Value::from(vector.code))]);
+            if vector.message.presence == "present" {
+                error.insert("message".into(), message.clone().into());
+            }
+            if vector.extra_field {
+                error.insert("internal".into(), "secret".into());
+            }
+            let result = exchange_rpc_error_for_test(rpc_error_payload(error.into())).await;
+            if vector.valid {
+                let error = result.unwrap_or_else(|failure| panic!("{}: {failure:?}", vector.id));
+                assert_eq!(error.code(), vector.code, "{}", vector.id);
+                let expected = (vector.message.presence == "present").then_some(message.as_str());
+                assert_eq!(error.message(), expected, "{}", vector.id);
+            } else {
+                assert_eq!(result, Err(SessionError::OperationFailed), "{}", vector.id);
+            }
+        }
+
+        for vector in fixture.raw_cases {
+            let message = vector
+                .message_hex
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+                .collect::<Vec<_>>();
+            let mut malformed = format!(
+                r#"{{"type_id":1,"request_id":0,"response_to":1,"payload":null,"error":{{"code":{},"message":""#,
+                vector.code
+            )
+            .into_bytes();
+            malformed.extend_from_slice(&message);
+            malformed.extend_from_slice(br#""}}"#);
+            let result = exchange_rpc_error_for_test(malformed).await;
+            if vector.valid {
+                result.unwrap_or_else(|failure| panic!("{}: {failure:?}", vector.id));
+            } else {
+                assert_eq!(result, Err(SessionError::OperationFailed), "{}", vector.id);
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_two_bit_ledger_advances_only_across_contiguous_terminal_slots() {
+        let mut ledger = StreamLedgerV3::new(StreamOpenerRoleV3::Client);
+        assert_eq!(ledger.states.len(), 262_144);
+        ledger.mark_fss3(1).unwrap();
+        ledger.mark_fss3(3).unwrap();
+        ledger.mark_terminal(3).unwrap();
+        assert_eq!(ledger.frontier(), 0);
+        ledger.mark_terminal(1).unwrap();
+        assert_eq!(ledger.frontier(), 3);
+        assert!(ledger.mark_fss3(1).is_err());
+        assert!(ledger.mark_fss3(2).is_err());
+        assert!(ledger.mark_fss3(2 * MAX_LEDGER_SLOTS + 1).is_err());
+    }
+
+    #[test]
+    fn stream_send_sequence_exhaustion_fails_closed_without_wrap() {
+        let sequence = AtomicU64::new(u64::MAX - 1);
+
+        assert_eq!(
+            next_stream_send_sequence_v3(&sequence).expect("last safe stream sequence"),
+            u64::MAX - 1
+        );
+        let error = next_stream_send_sequence_v3(&sequence)
+            .expect_err("exhausted stream sequence must fail closed");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(sequence.load(Ordering::Acquire), u64::MAX);
+    }
+
+    #[test]
+    fn reset_before_fss3_advances_frontier_and_rejects_duplicate_late_setup() {
+        let mut ledger = StreamLedgerV3::new(StreamOpenerRoleV3::Client);
+        ledger.mark_peer_reset(3).unwrap();
+        assert_eq!(ledger.frontier(), 0);
+        assert_eq!(
+            ledger.state(ledger.index(3).unwrap()),
+            LedgerStateV3::AbandonedNoFss3
+        );
+        ledger.mark_fss3(1).unwrap();
+        ledger.mark_terminal(1).unwrap();
+        assert_eq!(ledger.frontier(), 3);
+        ledger.mark_late_fss3_for_abandoned(3).unwrap();
+        assert!(ledger.mark_late_fss3_for_abandoned(3).is_err());
+    }
+
+    #[test]
+    fn epoch_root_cleanup_retains_only_the_current_epoch() {
+        let roots = derive_epoch_zero_v3(&[7; 32], DirectionV3::ClientToServer).unwrap();
+        let mut epochs = HashMap::from([(0, roots.clone()), (1, roots.clone()), (2, roots)]);
+        retain_current_epoch_roots_v3(&mut epochs, 2);
+        assert_eq!(epochs.len(), 1);
+        assert!(epochs.contains_key(&2));
+    }
+
+    #[test]
+    fn stream_key_update_ack_matches_the_shared_wire_vector() {
+        use std::fmt::Write as _;
+
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/transport_v3/session_wire_vectors.json"
+        ))
+        .unwrap();
+        let vector = &fixture["stream_key_update_ack"][0];
+        let logical_id =
+            u64::from_str_radix(vector["logical_id_hex"].as_str().unwrap(), 16).unwrap();
+        let transition =
+            u64::from_str_radix(vector["transition_id_hex"].as_str().unwrap(), 16).unwrap();
+        let next_epoch =
+            u32::from_str_radix(vector["next_epoch_hex"].as_str().unwrap(), 16).unwrap();
+        let payload = encode_stream_key_update_ack_v3(logical_id, transition, next_epoch);
+        let mut encoded = String::with_capacity(payload.len() * 2);
+        for byte in payload {
+            write!(&mut encoded, "{byte:02x}").unwrap();
+        }
+        assert_eq!(encoded, vector["payload_hex"].as_str().unwrap());
+        assert_eq!(
+            decode_stream_key_update_ack_v3(&payload).unwrap(),
+            (logical_id, transition, next_epoch)
+        );
+    }
+
+    #[test]
+    fn handshake_codec_and_kdf_match_the_shared_wire_vectors() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/transport_v3/handshake_vectors.json"
+        ))
+        .expect("parse handshake vectors");
+        assert_eq!(fixture["version"], 1);
+        assert_eq!(fixture["profile"], "flowersec/3");
+
+        for vector in fixture["vectors"].as_array().expect("handshake vectors") {
+            let id = vector["id"].as_str().expect("vector id");
+            let suite = match vector["suite"].as_u64().expect("suite") {
+                1 => CipherSuiteV3::ChaCha20Poly1305,
+                2 => CipherSuiteV3::Aes256Gcm,
+                other => panic!("{id}: unknown suite {other}"),
+            };
+            let fsc3 = vector_hex(vector, "fsc3_hex");
+            assert_eq!(control_preface_v3().as_slice(), fsc3, "{id}: FSC3");
+
+            let client_raw = vector_hex(vector, "client_init_hex");
+            let client: ClientInitWire = canonical_handshake_v3(
+                client_raw
+                    .get(HANDSHAKE_HEADER_BYTES..)
+                    .expect("CLIENT_INIT payload"),
+            )
+            .unwrap_or_else(|error| panic!("{id}: decode CLIENT_INIT: {error}"));
+            assert_eq!(
+                handshake_frame_v3(1, &client).expect("encode CLIENT_INIT"),
+                client_raw,
+                "{id}: CLIENT_INIT"
+            );
+
+            let server_core_raw = vector_hex(vector, "server_core_hex");
+            let server_core: ServerCoreWire =
+                canonical_handshake_v3(&server_core_raw[HANDSHAKE_HEADER_BYTES..])
+                    .unwrap_or_else(|error| panic!("{id}: decode SERVER core: {error}"));
+            assert_eq!(
+                handshake_frame_v3(2, &server_core).expect("encode SERVER core"),
+                server_core_raw,
+                "{id}: SERVER core"
+            );
+
+            let server_raw = vector_hex(vector, "server_finished_hex");
+            let server: ServerFinishedWire =
+                canonical_handshake_v3(&server_raw[HANDSHAKE_HEADER_BYTES..])
+                    .unwrap_or_else(|error| panic!("{id}: decode SERVER_FINISHED: {error}"));
+            assert_eq!(
+                handshake_frame_v3(2, &server).expect("encode SERVER_FINISHED"),
+                server_raw,
+                "{id}: SERVER_FINISHED"
+            );
+
+            let client_core_raw = vector_hex(vector, "client_core_hex");
+            let client_core: ClientCoreWire =
+                canonical_handshake_v3(&client_core_raw[HANDSHAKE_HEADER_BYTES..])
+                    .unwrap_or_else(|error| panic!("{id}: decode CLIENT core: {error}"));
+            assert_eq!(
+                handshake_frame_v3(3, &client_core).expect("encode CLIENT core"),
+                client_core_raw,
+                "{id}: CLIENT core"
+            );
+
+            let client_finished_raw = vector_hex(vector, "client_finished_hex");
+            let client_finished: ClientFinishedWire =
+                canonical_handshake_v3(&client_finished_raw[HANDSHAKE_HEADER_BYTES..])
+                    .unwrap_or_else(|error| panic!("{id}: decode CLIENT_FINISHED: {error}"));
+            assert_eq!(
+                handshake_frame_v3(3, &client_finished).expect("encode CLIENT_FINISHED"),
+                client_finished_raw,
+                "{id}: CLIENT_FINISHED"
+            );
+
+            let client_private = vector_hex(vector, "client_private_hex");
+            let server_private = vector_hex(vector, "server_private_hex");
+            let client_public = decode_b64(&client.client_eph_pub_b64u).expect("client public");
+            let server_public = decode_b64(&server.server_eph_pub_b64u).expect("server public");
+            assert_eq!(
+                client.client_eph_pub_b64u, vector["client_public_b64u"],
+                "{id}: client public"
+            );
+            assert_eq!(
+                server.server_eph_pub_b64u, vector["server_public_b64u"],
+                "{id}: server public"
+            );
+            let client_shared = crate::crypto_v3::derive_shared_secret(
+                handshake_suite(suite),
+                &client_private,
+                &server_public,
+            )
+            .unwrap_or_else(|error| panic!("{id}: client ECDH: {error}"));
+            let server_shared = crate::crypto_v3::derive_shared_secret(
+                handshake_suite(suite),
+                &server_private,
+                &client_public,
+            )
+            .unwrap_or_else(|error| panic!("{id}: server ECDH: {error}"));
+            assert_eq!(client_shared.expose(), server_shared.expose(), "{id}: ECDH");
+            assert_eq!(
+                client_shared.expose().as_slice(),
+                vector_hex(vector, "shared_secret_hex"),
+                "{id}: shared secret"
+            );
+
+            let psk = vector_hex(vector, "psk_hex");
+            let handshake_prk = hkdf_extract_v3(&psk, client_shared.expose());
+            assert_vector_hex(
+                id,
+                "handshake PRK",
+                &handshake_prk,
+                vector,
+                "handshake_prk_hex",
+            );
+            let h0 = hash_parts(&[
+                b"flowersec-v3-handshake\0",
+                &fsc3,
+                &length_prefix(&client_raw),
+            ]);
+            assert_vector_hex(id, "h0", &h0, vector, "h0_hex");
+            let h1 = hash_parts(&[&h0, &length_prefix(&server_core_raw)]);
+            assert_vector_hex(id, "h1", &h1, vector, "h1_hex");
+            let server_confirm = confirm_v3(&handshake_prk, b"flowersec v3 server finished", &h1)
+                .expect("server confirmation");
+            assert_vector_hex(
+                id,
+                "server confirmation",
+                &server_confirm,
+                vector,
+                "server_confirm_hex",
+            );
+            assert_eq!(
+                decode_fixed_32(&server.server_confirm_b64u).expect("server confirmation wire"),
+                server_confirm,
+                "{id}: server confirmation wire"
+            );
+
+            let h2 = hash_parts(&[
+                &h1,
+                &length_prefix(&server_raw),
+                &length_prefix(&client_core_raw),
+            ]);
+            assert_vector_hex(id, "h2", &h2, vector, "h2_hex");
+            let client_confirm = confirm_v3(&handshake_prk, b"flowersec v3 client finished", &h2)
+                .expect("client confirmation");
+            assert_vector_hex(
+                id,
+                "client confirmation",
+                &client_confirm,
+                vector,
+                "client_confirm_hex",
+            );
+            assert_eq!(
+                decode_fixed_32(&client_finished.client_confirm_b64u)
+                    .expect("client confirmation wire"),
+                client_confirm,
+                "{id}: client confirmation wire"
+            );
+            let h3 = hash_parts(&[&h2, &length_prefix(&client_finished_raw)]);
+            assert_vector_hex(id, "h3", &h3, vector, "h3_hex");
+            let session_prk = hkdf_extract_v3(&h3, &handshake_prk);
+            assert_vector_hex(id, "session PRK", &session_prk, vector, "session_prk_hex");
+
+            let mut noncanonical = client_raw[HANDSHAKE_HEADER_BYTES..].to_vec();
+            noncanonical.push(b' ');
+            assert!(canonical_handshake_v3::<ClientInitWire>(&noncanonical).is_err());
+        }
+    }
+
+    fn vector_hex(vector: &serde_json::Value, field: &str) -> Vec<u8> {
+        let value = vector[field]
+            .as_str()
+            .unwrap_or_else(|| panic!("missing {field}"));
+        assert_eq!(value.len() % 2, 0, "{field}: even hex length");
+        value
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                let digits = std::str::from_utf8(pair).expect("ASCII hex");
+                u8::from_str_radix(digits, 16).expect("valid hex")
+            })
+            .collect()
+    }
+
+    fn assert_vector_hex(
+        id: &str,
+        label: &str,
+        actual: &[u8],
+        vector: &serde_json::Value,
+        field: &str,
+    ) {
+        assert_eq!(actual, vector_hex(vector, field), "{id}: {label}");
+    }
+
+    #[test]
+    fn identical_rekey_ack_is_idempotent_but_mismatches_fail() {
+        let ack = (7_u64, 3_u32);
+        assert_eq!(
+            classify_ack_v3(Some(&ack), None, &ack).unwrap(),
+            AckDispositionV3::Pending
+        );
+        assert_eq!(
+            classify_ack_v3(None, Some(&ack), &ack).unwrap(),
+            AckDispositionV3::Duplicate
+        );
+        assert!(classify_ack_v3(Some(&ack), None, &(8, 3)).is_err());
+        assert!(classify_ack_v3(None, Some(&ack), &(7, 4)).is_err());
+    }
+
+    #[test]
+    fn goaway_boundary_uses_zero_sentinel_parity_and_high_watermark() {
+        assert!(valid_goaway_boundary_v3(SessionRole::Client, 0, 0));
+        assert!(valid_goaway_boundary_v3(SessionRole::Client, 3, 5));
+        assert!(!valid_goaway_boundary_v3(SessionRole::Client, 4, 5));
+        assert!(!valid_goaway_boundary_v3(SessionRole::Client, 7, 5));
+        assert!(valid_goaway_boundary_v3(SessionRole::Server, 4, 6));
+        assert!(!valid_goaway_boundary_v3(SessionRole::Server, 3, 6));
+    }
+
+    #[test]
+    fn session_close_requires_a_nonzero_reason() {
+        assert!(validate_session_close_payload_v3(&1_u16.to_be_bytes()).is_ok());
+        assert!(validate_session_close_payload_v3(&0_u16.to_be_bytes()).is_err());
+        assert!(validate_session_close_payload_v3(&[]).is_err());
+        assert!(validate_session_close_payload_v3(&[0, 1, 2]).is_err());
+    }
+
+    #[test]
+    fn stream_reset_requires_a_nonzero_reason() {
+        let mut payload = [0_u8; 10];
+        payload[..8].copy_from_slice(&1_u64.to_be_bytes());
+        payload[8..].copy_from_slice(&1_u16.to_be_bytes());
+        assert_eq!(validate_stream_reset_payload_v3(&payload).unwrap(), 1);
+
+        payload[8..].copy_from_slice(&0_u16.to_be_bytes());
+        assert!(validate_stream_reset_payload_v3(&payload).is_err());
+        assert!(validate_stream_reset_payload_v3(&payload[..9]).is_err());
+    }
+
+    #[test]
+    fn unreliable_replay_window_tracks_out_of_order_and_rejects_duplicates() {
+        let mut window = ReplayWindowV3::default();
+        assert!(!window.contains(7));
+        window.insert(7);
+        assert!(window.contains(7));
+        assert!(!window.contains(9));
+        window.insert(9);
+        assert!(window.contains(9));
+        assert!(!window.contains(8));
+        window.insert(8);
+        assert!(window.contains(8));
+        window.insert(140);
+        assert!(window.contains(7), "sequences outside the window are stale");
+        assert!(window.contains(140));
+    }
+
+    #[tokio::test]
+    async fn pending_ping_guard_cleans_error_timeout_and_cancellation_paths() {
+        let pings = Arc::new(PendingPingsV3::default());
+
+        let (sender, _receiver) = oneshot::channel();
+        let failed: io::Result<()> = async {
+            let _pending = pings.register(1, sender)?;
+            Err(io::Error::other("injected ping send failure"))
+        }
+        .await;
+        assert!(failed.is_err());
+        assert_eq!(pings.len(), 0);
+
+        let (sender, _receiver) = oneshot::channel();
+        let timed_out = tokio::time::timeout(Duration::from_millis(1), async {
+            let _pending = pings.register(2, sender).unwrap();
+            std::future::pending::<()>().await;
+        })
+        .await;
+        assert!(timed_out.is_err());
+        assert_eq!(pings.len(), 0);
+    }
+
+    #[test]
+    fn open_reject_requires_the_expected_hash_and_a_nonzero_reason() {
+        let expected = [7_u8; 32];
+        let mut payload = Vec::from(expected);
+        payload.extend_from_slice(&2_u16.to_be_bytes());
+        assert_eq!(
+            validate_open_reject_payload_v3(&payload, &expected).unwrap(),
+            2
+        );
+
+        let mut zero_reason = Vec::from(expected);
+        zero_reason.extend_from_slice(&0_u16.to_be_bytes());
+        assert!(validate_open_reject_payload_v3(&zero_reason, &expected).is_err());
+
+        payload[0] ^= 1;
+        assert!(validate_open_reject_payload_v3(&payload, &expected).is_err());
+    }
+}

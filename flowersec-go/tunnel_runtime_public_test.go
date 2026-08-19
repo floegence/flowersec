@@ -2,14 +2,39 @@ package flowersec_test
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sync/atomic"
 	"testing"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
-	"github.com/floegence/flowersec/flowersec-go/v2/controlplane"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
+	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
 )
+
+func TestTunnelRuntimeHandlerRejectsResumedTLSBeforeAuthorization(t *testing.T) {
+	var authorized atomic.Int32
+	runtime, err := flowersec.NewTunnelRuntime(flowersec.TunnelRuntimeOptions{
+		AllowedOrigins: []string{"https://app.example"},
+		Listeners:      []flowersec.TunnelListener{flowersec.NewWebSocketTunnelListener()},
+		Authorize: func(context.Context, controlplane.RuntimeAuthorizationRequest) (controlplane.TunnelAuthorizationResponse, error) {
+			authorized.Add(1)
+			return controlplane.TunnelAuthorizationResponse{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, flowersec.WebSocketTunnelPath, nil)
+	request.Header.Set("Origin", "https://app.example")
+	request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, DidResume: true}
+	response := httptest.NewRecorder()
+	runtime.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || authorized.Load() != 0 {
+		t.Fatalf("resumed request status/authorizations = %d/%d, want 403/0", response.Code, authorized.Load())
+	}
+}
 
 func TestDirectAndTunnelRuntimePublicBoundariesAreDistinct(t *testing.T) {
 	var direct []flowersec.DirectListener

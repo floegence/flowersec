@@ -116,12 +116,13 @@ WebTransport ist optional und nicht Teil des erforderlichen native-server-carrie
 ## Sicherheit
 
 - Anwendungsdaten sind bei direkten und weitergeleiteten Sitzungen Ende zu Ende verschlüsselt.
+- Die TLS-Vertrauensrichtlinie ist an jeden v3-Transportkandidaten gebunden. Öffentliche oder bereitgestellte CA-Wurzeln und explizite Leaf-Zertifikat-Pins schließen sich gegenseitig aus; nach einem Fehler gibt es keine Herabstufung.
 - Verbindungseinladungen sind undurchsichtig, kurzlebig und nur einmal verwendbar.
 - Zugangsdaten werden vor der Nutzung fest verbucht, damit eine verbrauchte Einladung nicht wiederholt werden kann.
 - Relays leiten nur verschlüsselten Datenverkehr weiter und beenden keine Anwendungssitzungen.
 - Ungültige oder nicht unterstützte Verbindungen schlagen sicher mit begrenzten öffentlichen Fehlern fehl.
 
-Details zu Protokoll und Bedrohungsmodell stehen im [API-Vertrag](docs/API_CONTRACT.md), in der [Transportarchitektur](docs/TRANSPORT_V2_ARCHITECTURE.md) und im [Bedrohungsmodell](docs/THREAT_MODEL.md).
+Details zu Protokoll und Bedrohungsmodell stehen im [API-Vertrag](docs/API_CONTRACT.md), in der [Transportarchitektur](docs/TRANSPORT_V3_ARCHITECTURE.md) und im [Bedrohungsmodell](docs/THREAT_MODEL.md).
 
 <!-- readme-section:deploy-and-develop -->
 <a id="deploy-and-develop"></a>
@@ -130,7 +131,7 @@ Details zu Protokoll und Bedrohungsmodell stehen im [API-Vertrag](docs/API_CONTR
 
 - [API-Vertrag](docs/API_CONTRACT.md): stabiles Anwendungsverhalten aller SDKs.
 - [Fehlermodell](docs/ERROR_MODEL.md): öffentliche Verbindungs-, Sitzungs- und RPC-Fehler.
-- [Transportarchitektur](docs/TRANSPORT_V2_ARCHITECTURE.md): Design direkter und weitergeleiteter Verbindungen.
+- [Transportarchitektur](docs/TRANSPORT_V3_ARCHITECTURE.md): Design direkter und weitergeleiteter Verbindungen.
 - [Beispiele](examples/README.md): ausführbare SDK-Nutzung.
 
 Flowersec ist unter der [MIT License](LICENSE) verfügbar. Veröffentlichte Pakete und Versionshinweise findest du in den [GitHub Releases](https://github.com/floegence/flowersec/releases).

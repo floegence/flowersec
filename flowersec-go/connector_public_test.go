@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
 )
 
 func TestConnectorPublicSurfaceIsCarrierNeutral(t *testing.T) {
@@ -263,6 +263,7 @@ func TestConnectErrorPublicSnapshotContainsNoInternalDetail(t *testing.T) {
 		t.Fatalf("nil ConnectError code = %q, want %q", err.Code(), flowersec.ConnectConnectionFailed)
 	}
 	wantCodes := map[flowersec.ConnectErrorCode]string{
+		flowersec.ConnectArtifactInvalid:  "artifact_invalid",
 		flowersec.ConnectInvalidInput:     "invalid_input",
 		flowersec.ConnectInvalidOptions:   "invalid_options",
 		flowersec.ConnectCanceled:         "canceled",
@@ -330,11 +331,11 @@ func TestConnectorRejectsInvalidCarrierNeutralOptions(t *testing.T) {
 	if _, err := flowersec.Connect(context.Background(), flowersec.ArtifactLease{}, flowersec.ConnectorOptions{
 		TrustRoots: fixtureTrustRoots(t),
 	}); err == nil {
-		t.Fatal("Connect zero lease error = nil, want invalid input")
+		t.Fatal("Connect zero lease error = nil, want artifact invalid")
 	} else {
 		var connectErr *flowersec.ConnectError
-		if !errors.As(err, &connectErr) || connectErr.Code() != flowersec.ConnectInvalidInput {
-			t.Fatalf("Connect zero lease error = %#v, want ConnectInvalidInput", err)
+		if !errors.As(err, &connectErr) || connectErr.Code() != flowersec.ConnectArtifactInvalid {
+			t.Fatalf("Connect zero lease error = %#v, want ConnectArtifactInvalid", err)
 		}
 		if got := connectErr.RetryDisposition().Kind; got != flowersec.RetryDispositionTerminal {
 			t.Fatalf("zero lease retry disposition = %q, want terminal", got)

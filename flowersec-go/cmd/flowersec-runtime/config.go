@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
 )
 
 var ErrInvalidConfig = errors.New("invalid Flowersec runtime configuration")
@@ -182,8 +182,8 @@ func (config Config) validate() error {
 			return &ConfigError{Field: "admission_reasons", Err: errors.New("contains a duplicate")}
 		}
 		seenReasons[reason] = struct{}{}
-		registry := artifactv2.ReasonRegistry{reason: {}}
-		if _, err := artifactv2.MarshalResponse(artifactv2.AdmissionResponse{Status: artifactv2.AdmissionReject, Reason: reason}, registry); err != nil {
+		registry := artifactv3.ReasonRegistry{reason: {}}
+		if _, err := artifactv3.MarshalResponse(artifactv3.AdmissionResponse{Status: artifactv3.AdmissionReject, Reason: reason}, registry); err != nil {
 			return &ConfigError{Field: "admission_reasons", Err: errors.New("contains an invalid reason")}
 		}
 	}

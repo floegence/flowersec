@@ -27,19 +27,19 @@ struct ValuePayload {
 async fn main() -> Result<(), Box<dyn Error>> {
     let mut arguments = env::args().skip(1);
     match arguments.next().as_deref() {
-        Some("artifact-v2") => {
+        Some("artifact-v3") => {
             let artifact_path = required_argument(arguments.next(), "artifact JSON path")?;
             if arguments.next().is_some() {
-                return Err("artifact-v2 accepts exactly one path".into());
+                return Err("artifact-v3 accepts exactly one path".into());
             }
             inspect_opaque_artifact(Path::new(&artifact_path))
         }
-        Some("connect-v2") => {
+        Some("connect-v3") => {
             let artifact_path = required_argument(arguments.next(), "artifact JSON path")?;
             let trust_root_path = required_argument(arguments.next(), "trust root DER path")?;
             let receipt_path = required_argument(arguments.next(), "spend receipt path")?;
             if arguments.next().is_some() {
-                return Err("connect-v2 accepts exactly three paths".into());
+                return Err("connect-v3 accepts exactly three paths".into());
             }
             connect_opaque_artifact(
                 Path::new(&artifact_path),
@@ -173,7 +173,7 @@ async fn write_spend_receipt(receipt_path: PathBuf) -> Result<(), ArtifactSpendE
             .open(&receipt_path)
             .map_err(|_| ArtifactSpendError::CommitFailed)?;
         receipt
-            .write_all(b"flowersec-v2-artifact-spent\n")
+            .write_all(b"flowersec-v3-artifact-spent\n")
             .and_then(|()| receipt.sync_all())
             .map_err(|_| ArtifactSpendError::CommitFailed)?;
         drop(receipt);
@@ -196,5 +196,5 @@ fn required_argument(value: Option<String>, name: &str) -> Result<String, Box<dy
 }
 
 fn usage() -> &'static str {
-    "usage: flowersec-rust-client-example artifact-v2 <artifact-json> | connect-v2 <artifact-json> <trust-root-der> <spend-receipt>"
+    "usage: flowersec-rust-client-example artifact-v3 <artifact-json> | connect-v3 <artifact-json> <trust-root-der> <spend-receipt>"
 }

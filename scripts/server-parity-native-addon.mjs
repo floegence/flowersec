@@ -64,14 +64,23 @@ export async function prepareServerParityNativeAddon(repositoryRoot, required) {
   }
 }
 
-async function runNativeIntegration(repositoryRoot) {
+async function runNativeIntegration(repositoryRoot, title) {
+  const arguments_ = [
+    "run", "src/node/nativeRawQuic.integration.test.ts",
+  ];
+  if (title !== undefined) arguments_.push("-t", `(^|\\s)${escapeRegex(title)}$`);
+  await runVitestWithNativeAddon(repositoryRoot, arguments_);
+}
+
+async function runCoverage(repositoryRoot) {
+  await runVitestWithNativeAddon(repositoryRoot, ["run", "--coverage"]);
+}
+
+async function runVitestWithNativeAddon(repositoryRoot, vitestArguments) {
   const fixture = await prepareServerParityNativeAddon(repositoryRoot, true);
   try {
-    const result = await execFileAsync("npm", [
-      "--prefix", "flowersec-ts", "exec", "--", "vitest", "run", "--config",
-      "flowersec-ts/vitest.config.ts", "flowersec-ts/src/node/nativeRawQuic.integration.test.ts",
-    ], {
-      cwd: repositoryRoot,
+    const result = await execFileAsync("npm", ["exec", "--", "vitest", ...vitestArguments], {
+      cwd: path.join(repositoryRoot, "flowersec-ts"),
       env: { ...process.env, ...fixture.environment },
       maxBuffer: 16 * 1024 * 1024,
     });
@@ -82,10 +91,20 @@ async function runNativeIntegration(repositoryRoot) {
   }
 }
 
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  if (process.argv.length !== 3 || process.argv[2] !== "--test-native-integration") {
-    throw new Error("usage: server-parity-native-addon.mjs --test-native-integration");
+  const runAll = process.argv.length === 3 && process.argv[2] === "--test-native-integration";
+  const runAllCoverage = process.argv.length === 3 && process.argv[2] === "--test-coverage";
+  const runTitle = process.argv.length === 4 && process.argv[2] === "--test-title" && process.argv[3].trim() !== "";
+  if (!runAll && !runAllCoverage && !runTitle) {
+    throw new Error(
+      "usage: server-parity-native-addon.mjs <--test-native-integration|--test-coverage|--test-title TITLE>",
+    );
   }
   const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  await runNativeIntegration(repositoryRoot);
+  if (runAllCoverage) await runCoverage(repositoryRoot);
+  else await runNativeIntegration(repositoryRoot, runTitle ? process.argv[3] : undefined);
 }

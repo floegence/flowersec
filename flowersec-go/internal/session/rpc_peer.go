@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
 )
 
 type sessionRPCPeer struct {

@@ -14,6 +14,7 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const matrix = JSON.parse(await readFile(path.join(repositoryRoot, "stability/interop_matrix.json"), "utf8"));
 const clientProfile = process.env.FLOWERSEC_PARITY_CLIENT_PROFILE?.trim();
 const clientProfileTestID = process.env.FLOWERSEC_PARITY_TEST_ID?.trim();
+const clientProfileProtocol = clientProfileTestID?.startsWith("compat/v2/") ? "v2" : "v3";
 const runtimeValues = SERVER_PARITY_RUNTIMES;
 const carrierValues = SERVER_PARITY_CARRIERS;
 const clients = selectedValues("FLOWERSEC_PARITY_CLIENTS", runtimeValues);
@@ -35,11 +36,11 @@ const commonCases = [
 const datagramCarriers = new Set(["raw-quic"]);
 const cellTimeoutMS = 45_000;
 
-const peers = {
+const peersV2 = {
   go: {
     cwd: path.join(repositoryRoot, "flowersec-go"),
     command: "go",
-    arguments: ["run", "./internal/cmd/server-parity-peer"],
+    arguments: ["run", "./internal/cmd/server-parity-peer-v2"],
   },
   rust: {
     cwd: repositoryRoot,
@@ -55,10 +56,18 @@ const peers = {
     arguments: ["--import", "tsx", "src/interop/serverParityPeer.ts"],
   },
 };
+const peersV3 = {
+  go: {
+    cwd: path.join(repositoryRoot, "flowersec-go"),
+    command: "go",
+    arguments: ["run", "./internal/cmd/server-parity-peer"],
+  },
+};
+const peers = clientProfileProtocol === "v2" ? peersV2 : peersV3;
 
 validateDirectContract(matrix.direct_cells);
 const selectedCells = clientProfile === undefined
-  ? matrix.direct_cells.filter((cell) => clients.includes(cell.client) && servers.includes(cell.server) && carriers.includes(cell.carrier))
+  ? matrix.direct_cells.filter((cell) => cell.status === "supported" && clients.includes(cell.client) && servers.includes(cell.server) && carriers.includes(cell.carrier))
   : [selectClientProfileCell()];
 const nativeAddon = await prepareServerParityNativeAddon(repositoryRoot, selectedCells.some((cell) =>
   cell.client === "node-typescript" || cell.server === "node-typescript"
@@ -94,7 +103,6 @@ function validateDirectContract(cells) {
       if (!Array.isArray(cell.test_ids) || cell.test_ids.length !== 1 || "reason" in cell) throw new Error(`${cell.id}: supported tuple must bind exactly one test ID and no reason`);
     } else if (cell.status === "unsupported") {
       if ((Array.isArray(cell.test_ids) && cell.test_ids.length !== 0) || typeof cell.reason !== "string" || cell.reason.length === 0) throw new Error(`${cell.id}: unsupported tuple must carry only a reason`);
-      throw new Error(`${cell.id}: required direct tuple cannot be unsupported`);
     } else {
       throw new Error(`${cell.id}: forbidden status ${String(cell.status)}`);
     }
@@ -158,8 +166,8 @@ function selectClientProfileCell() {
     throw new Error("FLOWERSEC_PARITY_CLIENT_PROFILE and FLOWERSEC_PARITY_TEST_ID must select a supported client-profile cell");
   }
   const cells = [
-    { profile: "browser", client: "typescript-browser", server: "go", carrier: "websocket", path: "direct", test_id: "browser/chromium/websocket/go/direct" },
-    { profile: "browser", client: "typescript-browser", server: "node-typescript", carrier: "websocket", path: "direct", test_id: "browser/chromium/websocket/node/direct" },
+    { profile: "browser", client: "typescript-browser", server: "go", carrier: "websocket", path: "direct", test_id: "compat/v2/browser/chromium/websocket/go/direct" },
+    { profile: "browser", client: "typescript-browser", server: "node-typescript", carrier: "websocket", path: "direct", test_id: "compat/v2/browser/chromium/websocket/node/direct" },
     { profile: "swift", client: "swift", server: "go", carrier: "websocket", path: "direct", test_id: "interop/swift-go/wss/direct" },
   ].filter((cell) => cell.profile === clientProfile && cell.test_id === clientProfileTestID);
   if (cells.length !== 1) throw new Error(`${clientProfileTestID}: client-profile direct cell is absent or ambiguous`);
@@ -206,11 +214,13 @@ function startExternalClient(ready, pathKind, browserPort) {
     return startProcess("swift", ["test", "--filter", "ConnectorV2Tests/testServerParityClientProfile"], path.join(repositoryRoot, "flowersec-swift"), {
       FLOWERSEC_PARITY_READY_BASE64: encoded,
       FLOWERSEC_PARITY_PATH: pathKind,
+      FLOWERSEC_PARITY_PROTOCOL: clientProfileProtocol,
     });
   }
   return startProcess("npm", ["--prefix", "flowersec-ts", "run", "test:browser:chromium", "--", "--grep", "Chromium runs the WebSocket client profile"], repositoryRoot, {
     FLOWERSEC_PARITY_READY_BASE64: encoded,
     FLOWERSEC_PARITY_PATH: pathKind,
+    FLOWERSEC_PARITY_PROTOCOL: clientProfileProtocol,
     FLOWERSEC_BROWSER_SITE_PORT: String(browserPort),
   });
 }

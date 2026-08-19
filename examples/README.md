@@ -30,5 +30,5 @@ handlers. Application code does not need to know how a relay forwards encrypted
 data.
 
 See the [API contract](../docs/API_CONTRACT.md) for shared behavior and the
-[transport architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md) for connection
+[transport architecture](../docs/TRANSPORT_V3_ARCHITECTURE.md) for connection
 details.

@@ -5,24 +5,30 @@ import XCTest
 
 final class FlowersecRPCTests: XCTestCase {
   func testEnvelopeConsumesSharedMalformedVectors() throws {
-    let root = try XCTUnwrap(
-      JSONSerialization.jsonObject(
-        with: Data(
-          contentsOf: packageRoot().appendingPathComponent(
-            "testdata/transport_v2/rpc_malformed_envelopes.json"))) as? [String: Any]
-    )
-    XCTAssertEqual((root["version"] as? NSNumber)?.intValue, 1)
-    let vectors = try XCTUnwrap(root["vectors"] as? [[String: Any]])
-    XCTAssertFalse(vectors.isEmpty)
-    for vector in vectors {
-      let id = try XCTUnwrap(vector["id"] as? String)
-      let valid = try XCTUnwrap(vector["valid"] as? Bool)
-      let envelope = try XCTUnwrap(vector["envelope"])
-      let data = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
-      if valid {
-        XCTAssertNoThrow(try RPCEnvelope(data: data), id)
-      } else {
-        XCTAssertThrowsError(try RPCEnvelope(data: data), id)
+    for version in [2, 3] {
+      let root = try XCTUnwrap(
+        JSONSerialization.jsonObject(
+          with: Data(
+            contentsOf: packageRoot().appendingPathComponent(
+              "testdata/transport_v\(version)/rpc_malformed_envelopes.json")))
+          as? [String: Any]
+      )
+      XCTAssertEqual((root["version"] as? NSNumber)?.intValue, 1)
+      if version == 3 {
+        XCTAssertEqual((root["transport_contract_version"] as? NSNumber)?.intValue, 3)
+      }
+      let vectors = try XCTUnwrap(root["vectors"] as? [[String: Any]])
+      XCTAssertFalse(vectors.isEmpty)
+      for vector in vectors {
+        let id = "v\(version)/\(try XCTUnwrap(vector["id"] as? String))"
+        let valid = try XCTUnwrap(vector["valid"] as? Bool)
+        let envelope = try XCTUnwrap(vector["envelope"])
+        let data = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
+        if valid {
+          XCTAssertNoThrow(try RPCEnvelope(data: data), id)
+        } else {
+          XCTAssertThrowsError(try RPCEnvelope(data: data), id)
+        }
       }
     }
   }
@@ -40,14 +46,6 @@ final class FlowersecRPCTests: XCTestCase {
   }
 
   func testEnvelopeEnforcesPortableInboundRPCErrorInvariant() throws {
-    let fixture = try JSONDecoder().decode(
-      SharedRPCErrorVectors.self,
-      from: Data(
-        contentsOf: packageRoot().appendingPathComponent(
-          "testdata/transport_v2/rpc_error_vectors.json"))
-    )
-    XCTAssertEqual(fixture.maximumMessageBytes, 1_024)
-
     func envelope(error: [String: Any]) throws -> Data {
       try JSONSerialization.data(
         withJSONObject: [
@@ -61,38 +59,50 @@ final class FlowersecRPCTests: XCTestCase {
       )
     }
 
-    for vector in fixture.cases {
-      let message = String(repeating: vector.message.unit, count: vector.message.repeatCount)
-        + vector.message.suffix
-      var error: [String: Any] = ["code": NSNumber(value: vector.code)]
-      if vector.message.presence == "present" {
-        error["message"] = message
-      }
-      if vector.extraField {
-        error["internal"] = "secret"
-      }
-      if vector.valid {
-        let decoded = try RPCEnvelope(data: envelope(error: error))
-        XCTAssertEqual(decoded.error?.code, vector.code, vector.id)
-        if vector.message.presence == "present" {
-          XCTAssertEqual(decoded.error?.message, message, vector.id)
-        }
-      } else {
-        XCTAssertThrowsError(try RPCEnvelope(data: envelope(error: error)), vector.id)
-      }
-    }
-
-    for vector in fixture.rawCases {
-      var raw = Data(
-        "{\"type_id\":1,\"request_id\":0,\"response_to\":1,\"payload\":null,\"error\":{\"code\":\(vector.code),\"message\":\""
-          .utf8
+    for version in [2, 3] {
+      let fixture = try JSONDecoder().decode(
+        SharedRPCErrorVectors.self,
+        from: Data(
+          contentsOf: packageRoot().appendingPathComponent(
+            "testdata/transport_v\(version)/rpc_error_vectors.json"))
       )
-      raw.append(try decodeHex(vector.messageHex))
-      raw.append(Data("\"}}".utf8))
-      if vector.valid {
-        XCTAssertNoThrow(try RPCEnvelope(data: raw), vector.id)
-      } else {
-        XCTAssertThrowsError(try RPCEnvelope(data: raw), vector.id)
+      XCTAssertEqual(fixture.maximumMessageBytes, 1_024)
+
+      for vector in fixture.cases {
+        let id = "v\(version)/\(vector.id)"
+        let message = String(repeating: vector.message.unit, count: vector.message.repeatCount)
+          + vector.message.suffix
+        var error: [String: Any] = ["code": NSNumber(value: vector.code)]
+        if vector.message.presence == "present" {
+          error["message"] = message
+        }
+        if vector.extraField {
+          error["internal"] = "secret"
+        }
+        if vector.valid {
+          let decoded = try RPCEnvelope(data: envelope(error: error))
+          XCTAssertEqual(decoded.error?.code, vector.code, id)
+          if vector.message.presence == "present" {
+            XCTAssertEqual(decoded.error?.message, message, id)
+          }
+        } else {
+          XCTAssertThrowsError(try RPCEnvelope(data: envelope(error: error)), id)
+        }
+      }
+
+      for vector in fixture.rawCases {
+        let id = "v\(version)/\(vector.id)"
+        var raw = Data(
+          "{\"type_id\":1,\"request_id\":0,\"response_to\":1,\"payload\":null,\"error\":{\"code\":\(vector.code),\"message\":\""
+            .utf8
+        )
+        raw.append(try decodeHex(vector.messageHex))
+        raw.append(Data("\"}}".utf8))
+        if vector.valid {
+          XCTAssertNoThrow(try RPCEnvelope(data: raw), id)
+        } else {
+          XCTAssertThrowsError(try RPCEnvelope(data: raw), id)
+        }
       }
     }
   }

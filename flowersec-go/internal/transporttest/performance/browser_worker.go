@@ -7,7 +7,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/transporttest/tunnelworkload"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest/tunnelworkload"
 )
 
 const browserWorkerArg = "--browser-capacity-worker"

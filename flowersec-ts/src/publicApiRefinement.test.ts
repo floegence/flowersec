@@ -23,7 +23,7 @@ describe("final public SDK names", () => {
     expect("createNodeConnectionController" in node).toBe(false);
   });
 
-  test("built public declarations contain no versioned or internal SDK types", async () => {
+  test("built public declarations expose v2 only through the explicit compatibility namespaces", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
     const root = path.resolve(process.cwd(), "dist");
@@ -69,7 +69,25 @@ describe("final public SDK names", () => {
       }
     }
     expect(retained.size).toBeGreaterThan(0);
-    const publicSource = await Promise.all([...retained].map((file) => fs.readFile(file, "utf8"))).then((sources) => sources.join("\n"));
+    const declarations = await Promise.all([...retained].map(async (file) => ({
+      file,
+      source: await fs.readFile(file, "utf8"),
+    })));
+    const allowedV2References = new Map<string, readonly string[]>([
+      [path.join(root, "facade.d.ts"), ['export * as v2 from "./v2/index.js";']],
+      [path.join(root, "browser/index.d.ts"), ['export * as v2 from "./v2.js";']],
+      [path.join(root, "browser/v2.d.ts"), ['export * from "../v2/index.js";']],
+      [path.join(root, "node/index.d.ts"), ['export * as v2 from "./v2.js";']],
+      [path.join(root, "node/v2.d.ts"), ['export * from "../v2/index.js";']],
+    ]);
+    const publicSource = declarations.map(({ file, source }) => {
+      let guardedSource = source;
+      for (const reference of allowedV2References.get(file) ?? []) {
+        expect(guardedSource.split(reference)).toHaveLength(2);
+        guardedSource = guardedSource.replace(reference, "");
+      }
+      return guardedSource;
+    }).join("\n");
     expect(publicSource).not.toMatch(/\b[A-Za-z_$][A-Za-z0-9_$]*V2\b/u);
     expect(publicSource).not.toMatch(/(?:^|["'\/])(?:v2|connector)(?:["'\/]|\.)/u);
     expect(publicSource).not.toMatch(/(?:^|["'\/])utils\/errors(?:["'\/]|\.)/u);

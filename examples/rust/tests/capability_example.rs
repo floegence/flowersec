@@ -9,7 +9,7 @@ use std::{
 #[test]
 fn artifact_subcommand_keeps_the_unspent_artifact_opaque() {
     let fixture: Value = serde_json::from_str(include_str!(
-        "../../../testdata/transport_v2/artifact_vectors.json"
+        "../../../testdata/transport_v3/artifact_vectors.json"
     ))
     .unwrap();
     let artifact = fixture["positive"][0]["artifact_json"].as_str().unwrap();
@@ -18,7 +18,7 @@ fn artifact_subcommand_keeps_the_unspent_artifact_opaque() {
         .unwrap()
         .as_nanos();
     let base = std::env::temp_dir().join(format!(
-        "flowersec-rust-v2-example-{}-{nonce}",
+        "flowersec-rust-v3-example-{}-{nonce}",
         std::process::id()
     ));
     fs::create_dir(&base).unwrap();
@@ -41,7 +41,7 @@ fn artifact_subcommand_keeps_the_unspent_artifact_opaque() {
 
 fn run_artifact(artifact_path: &PathBuf) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_flowersec-rust-client-example"))
-        .args(["artifact-v2"])
+        .args(["artifact-v3"])
         .arg(artifact_path)
         .output()
         .unwrap()

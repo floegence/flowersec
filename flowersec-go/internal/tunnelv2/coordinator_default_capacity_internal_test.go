@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv2"
 )
 
 func TestDefaultCoordinatorAdmitsPair1024Rejects1025AndReadmitsAfterRelease(t *testing.T) {

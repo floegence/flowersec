@@ -7,25 +7,21 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"math/big"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/quicbase"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/rawquicv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
 )
 
 // TestConnectionControllerRealNetworkRestartReconnect owns a real raw QUIC
@@ -197,23 +193,23 @@ func (source *networkRestartSource) stopAll() {
 }
 
 type networkRestartServer struct {
-	listener *rawquic.Listener
+	listener *rawquicv3.Listener
 	stopOnce sync.Once
 	stopCh   chan struct{}
 	done     chan error
 	runErr   error
-	secure   flowersession.SessionV2
-	carrier  *rawquic.Session
+	secure   flowersession.Session
+	carrier  *rawquicv3.Session
 	mu       sync.Mutex
 }
 
 func startNetworkRestartServer(serverTLS *tls.Config) (*networkRestartServer, error) {
-	serverTLS.NextProtos = []string{rawquic.ALPNDirect}
+	serverTLS.NextProtos = []string{rawquicv3.ALPNDirect}
 	limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), 64)
 	if err != nil {
 		return nil, err
 	}
-	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS, limits)
+	listener, err := rawquicv3.Listen("127.0.0.1:0", serverTLS, limits)
 	if err != nil {
 		return nil, err
 	}
@@ -240,13 +236,13 @@ func (server *networkRestartServer) run() {
 	server.carrier = carrierSession
 	server.mu.Unlock()
 	defer carrierSession.Close()
-	admission, err := carrierSession.AcceptStream(ctx)
+	admission, err := rawquicv3.AcceptAdmissionStream(ctx, carrierSession)
 	if err != nil {
 		finish(err)
 		return
 	}
-	decoded, err := admissionv2.Serve(ctx, admission, nil, func(context.Context, *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
-		return artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, nil
+	decoded, err := admissionv3.Serve(ctx, admission, nil, func(context.Context, *artifactv3.DecodedRequest) (artifactv3.AdmissionResponse, error) {
+		return artifactv3.AdmissionResponse{Status: artifactv3.AdmissionSuccess}, nil
 	})
 	if err != nil {
 		finish(err)
@@ -256,7 +252,7 @@ func (server *networkRestartServer) run() {
 	secure, err := flowersession.Establish(ctx, carrierSession, flowersession.Config{
 		Role: flowersession.RoleServer, Path: flowersession.PathDirect,
 		ChannelID: contract.ChannelID, SessionContractHash: contract.SessionContractHash,
-		Suite: protocolv2.Suite(1), PSK: [32]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+		Suite: protocolv3.Suite(1), PSK: [32]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
 		MaxInboundStreams: 64, IdleTimeout: 60 * time.Second, EstablishTimeout: 30 * time.Second,
 		RekeyPrepareTimeout: 10 * time.Second, RekeyCompletionTimeout: 30 * time.Second,
 		LocalAdmissionBinding: decoded.LocalAdmissionBinding, PeerAdmissionBinding: decoded.LocalAdmissionBinding,
@@ -321,24 +317,30 @@ func controllerNetworkTLS(t *testing.T) (*tls.Config, *x509.CertPool) {
 }
 
 func controllerNetworkArtifact(address string) (Artifact, error) {
-	raw, err := os.ReadFile(filepath.Join("..", "testdata", "transport_v2", "artifact_vectors.json"))
+	contract := artifactv3.SessionContract{
+		ChannelID: "controller-network", InitExpireAtUnixSeconds: time.Now().Add(time.Minute).Unix(),
+		IdleTimeoutSeconds: 60, EstablishTimeoutSeconds: 30, RekeyPrepareTimeoutSeconds: 10,
+		RekeyCompletionTimeoutSeconds: 30, MaxInboundStreams: 64,
+		AllowedSuites: []uint16{1}, DefaultSuite: 1,
+		E2EEPSK: [32]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+	}
+	hash, _, err := artifactv3.ComputeSessionContractHash(contract)
 	if err != nil {
 		return Artifact{}, err
 	}
-	var fixture struct {
-		Positive []struct {
-			ArtifactJSON string `json:"artifact_json"`
-		} `json:"positive"`
+	contract.ContractHash = hash
+	value := artifactv3.Artifact{
+		Version: 3, Profile: artifactv3.Profile, Session: contract,
+		Path: artifactv3.ArtifactPath{
+			Kind: artifactv3.PathDirect, RendezvousGroupID: "controller-network-group", ListenerAudience: "controller-network-listener",
+			RoutingToken: "controller-network-routing", Candidates: []artifactv3.Candidate{{
+				ID: "q1", Carrier: artifactv3.CarrierRawQUIC, URL: "quic://" + address, WireProfile: rawquicv3.ALPNDirect,
+				TLS: artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA},
+			}},
+		},
+		Scoped: []artifactv3.ScopeMetadata{}, Correlation: artifactv3.CorrelationContext{Version: 3, Tags: []artifactv3.CorrelationTag{}},
 	}
-	if err := json.Unmarshal(raw, &fixture); err != nil || len(fixture.Positive) == 0 {
-		return Artifact{}, errors.New("invalid artifact fixture")
-	}
-	decoded, err := artifactv2.DecodeArtifactJSON(strings.NewReader(fixture.Positive[0].ArtifactJSON))
-	if err != nil {
-		return Artifact{}, err
-	}
-	decoded.Path.Candidates = []artifactv2.Candidate{{ID: "q1", Carrier: artifactv2.CarrierRawQUIC, URL: "quic://" + address, WireProfile: rawquic.ALPNDirect}}
-	encoded, err := artifactv2.MarshalArtifactJSON(*decoded)
+	encoded, err := artifactv3.MarshalArtifactJSON(value)
 	if err != nil {
 		return Artifact{}, err
 	}

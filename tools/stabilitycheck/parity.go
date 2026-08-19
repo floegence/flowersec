@@ -30,13 +30,19 @@ var requiredPortableCapabilityIDs = []string{
 }
 
 var requiredSharedFixtureIDs = []string{
-	"artifact_v2",
-	"crypto_v2",
-	"handshake_v2",
-	"open_unicode_v2",
-	"connection_controller",
-	"session_handlers_v2",
-	"session_wire_v2",
+	"artifact_admission_v3",
+	"capability_v3",
+	"controller_v3",
+	"crypto_v3",
+	"datagram_v3",
+	"handshake_v3",
+	"idna_v3",
+	"open_unicode_v3",
+	"rpc_error_v3",
+	"rpc_malformed_envelopes_v3",
+	"rpc_notifications_v3",
+	"session_handlers_v3",
+	"session_wire_v3",
 }
 
 var retiredProductionCarrierCapabilityIDs = []string{
@@ -47,40 +53,38 @@ var retiredProductionCarrierCapabilityIDs = []string{
 }
 
 var expectedServerParityEntrypoints = map[string]string{
-	"go/endpoint-client/websocket/direct/connect":                                   "flowersec.Connect",
-	"go/endpoint-client/websocket/tunnel/connect":                                   "flowersec.Connect",
-	"go/direct-server/websocket/direct/accept":                                      "flowersec.NewAcceptor/NewWebSocketDirectListener",
-	"go/tunnel-runtime/websocket/tunnel/pair-forward":                               "flowersec.NewTunnelRuntime/NewWebSocketTunnelListener",
-	"go/endpoint-client/raw-quic/direct/connect":                                    "flowersec.Connect",
-	"go/endpoint-client/raw-quic/tunnel/connect":                                    "flowersec.Connect",
-	"go/direct-server/raw-quic/direct/accept":                                       "flowersec.NewAcceptor/NewRawQUICDirectListener",
-	"go/tunnel-runtime/raw-quic/tunnel/pair-forward":                                "flowersec.NewTunnelRuntime/NewRawQUICTunnelListener",
-	"go/endpoint-client/webtransport/direct/connect":                                "flowersec.Connect",
-	"go/endpoint-client/webtransport/tunnel/connect":                                "flowersec.Connect",
-	"go/direct-server/webtransport/direct/accept":                                   "flowersec.NewAcceptor/NewWebTransportDirectListener",
-	"go/tunnel-runtime/webtransport/tunnel/pair-forward":                            "flowersec.NewTunnelRuntime/NewWebTransportTunnelListener",
-	"go/control-plane/carrier-neutral/carrier-neutral/issue-authorize":              "flowersec-go/v2/controlplane",
-	"go/proxy-server/carrier-neutral/direct/proxy":                                  "flowersec.NewProxyServer",
-	"node-typescript/endpoint-client/websocket/direct/connect":                      "@floegence/flowersec-core/node connect",
-	"node-typescript/endpoint-client/websocket/tunnel/connect":                      "@floegence/flowersec-core/node connect",
-	"node-typescript/direct-server/websocket/direct/accept":                         "@floegence/flowersec-core/node createAcceptor",
-	"node-typescript/tunnel-runtime/websocket/tunnel/pair-forward":                  "@floegence/flowersec-core/node createTunnelRuntime",
-	"node-typescript/endpoint-client/raw-quic/direct/connect":                       "@floegence/flowersec-core/node connect",
-	"node-typescript/endpoint-client/raw-quic/tunnel/connect":                       "@floegence/flowersec-core/node connect",
-	"node-typescript/direct-server/raw-quic/direct/accept":                          "@floegence/flowersec-core/node createAcceptor",
-	"node-typescript/tunnel-runtime/raw-quic/tunnel/pair-forward":                   "@floegence/flowersec-core/node createTunnelRuntime",
-	"node-typescript/control-plane/carrier-neutral/carrier-neutral/issue-authorize": "@floegence/flowersec-core/node Issuer/authorizeRuntime",
-	"node-typescript/proxy-server/carrier-neutral/direct/proxy":                     "@floegence/flowersec-core/node ProxyServer",
-	"rust/endpoint-client/websocket/direct/connect":                                 "flowersec::connect",
-	"rust/endpoint-client/websocket/tunnel/connect":                                 "flowersec::connect",
-	"rust/direct-server/websocket/direct/accept":                                    "flowersec::Acceptor::bind_websocket",
-	"rust/tunnel-runtime/websocket/tunnel/pair-forward":                             "flowersec::TunnelRuntime::bind_websocket",
-	"rust/endpoint-client/raw-quic/direct/connect":                                  "flowersec::connect",
-	"rust/endpoint-client/raw-quic/tunnel/connect":                                  "flowersec::connect",
-	"rust/direct-server/raw-quic/direct/accept":                                     "flowersec::Acceptor",
-	"rust/tunnel-runtime/raw-quic/tunnel/pair-forward":                              "flowersec::TunnelRuntime::bind_raw_quic",
-	"rust/control-plane/carrier-neutral/carrier-neutral/issue-authorize":            "flowersec::controlplane",
-	"rust/proxy-server/carrier-neutral/direct/proxy":                                "flowersec::ProxyServer",
+	"go/endpoint-client/websocket/direct/connect":                      "flowersec.Connect",
+	"go/endpoint-client/websocket/tunnel/connect":                      "flowersec.Connect",
+	"go/direct-server/websocket/direct/accept":                         "flowersec.NewAcceptor/NewWebSocketDirectListener",
+	"go/tunnel-runtime/websocket/tunnel/pair-forward":                  "flowersec.NewTunnelRuntime/NewWebSocketTunnelListener",
+	"go/endpoint-client/raw-quic/direct/connect":                       "flowersec.Connect",
+	"go/endpoint-client/raw-quic/tunnel/connect":                       "flowersec.Connect",
+	"go/direct-server/raw-quic/direct/accept":                          "flowersec.NewAcceptor/NewRawQUICDirectListener",
+	"go/tunnel-runtime/raw-quic/tunnel/pair-forward":                   "flowersec.NewTunnelRuntime/NewRawQUICTunnelListener",
+	"go/endpoint-client/webtransport/direct/connect":                   "flowersec.Connect",
+	"go/endpoint-client/webtransport/tunnel/connect":                   "flowersec.Connect",
+	"go/direct-server/webtransport/direct/accept":                      "flowersec.NewAcceptor/NewWebTransportDirectListener",
+	"go/tunnel-runtime/webtransport/tunnel/pair-forward":               "flowersec.NewTunnelRuntime/NewWebTransportTunnelListener",
+	"go/control-plane/carrier-neutral/carrier-neutral/issue-authorize": "flowersec-go/v3/controlplane",
+	"go/proxy-server/carrier-neutral/direct/proxy":                     "flowersec.NewProxyServer",
+	"node-typescript/endpoint-client/websocket/direct/connect":         "@floegence/flowersec-core/node connect",
+	"node-typescript/endpoint-client/websocket/tunnel/connect":         "@floegence/flowersec-core/node connect",
+	"node-typescript/direct-server/websocket/direct/accept":            "@floegence/flowersec-core/node createAcceptor",
+	"node-typescript/tunnel-runtime/websocket/tunnel/pair-forward":     "@floegence/flowersec-core/node createTunnelRuntime",
+	"node-typescript/endpoint-client/raw-quic/direct/connect":          "@floegence/flowersec-core/node connect",
+	"node-typescript/endpoint-client/raw-quic/tunnel/connect":          "@floegence/flowersec-core/node connect",
+	"node-typescript/direct-server/raw-quic/direct/accept":             "@floegence/flowersec-core/node createAcceptor",
+	"node-typescript/tunnel-runtime/raw-quic/tunnel/pair-forward":      "@floegence/flowersec-core/node createTunnelRuntime",
+	"node-typescript/proxy-server/carrier-neutral/direct/proxy":        "@floegence/flowersec-core/node ProxyServer",
+	"rust/endpoint-client/websocket/direct/connect":                    "flowersec::connect",
+	"rust/endpoint-client/websocket/tunnel/connect":                    "flowersec::connect",
+	"rust/direct-server/websocket/direct/accept":                       "flowersec::Acceptor::bind_websocket",
+	"rust/tunnel-runtime/websocket/tunnel/pair-forward":                "flowersec::TunnelRuntime::bind_websocket",
+	"rust/endpoint-client/raw-quic/direct/connect":                     "flowersec::connect",
+	"rust/endpoint-client/raw-quic/tunnel/connect":                     "flowersec::connect",
+	"rust/direct-server/raw-quic/direct/accept":                        "flowersec::Acceptor",
+	"rust/tunnel-runtime/raw-quic/tunnel/pair-forward":                 "flowersec::TunnelRuntime::bind_raw_quic",
+	"rust/proxy-server/carrier-neutral/direct/proxy":                   "flowersec::ProxyServer",
 }
 
 var expectedPortableServerEntrypoints = map[string]map[string]string{
@@ -672,7 +676,7 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	if len(matrix.CapabilityCoverage) != len(requiredPortableCapabilityIDs) {
 		return errors.New("interop capability coverage must contain every portable capability exactly once")
 	}
-	fmt.Printf("Transport v2 interop matrix OK: %d direct cells, %d tunnel topologies, %d cases\n", len(matrix.DirectCells), len(matrix.TunnelTopologies), len(matrix.Cases))
+	fmt.Printf("Transport v3 interop matrix OK: %d direct cells, %d tunnel topologies, %d cases\n", len(matrix.DirectCells), len(matrix.TunnelTopologies), len(matrix.Cases))
 	return nil
 }
 
@@ -721,7 +725,6 @@ func validateDirectInteropCells(matrix interopMatrix, registryIDs map[string]str
 			if !isStableUnsupportedReason(cell.Reason) {
 				return fmt.Errorf("unsupported interop cell %s requires a stable English reason", cell.ID)
 			}
-			return fmt.Errorf("required interop cell %s cannot be unsupported", cell.ID)
 		default:
 			return fmt.Errorf("interop cell %s has forbidden status %q", cell.ID, cell.Status)
 		}
@@ -791,7 +794,6 @@ func validateTunnelInteropTopologies(matrix interopMatrix, registryIDs map[strin
 			if !isStableUnsupportedReason(topology.Reason) {
 				return fmt.Errorf("unsupported tunnel topology %s requires a stable English reason", topology.ID)
 			}
-			return fmt.Errorf("required tunnel topology %s cannot be unsupported", topology.ID)
 		default:
 			return fmt.Errorf("tunnel topology %s has forbidden status %q", topology.ID, topology.Status)
 		}
@@ -1003,7 +1005,7 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 	if err := decodeStrictJSONFile(filepath.Join(repoRoot, capabilityManifestPath), &m); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", capabilityManifestPath, err)
 	}
-	if m.Version != 2 {
+	if m.Version != 3 {
 		return nil, fmt.Errorf("unsupported capability manifest version %d", m.Version)
 	}
 	if err := validateServerParityContract(m.ServerParityContract); err != nil {
@@ -1207,26 +1209,26 @@ func validateServerParityContract(contract *serverParityContract) error {
 }
 
 func validateDeploymentProfiles(contract deploymentProfilesContract, parity *serverParityContract) error {
-	if contract.Version != 1 || contract.ApplicationWire != "shared_across_runtimes_and_carriers" {
-		return errors.New("deployment_profiles must declare version 1 and the shared application wire")
+	if contract.Version != 3 || contract.ApplicationWire != "flowersec/3" {
+		return errors.New("deployment_profiles must declare version 3 and the flowersec/3 application wire")
 	}
 	expected := []deploymentProfile{
 		{
 			ID: "native-server-core", ClaimedRuntimes: []string{"go", "rust", "node-typescript"},
-			TransportRuntimeIDs: []string{"go_native", "rust_native", "typescript_node"},
+			TransportRuntimeIDs: []string{"go/native", "rust/native", "typescript/node"},
 			RequiredRoles:       []string{"endpoint-client", "direct-server", "tunnel-runtime"}, RequiredCarriers: []string{"websocket", "raw-quic"},
 			RequiredPaths:         map[string][]string{"endpoint-client": {"direct", "tunnel"}, "direct-server": {"direct"}, "tunnel-runtime": {"tunnel"}},
-			RequiredCapabilityIDs: []string{"opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "client_rpc_handlers", "validated_stream_metadata", "application_stream_handlers", "connection_controller", "server_acceptor_session", "server_session_handlers", "controlplane_issue_authorize", "server_admission_paths", "browser_proxy_runtime", "carrier_contract", "wire_security"},
+			RequiredCapabilityIDs: []string{"opaque_artifact", "opaque_connector", "secure_session", "rpc_call_notify", "client_rpc_handlers", "validated_stream_metadata", "application_stream_handlers", "connection_controller", "server_acceptor_session", "server_session_handlers", "server_admission_paths", "carrier_contract", "wire_security"},
 			OptionalCarriers:      []string{"webtransport"}, RequiredTupleCount: 18, RequiredPathUnitCount: 24,
 		},
 		{
-			ID: "browser-client", ClaimedRuntimes: []string{"typescript-browser"}, TransportRuntimeIDs: []string{"typescript_browser"}, RequiredRoles: []string{"endpoint-client"}, RequiredCarriers: []string{"websocket"},
+			ID: "browser-client", ClaimedRuntimes: []string{"typescript-browser"}, TransportRuntimeIDs: []string{"typescript/browser"}, RequiredRoles: []string{"endpoint-client"}, RequiredCarriers: []string{"websocket"},
 			RequiredPaths:         map[string][]string{"endpoint-client": {"direct", "tunnel"}},
 			RequiredCapabilityIDs: []string{"opaque_artifact", "secure_session", "rpc_call_notify", "validated_stream_metadata", "application_stream_handlers", "connection_controller"},
 			OptionalCarriers:      []string{"webtransport"}, RequiredTupleCount: 1, RequiredPathUnitCount: 2,
 		},
 		{
-			ID: "apple-client", ClaimedRuntimes: []string{"swift"}, TransportRuntimeIDs: []string{"swift_ios", "swift_macos"}, RequiredRoles: []string{"endpoint-client"}, RequiredCarriers: []string{"websocket"},
+			ID: "apple-client", ClaimedRuntimes: []string{"swift"}, TransportRuntimeIDs: []string{"swift/ios", "swift/macos"}, RequiredRoles: []string{"endpoint-client"}, RequiredCarriers: []string{"websocket"},
 			RequiredPaths:         map[string][]string{"endpoint-client": {"direct", "tunnel"}},
 			RequiredCapabilityIDs: []string{"opaque_artifact", "secure_session", "rpc_call_notify", "validated_stream_metadata", "application_stream_handlers", "connection_controller"},
 			RequiredTupleCount:    1, RequiredPathUnitCount: 2,
@@ -1324,16 +1326,24 @@ func validateDeploymentProfileTransportBindings(contract deploymentProfilesContr
 	if transport == nil {
 		return errors.New("deployment profiles require the transport contract")
 	}
-	if contract.ApplicationWire != transport.Policies.ProfileApplicationWire {
-		return errors.New("deployment profile and transport contracts disagree on the application wire")
+	if contract.ApplicationWire != "flowersec/3" || transport.Version != 2 {
+		return errors.New("deployment profile must use flowersec/3 over the frozen transport v2 tuple baseline")
 	}
 	runtimes := make(map[string]transportV2Runtime, len(transport.Runtimes))
 	for _, runtime := range transport.Runtimes {
 		runtimes[runtime.ID] = runtime
 	}
+	baselineRuntimeID := map[string]string{
+		"go/native":          "go_native",
+		"rust/native":        "rust_native",
+		"typescript/node":    "typescript_node",
+		"typescript/browser": "typescript_browser",
+		"swift/ios":          "swift_ios",
+		"swift/macos":        "swift_macos",
+	}
 	for _, profile := range contract.Profiles {
 		for _, runtimeID := range profile.TransportRuntimeIDs {
-			runtime, ok := runtimes[runtimeID]
+			runtime, ok := runtimes[baselineRuntimeID[runtimeID]]
 			if !ok {
 				return fmt.Errorf("deployment profile %q references unknown transport runtime %q", profile.ID, runtimeID)
 			}
@@ -1407,7 +1417,7 @@ func validateRequiredServerParityComplete(contract *serverParityContract) error 
 		return err
 	}
 	for _, unit := range contract.Units {
-		if unit.Status == "unsupported" && unit.Carrier != "webtransport" {
+		if unit.Status == "unsupported" && unit.Carrier != "webtransport" && unit.Role != "control-plane" && unit.Role != "proxy-server" {
 			key := strings.Join([]string{unit.Runtime, unit.Role, unit.Carrier, unit.Path, unit.Feature}, "/")
 			return fmt.Errorf("required server parity unit %s is unsupported: %s", key, unit.Reason)
 		}

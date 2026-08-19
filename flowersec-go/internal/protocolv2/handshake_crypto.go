@@ -9,7 +9,7 @@ import (
 	"errors"
 	"io"
 
-	internalhkdf "github.com/floegence/flowersec/flowersec-go/v2/internal/hkdf"
+	internalhkdf "github.com/floegence/flowersec/flowersec-go/v3/internal/hkdf"
 )
 
 var (

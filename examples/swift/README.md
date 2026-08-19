@@ -1,6 +1,6 @@
 # Swift Cookbook
 
-The Swift example prints the opaque Flowersec v2 public contract marker and
+The Swift example prints the opaque Flowersec v3 public contract marker and
 optionally establishes a macOS WSS session from an artifact lease. A connected
 client exercises typed RPC, decoded notification delivery, reliable stream
 write/read/FIN, liveness, subscription cancellation, and session close.
@@ -16,7 +16,7 @@ swift run --package-path ./examples/swift
 Output without an artifact is:
 
 ```text
-transport=v2
+transport=v3
 session_api=opaque
 ```
 
@@ -24,8 +24,8 @@ To establish and close a session, provide a fresh artifact containing a
 macOS-compatible WSS candidate and a new path for the durable spend receipt:
 
 ```bash
-FSEC_ARTIFACT_V2_PATH=/secure/path/artifact-v2.json \
-FSEC_SPEND_RECEIPT_V2_PATH=/durable/state/artifact.spent \
+FSEC_ARTIFACT_V3_PATH=/secure/path/artifact-v3.json \
+FSEC_SPEND_RECEIPT_V3_PATH=/durable/state/artifact.spent \
   swift run --package-path ./examples/swift
 ```
 
@@ -49,5 +49,5 @@ Applications receive only opaque artifacts, sessions, RPC peers, byte streams, a
 ## Troubleshooting
 
 - Spent or expired artifact: acquire a fresh artifact and retry.
-- TLS or subprotocol rejection: verify the WSS certificate trust chain and exact Flowersec v2 subprotocol.
+- TLS or subprotocol rejection: verify the artifact's CA or pin policy and the exact Flowersec v3 subprotocol.
 - Dependency resolution failure: run `swift package resolve --package-path ./examples/swift` and retry.

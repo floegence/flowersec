@@ -1,8 +1,9 @@
-module github.com/floegence/flowersec/flowersec-go/v2
+module github.com/floegence/flowersec/flowersec-go/v3
 
 go 1.26.6
 
 require (
+	github.com/floegence/flowersec/flowersec-go/v2 v2.5.4
 	github.com/gorilla/websocket v1.5.3
 	github.com/libp2p/go-yamux/v5 v5.1.0
 	github.com/quic-go/quic-go v0.61.0

@@ -116,12 +116,13 @@ WebTransport é um adaptador opcional e não faz parte do contrato de carrier na
 ## Segurança
 
 - Os dados do aplicativo são criptografados de ponta a ponta em sessões diretas e via relay.
+- A política de confiança TLS é vinculada a cada candidato de transporte v3. Raízes de CA públicas ou fornecidas pela implantação e pins explícitos do certificado folha são mutuamente exclusivos, sem rebaixamento após falha.
 - Os convites de conexão são opacos, de curta duração e de uso único.
 - As credenciais são consumidas antes do uso, impedindo a repetição de um convite já usado.
 - Relays apenas encaminham tráfego criptografado; eles não encerram sessões do aplicativo.
 - Tentativas inválidas ou não compatíveis falham com segurança e retornam erros públicos limitados.
 
-Para detalhes do protocolo e do modelo de ameaças, leia o [contrato da API](docs/API_CONTRACT.md), a [arquitetura de transporte](docs/TRANSPORT_V2_ARCHITECTURE.md) e o [modelo de ameaças](docs/THREAT_MODEL.md).
+Para detalhes do protocolo e do modelo de ameaças, leia o [contrato da API](docs/API_CONTRACT.md), a [arquitetura de transporte](docs/TRANSPORT_V3_ARCHITECTURE.md) e o [modelo de ameaças](docs/THREAT_MODEL.md).
 
 <!-- readme-section:deploy-and-develop -->
 <a id="deploy-and-develop"></a>
@@ -130,7 +131,7 @@ Para detalhes do protocolo e do modelo de ameaças, leia o [contrato da API](doc
 
 - [Contrato da API](docs/API_CONTRACT.md): comportamento estável compartilhado pelos SDKs.
 - [Modelo de erros](docs/ERROR_MODEL.md): erros públicos de conexão, sessão e RPC.
-- [Arquitetura de transporte](docs/TRANSPORT_V2_ARCHITECTURE.md): projeto das conexões diretas e via relay.
+- [Arquitetura de transporte](docs/TRANSPORT_V3_ARCHITECTURE.md): projeto das conexões diretas e via relay.
 - [Exemplos](examples/README.md): uso executável dos SDKs.
 
 Flowersec está disponível sob a [licença MIT](LICENSE). Os pacotes publicados e as notas de versão estão em [GitHub Releases](https://github.com/floegence/flowersec/releases).

@@ -10,13 +10,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/runtimev2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv2"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/runtimev2"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/session"
 )
 
 var (

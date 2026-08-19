@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
-	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
 )
 
 // Operation records one real workload operation without pre-aggregating its
