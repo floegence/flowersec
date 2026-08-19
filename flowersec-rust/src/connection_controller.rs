@@ -305,6 +305,8 @@ impl ConnectionController {
     pub async fn wait_for_snapshot_change(&self, after: &ConnectionSnapshot) -> ConnectionSnapshot {
         loop {
             let changed = self.inner.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             if self.inner.status().revision != after.revision {
                 return self.inner.snapshot();
             }
@@ -1040,6 +1042,8 @@ async fn wait_for_retry(
 async fn wait_for_retry_now(inner: &ControllerInner, revision: u64) {
     loop {
         let notified = inner.retry_wake.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         if inner.retry_revision.load(Ordering::Acquire) == revision {
             return;
         }

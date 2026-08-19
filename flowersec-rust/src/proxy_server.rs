@@ -260,6 +260,8 @@ impl ProxyServer {
         self.inner.closed.cancel();
         loop {
             let completion = self.inner.completion.notified();
+            tokio::pin!(completion);
+            completion.as_mut().enable();
             if self.inner.active.load(Ordering::Acquire) == 0 {
                 return;
             }

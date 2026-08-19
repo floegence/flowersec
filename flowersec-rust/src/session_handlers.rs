@@ -502,14 +502,33 @@ async fn serve_stream_snapshot(
             continue;
         };
         let handler_cancellation = handler_shutdown.child_token();
+        let cleanup_shutdown = handler_shutdown.clone();
         tasks.spawn(async move {
             let _permit = permit;
-            let succeeded = AssertUnwindSafe(handler.handle(&incoming, handler_cancellation))
-                .catch_unwind()
-                .await
-                .is_ok_and(|result| result.is_ok());
-            if !succeeded || incoming.stream().close_write().await.is_err() {
-                let _ = incoming.stream().reset().await;
+            let succeeded =
+                AssertUnwindSafe(handler.handle(&incoming, handler_cancellation.clone()))
+                    .catch_unwind()
+                    .await
+                    .is_ok_and(|result| result.is_ok());
+            if !succeeded {
+                tokio::select! {
+                    biased;
+                    _ = cleanup_shutdown.cancelled() => {},
+                    _ = incoming.stream().reset() => {},
+                }
+                return;
+            }
+            let close_result = tokio::select! {
+                biased;
+                _ = cleanup_shutdown.cancelled() => return,
+                result = incoming.stream().close_write() => result,
+            };
+            if close_result.is_err() {
+                tokio::select! {
+                    biased;
+                    _ = cleanup_shutdown.cancelled() => {},
+                    _ = incoming.stream().reset() => {},
+                }
             }
         });
     };
@@ -529,6 +548,7 @@ impl fmt::Debug for AcceptedSession {
 mod tests {
     use std::{
         fs,
+        future::pending,
         path::PathBuf,
         sync::atomic::{AtomicBool, AtomicUsize, Ordering},
         time::Duration,
@@ -623,7 +643,7 @@ mod tests {
         rpc: StreamTestRpcPeer,
         incoming: AsyncMutex<mpsc::UnboundedReceiver<Result<IncomingStream, SessionError>>>,
         sender: mpsc::UnboundedSender<Result<IncomingStream, SessionError>>,
-        close_count: AtomicUsize,
+        close_count: Arc<AtomicUsize>,
     }
 
     impl StreamTestSession {
@@ -633,7 +653,7 @@ mod tests {
                 rpc: StreamTestRpcPeer,
                 incoming: AsyncMutex::new(incoming),
                 sender,
-                close_count: AtomicUsize::new(0),
+                close_count: Arc::new(AtomicUsize::new(0)),
             }
         }
 
@@ -705,6 +725,8 @@ mod tests {
         kind: String,
         state: Arc<StreamTestState>,
         fail_close_write: bool,
+        block_close_write: bool,
+        block_reset: bool,
     }
 
     #[async_trait]
@@ -731,6 +753,9 @@ mod tests {
 
         async fn close_write(&self) -> Result<(), SessionError> {
             self.state.close_write_count.fetch_add(1, Ordering::SeqCst);
+            if self.block_close_write {
+                pending::<()>().await;
+            }
             if self.fail_close_write {
                 Err(SessionError::OperationFailed)
             } else {
@@ -740,6 +765,9 @@ mod tests {
 
         async fn reset(&self) -> Result<(), SessionError> {
             self.state.reset_count.fetch_add(1, Ordering::SeqCst);
+            if self.block_reset {
+                pending::<()>().await;
+            }
             Ok(())
         }
 
@@ -760,6 +788,28 @@ mod tests {
                 kind: kind.to_owned(),
                 state,
                 fail_close_write,
+                block_close_write: false,
+                block_reset: false,
+            }),
+        )
+    }
+
+    fn stream_test_incoming_with_blocking_cleanup(
+        kind: &str,
+        state: Arc<StreamTestState>,
+        fail_close_write: bool,
+        block_close_write: bool,
+        block_reset: bool,
+    ) -> IncomingStream {
+        IncomingStream::new(
+            kind,
+            StreamMetadata::empty(),
+            Box::new(StreamTestByteStream {
+                kind: kind.to_owned(),
+                state,
+                fail_close_write,
+                block_close_write,
+                block_reset,
             }),
         )
     }
@@ -770,6 +820,9 @@ mod tests {
         Failure,
         Panic,
         WaitForCancellation,
+        WaitForCancellationThenFailure,
+        SelfCancelSuccess,
+        SelfCancelFailure,
     }
 
     #[derive(Debug)]
@@ -789,6 +842,28 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct WaitForSessionCloseHandler {
+        close_count: Arc<AtomicUsize>,
+        completed: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl StreamHandler for WaitForSessionCloseHandler {
+        async fn handle(
+            &self,
+            _stream: &IncomingStream,
+            cancellation: CancellationToken,
+        ) -> Result<(), SessionError> {
+            cancellation.cancelled().await;
+            while self.close_count.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+            self.completed.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
     #[async_trait]
     impl StreamHandler for StreamTestHandler {
         async fn handle(
@@ -805,6 +880,18 @@ mod tests {
                     cancellation.cancelled().await;
                     Ok(())
                 }
+                StreamTestBehavior::WaitForCancellationThenFailure => {
+                    cancellation.cancelled().await;
+                    Err(SessionError::OperationFailed)
+                }
+                StreamTestBehavior::SelfCancelSuccess => {
+                    cancellation.cancel();
+                    Ok(())
+                }
+                StreamTestBehavior::SelfCancelFailure => {
+                    cancellation.cancel();
+                    Err(SessionError::OperationFailed)
+                }
             };
             self.completed.store(true, Ordering::SeqCst);
             result
@@ -818,6 +905,8 @@ mod tests {
         let failure = Arc::new(StreamTestState::default());
         let panicked = Arc::new(StreamTestState::default());
         let close_failure = Arc::new(StreamTestState::default());
+        let self_canceled_success = Arc::new(StreamTestState::default());
+        let self_canceled_failure = Arc::new(StreamTestState::default());
         let unknown = Arc::new(StreamTestState::default());
         session.enqueue(Ok(stream_test_incoming("success", success.clone(), false)));
         session.enqueue(Ok(stream_test_incoming("failure", failure.clone(), false)));
@@ -827,8 +916,17 @@ mod tests {
             close_failure.clone(),
             true,
         )));
+        session.enqueue(Ok(stream_test_incoming(
+            "self-canceled-success",
+            self_canceled_success.clone(),
+            false,
+        )));
+        session.enqueue(Ok(stream_test_incoming(
+            "self-canceled-failure",
+            self_canceled_failure.clone(),
+            false,
+        )));
         session.enqueue(Ok(stream_test_incoming("unknown", unknown.clone(), false)));
-        session.enqueue(Err(SessionError::Closed));
 
         let mut handlers = StreamHandlers::default();
         handlers
@@ -852,22 +950,181 @@ mod tests {
                 StreamTestHandler::new(StreamTestBehavior::Success),
             )
             .expect("register close failure handler");
+        handlers
+            .handle_stream(
+                "self-canceled-success",
+                StreamTestHandler::new(StreamTestBehavior::SelfCancelSuccess),
+            )
+            .expect("register self-canceling success handler");
+        handlers
+            .handle_stream(
+                "self-canceled-failure",
+                StreamTestHandler::new(StreamTestBehavior::SelfCancelFailure),
+            )
+            .expect("register self-canceling failure handler");
 
-        let result = tokio::time::timeout(
-            Duration::from_secs(1),
-            handlers.serve(&session, CancellationToken::new()),
-        )
+        let serving = handlers.serve(&session, CancellationToken::new());
+        let terminating = async {
+            while success.close_write_count.load(Ordering::SeqCst) == 0
+                || failure.reset_count.load(Ordering::SeqCst) == 0
+                || panicked.reset_count.load(Ordering::SeqCst) == 0
+                || close_failure.reset_count.load(Ordering::SeqCst) == 0
+                || self_canceled_success
+                    .close_write_count
+                    .load(Ordering::SeqCst)
+                    == 0
+                || self_canceled_failure.reset_count.load(Ordering::SeqCst) == 0
+                || unknown.reset_count.load(Ordering::SeqCst) == 0
+            {
+                tokio::task::yield_now().await;
+            }
+            session.enqueue(Err(SessionError::Closed));
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(serving, terminating)
+        })
         .await
         .expect("stream serving cleanup timed out");
         assert_eq!(result, Err(SessionError::Closed));
         assert_eq!(session.close_count.load(Ordering::SeqCst), 1);
         assert_eq!(success.close_write_count.load(Ordering::SeqCst), 1);
         assert_eq!(success.reset_count.load(Ordering::SeqCst), 0);
+        assert_eq!(failure.close_write_count.load(Ordering::SeqCst), 0);
         assert_eq!(failure.reset_count.load(Ordering::SeqCst), 1);
+        assert_eq!(panicked.close_write_count.load(Ordering::SeqCst), 0);
         assert_eq!(panicked.reset_count.load(Ordering::SeqCst), 1);
         assert_eq!(close_failure.close_write_count.load(Ordering::SeqCst), 1);
         assert_eq!(close_failure.reset_count.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            self_canceled_success
+                .close_write_count
+                .load(Ordering::SeqCst),
+            1
+        );
+        assert_eq!(self_canceled_success.reset_count.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            self_canceled_failure
+                .close_write_count
+                .load(Ordering::SeqCst),
+            0
+        );
+        assert_eq!(self_canceled_failure.reset_count.load(Ordering::SeqCst), 1);
         assert_eq!(unknown.reset_count.load(Ordering::SeqCst), 1);
+    }
+
+    async fn assert_pending_cleanup_yields_to_shutdown(
+        behavior: StreamTestBehavior,
+        fail_close_write: bool,
+        block_close_write: bool,
+        block_reset: bool,
+        wait_for_reset: bool,
+    ) {
+        let session = StreamTestSession::new();
+        let active = Arc::new(StreamTestState::default());
+        session.enqueue(Ok(stream_test_incoming_with_blocking_cleanup(
+            "held",
+            active.clone(),
+            fail_close_write,
+            block_close_write,
+            block_reset,
+        )));
+
+        let mut handlers = StreamHandlers::default();
+        handlers
+            .handle_stream("held", StreamTestHandler::new(behavior))
+            .expect("register cleanup handler");
+        let cancellation = CancellationToken::new();
+        let serving = handlers.serve(&session, cancellation.clone());
+        let canceling = async {
+            loop {
+                let count = if wait_for_reset {
+                    active.reset_count.load(Ordering::SeqCst)
+                } else {
+                    active.close_write_count.load(Ordering::SeqCst)
+                };
+                if count > 0 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            cancellation.cancel();
+        };
+
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(serving, canceling)
+        })
+        .await
+        .expect("pending stream cleanup did not yield to shutdown");
+        assert_eq!(result, Err(SessionError::Canceled));
+        assert_eq!(session.close_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn pending_close_write_yields_to_shutdown() {
+        assert_pending_cleanup_yields_to_shutdown(
+            StreamTestBehavior::Success,
+            false,
+            true,
+            false,
+            false,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn pending_failure_reset_yields_to_shutdown() {
+        assert_pending_cleanup_yields_to_shutdown(
+            StreamTestBehavior::Failure,
+            false,
+            false,
+            true,
+            true,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn pending_close_failure_reset_yields_to_shutdown() {
+        assert_pending_cleanup_yields_to_shutdown(
+            StreamTestBehavior::Success,
+            true,
+            false,
+            true,
+            true,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn stream_handlers_close_session_before_waiting_for_handlers() {
+        let session = StreamTestSession::new();
+        let active = Arc::new(StreamTestState::default());
+        session.enqueue(Ok(stream_test_incoming("held", active.clone(), false)));
+        session.enqueue(Err(SessionError::Closed));
+
+        let completed = Arc::new(AtomicBool::new(false));
+        let mut handlers = StreamHandlers::default();
+        handlers
+            .handle_stream(
+                "held",
+                WaitForSessionCloseHandler {
+                    close_count: session.close_count.clone(),
+                    completed: completed.clone(),
+                },
+            )
+            .expect("register close-order handler");
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            handlers.serve(&session, CancellationToken::new()),
+        )
+        .await
+        .expect("session close waited for an active handler");
+        assert_eq!(result, Err(SessionError::Closed));
+        assert!(completed.load(Ordering::SeqCst));
+        assert_eq!(session.close_count.load(Ordering::SeqCst), 1);
+        assert_eq!(active.close_write_count.load(Ordering::SeqCst), 0);
+        assert_eq!(active.reset_count.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -893,7 +1150,8 @@ mod tests {
         assert_eq!(result, Err(SessionError::Closed));
         assert!(completed.load(Ordering::SeqCst));
         assert_eq!(session.close_count.load(Ordering::SeqCst), 1);
-        assert_eq!(active.close_write_count.load(Ordering::SeqCst), 1);
+        assert_eq!(active.close_write_count.load(Ordering::SeqCst), 0);
+        assert_eq!(active.reset_count.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -904,7 +1162,7 @@ mod tests {
         session.enqueue(Ok(stream_test_incoming("held", active.clone(), false)));
         session.enqueue(Ok(stream_test_incoming("held", excess.clone(), false)));
 
-        let handler = StreamTestHandler::new(StreamTestBehavior::WaitForCancellation);
+        let handler = StreamTestHandler::new(StreamTestBehavior::WaitForCancellationThenFailure);
         let started = handler.started.clone();
         let completed = handler.completed.clone();
         let mut handlers = StreamHandlers::new(StreamHandlerOptions {
@@ -932,7 +1190,8 @@ mod tests {
         assert_eq!(result, Err(SessionError::Canceled));
         assert!(completed.load(Ordering::SeqCst));
         assert_eq!(session.close_count.load(Ordering::SeqCst), 1);
-        assert_eq!(active.close_write_count.load(Ordering::SeqCst), 1);
+        assert_eq!(active.close_write_count.load(Ordering::SeqCst), 0);
+        assert_eq!(active.reset_count.load(Ordering::SeqCst), 0);
         assert_eq!(excess.reset_count.load(Ordering::SeqCst), 1);
     }
 

@@ -2123,6 +2123,117 @@ async fn reset_wakes_full_rekey_buffer_and_releases_capacity_once() {
 }
 
 #[tokio::test]
+async fn local_reset_wakes_application_io_before_control_cleanup() {
+    let (client_carrier, server_inner) = memory_carrier_pair_for_logical(1);
+    let control_enabled = Arc::new(AtomicBool::new(false));
+    let control_entered = Arc::new(Notify::new());
+    let control_release = Arc::new(Notify::new());
+    let control_gated: Arc<dyn CarrierSessionV2> = Arc::new(BlockingNthWriteCarrierSession {
+        inner: server_inner,
+        enabled: control_enabled.clone(),
+        writes: Arc::new(AtomicU64::new(0)),
+        block_on: 1,
+        entered: control_entered.clone(),
+        release: control_release.clone(),
+    });
+    let write_enabled = Arc::new(AtomicBool::new(false));
+    let write_entered = Arc::new(Notify::new());
+    let write_release = Arc::new(Notify::new());
+    let application_write_gated: Arc<dyn CarrierSessionV2> =
+        Arc::new(BlockingNthWriteCarrierSession {
+            inner: control_gated,
+            enabled: write_enabled.clone(),
+            writes: Arc::new(AtomicU64::new(0)),
+            block_on: 1,
+            entered: write_entered.clone(),
+            release: write_release.clone(),
+        });
+    let read_enabled = Arc::new(AtomicBool::new(false));
+    let read_entered = Arc::new(Notify::new());
+    let read_release = Arc::new(Notify::new());
+    let server_carrier: Arc<dyn CarrierSessionV2> =
+        Arc::new(BlockingApplicationReadCarrierSession {
+            inner: application_write_gated,
+            accepts: AtomicU64::new(0),
+            block_on: 2,
+            enabled: read_enabled.clone(),
+            entered: read_entered.clone(),
+            release: read_release.clone(),
+        });
+    let client_config = regression_config(SessionRole::Client, "local-reset-io", 1, None);
+    let server_config = regression_config(SessionRole::Server, "local-reset-io", 1, None);
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+    let (outgoing, incoming) = tokio::join!(
+        client.open_stream("local-reset-io", StreamMetadata::empty()),
+        server.accept_stream(),
+    );
+    let outgoing = outgoing.expect("open stream");
+    let incoming = Arc::new(incoming.expect("accept stream"));
+
+    read_enabled.store(true, Ordering::Release);
+    write_enabled.store(true, Ordering::Release);
+    let reading_stream = incoming.clone();
+    let reading = tokio::spawn(async move { reading_stream.stream().read().await });
+    tokio::time::timeout(Duration::from_millis(250), read_entered.notified())
+        .await
+        .expect("application read never reached the carrier gate");
+    let writing_stream = incoming.clone();
+    let writing = tokio::spawn(async move {
+        writing_stream
+            .stream()
+            .write(Bytes::from_static(b"blocked write"))
+            .await
+    });
+    tokio::time::timeout(Duration::from_millis(250), write_entered.notified())
+        .await
+        .expect("application write never reached the carrier gate");
+
+    write_enabled.store(false, Ordering::Release);
+    control_enabled.store(true, Ordering::Release);
+    let resetting_stream = incoming.clone();
+    let mut resetting = tokio::spawn(async move { resetting_stream.stream().reset().await });
+    tokio::time::timeout(Duration::from_millis(250), control_entered.notified())
+        .await
+        .expect("STREAM_RESET never reached the control write gate");
+
+    let read_error = tokio::time::timeout(Duration::from_millis(250), reading)
+        .await
+        .expect("local reset did not wake the application read")
+        .expect("join application read")
+        .expect_err("local reset must fail the application read");
+    assert_eq!(read_error, SessionError::StreamReset);
+    let write_error = tokio::time::timeout(Duration::from_millis(250), writing)
+        .await
+        .expect("local reset did not wake the application write")
+        .expect("join application write")
+        .expect_err("local reset must fail the application write");
+    assert_eq!(write_error, SessionError::StreamReset);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut resetting)
+            .await
+            .is_err(),
+        "reset completed before the owned control cleanup was released"
+    );
+
+    control_release.notify_one();
+    tokio::time::timeout(Duration::from_millis(250), resetting)
+        .await
+        .expect("reset did not finish after releasing control cleanup")
+        .expect("join reset task")
+        .expect("reset stream");
+    read_release.notify_one();
+    write_release.notify_one();
+    drop(outgoing);
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
 async fn encrypted_stream_reports_only_the_closed_terminal_error_set() {
     let (client, server) = establish_pair().await;
     let (opened, incoming) = tokio::join!(
@@ -2603,7 +2714,7 @@ async fn rekey_prepare_timeout_leaves_the_session_recoverable() {
         .await
         .expect_err("pre-commit responder freeze must time out");
     assert_eq!(error, SessionError::RekeyFailed);
-    release.notify_waiters();
+    release.notify_one();
     let incoming = tokio::time::timeout(Duration::from_millis(750), client.accept_stream())
         .await
         .expect("inbound OPEN remained frozen after prepare timeout")
@@ -2734,7 +2845,7 @@ async fn dropping_a_committed_rekey_future_keeps_owned_completion_running() {
         .await
         .expect_err("caller future must be canceled after commit");
     gate.store(false, Ordering::Release);
-    release.notify_waiters();
+    release.notify_one();
 
     tokio::time::timeout(Duration::from_millis(750), client.rekey())
         .await
@@ -2948,7 +3059,7 @@ async fn canceled_abandonment_finishes_the_in_flight_reset_record() {
         .await
         .expect("STREAM_RESET record write never blocked");
     opening.abort();
-    release.notify_waiters();
+    release.notify_one();
 
     enabled.store(false, Ordering::Release);
     let (stream, incoming) = tokio::time::timeout(Duration::from_secs(1), async {
@@ -3049,14 +3160,14 @@ async fn goaway_boundary_tightening_rejects_an_already_allocated_open() {
         .expect("server close did not flush GOAWAY before SESSION_CLOSE");
     tokio::time::sleep(Duration::from_millis(20)).await;
     client_gate.store(false, Ordering::Release);
-    client_release.notify_waiters();
+    client_release.notify_one();
     let error = tokio::time::timeout(Duration::from_secs(1), opening)
         .await
         .expect("open did not observe tightened GOAWAY boundary")
         .expect("join open task")
         .expect_err("open past GOAWAY boundary must fail");
     assert_eq!(error, SessionError::GoingAway);
-    server_release.notify_waiters();
+    server_release.notify_one();
     closing
         .await
         .expect("join close task")
@@ -3145,6 +3256,180 @@ async fn close_finishes_control_stream_before_carrier_shutdown() {
         "control FIN order {finish_order} must precede carrier close order {close_order}"
     );
     let _ = server.close().await;
+}
+
+#[tokio::test]
+async fn close_accepts_terminal_records_from_the_pre_ack_control_epoch() {
+    let (client_inner, server_inner) = memory_carrier_pair_for_logical(1);
+    let client_enabled = Arc::new(AtomicBool::new(false));
+    let client_writes = Arc::new(AtomicU64::new(0));
+    let client_entered = Arc::new(Notify::new());
+    let client_release = Arc::new(Notify::new());
+    let client_carrier: Arc<dyn CarrierSessionV2> = Arc::new(BlockingNthWriteCarrierSession {
+        inner: client_inner,
+        enabled: client_enabled.clone(),
+        writes: client_writes.clone(),
+        block_on: 1,
+        entered: client_entered.clone(),
+        release: client_release.clone(),
+    });
+    let server_enabled = Arc::new(AtomicBool::new(false));
+    let server_writes = Arc::new(AtomicU64::new(0));
+    let server_carrier: Arc<dyn CarrierSessionV2> = Arc::new(BlockingNthWriteCarrierSession {
+        inner: server_inner,
+        enabled: server_enabled.clone(),
+        writes: server_writes.clone(),
+        block_on: u64::MAX,
+        entered: Arc::new(Notify::new()),
+        release: Arc::new(Notify::new()),
+    });
+    let mut client_config =
+        regression_config(SessionRole::Client, "pre-ack-terminal-epoch", 1, None);
+    client_config.deadlines.close_flush = Duration::from_millis(500);
+    client_config.deadlines.rekey_completion = Duration::from_millis(500);
+    let mut server_config =
+        regression_config(SessionRole::Server, "pre-ack-terminal-epoch", 1, None);
+    server_config.deadlines.close_flush = Duration::from_millis(500);
+    server_config.deadlines.rekey_completion = Duration::from_millis(500);
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
+    client_writes.store(0, Ordering::Release);
+    server_writes.store(0, Ordering::Release);
+    client_enabled.store(true, Ordering::Release);
+    server_enabled.store(true, Ordering::Release);
+
+    let server_rekey = tokio::spawn({
+        let server = server.clone();
+        async move { server.rekey().await }
+    });
+    tokio::time::timeout(Duration::from_secs(1), client_entered.notified())
+        .await
+        .expect("client did not block its rekey ACK");
+    let server_close = tokio::spawn({
+        let server = server.clone();
+        async move { server.close().await }
+    });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while server_writes.load(Ordering::Acquire) < 3 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("server did not write its pre-ACK terminal sequence");
+    client_release.notify_one();
+
+    let (server_rekey, server_close) = tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::join!(server_rekey, server_close)
+    })
+    .await
+    .expect("rekey and close did not converge");
+    let _ = server_rekey.expect("join server rekey");
+    server_close
+        .expect("join server close")
+        .expect("close server");
+    client.close().await.expect("close client");
+    assert_eq!(client_writes.load(Ordering::Acquire), 2);
+    assert_eq!(server_writes.load(Ordering::Acquire), 3);
+}
+
+#[tokio::test]
+async fn close_terminal_sequence_suppresses_a_queued_pong() {
+    let (client_inner, server_inner) = memory_carrier_pair_for_logical(1);
+    let client_enabled = Arc::new(AtomicBool::new(false));
+    let client_writes = Arc::new(AtomicU64::new(0));
+    let client_entered = Arc::new(Notify::new());
+    let client_release = Arc::new(Notify::new());
+    let client_carrier: Arc<dyn CarrierSessionV2> = Arc::new(BlockingNthWriteCarrierSession {
+        inner: client_inner,
+        enabled: client_enabled.clone(),
+        writes: client_writes.clone(),
+        block_on: 1,
+        entered: client_entered.clone(),
+        release: client_release.clone(),
+    });
+    let server_enabled = Arc::new(AtomicBool::new(false));
+    let server_writes = Arc::new(AtomicU64::new(0));
+    let server_carrier: Arc<dyn CarrierSessionV2> = Arc::new(BlockingNthWriteCarrierSession {
+        inner: server_inner,
+        enabled: server_enabled.clone(),
+        writes: server_writes.clone(),
+        block_on: u64::MAX,
+        entered: Arc::new(Notify::new()),
+        release: Arc::new(Notify::new()),
+    });
+    let mut client_config =
+        regression_config(SessionRole::Client, "terminal-control-sequence", 1, None);
+    client_config.deadlines.close_flush = Duration::from_millis(500);
+    let mut server_config =
+        regression_config(SessionRole::Server, "terminal-control-sequence", 1, None);
+    server_config.deadlines.close_flush = Duration::from_millis(500);
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
+    client_writes.store(0, Ordering::Release);
+    server_writes.store(0, Ordering::Release);
+    client_enabled.store(true, Ordering::Release);
+    server_enabled.store(true, Ordering::Release);
+
+    let client_close = tokio::spawn({
+        let client = client.clone();
+        async move { client.close().await }
+    });
+    tokio::time::timeout(Duration::from_secs(1), client_entered.notified())
+        .await
+        .expect("client close did not block its GOAWAY write");
+    let server_probe = tokio::spawn({
+        let server = server.clone();
+        async move { server.probe_liveness().await }
+    });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while server_writes.load(Ordering::Acquire) < 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("server did not send its PING");
+    let server_close = tokio::spawn(async move { server.close().await });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while server_writes.load(Ordering::Acquire) < 3 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("server did not send its terminal control sequence");
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    client_release.notify_one();
+
+    let (client_close, server_close, server_probe) =
+        tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(client_close, server_close, server_probe)
+        })
+        .await
+        .expect("concurrent terminal control sequences did not converge");
+    client_close
+        .expect("join client close")
+        .expect("close client");
+    server_close
+        .expect("join server close")
+        .expect("close server");
+    assert!(
+        server_probe.expect("join server probe").is_err(),
+        "in-flight probe must terminate with its closing Session"
+    );
+    assert_eq!(
+        client_writes.load(Ordering::Acquire),
+        2,
+        "PONG must not interleave with GOAWAY, SESSION_CLOSE, and control FIN"
+    );
 }
 
 #[tokio::test]
@@ -3529,7 +3814,7 @@ async fn peer_stream_reset_wakes_a_reader_blocked_below_the_session_boundary() {
         .expect("join blocked reader")
         .expect_err("peer reset must fail the read");
     assert_eq!(error, SessionError::StreamReset);
-    release.notify_waiters();
+    release.notify_one();
     client.close().await.expect("close client");
     server.close().await.expect("close server");
 }
@@ -3576,7 +3861,7 @@ async fn peer_initiated_rekey_is_bounded_by_the_receivers_completion_deadline() 
         .await
         .expect("peer-initiated rekey ignored the receiver completion deadline");
     assert_eq!(terminal.error, SessionError::Timeout);
-    release.notify_waiters();
+    release.notify_one();
     assert!(rekeying.await.expect("join rekey task").is_err());
     let _ = stream.reset().await;
     let _ = incoming.stream().reset().await;
@@ -3673,7 +3958,7 @@ async fn peer_session_close_flushes_an_authenticated_reply_before_carrier_shutdo
         .await
         .expect("peer SESSION_CLOSE did not trigger an authenticated reply");
     assert_eq!(writes.load(Ordering::Acquire), 1);
-    release.notify_waiters();
+    release.notify_one();
     tokio::time::timeout(Duration::from_millis(250), closing)
         .await
         .expect("client close did not finish after the authenticated reply")
@@ -3735,7 +4020,7 @@ async fn local_rekey_waits_for_an_in_flight_inbound_open_responder() {
         "rekey bypassed the inbound responder"
     );
 
-    release.notify_waiters();
+    release.notify_one();
     let incoming = tokio::time::timeout(Duration::from_millis(750), client.accept_stream())
         .await
         .expect("inbound OPEN was not delivered")

@@ -791,6 +791,12 @@ mod tests {
 
     #[tokio::test]
     async fn production_websocket_acceptor_binds_handlers_before_session_establishment() {
+        for _ in 0..32 {
+            production_websocket_acceptor_binds_handlers_before_session_establishment_once().await;
+        }
+    }
+
+    async fn production_websocket_acceptor_binds_handlers_before_session_establishment_once() {
         let (root, identity) = private_ca_identity();
         let acceptor = Acceptor::bind_websocket(WebSocketAcceptorOptions {
             bind_address: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),

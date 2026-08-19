@@ -1312,6 +1312,8 @@ where
 async fn wait_for_zero(counter: &AtomicUsize, notification: &Notify) {
     loop {
         let notified = notification.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         if counter.load(Ordering::Acquire) == 0 {
             return;
         }

@@ -629,7 +629,6 @@ where
                 }
             }
         }
-        task_cancellation.cancel();
     });
     WebSocketIo {
         incoming: Mutex::new(Some(incoming_rx)),
@@ -645,6 +644,7 @@ struct WebSocketCarrier {
 struct WebSocketCarrierState {
     io: Mutex<Option<WebSocketIo>>,
     mux: Mutex<Option<Arc<WebSocketMuxSession>>>,
+    cancellation: CancellationToken,
     admission_client: bool,
     multiplexer_client: AtomicBool,
     capacity: u32,
@@ -660,10 +660,12 @@ impl fmt::Debug for WebSocketCarrier {
 
 impl WebSocketCarrier {
     fn pending(io: WebSocketIo, client: bool, capacity: u32) -> Arc<Self> {
+        let cancellation = io.cancellation.clone();
         Arc::new(Self {
             state: Arc::new(WebSocketCarrierState {
                 io: Mutex::new(Some(io)),
                 mux: Mutex::new(None),
+                cancellation,
                 admission_client: client,
                 multiplexer_client: AtomicBool::new(client),
                 capacity,
@@ -774,6 +776,7 @@ impl CarrierSessionV2 for WebSocketCarrier {
         if self.state.closed.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
+        let _cancel_on_exit = CancelCarrierOnDrop(self.state.cancellation.clone());
         if let Some(mux) = self.state.mux.lock().await.as_ref() {
             mux.close().await?;
         }
@@ -785,19 +788,16 @@ impl CarrierSessionV2 for WebSocketCarrier {
     }
 
     fn abort(&self) {
-        if self.state.closed.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        if let Ok(io) = self.state.io.try_lock()
-            && let Some(io) = io.as_ref()
-        {
-            io.cancellation.cancel();
-        }
-        if let Ok(mux) = self.state.mux.try_lock()
-            && let Some(mux) = mux.as_ref()
-        {
-            mux.cancellation.cancel();
-        }
+        self.state.closed.store(true, Ordering::Release);
+        self.state.cancellation.cancel();
+    }
+}
+
+struct CancelCarrierOnDrop(CancellationToken);
+
+impl Drop for CancelCarrierOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
     }
 }
 
@@ -1175,8 +1175,6 @@ async fn run_yamux<T>(
                 break;
             }
             Event::Canceled => {
-                let _ =
-                    futures_util::future::poll_fn(|context| connection.poll_close(context)).await;
                 break;
             }
             Event::Inbound(Some(Ok(stream))) => {
@@ -1217,7 +1215,6 @@ fn spawn_binary_bridge(
             }
         }
         let _ = writer.shutdown().await;
-        read_cancellation.cancel();
     });
     let (flush_tx, mut flush_rx) = mpsc::channel::<oneshot::Sender<io::Result<()>>>(1);
     let (outbound_done, outbound_delivery) = oneshot::channel();
@@ -1458,9 +1455,54 @@ impl CarrierStreamV3 for YamuxCarrierStream {
 
 #[cfg(test)]
 mod tests {
-    use cert_test_builder::{CertificateParams, KeyPair};
+    use std::{
+        io,
+        pin::Pin,
+        sync::atomic::Ordering,
+        task::{Context, Poll},
+    };
 
-    use super::server_tls_config;
+    use cert_test_builder::{CertificateParams, KeyPair};
+    use futures_util::{SinkExt, io::AsyncRead, io::AsyncWrite};
+    use tokio::io::{AsyncReadExt, duplex};
+    use tokio::sync::{Mutex, mpsc};
+    use tokio_tungstenite::{accept_async, client_async, tungstenite::Message};
+    use tokio_util::sync::CancellationToken;
+
+    use super::{
+        CarrierSessionV2, OutgoingMessage, WebSocketCarrier, WebSocketIo, run_yamux,
+        server_tls_config, spawn_binary_bridge, spawn_websocket_pump,
+    };
+
+    struct PendingIo;
+
+    impl AsyncRead for PendingIo {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+            _buffer: &mut [u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Pending
+        }
+    }
+
+    impl AsyncWrite for PendingIo {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+            _buffer: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Pending
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Pending
+        }
+
+        fn poll_close(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Pending
+        }
+    }
 
     #[test]
     fn v3_server_tls_disables_early_data_and_session_tickets() {
@@ -1475,5 +1517,133 @@ mod tests {
 
         assert_eq!(config.max_early_data_size, 0);
         assert_eq!(config.send_tls13_tickets, 0);
+    }
+
+    #[tokio::test]
+    async fn graceful_websocket_close_drains_queued_binary_into_mux() {
+        let (client_transport, server_transport) = duplex(64 * 1024);
+        let accepting = tokio::spawn(async move {
+            accept_async(server_transport)
+                .await
+                .expect("accept test WebSocket")
+        });
+        let (mut client, _) = client_async("ws://localhost/", client_transport)
+            .await
+            .expect("connect test WebSocket");
+        let server = accepting.await.expect("join WebSocket accept");
+        let io = spawn_websocket_pump(server);
+        let incoming = io
+            .incoming
+            .lock()
+            .await
+            .take()
+            .expect("take WebSocket incoming queue");
+
+        let payload = b"queued before graceful close".to_vec();
+        client
+            .send(Message::Binary(payload.clone().into()))
+            .await
+            .expect("send queued binary message");
+        client
+            .send(Message::Close(None))
+            .await
+            .expect("send graceful close");
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while !incoming.is_closed() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("WebSocket pump did not close its incoming queue");
+
+        let (mut mux_side, bridge_side) = duplex(64 * 1024);
+        let (_outbound_done, _outbound_flush) = spawn_binary_bridge(
+            bridge_side,
+            incoming,
+            io.outgoing.clone(),
+            io.cancellation.clone(),
+        );
+        let mut received = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            mux_side.read_to_end(&mut received),
+        )
+        .await
+        .expect("binary bridge did not finish draining")
+        .expect("read drained binary payload");
+
+        assert_eq!(received, payload);
+        assert!(
+            !io.cancellation.is_cancelled(),
+            "graceful inbound EOF must be consumed by the mux before cancellation"
+        );
+        io.cancellation.cancel();
+    }
+
+    fn pending_test_carrier() -> (
+        std::sync::Arc<WebSocketCarrier>,
+        CancellationToken,
+        mpsc::Receiver<OutgoingMessage>,
+    ) {
+        let (_incoming_tx, incoming_rx) = mpsc::channel(1);
+        let (outgoing, outgoing_rx) = mpsc::channel(1);
+        let cancellation = CancellationToken::new();
+        let carrier = WebSocketCarrier::pending(
+            WebSocketIo {
+                incoming: Mutex::new(Some(incoming_rx)),
+                outgoing,
+                cancellation: cancellation.clone(),
+            },
+            true,
+            3,
+        );
+        (carrier, cancellation, outgoing_rx)
+    }
+
+    #[tokio::test]
+    async fn canceled_carrier_close_aborts_the_transport() {
+        let (carrier, cancellation, mut outgoing) = pending_test_carrier();
+        let mut closing = Box::pin(CarrierSessionV2::close(carrier.as_ref()));
+        let message = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            tokio::select! {
+                result = &mut closing => panic!("carrier close unexpectedly finished: {result:?}"),
+                message = outgoing.recv() => message,
+            }
+        })
+        .await
+        .expect("carrier close did not request WebSocket shutdown")
+        .expect("carrier close channel ended");
+        assert!(matches!(message, OutgoingMessage::Close(_)));
+        assert!(!cancellation.is_cancelled());
+
+        drop(closing);
+        assert!(cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn abort_cancels_after_close_ownership_was_claimed() {
+        let (carrier, cancellation, _outgoing) = pending_test_carrier();
+        carrier.state.closed.store(true, Ordering::Release);
+
+        CarrierSessionV2::abort(carrier.as_ref());
+
+        assert!(cancellation.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn canceled_yamux_driver_does_not_wait_for_graceful_io() {
+        let connection =
+            yamux::Connection::new(PendingIo, yamux::Config::default(), yamux::Mode::Client);
+        let (_commands_tx, commands_rx) = mpsc::channel(1);
+        let (incoming_tx, _incoming_rx) = mpsc::channel(1);
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            run_yamux(connection, commands_rx, incoming_tx, cancellation),
+        )
+        .await
+        .expect("hard-canceled Yamux driver waited for graceful I/O");
     }
 }

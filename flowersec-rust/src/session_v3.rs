@@ -454,6 +454,7 @@ pub struct EncryptedSessionV3 {
     control: Arc<dyn CarrierStreamV3>,
     state: Mutex<EngineStateV3>,
     control_write: Mutex<()>,
+    control_terminal_committed: AtomicBool,
     open_lock: Arc<Mutex<()>>,
     rekey_lock: Arc<Mutex<()>>,
     rekeying: AtomicBool,
@@ -644,6 +645,7 @@ async fn establish_session_v3_inner(
             control_recv_sequence: 0,
         }),
         control_write: Mutex::new(()),
+        control_terminal_committed: AtomicBool::new(false),
         open_lock: Arc::new(Mutex::new(())),
         rekey_lock: Arc::new(Mutex::new(())),
         rekeying: AtomicBool::new(false),
@@ -1153,6 +1155,9 @@ async fn receive_unreliable_message_v3(
         }
         let plaintext = {
             let state = session.state.lock().await;
+            if !unreliable_receive_epoch_is_committed_v3(state.recv_epoch, header.epoch) {
+                continue;
+            }
             let Some(roots) = state.recv_roots.get(&header.epoch) else {
                 continue;
             };
@@ -1179,13 +1184,11 @@ async fn receive_unreliable_message_v3(
         if header.expires_at_unix_ms <= unix_millis(SystemTime::now())? {
             continue;
         }
-        session
+        let mut replay = session
             .unreliable_replay
             .lock()
-            .expect("unreliable replay lock poisoned")
-            .entry(header.epoch)
-            .or_default()
-            .insert(header.sequence);
+            .expect("unreliable replay lock poisoned");
+        record_unreliable_sequence_v3(&mut replay, header.epoch, header.sequence);
         touch_activity_v3(session);
         return Ok(Bytes::from(plaintext));
     }
@@ -1197,6 +1200,22 @@ fn unix_millis(value: SystemTime) -> Result<u64, UnreliableMessageError> {
         .map_err(|_| UnreliableMessageError::InvalidInput)?
         .as_millis();
     u64::try_from(millis).map_err(|_| UnreliableMessageError::InvalidInput)
+}
+
+fn record_unreliable_sequence_v3(
+    replay: &mut HashMap<u32, ReplayWindowV3>,
+    epoch: u32,
+    sequence: u64,
+) {
+    let inserted_epoch = !replay.contains_key(&epoch);
+    replay.entry(epoch).or_default().insert(sequence);
+    if inserted_epoch {
+        replay.retain(|candidate, _| !(*candidate < epoch && epoch - *candidate > 1));
+    }
+}
+
+fn unreliable_receive_epoch_is_committed_v3(recv_epoch: u32, message_epoch: u32) -> bool {
+    message_epoch <= recv_epoch
 }
 
 fn map_carrier_unreliable_error(error: CarrierUnreliableMessageErrorV3) -> UnreliableMessageError {
@@ -1589,6 +1608,43 @@ async fn send_control_v3(
     payload: &[u8],
 ) -> io::Result<()> {
     let _write = session.control_write.lock().await;
+    if session.is_closed() {
+        return Err(closed());
+    }
+    write_control_locked_v3(session, kind, payload).await
+}
+
+async fn send_control_response_v3(
+    session: &EncryptedSessionV3,
+    kind: InnerRecordTypeV3,
+    payload: &[u8],
+) -> io::Result<()> {
+    let _write = session.control_write.lock().await;
+    if session.is_closed() {
+        return Ok(());
+    }
+    write_control_locked_v3(session, kind, payload).await
+}
+
+async fn send_control_cleanup_v3(
+    session: &EncryptedSessionV3,
+    kind: InnerRecordTypeV3,
+    payload: &[u8],
+) -> io::Result<()> {
+    let _write = session.control_write.lock().await;
+    if session.lifecycle() == SessionLifecycleV3::Closed
+        || session.control_terminal_committed.load(Ordering::Acquire)
+    {
+        return Err(closed());
+    }
+    write_control_locked_v3(session, kind, payload).await
+}
+
+async fn write_control_locked_v3(
+    session: &EncryptedSessionV3,
+    kind: InnerRecordTypeV3,
+    payload: &[u8],
+) -> io::Result<()> {
     let inner = encode_inner_record_v3(kind, payload).map_err(proto)?;
     let (epoch, sequence, key, nonce) = {
         let mut state = session.state.lock().await;
@@ -1642,9 +1698,9 @@ async fn read_control_v3(session: &EncryptedSessionV3) -> io::Result<(InnerRecor
     let header = RecordHeaderV3::decode(&raw_header).map_err(proto)?;
     let mut ciphertext = vec![0; header.ciphertext_length() as usize];
     read_exact_v3(&session.control, &mut ciphertext).await?;
-    let (key, nonce) = {
+    let (key, nonce, control_epoch_advanced) = {
         let mut state = session.state.lock().await;
-        if header.epoch() == state.control_recv_epoch {
+        let control_epoch_advanced = if header.epoch() == state.control_recv_epoch {
             if header.sequence() != state.control_recv_sequence {
                 return Err(invalid("invalid control sequence"));
             }
@@ -1652,15 +1708,17 @@ async fn read_control_v3(session: &EncryptedSessionV3) -> io::Result<(InnerRecor
                 .control_recv_sequence
                 .checked_add(1)
                 .ok_or_else(|| invalid("control sequence exhausted"))?;
+            false
         } else if header.epoch() == state.recv_epoch
             && header.epoch() == state.control_recv_epoch.saturating_add(1)
             && header.sequence() == 0
         {
             state.control_recv_epoch = header.epoch();
             state.control_recv_sequence = 1;
+            true
         } else {
             return Err(invalid("invalid control epoch"));
-        }
+        };
         let roots = state
             .recv_roots
             .get(&header.epoch())
@@ -1672,7 +1730,11 @@ async fn read_control_v3(session: &EncryptedSessionV3) -> io::Result<(InnerRecor
             header.epoch(),
         )
         .map_err(proto)?;
-        (*material.record_key(), *material.nonce_prefix())
+        (
+            *material.record_key(),
+            *material.nonce_prefix(),
+            control_epoch_advanced,
+        )
     };
     let plaintext = open_record_v3(
         session.config.suite,
@@ -1686,6 +1748,12 @@ async fn read_control_v3(session: &EncryptedSessionV3) -> io::Result<(InnerRecor
     )
     .map_err(proto)?;
     let (kind, payload) = decode_inner_record_v3(&plaintext).map_err(proto)?;
+    if control_epoch_advanced && !session.rekeying.load(Ordering::Acquire) {
+        let mut state = session.state.lock().await;
+        let recv_epoch = state.recv_epoch;
+        let control_recv_epoch = state.control_recv_epoch;
+        retain_receive_epoch_roots_v3(&mut state.recv_roots, recv_epoch, control_recv_epoch);
+    }
     touch_activity_v3(session);
     Ok((kind, payload.to_vec()))
 }
@@ -1702,7 +1770,7 @@ async fn control_loop_v3(session: Arc<SelfSession>) {
         };
         let handled = match kind {
             InnerRecordTypeV3::Ping => {
-                send_control_v3(&session, InnerRecordTypeV3::Pong, &payload).await
+                send_control_response_v3(&session, InnerRecordTypeV3::Pong, &payload).await
             }
             InnerRecordTypeV3::Pong => {
                 if payload.len() != 8 {
@@ -2034,8 +2102,9 @@ async fn complete_rekey_v3(
         let mut state = session.state.lock().await;
         let current = state.send_epoch;
         retain_current_epoch_roots_v3(&mut state.send_roots, current);
-        let current = state.recv_epoch;
-        retain_current_epoch_roots_v3(&mut state.recv_roots, current);
+        let recv_epoch = state.recv_epoch;
+        let control_recv_epoch = state.control_recv_epoch;
+        retain_receive_epoch_roots_v3(&mut state.recv_roots, recv_epoch, control_recv_epoch);
     }
     Ok(())
 }
@@ -2111,17 +2180,27 @@ async fn receive_rekey_inner_v3(session: &EncryptedSessionV3, payload: &[u8]) ->
             *update = None;
         }
     }
-    send_control_v3(session, InnerRecordTypeV3::SessionKeyUpdateAck, payload).await?;
+    send_control_response_v3(session, InnerRecordTypeV3::SessionKeyUpdateAck, payload).await?;
     if !session.rekeying.load(Ordering::Acquire) {
         let mut state = session.state.lock().await;
-        let current = state.recv_epoch;
-        retain_current_epoch_roots_v3(&mut state.recv_roots, current);
+        let recv_epoch = state.recv_epoch;
+        let control_recv_epoch = state.control_recv_epoch;
+        retain_receive_epoch_roots_v3(&mut state.recv_roots, recv_epoch, control_recv_epoch);
     }
     Ok(())
 }
 
 fn retain_current_epoch_roots_v3(roots: &mut HashMap<u32, EpochRootsV3>, current: u32) {
     roots.retain(|epoch, _| *epoch == current);
+}
+
+fn retain_receive_epoch_roots_v3(
+    roots: &mut HashMap<u32, EpochRootsV3>,
+    recv_epoch: u32,
+    control_recv_epoch: u32,
+) {
+    let oldest_live_epoch = recv_epoch.min(control_recv_epoch);
+    roots.retain(|epoch, _| *epoch >= oldest_live_epoch);
 }
 
 fn encode_stream_key_update_ack_v3(logical_id: u64, transition: u64, next_epoch: u32) -> [u8; 20] {
@@ -2232,7 +2311,7 @@ fn valid_goaway_boundary_v3(role: SessionRole, last: u64, high: u64) -> bool {
             })
 }
 
-async fn send_goaway_v3(session: &EncryptedSessionV3, reason: u16) -> io::Result<()> {
+async fn write_goaway_locked_v3(session: &EncryptedSessionV3, reason: u16) -> io::Result<()> {
     if reason == 0 {
         return Err(invalid("invalid GOAWAY reason"));
     }
@@ -2242,7 +2321,15 @@ async fn send_goaway_v3(session: &EncryptedSessionV3, reason: u16) -> io::Result
     let mut payload = [0; 10];
     payload[..8].copy_from_slice(&last.to_be_bytes());
     payload[8..].copy_from_slice(&reason.to_be_bytes());
-    send_control_v3(session, InnerRecordTypeV3::GoAway, &payload).await
+    write_control_locked_v3(session, InnerRecordTypeV3::GoAway, &payload).await
+}
+
+async fn send_goaway_v3(session: &EncryptedSessionV3, reason: u16) -> io::Result<()> {
+    let _control_write = session.control_write.lock().await;
+    if session.is_closed() {
+        return Err(closed());
+    }
+    write_goaway_locked_v3(session, reason).await
 }
 
 async fn close_session_v3(session: &EncryptedSessionV3) -> io::Result<()> {
@@ -2251,14 +2338,20 @@ async fn close_session_v3(session: &EncryptedSessionV3) -> io::Result<()> {
         session.rpc.notifications.clear();
         let deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
         let flush = match tokio::time::timeout_at(deadline, async {
-            send_goaway_v3(session, NORMAL_CLOSE_REASON_V3).await?;
-            send_control_v3(
-                session,
-                InnerRecordTypeV3::SessionClose,
-                &NORMAL_CLOSE_REASON_V3.to_be_bytes(),
-            )
-            .await?;
-            session.control.close_write_delivered().await?;
+            {
+                let _control_write = session.control_write.lock().await;
+                session
+                    .control_terminal_committed
+                    .store(true, Ordering::Release);
+                write_goaway_locked_v3(session, NORMAL_CLOSE_REASON_V3).await?;
+                write_control_locked_v3(
+                    session,
+                    InnerRecordTypeV3::SessionClose,
+                    &NORMAL_CLOSE_REASON_V3.to_be_bytes(),
+                )
+                .await?;
+                session.control.close_write_delivered().await?;
+            }
             wait_for_peer_session_close_v3(session).await;
             Ok(())
         })
@@ -2270,14 +2363,24 @@ async fn close_session_v3(session: &EncryptedSessionV3) -> io::Result<()> {
                 "Flowersec v3 close flush timeout",
             )),
         };
+        session
+            .control_terminal_committed
+            .store(true, Ordering::Release);
         session.terminate_stream_buffers();
         session.canceled.cancel();
         let carrier = match tokio::time::timeout_at(deadline, session.carrier.close()).await {
-            Ok(result) => result,
-            Err(_) => Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "Flowersec v3 carrier close timeout",
-            )),
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => {
+                session.carrier.abort();
+                Err(error)
+            }
+            Err(_) => {
+                session.carrier.abort();
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Flowersec v3 carrier close timeout",
+                ))
+            }
         };
         let _rpc_operation = session.rpc.serial.lock().await;
         session.finish_closed();
@@ -2290,6 +2393,8 @@ async fn close_session_v3(session: &EncryptedSessionV3) -> io::Result<()> {
 async fn wait_for_peer_session_close_v3(session: &EncryptedSessionV3) {
     loop {
         let changed = session.received_session_close_changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
         if session.received_session_close.load(Ordering::Acquire) {
             return;
         }
@@ -2305,7 +2410,11 @@ async fn close_peer_session_v3(session: &EncryptedSessionV3) {
     session.rpc.notifications.clear();
     let deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
     let reply = tokio::time::timeout_at(deadline, async {
-        send_control_v3(
+        let _control_write = session.control_write.lock().await;
+        session
+            .control_terminal_committed
+            .store(true, Ordering::Release);
+        write_control_locked_v3(
             session,
             InnerRecordTypeV3::SessionClose,
             &NORMAL_CLOSE_REASON_V3.to_be_bytes(),
@@ -2314,10 +2423,16 @@ async fn close_peer_session_v3(session: &EncryptedSessionV3) {
         session.control.close_write_delivered().await
     })
     .await;
+    session
+        .control_terminal_committed
+        .store(true, Ordering::Release);
     session.terminate_stream_buffers();
     session.canceled.cancel();
     let _ = reply;
-    let _ = tokio::time::timeout_at(deadline, session.carrier.close()).await;
+    let carrier = tokio::time::timeout_at(deadline, session.carrier.close()).await;
+    if !matches!(carrier, Ok(Ok(()))) {
+        session.carrier.abort();
+    }
     session.finish_closed();
 }
 
@@ -2366,16 +2481,26 @@ async fn idle_watchdog_v3(session: Arc<SelfSession>) {
                     session.rpc.notifications.clear();
                     session.terminate_stream_buffers();
                     session.canceled.cancel();
-                    let _ = tokio::time::timeout(
-                        session.config.deadlines.close_flush,
-                        send_goaway_v3(&session, IDLE_TIMEOUT_REASON_V3),
-                    )
+                    let _ = tokio::time::timeout(session.config.deadlines.close_flush, async {
+                        let _control_write = session.control_write.lock().await;
+                        session
+                            .control_terminal_committed
+                            .store(true, Ordering::Release);
+                        write_goaway_locked_v3(&session, IDLE_TIMEOUT_REASON_V3).await?;
+                        Ok::<(), io::Error>(())
+                    })
                     .await;
-                    let _ = tokio::time::timeout(
+                    session
+                        .control_terminal_committed
+                        .store(true, Ordering::Release);
+                    let carrier = tokio::time::timeout(
                         session.config.deadlines.close_flush,
                         session.carrier.close(),
                     )
                     .await;
+                    if !matches!(carrier, Ok(Ok(()))) {
+                        session.carrier.abort();
+                    }
                     session.finish_closed();
                 }
                 return;
@@ -2390,6 +2515,9 @@ fn fail_session_v3(session: &EncryptedSessionV3, error: io::Error) {
         session.rpc.notifications.clear();
         session.terminate_stream_buffers();
         session.canceled.cancel();
+        session
+            .control_terminal_committed
+            .store(true, Ordering::Release);
         session.carrier.abort();
         session.finish_closed();
     }
@@ -2466,7 +2594,9 @@ async fn commit_outbound_abandonment_v3(
     let mut payload = [0; 10];
     payload[..8].copy_from_slice(&id.to_be_bytes());
     payload[8..].copy_from_slice(&6_u16.to_be_bytes());
-    if let Err(error) = send_control_v3(&session, InnerRecordTypeV3::StreamReset, &payload).await {
+    if let Err(error) =
+        send_control_cleanup_v3(&session, InnerRecordTypeV3::StreamReset, &payload).await
+    {
         if !session.is_closed() {
             fail_session_v3(&session, error);
         }
@@ -2500,6 +2630,7 @@ struct EncryptedStreamV3 {
     local_fin: AtomicBool,
     remote_fin: AtomicBool,
     reset: AtomicBool,
+    application_reset_changed: Notify,
     reset_changed: Notify,
     reset_cleanup_done: AtomicBool,
     reset_cleanup_changed: Notify,
@@ -2847,6 +2978,7 @@ async fn open_stream_with_capacity_v3(
         local_fin: AtomicBool::new(false),
         remote_fin: AtomicBool::new(false),
         reset: AtomicBool::new(false),
+        application_reset_changed: Notify::new(),
         reset_changed: Notify::new(),
         reset_cleanup_done: AtomicBool::new(false),
         reset_cleanup_changed: Notify::new(),
@@ -2941,7 +3073,7 @@ impl ByteStream for StreamHandleV3 {
             Ok(written) => Ok(written),
             Err(error) => {
                 self.0.record_terminal(&error);
-                let _ = self.0.reset_inner().await;
+                self.0.begin_reset();
                 Err(SessionError::from_io(&error))
             }
         }
@@ -2951,7 +3083,7 @@ impl ByteStream for StreamHandleV3 {
             Ok(()) => Ok(()),
             Err(error) => {
                 self.0.record_terminal(&error);
-                let _ = self.0.reset_inner().await;
+                self.0.begin_reset();
                 Err(SessionError::from_io(&error))
             }
         }
@@ -3031,7 +3163,7 @@ impl EncryptedStreamV3 {
             ));
         }
         if !self.local_fin.load(Ordering::Acquire) {
-            let reset_changed = self.reset_changed.notified();
+            let reset_changed = self.application_reset_changed.notified();
             tokio::pin!(reset_changed);
             reset_changed.as_mut().enable();
             if self.reset.load(Ordering::Acquire) {
@@ -3057,14 +3189,16 @@ impl EncryptedStreamV3 {
         Ok(())
     }
     async fn reset_inner(self: &Arc<Self>) -> io::Result<()> {
+        self.begin_reset();
+        self.wait_reset_cleanup().await
+    }
+    fn begin_reset(self: &Arc<Self>) {
         let _ = self.terminal.set(SessionError::StreamReset);
         if !self.reset.swap(true, Ordering::AcqRel) {
-            self.buffered_reads.terminate();
-            self.reset_changed.notify_waiters();
+            self.application_reset_changed.notify_waiters();
             let stream = self.clone();
             tokio::spawn(async move { stream.finish_reset().await });
         }
-        self.wait_reset_cleanup().await
     }
     async fn wait_reset_cleanup(&self) -> io::Result<()> {
         loop {
@@ -3091,7 +3225,9 @@ impl EncryptedStreamV3 {
             payload[..8].copy_from_slice(&self.id.to_be_bytes());
             payload[8..].copy_from_slice(&1_u16.to_be_bytes());
             let result =
-                match send_control_v3(&session, InnerRecordTypeV3::StreamReset, &payload).await {
+                match send_control_cleanup_v3(&session, InnerRecordTypeV3::StreamReset, &payload)
+                    .await
+                {
                     Ok(()) if self.remote_fin.load(Ordering::Acquire) => {
                         confirm_control_delivery_v3(&session).await.map(|_| ())
                     }
@@ -3103,6 +3239,8 @@ impl EncryptedStreamV3 {
                 }
             }
         }
+        self.buffered_reads.terminate();
+        self.reset_changed.notify_waiters();
         self.finish_physical_reset().await;
     }
     async fn finish_physical_reset(&self) {
@@ -3121,6 +3259,7 @@ impl EncryptedStreamV3 {
         let _ = self.terminal.set(SessionError::StreamReset);
         if !self.reset.swap(true, Ordering::AcqRel) {
             self.buffered_reads.terminate();
+            self.application_reset_changed.notify_waiters();
             self.reset_changed.notify_waiters();
             let stream = self.clone();
             tokio::spawn(async move { stream.finish_physical_reset().await });
@@ -3142,7 +3281,7 @@ impl EncryptedStreamV3 {
         kind: InnerRecordTypeV3,
         payload: &[u8],
     ) -> io::Result<()> {
-        let reset_changed = self.reset_changed.notified();
+        let reset_changed = self.application_reset_changed.notified();
         tokio::pin!(reset_changed);
         reset_changed.as_mut().enable();
         if self.reset.load(Ordering::Acquire) {
@@ -3181,7 +3320,7 @@ impl EncryptedStreamV3 {
             let state_changed = self.buffered_reads.state_changed.notified();
             tokio::pin!(state_changed);
             state_changed.as_mut().enable();
-            let reset_changed = self.reset_changed.notified();
+            let reset_changed = self.application_reset_changed.notified();
             tokio::pin!(reset_changed);
             reset_changed.as_mut().enable();
             if self.reset.load(Ordering::Acquire) {
@@ -3295,6 +3434,9 @@ impl EncryptedStreamV3 {
             let capacity_changed = self.buffered_reads.capacity_changed.notified();
             tokio::pin!(capacity_changed);
             capacity_changed.as_mut().enable();
+            let reset_changed = self.reset_changed.notified();
+            tokio::pin!(reset_changed);
+            reset_changed.as_mut().enable();
             match self.buffered_reads.try_push_data(data) {
                 BufferedReadPushV3::Pushed => return Ok(()),
                 BufferedReadPushV3::Terminal => {
@@ -3307,7 +3449,7 @@ impl EncryptedStreamV3 {
             }
             tokio::select! {
                 biased;
-                _ = self.reset_changed.notified() => return Err(io::Error::new(
+                _ = &mut reset_changed => return Err(io::Error::new(
                     io::ErrorKind::ConnectionReset,
                     "logical stream reset",
                 )),
@@ -3654,6 +3796,7 @@ async fn accept_one_stream_v3(
         local_fin: AtomicBool::new(false),
         remote_fin: AtomicBool::new(false),
         reset: AtomicBool::new(false),
+        application_reset_changed: Notify::new(),
         reset_changed: Notify::new(),
         reset_cleanup_done: AtomicBool::new(false),
         reset_cleanup_changed: Notify::new(),
@@ -4663,12 +4806,35 @@ mod tests {
     }
 
     #[test]
-    fn epoch_root_cleanup_retains_only_the_current_epoch() {
+    fn send_epoch_root_cleanup_retains_only_the_current_epoch() {
         let roots = derive_epoch_zero_v3(&[7; 32], DirectionV3::ClientToServer).unwrap();
         let mut epochs = HashMap::from([(0, roots.clone()), (1, roots.clone()), (2, roots)]);
         retain_current_epoch_roots_v3(&mut epochs, 2);
         assert_eq!(epochs.len(), 1);
         assert!(epochs.contains_key(&2));
+    }
+
+    #[test]
+    fn receive_epoch_root_cleanup_preserves_control_current_and_pending_epochs() {
+        let roots = derive_epoch_zero_v3(&[7; 32], DirectionV3::ClientToServer).unwrap();
+        let mut epochs = HashMap::from([
+            (0, roots.clone()),
+            (1, roots.clone()),
+            (2, roots.clone()),
+            (3, roots.clone()),
+            (4, roots.clone()),
+        ]);
+        retain_receive_epoch_roots_v3(&mut epochs, 2, 1);
+        assert_eq!(epochs.len(), 4);
+        assert!(epochs.contains_key(&1));
+        assert!(epochs.contains_key(&2));
+        assert!(epochs.contains_key(&3));
+        assert!(epochs.contains_key(&4));
+
+        let mut caught_up = HashMap::from([(1, roots.clone()), (2, roots.clone()), (3, roots)]);
+        retain_receive_epoch_roots_v3(&mut caught_up, 3, 3);
+        assert_eq!(caught_up.len(), 1);
+        assert!(caught_up.contains_key(&3));
     }
 
     #[test]
@@ -4950,6 +5116,21 @@ mod tests {
         window.insert(140);
         assert!(window.contains(7), "sequences outside the window are stale");
         assert!(window.contains(140));
+    }
+
+    #[test]
+    fn unreliable_replay_state_rejects_future_epochs_and_keeps_two_windows() {
+        assert!(unreliable_receive_epoch_is_committed_v3(2, 2));
+        assert!(unreliable_receive_epoch_is_committed_v3(2, 1));
+        assert!(!unreliable_receive_epoch_is_committed_v3(2, 3));
+
+        let mut replay = HashMap::new();
+        for epoch in 0..4 {
+            record_unreliable_sequence_v3(&mut replay, epoch, 1);
+        }
+        assert_eq!(replay.len(), 2);
+        assert!(replay.contains_key(&2));
+        assert!(replay.contains_key(&3));
     }
 
     #[tokio::test]

@@ -850,6 +850,8 @@ where
 async fn wait_for_zero(counter: &AtomicUsize, notification: &Notify) {
     loop {
         let notified = notification.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         if counter.load(Ordering::Acquire) == 0 {
             return;
         }
@@ -1419,6 +1421,8 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
                 let notified = authorizer.started.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
                 if authorizer.calls.load(Ordering::SeqCst) >= expected {
                     return;
                 }
