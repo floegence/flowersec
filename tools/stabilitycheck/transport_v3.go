@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -45,8 +46,33 @@ type transportV3Registry struct {
 		PinToCA            bool `json:"replacement_same_endpoint_pin_to_ca"`
 	} `json:"controller"`
 	URLNormalization struct {
-		ForbiddenCharacters []string `json:"forbidden_characters"`
+		InputUTF8BytesMin             int      `json:"input_utf8_bytes_min"`
+		InputUTF8BytesMax             int      `json:"input_utf8_bytes_max"`
+		SplitDelimiter                string   `json:"split_delimiter"`
+		AuthoritySplit                string   `json:"authority_split"`
+		ForbiddenCharacters           []string `json:"forbidden_characters"`
+		AuthorityNonEmpty             bool     `json:"authority_non_empty"`
+		AuthorityAtSignForbidden      bool     `json:"authority_at_sign_forbidden"`
+		AuthorityBracketedIPv6Only    bool     `json:"authority_bracketed_ipv6_only"`
+		AuthorityClosingBracket       bool     `json:"authority_closing_bracket_required"`
+		UnbracketedAuthorityMaxColons int      `json:"unbracketed_authority_max_colons"`
+		PathOpaqueAfterSlash          bool     `json:"path_is_opaque_after_first_slash"`
+		PathEmptyRawQUICOnly          bool     `json:"path_empty_allowed_only_for_raw_quic"`
 	} `json:"url_normalization"`
+	VersionIsolation struct {
+		WireNegotiation        bool     `json:"wire_negotiation"`
+		AutomaticV2Fallback    bool     `json:"automatic_v2_fallback"`
+		V2ArtifactAcceptedByV3 bool     `json:"v2_artifact_accepted_by_v3"`
+		V3ArtifactAcceptedByV2 bool     `json:"v3_artifact_accepted_by_v2"`
+		RejectionFields        []string `json:"rejection_fields"`
+		V2Identifiers          struct {
+			Magic        []string `json:"magic"`
+			Profiles     []string `json:"profiles"`
+			Paths        []string `json:"paths"`
+			ALPN         []string `json:"alpn"`
+			CryptoLabels []string `json:"crypto_labels"`
+		} `json:"v2_identifiers"`
+	} `json:"version_isolation"`
 	WireFixtures []transportV3Fixture `json:"wire_fixtures"`
 }
 
@@ -61,9 +87,16 @@ type transportV3Fixture struct {
 	Consumers map[string][]string `json:"consumers"`
 }
 
+type transportV3IsolationMutation struct {
+	ID        string `json:"id"`
+	V3        string `json:"v3"`
+	V2        string `json:"v2"`
+	ErrorCode string `json:"error_code"`
+}
+
 var transportV3ConsumerLanguages = []string{"go", "rust", "swift", "typescript"}
 
-var transportV3ForbiddenDomain = regexp.MustCompile(`flowersec v2 (?:server finished|client finished|epoch zero|control root|stream root|setup root|rekey root|next epoch|stream|control|record key|nonce|unreliable)|flowersec-v2-(?:handshake|setup|record|open|unreliable)`)
+var transportV3ForbiddenDomain = regexp.MustCompile(`(?i)(?:\b(?:FSB2|FSA2|FSC2|FSH2|FSS2|FSR2|FSD2)\b|flowersec(?:/2|[-.]direct/2|[-.]tunnel/2|[-.]v2)|flowersec(?:/v2|/webtransport/v2)/[a-z/]+|flowersec\.(?:direct|tunnel)\.v2|flowersec v2 (?:server finished|client finished|epoch zero|control root|stream root|setup root|rekey root|next epoch|stream|control|record key|nonce|unreliable)|flowersec-v2-(?:handshake|setup|record|open|unreliable))`)
 
 func loadTransportV3Registry(repoRoot string) (*transportV3Registry, error) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot, transportV3ContractPath))
@@ -110,6 +143,23 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	}
 	if !slices.Equal(registry.URLNormalization.ForbiddenCharacters, []string{`\`, "?", "#", "%"}) {
 		return fmt.Errorf("%s URL forbidden characters drifted", transportV3ContractPath)
+	}
+	if registry.URLNormalization.InputUTF8BytesMin != 1 || registry.URLNormalization.InputUTF8BytesMax != 2048 ||
+		registry.URLNormalization.SplitDelimiter != "first_literal_://" || registry.URLNormalization.AuthoritySplit != "first_ascii_slash" ||
+		!registry.URLNormalization.AuthorityNonEmpty || !registry.URLNormalization.AuthorityAtSignForbidden ||
+		!registry.URLNormalization.AuthorityBracketedIPv6Only || !registry.URLNormalization.AuthorityClosingBracket ||
+		registry.URLNormalization.UnbracketedAuthorityMaxColons != 1 || !registry.URLNormalization.PathOpaqueAfterSlash ||
+		!registry.URLNormalization.PathEmptyRawQUICOnly {
+		return fmt.Errorf("%s URL parsing rules are incomplete", transportV3ContractPath)
+	}
+	if registry.VersionIsolation.WireNegotiation || registry.VersionIsolation.AutomaticV2Fallback ||
+		registry.VersionIsolation.V2ArtifactAcceptedByV3 || registry.VersionIsolation.V3ArtifactAcceptedByV2 ||
+		!slices.Equal(registry.VersionIsolation.RejectionFields, []string{"magic", "profile", "path", "alpn", "crypto_label"}) ||
+		!slices.Equal(registry.VersionIsolation.V2Identifiers.Magic, []string{"FSB2", "FSA2", "FSC2", "FSH2", "FSS2", "FSR2", "FSD2"}) ||
+		!slices.Equal(registry.VersionIsolation.V2Identifiers.Profiles, []string{"flowersec/2", "flowersec-direct/2", "flowersec-tunnel/2"}) ||
+		!slices.Equal(registry.VersionIsolation.V2Identifiers.ALPN, []string{"flowersec-direct/2", "flowersec-tunnel/2"}) ||
+		len(registry.VersionIsolation.V2Identifiers.Paths) != 6 || len(registry.VersionIsolation.V2Identifiers.CryptoLabels) != 21 {
+		return fmt.Errorf("%s version isolation registry drifted", transportV3ContractPath)
 	}
 	if len(registry.Docs) != 2 {
 		return fmt.Errorf("%s docs must contain wire and architecture", transportV3ContractPath)
@@ -239,13 +289,13 @@ func validateTransportV3ConsumerEvidence(fixtureID, language, body string) error
 	case "issuer_admission/swift":
 		required = []string{"go_issuer_admission_vectors.json", "acceptor_admissions_hash_hex", "encodeFSB3"}
 	case "version_isolation/go":
-		required = []string{"version_isolation_vectors.json", "v2_magic_hex", "v2_version_hex", "assertRejects"}
+		required = []string{"version_isolation_vectors.json", "v2_magic_hex", "v2_version_hex", "profile_mutations", "path_mutations", "alpn_mutations", "crypto_label_mutations", "assertRejects"}
 	case "version_isolation/typescript":
-		required = []string{"version_isolation_vectors.json", "v2_magic_hex", "v2_version_hex", "toThrow"}
+		required = []string{"version_isolation_vectors.json", "v2_magic_hex", "v2_version_hex", "profile_mutations", "path_mutations", "alpn_mutations", "crypto_label_mutations", "toThrow"}
 	case "version_isolation/rust":
-		required = []string{"version_isolation_vectors.json", "v2_magic_hex", "v2_version_hex", "version_isolation"}
+		required = []string{"version_isolation_vectors.json", "v2_magic_hex", "v2_version_hex", "profile_mutations", "path_mutations", "alpn_mutations", "crypto_label_mutations", "version_isolation"}
 	case "version_isolation/swift":
-		required = []string{"version_isolation_vectors.json", "v2_magic_hex", "v2_version_hex", "versionIsolationVectorsRejectV2Mutations"}
+		required = []string{"version_isolation_vectors.json", "v2_magic_hex", "v2_version_hex", "profile_mutations", "path_mutations", "alpn_mutations", "crypto_label_mutations", "versionIsolationVectorsRejectV2Mutations"}
 	default:
 		return nil
 	}
@@ -268,6 +318,40 @@ func validateTransportV3FixtureShapes(repoRoot string) error {
 			return fmt.Errorf("parse v3 fixture %s: %w", name, err)
 		}
 		return nil
+	}
+	var isolation struct {
+		Frames []struct {
+			ID           string `json:"id"`
+			V3Hex        string `json:"v3_hex"`
+			V2MagicHex   string `json:"v2_magic_hex"`
+			V2VersionHex string `json:"v2_version_hex"`
+		} `json:"frames"`
+		ProfileMutations     []transportV3IsolationMutation `json:"profile_mutations"`
+		PathMutations        []transportV3IsolationMutation `json:"path_mutations"`
+		ALPNMutations        []transportV3IsolationMutation `json:"alpn_mutations"`
+		CryptoLabelMutations []transportV3IsolationMutation `json:"crypto_label_mutations"`
+	}
+	if err := read("version_isolation_vectors.json", &isolation); err != nil {
+		return err
+	}
+	if len(isolation.Frames) != 7 || len(isolation.ProfileMutations) != 3 || len(isolation.PathMutations) != 6 ||
+		len(isolation.ALPNMutations) != 2 || len(isolation.CryptoLabelMutations) != 21 {
+		return fmt.Errorf("v3 version-isolation fixture shape drifted")
+	}
+	for _, frame := range isolation.Frames {
+		if frame.ID == "" || len(frame.V3Hex) == 0 || len(frame.V3Hex) != len(frame.V2MagicHex) || len(frame.V3Hex) != len(frame.V2VersionHex) {
+			return fmt.Errorf("v3 version-isolation frame %q is malformed", frame.ID)
+		}
+	}
+	for field, mutations := range map[string][]transportV3IsolationMutation{
+		"profile": isolation.ProfileMutations, "path": isolation.PathMutations,
+		"alpn": isolation.ALPNMutations, "crypto label": isolation.CryptoLabelMutations,
+	} {
+		for _, mutation := range mutations {
+			if mutation.ID == "" || mutation.V3 == mutation.V2 || mutation.ErrorCode != "version_isolation" {
+				return fmt.Errorf("v3 version-isolation %s mutation %q is malformed", field, mutation.ID)
+			}
+		}
 	}
 
 	var artifact struct {
@@ -446,8 +530,9 @@ func validateTransportV3FixtureShapes(repoRoot string) error {
 
 func scanTransportV3Domains(repoRoot string) error {
 	roots := []string{
-		"flowersec-go/internal/protocolv3",
-		"flowersec-ts/src/v3",
+		"flowersec-go/internal",
+		"flowersec-go",
+		"flowersec-ts/src",
 		"flowersec-rust/src",
 		"flowersec-swift/Sources/Flowersec",
 	}
@@ -465,7 +550,10 @@ func scanTransportV3Domains(repoRoot string) error {
 				return err
 			}
 			name := filepath.ToSlash(relative)
-			if !strings.Contains(name, "/v3/") && !strings.Contains(name, "protocolv3") && !strings.Contains(strings.ToLower(entry.Name()), "v3") {
+			if !isTransportV3SourcePath(name) {
+				return nil
+			}
+			if isTransportV3TestPath(name) {
 				return nil
 			}
 			extension := filepath.Ext(entry.Name())
@@ -476,7 +564,13 @@ func scanTransportV3Domains(repoRoot string) error {
 			if err != nil {
 				return err
 			}
-			if transportV3ForbiddenDomain.Match(body) {
+			productionBody := body
+			if marker := []byte("#[cfg(test)]"); filepath.Ext(entry.Name()) == ".rs" {
+				if index := bytes.Index(body, marker); index >= 0 {
+					productionBody = body[:index]
+				}
+			}
+			if transportV3ForbiddenDomain.Match(productionBody) {
 				return fmt.Errorf("transport v3 source %s contains a v2 cryptographic domain", name)
 			}
 			return nil
@@ -486,4 +580,27 @@ func scanTransportV3Domains(repoRoot string) error {
 		}
 	}
 	return nil
+}
+
+func isTransportV3TestPath(name string) bool {
+	lower := strings.ToLower(filepath.ToSlash(name))
+	return strings.HasSuffix(lower, "_test.go") || strings.HasSuffix(lower, ".test.ts") ||
+		strings.Contains(lower, "/tests/") || strings.Contains(lower, "/test/")
+}
+
+func isTransportV3SourcePath(name string) bool {
+	lower := strings.ToLower(filepath.ToSlash(name))
+	if strings.Contains(lower, "/v3/") || strings.Contains(lower, "v3/") || strings.Contains(lower, "/v3.") || strings.Contains(lower, "v3_") || strings.Contains(lower, "v3-") || strings.HasSuffix(lower, "v3.go") || strings.HasSuffix(lower, "v3.rs") || strings.HasSuffix(lower, "v3.swift") {
+		return true
+	}
+	// These are the Rust v3 implementation files whose public names are shared
+	// with the v2 facade; v2 remains in the explicit *_v2 modules.
+	if strings.HasPrefix(lower, "flowersec-rust/src/") {
+		for _, base := range []string{"connection_controller.rs", "connection_controller_vectors.rs"} {
+			if strings.HasSuffix(lower, "/"+base) {
+				return true
+			}
+		}
+	}
+	return false
 }

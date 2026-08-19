@@ -28,7 +28,7 @@ const (
 
 type LogicalStreamState struct {
 	logicalID     uint64
-	fss2Hash      [32]byte
+	fss3Hash      [32]byte
 	localOpener   bool
 	ledger        *StreamLedger
 	openSeen      bool
@@ -43,18 +43,18 @@ type LogicalStreamState struct {
 	terminalError error
 }
 
-func NewOutboundLogicalStreamState(logicalID uint64, fss2Hash [32]byte) (*LogicalStreamState, error) {
+func NewOutboundLogicalStreamState(logicalID uint64, fss3Hash [32]byte) (*LogicalStreamState, error) {
 	if logicalID == 0 {
 		return nil, ErrInvalidOpenPayload
 	}
-	return &LogicalStreamState{logicalID: logicalID, fss2Hash: fss2Hash, localOpener: true}, nil
+	return &LogicalStreamState{logicalID: logicalID, fss3Hash: fss3Hash, localOpener: true}, nil
 }
 
-func NewInboundLogicalStreamState(ledger *StreamLedger, logicalID uint64, fss2Hash [32]byte) (*LogicalStreamState, error) {
+func NewInboundLogicalStreamState(ledger *StreamLedger, logicalID uint64, fss3Hash [32]byte) (*LogicalStreamState, error) {
 	if ledger == nil || logicalID == 0 || ledger.State(logicalID) != LedgerOpenSeen {
 		return nil, ErrInvalidLedgerState
 	}
-	return &LogicalStreamState{logicalID: logicalID, fss2Hash: fss2Hash, ledger: ledger}, nil
+	return &LogicalStreamState{logicalID: logicalID, fss3Hash: fss3Hash, ledger: ledger}, nil
 }
 
 func (s *LogicalStreamState) SendOpen(raw []byte) error {
@@ -65,7 +65,7 @@ func (s *LogicalStreamState) SendOpen(raw []byte) error {
 		return s.failProtocol("OPEN is not the first opener record")
 	}
 	open, err := ParseOpenPayload(raw)
-	if err != nil || open.LogicalStreamID != s.logicalID || open.FSS3Hash != s.fss2Hash {
+	if err != nil || open.LogicalStreamID != s.logicalID || open.FSS3Hash != s.fss3Hash {
 		return ErrInvalidOpenPayload
 	}
 	hash, err := ComputeOpenHash(raw)
@@ -86,7 +86,7 @@ func (s *LogicalStreamState) ReceiveOpen(raw []byte) error {
 		return s.failProtocol("duplicate or misplaced OPEN")
 	}
 	open, err := ParseOpenPayload(raw)
-	if err != nil || open.LogicalStreamID != s.logicalID || open.FSS3Hash != s.fss2Hash {
+	if err != nil || open.LogicalStreamID != s.logicalID || open.FSS3Hash != s.fss3Hash {
 		return s.failProtocol("invalid OPEN payload")
 	}
 	hash, err := ComputeOpenHash(raw)

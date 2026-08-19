@@ -11,6 +11,13 @@ import (
 	protocolv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
 )
 
+type versionIsolationMutation struct {
+	ID        string `json:"id"`
+	V3        string `json:"v3"`
+	V2        string `json:"v2"`
+	ErrorCode string `json:"error_code"`
+}
+
 type versionIsolationFixture struct {
 	Version int `json:"version"`
 	Frames  []struct {
@@ -30,6 +37,10 @@ type versionIsolationFixture struct {
 			Envelope string `json:"envelope_json"`
 		} `json:"rpc"`
 	} `json:"inherited_codecs"`
+	ProfileMutations     []versionIsolationMutation `json:"profile_mutations"`
+	PathMutations        []versionIsolationMutation `json:"path_mutations"`
+	ALPNMutations        []versionIsolationMutation `json:"alpn_mutations"`
+	CryptoLabelMutations []versionIsolationMutation `json:"crypto_label_mutations"`
 }
 
 func TestVersionIsolationFramesFailClosedAcrossProductionDecoders(t *testing.T) {

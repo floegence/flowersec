@@ -217,7 +217,7 @@ func TestServerParityCompletionObjectiveRejectsUnsupportedRequiredUnit(t *testin
 	}
 }
 
-func TestServerParityCompletionObjectiveAllowsUnsupportedOptionalWebTransport(t *testing.T) {
+func TestServerParityCompletionObjectiveLocksGoWebTransportTunnelToProductionEvidence(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +233,11 @@ func TestServerParityCompletionObjectiveAllowsUnsupportedOptionalWebTransport(t 
 		unit := slices.IndexFunc(manifest.ServerParityContract.Units, func(unit serverParityUnit) bool {
 			return unit.Runtime == "go" && unit.Role == role && unit.Carrier == "webtransport" && unit.Path == "tunnel"
 		})
-		if unit < 0 || manifest.ServerParityContract.Units[unit].Status != "supported" || !slices.Equal(manifest.ServerParityContract.Units[unit].TestIDs, []string{"carrier/go-webtransport-tunnel"}) {
+		if unit < 0 {
+			t.Fatalf("Go H4 %s WebTransport tunnel unit is missing", role)
+		}
+		entry := manifest.ServerParityContract.Units[unit]
+		if entry.Status != "supported" || !slices.Equal(entry.TestIDs, []string{"carrier/go-webtransport-tunnel"}) || entry.Reason != "" {
 			t.Fatalf("Go H4 %s WebTransport tunnel unit is not locked to production broker evidence", role)
 		}
 	}

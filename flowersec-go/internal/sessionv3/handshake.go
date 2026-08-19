@@ -67,7 +67,7 @@ func performClientHandshake(control carrier.Stream, config Config, availableFeat
 	if _, err := io.ReadFull(rand.Reader, nonce[:]); err != nil {
 		return handshakeMaterial{}, err
 	}
-	fsc2 := protocolv3.MarshalControlPreface()
+	controlPreface := protocolv3.MarshalControlPreface()
 	initMessage := protocolv3.ClientInit{
 		Profile: "flowersec/3", ChannelID: config.ChannelID,
 		SessionContractHash: config.SessionContractHash, ClientRole: byte(protocolv3.RoleClient),
@@ -80,7 +80,7 @@ func performClientHandshake(control carrier.Stream, config Config, availableFeat
 	if err != nil {
 		return handshakeMaterial{}, err
 	}
-	if err := writeAll(control, fsc2); err != nil {
+	if err := writeAll(control, controlPreface); err != nil {
 		return handshakeMaterial{}, handshakeIOError("client", "write control preface", err)
 	}
 	if err := writeAll(control, initRaw); err != nil {
@@ -106,7 +106,7 @@ func performClientHandshake(control carrier.Stream, config Config, availableFeat
 	if err != nil {
 		return handshakeMaterial{}, err
 	}
-	h0, err := protocolv3.ComputeHandshakeH0(fsc2, initRaw)
+	h0, err := protocolv3.ComputeHandshakeH0(controlPreface, initRaw)
 	if err != nil {
 		return handshakeMaterial{}, err
 	}
@@ -151,11 +151,11 @@ func performClientHandshake(control carrier.Stream, config Config, availableFeat
 }
 
 func performServerHandshake(control carrier.Stream, config Config, availableFeatures uint32) (handshakeMaterial, error) {
-	fsc2 := make([]byte, protocolv3.ControlPrefaceSize)
-	if _, err := io.ReadFull(control, fsc2); err != nil {
+	controlPreface := make([]byte, protocolv3.ControlPrefaceSize)
+	if _, err := io.ReadFull(control, controlPreface); err != nil {
 		return handshakeMaterial{}, handshakeIOError("server", "read control preface", err)
 	}
-	if err := protocolv3.ParseControlPreface(fsc2); err != nil {
+	if err := protocolv3.ParseControlPreface(controlPreface); err != nil {
 		return handshakeMaterial{}, err
 	}
 	clientFrame, err := protocolv3.ReadHandshakeFrame(control)
@@ -197,7 +197,7 @@ func performServerHandshake(control carrier.Stream, config Config, availableFeat
 		ServerAdmissionBinding:   config.LocalAdmissionBinding,
 		ServerEndpointInstanceID: config.LocalEndpointInstanceID,
 	}}
-	h0, err := protocolv3.ComputeHandshakeH0(fsc2, clientFrame.Raw)
+	h0, err := protocolv3.ComputeHandshakeH0(controlPreface, clientFrame.Raw)
 	if err != nil {
 		return handshakeMaterial{}, err
 	}

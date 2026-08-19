@@ -1,4 +1,5 @@
 import { base64urlDecode } from "../utils/base64url.js";
+import { SDK_DEFAULTS } from "../defaults.js";
 import type { Session } from "../public/contract.js";
 import type { RpcRouter } from "../rpc/server.js";
 import {
@@ -80,6 +81,7 @@ export type SessionConnectorRuntimeV3 = Readonly<{
   capabilitySnapshot(): RuntimeCapabilityDescriptorV3;
   dial: CandidateDialerV3;
   protocolRuntime: SessionProtocolRuntimeV3;
+  connectTimeoutMilliseconds?: number;
   createRPCRouter?: () => RpcRouter;
   nowUnixSeconds?: () => number;
   deadlineFactory?: SessionDeadlineFactoryV3;
@@ -140,6 +142,40 @@ export async function attemptClaimedArtifactLeaseV3(
   context: LeaseAttemptContextV3,
   runtime: SessionConnectorRuntimeV3,
 ): Promise<LeaseAttemptResultV3<Session>> {
+  let timeoutMilliseconds: number;
+  try {
+    timeoutMilliseconds = normalizeConnectTimeoutMilliseconds(runtime.connectTimeoutMilliseconds);
+  } catch (error) {
+    return { kind: "pre_spend_failure", error: publicPreSpendError(error) };
+  }
+  const controller = new AbortController();
+  const unlink = linkConnectAttemptAbort(context.signal, controller);
+  const timer = setTimeout(() => controller.abort(
+    new ConnectErrorV3("connection_failed", { kind: "retryable" }),
+  ), timeoutMilliseconds);
+  try {
+    throwIfAborted(controller.signal);
+    return await attemptClaimedArtifactLeaseWithinDeadlineV3(
+      { ...context, signal: controller.signal },
+      runtime,
+    );
+  } catch (error) {
+    const projected = error instanceof ConnectErrorV3
+      ? error
+      : new ConnectErrorV3("connection_failed", { kind: "terminal" });
+    return artifactLeaseStateV3(context.claim) === "claimed"
+      ? { kind: "pre_spend_failure", error: projected }
+      : { kind: "post_spend_failure", error: projected };
+  } finally {
+    clearTimeout(timer);
+    unlink();
+  }
+}
+
+async function attemptClaimedArtifactLeaseWithinDeadlineV3(
+  context: LeaseAttemptContextV3,
+  runtime: SessionConnectorRuntimeV3,
+): Promise<LeaseAttemptResultV3<Session>> {
   const role = context.artifact.path.kind === "tunnel" && context.artifact.path.role === 2
     ? "server"
     : "client";
@@ -162,6 +198,7 @@ export async function attemptClaimedArtifactLeaseV3(
   }
 
   for (const [index, candidate] of context.candidates.entries()) {
+    throwIfAborted(context.signal);
     if (!supportsCandidateSecurityV3(
       context.capability,
       candidate.carrier,
@@ -184,7 +221,10 @@ export async function attemptClaimedArtifactLeaseV3(
     const controller = new AbortController();
     controllers.set(index, controller);
     const unlink = linkAbort(context.signal, controller);
-    const task = runtime.dial(candidate, context.artifact, attemptNow, context.capability, controller.signal)
+    const task = Promise.resolve().then(async () => {
+      throwIfAborted(controller.signal);
+      return await runtime.dial(candidate, context.artifact, attemptNow, context.capability, controller.signal);
+    })
       .then((ready) => ({ index, ready }))
       .catch((error: unknown) => ({ index, failure: asTransportFailure(error) }))
       .finally(unlink);
@@ -193,8 +233,9 @@ export async function attemptClaimedArtifactLeaseV3(
 
   let winner: ReadyAdmissionTransportV3 | undefined;
   while (pending.size > 0 && winner === undefined) {
-    if (context.signal.aborted) break;
-    const result = await Promise.race(pending.values());
+    throwIfAborted(context.signal);
+    const result = await raceAbort(Promise.race(pending.values()), context.signal);
+    throwIfAborted(context.signal);
     pending.delete(result.index);
     if (result.ready !== undefined) winner = result.ready;
     else {
@@ -205,9 +246,11 @@ export async function attemptClaimedArtifactLeaseV3(
   for (const [index, controller] of controllers) {
     if (context.candidates[index] !== winner?.candidate) controller.abort(new Error("candidate lost race"));
   }
-  const lateResults = await Promise.all([...pending.values()]);
-  for (const result of lateResults) {
-    if (result.ready !== undefined && result.ready !== winner) await result.ready.close().catch(() => undefined);
+  try {
+    await drainCandidateResultsV3([...pending.values()], winner, context.signal);
+  } catch (error) {
+    if (winner !== undefined) await closePreparedTransportV3(winner, context.signal);
+    throw error;
   }
   if (winner === undefined) {
     try { context.assertArtifactFresh(); } catch (error) {
@@ -220,7 +263,7 @@ export async function attemptClaimedArtifactLeaseV3(
     context.assertArtifactFresh();
     const rawFSB3 = encodeFSB3RequestV3(buildFSB3RequestV3(context.artifact, winner.candidate.id));
     const config = sessionConfigFromArtifactV3(context.artifact, rawFSB3, runtime);
-    const channel = await winner.openAdmissionChannel(context.signal);
+    const channel = await raceAbort(winner.openAdmissionChannel(context.signal), context.signal);
     try {
       context.assertArtifactFresh();
       await commitArtifactLeaseSpendV3(context.claim, context.signal);
@@ -236,7 +279,7 @@ export async function attemptClaimedArtifactLeaseV3(
       }
       const carrier = winner.finalize();
       try {
-        const session = await establishSessionV3(carrier, config, { signal: context.signal });
+        const session = await raceAbort(establishSessionV3(carrier, config, { signal: context.signal }), context.signal);
         return { kind: "established", session: projectSessionV3(session) };
       } catch (error) {
         carrier.abort({ code: 6, reason: "session establishment failed" });
@@ -247,7 +290,8 @@ export async function attemptClaimedArtifactLeaseV3(
       throw error;
     }
   } catch (error) {
-    await winner.close().catch(() => undefined);
+    await closePreparedTransportV3(winner, context.signal);
+    throwIfAborted(context.signal);
     if (artifactLeaseStateV3(context.claim) === "claimed") {
       return { kind: "pre_spend_failure", error: publicPreSpendError(error) };
     }
@@ -298,8 +342,8 @@ async function exchangeMessage(
   rawFSB3: Uint8Array,
   signal: AbortSignal,
 ): Promise<Uint8Array> {
-  await channel.write(rawFSB3, signal);
-  return await channel.read(signal);
+  await raceAbort(channel.write(rawFSB3, signal), signal);
+  return await raceAbort(channel.read(signal), signal);
 }
 
 async function exchangeStream(
@@ -391,6 +435,14 @@ function publicPreSpendError(error: unknown): ConnectErrorV3 {
   return new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
 }
 
+function normalizeConnectTimeoutMilliseconds(value: number | undefined): number {
+  const timeout = value ?? SDK_DEFAULTS.transport.connectTimeoutMs;
+  if (!Number.isSafeInteger(timeout) || timeout < 1) {
+    throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
+  }
+  return timeout;
+}
+
 function asTransportFailure(error: unknown): TransportFailureV3 {
   return error instanceof TransportFailureV3
     ? error
@@ -409,12 +461,84 @@ function linkAbort(parent: AbortSignal | undefined, child: AbortController): () 
   return () => parent.removeEventListener("abort", abort);
 }
 
+function linkConnectAttemptAbort(parent: AbortSignal, child: AbortController): () => void {
+  const abort = () => child.abort(new ConnectErrorV3("connection_failed", { kind: "terminal" }));
+  if (parent.aborted) abort();
+  else parent.addEventListener("abort", abort, { once: true });
+  return () => parent.removeEventListener("abort", abort);
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw signal.reason;
+}
+
+async function drainCandidateResultsV3(
+  pending: readonly Promise<Readonly<{
+    index: number;
+    ready?: ReadyAdmissionTransportV3;
+    failure?: TransportFailureV3;
+  }>>[],
+  winner: ReadyAdmissionTransportV3 | undefined,
+  signal: AbortSignal,
+): Promise<void> {
+  const drain = Promise.all(pending).then(async (results) => {
+    await Promise.allSettled(results.map(async (result) => {
+      if (result.ready !== undefined && result.ready !== winner) {
+        await closePreparedTransportV3(result.ready, signal);
+      }
+    }));
+  });
+  await raceAbort(drain, signal);
+}
+
+async function closePreparedTransportV3(
+  transport: ReadyAdmissionTransportV3,
+  signal: AbortSignal,
+): Promise<void> {
+  const closing = Promise.resolve()
+    .then(async () => await transport.close())
+    .catch(() => undefined);
+  if (signal.aborted) {
+    abortPreparedTransportV3(transport);
+    return;
+  }
+  try {
+    await raceAbort(closing, signal);
+  } catch {
+    abortPreparedTransportV3(transport);
+  }
+}
+
+function abortPreparedTransportV3(transport: ReadyAdmissionTransportV3): void {
+  try { transport.abort(); } catch { /* best effort */ }
+}
+
 async function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) throw signal.reason;
   return await new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason);
+    let settled = false;
+    const cleanup = () => signal.removeEventListener("abort", abort);
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(signal.reason);
+    };
     signal.addEventListener("abort", abort, { once: true });
-    void promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    void promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      },
+    );
   });
 }
 

@@ -58,6 +58,35 @@ const controllerFixture = JSON.parse(readFileSync(
 }>[] }>;
 
 describe("transport v3 production connection controller", () => {
+  test("consumes a spend whose callback outlives caller cancellation", async () => {
+    let signalStarted!: () => void;
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    let release!: () => void;
+    const spend = vi.fn(async (_signal?: AbortSignal) => await new Promise<void>((resolve) => {
+      release = resolve;
+      signalStarted();
+    }));
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, spend);
+    const claim = claimArtifactLeaseV3(lease);
+    const cancellation = new AbortController();
+    const commit = commitArtifactLeaseSpendV3(claim, cancellation.signal);
+    await started;
+    cancellation.abort(new Error("caller stopped"));
+    await expect(commit).rejects.toThrow("caller stopped");
+    expect(artifactLeaseStateV3(lease)).toBe("consumed");
+    release();
+    expect(spend).toHaveBeenCalledOnce();
+  });
+
+  test("consumes a spend whose callback fails", async () => {
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => {
+      throw new Error("durability unavailable");
+    });
+    const claim = claimArtifactLeaseV3(lease);
+    await expect(commitArtifactLeaseSpendV3(claim)).rejects.toThrow("durability unavailable");
+    expect(artifactLeaseStateV3(lease)).toBe("consumed");
+  });
+
   test("immediately acquires one changed-pin replacement and establishes", async () => {
     const expected = controllerScenario("pin-mismatch-changed-pin-success").expected;
     const replacementArtifact = withChangedWebTransportPin(primaryArtifact);
@@ -495,6 +524,31 @@ describe("transport v3 production connection controller", () => {
     expect(controller.state).toBe(expected.final_state);
     expect(artifactLeaseStateV3(lease)).toBe(expected.lease_terminal_states[0]);
     expect(cleanup).toHaveBeenCalledTimes(expected.retire_callbacks);
+  });
+
+  test("closes an established session delivered after controller close wins", async () => {
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined);
+    let markConnectorStarted!: () => void;
+    const connectorStarted = new Promise<void>((resolve) => { markConnectorStarted = resolve; });
+    const close = vi.fn(async () => undefined);
+    const session: ManagedSessionV3 = {
+      waitTermination: async () => await new Promise<Readonly<{ error: Error }>>(() => undefined),
+      close,
+    };
+    let resolveConnector!: (result: { kind: "established"; session: ManagedSessionV3 }) => void;
+    const connector = async () => await new Promise<{ kind: "established"; session: ManagedSessionV3 }>((resolve) => {
+      resolveConnector = resolve;
+      markConnectorStarted();
+    });
+    const controller = createConnectionControllerV3({
+      acquire: async () => ({ kind: "lease" as const, lease }),
+    }, connector, { capabilitySnapshot });
+    controller.start();
+    await connectorStarted;
+    const closing = controller.close();
+    resolveConnector({ kind: "established", session });
+    await closing;
+    expect(close).toHaveBeenCalledOnce();
   });
 
   test("records the A pin digest before an expired B and filters it on the next primary", async () => {

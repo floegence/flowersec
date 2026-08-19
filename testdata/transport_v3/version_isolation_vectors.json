@@ -49,6 +49,445 @@
       "v2_version_hex": "465344330200002000000007000000000000000b000001d1a94a20000000002d"
     }
   ],
+  "profile_mutations": [
+    {
+      "id": "session",
+      "v3": "flowersec/3",
+      "v2": "flowersec/2",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "direct",
+      "v3": "flowersec-direct/3",
+      "v2": "flowersec-direct/2",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "tunnel",
+      "v3": "flowersec-tunnel/3",
+      "v2": "flowersec-tunnel/2",
+      "error_code": "version_isolation"
+    }
+  ],
+  "path_mutations": [
+    {
+      "id": "websocket-direct",
+      "v3": "/flowersec/v3/direct",
+      "v2": "/flowersec/v2/direct",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "websocket-tunnel",
+      "v3": "/flowersec/v3/tunnel",
+      "v2": "/flowersec/v2/tunnel",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "webtransport-direct",
+      "v3": "/flowersec/webtransport/v3/direct",
+      "v2": "/flowersec/webtransport/v2/direct",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "webtransport-tunnel",
+      "v3": "/flowersec/webtransport/v3/tunnel",
+      "v2": "/flowersec/webtransport/v2/tunnel",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "websocket-direct-subprotocol",
+      "v3": "flowersec.direct.v3",
+      "v2": "flowersec.direct.v2",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "websocket-tunnel-subprotocol",
+      "v3": "flowersec.tunnel.v3",
+      "v2": "flowersec.tunnel.v2",
+      "error_code": "version_isolation"
+    }
+  ],
+  "alpn_mutations": [
+    {
+      "id": "direct",
+      "v3": "flowersec-direct/3",
+      "v2": "flowersec-direct/2",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "tunnel",
+      "v3": "flowersec-tunnel/3",
+      "v2": "flowersec-tunnel/2",
+      "error_code": "version_isolation"
+    }
+  ],
+  "crypto_label_mutations": [
+    {
+      "id": "handshake",
+      "v3": "flowersec-v3-handshake\u0000",
+      "v2": "flowersec-v2-handshake\u0000",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "server-finished",
+      "v3": "flowersec v3 server finished",
+      "v2": "flowersec v2 server finished",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "client-finished",
+      "v3": "flowersec v3 client finished",
+      "v2": "flowersec v2 client finished",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "epoch-zero",
+      "v3": "flowersec v3 epoch zero",
+      "v2": "flowersec v2 epoch zero",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "control-root",
+      "v3": "flowersec v3 control root",
+      "v2": "flowersec v2 control root",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "stream-root",
+      "v3": "flowersec v3 stream root",
+      "v2": "flowersec v2 stream root",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "setup-root",
+      "v3": "flowersec v3 setup root",
+      "v2": "flowersec v2 setup root",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "rekey-root",
+      "v3": "flowersec v3 rekey root",
+      "v2": "flowersec v2 rekey root",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "next-epoch",
+      "v3": "flowersec v3 next epoch",
+      "v2": "flowersec v2 next epoch",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "stream",
+      "v3": "flowersec v3 stream",
+      "v2": "flowersec v2 stream",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "control",
+      "v3": "flowersec v3 control",
+      "v2": "flowersec v2 control",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "record-key",
+      "v3": "flowersec v3 record key",
+      "v2": "flowersec v2 record key",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "nonce",
+      "v3": "flowersec v3 nonce",
+      "v2": "flowersec v2 nonce",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "unreliable-root",
+      "v3": "flowersec v3 unreliable root",
+      "v2": "flowersec v2 unreliable root",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "unreliable",
+      "v3": "flowersec v3 unreliable",
+      "v2": "flowersec v2 unreliable",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "unreliable-key",
+      "v3": "flowersec v3 unreliable key",
+      "v2": "flowersec v2 unreliable key",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "unreliable-nonce",
+      "v3": "flowersec v3 unreliable nonce",
+      "v2": "flowersec v2 unreliable nonce",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "unreliable-aad",
+      "v3": "flowersec-v3-unreliable",
+      "v2": "flowersec-v2-unreliable",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "setup-mac",
+      "v3": "flowersec-v3-setup\u0000",
+      "v2": "flowersec-v2-setup\u0000",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "record-aad",
+      "v3": "flowersec-v3-record\u0000",
+      "v2": "flowersec-v2-record\u0000",
+      "error_code": "version_isolation"
+    },
+    {
+      "id": "open",
+      "v3": "flowersec-v3-open\u0000",
+      "v2": "flowersec-v2-open\u0000",
+      "error_code": "version_isolation"
+    }
+  ],
+  "identifier_sets": {
+    "magic": [
+      {
+        "v3": "FSB3",
+        "v2": "FSB2",
+        "error_code": "version_isolation"
+      },
+      {
+        "v3": "FSA3",
+        "v2": "FSA2",
+        "error_code": "version_isolation"
+      },
+      {
+        "v3": "FSC3",
+        "v2": "FSC2",
+        "error_code": "version_isolation"
+      },
+      {
+        "v3": "FSH3",
+        "v2": "FSH2",
+        "error_code": "version_isolation"
+      },
+      {
+        "v3": "FSS3",
+        "v2": "FSS2",
+        "error_code": "version_isolation"
+      },
+      {
+        "v3": "FSR3",
+        "v2": "FSR2",
+        "error_code": "version_isolation"
+      },
+      {
+        "v3": "FSD3",
+        "v2": "FSD2",
+        "error_code": "version_isolation"
+      }
+    ],
+    "profile": [
+      {
+        "id": "session",
+        "v3": "flowersec/3",
+        "v2": "flowersec/2",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "direct",
+        "v3": "flowersec-direct/3",
+        "v2": "flowersec-direct/2",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "tunnel",
+        "v3": "flowersec-tunnel/3",
+        "v2": "flowersec-tunnel/2",
+        "error_code": "version_isolation"
+      }
+    ],
+    "path": [
+      {
+        "id": "websocket-direct",
+        "v3": "/flowersec/v3/direct",
+        "v2": "/flowersec/v2/direct",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "websocket-tunnel",
+        "v3": "/flowersec/v3/tunnel",
+        "v2": "/flowersec/v2/tunnel",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "webtransport-direct",
+        "v3": "/flowersec/webtransport/v3/direct",
+        "v2": "/flowersec/webtransport/v2/direct",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "webtransport-tunnel",
+        "v3": "/flowersec/webtransport/v3/tunnel",
+        "v2": "/flowersec/webtransport/v2/tunnel",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "websocket-direct-subprotocol",
+        "v3": "flowersec.direct.v3",
+        "v2": "flowersec.direct.v2",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "websocket-tunnel-subprotocol",
+        "v3": "flowersec.tunnel.v3",
+        "v2": "flowersec.tunnel.v2",
+        "error_code": "version_isolation"
+      }
+    ],
+    "alpn": [
+      {
+        "id": "direct",
+        "v3": "flowersec-direct/3",
+        "v2": "flowersec-direct/2",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "tunnel",
+        "v3": "flowersec-tunnel/3",
+        "v2": "flowersec-tunnel/2",
+        "error_code": "version_isolation"
+      }
+    ],
+    "crypto_label": [
+      {
+        "id": "handshake",
+        "v3": "flowersec-v3-handshake\u0000",
+        "v2": "flowersec-v2-handshake\u0000",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "server-finished",
+        "v3": "flowersec v3 server finished",
+        "v2": "flowersec v2 server finished",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "client-finished",
+        "v3": "flowersec v3 client finished",
+        "v2": "flowersec v2 client finished",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "epoch-zero",
+        "v3": "flowersec v3 epoch zero",
+        "v2": "flowersec v2 epoch zero",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "control-root",
+        "v3": "flowersec v3 control root",
+        "v2": "flowersec v2 control root",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "stream-root",
+        "v3": "flowersec v3 stream root",
+        "v2": "flowersec v2 stream root",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "setup-root",
+        "v3": "flowersec v3 setup root",
+        "v2": "flowersec v2 setup root",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "rekey-root",
+        "v3": "flowersec v3 rekey root",
+        "v2": "flowersec v2 rekey root",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "next-epoch",
+        "v3": "flowersec v3 next epoch",
+        "v2": "flowersec v2 next epoch",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "stream",
+        "v3": "flowersec v3 stream",
+        "v2": "flowersec v2 stream",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "control",
+        "v3": "flowersec v3 control",
+        "v2": "flowersec v2 control",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "record-key",
+        "v3": "flowersec v3 record key",
+        "v2": "flowersec v2 record key",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "nonce",
+        "v3": "flowersec v3 nonce",
+        "v2": "flowersec v2 nonce",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "unreliable-root",
+        "v3": "flowersec v3 unreliable root",
+        "v2": "flowersec v2 unreliable root",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "unreliable",
+        "v3": "flowersec v3 unreliable",
+        "v2": "flowersec v2 unreliable",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "unreliable-key",
+        "v3": "flowersec v3 unreliable key",
+        "v2": "flowersec v2 unreliable key",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "unreliable-nonce",
+        "v3": "flowersec v3 unreliable nonce",
+        "v2": "flowersec v2 unreliable nonce",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "unreliable-aad",
+        "v3": "flowersec-v3-unreliable",
+        "v2": "flowersec-v2-unreliable",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "setup-mac",
+        "v3": "flowersec-v3-setup\u0000",
+        "v2": "flowersec-v2-setup\u0000",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "record-aad",
+        "v3": "flowersec-v3-record\u0000",
+        "v2": "flowersec-v2-record\u0000",
+        "error_code": "version_isolation"
+      },
+      {
+        "id": "open",
+        "v3": "flowersec-v3-open\u0000",
+        "v2": "flowersec-v2-open\u0000",
+        "error_code": "version_isolation"
+      }
+    ]
+  },
   "inherited_codecs": {
     "fsh3": {
       "fixture": "handshake_vectors.json",

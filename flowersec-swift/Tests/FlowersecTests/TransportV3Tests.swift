@@ -115,6 +115,43 @@ struct TransportV3Tests {
     await #expect(throws: ArtifactLeaseErrorV3.unavailable) { try await lease.claim() }
   }
 
+  @Test func canceledSpendWithUnknownCallbackResultIsConsumed() async throws {
+    let artifact = try parseArtifactV3(Self.validArtifact())
+    let started = AsyncStream<Void>.makeStream()
+    let release = AsyncStream<Void>.makeStream()
+    let lease = ArtifactLeaseV3(artifact: artifact, commitSpend: {
+      started.continuation.yield(())
+      for await _ in release.stream { break }
+    })
+    let claimed = try await lease.claim()
+    let task = Task { try await claimed.commitSpend() }
+    var iterator = started.stream.makeAsyncIterator()
+    _ = await iterator.next()
+    task.cancel()
+    var consumed = false
+    for _ in 0..<100 {
+      if await claimed.isConsumed { consumed = true; break }
+      await Task.yield()
+    }
+    #expect(consumed)
+    release.continuation.finish()
+    _ = await task.result
+  }
+
+  @Test func failedSpendIsConsumed() async throws {
+    let artifact = try parseArtifactV3(Self.validArtifact())
+    let lease = ArtifactLeaseV3(artifact: artifact, commitSpend: {
+      throw SpendFailureV3.durabilityUnavailable
+    })
+    let claimed = try await lease.claim()
+    await #expect(throws: SpendFailureV3.durabilityUnavailable) {
+      try await claimed.commitSpend()
+    }
+    await #expect(throws: ArtifactLeaseErrorV3.unavailable) {
+      try await lease.claim()
+    }
+  }
+
   @Test func capabilityAndPinVerifierAreStrict() throws {
     let capability = RuntimeCapabilitiesV3.macOS
     let canonical = try #require(String(data: capability.canonicalJSON(), encoding: .utf8))
@@ -406,6 +443,47 @@ struct TransportV3Tests {
         Issue.record("unexpected isolation frame \(id)")
       }
     }
+
+    let artifactText = try #require(String(data: Self.validArtifact(), encoding: .utf8))
+    let profileMutations = try #require(root["profile_mutations"] as? [[String: Any]])
+    for mutation in profileMutations {
+      let id = try #require(mutation["id"] as? String)
+      let v2 = try #require(mutation["v2"] as? String)
+      if id == "tunnel" {
+        #expect(v2 == "flowersec-tunnel/2")
+        #expect(v2 != "flowersec-tunnel/3")
+        continue
+      }
+      let marker = id == "session"
+        ? "\"profile\":\"flowersec/3\""
+        : "\"wire_profile\":\"flowersec-\(id)/3\""
+      let mutated = artifactText.replacingOccurrences(of: marker, with: marker.replacingOccurrences(of: "/3", with: "/2"))
+      #expect(throws: ArtifactErrorV3.self, Comment(rawValue: "profile_mutations/\(id)")) {
+        try parseArtifactV3(Data(mutated.utf8))
+      }
+      #expect(v2.hasSuffix("/2"))
+    }
+
+    let pathMutations = try #require(root["path_mutations"] as? [[String: Any]])
+    for mutation in pathMutations where !(mutation["id"] as? String ?? "").hasSuffix("-subprotocol") {
+      let id = try #require(mutation["id"] as? String)
+      let v3 = try #require(mutation["v3"] as? String)
+      let v2 = try #require(mutation["v2"] as? String)
+      let carrier = id.hasPrefix("webtransport") ? "webtransport" : "websocket"
+      let kind = id.hasSuffix("-tunnel") ? "tunnel" : "direct"
+      #expect(try ArtifactCodecV3.normalizeURL("\(carrier == "webtransport" ? "https" : "wss")://example.com\(v3)", carrier: carrier, kind: kind).contains("/v3/"))
+      #expect(throws: ArtifactErrorV3.self, Comment(rawValue: "path_mutations/\(id)")) {
+        try ArtifactCodecV3.normalizeURL("\(carrier == "webtransport" ? "https" : "wss")://example.com\(v2)", carrier: carrier, kind: kind)
+      }
+    }
+
+    for field in ["alpn_mutations", "crypto_label_mutations"] {
+      let mutations = try #require(root[field] as? [[String: Any]])
+      for mutation in mutations {
+        #expect(mutation["error_code"] as? String == "version_isolation")
+        #expect(mutation["v3"] as? String != mutation["v2"] as? String)
+      }
+    }
   }
 
   @Test func sharedDatagramVectorsFreezeFSD3WireCryptoAndErrors() throws {
@@ -637,6 +715,10 @@ struct TransportV3Tests {
       "v": 3,
     ])
   }
+}
+
+private enum SpendFailureV3: Error, Equatable {
+  case durabilityUnavailable
 }
 
 extension Data {

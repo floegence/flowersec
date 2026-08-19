@@ -21,7 +21,7 @@ instances, namespaces, faults, and temporary files that they create.
 | Declared Go/Rust/Node WebSocket and raw QUIC tunnel matrix | `stability/interop_matrix.json` defines 18 endpoint-A/runtime/endpoint-B/carrier topologies and each topology's complete executable case set |
 | Current direct and tunnel matrix support | All 36 declarations are unsupported because no single release-gating v3 test exercises the declaration's complete executable case set |
 | Scoped carrier, server, and cross-runtime behavior | Capability and product tests use their own stable IDs and remain support evidence for exactly the behavior they execute; they do not promote a complete matrix declaration to supported |
-| Optional Go WebTransport direct adapter | Go carrier conformance and Chromium direct checks when the adapter is selected |
+| Go WebTransport H4 | Go carrier conformance covers direct and tunnel endpoint dial, direct listen, and tunnel listener pairing; Chromium direct checks run when the browser adapter is selected |
 | Node raw-QUIC-only no-origin and Rust rootless loopback profiles | Node native connector one-shot and Controller generations; Rust direct WebSocket plus spend-before-roots validation |
 | Swift WSS production connector | The v3 Swift connector suite validates the production adapter; scoped Swift-Go interoperability, when registered, remains separate from the complete 18-cell matrix |
 | Chromium direct, WebTransport-to-WSS tunnel, and WebTransport-to-QUIC tunnel | Local `make browser-smoke` using Chromium dual-listener bridge workloads; these are not native `TunnelRuntime` declarations |

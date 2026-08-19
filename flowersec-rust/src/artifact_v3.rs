@@ -1640,6 +1640,38 @@ impl Drop for SpendCompletionV3 {
     }
 }
 
+pub(crate) struct SpendOperationV3 {
+    shared: Arc<LeaseStateV3>,
+    callback: Option<LeaseCallbackV3>,
+    _completion: SpendCompletionV3,
+}
+
+impl SpendOperationV3 {
+    pub(crate) async fn commit(mut self) -> Result<ConsumedArtifactLeaseV3, ArtifactSpendErrorV3> {
+        let callback = self
+            .callback
+            .take()
+            .ok_or(ArtifactSpendErrorV3::Unavailable)?;
+        let result = callback().await;
+        result.map(|_| ConsumedArtifactLeaseV3 {
+            _shared: self.shared.clone(),
+        })
+    }
+}
+
+pub(crate) struct RetireOperationV3 {
+    callback: Option<LeaseCallbackV3>,
+}
+
+impl RetireOperationV3 {
+    pub(crate) async fn finish(mut self) -> Result<(), ArtifactSpendErrorV3> {
+        match self.callback.take() {
+            Some(callback) => callback().await,
+            None => Ok(()),
+        }
+    }
+}
+
 impl ClaimedArtifactLeaseV3 {
     pub(crate) fn artifact(&self) -> &ArtifactV3 {
         &self.artifact
@@ -1659,9 +1691,7 @@ impl ClaimedArtifactLeaseV3 {
     pub(crate) fn is_consumed(&self) -> bool {
         matches!(self.shared.state.load(Ordering::Acquire), 2 | 3)
     }
-    pub(crate) async fn commit_spend(
-        self,
-    ) -> Result<ConsumedArtifactLeaseV3, ArtifactSpendErrorV3> {
+    pub(crate) fn begin_spend(self) -> Result<SpendOperationV3, ArtifactSpendErrorV3> {
         self.shared
             .state
             .compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire)
@@ -1676,13 +1706,20 @@ impl ClaimedArtifactLeaseV3 {
             .map_err(|_| ArtifactSpendErrorV3::CommitFailed)?
             .take()
             .ok_or(ArtifactSpendErrorV3::Unavailable)?;
-        let result = callback().await;
-        drop(completion);
-        result.map(|_| ConsumedArtifactLeaseV3 {
-            _shared: self.shared,
+        Ok(SpendOperationV3 {
+            shared: self.shared.clone(),
+            callback: Some(callback),
+            _completion: completion,
         })
     }
-    pub(crate) async fn retire(self) -> Result<(), ArtifactSpendErrorV3> {
+
+    pub(crate) async fn commit_spend(
+        self,
+    ) -> Result<ConsumedArtifactLeaseV3, ArtifactSpendErrorV3> {
+        self.begin_spend()?.commit().await
+    }
+
+    pub(crate) fn begin_retire(self) -> Result<RetireOperationV3, ArtifactSpendErrorV3> {
         self.shared
             .state
             .compare_exchange(1, 4, Ordering::AcqRel, Ordering::Acquire)
@@ -1693,10 +1730,11 @@ impl ClaimedArtifactLeaseV3 {
             .lock()
             .map_err(|_| ArtifactSpendErrorV3::CommitFailed)?
             .take();
-        match callback {
-            Some(callback) => callback().await,
-            None => Ok(()),
-        }
+        Ok(RetireOperationV3 { callback })
+    }
+
+    pub(crate) async fn retire(self) -> Result<(), ArtifactSpendErrorV3> {
+        self.begin_retire()?.finish().await
     }
 }
 pub(crate) struct ConsumedArtifactLeaseV3 {
@@ -1908,6 +1946,66 @@ mod tests {
     }
 
     #[test]
+    fn version_isolation_profiles_and_paths_are_consumed_by_the_artifact_parser() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../testdata/transport_v3/version_isolation_vectors.json"
+        ))
+        .unwrap();
+        let base: Value = serde_json::from_slice(&valid_artifact()).unwrap();
+        for mutation in fixture["profile_mutations"].as_array().unwrap() {
+            let id = mutation["id"].as_str().unwrap();
+            let v3 = mutation["v3"].as_str().unwrap();
+            assert!(v3.ends_with("/3"));
+            let v2 = mutation["v2"].as_str().unwrap();
+            let mut value = base.clone();
+            match id {
+                "session" => value["profile"] = Value::String(v2.into()),
+                "direct" | "tunnel" => {
+                    value["path"]["candidates"][0]["wire_profile"] = Value::String(v2.into())
+                }
+                other => panic!("unknown profile mutation {other}"),
+            }
+            assert!(
+                ArtifactV3::parse(jcs_value(&value).unwrap()).is_err(),
+                "v2 profile mutation {id} was accepted"
+            );
+        }
+        for mutation in fixture["path_mutations"].as_array().unwrap() {
+            let id = mutation["id"].as_str().unwrap();
+            let v3 = mutation["v3"].as_str().unwrap();
+            let v2 = mutation["v2"].as_str().unwrap();
+            if id.ends_with("-subprotocol") {
+                continue;
+            }
+            let carrier = if id.starts_with("webtransport") {
+                CarrierWireV3::Webtransport
+            } else {
+                CarrierWireV3::Websocket
+            };
+            let kind = if id.contains("tunnel") {
+                "tunnel"
+            } else {
+                "direct"
+            };
+            let scheme = if carrier == CarrierWireV3::Websocket {
+                "wss"
+            } else {
+                "https"
+            };
+            let valid = format!("{scheme}://example.com{v3}");
+            assert!(
+                normalize_url_v3(kind, carrier, &valid).is_ok(),
+                "v3 path {id}"
+            );
+            let legacy = format!("{scheme}://example.com{v2}");
+            assert!(
+                normalize_url_v3(kind, carrier, &legacy).is_err(),
+                "v2 path mutation {id} was accepted"
+            );
+        }
+    }
+
+    #[test]
     fn tunnel_fsb3_decoder_revalidates_the_complete_candidate_projection() {
         let raw = tunnel_fsb3_vector();
         let decoded = decode_tunnel_fsb3(&raw, CarrierWireV3::RawQuic).unwrap();
@@ -2105,6 +2203,55 @@ mod tests {
         assert_eq!(claimed.artifact().expires_at_unix_seconds(), 9_999_999_999);
         claimed.retire().await.unwrap();
         assert_eq!(retires.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn spend_failure_consumes_the_lease_without_a_second_callback() {
+        let artifact = ArtifactV3::parse(valid_artifact()).unwrap();
+        let spends = Arc::new(AtomicUsize::new(0));
+        let spends_capture = spends.clone();
+        let lease = ArtifactLeaseV3::new(artifact, move || async move {
+            spends_capture.fetch_add(1, Ordering::SeqCst);
+            Err(ArtifactSpendErrorV3::CommitFailed)
+        });
+        let copy = lease.clone();
+        let claimed = lease.claim().unwrap();
+        assert!(matches!(
+            claimed.commit_spend().await,
+            Err(ArtifactSpendErrorV3::CommitFailed)
+        ));
+        assert_eq!(spends.load(Ordering::SeqCst), 1);
+        assert!(copy.claim().is_err(), "failed spend became reusable");
+    }
+
+    #[tokio::test]
+    async fn spend_panic_consumes_the_lease_even_when_owned_task_panics() {
+        let artifact = ArtifactV3::parse(valid_artifact()).unwrap();
+        let lease = ArtifactLeaseV3::new(artifact, || async {
+            panic!("injected spend panic");
+            #[allow(unreachable_code)]
+            Ok(())
+        });
+        let copy = lease.clone();
+        let claimed = lease.claim().unwrap();
+        let task = tokio::spawn(claimed.commit_spend());
+        assert!(matches!(task.await, Err(error) if error.is_panic()));
+        assert!(copy.claim().is_err(), "panicking spend became reusable");
+    }
+
+    #[tokio::test]
+    async fn aborting_an_unpolled_spend_operation_consumes_the_lease() {
+        let artifact = ArtifactV3::parse(valid_artifact()).unwrap();
+        let lease = ArtifactLeaseV3::new(artifact, || async { Ok(()) });
+        let copy = lease.clone();
+        let operation = lease.claim().unwrap().begin_spend().unwrap();
+        let task = tokio::spawn(operation.commit());
+        task.abort();
+        let _ = task.await;
+        assert!(
+            copy.is_consumed_for_test(),
+            "aborted spend operation did not reach consumed"
+        );
     }
 
     #[tokio::test]

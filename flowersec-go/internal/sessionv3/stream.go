@@ -197,19 +197,19 @@ func (s *engineSession) openStream(ctx context.Context, kind string, metadata Me
 		_ = s.commitOutboundReset(logicalID)
 		return nil, ErrGoingAway
 	}
-	fss2Hash, err := protocolv3.ComputeFSS3Hash(rawPreface)
+	fss3Hash, err := protocolv3.ComputeFSS3Hash(rawPreface)
 	if err != nil {
 		_ = carrierStream.Reset()
 		return nil, err
 	}
 	openRaw, err := protocolv3.MarshalOpenPayload(protocolv3.OpenPayload{
-		LogicalStreamID: logicalID, FSS3Hash: fss2Hash, Kind: kind, Metadata: metadataRaw,
+		LogicalStreamID: logicalID, FSS3Hash: fss3Hash, Kind: kind, Metadata: metadataRaw,
 	})
 	if err != nil {
 		_ = carrierStream.Reset()
 		return nil, err
 	}
-	state, err := protocolv3.NewOutboundLogicalStreamState(logicalID, fss2Hash)
+	state, err := protocolv3.NewOutboundLogicalStreamState(logicalID, fss3Hash)
 	if err != nil {
 		_ = carrierStream.Reset()
 		return nil, err
@@ -356,7 +356,7 @@ func (s *engineSession) acceptCarrierStream(carrierStream carrier.Stream) {
 		return
 	}
 
-	fss2Hash, err := protocolv3.ComputeFSS3Hash(rawPreface)
+	fss3Hash, err := protocolv3.ComputeFSS3Hash(rawPreface)
 	if err != nil {
 		_ = carrierStream.Reset()
 		return
@@ -367,7 +367,7 @@ func (s *engineSession) acceptCarrierStream(carrierStream carrier.Stream) {
 		return
 	}
 	s.ledgerMu.Lock()
-	state, err := protocolv3.NewInboundLogicalStreamState(s.ledger, preface.LogicalStreamID, fss2Hash)
+	state, err := protocolv3.NewInboundLogicalStreamState(s.ledger, preface.LogicalStreamID, fss3Hash)
 	if err != nil {
 		s.ledgerMu.Unlock()
 		s.resetInboundBeforeDelivery(preface.LogicalStreamID, carrierStream)

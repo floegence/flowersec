@@ -821,6 +821,50 @@ const isolationFrame = (id, hex) => {
   return { id, v3_hex: hex, v2_magic_hex: magic.toString("hex"), v2_version_hex: version.toString("hex") };
 };
 const isolationSourceFrame = direct.winners.find(({ candidate_id }) => candidate_id === "w-ca").fsb3_hex;
+const v2FrameIdentifiers = [
+  ["FSB3", "FSB2"], ["FSA3", "FSA2"], ["FSC3", "FSC2"],
+  ["FSH3", "FSH2"], ["FSS3", "FSS2"], ["FSR3", "FSR2"], ["FSD3", "FSD2"],
+].map(([v3, v2]) => ({ v3, v2, error_code: "version_isolation" }));
+const v2ProfileIdentifiers = [
+  ["session", "flowersec/3", "flowersec/2"],
+  ["direct", "flowersec-direct/3", "flowersec-direct/2"],
+  ["tunnel", "flowersec-tunnel/3", "flowersec-tunnel/2"],
+].map(([id, v3, v2]) => ({ id, v3, v2, error_code: "version_isolation" }));
+const v2PathIdentifiers = [
+  ["websocket-direct", "/flowersec/v3/direct", "/flowersec/v2/direct"],
+  ["websocket-tunnel", "/flowersec/v3/tunnel", "/flowersec/v2/tunnel"],
+  ["webtransport-direct", "/flowersec/webtransport/v3/direct", "/flowersec/webtransport/v2/direct"],
+  ["webtransport-tunnel", "/flowersec/webtransport/v3/tunnel", "/flowersec/webtransport/v2/tunnel"],
+  ["websocket-direct-subprotocol", "flowersec.direct.v3", "flowersec.direct.v2"],
+  ["websocket-tunnel-subprotocol", "flowersec.tunnel.v3", "flowersec.tunnel.v2"],
+].map(([id, v3, v2]) => ({ id, v3, v2, error_code: "version_isolation" }));
+const v2ALPNIdentifiers = [
+  ["direct", "flowersec-direct/3", "flowersec-direct/2"],
+  ["tunnel", "flowersec-tunnel/3", "flowersec-tunnel/2"],
+].map(([id, v3, v2]) => ({ id, v3, v2, error_code: "version_isolation" }));
+const v2CryptoLabels = [
+  ["handshake", "flowersec-v3-handshake\0", "flowersec-v2-handshake\0"],
+  ["server-finished", "flowersec v3 server finished", "flowersec v2 server finished"],
+  ["client-finished", "flowersec v3 client finished", "flowersec v2 client finished"],
+  ["epoch-zero", "flowersec v3 epoch zero", "flowersec v2 epoch zero"],
+  ["control-root", "flowersec v3 control root", "flowersec v2 control root"],
+  ["stream-root", "flowersec v3 stream root", "flowersec v2 stream root"],
+  ["setup-root", "flowersec v3 setup root", "flowersec v2 setup root"],
+  ["rekey-root", "flowersec v3 rekey root", "flowersec v2 rekey root"],
+  ["next-epoch", "flowersec v3 next epoch", "flowersec v2 next epoch"],
+  ["stream", "flowersec v3 stream", "flowersec v2 stream"],
+  ["control", "flowersec v3 control", "flowersec v2 control"],
+  ["record-key", "flowersec v3 record key", "flowersec v2 record key"],
+  ["nonce", "flowersec v3 nonce", "flowersec v2 nonce"],
+  ["unreliable-root", "flowersec v3 unreliable root", "flowersec v2 unreliable root"],
+  ["unreliable", "flowersec v3 unreliable", "flowersec v2 unreliable"],
+  ["unreliable-key", "flowersec v3 unreliable key", "flowersec v2 unreliable key"],
+  ["unreliable-nonce", "flowersec v3 unreliable nonce", "flowersec v2 unreliable nonce"],
+  ["unreliable-aad", "flowersec-v3-unreliable", "flowersec-v2-unreliable"],
+  ["setup-mac", "flowersec-v3-setup\0", "flowersec-v2-setup\0"],
+  ["record-aad", "flowersec-v3-record\0", "flowersec-v2-record\0"],
+  ["open", "flowersec-v3-open\0", "flowersec-v2-open\0"],
+].map(([id, v3, v2]) => ({ id, v3, v2, error_code: "version_isolation" }));
 write("version_isolation_vectors.json", {
   version: 3,
   source: {
@@ -837,6 +881,17 @@ write("version_isolation_vectors.json", {
     isolationFrame("fsr3", cryptoFixtures.vectors[0].fsr3_header_hex),
     isolationFrame("fsd3", datagramFixtures.vectors[0].header_hex),
   ],
+  profile_mutations: v2ProfileIdentifiers,
+  path_mutations: v2PathIdentifiers,
+  alpn_mutations: v2ALPNIdentifiers,
+  crypto_label_mutations: v2CryptoLabels,
+  identifier_sets: {
+    magic: v2FrameIdentifiers,
+    profile: v2ProfileIdentifiers,
+    path: v2PathIdentifiers,
+    alpn: v2ALPNIdentifiers,
+    crypto_label: v2CryptoLabels,
+  },
   inherited_codecs: {
     fsh3: {
       fixture: "handshake_vectors.json",

@@ -1,4 +1,4 @@
-import { X509Certificate, createHash, timingSafeEqual } from "node:crypto";
+import { X509Certificate, constants, createHash, timingSafeEqual } from "node:crypto";
 import { createRequire } from "node:module";
 import { connect as tlsConnect, type ConnectionOptions, type TLSSocket } from "node:tls";
 
@@ -60,16 +60,16 @@ export async function connectNodeTLSSocketV3(
     minVersion: "TLSv1.3",
     maxVersion: "TLSv1.3",
     ALPNProtocols: ["http/1.1"],
+    secureOptions: constants.SSL_OP_NO_TICKET,
     rejectUnauthorized: policy.mode === "ca",
     ...(isIPAddress(host) ? {} : { servername: host }),
     ...(policy.mode === "ca" && options.roots !== undefined ? { ca: options.roots as ConnectionOptions["ca"] } : {}),
   };
-  const socket = tlsConnect(tlsOptions);
   const timeout = options.timeoutMilliseconds ?? 10_000;
   if (!Number.isSafeInteger(timeout) || timeout < 1) {
-    socket.destroy();
     throw new TransportFailureV3("invalid_artifact");
   }
+  const socket = tlsConnect(tlsOptions);
   return await new Promise<TLSSocket>((resolve, reject) => {
     let settled = false;
     const timer = setTimeout(() => fail(new TransportFailureV3("connection_failed")), timeout);

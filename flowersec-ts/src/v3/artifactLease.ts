@@ -83,10 +83,25 @@ export async function commitArtifactLeaseSpendV3(
   const state = claimStates.get(claim);
   if (state === undefined || state.status !== "claimed") throw new ArtifactLeaseV3Error();
   state.status = "spending";
+  const callback = Promise.resolve().then(() => state.commit(signal));
+  let abort: (() => void) | undefined;
   try {
-    await state.commit(signal);
+    if (signal === undefined) {
+      await callback;
+    } else {
+      const canceled = new Promise<never>((_, reject) => {
+        abort = () => reject(signal.reason ?? new Error("artifact spend canceled"));
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+      });
+      await Promise.race([callback, canceled]);
+    }
   } finally {
+    if (signal !== undefined && abort !== undefined) signal.removeEventListener("abort", abort);
     state.status = "consumed";
+    // A cancellation result is authoritative for the lease even when an
+    // application callback ignores the signal and settles later.
+    void callback.catch(() => undefined);
   }
 }
 

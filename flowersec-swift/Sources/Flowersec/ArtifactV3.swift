@@ -187,12 +187,20 @@ private actor ArtifactLeaseStateV3 {
     guard state == .claimed else { throw ArtifactLeaseErrorV3.unavailable }
     state = .spending
     do {
-      try await spend()
+      try await withTaskCancellationHandler {
+        try await spend()
+      } onCancel: {
+        Task { await self.markConsumedAfterCancellation() }
+      }
       state = .consumed
     } catch {
       state = .consumed
       throw error
     }
+  }
+
+  private func markConsumedAfterCancellation() {
+    if state == .spending { state = .consumed }
   }
 
   func retire() async throws {

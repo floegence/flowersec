@@ -124,6 +124,55 @@ func TestArtifactLeaseBurnsAfterSpendCancellation(t *testing.T) {
 	}
 }
 
+func TestArtifactLeaseBurnsWhenSpendCallbackOutlivesCancellation(t *testing.T) {
+	artifact := mustParseInternalFixtureArtifact(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	lease, err := NewArtifactLease(artifact, func(context.Context) error {
+		close(started)
+		<-release
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lease.claimForConnectionController() {
+		t.Fatal("lease claim failed")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- lease.commitSpend(ctx) }()
+	<-started
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled commitSpend() error = %v, want canceled", err)
+	}
+	lease.state.mu.Lock()
+	status := lease.state.status
+	lease.state.mu.Unlock()
+	if status != artifactLeaseConsumed {
+		t.Fatalf("lease status after callback outlives cancellation = %d, want consumed", status)
+	}
+	close(release)
+}
+
+func TestArtifactLeaseBurnsAfterSpendCallbackPanic(t *testing.T) {
+	artifact := mustParseInternalFixtureArtifact(t)
+	lease, err := NewArtifactLease(artifact, func(context.Context) error { panic("unknown spend result") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lease.claimForConnectionController() {
+		t.Fatal("lease claim failed")
+	}
+	if err := lease.commitSpend(context.Background()); err == nil {
+		t.Fatal("panic callback returned nil error")
+	}
+	if err := lease.commitSpend(context.Background()); !errors.Is(err, errArtifactLeaseConsumed) {
+		t.Fatalf("reused commitSpend() error = %v, want consumed", err)
+	}
+}
+
 func TestConnectorFreezesRPCHandlersOnlyAfterLocalValidation(t *testing.T) {
 	artifact := mustParseInternalFixtureArtifact(t)
 	lease, err := NewArtifactLease(artifact, func(context.Context) error { return nil })

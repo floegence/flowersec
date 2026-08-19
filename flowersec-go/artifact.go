@@ -150,6 +150,9 @@ func (lease ArtifactLease) commitSpend(ctx context.Context) error {
 	if lease.state == nil || lease.state.commitSpend == nil {
 		return ErrInvalidArtifact
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	lease.state.mu.Lock()
 	if lease.state.status != artifactLeaseClaimed {
 		lease.state.mu.Unlock()
@@ -157,8 +160,47 @@ func (lease ArtifactLease) commitSpend(ctx context.Context) error {
 	}
 	lease.state.status = artifactLeaseSpending
 	lease.state.mu.Unlock()
+	if ctx.Done() == nil {
+		var err error
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					err = fmt.Errorf("artifact spend callback panicked: %v", recovered)
+				}
+			}()
+			err = lease.state.commitSpend(ctx)
+		}()
+		lease.state.mu.Lock()
+		lease.state.status = artifactLeaseConsumed
+		lease.state.mu.Unlock()
+		return err
+	}
 
-	err := lease.state.commitSpend(ctx)
+	// A durable callback may be implemented by application code and can fail to
+	// return after its context is canceled. Race it with cancellation so the
+	// lease cannot remain in the in-progress state forever. The callback still
+	// receives the context and its result is buffered, so a late completion does
+	// not leak a goroutine or permit a second spend.
+	type spendResult struct{ err error }
+	result := make(chan spendResult, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				result <- spendResult{err: fmt.Errorf("artifact spend callback panicked: %v", recovered)}
+			}
+		}()
+		result <- spendResult{err: lease.state.commitSpend(ctx)}
+	}()
+	<-started
+	var err error
+	select {
+	case outcome := <-result:
+		err = outcome.err
+	case <-ctx.Done():
+		err = ctx.Err()
+	}
 	lease.state.mu.Lock()
 	lease.state.status = artifactLeaseConsumed
 	lease.state.mu.Unlock()

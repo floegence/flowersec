@@ -124,16 +124,16 @@ An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default.
 
 ## Supported Connections
 
-The Go SDK supports WebSocket and raw QUIC on direct and tunnel paths, plus
-direct WebTransport connections. `NewWebTransportTunnelListener(...)` is an
-optional low-level listener adapter only; it is not a supported endpoint-client
-tunnel path or `TunnelRuntime` capability because the production opaque relay
-does not provide complete paired WebTransport datagram forwarding. No runtime
-currently claims the complete `webtransport-server` profile. The SDK
-provides the direct-only `NewAcceptor` for application-owned server sessions,
-the separate `NewTunnelRuntime` for opaque tunnel pairing and forwarding, and
-`NewProxyServer` for bounded browser HTTP/WebSocket proxy handling. A tunnel
-runtime never owns a `Session`, application handler, or E2EE PSK.
+The Go SDK supports WebSocket, raw QUIC, and WebTransport across H4: direct
+endpoint dial, client and server endpoint tunnel dial, direct listen, and
+tunnel listener pairing. `NewTunnelRuntime(...)` composes
+`NewWebTransportTunnelListener(...)` for opaque paired stream and datagram
+forwarding. No runtime currently claims the complete `webtransport-server`
+profile. The SDK provides the direct-only `NewAcceptor` for application-owned
+server sessions, the separate `NewTunnelRuntime` for opaque tunnel pairing and
+forwarding, and `NewProxyServer` for bounded browser HTTP/WebSocket proxy
+handling. A tunnel runtime never owns a `Session`, application handler, or E2EE
+PSK.
 
 ## Server Control Plane
 

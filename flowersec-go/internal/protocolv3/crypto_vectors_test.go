@@ -83,8 +83,8 @@ func TestSharedTransportV3CryptoVectors(t *testing.T) {
 				t.Fatal(err)
 			}
 			preface.SetupMAC = mac
-			fss2, err := preface.MarshalBinary()
-			if err != nil || hex.EncodeToString(fss2) != vector.FSS3Hex {
+			legacySetup, err := preface.MarshalBinary()
+			if err != nil || hex.EncodeToString(legacySetup) != vector.FSS3Hex {
 				t.Fatalf("FSS3 mismatch: %v", err)
 			}
 			inner, err := MarshalInnerRecord(InnerData, []byte("abc"))

@@ -178,6 +178,7 @@ jobs:
     permissions:
       contents: write
       packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -234,6 +235,12 @@ jobs:
           pattern: flowersec-node-native-*
           path: native-prebuilt
           merge-multiple: false
+
+      - name: Setup cosign
+        if: needs.prepare.outputs.release_exists == 'false'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
 
       - name: Build release artifacts
         if: needs.prepare.outputs.release_exists == 'false'
@@ -296,7 +303,37 @@ jobs:
           build_runtime linux amd64
           build_runtime linux arm64
 
-          ( cd dist && sha256sum * > checksums.txt )
+          ( cd dist && sha256sum *.tgz *.tar.gz > checksums.txt )
+
+          # Every published release asset receives a keyless Sigstore signature
+          # and certificate. Checksums remain a convenience index, not the
+          # release authenticity mechanism.
+          command -v cosign >/dev/null
+          case "$GITHUB_WORKFLOW_REF" in
+            "${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/heads/main" | \
+            "${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/flowersec-go/v${VERSION}") ;;
+            *)
+              echo "release signing requires the reviewed main or release-tag workflow" >&2
+              exit 1
+              ;;
+          esac
+          certificate_identity="https://github.com/${GITHUB_WORKFLOW_REF}"
+          release_assets=(dist/*.tgz dist/*.tar.gz dist/checksums.txt)
+          ((${#release_assets[@]} > 0))
+          for asset in "${release_assets[@]}"; do
+            cosign sign-blob --yes \
+              --output-signature "${asset}.sig" \
+              --output-certificate "${asset}.pem" \
+              "$asset"
+          done
+          for asset in "${release_assets[@]}"; do
+            cosign verify-blob \
+              --signature "${asset}.sig" \
+              --certificate "${asset}.pem" \
+              --certificate-identity "$certificate_identity" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "$asset" >/dev/null
+          done
 
       - name: Generate release notes
         if: needs.prepare.outputs.release_exists == 'false'
@@ -372,6 +409,11 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Setup cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+
       - name: Publish or recover npm registry packages from immutable release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -386,7 +428,11 @@ jobs:
           gh release download "flowersec-go/v${VERSION}" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern checksums.txt \
+            --pattern 'checksums.txt.sig' \
+            --pattern 'checksums.txt.pem' \
             --pattern 'floegence-flowersec-*.tgz' \
+            --pattern 'floegence-flowersec-*.tgz.sig' \
+            --pattern 'floegence-flowersec-*.tgz.pem' \
             --dir npm-release-assets
 
           archives=(
@@ -397,9 +443,38 @@ jobs:
             "floegence-flowersec-node-native-${VERSION}.tgz"
             "floegence-flowersec-core-${VERSION}.tgz"
           )
+          expected=(checksums.txt checksums.txt.sig checksums.txt.pem)
+          for archive in "${archives[@]}"; do
+            expected+=("$archive" "$archive.sig" "$archive.pem")
+          done
           mapfile -t downloaded < <(find npm-release-assets -maxdepth 1 -type f -printf '%f\n' | sort)
-          mapfile -t expected < <(printf '%s\n' checksums.txt "${archives[@]}" | sort)
+          mapfile -t expected < <(printf '%s\n' "${expected[@]}" | sort)
           [[ "${downloaded[*]}" == "${expected[*]}" ]]
+          command -v cosign >/dev/null
+          verify_signed() {
+            local asset="$1"
+            local identity
+            local identities=(
+              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/heads/main"
+              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/flowersec-go/v${VERSION}"
+            )
+            for identity in "${identities[@]}"; do
+              if cosign verify-blob \
+                --signature "${asset}.sig" \
+                --certificate "${asset}.pem" \
+                --certificate-identity "$identity" \
+                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+                "$asset" >/dev/null 2>&1; then
+                return 0
+              fi
+            done
+            echo "release asset signature does not match a trusted workflow identity: $asset" >&2
+            return 1
+          }
+          verify_signed npm-release-assets/checksums.txt
+          for archive in "${archives[@]}"; do
+            verify_signed "npm-release-assets/$archive"
+          done
           for archive in "${archives[@]}"; do
             test -f "npm-release-assets/${archive}"
             [[ "$(awk -v file="$archive" '$2 == file { count++ } END { print count + 0 }' npm-release-assets/checksums.txt)" == 1 ]]

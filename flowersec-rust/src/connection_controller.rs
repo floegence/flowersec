@@ -8,12 +8,13 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Mutex, MutexGuard,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, SystemTime},
 };
 
 use async_trait::async_trait;
+use futures_util::FutureExt as _;
 use tokio::{
     sync::{Mutex as AsyncMutex, Notify},
     task::JoinHandle,
@@ -208,6 +209,12 @@ struct ControllerInner {
     retry_wake: Notify,
     retry_revision: AtomicU64,
     changed: Notify,
+    close_workflow_started: AtomicBool,
+    close_complete: AtomicBool,
+    close_complete_changed: Notify,
+    scheduler_join_started: AtomicBool,
+    scheduler_join_complete: AtomicBool,
+    scheduler_join_complete_changed: Notify,
     state: Mutex<ControllerState>,
 }
 
@@ -277,6 +284,12 @@ impl ConnectionController {
                 retry_wake: Notify::new(),
                 retry_revision: AtomicU64::new(0),
                 changed: Notify::new(),
+                close_workflow_started: AtomicBool::new(false),
+                close_complete: AtomicBool::new(false),
+                close_complete_changed: Notify::new(),
+                scheduler_join_started: AtomicBool::new(false),
+                scheduler_join_complete: AtomicBool::new(false),
+                scheduler_join_complete_changed: Notify::new(),
                 state: Mutex::new(ControllerState {
                     status: ControllerStatus {
                         state: ConnectionState::Idle,
@@ -351,13 +364,11 @@ impl ConnectionController {
         let _close = self.close_lock.lock().await;
         self.inner.cancellation.cancel();
         self.inner.retry_wake.notify_waiters();
-        if let Some(session) = self.inner.finish_closed() {
-            let _ = session.close().await;
-        }
+        self.inner.start_close_workflow(self.inner.finish_closed());
         let task = lock(&self.task).take();
-        if let Some(task) = task {
-            let _ = task.await;
-        }
+        self.inner.start_scheduler_join_workflow(task);
+        self.inner.wait_close_completion().await;
+        self.inner.wait_scheduler_join_completion().await;
     }
 }
 
@@ -461,6 +472,66 @@ impl ControllerInner {
         };
         self.changed.notify_waiters();
         current
+    }
+
+    fn start_close_workflow(self: &Arc<Self>, session: Option<Arc<dyn Session>>) {
+        if self.close_workflow_started.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let Some(session) = session else {
+            self.close_complete.store(true, Ordering::Release);
+            self.close_complete_changed.notify_waiters();
+            return;
+        };
+        let inner = self.clone();
+        tokio::spawn(async move {
+            let _ = std::panic::AssertUnwindSafe(session.close())
+                .catch_unwind()
+                .await;
+            inner.close_complete.store(true, Ordering::Release);
+            inner.close_complete_changed.notify_waiters();
+        });
+    }
+
+    async fn wait_close_completion(&self) {
+        loop {
+            let changed = self.close_complete_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.close_complete.load(Ordering::Acquire) {
+                return;
+            }
+            changed.await;
+        }
+    }
+
+    fn start_scheduler_join_workflow(self: &Arc<Self>, task: Option<JoinHandle<()>>) {
+        if self.scheduler_join_started.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let Some(task) = task else {
+            self.scheduler_join_complete.store(true, Ordering::Release);
+            self.scheduler_join_complete_changed.notify_waiters();
+            return;
+        };
+        let inner = self.clone();
+        tokio::spawn(async move {
+            let _ = task.await;
+            inner.scheduler_join_complete.store(true, Ordering::Release);
+            inner.scheduler_join_complete_changed.notify_waiters();
+        });
+    }
+
+    async fn wait_scheduler_join_completion(&self) {
+        loop {
+            let changed = self.scheduler_join_complete_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.scheduler_join_complete.load(Ordering::Acquire) {
+                return;
+            }
+            changed.await;
+        }
     }
 }
 
@@ -1097,10 +1168,9 @@ fn next_clock_delay(monotonic_delay: Duration, wall_delay: Duration) -> Duration
     }
 }
 
-async fn close_inner(inner: &ControllerInner) {
-    if let Some(session) = inner.finish_closed() {
-        let _ = session.close().await;
-    }
+async fn close_inner(inner: &Arc<ControllerInner>) {
+    inner.start_close_workflow(inner.finish_closed());
+    inner.wait_close_completion().await;
 }
 
 const fn connect_failure(
@@ -1493,6 +1563,59 @@ mod tests {
         }
         controller.close().await;
         assert_eq!(retired.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn canceled_first_close_still_waits_for_owned_scheduler_cleanup() {
+        let retire_entered = Arc::new(Notify::new());
+        let retire_release = Arc::new(Notify::new());
+        let retire_entered_capture = retire_entered.clone();
+        let retire_release_capture = retire_release.clone();
+        let lease = ArtifactLeaseV3::new_with_retire(
+            pin_only_artifact([0x11; 32]),
+            || async { Ok(()) },
+            move || async move {
+                retire_entered_capture.notify_one();
+                retire_release_capture.notified().await;
+                Ok(())
+            },
+        );
+        let source = Arc::new(LateLeaseSource {
+            lease: Mutex::new(Some(lease)),
+            acquisitions: AtomicU64::new(0),
+        });
+        let controller = ConnectionController::new_with_connector(
+            source.clone(),
+            test_options(None),
+            scripted_connector(std::iter::empty::<ConnectorStep>()),
+        );
+        controller.start();
+        while source.acquisitions.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+
+        let mut first = Box::pin(controller.close());
+        tokio::time::timeout(Duration::from_millis(250), async {
+            tokio::select! {
+                _ = retire_entered.notified() => {}
+                () = &mut first => panic!("controller close completed before scheduler cleanup"),
+            }
+        })
+        .await
+        .expect("scheduler cleanup did not enter lease retirement");
+        drop(first);
+
+        let mut second = Box::pin(controller.close());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut second)
+                .await
+                .is_err(),
+            "later close returned before owned scheduler cleanup"
+        );
+        retire_release.notify_one();
+        tokio::time::timeout(Duration::from_millis(500), &mut second)
+            .await
+            .expect("later close remained blocked after scheduler cleanup");
     }
 
     #[tokio::test]
@@ -2292,6 +2415,57 @@ mod tests {
         release.notify_one();
         first.await;
         second.await;
+    }
+
+    #[tokio::test]
+    async fn canceled_first_controller_close_leaves_owned_cleanup_for_later_close() {
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let session = Arc::new(BlockingCloseSession {
+            entered: entered.clone(),
+            release: release.clone(),
+        });
+        let source = Arc::new(QueueSource::new([Ok(test_lease(
+            pin_only_artifact([0x11; 32]),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+        ))]));
+        let controller = ConnectionController::new_with_connector(
+            source,
+            test_options(Some(1)),
+            Arc::new(move |lease, _options, _cancellation| {
+                let session = session.clone();
+                Box::pin(async move {
+                    spend_lease(lease).await?;
+                    Ok(session as Arc<dyn Session>)
+                })
+            }),
+        );
+        controller.start();
+        wait_for_state(&controller, ConnectionState::Connected).await;
+
+        let mut first = Box::pin(controller.close());
+        tokio::time::timeout(Duration::from_millis(250), async {
+            tokio::select! {
+                _ = entered.notified() => {}
+                () = &mut first => panic!("controller close completed before session cleanup"),
+            }
+        })
+        .await
+        .expect("first controller close did not enter session cleanup");
+        drop(first);
+
+        let mut second = Box::pin(controller.close());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut second)
+                .await
+                .is_err(),
+            "later controller close returned before owned cleanup"
+        );
+        release.notify_one();
+        tokio::time::timeout(Duration::from_millis(500), &mut second)
+            .await
+            .expect("later controller close remained blocked after release");
     }
 
     fn pin_only_artifact(pin: [u8; 32]) -> ArtifactV3 {

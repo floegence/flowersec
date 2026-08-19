@@ -489,6 +489,7 @@ pub struct EncryptedSessionV3 {
     lifecycle: AtomicU8,
     close_complete: AtomicBool,
     close_complete_changed: Notify,
+    close_error: StdMutex<Option<io::ErrorKind>>,
     canceled: CancellationToken,
     terminal: StdMutex<Option<TerminalCauseV3>>,
     rpc: SessionRpcPeerV3,
@@ -694,6 +695,7 @@ async fn establish_session_v3_inner(
         lifecycle: AtomicU8::new(SessionLifecycleV3::Opening as u8),
         close_complete: AtomicBool::new(false),
         close_complete_changed: Notify::new(),
+        close_error: StdMutex::new(None),
         canceled: CancellationToken::new(),
         terminal: StdMutex::new(None),
         rpc: SessionRpcPeerV3 {
@@ -2369,12 +2371,35 @@ async fn send_goaway_v3(session: &EncryptedSessionV3, reason: u16) -> io::Result
 }
 
 async fn close_session_v3(session: &EncryptedSessionV3) -> io::Result<()> {
-    if !session.begin_closing() {
-        if session.lifecycle() == SessionLifecycleV3::Closing {
-            wait_for_close_completion_v3(session).await;
-        }
+    if session.begin_closing() {
+        let Some(owner) = session.self_weak.get().and_then(Weak::upgrade) else {
+            session.finish_close_workflow();
+            return Err(closed());
+        };
+        tokio::spawn(async move {
+            let result = std::panic::AssertUnwindSafe(close_session_workflow_v3(&owner))
+                .catch_unwind()
+                .await
+                .unwrap_or_else(|_| Err(io::Error::other("Flowersec v3 close workflow panicked")));
+            if let Err(error) = &result {
+                *owner.close_error.lock().expect("close error lock poisoned") = Some(error.kind());
+            }
+            owner.finish_close_workflow();
+        });
+    } else if session.lifecycle() != SessionLifecycleV3::Closing {
         return Ok(());
     }
+    wait_for_close_completion_v3(session).await;
+    session
+        .close_error
+        .lock()
+        .expect("close error lock poisoned")
+        .map_or(Ok(()), |kind| {
+            Err(io::Error::new(kind, "Flowersec v3 close failed"))
+        })
+}
+
+async fn close_session_workflow_v3(session: &EncryptedSessionV3) -> io::Result<()> {
     record_terminal_v3(session, &closed());
     session.rpc.notifications.clear();
     let deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
@@ -2424,7 +2449,6 @@ async fn close_session_v3(session: &EncryptedSessionV3) -> io::Result<()> {
         }
     };
     let _rpc_operation = session.rpc.serial.lock().await;
-    session.finish_close_workflow();
     flush.and(carrier)
 }
 
@@ -2459,6 +2483,28 @@ async fn close_peer_session_v3(session: &EncryptedSessionV3) {
         }
         return;
     }
+    let Some(owner) = session.self_weak.get().and_then(Weak::upgrade) else {
+        session.finish_close_workflow();
+        return;
+    };
+    tokio::spawn(async move {
+        let result = std::panic::AssertUnwindSafe(close_peer_workflow_v3(&owner))
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|_| {
+                Err(io::Error::other(
+                    "Flowersec v3 peer close workflow panicked",
+                ))
+            });
+        if let Err(error) = result {
+            *owner.close_error.lock().expect("close error lock poisoned") = Some(error.kind());
+        }
+        owner.finish_close_workflow();
+    });
+    wait_for_close_completion_v3(session).await;
+}
+
+async fn close_peer_workflow_v3(session: &EncryptedSessionV3) -> io::Result<()> {
     record_terminal_v3(session, &closed());
     session.rpc.notifications.clear();
     let deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
@@ -2482,11 +2528,20 @@ async fn close_peer_session_v3(session: &EncryptedSessionV3) {
     session.terminate_stream_buffers();
     session.canceled.cancel();
     let _ = reply;
-    let carrier = tokio::time::timeout_at(deadline, session.carrier.close()).await;
-    if !matches!(carrier, Ok(Ok(()))) {
-        session.carrier.abort();
+    match tokio::time::timeout_at(deadline, session.carrier.close()).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => {
+            session.carrier.abort();
+            Err(error)
+        }
+        Err(_) => {
+            session.carrier.abort();
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Flowersec v3 peer carrier close timeout",
+            ))
+        }
     }
-    session.finish_close_workflow();
 }
 
 fn validate_session_close_payload_v3(payload: &[u8]) -> io::Result<()> {

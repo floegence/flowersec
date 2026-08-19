@@ -1654,10 +1654,6 @@ actor TransportV3Session {
     guard !closed else { return }
     controlTerminalCommitted = true
     lifecycle = .closed
-    terminationError = error
-    let waiters = terminationWaiters
-    terminationWaiters.removeAll()
-    for waiter in waiters { waiter.resume(returning: error) }
     releasePeerCloseWaiters()
     controlTask?.cancel()
     acceptTask?.cancel()
@@ -1691,6 +1687,12 @@ actor TransportV3Session {
     closeDeadlineTask = nil
     closeWorkTask = nil
     await closeSignal?.finish()
+    // waitTermination is the controller's cleanup barrier. Publish terminal
+    // state only after carrier, streams, RPC, and close signaling are complete.
+    terminationError = error
+    let waiters = terminationWaiters
+    terminationWaiters.removeAll()
+    for waiter in waiters { waiter.resume(returning: error) }
   }
 
   private func idReasonPayload(id: UInt64, reason: UInt16) -> Data {

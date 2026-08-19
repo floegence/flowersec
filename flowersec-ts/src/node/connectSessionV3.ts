@@ -1,4 +1,5 @@
 import type { Session } from "../public/contract.js";
+import { SDK_DEFAULTS } from "../defaults.js";
 import type { ArtifactLeaseV3 } from "../v3/artifactLease.js";
 import {
   createConnectionControllerV3 as createCoreControllerV3,
@@ -71,6 +72,10 @@ function nodeRuntime(options: Readonly<{
   connectTimeoutMs?: number;
   rpcHandlers?: RPCHandlers;
 }>): SessionConnectorRuntimeV3 {
+  const connectTimeoutMilliseconds = options.connectTimeoutMs ?? SDK_DEFAULTS.transport.connectTimeoutMs;
+  if (!Number.isSafeInteger(connectTimeoutMilliseconds) || connectTimeoutMilliseconds < 1) {
+    throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
+  }
   const addon = tryLoadNativeTransportAddon();
   const rawQuic = addon === undefined ? undefined : createNativeRawQuicDriverV3(addon);
   const capability = detectNodeRuntimeCapabilityV3(rawQuic !== undefined, options.origin !== undefined);
@@ -82,6 +87,7 @@ function nodeRuntime(options: Readonly<{
   }
   return {
     capabilitySnapshot: () => capability,
+    connectTimeoutMilliseconds,
     protocolRuntime: nodeSessionRuntimeV3,
     ...(rpcSnapshot === undefined ? {} : { createRPCRouter: () => createRPCRouter(rpcSnapshot) }),
     dial: async (candidate, artifact, attemptNow, _capability, signal) => {
@@ -91,7 +97,7 @@ function nodeRuntime(options: Readonly<{
           origin: options.origin,
           signal,
           ...(options.roots === undefined ? {} : { roots: options.roots }),
-          ...(options.connectTimeoutMs === undefined ? {} : { timeoutMilliseconds: options.connectTimeoutMs }),
+          timeoutMilliseconds: connectTimeoutMilliseconds,
         });
         return await readyWebSocketAdmissionV3(candidate, artifact, socket, signal);
       }
@@ -99,7 +105,7 @@ function nodeRuntime(options: Readonly<{
         const carrier = await createNodeRawQuicClientV3(rawQuic, candidate, artifact, attemptNow, {
           signal,
           ...(options.roots === undefined ? {} : { roots: options.roots }),
-          ...(options.connectTimeoutMs === undefined ? {} : { handshakeTimeoutMs: options.connectTimeoutMs }),
+          handshakeTimeoutMs: connectTimeoutMilliseconds,
         });
         return readyNativeAdmissionV3(candidate, carrier);
       }

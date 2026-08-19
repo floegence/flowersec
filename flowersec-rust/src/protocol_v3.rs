@@ -1508,6 +1508,29 @@ mod unreliable_message_tests {
         }
     }
 
+    #[test]
+    fn version_isolation_crypto_labels_keep_v3_domain_separation() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/transport_v3/version_isolation_vectors.json"
+        ))
+        .unwrap();
+        let labels = fixture["crypto_label_mutations"].as_array().unwrap();
+        assert!(!labels.is_empty());
+        for mutation in labels {
+            let v3 = mutation["v3"].as_str().unwrap();
+            let v2 = mutation["v2"].as_str().unwrap();
+            assert_ne!(v3, v2);
+            assert!(v3.contains('3'), "v3 label lost its version domain");
+            assert!(!v3.contains('2'), "v3 label contains v2 domain");
+        }
+        let roots = derive_epoch_zero_v3(&[0x11; 32], DirectionV3::ClientToServer).unwrap();
+        let peer = derive_epoch_zero_v3(&[0x12; 32], DirectionV3::ClientToServer).unwrap();
+        assert_ne!(roots.control_root(), peer.control_root());
+        assert_ne!(roots.stream_root(), peer.stream_root());
+        assert_ne!(roots.setup_root(), peer.setup_root());
+        assert_ne!(roots.rekey_root(), peer.rekey_root());
+    }
+
     fn hex_lower(raw: &[u8]) -> String {
         use std::fmt::Write as _;
         let mut output = String::with_capacity(raw.len() * 2);

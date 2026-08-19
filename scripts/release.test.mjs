@@ -288,6 +288,23 @@ test("release recovery preserves immutable assets and publishes npm from those e
   );
   assert.match(workflow, /gh release download "flowersec-go\/v\$\{VERSION\}"/);
   assert.match(workflow, /sha256sum --check checksums\.txt/);
+  assert.match(workflow, /cosign sign-blob --yes/);
+  assert.match(workflow, /--output-signature "\$\{asset\}\.sig"/);
+  assert.match(workflow, /--output-certificate "\$\{asset\}\.pem"/);
+  assert.match(workflow, /cosign verify-blob/);
+  assert.match(workflow, /--certificate-identity "\$certificate_identity"/);
+  assert.match(workflow, /--certificate-identity "\$identity"/);
+  assert.match(workflow, /release\.yml@refs\/heads\/main/);
+  assert.match(workflow, /release\.yml@refs\/tags\/flowersec-go\/v\$\{VERSION\}/);
+  assert.doesNotMatch(workflow, /certificate-identity-regexp/);
+  assert.match(workflow, /certificate-oidc-issuer "https:\/\/token\.actions\.githubusercontent\.com"/);
+  assert.match(workflow, /checksums\.txt\.sig/);
+  assert.match(workflow, /checksums\.txt\.pem/);
+  assert.equal(
+    workflow.match(/uses: sigstore\/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6/g)?.length,
+    2,
+  );
+  assert.equal(workflow.match(/cosign-release: v3\.0\.6/g)?.length, 2);
   assert.match(workflow, /downloaded\[\*\].*expected\[\*\]/);
   assert.match(workflow, /awk -v file="\$archive"/);
   assert.match(workflow, /validate_manifest "\$archive" "\$package"/);
@@ -986,7 +1003,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       const root = createReleasePolicyFixture(t);
       const workflowPath = path.join(root, ".github/workflows/release.yml");
       const workflow = fs.readFileSync(workflowPath, "utf8");
-      const marker = "    permissions:\n      contents: write\n      packages: write\n    steps:\n";
+      const marker = "    permissions:\n      contents: write\n      packages: write\n      id-token: write\n    steps:\n";
       assert.ok(workflow.includes(marker));
       fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}      - name: Unreviewed command\n        run: ${bypass.run}\n\n`));
       const result = runReleasePolicy(root);
@@ -1011,7 +1028,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
-    const marker = "    permissions:\n      contents: write\n      packages: write\n    steps:\n";
+    const marker = "    permissions:\n      contents: write\n      packages: write\n      id-token: write\n    steps:\n";
     assert.ok(workflow.includes(marker));
     fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}      - name: Unreviewed publisher\n        uses: example/publish-action@v1\n\n`));
     const result = runReleasePolicy(root);
@@ -1080,6 +1097,16 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       name: "npm recovery no longer waits for full release publication",
       from: "    needs: [prepare, release]\n",
       to: "    needs: prepare\n",
+    },
+    {
+      name: "cosign installer version is mutable",
+      from: "          cosign-release: v3.0.6\n",
+      to: "          cosign-release: latest\n",
+    },
+    {
+      name: "release signing accepts an arbitrary workflow ref",
+      from: '          certificate_identity="https://github.com/${GITHUB_WORKFLOW_REF}"\n',
+      to: '          certificate_identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/heads/unreviewed"\n',
     },
   ]) {
     schedulePolicyTest(`rejects unsafe immutable release mutation: ${mutation.name}`, () => {

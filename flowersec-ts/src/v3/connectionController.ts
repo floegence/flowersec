@@ -358,7 +358,11 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         };
       }
       if (this.#lifetime.signal.aborted) {
-        if (artifactLeaseStateV3(claim) === "claimed") await retireArtifactLeaseV3(claim);
+        if (result.kind === "established") {
+          await result.session.close().catch(() => undefined);
+        } else if (artifactLeaseStateV3(claim) === "claimed") {
+          await retireArtifactLeaseV3(claim);
+        }
         return;
       }
 

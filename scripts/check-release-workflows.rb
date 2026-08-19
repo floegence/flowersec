@@ -399,6 +399,7 @@ require_exact_value(release_job["needs"], ["prepare", "rust-publish", "native-pr
 require_exact_value(release_job["permissions"], {
   "contents" => "write",
   "packages" => "write",
+  "id-token" => "write",
 }, "the release job permissions")
 require_exact_value(rust_publish_job["permissions"], {
   "contents" => "read",
@@ -607,11 +608,16 @@ validate_step_contracts(release_steps, [
     "uses" => "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
     "with" => { "pattern" => "flowersec-node-native-*", "path" => "native-prebuilt", "merge-multiple" => false },
   } },
+  { name: "Setup cosign", keys: ["name", "if", "uses", "with"], values: {
+    "if" => "needs.prepare.outputs.release_exists == 'false'",
+    "uses" => "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+    "with" => { "cosign-release" => "v3.0.6" },
+  } },
   { name: "Build release artifacts", keys: ["name", "if", "env", "run"], values: { "if" => "needs.prepare.outputs.release_exists == 'false'", "env" => {
     "RELEASE_DATE" => "${{ steps.vars.outputs.date }}",
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
-  } }, run_sha256: "fbe9ed98ae2c7e39754e3afacf934f170300ea1605b29126c821bb76ee7b10ec" },
+  } }, run_sha256: "eb7519a7567db3218ec428f1fa4fc876db6e0cf1c9a032a966b9af20d2608ab5" },
   { name: "Generate release notes", keys: ["name", "if", "env", "run"], values: { "if" => "needs.prepare.outputs.release_exists == 'false'", "env" => {
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_TAG" => "${{ steps.vars.outputs.tag }}",
@@ -669,10 +675,14 @@ validate_step_contracts(npm_recovery_steps, [
     "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
     "with" => { "node-version" => "24", "registry-url" => "https://registry.npmjs.org" },
   } },
+  { name: "Setup cosign", keys: ["name", "uses", "with"], values: {
+    "uses" => "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+    "with" => { "cosign-release" => "v3.0.6" },
+  } },
   { name: "Publish or recover npm registry packages from immutable release assets", keys: ["name", "env", "run"], values: { "env" => {
     "GH_TOKEN" => "${{ github.token }}",
     "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
-  } }, run_sha256: "6feafd9fa377d946d2dcdaa43b39149a563c9f80428d4525f5c30ca4f7e9a59a" },
+  } }, run_sha256: "eae23aaf61a480b20202b42abc53fc660148819da579c46263665e2018e036e6" },
 ], "the unified release workflow npm recovery job")
 validate_step_contracts(npm_consumer_steps, [
   { name: nil, keys: ["uses", "with"], values: {

@@ -15,8 +15,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     artifact_v3::{
-        AdmissionStatusV3, ArtifactLeaseV3, CanonicalCandidateV3, CarrierWireV3, ConnectionPlanV3,
-        TlsPolicyWireV3, decode_fsa3, decode32,
+        AdmissionStatusV3, ArtifactLeaseV3, ArtifactSpendErrorV3, CanonicalCandidateV3,
+        CarrierWireV3, ClaimedArtifactLeaseV3, ConnectionPlanV3, SpendOperationV3, TlsPolicyWireV3,
+        decode_fsa3, decode32,
     },
     native_runtime_v2::ConnectorOptions as ConnectorOptionsV2,
     raw_quic_v3::{self, RawQuicDialFailureV3},
@@ -276,12 +277,18 @@ pub(crate) async fn connect_v3_with_cancellation_and_preparer(
     cancellation: CancellationToken,
     preparer: &dyn CandidatePreparerV3,
 ) -> Result<Arc<dyn Session>, ConnectError> {
+    let claimed = PreSpendLeaseGuardV3::new(
+        lease
+            .claim()
+            .map_err(|_| terminal_error(ConnectErrorCode::ArtifactInvalid))?,
+    );
+    // A pre-canceled one-shot still owns the lease after claiming it. Retire
+    // that claim before returning so the source cannot hand the idle lease to
+    // a later attempt.
     if cancellation.is_cancelled() {
+        let _ = claimed.retire().await;
         return Err(terminal_error(ConnectErrorCode::ConnectionFailed));
     }
-    let claimed = lease
-        .claim()
-        .map_err(|_| terminal_error(ConnectErrorCode::ArtifactInvalid))?;
     let plan = match claimed.artifact().connection_plan() {
         Ok(plan) => plan,
         Err(_) => {
@@ -554,7 +561,7 @@ fn snapshot_candidate_policy(
 }
 
 async fn admit_and_establish(
-    claimed: crate::artifact_v3::ClaimedArtifactLeaseV3,
+    claimed: PreSpendLeaseGuardV3,
     candidate: &CanonicalCandidateV3,
     plan: &ConnectionPlanV3,
     carrier: Arc<dyn CarrierSessionV3>,
@@ -584,18 +591,21 @@ async fn admit_and_establish(
     // The owned task makes caller-future drops explicit. Cancellation aborts
     // the callback; the lease guard still commits the irreversible consumed
     // state because the durable result is then unknown.
-    let mut spend: JoinHandle<_> = tokio::spawn(claimed.commit_spend());
+    let spend_operation = claimed
+        .begin_spend()
+        .map_err(|_| public_error(ConnectErrorCode::ConnectionFailed))?;
+    let mut spend = AbortOnDropJoinHandle::new(tokio::spawn(spend_operation.commit()));
     let spent = tokio::select! {
         biased;
-        result = &mut spend => result,
+        result = spend.wait() => result,
         _ = cancellation.cancelled() => {
             spend.abort();
-            let _ = spend.await;
+            let _ = spend.wait().await;
             return Err(terminal_error(ConnectErrorCode::ConnectionFailed));
         }
         _ = tokio::time::sleep_until(deadline) => {
             spend.abort();
-            let _ = spend.await;
+            let _ = spend.wait().await;
             return Err(public_error(ConnectErrorCode::ConnectionFailed));
         }
     };
@@ -676,7 +686,7 @@ async fn admit_and_establish(
 }
 
 async fn admit_candidate_and_establish(
-    claimed: crate::artifact_v3::ClaimedArtifactLeaseV3,
+    claimed: PreSpendLeaseGuardV3,
     candidate: &CanonicalCandidateV3,
     plan: &ConnectionPlanV3,
     carrier: Arc<dyn CarrierSessionV3>,
@@ -684,6 +694,7 @@ async fn admit_candidate_and_establish(
     deadline: tokio::time::Instant,
     cancellation: &CancellationToken,
 ) -> Result<Arc<dyn Session>, ConnectError> {
+    let mut cleanup = CarrierAbortGuard::new(carrier.clone());
     let result = admit_and_establish(
         claimed,
         candidate,
@@ -694,10 +705,115 @@ async fn admit_candidate_and_establish(
         cancellation,
     )
     .await;
-    if result.is_err() {
-        carrier.abort();
+    if result.is_ok() {
+        cleanup.disarm();
     }
     result
+}
+
+struct PreSpendLeaseGuardV3 {
+    claimed: Option<ClaimedArtifactLeaseV3>,
+    runtime: tokio::runtime::Handle,
+}
+
+impl PreSpendLeaseGuardV3 {
+    fn new(claimed: ClaimedArtifactLeaseV3) -> Self {
+        Self {
+            claimed: Some(claimed),
+            runtime: tokio::runtime::Handle::current(),
+        }
+    }
+
+    fn artifact(&self) -> &crate::artifact_v3::ArtifactV3 {
+        self.claimed
+            .as_ref()
+            .expect("pre-spend lease ownership is present")
+            .artifact()
+    }
+
+    async fn retire(mut self) -> Result<(), ArtifactSpendErrorV3> {
+        self.claimed
+            .take()
+            .expect("pre-spend lease ownership is present")
+            .retire()
+            .await
+    }
+
+    fn begin_spend(mut self) -> Result<SpendOperationV3, ArtifactSpendErrorV3> {
+        self.claimed
+            .take()
+            .expect("pre-spend lease ownership is present")
+            .begin_spend()
+    }
+}
+
+impl Drop for PreSpendLeaseGuardV3 {
+    fn drop(&mut self) {
+        let Some(claimed) = self.claimed.take() else {
+            return;
+        };
+        let Ok(retirement) = claimed.begin_retire() else {
+            return;
+        };
+        self.runtime.spawn(async move {
+            let _ = retirement.finish().await;
+        });
+    }
+}
+
+struct CarrierAbortGuard {
+    carrier: Arc<dyn CarrierSessionV3>,
+    armed: bool,
+}
+
+impl CarrierAbortGuard {
+    fn new(carrier: Arc<dyn CarrierSessionV3>) -> Self {
+        Self {
+            carrier,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for CarrierAbortGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.carrier.abort();
+        }
+    }
+}
+
+/// Keeps a spawned spend task owned by the admission future.
+///
+/// Dropping a `JoinHandle` detaches its task, which would leave a callback
+/// that ignores cancellation running after the connector future is gone. The
+/// guard aborts that task on drop so `SpendCompletionV3` can burn the lease.
+struct AbortOnDropJoinHandle<T> {
+    handle: JoinHandle<T>,
+}
+
+impl<T> AbortOnDropJoinHandle<T> {
+    fn new(handle: JoinHandle<T>) -> Self {
+        Self { handle }
+    }
+
+    fn abort(&self) {
+        self.handle.abort();
+    }
+
+    async fn wait(&mut self) -> Result<T, tokio::task::JoinError> {
+        (&mut self.handle).await
+    }
+}
+
+impl<T> Drop for AbortOnDropJoinHandle<T> {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
 }
 
 async fn write_all(
@@ -766,8 +882,10 @@ fn aggregate_failure(current: CandidateFailureV3, next: CandidateFailureV3) -> C
         match failure {
             CandidateFailureV3::InvalidArtifact => 7,
             CandidateFailureV3::Canceled => 6,
-            CandidateFailureV3::Timeout => 5,
-            CandidateFailureV3::PolicyExpired | CandidateFailureV3::Security => 4,
+            // A security or policy decision is stronger evidence than a
+            // carrier timeout. Completion order must not hide that failure.
+            CandidateFailureV3::PolicyExpired | CandidateFailureV3::Security => 5,
+            CandidateFailureV3::Timeout => 4,
             CandidateFailureV3::Connection => 3,
             CandidateFailureV3::Unsupported => 2,
         }
@@ -888,6 +1006,27 @@ mod tests {
     #[derive(Debug)]
     struct HangingAdmissionStream {
         entered: Arc<tokio::sync::Semaphore>,
+    }
+
+    struct HangingCandidatePreparer {
+        entered: Arc<tokio::sync::Notify>,
+    }
+
+    impl CandidatePreparerV3 for HangingCandidatePreparer {
+        fn prepare<'a>(
+            &'a self,
+            _candidate: &'a CanonicalCandidateV3,
+            _plan: &'a ConnectionPlanV3,
+            _options: &'a ConnectorOptions,
+            _deadline: tokio::time::Instant,
+            _cancellation: &'a CancellationToken,
+        ) -> CandidatePrepareFutureV3<'a> {
+            let entered = self.entered.clone();
+            Box::pin(async move {
+                entered.notify_one();
+                std::future::pending().await
+            })
+        }
     }
 
     #[async_trait]
@@ -1065,7 +1204,7 @@ mod tests {
         let cancellation = CancellationToken::new();
         let options = ConnectorOptions::new();
         let mut operation = Box::pin(admit_candidate_and_establish(
-            claimed,
+            PreSpendLeaseGuardV3::new(claimed),
             &candidate,
             &plan,
             carrier,
@@ -1088,6 +1227,69 @@ mod tests {
         assert_eq!(settled.load(Ordering::Acquire), 0);
         assert!(observed_lease.is_consumed_for_test());
         release.notify_one();
+    }
+
+    #[tokio::test]
+    async fn dropping_admission_future_aborts_spend_and_carrier() {
+        let artifact = artifact_with_candidates(vec![json!({
+            "carrier": "websocket",
+            "id": "ca",
+            "tls": {"mode": "ca"},
+            "url": "wss://127.0.0.1:443/flowersec/v3/direct",
+            "wire_profile": "flowersec-direct/3"
+        })]);
+        let plan = artifact.connection_plan().expect("valid connection plan");
+        let candidate = plan.candidates[0].clone();
+        let spend_entered = Arc::new(tokio::sync::Notify::new());
+        let spend_release = Arc::new(tokio::sync::Notify::new());
+        let spend_entered_capture = spend_entered.clone();
+        let spend_release_capture = spend_release.clone();
+        let lease = ArtifactLeaseV3::new(artifact, move || async move {
+            spend_entered_capture.notify_one();
+            spend_release_capture.notified().await;
+            Ok(())
+        });
+        let observed_lease = lease.clone();
+        let claimed = lease.claim().expect("claim lease");
+        let carrier = Arc::new(HangingAdmissionCarrier {
+            phase: HangingAdmissionPhase::Open,
+            entered: Arc::new(tokio::sync::Semaphore::new(0)),
+            aborts: AtomicUsize::new(0),
+        });
+        let cancellation = CancellationToken::new();
+        let options = ConnectorOptions::new();
+        let mut operation = Box::pin(admit_candidate_and_establish(
+            PreSpendLeaseGuardV3::new(claimed),
+            &candidate,
+            &plan,
+            carrier.clone(),
+            &options,
+            tokio::time::Instant::now() + Duration::from_secs(1),
+            &cancellation,
+        ));
+        tokio::time::timeout(Duration::from_millis(100), async {
+            tokio::select! {
+                _ = spend_entered.notified() => {}
+                result = &mut operation => panic!("admission unexpectedly completed: {result:?}"),
+            }
+        })
+        .await
+        .expect("spend callback did not start");
+        drop(operation);
+
+        tokio::time::timeout(Duration::from_millis(100), async {
+            loop {
+                if observed_lease.is_consumed_for_test()
+                    && carrier.aborts.load(Ordering::Acquire) == 1
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dropped admission did not settle spend and carrier cleanup");
+        spend_release.notify_one();
     }
 
     async fn run_hanging_admission(
@@ -1118,7 +1320,7 @@ mod tests {
         let cancellation = CancellationToken::new();
         let options = ConnectorOptions::new();
         let operation = admit_candidate_and_establish(
-            claimed,
+            PreSpendLeaseGuardV3::new(claimed),
             &candidate,
             &plan,
             carrier.clone(),
@@ -1372,6 +1574,125 @@ mod tests {
                 .is_err(),
             "unsupported candidate created a network transport"
         );
+    }
+
+    #[tokio::test]
+    async fn pre_canceled_one_shot_claims_and_retires_the_lease() {
+        let artifact = artifact_with_candidates(vec![json!({
+            "carrier": "webtransport",
+            "id": "unsupported",
+            "tls": {"mode": "ca"},
+            "url": "https://example.org/flowersec/webtransport/v3/direct",
+            "wire_profile": "flowersec-direct/3"
+        })]);
+        let retires = Arc::new(AtomicUsize::new(0));
+        let retires_capture = retires.clone();
+        let lease = ArtifactLeaseV3::new_with_retire(
+            artifact,
+            || async { Ok(()) },
+            move || async move {
+                retires_capture.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        );
+        let reusable = lease.clone();
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let error = connect_v3_with_cancellation(lease, ConnectorOptions::new(), cancellation)
+            .await
+            .expect_err("pre-canceled one-shot unexpectedly connected");
+        assert_eq!(error.code(), ConnectErrorCode::ConnectionFailed);
+        assert_eq!(retires.load(Ordering::SeqCst), 1);
+        assert!(reusable.claim().is_err(), "retired lease was left reusable");
+    }
+
+    #[tokio::test]
+    async fn dropping_one_shot_before_spend_retires_the_claimed_lease() {
+        let artifact = artifact_with_candidates(vec![json!({
+            "carrier": "raw_quic",
+            "id": "ca",
+            "tls": {"mode": "ca"},
+            "url": "quic://127.0.0.1:443",
+            "wire_profile": "flowersec-direct/3"
+        })]);
+        let retires = Arc::new(AtomicUsize::new(0));
+        let retires_capture = retires.clone();
+        let lease = ArtifactLeaseV3::new_with_retire(
+            artifact,
+            || async { Ok(()) },
+            move || async move {
+                retires_capture.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        );
+        let reusable = lease.clone();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let preparer = HangingCandidatePreparer {
+            entered: entered.clone(),
+        };
+        let mut operation = Box::pin(connect_v3_with_cancellation_and_preparer(
+            lease,
+            ConnectorOptions::new(),
+            CancellationToken::new(),
+            &preparer,
+        ));
+        tokio::time::timeout(Duration::from_millis(100), async {
+            tokio::select! {
+                _ = entered.notified() => {}
+                result = &mut operation => panic!("one-shot unexpectedly completed: {result:?}"),
+            }
+        })
+        .await
+        .expect("candidate preparation did not start");
+        drop(operation);
+
+        tokio::time::timeout(Duration::from_millis(100), async {
+            while retires.load(Ordering::Acquire) != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dropped one-shot did not run retire cleanup");
+        assert!(reusable.claim().is_err(), "dropped claim became reusable");
+    }
+
+    #[test]
+    fn cancellation_dominates_security_while_security_dominates_timeout() {
+        assert_eq!(
+            aggregate_failure(CandidateFailureV3::Security, CandidateFailureV3::Canceled),
+            CandidateFailureV3::Canceled
+        );
+        assert_eq!(
+            aggregate_failure(CandidateFailureV3::Timeout, CandidateFailureV3::Security),
+            CandidateFailureV3::Security
+        );
+        assert_eq!(
+            aggregate_failure(
+                CandidateFailureV3::Timeout,
+                CandidateFailureV3::PolicyExpired
+            ),
+            CandidateFailureV3::PolicyExpired
+        );
+    }
+
+    #[test]
+    fn version_isolation_alpn_vectors_match_the_native_v3_dialer() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/transport_v3/version_isolation_vectors.json"
+        ))
+        .unwrap();
+        for mutation in fixture["alpn_mutations"].as_array().unwrap() {
+            let id = mutation["id"].as_str().unwrap();
+            let v3 = mutation["v3"].as_str().unwrap().as_bytes();
+            let v2 = mutation["v2"].as_str().unwrap().as_bytes();
+            let expected = if id == "direct" {
+                ALPN_DIRECT_V3
+            } else {
+                ALPN_TUNNEL_V3
+            };
+            assert_eq!(v3, expected);
+            assert_ne!(v2, expected);
+        }
     }
 
     #[tokio::test]

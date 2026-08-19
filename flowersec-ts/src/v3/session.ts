@@ -1713,7 +1713,7 @@ async function clientHandshake(
   signal?: AbortSignal,
 ): Promise<HandshakeMaterial> {
   const key = generateEphemeralKeyV3(config.suite, config.runtime.entropy);
-  const fsc2 = encodeControlPrefaceV3();
+  const controlPreface = encodeControlPrefaceV3();
   const initRaw = encodeClientInitV3({
     profile: "flowersec/3",
     channelID: config.channelID,
@@ -1727,7 +1727,7 @@ async function clientHandshake(
     clientAdmissionBinding: config.localAdmissionBinding,
     clientEndpointInstanceID: config.localEndpointInstanceID,
   });
-  await writeAll(control, fsc2, signal);
+  await writeAll(control, controlPreface, signal);
   await writeAll(control, initRaw, signal);
   const serverRaw = await readHandshakeFrame(reader, signal);
   const server = decodeServerFinishedV3(serverRaw, config.suite);
@@ -1737,7 +1737,7 @@ async function clientHandshake(
   }
   const shared = computeSharedSecretV3(config.suite, key.privateKey, server.core.serverEphemeralPublic);
   const handshakePRK = deriveHandshakePRKV3(config.psk, shared);
-  const h0 = computeHandshakeH0V3(fsc2, initRaw);
+  const h0 = computeHandshakeH0V3(controlPreface, initRaw);
   const h1 = computeHandshakeH1V3(h0, encodeServerFinishedCoreV3(server.core, config.suite));
   if (!bytesEqual(server.serverConfirm, computeServerConfirmV3(handshakePRK, h1))) {
     throw protocolError("server confirm mismatch");
@@ -1764,8 +1764,8 @@ async function serverHandshake(
   localFeatures: number,
   signal?: AbortSignal,
 ): Promise<HandshakeMaterial> {
-  const fsc2 = await reader.readExactly(16, signal);
-  parseControlPrefaceV3(fsc2);
+  const controlPreface = await reader.readExactly(16, signal);
+  parseControlPrefaceV3(controlPreface);
   const clientRaw = await readHandshakeFrame(reader, signal);
   const client = decodeClientInitV3(clientRaw);
   validateClientInitV3(client, expectations(config, true));
@@ -1783,7 +1783,7 @@ async function serverHandshake(
     serverAdmissionBinding: config.localAdmissionBinding,
     serverEndpointInstanceID: config.localEndpointInstanceID,
   } as const;
-  const h0 = computeHandshakeH0V3(fsc2, clientRaw);
+  const h0 = computeHandshakeH0V3(controlPreface, clientRaw);
   const h1 = computeHandshakeH1V3(h0, encodeServerFinishedCoreV3(core, config.suite));
   const serverRaw = encodeServerFinishedV3({
     core,

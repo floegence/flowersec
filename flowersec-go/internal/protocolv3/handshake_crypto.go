@@ -106,14 +106,14 @@ func DeriveHandshakePRK(psk, sharedSecret []byte) ([32]byte, error) {
 	return internalhkdf.ExtractSHA256(psk, sharedSecret), nil
 }
 
-func ComputeHandshakeH0(fsc2Raw, clientInitRaw []byte) ([32]byte, error) {
-	if err := ParseControlPreface(fsc2Raw); err != nil {
+func ComputeHandshakeH0(controlPrefaceRaw, clientInitRaw []byte) ([32]byte, error) {
+	if err := ParseControlPreface(controlPrefaceRaw); err != nil {
 		return [32]byte{}, err
 	}
 	if _, err := ParseClientInit(clientInitRaw); err != nil {
 		return [32]byte{}, err
 	}
-	return hashTranscript([]byte("flowersec-v3-handshake\x00"), fsc2Raw, lengthPrefixed(clientInitRaw)), nil
+	return hashTranscript([]byte("flowersec-v3-handshake\x00"), controlPrefaceRaw, lengthPrefixed(clientInitRaw)), nil
 }
 
 func ComputeHandshakeH1(h0 [32]byte, serverCoreFrame []byte) ([32]byte, error) {

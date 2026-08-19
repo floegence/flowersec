@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test, vi } from "vitest";
 
 import { base64urlDecode } from "../utils/base64url.js";
+import { SDK_DEFAULTS } from "../defaults.js";
+import { connectV3 as connectNodeV3 } from "../node/connectSessionV3.js";
 import {
   AdmissionStatusV3,
   admissionBindingV3,
@@ -38,6 +40,13 @@ const connectorArtifact = {
   path: {
     ...artifact.path,
     candidates: artifact.path.candidates.filter(({ id }) => id === "w-ca"),
+  },
+} as ArtifactV3;
+const raceArtifact = {
+  ...artifact,
+  path: {
+    ...artifact.path,
+    candidates: artifact.path.candidates.filter(({ id }) => id === "w-ca" || id === "w-pin"),
   },
 } as ArtifactV3;
 
@@ -110,6 +119,190 @@ describe("transport v3 session connector", () => {
     expect(spend).not.toHaveBeenCalled();
     expect(retire).toHaveBeenCalledOnce();
     expect(artifactLeaseStateV3(lease)).toBe("retired");
+  });
+
+  test("applies the shared default connection deadline when a dialer ignores cancellation", async () => {
+    vi.useFakeTimers();
+    try {
+      const spend = vi.fn(async () => undefined);
+      const retire = vi.fn(async () => undefined);
+      const lease = createArtifactLeaseV3Internal(connectorArtifact, spend, retire);
+      const connecting = connectArtifactLeaseV3(lease, {
+        capabilitySnapshot: detectNodeRuntimeCapabilityV3,
+        protocolRuntime: nodeSessionRuntimeV3,
+        nowUnixSeconds: () => 1_900_000_000,
+        dial: async () => await new Promise<ReadyAdmissionTransportV3>(() => undefined),
+      });
+      const rejected = expect(connecting).rejects.toMatchObject({
+        code: "connection_failed",
+        disposition: { kind: "retryable" },
+      });
+
+      await vi.advanceTimersByTimeAsync(SDK_DEFAULTS.transport.connectTimeoutMs);
+      await rejected;
+
+      expect(spend).not.toHaveBeenCalled();
+      expect(retire).toHaveBeenCalledOnce();
+      expect(artifactLeaseStateV3(lease)).toBe("retired");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("bounds loser drain and closes a late prepared transport", async () => {
+    vi.useFakeTimers();
+    try {
+      const winnerClose = vi.fn(async () => undefined);
+      const loserClose = vi.fn(async () => undefined);
+      let resolveLoser!: (ready: ReadyAdmissionTransportV3) => void;
+      const loser = new Promise<ReadyAdmissionTransportV3>((resolve) => { resolveLoser = resolve; });
+      const lease = createArtifactLeaseV3Internal(raceArtifact, async () => undefined);
+      const connecting = connectArtifactLeaseV3(lease, {
+        capabilitySnapshot: detectNodeRuntimeCapabilityV3,
+        connectTimeoutMilliseconds: 25,
+        protocolRuntime: nodeSessionRuntimeV3,
+        nowUnixSeconds: () => 1_900_000_000,
+        dial: async (candidate): Promise<ReadyAdmissionTransportV3> => {
+          if (candidate.id !== "w-ca") return await loser;
+          return {
+            candidate,
+            openAdmissionChannel: async () => { throw new Error("loser drain must precede admission"); },
+            finalize: () => { throw new Error("loser drain must precede finalization"); },
+            close: winnerClose,
+            abort: () => undefined,
+          };
+        },
+      });
+      const rejected = expect(connecting).rejects.toMatchObject({
+        code: "connection_failed",
+        disposition: { kind: "retryable" },
+      });
+
+      await vi.advanceTimersByTimeAsync(25);
+      await rejected;
+      expect(winnerClose).toHaveBeenCalledOnce();
+      expect(artifactLeaseStateV3(lease)).toBe("retired");
+
+      const loserCandidate = raceArtifact.path.candidates.find(({ id }) => id === "w-pin");
+      if (loserCandidate === undefined) throw new Error("loser fixture is missing");
+      resolveLoser({
+        candidate: loserCandidate,
+        openAdmissionChannel: async () => { throw new Error("late loser must not open admission"); },
+        finalize: () => { throw new Error("late loser must not finalize"); },
+        close: loserClose,
+        abort: () => undefined,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(loserClose).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("keeps a lease consumed when the overall deadline interrupts admission", async () => {
+    vi.useFakeTimers();
+    try {
+      const spend = vi.fn(async () => undefined);
+      const retire = vi.fn(async () => undefined);
+      const channelAbort = vi.fn();
+      const close = vi.fn(async () => await new Promise<void>(() => undefined));
+      const transportAbort = vi.fn();
+      let addEventListener: ReturnType<typeof vi.spyOn> | undefined;
+      let removeEventListener: ReturnType<typeof vi.spyOn> | undefined;
+      const lease = createArtifactLeaseV3Internal(connectorArtifact, spend, retire);
+      const connecting = connectArtifactLeaseV3(lease, {
+        capabilitySnapshot: detectNodeRuntimeCapabilityV3,
+        connectTimeoutMilliseconds: 25,
+        protocolRuntime: nodeSessionRuntimeV3,
+        nowUnixSeconds: () => 1_900_000_000,
+        dial: async (candidate): Promise<ReadyAdmissionTransportV3> => ({
+          candidate,
+          openAdmissionChannel: async (signal) => {
+            if (signal === undefined) throw new Error("admission signal is required");
+            addEventListener = vi.spyOn(signal, "addEventListener");
+            removeEventListener = vi.spyOn(signal, "removeEventListener");
+            return {
+              framing: "message",
+              write: async () => undefined,
+              read: async () => await new Promise<Uint8Array>(() => undefined),
+              abort: channelAbort,
+            };
+          },
+          finalize: () => { throw new Error("admission timeout must not finalize"); },
+          close,
+          abort: transportAbort,
+        }),
+      });
+      const rejected = expect(connecting).rejects.toMatchObject({
+        code: "connection_failed",
+        disposition: { kind: "retryable" },
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(spend).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(25);
+      await rejected;
+
+      expect(retire).not.toHaveBeenCalled();
+      expect(channelAbort).toHaveBeenCalledOnce();
+      expect(close).toHaveBeenCalledOnce();
+      expect(transportAbort).toHaveBeenCalledOnce();
+      expect(artifactLeaseStateV3(lease)).toBe("consumed");
+      if (addEventListener === undefined || removeEventListener === undefined) {
+        throw new Error("admission signal listeners were not observed");
+      }
+      const abortListeners = addEventListener.mock.calls
+        .filter(([type]) => type === "abort")
+        .map(([, listener]) => listener);
+      expect(abortListeners.length).toBeGreaterThan(0);
+      for (const listener of abortListeners) {
+        expect(removeEventListener.mock.calls.some(([type, removed]) =>
+          type === "abort" && removed === listener)).toBe(true);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("projects caller cancellation as terminal and does not dial after pre-cancellation", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("caller canceled"));
+    const dial = vi.fn(async (): Promise<ReadyAdmissionTransportV3> =>
+      await new Promise<ReadyAdmissionTransportV3>(() => undefined));
+    const spend = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(connectorArtifact, spend);
+
+    await expect(connectArtifactLeaseV3(lease, {
+      capabilitySnapshot: detectNodeRuntimeCapabilityV3,
+      protocolRuntime: nodeSessionRuntimeV3,
+      nowUnixSeconds: () => 1_900_000_000,
+      dial,
+    }, controller.signal)).rejects.toMatchObject({
+      code: "connection_failed",
+      disposition: { kind: "terminal" },
+    });
+
+    expect(dial).not.toHaveBeenCalled();
+    expect(spend).not.toHaveBeenCalled();
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
+  });
+
+  test("rejects an invalid Node connection timeout before claiming or spending", async () => {
+    const spend = vi.fn(async () => undefined);
+    const retire = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(connectorArtifact, spend, retire);
+
+    await expect(connectNodeV3(lease, {
+      origin: "https://client.example",
+      connectTimeoutMs: 0,
+    })).rejects.toMatchObject({
+      code: "artifact_invalid",
+      disposition: { kind: "terminal" },
+    });
+
+    expect(spend).not.toHaveBeenCalled();
+    expect(retire).not.toHaveBeenCalled();
+    expect(artifactLeaseStateV3(lease)).toBe("idle");
   });
 
   test("uses one active-pin snapshot for every candidate in a race", async () => {

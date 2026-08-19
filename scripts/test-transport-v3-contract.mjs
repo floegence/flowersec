@@ -108,10 +108,18 @@ assert.deepEqual(registry.control_plane.scheme_carrier_mapping, {
 });
 assert.equal(registry.url_normalization.scheme_pattern, "^[A-Za-z][A-Za-z0-9+.-]*$");
 assert.equal(registry.url_normalization.scheme_lowercase, true);
+assert.equal(registry.url_normalization.input_utf8_bytes_min, 1);
+assert.equal(registry.url_normalization.input_utf8_bytes_max, 2048);
+assert.equal(registry.url_normalization.split_delimiter, "first_literal_://");
+assert.equal(registry.url_normalization.authority_split, "first_ascii_slash");
 assert.equal(registry.url_normalization.authority_non_empty, true);
 assert.equal(registry.url_normalization.userinfo_forbidden, true);
 assert.equal(registry.url_normalization.authority_at_sign_forbidden, true);
+assert.equal(registry.url_normalization.authority_bracketed_ipv6_only, true);
+assert.equal(registry.url_normalization.authority_closing_bracket_required, true);
 assert.equal(registry.url_normalization.unbracketed_authority_max_colons, 1);
+assert.equal(registry.url_normalization.path_is_opaque_after_first_slash, true);
+assert.equal(registry.url_normalization.path_empty_allowed_only_for_raw_quic, true);
 assert.deepEqual(registry.url_normalization.ipv4, {
   ascii_digit_dot_requires_four_octets: true,
   octet_minimum: 0,
@@ -123,6 +131,22 @@ assert.deepEqual(registry.url_normalization.dns, {
   trailing_dot_forbidden: true,
   label_bytes_max: 63,
   host_bytes_max: 253,
+});
+assert.deepEqual(registry.url_normalization.ipv6, {
+  rfc5952_lowercase_compressed: true,
+  zone_id_forbidden: true,
+  embedded_dotted_decimal_forbidden: true,
+});
+assert.deepEqual(registry.url_normalization.idna, {
+  unicode_version: "15.1",
+  profile: "UTS46 lookup",
+  transitional: false,
+  std3: true,
+  check_hyphens: true,
+  check_contextj: true,
+  check_bidi: true,
+  check_dns_length: true,
+  output: "lowercase_alabel",
 });
 
 for (const relative of Object.values(registry.docs)) {
@@ -438,6 +462,33 @@ for (const frame of versionIsolation.frames) {
   assert.notEqual(frame.v3_hex, frame.v2_magic_hex, `${frame.id} magic isolation`);
   assert.notEqual(frame.v3_hex, frame.v2_version_hex, `${frame.id} version isolation`);
 }
+assert.deepEqual(registry.version_isolation.rejection_fields, ["magic", "profile", "path", "alpn", "crypto_label"]);
+assert.deepEqual(registry.version_isolation.v2_identifiers.magic, ["FSB2", "FSA2", "FSC2", "FSH2", "FSS2", "FSR2", "FSD2"]);
+assert.deepEqual(registry.version_isolation.v2_identifiers.profiles, ["flowersec/2", "flowersec-direct/2", "flowersec-tunnel/2"]);
+assert.deepEqual(registry.version_isolation.v2_identifiers.alpn, ["flowersec-direct/2", "flowersec-tunnel/2"]);
+for (const field of ["profile_mutations", "path_mutations", "alpn_mutations", "crypto_label_mutations"]) {
+  assert(Array.isArray(versionIsolation[field]) && versionIsolation[field].length > 0, `${field} is required`);
+  for (const mutation of versionIsolation[field]) {
+    assert.equal(mutation.error_code, "version_isolation", `${field}/${mutation.id}`);
+    assert.notEqual(mutation.v3, mutation.v2, `${field}/${mutation.id} must cross versions`);
+  }
+}
+assert.deepEqual(
+  versionIsolation.identifier_sets.magic.map((item) => item.v2),
+  registry.version_isolation.v2_identifiers.magic,
+);
+assert.deepEqual(
+  versionIsolation.identifier_sets.profile.map((item) => item.v2),
+  registry.version_isolation.v2_identifiers.profiles,
+);
+assert.deepEqual(
+  versionIsolation.identifier_sets.alpn.map((item) => item.v2),
+  registry.version_isolation.v2_identifiers.alpn,
+);
+assert.deepEqual(
+  versionIsolation.identifier_sets.crypto_label.map((item) => item.v2),
+  registry.version_isolation.v2_identifiers.crypto_labels,
+);
 assert.equal(versionIsolation.inherited_codecs.fsh3.inherited_codec_from, "transport_v2");
 assert.equal(versionIsolation.inherited_codecs.open.inherited_codec_from, "transport_v2");
 assert.equal(versionIsolation.inherited_codecs.rpc.inherited_codec_from, "transport_v2");

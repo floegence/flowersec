@@ -323,12 +323,12 @@ export function deriveHandshakePRKV3(psk: Uint8Array, sharedSecret: Uint8Array):
   return extract(sha256, sharedSecret, psk);
 }
 
-export function computeHandshakeH0V3(fsc2Raw: Uint8Array, clientInitRaw: Uint8Array): Uint8Array {
-  parseControlPrefaceV3(fsc2Raw);
+export function computeHandshakeH0V3(controlPrefaceRaw: Uint8Array, clientInitRaw: Uint8Array): Uint8Array {
+  parseControlPrefaceV3(controlPrefaceRaw);
   decodeClientInitV3(clientInitRaw);
   return sha256(concatBytes([
     encoder.encode("flowersec-v3-handshake\0"),
-    fsc2Raw,
+    controlPrefaceRaw,
     lengthPrefixed(clientInitRaw),
   ]));
 }

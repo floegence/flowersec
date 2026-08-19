@@ -4274,6 +4274,61 @@ async fn concurrent_close_waits_for_the_owned_close_workflow() {
 }
 
 #[tokio::test]
+async fn canceled_first_close_leaves_the_owned_workflow_for_later_close() {
+    let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
+    let enabled = Arc::new(AtomicBool::new(false));
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let client_carrier: Arc<dyn CarrierSessionV3> = Arc::new(BlockingNthWriteCarrierSession {
+        inner: client_inner,
+        enabled: enabled.clone(),
+        writes: Arc::new(AtomicU64::new(0)),
+        block_on: 1,
+        entered: entered.clone(),
+        release: release.clone(),
+    });
+    let mut client_config = regression_config(SessionRole::Client, "canceled-first-close", 1, None);
+    client_config.deadlines.close_flush = Duration::from_millis(500);
+    let mut server_config = regression_config(SessionRole::Server, "canceled-first-close", 1, None);
+    server_config.deadlines.close_flush = Duration::from_millis(500);
+    let (client, server) = tokio::join!(
+        establish_session_v3(client_carrier, client_config),
+        establish_session_v3(server_carrier, server_config),
+    );
+    let client = client.expect("client Session");
+    let server = server.expect("server Session");
+
+    enabled.store(true, Ordering::Release);
+    let first = tokio::spawn({
+        let client = client.clone();
+        async move { client.close().await }
+    });
+    tokio::time::timeout(Duration::from_millis(250), entered.notified())
+        .await
+        .expect("first close did not enter its owned workflow");
+    first.abort();
+    assert!(first.await.expect_err("aborted first close").is_cancelled());
+
+    let mut second = tokio::spawn({
+        let client = client.clone();
+        async move { client.close().await }
+    });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut second)
+            .await
+            .is_err(),
+        "later close returned before the owned workflow completed"
+    );
+    release.notify_one();
+    tokio::time::timeout(Duration::from_millis(500), &mut second)
+        .await
+        .expect("later close remained blocked after release")
+        .expect("join later close")
+        .expect("later close");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
 async fn idle_timeout_drops_a_hanging_carrier_close_future() {
     let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
     let active_closes = Arc::new(AtomicU64::new(0));

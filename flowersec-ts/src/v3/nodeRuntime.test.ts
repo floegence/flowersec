@@ -18,8 +18,9 @@ import {
 } from "./nodeRuntime.js";
 import type { CanonicalArtifactCandidateV3, TransportSecurityPolicyV3 } from "./artifact.js";
 
-const opensslAvailable = spawnSync("openssl", ["version"], { stdio: "ignore" }).status === 0;
-const tlsDescribe = opensslAvailable ? describe : describe.skip;
+if (spawnSync("openssl", ["version"], { stdio: "ignore" }).status !== 0) {
+  throw new Error("OpenSSL is required for the transport v3 Node TLS test suite");
+}
 const require = createRequire(import.meta.url);
 const wsModule = require("ws") as { WebSocketServer: new (...args: unknown[]) => any };
 
@@ -37,7 +38,7 @@ let nextPinKey: Buffer;
 let nextPinDigest: Buffer;
 let legacyPinDER: Buffer;
 
-tlsDescribe("transport v3 Node TLS verifier and WebSocket production path", () => {
+describe("transport v3 Node TLS verifier and WebSocket production path", () => {
   beforeAll(() => {
     directory = mkdtempSync(join(tmpdir(), "flowersec-ts-v3-tls-"));
     generateCertificates(directory);
@@ -72,6 +73,23 @@ tlsDescribe("transport v3 Node TLS verifier and WebSocket production path", () =
       socket.destroy();
       await expect(connectNodeTLSSocketV3(candidate, nowSeconds(), { timeoutMilliseconds: 2_000 }))
         .rejects.toMatchObject({ code: "tls_failed", detail: "ca_untrusted" });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("does not resume or accept TLS session tickets for v3 clients", async () => {
+    expect(readFileSync(new URL("./nodeRuntime.ts", import.meta.url), "utf8"))
+      .toContain("secureOptions: constants.SSL_OP_NO_TICKET");
+    const server = createTLSServer({ cert: leafCertificate, key: leafKey });
+    const port = await listen(server);
+    try {
+      const socket = await connectNodeTLSSocketV3(websocketCandidate(port, { mode: "ca" }), nowSeconds(), {
+        roots: rootCertificate,
+        timeoutMilliseconds: 2_000,
+      });
+      expect(socket.isSessionReused()).toBe(false);
+      socket.destroy();
     } finally {
       await closeServer(server);
     }

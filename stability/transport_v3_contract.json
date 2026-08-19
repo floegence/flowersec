@@ -197,12 +197,20 @@
     "correlation.tags": "ordered_unique_key"
   },
   "url_normalization": {
+    "input_utf8_bytes_min": 1,
+    "input_utf8_bytes_max": 2048,
+    "split_delimiter": "first_literal_://",
+    "authority_split": "first_ascii_slash",
     "forbidden_characters": ["\\", "?", "#", "%"],
     "scheme_pattern": "^[A-Za-z][A-Za-z0-9+.-]*$",
     "scheme_lowercase": true,
     "authority_non_empty": true,
     "authority_at_sign_forbidden": true,
+    "authority_bracketed_ipv6_only": true,
+    "authority_closing_bracket_required": true,
     "unbracketed_authority_max_colons": 1,
+    "path_is_opaque_after_first_slash": true,
+    "path_empty_allowed_only_for_raw_quic": true,
     "userinfo_forbidden": true,
     "ipv4": {
       "ascii_digit_dot_requires_four_octets": true,
@@ -216,8 +224,11 @@
       "label_bytes_max": 63,
       "host_bytes_max": 253
     },
-    "allowed_production_schemes": ["wss", "quic", "https"],
-    "default_port_omitted": 443,
+    "ipv6": {
+      "rfc5952_lowercase_compressed": true,
+      "zone_id_forbidden": true,
+      "embedded_dotted_decimal_forbidden": true
+    },
     "idna": {
       "unicode_version": "15.1",
       "profile": "UTS46 lookup",
@@ -226,8 +237,11 @@
       "check_hyphens": true,
       "check_contextj": true,
       "check_bidi": true,
-      "check_dns_length": true
+      "check_dns_length": true,
+      "output": "lowercase_alabel"
     },
+    "allowed_production_schemes": ["wss", "quic", "https"],
+    "default_port_omitted": 443,
     "reject_ends_in_number": true,
     "reject_ipv6_zone": true,
     "reject_embedded_dotted_decimal_ipv6": true,
@@ -619,7 +633,7 @@
     {"id": "version_isolation", "path": "testdata/transport_v3/version_isolation_vectors.json", "consumers": {
       "go": ["flowersec-go/internal/protocolv3/version_isolation_vectors_test.go", "flowersec-go/internal/rpc/version_isolation_vectors_test.go"],
       "typescript": ["flowersec-ts/src/v3/versionIsolation.test.ts"],
-      "rust": ["flowersec-rust/src/artifact_v3.rs", "flowersec-rust/src/protocol_v3.rs", "flowersec-rust/src/session_v3.rs"],
+      "rust": ["flowersec-rust/src/artifact_v3.rs", "flowersec-rust/src/connector_v3.rs", "flowersec-rust/src/protocol_v3.rs", "flowersec-rust/src/session_v3.rs"],
       "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift"]
     }}
   ],
@@ -627,6 +641,26 @@
     "wire_negotiation": false,
     "automatic_v2_fallback": false,
     "v2_artifact_accepted_by_v3": false,
-    "v3_artifact_accepted_by_v2": false
+    "v3_artifact_accepted_by_v2": false,
+    "rejection_fields": ["magic", "profile", "path", "alpn", "crypto_label"],
+    "v2_identifiers": {
+      "magic": ["FSB2", "FSA2", "FSC2", "FSH2", "FSS2", "FSR2", "FSD2"],
+      "profiles": ["flowersec/2", "flowersec-direct/2", "flowersec-tunnel/2"],
+      "paths": [
+        "/flowersec/v2/direct", "/flowersec/v2/tunnel",
+        "/flowersec/webtransport/v2/direct", "/flowersec/webtransport/v2/tunnel",
+        "flowersec.direct.v2", "flowersec.tunnel.v2"
+      ],
+      "alpn": ["flowersec-direct/2", "flowersec-tunnel/2"],
+      "crypto_labels": [
+        "flowersec-v2-handshake\u0000", "flowersec v2 server finished", "flowersec v2 client finished",
+        "flowersec v2 epoch zero", "flowersec v2 control root", "flowersec v2 stream root",
+        "flowersec v2 setup root", "flowersec v2 rekey root", "flowersec v2 next epoch",
+        "flowersec v2 stream", "flowersec v2 control", "flowersec v2 record key", "flowersec v2 nonce",
+        "flowersec v2 unreliable root", "flowersec v2 unreliable", "flowersec v2 unreliable key",
+        "flowersec v2 unreliable nonce", "flowersec-v2-unreliable", "flowersec-v2-setup\u0000",
+        "flowersec-v2-record\u0000", "flowersec-v2-open\u0000"
+      ]
+    }
   }
 }

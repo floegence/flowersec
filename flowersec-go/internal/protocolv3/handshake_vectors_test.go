@@ -87,13 +87,13 @@ func TestNodeHandshakeVectors(t *testing.T) {
 				t.Fatalf("shared = %x, error=%v", shared, err)
 			}
 
-			fsc2 := mustHandshakeHex(t, vector.FSC3Hex)
+			controlPreface := mustHandshakeHex(t, vector.FSC3Hex)
 			initRaw := mustHandshakeHex(t, vector.ClientInitHex)
 			serverCoreRaw := mustHandshakeHex(t, vector.ServerCoreHex)
 			serverRaw := mustHandshakeHex(t, vector.ServerFinishedHex)
 			clientCoreRaw := mustHandshakeHex(t, vector.ClientCoreHex)
 			clientRaw := mustHandshakeHex(t, vector.ClientFinishedHex)
-			if err := protocolv3.ParseControlPreface(fsc2); err != nil {
+			if err := protocolv3.ParseControlPreface(controlPreface); err != nil {
 				t.Fatal(err)
 			}
 			init, err := protocolv3.ParseClientInit(initRaw)
@@ -128,7 +128,7 @@ func TestNodeHandshakeVectors(t *testing.T) {
 			if err != nil || !bytes.Equal(handshakePRK[:], mustHandshakeHex(t, vector.HandshakePRKHex)) {
 				t.Fatalf("handshake PRK = %x, error=%v", handshakePRK, err)
 			}
-			h0, err := protocolv3.ComputeHandshakeH0(fsc2, initRaw)
+			h0, err := protocolv3.ComputeHandshakeH0(controlPreface, initRaw)
 			if err != nil || !bytes.Equal(h0[:], mustHandshakeHex(t, vector.H0Hex)) {
 				t.Fatalf("H0 = %x, error=%v", h0, err)
 			}
@@ -188,7 +188,7 @@ func TestHandshakeConfirmAndTranscriptTampering(t *testing.T) {
 	vector := loadHandshakeVectors(t).Vectors[0]
 	suite := protocolv3.Suite(vector.Suite)
 	handshakePRK := handshakeArray32(t, vector.HandshakePRKHex)
-	fsc2 := mustHandshakeHex(t, vector.FSC3Hex)
+	controlPreface := mustHandshakeHex(t, vector.FSC3Hex)
 	initRaw := mustHandshakeHex(t, vector.ClientInitHex)
 	serverRaw := mustHandshakeHex(t, vector.ServerFinishedHex)
 	clientCore := mustHandshakeHex(t, vector.ClientCoreHex)
@@ -222,7 +222,7 @@ func TestHandshakeConfirmAndTranscriptTampering(t *testing.T) {
 			if marshalErr != nil {
 				t.Fatal(marshalErr)
 			}
-			h0, hashErr := protocolv3.ComputeHandshakeH0(fsc2, mutatedRaw)
+			h0, hashErr := protocolv3.ComputeHandshakeH0(controlPreface, mutatedRaw)
 			if hashErr != nil {
 				t.Fatal(hashErr)
 			}
