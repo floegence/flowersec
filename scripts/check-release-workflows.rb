@@ -264,7 +264,7 @@ require_exact_value(release_workflow[true], {
   }, "mode" => {
     "description" => "Recovery scope",
     "required" => true,
-    "default" => "full",
+    "default" => "npm-only",
     "type" => "choice",
     "options" => ["full", "npm-only"],
   } } },
@@ -387,6 +387,7 @@ require_exact_value(scorecard_job["permissions"], {
 require_exact_value(prepare_job["outputs"], {
   "version" => "${{ steps.version.outputs.version }}",
   "mode" => "${{ steps.version.outputs.mode }}",
+  "release_exists" => "${{ steps.release-state.outputs.exists }}",
 }, "the prepare job outputs")
 require_exact_value(rust_reuse_job["needs"], "prepare", "the rust-publish job dependency")
 require_exact_value(rust_reuse_job["permissions"], {
@@ -398,7 +399,6 @@ require_exact_value(release_job["needs"], ["prepare", "rust-publish", "native-pr
 require_exact_value(release_job["permissions"], {
   "contents" => "write",
   "packages" => "write",
-  "id-token" => "write",
 }, "the release job permissions")
 require_exact_value(rust_publish_job["permissions"], {
   "contents" => "read",
@@ -416,7 +416,7 @@ require_exact_value(native_prebuilt_job["strategy"], {
     { "platform" => "linux-x64-gnu", "runner" => "ubuntu-latest", "target" => "x86_64-unknown-linux-gnu" },
   ] },
 }, "the native-prebuilt matrix")
-require_exact_value(npm_recovery_job["needs"], "prepare", "the npm recovery job dependency")
+require_exact_value(npm_recovery_job["needs"], ["prepare", "release"], "the npm recovery job dependency")
 require_exact_value(npm_recovery_job["runs-on"], "ubuntu-latest", "the npm recovery runner")
 require_exact_value(npm_recovery_job["permissions"], {
   "contents" => "read",
@@ -444,11 +444,11 @@ require_exact_value(npm_consumer_job["strategy"], {
   [codeql_plan_job, "the CodeQL plan job"],
   [scorecard_job, "the Scorecard analysis job"],
 ].each { |job, context| require_unconditional(job, context) }
-require_condition_value(release_job, "needs.prepare.outputs.mode == 'full'", "the unified release workflow release job")
+require_condition_value(release_job, "always() && needs.prepare.result == 'success' && needs.prepare.outputs.mode == 'full' && needs.rust-publish.result == 'success' && ((needs.prepare.outputs.release_exists == 'false' && needs.native-prebuilt.result == 'success') || (needs.prepare.outputs.release_exists == 'true' && needs.native-prebuilt.result == 'skipped'))", "the unified release workflow release job")
 require_condition_value(rust_reuse_job, "needs.prepare.outputs.mode == 'full'", "the unified release workflow rust-publish job")
-require_condition_value(native_prebuilt_job, "needs.prepare.outputs.mode == 'full'", "the unified release workflow native-prebuilt job")
-require_condition_value(npm_recovery_job, "needs.prepare.outputs.mode == 'npm-only'", "the unified release workflow npm recovery job")
-require_condition_value(npm_consumer_job, "always() && needs.prepare.result == 'success' && ((needs.prepare.outputs.mode == 'full' && needs.release.result == 'success') || (needs.prepare.outputs.mode == 'npm-only' && needs.npm-recovery.result == 'success'))", "the unified release workflow npm consumer job")
+require_condition_value(native_prebuilt_job, "needs.prepare.outputs.mode == 'full' && needs.prepare.outputs.release_exists == 'false'", "the unified release workflow native-prebuilt job")
+require_condition_value(npm_recovery_job, "always() && needs.prepare.result == 'success' && ((needs.prepare.outputs.mode == 'full' && needs.release.result == 'success') || (needs.prepare.outputs.mode == 'npm-only' && needs.release.result == 'skipped'))", "the unified release workflow npm recovery job")
+require_condition_value(npm_consumer_job, "always() && needs.prepare.result == 'success' && needs.npm-recovery.result == 'success'", "the unified release workflow npm consumer job")
 require_condition_value(dependency_review_job, "github.event_name == 'pull_request'", "the hosted CI dependency review job")
 require_condition_value(codeql_job, "needs.plan.outputs.should_scan == 'true'", "the CodeQL analyze job")
 require_condition_value(codeql_swift_job, "github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && needs.plan.outputs.should_scan == 'true')", "the CodeQL Swift analyze job")
@@ -490,6 +490,14 @@ validate_step_contracts(prepare_steps, [
       "RELEASE_MODE_INPUT" => "${{ inputs.mode }}",
     },
   }, run_sha256: "a6ae5453b78e4d35fcfd50e172b465130f1e159898b009cb9a7154503f7ab7c7" },
+  { name: "Inspect immutable GitHub Release state", keys: ["name", "id", "env", "run"], values: {
+    "id" => "release-state",
+    "env" => {
+      "GH_TOKEN" => "${{ github.token }}",
+      "RELEASE_MODE" => "${{ steps.version.outputs.mode }}",
+      "RELEASE_VERSION" => "${{ steps.version.outputs.version }}",
+    },
+  }, run_sha256: "1f3e030ed115e357a112ce25c395e0243e0bf771a986d3668deac675bbf02fc0" },
 ], "the unified release workflow prepare job")
 validate_step_contracts(ci_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
@@ -585,33 +593,34 @@ validate_step_contracts(release_steps, [
   { name: "Compute version vars", keys: ["name", "id", "env", "run"], values: {
     "id" => "vars",
     "env" => { "RELEASE_VERSION_INPUT" => "${{ needs.prepare.outputs.version }}" },
-  }, run_sha256: "1e2b49d667841468c895f18da4398191530b1ae1796ea1108ffdc3e4b4deadec" },
+  }, run_sha256: "479845d981a22d9aa135c767fed353641737e1c73587d14d188562b5d5fa06f9" },
   { name: "Setup Go", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff", "with" => { "go-version-file" => "flowersec-go/go.mod", "cache" => true, "cache-dependency-path" => "flowersec-go/go.sum" } } },
-  { name: "Setup Node", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", "with" => { "node-version" => "24", "registry-url" => "https://registry.npmjs.org", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" } } },
-  { name: "Ensure npm supports trusted publishing (OIDC)", keys: ["name", "run"], run_sha256: "fb7f479c6c90ad6363c5368e126e136be6cb4808b20328f2476fea0230aeea0e" },
+  { name: "Setup Node", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", "with" => { "node-version" => "24", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" } } },
   { name: "Setup Rust", keys: ["name", "uses"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4" } },
   { name: "Validate release version facts", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}" } }, run_sha256: "9431ce4342dcd8f8af90607321f1ceb9e6e61c13f455b06acd242d96f53e0087" },
   { name: "Verify all language tags point to this commit", keys: ["name", "env", "run"], values: { "env" => {
     "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
   } }, run_sha256: "2dc2aa66b184f05c334e60ef6d1ca9421fc40c42ace1a5e74f6236355f3b8613" },
-  { name: "Download native prebuilt packages", keys: ["name", "uses", "with"], values: {
+  { name: "Download native prebuilt packages", keys: ["name", "if", "uses", "with"], values: {
+    "if" => "needs.prepare.outputs.release_exists == 'false'",
     "uses" => "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
     "with" => { "pattern" => "flowersec-node-native-*", "path" => "native-prebuilt", "merge-multiple" => false },
   } },
-  { name: "Build release artifacts", keys: ["name", "env", "run"], values: { "env" => {
+  { name: "Build release artifacts", keys: ["name", "if", "env", "run"], values: { "if" => "needs.prepare.outputs.release_exists == 'false'", "env" => {
     "RELEASE_DATE" => "${{ steps.vars.outputs.date }}",
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
   } }, run_sha256: "fbe9ed98ae2c7e39754e3afacf934f170300ea1605b29126c821bb76ee7b10ec" },
-  { name: "Generate release notes", keys: ["name", "env", "run"], values: { "env" => {
+  { name: "Generate release notes", keys: ["name", "if", "env", "run"], values: { "if" => "needs.prepare.outputs.release_exists == 'false'", "env" => {
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_TAG" => "${{ steps.vars.outputs.tag }}",
   } }, run_sha256: "1bd88ea62d5cfa76a864986943ea296ec1def96e507dcdb60077ac446e1f2658" },
-  { name: "Publish GitHub Release", keys: ["name", "uses", "with"], values: { "uses" => "softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228", "with" => {
+  { name: "Publish GitHub Release", keys: ["name", "if", "uses", "with"], values: { "if" => "needs.prepare.outputs.release_exists == 'false'", "uses" => "softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228", "with" => {
     "files" => "dist/*\n",
     "body_path" => "release-notes.md",
     "tag_name" => "${{ steps.vars.outputs.tag }}",
+    "overwrite_files" => false,
   } } },
   { name: "Setup Docker Buildx", keys: ["name", "uses", "with"], values: { "uses" => "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c", "with" => { "driver-opts" => "image=moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec" } } },
   { name: "Login to GHCR", keys: ["name", "uses", "with"], values: { "uses" => "docker/login-action@dbcb813823bdd20940b903addbd779551569679f", "with" => { "registry" => "ghcr.io", "username" => "${{ github.actor }}", "password" => "${{ secrets.GITHUB_TOKEN }}" } } },
@@ -624,10 +633,6 @@ validate_step_contracts(release_steps, [
     "tags" => "ghcr.io/${{ github.repository_owner }}/flowersec-runtime:${{ steps.vars.outputs.version }}\nghcr.io/${{ github.repository_owner }}/flowersec-runtime:latest\n",
     "build-args" => "VERSION=v${{ steps.vars.outputs.version }}\nCOMMIT=${{ steps.vars.outputs.sha }}\nDATE=${{ steps.vars.outputs.date }}\n",
   } } },
-  { name: "Publish npm packages with dependency barriers", keys: ["name", "env", "run"], values: { "env" => {
-    "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
-    "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
-  } }, run_sha256: "8972e0612f98fd0de5a8b06f0945e153d3b50bd71086baf3295cb3441a9153cc" },
 ], "the unified release workflow release job")
 validate_step_contracts(native_prebuilt_steps, [
   { name: nil, keys: ["uses", "with"], values: {
@@ -664,7 +669,7 @@ validate_step_contracts(npm_recovery_steps, [
     "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
     "with" => { "node-version" => "24", "registry-url" => "https://registry.npmjs.org" },
   } },
-  { name: "Recover npm registry packages from immutable release assets", keys: ["name", "env", "run"], values: { "env" => {
+  { name: "Publish or recover npm registry packages from immutable release assets", keys: ["name", "env", "run"], values: { "env" => {
     "GH_TOKEN" => "${{ github.token }}",
     "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
   } }, run_sha256: "6feafd9fa377d946d2dcdaa43b39149a563c9f80428d4525f5c30ca4f7e9a59a" },
@@ -703,7 +708,7 @@ validate_step_contracts(rust_steps, [
   { name: "Verify Flowersec Rust SDK registry readback", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "5d0dee062187ebcd7c435a23d84b5e8c4992ebd9a70f6b6b2b50f2cff26f140b" },
 ], "the Rust recovery workflow publish job")
 
-reject_publication_before(release_steps, 8, "the unified release workflow")
+reject_publication_before(release_steps, 7, "the unified release workflow")
 reject_publication_before(rust_steps, 5, "the Rust recovery workflow")
 
 release_setup, release_setup_index = require_named_step(release_steps, "Setup Rust", "the unified release workflow")
@@ -717,16 +722,19 @@ require_step_field(release_tags, "run", 'scripts/verify-release-tags.sh "$RELEAS
 end
 require_condition(release_setup_index < release_version_index && release_version_index < release_tags_index, "the unified release workflow must run Rust setup, version validation, and tag verification in order")
 
-release_publication_steps = [
-  "Build release artifacts",
-  "Generate release notes",
-  "Publish GitHub Release",
-  "Build and push runtime image",
-  "Publish npm packages with dependency barriers",
-]
-release_publication_steps.each do |name|
+release_publication_steps = {
+  "Build release artifacts" => "needs.prepare.outputs.release_exists == 'false'",
+  "Generate release notes" => "needs.prepare.outputs.release_exists == 'false'",
+  "Publish GitHub Release" => "needs.prepare.outputs.release_exists == 'false'",
+  "Build and push runtime image" => nil,
+}
+release_publication_steps.each do |name, condition|
   step, index = require_named_step(release_steps, name, "the unified release workflow")
-  require_unconditional(step, "the unified release workflow publication step #{name}")
+  if condition
+    require_condition_value(step, condition, "the unified release workflow publication step #{name}")
+  else
+    require_unconditional(step, "the unified release workflow publication step #{name}")
+  end
   require_condition(release_version_index < index && release_tags_index < index, "the unified release workflow must validate versions and tags before every publication step, including #{name}")
 end
 

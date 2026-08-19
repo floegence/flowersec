@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -371,6 +372,145 @@ func TestPeerSessionCloseDoesNotBypassQueuedControlFlush(t *testing.T) {
 	if err := session.flushControl(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("flushControl after peer close = %v, want deadline while the reply remains queued", err)
 	}
+}
+
+func TestControlTerminalSealOrdersQueuedCleanupBeforeSessionCloseAndFIN(t *testing.T) {
+	session := newControlActorUnitSession(t, 1)
+	session.ctx, session.cancel = context.WithCancelCause(context.Background())
+	session.closingCh = make(chan struct{})
+	session.lifecycle = lifecycleOpen
+	control := newTerminalControlStream(session.ctx)
+	session.control = control
+	if err := session.sendControl(protocolv2.InnerPong, make([]byte, 8)); err != nil {
+		t.Fatal(err)
+	}
+	session.beginClosing()
+	if err := session.commitControl(protocolv2.InnerStreamReset, marshalIDReason(1, 6), nil); err != nil {
+		t.Fatalf("owned reset during closing: %v", err)
+	}
+	if err := session.handleControl(protocolv2.InnerPing, make([]byte, 8)); err != nil {
+		t.Fatalf("PING response during closing: %v", err)
+	}
+	if err := session.commitControl(protocolv2.InnerSessionKeyUpdateACK, make([]byte, 20), nil); !errors.Is(err, ErrSessionClosed) {
+		t.Fatalf("rekey ACK during closing = %v, want ErrSessionClosed", err)
+	}
+
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		session.controlWriterLoop()
+	}()
+	select {
+	case <-control.writeEntered:
+	case <-time.After(time.Second):
+		t.Fatal("control writer did not reach the barrier")
+	}
+
+	terminalDone := make(chan error, 1)
+	go func() {
+		terminalDone <- session.closeControlTerminal(context.Background(), marshalIDReason(0, 1))
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		session.controlActorMu.Lock()
+		sealed := session.controlTerminalSealed
+		types := make([]protocolv2.InnerType, len(session.controlQueue))
+		for index := range session.controlQueue {
+			types[index] = session.controlQueue[index].typ
+		}
+		session.controlActorMu.Unlock()
+		if sealed {
+			want := []protocolv2.InnerType{
+				protocolv2.InnerPong,
+				protocolv2.InnerStreamReset,
+				protocolv2.InnerGoAway,
+				protocolv2.InnerSessionClose,
+			}
+			if !slices.Equal(types, want) {
+				t.Fatalf("sealed control order = %v, want %v", types, want)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("terminal control was not sealed")
+		}
+		runtime.Gosched()
+	}
+	for _, record := range []struct {
+		name    string
+		typ     protocolv2.InnerType
+		payload []byte
+	}{
+		{name: "PONG", typ: protocolv2.InnerPong, payload: make([]byte, 8)},
+		{name: "rekey ACK", typ: protocolv2.InnerSessionKeyUpdateACK, payload: make([]byte, 20)},
+		{name: "STREAM_RESET", typ: protocolv2.InnerStreamReset, payload: marshalIDReason(3, 6)},
+	} {
+		if err := session.sendControl(record.typ, record.payload); !errors.Is(err, ErrSessionClosed) {
+			t.Fatalf("%s after terminal seal = %v, want ErrSessionClosed", record.name, err)
+		}
+	}
+	select {
+	case err := <-terminalDone:
+		t.Fatalf("terminal close bypassed queued writes: %v", err)
+	default:
+	}
+	close(control.releaseWrites)
+	if err := <-terminalDone; err != nil {
+		t.Fatal(err)
+	}
+	if events := control.snapshotEvents(); !slices.Equal(events, []string{"write", "write", "write", "write", "fin"}) {
+		t.Fatalf("control stream events = %v", events)
+	}
+	session.cancel(ErrSessionClosed)
+	select {
+	case <-writerDone:
+	case <-time.After(time.Second):
+		t.Fatal("control writer did not stop")
+	}
+}
+
+type terminalControlStream struct {
+	ctx           context.Context
+	writeEntered  chan struct{}
+	releaseWrites chan struct{}
+	firstWrite    sync.Once
+	mu            sync.Mutex
+	events        []string
+}
+
+func newTerminalControlStream(ctx context.Context) *terminalControlStream {
+	return &terminalControlStream{
+		ctx: ctx, writeEntered: make(chan struct{}), releaseWrites: make(chan struct{}),
+	}
+}
+
+func (stream *terminalControlStream) Read([]byte) (int, error) { return 0, io.EOF }
+
+func (stream *terminalControlStream) Write(payload []byte) (int, error) {
+	stream.firstWrite.Do(func() { close(stream.writeEntered) })
+	<-stream.releaseWrites
+	stream.mu.Lock()
+	stream.events = append(stream.events, "write")
+	stream.mu.Unlock()
+	return len(payload), nil
+}
+
+func (stream *terminalControlStream) CloseWrite() error {
+	stream.mu.Lock()
+	stream.events = append(stream.events, "fin")
+	stream.mu.Unlock()
+	return nil
+}
+
+func (stream *terminalControlStream) StopSending() error       { return nil }
+func (stream *terminalControlStream) Reset() error             { return nil }
+func (stream *terminalControlStream) Close() error             { return nil }
+func (stream *terminalControlStream) Context() context.Context { return stream.ctx }
+
+func (stream *terminalControlStream) snapshotEvents() []string {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return append([]string(nil), stream.events...)
 }
 
 func newControlActorUnitSession(t *testing.T, maxInbound uint16) *engineSession {

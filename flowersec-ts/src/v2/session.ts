@@ -246,6 +246,7 @@ export class SessionV2 implements SessionV2Contract {
   private controlReceiveEpoch = 0;
   private controlReceiveSequence = 0n;
   private controlWriteTail: Promise<void> = Promise.resolve();
+  private controlTerminalSealed = false;
   private nextLogicalID: bigint;
   private receivedGoAway = false;
   private receivedGoAwayLastAccepted = 0n;
@@ -502,9 +503,10 @@ export class SessionV2 implements SessionV2Contract {
     this.releaseStream(stream);
     let controlConfirmed = false;
     try {
-      await this.sendControl(InnerTypeV2.StreamReset, idReason(stream.id, 6));
-      this.commitLocalReset(stream.id);
-      if (stream.hasRemoteFIN()) controlConfirmed = await this.confirmControlDelivery();
+      if (await this.sendControlCleanup(InnerTypeV2.StreamReset, idReason(stream.id, 6))) {
+        this.commitLocalReset(stream.id);
+        if (stream.hasRemoteFIN()) controlConfirmed = await this.confirmControlDelivery();
+      }
     } catch (cause) {
       this.fail(asError(cause));
     }
@@ -531,6 +533,7 @@ export class SessionV2 implements SessionV2Contract {
   }
 
   private async confirmControlDelivery(): Promise<boolean> {
+    if (this.lifecycle !== "open" || this.controlTerminalSealed) return false;
     const nonce = this.nextPing++;
     const pending = deferred<void>();
     this.pings.set(nonce, pending);
@@ -780,36 +783,91 @@ export class SessionV2 implements SessionV2Contract {
   private async resetInboundBeforeDelivery(id: bigint, carrierStream: CarrierStreamV2): Promise<void> {
     await carrierStream.reset().catch(() => undefined);
     try {
-      await this.sendControl(InnerTypeV2.StreamReset, idReason(id, 3));
-      this.peerLedger.localResetCommitted(id);
+      if (await this.sendControlCleanup(InnerTypeV2.StreamReset, idReason(id, 3))) {
+        this.peerLedger.localResetCommitted(id);
+      }
     } catch (error) {
       this.fail(asError(error));
     }
   }
 
   private async sendControl(type: InnerTypeV2, payload: Uint8Array, signal?: AbortSignal): Promise<void> {
+    if (this.controlTerminalSealed) {
+      throw this.terminalError ?? new SessionV2Error("closed", "Flowersec v2 control stream is sealed");
+    }
     const task = this.controlWriteTail.then(async () => {
       if (this.lifecycle === "closed") throw this.terminalError ?? new SessionV2Error("closed", "Flowersec v2 session closed");
-      const inner = encodeInnerRecordV2(type, payload);
-      const roots = this.rootForSend(this.controlSendEpoch);
-      const material = deriveControlMaterial(
-        roots.controlRoot,
-        this.h3,
-        this.sendDirection,
-        this.controlSendEpoch,
-      );
-      const header = {
-        epoch: this.controlSendEpoch,
-        sequence: this.controlSendSequence,
-        ciphertextLength: inner.length + 16,
-      };
-      const ciphertext = sealRecord(this.config.suite, material, this.h3, 0n, this.sendDirection, header, inner);
-      this.controlSendSequence += 1n;
-      await writeAll(this.control, concat(encodeRecordHeader(header), ciphertext), signal);
-      this.markAuthenticatedActivity();
+      await this.writeControl(type, payload, signal);
     });
     this.controlWriteTail = task.catch(() => undefined);
     await task;
+  }
+
+  private async sendControlResponse(type: InnerTypeV2, payload: Uint8Array): Promise<boolean> {
+    if (this.lifecycle !== "open" || this.controlTerminalSealed) return false;
+    const task = this.controlWriteTail.then(async () => {
+      if (this.lifecycle !== "open" || this.controlTerminalSealed) return false;
+      await this.writeControl(type, payload);
+      return true;
+    });
+    this.controlWriteTail = task.then(() => undefined, () => undefined);
+    return await task;
+  }
+
+  private async sendControlCleanup(type: InnerTypeV2, payload: Uint8Array): Promise<boolean> {
+    if (this.controlTerminalSealed || this.lifecycle === "closed") return false;
+    const task = this.controlWriteTail.then(async () => {
+      if (this.lifecycle === "closed") return false;
+      await this.writeControl(type, payload);
+      return true;
+    });
+    this.controlWriteTail = task.then(() => undefined, () => undefined);
+    return await task;
+  }
+
+  private sendTerminalControl(reason: number): Promise<void> {
+    if (this.controlTerminalSealed) return this.controlWriteTail;
+    this.controlTerminalSealed = true;
+    const task = this.controlWriteTail.then(async () => {
+      if (this.lifecycle === "closed") throw this.terminalError ?? new SessionV2Error("closed", "Flowersec v2 session closed");
+      if (!this.sentGoAway) {
+        this.sentGoAway = true;
+        this.sentGoAwayLastAccepted = this.peerLedger.frontier;
+        this.sentGoAwayReason = reason;
+      }
+      await this.writeControl(
+        InnerTypeV2.GoAway,
+        idReason(this.sentGoAwayLastAccepted, this.sentGoAwayReason),
+      );
+      if (!this.sentSessionClose) {
+        this.sentSessionClose = true;
+        await this.writeControl(InnerTypeV2.SessionClose, Uint8Array.of(0, reason));
+        this.sessionCloseCommitted = true;
+      }
+      await this.control.closeWrite();
+    });
+    this.controlWriteTail = task.catch(() => undefined);
+    return task;
+  }
+
+  private async writeControl(type: InnerTypeV2, payload: Uint8Array, signal?: AbortSignal): Promise<void> {
+    const inner = encodeInnerRecordV2(type, payload);
+    const roots = this.rootForSend(this.controlSendEpoch);
+    const material = deriveControlMaterial(
+      roots.controlRoot,
+      this.h3,
+      this.sendDirection,
+      this.controlSendEpoch,
+    );
+    const header = {
+      epoch: this.controlSendEpoch,
+      sequence: this.controlSendSequence,
+      ciphertextLength: inner.length + 16,
+    };
+    const ciphertext = sealRecord(this.config.suite, material, this.h3, 0n, this.sendDirection, header, inner);
+    this.controlSendSequence += 1n;
+    await writeAll(this.control, concat(encodeRecordHeader(header), ciphertext), signal);
+    this.markAuthenticatedActivity();
   }
 
   private async readControl(): Promise<Readonly<{ type: InnerTypeV2; payload: Uint8Array }>> {
@@ -848,7 +906,7 @@ export class SessionV2 implements SessionV2Contract {
         const record = await this.readControl();
         switch (record.type) {
           case InnerTypeV2.Ping:
-            await this.sendControl(InnerTypeV2.Pong, record.payload);
+            await this.sendControlResponse(InnerTypeV2.Pong, record.payload);
             break;
           case InnerTypeV2.Pong:
             this.pings.get(readU64(record.payload))?.resolve();
@@ -906,19 +964,10 @@ export class SessionV2 implements SessionV2Contract {
   private async closeOnce(): Promise<void> {
     if (this.lifecycle === "closed") return;
     const closed = new SessionV2Error("closed", "Flowersec v2 session closed");
+    const terminal = this.sendTerminalControl(1);
     const work = (async () => {
       try {
-        await this.sendGoAway(1);
-      } catch {
-        // A prior GOAWAY boundary must not suppress the close response.
-      }
-      try {
-        if (!this.sentSessionClose) {
-          this.sentSessionClose = true;
-          await this.sendControl(InnerTypeV2.SessionClose, Uint8Array.of(0, 1));
-          this.sessionCloseCommitted = true;
-          await this.control.closeWrite();
-        }
+        await terminal;
       } catch {
         // Closing is best-effort once the bounded shutdown has started.
       }
@@ -1080,7 +1129,12 @@ export class SessionV2 implements SessionV2Contract {
     }
     const streams = [...this.streams.values()];
     await Promise.all(streams.map(async (stream) => await stream.waitReceiveRekey(transition, nextEpoch, signal)));
-    await raceAbort(this.sendControl(InnerTypeV2.SessionKeyUpdateACK, payload), signal);
+    const acknowledged = await raceAbort(this.sendControlResponse(InnerTypeV2.SessionKeyUpdateACK, payload), signal);
+    if (!acknowledged) {
+      this.pendingReceiveEpoch = undefined;
+      this.cleanupEpochRoots();
+      return;
+    }
     throwIfAborted(signal);
     this.receiveEpoch = nextEpoch;
     this.receiveTransition = transition;
@@ -1123,9 +1177,10 @@ export class SessionV2 implements SessionV2Contract {
   }
 
   private async commitOutboundReset(id: bigint): Promise<void> {
-    await this.sendControl(InnerTypeV2.StreamReset, idReason(id, 6));
-    this.outboundLedger.localResetCommitted(id);
-    this.notifyOutboundFrontierChanged();
+    if (await this.sendControlCleanup(InnerTypeV2.StreamReset, idReason(id, 6))) {
+      this.outboundLedger.localResetCommitted(id);
+      this.notifyOutboundFrontierChanged();
+    }
   }
 
   private commitLocalReset(id: bigint): void {
@@ -1257,6 +1312,7 @@ export class SessionV2 implements SessionV2Contract {
 
   private fail(error: Error, abortCarrier = true): void {
     if (this.lifecycle === "closed") return;
+    this.controlTerminalSealed = true;
     this.beginClosing();
     const normalPeerCarrierClose = this.sessionCloseCommitted && error instanceof CarrierError && error.code === "closed";
     if (normalPeerCarrierClose) this.peerSessionClose.resolve();

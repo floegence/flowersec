@@ -607,6 +607,74 @@ final class TransportV2SessionTests: XCTestCase {
     try await serverSession.close()
   }
 
+  func testCloseUsesReciprocalAuthenticatedTerminalSequenceBeforeCarrierClose() async throws {
+    let clientEvents = CloseCarrierEventsV2()
+    let serverEvents = CloseCarrierEventsV2()
+    let (clientBase, serverBase) = MemoryCarrierSession.pair()
+    let clientCarrier = ObservedCloseCarrierSessionV2(
+      base: clientBase, events: clientEvents, observedOpen: 1)
+    let serverCarrier = ObservedCloseCarrierSessionV2(
+      base: serverBase, events: serverEvents, observedAccept: 1)
+    var configs = try makeConfigs()
+    configs.client.deadlines.closeFlush = .seconds(1)
+    configs.server.deadlines.closeFlush = .seconds(1)
+    let clientConfig = configs.client
+    let serverConfig = configs.server
+    async let server = TransportV2Session.establish(carrier: serverCarrier, config: serverConfig)
+    async let client = TransportV2Session.establish(carrier: clientCarrier, config: clientConfig)
+    let (clientSession, serverSession) = try await (client, server)
+    await clientEvents.enable()
+    await serverEvents.enable()
+
+    try await clientSession.close()
+    let serverClosed = await serverSession.waitClosed()
+    let clientOutbound = await clientEvents.outboundEvents()
+    let serverOutbound = await serverEvents.outboundEvents()
+    XCTAssertEqual(serverClosed, .closed)
+    XCTAssertEqual(
+      clientOutbound, [.write, .write, .closeWrite, .carrierClose])
+    XCTAssertEqual(serverOutbound, [.write, .closeWrite, .carrierClose])
+  }
+
+  func testTerminalSequenceSuppressesPONGQueuedBehindCloseWrite() async throws {
+    let clientEvents = CloseCarrierEventsV2()
+    let serverEvents = CloseCarrierEventsV2()
+    let (clientBase, serverBase) = MemoryCarrierSession.pair()
+    let clientCarrier = ObservedCloseCarrierSessionV2(
+      base: clientBase, events: clientEvents, observedOpen: 1)
+    let serverCarrier = ObservedCloseCarrierSessionV2(
+      base: serverBase, events: serverEvents, observedAccept: 1)
+    var configs = try makeConfigs()
+    configs.client.deadlines.closeFlush = .seconds(2)
+    configs.server.deadlines.closeFlush = .seconds(2)
+    let clientConfig = configs.client
+    let serverConfig = configs.server
+    async let server = TransportV2Session.establish(carrier: serverCarrier, config: serverConfig)
+    async let client = TransportV2Session.establish(carrier: clientCarrier, config: clientConfig)
+    let (clientSession, serverSession) = try await (client, server)
+    await clientEvents.enable(blockNextWrite: true)
+    await serverEvents.enable()
+
+    let closing = Task { try await clientSession.close() }
+    let closeWriteStarted = await clientEvents.waitForWrites(1)
+    XCTAssertTrue(closeWriteStarted)
+    let probing = Task { try await serverSession.probeLiveness() }
+    let pingWritten = await serverEvents.waitForWrites(1)
+    let pingRead = await clientEvents.waitForReads(2)
+    XCTAssertTrue(pingWritten)
+    XCTAssertTrue(pingRead)
+    for _ in 0..<10 { await Task.yield() }
+    await clientEvents.releaseWrite()
+
+    try await closing.value
+    _ = try? await probing.value
+    let serverClosed = await serverSession.waitClosed()
+    let clientOutbound = await clientEvents.outboundEvents()
+    XCTAssertEqual(serverClosed, .closed)
+    XCTAssertEqual(
+      clientOutbound, [.write, .write, .closeWrite, .carrierClose])
+  }
+
   func testApplicationDataAndFINWaitForStreamRekeyACK() async throws {
     let blocker = SwitchableWriteBlocker()
     let (clientCarrier, serverBase) = MemoryCarrierSession.pair()
@@ -1924,7 +1992,10 @@ private actor EstablishedStreamFaults {
 
   func failNextWrite() { failWrite = true }
   func failNextCloseWrite() { failCloseWrite = true }
-  func consumeWriteFailure() -> Bool { defer { failWrite = false }; return failWrite }
+  func consumeWriteFailure() -> Bool {
+    defer { failWrite = false }
+    return failWrite
+  }
   func consumeCloseWriteFailure() -> Bool {
     defer { failCloseWrite = false }
     return failCloseWrite
@@ -2028,6 +2099,154 @@ private actor FaultingEstablishedStreamCarrierStream: TransportV2CarrierStream {
     await base.reset(code: code)
     await faults.recordReset()
   }
+  func close() async { await base.close() }
+  nonisolated func abort(code: UInt16) { base.abort(code: code) }
+}
+
+private enum CloseCarrierEventV2: Equatable, Sendable {
+  case read
+  case write
+  case closeWrite
+  case carrierClose
+  case abort
+}
+
+private actor CloseCarrierEventsV2 {
+  private var enabled = false
+  private var events: [CloseCarrierEventV2] = []
+  private var blockWrite = false
+  private var writeReleased = false
+  private var writeWaiters: [CheckedContinuation<Void, Never>] = []
+
+  func enable(blockNextWrite: Bool = false) {
+    enabled = true
+    events.removeAll()
+    blockWrite = blockNextWrite
+    writeReleased = !blockNextWrite
+  }
+
+  func recordRead() {
+    if enabled { events.append(.read) }
+  }
+
+  func beforeWrite() async {
+    guard enabled else { return }
+    events.append(.write)
+    guard blockWrite, !writeReleased else { return }
+    blockWrite = false
+    await withCheckedContinuation { writeWaiters.append($0) }
+  }
+
+  func record(_ event: CloseCarrierEventV2) {
+    if enabled { events.append(event) }
+  }
+
+  func releaseWrite() {
+    writeReleased = true
+    let waiters = writeWaiters
+    writeWaiters.removeAll()
+    for waiter in waiters { waiter.resume() }
+  }
+
+  func waitForWrites(_ count: Int) async -> Bool {
+    await waitUntil { events.filter { $0 == .write }.count >= count }
+  }
+
+  func waitForReads(_ count: Int) async -> Bool {
+    await waitUntil { events.filter { $0 == .read }.count >= count }
+  }
+
+  func outboundEvents() -> [CloseCarrierEventV2] {
+    events.filter { $0 != .read }
+  }
+
+  private func waitUntil(_ predicate: () -> Bool) async -> Bool {
+    let deadline = ContinuousClock.now + .seconds(1)
+    while ContinuousClock.now < deadline {
+      if predicate() { return true }
+      await Task.yield()
+    }
+    return predicate()
+  }
+}
+
+private actor ObservedCloseCarrierSessionV2: TransportV2CarrierSession {
+  nonisolated let chosenCarrier: CarrierKind
+  nonisolated let inboundBidirectionalStreamCapacity: UInt16
+  private let base: MemoryCarrierSession
+  private let events: CloseCarrierEventsV2
+  private let observedOpen: Int?
+  private let observedAccept: Int?
+  private var openCount = 0
+  private var acceptCount = 0
+
+  init(
+    base: MemoryCarrierSession,
+    events: CloseCarrierEventsV2,
+    observedOpen: Int? = nil,
+    observedAccept: Int? = nil
+  ) {
+    self.base = base
+    self.events = events
+    self.observedOpen = observedOpen
+    self.observedAccept = observedAccept
+    chosenCarrier = base.chosenCarrier
+    inboundBidirectionalStreamCapacity = base.inboundBidirectionalStreamCapacity
+  }
+
+  func openStream() async throws -> any TransportV2CarrierStream {
+    openCount += 1
+    let stream = try await base.openStream()
+    return openCount == observedOpen
+      ? ObservedCloseCarrierStreamV2(base: stream, events: events) : stream
+  }
+
+  func acceptStream() async throws -> any TransportV2CarrierStream {
+    acceptCount += 1
+    let stream = try await base.acceptStream()
+    return acceptCount == observedAccept
+      ? ObservedCloseCarrierStreamV2(base: stream, events: events) : stream
+  }
+
+  func close(code: UInt16, reason: String) async {
+    await events.record(.carrierClose)
+    await base.close(code: code, reason: reason)
+  }
+
+  nonisolated func abort(code: UInt16, reason: String) {
+    Task { await events.record(.abort) }
+    base.abort(code: code, reason: reason)
+  }
+}
+
+private actor ObservedCloseCarrierStreamV2: TransportV2CarrierStream {
+  nonisolated let carrierStreamID: UInt64
+  private let base: any TransportV2CarrierStream
+  private let events: CloseCarrierEventsV2
+
+  init(base: any TransportV2CarrierStream, events: CloseCarrierEventsV2) {
+    self.base = base
+    self.events = events
+    carrierStreamID = base.carrierStreamID
+  }
+
+  func read(maxBytes: Int) async throws -> Data? {
+    let result = try await base.read(maxBytes: maxBytes)
+    if result != nil { await events.recordRead() }
+    return result
+  }
+
+  func write(_ data: Data) async throws -> Int {
+    await events.beforeWrite()
+    return try await base.write(data)
+  }
+
+  func closeWrite() async throws {
+    await events.record(.closeWrite)
+    try await base.closeWrite()
+  }
+
+  func reset(code: UInt16) async { await base.reset(code: code) }
   func close() async { await base.close() }
   nonisolated func abort(code: UInt16) { base.abort(code: code) }
 }

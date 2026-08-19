@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+
 @testable import Flowersec
 
 final class ConnectionControllerTests: XCTestCase {
@@ -45,6 +46,39 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(winners.count, 1)
     if case .success(let claimed) = controller { try await claimed.retire() }
     if case .success(let claimed) = oneShot { try await claimed.retire() }
+  }
+
+  func testCloseCancelsBlockedRetirementWithoutPublishingRetryState() async throws {
+    let retireGate = CancellationAwareRetireGateV3()
+    let lease = ArtifactLeaseV3(
+      artifact: try artifactV3(),
+      commitSpend: {},
+      retire: { try await retireGate.wait() }
+    )
+    let controller = try ConnectionController(
+      source: SequenceArtifactSourceV3([lease]),
+      connectOneShot: { _, _ in throw ConnectError.connectionFailed }
+    )
+    await controller.start()
+    let retireStarted = await retireGate.waitUntilEntered()
+    XCTAssertTrue(retireStarted)
+
+    let closeCompleted = AsyncFlagV3()
+    let closing = Task {
+      await controller.close()
+      await closeCompleted.set()
+    }
+    let bounded = await waitUntilV3(timeout: .milliseconds(500)) {
+      await closeCompleted.value
+    }
+    XCTAssertTrue(bounded)
+    await closing.value
+
+    let snapshot = await controller.snapshot()
+    let retirementCancelled = await retireGate.cancelled
+    XCTAssertEqual(snapshot.state, .closed)
+    XCTAssertNil(snapshot.retryDisposition)
+    XCTAssertTrue(retirementCancelled)
   }
 
   func testV3ControllerVectorsAndBackoffAreOwnedByTheDefaultController() throws {
@@ -1078,7 +1112,8 @@ final class ConnectionControllerTests: XCTestCase {
     await controller.start()
     for acquisition in 1..<failureOrdinal {
       assertTrueV3(
-        await waitUntilV3 { await source.acquisitions >= acquisition }, "\(id) acquisition \(acquisition)")
+        await waitUntilV3 { await source.acquisitions >= acquisition },
+        "\(id) acquisition \(acquisition)")
       assertTrueV3(await clock.waitForSleepCount(acquisition), "\(id) sleep \(acquisition)")
       assertTrueV3(await controller.retryNow(), "\(id) retryNow \(acquisition)")
     }
@@ -1254,7 +1289,8 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertTrue(connecting, id)
     let snapshot = await controller.snapshot()
     XCTAssertEqual(snapshot.attempt, maxSafe, id)
-    XCTAssertEqual(snapshot.attempt, UInt64(try XCTUnwrap(expected["attempt"] as? NSNumber).uint64Value), id)
+    XCTAssertEqual(
+      snapshot.attempt, UInt64(try XCTUnwrap(expected["attempt"] as? NSNumber).uint64Value), id)
     XCTAssertEqual(expected["counter_saturated"] as? Bool, true, id)
     await controller.close()
   }
@@ -1666,11 +1702,13 @@ private final class VectorManualClockV3: @unchecked Sendable {
 
   func advance(wallMilliseconds wallDelta: Int64, monotonicMilliseconds monotonicDelta: UInt64) {
     let continuations: [CheckedContinuation<Void, Error>] = lock.withLock {
-      wallMilliseconds = wallMilliseconds.addingReportingOverflow(wallDelta).overflow
+      wallMilliseconds =
+        wallMilliseconds.addingReportingOverflow(wallDelta).overflow
         ? (wallDelta >= 0 ? Int64.max : Int64.min)
         : wallMilliseconds + wallDelta
       let (sum, overflow) = monotonicMilliseconds.addingReportingOverflow(monotonicDelta)
-      monotonicMilliseconds = overflow || sum > Self.maxSafeInteger
+      monotonicMilliseconds =
+        overflow || sum > Self.maxSafeInteger
         ? Self.maxSafeInteger : sum
       let current = Array(waiters.values)
       waiters.removeAll()
@@ -1758,6 +1796,36 @@ private actor AsyncCounterV3 {
   func increment() -> Int {
     value += 1
     return value
+  }
+}
+
+private actor AsyncFlagV3 {
+  private(set) var value = false
+
+  func set() { value = true }
+}
+
+private actor CancellationAwareRetireGateV3 {
+  private(set) var entered = false
+  private(set) var cancelled = false
+
+  func wait() async throws {
+    entered = true
+    do {
+      try await Task.sleep(for: .seconds(60))
+    } catch is CancellationError {
+      cancelled = true
+      throw CancellationError()
+    }
+  }
+
+  func waitUntilEntered() async -> Bool {
+    let deadline = ContinuousClock.now + .seconds(1)
+    while ContinuousClock.now < deadline {
+      if entered { return true }
+      await Task.yield()
+    }
+    return entered
   }
 }
 

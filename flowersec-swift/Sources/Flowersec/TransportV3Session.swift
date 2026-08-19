@@ -86,6 +86,9 @@ actor TransportV3Session {
   private var closeWorkTask: Task<Void, Never>?
   private var closeGeneration: UInt64 = 0
   private var closeSignal: TransportV3CloseSignal?
+  private var controlTerminalCommitted = false
+  private var receivedSessionClose = false
+  private var peerCloseWaiters: [CheckedContinuation<Void, Never>] = []
   private var lifecycle = TransportV3SessionLifecycle.opening
   private var closing: Bool { lifecycle == .closing }
   private var closed: Bool { lifecycle == .closed }
@@ -379,7 +382,7 @@ actor TransportV3Session {
     await signal.wait()
   }
 
-  func sendGoAway(reason: UInt16, allowWhileClosing: Bool = false) async throws {
+  func sendGoAway(reason: UInt16) async throws {
     guard reason != 0 else { throw TransportV3SessionError.protocolViolation }
     let lastAccepted = peerHighWatermark()
     if sentGoAway, sentGoAwayLastAccepted != lastAccepted {
@@ -387,11 +390,7 @@ actor TransportV3Session {
     }
     sentGoAway = true
     sentGoAwayLastAccepted = lastAccepted
-    try await sendControl(
-      .goAway,
-      payload: idReasonPayload(id: lastAccepted, reason: reason),
-      allowWhileClosing: allowWhileClosing
-    )
+    try await sendControl(.goAway, payload: idReasonPayload(id: lastAccepted, reason: reason))
   }
 
   fileprivate func root(
@@ -896,12 +895,17 @@ actor TransportV3Session {
 
   private func sendControl(
     _ type: InnerRecordTypeV3,
-    payload: Data,
-    allowWhileClosing: Bool = false
+    payload: Data
   ) async throws {
-    guard !closed, allowWhileClosing || !closing else {
+    guard !closed, !closing, !controlTerminalCommitted else {
       throw TransportV3SessionError.closed
     }
+    let raw = try encodeControl(type, payload: payload)
+    try await controlWriter.write(raw)
+    touchActivity()
+  }
+
+  private func encodeControl(_ type: InnerRecordTypeV3, payload: Data) throws -> Data {
     guard let roots = sendRoots[sendEpoch] else {
       throw TransportV3SessionError.protocolViolation
     }
@@ -935,8 +939,7 @@ actor TransportV3Session {
     )
     var raw = try header.encoded()
     raw.append(ciphertext)
-    try await controlWriter.write(raw)
-    touchActivity()
+    return raw
   }
 
   private func readControl() async throws -> (InnerRecordTypeV3, Data) {
@@ -1031,7 +1034,7 @@ actor TransportV3Session {
   private func handleControl(_ type: InnerRecordTypeV3, payload: Data) async throws {
     switch type {
     case .ping:
-      try await sendControl(.pong, payload: payload)
+      if !closing { try await sendControl(.pong, payload: payload) }
     case .pong:
       let nonce = payload.readUInt64BE(at: 0)
       if let waiter = pings.removeValue(forKey: nonce) { await waiter.succeed() }
@@ -1049,11 +1052,19 @@ actor TransportV3Session {
         throw TransportV3SessionError.protocolViolation
       }
     case .sessionClose:
-      guard payload.readUInt16BE(at: 0) != 0 else {
+      guard payload.count == 2, payload.readUInt16BE(at: 0) != 0 else {
         throw TransportV3SessionError.protocolViolation
       }
-      carrier.abort(code: 1, reason: "peer closed session")
-      await terminate(error: .closed, code: 1, reason: "peer closed session")
+      receiveSessionClose()
+      if !closing, !closed {
+        let signal = initiatePeerClose(
+          closeReason: 1,
+          carrierCode: 1,
+          carrierReason: "peer closed session",
+          terminalError: .closed
+        )
+        await signal.wait()
+      }
     case .goAway:
       try receivedGoAway.accept(
         lastAccepted: payload.readUInt64BE(at: 0),
@@ -1420,6 +1431,43 @@ actor TransportV3Session {
     return signal
   }
 
+  private func initiatePeerClose(
+    closeReason: UInt16,
+    carrierCode: UInt16,
+    carrierReason: String,
+    terminalError: TransportV3SessionError
+  ) -> TransportV3CloseSignal {
+    if let closeSignal { return closeSignal }
+    lifecycle = .closing
+    idleTask?.cancel()
+    idleTask = nil
+    closeGeneration &+= 1
+    if closeGeneration == 0 { closeGeneration = 1 }
+    let generation = closeGeneration
+    let signal = TransportV3CloseSignal()
+    closeSignal = signal
+    rejectPendingOperationsForClosing(error: .closed)
+    let closeFlush = config.deadlines.closeFlush
+    closeDeadlineTask = Task { [weak self] in
+      do {
+        try await Task.sleep(for: closeFlush)
+        await self?.expireClose(generation: generation, code: carrierCode, reason: carrierReason)
+      } catch {
+        // Cancellation means the close records completed within the bounded flush window.
+      }
+    }
+    closeWorkTask = Task { [weak self] in
+      await self?.writePeerCloseReply(
+        generation: generation,
+        closeReason: closeReason,
+        carrierCode: carrierCode,
+        carrierReason: carrierReason,
+        terminalError: terminalError
+      )
+    }
+    return signal
+  }
+
   private func rejectPendingOperationsForClosing(error: TransportV3SessionError) {
     let acceptWaiters = Array(incomingWaiters.values)
     incomingWaiters.removeAll()
@@ -1449,13 +1497,25 @@ actor TransportV3Session {
   ) async {
     do {
       guard isCurrentClose(generation) else { return }
-      try await sendGoAway(reason: goAwayReason, allowWhileClosing: true)
-      guard isCurrentClose(generation) else { return }
+      controlTerminalCommitted = true
+      let lastAccepted = peerHighWatermark()
+      if sentGoAway, sentGoAwayLastAccepted != lastAccepted {
+        throw TransportV3SessionError.protocolViolation
+      }
+      sentGoAway = true
+      sentGoAwayLastAccepted = lastAccepted
+      let goAway = try encodeControl(
+        .goAway,
+        payload: idReasonPayload(id: lastAccepted, reason: goAwayReason)
+      )
       var payload = Data()
       payload.appendUInt16BE(closeReason)
-      try await sendControl(.sessionClose, payload: payload, allowWhileClosing: true)
+      let sessionClose = try encodeControl(.sessionClose, payload: payload)
+      try await controlWriter.writeTerminal([goAway, sessionClose])
+      if terminalError == .closed { await waitForPeerSessionClose() }
     } catch {
-      // The versioned close deadline and carrier shutdown remain authoritative.
+      controlTerminalCommitted = true
+      carrier.abort(code: carrierCode, reason: carrierReason)
     }
     await finishClose(
       generation: generation,
@@ -1463,6 +1523,55 @@ actor TransportV3Session {
       code: carrierCode,
       reason: carrierReason
     )
+  }
+
+  private func writePeerCloseReply(
+    generation: UInt64,
+    closeReason: UInt16,
+    carrierCode: UInt16,
+    carrierReason: String,
+    terminalError: TransportV3SessionError
+  ) async {
+    do {
+      guard isCurrentClose(generation) else { return }
+      controlTerminalCommitted = true
+      var payload = Data()
+      payload.appendUInt16BE(closeReason)
+      let sessionClose = try encodeControl(.sessionClose, payload: payload)
+      try await controlWriter.writeTerminal([sessionClose])
+    } catch {
+      controlTerminalCommitted = true
+      carrier.abort(code: carrierCode, reason: carrierReason)
+    }
+    await finishClose(
+      generation: generation,
+      error: terminalError,
+      code: carrierCode,
+      reason: carrierReason
+    )
+  }
+
+  private func receiveSessionClose() {
+    guard !receivedSessionClose else { return }
+    receivedSessionClose = true
+    releasePeerCloseWaiters()
+  }
+
+  private func releasePeerCloseWaiters() {
+    let waiters = peerCloseWaiters
+    peerCloseWaiters.removeAll()
+    for waiter in waiters { waiter.resume(returning: ()) }
+  }
+
+  private func waitForPeerSessionClose() async {
+    if receivedSessionClose { return }
+    await withCheckedContinuation { continuation in
+      if receivedSessionClose || closed {
+        continuation.resume(returning: ())
+      } else {
+        peerCloseWaiters.append(continuation)
+      }
+    }
   }
 
   private func finishClose(
@@ -1478,7 +1587,9 @@ actor TransportV3Session {
   private func expireClose(generation: UInt64, code: UInt16, reason: String) async {
     guard closeGeneration == generation, closeSignal != nil, closeWorkTask != nil else { return }
     closeDeadlineTask = nil
+    controlTerminalCommitted = true
     carrier.abort(code: code, reason: reason)
+    releasePeerCloseWaiters()
   }
 
   private func isCurrentClose(_ generation: UInt64) -> Bool {
@@ -1519,11 +1630,13 @@ actor TransportV3Session {
     reason: String
   ) async {
     guard !closed else { return }
+    controlTerminalCommitted = true
     lifecycle = .closed
     terminationError = error
     let waiters = terminationWaiters
     terminationWaiters.removeAll()
     for waiter in waiters { waiter.resume(returning: error) }
+    releasePeerCloseWaiters()
     controlTask?.cancel()
     acceptTask?.cancel()
     rpcServerTask?.cancel()
@@ -2453,11 +2566,53 @@ private actor TransportV3CarrierReader {
 
 private actor TransportV3CarrierWriter {
   private let stream: any TransportV3CarrierStream
+  private var tail: Task<Void, Error>?
+  private var tailID: UInt64 = 0
+  private var nextOperationID: UInt64 = 1
+  private var terminalCommitted = false
 
   init(stream: any TransportV3CarrierStream) { self.stream = stream }
 
   func write(_ data: Data) async throws {
-    try await TransportV3Handshake.writeAll(data, to: stream)
+    guard !terminalCommitted else { throw TransportV3SessionError.closed }
+    let previous = tail
+    let stream = self.stream
+    let operation = Task {
+      if let previous { try await previous.value }
+      try await TransportV3Handshake.writeAll(data, to: stream)
+    }
+    let operationID = nextOperationID
+    nextOperationID &+= 1
+    if nextOperationID == 0 { nextOperationID = 1 }
+    tail = operation
+    tailID = operationID
+    defer {
+      if tailID == operationID { tail = nil }
+    }
+    try await operation.value
+  }
+
+  func writeTerminal(_ records: [Data]) async throws {
+    guard !terminalCommitted else { throw TransportV3SessionError.closed }
+    terminalCommitted = true
+    let previous = tail
+    let stream = self.stream
+    let operation = Task {
+      if let previous { try await previous.value }
+      for record in records {
+        try await TransportV3Handshake.writeAll(record, to: stream)
+      }
+      try await stream.closeWrite()
+    }
+    let operationID = nextOperationID
+    nextOperationID &+= 1
+    if nextOperationID == 0 { nextOperationID = 1 }
+    tail = operation
+    tailID = operationID
+    defer {
+      if tailID == operationID { tail = nil }
+    }
+    try await operation.value
   }
 }
 

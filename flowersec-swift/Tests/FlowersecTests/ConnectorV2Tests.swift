@@ -5,7 +5,7 @@ import NIOFoundationCompat
 import NIOHTTP1
 import NIOPosix
 import NIOSSL
-import NIOWebSocket
+@preconcurrency import NIOWebSocket
 import XCTest
 
 @testable import Flowersec
@@ -1714,17 +1714,21 @@ private final class ConnectorWSSServer: @unchecked Sendable {
           upgradePipelineHandler: { channel, request in
             let transport = ConnectorNIOBinaryTransport(channel: channel)
             let handler = ConnectorNIOWebSocketHandler(transport: transport)
-            return channel.pipeline.addHandlers(
-              NIOWebSocketFrameAggregator(
-                minNonFinalFragmentSize: 1,
-                maxAccumulatedFrameCount: 1024,
-                maxAccumulatedFrameSize: FlowersecSDKDefaults.Yamux.maxFrameBytes + 12),
-              handler
-            ).map {
+            do {
+              try channel.pipeline.syncOperations.addHandlers(
+                NIOWebSocketFrameAggregator(
+                  minNonFinalFragmentSize: 1,
+                  maxAccumulatedFrameCount: 1024,
+                  maxAccumulatedFrameSize: FlowersecSDKDefaults.Yamux.maxFrameBytes + 12),
+                handler
+              )
               Task {
                 await accepted.deliver(
                   transport, protocolValue: request.headers.first(name: "sec-websocket-protocol"))
               }
+              return channel.eventLoop.makeSucceededFuture(())
+            } catch {
+              return channel.eventLoop.makeFailedFuture(error)
             }
           })
         let upgrade: NIOHTTPServerUpgradeSendableConfiguration = (

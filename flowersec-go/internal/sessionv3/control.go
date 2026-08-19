@@ -55,15 +55,22 @@ func (s *engineSession) commitControl(typ protocolv3.InnerType, payload []byte, 
 }
 
 func (s *engineSession) commitControlPriority(typ protocolv3.InnerType, payload []byte, publish func() error, priority controlPriority) error {
+	s.controlActorMu.Lock()
+	defer s.controlActorMu.Unlock()
+	return s.commitControlPriorityLocked(typ, payload, publish, priority, false)
+}
+
+func (s *engineSession) commitControlPriorityLocked(typ protocolv3.InnerType, payload []byte, publish func() error, priority controlPriority, terminal bool) error {
+	if s.controlTerminalSealed || (s.controlClosing && !terminal && typ != protocolv3.InnerStreamReset) {
+		return ErrSessionClosed
+	}
 	inner, err := protocolv3.MarshalInnerRecord(typ, payload)
 	if err != nil {
 		return err
 	}
-	s.controlActorMu.Lock()
-	defer s.controlActorMu.Unlock()
 	switch priority {
 	case controlPriorityCritical:
-		if s.controlCriticalCount >= s.controlCriticalCap {
+		if !terminal && s.controlCriticalCount >= s.controlCriticalCap {
 			return protocolv3.ErrControlQueueFull
 		}
 	case controlPriorityNormal:
@@ -138,6 +145,54 @@ func (s *engineSession) commitControlPriority(typ protocolv3.InnerType, payload 
 	default:
 	}
 	return nil
+}
+
+func (s *engineSession) closeControlTerminal(ctx context.Context, goAwayPayload []byte) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.controlActorMu.Lock()
+	if s.controlTerminalSealed {
+		idle := s.controlIdle
+		s.controlActorMu.Unlock()
+		return errors.Join(waitForControlIdle(ctx, s.ctx, idle, s.sessionError), s.control.CloseWrite())
+	}
+	s.controlClosing = true
+	var protocolErr error
+	if goAwayPayload != nil {
+		protocolErr = s.commitControlPriorityLocked(protocolv3.InnerGoAway, goAwayPayload, nil, controlPriorityCritical, true)
+	}
+	protocolErr = errors.Join(protocolErr, s.commitControlPriorityLocked(protocolv3.InnerSessionClose, []byte{0, 1}, nil, controlPriorityCritical, true))
+	s.controlTerminalSealed = true
+	close(s.controlCapacityChanged)
+	s.controlCapacityChanged = make(chan struct{})
+	idle := s.controlIdle
+	s.controlActorMu.Unlock()
+	protocolErr = errors.Join(protocolErr, waitForControlIdle(ctx, s.ctx, idle, s.sessionError))
+	protocolErr = errors.Join(protocolErr, s.control.CloseWrite())
+	return protocolErr
+}
+
+func (s *engineSession) sealControl() {
+	s.controlActorMu.Lock()
+	if !s.controlTerminalSealed {
+		s.controlClosing = true
+		s.controlTerminalSealed = true
+		close(s.controlCapacityChanged)
+		s.controlCapacityChanged = make(chan struct{})
+	}
+	s.controlActorMu.Unlock()
+}
+
+func waitForControlIdle(ctx, sessionCtx context.Context, idle <-chan struct{}, sessionError func() error) error {
+	select {
+	case <-idle:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-sessionCtx.Done():
+		return sessionError()
+	}
 }
 
 func (s *engineSession) commitControlPriorityWait(ctx context.Context, typ protocolv3.InnerType, payload []byte, priority controlPriority) error {
@@ -228,14 +283,7 @@ func (s *engineSession) flushControl(ctx context.Context) error {
 	s.controlActorMu.Lock()
 	idle := s.controlIdle
 	s.controlActorMu.Unlock()
-	select {
-	case <-idle:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-s.ctx.Done():
-		return s.sessionError()
-	}
+	return waitForControlIdle(ctx, s.ctx, idle, s.sessionError)
 }
 
 func (s *engineSession) readControl() (protocolv3.InnerType, []byte, error) {
@@ -333,7 +381,14 @@ func (s *engineSession) controlLoop() {
 func (s *engineSession) handleControl(typ protocolv3.InnerType, payload []byte) error {
 	switch typ {
 	case protocolv3.InnerPing:
-		return s.commitControlPriorityWait(s.ctx, protocolv3.InnerPong, payload, controlPriorityLiveness)
+		if s.isClosing() {
+			return nil
+		}
+		err := s.commitControlPriorityWait(s.ctx, protocolv3.InnerPong, payload, controlPriorityLiveness)
+		if errors.Is(err, ErrSessionClosed) && s.isClosing() {
+			return nil
+		}
+		return err
 	case protocolv3.InnerPong:
 		nonce := binary.BigEndian.Uint64(payload)
 		s.pingsMu.Lock()
@@ -674,6 +729,9 @@ func (s *engineSession) handleSessionUpdate(payload []byte) error {
 			return err
 		}
 	}
+	if s.isClosing() {
+		return nil
+	}
 	if err := s.commitControl(protocolv3.InnerSessionKeyUpdateACK, payload, func() error {
 		s.cryptoMu.Lock()
 		s.recvSessionEpoch = nextEpoch
@@ -686,6 +744,9 @@ func (s *engineSession) handleSessionUpdate(payload []byte) error {
 		peerFrozen = false
 		return nil
 	}); err != nil {
+		if errors.Is(err, ErrSessionClosed) && s.isClosing() {
+			return nil
+		}
 		return err
 	}
 	return nil

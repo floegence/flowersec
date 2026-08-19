@@ -106,6 +106,8 @@ type engineSession struct {
 	controlSendExhausted   bool
 	controlIdle            chan struct{}
 	controlCapacityChanged chan struct{}
+	controlClosing         bool
+	controlTerminalSealed  bool
 
 	openMu                 sync.Mutex
 	openFrozen             bool
@@ -448,10 +450,7 @@ func (s *engineSession) Close() error {
 		s.beginClosing()
 		closeContext, cancelClose := context.WithTimeout(context.Background(), sessionCloseFlushTimeout)
 		defer cancelClose()
-		protocolErr := s.sendGoAway(1)
-		protocolErr = errors.Join(protocolErr, s.sendControl(protocolv2.InnerSessionClose, []byte{0, 1}))
-		protocolErr = errors.Join(protocolErr, s.flushControl(closeContext))
-		protocolErr = errors.Join(protocolErr, s.control.CloseWrite())
+		protocolErr := s.closeControlTerminal(closeContext, s.localGoAwayPayload(1))
 		select {
 		case <-s.peerSessionClose:
 		case <-s.carrier.Termination():
@@ -514,13 +513,20 @@ func (s *engineSession) markOpen() {
 }
 
 func (s *engineSession) beginClosing() {
+	s.controlActorMu.Lock()
 	s.openMu.Lock()
 	if s.lifecycle < lifecycleClosing {
 		s.lifecycle = lifecycleClosing
 		s.goingAway = true
 		close(s.closingCh)
 	}
+	if !s.controlClosing {
+		s.controlClosing = true
+		close(s.controlCapacityChanged)
+		s.controlCapacityChanged = make(chan struct{})
+	}
 	s.openMu.Unlock()
+	s.controlActorMu.Unlock()
 }
 
 func (s *engineSession) isClosing() bool {
@@ -551,9 +557,7 @@ func (s *engineSession) handlePeerSessionClose() {
 		s.beginClosing()
 		closeContext, cancelClose := context.WithTimeout(context.Background(), sessionCloseFlushTimeout)
 		defer cancelClose()
-		protocolErr := s.sendControl(protocolv2.InnerSessionClose, []byte{0, 1})
-		protocolErr = errors.Join(protocolErr, s.flushControl(closeContext))
-		protocolErr = errors.Join(protocolErr, s.control.CloseWrite())
+		protocolErr := s.closeControlTerminal(closeContext, nil)
 		if flusher, ok := s.carrier.(interface{ Flush(context.Context) error }); ok {
 			protocolErr = errors.Join(protocolErr, flusher.Flush(closeContext))
 		}
@@ -577,6 +581,7 @@ func (s *engineSession) fail(err error) {
 		err = ErrSessionClosed
 	}
 	s.closeOnce.Do(func() {
+		s.sealControl()
 		s.markClosed()
 		s.cancel(err)
 		s.resetAllStreams()
@@ -813,13 +818,18 @@ func (s *engineSession) notifyResponderChangedLocked() {
 }
 
 func (s *engineSession) sendGoAway(reason uint16) error {
+	payload := s.localGoAwayPayload(reason)
+	return s.sendControl(protocolv2.InnerGoAway, payload)
+}
+
+func (s *engineSession) localGoAwayPayload(reason uint16) []byte {
 	lastAccepted := s.peerResolvedFrontier()
 	s.openMu.Lock()
 	s.goingAway = true
 	s.sentGoAway = true
 	s.sentGoAwayLastAccepted = lastAccepted
 	s.openMu.Unlock()
-	return s.sendControl(protocolv2.InnerGoAway, marshalIDReason(lastAccepted, reason))
+	return marshalIDReason(lastAccepted, reason)
 }
 
 func (s *engineSession) exhaustRekeyCounter() error {

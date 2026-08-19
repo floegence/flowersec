@@ -147,20 +147,16 @@ pub async fn connect_v3_with_cancellation(
                         loser.abort();
                     }
                 }
-                let result = admit_and_establish(
+                return admit_candidate_and_establish(
                     claimed,
                     candidate,
                     &plan,
-                    carrier.clone(),
+                    carrier,
                     &options,
                     deadline,
                     &cancellation,
                 )
                 .await;
-                if result.is_err() {
-                    carrier.abort();
-                }
-                return result;
             }
             Err(failure) => {
                 if matches!(
@@ -369,14 +365,8 @@ async fn admit_and_establish(
     let spent = tokio::select! {
         biased;
         result = &mut spend => result,
-        _ = cancellation.cancelled() => {
-            carrier.abort();
-            return Err(public_error(ConnectErrorCode::Canceled));
-        }
-        _ = tokio::time::sleep_until(deadline) => {
-            carrier.abort();
-            return Err(public_error(ConnectErrorCode::Timeout));
-        }
+        _ = cancellation.cancelled() => return Err(public_error(ConnectErrorCode::Canceled)),
+        _ = tokio::time::sleep_until(deadline) => return Err(public_error(ConnectErrorCode::Timeout)),
     };
     spent
         .map_err(|_| public_error(ConnectErrorCode::SpendFailed))?
@@ -386,15 +376,25 @@ async fn admit_and_establish(
     // already consumed, but the credential must never be sent after expiry.
     require_unexpired(plan)?;
 
-    let admission = carrier
-        .open_stream()
-        .await
-        .map_err(|_| public_error(ConnectErrorCode::DialFailed))?;
+    let admission = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(public_error(ConnectErrorCode::Canceled)),
+        result = tokio::time::timeout_at(deadline, carrier.open_stream()) => {
+            result
+                .map_err(|_| public_error(ConnectErrorCode::Timeout))?
+                .map_err(|_| public_error(ConnectErrorCode::DialFailed))?
+        }
+    };
     write_all(admission.as_ref(), &fsb3.raw, deadline, cancellation).await?;
-    admission
-        .close_write_delivered()
-        .await
-        .map_err(|_| public_error(ConnectErrorCode::DialFailed))?;
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(public_error(ConnectErrorCode::Canceled)),
+        result = tokio::time::timeout_at(deadline, admission.close_write_delivered()) => {
+            result
+                .map_err(|_| public_error(ConnectErrorCode::Timeout))?
+                .map_err(|_| public_error(ConnectErrorCode::DialFailed))?;
+        }
+    }
     let response = read_to_end(admission.as_ref(), deadline, cancellation).await?;
     let response =
         decode_fsa3(&response).map_err(|_| public_error(ConnectErrorCode::DialFailed))?;
@@ -443,6 +443,31 @@ async fn admit_and_establish(
             }
         }
     }
+}
+
+async fn admit_candidate_and_establish(
+    claimed: crate::artifact_v3::ClaimedArtifactLeaseV3,
+    candidate: &CanonicalCandidateV3,
+    plan: &ConnectionPlanV3,
+    carrier: Arc<dyn CarrierSessionV3>,
+    options: &ConnectorOptions,
+    deadline: tokio::time::Instant,
+    cancellation: &CancellationToken,
+) -> Result<Arc<dyn Session>, ConnectError> {
+    let result = admit_and_establish(
+        claimed,
+        candidate,
+        plan,
+        carrier.clone(),
+        options,
+        deadline,
+        cancellation,
+    )
+    .await;
+    if result.is_err() {
+        carrier.abort();
+    }
+    result
 }
 
 async fn write_all(
@@ -594,6 +619,93 @@ mod tests {
 
     struct ProductStreamHandler(tokio::sync::mpsc::UnboundedSender<Bytes>);
 
+    #[derive(Clone, Copy, Debug)]
+    enum HangingAdmissionPhase {
+        Open,
+        FinishDelivery,
+    }
+
+    #[derive(Debug)]
+    struct HangingAdmissionCarrier {
+        phase: HangingAdmissionPhase,
+        entered: Arc<tokio::sync::Semaphore>,
+        aborts: AtomicUsize,
+    }
+
+    #[derive(Debug)]
+    struct HangingAdmissionStream {
+        entered: Arc<tokio::sync::Semaphore>,
+    }
+
+    #[async_trait]
+    impl CarrierSessionV3 for HangingAdmissionCarrier {
+        fn kind(&self) -> crate::transport_v3::CarrierKind {
+            crate::transport_v3::CarrierKind::Wss
+        }
+
+        fn set_multiplexer_client(&self, _client: bool) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+            3
+        }
+
+        async fn open_stream(&self) -> std::io::Result<Arc<dyn CarrierStreamV3>> {
+            if matches!(self.phase, HangingAdmissionPhase::Open) {
+                self.entered.add_permits(1);
+                return std::future::pending().await;
+            }
+            Ok(Arc::new(HangingAdmissionStream {
+                entered: self.entered.clone(),
+            }))
+        }
+
+        async fn accept_stream(&self) -> std::io::Result<Arc<dyn CarrierStreamV3>> {
+            std::future::pending().await
+        }
+
+        async fn close(&self) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        fn abort(&self) {
+            self.aborts.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait]
+    impl CarrierStreamV3 for HangingAdmissionStream {
+        async fn read(&self, _payload: &mut [u8]) -> std::io::Result<usize> {
+            std::future::pending().await
+        }
+
+        async fn write(&self, payload: &[u8]) -> std::io::Result<usize> {
+            Ok(payload.len())
+        }
+
+        async fn close_write(&self) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        async fn close_write_delivered(&self) -> std::io::Result<()> {
+            self.entered.add_permits(1);
+            std::future::pending().await
+        }
+
+        async fn stop_sending(&self) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        async fn reset(&self) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        async fn close(&self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     #[async_trait]
     impl StreamHandler for ProductStreamHandler {
         async fn handle(
@@ -609,6 +721,103 @@ mod tests {
             let _ = self.0.send(payload);
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn admission_open_obeys_the_overall_timeout_and_aborts_the_carrier() {
+        let (result, carrier) = run_hanging_admission(
+            HangingAdmissionPhase::Open,
+            Duration::from_millis(25),
+            false,
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err().code(), ConnectErrorCode::Timeout);
+        assert_eq!(carrier.aborts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn admission_open_prefers_cancellation_and_aborts_the_carrier() {
+        let (result, carrier) =
+            run_hanging_admission(HangingAdmissionPhase::Open, Duration::from_secs(1), true).await;
+
+        assert_eq!(result.unwrap_err().code(), ConnectErrorCode::Canceled);
+        assert_eq!(carrier.aborts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn admission_finish_delivery_obeys_the_overall_timeout_and_aborts_the_carrier() {
+        let (result, carrier) = run_hanging_admission(
+            HangingAdmissionPhase::FinishDelivery,
+            Duration::from_millis(25),
+            false,
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err().code(), ConnectErrorCode::Timeout);
+        assert_eq!(carrier.aborts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn admission_finish_delivery_prefers_cancellation_and_aborts_the_carrier() {
+        let (result, carrier) = run_hanging_admission(
+            HangingAdmissionPhase::FinishDelivery,
+            Duration::from_secs(1),
+            true,
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err().code(), ConnectErrorCode::Canceled);
+        assert_eq!(carrier.aborts.load(Ordering::SeqCst), 1);
+    }
+
+    async fn run_hanging_admission(
+        phase: HangingAdmissionPhase,
+        timeout: Duration,
+        cancel_when_entered: bool,
+    ) -> (
+        Result<Arc<dyn Session>, ConnectError>,
+        Arc<HangingAdmissionCarrier>,
+    ) {
+        let artifact = artifact_with_candidates(vec![json!({
+            "carrier": "websocket",
+            "id": "ca",
+            "tls": {"mode": "ca"},
+            "url": "wss://127.0.0.1:443/flowersec/v3/direct",
+            "wire_profile": "flowersec-direct/3"
+        })]);
+        let plan = artifact.connection_plan().unwrap();
+        let candidate = plan.candidates[0].clone();
+        let claimed = ArtifactLeaseV3::new(artifact, || async { Ok(()) })
+            .claim()
+            .unwrap();
+        let carrier = Arc::new(HangingAdmissionCarrier {
+            phase,
+            entered: Arc::new(tokio::sync::Semaphore::new(0)),
+            aborts: AtomicUsize::new(0),
+        });
+        let cancellation = CancellationToken::new();
+        let options = ConnectorOptions::new();
+        let operation = admit_candidate_and_establish(
+            claimed,
+            &candidate,
+            &plan,
+            carrier.clone(),
+            &options,
+            tokio::time::Instant::now() + timeout,
+            &cancellation,
+        );
+        let result = if cancel_when_entered {
+            let canceler = async {
+                carrier.entered.acquire().await.unwrap().forget();
+                cancellation.cancel();
+            };
+            let (result, ()) = tokio::join!(operation, canceler);
+            result
+        } else {
+            operation.await
+        };
+        (result, carrier)
     }
 
     #[tokio::test]

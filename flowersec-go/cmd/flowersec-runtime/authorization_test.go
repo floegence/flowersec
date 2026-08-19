@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -200,6 +201,124 @@ func TestHTTPAuthorizationProviderRetriesReleaseUntilAcknowledged(t *testing.T) 
 	provider.Release("lease-retry")
 	if attempts != 3 {
 		t.Fatalf("release attempts = %d, want 3", attempts)
+	}
+}
+
+func TestHTTPAuthorizationProviderNeverRedirectsSensitiveRequests(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		route  string
+	}{
+		{name: "cross-host-307", status: http.StatusTemporaryRedirect, route: "cross-host"},
+		{name: "cross-host-308", status: http.StatusPermanentRedirect, route: "cross-host"},
+		{name: "https-to-http-307", status: http.StatusTemporaryRedirect, route: "downgrade"},
+		{name: "same-host-308", status: http.StatusPermanentRedirect, route: "same-host"},
+	}
+	for _, test := range tests {
+		t.Run(test.name+"/authorize", func(t *testing.T) {
+			fixture := newAuthorizationRedirectFixture(t, test.status, test.route)
+			provider := &httpAuthorizationProvider{
+				url: fixture.sourceURL, token: "redirect-secret", client: fixture.client,
+			}
+			_, err := provider.Authorize(context.Background(), authorizationRequest{
+				FSB3Base64URL: "sensitive-fsb3", Carrier: "websocket",
+			})
+			if !errors.Is(err, ErrAuthorizationUnavailable) {
+				t.Fatalf("Authorize redirect error = %v, want ErrAuthorizationUnavailable", err)
+			}
+			fixture.assertRequests(t, 1, "sensitive-fsb3")
+		})
+		t.Run(test.name+"/release", func(t *testing.T) {
+			fixture := newAuthorizationRedirectFixture(t, test.status, test.route)
+			provider := &httpAuthorizationProvider{
+				releaseURL: fixture.sourceURL, token: "redirect-secret", client: fixture.client,
+				logger: log.New(io.Discard, "", 0),
+			}
+			provider.Release("sensitive-lease")
+			fixture.assertRequests(t, maxReleaseAttempts, "sensitive-lease")
+		})
+	}
+}
+
+type authorizationRedirectFixture struct {
+	sourceURL     string
+	client        *http.Client
+	mu            sync.Mutex
+	sourceBodies  [][]byte
+	sourceHeaders []string
+	targetBodies  [][]byte
+	targetHeaders []string
+}
+
+func newAuthorizationRedirectFixture(t *testing.T, status int, route string) *authorizationRedirectFixture {
+	t.Helper()
+	fixture := &authorizationRedirectFixture{}
+	targetHandler := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		fixture.mu.Lock()
+		fixture.targetBodies = append(fixture.targetBodies, body)
+		fixture.targetHeaders = append(fixture.targetHeaders, request.Header.Get("Authorization"))
+		fixture.mu.Unlock()
+		writer.WriteHeader(http.StatusNoContent)
+	})
+	sourceHandler := func(targetURL func() string) http.HandlerFunc {
+		return func(writer http.ResponseWriter, request *http.Request) {
+			body, _ := io.ReadAll(request.Body)
+			fixture.mu.Lock()
+			fixture.sourceBodies = append(fixture.sourceBodies, body)
+			fixture.sourceHeaders = append(fixture.sourceHeaders, request.Header.Get("Authorization"))
+			fixture.mu.Unlock()
+			http.Redirect(writer, request, targetURL(), status)
+		}
+	}
+	switch route {
+	case "cross-host":
+		target := httptest.NewServer(targetHandler)
+		source := httptest.NewServer(sourceHandler(func() string { return target.URL }))
+		t.Cleanup(source.Close)
+		t.Cleanup(target.Close)
+		fixture.sourceURL = source.URL
+		fixture.client = source.Client()
+	case "downgrade":
+		target := httptest.NewServer(targetHandler)
+		source := httptest.NewTLSServer(sourceHandler(func() string { return target.URL }))
+		t.Cleanup(source.Close)
+		t.Cleanup(target.Close)
+		fixture.sourceURL = source.URL
+		fixture.client = source.Client()
+	case "same-host":
+		var server *httptest.Server
+		server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			if request.URL.Path == "/target" {
+				targetHandler.ServeHTTP(writer, request)
+				return
+			}
+			sourceHandler(func() string { return server.URL + "/target" }).ServeHTTP(writer, request)
+		}))
+		t.Cleanup(server.Close)
+		fixture.sourceURL = server.URL + "/source"
+		fixture.client = server.Client()
+	default:
+		t.Fatalf("unknown redirect route %q", route)
+	}
+	return fixture
+}
+
+func (fixture *authorizationRedirectFixture) assertRequests(t *testing.T, sourceCount int, sensitive string) {
+	t.Helper()
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	if len(fixture.sourceBodies) != sourceCount || len(fixture.sourceHeaders) != sourceCount {
+		t.Fatalf("source requests = %d bodies/%d headers, want %d", len(fixture.sourceBodies), len(fixture.sourceHeaders), sourceCount)
+	}
+	for index := range fixture.sourceBodies {
+		if !bytes.Contains(fixture.sourceBodies[index], []byte(sensitive)) || fixture.sourceHeaders[index] != "Bearer redirect-secret" {
+			t.Fatalf("source request %d did not carry the expected sensitive credentials", index)
+		}
+	}
+	if len(fixture.targetBodies) != 0 || len(fixture.targetHeaders) != 0 {
+		t.Fatalf("redirect target received %d bodies and %d authorization headers", len(fixture.targetBodies), len(fixture.targetHeaders))
 	}
 }
 

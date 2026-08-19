@@ -71,6 +71,7 @@ public actor ConnectionController {
   private var retryNotBefore: RetryNotBeforeV3?
   private var observers: [UUID: AsyncStream<ConnectionSnapshot>.Continuation] = [:]
   private var closeTask: Task<Void, Never>?
+  private var active: Bool { state != .closed && !Task.isCancelled }
 
   public init(
     source: any ArtifactSource,
@@ -139,10 +140,13 @@ public actor ConnectionController {
   public func retryNow() async -> Bool {
     guard state == .waiting, let retryGate else { return false }
     if let notBefore = retryNotBefore,
-      wallNowMilliseconds(clock.wallNow()) < notBefore.wallDeadlineMilliseconds { return false }
+      wallNowMilliseconds(clock.wallNow()) < notBefore.wallDeadlineMilliseconds
+    {
+      return false
+    }
     retryTimer?.cancel()
     await retryGate.wake()
-    return true
+    return active
   }
 
   public func close() async {
@@ -192,8 +196,12 @@ public actor ConnectionController {
 
       let outcome = await runAttempt(blockedPinPolicy: blockedPinPolicy)
       inFlightAttempt = nil
-      guard state != .closed, !Task.isCancelled else {
-        if case .failed(_, let lease?, _, _) = outcome { await retire(lease) }
+      guard active else {
+        switch outcome {
+        case .connected(let session): try? await session.close()
+        case .failed(_, let lease?, _, _): await retire(lease)
+        case .failed: break
+        }
         return
       }
       switch outcome {
@@ -229,6 +237,10 @@ public actor ConnectionController {
           await shouldRefreshPolicy(
             attemptFailure, lease: claimedLease, provenance: provenance)
         {
+          guard active else {
+            await retire(claimedLease)
+            return
+          }
           if replacementUsed {
             await retire(claimedLease)
             fail(.connection(publicError(for: attemptFailure)))
@@ -238,12 +250,17 @@ public actor ConnectionController {
           let trigger = policyIdentity(claimedLease.artifact, provenance: provenance!)
           blockedPinPolicy.formUnion(trigger.pins, opaque: trigger.opaque)
           await retire(claimedLease)
+          guard active else { return }
           let replacement = await runReplacement(
             trigger: trigger,
             attempts: &primaryAttempts,
             failures: &consecutiveFailures,
             replacementUsed: &replacementUsed,
             blockedPinPolicy: blockedPinPolicy)
+          guard active else {
+            if case .connected(let session) = replacement { try? await session.close() }
+            return
+          }
           switch replacement {
           case .connected(let session):
             consecutiveFailures = 0
@@ -321,7 +338,8 @@ public actor ConnectionController {
       let candidateIDs = primaryCandidateIDs(
         claimedLease.artifact, blockedPinPolicy: blockedPinPolicy)
       guard !candidateIDs.isEmpty else {
-        let code: ConnectError = blockedPinPolicy.hasNativeTrigger
+        let code: ConnectError =
+          blockedPinPolicy.hasNativeTrigger
           ? .transportSecurityFailed : .connectionFailed
         return .failed(.connection(code), claimedLease, .terminal, nil)
       }
@@ -560,7 +578,8 @@ public actor ConnectionController {
       artifact.canonicalCandidates.compactMap { candidate in
         let candidateEndpoint = endpoint(for: candidate, artifact: artifact)
         if candidate.tls.mode == "ca" {
-          return blockedPinPolicy.identities.contains { $0.endpoint == candidateEndpoint } ? nil : candidate.id
+          return blockedPinPolicy.identities.contains { $0.endpoint == candidateEndpoint }
+            ? nil : candidate.id
         }
         guard candidate.tls.mode == "pin", let digest = try? candidate.tlsPolicyDigest() else {
           return candidate.id
@@ -588,6 +607,7 @@ public actor ConnectionController {
     alreadyCounted: Bool = false,
     dispositionOverride: RetryDispositionV3? = nil
   ) async -> Bool {
+    guard active else { return false }
     let disposition = dispositionOverride ?? attemptFailure.retryDisposition
     guard validRetryDisposition(disposition) else {
       fail(.connection(.artifactInvalid))
@@ -622,6 +642,7 @@ public actor ConnectionController {
   private func waitForRetry(
     backoffDeadline: UInt64, notBefore: RetryNotBeforeV3?
   ) async -> Bool {
+    guard active else { return false }
     let gate = ConnectionRetryGateV3()
     retryGate = gate
     retryNotBefore = notBefore
@@ -631,17 +652,20 @@ public actor ConnectionController {
     retryTimer = Task {
       while !Task.isCancelled {
         let monotonicNow = min(clock.monotonicMilliseconds(), Self.maxSafeInteger)
-        let monotonicRemaining = backoffDeadline > monotonicNow
+        let monotonicRemaining =
+          backoffDeadline > monotonicNow
           ? backoffDeadline - monotonicNow : 0
-        let wallRemaining: UInt64 = notBefore.map {
-          let now = wallNowMilliseconds(clock.wallNow())
-          return $0.wallDeadlineMilliseconds > now ? $0.wallDeadlineMilliseconds - now : 0
-        } ?? 0
+        let wallRemaining: UInt64 =
+          notBefore.map {
+            let now = wallNowMilliseconds(clock.wallNow())
+            return $0.wallDeadlineMilliseconds > now ? $0.wallDeadlineMilliseconds - now : 0
+          } ?? 0
         if monotonicRemaining == 0, wallRemaining == 0 {
           await gate.wake()
           return
         }
-        let nextDeadline = monotonicRemaining == 0
+        let nextDeadline =
+          monotonicRemaining == 0
           ? wallRemaining
           : wallRemaining == 0 ? monotonicRemaining : min(monotonicRemaining, wallRemaining)
         let remaining = min(nextDeadline, 1_000)
@@ -654,7 +678,7 @@ public actor ConnectionController {
     retryTimer = nil
     retryGate = nil
     retryNotBefore = nil
-    return state != .closed && !Task.isCancelled
+    return active
   }
 
   private func backoff(failure: UInt64) -> Duration {

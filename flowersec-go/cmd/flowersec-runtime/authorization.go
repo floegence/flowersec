@@ -108,8 +108,25 @@ func newHTTPAuthorizationProvider(config AuthorizationConfig) (*httpAuthorizatio
 	}
 	return &httpAuthorizationProvider{
 		url: config.URL, releaseURL: config.ReleaseURL, token: token,
-		client: &http.Client{Timeout: time.Duration(config.TimeoutSeconds) * time.Second}, logger: log.Default(),
+		client: &http.Client{
+			Timeout:       time.Duration(config.TimeoutSeconds) * time.Second,
+			CheckRedirect: rejectAuthorizationRedirect,
+		},
+		logger: log.Default(),
 	}, nil
+}
+
+func rejectAuthorizationRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+func (provider *httpAuthorizationProvider) do(request *http.Request) (*http.Response, error) {
+	if provider.client == nil {
+		return nil, fmt.Errorf("%w: authorization client unavailable", ErrAuthorizationUnavailable)
+	}
+	client := *provider.client
+	client.CheckRedirect = rejectAuthorizationRedirect
+	return client.Do(request)
 }
 
 func (provider *httpAuthorizationProvider) Authorize(ctx context.Context, input authorizationRequest) (authorizationResponse, error) {
@@ -126,7 +143,7 @@ func (provider *httpAuthorizationProvider) Authorize(ctx context.Context, input 
 	if provider.token != "" {
 		request.Header.Set("Authorization", "Bearer "+provider.token)
 	}
-	response, err := provider.client.Do(request)
+	response, err := provider.do(request)
 	if err != nil {
 		return authorizationResponse{}, fmt.Errorf("%w: request failed", ErrAuthorizationUnavailable)
 	}
@@ -198,7 +215,7 @@ func (provider *httpAuthorizationProvider) releaseAttempt(body []byte) error {
 	if provider.token != "" {
 		request.Header.Set("Authorization", "Bearer "+provider.token)
 	}
-	response, err := provider.client.Do(request)
+	response, err := provider.do(request)
 	if err != nil {
 		return fmt.Errorf("%w: release request failed", ErrAuthorizationUnavailable)
 	}
