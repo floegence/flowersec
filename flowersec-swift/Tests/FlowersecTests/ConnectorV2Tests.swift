@@ -1,5 +1,8 @@
 import Crypto
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 import NIOCore
 import NIOFoundationCompat
 import NIOHTTP1
@@ -1546,6 +1549,7 @@ private struct ConnectorTestTLS {
 #if os(macOS) || os(iOS)
   private final class InvalidProofPeer: @unchecked Sendable {
     let process: Process
+    let temporaryDirectory: URL
     let port: Int
     let leafDER: Data
 
@@ -1553,55 +1557,134 @@ private struct ConnectorTestTLS {
       let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent()
+      let temporaryDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(
+          "flowersec-invalid-proof-peer-\(UUID().uuidString)", isDirectory: true)
+      try FileManager.default.createDirectory(
+        at: temporaryDirectory, withIntermediateDirectories: true)
+      var retainTemporaryDirectory = false
+      defer {
+        if !retainTemporaryDirectory {
+          try? FileManager.default.removeItem(at: temporaryDirectory)
+        }
+      }
+      let binary = temporaryDirectory.appendingPathComponent("invalid-proof-peer")
+      try buildBinary(binary, root: root)
+
       let process = Process()
-      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-      process.arguments = [
-        "go", "run", "./internal/cmd/invalid-proof-peer", "--carrier", "websocket",
-      ]
+      process.executableURL = binary
+      process.arguments = ["--carrier", "websocket"]
       process.currentDirectoryURL = root.appendingPathComponent("flowersec-go")
       process.standardInput = FileHandle.nullDevice
       let output = Pipe()
       process.standardOutput = output
       process.standardError = FileHandle.standardError
       try process.run()
-      let line = try readLine(from: output.fileHandleForReading)
-      guard let bytes = line.data(using: .utf8),
-        let json = try JSONSerialization.jsonObject(with: bytes) as? [String: Any],
-        let address = json["address"] as? String,
-        let port = Int(address.split(separator: ":").last ?? ""),
-        let encoded = json["leaf_der_base64"] as? String,
-        let leafDER = Data(base64Encoded: encoded)
-      else {
-        process.terminate()
-        throw ConnectorGeneratedTLSError.failed("invalid-proof peer emitted malformed readiness")
+      do {
+        let line = try readReadinessLine(from: output.fileHandleForReading, timeout: 10)
+        guard let bytes = line.data(using: .utf8),
+          let json = try JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+          let address = json["address"] as? String,
+          let port = Int(address.split(separator: ":").last ?? ""),
+          let encoded = json["leaf_der_base64"] as? String,
+          let leafDER = Data(base64Encoded: encoded)
+        else {
+          throw ConnectorGeneratedTLSError.failed(
+            "invalid-proof peer emitted malformed readiness")
+        }
+        let peer = Self(
+          process: process,
+          temporaryDirectory: temporaryDirectory,
+          port: port,
+          leafDER: leafDER)
+        retainTemporaryDirectory = true
+        return peer
+      } catch {
+        stop(process: process)
+        throw error
       }
-      return Self(process: process, port: port, leafDER: leafDER)
     }
 
-    private init(process: Process, port: Int, leafDER: Data) {
+    private init(process: Process, temporaryDirectory: URL, port: Int, leafDER: Data) {
       self.process = process
+      self.temporaryDirectory = temporaryDirectory
       self.port = port
       self.leafDER = leafDER
     }
 
     func stop() {
-      if process.isRunning { process.terminate() }
-      process.waitUntilExit()
+      Self.stop(process: process)
+      try? FileManager.default.removeItem(at: temporaryDirectory)
     }
-  }
 
-  private func readLine(from handle: FileHandle) throws -> String {
-    var bytes = Data()
-    while true {
-      let chunk = try handle.read(upToCount: 1) ?? Data()
-      if chunk.isEmpty { break }
-      bytes.append(chunk)
-      if chunk == Data([0x0A]) { break }
+    private static func buildBinary(_ binary: URL, root: URL) throws {
+      let build = Process()
+      build.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+      build.arguments = ["go", "build", "-o", binary.path, "./internal/cmd/invalid-proof-peer"]
+      build.currentDirectoryURL = root.appendingPathComponent("flowersec-go")
+      build.standardOutput = FileHandle.nullDevice
+      let errors = Pipe()
+      build.standardError = errors
+      try build.run()
+      guard waitForExit(build, timeout: 30) else {
+        stop(process: build)
+        throw ConnectorGeneratedTLSError.failed("invalid-proof peer build timed out")
+      }
+      guard build.terminationStatus == 0 else {
+        let diagnostic = String(
+          data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        throw ConnectorGeneratedTLSError.failed(
+          "invalid-proof peer build failed: \(diagnostic)")
+      }
     }
-    guard let line = String(data: bytes, encoding: .utf8), !line.isEmpty else {
-      throw ConnectorGeneratedTLSError.failed("invalid-proof peer did not emit readiness")
+
+    private static func stop(process: Process) {
+      guard process.isRunning else { return }
+      process.terminate()
+      _ = waitForExit(process, timeout: 1)
+
+      if process.isRunning {
+        _ = Darwin.kill(process.processIdentifier, SIGKILL)
+        _ = waitForExit(process, timeout: 1)
+      }
     }
-    return line
+
+    private static func readReadinessLine(from handle: FileHandle, timeout: TimeInterval) throws
+      -> String
+    {
+      var bytes = Data()
+      let deadline = Date().addingTimeInterval(timeout)
+      while Date() < deadline {
+        var descriptor = pollfd(
+          fd: handle.fileDescriptor, events: Int16(POLLIN | POLLHUP | POLLERR), revents: 0)
+        let milliseconds = max(
+          1, min(Int(Int32.max), Int((deadline.timeIntervalSinceNow * 1_000).rounded(.up))))
+        let result = Darwin.poll(&descriptor, 1, Int32(milliseconds))
+        if result < 0 {
+          if errno == EINTR { continue }
+          throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        if result == 0 { continue }
+        let chunk = try handle.read(upToCount: 1) ?? Data()
+        if chunk.isEmpty { break }
+        bytes.append(chunk)
+        if chunk == Data([0x0A]) {
+          guard let line = String(data: bytes, encoding: .utf8), !line.isEmpty else {
+            break
+          }
+          return line
+        }
+      }
+      throw ConnectorGeneratedTLSError.failed("invalid-proof peer readiness timed out")
+    }
+
+    private static func waitForExit(_ process: Process, timeout: TimeInterval) -> Bool {
+      let deadline = Date().addingTimeInterval(timeout)
+      while process.isRunning && Date() < deadline {
+        Thread.sleep(forTimeInterval: 0.01)
+      }
+      return !process.isRunning
+    }
   }
 #endif
 

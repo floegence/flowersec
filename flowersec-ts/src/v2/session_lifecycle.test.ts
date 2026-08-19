@@ -29,19 +29,20 @@ function config(
 }
 
 async function establishLifecyclePair(
-  idleTimeoutMs: number,
+  clientIdleTimeoutMs: number,
+  serverIdleTimeoutMs: number,
   closeTimeoutMs = 50,
 ): Promise<readonly [SessionV2, SessionV2]> {
   const [clientCarrier, serverCarrier] = createMemoryCarrierPairV2({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
   return await Promise.all([
-    establishSessionV2(clientCarrier, config("client", { idleTimeoutMs, closeTimeoutMs })),
-    establishSessionV2(serverCarrier, config("server", { idleTimeoutMs, closeTimeoutMs })),
+    establishSessionV2(clientCarrier, config("client", { idleTimeoutMs: clientIdleTimeoutMs, closeTimeoutMs })),
+    establishSessionV2(serverCarrier, config("server", { idleTimeoutMs: serverIdleTimeoutMs, closeTimeoutMs })),
   ]);
 }
 
 describe("SessionV2 lifecycle bounds", () => {
   test("terminates an idle READY session and refreshes the watchdog on authenticated activity", async () => {
-    const [client, server] = await establishLifecyclePair(100);
+    const [client, server] = await establishLifecyclePair(100, 0);
     await new Promise((resolve) => setTimeout(resolve, 45));
     await client.probeLiveness();
     await new Promise((resolve) => setTimeout(resolve, 45));

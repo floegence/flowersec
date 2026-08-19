@@ -51,12 +51,12 @@ func syncDirectory(at directoryURL: URL) throws {
   }
 }
 
-func retryDispositionV3(for error: any Error) -> RetryDisposition? {
+func retryDispositionV3(for error: any Error) -> RetryDispositionV3? {
   if let connectError = error as? ConnectError {
     return connectError.retryDisposition
   }
   if let sessionError = error as? SessionError {
-    return sessionError.retryDisposition
+    return sessionError.retryDispositionV3
   }
   return nil
 }

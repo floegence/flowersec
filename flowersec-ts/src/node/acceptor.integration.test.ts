@@ -310,6 +310,14 @@ describe("Node Acceptor handler lifecycle", () => {
   test("resets only a rejected handler stream and continues serving", async () => {
     const raw = directWebSocketArtifact();
     let calls = 0;
+    let resolveFirstEOF!: () => void;
+    const firstEOF = new Promise<void>((resolve) => {
+      resolveFirstEOF = resolve;
+    });
+    let releaseFirstHandler!: () => void;
+    const firstHandlerFailureGate = new Promise<void>((resolve) => {
+      releaseFirstHandler = resolve;
+    });
     let resolveSecond!: (payload: string) => void;
     const secondHandled = new Promise<string>((resolve) => {
       resolveSecond = resolve;
@@ -319,8 +327,13 @@ describe("Node Acceptor handler lifecycle", () => {
       const bytes = await incoming.stream.read();
       expect(bytes).not.toBeNull();
       const payload = new TextDecoder().decode(bytes!);
+      expect(await incoming.stream.read()).toBeNull();
       calls++;
-      if (calls === 1) throw new Error("application handler failed");
+      if (calls === 1) {
+        resolveFirstEOF();
+        await firstHandlerFailureGate;
+        throw new Error("application handler failed");
+      }
       resolveSecond(payload);
     });
     const acceptor = await createAcceptor({
@@ -359,6 +372,14 @@ describe("Node Acceptor handler lifecycle", () => {
       const failed = await client.openStream("handler-failure");
       await failed.write(new TextEncoder().encode("failed"));
       await failed.closeWrite();
+      await expect(Promise.race([
+        firstEOF,
+        new Promise<never>((_, reject) => setTimeout(
+          () => reject(new Error("handler did not observe the client half-close")),
+          1_000,
+        )),
+      ])).resolves.toBeUndefined();
+      releaseFirstHandler();
       await expect(failed.read()).rejects.toMatchObject({
         code: "stream_reset",
       });
@@ -370,6 +391,7 @@ describe("Node Acceptor handler lifecycle", () => {
       await client.close();
       await expect(serving).resolves.toMatchObject({ code: "closed" });
     } finally {
+      releaseFirstHandler();
       await accepted?.close().catch(() => undefined);
       await acceptor.close();
     }
