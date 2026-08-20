@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -84,6 +86,7 @@ type transportV3Registry struct {
 type transportV3Design struct {
 	Version      string                    `json:"version"`
 	SHA256       string                    `json:"sha256"`
+	SourcePath   string                    `json:"source_path"`
 	Traceability []transportV3Traceability `json:"traceability"`
 }
 
@@ -233,8 +236,19 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	if registry.Version != 3 || registry.Status != "final" || registry.Design.Version != "3.0.0" {
 		return fmt.Errorf("%s does not describe final transport v3.0.0", transportV3ContractPath)
 	}
-	if registry.Design.SHA256 != "236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba" {
+	if registry.Design.SHA256 != "f6c48593fafbc4ef409e5bf43985a52576ae6388100e5a6b3fe719c4189548bc" {
 		return fmt.Errorf("%s design hash drifted", transportV3ContractPath)
+	}
+	if registry.Design.SourcePath == "" {
+		return fmt.Errorf("%s design source path is required", transportV3ContractPath)
+	}
+	source, err := os.ReadFile(filepath.Join(repoRoot, registry.Design.SourcePath))
+	if err != nil {
+		return fmt.Errorf("%s design source %s: %w", transportV3ContractPath, registry.Design.SourcePath, err)
+	}
+	digest := sha256.Sum256(source)
+	if hex.EncodeToString(digest[:]) != registry.Design.SHA256 {
+		return fmt.Errorf("%s design source hash drifted", transportV3ContractPath)
 	}
 	wantClauses := []string{
 		"3.1", "3.2", "3.3", "3.4", "4", "5", "6", "7", "8", "9", "10", "11",

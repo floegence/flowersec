@@ -444,7 +444,7 @@ const artifactVectors = {
   profile: PROFILE,
   source: {
     producer: "testdata/transport_v3/generate_contract_vectors.mjs",
-    design_sha256: "236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba",
+    design_sha256: "f6c48593fafbc4ef409e5bf43985a52576ae6388100e5a6b3fe719c4189548bc",
   },
   constants: {
     maximum_safe_integer: SAFE_MAX,
@@ -876,7 +876,7 @@ const v2CryptoLabels = [
 write("version_isolation_vectors.json", {
   version: 3,
   source: {
-    design_sha256: "236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba",
+    design_sha256: "f6c48593fafbc4ef409e5bf43985a52576ae6388100e5a6b3fe719c4189548bc",
     producer: "testdata/transport_v3/generate_contract_vectors.mjs",
     rules_are_not_extended_by_vectors: true,
   },

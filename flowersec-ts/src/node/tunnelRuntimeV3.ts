@@ -104,7 +104,6 @@ export class TunnelRuntimeV3 {
       if (starting !== undefined) await Promise.allSettled([starting]);
       await Promise.allSettled(state.listeners.map(async (listener) => await listener.close()));
       await boundedCleanup(state.tasks, state.limits.cleanupTimeoutMs);
-      state.tasks.clear();
     })();
     closes.set(state, closing);
     return await closing;
@@ -368,6 +367,11 @@ function registerLeg(state: TunnelRuntimeStateV3, leg: TunnelLeg): void {
     generation.timer = setTimeout(() => rejectGeneration(state, generation!, "pair_timeout", true), timeout);
     return;
   }
+  const now = Math.floor(Date.now() / 1_000);
+  if (firstAuthorizationExpired(generation, now)) {
+    rejectGeneration(state, generation, "authorization_expired", false);
+    return;
+  }
   if (state.counts.activePairs >= state.limits.maxActivePairs) {
     rejectGeneration(state, generation, "capacity", true);
     return;
@@ -550,7 +554,16 @@ function pairKey(request: TunnelFSB3RequestV3): string {
     request.channel_id,
     request.rendezvous_group_id,
     request.listener_audience,
+    request.session_contract_hash_b64u,
+    request.candidate_set_hash_b64u,
   ]);
+}
+
+function firstAuthorizationExpired(generation: Generation, nowUnixSeconds: number): boolean {
+  for (const leg of generation.roles.values()) {
+    if (leg.authorization.expiresAtUnixSeconds <= nowUnixSeconds) return true;
+  }
+  return false;
 }
 
 function rejectGeneration(
@@ -658,9 +671,18 @@ function releaseDecision(state: TunnelRuntimeStateV3, decision: AllowedDecision)
 
 function trackRelease(state: TunnelRuntimeStateV3, leaseId: string): void {
   if (state.options.release === undefined) return;
-  track(state, Promise.resolve()
+  const release = Promise.resolve()
     .then(async () => await state.options.release!(leaseId))
-    .then(() => undefined));
+    .then(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, state.limits.cleanupTimeoutMs);
+  });
+  track(state, Promise.race([release, timeout])
+    .then(() => undefined)
+    .finally(() => {
+      if (timer !== undefined) clearTimeout(timer);
+    }));
 }
 
 function track(state: TunnelRuntimeStateV3, task: Promise<void>): void {

@@ -150,10 +150,12 @@ type Coordinator struct {
 }
 
 type authorityKey struct {
-	channelID         string
-	profile           string
-	rendezvousGroupID string
-	listenerAudience  string
+	channelID           string
+	profile             string
+	rendezvousGroupID   string
+	listenerAudience    string
+	sessionContractHash [32]byte
+	candidateSetHash    [32]byte
 }
 
 type admittedLeg struct {
@@ -372,6 +374,8 @@ func keyFor(claims VerifiedClaims) authorityKey {
 	return authorityKey{
 		channelID: claims.ChannelID, profile: claims.Profile,
 		rendezvousGroupID: claims.RendezvousGroupID, listenerAudience: claims.ListenerAudience,
+		sessionContractHash: claims.SessionContractHash,
+		candidateSetHash:    claims.CandidateSetHash,
 	}
 }
 

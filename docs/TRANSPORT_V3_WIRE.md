@@ -5,15 +5,19 @@ Status: final
 Version: 3.0.0
 
 This is the normative English wire specification for Flowersec Transport v3.
-Its normative source is the final Chinese design at
-`/Volumes/JianDisk/code/floegence/flowersec-v3-transport-security-design.zh-CN.md`,
-version 3.0.0, baseline commit
-`026cb52d116d2a04de50d0f0621fff57c7657120`. This document is its complete
-English transcription. This document, the machine-readable registry, and the
-vectors are derived consistency artifacts. A conflict among them or with the
-source design blocks release; no derived artifact can replace or expand a
-general rule from the source design. MUST, MUST NOT, SHOULD, SHOULD NOT, and
-MAY have the meanings from RFC 2119 and RFC 8174.
+Its normative source is the final Chinese design recorded in
+`stability/transport_v3_contract.json` under `design`: version `3.0.0`,
+baseline commit `026cb52d116d2a04de50d0f0621fff57c7657120`, and SHA-256
+`f6c48593fafbc4ef409e5bf43985a52576ae6388100e5a6b3fe719c4189548bc`.
+The checked-in release-controlled source input is
+`docs/TRANSPORT_V3_DESIGN.zh-CN.md`; release tooling MUST verify that file
+against the recorded digest before regenerating derived artifacts. This
+document is its complete English transcription. This document, the
+machine-readable registry, and the vectors are derived consistency artifacts.
+A conflict among them or with the source design blocks release; no derived
+artifact can replace or expand a general rule from the source design. MUST,
+MUST NOT, SHOULD, SHOULD NOT, and MAY have the meanings from RFC 2119 and RFC
+8174.
 
 ## Normative v2 Baseline and Priority
 
