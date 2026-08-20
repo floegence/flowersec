@@ -274,7 +274,7 @@ func (coordinator *Coordinator) Serve(ctx context.Context, pending PendingLeg) e
 	if err := validateCarrierBinding(decoded, pending.CarrierKind()); err != nil {
 		return errors.Join(err, coordinator.rejectUnregistered(admissionCtx, pending, artifactv3.AdmissionReject, ReasonInvalidCredential))
 	}
-	authorization, err := coordinator.authorize(admissionCtx, decoded)
+	authorization, err := coordinator.authorizeWithContext(admissionCtx, decoded)
 	if err != nil {
 		coordinator.releaseLease(authorization.Lease)
 		status, reason := artifactv3.AdmissionReject, ReasonInvalidCredential
@@ -315,6 +315,32 @@ func (coordinator *Coordinator) Serve(ctx context.Context, pending PendingLeg) e
 
 	<-generation.done
 	return generation.err
+}
+
+type authorizationResult struct {
+	authorization Authorization
+	err           error
+}
+
+// authorizeWithContext prevents an application-owned authorizer that ignores
+// cancellation from holding the admission and runtime shutdown path hostage.
+// A late authorization is still drained and its lease is released exactly once.
+func (coordinator *Coordinator) authorizeWithContext(ctx context.Context, decoded *artifactv3.DecodedRequest) (Authorization, error) {
+	result := make(chan authorizationResult, 1)
+	go func() {
+		authorization, err := coordinator.authorize(ctx, decoded)
+		result <- authorizationResult{authorization: authorization, err: err}
+	}()
+	select {
+	case outcome := <-result:
+		return outcome.authorization, outcome.err
+	case <-ctx.Done():
+		go func() {
+			outcome := <-result
+			coordinator.releaseLease(outcome.authorization.Lease)
+		}()
+		return Authorization{}, ctx.Err()
+	}
 }
 
 func (coordinator *Coordinator) acquireAdmission() (func(), bool) {

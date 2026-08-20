@@ -243,6 +243,11 @@ async function processCarrier(state: TunnelRuntimeStateV3, carrier: CarrierSessi
     const decision = await abortableCallback(
       state.options.authorize(decoded, { signal: state.abort.signal }),
       state.abort.signal,
+      (lateDecision) => {
+        if (lateDecision !== undefined && lateDecision.decision === "allow") {
+          releaseDecision(state, lateDecision);
+        }
+      },
     );
     if (decision.decision !== "allow") {
       await reject(
@@ -698,7 +703,11 @@ async function boundedCleanup(tasks: ReadonlySet<Promise<void>>, timeoutMs: numb
   ]);
 }
 
-async function abortableCallback<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+async function abortableCallback<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+  onLateValue?: (value: T) => void,
+): Promise<T> {
   if (signal.aborted) throw asError(signal.reason);
   return await new Promise<T>((resolve, reject) => {
     let settled = false;
@@ -712,7 +721,10 @@ async function abortableCallback<T>(promise: Promise<T>, signal: AbortSignal): P
     signal.addEventListener("abort", abort, { once: true });
     void promise.then(
       (value) => {
-        if (settled) return;
+        if (settled) {
+          onLateValue?.(value);
+          return;
+        }
         settled = true;
         cleanup();
         resolve(value);

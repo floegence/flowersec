@@ -380,6 +380,65 @@ describe("Node production server runtime v3", () => {
     }
   });
 
+  test("releases an authorization lease that resolves after runtime cancellation", async () => {
+    let authorizeStarted!: () => void;
+    const started = new Promise<void>((resolve) => { authorizeStarted = resolve; });
+    let resolveAuthorization!: (value: Readonly<{
+      decision: "allow";
+      credentialId: string;
+      leaseId: string;
+      expiresAtUnixSeconds: number;
+      expectedPeerEndpointInstanceId: string;
+    }>) => void;
+    const lateAuthorization = new Promise<Readonly<{
+      decision: "allow";
+      credentialId: string;
+      leaseId: string;
+      expiresAtUnixSeconds: number;
+      expectedPeerEndpointInstanceId: string;
+    }>>((resolve) => { resolveAuthorization = resolve; });
+    const released: string[] = [];
+    const runtime = createTunnelRuntimeV3({
+      listeners: [{
+        carrier: "websocket",
+        host: "127.0.0.1",
+        port: 0,
+        tls: { certificate: leafCertificate, privateKey: leafKey },
+        allowedOrigins: ["https://app.example"],
+      }],
+      maxInboundStreams: tunnelBase.session.max_inbound_streams,
+      authorize: async () => {
+        authorizeStarted();
+        return await lateAuthorization;
+      },
+      release: (leaseId) => { released.push(leaseId); },
+    });
+    await runtime.start();
+    const port = runtime.addresses()[0]!.port;
+    const artifact = tunnelArtifact(port, 1);
+    let connecting: Promise<unknown> | undefined;
+    try {
+      connecting = connectV3(lease(artifact), {
+        origin: "https://app.example",
+        roots: rootCertificate,
+        connectTimeoutMs: 3_000,
+      }).catch(() => undefined);
+      await started;
+      await runtime.close();
+      resolveAuthorization({
+        decision: "allow",
+        credentialId: createHash("sha256").update(artifact.path.token).digest("base64url"),
+        leaseId: "late-authorization-lease",
+        expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
+        expectedPeerEndpointInstanceId: "endpoint-server",
+      });
+      await waitFor(() => released.includes("late-authorization-lease"));
+    } finally {
+      await runtime.close().catch(() => undefined);
+      await connecting;
+    }
+  }, 10_000);
+
   test("keeps tunnel legs with different session hashes in separate generations", async () => {
     const released: string[] = [];
     const runtime = createTunnelRuntimeV3({

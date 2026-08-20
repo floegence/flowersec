@@ -38,7 +38,7 @@ var (
 
 type authorizationProvider interface {
 	Authorize(context.Context, authorizationRequest) (authorizationResponse, error)
-	Release(string)
+	ReleaseContext(context.Context, string)
 }
 
 type authorizationRequest struct {
@@ -64,10 +64,16 @@ type directAuthorization struct {
 	lease    tunnelv3.Lease
 }
 
-func (authorization *directAuthorization) Release() {
+func (authorization *directAuthorization) ReleaseContext(ctx context.Context) {
 	if authorization != nil && authorization.lease != nil {
-		authorization.lease.ReleaseContext(context.Background())
+		authorization.lease.ReleaseContext(ctx)
 	}
+}
+
+func (authorization *directAuthorization) Release() {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultReleaseAttemptTimeout)
+	defer cancel()
+	authorization.ReleaseContext(ctx)
 }
 
 type authorizedSessionContract struct {
@@ -246,18 +252,14 @@ type externalLease struct {
 }
 
 func (lease *externalLease) Release() {
-	lease.ReleaseContext(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), defaultReleaseAttemptTimeout)
+	defer cancel()
+	lease.ReleaseContext(ctx)
 }
 
 func (lease *externalLease) ReleaseContext(ctx context.Context) {
 	lease.once.Do(func() {
-		if provider, ok := lease.provider.(interface {
-			ReleaseContext(context.Context, string)
-		}); ok {
-			provider.ReleaseContext(ctx, lease.id)
-			return
-		}
-		lease.provider.Release(lease.id)
+		lease.provider.ReleaseContext(ctx, lease.id)
 	})
 }
 
@@ -302,12 +304,15 @@ func authorizeDirect(ctx context.Context, provider authorizationProvider, decode
 	releaseOnReturn := lease != nil
 	defer func() {
 		if releaseOnReturn {
-			lease.Release()
+			lease.ReleaseContext(ctx)
 		}
 	}()
 	response, allowed, err := admissionDecision(decision, reasons)
 	if err != nil || !allowed {
 		return response, nil, err
+	}
+	if !decision.ExpiresAt.IsZero() && !decision.ExpiresAt.After(time.Now()) {
+		return retryResponse(artifactv3.ReasonExpiredArtifact), nil, nil
 	}
 	if lease == nil {
 		return artifactv3.AdmissionResponse{}, nil, ErrInvalidAuthorization
@@ -318,7 +323,13 @@ func authorizeDirect(ctx context.Context, provider authorizationProvider, decode
 		return artifactv3.AdmissionResponse{}, nil, ErrInvalidAuthorization
 	}
 	contract, err := decision.Direct.Session.contract()
-	if err != nil || contract.ChannelID != decoded.Request.ChannelID || contract.ContractHash != decoded.Request.SessionContractHash || contract.MaxInboundStreams != maxInbound || time.Now().Unix() >= contract.InitExpireAtUnixSeconds {
+	if err != nil {
+		return artifactv3.AdmissionResponse{}, nil, ErrInvalidAuthorization
+	}
+	if time.Now().Unix() >= contract.InitExpireAtUnixSeconds {
+		return retryResponse(artifactv3.ReasonExpiredArtifact), nil, nil
+	}
+	if contract.ChannelID != decoded.Request.ChannelID || contract.ContractHash != decoded.Request.SessionContractHash || contract.MaxInboundStreams != maxInbound {
 		return artifactv3.AdmissionResponse{}, nil, ErrInvalidAuthorization
 	}
 	if decision.Direct.Upstream.Network != "tcp" || decision.Direct.Upstream.Address == "" {
@@ -346,7 +357,7 @@ func tunnelAuthorizer(provider authorizationProvider, reasons artifactv3.ReasonR
 		releaseOnReturn := lease != nil
 		defer func() {
 			if releaseOnReturn {
-				lease.Release()
+				lease.ReleaseContext(ctx)
 			}
 		}()
 		response, allowed, err := admissionDecision(decision, reasons)
@@ -355,6 +366,9 @@ func tunnelAuthorizer(provider authorizationProvider, reasons artifactv3.ReasonR
 		}
 		if !allowed {
 			return tunnelv3.Authorization{}, &admissionv3.ResponseError{Status: response.Status, Reason: response.Reason}
+		}
+		if !decision.ExpiresAt.IsZero() && !decision.ExpiresAt.After(time.Now()) {
+			return tunnelv3.Authorization{}, &admissionv3.ResponseError{Status: artifactv3.AdmissionRetryable, Reason: artifactv3.ReasonExpiredArtifact}
 		}
 		if lease == nil {
 			return tunnelv3.Authorization{}, ErrInvalidAuthorization

@@ -242,7 +242,7 @@ func (runtime *runtimeServer) serveNativeDirect(
 		return response, authorizeErr
 	})
 	if authorization != nil {
-		defer authorization.Release()
+		defer runtime.releaseDirectAuthorization(ctx, authorization)
 	}
 	if err != nil || authorization == nil {
 		_ = carrierSession.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "admission rejected"})
@@ -344,7 +344,7 @@ func (runtime *runtimeServer) handleWebSocket(baseContext context.Context, write
 		return response, authorizeErr
 	})
 	if authorization != nil {
-		defer authorization.Release()
+		defer runtime.releaseDirectAuthorization(ctx, authorization)
 	}
 	if err != nil || authorization == nil {
 		_ = connection.Close()
@@ -421,6 +421,15 @@ func (runtime *runtimeServer) serveAuthorizedDirect(ctx context.Context, carrier
 			runtime.bridgeDirectStream(ctx, incoming.Stream, authorization.Upstream)
 		}()
 	}
+}
+
+func (runtime *runtimeServer) releaseDirectAuthorization(parent context.Context, authorization *directAuthorization) {
+	if authorization == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, runtime.config.admissionTimeout())
+	defer cancel()
+	authorization.ReleaseContext(ctx)
 }
 
 func (runtime *runtimeServer) bridgeDirectStream(ctx context.Context, stream session.ByteStream, target upstreamTarget) {

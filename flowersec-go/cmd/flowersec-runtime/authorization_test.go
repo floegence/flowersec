@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv3"
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
 )
@@ -37,11 +38,19 @@ func (provider *fakeAuthorizationProvider) Authorize(_ context.Context, request 
 }
 
 func (provider *fakeAuthorizationProvider) Release(id string) {
+	provider.ReleaseContext(context.Background(), id)
+}
+
+func (provider *fakeAuthorizationProvider) ReleaseContext(ctx context.Context, id string) {
 	if provider.releaseStarted != nil {
 		provider.releaseStarted <- id
 	}
 	if provider.releaseContinue != nil {
-		<-provider.releaseContinue
+		select {
+		case <-ctx.Done():
+			return
+		case <-provider.releaseContinue:
+		}
 	}
 	provider.mu.Lock()
 	provider.released = append(provider.released, id)
@@ -91,6 +100,31 @@ func TestAuthorizeDirectConvertsProviderFailureToRetry(t *testing.T) {
 	response, authorization, err := authorizeDirect(ctx, provider, decoded, runtimeReasons(), 32)
 	if err != nil || authorization != nil || response.Status != artifactv3.AdmissionRetryable || response.Reason != reasonAuthorizationUnavailable {
 		t.Fatalf("unexpected retry result: %+v %+v %v", response, authorization, err)
+	}
+}
+
+func TestAuthorizeDirectReturnsRetryableExpiredArtifact(t *testing.T) {
+	wire := validAuthorizedSession(t, "expired-channel", 32)
+	wire.InitExpireAtUnixSeconds = time.Now().Add(-time.Minute).Unix()
+	contract, err := wire.contract()
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeAuthorizationProvider{response: authorizationResponse{
+		Decision: "allow", CredentialID: "credential-expired", LeaseID: "lease-expired-direct", ExpiresAt: time.Now().Add(time.Minute),
+		Direct: &directAuthorization{Session: wire, Upstream: upstreamTarget{Network: "tcp", Address: "127.0.0.1:9000"}},
+	}}
+	decoded := &artifactv3.DecodedRequest{Raw: []byte("FSB3 fixture"), Request: artifactv3.Request{
+		PathKind: artifactv3.PathDirect, ChannelID: "expired-channel", SessionContractHash: contract.ContractHash, RoutingToken: "routing-token",
+	}}
+	provider.response.CredentialID, _ = credentialIDFor(decoded)
+	ctx := withAuthorizationContext(context.Background(), authorizationContext{carrier: carrier.KindRawQUIC, remoteAddress: "127.0.0.1:1"})
+	response, authorization, err := authorizeDirect(ctx, provider, decoded, runtimeReasons(), 32)
+	if err != nil || authorization != nil || response.Status != artifactv3.AdmissionRetryable || response.Reason != artifactv3.ReasonExpiredArtifact {
+		t.Fatalf("expired direct response/authorization/error = %+v/%+v/%v", response, authorization, err)
+	}
+	if len(provider.released) != 1 || provider.released[0] != "lease-expired-direct" {
+		t.Fatalf("released leases = %v, want expired direct lease", provider.released)
 	}
 }
 
@@ -163,8 +197,13 @@ func TestTunnelAuthorizerRejectsExpiredAllowBeforeReturningLease(t *testing.T) {
 	}}
 	provider.response.CredentialID, _ = credentialIDFor(decoded)
 	ctx := withAuthorizationContext(context.Background(), authorizationContext{carrier: carrier.KindWebSocket, remoteAddress: "127.0.0.1:2"})
-	if _, err := tunnelAuthorizer(provider, runtimeReasons())(ctx, decoded); !errors.Is(err, ErrInvalidAuthorization) {
-		t.Fatalf("expired tunnel authorization error = %v", err)
+	if _, err := tunnelAuthorizer(provider, runtimeReasons())(ctx, decoded); err == nil {
+		t.Fatalf("expired tunnel authorization unexpectedly succeeded")
+	} else {
+		var responseError *admissionv3.ResponseError
+		if !errors.As(err, &responseError) || responseError.Status != artifactv3.AdmissionRetryable || responseError.Reason != artifactv3.ReasonExpiredArtifact {
+			t.Fatalf("expired tunnel authorization error = %v", err)
+		}
 	}
 	if len(provider.released) != 1 || provider.released[0] != "lease-expired-tunnel" {
 		t.Fatalf("released leases = %v, want expired tunnel lease", provider.released)

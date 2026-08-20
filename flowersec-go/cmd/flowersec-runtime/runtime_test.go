@@ -165,15 +165,10 @@ func TestWSSDirectListenerTerminatesV2AndBridgesAuthorizedTCP(t *testing.T) {
 	}()
 	select {
 	case <-waitDone:
-		t.Fatal("standalone runtime stopped before direct WSS lease release completed")
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(2 * time.Second):
+		t.Fatal("standalone runtime did not cancel direct WSS lease cleanup")
 	}
 	releaseCompletion()
-	select {
-	case <-waitDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("standalone runtime did not finish after direct WSS lease release")
-	}
 }
 
 func TestBridgeDirectStreamStopsWhenRuntimeCancelsAfterUpstreamFIN(t *testing.T) {

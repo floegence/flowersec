@@ -98,9 +98,61 @@ func TestReleaseLeaseDoesNotBlockCoordinatorCleanup(t *testing.T) {
 	close(unblock)
 }
 
+func TestServeBoundsAuthorizerThatIgnoresCancellation(t *testing.T) {
+	started := make(chan struct{})
+	unblock := make(chan struct{})
+	coordinator, err := NewCoordinator(Config{
+		AdmissionTimeout: 20 * time.Millisecond, AdmissionResponseTimeout: 20 * time.Millisecond,
+	}, func(context.Context, *artifactv3.DecodedRequest) (Authorization, error) {
+		close(started)
+		<-unblock
+		return Authorization{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := &blockingAuthorizePendingLeg{}
+	startedAt := time.Now()
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- coordinator.Serve(context.Background(), pending) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("authorizer did not start")
+	}
+	select {
+	case <-serveDone:
+		if elapsed := time.Since(startedAt); elapsed > 500*time.Millisecond {
+			t.Fatalf("Serve remained blocked for %s", elapsed)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Serve remained blocked by a cancellation-ignoring authorizer")
+	}
+	close(unblock)
+}
+
 type blockingLease struct {
 	started chan struct{}
 	unblock chan struct{}
+}
+
+type blockingAuthorizePendingLeg struct{}
+
+func (blockingAuthorizePendingLeg) CarrierKind() carrier.Kind { return carrier.KindRawQUIC }
+func (blockingAuthorizePendingLeg) ReceiveAdmission(context.Context) (*artifactv3.DecodedRequest, error) {
+	return &artifactv3.DecodedRequest{Request: artifactv3.Request{
+		PathKind: artifactv3.PathTunnel, ChosenCandidateID: "candidate",
+		Candidates: []artifactv3.CanonicalCandidate{{ID: "candidate", Carrier: artifactv3.CarrierRawQUIC}},
+	}}, nil
+}
+func (blockingAuthorizePendingLeg) SendAdmission(context.Context, artifactv3.AdmissionResponse, artifactv3.ReasonRegistry) error {
+	return nil
+}
+func (blockingAuthorizePendingLeg) Activate(context.Context, uint8) (carrier.Session, error) {
+	return nil, errors.New("unexpected activation")
+}
+func (blockingAuthorizePendingLeg) CloseWithError(context.Context, carrier.ApplicationError) error {
+	return nil
 }
 
 func (lease blockingLease) ReleaseContext(ctx context.Context) {
