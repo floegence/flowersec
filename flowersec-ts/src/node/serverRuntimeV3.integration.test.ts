@@ -16,8 +16,10 @@ import { createAcceptorV3 } from "./acceptorV3.js";
 import { createTunnelRuntimeV3 } from "./tunnelRuntimeV3.js";
 import { startNodeWebSocketListenerV3 } from "./webSocketServerV3.js";
 
-const opensslAvailable = spawnSync("openssl", ["version"], { stdio: "ignore" }).status === 0;
-const networkDescribe = opensslAvailable ? describe : describe.skip;
+const opensslProbe = spawnSync("openssl", ["version"], { stdio: "ignore" });
+if (opensslProbe.error !== undefined || opensslProbe.status !== 0) {
+  throw new Error("OpenSSL is required for Node production server runtime v3 integration tests");
+}
 const fixture = JSON.parse(readFileSync(
   new URL("../../../testdata/transport_v3/artifact_vectors.json", import.meta.url),
   "utf8",
@@ -33,7 +35,7 @@ let leafCertificate = "";
 let leafKey = "";
 let leafDigest = "";
 
-networkDescribe("Node production server runtime v3", () => {
+describe("Node production server runtime v3", () => {
   beforeAll(() => {
     directory = mkdtempSync(join(tmpdir(), "flowersec-node-server-v3-"));
     generateCertificates(directory);
