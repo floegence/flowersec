@@ -93,15 +93,17 @@
       "v3": "/flowersec/webtransport/v3/tunnel",
       "v2": "/flowersec/webtransport/v2/tunnel",
       "error_code": "version_isolation"
-    },
+    }
+  ],
+  "subprotocol_mutations": [
     {
-      "id": "websocket-direct-subprotocol",
+      "id": "websocket-direct",
       "v3": "flowersec.direct.v3",
       "v2": "flowersec.direct.v2",
       "error_code": "version_isolation"
     },
     {
-      "id": "websocket-tunnel-subprotocol",
+      "id": "websocket-tunnel",
       "v3": "flowersec.tunnel.v3",
       "v2": "flowersec.tunnel.v2",
       "error_code": "version_isolation"
@@ -361,15 +363,17 @@
         "v3": "/flowersec/webtransport/v3/tunnel",
         "v2": "/flowersec/webtransport/v2/tunnel",
         "error_code": "version_isolation"
-      },
+      }
+    ],
+    "subprotocol": [
       {
-        "id": "websocket-direct-subprotocol",
+        "id": "websocket-direct",
         "v3": "flowersec.direct.v3",
         "v2": "flowersec.direct.v2",
         "error_code": "version_isolation"
       },
       {
-        "id": "websocket-tunnel-subprotocol",
+        "id": "websocket-tunnel",
         "v3": "flowersec.tunnel.v3",
         "v2": "flowersec.tunnel.v2",
         "error_code": "version_isolation"

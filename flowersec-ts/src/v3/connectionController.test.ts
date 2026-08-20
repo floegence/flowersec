@@ -170,6 +170,77 @@ describe("transport v3 production connection controller", () => {
     expect(acquire).toHaveBeenCalledOnce();
   });
 
+  test("rejects a thrown source failure with invalid retry-after before scheduling", async () => {
+    const observed: string[] = [];
+    const connector = vi.fn(async () => { throw new Error("connector must not run"); });
+    const controller = createConnectionControllerV3({
+      acquire: async () => {
+        throw new ConnectErrorV3("connection_failed", {
+          kind: "retry_after",
+          absoluteUnixMilliseconds: 253_402_300_800_000,
+        });
+      },
+    }, connector, { maximumAttempts: 2, clock: immediateClock(observed), capabilitySnapshot });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "artifact", code: "artifact_invalid" },
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(controller.state).toBe("failed");
+    expect(connector).not.toHaveBeenCalled();
+    expect(observed).toEqual([]);
+    await controller.close();
+  });
+
+  test("retires a lease from a mixed lease-and-failure source result", async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined, cleanup);
+    const connector = vi.fn(async () => { throw new Error("connector must not run"); });
+    const controller = createConnectionControllerV3({
+      acquire: async () => ({
+        kind: "lease",
+        lease,
+        code: "connection_failed",
+        disposition: { kind: "retryable" },
+      } as unknown as ArtifactSourceResultV3),
+    }, connector, { capabilitySnapshot });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "artifact", code: "artifact_invalid" },
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(connector).not.toHaveBeenCalled();
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
+    expect(cleanup).toHaveBeenCalledOnce();
+    await controller.close();
+  });
+
+  test("retires a lease from a mixed failure-and-lease source result", async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined, cleanup);
+    const connector = vi.fn(async () => { throw new Error("connector must not run"); });
+    const controller = createConnectionControllerV3({
+      acquire: async () => ({
+        kind: "failure",
+        code: "connection_failed",
+        disposition: { kind: "retryable" },
+        lease,
+      } as unknown as ArtifactSourceResultV3),
+    }, connector, { capabilitySnapshot });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "artifact", code: "artifact_invalid" },
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(connector).not.toHaveBeenCalled();
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
+    expect(cleanup).toHaveBeenCalledOnce();
+    await controller.close();
+  });
+
   test("keeps a post-spend lease consumed and retries with a new primary", async () => {
     const states: string[] = [];
     const first = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined);

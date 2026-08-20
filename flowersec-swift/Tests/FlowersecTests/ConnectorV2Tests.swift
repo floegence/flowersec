@@ -162,13 +162,13 @@ final class ConnectorV2Tests: XCTestCase {
         ("not-yet-valid", material.certificate, p256Digest, Int64(material.certificate.notValidBefore) - 1),
         ("expired", material.certificate, p256Digest, Int64(material.certificate.notValidAfter) + 1),
       ]
-      for (_, certificate, digest, verificationTime) in cases {
+      for (name, certificate, digest, verificationTime) in cases {
         do {
           try NativeTLSPolicyAdapterV3.verifyPinnedCertificate(
             certificate, activePins: [digest], nowUnixSeconds: verificationTime)
-          XCTFail("profile (name) unexpectedly passed")
+          XCTFail("profile \(name) unexpectedly passed")
         } catch {
-          XCTAssertTrue(error is TransportSecurityFailureV3 || error is NativeTLSPolicyErrorV3)
+          XCTAssertEqual(error as? TransportSecurityFailureV3, .unknownTLS, "profile \(name)")
         }
       }
     }
@@ -250,7 +250,7 @@ final class ConnectorV2Tests: XCTestCase {
 
   #if os(iOS)
     func testProductionV3IOSAdapterBuildsPinnedTLSHandlerAndVerifiesLeaf() async throws {
-      let material = try ConnectorTestTLS.load()
+      let material = try ConnectorTestTLS.loadShortLived()
       let der = Data(try material.certificate.toDERBytes())
       let pin = Data(SHA256.hash(data: der))
       let policy = TransportSecurityPolicyV3.pin(
@@ -259,42 +259,63 @@ final class ConnectorV2Tests: XCTestCase {
       let handler = try NativeTLSPolicyAdapterV3.makeClientHandlerFactory(
         policy: policy, serverHostname: "localhost")
       _ = try handler.make()
-      // The shared fixture intentionally has a ten-year lifetime. The v3
-      // profile rejects it before pin comparison, proving the iOS callback
-      // remains fail-closed even when the leaf hash matches.
-      XCTAssertThrowsError(
-        try NativeTLSPolicyAdapterV3.verifyPinnedCertificate(
-          material.certificate,
-          activePins: [pin],
-          nowUnixSeconds: Int64(Date().timeIntervalSince1970))
-      ) { error in
-        XCTAssertEqual(error as? TransportSecurityFailureV3, .unknownTLS)
-      }
+      try NativeTLSPolicyAdapterV3.verifyPinnedCertificate(
+        material.certificate,
+        activePins: [pin],
+        nowUnixSeconds: Int64(Date().timeIntervalSince1970))
 
-      let candidate = CanonicalCandidateV3(
-        carrier: "websocket",
-        id: "ios-test",
-        normalizedURL: "wss://127.0.0.1:9/flowersec/v3/direct",
-        tls: TLSPolicyWireV3(
-          mode: "pin",
-          pins: [CertificatePinWireV3(
-            algorithm: "sha-256",
-            valueBase64URL: pin.base64URLEncodedStringV3(),
-            notAfterUnixSeconds: UInt64(Date().timeIntervalSince1970) + 3_600)]),
-        wireProfile: "flowersec-direct/3")
-      do {
-        _ = try await AppleWebSocketRuntimeAdapterV3().prepare(
-          candidate: candidate,
-          path: .direct,
-          role: .client,
-          options: ConnectorOptions(
-            origin: "https://client.example", connectTimeout: .milliseconds(100)),
-          activePinHashes: [pin])
-        XCTFail("closed endpoint unexpectedly established an iOS v3 carrier")
-      } catch let error as SwiftRuntimeErrorV3 {
-        XCTAssertEqual(error, .connectionFailed)
-      }
+      let accepted = ConnectorAcceptedTransport()
+      let server = try await ConnectorWSSServer.start(
+        tls: material, selectedProtocol: "flowersec.direct.v3", accepted: accepted)
+      defer { Task { await server.close() } }
+      let artifact = try v3WebSocketArtifact(
+        port: server.port,
+        tls: ["mode": "pin", "pins": [[
+          "algorithm": "sha-256",
+          "not_after_unix_s": Int(Date().timeIntervalSince1970) + 3_600,
+          "value_b64u": pin.base64URLEncodedStringV3(),
+        ]]])
+      let options = ConnectorOptions(
+        origin: "https://client.example", connectTimeout: .seconds(5))
+      async let serverSession = Self.establishServerSessionV3(
+        artifact: artifact, accepted: accepted)
+      async let clientSession = connectV3(
+        lease: ArtifactLeaseV3(artifact: artifact) {}, options: options)
+      let (client, serverPeer) = try await (clientSession, serverSession)
+      async let closeClient = client.close()
+      async let closeServer = serverPeer.close()
+      _ = try await (closeClient, closeServer)
     }
+
+    private static func establishServerSessionV3(
+      artifact: ArtifactV3, accepted: ConnectorAcceptedTransport
+    ) async throws -> TransportV3Session {
+      let transport = try await accepted.accept()
+      let fsb3 = try AdmissionCodecV3.decodeFSB3(try await transport.readBinary())
+      try await transport.writeBinary(Data([70, 83, 65, 51, 3, 0, 0, 0]))
+      let value = artifact.value
+      let path: PathKind = value.path.kind == "direct" ? .direct : .tunnel
+      let carrier = WebSocketCarrierSessionV3(
+        transport: transport, path: path, client: false,
+        inboundCapacity: UInt16(value.session.maxInboundStreams) + 2)
+      let config = TransportV3SessionConfig(
+        role: .server,
+        path: path,
+        channelID: value.session.channelID,
+        sessionContractHash: try decodeTest32(value.session.contractHashBase64URL),
+        suite: try XCTUnwrap(TransportCipherSuiteV3(rawValue: UInt16(value.session.defaultSuite))),
+        psk: try decodeTest32(value.session.e2eePSKBase64URL),
+        maxInboundStreams: try XCTUnwrap(UInt16(exactly: value.session.maxInboundStreams)),
+        idleTimeoutSeconds: try XCTUnwrap(UInt32(exactly: value.session.idleTimeoutSeconds)),
+        localAdmissionBinding: fsb3.admissionBinding,
+        peerAdmissionBinding: fsb3.admissionBinding,
+        localEndpointInstanceID: value.path.localEndpointInstanceID ?? "",
+        expectedPeerEndpointInstanceID: value.path.expectedPeerEndpointInstanceID ?? "")
+      var boundedConfig = config
+      boundedConfig.deadlines.establish = .seconds(5)
+      return try await TransportV3Session.establish(carrier: carrier, config: boundedConfig)
+    }
+
   #endif
 
   func testV3ControllerFailureProvenanceIncludesOnlyAttemptedFailures() async throws {
@@ -1084,19 +1105,15 @@ final class ConnectorV2Tests: XCTestCase {
     try parseArtifactV2(Data(loadArtifactJSON(index: 0).utf8))
   }
 
-  #if os(macOS)
+  #if os(macOS) || os(iOS)
     private func v3WebSocketArtifact(
       port: Int,
       tls: [String: Any]
     ) throws -> ArtifactV3 {
-      let url = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appendingPathComponent("testdata/transport_v3/artifact_vectors.json")
-      let vectors = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
-      let positive = vectors["positive"] as! [[String: Any]]
+      let resources = try XCTUnwrap(Bundle.module.resourceURL?.appendingPathComponent("Fixtures"))
+      let fixture = resources.appendingPathComponent("transport_v3_direct_artifact.json")
       var root = try JSONSerialization.jsonObject(
-        with: Data((positive[0]["artifact_json"] as! String).utf8)) as! [String: Any]
+        with: Data(contentsOf: fixture)) as! [String: Any]
       var path = root["path"] as! [String: Any]
       path["candidates"] = [[
         "carrier": "websocket",
@@ -1581,6 +1598,17 @@ private struct ConnectorTestTLS {
     let key = try Data(contentsOf: resources.appendingPathComponent("self_signed_key.pem"))
     return try Self(
       caPEM: ca,
+      certificate: XCTUnwrap(NIOSSLCertificate.fromPEMBytes(Array(cert)).first),
+      privateKey: NIOSSLPrivateKey(bytes: Array(key), format: .pem)
+    )
+  }
+
+  static func loadShortLived() throws -> Self {
+    let resources = try XCTUnwrap(Bundle.module.resourceURL?.appendingPathComponent("Fixtures"))
+    let cert = try Data(contentsOf: resources.appendingPathComponent("short_lived_cert.pem"))
+    let key = try Data(contentsOf: resources.appendingPathComponent("short_lived_key.pem"))
+    return try Self(
+      caPEM: cert,
       certificate: XCTUnwrap(NIOSSLCertificate.fromPEMBytes(Array(cert)).first),
       privateKey: NIOSSLPrivateKey(bytes: Array(key), format: .pem)
     )

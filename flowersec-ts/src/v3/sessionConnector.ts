@@ -301,7 +301,9 @@ async function attemptClaimedArtifactLeaseWithinDeadlineV3(
         return { kind: "established", session: projectSessionV3(session) };
       } catch (error) {
         carrier.abort({ code: 6, reason: "session establishment failed" });
-        throw error;
+        throw error instanceof ConnectErrorV3
+          ? error
+          : new ConnectErrorV3("connection_failed", { kind: "retryable" });
       }
     } catch (error) {
       channel.abort(asError(error));

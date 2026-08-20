@@ -481,19 +481,39 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
       if (result === null || typeof result !== "object") return invalidSourceResult();
       if (result.kind === "lease") {
         if (result.lease === null || typeof result.lease !== "object") return invalidSourceResult();
-        return result;
+        if (!hasExactOwnKeys(result, ["kind", "lease"])) {
+          await this.#claimAndRetire(result.lease);
+          return invalidSourceResult();
+        }
+        return { kind: "lease", lease: result.lease };
       }
-      if (result.kind === "failure" && typeof result.code === "string" &&
-          ARTIFACT_SOURCE_FAILURE_CODES_V3.has(result.code)) {
-        return { ...result, disposition: validateRetryDispositionV3(result.disposition) };
+      if (result.kind === "failure") {
+        const mixedLease = deliveredLease(result);
+        if (mixedLease !== undefined) {
+          await this.#claimAndRetire(mixedLease);
+        }
+        if (!hasExactOwnKeys(result, ["kind", "code", "disposition"]) ||
+            typeof result.code !== "string" || !ARTIFACT_SOURCE_FAILURE_CODES_V3.has(result.code)) {
+          return invalidSourceResult();
+        }
+        return { kind: "failure", code: result.code, disposition: validateRetryDispositionV3(result.disposition) };
       }
+      const invalidLease = deliveredLease(result);
+      if (invalidLease !== undefined) await this.#claimAndRetire(invalidLease);
       return invalidSourceResult();
     } catch (error) {
-      if (error instanceof ConnectErrorV3) return {
-        kind: "failure",
-        code: error.code,
-        disposition: error.disposition,
-      };
+      if (error instanceof ConnectErrorV3) {
+        try {
+          if (!ARTIFACT_SOURCE_FAILURE_CODES_V3.has(error.code)) return invalidSourceResult();
+          return {
+            kind: "failure",
+            code: error.code,
+            disposition: validateRetryDispositionV3(error.disposition),
+          };
+        } catch {
+          return invalidSourceResult();
+        }
+      }
       return invalidSourceResult();
     }
   }
@@ -573,6 +593,16 @@ function invalidSourceResult(): ArtifactSourceResultV3 {
     code: "artifact_invalid",
     disposition: Object.freeze({ kind: "terminal" as const }),
   });
+}
+
+function hasExactOwnKeys(value: object, expected: readonly string[]): boolean {
+  const keys = Reflect.ownKeys(value);
+  return keys.length === expected.length && expected.every((key) => keys.includes(key));
+}
+
+function deliveredLease(value: object): ArtifactLeaseV3 | undefined {
+  const lease = Reflect.get(value, "lease");
+  return lease !== null && typeof lease === "object" ? lease as ArtifactLeaseV3 : undefined;
 }
 
 function sourceFailure(result: Extract<ArtifactSourceResultV3, { kind: "failure" }>): ConnectErrorV3 {

@@ -1427,7 +1427,11 @@ async fn run_cycle_reset(scenario: &ScenarioV3) {
     assert!(controller.retry_now());
     let _ = wait_for_state(&controller, ConnectionState::Connected).await;
     first_session.terminate();
-    let _ = wait_for_state(&controller, ConnectionState::Waiting).await;
+    let waiting = wait_for_state(&controller, ConnectionState::Waiting).await;
+    assert_eq!(
+        waiting.attempt, 0,
+        "post-session cycle must publish attempt zero"
+    );
     assert!(controller.retry_now());
     let status = wait_for_state(&controller, ConnectionState::Connected).await;
     assert_eq!(scenario.expected.failure_ordinal, Some(1));

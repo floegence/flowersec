@@ -398,11 +398,29 @@ pub(crate) async fn connect_v3_with_cancellation_and_preparer(
         }
     }
 
-    if let Err(error) = require_unexpired(&plan) {
-        let _ = claimed.retire().await;
-        return Err(error);
-    }
+    Err(finalize_candidate_race(
+        claimed,
+        &plan,
+        aggregate,
+        policy_trigger_mask,
+        failed_candidate_mask,
+    )
+    .await)
+}
+
+async fn finalize_candidate_race(
+    claimed: PreSpendLeaseGuardV3,
+    plan: &ConnectionPlanV3,
+    aggregate: CandidateFailureV3,
+    policy_trigger_mask: u8,
+    failed_candidate_mask: u8,
+) -> ConnectError {
+    // Expiry at the race boundary is authoritative over candidate failures.
+    let expiry = require_unexpired(plan).err();
     let _ = claimed.retire().await;
+    if let Some(error) = expiry {
+        return error;
+    }
     let error = match aggregate {
         CandidateFailureV3::InvalidArtifact => public_error(ConnectErrorCode::ArtifactInvalid),
         CandidateFailureV3::Unsupported => {
@@ -416,7 +434,7 @@ pub(crate) async fn connect_v3_with_cancellation_and_preparer(
             public_error(ConnectErrorCode::ConnectionFailed)
         }
     };
-    Err(error.with_v3_candidate_masks(policy_trigger_mask, failed_candidate_mask))
+    error.with_v3_candidate_masks(policy_trigger_mask, failed_candidate_mask)
 }
 
 async fn prepare_candidate(
@@ -1781,6 +1799,48 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn race_end_expiry_overrides_security_aggregate_and_retires_once() {
+        let artifact = artifact_with_candidates_and_expiry(
+            vec![json!({
+                "carrier": "raw_quic",
+                "id": "failed",
+                "tls": {"mode": "ca"},
+                "url": "quic://127.0.0.1:443",
+                "wire_profile": "flowersec-direct/3"
+            })],
+            unix_seconds(),
+        );
+        let plan = artifact.connection_plan().expect("valid connection plan");
+        let retires = Arc::new(AtomicUsize::new(0));
+        let retire_capture = retires.clone();
+        let claimed = ArtifactLeaseV3::new_with_retire(
+            artifact,
+            || async { Ok(()) },
+            move || async move {
+                retire_capture.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .claim()
+        .expect("claim lease");
+
+        let error = finalize_candidate_race(
+            PreSpendLeaseGuardV3::new(claimed),
+            &plan,
+            CandidateFailureV3::Security,
+            1,
+            1,
+        )
+        .await;
+
+        assert_eq!(error.code(), ConnectErrorCode::Expired);
+        assert!(error.controller_retryable());
+        assert_eq!(error.v3_policy_trigger_mask(), 0);
+        assert_eq!(error.v3_failed_candidate_mask(), 0);
+        assert_eq!(retires.load(Ordering::SeqCst), 1);
+    }
+
     #[test]
     fn cancellation_dominates_security_while_security_dominates_timeout() {
         assert_eq!(
@@ -2167,8 +2227,22 @@ mod tests {
         parse_artifact_with_candidates(candidates).unwrap()
     }
 
+    fn artifact_with_candidates_and_expiry(
+        candidates: Vec<Value>,
+        expires_at_unix_seconds: u64,
+    ) -> ArtifactV3 {
+        parse_artifact_with_candidates_and_expiry(candidates, expires_at_unix_seconds).unwrap()
+    }
+
     fn parse_artifact_with_candidates(
         candidates: Vec<Value>,
+    ) -> Result<ArtifactV3, crate::artifact_v3::ArtifactErrorV3> {
+        parse_artifact_with_candidates_and_expiry(candidates, unix_seconds() + 600)
+    }
+
+    fn parse_artifact_with_candidates_and_expiry(
+        candidates: Vec<Value>,
+        expires_at_unix_seconds: u64,
     ) -> Result<ArtifactV3, crate::artifact_v3::ArtifactErrorV3> {
         let projection = json!({
             "allowed_suites": [1],
@@ -2205,7 +2279,7 @@ mod tests {
                 "e2ee_psk_b64u": URL_SAFE_NO_PAD.encode([7_u8; 32]),
                 "establish_timeout_seconds": 30,
                 "idle_timeout_seconds": 0,
-                "init_expire_at_unix_s": unix_seconds() + 600,
+                "init_expire_at_unix_s": expires_at_unix_seconds,
                 "max_inbound_streams": 1,
                 "rekey_completion_timeout_seconds": 30,
                 "rekey_prepare_timeout_seconds": 10,

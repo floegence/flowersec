@@ -682,7 +682,7 @@ func (controller *ConnectionController) handleFailure(
 	if disposition.Kind == RetryDispositionRetryAfter {
 		notBeforeUnixMilliseconds = disposition.RetryAtUnixMilliseconds
 	}
-	if !controller.wait(ctx, err, disposition, notBeforeUnixMilliseconds, connectionControllerBackoff(failureOrdinal)) {
+	if !controller.wait(ctx, err, disposition, notBeforeUnixMilliseconds, connectionControllerBackoff(failureOrdinal), attemptsSinceConnected) {
 		controller.finishClosed()
 		return false
 	}
@@ -709,6 +709,7 @@ func (controller *ConnectionController) wait(
 	disposition RetryDisposition,
 	notBeforeUnixMilliseconds int64,
 	backoff time.Duration,
+	attempt uint64,
 ) bool {
 	for {
 		select {
@@ -721,7 +722,7 @@ drained:
 	controller.mu.Lock()
 	controller.retryNotBeforeUnixMilliseconds = notBeforeUnixMilliseconds
 	controller.setSnapshotLocked(ConnectionSnapshot{
-		State: ConnectionWaiting, Attempt: controller.snapshot.Attempt,
+		State: ConnectionWaiting, Attempt: attempt,
 		Failure: connectionFailure(err, disposition),
 	})
 	controller.mu.Unlock()

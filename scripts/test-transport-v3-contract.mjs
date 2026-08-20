@@ -35,6 +35,12 @@ function digest(label, value) {
 }
 
 const registry = json("stability/transport_v3_contract.json");
+const artifactVectors = json("testdata/transport_v3/artifact_vectors.json");
+assert.equal(
+  canonicalJSON(json("flowersec-swift/Tests/FlowersecTests/Fixtures/transport_v3_direct_artifact.json")),
+  artifactVectors.positive[0].artifact_json,
+  "the bundled iOS artifact must stay identical to the shared direct vector",
+);
 assert.equal(registry.version, 3);
 assert.equal(registry.status, "final");
 assert.equal(registry.design.version, "3.0.0");
@@ -156,6 +162,36 @@ for (const relative of Object.values(registry.docs)) {
   assert.match(source, /Version: 3\.0\.0/);
   assert.match(source, /flowersec\/3/);
   assert.match(source, /serverCertificateHashes|FSB3/);
+}
+assert(Array.isArray(registry.design.traceability) && registry.design.traceability.length >= 16,
+  "design traceability must cover all major v3 domains");
+const traceabilityClauses = registry.design.traceability.map((entry) => entry.clause);
+for (const requiredClause of [
+  "3.1", "3.2", "3.3", "3.4", "4", "5", "6", "7", "8", "9", "10", "11", "13.1", "13.2", "13.3", "15",
+]) assert(traceabilityClauses.includes(requiredClause), `missing traceability clause: ${requiredClause}`);
+assert.equal(new Set(traceabilityClauses).size, traceabilityClauses.length, "traceability clause IDs must be unique");
+for (const entry of registry.design.traceability) {
+  assert(typeof entry.clause === "string" && entry.clause.length > 0, "traceability clause ID is required");
+  assert(typeof entry.title === "string" && entry.title.length > 0, `${entry.clause} traceability title is required`);
+  for (const field of ["source", "tests", "docs", "registry_vector"]) {
+    assert(Array.isArray(entry[field]) && entry[field].length > 0, `${entry.clause} ${field} is required`);
+  }
+  for (const relative of [...entry.source, ...entry.tests, ...entry.docs]) {
+    assert(fs.existsSync(path.join(root, relative)), `${entry.clause} missing traceability path ${relative}`);
+  }
+  assert(entry.registry_vector.some((reference) => reference.startsWith("wire_fixtures[id=")),
+    `${entry.clause} must reference a wire fixture`);
+  for (const reference of entry.registry_vector) {
+    assert(typeof reference === "string" && reference.length > 0, `${entry.clause} registry/vector reference is required`);
+    if (reference.startsWith("wire_fixtures[id=")) {
+      assert.match(reference, /^wire_fixtures\[id=[a-z0-9_]+\]$/);
+      const fixtureID = reference.slice("wire_fixtures[id=".length, -1);
+      assert(registry.wire_fixtures.some((fixture) => fixture.id === fixtureID), `${entry.clause} unknown fixture ${fixtureID}`);
+    } else {
+      const topLevel = reference.split(".", 1)[0];
+      assert(Object.hasOwn(registry, topLevel), `${entry.clause} unknown registry path ${reference}`);
+    }
+  }
 }
 for (const fixture of registry.wire_fixtures) {
   assert(fs.existsSync(path.join(root, fixture.path)), "missing fixture " + fixture.path);
@@ -462,11 +498,16 @@ for (const frame of versionIsolation.frames) {
   assert.notEqual(frame.v3_hex, frame.v2_magic_hex, `${frame.id} magic isolation`);
   assert.notEqual(frame.v3_hex, frame.v2_version_hex, `${frame.id} version isolation`);
 }
-assert.deepEqual(registry.version_isolation.rejection_fields, ["magic", "profile", "path", "alpn", "crypto_label"]);
+assert.deepEqual(registry.version_isolation.rejection_fields, ["magic", "profile", "path", "subprotocol", "alpn", "crypto_label"]);
 assert.deepEqual(registry.version_isolation.v2_identifiers.magic, ["FSB2", "FSA2", "FSC2", "FSH2", "FSS2", "FSR2", "FSD2"]);
 assert.deepEqual(registry.version_isolation.v2_identifiers.profiles, ["flowersec/2", "flowersec-direct/2", "flowersec-tunnel/2"]);
+assert.deepEqual(registry.version_isolation.v2_identifiers.paths, [
+  "/flowersec/v2/direct", "/flowersec/v2/tunnel",
+  "/flowersec/webtransport/v2/direct", "/flowersec/webtransport/v2/tunnel",
+]);
+assert.deepEqual(registry.version_isolation.v2_identifiers.subprotocols, ["flowersec.direct.v2", "flowersec.tunnel.v2"]);
 assert.deepEqual(registry.version_isolation.v2_identifiers.alpn, ["flowersec-direct/2", "flowersec-tunnel/2"]);
-for (const field of ["profile_mutations", "path_mutations", "alpn_mutations", "crypto_label_mutations"]) {
+for (const field of ["profile_mutations", "path_mutations", "subprotocol_mutations", "alpn_mutations", "crypto_label_mutations"]) {
   assert(Array.isArray(versionIsolation[field]) && versionIsolation[field].length > 0, `${field} is required`);
   for (const mutation of versionIsolation[field]) {
     assert.equal(mutation.error_code, "version_isolation", `${field}/${mutation.id}`);
@@ -480,6 +521,14 @@ assert.deepEqual(
 assert.deepEqual(
   versionIsolation.identifier_sets.profile.map((item) => item.v2),
   registry.version_isolation.v2_identifiers.profiles,
+);
+assert.deepEqual(
+  versionIsolation.identifier_sets.path.map((item) => item.v2),
+  registry.version_isolation.v2_identifiers.paths,
+);
+assert.deepEqual(
+  versionIsolation.identifier_sets.subprotocol.map((item) => item.v2),
+  registry.version_isolation.v2_identifiers.subprotocols,
 );
 assert.deepEqual(
   versionIsolation.identifier_sets.alpn.map((item) => item.v2),

@@ -873,10 +873,10 @@ async fn run_controller(inner: Arc<ControllerInner>) {
             error: termination.error,
             disposition: session_disposition(termination.error),
         };
+        attempt = 0;
         if !schedule_retry(&inner, attempt, 0, 0, failure).await {
             return;
         }
-        attempt = 0;
         retry_index = 1;
     }
 }

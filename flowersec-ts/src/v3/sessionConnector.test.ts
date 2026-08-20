@@ -508,7 +508,7 @@ describe("transport v3 session connector", () => {
       }),
     })).rejects.toMatchObject({
       code: "connection_failed",
-      disposition: { kind: "terminal" },
+      disposition: { kind: "retryable" },
     });
 
     expect(spend).toHaveBeenCalledOnce();

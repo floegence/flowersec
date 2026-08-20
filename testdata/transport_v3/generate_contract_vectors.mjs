@@ -835,8 +835,10 @@ const v2PathIdentifiers = [
   ["websocket-tunnel", "/flowersec/v3/tunnel", "/flowersec/v2/tunnel"],
   ["webtransport-direct", "/flowersec/webtransport/v3/direct", "/flowersec/webtransport/v2/direct"],
   ["webtransport-tunnel", "/flowersec/webtransport/v3/tunnel", "/flowersec/webtransport/v2/tunnel"],
-  ["websocket-direct-subprotocol", "flowersec.direct.v3", "flowersec.direct.v2"],
-  ["websocket-tunnel-subprotocol", "flowersec.tunnel.v3", "flowersec.tunnel.v2"],
+].map(([id, v3, v2]) => ({ id, v3, v2, error_code: "version_isolation" }));
+const v2SubprotocolIdentifiers = [
+  ["websocket-direct", "flowersec.direct.v3", "flowersec.direct.v2"],
+  ["websocket-tunnel", "flowersec.tunnel.v3", "flowersec.tunnel.v2"],
 ].map(([id, v3, v2]) => ({ id, v3, v2, error_code: "version_isolation" }));
 const v2ALPNIdentifiers = [
   ["direct", "flowersec-direct/3", "flowersec-direct/2"],
@@ -888,12 +890,14 @@ write("version_isolation_vectors.json", {
   ],
   profile_mutations: v2ProfileIdentifiers,
   path_mutations: v2PathIdentifiers,
+  subprotocol_mutations: v2SubprotocolIdentifiers,
   alpn_mutations: v2ALPNIdentifiers,
   crypto_label_mutations: v2CryptoLabels,
   identifier_sets: {
     magic: v2FrameIdentifiers,
     profile: v2ProfileIdentifiers,
     path: v2PathIdentifiers,
+    subprotocol: v2SubprotocolIdentifiers,
     alpn: v2ALPNIdentifiers,
     crypto_label: v2CryptoLabels,
   },

@@ -1,4 +1,4 @@
-.PHONY: test test-resume coverage-race browser-smoke browser-compat precommit diagnostic performance go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-package-cache-preflight ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check native-addon-test swift-package-check swift-security-check swift-source-guard swift-public-api-check swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-publish-preflight rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-source-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-source precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check flowersec-test-contract go-cover-check-short go-cover-check nightly-check
+.PHONY: test test-resume coverage-race browser-smoke browser-compat precommit diagnostic performance go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-package-cache-preflight ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check native-addon-test swift-package-check swift-security-check swift-source-guard swift-public-api-check swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-publish-preflight rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-source-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-source precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-public-ca-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check flowersec-test-contract go-cover-check-short go-cover-check nightly-check
 
 FLOWERSEC_TEST_HOST ?= ./scripts/test-host.sh
 PERFORMANCE_BUDGET ?= 10m
@@ -365,8 +365,11 @@ check: security-makefile-check
 	$(MAKE) final-integration-lanes
 	CARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 post $(MAKE) final-post-validation
 
-final-network-preflight:
+final-network-preflight: final-public-ca-preflight
 	node scripts/run-final-lanes.mjs $(MAKE) final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight
+
+final-public-ca-preflight:
+	go -C flowersec-go run ./internal/cmd/flowersec-test preflight-public-ca
 
 final-go-preflight:
 	$(MAKE) go-vulncheck
@@ -380,6 +383,8 @@ final-ts-preflight:
 
 final-swift-preflight:
 	$(MAKE) swift-security-check
+	node --test scripts/run-ios-simulator-test.test.mjs
+	node scripts/run-ios-simulator-test.mjs --preflight
 
 final-rust-preflight:
 	$(MAKE) rust-fetch

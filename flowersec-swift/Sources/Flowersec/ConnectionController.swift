@@ -219,13 +219,13 @@ public actor ConnectionController {
         guard state != .closed, !Task.isCancelled else { return }
         currentSession = nil
         let sessionFailure = ConnectionAttemptFailure.session(termination.error)
+        attempt = 0
         guard
           await scheduleRetry(
             after: sessionFailure,
             failures: &consecutiveFailures,
             attempts: primaryAttempts)
         else { return }
-        attempt = 0
 
       case .failed(
         let attemptFailure, let claimedLease, let dispositionOverride, let provenance):
@@ -277,13 +277,13 @@ public actor ConnectionController {
             guard state != .closed, !Task.isCancelled else { return }
             currentSession = nil
             let sessionFailure = ConnectionAttemptFailure.session(termination.error)
+            attempt = 0
             guard
               await scheduleRetry(
                 after: sessionFailure,
                 failures: &consecutiveFailures,
                 attempts: primaryAttempts)
             else { return }
-            attempt = 0
           case .retryPrimary(let failure, let replacementDisposition):
             guard
               await scheduleRetry(

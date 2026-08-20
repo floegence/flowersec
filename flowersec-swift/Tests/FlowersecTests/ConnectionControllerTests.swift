@@ -722,9 +722,10 @@ final class ConnectionControllerTests: XCTestCase {
       try lease(
         artifact: beforeRace ? expiredArtifactV3() : changedPinArtifactV3(), spent: spent,
         retired: retired),
-      try lease(artifact: changedPinArtifactV3(), spent: spent, retired: retired),
+      try lease(artifact: mixedCAPinArtifactV3(), spent: spent, retired: retired),
     ])
     let calls = AsyncCounterV3()
+    let primaryCandidates = CandidateIDRecorderV3()
     let session = ControllerSessionV3()
     let controller = try ConnectionController(
       source: source,
@@ -733,6 +734,7 @@ final class ConnectionControllerTests: XCTestCase {
         case 1: throw ConnectError.transportSecurityFailed
         case 2 where !beforeRace: throw ConnectError.expiredArtifact
         default:
+          await primaryCandidates.record(Set(lease.artifact.canonicalCandidates.map(\.id)))
           let claimed = try await lease.claim()
           try await claimed.commitSpend()
           return session
@@ -749,6 +751,7 @@ final class ConnectionControllerTests: XCTestCase {
     let finalRetirements = await retired.value
     let finalSpends = await spent.value
     let connectAttempts = await calls.value
+    let allowedPrimaryCandidates = await primaryCandidates.value
     XCTAssertTrue(waiting)
     XCTAssertEqual(initialAcquisitions, 2)
     XCTAssertEqual(initialRetirements, 2)
@@ -760,6 +763,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(connectAttempts, expected["transports_created"] as? Int)
     XCTAssertEqual(expected["replacement_acquisitions"] as? Int, 1)
     XCTAssertEqual(expected["replacement_quota_used"] as? Int, 1)
+    XCTAssertEqual(allowedPrimaryCandidates, ["w-ca"])
     XCTAssertEqual(finalSpends, expected["spend_callbacks"] as? Int)
     XCTAssertEqual(finalRetirements, expected["retire_callbacks"] as? Int)
     XCTAssertEqual(
@@ -1009,6 +1013,7 @@ final class ConnectionControllerTests: XCTestCase {
       await controller.start()
       assertTrueV3(await waitUntilV3 { await source.acquisitions == 1 }, id)
       let closeTask = Task { await controller.close() }
+      assertTrueV3(await waitUntilV3 { await controller.state == .closed }, id)
       await source.release()
       await closeTask.value
       let snapshot = await controller.snapshot()
@@ -1188,6 +1193,8 @@ final class ConnectionControllerTests: XCTestCase {
     assertTrueV3(await waitForState(.connected, controller: controller), id)
     try await first.close()
     assertTrueV3(await waitForState(.waiting, controller: controller), id)
+    let waitingSnapshot = await controller.snapshot()
+    XCTAssertEqual(waitingSnapshot.attempt, 0, id)
     assertTrueV3(await clock.waitForSleepCount(2), id)
     clock.advance(wallMilliseconds: 0, monotonicMilliseconds: 250)
     assertTrueV3(await waitForState(.connected, controller: controller), id)

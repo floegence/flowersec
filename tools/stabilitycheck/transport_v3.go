@@ -73,6 +73,7 @@ type transportV3Registry struct {
 			Magic        []string `json:"magic"`
 			Profiles     []string `json:"profiles"`
 			Paths        []string `json:"paths"`
+			Subprotocols []string `json:"subprotocols"`
 			ALPN         []string `json:"alpn"`
 			CryptoLabels []string `json:"crypto_labels"`
 		} `json:"v2_identifiers"`
@@ -81,8 +82,18 @@ type transportV3Registry struct {
 }
 
 type transportV3Design struct {
-	Version string `json:"version"`
-	SHA256  string `json:"sha256"`
+	Version      string                    `json:"version"`
+	SHA256       string                    `json:"sha256"`
+	Traceability []transportV3Traceability `json:"traceability"`
+}
+
+type transportV3Traceability struct {
+	Clause         string   `json:"clause"`
+	Title          string   `json:"title"`
+	Source         []string `json:"source"`
+	Tests          []string `json:"tests"`
+	Docs           []string `json:"docs"`
+	RegistryVector []string `json:"registry_vector"`
 }
 
 type transportV3Fixture struct {
@@ -225,6 +236,23 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	if registry.Design.SHA256 != "236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba" {
 		return fmt.Errorf("%s design hash drifted", transportV3ContractPath)
 	}
+	wantClauses := []string{"3.1", "3.2", "3.3", "3.4", "4", "5", "6", "7", "8", "9", "10", "11", "13.1", "13.2", "13.3", "15"}
+	gotClauses := make([]string, 0, len(registry.Design.Traceability))
+	for _, entry := range registry.Design.Traceability {
+		gotClauses = append(gotClauses, entry.Clause)
+		if entry.Title == "" || len(entry.Source) == 0 || len(entry.Tests) == 0 ||
+			len(entry.Docs) == 0 || len(entry.RegistryVector) == 0 {
+			return fmt.Errorf("%s traceability clause %q is incomplete", transportV3ContractPath, entry.Clause)
+		}
+		for _, relative := range append(append(slices.Clone(entry.Source), entry.Tests...), entry.Docs...) {
+			if _, err := os.Stat(filepath.Join(repoRoot, relative)); err != nil {
+				return fmt.Errorf("%s traceability clause %q path %s: %w", transportV3ContractPath, entry.Clause, relative, err)
+			}
+		}
+	}
+	if !slices.Equal(gotClauses, wantClauses) {
+		return fmt.Errorf("%s traceability clauses = %v, want %v", transportV3ContractPath, gotClauses, wantClauses)
+	}
 	if registry.Profiles.Session != "flowersec/3" || registry.Profiles.Direct != "flowersec-direct/3" || registry.Profiles.Tunnel != "flowersec-tunnel/3" {
 		return fmt.Errorf("%s profile identifiers drifted", transportV3ContractPath)
 	}
@@ -251,11 +279,12 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	}
 	if registry.VersionIsolation.WireNegotiation || registry.VersionIsolation.AutomaticV2Fallback ||
 		registry.VersionIsolation.V2ArtifactAcceptedByV3 || registry.VersionIsolation.V3ArtifactAcceptedByV2 ||
-		!slices.Equal(registry.VersionIsolation.RejectionFields, []string{"magic", "profile", "path", "alpn", "crypto_label"}) ||
+		!slices.Equal(registry.VersionIsolation.RejectionFields, []string{"magic", "profile", "path", "subprotocol", "alpn", "crypto_label"}) ||
 		!slices.Equal(registry.VersionIsolation.V2Identifiers.Magic, []string{"FSB2", "FSA2", "FSC2", "FSH2", "FSS2", "FSR2", "FSD2"}) ||
 		!slices.Equal(registry.VersionIsolation.V2Identifiers.Profiles, []string{"flowersec/2", "flowersec-direct/2", "flowersec-tunnel/2"}) ||
+		!slices.Equal(registry.VersionIsolation.V2Identifiers.Paths, []string{"/flowersec/v2/direct", "/flowersec/v2/tunnel", "/flowersec/webtransport/v2/direct", "/flowersec/webtransport/v2/tunnel"}) ||
+		!slices.Equal(registry.VersionIsolation.V2Identifiers.Subprotocols, []string{"flowersec.direct.v2", "flowersec.tunnel.v2"}) ||
 		!slices.Equal(registry.VersionIsolation.V2Identifiers.ALPN, []string{"flowersec-direct/2", "flowersec-tunnel/2"}) ||
-		len(registry.VersionIsolation.V2Identifiers.Paths) != 6 ||
 		!slices.Equal(registry.VersionIsolation.V2Identifiers.CryptoLabels, transportV3V2CryptoLabels()) {
 		return fmt.Errorf("%s version isolation registry drifted", transportV3ContractPath)
 	}
@@ -426,13 +455,15 @@ func validateTransportV3FixtureShapes(repoRoot string) error {
 		} `json:"frames"`
 		ProfileMutations     []transportV3IsolationMutation `json:"profile_mutations"`
 		PathMutations        []transportV3IsolationMutation `json:"path_mutations"`
+		SubprotocolMutations []transportV3IsolationMutation `json:"subprotocol_mutations"`
 		ALPNMutations        []transportV3IsolationMutation `json:"alpn_mutations"`
 		CryptoLabelMutations []transportV3IsolationMutation `json:"crypto_label_mutations"`
 	}
 	if err := read("version_isolation_vectors.json", &isolation); err != nil {
 		return err
 	}
-	if len(isolation.Frames) != 7 || len(isolation.ProfileMutations) != 3 || len(isolation.PathMutations) != 6 ||
+	if len(isolation.Frames) != 7 || len(isolation.ProfileMutations) != 3 || len(isolation.PathMutations) != 4 ||
+		len(isolation.SubprotocolMutations) != 2 ||
 		len(isolation.ALPNMutations) != 2 || !slices.Equal(isolation.CryptoLabelMutations, transportV3CryptoLabelMutations) {
 		return fmt.Errorf("v3 version-isolation fixture shape drifted")
 	}
@@ -443,7 +474,8 @@ func validateTransportV3FixtureShapes(repoRoot string) error {
 	}
 	for field, mutations := range map[string][]transportV3IsolationMutation{
 		"profile": isolation.ProfileMutations, "path": isolation.PathMutations,
-		"alpn": isolation.ALPNMutations, "crypto label": isolation.CryptoLabelMutations,
+		"subprotocol": isolation.SubprotocolMutations,
+		"alpn":        isolation.ALPNMutations, "crypto label": isolation.CryptoLabelMutations,
 	} {
 		for _, mutation := range mutations {
 			if mutation.ID == "" || mutation.V3 == mutation.V2 || mutation.ErrorCode != "version_isolation" {

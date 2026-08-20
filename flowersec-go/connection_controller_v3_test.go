@@ -72,7 +72,7 @@ func TestConnectionControllerWaitUsesInjectedWallAndMonotonicClocks(t *testing.T
 	}
 	result := make(chan bool, 1)
 	go func() {
-		result <- controller.wait(context.Background(), &ConnectError{code: ConnectConnectionFailed}, retryableDisposition(), 5_000, 250*time.Millisecond)
+		result <- controller.wait(context.Background(), &ConnectError{code: ConnectConnectionFailed}, retryableDisposition(), 5_000, 250*time.Millisecond, 0)
 	}()
 	clock.waitForTimer(t, 0)
 	clock.advance(1_000, 250)

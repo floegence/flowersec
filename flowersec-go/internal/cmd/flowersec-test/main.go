@@ -67,8 +67,11 @@ func main() {
 }
 
 func runCLI(args []string) error {
+	if len(args) == 1 && args[0] == "preflight-public-ca" {
+		return validatePublicCAConfigurationFromEnvironment()
+	}
 	if len(args) == 0 || (args[0] != "run" && args[0] != "resume" && args[0] != "status") {
-		return errors.New("usage: flowersec-test <run|resume|status> [--suite NAME] [--report ABSOLUTE.md] [--budget DURATION] [--debug]")
+		return errors.New("usage: flowersec-test <run|resume|status|preflight-public-ca> [--suite NAME] [--report ABSOLUTE.md] [--budget DURATION] [--debug]")
 	}
 	action := args[0]
 	flags := flag.NewFlagSet(action, flag.ContinueOnError)
@@ -78,7 +81,7 @@ func runCLI(args []string) error {
 	budgetValue := flags.String("budget", "", "integrated performance suite wall-clock budget")
 	debug := flags.Bool("debug", false, "retain test-owned debug output")
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 || (action == "status" && (*debug || *report != "" || *budgetValue != "")) {
-		return errors.New("usage: flowersec-test <run|resume|status> [--suite NAME] [--report ABSOLUTE.md] [--budget DURATION] [--debug]")
+		return errors.New("usage: flowersec-test <run|resume|status|preflight-public-ca> [--suite NAME] [--report ABSOLUTE.md] [--budget DURATION] [--debug]")
 	}
 	performanceBudget := time.Duration(0)
 	if *suite == "performance" && action != "status" {

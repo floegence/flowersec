@@ -568,6 +568,10 @@ func runControllerVectorCycleReset(t *testing.T, scenario controllerVectorScenar
 	waitControllerSession(t, controller, firstSession)
 	firstSession.terminate()
 	waitControllerState(t, controller, ConnectionWaiting)
+	waiting := controller.Snapshot()
+	if waiting.Attempt != 0 {
+		t.Fatalf("post-session waiting attempt = %d, want 0", waiting.Attempt)
+	}
 	if !controller.RetryNow() {
 		t.Fatal("post-session retry was not reset to ordinal one")
 	}
