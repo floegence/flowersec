@@ -281,6 +281,14 @@ describe("transport v3 artifact, TLS policy, and admission", () => {
     new DataView(unknownFrame.buffer).setUint16(6, reason.length, false);
     unknownFrame.set(reason, 8);
     expect(decodeFSA3ResponseV3(unknownFrame)).toEqual({ status: 1, reason: "unknown_reason" });
+    expect(() => decodeFSA3ResponseV3(
+      Uint8Array.from([0x46, 0x53, 0x41, 0x33, 3, 1, 0, 16,
+        ...new TextEncoder().encode("expired_artifact")]),
+    )).toThrowError(ArtifactV3Error);
+    expect(() => encodeFSA3ResponseV3(
+      { status: 1, reason: "expired_artifact" },
+      new Set(["expired_artifact"]),
+    )).toThrowError(ArtifactV3Error);
   });
 });
 

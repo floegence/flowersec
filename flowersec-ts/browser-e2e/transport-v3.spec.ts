@@ -222,6 +222,51 @@ test("Chromium WebTransport production adapter accepts a public-CA certificate i
   }
 });
 
+test("Chromium runs the WebSocket open failure as retryable before durable spend", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "requires Chromium browser WebSocket coverage");
+  test.setTimeout(30_000);
+  const site = await startBrowserModuleSite();
+  try {
+    const source = fixture.positive.find(({ id }) => id === "direct-mixed-security");
+    if (source === undefined) throw new Error("direct mixed-security artifact fixture is missing");
+    const artifact = JSON.parse(source.artifact_json) as {
+      path: { candidates: Array<{ carrier: string; tls: unknown; url: string }> };
+    };
+    const candidate = artifact.path.candidates.find(({ carrier }) => carrier === "websocket");
+    if (candidate === undefined) throw new Error("WebSocket v3 candidate is missing");
+    candidate.tls = { mode: "ca" };
+    candidate.url = "wss://127.0.0.1:1/flowersec/v3/direct";
+    artifact.path.candidates = [candidate];
+    await page.goto(site.origin, { waitUntil: "networkidle" });
+    const result = await page.evaluate(async (artifactJSON) => {
+      const sdk = await import("/dist/browser/index.js");
+      let spendCount = 0;
+      try {
+        const session = await sdk.connect(sdk.createArtifactLease(
+          sdk.parseArtifact(artifactJSON),
+          async () => { spendCount += 1; },
+        ));
+        await session.close().catch(() => undefined);
+        return { connected: true, spendCount };
+      } catch (error) {
+        if (!(error instanceof sdk.ConnectError)) throw error;
+        return {
+          connected: false,
+          spendCount,
+          error: { code: error.code, disposition: error.disposition.kind },
+        };
+      }
+    }, JSON.stringify(artifact));
+    expect(result).toEqual({
+      connected: false,
+      spendCount: 0,
+      error: { code: "connection_failed", disposition: "retryable" },
+    });
+  } finally {
+    await site.close();
+  }
+});
+
 test("Chromium WebTransport production adapter rejects a wrong pin for a public-CA certificate without CA fallback", async ({ browser, browserName }) => {
   test.skip(browserName !== "chromium", "requires Chromium WebTransport certificate hashes");
   requirePublicCAConfiguration();
@@ -371,7 +416,7 @@ test("Chromium WebTransport delegates CA trust without certificate hashes", asyn
         ));
       } catch (error) {
         if (!(error instanceof sdk.ConnectError)) throw error;
-        code = error.code;
+        code = `${error.code}:${error.disposition.kind}`;
       }
       const constructorURL = calls[0]?.[0];
       return {
@@ -388,7 +433,7 @@ test("Chromium WebTransport delegates CA trust without certificate hashes", asyn
     expect(vector.whatwg_roundtrip).toBe(true);
     expect(result).toEqual({
       argumentCount: 1,
-      code: "connection_failed",
+      code: "connection_failed:retryable",
       constructorURL: vector.normalized,
       roundtrips: normalizedURLs,
       roundtripURL: vector.normalized,

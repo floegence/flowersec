@@ -834,27 +834,43 @@ impl TaskRuntime {
             (leg.carrier.clone(), peer.carrier.clone())
         };
         if client.kind() == CarrierKind::Wss {
-            client
-                .set_multiplexer_client(false)
-                .map_err(|_| TunnelRuntimeError::AdmissionFailed)?;
-            server
-                .set_multiplexer_client(true)
-                .map_err(|_| TunnelRuntimeError::AdmissionFailed)?;
+            if client.set_multiplexer_client(false).is_err() {
+                self.rollback_active_pair(&peer, &leg, &client, &server)
+                    .await;
+                return Err(TunnelRuntimeError::AdmissionFailed);
+            }
+            if server.set_multiplexer_client(true).is_err() {
+                self.rollback_active_pair(&peer, &leg, &client, &server)
+                    .await;
+                return Err(TunnelRuntimeError::AdmissionFailed);
+            }
         }
-        send_fsa3(
+        if send_fsa3(
             peer.admission.as_ref(),
             0,
             "",
             &self.options.admission_reasons,
         )
-        .await?;
-        send_fsa3(
+        .await
+        .is_err()
+        {
+            self.rollback_active_pair(&peer, &leg, &client, &server)
+                .await;
+            return Err(TunnelRuntimeError::AdmissionFailed);
+        }
+        if send_fsa3(
             leg.admission.as_ref(),
             0,
             "",
             &self.options.admission_reasons,
         )
-        .await?;
+        .await
+        .is_err()
+        {
+            self.rollback_active_pair(&peer, &leg, &client, &server)
+                .await;
+            return Err(TunnelRuntimeError::AdmissionFailed);
+        }
         let pair_id = self.state.next_pair_id.fetch_add(1, Ordering::Relaxed);
         self.state
             .active_carriers
@@ -870,6 +886,21 @@ impl TaskRuntime {
         self.authorizer.release(&peer.lease_id).await;
         self.authorizer.release(&leg.lease_id).await;
         Ok(())
+    }
+
+    async fn rollback_active_pair(
+        &self,
+        peer: &Leg,
+        leg: &Leg,
+        client: &Arc<dyn CarrierSessionV3>,
+        server: &Arc<dyn CarrierSessionV3>,
+    ) {
+        let _ = tokio::join!(client.close(), server.close());
+        let mut active = self.state.active_pairs.lock().await;
+        *active = active.saturating_sub(1);
+        drop(active);
+        self.authorizer.release(&peer.lease_id).await;
+        self.authorizer.release(&leg.lease_id).await;
     }
 }
 

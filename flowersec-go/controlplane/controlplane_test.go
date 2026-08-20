@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -141,6 +142,11 @@ func TestRuntimeAuthorizationReturnsExactRetryAtArtifactExpiry(t *testing.T) {
 			}
 			if string(encoded) != test.want {
 				t.Fatalf("expired artifact response = %s, want %s", encoded, test.want)
+			}
+			request.decoded.Raw = slices.Clone(request.decoded.Raw)
+			request.decoded.Raw[len(request.decoded.Raw)-1] ^= 1
+			if _, err := test.authorize(request, record); !errors.Is(err, ErrInvalidControlPlaneInput) {
+				t.Fatalf("expired artifact with mismatched FSB3 returned %v, want invalid control-plane input", err)
 			}
 		})
 	}

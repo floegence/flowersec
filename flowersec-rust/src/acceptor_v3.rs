@@ -478,6 +478,19 @@ async fn admit_direct(
             return Err(code);
         }
     };
+    if decode_direct_fsb3(&raw).is_err() {
+        let _ = admission.reset().await;
+        carrier.abort();
+        return Err(AcceptErrorCode::HandshakeFailed);
+    }
+    let Some(matched) = expected.iter().find(|candidate| {
+        candidate.raw.len() == raw.len()
+            && bool::from(candidate.raw.as_slice().ct_eq(raw.as_slice()))
+    }) else {
+        let _ = admission.reset().await;
+        carrier.abort();
+        return Ok(None);
+    };
     if unix_seconds() >= expires_at_unix_seconds {
         let response_result = if let Err(code) =
             write_all(admission.as_ref(), FSA3_EXPIRED, deadline, cancellation).await
@@ -502,19 +515,6 @@ async fn admit_direct(
         carrier.abort();
         return Err(AcceptErrorCode::Expired);
     }
-    if decode_direct_fsb3(&raw).is_err() {
-        let _ = admission.reset().await;
-        carrier.abort();
-        return Err(AcceptErrorCode::HandshakeFailed);
-    }
-    let Some(matched) = expected.iter().find(|candidate| {
-        candidate.raw.len() == raw.len()
-            && bool::from(candidate.raw.as_slice().ct_eq(raw.as_slice()))
-    }) else {
-        let _ = admission.reset().await;
-        carrier.abort();
-        return Ok(None);
-    };
     write_all(admission.as_ref(), FSA3_SUCCESS, deadline, cancellation).await?;
     tokio::select! {
         biased;

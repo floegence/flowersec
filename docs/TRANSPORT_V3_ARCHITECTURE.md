@@ -419,6 +419,38 @@ with `errors.Is`. `ErrIssuanceFailed` is independent and is never wrapped by or
 projected as `ControlPlaneError`. The exact public symbol and error inventory
 is frozen in `stability/api_contract_manifest.json`.
 
+The typed issuer surface is normative and has no URL-only compatibility
+overload:
+
+~~~go
+type EndpointConfig struct { ID string; URL string; TLS TLSPolicy }
+func NewEndpointSet(endpoints ...EndpointConfig) (EndpointSet, error)
+func CAPolicy() TLSPolicy
+func PinPolicy(pins ...CertificatePin) (TLSPolicy, error)
+type ControlPlaneErrorCode string
+type ControlPlaneError struct { /* private fields */ }
+func (e *ControlPlaneError) Error() string
+func (e *ControlPlaneError) Code() ControlPlaneErrorCode
+func (e *ControlPlaneError) FieldPath() string
+func (e *ControlPlaneError) Unwrap() error
+~~~
+
+The six `ControlPlaneErrorCode` values are exactly
+`invalid_endpoint_count`, `invalid_endpoint_id`, `invalid_endpoint_url`,
+`duplicate_endpoint`, `invalid_tls_policy`, and `invalid_pin`. `FieldPath()`
+is restricted to `endpoints`, `endpoints[<index>]` plus `.id`, `.url`, `.tls`,
+or `.tls.pins[<index>].not_after`, and the pin constructor paths `pins`,
+`pins[<index>]`, `pins[<index>].sha256`, and `pins[<index>].not_after`.
+`Error()` is always `flowersec control-plane input is invalid`; it never
+contains URLs, pins, certificates, credentials, or parser text. Endpoint and
+TLS revalidation errors use `ControlPlaneError` and unwrap only to
+`ErrInvalidControlPlaneInput`; invalid non-endpoint issuance input returns that
+sentinel directly, while provider or randomness failures return the independent
+`ErrIssuanceFailed` (`flowersec artifact issuance failed`). `PinPolicy` stores
+whole-second UTC expiry and canonical base64url SHA-256 pins sorted by encoded
+ASCII value, and rejects zero, duplicate, oversized, subsecond, or out-of-range
+pin sets. These rules apply equally to `IssueDirect` and `IssueTunnelPair`.
+
 ## 11. Certificate Rotation
 
 Deployment publishes an artifact containing old and new pins before switching

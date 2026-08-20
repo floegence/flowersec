@@ -306,6 +306,11 @@ networkDescribe("Node production server runtime v3", () => {
   });
 
   test("pairs production v3 WSS tunnel roles without exposing the encrypted session", async () => {
+    let releaseStarted!: () => void;
+    const releaseBegan = new Promise<void>((resolve) => { releaseStarted = resolve; });
+    let allowRelease!: () => void;
+    const releaseGate = new Promise<void>((resolve) => { allowRelease = resolve; });
+    let runtimeClosed = false;
     const runtime = createTunnelRuntimeV3({
       listeners: [{
         carrier: "websocket",
@@ -324,6 +329,10 @@ networkDescribe("Node production server runtime v3", () => {
           ? "endpoint-server"
           : "endpoint-client",
       }),
+      release: async () => {
+        releaseStarted();
+        await releaseGate;
+      },
     });
     await runtime.start();
     const port = runtime.addresses()[0]!.port;
@@ -348,8 +357,19 @@ networkDescribe("Node production server runtime v3", () => {
       await outgoing.write(new Uint8Array([3, 1, 2, 3]));
       expect(await incoming.stream.read()).toEqual(new Uint8Array([3, 1, 2, 3]));
       await Promise.all([client.close(), server.close()]);
+      await releaseBegan;
+      const firstRuntimeClose = runtime.close();
+      const secondRuntimeClose = runtime.close();
+      let secondResolved = false;
+      void secondRuntimeClose.then(() => { secondResolved = true; });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(secondResolved).toBe(false);
+      allowRelease();
+      await Promise.all([firstRuntimeClose, secondRuntimeClose]);
+      runtimeClosed = true;
     } finally {
-      await runtime.close();
+      allowRelease();
+      if (!runtimeClosed) await runtime.close();
     }
   });
 });

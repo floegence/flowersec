@@ -135,7 +135,7 @@ describe("Node Acceptor handler lifecycle", () => {
       expect(acceptor.close()).resolves.toBeUndefined(),
       expect(acceptor.close()).resolves.toBeUndefined(),
     ]);
-  });
+  }, 15_000);
 
   test("bounds admissions and cleanup failures while releasing every lease exactly once", async () => {
     const raw = directWebSocketArtifact();

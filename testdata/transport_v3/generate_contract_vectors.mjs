@@ -432,6 +432,7 @@ const fsa3Negative = [
   frameNegative("fsa3-invalid-reason-lead", "fsa3", Buffer.from(fsa3(1, "1invalid"), "hex"), "invalid_fsa3"),
   frameNegative("fsa3-invalid-reason-character", "fsa3", Buffer.from(fsa3(1, "invalid-token"), "hex"), "invalid_fsa3"),
   frameNegative("fsa3-forbidden-tls-reason", "fsa3", Buffer.from(fsa3(1, "tls_pin_mismatch"), "hex"), "invalid_fsa3"),
+  frameNegative("fsa3-expired-artifact-reject-status", "fsa3", Buffer.from(fsa3(1, "expired_artifact"), "hex"), "invalid_fsa3"),
   frameNegative("fsa3-reason-too-long", "fsa3", Buffer.from(fsa3(1, "a".repeat(65)), "hex"), "invalid_fsa3"),
   frameNegative("fsa3-trailing-byte", "fsa3", Buffer.concat([Buffer.from(fsa3(1, "invalid_token"), "hex"), Buffer.from([0])]), "invalid_fsa3"),
   frameNegative("fsa3-invalid-utf8", "fsa3", Buffer.from([0x46, 0x53, 0x41, 0x33, 3, 1, 0, 1, 0xff]), "invalid_fsa3"),

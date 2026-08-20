@@ -88,11 +88,17 @@ export class AcceptorV3 {
 
   async close(): Promise<void> {
     const state = acceptorState(this);
-    if (state.closed) return;
-    state.closed = true;
-    state.abort.abort(new Error("Flowersec v3 acceptor closed"));
-    const results = await Promise.allSettled(state.listeners.map(async (listener) => await listener.close()));
-    if (results.some(({ status }) => status === "rejected")) throw new Error("Flowersec v3 acceptor cleanup failed");
+    const existing = closes.get(state);
+    if (existing !== undefined) return await existing;
+    const closing = (async () => {
+      await Promise.resolve();
+      state.closed = true;
+      state.abort.abort(new Error("Flowersec v3 acceptor closed"));
+      const results = await Promise.allSettled(state.listeners.map(async (listener) => await listener.close()));
+      if (results.some(({ status }) => status === "rejected")) throw new Error("Flowersec v3 acceptor cleanup failed");
+    })();
+    closes.set(state, closing);
+    return await closing;
   }
 }
 
@@ -107,6 +113,7 @@ type AcceptorStateV3 = {
   cursor: number;
 };
 const acceptorStatesV3 = new WeakMap<AcceptorV3, AcceptorStateV3>();
+const closes = new WeakMap<AcceptorStateV3, Promise<void>>();
 
 export async function createAcceptorV3(options: AcceptorOptionsV3): Promise<AcceptorV3> {
   validateOptions(options);

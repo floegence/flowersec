@@ -352,6 +352,9 @@ struct TransportV3Tests {
       #expect(decoded.status.rawValue == UInt8(status), Comment(rawValue: id))
       #expect(decoded.reason == reason, Comment(rawValue: id))
     }
+    #expect(throws: AdmissionCodecErrorV3.self) {
+      try AdmissionCodecV3.decodeFSA3(Data(hexV3: "4653413303010010657870697265645f6172746966616374"))
+    }
 
     let activePinSnapshots = try #require(vectors["active_pin_snapshots"] as? [[String: Any]])
     for vector in activePinSnapshots {

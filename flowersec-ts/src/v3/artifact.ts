@@ -1209,6 +1209,9 @@ function validateFSA3Response(
       if (!/^[a-z][a-z0-9_]*$/.test(response.reason) || utf8Length(response.reason) > MAX_ADMISSION_REASON_BYTES) {
         throw invalidFSA3("reason token");
       }
+      if (response.reason === "expired_artifact" && response.status !== AdmissionStatusV3.Retryable) {
+        throw invalidFSA3("expired artifact status");
+      }
       if (FORBIDDEN_FSA3_REASONS.has(response.reason)) throw invalidFSA3("transport security reason");
       if (requireRegisteredReason && !admissionReasons.has(response.reason)) {
         throw invalidFSA3("unregistered reason");

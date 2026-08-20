@@ -94,14 +94,20 @@ export class TunnelRuntimeV3 {
 
   async close(): Promise<void> {
     const state = tunnelRuntimeStateV3(this);
-    if (state.abort.signal.aborted) return;
-    state.abort.abort(new Error("Flowersec tunnel runtime closed"));
-    for (const generation of [...state.generations.values()]) finishGeneration(state, generation);
-    const starting = starts.get(state);
-    if (starting !== undefined) await Promise.allSettled([starting]);
-    await Promise.allSettled(state.listeners.map(async (listener) => await listener.close()));
-    await boundedCleanup(state.tasks, state.limits.cleanupTimeoutMs);
-    state.tasks.clear();
+    const existing = closes.get(state);
+    if (existing !== undefined) return await existing;
+    const closing = (async () => {
+      await Promise.resolve();
+      state.abort.abort(new Error("Flowersec tunnel runtime closed"));
+      for (const generation of [...state.generations.values()]) finishGeneration(state, generation);
+      const starting = starts.get(state);
+      if (starting !== undefined) await Promise.allSettled([starting]);
+      await Promise.allSettled(state.listeners.map(async (listener) => await listener.close()));
+      await boundedCleanup(state.tasks, state.limits.cleanupTimeoutMs);
+      state.tasks.clear();
+    })();
+    closes.set(state, closing);
+    return await closing;
   }
 }
 
@@ -171,6 +177,7 @@ export function createTunnelRuntimeV3(options: TunnelRuntimeOptionsV3): TunnelRu
 }
 
 const starts = new WeakMap<TunnelRuntimeStateV3, Promise<void>>();
+const closes = new WeakMap<TunnelRuntimeStateV3, Promise<void>>();
 
 async function startTunnelRuntimeV3(state: TunnelRuntimeStateV3): Promise<void> {
   if (state.abort.signal.aborted) throw new Error("Flowersec tunnel runtime is closed");

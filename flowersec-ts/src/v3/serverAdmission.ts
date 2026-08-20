@@ -35,7 +35,10 @@ export function createAdmissionReasonRegistryV3(
   for (const reason of [...builtInReasons, ...deploymentReasons]) {
     if (registry.has(reason)) throw new TypeError(`duplicate Flowersec v3 admission reason: ${reason}`);
     registry.add(reason);
-    encodeFSA3ResponseV3({ status: AdmissionStatusV3.Reject, reason }, registry);
+    encodeFSA3ResponseV3({
+      status: reason === "expired_artifact" ? AdmissionStatusV3.Retryable : AdmissionStatusV3.Reject,
+      reason,
+    }, registry);
   }
   return registry;
 }
@@ -93,13 +96,6 @@ export async function acceptReceivedSessionV3(
 ): Promise<SessionV3> {
   try {
     validateArtifactV3(artifact);
-    if ((options.nowUnixSeconds?.() ?? Math.floor(Date.now() / 1_000)) >= artifact.session.init_expire_at_unix_s) {
-      return await rejectSessionAdmissionV3(received, {
-        accepted: false,
-        status: AdmissionStatusV3.Retryable,
-        reason: "expired_artifact",
-      }, options.admissionReasons, options.signal);
-    }
     const expected = encodeFSB3RequestV3(
       buildFSB3RequestV3(artifact, received.decoded.request.chosen_candidate_id),
     );
@@ -108,6 +104,13 @@ export async function acceptReceivedSessionV3(
       id === received.decoded.request.chosen_candidate_id);
     if (chosen?.carrier !== received.carrier.kind || received.decoded.request.pathKind !== received.carrier.path) {
       throw new Error("admission carrier binding mismatch");
+    }
+    if ((options.nowUnixSeconds?.() ?? Math.floor(Date.now() / 1_000)) >= artifact.session.init_expire_at_unix_s) {
+      return await rejectSessionAdmissionV3(received, {
+        accepted: false,
+        status: AdmissionStatusV3.Retryable,
+        reason: "expired_artifact",
+      }, options.admissionReasons, options.signal);
     }
     if (received.carrier.kind === "websocket") {
       configureServerWebSocketCarrierRoleV3(received.carrier, false);

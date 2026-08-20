@@ -163,10 +163,12 @@ func (runtime *TunnelRuntime) serveNative(ctx context.Context, native carrier.Se
 	defer cancel()
 	stream, err := acceptorNativeAdmissionStream(admissionCtx, native)
 	if err != nil {
+		_ = native.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "admission failed"})
 		return err
 	}
 	leg, err := tunnelv3.NewNativeStreamLeg(native, stream)
 	if err != nil {
+		_ = native.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "admission failed"})
 		return err
 	}
 	return runtime.coordinator.Serve(context.WithValue(ctx, acceptorTransportContextKey{}, acceptorTransportContext{carrier: string(native.Kind()), remoteAddress: remote}), leg)

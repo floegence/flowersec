@@ -268,12 +268,6 @@ func authorizeRuntimeAt(request RuntimeAuthorizationRequest, record Authorizatio
 		return AuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
 	artifact := record.artifact
-	if now.Unix() >= artifact.Session.InitExpireAtUnixSeconds {
-		// Expiry is an admission outcome, not malformed control-plane input.
-		// Preserve the FSA3 retryable response so the server can reject the
-		// already-authenticated request without silently closing the carrier.
-		return RejectRuntime(artifactv3.ReasonExpiredArtifact, true)
-	}
 	expected, err := artifactv3.BuildRequest(*artifact, request.decoded.Request.ChosenCandidateID)
 	if err != nil {
 		return AuthorizationResponse{}, ErrInvalidControlPlaneInput
@@ -281,6 +275,9 @@ func authorizeRuntimeAt(request RuntimeAuthorizationRequest, record Authorizatio
 	expectedRaw, err := artifactv3.MarshalRequest(expected)
 	if err != nil || subtle.ConstantTimeCompare(expectedRaw, request.decoded.Raw) != 1 {
 		return AuthorizationResponse{}, ErrInvalidControlPlaneInput
+	}
+	if now.Unix() >= artifact.Session.InitExpireAtUnixSeconds {
+		return RejectRuntime(artifactv3.ReasonExpiredArtifact, true)
 	}
 	wire := runtimeAuthorizationResponseWire{
 		Decision: "allow", CredentialID: record.lookupKey, LeaseID: leaseID,
@@ -311,9 +308,6 @@ func authorizeTunnelRuntimeAt(request RuntimeAuthorizationRequest, record Author
 		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
 	artifact := record.artifact
-	if now.Unix() >= artifact.Session.InitExpireAtUnixSeconds {
-		return RejectTunnelRuntime(artifactv3.ReasonExpiredArtifact, true)
-	}
 	expected, err := artifactv3.BuildRequest(*artifact, request.decoded.Request.ChosenCandidateID)
 	if err != nil {
 		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
@@ -321,6 +315,9 @@ func authorizeTunnelRuntimeAt(request RuntimeAuthorizationRequest, record Author
 	expectedRaw, err := artifactv3.MarshalRequest(expected)
 	if err != nil || subtle.ConstantTimeCompare(expectedRaw, request.decoded.Raw) != 1 {
 		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
+	}
+	if now.Unix() >= artifact.Session.InitExpireAtUnixSeconds {
+		return RejectTunnelRuntime(artifactv3.ReasonExpiredArtifact, true)
 	}
 	return AllowTunnelRuntime(
 		request,

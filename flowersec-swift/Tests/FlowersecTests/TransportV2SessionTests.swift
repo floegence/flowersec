@@ -628,6 +628,10 @@ final class TransportV2SessionTests: XCTestCase {
 
     try await clientSession.close()
     let serverClosed = await serverSession.waitClosed()
+    let clientCarrierClosed = await clientEvents.waitFor(.carrierClose)
+    let serverCarrierClosed = await serverEvents.waitFor(.carrierClose)
+    XCTAssertTrue(clientCarrierClosed)
+    XCTAssertTrue(serverCarrierClosed)
     let clientOutbound = await clientEvents.outboundEvents()
     let serverOutbound = await serverEvents.outboundEvents()
     XCTAssertEqual(serverClosed, .closed)
@@ -2199,6 +2203,10 @@ private actor CloseCarrierEventsV2 {
 
   func waitForReads(_ count: Int) async -> Bool {
     await waitUntil { events.filter { $0 == .read }.count >= count }
+  }
+
+  func waitFor(_ event: CloseCarrierEventV2) async -> Bool {
+    await waitUntil { events.contains(event) }
   }
 
   func outboundEvents() -> [CloseCarrierEventV2] {

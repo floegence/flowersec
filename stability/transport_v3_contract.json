@@ -590,7 +590,7 @@
     }},
     {"id": "controller", "path": "testdata/transport_v3/controller_vectors.json", "consumers": {
       "go": ["flowersec-go/connection_controller_test.go"],
-      "typescript": ["flowersec-ts/src/v3/controller.test.ts"],
+      "typescript": ["flowersec-ts/src/v3/controller.test.ts", "flowersec-ts/src/v3/controllerVectors.test.ts"],
       "rust": ["flowersec-rust/src/connection_controller.rs"],
       "swift": ["flowersec-swift/Tests/FlowersecTests/ConnectionControllerTests.swift"]
     }},

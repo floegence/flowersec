@@ -347,6 +347,9 @@ pub(crate) fn decode_fsa3(frame: &[u8]) -> Result<AdmissionResponseV3, ArtifactE
         .to_owned();
     match status {
         AdmissionStatusV3::Success if !reason.is_empty() => return Err(ArtifactErrorV3::Invalid),
+        AdmissionStatusV3::Reject if reason == "expired_artifact" => {
+            return Err(ArtifactErrorV3::Invalid);
+        }
         AdmissionStatusV3::Reject | AdmissionStatusV3::Retryable
             if !valid_reason(&reason) || FORBIDDEN_FSA3_REASONS.contains(&reason.as_str()) =>
         {
@@ -1926,6 +1929,7 @@ mod tests {
         let retryable = decode_fsa3(b"FSA3\x03\x02\x00\x10expired_artifact").unwrap();
         assert_eq!(retryable.status, AdmissionStatusV3::Retryable);
         assert_eq!(retryable.reason, "expired_artifact");
+        assert!(decode_fsa3(b"FSA3\x03\x01\x00\x10expired_artifact").is_err());
         assert!(decode_fsa3(b"FSA3\x03\x01\x00\x081invalid").is_err());
         assert!(decode_fsa3(b"FSA3\x03\x01\x00\x08_invalid").is_err());
         assert!(decode_fsa3(b"FSA3\x03\x01\x00\x10tls_pin_mismatch").is_err());

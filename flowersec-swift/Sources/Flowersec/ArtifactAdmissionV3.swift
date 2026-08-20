@@ -205,6 +205,7 @@ enum AdmissionCodecV3 {
       let bytes = Array(reason.utf8)
       guard !bytes.isEmpty, bytes.count <= 64, (97...122).contains(bytes[0]),
         bytes.allSatisfy({ (97...122).contains($0) || (48...57).contains($0) || $0 == 95 }),
+        !(reason == "expired_artifact" && status != .retryable),
         !forbiddenTransportSecurityReason(reason)
       else { throw AdmissionCodecErrorV3.invalid }
     }
