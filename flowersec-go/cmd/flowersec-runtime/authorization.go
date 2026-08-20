@@ -393,7 +393,11 @@ func admissionDecision(decision authorizationResponse, reasons artifactv3.Reason
 		if decision.Decision == "retry" {
 			status = artifactv3.AdmissionRetryable
 		}
-		return artifactv3.AdmissionResponse{Status: status, Reason: decision.Reason}, false, nil
+		response := artifactv3.AdmissionResponse{Status: status, Reason: decision.Reason}
+		if _, err := artifactv3.MarshalResponse(response, reasons); err != nil {
+			return artifactv3.AdmissionResponse{}, false, ErrInvalidAuthorization
+		}
+		return response, false, nil
 	default:
 		return artifactv3.AdmissionResponse{}, false, ErrInvalidAuthorization
 	}

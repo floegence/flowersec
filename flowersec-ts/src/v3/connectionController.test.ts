@@ -597,6 +597,74 @@ describe("transport v3 production connection controller", () => {
     expect(cleanup).toHaveBeenCalledTimes(expected.retire_callbacks);
   });
 
+  test("does not acquire after a connecting subscriber closes synchronously", async () => {
+    const acquire = vi.fn(async (): Promise<ArtifactSourceResultV3> => {
+      throw new Error("acquisition must not start after close");
+    });
+    const connector = vi.fn(async () => {
+      throw new Error("connector must not run");
+    });
+    const controller = createConnectionControllerV3({ acquire }, connector, { capabilitySnapshot });
+    const states: string[] = [];
+    let subscriberClose: Promise<void> | undefined;
+    controller.subscribe((snapshot) => {
+      states.push(snapshot.state);
+      if (snapshot.state === "connecting") subscriberClose = controller.close();
+    });
+
+    controller.start();
+    const repeatedClose = controller.close();
+
+    expect(subscriberClose).toBe(repeatedClose);
+    await repeatedClose;
+    expect(states).toEqual(["idle", "connecting", "closed"]);
+    expect(controller.state).toBe("closed");
+    expect(acquire).not.toHaveBeenCalled();
+    expect(connector).not.toHaveBeenCalled();
+  });
+
+  test("returns one close promise when a closed subscriber closes synchronously", async () => {
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined);
+    let finishSessionClose!: () => void;
+    const sessionClose = vi.fn(async () => await new Promise<void>((resolve) => {
+      finishSessionClose = resolve;
+    }));
+    const session: ManagedSessionV3 = {
+      waitTermination: async () => await new Promise<Readonly<{ error: Error }>>(() => undefined),
+      close: sessionClose,
+    };
+    const controller = createConnectionControllerV3({
+      acquire: async () => ({ kind: "lease", lease }),
+    }, async (context) => {
+      await commitArtifactLeaseSpendV3(context.claim);
+      return { kind: "established", session };
+    }, { nowUnixSeconds: () => 1_900_000_000, capabilitySnapshot });
+    controller.start();
+    await expect(controller.waitForSession()).resolves.toBe(session);
+
+    let closedNotifications = 0;
+    let subscriberClose: Promise<void> | undefined;
+    controller.subscribe((snapshot) => {
+      if (snapshot.state !== "closed") return;
+      closedNotifications += 1;
+      subscriberClose = controller.close();
+    });
+    const closing = controller.close();
+
+    expect(subscriberClose).toBe(closing);
+    expect(controller.close()).toBe(closing);
+    expect(closedNotifications).toBe(1);
+    expect(sessionClose).toHaveBeenCalledOnce();
+    let settled = false;
+    void closing.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finishSessionClose();
+    await closing;
+    expect(settled).toBe(true);
+    expect(sessionClose).toHaveBeenCalledOnce();
+  });
+
   test("closes an established session delivered after controller close wins", async () => {
     const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined);
     let markConnectorStarted!: () => void;

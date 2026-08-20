@@ -160,8 +160,14 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
   get failure(): ConnectionControllerFailureV3 | undefined { return this.#failure; }
 
   start(): void {
-    if (this.#state !== "idle") return;
-    this.#scheduler = this.#run();
+    if (this.#state !== "idle" || this.#scheduler !== undefined) return;
+    let resolveScheduler!: () => void;
+    let rejectScheduler!: (reason?: unknown) => void;
+    this.#scheduler = new Promise<void>((resolve, reject) => {
+      resolveScheduler = resolve;
+      rejectScheduler = reject;
+    });
+    void this.#run().then(resolveScheduler, rejectScheduler);
   }
 
   retryNow(): boolean {
@@ -220,16 +226,19 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
 
   close(): Promise<void> {
     if (this.#closeOperation !== undefined) return this.#closeOperation;
+    let resolveClose!: () => void;
+    const closeOperation = new Promise<void>((resolve) => { resolveClose = resolve; });
+    this.#closeOperation = closeOperation;
     const active = this.#session;
     this.#session = undefined;
     this.#disposition = undefined;
     this.#lifetime.abort(new ConnectionControllerV3Error("closed", this.#failure));
     this.#transition("closed");
-    this.#closeOperation = Promise.allSettled([
+    void Promise.allSettled([
       this.#scheduler ?? Promise.resolve(),
       active?.close() ?? Promise.resolve(),
-    ]).then(() => undefined);
-    return this.#closeOperation;
+    ]).then(() => resolveClose());
+    return closeOperation;
   }
 
   async #run(): Promise<void> {
@@ -261,6 +270,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
       }
       this.#disposition = undefined;
       this.#transition("connecting");
+      if (this.#lifetime.signal.aborted) return;
       let capability: RuntimeCapabilityDescriptorV3;
       try {
         capability = this.#capabilitySnapshot();

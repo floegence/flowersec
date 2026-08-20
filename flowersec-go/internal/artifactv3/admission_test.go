@@ -1,6 +1,9 @@
 package artifactv3
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestFSA3RejectsTransportSecurityReasons(t *testing.T) {
 	for _, reason := range []string{
@@ -20,5 +23,25 @@ func TestFSA3RejectsTransportSecurityReasons(t *testing.T) {
 				t.Fatal("transport security reason was accepted from peer")
 			}
 		})
+	}
+}
+
+func TestFSA3ExpiredArtifactIsAlwaysRetryable(t *testing.T) {
+	reasons := ReasonRegistry{ReasonExpiredArtifact: {}}
+	want := []byte("FSA3\x03\x02\x00\x10expired_artifact")
+	encoded, err := MarshalResponse(AdmissionResponse{Status: AdmissionRetryable, Reason: ReasonExpiredArtifact}, reasons)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(encoded, want) {
+		t.Fatalf("expired artifact FSA3 = %x, want %x", encoded, want)
+	}
+	for _, parse := range []func([]byte) (AdmissionResponse, error){
+		func(raw []byte) (AdmissionResponse, error) { return ParseResponse(raw, reasons) },
+		ParseClientResponse,
+	} {
+		if _, err := parse([]byte("FSA3\x03\x01\x00\x10expired_artifact")); err == nil {
+			t.Fatal("expired_artifact was accepted with reject status")
+		}
 	}
 }

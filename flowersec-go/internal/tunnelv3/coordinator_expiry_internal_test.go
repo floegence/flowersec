@@ -66,6 +66,17 @@ func TestRegisterRevalidatesBothAuthorizationExpiriesBeforeActivation(t *testing
 	}
 }
 
+func TestDefaultReasonRegistryIncludesRetryableExpiredArtifact(t *testing.T) {
+	reasons := DefaultReasonRegistry()
+	response := artifactv3.AdmissionResponse{
+		Status: artifactv3.AdmissionRetryable,
+		Reason: artifactv3.ReasonExpiredArtifact,
+	}
+	if _, err := artifactv3.MarshalResponse(response, reasons); err != nil {
+		t.Fatalf("default tunnel registry rejected retryable expiry: %v", err)
+	}
+}
+
 type expiryTestPendingLeg struct {
 	responses   atomic.Int32
 	activations atomic.Int32

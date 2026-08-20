@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"sync"
@@ -227,11 +228,26 @@ func (runtime *TunnelRuntime) authorize(ctx context.Context, decoded *artifactv3
 	}
 	decoder := json.NewDecoder(bytes.NewReader(response.JSON()))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&wire); err != nil {
+	if err := decoder.Decode(&wire); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
 		return tunnelv3.Authorization{}, ErrInvalidTunnelRuntime
 	}
-	if wire.Decision != "allow" {
-		return tunnelv3.Authorization{}, &admissionv3.ResponseError{Status: artifactv3.AdmissionReject, Reason: wire.Reason}
+	if wire.Decision == "reject" || wire.Decision == "retry" {
+		if wire.CredentialID != "" || wire.LeaseID != "" || !wire.ExpiresAt.IsZero() ||
+			wire.ExpectedPeerEndpointInstanceID != "" || wire.AllowReplacement {
+			return tunnelv3.Authorization{}, ErrInvalidTunnelRuntime
+		}
+		status := artifactv3.AdmissionReject
+		if wire.Decision == "retry" {
+			status = artifactv3.AdmissionRetryable
+		}
+		admission := artifactv3.AdmissionResponse{Status: status, Reason: wire.Reason}
+		if _, err := artifactv3.MarshalResponse(admission, tunnelv3.DefaultReasonRegistry()); err != nil {
+			return tunnelv3.Authorization{}, ErrInvalidTunnelRuntime
+		}
+		return tunnelv3.Authorization{}, &admissionv3.ResponseError{Status: status, Reason: wire.Reason}
+	}
+	if wire.Decision != "allow" || wire.Reason != "" {
+		return tunnelv3.Authorization{}, ErrInvalidTunnelRuntime
 	}
 	if wire.CredentialID == "" || wire.CredentialID != request.LookupKey() || wire.LeaseID == "" || wire.ExpectedPeerEndpointInstanceID == "" || wire.ExpiresAt.IsZero() {
 		return tunnelv3.Authorization{}, ErrInvalidTunnelRuntime

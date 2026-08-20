@@ -241,8 +241,10 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 		"12.1", "12.2", "12.3", "12.4", "13.1", "13.2", "13.3", "13.4", "14", "15",
 	}
 	gotClauses := make([]string, 0, len(registry.Design.Traceability))
+	traceabilityByClause := make(map[string]transportV3Traceability, len(registry.Design.Traceability))
 	for _, entry := range registry.Design.Traceability {
 		gotClauses = append(gotClauses, entry.Clause)
+		traceabilityByClause[entry.Clause] = entry
 		if entry.Title == "" || len(entry.Source) == 0 || len(entry.Tests) == 0 ||
 			len(entry.Docs) == 0 || len(entry.RegistryVector) == 0 {
 			return fmt.Errorf("%s traceability clause %q is incomplete", transportV3ContractPath, entry.Clause)
@@ -255,6 +257,23 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	}
 	if !slices.Equal(gotClauses, wantClauses) {
 		return fmt.Errorf("%s traceability clauses = %v, want %v", transportV3ContractPath, gotClauses, wantClauses)
+	}
+	wantFixtureReferences := make([]string, 0, len(registry.WireFixtures))
+	for _, fixture := range registry.WireFixtures {
+		wantFixtureReferences = append(wantFixtureReferences, fmt.Sprintf("wire_fixtures[id=%s]", fixture.ID))
+	}
+	slices.Sort(wantFixtureReferences)
+	for _, clause := range []string{"12.1", "13.1"} {
+		gotFixtureReferences := make([]string, 0, len(wantFixtureReferences))
+		for _, reference := range traceabilityByClause[clause].RegistryVector {
+			if strings.HasPrefix(reference, "wire_fixtures[id=") {
+				gotFixtureReferences = append(gotFixtureReferences, reference)
+			}
+		}
+		slices.Sort(gotFixtureReferences)
+		if !slices.Equal(gotFixtureReferences, wantFixtureReferences) {
+			return fmt.Errorf("%s traceability clause %q fixtures = %v, want %v", transportV3ContractPath, clause, gotFixtureReferences, wantFixtureReferences)
+		}
 	}
 	if registry.Profiles.Session != "flowersec/3" || registry.Profiles.Direct != "flowersec-direct/3" || registry.Profiles.Tunnel != "flowersec-tunnel/3" {
 		return fmt.Errorf("%s profile identifiers drifted", transportV3ContractPath)

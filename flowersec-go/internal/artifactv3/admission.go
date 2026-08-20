@@ -399,6 +399,9 @@ func validateResponseForPeer(response AdmissionResponse, reasons ReasonRegistry,
 		if !validReasonToken(response.Reason) || forbiddenTransportSecurityReason(response.Reason) {
 			return ErrInvalidFSA3
 		}
+		if response.Reason == ReasonExpiredArtifact && response.Status != AdmissionRetryable {
+			return ErrInvalidFSA3
+		}
 		if _, ok := reasons[response.Reason]; requireRegisteredReason && !ok {
 			return fmt.Errorf("%w: %s", ErrUnknownAdmissionCode, response.Reason)
 		}

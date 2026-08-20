@@ -121,7 +121,7 @@ func defaultReasons() artifactv3.ReasonRegistry {
 	return artifactv3.ReasonRegistry{
 		ReasonCapacity: {}, ReasonCredentialReplay: {}, ReasonInvalidCredential: {},
 		ReasonPairMismatch: {}, ReasonPairTimeout: {}, ReasonReplaced: {},
-		ReasonReplacementDenied: {},
+		ReasonReplacementDenied: {}, artifactv3.ReasonExpiredArtifact: {},
 	}
 }
 
@@ -221,7 +221,11 @@ func NewCoordinator(config Config, authorize Authorize) (*Coordinator, error) {
 		reasons[reason] = struct{}{}
 	}
 	for reason := range reasons {
-		if _, err := artifactv3.MarshalResponse(artifactv3.AdmissionResponse{Status: artifactv3.AdmissionReject, Reason: reason}, reasons); err != nil {
+		status := artifactv3.AdmissionReject
+		if reason == artifactv3.ReasonExpiredArtifact {
+			status = artifactv3.AdmissionRetryable
+		}
+		if _, err := artifactv3.MarshalResponse(artifactv3.AdmissionResponse{Status: status, Reason: reason}, reasons); err != nil {
 			return nil, ErrInvalidConfig
 		}
 	}

@@ -363,6 +363,21 @@ func TestAdmissionDecisionRejectsUnregisteredReason(t *testing.T) {
 	}
 }
 
+func TestAdmissionDecisionRequiresRetryForExpiredArtifact(t *testing.T) {
+	reasons := runtimeReasons()
+	if _, _, err := admissionDecision(authorizationResponse{
+		Decision: "reject", Reason: artifactv3.ReasonExpiredArtifact,
+	}, reasons); !errors.Is(err, ErrInvalidAuthorization) {
+		t.Fatalf("expired artifact reject error = %v, want invalid authorization", err)
+	}
+	response, allowed, err := admissionDecision(authorizationResponse{
+		Decision: "retry", Reason: artifactv3.ReasonExpiredArtifact,
+	}, reasons)
+	if err != nil || allowed || response.Status != artifactv3.AdmissionRetryable || response.Reason != artifactv3.ReasonExpiredArtifact {
+		t.Fatalf("expired artifact retry response/allowed/error = %+v/%t/%v", response, allowed, err)
+	}
+}
+
 func validAuthorizedSession(t *testing.T, channel string, maxInbound uint16) authorizedSessionContract {
 	t.Helper()
 	psk := make([]byte, 32)
@@ -381,5 +396,6 @@ func validAuthorizedSession(t *testing.T, channel string, maxInbound uint16) aut
 func runtimeReasons() artifactv3.ReasonRegistry {
 	return artifactv3.ReasonRegistry{
 		reasonAuthorizationDenied: {}, reasonAuthorizationUnavailable: {}, "policy_denied": {},
+		artifactv3.ReasonExpiredArtifact: {},
 	}
 }

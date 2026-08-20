@@ -243,6 +243,16 @@ type runtimeAuthorizationResponseWire struct {
 	Direct       *directAuthorizationWire `json:"direct"`
 }
 
+type tunnelRuntimeAuthorizationResponseWire struct {
+	Decision                       string    `json:"decision"`
+	Reason                         string    `json:"reason,omitempty"`
+	CredentialID                   string    `json:"credential_id"`
+	LeaseID                        string    `json:"lease_id"`
+	ExpiresAt                      time.Time `json:"expires_at"`
+	ExpectedPeerEndpointInstanceID string    `json:"expected_peer_endpoint_instance_id"`
+	AllowReplacement               bool      `json:"allow_replacement"`
+}
+
 // AuthorizeRuntime verifies the complete FSB3 bytes against the stored
 // artifact before producing an allow response. The caller must atomically
 // reserve the one-time record and provide its durable lease ID first.
@@ -262,7 +272,7 @@ func authorizeRuntimeAt(request RuntimeAuthorizationRequest, record Authorizatio
 		// Expiry is an admission outcome, not malformed control-plane input.
 		// Preserve the FSA3 retryable response so the server can reject the
 		// already-authenticated request without silently closing the carrier.
-		return RejectRuntime("expired_artifact", true)
+		return RejectRuntime(artifactv3.ReasonExpiredArtifact, true)
 	}
 	expected, err := artifactv3.BuildRequest(*artifact, request.decoded.Request.ChosenCandidateID)
 	if err != nil {
@@ -302,7 +312,7 @@ func authorizeTunnelRuntimeAt(request RuntimeAuthorizationRequest, record Author
 	}
 	artifact := record.artifact
 	if now.Unix() >= artifact.Session.InitExpireAtUnixSeconds {
-		return RejectTunnelRuntime("expired_artifact", true)
+		return RejectTunnelRuntime(artifactv3.ReasonExpiredArtifact, true)
 	}
 	expected, err := artifactv3.BuildRequest(*artifact, request.decoded.Request.ChosenCandidateID)
 	if err != nil {
@@ -333,14 +343,7 @@ func AllowTunnelRuntime(request RuntimeAuthorizationRequest, leaseID string, exp
 		!expiresAt.After(time.Now()) {
 		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
 	}
-	wire := struct {
-		Decision                       string    `json:"decision"`
-		CredentialID                   string    `json:"credential_id"`
-		LeaseID                        string    `json:"lease_id"`
-		ExpiresAt                      time.Time `json:"expires_at"`
-		ExpectedPeerEndpointInstanceID string    `json:"expected_peer_endpoint_instance_id"`
-		AllowReplacement               bool      `json:"allow_replacement"`
-	}{
+	wire := tunnelRuntimeAuthorizationResponseWire{
 		Decision: "allow", CredentialID: request.lookupKey, LeaseID: leaseID,
 		ExpiresAt:                      expiresAt.UTC(),
 		ExpectedPeerEndpointInstanceID: expectedPeerEndpointInstanceID,
@@ -356,11 +359,23 @@ func AllowTunnelRuntime(request RuntimeAuthorizationRequest, leaseID string, exp
 // RejectTunnelRuntime creates a bounded tunnel rejection without exposing a
 // direct-runtime response type at the relay boundary.
 func RejectTunnelRuntime(reason string, retryable bool) (TunnelAuthorizationResponse, error) {
-	response, err := RejectRuntime(reason, retryable)
-	if err != nil {
-		return TunnelAuthorizationResponse{}, err
+	status := artifactv3.AdmissionReject
+	decision := "reject"
+	if retryable {
+		status = artifactv3.AdmissionRetryable
+		decision = "retry"
 	}
-	return TunnelAuthorizationResponse{encoded: response.JSON()}, nil
+	if _, err := artifactv3.MarshalResponse(
+		artifactv3.AdmissionResponse{Status: status, Reason: reason},
+		artifactv3.ReasonRegistry{reason: {}},
+	); err != nil {
+		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
+	}
+	encoded, err := json.Marshal(tunnelRuntimeAuthorizationResponseWire{Decision: decision, Reason: reason})
+	if err != nil {
+		return TunnelAuthorizationResponse{}, ErrInvalidControlPlaneInput
+	}
+	return TunnelAuthorizationResponse{encoded: encoded}, nil
 }
 
 // RejectRuntime creates a bounded reject or retry response for a reason token

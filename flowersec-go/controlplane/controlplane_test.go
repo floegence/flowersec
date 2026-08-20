@@ -98,14 +98,15 @@ func TestRuntimeAuthorizationReturnsExactRetryAtArtifactExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const want = `{"decision":"retry","reason":"expired_artifact","credential_id":"","lease_id":"","expires_at":"0001-01-01T00:00:00Z","direct":null}`
 	for _, test := range []struct {
 		name      string
 		issued    IssuedArtifact
+		want      string
 		authorize func(RuntimeAuthorizationRequest, AuthorizationRecord) ([]byte, error)
 	}{
 		{
 			name: "direct", issued: direct,
+			want: `{"decision":"retry","reason":"expired_artifact","credential_id":"","lease_id":"","expires_at":"0001-01-01T00:00:00Z","direct":null}`,
 			authorize: func(request RuntimeAuthorizationRequest, record AuthorizationRecord) ([]byte, error) {
 				response, err := authorizeRuntimeAt(request, record, "lease-expired-direct", expiresAt)
 				return response.JSON(), err
@@ -113,6 +114,7 @@ func TestRuntimeAuthorizationReturnsExactRetryAtArtifactExpiry(t *testing.T) {
 		},
 		{
 			name: "tunnel", issued: pair.First,
+			want: `{"decision":"retry","reason":"expired_artifact","credential_id":"","lease_id":"","expires_at":"0001-01-01T00:00:00Z","expected_peer_endpoint_instance_id":"","allow_replacement":false}`,
 			authorize: func(request RuntimeAuthorizationRequest, record AuthorizationRecord) ([]byte, error) {
 				response, err := authorizeTunnelRuntimeAt(request, record, "lease-expired-tunnel", expiresAt)
 				return response.JSON(), err
@@ -137,8 +139,8 @@ func TestRuntimeAuthorizationReturnsExactRetryAtArtifactExpiry(t *testing.T) {
 			if err != nil {
 				t.Fatalf("expired artifact returned an input error: %v", err)
 			}
-			if string(encoded) != want {
-				t.Fatalf("expired artifact response = %s, want %s", encoded, want)
+			if string(encoded) != test.want {
+				t.Fatalf("expired artifact response = %s, want %s", encoded, test.want)
 			}
 		})
 	}
@@ -379,6 +381,12 @@ func TestRejectRuntimeBuildsOnlyValidatedRejectAndRetryResponses(t *testing.T) {
 	}
 	if _, err := RejectRuntime("Secret Detail", false); err == nil {
 		t.Fatal("invalid rejection reason unexpectedly succeeded")
+	}
+	if _, err := RejectRuntime(artifactv3.ReasonExpiredArtifact, false); !errors.Is(err, ErrInvalidControlPlaneInput) {
+		t.Fatalf("expired artifact reject error = %v, want invalid control-plane input", err)
+	}
+	if _, err := RejectTunnelRuntime(artifactv3.ReasonExpiredArtifact, false); !errors.Is(err, ErrInvalidControlPlaneInput) {
+		t.Fatalf("expired tunnel artifact reject error = %v, want invalid control-plane input", err)
 	}
 }
 

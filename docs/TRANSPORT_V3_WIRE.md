@@ -9,11 +9,11 @@ Its normative source is the final Chinese design at
 `/Volumes/JianDisk/code/floegence/flowersec-v3-transport-security-design.zh-CN.md`,
 version 3.0.0, baseline commit
 `026cb52d116d2a04de50d0f0621fff57c7657120`. This document is its complete
-English transcription. The machine-readable registry and vectors are derived
-artifacts: an implementation MUST fail closed if they disagree with this
-transcription, but they MUST NOT replace a general rule from the source
-design. MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY have the meanings from RFC
-2119 and RFC 8174.
+English transcription. This document, the machine-readable registry, and the
+vectors are derived consistency artifacts. A conflict among them or with the
+source design blocks release; no derived artifact can replace or expand a
+general rule from the source design. MUST, MUST NOT, SHOULD, SHOULD NOT, and
+MAY have the meanings from RFC 2119 and RFC 8174.
 
 ## Normative v2 Baseline and Priority
 
@@ -33,10 +33,18 @@ frozen v2 baseline at design commit `026cb52d116d2a04de50d0f0621fff57c7657120`:
   `stability/connection_controller_recovery.json` only for Controller
   lifecycle and error-recovery mappings not rewritten by v3.
 
-Normative priority is: the final Chinese v3 design, then this complete English
-transcription, then the v3 registry and vectors as derived consistency
-artifacts. Source code, v2 runtime behavior, and any other document cannot add
-a v3 exception. A missing or conflicting derived artifact blocks release.
+Normative priority is:
+
+1. the final Chinese v3 design;
+2. the frozen v2 baseline sources listed above, only within their stated
+   inherited scope; and
+3. the audited v3 machine-readable registry and v3 vectors generated from the
+   final design.
+
+This English transcription is a required derived consistency artifact, not an
+independent priority tier. Source code, v2 runtime behavior, and any other
+document cannot add a v3 exception. A missing or conflicting derived artifact
+blocks release.
 
 ## 1. Fixed Identifiers
 

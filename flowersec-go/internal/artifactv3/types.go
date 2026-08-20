@@ -169,6 +169,9 @@ const (
 	AdmissionRetryable AdmissionStatus = 2
 )
 
+// ReasonExpiredArtifact has a contract-fixed retryable FSA3 status.
+const ReasonExpiredArtifact = "expired_artifact"
+
 type AdmissionResponse struct {
 	Status AdmissionStatus
 	Reason string

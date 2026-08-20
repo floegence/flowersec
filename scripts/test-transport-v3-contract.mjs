@@ -167,6 +167,10 @@ const wireDocument = read(registry.docs.wire).toString("utf8");
 const architectureDocument = read(registry.docs.architecture).toString("utf8");
 assert(!wireDocument.includes("flowersec-v2-tls-policy"),
   "the v3-only TLS policy domain must not be represented as a v2 replacement");
+assert.match(wireDocument, /Normative priority is:\s*\n\s*1\. the final Chinese v3 design;\s*\n\s*2\. the frozen v2 baseline sources/,
+  "the wire contract must preserve the final design's frozen-v2 priority tier");
+assert.match(wireDocument, /English transcription is a required derived consistency artifact, not an\s+independent priority tier/,
+  "the derived English transcription must not become a normative priority tier");
 assert(architectureDocument.includes("`errors.As` to recover `ControlPlaneError`"),
   "the architecture must define errors.As for ControlPlaneError");
 assert(architectureDocument.includes("`Unwrap()` returns only `ErrInvalidControlPlaneInput`"),
@@ -181,6 +185,17 @@ for (const requiredClause of [
   "12.1", "12.2", "12.3", "12.4", "13.1", "13.2", "13.3", "13.4", "14", "15",
 ]) assert(traceabilityClauses.includes(requiredClause), `missing traceability clause: ${requiredClause}`);
 assert.equal(new Set(traceabilityClauses).size, traceabilityClauses.length, "traceability clause IDs must be unique");
+const allFixtureReferences = registry.wire_fixtures
+  .map((fixture) => `wire_fixtures[id=${fixture.id}]`)
+  .sort();
+for (const clause of ["12.1", "13.1"]) {
+  const entry = registry.design.traceability.find((candidate) => candidate.clause === clause);
+  const fixtureReferences = entry.registry_vector
+    .filter((reference) => reference.startsWith("wire_fixtures[id="))
+    .sort();
+  assert.deepEqual(fixtureReferences, allFixtureReferences,
+    `${clause} traceability must cover the complete v3 fixture inventory`);
+}
 for (const entry of registry.design.traceability) {
   assert(typeof entry.clause === "string" && entry.clause.length > 0, "traceability clause ID is required");
   assert(typeof entry.title === "string" && entry.title.length > 0, `${entry.clause} traceability title is required`);

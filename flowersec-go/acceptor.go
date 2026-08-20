@@ -440,7 +440,10 @@ func (acceptor *Acceptor) releaseLease(ctx context.Context, leaseID string) {
 	}
 }
 func (acceptor *Acceptor) reasons() artifactv3.ReasonRegistry {
-	return artifactv3.ReasonRegistry{"authorization_denied": {}, "authorization_unavailable": {}}
+	return artifactv3.ReasonRegistry{
+		"authorization_denied": {}, "authorization_unavailable": {},
+		artifactv3.ReasonExpiredArtifact: {},
+	}
 }
 
 type acceptorTransportContext struct {
