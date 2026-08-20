@@ -619,6 +619,8 @@ struct AuthorityKey {
     channel: String,
     group: String,
     audience: String,
+    contract_hash: String,
+    candidate_set_hash: String,
 }
 
 struct PendingEntry<T> {
@@ -1133,6 +1135,8 @@ impl From<&FsbClaims> for AuthorityKey {
             channel: claims.channel.clone(),
             group: claims.group.clone(),
             audience: claims.audience.clone(),
+            contract_hash: claims.contract_hash.clone(),
+            candidate_set_hash: claims.candidate_set_hash.clone(),
         }
     }
 }
@@ -1676,6 +1680,57 @@ mod tests {
         aborted: Arc<AtomicBool>,
     }
 
+    #[derive(Debug)]
+    struct ActivationProbeCarrier {
+        accepted: Arc<AtomicBool>,
+        opened: Arc<AtomicBool>,
+        accept_used: AtomicBool,
+        open_used: AtomicBool,
+        aborted: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl CarrierSessionV3 for ActivationProbeCarrier {
+        fn kind(&self) -> CarrierKind {
+            CarrierKind::RawQuic
+        }
+
+        fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+            8
+        }
+
+        async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV3>> {
+            if self.open_used.swap(true, Ordering::SeqCst) {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "probe open complete",
+                ));
+            }
+            self.opened.store(true, Ordering::SeqCst);
+            self.accepted.store(true, Ordering::SeqCst);
+            Ok(Arc::new(ImmediateWriteStream))
+        }
+
+        async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV3>> {
+            if self.accept_used.swap(true, Ordering::SeqCst) {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "probe accept complete",
+                ));
+            }
+            self.accepted.store(true, Ordering::SeqCst);
+            Ok(Arc::new(ImmediateWriteStream))
+        }
+
+        async fn close(&self) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn abort(&self) {
+            self.aborted.store(true, Ordering::SeqCst);
+        }
+    }
+
     #[async_trait]
     impl CarrierSessionV3 for AbortProbeCarrier {
         fn kind(&self) -> CarrierKind {
@@ -1721,6 +1776,45 @@ mod tests {
         }
 
         async fn write(&self, payload: &[u8]) -> io::Result<usize> {
+            Ok(payload.len())
+        }
+
+        async fn close_write(&self) -> io::Result<()> {
+            Ok(())
+        }
+
+        async fn stop_sending(&self) -> io::Result<()> {
+            Ok(())
+        }
+
+        async fn reset(&self) -> io::Result<()> {
+            Ok(())
+        }
+
+        async fn close(&self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct RecordingAdmissionStream {
+        bytes: StdMutex<(Vec<u8>, usize)>,
+        writes: Arc<StdMutex<Vec<u8>>>,
+    }
+
+    #[async_trait]
+    impl CarrierStreamV3 for RecordingAdmissionStream {
+        async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
+            let mut bytes = self.bytes.lock().unwrap();
+            let remaining = bytes.0.len().saturating_sub(bytes.1);
+            let count = remaining.min(payload.len());
+            payload[..count].copy_from_slice(&bytes.0[bytes.1..bytes.1 + count]);
+            bytes.1 += count;
+            Ok(count)
+        }
+
+        async fn write(&self, payload: &[u8]) -> io::Result<usize> {
+            self.writes.lock().unwrap().extend_from_slice(payload);
             Ok(payload.len())
         }
 
@@ -1816,6 +1910,25 @@ mod tests {
             }),
             remote_address: "127.0.0.1:12345".parse().unwrap(),
         }
+    }
+
+    fn accepted_with_recorded_admission(raw: Vec<u8>) -> (AcceptedCarrier, Arc<StdMutex<Vec<u8>>>) {
+        let (inner, _peer_guard) = crate::session_v3::memory_carrier_pair_v3();
+        let writes = Arc::new(StdMutex::new(Vec::new()));
+        let stream = RecordingAdmissionStream {
+            bytes: StdMutex::new((raw, 0)),
+            writes: writes.clone(),
+        };
+        (
+            AcceptedCarrier {
+                carrier: Arc::new(AdmissionCarrier {
+                    inner,
+                    admission: StdMutex::new(Some(Arc::new(stream))),
+                }),
+                remote_address: "127.0.0.1:12345".parse().unwrap(),
+            },
+            writes,
+        )
     }
 
     #[derive(Debug)]
@@ -2090,20 +2203,43 @@ mod tests {
             .clone()
             .try_acquire_owned()
             .unwrap();
-        let result = runtime
-            .admit_and_pair(
-                accepted_with_admission(vector_tunnel_admission(
-                    1,
-                    "endpoint-client",
-                    "attach-token-v3",
-                )),
-                permit,
-            )
-            .await;
+        let (accepted, writes) = accepted_with_recorded_admission(vector_tunnel_admission(
+            1,
+            "endpoint-client",
+            "attach-token-v3",
+        ));
+        let result = runtime.admit_and_pair(accepted, permit).await;
         assert_eq!(result, Err(TunnelRuntimeError::Rejected));
+        let response = crate::artifact_v3::decode_fsa3(&writes.lock().unwrap()).unwrap();
+        assert_eq!(
+            response.status,
+            crate::artifact_v3::AdmissionStatusV3::Reject
+        );
+        assert_eq!(response.reason, "invalid_credential");
+
+        let retry_permit = runtime
+            .state
+            .admission_permits
+            .clone()
+            .try_acquire_owned()
+            .unwrap();
+        let (retry, retry_writes) = accepted_with_recorded_admission(vector_tunnel_admission(
+            1,
+            "endpoint-client",
+            "attach-token-v3",
+        ));
+        let retry_result = runtime.admit_and_pair(retry, retry_permit).await;
+        assert_eq!(retry_result, Err(TunnelRuntimeError::Rejected));
+        let retry_response =
+            crate::artifact_v3::decode_fsa3(&retry_writes.lock().unwrap()).unwrap();
+        assert_eq!(
+            retry_response.status,
+            crate::artifact_v3::AdmissionStatusV3::Reject
+        );
+        assert_eq!(retry_response.reason, "invalid_credential");
         assert_eq!(
             authorizer.releases.lock().unwrap().as_slice(),
-            ["lease-malformed"]
+            ["lease-malformed", "lease-malformed"]
         );
     }
 
@@ -2270,6 +2406,8 @@ mod tests {
                     channel: "channel".into(),
                     group: "group".into(),
                     audience: "audience".into(),
+                    contract_hash: "contract".into(),
+                    candidate_set_hash: "candidates".into(),
                 })
             {
                 break;
@@ -2301,9 +2439,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn opposite_role_hash_mismatch_rejects_only_the_incoming_leg() {
+    async fn opposite_role_hash_mismatch_uses_a_separate_pair_generation() {
         let authorizer = Arc::new(CountingAuthorizer::default());
-        let runtime = Arc::new(test_runtime(authorizer.clone(), Duration::from_secs(1), 1));
+        let runtime = Arc::new(test_runtime(authorizer.clone(), Duration::from_secs(1), 2));
         let (first_inner, _first_peer_guard) = crate::session_v3::memory_carrier_pair_v3();
         let first_task = {
             let runtime = runtime.clone();
@@ -2331,6 +2469,8 @@ mod tests {
             channel: "channel".into(),
             group: "group".into(),
             audience: "audience".into(),
+            contract_hash: "contract-a".into(),
+            candidate_set_hash: "candidates-a".into(),
         };
         for _ in 0..20 {
             if runtime.state.pending.lock().await.contains_key(&key) {
@@ -2339,28 +2479,38 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
         let (incoming, _) = crate::session_v3::memory_carrier_pair_v3();
-        let result = runtime
-            .register_leg(
-                test_leg_with_hashes(
-                    "incoming-lease",
-                    2,
-                    "endpoint-second",
-                    "endpoint-first",
-                    SystemTime::now() + Duration::from_secs(1),
-                    false,
-                    "contract-b",
-                    "candidates-b",
-                    incoming,
-                ),
-                Instant::now() + Duration::from_secs(1),
-            )
-            .await;
-        assert_eq!(result, Err(TunnelRuntimeError::Rejected));
+        let second_runtime = runtime.clone();
+        let second_task = tokio::spawn(async move {
+            second_runtime
+                .register_leg(
+                    test_leg_with_hashes(
+                        "incoming-lease",
+                        2,
+                        "endpoint-second",
+                        "endpoint-first",
+                        SystemTime::now() + Duration::from_secs(1),
+                        false,
+                        "contract-b",
+                        "candidates-b",
+                        incoming,
+                    ),
+                    Instant::now() + Duration::from_secs(1),
+                )
+                .await
+        });
+        for _ in 0..20 {
+            if runtime.state.pending.lock().await.len() == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
         let pending = runtime.state.pending.lock().await;
+        assert_eq!(pending.len(), 2);
         assert_eq!(pending.get(&key).unwrap().value.lease_id, "pending-lease");
         drop(pending);
         runtime.state.closed.cancel();
         let _ = first_task.await;
+        let _ = second_task.await;
         assert_eq!(authorizer.releases.load(Ordering::SeqCst), 2);
     }
 
@@ -2442,6 +2592,108 @@ mod tests {
         assert!(first_aborted.load(Ordering::SeqCst));
         assert_eq!(*runtime.state.active_pairs.lock().await, 0);
         assert_eq!(authorizer.releases.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn active_replacement_establishes_a_new_pair_before_cleanup() {
+        let authorizer = Arc::new(CountingAuthorizer::default());
+        let runtime = Arc::new(test_runtime(authorizer.clone(), Duration::from_secs(1), 2));
+        let old_client_aborted = Arc::new(AtomicBool::new(false));
+        let old_server_aborted = Arc::new(AtomicBool::new(false));
+        let (old_client, _old_client_guard) = crate::session_v3::memory_carrier_pair_v3();
+        let (old_server, _old_server_guard) = crate::session_v3::memory_carrier_pair_v3();
+        let old_pair = ActivePair {
+            key: AuthorityKey {
+                profile: "flowersec/3".into(),
+                channel: "channel".into(),
+                group: "group".into(),
+                audience: "audience".into(),
+                contract_hash: "contract".into(),
+                candidate_set_hash: "candidates".into(),
+            },
+            contract_hash: "contract".into(),
+            candidate_set_hash: "candidates".into(),
+            client: Arc::new(AbortProbeCarrier {
+                inner: old_client,
+                aborted: old_client_aborted.clone(),
+            }),
+            server: Arc::new(AbortProbeCarrier {
+                inner: old_server,
+                aborted: old_server_aborted.clone(),
+            }),
+            peer_lease_id: "old-client".into(),
+            leg_lease_id: "old-server".into(),
+            cleanup_claimed: Arc::new(AtomicBool::new(false)),
+        };
+        *runtime.state.active_pairs.lock().await = 1;
+        runtime
+            .state
+            .active_carriers
+            .lock()
+            .await
+            .insert(1, old_pair);
+        let replacement_client_accepted = Arc::new(AtomicBool::new(false));
+        let replacement_client_opened = Arc::new(AtomicBool::new(false));
+        let replacement_client_aborted = Arc::new(AtomicBool::new(false));
+        let replacement_server_accepted = Arc::new(AtomicBool::new(false));
+        let replacement_server_opened = Arc::new(AtomicBool::new(false));
+        let replacement_server_aborted = Arc::new(AtomicBool::new(false));
+        let replacement_client = test_leg(
+            "replacement-client",
+            1,
+            "endpoint-first",
+            "endpoint-second",
+            SystemTime::now() + Duration::from_secs(1),
+            true,
+            Arc::new(ActivationProbeCarrier {
+                accepted: replacement_client_accepted.clone(),
+                opened: replacement_client_opened.clone(),
+                accept_used: AtomicBool::new(false),
+                open_used: AtomicBool::new(false),
+                aborted: replacement_client_aborted.clone(),
+            }),
+        );
+        let replacement_server = test_leg(
+            "replacement-server",
+            2,
+            "endpoint-second",
+            "endpoint-first",
+            SystemTime::now() + Duration::from_secs(1),
+            false,
+            Arc::new(ActivationProbeCarrier {
+                accepted: replacement_server_accepted.clone(),
+                opened: replacement_server_opened.clone(),
+                accept_used: AtomicBool::new(false),
+                open_used: AtomicBool::new(false),
+                aborted: replacement_server_aborted.clone(),
+            }),
+        );
+        let replacement_client_task = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .register_leg(replacement_client, Instant::now() + Duration::from_secs(1))
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        let replacement_server_task = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .register_leg(replacement_server, Instant::now() + Duration::from_secs(1))
+                    .await
+            })
+        };
+        assert_eq!(replacement_client_task.await.unwrap(), Ok(()));
+        assert_eq!(replacement_server_task.await.unwrap(), Ok(()));
+        assert!(replacement_client_accepted.load(Ordering::SeqCst));
+        assert!(replacement_server_opened.load(Ordering::SeqCst));
+        assert!(!replacement_client_aborted.load(Ordering::SeqCst));
+        assert!(!replacement_server_aborted.load(Ordering::SeqCst));
+        assert!(old_client_aborted.load(Ordering::SeqCst));
+        assert!(old_server_aborted.load(Ordering::SeqCst));
+        assert_eq!(authorizer.releases.load(Ordering::SeqCst), 4);
     }
 
     #[tokio::test]

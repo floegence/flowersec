@@ -7,7 +7,12 @@ import { createRequire } from "node:module";
 
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
-import { decodeArtifactV3JSON, type ArtifactV3, type ArtifactCandidateV3 } from "../v3/artifact.js";
+import {
+  computeSessionContractHashV3,
+  decodeArtifactV3JSON,
+  type ArtifactV3,
+  type ArtifactCandidateV3,
+} from "../v3/artifact.js";
 import { createArtifactLeaseV3Internal } from "../v3/artifactLease.js";
 import type { Session } from "../public/contract.js";
 import { connectV3, createConnectionControllerV3 } from "./connectSessionV3.js";
@@ -374,6 +379,101 @@ describe("Node production server runtime v3", () => {
       if (!runtimeClosed) await runtime.close();
     }
   });
+
+  test("keeps tunnel legs with different session hashes in separate generations", async () => {
+    const released: string[] = [];
+    const runtime = createTunnelRuntimeV3({
+      listeners: [{
+        carrier: "websocket",
+        host: "127.0.0.1",
+        port: 0,
+        tls: { certificate: leafCertificate, privateKey: leafKey },
+        allowedOrigins: ["https://app.example"],
+      }],
+      maxInboundStreams: tunnelBase.session.max_inbound_streams,
+      maxPendingLegs: 2,
+      pairTimeoutMs: 100,
+      authorize: async ({ request }) => ({
+        decision: "allow" as const,
+        credentialId: createHash("sha256").update(request.attach_token).digest("base64url"),
+        leaseId: `hash-isolation-${request.role}`,
+        expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
+        expectedPeerEndpointInstanceId: request.role === 1 ? "endpoint-server" : "endpoint-client",
+      }),
+      release: (leaseId) => { released.push(leaseId); },
+    });
+    try {
+      await runtime.start();
+      const port = runtime.addresses()[0]!.port;
+      const first = tunnelArtifactWithSession(port, 1, tunnelBase.session.max_inbound_streams);
+      const second = tunnelArtifactWithSession(port, 2, tunnelBase.session.max_inbound_streams + 1);
+      const results = await Promise.allSettled([
+        connectV3(lease(first), { origin: "https://app.example", roots: rootCertificate, connectTimeoutMs: 3_000 }),
+        connectV3(lease(second), { origin: "https://app.example", roots: rootCertificate, connectTimeoutMs: 3_000 }),
+      ]);
+      expect(results.every((result) => result.status === "rejected")).toBe(true);
+      await waitFor(() => released.length === 2);
+      expect(new Set(released)).toEqual(new Set(["hash-isolation-1", "hash-isolation-2"]));
+    } finally {
+      await runtime.close();
+    }
+  }, 15_000);
+
+  test("bounds v3 tunnel close when lease release never resolves", async () => {
+    const tls = { certificate: leafCertificate, privateKey: leafKey };
+    let releaseStartedResolve!: () => void;
+    const releaseStarted = new Promise<void>((resolve) => { releaseStartedResolve = resolve; });
+    let authorizeStartedResolve!: () => void;
+    const authorized = new Promise<void>((resolve) => { authorizeStartedResolve = resolve; });
+    const runtime = createTunnelRuntimeV3({
+      listeners: [{
+        carrier: "websocket",
+        host: "127.0.0.1",
+        port: 0,
+        tls,
+        allowedOrigins: ["https://app.example"],
+      }],
+      maxInboundStreams: tunnelBase.session.max_inbound_streams,
+      cleanupTimeoutMs: 50,
+      authorize: async ({ request }) => {
+        authorizeStartedResolve();
+        return {
+          decision: "allow" as const,
+          credentialId: createHash("sha256").update(request.attach_token).digest("base64url"),
+          leaseId: "never-release",
+          expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
+          expectedPeerEndpointInstanceId: "endpoint-server",
+        };
+      },
+      release: async () => {
+        releaseStartedResolve();
+        await new Promise<never>(() => undefined);
+      },
+    });
+    let connecting: Promise<unknown> | undefined;
+    let closing: Promise<void> | undefined;
+    try {
+      await runtime.start();
+      const port = runtime.addresses()[0]!.port;
+      const connectedArtifact = tunnelArtifact(port, 1);
+      connecting = connectV3(lease(connectedArtifact), {
+        origin: "https://app.example",
+        roots: rootCertificate,
+        connectTimeoutMs: 3_000,
+      }).catch(() => undefined);
+      await authorized;
+      closing = runtime.close();
+      await releaseStarted;
+      await expect(Promise.race([
+        closing.then(() => "closed" as const),
+        new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 500)),
+      ])).resolves.toBe("closed");
+    } finally {
+      await closing?.catch(() => undefined);
+      await runtime.close().catch(() => undefined);
+      await connecting;
+    }
+  }, 10_000);
 });
 
 function directArtifact(port: number): ArtifactV3 {
@@ -508,6 +608,18 @@ function tunnelArtifact(port: number, role: 1 | 2): ArtifactV3 {
       expected_peer_endpoint_instance_id: role === 1 ? "endpoint-server" : "endpoint-client",
       token: role === 1 ? "attach-token-client-v3" : "attach-token-server-v3",
       candidates: [candidate(port, "tunnel")],
+    },
+  };
+}
+
+function tunnelArtifactWithSession(port: number, role: 1 | 2, maxInboundStreams: number): ArtifactV3 {
+  const artifact = tunnelArtifact(port, role);
+  const session = { ...artifact.session, max_inbound_streams: maxInboundStreams };
+  return {
+    ...artifact,
+    session: {
+      ...session,
+      contract_hash_b64u: computeSessionContractHashV3(session).hashBase64URL,
     },
   };
 }
