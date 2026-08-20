@@ -18,48 +18,46 @@ func hashTestLeg(role uint8, credential string, contract, candidates byte, repla
 }
 
 func TestCoordinatorHashFieldsIsolatePairGenerations(t *testing.T) {
-	coordinator, err := NewCoordinator(Config{PairTimeout: 20 * time.Millisecond}, func(context.Context, *artifactv3.DecodedRequest) (Authorization, error) {
-		return Authorization{}, nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	first := hashTestLeg(1, "first-a", 1, 2, false)
-	generationA, err := coordinator.register(context.Background(), first)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	second := hashTestLeg(2, "second-b", 3, 4, false)
-	generationB, err := coordinator.register(context.Background(), second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if generationA == generationB {
-		t.Fatal("different contract/candidate hashes shared a generation")
-	}
-	coordinator.mu.Lock()
-	if len(coordinator.groups) != 2 {
-		coordinator.mu.Unlock()
-		t.Fatalf("hash-isolated groups = %d, want 2", len(coordinator.groups))
-	}
-	coordinator.mu.Unlock()
-
-	matchingPeer := hashTestLeg(2, "second-a", 1, 2, false)
-	matchingGeneration, err := coordinator.register(context.Background(), matchingPeer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if matchingGeneration != generationA {
-		t.Fatal("identical contract/candidate hashes did not pair in the existing generation")
-	}
-
-	for name, generation := range map[string]*pairGeneration{"matching": generationA, "isolated": generationB} {
-		select {
-		case <-generation.done:
-		case <-time.After(time.Second):
-			t.Fatalf("%s generation did not finish", name)
-		}
+	for _, testCase := range []struct {
+		name                      string
+		firstContract, firstSet   byte
+		secondContract, secondSet byte
+	}{
+		{name: "contract", firstContract: 1, firstSet: 2, secondContract: 3, secondSet: 2},
+		{name: "candidate set", firstContract: 1, firstSet: 2, secondContract: 1, secondSet: 4},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			coordinator, err := NewCoordinator(Config{PairTimeout: 20 * time.Millisecond}, func(context.Context, *artifactv3.DecodedRequest) (Authorization, error) {
+				return Authorization{}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			generationA, err := coordinator.register(context.Background(), hashTestLeg(1, "first-a", testCase.firstContract, testCase.firstSet, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			generationB, err := coordinator.register(context.Background(), hashTestLeg(2, "second-b", testCase.secondContract, testCase.secondSet, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if generationA == generationB {
+				t.Fatal("different contract/candidate hashes shared a generation")
+			}
+			matchingPeer, err := coordinator.register(context.Background(), hashTestLeg(2, "second-a", testCase.firstContract, testCase.firstSet, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if matchingPeer != generationA {
+				t.Fatal("identical contract/candidate hashes did not pair in the existing generation")
+			}
+			for name, generation := range map[string]*pairGeneration{"matching": generationA, "isolated": generationB} {
+				select {
+				case <-generation.done:
+				case <-time.After(time.Second):
+					t.Fatalf("%s generation did not finish", name)
+				}
+			}
+		})
 	}
 }

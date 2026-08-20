@@ -741,7 +741,9 @@ function credentialLookup(credential: string): string {
 
 class StreamSlots {
   private active = 0;
-  private readonly waiters: Array<() => void> = [];
+  private readonly waiters: Array<{
+    grant: () => void;
+  }> = [];
 
   constructor(private readonly maximum: number) {}
 
@@ -749,24 +751,43 @@ class StreamSlots {
     if (signal.aborted) throw asError(signal.reason);
     if (this.active >= this.maximum) {
       await new Promise<void>((resolve, reject) => {
-        const ready = () => { cleanup(); resolve(); };
-        const abort = () => { cleanup(); reject(asError(signal.reason)); };
+        let settled = false;
+        const ready = () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          // Reserve the released slot before waking the waiter. A new caller
+          // can otherwise claim it during the microtask turn.
+          this.active += 1;
+          resolve();
+        };
+        const abort = () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(asError(signal.reason));
+        };
         const cleanup = () => {
-          const index = this.waiters.indexOf(ready);
+          const index = this.waiters.findIndex((waiter) => waiter.grant === ready);
           if (index >= 0) this.waiters.splice(index, 1);
           signal.removeEventListener("abort", abort);
         };
-        this.waiters.push(ready);
+        this.waiters.push({ grant: ready });
         signal.addEventListener("abort", abort, { once: true });
       });
+    } else {
+      this.active += 1;
     }
-    this.active += 1;
     let released = false;
     return () => {
       if (released) return;
       released = true;
       this.active -= 1;
-      this.waiters.shift()?.();
+      while (this.waiters.length > 0) {
+        const waiter = this.waiters.shift()!;
+        waiter.grant();
+        if (this.active <= this.maximum) break;
+      }
     };
   }
 }

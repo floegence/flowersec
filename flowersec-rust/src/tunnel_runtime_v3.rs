@@ -1118,7 +1118,10 @@ impl TaskRuntime {
     async fn rollback_active_pair(&self, pair: ActivePair, deadline: Instant) {
         pair.client.abort();
         pair.server.abort();
-        let _ = tokio::join!(pair.client.close(), pair.server.close());
+        let _ = tokio::time::timeout_at(deadline, async {
+            tokio::join!(pair.client.close(), pair.server.close())
+        })
+        .await;
         self.state
             .active_carriers
             .lock()
@@ -1167,7 +1170,7 @@ where
     pending.remove(key).map(|entry| entry.value)
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct FsbClaims {
     profile: String,
     role: u8,
@@ -1411,11 +1414,19 @@ async fn bridge(
     server: Arc<dyn CarrierSessionV3>,
     runtime_closed: CancellationToken,
 ) {
-    let Ok(control) = client.accept_stream().await else {
-        return;
+    let control = match tokio::select! {
+        _ = runtime_closed.cancelled() => return,
+        result = client.accept_stream() => result,
+    } {
+        Ok(control) => control,
+        Err(_) => return,
     };
-    let Ok(control_peer) = server.open_stream().await else {
-        return;
+    let control_peer = match tokio::select! {
+        _ = runtime_closed.cancelled() => return,
+        result = server.open_stream() => result,
+    } {
+        Ok(control_peer) => control_peer,
+        Err(_) => return,
     };
     let closed = CancellationToken::new();
     let mut control_task = tokio::spawn(bridge_control_pair(control, control_peer, closed.clone()));
@@ -2490,7 +2501,7 @@ mod tests {
                         "endpoint-first",
                         SystemTime::now() + Duration::from_secs(1),
                         false,
-                        "contract-b",
+                        "contract-a",
                         "candidates-b",
                         incoming,
                     ),
@@ -2512,6 +2523,32 @@ mod tests {
         let _ = first_task.await;
         let _ = second_task.await;
         assert_eq!(authorizer.releases.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn authority_key_isolates_each_hash_independently() {
+        let base = FsbClaims {
+            profile: "flowersec/3".into(),
+            role: 1,
+            endpoint: "endpoint-first".into(),
+            channel: "channel".into(),
+            group: "group".into(),
+            audience: "audience".into(),
+            contract_hash: "contract-a".into(),
+            candidate_set_hash: "candidates-a".into(),
+        };
+        let mut contract_changed = base.clone();
+        contract_changed.contract_hash = "contract-b".into();
+        let mut candidates_changed = base.clone();
+        candidates_changed.candidate_set_hash = "candidates-b".into();
+        assert_ne!(
+            AuthorityKey::from(&base),
+            AuthorityKey::from(&contract_changed)
+        );
+        assert_ne!(
+            AuthorityKey::from(&base),
+            AuthorityKey::from(&candidates_changed)
+        );
     }
 
     async fn wait_for_active_pair(runtime: &TaskRuntime) {

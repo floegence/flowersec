@@ -77,6 +77,34 @@ func TestDefaultReasonRegistryIncludesRetryableExpiredArtifact(t *testing.T) {
 	}
 }
 
+func TestReleaseLeaseDoesNotBlockCoordinatorCleanup(t *testing.T) {
+	coordinator, err := NewCoordinator(Config{AdmissionResponseTimeout: 20 * time.Millisecond}, func(context.Context, *artifactv3.DecodedRequest) (Authorization, error) {
+		return Authorization{}, errors.New("unused authorizer")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	unblock := make(chan struct{})
+	coordinator.releaseLease(blockingLease{started: started, unblock: unblock})
+	select {
+	case <-started:
+	default:
+		t.Fatal("lease release was not started")
+	}
+	close(unblock)
+}
+
+type blockingLease struct {
+	started chan struct{}
+	unblock chan struct{}
+}
+
+func (lease blockingLease) Release() {
+	close(lease.started)
+	<-lease.unblock
+}
+
 type expiryTestPendingLeg struct {
 	responses   atomic.Int32
 	activations atomic.Int32

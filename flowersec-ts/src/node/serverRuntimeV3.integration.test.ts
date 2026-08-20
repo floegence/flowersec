@@ -419,6 +419,45 @@ describe("Node production server runtime v3", () => {
     }
   }, 15_000);
 
+  test("keeps tunnel legs with different candidate-set hashes in separate generations", async () => {
+    const released: string[] = [];
+    const runtime = createTunnelRuntimeV3({
+      listeners: [{
+        carrier: "websocket",
+        host: "127.0.0.1",
+        port: 0,
+        tls: { certificate: leafCertificate, privateKey: leafKey },
+        allowedOrigins: ["https://app.example"],
+      }],
+      maxInboundStreams: tunnelBase.session.max_inbound_streams,
+      maxPendingLegs: 2,
+      pairTimeoutMs: 100,
+      authorize: async ({ request }) => ({
+        decision: "allow" as const,
+        credentialId: createHash("sha256").update(request.attach_token).digest("base64url"),
+        leaseId: `candidate-isolation-${request.role}`,
+        expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
+        expectedPeerEndpointInstanceId: request.role === 1 ? "endpoint-server" : "endpoint-client",
+      }),
+      release: (leaseId) => { released.push(leaseId); },
+    });
+    try {
+      await runtime.start();
+      const port = runtime.addresses()[0]!.port;
+      const first = tunnelArtifactWithCandidate(port, 1, "w-ca");
+      const second = tunnelArtifactWithCandidate(port, 2, "w-cb");
+      const results = await Promise.allSettled([
+        connectV3(lease(first), { origin: "https://app.example", roots: rootCertificate, connectTimeoutMs: 3_000 }),
+        connectV3(lease(second), { origin: "https://app.example", roots: rootCertificate, connectTimeoutMs: 3_000 }),
+      ]);
+      expect(results.every((result) => result.status === "rejected")).toBe(true);
+      await waitFor(() => released.length === 2);
+      expect(new Set(released)).toEqual(new Set(["candidate-isolation-1", "candidate-isolation-2"]));
+    } finally {
+      await runtime.close();
+    }
+  }, 15_000);
+
   test("bounds v3 tunnel close when lease release never resolves", async () => {
     const tls = { certificate: leafCertificate, privateKey: leafKey };
     let releaseStartedResolve!: () => void;
@@ -620,6 +659,17 @@ function tunnelArtifactWithSession(port: number, role: 1 | 2, maxInboundStreams:
     session: {
       ...session,
       contract_hash_b64u: computeSessionContractHashV3(session).hashBase64URL,
+    },
+  };
+}
+
+function tunnelArtifactWithCandidate(port: number, role: 1 | 2, candidateID: string): ArtifactV3 {
+  const artifact = tunnelArtifact(port, role);
+  return {
+    ...artifact,
+    path: {
+      ...artifact.path,
+      candidates: [{ ...candidate(port, "tunnel"), id: candidateID }],
     },
   };
 }

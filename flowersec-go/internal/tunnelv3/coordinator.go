@@ -107,6 +107,25 @@ type Config struct {
 	OnPair func(context.Context, carrier.Session, carrier.Session, Authorization, Authorization) error
 }
 
+func (coordinator *Coordinator) releaseLease(lease Lease) {
+	if lease == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		lease.Release()
+		close(done)
+	}()
+	timer := time.NewTimer(coordinator.config.AdmissionResponseTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		// Lease is an application callback with no cancellation primitive. Do
+		// not let a stuck implementation block pairing or shutdown forever.
+	}
+}
+
 // DefaultConfig returns the production tunnel coordinator limits.
 func DefaultConfig() Config {
 	return Config{
@@ -265,9 +284,7 @@ func (coordinator *Coordinator) Serve(ctx context.Context, pending PendingLeg) e
 	}
 	authorization, err := coordinator.authorize(admissionCtx, decoded)
 	if err != nil {
-		if authorization.Lease != nil {
-			authorization.Lease.Release()
-		}
+		coordinator.releaseLease(authorization.Lease)
 		status, reason := artifactv3.AdmissionReject, ReasonInvalidCredential
 		var responseError *admissionv3.ResponseError
 		if errors.As(err, &responseError) && responseError.Status != artifactv3.AdmissionSuccess {
@@ -276,14 +293,12 @@ func (coordinator *Coordinator) Serve(ctx context.Context, pending PendingLeg) e
 		return errors.Join(err, coordinator.rejectUnregistered(admissionCtx, pending, status, reason))
 	}
 	if err := validateAuthorization(decoded, authorization, coordinator.now()); err != nil {
-		if authorization.Lease != nil {
-			authorization.Lease.Release()
-		}
+		coordinator.releaseLease(authorization.Lease)
 		coordinator.rejectUnregistered(admissionCtx, pending, artifactv3.AdmissionReject, ReasonInvalidCredential)
 		return err
 	}
 	if err := admissionCtx.Err(); err != nil {
-		authorization.Lease.Release()
+		coordinator.releaseLease(authorization.Lease)
 		return errors.Join(err, coordinator.closePendingLegs([]PendingLeg{pending}, ReasonInvalidCredential))
 	}
 	cancelAdmission()
@@ -292,7 +307,7 @@ func (coordinator *Coordinator) Serve(ctx context.Context, pending PendingLeg) e
 	leg := &admittedLeg{pending: pending, authorization: authorization}
 	generation, err := coordinator.register(ctx, leg)
 	if err != nil {
-		authorization.Lease.Release()
+		coordinator.releaseLease(authorization.Lease)
 		status, reason := artifactv3.AdmissionReject, ReasonInvalidCredential
 		if errors.Is(err, ErrCapacity) {
 			status, reason = artifactv3.AdmissionRetryable, ReasonCapacity
@@ -635,7 +650,7 @@ func (coordinator *Coordinator) rejectGeneration(generation *pairGeneration, cau
 		cancelResponses()
 	}
 	for _, leg := range legs {
-		leg.authorization.Lease.Release()
+		coordinator.releaseLease(leg.authorization.Lease)
 	}
 	_ = coordinator.closeAdmittedLegs(legs, reason)
 	close(generation.done)
@@ -655,7 +670,7 @@ func (coordinator *Coordinator) finish(generation *pairGeneration, cause error) 
 		return
 	}
 	for _, leg := range generation.roles {
-		leg.authorization.Lease.Release()
+		coordinator.releaseLease(leg.authorization.Lease)
 		_ = leg.stopWaitingGuard(coordinator.config.GuardStopTimeout)
 	}
 	_ = coordinator.closeAdmittedLegsMapWithError(generation.roles, closeApplicationError(cause))
