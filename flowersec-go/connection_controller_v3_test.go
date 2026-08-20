@@ -717,6 +717,18 @@ func controllerPolicyArtifact(t *testing.T, policy artifactv3.TLSPolicy) Artifac
 	return Artifact{value: &value}
 }
 
+func controllerMixedPolicyArtifact(t *testing.T, policy artifactv3.TLSPolicy) Artifact {
+	t.Helper()
+	original := mustParseInternalFixtureArtifact(t)
+	value := *original.value
+	value.Path.Candidates = []artifactv3.Candidate{
+		original.value.Path.Candidates[0],
+		original.value.Path.Candidates[3],
+	}
+	value.Path.Candidates[1].TLS = artifactv3.CloneTLSPolicy(policy)
+	return Artifact{value: &value}
+}
+
 func controllerTrackedLease(t *testing.T, artifact Artifact) (ArtifactLease, *atomic.Int32) {
 	t.Helper()
 	retired := &atomic.Int32{}

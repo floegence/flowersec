@@ -287,6 +287,26 @@ final class ConnectorV2Tests: XCTestCase {
       _ = try await (closeClient, closeServer)
     }
 
+    func testProductionV3IOSAdapterRejectsWrongPinAndBuildsConfiguredCA() throws {
+      let material = try ConnectorTestTLS.loadShortLived()
+      let der = Data(try material.certificate.toDERBytes())
+      let pin = Data(SHA256.hash(data: der))
+      let wrongPin = Data(repeating: 0xA5, count: 32)
+
+      XCTAssertThrowsError(
+        try NativeTLSPolicyAdapterV3.verifyPinnedCertificate(
+          material.certificate,
+          activePins: [wrongPin],
+          nowUnixSeconds: Int64(Date().timeIntervalSince1970)))
+      _ = try NativeTLSPolicyAdapterV3.makeClientHandlerFactory(
+        policy: .ca(serverName: "localhost", rootsSource: .configured),
+        serverHostname: "localhost",
+        configuredRoots: [material.certificate])
+      _ = try NativeTLSPolicyAdapterV3.makeClientHandlerFactory(
+        policy: .pin(serverName: "localhost", activeLeafDERSHA256: [pin]),
+        serverHostname: "localhost")
+    }
+
     private static func establishServerSessionV3(
       artifact: ArtifactV3, accepted: ConnectorAcceptedTransport
     ) async throws -> TransportV3Session {
@@ -1174,26 +1194,9 @@ final class ConnectorV2Tests: XCTestCase {
 
   #if os(macOS)
     private func exerciseGoWSS(path: String, vectorIndex: Int) async throws {
-    let process = Process()
-    let output = Pipe()
-    let errors = Pipe()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = ["go", "run", "./internal/cmd/ts-session-peer", "--path", path]
-    process.currentDirectoryURL = packageRoot().appendingPathComponent("flowersec-go")
-    process.standardOutput = output
-    process.standardError = errors
-    try process.run()
-    defer {
-      if process.isRunning {
-        process.terminate()
-        process.waitUntilExit()
-      }
-    }
-
-    let endpoint = try JSONDecoder().decode(
-      GoWSSEndpoint.self,
-      from: readFirstLine(output.fileHandleForReading)
-    )
+    let peer = try GoWSSPeer.start(path: path)
+    defer { peer.stop() }
+    let endpoint = peer.endpoint
     let source = try loadArtifactJSON(index: vectorIndex)
     var wire = try XCTUnwrap(
       JSONSerialization.jsonObject(with: Data(source.utf8)) as? [String: Any])
@@ -1245,20 +1248,18 @@ final class ConnectorV2Tests: XCTestCase {
       XCTAssertNil(eof)
       try await session.close()
     } catch {
-      process.waitUntilExit()
-      let peerError = errors.fileHandleForReading.readDataToEndOfFile()
+      let result = peer.finish()
       throw GoWSSInteropError(
         client: error,
         clientDuration: clientStarted.duration(to: .now),
         clientOperation: clientOperation,
-        peer: String(decoding: peerError, as: UTF8.self),
-        peerExit: process.terminationStatus
+        peer: result.stderr,
+        peerExit: result.status
       )
     }
 
-    process.waitUntilExit()
-    let peerError = errors.fileHandleForReading.readDataToEndOfFile()
-    XCTAssertEqual(process.terminationStatus, 0, String(decoding: peerError, as: UTF8.self))
+    let result = peer.finish()
+    XCTAssertEqual(result.status, 0, result.stderr)
     }
   #endif
 
@@ -1605,8 +1606,12 @@ private struct ConnectorTestTLS {
 
   static func loadShortLived() throws -> Self {
     let resources = try XCTUnwrap(Bundle.module.resourceURL?.appendingPathComponent("Fixtures"))
-    let cert = try Data(contentsOf: resources.appendingPathComponent("short_lived_cert.pem"))
-    let key = try Data(contentsOf: resources.appendingPathComponent("short_lived_key.pem"))
+    let certURL = ProcessInfo.processInfo.environment["FLOWERSEC_IOS_TEST_CERT"]
+      .map(URL.init(fileURLWithPath:)) ?? resources.appendingPathComponent("short_lived_cert.pem")
+    let keyURL = ProcessInfo.processInfo.environment["FLOWERSEC_IOS_TEST_KEY"]
+      .map(URL.init(fileURLWithPath:)) ?? resources.appendingPathComponent("short_lived_key.pem")
+    let cert = try Data(contentsOf: certURL)
+    let key = try Data(contentsOf: keyURL)
     return try Self(
       caPEM: cert,
       certificate: XCTUnwrap(NIOSSLCertificate.fromPEMBytes(Array(cert)).first),

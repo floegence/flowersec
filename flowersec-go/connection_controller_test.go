@@ -124,6 +124,7 @@ func TestConnectionControllerSharedLifecycleVectors(t *testing.T) {
 		"pin-mismatch-same-policy-terminal":                  runControllerVectorSamePin,
 		"pin-to-ca-filtered":                                 runControllerVectorPinToCA,
 		"browser-opaque-exhausted":                           runControllerVectorBrowserOpaque,
+		"mixed-security-opaque-policy-refresh":               runControllerVectorMixedSecurityOpaque,
 		"all-unsupported":                                    runControllerVectorAllUnsupported,
 		"replacement-expired-returns-primary":                runControllerVectorReplacementExpired,
 		"replacement-expired-before-race-returns-primary":    runControllerVectorReplacementExpired,

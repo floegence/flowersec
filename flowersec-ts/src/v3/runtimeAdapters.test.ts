@@ -25,6 +25,18 @@ describe("transport v3 WebSocket admission adapter", () => {
     expect(socket.close).toHaveBeenCalledOnce();
   });
 
+  test("rejects an already-open socket with no negotiated protocol", async () => {
+    const socket = fakeSocket(1, undefined);
+
+    await expect(readyWebSocketAdmissionV3(
+      candidate,
+      artifact,
+      socket,
+      new AbortController().signal,
+    )).rejects.toMatchObject({ code: "connection_failed" });
+    expect(socket.close).toHaveBeenCalledOnce();
+  });
+
   test("closes a socket when the open event negotiates the wrong protocol", async () => {
     const socket = fakeSocket(0, "wrong.v3");
     const opening = readyWebSocketAdmissionV3(
@@ -40,7 +52,7 @@ describe("transport v3 WebSocket admission adapter", () => {
   });
 });
 
-function fakeSocket(readyState: number, protocol: string): WebSocketLikeV3 & Readonly<{
+function fakeSocket(readyState: number, protocol: string | undefined): WebSocketLikeV3 & Readonly<{
   emit(type: "open" | "error" | "close"): void;
 }> {
   const listeners = new Map<string, Set<(event: unknown) => void>>();

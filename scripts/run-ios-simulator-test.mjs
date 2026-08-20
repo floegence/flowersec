@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -59,13 +61,31 @@ function main() {
     `iOS Simulator ready: ${simulator.name} (${simulator.udid}), iOS ${simulator.version.join(".")}\n`,
   );
   if (preflight[0] === "--preflight") return;
-  run("xcodebuild", [
-    "-quiet", "-scheme", "Flowersec",
-    "-destination", `platform=iOS Simulator,id=${simulator.udid}`,
-    "-parallel-testing-enabled", "NO", "test",
-    "-only-testing:FlowersecTests/ConnectorV2Tests/testProductionV3IOSAdapterBuildsPinnedTLSHandlerAndVerifiesLeaf",
-    "CODE_SIGNING_ALLOWED=NO",
-  ]);
+  const fixtureDirectory = mkdtempSync(`${os.tmpdir()}/flowersec-ios-tls-`);
+  const certificatePath = path.join(fixtureDirectory, "leaf.pem");
+  const privateKeyPath = path.join(fixtureDirectory, "leaf-key.pem");
+  try {
+    execFileSync("openssl", [
+      "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
+      "-sha256", "-nodes", "-days", "7", "-subj", "/CN=localhost",
+      "-addext", "subjectAltName=DNS:localhost", "-keyout", privateKeyPath,
+      "-out", certificatePath,
+    ], { cwd: root, stdio: "ignore" });
+    run("xcodebuild", [
+      "-quiet", "-scheme", "Flowersec",
+      "-destination", `platform=iOS Simulator,id=${simulator.udid}`,
+      "-parallel-testing-enabled", "NO", "test",
+      "-only-testing:FlowersecTests/ConnectorV2Tests/testProductionV3IOSAdapterBuildsPinnedTLSHandlerAndVerifiesLeaf",
+      "-only-testing:FlowersecTests/ConnectorV2Tests/testProductionV3IOSAdapterRejectsWrongPinAndBuildsConfiguredCA",
+      "CODE_SIGNING_ALLOWED=NO",
+    ], { env: {
+      ...process.env,
+      FLOWERSEC_IOS_TEST_CERT: certificatePath,
+      FLOWERSEC_IOS_TEST_KEY: privateKeyPath,
+    } });
+  } finally {
+    rmSync(fixtureDirectory, { recursive: true, force: true });
+  }
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) main();

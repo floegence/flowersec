@@ -72,6 +72,48 @@ func runControllerVectorChangedPin(t *testing.T, scenario controllerVectorScenar
 	closeController(t, controller)
 }
 
+func runControllerVectorMixedSecurityOpaque(t *testing.T, scenario controllerVectorScenario) {
+	oldPolicy := controllerPinPolicy("ERERERERERERERERERERERERERERERERERERERERERE")
+	newPolicy := controllerPinPolicy("gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIA")
+	primary := newControllerVectorLease(t, controllerMixedPolicyArtifact(t, oldPolicy))
+	replacement := newControllerVectorLease(t, controllerMixedPolicyArtifact(t, newPolicy))
+	source := &controllerTestSource{results: []controllerAcquireResult{{lease: primary.lease}, {lease: replacement.lease}}}
+	controller := newControllerForTest(t, source, 0)
+	session := newControllerTestSession(SessionClosed)
+	var connects atomic.Int32
+	var transports atomic.Int32
+	controller.connectDetailed = func(ctx context.Context, claimed claimedArtifactLease, _ ConnectorOptions, allowed map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome) {
+		transports.Add(1)
+		if connects.Add(1) == 1 {
+			artifact := claimed.lease.artifact.value
+			ca := artifact.Path.Candidates[0]
+			pin := artifact.Path.Candidates[1]
+			caKey := endpointKey(artifact.Path.Kind, ca)
+			pinKey := endpointKey(artifact.Path.Kind, pin)
+			return nil, controllerConnectOutcome{
+				err: &ConnectError{code: ConnectTransportSecurityFailed}, securityFailure: true, opaqueTrigger: true,
+				triggerCandidates: map[transportEndpointKey]artifactv3.Candidate{pinKey: pin},
+				failedEndpoints:   map[transportEndpointKey]struct{}{caKey: {}, pinKey: {}},
+			}
+		}
+		candidate := claimed.lease.artifact.value.Path.Candidates[1]
+		if _, ok := allowed[endpointKey(claimed.lease.artifact.value.Path.Kind, candidate)]; !ok || len(allowed) != 1 {
+			t.Fatalf("mixed replacement allowed endpoints = %v, want changed pin only", allowed)
+		}
+		if err := claimed.lease.commitSpend(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return session, controllerConnectOutcome{spendStarted: claimed.spendStarted()}
+	}
+	controller.Start(context.Background())
+	waitControllerSession(t, controller, session)
+	assertControllerVectorObserved(t, scenario.Expected, controllerVectorObservation(
+		controller, source.callCount(), int(connects.Load()), int(transports.Load()), 1,
+		[]*controllerVectorLease{primary, replacement}, nil,
+	))
+	closeController(t, controller)
+}
+
 func runControllerVectorSamePin(t *testing.T, scenario controllerVectorScenario) {
 	runControllerVectorRejectedReplacement(t, scenario,
 		controllerPinPolicy("ERERERERERERERERERERERERERERERERERERERERERE"), false)

@@ -595,6 +595,9 @@ validate_step_contracts(release_steps, [
     "id" => "vars",
     "env" => { "RELEASE_VERSION_INPUT" => "${{ needs.prepare.outputs.version }}" },
   }, run_sha256: "479845d981a22d9aa135c767fed353641737e1c73587d14d188562b5d5fa06f9" },
+  { name: "Verify tagged commit is the remote main tip", keys: ["name", "env", "run"], values: {
+    "env" => { "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}" },
+  }, run_sha256: "d4c29c98aae2d8fb96522062eb3fc3d245e24e8bad4f4972c37603f325dd7158" },
   { name: "Setup Go", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff", "with" => { "go-version-file" => "flowersec-go/go.mod", "cache" => true, "cache-dependency-path" => "flowersec-go/go.sum" } } },
   { name: "Setup Node", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", "with" => { "node-version" => "24", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" } } },
   { name: "Setup Rust", keys: ["name", "uses"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4" } },
@@ -630,7 +633,7 @@ validate_step_contracts(release_steps, [
   } } },
   { name: "Setup Docker Buildx", keys: ["name", "uses", "with"], values: { "uses" => "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c", "with" => { "driver-opts" => "image=moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec" } } },
   { name: "Login to GHCR", keys: ["name", "uses", "with"], values: { "uses" => "docker/login-action@dbcb813823bdd20940b903addbd779551569679f", "with" => { "registry" => "ghcr.io", "username" => "${{ github.actor }}", "password" => "${{ secrets.GITHUB_TOKEN }}" } } },
-  { name: "Build and push runtime image", keys: ["name", "uses", "with"], values: { "uses" => "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8", "with" => {
+  { name: "Build and push runtime image", keys: ["name", "id", "uses", "with"], values: { "id" => "runtime-image", "uses" => "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8", "with" => {
     "context" => ".",
     "file" => "docker/flowersec-runtime/Dockerfile",
     "platforms" => "linux/amd64,linux/arm64",
@@ -639,6 +642,13 @@ validate_step_contracts(release_steps, [
     "tags" => "ghcr.io/${{ github.repository_owner }}/flowersec-runtime:${{ steps.vars.outputs.version }}\nghcr.io/${{ github.repository_owner }}/flowersec-runtime:latest\n",
     "build-args" => "VERSION=v${{ steps.vars.outputs.version }}\nCOMMIT=${{ steps.vars.outputs.sha }}\nDATE=${{ steps.vars.outputs.date }}\n",
   } } },
+  { name: "Verify GHCR runtime manifest readback", keys: ["name", "env", "run"], values: {
+    "env" => {
+      "IMAGE_DIGEST" => "${{ steps.runtime-image.outputs.digest }}",
+      "IMAGE_REPOSITORY" => "ghcr.io/${{ github.repository_owner }}/flowersec-runtime",
+      "IMAGE_VERSION" => "${{ steps.vars.outputs.version }}",
+    },
+  }, run_sha256: "bd678c0fe9d43098f8b726037dd67ede37a594e8ebdd7f685624693b150ca944" },
 ], "the unified release workflow release job")
 validate_step_contracts(native_prebuilt_steps, [
   { name: nil, keys: ["uses", "with"], values: {
@@ -705,6 +715,7 @@ validate_step_contracts(npm_consumer_steps, [
 validate_step_contracts(rust_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
   { name: "Checkout release commit", keys: ["name", "id", "env", "run"], values: { "id" => "version", "env" => { "RELEASE_VERSION_INPUT" => "${{ inputs.version }}" } }, run_sha256: "ac06a1217c1f7df7c9e899d1fd91e3eb5a9c16f30aba50503028c62b391ac398" },
+  { name: "Verify tagged commit is the remote main tip", keys: ["name", "run"], run_sha256: "c6b6362a10a06dc03d1e88283f854c3642c9fd2de2c08861a8ba1ac6467b98ab" },
   { name: "Setup Rust", keys: ["name", "uses"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4" } },
   { name: "Validate release version facts", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "9431ce4342dcd8f8af90607321f1ceb9e6e61c13f455b06acd242d96f53e0087" },
   { name: "Verify release tags", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "3e5e103b4b32e468d370d25613885b564a2f9f0dfebe2ced9b182a1691038830" },

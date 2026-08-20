@@ -665,7 +665,8 @@ async fn run_scenario(scenario: &ScenarioV3) {
         "pin-mismatch-changed-pin-success"
         | "pin-mismatch-same-policy-terminal"
         | "pin-to-ca-filtered"
-        | "browser-opaque-exhausted" => run_policy_replacement(scenario).await,
+        | "browser-opaque-exhausted"
+        | "mixed-security-opaque-policy-refresh" => run_policy_replacement(scenario).await,
         "all-unsupported" | "capability-snapshot-invalidation-barrier" => {
             run_capability_filter(scenario).await
         }
@@ -715,12 +716,23 @@ async fn run_scenario(scenario: &ScenarioV3) {
 }
 
 async fn run_policy_replacement(scenario: &ScenarioV3) {
-    let primary_lease = TrackedLease::new(pin_artifact([0x11; 32]));
+    let mixed = scenario.input["trigger"].as_str() == Some("mixed_security_opaque");
+    let primary_lease = TrackedLease::new(if mixed {
+        pin_and_unrelated_ca_artifact([0x11; 32])
+    } else {
+        pin_artifact([0x11; 32])
+    });
     let replacement_kind = scenario.input["replacement_policy"]
         .as_str()
         .expect("replacement policy");
     let replacement_artifact = match replacement_kind {
-        "changed_pin" => pin_artifact([0x22; 32]),
+        "changed_pin" => {
+            if mixed {
+                pin_and_unrelated_ca_artifact([0x22; 32])
+            } else {
+                pin_artifact([0x22; 32])
+            }
+        }
         "same_pin" => pin_artifact([0x11; 32]),
         "ca" => ca_artifact(),
         value => panic!("unknown replacement policy {value}"),
@@ -742,7 +754,8 @@ async fn run_policy_replacement(scenario: &ScenarioV3) {
         transports: 1,
         allowed_candidate_ids: None,
         outcome: ConnectorOutcome::Error(
-            ConnectError::from_runtime_code(code).with_v3_candidate_masks(1, 1),
+            ConnectError::from_runtime_code(code)
+                .with_v3_candidate_masks(1, if mixed { 0b11 } else { 1 }),
         ),
     }];
     if replacement_kind == "changed_pin" {

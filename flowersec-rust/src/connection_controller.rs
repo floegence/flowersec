@@ -857,6 +857,7 @@ async fn run_controller(inner: Arc<ControllerInner>) {
         attempts_in_cycle = 0;
         replacement_used = false;
         blocked_pin_policy.clear();
+        retry_index = 0;
         if !inner.set_connected(attempt, session.clone()) {
             let _ = session.close().await;
             return;
@@ -874,7 +875,7 @@ async fn run_controller(inner: Arc<ControllerInner>) {
             disposition: session_disposition(termination.error),
         };
         attempt = 0;
-        if !schedule_retry(&inner, attempt, 0, 0, failure).await {
+        if !schedule_retry(&inner, attempt, 0, retry_index, failure).await {
             return;
         }
         retry_index = 1;
@@ -1933,6 +1934,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_termination_starts_a_fresh_cycle_at_initial_backoff() {
+        let source = Arc::new(QueueSource::new([Ok(test_lease(
+            pin_only_artifact([0x11; 32]),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+        ))]));
+        let controller = ConnectionController::new_with_connector(
+            source,
+            test_options(None),
+            Arc::new(|lease, _options, _cancellation| {
+                Box::pin(async move {
+                    spend_lease(lease).await?;
+                    Ok(Arc::new(TerminatingSession) as Arc<dyn Session>)
+                })
+            }),
+        );
+
+        controller.start();
+        let waiting = wait_for_state(&controller, ConnectionState::Waiting).await;
+        let next_retry_at = waiting.next_retry_at.expect("session retry deadline");
+        let delay = next_retry_at
+            .duration_since(SystemTime::now())
+            .unwrap_or_default();
+        assert!(delay >= Duration::from_millis(150));
+        assert!(delay <= Duration::from_millis(500));
+        assert_eq!(waiting.attempt, 0);
+        controller.close().await;
+    }
+
+    #[tokio::test]
     async fn expired_replacement_keeps_quota_and_returns_to_primary_backoff() {
         let expected = scenario_expected("replacement-expired-returns-primary");
         let retired = Arc::new(AtomicU64::new(0));
@@ -2323,6 +2354,46 @@ mod tests {
 
         async fn wait_termination(&self) -> SessionTermination {
             std::future::pending().await
+        }
+
+        async fn close(&self) -> Result<(), SessionError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct TerminatingSession;
+
+    #[async_trait]
+    impl Session for TerminatingSession {
+        fn rpc(&self) -> &dyn RpcPeer {
+            panic!("RPC is not used by controller tests")
+        }
+
+        async fn open_stream(
+            &self,
+            _kind: &str,
+            _metadata: StreamMetadata,
+        ) -> Result<Box<dyn ByteStream>, SessionError> {
+            Err(SessionError::OperationFailed)
+        }
+
+        async fn accept_stream(&self) -> Result<IncomingStream, SessionError> {
+            Err(SessionError::OperationFailed)
+        }
+
+        async fn rekey(&self) -> Result<(), SessionError> {
+            Err(SessionError::OperationFailed)
+        }
+
+        async fn probe_liveness(&self) -> Result<Duration, SessionError> {
+            Err(SessionError::OperationFailed)
+        }
+
+        async fn wait_termination(&self) -> SessionTermination {
+            SessionTermination {
+                error: SessionError::GoingAway,
+            }
         }
 
         async fn close(&self) -> Result<(), SessionError> {

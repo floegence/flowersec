@@ -263,6 +263,11 @@ func NewWebSocketCarrierDial(config WebSocketDialConfig) (Dial, error) {
 	if dialer.NetDial != nil && dialer.NetDialContext == nil {
 		return nil, ErrInvalidCarrierDialConfig
 	}
+	// Gorilla bypasses TLSClientConfig when the callback performs TLS itself.
+	// v3 must own the complete TLS policy, so custom TLS callbacks are forbidden.
+	if dialer.NetDialTLSContext != nil {
+		return nil, ErrInvalidCarrierDialConfig
+	}
 	if dialer.TLSClientConfig == nil {
 		dialer.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13}
 	} else {

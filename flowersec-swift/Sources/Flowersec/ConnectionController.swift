@@ -496,7 +496,7 @@ public actor ConnectionController {
     else { return false }
     switch failure {
     case .connection(let error) where error == .transportSecurityFailed:
-      return !provenance.policyTriggerIDs.isEmpty
+      return !provenance.policyTriggerIDs.isEmpty || !provenance.opaquePolicyTriggerIDs.isEmpty
     case .connection(let error) where error.code == .connectionFailed:
       return !provenance.opaquePolicyTriggerIDs.isEmpty
     default: return false

@@ -83,7 +83,7 @@ function waitForWebSocketOpen(
 ): Promise<void> {
   if (signal.aborted) return Promise.reject(signal.reason);
   if (socket.readyState === 1) {
-    if (socket.protocol === undefined || socket.protocol === expectedProtocol) return Promise.resolve();
+    if (socket.protocol === expectedProtocol) return Promise.resolve();
     closeWebSocketAfterProtocolMismatch(socket);
     return Promise.reject(new TransportFailureV3("connection_failed"));
   }
@@ -102,7 +102,7 @@ function waitForWebSocketOpen(
       failure === undefined ? resolve() : reject(failure);
     };
     const open = () => {
-      if (socket.protocol === undefined || socket.protocol === expectedProtocol) {
+      if (socket.protocol === expectedProtocol) {
         finish();
         return;
       }

@@ -15,6 +15,29 @@ transcription, but they MUST NOT replace a general rule from the source
 design. MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY have the meanings from RFC
 2119 and RFC 8174.
 
+## Normative v2 Baseline and Priority
+
+Rules not explicitly rewritten by the Chinese v3 design are inherited from the
+frozen v2 baseline at design commit `026cb52d116d2a04de50d0f0621fff57c7657120`:
+
+- `docs/TRANSPORT_V2_WIRE.md` and `stability/transport_v2_contract.json` for
+  frame lengths, offsets, reserved values, session wire, and application codec
+  rules;
+- `docs/TRANSPORT_V2_ARCHITECTURE.md` and the same registry only for the
+  carrier tuples, lifecycle, and Controller baseline explicitly referenced by
+  v3;
+- the v2 registry `wire_fixtures` vectors for fields, byte order, registry
+  values, and canonical codec behavior explicitly frozen by the v2 wire
+  document;
+- `testdata/transport_v2/connection_controller_vectors.json` and
+  `stability/connection_controller_recovery.json` only for Controller
+  lifecycle and error-recovery mappings not rewritten by v3.
+
+Normative priority is: the final Chinese v3 design, then this complete English
+transcription, then the v3 registry and vectors as derived consistency
+artifacts. Source code, v2 runtime behavior, and any other document cannot add
+a v3 exception. A missing or conflicting derived artifact blocks release.
+
 ## 1. Fixed Identifiers
 
 | Item | Value |
@@ -320,6 +343,12 @@ truncation, or trailing data fails closed.
 The v3 path exclusively uses these domain labels:
 
 ~~~text
+flowersec-v3-session-contract\0
+flowersec-v3-candidates\0
+flowersec-v3-tls-policy\0
+flowersec-v3-admission\0
+flowersec-v3-acceptor-admissions\0
+flowersec-v3-runtime-capability\0
 flowersec-v3-handshake\0
 flowersec v3 server finished
 flowersec v3 client finished
@@ -342,6 +371,42 @@ flowersec-v3-setup\0
 flowersec-v3-record\0
 flowersec-v3-open\0
 ~~~
+
+The complete v2-to-v3 domain replacement table is:
+
+| v2 label | v3 label |
+| --- | --- |
+| `flowersec-v2-session-contract\0` | `flowersec-v3-session-contract\0` |
+| `flowersec-v2-candidates\0` | `flowersec-v3-candidates\0` |
+| `flowersec-v2-tls-policy\0` | `flowersec-v3-tls-policy\0` |
+| `flowersec-v2-admission\0` | `flowersec-v3-admission\0` |
+| `flowersec-v2-acceptor-admissions\0` | `flowersec-v3-acceptor-admissions\0` |
+| `flowersec-v2-runtime-capability\0` | `flowersec-v3-runtime-capability\0` |
+| `flowersec-v2-handshake\0` | `flowersec-v3-handshake\0` |
+| `flowersec v2 server finished` | `flowersec v3 server finished` |
+| `flowersec v2 client finished` | `flowersec v3 client finished` |
+| `flowersec v2 epoch zero` | `flowersec v3 epoch zero` |
+| `flowersec v2 control root` | `flowersec v3 control root` |
+| `flowersec v2 stream root` | `flowersec v3 stream root` |
+| `flowersec v2 setup root` | `flowersec v3 setup root` |
+| `flowersec v2 rekey root` | `flowersec v3 rekey root` |
+| `flowersec v2 next epoch` | `flowersec v3 next epoch` |
+| `flowersec v2 stream` | `flowersec v3 stream` |
+| `flowersec v2 control` | `flowersec v3 control` |
+| `flowersec v2 record key` | `flowersec v3 record key` |
+| `flowersec v2 nonce` | `flowersec v3 nonce` |
+| `flowersec v2 unreliable root` | `flowersec v3 unreliable root` |
+| `flowersec v2 unreliable` | `flowersec v3 unreliable` |
+| `flowersec v2 unreliable key` | `flowersec v3 unreliable key` |
+| `flowersec v2 unreliable nonce` | `flowersec v3 unreliable nonce` |
+| `flowersec-v2-unreliable` | `flowersec-v3-unreliable` |
+| `flowersec-v2-setup\0` | `flowersec-v3-setup\0` |
+| `flowersec-v2-record\0` | `flowersec-v3-record\0` |
+| `flowersec-v2-open\0` | `flowersec-v3-open\0` |
+
+Every v3 path MUST use the corresponding v3 preimage and MUST reject a v2
+magic, profile, ALPN, subprotocol, or label. The acceptor-admissions label is
+included because its hash covers the complete chosen-candidate FSB3 frames.
 
 A v3 path MUST NOT call a helper containing another protocol version's
 preimage, HKDF info, HMAC input, AAD, frame magic, or version byte.

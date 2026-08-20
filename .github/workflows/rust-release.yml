@@ -46,6 +46,20 @@ jobs:
           git checkout --detach "refs/tags/flowersec-rust/v${VERSION}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Verify tagged commit is the remote main tip
+        run: |
+          set -euo pipefail
+          release_sha="$(git rev-parse HEAD)"
+          git fetch --no-tags origin main
+          local_main_sha="$(git rev-parse refs/remotes/origin/main)"
+          remote_main_sha="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          test -n "$remote_main_sha"
+          if [[ "$release_sha" != "$local_main_sha" || "$release_sha" != "$remote_main_sha" ]]; then
+            echo "release tag must point at the current remote main tip" >&2
+            echo "tag=$release_sha local_main=$local_main_sha remote_main=$remote_main_sha" >&2
+            exit 1
+          fi
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
 

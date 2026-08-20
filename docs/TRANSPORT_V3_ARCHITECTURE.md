@@ -223,7 +223,10 @@ Public codes are artifact_invalid, expired_artifact,
 transport_security_unsupported, transport_security_failed, and
 connection_failed. Public retry disposition is terminal, retryable, or
 retry_after with an absolute Unix millisecond integer in
-0..253402300799999.
+0..253402300799999 inclusive. The value is a safe, non-negative integer; a
+fraction, negative value, value above 253402300799999, or non-finite value is
+invalid at the source/adapter boundary and is projected to artifact_invalid
+terminal.
 
 Every boundary validates a disposition. Invalid source or adapter
 retry_after is a contract violation and becomes artifact_invalid terminal
@@ -334,12 +337,15 @@ Failure ordinal n waits:
 min(250 * 2^(n-1), 30000) milliseconds
 ~~~
 
-Jitter is zero. Backoff uses monotonic time. Artifact, policy, certificate, and
-retry-after times use trusted wall clock. retry_after waits for both monotonic
-backoff and wall_now_ms at or beyond the absolute deadline. Wall-clock forward
-jumps can satisfy only the wall condition; backward jumps delay it.
-Implementations reread wall time after every wake and at least every 1000
-monotonic milliseconds. Timer arithmetic saturates.
+The first failure has ordinal 1 and therefore a 250 ms floor; the ordinal is
+reset only after Session establishment. Jitter is exactly zero. Backoff uses a
+monotonic clock and saturating arithmetic, including the exponent and the
+30,000 ms ceiling. Artifact, policy, certificate, and retry-after times use a
+trusted wall clock. A retry_after wait is the later of the monotonic backoff
+deadline and the absolute wall-clock deadline. Wall-clock forward jumps can
+satisfy only the wall condition; backward jumps delay it. Implementations
+reread wall time after every wake and at least every 1,000 monotonic
+milliseconds, and never convert the absolute deadline into an unbounded sleep.
 
 retryNow wakes only an existing wait, may skip remaining backoff, and cannot
 cross a future absolute deadline. It returns false outside waiting or after
@@ -405,7 +411,12 @@ separate ErrIssuanceFailed. Debug and string output never reveal endpoint or
 certificate material.
 
 Only Go supplies the v3 issuer. TypeScript, Rust, and Swift consume issued
-artifacts.
+artifacts; their control-plane modules do not issue or mutate v3 records.
+`ControlPlaneError` has fixed `Error()`, `Code()`, `FieldPath()`, and
+`Unwrap()` accessors and must unwrap with `errors.As` to the closed
+`ErrInvalidControlPlaneInput` or `ErrIssuanceFailed` sentinels. The exact
+public symbol and error inventory is frozen in
+`stability/api_contract_manifest.json`.
 
 ## 11. Certificate Rotation
 

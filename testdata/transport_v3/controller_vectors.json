@@ -294,6 +294,41 @@
       }
     },
     {
+      "id": "mixed-security-opaque-policy-refresh",
+      "driver": "policy-replacement",
+      "steps": [
+        "tls_failed_ca_untrusted_w_ca",
+        "browser_pin_opaque_w_pin",
+        "refresh_on_union_of_native_and_opaque_triggers",
+        "acquire_replacement_immediate",
+        "claim_B",
+        "changed_pin",
+        "commit_spend_B",
+        "established"
+      ],
+      "input": {
+        "replacement_policy": "changed_pin",
+        "trigger": "mixed_security_opaque"
+      },
+      "expected": {
+        "final_state": "connected",
+        "public_error": null,
+        "disposition": null,
+        "acquisitions": 2,
+        "connect_attempts": 2,
+        "transports_created": 2,
+        "replacement_acquisitions": 1,
+        "replacement_quota_used": 1,
+        "spend_callbacks": 1,
+        "retire_callbacks": 1,
+        "lease_terminal_states": [
+          "retired",
+          "consumed"
+        ],
+        "retry_delays_ms": []
+      }
+    },
+    {
       "id": "replacement-expired-returns-primary",
       "driver": "replacement-expiry",
       "steps": [

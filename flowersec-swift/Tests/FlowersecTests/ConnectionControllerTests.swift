@@ -542,6 +542,46 @@ final class ConnectionControllerTests: XCTestCase {
     await controller.close()
   }
 
+  func testMixedSecurityAndOpaqueTriggersRefresh() async throws {
+    let expected = try controllerExpectedV3("mixed-security-opaque-policy-refresh")
+    let retired = AsyncCounterV3()
+    let spent = AsyncCounterV3()
+    let source = SequenceArtifactSourceV3([
+      try lease(artifact: mixedCAPinArtifactV3(), spent: spent, retired: retired),
+      try lease(artifact: changedPinArtifactV3(), spent: spent, retired: retired),
+    ])
+    let calls = AsyncCounterV3()
+    let session = ControllerSessionV3()
+    let controller = try ConnectionController(
+      source: source,
+      connectOneShot: { lease, _ in
+        if await calls.increment() == 1 {
+          throw ControllerConnectFailureV3.connection(
+            .transportSecurityFailed, .retryable,
+            policyTriggerIDs: [], opaquePolicyTriggerIDs: ["w-pin"],
+            failedIDs: ["w-ca", "w-pin"])
+        }
+        let claimed = try await lease.claim()
+        try await claimed.commitSpend()
+        return session
+      })
+
+    await controller.start()
+    let connected = await waitForState(.connected, controller: controller)
+    let snapshot = await controller.snapshot()
+    let acquisitions = await source.acquisitions
+    let attempts = await calls.value
+    let retirements = await retired.value
+    let spends = await spent.value
+    XCTAssertTrue(connected)
+    XCTAssertEqual(snapshot.state, .connected)
+    XCTAssertEqual(acquisitions, expected["acquisitions"] as? Int)
+    XCTAssertEqual(attempts, expected["connect_attempts"] as? Int)
+    XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int)
+    XCTAssertEqual(spends, expected["spend_callbacks"] as? Int)
+    await controller.close()
+  }
+
   func testSamePinAndPinToCAReplacementsAreTerminalWithoutThirdLease() async throws {
     for (scenarioID, replacementArtifact) in [
       ("pin-mismatch-same-policy-terminal", try artifactV3()),
@@ -934,8 +974,8 @@ final class ConnectionControllerTests: XCTestCase {
     let root = try controllerVectorsV3()
     let scenarios = try XCTUnwrap(root["scenarios"] as? [[String: Any]])
     let ids = scenarios.compactMap { $0["id"] as? String }
-    XCTAssertEqual(ids.count, 39)
-    XCTAssertEqual(Set(ids).count, 39)
+    XCTAssertEqual(ids.count, 40)
+    XCTAssertEqual(Set(ids).count, 40)
 
     for id in ids {
       switch id {
@@ -945,6 +985,8 @@ final class ConnectionControllerTests: XCTestCase {
         try await testSamePinAndPinToCAReplacementsAreTerminalWithoutThirdLease()
       case "browser-opaque-exhausted":
         try await testBrowserOpaquePinFailureRefreshesOnceAndKeepsConnectionError()
+      case "mixed-security-opaque-policy-refresh":
+        try await testMixedSecurityAndOpaqueTriggersRefresh()
       case "all-unsupported":
         try await testAllUnsupportedIsTerminalWithoutCreatingTransport()
       case "replacement-expired-returns-primary":

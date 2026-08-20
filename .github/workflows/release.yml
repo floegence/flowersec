@@ -200,6 +200,21 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "date=$DATE" >> "$GITHUB_OUTPUT"
 
+      - name: Verify tagged commit is the remote main tip
+        env:
+          RELEASE_SHA: ${{ steps.vars.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          local_main_sha="$(git rev-parse refs/remotes/origin/main)"
+          remote_main_sha="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          test -n "$remote_main_sha"
+          if [[ "$RELEASE_SHA" != "$local_main_sha" || "$RELEASE_SHA" != "$remote_main_sha" ]]; then
+            echo "release tag must point at the current remote main tip" >&2
+            echo "tag=$RELEASE_SHA local_main=$local_main_sha remote_main=$remote_main_sha" >&2
+            exit 1
+          fi
+
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
@@ -371,6 +386,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push runtime image
+        id: runtime-image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
@@ -385,6 +401,23 @@ jobs:
             VERSION=v${{ steps.vars.outputs.version }}
             COMMIT=${{ steps.vars.outputs.sha }}
             DATE=${{ steps.vars.outputs.date }}
+
+      - name: Verify GHCR runtime manifest readback
+        env:
+          IMAGE_DIGEST: ${{ steps.runtime-image.outputs.digest }}
+          IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/flowersec-runtime
+          IMAGE_VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -n "$IMAGE_DIGEST"
+          for tag in "$IMAGE_VERSION" latest; do
+            image="$IMAGE_REPOSITORY:$tag"
+            observed="$(docker buildx imagetools inspect "$image" | awk '$1 == "Digest:" { print $2; exit }')"
+            if [[ -z "$observed" || "$observed" != "$IMAGE_DIGEST" ]]; then
+              echo "GHCR manifest readback mismatch for $image: expected $IMAGE_DIGEST got ${observed:-<missing>}" >&2
+              exit 1
+            fi
+          done
 
   npm-recovery:
     needs: [prepare, release]

@@ -47,6 +47,32 @@ func TestIsQUICTLSFailureUsesCryptoTransportCode(t *testing.T) {
 	}
 }
 
+func TestNewWebSocketCarrierDialRejectsCustomTLSCallbacks(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		configure func(*gorillaws.Dialer)
+	}{
+		{
+			name: "context callback",
+			configure: func(dialer *gorillaws.Dialer) {
+				dialer.NetDialTLSContext = func(context.Context, string, string) (net.Conn, error) {
+					return nil, errors.New("unexpected custom TLS callback")
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dialer := *gorillaws.DefaultDialer
+			test.configure(&dialer)
+			if _, err := NewWebSocketCarrierDial(WebSocketDialConfig{
+				Dialer: &dialer, Resources: carrierws.DefaultResourcePolicy(),
+			}); !errors.Is(err, ErrInvalidCarrierDialConfig) {
+				t.Fatalf("constructor error = %v, want ErrInvalidCarrierDialConfig", err)
+			}
+		})
+	}
+}
+
 func TestGoNativePinProvidersRejectHashMatchedLeafWithInvalidTLSProof(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	leakedDER, serverConfig := invalidProofServerTLS(t, now)

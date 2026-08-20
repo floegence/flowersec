@@ -95,6 +95,7 @@ const scenarioRunners: Readonly<Record<string, ScenarioRunner>> = Object.freeze(
   "pin-mismatch-same-policy-terminal": runPolicyReplacement,
   "pin-to-ca-filtered": runPolicyReplacement,
   "browser-opaque-exhausted": runPolicyReplacement,
+  "mixed-security-opaque-policy-refresh": runPolicyReplacement,
   "all-unsupported": runAllUnsupported,
   "replacement-expired-returns-primary": runReplacementExpired,
   "replacement-expired-before-race-returns-primary": runReplacementExpired,
@@ -148,7 +149,8 @@ describe("transport v3 shared controller vectors", () => {
 });
 
 async function runPolicyReplacement(scenario: ControllerScenario): Promise<void> {
-  const primary = singleCandidateArtifact(baseArtifact, "t-pin");
+  const mixed = scenario.input.trigger === "mixed_security_opaque";
+  const primary = mixed ? mixedCAPinArtifact(baseArtifact) : singleCandidateArtifact(baseArtifact, "t-pin");
   const replacementPolicy = scenario.input.replacement_policy;
   const replacement = replacementPolicy === "changed_pin"
     ? withChangedPin(primary)
@@ -162,6 +164,15 @@ async function runPolicyReplacement(scenario: ControllerScenario): Promise<void>
     if (context.kind === "replacement") {
       await commitArtifactLeaseSpendV3(context.claim);
       return { kind: "established", session };
+    }
+    if (mixed) {
+      const ca = context.candidates.find(({ id }) => id === "w-ca");
+      const pin = context.candidates.find(({ id }) => id === "w-pin");
+      if (ca === undefined || pin === undefined) throw new Error("mixed fixture candidates missing");
+      return { kind: "candidate_failures", failures: [
+        { candidate: ca, failure: new TransportFailureV3("tls_failed", "ca_untrusted") },
+        { candidate: pin, failure: new TransportFailureV3("connection_failed", "browser_pin_opaque") },
+      ] };
     }
     const opaque = scenario.input.trigger === "browser_pin_opaque";
     return { kind: "candidate_failures", failures: [{
@@ -813,6 +824,14 @@ function singleCandidateArtifact(input: ArtifactV3, id: string): ArtifactV3 {
   const candidate = input.path.candidates.find((value) => value.id === id);
   if (candidate === undefined) throw new Error(`fixture candidate ${id} is missing`);
   return { ...structuredClone(input), path: { ...structuredClone(input.path), candidates: [structuredClone(candidate)] } };
+}
+
+function mixedCAPinArtifact(input: ArtifactV3): ArtifactV3 {
+  const output = structuredClone(input) as ArtifactV3;
+  output.path.candidates = output.path.candidates
+    .filter(({ id }) => id === "w-ca" || id === "w-pin")
+    .map((candidate) => structuredClone(candidate));
+  return output;
 }
 
 function twoPinArtifact(input: ArtifactV3): ArtifactV3 {

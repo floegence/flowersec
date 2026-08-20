@@ -350,17 +350,14 @@ pub(crate) async fn connect_v3_with_cancellation_and_preparer(
     }
 
     if !attempted {
-        let _ = claimed.retire().await;
-        let code = match aggregate {
-            CandidateFailureV3::PolicyExpired | CandidateFailureV3::Security => {
-                ConnectErrorCode::TransportSecurityFailed
-            }
-            CandidateFailureV3::InvalidArtifact => ConnectErrorCode::ArtifactInvalid,
-            _ => ConnectErrorCode::TransportSecurityUnsupported,
-        };
-        return Err(
-            public_error(code).with_v3_candidate_masks(policy_trigger_mask, failed_candidate_mask)
-        );
+        return Err(finalize_candidate_race(
+            claimed,
+            &plan,
+            aggregate,
+            policy_trigger_mask,
+            failed_candidate_mask,
+        )
+        .await);
     }
     tokio::pin!(attempts);
     while let Some((candidate_index, candidate, result)) = attempts.next().await {
