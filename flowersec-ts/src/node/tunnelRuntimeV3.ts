@@ -262,7 +262,14 @@ async function processCarrier(state: TunnelRuntimeStateV3, carrier: CarrierSessi
     const leg = validatedLeg(state, received, decoded.request, decision);
     if (leg === undefined) {
       releaseDecision(state, decision);
-      await reject(received, "invalid_credential", false, state.admissionReasons, state.abort.signal);
+      const expired = decision.expiresAtUnixSeconds <= Math.floor(Date.now() / 1_000);
+      await reject(
+        received,
+        expired ? "expired_artifact" : "invalid_credential",
+        expired,
+        state.admissionReasons,
+        state.abort.signal,
+      );
       return;
     }
     configureRole(leg);
@@ -366,11 +373,17 @@ function registerLeg(state: TunnelRuntimeStateV3, leg: TunnelLeg): void {
   track(state, watchTermination(state, leg));
   if (generation.roles.size === 1) {
     state.counts.pendingLegs += 1;
+    const expiresFirst = leg.authorization.expiresAtUnixSeconds * 1_000 <= Date.now() + state.limits.pairTimeoutMs;
     const timeout = Math.min(
       state.limits.pairTimeoutMs,
       Math.max(1, leg.authorization.expiresAtUnixSeconds * 1_000 - Date.now()),
     );
-    generation.timer = setTimeout(() => rejectGeneration(state, generation!, "pair_timeout", true), timeout);
+    generation.timer = setTimeout(() => rejectGeneration(
+      state,
+      generation!,
+      expiresFirst ? "expired_artifact" : "pair_timeout",
+      true,
+    ), timeout);
     return;
   }
   const now = Math.floor(Date.now() / 1_000);

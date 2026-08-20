@@ -69,6 +69,28 @@ func TestRegisterRevalidatesBothAuthorizationExpiriesBeforeActivation(t *testing
 	}
 }
 
+func TestPendingAuthorizationExpiryUsesExpiredArtifactReason(t *testing.T) {
+	coordinator, err := NewCoordinator(Config{PairTimeout: 100 * time.Millisecond}, func(context.Context, *artifactv3.DecodedRequest) (Authorization, error) {
+		return Authorization{}, errors.New("unused authorizer")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leg := newExpiryTestLeg(1, time.Now().Add(20*time.Millisecond))
+	generation, err := coordinator.register(context.Background(), leg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-generation.done:
+	case <-time.After(time.Second):
+		t.Fatal("expired pending leg was not rejected")
+	}
+	if leg.pending.(*expiryTestPendingLeg).responseReason.Load() != artifactv3.ReasonExpiredArtifact {
+		t.Fatalf("pending expiry reason = %q, want %q", leg.pending.(*expiryTestPendingLeg).responseReason.Load(), artifactv3.ReasonExpiredArtifact)
+	}
+}
+
 func TestDefaultReasonRegistryIncludesRetryableExpiredArtifact(t *testing.T) {
 	reasons := DefaultReasonRegistry()
 	response := artifactv3.AdmissionResponse{

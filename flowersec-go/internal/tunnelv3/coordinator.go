@@ -157,6 +157,7 @@ type Coordinator struct {
 	pendingLegs int
 	activePairs int
 	admissions  chan struct{}
+	authorizers chan struct{}
 	now         func() time.Time
 }
 
@@ -246,8 +247,9 @@ func NewCoordinator(config Config, authorize Authorize) (*Coordinator, error) {
 	return &Coordinator{
 		config: config, authorize: authorize,
 		groups: make(map[authorityKey]*pairGeneration), used: make(map[string]time.Time),
-		admissions: make(chan struct{}, config.MaxConcurrentAdmissions),
-		now:        time.Now,
+		admissions:  make(chan struct{}, config.MaxConcurrentAdmissions),
+		authorizers: make(chan struct{}, config.MaxConcurrentAdmissions),
+		now:         time.Now,
 	}, nil
 }
 
@@ -326,18 +328,35 @@ type authorizationResult struct {
 // cancellation from holding the admission and runtime shutdown path hostage.
 // A late authorization is still drained and its lease is released exactly once.
 func (coordinator *Coordinator) authorizeWithContext(ctx context.Context, decoded *artifactv3.DecodedRequest) (Authorization, error) {
+	select {
+	case coordinator.authorizers <- struct{}{}:
+	case <-ctx.Done():
+		return Authorization{}, ctx.Err()
+	}
+	var releaseOnce sync.Once
+	releaseLate := func(authorization Authorization) {
+		releaseOnce.Do(func() { coordinator.releaseLease(authorization.Lease) })
+	}
 	result := make(chan authorizationResult, 1)
 	go func() {
+		defer func() { <-coordinator.authorizers }()
 		authorization, err := coordinator.authorize(ctx, decoded)
+		if ctx.Err() != nil {
+			releaseLate(authorization)
+		}
 		result <- authorizationResult{authorization: authorization, err: err}
 	}()
 	select {
 	case outcome := <-result:
+		if err := ctx.Err(); err != nil {
+			releaseLate(outcome.authorization)
+			return Authorization{}, err
+		}
 		return outcome.authorization, outcome.err
 	case <-ctx.Done():
 		go func() {
 			outcome := <-result
-			coordinator.releaseLease(outcome.authorization.Lease)
+			releaseLate(outcome.authorization)
 		}()
 		return Authorization{}, ctx.Err()
 	}
@@ -489,11 +508,14 @@ func (coordinator *Coordinator) registerClaimed(ctx context.Context, leg *admitt
 		coordinator.pendingLegs++
 		generation.pendingCount++
 		deadline := now.Add(coordinator.config.PairTimeout)
-		if leg.authorization.ExpiresAt.Before(deadline) {
+		reason := ReasonPairTimeout
+		if !leg.authorization.ExpiresAt.After(deadline) {
 			deadline = leg.authorization.ExpiresAt
+			reason = artifactv3.ReasonExpiredArtifact
 		}
+		expiryReason := reason
 		generation.timer = time.AfterFunc(time.Until(deadline), func() {
-			coordinator.rejectGeneration(generation, ErrPairTimeout, artifactv3.AdmissionRetryable, ReasonPairTimeout)
+			coordinator.rejectGeneration(generation, ErrPairTimeout, artifactv3.AdmissionRetryable, expiryReason)
 		})
 		coordinator.mu.Unlock()
 		return generation, nil
@@ -579,6 +601,10 @@ func (coordinator *Coordinator) activate(generation *pairGeneration) {
 	for role, leg := range generation.roles {
 		go func(role uint8, leg *admittedLeg) {
 			session, err := leg.pending.Activate(activationCtx, role)
+			if activationCtx.Err() != nil && session != nil {
+				_ = session.Close()
+				session = nil
+			}
 			sessions <- activationResult{role: role, session: session, err: err}
 		}(role, leg)
 	}
@@ -603,6 +629,13 @@ func (coordinator *Coordinator) activate(generation *pairGeneration) {
 		if activationErr == nil {
 			activationErr = io.ErrClosedPipe
 		}
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), coordinator.config.BridgeLimits.CleanupTimeout)
+		for _, session := range []carrier.Session{client, server} {
+			if session != nil {
+				_ = session.CloseWithErrorContext(cleanupCtx, closeApplicationError(activationErr))
+			}
+		}
+		cancelCleanup()
 		coordinator.finish(generation, activationErr)
 		return
 	}

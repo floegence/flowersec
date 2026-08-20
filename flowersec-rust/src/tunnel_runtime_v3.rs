@@ -890,9 +890,11 @@ impl TaskRuntime {
                     .expires_at
                     .duration_since(SystemTime::now())
                     .unwrap_or_default();
-            let pair_deadline = (Instant::now() + self.options.pair_timeout)
+            let pair_timeout_deadline = Instant::now() + self.options.pair_timeout;
+            let pair_deadline = pair_timeout_deadline
                 .min(admission_deadline)
                 .min(expiry_deadline);
+            let expiry_first = expiry_deadline <= pair_deadline;
             tokio::select! {
                 biased;
                 _ = self.state.closed.cancelled() => {}
@@ -903,10 +905,15 @@ impl TaskRuntime {
                 remove_pending_generation(&mut pending, &key, generation_id)
             };
             if let Some(expired) = expired {
+                let reason = if expiry_first {
+                    "expired_artifact"
+                } else {
+                    "pair_timeout"
+                };
                 let _ = send_fsa3(
                     expired.admission.as_ref(),
                     FSA3_RETRY,
-                    "pair_timeout",
+                    reason,
                     &self.options.admission_reasons,
                     admission_deadline,
                     &self.state.closed,
@@ -916,7 +923,7 @@ impl TaskRuntime {
                 release_bounded(
                     self.authorizer.as_ref(),
                     &expired.lease_id,
-                    admission_deadline,
+                    Instant::now() + self.admission_options.admission_timeout,
                 )
                 .await;
                 return Err(TunnelRuntimeError::AdmissionFailed);
@@ -939,7 +946,7 @@ impl TaskRuntime {
             self.reject_legs(
                 &peer,
                 &leg,
-                FSA3_REJECT,
+                FSA3_RETRY,
                 "expired_artifact",
                 admission_deadline,
             )
@@ -1331,7 +1338,10 @@ fn parse_authorization_decision(
             .map_err(|_| TunnelRuntimeError::Rejected)?;
             let seconds = parsed.unix_timestamp();
             if seconds <= unix_seconds() as i64 {
-                return Err(TunnelRuntimeError::Rejected);
+                return Ok(AuthorizationDecision::Deny {
+                    status: FSA3_RETRY,
+                    reason: "expired_artifact".into(),
+                });
             }
             Ok(AuthorizationDecision::Allow(AllowedClaims {
                 lease_id: object["lease_id"].as_str().expect("validated lease").into(),
@@ -1407,7 +1417,8 @@ async fn send_fsa3(
 }
 
 async fn release_bounded(authorizer: &dyn TunnelAuthorizer, lease_id: &str, deadline: Instant) {
-    let _ = tokio::time::timeout_at(deadline, authorizer.release(lease_id)).await;
+    let cleanup_deadline = deadline.max(Instant::now() + Duration::from_millis(100));
+    let _ = tokio::time::timeout_at(cleanup_deadline, authorizer.release(lease_id)).await;
 }
 
 async fn bridge(
@@ -2822,6 +2833,23 @@ mod tests {
             response_lease_id(br#"{"decision":"allow","lease_id":"lease-1"}"#),
             Some("lease-1".into())
         );
+    }
+
+    #[test]
+    fn expired_allow_decision_is_retryable_expired_artifact() {
+        let response = serde_json::to_vec(&json!({
+            "allow_replacement": false,
+            "credential_id": "lookup",
+            "decision": "allow",
+            "expected_peer_endpoint_instance_id": "peer",
+            "expires_at": "2000-01-01T00:00:00Z",
+            "lease_id": "lease-expired",
+        }))
+        .unwrap();
+        assert!(matches!(
+            parse_authorization_decision(&response, "lookup", &[]),
+            Ok(AuthorizationDecision::Deny { status: FSA3_RETRY, reason }) if reason == "expired_artifact"
+        ));
     }
 
     #[tokio::test]
