@@ -163,11 +163,22 @@ for (const relative of Object.values(registry.docs)) {
   assert.match(source, /flowersec\/3/);
   assert.match(source, /serverCertificateHashes|FSB3/);
 }
+const wireDocument = read(registry.docs.wire).toString("utf8");
+const architectureDocument = read(registry.docs.architecture).toString("utf8");
+assert(!wireDocument.includes("flowersec-v2-tls-policy"),
+  "the v3-only TLS policy domain must not be represented as a v2 replacement");
+assert(architectureDocument.includes("`errors.As` to recover `ControlPlaneError`"),
+  "the architecture must define errors.As for ControlPlaneError");
+assert(architectureDocument.includes("`Unwrap()` returns only `ErrInvalidControlPlaneInput`"),
+  "the architecture must freeze the ControlPlaneError unwrap sentinel");
+assert(architectureDocument.includes("`ErrIssuanceFailed` is independent"),
+  "the architecture must keep issuance failures outside ControlPlaneError");
 assert(Array.isArray(registry.design.traceability) && registry.design.traceability.length >= 16,
   "design traceability must cover all major v3 domains");
 const traceabilityClauses = registry.design.traceability.map((entry) => entry.clause);
 for (const requiredClause of [
-  "3.1", "3.2", "3.3", "3.4", "4", "5", "6", "7", "8", "9", "10", "11", "13.1", "13.2", "13.3", "15",
+  "3.1", "3.2", "3.3", "3.4", "4", "5", "6", "7", "8", "9", "10", "11",
+  "12.1", "12.2", "12.3", "12.4", "13.1", "13.2", "13.3", "13.4", "14", "15",
 ]) assert(traceabilityClauses.includes(requiredClause), `missing traceability clause: ${requiredClause}`);
 assert.equal(new Set(traceabilityClauses).size, traceabilityClauses.length, "traceability clause IDs must be unique");
 for (const entry of registry.design.traceability) {

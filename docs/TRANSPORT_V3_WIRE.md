@@ -378,9 +378,7 @@ The complete v2-to-v3 domain replacement table is:
 | --- | --- |
 | `flowersec-v2-session-contract\0` | `flowersec-v3-session-contract\0` |
 | `flowersec-v2-candidates\0` | `flowersec-v3-candidates\0` |
-| `flowersec-v2-tls-policy\0` | `flowersec-v3-tls-policy\0` |
 | `flowersec-v2-admission\0` | `flowersec-v3-admission\0` |
-| `flowersec-v2-acceptor-admissions\0` | `flowersec-v3-acceptor-admissions\0` |
 | `flowersec-v2-runtime-capability\0` | `flowersec-v3-runtime-capability\0` |
 | `flowersec-v2-handshake\0` | `flowersec-v3-handshake\0` |
 | `flowersec v2 server finished` | `flowersec v3 server finished` |
@@ -403,10 +401,13 @@ The complete v2-to-v3 domain replacement table is:
 | `flowersec-v2-setup\0` | `flowersec-v3-setup\0` |
 | `flowersec-v2-record\0` | `flowersec-v3-record\0` |
 | `flowersec-v2-open\0` | `flowersec-v3-open\0` |
+| `flowersec-v2-acceptor-admissions\0` | `flowersec-v3-acceptor-admissions\0` |
 
 Every v3 path MUST use the corresponding v3 preimage and MUST reject a v2
-magic, profile, ALPN, subprotocol, or label. The acceptor-admissions label is
-included because its hash covers the complete chosen-candidate FSB3 frames.
+magic, profile, ALPN, subprotocol, or label. The v3-only TLS-policy digest uses
+`flowersec-v3-tls-policy\0`; it has no v2 predecessor. The
+acceptor-admissions label is included because its hash covers the complete
+chosen-candidate FSB3 frames.
 
 A v3 path MUST NOT call a helper containing another protocol version's
 preimage, HKDF info, HMAC input, AAD, frame magic, or version byte.

@@ -236,7 +236,10 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	if registry.Design.SHA256 != "236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba" {
 		return fmt.Errorf("%s design hash drifted", transportV3ContractPath)
 	}
-	wantClauses := []string{"3.1", "3.2", "3.3", "3.4", "4", "5", "6", "7", "8", "9", "10", "11", "13.1", "13.2", "13.3", "15"}
+	wantClauses := []string{
+		"3.1", "3.2", "3.3", "3.4", "4", "5", "6", "7", "8", "9", "10", "11",
+		"12.1", "12.2", "12.3", "12.4", "13.1", "13.2", "13.3", "13.4", "14", "15",
+	}
 	gotClauses := make([]string, 0, len(registry.Design.Traceability))
 	for _, entry := range registry.Design.Traceability {
 		gotClauses = append(gotClauses, entry.Clause)

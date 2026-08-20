@@ -413,10 +413,11 @@ certificate material.
 Only Go supplies the v3 issuer. TypeScript, Rust, and Swift consume issued
 artifacts; their control-plane modules do not issue or mutate v3 records.
 `ControlPlaneError` has fixed `Error()`, `Code()`, `FieldPath()`, and
-`Unwrap()` accessors and must unwrap with `errors.As` to the closed
-`ErrInvalidControlPlaneInput` or `ErrIssuanceFailed` sentinels. The exact
-public symbol and error inventory is frozen in
-`stability/api_contract_manifest.json`.
+`Unwrap()` accessors. Callers use `errors.As` to recover `ControlPlaneError`;
+`Unwrap()` returns only `ErrInvalidControlPlaneInput`, which callers may match
+with `errors.Is`. `ErrIssuanceFailed` is independent and is never wrapped by or
+projected as `ControlPlaneError`. The exact public symbol and error inventory
+is frozen in `stability/api_contract_manifest.json`.
 
 ## 11. Certificate Rotation
 
@@ -448,3 +449,18 @@ Release packaging does not run tests or consume a test receipt. Engineering
 gates establish acceptance before release. The release step validates version
 and refs, packages and signs artifacts, publishes, and performs registry
 readback.
+
+## 13. Explicit Exclusions
+
+Transport v3 does not encode pins in URLs or imitate libp2p
+multiaddresses. It provides no trust on first use, dynamic pin retrieval,
+first-certificate trust, `pin-or-ca`, `prefer-pin`, or other mixed or fallback
+trust mode. Artifacts never contain a root certificate, complete certificate
+chain, or private key, and Session, RPC, Stream, and application APIs never
+expose pins.
+
+Flowersec does not issue certificates, manage certificate authorities, or
+orchestrate deployment. Transport v3 does not redesign E2EE, RPC, stream,
+DATAGRAM, or application interfaces. Production artifacts permit no plaintext
+loopback. The wire protocol does not negotiate v2/v3 versions, and failure
+never falls back to another version.
