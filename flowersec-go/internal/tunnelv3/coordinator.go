@@ -58,7 +58,9 @@ type WaitingStreamRejector interface {
 // Lease is an authorizer-owned quota or policy lease released exactly once
 // when a leg is rejected or its generation terminates.
 type Lease interface {
-	Release()
+	// ReleaseContext must honor cancellation so coordinator cleanup cannot be
+	// held by an application-owned lease callback.
+	ReleaseContext(context.Context)
 }
 
 // VerifiedClaims are transport-neutral facts established by the authorizer.
@@ -111,19 +113,9 @@ func (coordinator *Coordinator) releaseLease(lease Lease) {
 	if lease == nil {
 		return
 	}
-	done := make(chan struct{})
-	go func() {
-		lease.Release()
-		close(done)
-	}()
-	timer := time.NewTimer(coordinator.config.AdmissionResponseTimeout)
-	defer timer.Stop()
-	select {
-	case <-done:
-	case <-timer.C:
-		// Lease is an application callback with no cancellation primitive. Do
-		// not let a stuck implementation block pairing or shutdown forever.
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), coordinator.config.AdmissionResponseTimeout)
+	defer cancel()
+	lease.ReleaseContext(ctx)
 }
 
 // DefaultConfig returns the production tunnel coordinator limits.
@@ -487,7 +479,7 @@ func (coordinator *Coordinator) registerClaimed(ctx context.Context, leg *admitt
 	for _, pairedLeg := range generation.roles {
 		if !pairedLeg.authorization.ExpiresAt.After(activationNow) {
 			coordinator.mu.Unlock()
-			go coordinator.rejectGeneration(generation, ErrInvalidAuthorization, artifactv3.AdmissionReject, ReasonInvalidCredential)
+			go coordinator.rejectGeneration(generation, ErrInvalidAuthorization, artifactv3.AdmissionRetryable, artifactv3.ReasonExpiredArtifact)
 			return generation, nil
 		}
 	}

@@ -47,6 +47,7 @@ const BUILT_IN_ADMISSION_REASONS: &[&str] = &[
     "authorization_expired",
     "capacity",
     "credential_replay",
+    "expired_artifact",
     "invalid_credential",
     "not_authorized",
     "pair_mismatch",
@@ -939,7 +940,7 @@ impl TaskRuntime {
                 &peer,
                 &leg,
                 FSA3_REJECT,
-                "authorization_expired",
+                "expired_artifact",
                 admission_deadline,
             )
             .await;

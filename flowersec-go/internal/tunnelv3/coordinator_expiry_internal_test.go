@@ -58,6 +58,9 @@ func TestRegisterRevalidatesBothAuthorizationExpiriesBeforeActivation(t *testing
 				if pending.responses.Load() != 1 || pending.closes.Load() != 1 || lease.releases.Load() != 1 {
 					t.Fatalf("role %d cleanup = responses:%d closes:%d releases:%d", role, pending.responses.Load(), pending.closes.Load(), lease.releases.Load())
 				}
+				if pending.responseStatus.Load() != int32(artifactv3.AdmissionRetryable) || pending.responseReason.Load() != artifactv3.ReasonExpiredArtifact {
+					t.Fatalf("role %d expiry response = status:%d reason:%q", role, pending.responseStatus.Load(), pending.responseReason.Load())
+				}
 				if pending.activations.Load() != 0 {
 					t.Fatalf("role %d activated after authorization expiry", role)
 				}
@@ -100,15 +103,20 @@ type blockingLease struct {
 	unblock chan struct{}
 }
 
-func (lease blockingLease) Release() {
+func (lease blockingLease) ReleaseContext(ctx context.Context) {
 	close(lease.started)
-	<-lease.unblock
+	select {
+	case <-lease.unblock:
+	case <-ctx.Done():
+	}
 }
 
 type expiryTestPendingLeg struct {
-	responses   atomic.Int32
-	activations atomic.Int32
-	closes      atomic.Int32
+	responses      atomic.Int32
+	responseStatus atomic.Int32
+	responseReason atomic.Value
+	activations    atomic.Int32
+	closes         atomic.Int32
 }
 
 func newExpiryTestLeg(role uint8, expiresAt time.Time) *admittedLeg {
@@ -132,8 +140,10 @@ func (leg *expiryTestPendingLeg) CarrierKind() carrier.Kind { return carrier.Kin
 func (leg *expiryTestPendingLeg) ReceiveAdmission(context.Context) (*artifactv3.DecodedRequest, error) {
 	return nil, errors.New("unused admission read")
 }
-func (leg *expiryTestPendingLeg) SendAdmission(context.Context, artifactv3.AdmissionResponse, artifactv3.ReasonRegistry) error {
+func (leg *expiryTestPendingLeg) SendAdmission(_ context.Context, response artifactv3.AdmissionResponse, _ artifactv3.ReasonRegistry) error {
 	leg.responses.Add(1)
+	leg.responseStatus.Store(int32(response.Status))
+	leg.responseReason.Store(response.Reason)
 	return nil
 }
 func (leg *expiryTestPendingLeg) Activate(context.Context, uint8) (carrier.Session, error) {
@@ -147,4 +157,4 @@ func (leg *expiryTestPendingLeg) CloseWithError(context.Context, carrier.Applica
 
 type expiryTestLease struct{ releases atomic.Int32 }
 
-func (lease *expiryTestLease) Release() { lease.releases.Add(1) }
+func (lease *expiryTestLease) ReleaseContext(context.Context) { lease.releases.Add(1) }

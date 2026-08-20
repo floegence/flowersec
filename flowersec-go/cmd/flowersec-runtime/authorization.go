@@ -66,7 +66,7 @@ type directAuthorization struct {
 
 func (authorization *directAuthorization) Release() {
 	if authorization != nil && authorization.lease != nil {
-		authorization.lease.Release()
+		authorization.lease.ReleaseContext(context.Background())
 	}
 }
 
@@ -172,6 +172,12 @@ func (provider *httpAuthorizationProvider) Authorize(ctx context.Context, input 
 }
 
 func (provider *httpAuthorizationProvider) Release(leaseID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultReleaseAttemptTimeout*time.Duration(maxReleaseAttempts))
+	defer cancel()
+	provider.ReleaseContext(ctx, leaseID)
+}
+
+func (provider *httpAuthorizationProvider) ReleaseContext(ctx context.Context, leaseID string) {
 	if provider == nil || leaseID == "" {
 		return
 	}
@@ -182,11 +188,17 @@ func (provider *httpAuthorizationProvider) Release(leaseID string) {
 		return
 	}
 	for attempt := 0; attempt < maxReleaseAttempts; attempt++ {
-		if err = provider.releaseAttempt(body); err == nil {
+		if err = provider.releaseAttempt(ctx, body); err == nil {
 			return
 		}
 		if attempt+1 < maxReleaseAttempts {
-			time.Sleep(releaseRetryBaseDelay * time.Duration(1<<attempt))
+			delay := time.NewTimer(releaseRetryBaseDelay * time.Duration(1<<attempt))
+			select {
+			case <-ctx.Done():
+				delay.Stop()
+				return
+			case <-delay.C:
+			}
 		}
 	}
 	logger := provider.logger
@@ -196,7 +208,7 @@ func (provider *httpAuthorizationProvider) Release(leaseID string) {
 	logger.Printf("authorization lease %q release was not acknowledged after %d attempts: %v", leaseID, maxReleaseAttempts, err)
 }
 
-func (provider *httpAuthorizationProvider) releaseAttempt(body []byte) error {
+func (provider *httpAuthorizationProvider) releaseAttempt(ctx context.Context, body []byte) error {
 	if provider.client == nil {
 		return fmt.Errorf("%w: release client unavailable", ErrAuthorizationUnavailable)
 	}
@@ -204,9 +216,9 @@ func (provider *httpAuthorizationProvider) releaseAttempt(body []byte) error {
 	if timeout <= 0 {
 		timeout = defaultReleaseAttemptTimeout
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, provider.releaseURL, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, provider.releaseURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("%w: create release request", ErrAuthorizationUnavailable)
 	}
@@ -234,7 +246,19 @@ type externalLease struct {
 }
 
 func (lease *externalLease) Release() {
-	lease.once.Do(func() { lease.provider.Release(lease.id) })
+	lease.ReleaseContext(context.Background())
+}
+
+func (lease *externalLease) ReleaseContext(ctx context.Context) {
+	lease.once.Do(func() {
+		if provider, ok := lease.provider.(interface {
+			ReleaseContext(context.Context, string)
+		}); ok {
+			provider.ReleaseContext(ctx, lease.id)
+			return
+		}
+		lease.provider.Release(lease.id)
+	})
 }
 
 type authorizationContext struct {

@@ -32,6 +32,7 @@ const BUILT_IN_ADMISSION_REASONS = [
   "authorization_expired",
   "capacity",
   "credential_replay",
+  "expired_artifact",
   "invalid_credential",
   "pair_mismatch",
   "pair_timeout",
@@ -369,7 +370,7 @@ function registerLeg(state: TunnelRuntimeStateV3, leg: TunnelLeg): void {
   }
   const now = Math.floor(Date.now() / 1_000);
   if (firstAuthorizationExpired(generation, now)) {
-    rejectGeneration(state, generation, "authorization_expired", false);
+    rejectGeneration(state, generation, "expired_artifact", true);
     return;
   }
   if (state.counts.activePairs >= state.limits.maxActivePairs) {

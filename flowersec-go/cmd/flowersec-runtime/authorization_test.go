@@ -129,8 +129,8 @@ func TestTunnelAuthorizerBindsClaimsAndReleasesLeaseOnce(t *testing.T) {
 	if authorization.Claims.CredentialID != expectedCredentialID || authorization.Claims.ExpectedPeerEndpointInstanceID != "peer-b" || authorization.Lease == nil {
 		t.Fatalf("unexpected claims: %+v", authorization.Claims)
 	}
-	authorization.Lease.Release()
-	authorization.Lease.Release()
+	authorization.Lease.ReleaseContext(context.Background())
+	authorization.Lease.ReleaseContext(context.Background())
 	if len(provider.released) != 1 || provider.released[0] != "lease-a" {
 		t.Fatalf("lease release count = %v", provider.released)
 	}

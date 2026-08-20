@@ -786,7 +786,7 @@ func (endpoint *Endpoint) authorize(_ context.Context, decoded *artifactv3.Decod
 
 type releaseLease struct{}
 
-func (releaseLease) Release() {}
+func (releaseLease) ReleaseContext(context.Context) {}
 
 // Close terminates both encrypted sessions within the supplied cleanup bound.
 func (pair *Pair) Close(ctx context.Context) error {

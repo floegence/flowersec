@@ -263,11 +263,9 @@ func (runtime *TunnelRuntime) authorize(ctx context.Context, decoded *artifactv3
 			ExpectedPeerEndpointInstanceID: wire.ExpectedPeerEndpointInstanceID, AllowReplacement: wire.AllowReplacement,
 		},
 		ExpiresAt: wire.ExpiresAt,
-		Lease: &tunnelRuntimeLease{release: func() {
+		Lease: &tunnelRuntimeLease{release: func(ctx context.Context) {
 			if runtime.options.Release != nil {
-				cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				releaseTunnelRuntimeLease(cleanupCtx, runtime.options.Release, wire.LeaseID)
+				runtime.options.Release(ctx, wire.LeaseID)
 			}
 		}},
 	}, nil
@@ -275,19 +273,13 @@ func (runtime *TunnelRuntime) authorize(ctx context.Context, decoded *artifactv3
 
 type tunnelRuntimeLease struct {
 	once    sync.Once
-	release func()
+	release func(context.Context)
 }
 
-func (lease *tunnelRuntimeLease) Release() { lease.once.Do(lease.release) }
+func (lease *tunnelRuntimeLease) ReleaseContext(ctx context.Context) {
+	lease.once.Do(func() { lease.release(ctx) })
+}
 
 func releaseTunnelRuntimeLease(ctx context.Context, release func(context.Context, string), leaseID string) {
-	done := make(chan struct{})
-	go func() {
-		release(ctx, leaseID)
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-ctx.Done():
-	}
+	release(ctx, leaseID)
 }
