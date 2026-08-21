@@ -109,7 +109,7 @@ final class TransportV3SessionTests: XCTestCase {
           metadata: Data("{}".utf8)
         ).encoded()
       }
-      if vector.id == "reserved-rpc-kind" {
+      if vector.id == "reserved-rpc-kind" || vector.id == "reserved-previous-rpc-kind" {
         XCTAssertNoThrow(try encode(), vector.id)
         continue
       }
