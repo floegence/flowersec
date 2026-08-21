@@ -904,9 +904,10 @@ impl TaskRuntime {
                     .duration_since(SystemTime::now())
                     .unwrap_or_default();
             let pair_timeout_deadline = Instant::now() + self.options.pair_timeout;
-            let pair_deadline = pair_timeout_deadline
-                .min(admission_deadline)
-                .min(expiry_deadline);
+            // Admission timeout ends credential intake. Once this leg is
+            // registered, the independent pair timeout owns the wait for its
+            // peer; only artifact expiry can shorten that pairing window.
+            let pair_deadline = pair_timeout_deadline.min(expiry_deadline);
             let expiry_first = expiry_deadline <= pair_deadline;
             tokio::select! {
                 biased;
@@ -2477,6 +2478,34 @@ mod tests {
             .await;
         assert!(matches!(result, Err(TunnelRuntimeError::AdmissionFailed)));
         assert!(started.elapsed() < Duration::from_millis(500));
+        assert_eq!(authorizer.releases.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn pending_pair_wait_is_independent_of_admission_timeout() {
+        let authorizer = Arc::new(CountingAuthorizer::default());
+        let mut runtime = test_runtime(authorizer.clone(), Duration::from_millis(100), 1);
+        runtime.admission_options.admission_timeout = Duration::from_millis(10);
+        let (carrier, _) = crate::session_v3::memory_carrier_pair_v3();
+        let started = std::time::Instant::now();
+        let result = runtime
+            .register_leg(
+                test_leg(
+                    "pair-timeout-lease",
+                    1,
+                    "endpoint-first",
+                    "endpoint-second",
+                    SystemTime::now() + Duration::from_secs(1),
+                    false,
+                    carrier,
+                ),
+                Instant::now() + Duration::from_secs(1),
+            )
+            .await;
+        let elapsed = started.elapsed();
+        assert!(matches!(result, Err(TunnelRuntimeError::AdmissionFailed)));
+        assert!(elapsed >= Duration::from_millis(70));
+        assert!(elapsed < Duration::from_millis(500));
         assert_eq!(authorizer.releases.load(Ordering::SeqCst), 1);
     }
 
