@@ -411,13 +411,24 @@ test("Chromium WebTransport delegates CA trust without certificate hashes", asyn
     const result = await page.evaluate(async ({ artifactJSON, normalizedURLs }) => {
       const calls: unknown[][] = [];
       Object.defineProperty(globalThis, "WebSocket", { configurable: true, value: undefined });
+      class WebTransportDouble {
+        readonly ready = Promise.reject(new Error("test endpoint intentionally unavailable"));
+        constructor(...args: unknown[]) { calls.push(args); }
+        async createBidirectionalStream(): Promise<never> { return await new Promise(() => undefined); }
+        close() {}
+      }
+      for (const property of ["ready", "closed", "incomingBidirectionalStreams", "datagrams"]) {
+        if (!(property in WebTransportDouble.prototype)) {
+          Object.defineProperty(WebTransportDouble.prototype, property, {
+            configurable: true,
+            writable: true,
+            value: undefined,
+          });
+        }
+      }
       Object.defineProperty(globalThis, "WebTransport", {
         configurable: true,
-        value: class {
-          readonly ready = Promise.reject(new Error("test endpoint intentionally unavailable"));
-          constructor(...args: unknown[]) { calls.push(args); }
-          close() {}
-        },
+        value: WebTransportDouble,
       });
       const sdk = await import("/dist/browser/index.js");
       let spendCount = 0;
