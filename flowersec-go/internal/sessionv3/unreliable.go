@@ -133,6 +133,10 @@ func (channel *unreliableChannel) Receive(ctx context.Context) ([]byte, error) {
 			}
 			return nil, err
 		}
+		if isPreviousVersionUnreliableDatagram(wire) {
+			channel.session.fail(ErrSessionProtocol)
+			return nil, channel.session.sessionError()
+		}
 		plaintext, accepted := channel.open(wire, time.Now())
 		if !accepted {
 			continue
@@ -140,6 +144,13 @@ func (channel *unreliableChannel) Receive(ctx context.Context) ([]byte, error) {
 		channel.session.touchActivity()
 		return plaintext, nil
 	}
+}
+
+func isPreviousVersionUnreliableDatagram(wire []byte) bool {
+	if len(wire) < 5 || wire[0] != 'F' || wire[1] != 'S' || wire[2] != 'D' {
+		return false
+	}
+	return wire[3] == '2' || wire[3] == '3' && wire[4] == 2
 }
 
 func (channel *unreliableChannel) open(wire []byte, now time.Time) ([]byte, bool) {

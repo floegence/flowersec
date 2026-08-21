@@ -22,6 +22,7 @@ use flowersec_native_transport::{
 use serde_json::{Value, json};
 use sha2::Digest as _;
 use time::{Duration as TimeDuration, OffsetDateTime};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     Acceptor, AcceptorOptions, ArtifactLeaseV3, ConnectorOptions, RpcHandler, RpcHandlers,
@@ -252,6 +253,7 @@ impl TunnelAuthorizer for TestTunnelAuthorizer {
     async fn authorize(
         &self,
         request: RuntimeAuthorizationRequest,
+        _cancellation: CancellationToken,
     ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
         let client_lookup = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(sha2::Sha256::digest(b"client-token"));

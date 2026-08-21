@@ -35,7 +35,7 @@ use crate::{
     transport_v3::{
         CarrierKind, CarrierSessionV3, CarrierStreamV3, carrier_inbound_stream_limit_v3,
     },
-    websocket_v2::WebSocketListener,
+    websocket_v3::WebSocketListener,
 };
 
 const MAX_ADMISSION_BYTES: usize = 32 * 1024;
@@ -200,9 +200,12 @@ impl TunnelAuthorizationResponse {
 /// Application-owned authorization boundary for strict v3 tunnel legs.
 #[async_trait]
 pub trait TunnelAuthorizer: Send + Sync + 'static {
+    /// Implementations must release any application-owned reservation that has
+    /// not yet been returned as a lease when cancellation is observed.
     async fn authorize(
         &self,
         request: RuntimeAuthorizationRequest,
+        cancellation: CancellationToken,
     ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError>;
 
     async fn release(&self, _lease_id: &str) {}
@@ -309,7 +312,7 @@ impl TunnelListener {
                 })
                 .map_err(|_| TunnelRuntimeError::Closed),
             Self::WebSocket(listener) => listener
-                .accept_with_peer_v3()
+                .accept_with_peer()
                 .await
                 .map(|(carrier, remote_address)| AcceptedCarrier {
                     carrier,
@@ -385,7 +388,7 @@ impl TunnelRuntime {
         validate_options(&options, admission_options)?;
         let capacity = carrier_inbound_stream_limit_v3(options.max_inbound_streams)
             .map_err(|_| TunnelRuntimeError::InvalidConfiguration)?;
-        let listener = WebSocketListener::bind_tunnel_v3(
+        let listener = WebSocketListener::bind_tunnel(
             options.bind_address,
             options.certificate_chain_der.clone(),
             options.private_key_der.clone(),
@@ -687,6 +690,48 @@ impl TaskRuntime {
         }
     }
 
+    async fn authorize_bounded(
+        &self,
+        request: RuntimeAuthorizationRequest,
+        deadline: Instant,
+    ) -> Result<Result<TunnelAuthorizationResponse, TunnelAuthorizationError>, TunnelRuntimeError>
+    {
+        let cancellation = CancellationToken::new();
+        let task_cancellation = cancellation.clone();
+        let authorizer = self.authorizer.clone();
+        let mut task =
+            tokio::spawn(async move { authorizer.authorize(request, task_cancellation).await });
+        let boundary = tokio::select! {
+            biased;
+            _ = self.state.closed.cancelled() => Err(TunnelRuntimeError::Closed),
+            result = tokio::time::timeout_at(deadline, &mut task) => {
+                result.map_err(|_| TunnelRuntimeError::AdmissionFailed)
+            }
+        };
+        match boundary {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(_)) => Ok(Err(TunnelAuthorizationError)),
+            Err(error) => {
+                cancellation.cancel();
+                let cleanup_deadline = Instant::now() + self.admission_options.admission_timeout;
+                match tokio::time::timeout_at(cleanup_deadline, &mut task).await {
+                    Ok(Ok(Ok(response))) => {
+                        if let Some(lease_id) = response_lease_id(&response.encoded) {
+                            release_bounded(self.authorizer.as_ref(), &lease_id, cleanup_deadline)
+                                .await;
+                        }
+                    }
+                    Ok(Ok(Err(_))) | Ok(Err(_)) => {}
+                    Err(_) => {
+                        task.abort();
+                        let _ = task.await;
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
     async fn admit_and_pair(
         &self,
         accepted: AcceptedCarrier,
@@ -732,12 +777,9 @@ impl TaskRuntime {
             .await;
             return Err(TunnelRuntimeError::Rejected);
         }
-        let response = match await_bounded(
-            admission_deadline,
-            &self.state.closed,
-            self.authorizer.authorize(request.clone()),
-        )
-        .await
+        let response = match self
+            .authorize_bounded(request.clone(), admission_deadline)
+            .await
         {
             Ok(Ok(response)) => response,
             Ok(Err(_)) => {
@@ -2071,6 +2113,7 @@ mod tests {
         async fn authorize(
             &self,
             _request: RuntimeAuthorizationRequest,
+            _cancellation: CancellationToken,
         ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
             Err(TunnelAuthorizationError)
         }
@@ -2086,6 +2129,7 @@ mod tests {
         async fn authorize(
             &self,
             _request: RuntimeAuthorizationRequest,
+            _cancellation: CancellationToken,
         ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
             Err(TunnelAuthorizationError)
         }
@@ -2103,6 +2147,7 @@ mod tests {
         async fn authorize(
             &self,
             _request: RuntimeAuthorizationRequest,
+            _cancellation: CancellationToken,
         ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
             Err(TunnelAuthorizationError)
         }
@@ -2122,10 +2167,44 @@ mod tests {
         async fn authorize(
             &self,
             request: RuntimeAuthorizationRequest,
+            _cancellation: CancellationToken,
         ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
             TunnelAuthorizationResponse::allow(
                 &request,
                 "lease-allow",
+                SystemTime::now() + Duration::from_secs(30),
+                if request.claims.role == 1 {
+                    "endpoint-server"
+                } else {
+                    "endpoint-client"
+                },
+                false,
+            )
+        }
+
+        async fn release(&self, lease_id: &str) {
+            self.releases.lock().unwrap().push(lease_id.to_owned());
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct LateAllowAuthorizer {
+        cancellation_observed: AtomicBool,
+        releases: StdMutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl TunnelAuthorizer for LateAllowAuthorizer {
+        async fn authorize(
+            &self,
+            request: RuntimeAuthorizationRequest,
+            cancellation: CancellationToken,
+        ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
+            cancellation.cancelled().await;
+            self.cancellation_observed.store(true, Ordering::SeqCst);
+            TunnelAuthorizationResponse::allow(
+                &request,
+                "lease-late",
                 SystemTime::now() + Duration::from_secs(30),
                 if request.claims.role == 1 {
                     "endpoint-server"
@@ -2151,6 +2230,7 @@ mod tests {
         async fn authorize(
             &self,
             request: RuntimeAuthorizationRequest,
+            _cancellation: CancellationToken,
         ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
             TunnelAuthorizationResponse::parse(
                 serde_json::to_vec(&json!({
@@ -2180,6 +2260,7 @@ mod tests {
         async fn authorize(
             &self,
             request: RuntimeAuthorizationRequest,
+            _cancellation: CancellationToken,
         ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
             TunnelAuthorizationResponse::parse(
                 serde_json::to_vec(&json!({
@@ -2446,6 +2527,36 @@ mod tests {
             authorizer.releases.lock().unwrap().as_slice(),
             ["lease-expired"]
         );
+    }
+
+    #[tokio::test]
+    async fn authorization_timeout_cancels_and_releases_a_late_allow() {
+        let authorizer = Arc::new(LateAllowAuthorizer::default());
+        let mut runtime = test_runtime(authorizer.clone(), Duration::from_secs(1), 1);
+        runtime.admission_options.admission_timeout = Duration::from_millis(10);
+        let permit = runtime
+            .state
+            .admission_permits
+            .clone()
+            .try_acquire_owned()
+            .unwrap();
+        let accepted = accepted_with_admission(vector_tunnel_admission(
+            1,
+            "endpoint-client",
+            "attach-token-v3",
+        ));
+
+        let result = runtime.admit_and_pair(accepted, permit).await;
+
+        assert_eq!(result, Err(TunnelRuntimeError::AdmissionFailed));
+        assert!(authorizer.cancellation_observed.load(Ordering::SeqCst));
+        assert_eq!(
+            authorizer.releases.lock().unwrap().as_slice(),
+            ["lease-late"]
+        );
+        assert_eq!(runtime.state.admission_permits.available_permits(), 1);
+        assert!(runtime.state.credentials.lock().await.is_empty());
+        assert_eq!(runtime.state.active_tasks.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

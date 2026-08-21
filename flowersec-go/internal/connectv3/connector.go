@@ -315,23 +315,21 @@ func (connector *Connector) Connect(ctx context.Context) (Result, error) {
 	cancelRace()
 	if winner.prepared != nil {
 		connector.state.Store(uint32(StateReady))
-	}
-
-	cleanupDiagnostics, cleanupErr := connector.closeLosers(ctx, entries, winner, &readyGroup, readyResults)
-	diagnostics = append(diagnostics, cleanupDiagnostics...)
-	if cleanupErr != nil {
-		if winner.prepared != nil {
-			cleanupErr = errors.Join(cleanupErr, connector.closePrepared(ctx, winner.prepared))
+		connector.closeLosersAsync(entries, winner, &readyGroup, readyResults)
+	} else {
+		cleanupDiagnostics, cleanupErr := connector.closeLosers(ctx, entries, winner, &readyGroup, readyResults)
+		diagnostics = append(diagnostics, cleanupDiagnostics...)
+		if cleanupErr != nil {
+			if !expiry.After(connector.now()) {
+				cleanupErr = errors.Join(ErrArtifactExpired, cleanupErr)
+				return terminate(fserrors.StageValidate, fserrors.CodeTimeout, errors.Join(cleanupErr, errors.Join(diagnosticErrors...)), diagnostics)
+			}
+			stage := fserrors.StageClose
+			if errors.Is(cleanupErr, context.DeadlineExceeded) || errors.Is(cleanupErr, context.Canceled) {
+				stage = fserrors.StageAttach
+			}
+			return terminate(stage, contextCode(cleanupErr, fserrors.CodeNotConnected), errors.Join(cleanupErr, errors.Join(diagnosticErrors...)), diagnostics)
 		}
-		if !expiry.After(connector.now()) {
-			cleanupErr = errors.Join(ErrArtifactExpired, cleanupErr)
-			return terminate(fserrors.StageValidate, fserrors.CodeTimeout, errors.Join(cleanupErr, errors.Join(diagnosticErrors...)), diagnostics)
-		}
-		stage := fserrors.StageClose
-		if errors.Is(cleanupErr, context.DeadlineExceeded) || errors.Is(cleanupErr, context.Canceled) {
-			stage = fserrors.StageAttach
-		}
-		return terminate(stage, contextCode(cleanupErr, fserrors.CodeNotConnected), errors.Join(cleanupErr, errors.Join(diagnosticErrors...)), diagnostics)
 	}
 	if winner.prepared == nil {
 		if !expiry.After(connector.now()) {
@@ -535,6 +533,14 @@ func (connector *Connector) closeLosers(ctx context.Context, entries []attemptEn
 			return diagnostics, errors.Join(failures...)
 		}
 	}
+}
+
+// closeLosersAsync owns loser cancellation and late prepared transports without
+// keeping the selected winner behind cleanup that cannot affect its outcome.
+func (connector *Connector) closeLosersAsync(entries []attemptEntry, winner readyResult, readyGroup *sync.WaitGroup, readyResults chan readyResult) {
+	go func() {
+		_, _ = connector.closeLosers(context.Background(), entries, winner, readyGroup, readyResults)
+	}()
 }
 
 func connectorPath(connector *Connector) fserrors.Path {

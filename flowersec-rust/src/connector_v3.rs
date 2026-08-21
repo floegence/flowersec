@@ -19,6 +19,7 @@ use crate::{
         CarrierWireV3, ClaimedArtifactLeaseV3, ConnectionPlanV3, SpendOperationV3, TlsPolicyWireV3,
         decode_fsa3, decode32,
     },
+    connection_controller::RetryDisposition,
     native_runtime_v2::ConnectorOptions as ConnectorOptionsV2,
     raw_quic_v3::{self, RawQuicDialFailureV3},
     session_handlers::{RpcHandlerSnapshot, RpcHandlers, rpc_router_v3},
@@ -29,7 +30,7 @@ use crate::{
         ALPN_DIRECT_V3, ALPN_TUNNEL_V3, CarrierSessionV3, CarrierStreamV3, PathKind, SessionRole,
         carrier_inbound_stream_limit_v3,
     },
-    websocket_v2::{self, SUBPROTOCOL_DIRECT_V3, SUBPROTOCOL_TUNNEL_V3, WebSocketError},
+    websocket_v3::{self, SUBPROTOCOL_DIRECT_V3, SUBPROTOCOL_TUNNEL_V3, WebSocketError},
 };
 
 /// Stable, redacted Flowersec v3 connection failure code.
@@ -81,6 +82,20 @@ impl ConnectError {
         self.code.as_str()
     }
 
+    /// Returns whether a one-shot failure is terminal or may be retried with a fresh artifact.
+    pub const fn retry_disposition(&self) -> RetryDisposition {
+        if self.controller_retryable {
+            RetryDisposition::Retryable
+        } else {
+            RetryDisposition::Terminal
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn controller_retryable(&self) -> bool {
+        self.controller_retryable
+    }
+
     #[cfg(test)]
     pub(crate) const fn from_runtime_code(code: ConnectErrorCode) -> Self {
         public_error(code)
@@ -88,10 +103,6 @@ impl ConnectError {
 
     pub(crate) const fn from_terminal_runtime_code(code: ConnectErrorCode) -> Self {
         terminal_error(code)
-    }
-
-    pub(crate) const fn controller_retryable(&self) -> bool {
-        self.controller_retryable
     }
 
     pub(crate) const fn with_v3_candidate_masks(
@@ -484,7 +495,7 @@ async fn prepare_websocket(
         _ = cancellation.cancelled() => Err(CandidateFailureV3::Canceled),
         result = tokio::time::timeout_at(
             deadline,
-            websocket_v2::dial_v3(
+            websocket_v3::dial(
                 &candidate.normalized_url,
                 subprotocol,
                 origin,
@@ -1484,8 +1495,14 @@ mod tests {
 
     #[test]
     fn fsa3_reject_is_terminal_but_retryable_is_controller_retryable() {
-        assert!(!admission_failure(AdmissionStatusV3::Reject).controller_retryable());
-        assert!(admission_failure(AdmissionStatusV3::Retryable).controller_retryable());
+        assert_eq!(
+            admission_failure(AdmissionStatusV3::Reject).retry_disposition(),
+            RetryDisposition::Terminal
+        );
+        assert_eq!(
+            admission_failure(AdmissionStatusV3::Retryable).retry_disposition(),
+            RetryDisposition::Retryable
+        );
         assert_eq!(
             admission_failure(AdmissionStatusV3::Reject).code(),
             ConnectErrorCode::ConnectionFailed
@@ -2203,6 +2220,7 @@ mod tests {
         async fn authorize(
             &self,
             request: crate::RuntimeAuthorizationRequest,
+            _cancellation: CancellationToken,
         ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
             let client_lookup = URL_SAFE_NO_PAD.encode(Sha256::digest(b"client-token"));
             let expected_peer = if request.lookup_key() == client_lookup {

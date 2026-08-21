@@ -172,11 +172,14 @@ describe("transport v3 session connector", () => {
     }
   });
 
-  test("bounds loser drain and closes a late prepared transport", async () => {
+  test("starts winner admission without waiting for a late prepared loser", async () => {
     vi.useFakeTimers();
     try {
       const winnerClose = vi.fn(async () => undefined);
       const loserClose = vi.fn(async () => undefined);
+      const openWinnerAdmission = vi.fn(async () => {
+        throw new Error("admission failed");
+      });
       let resolveLoser!: (ready: ReadyAdmissionTransportV3) => void;
       const loser = new Promise<ReadyAdmissionTransportV3>((resolve) => { resolveLoser = resolve; });
       const lease = createArtifactLeaseV3Internal(raceArtifact, async () => undefined);
@@ -189,20 +192,21 @@ describe("transport v3 session connector", () => {
           if (candidate.id !== "w-ca") return await loser;
           return {
             candidate,
-            openAdmissionChannel: async () => { throw new Error("loser drain must precede admission"); },
-            finalize: () => { throw new Error("loser drain must precede finalization"); },
+            openAdmissionChannel: openWinnerAdmission,
+            finalize: () => { throw new Error("failed admission must not finalize"); },
             close: winnerClose,
             abort: () => undefined,
           };
         },
       });
-      const rejected = expect(connecting).rejects.toMatchObject({
-        code: "connection_failed",
-        disposition: { kind: "retryable" },
-      });
+      const settled = connecting.then(
+        () => { throw new Error("connection unexpectedly succeeded"); },
+        (error: unknown) => error,
+      );
 
-      await vi.advanceTimersByTimeAsync(25);
-      await rejected;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(openWinnerAdmission).toHaveBeenCalledOnce();
+      expect(await settled).toBeInstanceOf(Error);
       expect(winnerClose).toHaveBeenCalledOnce();
       expect(artifactLeaseStateV3(lease)).toBe("retired");
 

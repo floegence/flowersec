@@ -163,11 +163,97 @@ func TestFailureAggregationIsIndependentOfCompletionOrder(t *testing.T) {
 	}
 }
 
+func TestWinnerDoesNotWaitForStalledLoserAndClosesLatePreparedTransport(t *testing.T) {
+	artifact := loadV3Artifact(t)
+	winnerCommit := &recordingAdmissionCommit{commitErr: errors.New("admission failed"), closed: make(chan struct{})}
+	loserCommit := &recordingAdmissionCommit{closed: make(chan struct{})}
+	loserReady := make(chan connectv3.AdmissionCommit, 1)
+	factory := &raceCandidateFactory{
+		capabilities: runtimev3.GoCapabilities(),
+		winnerID:     "w-ca",
+		winner:       winnerCommit,
+		loserReady:   loserReady,
+	}
+	connector := connectv3.NewConnector(
+		connectv3.ArtifactLease{Artifact: artifact, CommitSpend: func(context.Context) error { return nil }},
+		factory,
+		connectv3.WithCandidateFilter(func(candidate artifactv3.Candidate) bool {
+			return candidate.ID == "w-ca" || candidate.ID == "w-pin"
+		}),
+	)
+	done := make(chan error, 1)
+	go func() {
+		_, err := connector.Connect(context.Background())
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Connect succeeded after the winner admission failed")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("winner admission waited for the stalled loser")
+	}
+
+	loserReady <- loserCommit
+	select {
+	case <-loserCommit.closed:
+	case <-time.After(time.Second):
+		t.Fatal("late prepared loser was not closed")
+	}
+}
+
 type failureFactory struct {
 	capabilities runtimev3.CapabilityDescriptor
 	failures     map[string]error
 	delays       map[string]time.Duration
 	created      atomic.Int32
+}
+
+type raceCandidateFactory struct {
+	capabilities runtimev3.CapabilityDescriptor
+	winnerID     string
+	winner       connectv3.AdmissionCommit
+	loserReady   <-chan connectv3.AdmissionCommit
+}
+
+func (factory *raceCandidateFactory) Capabilities() runtimev3.CapabilityDescriptor {
+	return factory.capabilities
+}
+
+func (factory *raceCandidateFactory) NewAttempt(candidate artifactv3.Candidate, _ artifactv3.SessionContract, _ time.Time) (connectv3.CandidateAttempt, error) {
+	if candidate.ID == factory.winnerID {
+		return &raceCandidateAttempt{ready: func() connectv3.AdmissionCommit { return factory.winner }}, nil
+	}
+	return &raceCandidateAttempt{ready: func() connectv3.AdmissionCommit { return <-factory.loserReady }}, nil
+}
+
+type raceCandidateAttempt struct {
+	ready func() connectv3.AdmissionCommit
+}
+
+func (attempt *raceCandidateAttempt) Ready(context.Context) (connectv3.AdmissionCommit, error) {
+	return attempt.ready(), nil
+}
+
+func (*raceCandidateAttempt) Abort(context.Context) error { return nil }
+
+type recordingAdmissionCommit struct {
+	commitErr error
+	closed    chan struct{}
+	closedSet atomic.Bool
+}
+
+func (commit *recordingAdmissionCommit) Commit(context.Context, func(context.Context) error, []byte) (carrier.Session, error) {
+	return nil, commit.commitErr
+}
+
+func (commit *recordingAdmissionCommit) Close(context.Context) error {
+	if commit.closedSet.CompareAndSwap(false, true) {
+		close(commit.closed)
+	}
+	return nil
 }
 
 func (factory *failureFactory) Capabilities() runtimev3.CapabilityDescriptor {

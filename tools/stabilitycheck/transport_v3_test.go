@@ -41,6 +41,7 @@ func TestTransportV3SourceOwnershipCoversCamelCaseAndSharedDefaultFiles(t *testi
 		"flowersec-ts/src/node/tunnelRuntimeV3.ts",
 		"flowersec-swift/Sources/Flowersec/TransportV3Crypto.swift",
 		"flowersec-go/connection_controller.go",
+		"flowersec-rust/src/websocket_v3.rs",
 		"flowersec-swift/Sources/Flowersec/ConnectionController.swift",
 	} {
 		if !isTransportV3SourcePath(path, owned[path]) {
@@ -55,6 +56,29 @@ func TestTransportV3SourceOwnershipCoversCamelCaseAndSharedDefaultFiles(t *testi
 		if isTransportV3SourcePath(path, owned[path]) {
 			t.Fatalf("v2 source was misclassified as v3: %s", path)
 		}
+	}
+}
+
+func TestTransportV3RegistryReferencesResolveEveryPathSegment(t *testing.T) {
+	document := map[string]any{
+		"design": map[string]any{"traceability": []any{"entry"}},
+		"wire_fixtures": []any{map[string]any{"id": "crypto"}},
+	}
+	for _, reference := range []string{"design.traceability", "wire_fixtures[id=crypto]"} {
+		if _, err := resolveTransportV3RegistryReference(document, reference); err != nil {
+			t.Fatalf("resolve %s: %v", reference, err)
+		}
+	}
+	for _, reference := range []string{"design.missing", "wire_fixtures[id=missing]", "design.traceability.missing"} {
+		if _, err := resolveTransportV3RegistryReference(document, reference); err == nil {
+			t.Fatalf("invalid reference %s was accepted", reference)
+		}
+	}
+}
+
+func TestTransportV3ConsumerEvidenceRejectsUnregisteredRules(t *testing.T) {
+	if err := validateTransportV3ConsumerEvidence("invented", "go", "invented.json"); err == nil {
+		t.Fatal("unregistered consumer evidence rule was accepted")
 	}
 }
 

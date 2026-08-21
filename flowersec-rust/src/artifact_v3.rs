@@ -2012,9 +2012,9 @@ mod tests {
             };
             if carrier == CarrierWireV3::Websocket {
                 let expected = if kind == "direct" {
-                    crate::websocket_v2::DIRECT_PATH_V3
+                    crate::websocket_v3::DIRECT_PATH_V3
                 } else {
-                    crate::websocket_v2::TUNNEL_PATH_V3
+                    crate::websocket_v3::TUNNEL_PATH_V3
                 };
                 assert_eq!(v3, expected, "{id} production path");
             }
@@ -2034,8 +2034,8 @@ mod tests {
             let v3 = mutation["v3"].as_str().unwrap();
             let v2 = mutation["v2"].as_str().unwrap();
             let expected = match id {
-                "websocket-direct" => crate::websocket_v2::SUBPROTOCOL_DIRECT_V3,
-                "websocket-tunnel" => crate::websocket_v2::SUBPROTOCOL_TUNNEL_V3,
+                "websocket-direct" => crate::websocket_v3::SUBPROTOCOL_DIRECT_V3,
+                "websocket-tunnel" => crate::websocket_v3::SUBPROTOCOL_TUNNEL_V3,
                 other => panic!("unknown subprotocol mutation {other}"),
             };
             assert_eq!(mutation["error_code"], "version_isolation");

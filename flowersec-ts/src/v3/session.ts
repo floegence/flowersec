@@ -332,6 +332,7 @@ export class SessionV3 implements SessionV3Contract {
             epoch <= this.receiveEpoch && epoch + 1 >= this.receiveEpoch
               ? this.receiveRoots.get(epoch)?.epochSecret
               : undefined,
+          onProtocolFailure: () => this.fail(protocolError("previous protocol unreliable frame")),
         })
       : undefined;
     this.outboundPermits = new AsyncSemaphore(config.maxInboundStreams);

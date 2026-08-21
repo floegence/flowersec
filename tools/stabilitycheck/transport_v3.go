@@ -18,16 +18,32 @@ const transportV3ContractPath = "stability/transport_v3_contract.json"
 
 var transportV3TopLevelKeys = []string{
 	"array_rules", "artifact_schema", "capability", "control_plane", "controller",
-	"design", "docs", "domain_labels", "frame_family", "fsa3", "fsb3", "lease",
+	"design", "docs", "domain_labels", "fixture_generation", "frame_family", "fsa3", "fsb3", "lease",
 	"limits", "profiles", "routes", "status", "tls_policy", "transport_errors",
 	"url_normalization", "version", "version_isolation", "wire_fixtures",
 }
 
 type transportV3Registry struct {
-	Version  int               `json:"version"`
-	Status   string            `json:"status"`
-	Design   transportV3Design `json:"design"`
-	Docs     map[string]string `json:"docs"`
+	Version           int               `json:"version"`
+	Status            string            `json:"status"`
+	Design            transportV3Design `json:"design"`
+	Docs              map[string]string `json:"docs"`
+	FixtureGeneration struct {
+		Producer     string   `json:"producer"`
+		CheckCommand []string `json:"check_command"`
+		Outputs      []string `json:"outputs"`
+	} `json:"fixture_generation"`
+	Limits struct {
+		OpenKindBytesMin          int `json:"open_kind_bytes_min"`
+		OpenKindBytesMax          int `json:"open_kind_bytes_max"`
+		OpenMetadataBytes         int `json:"open_metadata_bytes"`
+		OpenMetadataDepth         int `json:"open_metadata_depth"`
+		OpenMetadataNodes         int `json:"open_metadata_nodes"`
+		OpenMetadataObjectMembers int `json:"open_metadata_object_members"`
+		OpenMetadataArrayElements int `json:"open_metadata_array_elements"`
+		OpenMetadataKeyBytes      int `json:"open_metadata_key_bytes"`
+		OpenMetadataStringBytes   int `json:"open_metadata_string_bytes"`
+	} `json:"limits"`
 	Profiles struct {
 		Session string `json:"session"`
 		Direct  string `json:"direct"`
@@ -86,6 +102,7 @@ type transportV3Registry struct {
 type transportV3Design struct {
 	Version      string                    `json:"version"`
 	SHA256       string                    `json:"sha256"`
+	Baseline     string                    `json:"baseline_commit"`
 	SourcePath   string                    `json:"source_path"`
 	Traceability []transportV3Traceability `json:"traceability"`
 }
@@ -204,6 +221,45 @@ func validateTransportV3AdapterNotComposedVector(vectors []transportV3InvalidCap
 var transportV3ConsumerLanguages = []string{"go", "rust", "swift", "typescript"}
 
 var transportV3ForbiddenDomain = regexp.MustCompile(`(?i)(?:\b(?:FSB2|FSA2|FSC2|FSH2|FSS2|FSR2|FSD2)\b|flowersec(?:/2|[-.]direct/2|[-.]tunnel/2|[-.]v2)|flowersec(?:/v2|/webtransport/v2)/[a-z/]+|flowersec\.(?:direct|tunnel)\.v2|flowersec v2 (?:server finished|client finished|epoch zero|control root|stream root|setup root|rekey root|next epoch|stream|control|record key|nonce|unreliable)|flowersec-v2-(?:handshake|setup|record|open|unreliable))`)
+var transportV3RegistryReferenceSegment = regexp.MustCompile(`^([a-z0-9_]+)(?:\[id=([a-z0-9_]+)\])?$`)
+
+func resolveTransportV3RegistryReference(document any, reference string) (any, error) {
+	current := document
+	for _, segment := range strings.Split(reference, ".") {
+		match := transportV3RegistryReferenceSegment.FindStringSubmatch(segment)
+		if match == nil {
+			return nil, fmt.Errorf("invalid registry path segment %q", segment)
+		}
+		object, ok := current.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("path segment %q does not select an object", segment)
+		}
+		current, ok = object[match[1]]
+		if !ok {
+			return nil, fmt.Errorf("unknown registry field %q", match[1])
+		}
+		if match[2] == "" {
+			continue
+		}
+		items, ok := current.([]any)
+		if !ok {
+			return nil, fmt.Errorf("registry field %q is not selectable by id", match[1])
+		}
+		found := false
+		for _, item := range items {
+			candidate, ok := item.(map[string]any)
+			if ok && candidate["id"] == match[2] {
+				current = item
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("registry field %q has no id %q", match[1], match[2])
+		}
+	}
+	return current, nil
+}
 
 func loadTransportV3Registry(repoRoot string) (*transportV3Registry, error) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot, transportV3ContractPath))
@@ -226,6 +282,17 @@ func loadTransportV3Registry(repoRoot string) (*transportV3Registry, error) {
 	if err := json.Unmarshal(raw, &registry); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", transportV3ContractPath, err)
 	}
+	var document any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return nil, fmt.Errorf("parse %s reference document: %w", transportV3ContractPath, err)
+	}
+	for _, entry := range registry.Design.Traceability {
+		for _, reference := range entry.RegistryVector {
+			if _, err := resolveTransportV3RegistryReference(document, reference); err != nil {
+				return nil, fmt.Errorf("%s traceability clause %q reference %q: %w", transportV3ContractPath, entry.Clause, reference, err)
+			}
+		}
+	}
 	if err := validateTransportV3Registry(repoRoot, &registry); err != nil {
 		return nil, err
 	}
@@ -238,6 +305,31 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	}
 	if registry.Design.SHA256 != "236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba" {
 		return fmt.Errorf("%s design hash drifted", transportV3ContractPath)
+	}
+	if registry.Design.Baseline != "026cb52d116d2a04de50d0f0621fff57c7657120" {
+		return fmt.Errorf("%s design baseline drifted", transportV3ContractPath)
+	}
+	wantGeneratedOutputs := []string{
+		"testdata/transport_v3/artifact_vectors.json",
+		"testdata/transport_v3/capability_vectors.json",
+		"testdata/transport_v3/controller_vectors.json",
+		"testdata/transport_v3/idna_vectors.json",
+		"testdata/transport_v3/open_unicode_vectors.json",
+		"testdata/transport_v3/rpc_error_vectors.json",
+		"testdata/transport_v3/rpc_malformed_envelopes.json",
+		"testdata/transport_v3/rpc_notification_vectors.json",
+		"testdata/transport_v3/session_handler_vectors.json",
+		"testdata/transport_v3/version_isolation_vectors.json",
+	}
+	if registry.FixtureGeneration.Producer != "testdata/transport_v3/generate_contract_vectors.mjs" ||
+		!slices.Equal(registry.FixtureGeneration.CheckCommand, []string{"node", registry.FixtureGeneration.Producer, "--check"}) ||
+		!slices.Equal(registry.FixtureGeneration.Outputs, wantGeneratedOutputs) {
+		return fmt.Errorf("%s fixture generation ownership drifted", transportV3ContractPath)
+	}
+	for _, relative := range append([]string{registry.FixtureGeneration.Producer}, registry.FixtureGeneration.Outputs...) {
+		if info, err := os.Stat(filepath.Join(repoRoot, relative)); err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("%s fixture generation path %s is unavailable", transportV3ContractPath, relative)
+		}
 	}
 	if registry.Design.SourcePath == "" {
 		return fmt.Errorf("%s design source path is required", transportV3ContractPath)
@@ -307,6 +399,13 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	}
 	if !slices.Equal(registry.URLNormalization.ForbiddenCharacters, []string{`\`, "?", "#", "%"}) {
 		return fmt.Errorf("%s URL forbidden characters drifted", transportV3ContractPath)
+	}
+	if registry.Limits.OpenKindBytesMin != 1 || registry.Limits.OpenKindBytesMax != 128 ||
+		registry.Limits.OpenMetadataBytes != 4096 || registry.Limits.OpenMetadataDepth != 4 ||
+		registry.Limits.OpenMetadataNodes != 64 || registry.Limits.OpenMetadataObjectMembers != 64 ||
+		registry.Limits.OpenMetadataArrayElements != 32 || registry.Limits.OpenMetadataKeyBytes != 64 ||
+		registry.Limits.OpenMetadataStringBytes != 512 {
+		return fmt.Errorf("%s OPEN limits drifted", transportV3ContractPath)
 	}
 	if registry.URLNormalization.InputUTF8BytesMin != 1 || registry.URLNormalization.InputUTF8BytesMax != 2048 ||
 		registry.URLNormalization.SplitDelimiter != "first_literal_://" || registry.URLNormalization.AuthoritySplit != "first_ascii_slash" ||
@@ -497,7 +596,28 @@ func validateTransportV3ConsumerEvidence(fixtureID, language, body string) error
 	case "version_isolation/swift":
 		required = []string{"version_isolation_vectors.json", "v2_magic_hex", "v2_version_hex", "profile_mutations", "path_mutations", "alpn_mutations", "crypto_label_mutations", "versionIsolationVectorsRejectV2Mutations"}
 	default:
-		return nil
+		genericEvidence := map[string][]string{
+			"artifact_admission":      {"artifact_vectors.json", "positive", "negative"},
+			"capability":              {"capability_vectors.json", "canonical_json", "digest_hex"},
+			"controller":              {"controller_vectors.json", "scenarios"},
+			"crypto":                  {"crypto_vectors.json", "session_prk_hex"},
+			"datagram":                {"datagram_vectors.json", "plaintext_b64u", "ciphertext_b64u"},
+			"handshake":               {"handshake_vectors.json", "client_init_hex", "h3_hex"},
+			"idna":                    {"idna_vectors.json", "positive", "negative"},
+			"issuer_admission":        {"go_issuer_admission_vectors.json", "acceptor_admissions_hash_hex"},
+			"open_unicode":            {"open_unicode_vectors.json", "metadata_json"},
+			"rpc_error":               {"rpc_error_vectors.json", "message"},
+			"rpc_malformed_envelopes": {"rpc_malformed_envelopes.json", "valid"},
+			"rpc_notifications":       {"rpc_notification_vectors.json", "payloads", "subscription_scenarios"},
+			"session_handlers":        {"session_handler_vectors.json", "stream_kinds", "rpc_type_ids"},
+			"session_wire":            {"session_wire_vectors.json", "transition_id_hex", "payload_hex"},
+			"version_isolation":       {"version_isolation_vectors.json", "v2_magic_hex", "v2_version_hex"},
+		}
+		var ok bool
+		required, ok = genericEvidence[fixtureID]
+		if !ok {
+			return fmt.Errorf("v3 fixture %s %s consumer has no evidence rule", fixtureID, language)
+		}
 	}
 	for _, token := range required {
 		if !strings.Contains(body, token) {

@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -35,6 +36,13 @@ function digest(label, value) {
 }
 
 const registry = json("stability/transport_v3_contract.json");
+const generation = spawnSync(
+  registry.fixture_generation.check_command[0],
+  registry.fixture_generation.check_command.slice(1),
+  { cwd: root, encoding: "utf8" },
+);
+assert.equal(generation.status, 0,
+  `transport v3 fixture regeneration check failed: ${generation.stderr || generation.stdout}`);
 const artifactVectors = json("testdata/transport_v3/artifact_vectors.json");
 assert.equal(
   canonicalJSON(json("flowersec-swift/Tests/FlowersecTests/Fixtures/transport_v3_direct_artifact.json")),
@@ -44,6 +52,7 @@ assert.equal(
 assert.equal(registry.version, 3);
 assert.equal(registry.status, "final");
 assert.equal(registry.design.version, "3.0.0");
+assert.equal(registry.design.baseline_commit, "026cb52d116d2a04de50d0f0621fff57c7657120");
 assert.equal(
   registry.design.sha256,
   "236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba",
@@ -57,6 +66,27 @@ assert.equal(
 assert.equal(registry.profiles.session, "flowersec/3");
 assert.equal(registry.frame_family.bootstrap, "FSB3");
 assert.equal(registry.frame_family.datagram, "FSD3");
+assert.deepEqual({
+  open_kind_bytes_min: registry.limits.open_kind_bytes_min,
+  open_kind_bytes_max: registry.limits.open_kind_bytes_max,
+  open_metadata_bytes: registry.limits.open_metadata_bytes,
+  open_metadata_depth: registry.limits.open_metadata_depth,
+  open_metadata_nodes: registry.limits.open_metadata_nodes,
+  open_metadata_object_members: registry.limits.open_metadata_object_members,
+  open_metadata_array_elements: registry.limits.open_metadata_array_elements,
+  open_metadata_key_bytes: registry.limits.open_metadata_key_bytes,
+  open_metadata_string_bytes: registry.limits.open_metadata_string_bytes,
+}, {
+  open_kind_bytes_min: 1,
+  open_kind_bytes_max: 128,
+  open_metadata_bytes: 4096,
+  open_metadata_depth: 4,
+  open_metadata_nodes: 64,
+  open_metadata_object_members: 64,
+  open_metadata_array_elements: 32,
+  open_metadata_key_bytes: 64,
+  open_metadata_string_bytes: 512,
+});
 assert.deepEqual(registry.tls_policy.modes, ["ca", "pin"]);
 assert.equal(registry.tls_policy.mode_fallback, false);
 assert.equal(registry.capability.first_release_emits_adapter_not_composed, false);
@@ -194,6 +224,23 @@ assert.equal(new Set(traceabilityClauses).size, traceabilityClauses.length, "tra
 const allFixtureReferences = registry.wire_fixtures
   .map((fixture) => `wire_fixtures[id=${fixture.id}]`)
   .sort();
+function resolveRegistryReference(reference) {
+  let current = registry;
+  for (const segment of reference.split(".")) {
+    const match = /^([a-z0-9_]+)(?:\[id=([a-z0-9_]+)\])?$/.exec(segment);
+    assert(match, `invalid registry path segment ${segment}`);
+    assert(current !== null && typeof current === "object" && !Array.isArray(current),
+      `${reference} segment ${segment} does not select an object`);
+    assert(Object.hasOwn(current, match[1]), `${reference} unknown registry field ${match[1]}`);
+    current = current[match[1]];
+    if (match[2] !== undefined) {
+      assert(Array.isArray(current), `${reference} field ${match[1]} is not selectable by id`);
+      current = current.find((item) => item?.id === match[2]);
+      assert.notEqual(current, undefined, `${reference} has no id ${match[2]}`);
+    }
+  }
+  return current;
+}
 for (const clause of ["12.1", "13.1"]) {
   const entry = registry.design.traceability.find((candidate) => candidate.clause === clause);
   const fixtureReferences = entry.registry_vector
@@ -215,14 +262,7 @@ for (const entry of registry.design.traceability) {
     `${entry.clause} must reference a wire fixture`);
   for (const reference of entry.registry_vector) {
     assert(typeof reference === "string" && reference.length > 0, `${entry.clause} registry/vector reference is required`);
-    if (reference.startsWith("wire_fixtures[id=")) {
-      assert.match(reference, /^wire_fixtures\[id=[a-z0-9_]+\]$/);
-      const fixtureID = reference.slice("wire_fixtures[id=".length, -1);
-      assert(registry.wire_fixtures.some((fixture) => fixture.id === fixtureID), `${entry.clause} unknown fixture ${fixtureID}`);
-    } else {
-      const topLevel = reference.split(".", 1)[0];
-      assert(Object.hasOwn(registry, topLevel), `${entry.clause} unknown registry path ${reference}`);
-    }
+    resolveRegistryReference(reference);
   }
 }
 for (const fixture of registry.wire_fixtures) {

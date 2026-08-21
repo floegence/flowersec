@@ -264,12 +264,6 @@ async function attemptClaimedArtifactLeaseWithinDeadlineV3(
       }).catch(() => undefined);
     }
   }
-  try {
-    await drainCandidateResultsV3([...pending.values()], winner, cleanupPreparedTransport, context.signal);
-  } catch (error) {
-    if (winner !== undefined) await cleanupPreparedTransport(winner);
-    throw error;
-  }
   if (winner === undefined) {
     try { context.assertArtifactFresh(); } catch (error) {
       return { kind: "pre_spend_failure", error: publicPreSpendError(error) };
@@ -490,26 +484,6 @@ function linkConnectAttemptAbort(parent: AbortSignal, child: AbortController): (
 
 function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw signal.reason;
-}
-
-async function drainCandidateResultsV3(
-  pending: readonly Promise<Readonly<{
-    index: number;
-    ready?: ReadyAdmissionTransportV3;
-    failure?: TransportFailureV3;
-  }>>[],
-  winner: ReadyAdmissionTransportV3 | undefined,
-  cleanupPreparedTransport: (transport: ReadyAdmissionTransportV3) => Promise<void>,
-  signal: AbortSignal,
-): Promise<void> {
-  const drain = Promise.all(pending).then(async (results) => {
-    await Promise.allSettled(results.map(async (result) => {
-      if (result.ready !== undefined && result.ready !== winner) {
-        await cleanupPreparedTransport(result.ready);
-      }
-    }));
-  });
-  await raceAbort(drain, signal);
 }
 
 async function closePreparedTransportV3(

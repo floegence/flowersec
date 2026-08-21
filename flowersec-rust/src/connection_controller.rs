@@ -1182,11 +1182,7 @@ const fn connect_failure(
 }
 
 fn connect_disposition(error: ConnectError) -> RetryDisposition {
-    if error.controller_retryable() {
-        RetryDisposition::Retryable
-    } else {
-        RetryDisposition::Terminal
-    }
+    error.retry_disposition()
 }
 
 fn session_disposition(error: SessionError) -> RetryDisposition {

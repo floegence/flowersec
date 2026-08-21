@@ -26,7 +26,7 @@ use crate::{
         CarrierKind, CarrierSessionV3, CarrierStreamV3, PathKind, SessionRole,
         carrier_inbound_stream_limit_v3,
     },
-    websocket_v2::WebSocketListener,
+    websocket_v3::WebSocketListener,
 };
 
 const FSB3_HEADER_BYTES: usize = 12;
@@ -161,7 +161,7 @@ impl AcceptorListener {
                 .await
                 .map(|(carrier, _)| carrier)
                 .map_err(io::Error::other),
-            Self::WebSocket(listener) => listener.accept_v3().await.map_err(io::Error::other),
+            Self::WebSocket(listener) => listener.accept().await.map_err(io::Error::other),
         }
     }
 }
@@ -192,7 +192,7 @@ impl Acceptor {
         validate_common(options.max_inbound_streams, options.accept_timeout)?;
         let capacity = carrier_inbound_stream_limit_v3(options.max_inbound_streams)
             .map_err(|_| error(AcceptErrorCode::InvalidInput))?;
-        let listener = WebSocketListener::bind_direct_v3(
+        let listener = WebSocketListener::bind_direct(
             options.bind_address,
             options.certificate_chain_der,
             options.private_key_der,

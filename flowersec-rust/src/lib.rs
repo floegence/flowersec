@@ -103,7 +103,9 @@ mod transport_v2;
 mod transport_v3;
 mod tunnel_runtime_v2;
 mod tunnel_runtime_v3;
+mod websocket_transport;
 mod websocket_v2;
+mod websocket_v3;
 
 #[cfg(feature = "__flowersec_internal_fuzzing")]
 #[doc(hidden)]

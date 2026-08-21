@@ -244,11 +244,10 @@ describe("transport v3 version isolation", () => {
             plaintext: base64urlDecode(vector.plaintext_b64u),
           });
           expect(Buffer.from(sealed.header).toString("hex")).toBe(frame.v3_hex);
-          const queue = [magic, version, sealed.wire];
           const transport = {
             maxDatagramSize: 1024,
             send: async () => "accepted" as const,
-            receive: async () => queue.shift()!,
+            receive: async () => sealed.wire,
           };
           const channel = createInternalUnreliableMessageChannelV3({
             transport,
@@ -258,9 +257,29 @@ describe("transport v3 version isolation", () => {
             receiveDirection: vector.direction as DirectionV3,
             currentSendEpoch: () => ({ epoch: vector.epoch, epochSecret: base64urlDecode(vector.epoch_secret_b64u) }),
             receiveEpochSecret: (epoch) => epoch === vector.epoch ? base64urlDecode(vector.epoch_secret_b64u) : undefined,
+            onProtocolFailure: () => undefined,
             now: () => 0,
           });
           expect(await channel.receive()).toEqual(base64urlDecode(vector.plaintext_b64u));
+          for (const mutation of [magic, version]) {
+            const onProtocolFailure = vi.fn();
+            const invalidChannel = createInternalUnreliableMessageChannelV3({
+              transport: {
+                ...transport,
+                receive: async () => mutation,
+              },
+              suite: vector.suite as CipherSuiteV3,
+              h3: base64urlDecode(vector.h3_b64u),
+              sendDirection: vector.direction as DirectionV3,
+              receiveDirection: vector.direction as DirectionV3,
+              currentSendEpoch: () => ({ epoch: vector.epoch, epochSecret: base64urlDecode(vector.epoch_secret_b64u) }),
+              receiveEpochSecret: (epoch) => epoch === vector.epoch ? base64urlDecode(vector.epoch_secret_b64u) : undefined,
+              onProtocolFailure,
+              now: () => 0,
+            });
+            await expect(invalidChannel.receive()).rejects.toMatchObject({ code: "closed" });
+            expect(onProtocolFailure).toHaveBeenCalledOnce();
+          }
           break;
         }
       }

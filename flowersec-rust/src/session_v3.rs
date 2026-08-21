@@ -1147,6 +1147,10 @@ async fn receive_unreliable_message_v3(
                 result.map_err(map_carrier_unreliable_error)?
             }
         };
+        if is_previous_version_unreliable_datagram_v3(&wire) {
+            fail_session_v3(session, invalid("previous protocol unreliable frame"));
+            return Err(UnreliableMessageError::Closed);
+        }
         if !(UNRELIABLE_HEADER_V3_SIZE + AEAD_TAG_V3_SIZE + 1..=MAX_UNRELIABLE_WIRE_V3_BYTES)
             .contains(&wire.len())
         {
@@ -1235,6 +1239,14 @@ fn record_unreliable_sequence_v3(
 
 fn unreliable_receive_epoch_is_committed_v3(recv_epoch: u32, message_epoch: u32) -> bool {
     message_epoch <= recv_epoch
+}
+
+fn is_previous_version_unreliable_datagram_v3(wire: &[u8]) -> bool {
+    wire.len() >= 5
+        && wire[0] == b'F'
+        && wire[1] == b'S'
+        && wire[2] == b'D'
+        && (wire[3] == b'2' || wire[3] == b'3' && wire[4] == 2)
 }
 
 fn map_carrier_unreliable_error(error: CarrierUnreliableMessageErrorV3) -> UnreliableMessageError {
@@ -5189,6 +5201,16 @@ mod tests {
         assert_eq!(client.profile, SESSION_PROFILE_V3);
         for field in ["v2_magic_hex", "v2_version_hex"] {
             assert!(read_frame(vector_hex(fsh3, field)).await.is_err());
+        }
+
+        let fsd3 = frames.iter().find(|frame| frame["id"] == "fsd3").unwrap();
+        assert!(!is_previous_version_unreliable_datagram_v3(&vector_hex(
+            fsd3, "v3_hex"
+        )));
+        for field in ["v2_magic_hex", "v2_version_hex"] {
+            assert!(is_previous_version_unreliable_datagram_v3(&vector_hex(
+                fsd3, field
+            )));
         }
 
         let open_fixture: serde_json::Value = serde_json::from_str(include_str!(

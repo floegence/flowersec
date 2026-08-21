@@ -5,9 +5,13 @@ use flowersec::v2::{
 use flowersec::{
     ArtifactLease, ArtifactSource, ArtifactSourceError, ConnectionController,
     ConnectionControllerOptions, ConnectorOptions, IncomingStream, NotificationHandler,
-    RetryDisposition, RpcError, RpcHandler, RpcHandlers, RpcPeer, RpcPeerExt, SessionError,
+    RetryDisposition, RpcError, RpcHandler, RpcHandlers, RpcPeer, RpcPeerExt,
+    RuntimeAuthorizationRequest as RuntimeAuthorizationRequestV3, SessionError,
     SessionHandlerOptions, SessionHandlers, SessionTermination, StreamHandler,
-    StreamHandlerOptions, StreamHandlers, StreamMetadata, StreamMetadataError, connect,
+    StreamHandlerOptions, StreamHandlers, StreamMetadata, StreamMetadataError,
+    TunnelAuthorizationError as TunnelAuthorizationErrorV3,
+    TunnelAuthorizationResponse as TunnelAuthorizationResponseV3,
+    TunnelAuthorizer as TunnelAuthorizerV3, connect,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -51,6 +55,20 @@ impl NotificationHandler for NotificationWithoutDebug {
 }
 
 struct StreamWithoutDebug;
+
+struct CompileV3Authorizer;
+
+#[async_trait::async_trait]
+impl TunnelAuthorizerV3 for CompileV3Authorizer {
+    async fn authorize(
+        &self,
+        _request: RuntimeAuthorizationRequestV3,
+        cancellation: CancellationToken,
+    ) -> Result<TunnelAuthorizationResponseV3, TunnelAuthorizationErrorV3> {
+        let _ = cancellation.is_cancelled();
+        Err(TunnelAuthorizationErrorV3)
+    }
+}
 
 static CARGO_PROBE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -109,6 +127,11 @@ async fn compile_connector_handlers(lease: ArtifactLease, mut handlers: RpcHandl
 fn exposes_explicit_options_and_typed_rpc() {
     let _ = compile_public_api;
     let _ = compile_connector_handlers;
+
+    fn compile_retry_disposition(error: flowersec::ConnectError) -> RetryDisposition {
+        error.retry_disposition()
+    }
+    let _ = compile_retry_disposition;
 }
 
 #[test]
@@ -122,6 +145,8 @@ fn exposes_a_production_websocket_direct_listener() {
 
 #[test]
 fn exposes_an_independent_opaque_tunnel_runtime() {
+    let _ = CompileV3Authorizer;
+    let _: Option<&dyn TunnelAuthorizerV3> = None;
     fn compile_runtime(options: TunnelRuntimeOptions, authorizer: Arc<dyn TunnelAuthorizer>) {
         let runtime =
             TunnelRuntime::bind_websocket(options, authorizer).expect("bind opaque tunnel runtime");

@@ -35,6 +35,7 @@ export type InternalUnreliableMessageChannelV3Options = Readonly<{
   receiveDirection: DirectionV3;
   currentSendEpoch(): Readonly<{ epoch: number; epochSecret: Uint8Array }>;
   receiveEpochSecret(epoch: number): Uint8Array | undefined;
+  onProtocolFailure(): void;
   now?: () => number;
 }>;
 
@@ -117,6 +118,10 @@ class InternalUnreliableMessageChannelV3 implements UnreliableMessageChannelV3 {
         if (isAbortError(error)) throw error;
         throw new UnreliableMessageError("closed");
       }
+      if (isPreviousVersionDatagram(wire)) {
+        this.options.onProtocolFailure();
+        throw new UnreliableMessageError("closed");
+      }
       const decoded = decodeHeader(wire);
       if (decoded === undefined || decoded.expiresAtUnixMs <= BigInt(Math.floor(this.now()))) continue;
       const epochSecret = this.options.receiveEpochSecret(decoded.epoch);
@@ -149,6 +154,12 @@ class InternalUnreliableMessageChannelV3 implements UnreliableMessageChannelV3 {
       return plaintext.slice();
     }
   }
+}
+
+function isPreviousVersionDatagram(wire: Uint8Array): boolean {
+  if (!(wire instanceof Uint8Array) || wire.byteLength < 5 ||
+      wire[0] !== 0x46 || wire[1] !== 0x53 || wire[2] !== 0x44) return false;
+  return wire[3] === 0x32 || (wire[3] === 0x33 && wire[4] === 2);
 }
 
 type DecodedHeader = Readonly<{

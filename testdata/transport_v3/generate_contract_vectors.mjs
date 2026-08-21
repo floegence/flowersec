@@ -6,6 +6,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(fileURLToPath(import.meta.url));
+const checkOnly = process.argv.length === 3 && process.argv[2] === "--check";
+if (process.argv.length > (checkOnly ? 3 : 2)) throw new Error("usage: generate_contract_vectors.mjs [--check]");
 const SAFE_MAX = 9_007_199_254_740_991;
 const PROFILE = "flowersec/3";
 const PIN_A = Buffer.alloc(32, 0x11).toString("base64url");
@@ -55,8 +57,14 @@ function digestResult(label, value) {
 }
 
 function write(name, value) {
+  const rendered = `${JSON.stringify(value, null, 2)}\n`;
+  if (checkOnly) {
+    const checkedIn = readFileSync(join(root, name), "utf8");
+    if (checkedIn !== rendered) throw new Error(`${name} is not reproducible; regenerate contract vectors`);
+    return;
+  }
   mkdirSync(root, { recursive: true });
-  writeFileSync(join(root, name), `${JSON.stringify(value, null, 2)}\n`);
+  writeFileSync(join(root, name), rendered);
 }
 
 function pin(value_b64u, not_after_unix_s) {
