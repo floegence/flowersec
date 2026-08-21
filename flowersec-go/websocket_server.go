@@ -1,6 +1,7 @@
 package flowersec
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -8,6 +9,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	gorillaws "github.com/gorilla/websocket"
 )
 
 // ErrInvalidWebSocketServer reports a missing or unsafe WebSocket server
@@ -33,10 +36,13 @@ type WebSocketHTTPServerOptions struct {
 // WebSocketHTTPServer owns the HTTP and TLS boundary for a v3 WebSocket
 // endpoint. Its TLS configuration is immutable from the caller's perspective.
 type WebSocketHTTPServer struct {
-	httpServer *http.Server
-	tlsConfig  *tls.Config
-	mu         sync.Mutex
-	listener   net.Listener
+	httpServer      *http.Server
+	tlsConfig       *tls.Config
+	mu              sync.Mutex
+	listener        net.Listener
+	closing         bool
+	upgrades        map[*webSocketServerUpgrade]struct{}
+	upgradesChanged chan struct{}
 }
 
 // NewWebSocketHTTPServer constructs a server for a Flowersec direct or tunnel
@@ -61,16 +67,19 @@ func NewWebSocketHTTPServer(options WebSocketHTTPServerOptions) (*WebSocketHTTPS
 	if readHeaderTimeout == 0 {
 		readHeaderTimeout = defaultWebSocketReadHeaderTimeout
 	}
-	return &WebSocketHTTPServer{
-		httpServer: &http.Server{
-			Handler:           boundary.secureHandler(),
-			ReadHeaderTimeout: readHeaderTimeout,
-			ReadTimeout:       options.ReadTimeout,
-			WriteTimeout:      options.WriteTimeout,
-			IdleTimeout:       options.IdleTimeout,
-		},
-		tlsConfig: tlsConfig,
-	}, nil
+	server := &WebSocketHTTPServer{
+		tlsConfig:       tlsConfig,
+		upgrades:        make(map[*webSocketServerUpgrade]struct{}),
+		upgradesChanged: make(chan struct{}),
+	}
+	server.httpServer = &http.Server{
+		Handler:           http.HandlerFunc(server.serveHTTP(boundary.secureHandler())),
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       options.ReadTimeout,
+		WriteTimeout:      options.WriteTimeout,
+		IdleTimeout:       options.IdleTimeout,
+	}
+	return server, nil
 }
 
 // Serve serves one TCP listener with the server-owned TLS policy. Callers pass
@@ -81,7 +90,7 @@ func (server *WebSocketHTTPServer) Serve(listener net.Listener) error {
 		return ErrInvalidWebSocketServer
 	}
 	server.mu.Lock()
-	if server.listener != nil {
+	if server.listener != nil || server.closing {
 		server.mu.Unlock()
 		return ErrInvalidWebSocketServer
 	}
@@ -103,7 +112,8 @@ func (server *WebSocketHTTPServer) ListenAndServe(address string) error {
 	return server.Serve(listener)
 }
 
-// Shutdown gracefully closes the HTTP server and active connections.
+// Shutdown gracefully closes ordinary HTTP connections, terminates upgraded
+// WebSocket connections, and waits for their handlers to release resources.
 func (server *WebSocketHTTPServer) Shutdown(ctx context.Context) error {
 	if server == nil || server.httpServer == nil {
 		return ErrInvalidWebSocketServer
@@ -111,15 +121,149 @@ func (server *WebSocketHTTPServer) Shutdown(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return server.httpServer.Shutdown(ctx)
+	server.stopWebSocketUpgrades(false)
+	shutdownErr := server.httpServer.Shutdown(ctx)
+	waitErr := server.waitForWebSocketUpgrades(ctx)
+	if waitErr != nil {
+		server.stopWebSocketUpgrades(true)
+	}
+	return errors.Join(shutdownErr, waitErr)
 }
 
-// Close immediately closes the HTTP server and active connections.
+// Close immediately closes the HTTP server and upgraded WebSocket connections,
+// then waits for their handlers to release resources.
 func (server *WebSocketHTTPServer) Close() error {
 	if server == nil || server.httpServer == nil {
 		return ErrInvalidWebSocketServer
 	}
-	return server.httpServer.Close()
+	server.stopWebSocketUpgrades(true)
+	closeErr := server.httpServer.Close()
+	return errors.Join(closeErr, server.waitForWebSocketUpgrades(context.Background()))
+}
+
+func (server *WebSocketHTTPServer) serveHTTP(next http.Handler) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		if !gorillaws.IsWebSocketUpgrade(request) {
+			next.ServeHTTP(writer, request)
+			return
+		}
+		ctx, cancel := context.WithCancel(request.Context())
+		upgrade := &webSocketServerUpgrade{server: server, cancel: cancel}
+		server.mu.Lock()
+		if server.closing {
+			server.mu.Unlock()
+			cancel()
+			http.Error(writer, "Flowersec WebSocket server is closed", http.StatusServiceUnavailable)
+			return
+		}
+		server.upgrades[upgrade] = struct{}{}
+		server.mu.Unlock()
+
+		trackedWriter := &webSocketServerResponseWriter{ResponseWriter: writer, upgrade: upgrade}
+		defer upgrade.finish()
+		next.ServeHTTP(trackedWriter, request.WithContext(ctx))
+	}
+}
+
+func (server *WebSocketHTTPServer) stopWebSocketUpgrades(force bool) {
+	server.mu.Lock()
+	server.closing = true
+	upgrades := make([]*webSocketServerUpgrade, 0, len(server.upgrades))
+	for upgrade := range server.upgrades {
+		upgrades = append(upgrades, upgrade)
+	}
+	server.mu.Unlock()
+	for _, upgrade := range upgrades {
+		upgrade.cancel()
+	}
+	if force {
+		for _, upgrade := range upgrades {
+			upgrade.closeConnection()
+		}
+	}
+}
+
+func (server *WebSocketHTTPServer) waitForWebSocketUpgrades(ctx context.Context) error {
+	for {
+		server.mu.Lock()
+		if len(server.upgrades) == 0 {
+			server.mu.Unlock()
+			return nil
+		}
+		changed := server.upgradesChanged
+		server.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		}
+	}
+}
+
+type webSocketServerUpgrade struct {
+	server     *WebSocketHTTPServer
+	cancel     context.CancelFunc
+	connection net.Conn
+}
+
+func (upgrade *webSocketServerUpgrade) attach(connection net.Conn) bool {
+	server := upgrade.server
+	server.mu.Lock()
+	if server.closing {
+		server.mu.Unlock()
+		_ = connection.Close()
+		return false
+	}
+	upgrade.connection = connection
+	server.mu.Unlock()
+	return true
+}
+
+func (upgrade *webSocketServerUpgrade) closeConnection() {
+	server := upgrade.server
+	server.mu.Lock()
+	connection := upgrade.connection
+	server.mu.Unlock()
+	if connection != nil {
+		_ = connection.Close()
+	}
+}
+
+func (upgrade *webSocketServerUpgrade) finish() {
+	upgrade.cancel()
+	upgrade.closeConnection()
+	server := upgrade.server
+	server.mu.Lock()
+	if _, exists := server.upgrades[upgrade]; exists {
+		delete(server.upgrades, upgrade)
+		close(server.upgradesChanged)
+		server.upgradesChanged = make(chan struct{})
+	}
+	server.mu.Unlock()
+}
+
+type webSocketServerResponseWriter struct {
+	http.ResponseWriter
+	upgrade *webSocketServerUpgrade
+}
+
+func (writer *webSocketServerResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := writer.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("Flowersec WebSocket response does not support hijacking")
+	}
+	connection, buffered, err := hijacker.Hijack()
+	if err != nil {
+		return nil, nil, err
+	}
+	if !writer.upgrade.attach(connection) {
+		return nil, nil, net.ErrClosed
+	}
+	return connection, buffered, nil
+}
+
+func (writer *webSocketServerResponseWriter) Unwrap() http.ResponseWriter {
+	return writer.ResponseWriter
 }
 
 func prepareWebSocketServerTLS(input *tls.Config) (*tls.Config, error) {

@@ -99,6 +99,7 @@ handlers.handleStream("files/read", async (incoming) => serveFile(incoming));
 const acceptor = await createAcceptor({
   listeners,
   maxInboundStreams: 32,
+  admissionTimeoutMs: 10_000,
   authorize: async (request, options) => ({
     accepted: true,
     artifact: await loadAuthorizedArtifact(request, options),
@@ -112,6 +113,10 @@ await accepted.serve();
 `loadAuthorizedArtifact(...)` returns the opaque `Artifact` produced by
 `parseArtifact(...)`; authorization code never reconstructs or receives
 package-private PSK, candidate, or pin fields.
+The admission deadline covers FSB3 receive, authorization, handler resolution,
+FSA3 completion, and Session establishment. Tunnel allow decisions likewise
+return the stored opaque `Artifact`; the relay reprojects and verifies the full
+FSB3 while remaining unable to inspect its E2EE session fields.
 
 `RPCHandlers` is available only from the Node entrypoint and cannot register
 application streams. The default `SessionHandlers` is strict v3 and

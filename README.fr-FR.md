@@ -89,10 +89,10 @@ Les quatre SDK partagent le même modèle de session. La prise en charge varie l
 | Connexions de clients Apple | Non | Non | Oui | Non |
 | Connexions QUIC natives | Oui | Node.js | Non | Oui |
 | Connexions WebSocket | Oui | Oui | Oui | Oui |
-| Connexions WebTransport | Go direct (adaptateur facultatif) | Browser (si l'API WebTransport du navigateur est disponible) | Non | Non |
+| Connexions WebTransport | Go H4 | Client Browser H3 (si l'API WebTransport du navigateur est disponible) | Non | Non |
 | Acceptation de sessions côté serveur | Oui | Node.js | Non | Oui |
 | Runtime de relais opaque | Oui | Node.js | Non | Oui |
-| Émission d'invitations par le plan de contrôle | Oui | Node.js | Non | Oui |
+| Émission d'invitations par le plan de contrôle | Oui | Non | Non | Non |
 | ProxyServer HTTP et WebSocket | Oui | Node.js | Non | Oui |
 
 Les profils de deploiement separent la disponibilite de la plateforme du protocole applicatif Flowersec partage :
@@ -102,13 +102,13 @@ Les profils de deploiement separent la disponibilite de la plateforme du protoco
 | `native-server-core` | Go, Rust, Node.js | Client endpoint, serveur direct et runtime de tunnel opaque WebSocket et raw QUIC | Adaptateur WebTransport |
 | `browser-client` | Navigateur TypeScript | Client endpoint WebSocket | Adaptateur WebTransport du navigateur |
 | `apple-client` | Swift sur les plateformes Apple | Client endpoint WSS | Aucune |
-| `webtransport-server` | Aucun runtime ne le revendique actuellement | La conformite du serveur direct et du runtime de tunnel opaque est requise avant toute revendication | Aucune |
+| `webtransport-server` | Go | Serveur WebTransport direct et runtime de tunnel opaque | Aucune |
 
-L'inventaire de capacités lisible par machine contient 18 tuples agrégés runtime-rôle-carrier, six par runtime natif, et 24 unités serveur propres à un chemin prises en charge. La matrice d'interopérabilité déclare séparément 18 cellules directes et 18 cellules tunnel. Les 36 cellules par paires sont actuellement des déclarations `unsupported` explicites, car aucun test v3 bloquant la release n'exécute l'ensemble complet des cas d'une cellule. Un profil ne modifie jamais la sémantique wire de Artifact, handshake, RPC, stream, close, rekey ou authorization.
+Le profil native-server-core lisible par machine contient 18 tuples agrégés runtime-rôle-carrier, six par runtime natif, et 24 unités serveur propres à un chemin prises en charge. Go H4 ajoute deux tuples serveur WebTransport et deux unités propres à un chemin. La matrice d'interopérabilité déclare séparément 18 cellules directes et 18 cellules tunnel. Les 36 cellules par paires sont actuellement des déclarations `unsupported` explicites, car aucun test v3 bloquant la release n'exécute l'ensemble complet des cas d'une cellule. Un profil ne modifie jamais la sémantique wire de Artifact, handshake, RPC, stream, close, rekey ou authorization.
 
 Consultez les guides des SDK pour connaître les combinaisons exactes de plateformes et de connexions prises en charge.
 
-WebTransport est un adaptateur facultatif et ne fait pas partie du contrat de carrier native-server. Go fournit un adaptateur direct ; le profil Browser utilise l'API WebTransport du navigateur lorsqu'elle est disponible. Node.js et Rust ne fournissent actuellement aucun adaptateur WebTransport de production. La surface carrier native-server est WebSocket et raw QUIC pour Go, Rust et Node.js ; l'interopérabilité par paires n'est revendiquée que par les entrées prises en charge de la matrice.
+WebTransport est un adaptateur facultatif et ne fait pas partie du contrat de carrier native-server requis. Go revendique le profil H4 webtransport-server séparé et complet ; le profil Browser utilise H3 lorsque l'API WebTransport du navigateur est disponible. Node.js et Rust ne fournissent actuellement aucun adaptateur WebTransport de production. La surface carrier native-server est WebSocket et raw QUIC pour Go, Rust et Node.js ; l'interopérabilité par paires n'est revendiquée que par les entrées prises en charge de la matrice.
 
 <!-- readme-section:security -->
 <a id="security"></a>

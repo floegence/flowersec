@@ -1,6 +1,7 @@
 import { createServer as createHTTPSServer, type Server as HTTPSServer } from "node:https";
 import { createRequire } from "node:module";
 import { constants } from "node:crypto";
+import type { Socket } from "node:net";
 
 import type { CarrierSessionV3 } from "../v3/carrier.js";
 import type { PathKind } from "../v3/contract.js";
@@ -21,6 +22,7 @@ export type NodeWebSocketListenerOptionsV3 = Readonly<{
   inboundBidirectionalStreamCapacity: number;
   maxPendingSessions?: number;
   pendingSessionTimeoutMs?: number;
+  cleanupTimeoutMs?: number;
 }>;
 
 export type NodeWebSocketListenerV3 = Readonly<{
@@ -35,6 +37,7 @@ export async function startNodeWebSocketListenerV3(
   validateOptions(options);
   const maxPendingSessions = options.maxPendingSessions ?? 1_024;
   const pendingSessionTimeoutMs = options.pendingSessionTimeoutMs ?? 10_000;
+  const cleanupTimeoutMs = options.cleanupTimeoutMs ?? 2_000;
   const protocol = websocketSubprotocolForPathV3(options.path);
   const endpoint = FLOWERSEC_V3_PATHS.websocket[options.path];
   const require = createRequire(import.meta.url);
@@ -49,11 +52,16 @@ export async function startNodeWebSocketListenerV3(
   });
   const sessions = new SessionQueueV3(maxPendingSessions, pendingSessionTimeoutMs);
   const sockets = new Set<any>();
+  const networkSockets = new Set<Socket>();
   const wss = new WebSocketServer({
     noServer: true,
     perMessageDeflate: false,
     maxPayload: defaultWsMaxPayload({}),
     handleProtocols(protocols: Set<string>) { return protocols.size === 1 && protocols.has(protocol) ? protocol : false; },
+  });
+  server.on("connection", (socket) => {
+    networkSockets.add(socket);
+    socket.once("close", () => networkSockets.delete(socket));
   });
   server.on("upgrade", (request, socket, head) => {
     const origin = request.headers.origin;
@@ -82,7 +90,7 @@ export async function startNodeWebSocketListenerV3(
     server.once("error", reject);
     server.listen(options.port, options.host, resolve);
   });
-  let closed = false;
+  let closePromise: Promise<void> | undefined;
   return Object.freeze({
     address() {
       const address = server.address();
@@ -91,15 +99,39 @@ export async function startNodeWebSocketListenerV3(
     },
     async accept(acceptOptions = {}) { return await sessions.shift(acceptOptions.signal); },
     async close() {
-      if (closed) return;
-      closed = true;
-      sessions.close();
-      for (const socket of sockets) socket.close();
-      wss.close();
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => error === undefined ? resolve() : reject(error)));
+      closePromise ??= closeListener();
+      await closePromise;
     },
   });
+
+  async function closeListener(): Promise<void> {
+    sessions.close();
+    for (const socket of sockets) socket.close();
+    const graceful = Promise.all([
+      new Promise<void>((resolve, reject) => {
+        wss.close((error?: Error) => error === undefined ? resolve() : reject(error));
+      }),
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => error === undefined ? resolve() : reject(error));
+      }),
+    ]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut: boolean;
+    try {
+      timedOut = await Promise.race([
+        graceful.then(() => false),
+        new Promise<true>((resolve) => {
+          timer = setTimeout(() => resolve(true), cleanupTimeoutMs);
+          timer.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+    if (!timedOut) return;
+    for (const socket of sockets) socket.terminate();
+    for (const socket of networkSockets) socket.destroy();
+  }
 }
 
 function validateOptions(options: NodeWebSocketListenerOptionsV3): void {
@@ -110,6 +142,7 @@ function validateOptions(options: NodeWebSocketListenerOptionsV3): void {
       options.inboundBidirectionalStreamCapacity < 3 || options.inboundBidirectionalStreamCapacity > 130 ||
       (options.maxPendingSessions !== undefined && (!Number.isSafeInteger(options.maxPendingSessions) || options.maxPendingSessions < 1 || options.maxPendingSessions > 1_024)) ||
       (options.pendingSessionTimeoutMs !== undefined && (!Number.isSafeInteger(options.pendingSessionTimeoutMs) || options.pendingSessionTimeoutMs < 1 || options.pendingSessionTimeoutMs > 600_000)) ||
+      (options.cleanupTimeoutMs !== undefined && (!Number.isSafeInteger(options.cleanupTimeoutMs) || options.cleanupTimeoutMs < 1 || options.cleanupTimeoutMs > 600_000)) ||
       options.tls.certificate.length === 0 || options.tls.privateKey.length === 0) {
     throw new TypeError("invalid Node WebSocket v3 listener options");
   }

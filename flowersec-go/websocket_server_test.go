@@ -21,6 +21,7 @@ import (
 
 	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
 	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocketv3"
 )
 
 func TestWebSocketHTTPServerRejectsUnsafeConstructionAndFixesTLSProfile(t *testing.T) {
@@ -154,6 +155,144 @@ func TestWebSocketHTTPServerDisablesTLS13ResumptionAcrossConnections(t *testing.
 	if connection, dialErr := tls.Dial("tcp", listener.Addr().String(), legacyClient); dialErr == nil {
 		_ = connection.Close()
 		t.Fatal("TLS 1.2 connection unexpectedly succeeded")
+	}
+}
+
+func TestWebSocketHTTPServerCloseTerminatesSilentAdmissionAndReleasesCapacity(t *testing.T) {
+	var authorizations atomic.Int32
+	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
+		AllowedOrigins:    []string{"https://consumer.example"},
+		MaxDirectSessions: 1,
+		Authorize: func(context.Context, controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
+			authorizations.Add(1)
+			return controlplane.AuthorizationResponse{}, nil
+		},
+		OnSession: func(context.Context, flowersec.Session, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverTLS, roots := acceptorListenerTLS(t)
+	server, err := startWebSocketTestServer(acceptor.Handler(), serverTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(server.Close)
+
+	silent := dialAdmissionWebSocket(t, server.URL, flowersec.WebSocketDirectPath, carrierws.SubprotocolDirect, roots)
+	capacityProbe := dialAdmissionWebSocket(t, server.URL, flowersec.WebSocketDirectPath, carrierws.SubprotocolDirect, roots)
+	_ = capacityProbe.SetReadDeadline(time.Now().Add(time.Second))
+	if _, _, readErr := capacityProbe.ReadMessage(); readErr == nil {
+		t.Fatal("capacity probe remained open while the silent admission owned the only direct slot")
+	} else if networkErr, ok := readErr.(net.Error); ok && networkErr.Timeout() {
+		t.Fatal("silent admission did not acquire the direct slot before shutdown")
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- server.endpoint.Close() }()
+	select {
+	case closeErr := <-closeDone:
+		if closeErr != nil {
+			t.Fatal(closeErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not terminate the silent upgraded connection")
+	}
+	_ = silent.SetReadDeadline(time.Now().Add(time.Second))
+	if _, _, readErr := silent.ReadMessage(); readErr == nil {
+		t.Fatal("silent upgraded connection remained open after Close")
+	} else if networkErr, ok := readErr.(net.Error); ok && networkErr.Timeout() {
+		t.Fatal("timed out waiting for Close to terminate the silent upgraded connection")
+	}
+	if got := authorizations.Load(); got != 0 {
+		t.Fatalf("silent admission authorizations = %d, want 0", got)
+	}
+
+	replacement, err := startWebSocketTestServer(acceptor.Handler(), serverTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(replacement.Close)
+	reusedSlot := dialAdmissionWebSocket(t, replacement.URL, flowersec.WebSocketDirectPath, carrierws.SubprotocolDirect, roots)
+	_ = reusedSlot.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, _, readErr := reusedSlot.ReadMessage(); readErr == nil {
+		t.Fatal("silent replacement admission unexpectedly produced a message")
+	} else if networkErr, ok := readErr.(net.Error); !ok || !networkErr.Timeout() {
+		t.Fatalf("replacement admission could not reuse released direct capacity: %v", readErr)
+	}
+}
+
+func TestWebSocketHTTPServerShutdownWaitsForEstablishedHandlerAndLeaseRelease(t *testing.T) {
+	var record controlplane.AuthorizationRecord
+	sessionStarted := make(chan struct{})
+	sessionStopped := make(chan struct{})
+	releases := make(chan struct {
+		leaseID string
+		ctxErr  error
+	}, 1)
+	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
+		AllowedOrigins: []string{"https://consumer.example"},
+		Authorize: func(_ context.Context, request controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
+			return controlplane.AuthorizeRuntime(request, record, "lease-websocket-shutdown")
+		},
+		Release: func(ctx context.Context, leaseID string) {
+			releases <- struct {
+				leaseID string
+				ctxErr  error
+			}{leaseID: leaseID, ctxErr: ctx.Err()}
+		},
+		OnSession: func(ctx context.Context, _ flowersec.Session, _ string) error {
+			close(sessionStarted)
+			<-ctx.Done()
+			close(sessionStopped)
+			return context.Cause(ctx)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverTLS, _ := acceptorListenerTLS(t)
+	server, err := startWebSocketTestServer(acceptor.Handler(), serverTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(server.Close)
+	issued, err := controlplane.NewIssuer().IssueDirect(controlplane.DirectIssueOptions{
+		Session:           controlplane.SessionOptions{ChannelID: "websocket-shutdown", ExpiresAt: time.Now().Add(time.Minute)},
+		Endpoints:         mustEndpointSet(t, websocketURL(server.URL, flowersec.WebSocketDirectPath)),
+		RendezvousGroupID: "websocket-shutdown-group",
+		ListenerAudience:  "test",
+		UpstreamAddress:   "127.0.0.1:8080",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record = issued.AuthorizationRecord()
+	session := connectIssued(t, server, issued, "https://consumer.example")
+	t.Cleanup(func() { _ = session.Close() })
+	select {
+	case <-sessionStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("established WebSocket handler did not start")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := server.endpoint.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	select {
+	case <-sessionStopped:
+	default:
+		t.Fatal("Shutdown returned before the established handler stopped")
+	}
+	select {
+	case released := <-releases:
+		if released.leaseID != "lease-websocket-shutdown" || released.ctxErr != nil {
+			t.Fatalf("lease release = %+v, want exact lease with live cleanup context", released)
+		}
+	default:
+		t.Fatal("Shutdown returned before the accepted lease was released")
 	}
 }
 

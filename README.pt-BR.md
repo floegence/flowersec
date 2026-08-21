@@ -89,10 +89,10 @@ Os quatro SDKs compartilham o mesmo modelo de sessão. O suporte varia quando um
 | Conexões de clientes Apple | Não | Não | Sim | Não |
 | Conexões QUIC nativas | Sim | Node.js | Não | Sim |
 | Conexões WebSocket | Sim | Sim | Sim | Sim |
-| Conexões WebTransport | Go direct (adaptador opcional) | Browser (quando a API WebTransport do navegador está disponível) | Não | Não |
+| Conexões WebTransport | Go H4 | Cliente Browser H3 (quando a API WebTransport do navegador está disponível) | Não | Não |
 | Aceitação de sessões no servidor | Sim | Node.js | Não | Sim |
 | Runtime de relay opaco | Sim | Node.js | Não | Sim |
-| Emissão de convites no plano de controle | Sim | Node.js | Não | Sim |
+| Emissão de convites no plano de controle | Sim | Não | Não | Não |
 | ProxyServer HTTP e WebSocket | Sim | Node.js | Não | Sim |
 
 Os perfis de implantacao separam a disponibilidade da plataforma do protocolo de aplicacao Flowersec compartilhado:
@@ -102,13 +102,13 @@ Os perfis de implantacao separam a disponibilidade da plataforma do protocolo de
 | `native-server-core` | Go, Rust, Node.js | Cliente endpoint, servidor direto e runtime de tunel opaco para WebSocket e raw QUIC | Adaptador WebTransport |
 | `browser-client` | Navegador TypeScript | Cliente endpoint WebSocket | Adaptador WebTransport do navegador |
 | `apple-client` | Swift em plataformas Apple | Cliente endpoint WSS | Nenhuma |
-| `webtransport-server` | Nenhum runtime declara atualmente | Servidor direto e runtime de tunel opaco devem passar na conformance antes da declaracao | Nenhuma |
+| `webtransport-server` | Go | Servidor WebTransport direto e runtime de tunel opaco | Nenhuma |
 
-O inventário de capacidades legível por máquina contém 18 tuplas agregadas de runtime, função e carrier, seis por runtime nativo, e 24 unidades de servidor específicas de caminho compatíveis. A matriz de interoperabilidade declara separadamente 18 células diretas e 18 células de túnel. As 36 células em pares são atualmente declarações `unsupported` explícitas porque nenhum teste v3 de release executa o conjunto completo de casos de uma célula. Um perfil nunca altera a semântica wire de Artifact, handshake, RPC, stream, close, rekey ou authorization.
+O perfil native-server-core legível por máquina contém 18 tuplas agregadas de runtime, função e carrier, seis por runtime nativo, e 24 unidades de servidor específicas de caminho compatíveis. O Go H4 adiciona duas tuplas de servidor WebTransport e duas unidades específicas de caminho. A matriz de interoperabilidade declara separadamente 18 células diretas e 18 células de túnel. As 36 células em pares são atualmente declarações `unsupported` explícitas porque nenhum teste v3 de release executa o conjunto completo de casos de uma célula. Um perfil nunca altera a semântica wire de Artifact, handshake, RPC, stream, close, rekey ou authorization.
 
 Consulte os guias dos SDKs para ver as combinações exatas de plataforma e conexão disponíveis.
 
-WebTransport é um adaptador opcional e não faz parte do contrato de carrier native-server. O Go fornece um adaptador direto; o perfil Browser usa a API WebTransport do navegador quando ela está disponível. Node.js e Rust atualmente não fornecem um adaptador WebTransport de produção. A superfície carrier native-server é WebSocket e raw QUIC para Go, Rust e Node.js; a interoperabilidade em pares só é declarada por entradas compatíveis da matriz.
+WebTransport é um adaptador opcional e não faz parte do contrato obrigatório de carrier native-server. O Go declara o perfil H4 webtransport-server separado e completo; o perfil Browser usa H3 quando a API WebTransport do navegador está disponível. Node.js e Rust atualmente não fornecem um adaptador WebTransport de produção. A superfície carrier native-server é WebSocket e raw QUIC para Go, Rust e Node.js; a interoperabilidade em pares só é declarada por entradas compatíveis da matriz.
 
 <!-- readme-section:security -->
 <a id="security"></a>

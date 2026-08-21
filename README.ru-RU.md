@@ -89,10 +89,10 @@ Flowersec отделяет сеанс приложения от сетевого
 | Соединения клиентов Apple | Нет | Нет | Да | Нет |
 | Нативные соединения QUIC | Да | Node.js | Нет | Да |
 | Соединения WebSocket | Да | Да | Да | Да |
-| Соединения WebTransport | Go direct (необязательный адаптер) | Browser (при наличии API WebTransport в браузере) | Нет | Нет |
+| Соединения WebTransport | Go H4 | Browser H3 client (при наличии API WebTransport в браузере) | Нет | Нет |
 | Приём сеансов на сервере | Да | Node.js | Нет | Да |
 | Непрозрачный relay runtime | Да | Node.js | Нет | Да |
-| Выпуск приглашений управляющей плоскостью | Да | Node.js | Нет | Да |
+| Выпуск приглашений управляющей плоскостью | Да | Нет | Нет | Нет |
 | HTTP и WebSocket ProxyServer | Да | Node.js | Нет | Да |
 
 Профили развертывания отделяют доступность платформы от общего прикладного протокола Flowersec:
@@ -102,13 +102,13 @@ Flowersec отделяет сеанс приложения от сетевого
 | `native-server-core` | Go, Rust, Node.js | WebSocket и raw QUIC endpoint client, direct server и opaque tunnel runtime | WebTransport adapter |
 | `browser-client` | TypeScript browser | WebSocket endpoint client | Browser WebTransport adapter |
 | `apple-client` | Swift на платформах Apple | WSS endpoint client | Нет |
-| `webtransport-server` | Сейчас не заявлен ни одной средой | Перед заявлением обязательна conformance direct server и opaque tunnel runtime | Нет |
+| `webtransport-server` | Go | WebTransport direct server и opaque tunnel runtime | Нет |
 
-Машиночитаемый перечень возможностей содержит 18 агрегированных runtime-role-carrier tuple, по шесть для каждой нативной среды, и 24 поддерживаемые серверные единицы, специфичные для пути. Матрица interoperability отдельно объявляет 18 direct cells и 18 tunnel cells. Все 36 попарных cells сейчас являются явными объявлениями `unsupported`, поскольку ни один блокирующий release v3 test не выполняет полный набор случаев cell. Профиль никогда не меняет wire-семантику Artifact, handshake, RPC, stream, close, rekey или authorization.
+Машиночитаемый профиль native-server-core содержит 18 агрегированных runtime-role-carrier tuple, по шесть для каждой нативной среды, и 24 поддерживаемые серверные единицы, специфичные для пути. Go H4 добавляет два серверных WebTransport tuple и две специфичные для пути единицы. Матрица interoperability отдельно объявляет 18 direct cells и 18 tunnel cells. Все 36 попарных cells сейчас являются явными объявлениями `unsupported`, поскольку ни один блокирующий release v3 test не выполняет полный набор случаев cell. Профиль никогда не меняет wire-семантику Artifact, handshake, RPC, stream, close, rekey или authorization.
 
 Точные сочетания платформ и типов соединений перечислены в руководствах SDK.
 
-WebTransport является необязательным адаптером и не входит в контракт carrier native-server. Go предоставляет direct-адаптер; профиль Browser использует API WebTransport браузера, если оно доступно. Node.js и Rust в настоящее время не предоставляют production-адаптер WebTransport. Поверхность carrier native-server для Go, Rust и Node.js включает WebSocket и raw QUIC; попарная interoperability заявляется только поддерживаемыми записями матрицы.
+WebTransport является необязательным адаптером и не входит в обязательный контракт carrier native-server. Go заявляет отдельный полный профиль H4 webtransport-server; профиль Browser использует H3, если доступен API WebTransport браузера. Node.js и Rust в настоящее время не предоставляют production-адаптер WebTransport. Поверхность carrier native-server для Go, Rust и Node.js включает WebSocket и raw QUIC; попарная interoperability заявляется только поддерживаемыми записями матрицы.
 
 <!-- readme-section:security -->
 <a id="security"></a>

@@ -282,6 +282,15 @@ claim these native details.
 TLS failure occurs before durable spend and FSB3 and is never represented as
 FSA3.
 
+Server admission is one bounded phase across FSB3 receive, deployment
+authorization, accepted-session handler resolution, FSA3 completion, and
+Session establishment. The authorization result carries an opaque stored
+artifact; the runtime reprojects and compares the complete FSB3 before success,
+so the relay cannot authorize a same-credential request with altered session,
+candidate, TLS, role, or endpoint claims. Listener shutdown first cancels the
+phase, then force-closes non-responsive upgraded and pre-upgrade sockets at its
+cleanup deadline.
+
 ## 6. Candidate Race and Aggregation
 
 Unsupported candidates are skipped without transport construction. Explicitly

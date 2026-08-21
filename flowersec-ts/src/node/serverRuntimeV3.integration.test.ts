@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { connect as connectTLS } from "node:tls";
 
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
@@ -108,6 +109,45 @@ describe("Node production server runtime v3", () => {
       await Promise.all([client.close(), accepted.close()]);
     } finally {
       await acceptor.close();
+    }
+  });
+
+  test("bounds the complete direct admission when authorization does not settle", async () => {
+    let artifact!: ArtifactV3;
+    let authorizationSignal: AbortSignal | undefined;
+    let authorizeStarted!: () => void;
+    const started = new Promise<void>((resolve) => { authorizeStarted = resolve; });
+    const acceptor = await createAcceptorV3({
+      listeners: [{
+        carrier: "websocket",
+        path: "direct",
+        host: "127.0.0.1",
+        port: 0,
+        tls: { certificate: leafCertificate, privateKey: leafKey },
+        allowedOrigins: ["https://app.example"],
+      }],
+      maxInboundStreams: directBase.session.max_inbound_streams,
+      admissionTimeoutMs: 50,
+      authorize: async (_request, options) => {
+        authorizationSignal = options.signal;
+        authorizeStarted();
+        return await new Promise<never>(() => undefined);
+      },
+    });
+    artifact = directArtifact(acceptor.addresses()[0]!.port);
+    const accepting = acceptor.accept();
+    const connecting = connectV3(lease(artifact), {
+      origin: "https://app.example",
+      roots: rootCertificate,
+      connectTimeoutMs: 1_000,
+    }).catch(() => undefined);
+    try {
+      await started;
+      await expect(accepting).rejects.toThrow("Flowersec v3 admission timed out");
+      expect(authorizationSignal?.aborted).toBe(true);
+    } finally {
+      await acceptor.close();
+      await connecting;
     }
   });
 
@@ -430,8 +470,76 @@ describe("Node production server runtime v3", () => {
     }
   });
 
+  test("force-closes a WebSocket peer that does not answer the close frame", async () => {
+    const listener = await startNodeWebSocketListenerV3({
+      host: "127.0.0.1",
+      port: 0,
+      path: "direct",
+      tls: { certificate: leafCertificate, privateKey: leafKey },
+      allowedOrigins: ["https://app.example"],
+      inboundBidirectionalStreamCapacity: 3,
+      cleanupTimeoutMs: 50,
+    });
+    const require = createRequire(import.meta.url);
+    const wsModule = require("ws") as { WebSocket: new (...args: unknown[]) => any };
+    const socket = new wsModule.WebSocket(
+      `wss://localhost:${listener.address().port}/flowersec/v3/direct`,
+      ["flowersec.direct.v3"],
+      { ca: rootCertificate, origin: "https://app.example" },
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("open", resolve);
+        socket.once("error", reject);
+      });
+      socket._socket.pause();
+      await expect(Promise.race([
+        listener.close().then(() => "closed" as const),
+        new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 500)),
+      ])).resolves.toBe("closed");
+    } finally {
+      socket.terminate();
+      await listener.close();
+    }
+  });
+
+  test("force-closes a pre-upgrade TLS socket during listener shutdown", async () => {
+    const listener = await startNodeWebSocketListenerV3({
+      host: "127.0.0.1",
+      port: 0,
+      path: "direct",
+      tls: { certificate: leafCertificate, privateKey: leafKey },
+      allowedOrigins: ["https://app.example"],
+      inboundBidirectionalStreamCapacity: 3,
+      cleanupTimeoutMs: 50,
+    });
+    const socket = connectTLS({
+      host: "127.0.0.1",
+      port: listener.address().port,
+      ca: rootCertificate,
+      servername: "localhost",
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("secureConnect", resolve);
+        socket.once("error", reject);
+      });
+      socket.pause();
+      await expect(Promise.race([
+        listener.close().then(() => "closed" as const),
+        new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 500)),
+      ])).resolves.toBe("closed");
+      socket.resume();
+      await new Promise<void>((resolve) => socket.once("close", () => resolve()));
+      expect(socket.destroyed).toBe(true);
+    } finally {
+      socket.destroy();
+      await listener.close();
+    }
+  });
+
   test("pairs production v3 WSS tunnel roles without exposing the encrypted session", async () => {
-    const roles = new Map<string, 1 | 2>();
+    const artifacts = new Map<string, ArtifactV3>();
     let releaseStarted!: () => void;
     const releaseBegan = new Promise<void>((resolve) => { releaseStarted = resolve; });
     let allowRelease!: () => void;
@@ -447,15 +555,11 @@ describe("Node production server runtime v3", () => {
       }],
       maxInboundStreams: tunnelBase.session.max_inbound_streams,
       authorize: async (request) => {
-        const role = roles.get(request.lookupKey());
-        if (role === undefined) return { decision: "reject" as const, reason: "not_authorized" };
-        return {
-          decision: "allow" as const,
-          credentialId: request.lookupKey(),
-          leaseId: `lease-${role}`,
-          expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
-          expectedPeerEndpointInstanceId: role === 1 ? "endpoint-server" : "endpoint-client",
-        };
+        const artifact = artifacts.get(request.lookupKey());
+        if (artifact === undefined || artifact.path.kind !== "tunnel") {
+          return { decision: "reject" as const, reason: "not_authorized" };
+        }
+        return tunnelAuthorization(artifact, `lease-${artifact.path.role}`);
       },
       release: async () => {
         releaseStarted();
@@ -466,8 +570,8 @@ describe("Node production server runtime v3", () => {
     const port = runtime.addresses()[0]!.port;
     const first = tunnelArtifact(port, 1);
     const second = tunnelArtifact(port, 2);
-    roles.set(tunnelLookupKey(first), 1);
-    roles.set(tunnelLookupKey(second), 2);
+    artifacts.set(tunnelLookupKey(first), first);
+    artifacts.set(tunnelLookupKey(second), second);
     try {
       const [client, server] = await Promise.all([
         connectV3(lease(first), {
@@ -506,20 +610,10 @@ describe("Node production server runtime v3", () => {
   test("releases an authorization lease that resolves after runtime cancellation", async () => {
     let authorizeStarted!: () => void;
     const started = new Promise<void>((resolve) => { authorizeStarted = resolve; });
-    let resolveAuthorization!: (value: Readonly<{
-      decision: "allow";
-      credentialId: string;
-      leaseId: string;
-      expiresAtUnixSeconds: number;
-      expectedPeerEndpointInstanceId: string;
-    }>) => void;
-    const lateAuthorization = new Promise<Readonly<{
-      decision: "allow";
-      credentialId: string;
-      leaseId: string;
-      expiresAtUnixSeconds: number;
-      expectedPeerEndpointInstanceId: string;
-    }>>((resolve) => { resolveAuthorization = resolve; });
+    let resolveAuthorization!: (value: ReturnType<typeof tunnelAuthorization>) => void;
+    const lateAuthorization = new Promise<ReturnType<typeof tunnelAuthorization>>(
+      (resolve) => { resolveAuthorization = resolve; },
+    );
     const released: string[] = [];
     const runtime = createTunnelRuntimeV3({
       listeners: [{
@@ -548,13 +642,7 @@ describe("Node production server runtime v3", () => {
       }).catch(() => undefined);
       await started;
       await runtime.close();
-      resolveAuthorization({
-        decision: "allow",
-        credentialId: tunnelLookupKey(artifact),
-        leaseId: "late-authorization-lease",
-        expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
-        expectedPeerEndpointInstanceId: "endpoint-server",
-      });
+      resolveAuthorization(tunnelAuthorization(artifact, "late-authorization-lease"));
       await waitFor(() => released.includes("late-authorization-lease"));
     } finally {
       await runtime.close().catch(() => undefined);
@@ -564,7 +652,7 @@ describe("Node production server runtime v3", () => {
 
   test("keeps tunnel legs with different session hashes in separate generations", async () => {
     const released: string[] = [];
-    const roles = new Map<string, 1 | 2>();
+    const artifacts = new Map<string, ArtifactV3>();
     const runtime = createTunnelRuntimeV3({
       listeners: [{
         carrier: "websocket",
@@ -577,15 +665,11 @@ describe("Node production server runtime v3", () => {
       maxPendingLegs: 2,
       pairTimeoutMs: 100,
       authorize: async (request) => {
-        const role = roles.get(request.lookupKey());
-        if (role === undefined) return { decision: "reject" as const, reason: "not_authorized" };
-        return {
-          decision: "allow" as const,
-          credentialId: request.lookupKey(),
-          leaseId: `hash-isolation-${role}`,
-          expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
-          expectedPeerEndpointInstanceId: role === 1 ? "endpoint-server" : "endpoint-client",
-        };
+        const artifact = artifacts.get(request.lookupKey());
+        if (artifact === undefined || artifact.path.kind !== "tunnel") {
+          return { decision: "reject" as const, reason: "not_authorized" };
+        }
+        return tunnelAuthorization(artifact, `hash-isolation-${artifact.path.role}`);
       },
       release: (leaseId) => { released.push(leaseId); },
     });
@@ -594,8 +678,8 @@ describe("Node production server runtime v3", () => {
       const port = runtime.addresses()[0]!.port;
       const first = tunnelArtifactWithSession(port, 1, tunnelBase.session.max_inbound_streams);
       const second = tunnelArtifactWithSession(port, 2, tunnelBase.session.max_inbound_streams + 1);
-      roles.set(tunnelLookupKey(first), 1);
-      roles.set(tunnelLookupKey(second), 2);
+      artifacts.set(tunnelLookupKey(first), first);
+      artifacts.set(tunnelLookupKey(second), second);
       const results = await Promise.allSettled([
         connectV3(lease(first), { origin: "https://app.example", roots: rootCertificate, connectTimeoutMs: 3_000 }),
         connectV3(lease(second), { origin: "https://app.example", roots: rootCertificate, connectTimeoutMs: 3_000 }),
@@ -608,9 +692,51 @@ describe("Node production server runtime v3", () => {
     }
   }, 15_000);
 
+  test("rejects a tunnel allow whose opaque artifact does not match the received FSB3", async () => {
+    const released: string[] = [];
+    let receivedArtifact: ArtifactV3 | undefined;
+    let authorizedArtifact: ArtifactV3 | undefined;
+    const runtime = createTunnelRuntimeV3({
+      listeners: [{
+        carrier: "websocket",
+        host: "127.0.0.1",
+        port: 0,
+        tls: { certificate: leafCertificate, privateKey: leafKey },
+        allowedOrigins: ["https://app.example"],
+      }],
+      maxInboundStreams: tunnelBase.session.max_inbound_streams,
+      authorize: async (request) => {
+        if (receivedArtifact === undefined || authorizedArtifact === undefined ||
+          request.lookupKey() !== tunnelLookupKey(receivedArtifact)) {
+          return { decision: "reject" as const, reason: "not_authorized" };
+        }
+        return tunnelAuthorization(authorizedArtifact, "mismatched-artifact-lease");
+      },
+      release: (leaseId) => { released.push(leaseId); },
+    });
+    try {
+      await runtime.start();
+      const port = runtime.addresses()[0]!.port;
+      receivedArtifact = tunnelArtifact(port, 1);
+      authorizedArtifact = tunnelArtifactWithSession(
+        port,
+        1,
+        receivedArtifact.session.max_inbound_streams + 1,
+      );
+      await expect(connectV3(lease(receivedArtifact), {
+        origin: "https://app.example",
+        roots: rootCertificate,
+        connectTimeoutMs: 1_000,
+      })).rejects.toBeDefined();
+      await waitFor(() => released.includes("mismatched-artifact-lease"));
+    } finally {
+      await runtime.close();
+    }
+  });
+
   test("keeps tunnel legs with different candidate-set hashes in separate generations", async () => {
     const released: string[] = [];
-    const roles = new Map<string, 1 | 2>();
+    const artifacts = new Map<string, ArtifactV3>();
     const runtime = createTunnelRuntimeV3({
       listeners: [{
         carrier: "websocket",
@@ -623,15 +749,11 @@ describe("Node production server runtime v3", () => {
       maxPendingLegs: 2,
       pairTimeoutMs: 100,
       authorize: async (request) => {
-        const role = roles.get(request.lookupKey());
-        if (role === undefined) return { decision: "reject" as const, reason: "not_authorized" };
-        return {
-          decision: "allow" as const,
-          credentialId: request.lookupKey(),
-          leaseId: `candidate-isolation-${role}`,
-          expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
-          expectedPeerEndpointInstanceId: role === 1 ? "endpoint-server" : "endpoint-client",
-        };
+        const artifact = artifacts.get(request.lookupKey());
+        if (artifact === undefined || artifact.path.kind !== "tunnel") {
+          return { decision: "reject" as const, reason: "not_authorized" };
+        }
+        return tunnelAuthorization(artifact, `candidate-isolation-${artifact.path.role}`);
       },
       release: (leaseId) => { released.push(leaseId); },
     });
@@ -640,8 +762,8 @@ describe("Node production server runtime v3", () => {
       const port = runtime.addresses()[0]!.port;
       const first = tunnelArtifactWithCandidate(port, 1, "w-ca");
       const second = tunnelArtifactWithCandidate(port, 2, "w-cb");
-      roles.set(tunnelLookupKey(first), 1);
-      roles.set(tunnelLookupKey(second), 2);
+      artifacts.set(tunnelLookupKey(first), first);
+      artifacts.set(tunnelLookupKey(second), second);
       const results = await Promise.allSettled([
         connectV3(lease(first), { origin: "https://app.example", roots: rootCertificate, connectTimeoutMs: 3_000 }),
         connectV3(lease(second), { origin: "https://app.example", roots: rootCertificate, connectTimeoutMs: 3_000 }),
@@ -660,6 +782,7 @@ describe("Node production server runtime v3", () => {
     const releaseStarted = new Promise<void>((resolve) => { releaseStartedResolve = resolve; });
     let authorizeStartedResolve!: () => void;
     const authorized = new Promise<void>((resolve) => { authorizeStartedResolve = resolve; });
+    let connectedArtifact: ArtifactV3 | undefined;
     const runtime = createTunnelRuntimeV3({
       listeners: [{
         carrier: "websocket",
@@ -672,13 +795,10 @@ describe("Node production server runtime v3", () => {
       cleanupTimeoutMs: 50,
       authorize: async (request) => {
         authorizeStartedResolve();
-        return {
-          decision: "allow" as const,
-          credentialId: request.lookupKey(),
-          leaseId: "never-release",
-          expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
-          expectedPeerEndpointInstanceId: "endpoint-server",
-        };
+        if (connectedArtifact === undefined || request.lookupKey() !== tunnelLookupKey(connectedArtifact)) {
+          return { decision: "reject" as const, reason: "not_authorized" };
+        }
+        return tunnelAuthorization(connectedArtifact, "never-release");
       },
       release: async () => {
         releaseStartedResolve();
@@ -690,7 +810,7 @@ describe("Node production server runtime v3", () => {
     try {
       await runtime.start();
       const port = runtime.addresses()[0]!.port;
-      const connectedArtifact = tunnelArtifact(port, 1);
+      connectedArtifact = tunnelArtifact(port, 1);
       connecting = connectV3(lease(connectedArtifact), {
         origin: "https://app.example",
         roots: rootCertificate,
@@ -873,6 +993,18 @@ function tunnelArtifactWithCandidate(port: number, role: 1 | 2, candidateID: str
 function tunnelLookupKey(artifact: ArtifactV3): string {
   if (artifact.path.kind !== "tunnel") throw new Error("expected tunnel artifact");
   return createHash("sha256").update(artifact.path.token).digest("base64url");
+}
+
+function tunnelAuthorization(artifact: ArtifactV3, leaseId: string) {
+  if (artifact.path.kind !== "tunnel") throw new Error("expected tunnel artifact");
+  return {
+    decision: "allow" as const,
+    artifact: parseArtifactV3(encodeArtifactV3JSON(artifact)),
+    credentialId: tunnelLookupKey(artifact),
+    leaseId,
+    expiresAtUnixSeconds: artifact.session.init_expire_at_unix_s,
+    expectedPeerEndpointInstanceId: artifact.path.expected_peer_endpoint_instance_id,
+  };
 }
 
 function candidate(port: number, path: "direct" | "tunnel"): ArtifactCandidateV3 {

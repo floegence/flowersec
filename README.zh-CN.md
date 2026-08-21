@@ -89,10 +89,10 @@ Flowersec 将应用会话与承载它的网络路径分离：
 | Apple 客户端连接 | 否 | 否 | 是 | 否 |
 | 原生 QUIC 连接 | 是 | Node.js | 否 | 是 |
 | WebSocket 连接 | 是 | 是 | 是 | 是 |
-| WebTransport 连接 | Go direct（可选 adapter） | Browser（浏览器 API 可用时） | 否 | 否 |
+| WebTransport 连接 | Go H4 | Browser H3 client（浏览器 API 可用时） | 否 | 否 |
 | 服务端接收会话 | 是 | Node.js | 否 | 是 |
 | 不透明中继运行时 | 是 | Node.js | 否 | 是 |
-| 控制面签发连接邀请 | 是 | Node.js | 否 | 是 |
+| 控制面签发连接邀请 | 是 | 否 | 否 | 否 |
 | HTTP 和 WebSocket ProxyServer | 是 | Node.js | 否 | 是 |
 
 部署 profile 将平台可用性与共享的 Flowersec 应用协议分离：
@@ -102,13 +102,13 @@ Flowersec 将应用会话与承载它的网络路径分离：
 | `native-server-core` | Go、Rust、Node.js | WebSocket 和 raw QUIC endpoint client、direct server 与 opaque tunnel runtime | WebTransport adapter |
 | `browser-client` | TypeScript browser | WebSocket endpoint client | Browser WebTransport adapter |
 | `apple-client` | Apple 平台上的 Swift | WSS endpoint client | 无 |
-| `webtransport-server` | 当前没有运行时声明 | 声明前必须同时通过 direct server 与 opaque tunnel runtime conformance | 无 |
+| `webtransport-server` | Go | WebTransport direct server 与 opaque tunnel runtime | 无 |
 
-机器可读的能力清单包含 18 个聚合的运行时-角色-carrier tuple（每个原生运行时 6 个）和 24 个已支持的特定路径服务端单元。互操作矩阵另行声明 18 个 direct cell 和 18 个 tunnel cell。由于当前没有 release-gating v3 测试覆盖任一 cell 的完整可执行用例集，全部 36 个两两 cell 都是明确的 `unsupported` 声明。profile 绝不会改变 Artifact、handshake、RPC、stream、close、rekey 或 authorization wire 语义。
+机器可读的 native-server-core profile 包含 18 个聚合的运行时-角色-carrier tuple（每个原生运行时 6 个）和 24 个已支持的特定路径服务端单元；Go H4 另增加 2 个 WebTransport 服务端 tuple 和 2 个特定路径单元。互操作矩阵另行声明 18 个 direct cell 和 18 个 tunnel cell。由于当前没有 release-gating v3 测试覆盖任一 cell 的完整可执行用例集，全部 36 个两两 cell 都是明确的 `unsupported` 声明。profile 绝不会改变 Artifact、handshake、RPC、stream、close、rekey 或 authorization wire 语义。
 
 请查看各 SDK 指南，了解每个包支持的平台和连接组合。
 
-WebTransport 是可选能力，不属于 native-server carrier 合同。Go 提供 direct adapter；Browser profile 在浏览器 WebTransport API 可用时使用它；Node.js 和 Rust 当前没有 production WebTransport adapter。Go、Rust 和 Node.js 的 native-server carrier 范围是 WebSocket 与 raw QUIC；两两互操作支持只由矩阵中标记 supported 的条目声明。
+WebTransport 是可选能力，不属于必需的 native-server carrier 合同。Go 声明独立且完整的 H4 webtransport-server profile；Browser profile 在浏览器 WebTransport API 可用时使用 H3；Node.js 和 Rust 当前没有 production WebTransport adapter。Go、Rust 和 Node.js 的 native-server carrier 范围是 WebSocket 与 raw QUIC；两两互操作支持只由矩阵中标记 supported 的条目声明。
 
 <!-- readme-section:security -->
 <a id="security"></a>

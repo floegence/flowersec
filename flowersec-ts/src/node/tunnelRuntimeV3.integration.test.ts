@@ -9,10 +9,12 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import {
   decodeArtifactV3JSON,
+  encodeArtifactV3JSON,
   type ArtifactCandidateV3,
   type ArtifactV3,
 } from "../v3/artifact.js";
 import { createArtifactLeaseV3Internal } from "../v3/artifactLease.js";
+import { parseArtifactV3 } from "../v3/publicApi.js";
 import { connectV3 } from "./connectSessionV3.js";
 import {
   createTunnelRuntimeV3,
@@ -95,6 +97,28 @@ describe("Node TunnelRuntimeV3 bounded admission and cleanup", () => {
       await runtime.close();
     }
   }, 10_000);
+
+  test("applies the cleanup deadline to a non-responsive WebSocket listener peer", async () => {
+    const runtime = createTunnelRuntimeV3({
+      listeners: [listener()],
+      maxInboundStreams: tunnelBase.session.max_inbound_streams,
+      cleanupTimeoutMs: 50,
+      authorize: async () => ({ decision: "reject", reason: "invalid_credential" }),
+    });
+    let silent: any;
+    try {
+      await runtime.start();
+      silent = await openSilentAdmission(runtime.addresses()[0]!.port);
+      silent._socket.pause();
+      await expect(Promise.race([
+        runtime.close().then(() => "closed" as const),
+        delay(500).then(() => "timed-out" as const),
+      ])).resolves.toBe("closed");
+    } finally {
+      silent?.terminate();
+      await runtime.close();
+    }
+  });
 
   test("releases one late allow after a hung authorization admission is canceled", async () => {
     const authorization = deferred<TunnelAuthorizationDecisionV3>();
@@ -244,9 +268,10 @@ function allow(
   if (artifact.path.kind !== "tunnel") throw new Error("invalid tunnel fixture");
   return {
     decision: "allow",
+    artifact: parseArtifactV3(encodeArtifactV3JSON(artifact)),
     credentialId: createHash("sha256").update(artifact.path.token).digest("base64url"),
     leaseId,
-    expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
+    expiresAtUnixSeconds: artifact.session.init_expire_at_unix_s,
     expectedPeerEndpointInstanceId: artifact.path.expected_peer_endpoint_instance_id,
   };
 }

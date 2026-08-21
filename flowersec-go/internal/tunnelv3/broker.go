@@ -80,8 +80,15 @@ func Bridge(ctx context.Context, clientLeg, serverLeg carrier.Session, limits Li
 	}
 
 	semaphore := make(chan struct{}, limits.MaxConcurrentStreams)
-	tasks := newTaskGroup()
-	tasks.Add(1)
+	clientUnreliable, clientSupportsUnreliable := clientLeg.(carrier.UnreliableTransport)
+	serverUnreliable, serverSupportsUnreliable := serverLeg.(carrier.UnreliableTransport)
+	bridgeUnreliable := clientSupportsUnreliable && serverSupportsUnreliable &&
+		clientUnreliable.UnreliableAvailable() && serverUnreliable.UnreliableAvailable()
+	baseTasks := 3
+	if bridgeUnreliable {
+		baseTasks += 2
+	}
+	tasks := newTaskGroup(baseTasks)
 	go func() {
 		defer tasks.Done()
 		if err := spliceStreamPair(bridgeContext, clientControl, serverControl, limits.CopyBufferBytes, limits.CleanupTimeout); err != nil {
@@ -91,14 +98,9 @@ func Bridge(ctx context.Context, clientLeg, serverLeg carrier.Session, limits Li
 		cancel(ErrControlClosed)
 	}()
 
-	tasks.Add(2)
 	go acceptLoop(bridgeContext, tasks, semaphore, clientLeg, serverLeg, limits.CopyBufferBytes)
 	go acceptLoop(bridgeContext, tasks, semaphore, serverLeg, clientLeg, limits.CopyBufferBytes)
-	clientUnreliable, clientSupportsUnreliable := clientLeg.(carrier.UnreliableTransport)
-	serverUnreliable, serverSupportsUnreliable := serverLeg.(carrier.UnreliableTransport)
-	if clientSupportsUnreliable && serverSupportsUnreliable &&
-		clientUnreliable.UnreliableAvailable() && serverUnreliable.UnreliableAvailable() {
-		tasks.Add(2)
+	if bridgeUnreliable {
 		go unreliableLoop(bridgeContext, tasks, clientUnreliable, serverUnreliable)
 		go unreliableLoop(bridgeContext, tasks, serverUnreliable, clientUnreliable)
 	}
@@ -212,7 +214,9 @@ type taskGroup struct {
 	done  chan struct{}
 }
 
-func newTaskGroup() *taskGroup { return &taskGroup{done: make(chan struct{})} }
+func newTaskGroup(initial int) *taskGroup {
+	return &taskGroup{count: initial, done: make(chan struct{})}
+}
 
 func (group *taskGroup) Add(count int) {
 	group.mu.Lock()

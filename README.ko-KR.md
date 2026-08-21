@@ -89,10 +89,10 @@ Flowersec은 애플리케이션 세션과 이를 전달하는 네트워크 경�
 | Apple 클라이언트 연결 | 미지원 | 미지원 | 지원 | 미지원 |
 | 네이티브 QUIC 연결 | 지원 | Node.js | 미지원 | 지원 |
 | WebSocket 연결 | 지원 | 지원 | 지원 | 지원 |
-| WebTransport 연결 | Go direct(선택적 adapter) | Browser(브라우저 API 사용 가능 시) | 미지원 | 미지원 |
+| WebTransport 연결 | Go H4 | Browser H3 client(브라우저 API 사용 가능 시) | 미지원 | 미지원 |
 | 서버 측 세션 수락 | 지원 | Node.js | 미지원 | 지원 |
 | 불투명 릴레이 런타임 | 지원 | Node.js | 미지원 | 지원 |
-| 제어 영역 연결 초대 발급 | 지원 | Node.js | 미지원 | 지원 |
+| 제어 영역 연결 초대 발급 | 지원 | 미지원 | 미지원 | 미지원 |
 | HTTP 및 WebSocket ProxyServer | 지원 | Node.js | 미지원 | 지원 |
 
 배포 profile은 플랫폼 가용성과 공유 Flowersec 애플리케이션 프로토콜을 분리합니다.
@@ -102,13 +102,13 @@ Flowersec은 애플리케이션 세션과 이를 전달하는 네트워크 경�
 | `native-server-core` | Go, Rust, Node.js | WebSocket 및 raw QUIC endpoint client, direct server, opaque tunnel runtime | WebTransport adapter |
 | `browser-client` | TypeScript browser | WebSocket endpoint client | Browser WebTransport adapter |
 | `apple-client` | Apple 플랫폼의 Swift | WSS endpoint client | 없음 |
-| `webtransport-server` | 현재 선언한 런타임 없음 | 선언 전에 direct server와 opaque tunnel runtime conformance를 모두 통과해야 함 | 없음 |
+| `webtransport-server` | Go | WebTransport direct server 및 opaque tunnel runtime | 없음 |
 
-기계 판독 capability inventory에는 native runtime별 6개씩 집계된 runtime-role-carrier tuple 18개와 지원되는 path별 server unit 24개가 있습니다. interoperability matrix는 direct cell 18개와 tunnel cell 18개를 별도로 선언합니다. cell의 전체 executable case set을 실행하는 release-gating v3 test가 없으므로 36개 pairwise cell은 현재 모두 명시적인 `unsupported` 선언입니다. profile은 Artifact, handshake, RPC, stream, close, rekey 또는 authorization wire semantics를 변경하지 않습니다.
+기계 판독 native-server-core profile에는 native runtime별 6개씩 집계된 runtime-role-carrier tuple 18개와 지원되는 path별 server unit 24개가 있습니다. Go H4는 WebTransport server tuple 2개와 path별 unit 2개를 추가합니다. interoperability matrix는 direct cell 18개와 tunnel cell 18개를 별도로 선언합니다. cell의 전체 executable case set을 실행하는 release-gating v3 test가 없으므로 36개 pairwise cell은 현재 모두 명시적인 `unsupported` 선언입니다. profile은 Artifact, handshake, RPC, stream, close, rekey 또는 authorization wire semantics를 변경하지 않습니다.
 
 각 패키지가 지원하는 정확한 플랫폼과 연결 조합은 SDK 가이드를 확인하세요.
 
-WebTransport는 native-server carrier contract에 포함되지 않는 선택적 adapter입니다. Go는 direct adapter를 제공하고 Browser profile은 브라우저 WebTransport API를 사용할 수 있을 때 사용합니다. Node.js와 Rust는 현재 production WebTransport adapter를 제공하지 않습니다. Go, Rust, Node.js의 native-server carrier surface는 WebSocket과 raw QUIC이며, pairwise interoperability는 matrix의 supported entry로만 선언합니다.
+WebTransport는 필수 native-server carrier contract에 포함되지 않는 선택적 adapter입니다. Go는 별도의 완전한 H4 webtransport-server profile을 선언하고 Browser profile은 브라우저 WebTransport API를 사용할 수 있을 때 H3를 사용합니다. Node.js와 Rust는 현재 production WebTransport adapter를 제공하지 않습니다. Go, Rust, Node.js의 native-server carrier surface는 WebSocket과 raw QUIC이며, pairwise interoperability는 matrix의 supported entry로만 선언합니다.
 
 <!-- readme-section:security -->
 <a id="security"></a>

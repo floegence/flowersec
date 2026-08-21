@@ -145,10 +145,10 @@ See the executable `controlplane.ExampleIssuer_IssueTunnelPair` example for arti
 
 ## Connection Notes
 
-Direct and relayed connections return the same `Session`. WebSocket and raw
-QUIC are selected internally for either path; WebTransport is selected only
-for direct invitations. The SDK keeps credentials, routing, and transport
-state out of the application API.
+Direct and relayed connections return the same `Session`. WebSocket, raw QUIC,
+and WebTransport are selected internally for either artifact-bound direct or
+tunnel path when the candidate and runtime capability match. The SDK keeps
+credentials, routing, and transport state out of the application API.
 
 ## Verify
 

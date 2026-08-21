@@ -334,6 +334,13 @@ big-endian reason length and reason. Success reason is empty. Other reasons
 match [a-z][a-z0-9_]* and come from the admission registry. TLS errors are
 never FSA3 reasons.
 
+Before FSA3 success, the receiver looks up the authorization record by the
+credential digest, reprojects the complete FSB3 from that record's validated
+artifact and the selected candidate, and compares the canonical bytes exactly.
+This comparison includes every common field, the complete candidate/TLS set,
+and the direct or tunnel variant fields. A missing record, variant mismatch,
+role mismatch, or unequal projection fails admission closed.
+
 When a server receives a complete FSB3 whose initiation expiry has been reached
 (`server_wall_now >= init_expire_at_unix_s`), it sends a retryable FSA3 with the
 audited reason `expired_artifact` and does not admit the session. This server

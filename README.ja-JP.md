@@ -89,10 +89,10 @@ Flowersec はアプリケーションセッションを、それを運ぶネッ�
 | Apple クライアント接続 | 非対応 | 非対応 | 対応 | 非対応 |
 | ネイティブ QUIC 接続 | 対応 | Node.js | 非対応 | 対応 |
 | WebSocket 接続 | 対応 | 対応 | 対応 | 対応 |
-| WebTransport 接続 | Go direct（オプション adapter） | Browser（ブラウザー API が利用可能な場合） | 非対応 | 非対応 |
+| WebTransport 接続 | Go H4 | Browser H3 client（ブラウザー API が利用可能な場合） | 非対応 | 非対応 |
 | サーバー側のセッション受け入れ | 対応 | Node.js | 非対応 | 対応 |
 | 不透明リレーランタイム | 対応 | Node.js | 非対応 | 対応 |
-| コントロールプレーンでの接続招待発行 | 対応 | Node.js | 非対応 | 対応 |
+| コントロールプレーンでの接続招待発行 | 対応 | 非対応 | 非対応 | 非対応 |
 | HTTP と WebSocket ProxyServer | 対応 | Node.js | 非対応 | 対応 |
 
 デプロイ profile は、プラットフォームでの利用可否と共通の Flowersec アプリケーションプロトコルを分離します。
@@ -102,13 +102,13 @@ Flowersec はアプリケーションセッションを、それを運ぶネッ�
 | `native-server-core` | Go、Rust、Node.js | WebSocket と raw QUIC の endpoint client、direct server、opaque tunnel runtime | WebTransport adapter |
 | `browser-client` | TypeScript browser | WebSocket endpoint client | Browser WebTransport adapter |
 | `apple-client` | Apple プラットフォームの Swift | WSS endpoint client | なし |
-| `webtransport-server` | 現在宣言しているランタイムなし | 宣言前に direct server と opaque tunnel runtime の conformance が必要 | なし |
+| `webtransport-server` | Go | WebTransport direct server と opaque tunnel runtime | なし |
 
-機械可読な capability inventory には、native runtime ごとに 6 個、合計 18 個の集約 runtime-role-carrier tuple と、対応済みの path 固有 server unit 24 個があります。interoperability matrix は direct cell 18 個と tunnel cell 18 個を別に宣言します。36 個すべての pairwise cell は、cell の完全な executable case set を実行する release-gating v3 test がないため、現在は明示的な `unsupported` 宣言です。profile が Artifact、handshake、RPC、stream、close、rekey、authorization の wire semantics を変更することはありません。
+機械可読な native-server-core profile には、native runtime ごとに 6 個、合計 18 個の集約 runtime-role-carrier tuple と、対応済みの path 固有 server unit 24 個があります。Go H4 は、WebTransport server tuple 2 個と path 固有 unit 2 個を追加します。interoperability matrix は direct cell 18 個と tunnel cell 18 個を別に宣言します。36 個すべての pairwise cell は、cell の完全な executable case set を実行する release-gating v3 test がないため、現在は明示的な `unsupported` 宣言です。profile が Artifact、handshake、RPC、stream、close、rekey、authorization の wire semantics を変更することはありません。
 
 各パッケージが対応するプラットフォームと接続方式の組み合わせは、SDK ガイドで確認してください。
 
-WebTransport は native-server carrier contract に含まれないオプションの adapter です。Go は direct adapter を提供し、Browser profile はブラウザーの WebTransport API が利用可能な場合に使用します。Node.js と Rust は現在 production WebTransport adapter を提供しません。Go、Rust、Node.js の native-server carrier surface は WebSocket と raw QUIC であり、pairwise interoperability は matrix の supported entry だけが宣言します。
+WebTransport は必須の native-server carrier contract に含まれないオプションの adapter です。Go は独立した完全な H4 webtransport-server profile を宣言し、Browser profile はブラウザーの WebTransport API が利用可能な場合に H3 を使用します。Node.js と Rust は現在 production WebTransport adapter を提供しません。Go、Rust、Node.js の native-server carrier surface は WebSocket と raw QUIC であり、pairwise interoperability は matrix の supported entry だけが宣言します。
 
 <!-- readme-section:security -->
 <a id="security"></a>

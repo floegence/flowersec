@@ -36,6 +36,8 @@ import {
   type RuntimeAuthorizationRequestV3,
 } from "./runtimeAuthorizationV3.js";
 
+const DEFAULT_ADMISSION_TIMEOUT_MS = 10_000;
+
 export type AcceptorListenerV3 =
   | Readonly<{
       carrier: "websocket";
@@ -56,6 +58,7 @@ export type AcceptorListenerV3 =
 export type AcceptorOptionsV3 = Readonly<{
   listeners: readonly AcceptorListenerV3[];
   maxInboundStreams: number;
+  admissionTimeoutMs?: number;
   admissionReasons?: readonly string[];
   authorize: AcceptorAuthorizerV3;
   resolveHandlers?(
@@ -112,6 +115,11 @@ export class AcceptorV3 {
     const unlinkClose = linkAbort(state.abort.signal, controller);
     try {
       const carrier = await acceptAny(state, controller.signal);
+      const admission = new AbortController();
+      const unlinkAdmission = linkAbort(controller.signal, admission);
+      const deadline = setTimeout(() => {
+        admission.abort(new Error("Flowersec v3 admission timed out"));
+      }, state.admissionTimeoutMs);
       try {
         let handlers: FrozenSessionHandlers | undefined;
         const authorize: AdmissionAuthorizerV3 = async (request, signal) => {
@@ -139,16 +147,22 @@ export class AcceptorV3 {
             const registry = state.resolveHandlers === undefined
               ? new SessionHandlersV3()
               : await state.resolveHandlers(authorizationRequest, signal === undefined ? {} : { signal });
+            if (signal?.aborted === true) {
+              throw signal.reason instanceof Error ? signal.reason : new Error("Flowersec v3 admission canceled");
+            }
             handlers = freezeSessionHandlersV3(registry);
             return createRPCRouter(handlers.rpc);
           },
-          signal: controller.signal,
+          signal: admission.signal,
         });
         if (handlers === undefined) throw new Error("Flowersec v3 handlers were not resolved");
         return createAcceptedSessionV3(projectSessionV3(internal), handlers);
       } catch (error) {
-        await carrier.close().catch(() => undefined);
+        carrier.abort({ code: 6, reason: "admission failed" });
         throw error;
+      } finally {
+        clearTimeout(deadline);
+        unlinkAdmission();
       }
     } finally {
       unlinkExternal();
@@ -178,6 +192,7 @@ type AcceptorStateV3 = {
   authorize: AcceptorAuthorizerV3;
   resolveHandlers?: AcceptorOptionsV3["resolveHandlers"];
   admissionReasons: ReadonlySet<string>;
+  admissionTimeoutMs: number;
   abort: AbortController;
   closed: boolean;
   cursor: number;
@@ -225,6 +240,7 @@ export async function createAcceptorV3(options: AcceptorOptionsV3): Promise<Acce
     authorize: options.authorize,
     ...(options.resolveHandlers === undefined ? {} : { resolveHandlers: options.resolveHandlers }),
     admissionReasons,
+    admissionTimeoutMs: options.admissionTimeoutMs ?? DEFAULT_ADMISSION_TIMEOUT_MS,
     abort: new AbortController(),
     closed: false,
     cursor: 0,
@@ -292,6 +308,9 @@ function validateOptions(options: AcceptorOptionsV3): void {
   if (options.listeners.length === 0 ||
       !Number.isSafeInteger(options.maxInboundStreams) || options.maxInboundStreams < 1 ||
       options.maxInboundStreams > 128 || typeof options.authorize !== "function" ||
+      (options.admissionTimeoutMs !== undefined &&
+        (!Number.isSafeInteger(options.admissionTimeoutMs) ||
+          options.admissionTimeoutMs < 1 || options.admissionTimeoutMs > 600_000)) ||
       (options.resolveHandlers !== undefined && typeof options.resolveHandlers !== "function") ||
       options.listeners.some(({ path }) => path !== "direct")) {
     throw new TypeError("invalid Flowersec v3 Acceptor options");

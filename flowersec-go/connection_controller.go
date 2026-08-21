@@ -510,17 +510,10 @@ func (controller *ConnectionController) run(ctx context.Context) {
 		}
 		cycle.consecutiveFailures = 1
 		cycle.lastFailure = terminalError
-		controller.resetAttempt()
 		if !controller.handleFailure(ctx, terminalError, disposition, cycle.consecutiveFailures, cycle.attempts) {
 			return
 		}
 	}
-}
-
-func (controller *ConnectionController) resetAttempt() {
-	controller.mu.Lock()
-	controller.snapshot.Attempt = 0
-	controller.mu.Unlock()
 }
 
 func newControllerCycle() controllerCycle {
@@ -682,7 +675,7 @@ func (controller *ConnectionController) handleFailure(
 	}
 	if disposition.Kind == RetryDispositionTerminal ||
 		(controller.maximumAttempts != 0 && attemptsSinceConnected >= controller.maximumAttempts) {
-		controller.fail(err, terminalDisposition())
+		controller.failAtAttempt(err, terminalDisposition(), attemptsSinceConnected)
 		return false
 	}
 	notBeforeUnixMilliseconds := int64(-1)
@@ -797,11 +790,21 @@ func (controller *ConnectionController) publishConnected(session Session) {
 
 func (controller *ConnectionController) fail(err error, disposition RetryDisposition) {
 	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	controller.setFailureLocked(err, disposition, controller.snapshot.Attempt)
+}
+
+func (controller *ConnectionController) failAtAttempt(err error, disposition RetryDisposition, attempt uint64) {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	controller.setFailureLocked(err, disposition, attempt)
+}
+
+func (controller *ConnectionController) setFailureLocked(err error, disposition RetryDisposition, attempt uint64) {
 	controller.setSnapshotLocked(ConnectionSnapshot{
-		State: ConnectionFailed, Attempt: controller.snapshot.Attempt,
+		State: ConnectionFailed, Attempt: attempt,
 		Failure: connectionFailure(err, disposition),
 	})
-	controller.mu.Unlock()
 }
 
 func (controller *ConnectionController) finishClosed() {

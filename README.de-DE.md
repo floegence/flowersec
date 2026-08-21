@@ -89,10 +89,10 @@ Alle vier SDKs verwenden dasselbe Sitzungsmodell. Der Plattformumfang unterschei
 | Apple-Clientverbindungen | Nein | Nein | Ja | Nein |
 | Native QUIC-Verbindungen | Ja | Node.js | Nein | Ja |
 | WebSocket-Verbindungen | Ja | Ja | Ja | Ja |
-| WebTransport-Verbindungen | Go direct (optionaler Adapter) | Browser (wenn die WebTransport-API verfügbar ist) | Nein | Nein |
+| WebTransport-Verbindungen | Go H4 | Browser H3 client (wenn die WebTransport-API verfügbar ist) | Nein | Nein |
 | Serverseitige Sitzungsannahme | Ja | Node.js | Nein | Ja |
 | Undurchsichtige Relay-Laufzeit | Ja | Node.js | Nein | Ja |
-| Verbindungseinladungen der Control Plane | Ja | Node.js | Nein | Ja |
+| Verbindungseinladungen der Control Plane | Ja | Nein | Nein | Nein |
 | HTTP- und WebSocket-ProxyServer | Ja | Node.js | Nein | Ja |
 
 Bereitstellungsprofile trennen die Plattformverfuegbarkeit vom gemeinsamen Flowersec-Anwendungsprotokoll:
@@ -102,13 +102,13 @@ Bereitstellungsprofile trennen die Plattformverfuegbarkeit vom gemeinsamen Flowe
 | `native-server-core` | Go, Rust, Node.js | WebSocket- und Raw-QUIC-Endpunktclient, direkter Server und opake Tunnellaufzeit | WebTransport-Adapter |
 | `browser-client` | TypeScript-Browser | WebSocket-Endpunktclient | Browser-WebTransport-Adapter |
 | `apple-client` | Swift auf Apple-Plattformen | WSS-Endpunktclient | Keine |
-| `webtransport-server` | Derzeit von keiner Laufzeit beansprucht | Vor einer Beanspruchung muessen direkter Server und opake Tunnellaufzeit konform sein | Keine |
+| `webtransport-server` | Go | WebTransport-Direktserver und opake Tunnellaufzeit | Keine |
 
-Das maschinenlesbare Faehigkeitsinventar enthaelt 18 aggregierte Runtime-Rollen-Carrier-Tupel, sechs pro nativer Laufzeit, und 24 unterstuetzte pfadspezifische Servereinheiten. Die Interoperabilitaetsmatrix deklariert separat 18 direkte Zellen und 18 Tunnelzellen. Alle 36 paarweisen Zellen sind derzeit explizite `unsupported`-Deklarationen, weil kein release-sperrender v3-Test den vollstaendigen ausfuehrbaren Fallsatz einer Zelle prueft. Ein Profil aendert niemals die Wire-Semantik fuer Artifact, Handshake, RPC, Stream, Close, Rekey oder Autorisierung.
+Das maschinenlesbare native-server-core-Profil enthaelt 18 aggregierte Runtime-Rollen-Carrier-Tupel, sechs pro nativer Laufzeit, und 24 unterstuetzte pfadspezifische Servereinheiten. Go H4 fuegt zwei WebTransport-Server-Tupel und zwei pfadspezifische Einheiten hinzu. Die Interoperabilitaetsmatrix deklariert separat 18 direkte Zellen und 18 Tunnelzellen. Alle 36 paarweisen Zellen sind derzeit explizite `unsupported`-Deklarationen, weil kein release-sperrender v3-Test den vollstaendigen ausfuehrbaren Fallsatz einer Zelle prueft. Ein Profil aendert niemals die Wire-Semantik fuer Artifact, Handshake, RPC, Stream, Close, Rekey oder Autorisierung.
 
 Die SDK-Anleitungen nennen die genauen unterstützten Kombinationen aus Plattform und Verbindung.
 
-WebTransport ist optional und nicht Teil des native-server-carrier-Vertrags. Go bietet einen direkten Adapter; das Browser-Profil verwendet die Browser-WebTransport-API, wenn sie verfügbar ist. Node.js und Rust bieten derzeit keinen produktiven WebTransport-Adapter. Die native-server-carrier-Oberflaeche ist WebSocket und raw QUIC fuer Go, Rust und Node.js; paarweise Interoperabilitaet wird nur durch unterstuetzte Matrixeintraege beansprucht.
+WebTransport ist optional und nicht Teil des erforderlichen native-server-carrier-Vertrags. Go beansprucht das separate vollstaendige H4-webtransport-server-Profil; das Browser-Profil verwendet H3, wenn die Browser-WebTransport-API verfügbar ist. Node.js und Rust bieten derzeit keinen produktiven WebTransport-Adapter. Die native-server-carrier-Oberflaeche ist WebSocket und raw QUIC fuer Go, Rust und Node.js; paarweise Interoperabilitaet wird nur durch unterstuetzte Matrixeintraege beansprucht.
 
 <!-- readme-section:security -->
 <a id="security"></a>

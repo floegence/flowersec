@@ -7,9 +7,15 @@ import {
 import { configureServerWebSocketCarrierRoleV3 } from "../v3/webSocketCarrier.js";
 import {
   AdmissionStatusV3,
+  buildFSB3RequestV3,
   encodeFSA3ResponseV3,
+  encodeFSB3RequestV3,
   type TunnelFSB3RequestV3,
 } from "../v3/artifact.js";
+import {
+  unwrapArtifactHandleV3,
+  type ArtifactHandleV3,
+} from "../v3/publicApi.js";
 import type {
   CarrierSessionV3,
   CarrierStreamV3,
@@ -47,6 +53,7 @@ const BUILT_IN_ADMISSION_REASONS = [
 export type TunnelAuthorizationDecisionV3 =
   | Readonly<{
       decision: "allow";
+      artifact: ArtifactHandleV3;
       credentialId: string;
       leaseId: string;
       expiresAtUnixSeconds: number;
@@ -213,6 +220,7 @@ async function startTunnelRuntimeV3(state: TunnelRuntimeStateV3): Promise<void> 
                 inboundBidirectionalStreamCapacity: state.options.maxInboundStreams + 2,
                 maxPendingSessions: state.limits.maxConcurrentAdmissions,
                 pendingSessionTimeoutMs: state.limits.admissionTimeoutMs,
+                cleanupTimeoutMs: state.limits.cleanupTimeoutMs,
               })
             : await startNodeRawQuicListenerV3(
                 rawQuicDriver ??= createNativeRawQuicDriverV3(),
@@ -323,7 +331,7 @@ async function processCarrier(state: TunnelRuntimeStateV3, carrier: CarrierSessi
     configureRole(leg);
     registerLeg(state, leg);
   } catch {
-    await carrier.close().catch(() => undefined);
+    carrier.abort({ code: 6, reason: "tunnel admission failed" });
   } finally {
     clearTimeout(deadline);
     unlinkRuntime();
@@ -338,10 +346,22 @@ function validatedLeg(
   authorization: AllowedDecision,
 ): TunnelLeg | undefined {
   const now = Math.floor(Date.now() / 1_000);
-  if (!ID.test(authorization.credentialId) || authorization.credentialId !== authorizationRequest.lookupKey() ||
-    !ID.test(authorization.leaseId) || !Number.isSafeInteger(authorization.expiresAtUnixSeconds) ||
-    authorization.expiresAtUnixSeconds <= now || !ID.test(authorization.expectedPeerEndpointInstanceId) ||
-    authorization.expectedPeerEndpointInstanceId === request.endpoint_instance_id) return undefined;
+  try {
+    const artifact = unwrapArtifactHandleV3(authorization.artifact);
+    if (artifact.path.kind !== "tunnel" ||
+      !equalBytes(
+        encodeFSB3RequestV3(buildFSB3RequestV3(artifact, request.chosen_candidate_id)),
+        received.rawFSB3,
+      ) ||
+      !ID.test(authorization.credentialId) || authorization.credentialId !== authorizationRequest.lookupKey() ||
+      !ID.test(authorization.leaseId) || !Number.isSafeInteger(authorization.expiresAtUnixSeconds) ||
+      authorization.expiresAtUnixSeconds !== artifact.session.init_expire_at_unix_s ||
+      authorization.expiresAtUnixSeconds <= now || !ID.test(authorization.expectedPeerEndpointInstanceId) ||
+      authorization.expectedPeerEndpointInstanceId !== artifact.path.expected_peer_endpoint_instance_id ||
+      authorization.expectedPeerEndpointInstanceId === request.endpoint_instance_id) return undefined;
+  } catch {
+    return undefined;
+  }
   let released = false;
   return {
     received,
@@ -993,6 +1013,15 @@ function aborted(signal: AbortSignal): Promise<void> {
 
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left[index]! ^ right[index]!;
+  }
+  return difference === 0;
 }
 
 class Slots {

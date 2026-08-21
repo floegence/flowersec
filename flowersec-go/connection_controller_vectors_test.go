@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -643,9 +644,52 @@ func runControllerVectorTerminalCycleReset(t *testing.T, scenario controllerVect
 	}
 	controller.Start(context.Background())
 	waitControllerSession(t, controller, session)
+	connected := controller.Snapshot()
+	if connected.State != ConnectionConnected || connected.Attempt != 1 || connected.CurrentSession != session {
+		t.Fatalf("connected snapshot = %+v, want connected attempt 1 with the established session", connected)
+	}
+	readerStarted := make(chan struct{})
+	stopReader := make(chan struct{})
+	readerDone := make(chan struct{})
+	invalidSnapshot := make(chan ConnectionSnapshot, 1)
+	go func() {
+		defer close(readerDone)
+		close(readerStarted)
+		for {
+			snapshot := controller.Snapshot()
+			if snapshot.State == ConnectionConnected && snapshot.Attempt == 0 {
+				select {
+				case invalidSnapshot <- snapshot:
+				default:
+				}
+				return
+			}
+			select {
+			case <-stopReader:
+				return
+			default:
+				runtime.Gosched()
+			}
+		}
+	}()
+	<-readerStarted
 	session.terminate()
-	waitControllerState(t, controller, ConnectionFailed)
-	snapshot := controller.Snapshot()
+	changeContext, cancelChange := context.WithTimeout(context.Background(), time.Second)
+	snapshot, err := controller.WaitForSnapshotChange(changeContext, connected)
+	cancelChange()
+	close(stopReader)
+	<-readerDone
+	if err != nil {
+		t.Fatalf("wait for terminal cycle transition: %v", err)
+	}
+	select {
+	case invalid := <-invalidSnapshot:
+		t.Fatalf("observed intermediate connected snapshot with reset attempt: %+v", invalid)
+	default:
+	}
+	if snapshot.State != ConnectionFailed || snapshot.CurrentSession != nil {
+		t.Fatalf("post-session terminal snapshot = %+v, want failed without a current session", snapshot)
+	}
 	if snapshot.Attempt != scenario.Expected.Attempt {
 		t.Fatalf("post-session terminal attempt = %d, want %d", snapshot.Attempt, scenario.Expected.Attempt)
 	}
