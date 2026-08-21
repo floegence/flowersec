@@ -1581,6 +1581,10 @@ for (const name of inherited) {
   if (name === "session_handler_vectors.json") {
     const reserved = value.stream_kinds.find(({ id }) => id === "reserved-rpc-kind");
     if (reserved === undefined) throw new Error("missing inherited reserved RPC stream-kind vector");
+    value.stream_kinds.splice(value.stream_kinds.indexOf(reserved), 0, {
+      ...reserved,
+      id: "reserved-previous-rpc-kind",
+    });
     reserved.unit = "flowersec.rpc.v3";
   }
   if (name === "idna_vectors.json") {

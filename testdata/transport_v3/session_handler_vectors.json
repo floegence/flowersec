@@ -78,6 +78,13 @@
       "valid": false
     },
     {
+      "id": "reserved-previous-rpc-kind",
+      "unit": "flowersec.rpc.v2",
+      "repeat": 1,
+      "suffix": "",
+      "valid": false
+    },
+    {
       "id": "reserved-rpc-kind",
       "unit": "flowersec.rpc.v3",
       "repeat": 1,

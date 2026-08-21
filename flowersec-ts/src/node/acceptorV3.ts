@@ -7,7 +7,11 @@ import {
 } from "../v3/serverAdmission.js";
 import { nodeSessionRuntimeV3 } from "../v3/nodeSessionRuntime.js";
 import type { CarrierSessionV3 } from "../v3/carrier.js";
-import type { DecodedFSB3RequestV3 } from "../v3/artifact.js";
+import { AdmissionStatusV3, type DecodedFSB3RequestV3 } from "../v3/artifact.js";
+import {
+  unwrapArtifactHandleV3,
+  type ArtifactHandleV3,
+} from "../v3/publicApi.js";
 import {
   SessionHandlersV3,
   createRPCRouter,
@@ -49,13 +53,22 @@ export type AcceptorOptionsV3 = Readonly<{
   listeners: readonly AcceptorListenerV3[];
   maxInboundStreams: number;
   admissionReasons?: readonly string[];
-  authorize: AdmissionAuthorizerV3;
+  authorize: AcceptorAuthorizerV3;
   resolveHandlers?(
     request: DecodedFSB3RequestV3,
     options: OperationOptions,
   ): Promise<SessionHandlersV3> | SessionHandlersV3;
   nowUnixSeconds?: () => number;
 }>;
+
+export type AcceptorAuthorizationDecisionV3 =
+  | Readonly<{ accepted: true; artifact: ArtifactHandleV3 }>
+  | Readonly<{ accepted: false; retryable: boolean; reason: string }>;
+
+export type AcceptorAuthorizerV3 = (
+  request: DecodedFSB3RequestV3,
+  options: OperationOptions,
+) => Promise<AcceptorAuthorizationDecisionV3> | AcceptorAuthorizationDecisionV3;
 
 export class AcceptedSessionV3 {
   private constructor() {}
@@ -98,7 +111,23 @@ export class AcceptorV3 {
       const carrier = await acceptAny(state, controller.signal);
       try {
         let handlers: FrozenSessionHandlers | undefined;
-        const internal = await acceptCarrierSessionV3(carrier, state.authorize, {
+        const authorize: AdmissionAuthorizerV3 = async (request, signal) => {
+          const decision = await state.authorize(
+            request,
+            signal === undefined ? {} : { signal },
+          );
+          if (decision.accepted) {
+            return { accepted: true, artifact: unwrapArtifactHandleV3(decision.artifact) };
+          }
+          return {
+            accepted: false,
+            status: decision.retryable
+              ? AdmissionStatusV3.Retryable
+              : AdmissionStatusV3.Reject,
+            reason: decision.reason,
+          };
+        };
+        const internal = await acceptCarrierSessionV3(carrier, authorize, {
           runtime: nodeSessionRuntimeV3,
           admissionReasons: state.admissionReasons,
           resolveRPCRouter: async (request, signal) => {
@@ -142,7 +171,7 @@ export class AcceptorV3 {
 type ListenerV3 = NodeWebSocketListenerV3 | NodeRawQuicListenerV3;
 type AcceptorStateV3 = {
   listeners: readonly ListenerV3[];
-  authorize: AdmissionAuthorizerV3;
+  authorize: AcceptorAuthorizerV3;
   resolveHandlers?: AcceptorOptionsV3["resolveHandlers"];
   admissionReasons: ReadonlySet<string>;
   nowUnixSeconds?: () => number;

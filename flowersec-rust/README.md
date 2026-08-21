@@ -104,7 +104,8 @@ handlers
 ```
 
 Application stream kinds contain 1 through 128 canonical UTF-8 bytes and
-exclude the reserved `flowersec.rpc.v3` kind. Unknown, excess, failed, and
+exclude the package-owned `flowersec.rpc.v2` and `flowersec.rpc.v3` kinds.
+Unknown, excess, failed, and
 panicked handler streams are reset without terminating unrelated dispatch.
 
 For the complete durable `ArtifactLease` spend workflow, see the

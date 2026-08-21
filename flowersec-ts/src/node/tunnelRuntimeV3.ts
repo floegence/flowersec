@@ -708,17 +708,46 @@ function rejectGeneration(
   if (generation.finished) return;
   detachGeneration(state, generation);
   track(state, (async () => {
-    await Promise.allSettled([...generation.roles.values()].map(async (leg) =>
-      await reject(
-        leg.received,
+    try {
+      await rejectTunnelPairAdmissionsV3(
+        [...generation.roles.values()].map(({ received }) => received),
         reason,
         retryable,
         state.admissionReasons,
         state.abort.signal,
-      )));
-    generation.abort.abort(new Error("Flowersec tunnel pair rejected"));
-    for (const leg of generation.roles.values()) leg.release();
+        state.limits.admissionTimeoutMs,
+      );
+    } catch {
+      // Pair teardown below owns the observable rejection boundary.
+    } finally {
+      generation.abort.abort(new Error("Flowersec tunnel pair rejected"));
+      for (const leg of generation.roles.values()) {
+        leg.received.carrier.abort({ code: 6, reason: "tunnel pair rejected" });
+        leg.release();
+      }
+    }
   })());
+}
+
+/** @internal */
+export async function rejectTunnelPairAdmissionsV3(
+  admissions: readonly ReceivedSessionAdmissionV3[],
+  reason: string,
+  retryable: boolean,
+  admissionReasons: ReadonlySet<string>,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<void> {
+  await runBoundedPhase(
+    signal,
+    timeoutMs,
+    "Flowersec tunnel admission rejection timed out",
+    async (responseSignal) => {
+      await Promise.all(admissions.map(async (received) => {
+        await reject(received, reason, retryable, admissionReasons, responseSignal);
+      }));
+    },
+  );
 }
 
 function finishGeneration(state: TunnelRuntimeStateV3, generation: Generation): void {

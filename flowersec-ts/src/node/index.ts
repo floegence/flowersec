@@ -9,6 +9,10 @@ export {
 export type {
   AcceptorListenerV3 as AcceptorListener,
   AcceptorListenerV3,
+  AcceptorAuthorizationDecisionV3 as AcceptorAuthorizationDecision,
+  AcceptorAuthorizationDecisionV3,
+  AcceptorAuthorizerV3 as AcceptorAuthorizer,
+  AcceptorAuthorizerV3,
   AcceptorOptionsV3 as AcceptorOptions,
   AcceptorOptionsV3,
 } from "./acceptorV3.js";

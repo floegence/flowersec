@@ -21,6 +21,62 @@ func TestTransportV3RegistryAndSourceConsumers(t *testing.T) {
 	}
 }
 
+func TestTransportV3SourceOwnershipCoversCamelCaseAndSharedDefaultFiles(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := loadTransportV3Registry(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned := transportV3OwnedSourceFiles(repoRoot, registry)
+	for path := range owned {
+		if !isTransportV3SourcePath(path, true) {
+			t.Fatalf("registered v3 source ownership omitted %s", path)
+		}
+	}
+	for _, path := range []string{
+		"flowersec-ts/src/node/acceptorV3.ts",
+		"flowersec-ts/src/node/tunnelRuntimeV3.ts",
+		"flowersec-swift/Sources/Flowersec/TransportV3Crypto.swift",
+		"flowersec-go/connection_controller.go",
+		"flowersec-swift/Sources/Flowersec/ConnectionController.swift",
+	} {
+		if !isTransportV3SourcePath(path, owned[path]) {
+			t.Fatalf("v3 source ownership omitted %s", path)
+		}
+	}
+	for _, path := range []string{
+		"flowersec-go/internal/protocolv2/codec.go",
+		"flowersec-ts/src/v2/protocol.ts",
+		"flowersec-swift/Sources/Flowersec/TransportV2Crypto.swift",
+	} {
+		if isTransportV3SourcePath(path, owned[path]) {
+			t.Fatalf("v2 source was misclassified as v3: %s", path)
+		}
+	}
+}
+
+func TestTransportV3ForbiddenDomainRecognizesEveryIsolationFamily(t *testing.T) {
+	for _, value := range []string{
+		"FSB2",
+		"flowersec/2",
+		"flowersec-direct/2",
+		"/flowersec/v2/direct",
+		"/flowersec/webtransport/v2/tunnel",
+		"flowersec.direct.v2",
+		"flowersec v2 server finished",
+		"flowersec v2 record key",
+		"flowersec-v2-handshake",
+		"flowersec-v2-record",
+	} {
+		if !transportV3ForbiddenDomain.MatchString(value) {
+			t.Fatalf("v2 isolation family was not recognized: %q", value)
+		}
+	}
+}
+
 func TestTransportV3RegistryRejectsUnknownTopLevelField(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {

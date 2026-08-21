@@ -272,6 +272,9 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	if !slices.Equal(gotClauses, wantClauses) {
 		return fmt.Errorf("%s traceability clauses = %v, want %v", transportV3ContractPath, gotClauses, wantClauses)
 	}
+	if err := validateTransportV3ProviderTraceability(traceabilityByClause); err != nil {
+		return err
+	}
 	wantFixtureReferences := make([]string, 0, len(registry.WireFixtures))
 	for _, fixture := range registry.WireFixtures {
 		wantFixtureReferences = append(wantFixtureReferences, fmt.Sprintf("wire_fixtures[id=%s]", fixture.ID))
@@ -382,7 +385,41 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	if !slices.Equal(gotFixtures, wantedFixtures) {
 		return fmt.Errorf("%s fixture IDs = %v, want %v", transportV3ContractPath, gotFixtures, wantedFixtures)
 	}
-	return scanTransportV3Domains(repoRoot)
+	return scanTransportV3Domains(repoRoot, registry)
+}
+
+func validateTransportV3ProviderTraceability(
+	traceability map[string]transportV3Traceability,
+) error {
+	requiredSources := []string{
+		"flowersec-ts/src/v3/browserRuntime.ts",
+		"flowersec-ts/src/v3/nodeRuntime.ts",
+		"flowersec-ts/src/node/rawQuicAdapterV3.ts",
+		"flowersec-swift/Sources/Flowersec/AppleWebSocketRuntimeAdapterV3.swift",
+		"flowersec-swift/Sources/Flowersec/NativeTLSPolicyV3.swift",
+	}
+	requiredTests := []string{
+		"flowersec-ts/src/v3/nodeRuntime.test.ts",
+		"flowersec-ts/src/node/rawQuicAdapterV3.test.ts",
+		"flowersec-swift/Tests/FlowersecTests/ConnectorV2Tests.swift",
+	}
+	for _, clause := range []string{"9", "13.2"} {
+		entry, ok := traceability[clause]
+		if !ok {
+			return fmt.Errorf("%s traceability omits provider clause %q", transportV3ContractPath, clause)
+		}
+		for _, required := range requiredSources {
+			if !slices.Contains(entry.Source, required) {
+				return fmt.Errorf("%s traceability clause %q omits provider source %s", transportV3ContractPath, clause, required)
+			}
+		}
+		for _, required := range requiredTests {
+			if !slices.Contains(entry.Tests, required) {
+				return fmt.Errorf("%s traceability clause %q omits provider test %s", transportV3ContractPath, clause, required)
+			}
+		}
+	}
+	return nil
 }
 
 func validateTransportV3ConsumerEvidence(fixtureID, language, body string) error {
@@ -703,18 +740,23 @@ func validateTransportV3FixtureShapes(repoRoot string) error {
 		return fmt.Errorf("v3 session-handler fixture shape drifted")
 	}
 	reservedRPCKind := 0
+	reservedPreviousRPCKind := 0
 	for _, vector := range sessionHandlers.StreamKinds {
 		if vector.ID == "reserved-rpc-kind" && vector.Unit == "flowersec.rpc.v3" && !vector.Valid {
 			reservedRPCKind++
 		}
+		if vector.ID == "reserved-previous-rpc-kind" && vector.Unit == "flowersec.rpc.v2" && !vector.Valid {
+			reservedPreviousRPCKind++
+		}
 	}
-	if reservedRPCKind != 1 {
-		return fmt.Errorf("v3 session-handler fixture omits the unique reserved flowersec.rpc.v3 kind")
+	if reservedRPCKind != 1 || reservedPreviousRPCKind != 1 {
+		return fmt.Errorf("v3 session-handler fixture must reserve the v2 and v3 package-owned RPC kinds")
 	}
 	return nil
 }
 
-func scanTransportV3Domains(repoRoot string) error {
+func scanTransportV3Domains(repoRoot string, registry *transportV3Registry) error {
+	ownedSources := transportV3OwnedSourceFiles(repoRoot, registry)
 	roots := []string{
 		"flowersec-go/internal",
 		"flowersec-go",
@@ -736,7 +778,7 @@ func scanTransportV3Domains(repoRoot string) error {
 				return err
 			}
 			name := filepath.ToSlash(relative)
-			if !isTransportV3SourcePath(name) {
+			if !isTransportV3SourcePath(name, ownedSources[name]) {
 				return nil
 			}
 			if isTransportV3TestPath(name) {
@@ -774,7 +816,30 @@ func isTransportV3TestPath(name string) bool {
 		strings.Contains(lower, "/tests/") || strings.Contains(lower, "/test/")
 }
 
-func isTransportV3SourcePath(name string) bool {
+func transportV3OwnedSourceFiles(repoRoot string, registry *transportV3Registry) map[string]bool {
+	owned := make(map[string]bool)
+	for _, entry := range registry.Design.Traceability {
+		if slices.Contains([]string{"12.1", "12.4", "13.1", "13.4"}, entry.Clause) {
+			continue
+		}
+		for _, relative := range entry.Source {
+			info, err := os.Stat(filepath.Join(repoRoot, relative))
+			if err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			extension := filepath.Ext(relative)
+			if extension == ".go" || extension == ".ts" || extension == ".rs" || extension == ".swift" {
+				owned[filepath.ToSlash(relative)] = true
+			}
+		}
+	}
+	return owned
+}
+
+func isTransportV3SourcePath(name string, registryOwned bool) bool {
+	if registryOwned || strings.Contains(filepath.Base(name), "V3") {
+		return true
+	}
 	lower := strings.ToLower(filepath.ToSlash(name))
 	if strings.Contains(lower, "/v3/") || strings.Contains(lower, "v3/") || strings.Contains(lower, "/v3.") || strings.Contains(lower, "v3_") || strings.Contains(lower, "v3-") || strings.HasSuffix(lower, "v3.go") || strings.HasSuffix(lower, "v3.rs") || strings.HasSuffix(lower, "v3.swift") {
 		return true
@@ -787,6 +852,9 @@ func isTransportV3SourcePath(name string) bool {
 				return true
 			}
 		}
+	}
+	if strings.HasPrefix(lower, "flowersec-go/controlplane/") {
+		return true
 	}
 	return false
 }

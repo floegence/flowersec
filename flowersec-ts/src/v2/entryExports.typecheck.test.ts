@@ -13,15 +13,20 @@ import {
 } from "../browser/index.js";
 import {
   createConnectionController as createNodeConnectionController,
+  SessionHandlers as NodeSessionHandlers,
   StreamHandlers as NodeStreamHandlers,
   v2 as NodeV2,
   type ArtifactSource as NodeArtifactSource,
   type ConnectionController as NodeConnectionController,
   type ConnectionSnapshot as NodeConnectionSnapshot,
   type ConnectionControllerOptions as NodeConnectionControllerOptions,
+  type AcceptorOptions as NodeV3AcceptorOptions,
   type RetryDisposition as NodeRetryDisposition,
 } from "../node/index.js";
-import type { StreamHandlerRegistrar as NodeStreamHandlerRegistrar } from "../node/v2.js";
+import type {
+  AcceptorOptions as NodeV2AcceptorOptions,
+  StreamHandlerRegistrar as NodeStreamHandlerRegistrar,
+} from "../node/v2.js";
 // @ts-expect-error runtime capability descriptors are package-internal.
 import type { RuntimeCapabilityDescriptorV2 } from "../browser/index.js";
 // @ts-expect-error candidate factories are package-internal.
@@ -37,6 +42,13 @@ const forgedStreamHandlerRegistrar: NodeStreamHandlerRegistrar = {
   async serve() {},
 };
 
+// @ts-expect-error a strict-v3 registry cannot enter a v2 Acceptor.
+const v3RegistryForV2: NonNullable<NodeV2AcceptorOptions["resolveHandlers"]> =
+  () => new NodeSessionHandlers();
+// @ts-expect-error a v2 registry cannot enter a strict-v3 Acceptor.
+const v2RegistryForV3: NonNullable<NodeV3AcceptorOptions["resolveHandlers"]> =
+  () => new NodeV2.SessionHandlers();
+
 test("exports the final controller API from browser and Node entries", () => {
   expect(createBrowserConnectionController).toBeTypeOf("function");
   expect(createNodeConnectionController).toBeTypeOf("function");
@@ -46,10 +58,10 @@ test("exports the final controller API from browser and Node entries", () => {
   expect(BrowserV2.StreamHandlers).not.toBe(BrowserStreamHandlers);
   const v3Handlers = new BrowserStreamHandlers();
   expect(() => v3Handlers.handleStream("flowersec.rpc.v3", async () => undefined)).toThrow();
-  expect(() => v3Handlers.handleStream("flowersec.rpc.v2", async () => undefined)).not.toThrow();
+  expect(() => v3Handlers.handleStream("flowersec.rpc.v2", async () => undefined)).toThrow();
   const v2Handlers = new BrowserV2.StreamHandlers();
   expect(() => v2Handlers.handleStream("flowersec.rpc.v2", async () => undefined)).toThrow();
-  expect(() => v2Handlers.handleStream("flowersec.rpc.v3", async () => undefined)).not.toThrow();
+  expect(() => v2Handlers.handleStream("flowersec.rpc.v3", async () => undefined)).toThrow();
   expect(BrowserV2.connect).toBeTypeOf("function");
   expect(NodeV2.connect).toBeTypeOf("function");
   void (undefined as unknown as BrowserArtifactSource);
@@ -67,4 +79,6 @@ test("exports the final controller API from browser and Node entries", () => {
   void (undefined as unknown as BrowserStreamHandlerRegistrar);
   void (undefined as unknown as RootStreamHandlerRegistrar);
   void forgedStreamHandlerRegistrar;
+  void v3RegistryForV2;
+  void v2RegistryForV3;
 });

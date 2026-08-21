@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	ErrInvalidLimits = errors.New("invalid Flowersec v3 tunnel bridge limits")
-	ErrControlClosed = errors.New("Flowersec v3 tunnel control stream closed")
+	ErrInvalidLimits     = errors.New("invalid Flowersec v3 tunnel bridge limits")
+	ErrControlClosed     = errors.New("Flowersec v3 tunnel control stream closed")
+	ErrActivationTimeout = errors.New("Flowersec v3 tunnel activation timed out")
 )
 
 const defaultCleanupTimeout = 2 * time.Second
@@ -48,7 +49,7 @@ func (limits Limits) validate() error {
 // Bridge mirrors the client-opened control stream first, then maps every
 // accepted data stream to one newly opened stream on the opposite leg. Stream
 // bytes remain opaque; half-close and reset stay scoped to the mapped pair.
-func Bridge(ctx context.Context, clientLeg, serverLeg carrier.Session, limits Limits) error {
+func Bridge(ctx context.Context, clientLeg, serverLeg carrier.Session, limits Limits, activationTimeout time.Duration) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -59,15 +60,22 @@ func Bridge(ctx context.Context, clientLeg, serverLeg carrier.Session, limits Li
 	if err := limits.validate(); err != nil {
 		return err
 	}
+	if activationTimeout < time.Millisecond || activationTimeout > time.Minute {
+		return ErrInvalidLimits
+	}
 	bridgeContext, cancel := context.WithCancelCause(ctx)
 	defer cancel(context.Canceled)
 
-	clientControl, err := clientLeg.AcceptStream(bridgeContext)
+	activationContext, cancelActivation := context.WithTimeoutCause(bridgeContext, activationTimeout, ErrActivationTimeout)
+	clientControl, err := acceptControlStream(activationContext, clientLeg)
 	if err != nil {
+		cancelActivation()
 		return errors.Join(preferContextCause(bridgeContext, err), closeBridgeSessions(limits.CleanupTimeout, clientLeg, serverLeg))
 	}
-	serverControl, err := serverLeg.OpenStream(bridgeContext)
+	serverControl, err := openControlStream(activationContext, serverLeg)
+	cancelActivation()
 	if err != nil {
+		_ = clientControl.Reset()
 		return errors.Join(preferContextCause(bridgeContext, err), closeBridgeSessions(limits.CleanupTimeout, clientLeg, serverLeg))
 	}
 
@@ -111,6 +119,37 @@ func Bridge(ctx context.Context, clientLeg, serverLeg carrier.Session, limits Li
 	cancelClose()
 	waitError := tasks.Wait(cleanupCtx)
 	return errors.Join(cause, closeError, waitError)
+}
+
+type controlStreamResult struct {
+	stream carrier.Stream
+	err    error
+}
+
+func acceptControlStream(ctx context.Context, session carrier.Session) (carrier.Stream, error) {
+	return boundedControlStream(ctx, func() (carrier.Stream, error) { return session.AcceptStream(ctx) })
+}
+
+func openControlStream(ctx context.Context, session carrier.Session) (carrier.Stream, error) {
+	return boundedControlStream(ctx, func() (carrier.Stream, error) { return session.OpenStream(ctx) })
+}
+
+func boundedControlStream(ctx context.Context, operation func() (carrier.Stream, error)) (carrier.Stream, error) {
+	result := make(chan controlStreamResult, 1)
+	go func() {
+		stream, err := operation()
+		if ctx.Err() != nil && stream != nil {
+			_ = stream.Reset()
+			stream = nil
+		}
+		result <- controlStreamResult{stream: stream, err: err}
+	}()
+	select {
+	case completed := <-result:
+		return completed.stream, completed.err
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	}
 }
 
 func unreliableLoop(

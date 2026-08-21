@@ -84,6 +84,7 @@ export class RPCHandlers {
 
 export class SessionHandlers {
   declare private readonly streamHandlerRegistrarBrand: void;
+  declare private readonly sessionHandlersV2Brand: void;
 
   constructor(options: SessionHandlerOptions = {}) {
     sessionHandlerStates.set(this, {
@@ -110,16 +111,31 @@ export class SessionHandlers {
 }
 
 /** Strict-v3 accepted-session handlers. */
-export class SessionHandlersV3 extends SessionHandlers {
+export class SessionHandlersV3 {
+  declare private readonly streamHandlerRegistrarBrand: void;
   declare private readonly sessionHandlersV3Brand: void;
 
   constructor(options: SessionHandlerOptions = {}) {
-    super(options);
     sessionHandlerStates.set(this, {
       rpc: createRPCHandlerState(),
       streams: new StreamHandlers(options),
       frozen: false,
     });
+  }
+
+  handleRPC(typeId: number, handler: RPCHandler): void {
+    const state = mutableSessionHandlerState(this);
+    registerRPC(state.rpc, typeId, handler);
+  }
+
+  handleNotification(typeId: number, handler: NotificationHandler): void {
+    const state = mutableSessionHandlerState(this);
+    registerNotification(state.rpc, typeId, handler);
+  }
+
+  handleStream(kind: string, handler: StreamHandler): void {
+    const state = mutableSessionHandlerState(this);
+    state.streams.handleStream(kind, handler);
   }
 }
 
@@ -139,7 +155,7 @@ type SessionHandlerState = {
 
 const rpcHandlerStates = new WeakMap<RPCHandlers, RPCHandlerState>();
 const sessionHandlerStates = new WeakMap<
-  SessionHandlers,
+  SessionHandlers | SessionHandlersV3,
   SessionHandlerState
 >();
 
@@ -154,7 +170,9 @@ function mutableRPCHandlerState(handlers: RPCHandlers): RPCHandlerState {
   return state;
 }
 
-function mutableSessionHandlerState(handlers: SessionHandlers): SessionHandlerState {
+function mutableSessionHandlerState(
+  handlers: SessionHandlers | SessionHandlersV3,
+): SessionHandlerState {
   const state = sessionHandlerStates.get(handlers);
   if (state === undefined) throw new HandlerRegistrationError("invalid_handler");
   if (state.frozen) throw new HandlerRegistrationError("frozen");
@@ -163,7 +181,7 @@ function mutableSessionHandlerState(handlers: SessionHandlers): SessionHandlerSt
 
 /** @internal */
 export function registerSessionStreamHandlersAtomically(
-  handlers: SessionHandlers,
+  handlers: SessionHandlers | SessionHandlersV3,
   entries: readonly (readonly [string, StreamHandler])[],
 ): void {
   const state = mutableSessionHandlerState(handlers);
@@ -255,6 +273,9 @@ export function createRPCRouter(snapshot: FrozenRPCHandlers): RpcRouter {
 
 /** @internal */
 export function freezeSessionHandlers(handlers: SessionHandlers): FrozenSessionHandlers {
+  if (!(handlers instanceof SessionHandlers)) {
+    throw new HandlerRegistrationError("invalid_handler");
+  }
   const state = sessionHandlerStates.get(handlers);
   if (state === undefined) throw new HandlerRegistrationError("invalid_handler");
   if (state.snapshot !== undefined) return state.snapshot;
@@ -271,7 +292,15 @@ export function freezeSessionHandlersV3(handlers: SessionHandlersV3): FrozenSess
   if (!(handlers instanceof SessionHandlersV3)) {
     throw new HandlerRegistrationError("invalid_handler");
   }
-  return freezeSessionHandlers(handlers);
+  const state = sessionHandlerStates.get(handlers);
+  if (state === undefined) throw new HandlerRegistrationError("invalid_handler");
+  if (state.snapshot !== undefined) return state.snapshot;
+  state.frozen = true;
+  state.snapshot = Object.freeze({
+    rpc: freezeRPCHandlerState(state.rpc),
+    streams: freezeStreamHandlers(state.streams),
+  });
+  return state.snapshot;
 }
 
 /** @internal */

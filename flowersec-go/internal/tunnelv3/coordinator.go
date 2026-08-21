@@ -653,7 +653,13 @@ func (coordinator *Coordinator) activate(generation *pairGeneration) {
 		coordinator.finish(generation, coordinator.config.OnPair(generation.ctx, client, server, left, right))
 		return
 	}
-	coordinator.finish(generation, Bridge(generation.ctx, client, server, coordinator.config.BridgeLimits))
+	coordinator.finish(generation, Bridge(
+		generation.ctx,
+		client,
+		server,
+		coordinator.config.BridgeLimits,
+		coordinator.config.ActivationTimeout,
+	))
 }
 
 func (coordinator *Coordinator) startWaitingGuard(generation *pairGeneration, leg *admittedLeg) {

@@ -1095,7 +1095,13 @@ impl TaskRuntime {
                 .await;
             return Err(TunnelRuntimeError::AdmissionFailed);
         }
-        bridge(client.clone(), server.clone(), self.state.closed.clone()).await;
+        bridge(
+            client.clone(),
+            server.clone(),
+            self.state.closed.clone(),
+            self.admission_options.admission_timeout,
+        )
+        .await;
         let _ = tokio::join!(client.close(), server.close());
         self.state.active_carriers.lock().await.remove(&pair_id);
         let release_deadline = Instant::now() + self.admission_options.admission_timeout;
@@ -1493,20 +1499,22 @@ async fn bridge(
     client: Arc<dyn CarrierSessionV3>,
     server: Arc<dyn CarrierSessionV3>,
     runtime_closed: CancellationToken,
+    activation_timeout: Duration,
 ) {
+    let activation_deadline = Instant::now() + activation_timeout;
     let control = match tokio::select! {
         _ = runtime_closed.cancelled() => return,
-        result = client.accept_stream() => result,
+        result = tokio::time::timeout_at(activation_deadline, client.accept_stream()) => result,
     } {
-        Ok(control) => control,
-        Err(_) => return,
+        Ok(Ok(control)) => control,
+        Ok(Err(_)) | Err(_) => return,
     };
     let control_peer = match tokio::select! {
         _ = runtime_closed.cancelled() => return,
-        result = server.open_stream() => result,
+        result = tokio::time::timeout_at(activation_deadline, server.open_stream()) => result,
     } {
-        Ok(control_peer) => control_peer,
-        Err(_) => return,
+        Ok(Ok(control_peer)) => control_peer,
+        Ok(Err(_)) | Err(_) => return,
     };
     let closed = CancellationToken::new();
     let mut control_task = tokio::spawn(bridge_control_pair(control, control_peer, closed.clone()));
@@ -1778,6 +1786,39 @@ mod tests {
         accept_used: AtomicBool,
         open_used: AtomicBool,
         aborted: Arc<AtomicBool>,
+    }
+
+    #[derive(Debug)]
+    struct HangingActivationCarrier {
+        aborted: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl CarrierSessionV3 for HangingActivationCarrier {
+        fn kind(&self) -> CarrierKind {
+            CarrierKind::RawQuic
+        }
+
+        fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+            8
+        }
+
+        async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV3>> {
+            pending().await
+        }
+
+        async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV3>> {
+            pending().await
+        }
+
+        async fn close(&self) -> io::Result<()> {
+            self.aborted.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn abort(&self) {
+            self.aborted.store(true, Ordering::SeqCst);
+        }
     }
 
     #[async_trait]
@@ -3049,6 +3090,116 @@ mod tests {
         assert!(!replacement_server_aborted.load(Ordering::SeqCst));
         assert!(old_client_aborted.load(Ordering::SeqCst));
         assert!(old_server_aborted.load(Ordering::SeqCst));
+        assert_eq!(authorizer.releases.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn silent_control_activation_releases_quota_and_allows_a_later_pair() {
+        let authorizer = Arc::new(CountingAuthorizer::default());
+        let mut configured = test_runtime(authorizer.clone(), Duration::from_millis(100), 2);
+        configured.admission_options.admission_timeout = Duration::from_millis(20);
+        let runtime = Arc::new(configured);
+        let first_aborted = Arc::new(AtomicBool::new(false));
+        let second_aborted = Arc::new(AtomicBool::new(false));
+        let first = test_leg(
+            "silent-client",
+            1,
+            "endpoint-first",
+            "endpoint-second",
+            SystemTime::now() + Duration::from_secs(1),
+            false,
+            Arc::new(HangingActivationCarrier {
+                aborted: first_aborted.clone(),
+            }),
+        );
+        let second = test_leg(
+            "silent-server",
+            2,
+            "endpoint-second",
+            "endpoint-first",
+            SystemTime::now() + Duration::from_secs(1),
+            false,
+            Arc::new(HangingActivationCarrier {
+                aborted: second_aborted.clone(),
+            }),
+        );
+        let first_task = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .register_leg(first, Instant::now() + Duration::from_secs(1))
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        let second_task = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .register_leg(second, Instant::now() + Duration::from_secs(1))
+                    .await
+            })
+        };
+        tokio::time::timeout(Duration::from_millis(500), async {
+            let _ = first_task.await;
+            let _ = second_task.await;
+        })
+        .await
+        .expect("silent admitted pair retained active quota");
+        assert_eq!(*runtime.state.active_pairs.lock().await, 0);
+        assert!(runtime.state.active_carriers.lock().await.is_empty());
+        assert_eq!(authorizer.releases.load(Ordering::SeqCst), 2);
+
+        let accepted = Arc::new(AtomicBool::new(false));
+        let opened = Arc::new(AtomicBool::new(false));
+        let retry_client = test_leg(
+            "retry-client",
+            1,
+            "endpoint-first",
+            "endpoint-second",
+            SystemTime::now() + Duration::from_secs(1),
+            false,
+            Arc::new(ActivationProbeCarrier {
+                accepted: accepted.clone(),
+                opened: Arc::new(AtomicBool::new(false)),
+                accept_used: AtomicBool::new(false),
+                open_used: AtomicBool::new(false),
+                aborted: Arc::new(AtomicBool::new(false)),
+            }),
+        );
+        let retry_server = test_leg(
+            "retry-server",
+            2,
+            "endpoint-second",
+            "endpoint-first",
+            SystemTime::now() + Duration::from_secs(1),
+            false,
+            Arc::new(ActivationProbeCarrier {
+                accepted: Arc::new(AtomicBool::new(false)),
+                opened: opened.clone(),
+                accept_used: AtomicBool::new(false),
+                open_used: AtomicBool::new(false),
+                aborted: Arc::new(AtomicBool::new(false)),
+            }),
+        );
+        let retry_first = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .register_leg(retry_client, Instant::now() + Duration::from_secs(1))
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        let retry_second = runtime
+            .register_leg(retry_server, Instant::now() + Duration::from_secs(1))
+            .await;
+        assert!(retry_second.is_ok());
+        assert!(retry_first.await.unwrap().is_ok());
+        assert!(accepted.load(Ordering::SeqCst));
+        assert!(opened.load(Ordering::SeqCst));
+        assert!(first_aborted.load(Ordering::SeqCst));
+        assert!(second_aborted.load(Ordering::SeqCst));
         assert_eq!(authorizer.releases.load(Ordering::SeqCst), 4);
     }
 

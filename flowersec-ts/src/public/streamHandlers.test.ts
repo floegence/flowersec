@@ -152,12 +152,16 @@ describe("StreamHandlers", () => {
     expect(() => handlers.handleStream("flowersec.rpc.v3", async () => undefined)).toThrowError(
       expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
     );
-    expect(() => handlers.handleStream("flowersec.rpc.v2", async () => undefined)).not.toThrow();
+    expect(() => handlers.handleStream("flowersec.rpc.v2", async () => undefined)).toThrowError(
+      expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
+    );
     const handlersV2 = new StreamHandlersV2();
     expect(() => handlersV2.handleStream("flowersec.rpc.v2", async () => undefined)).toThrowError(
       expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
     );
-    expect(() => handlersV2.handleStream("flowersec.rpc.v3", async () => undefined)).not.toThrow();
+    expect(() => handlersV2.handleStream("flowersec.rpc.v3", async () => undefined)).toThrowError(
+      expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
+    );
   });
 
   test("applies the shared OPEN kind contract", () => {

@@ -110,8 +110,9 @@ err = proxy.RegisterStreamHandlers(streamHandlers)
 RPC and notification registrations share one nonzero uint32 namespace. Consuming
 a registry freezes it; later registrations return `ErrHandlerRegistryFrozen`.
 Stream kinds contain 1 through 128 canonical UTF-8 bytes, reject leading or
-trailing Unicode whitespace, controls, and unassigned scalars, and reserve
-`flowersec.rpc.v3`. `NewStreamMetadata(...)` validates and
+trailing Unicode whitespace, controls, and unassigned scalars, and reserve the
+package-owned `flowersec.rpc.v2` and `flowersec.rpc.v3` names.
+`NewStreamMetadata(...)` validates and
 defensively copies metadata before a stream is opened. Handler and connection
 state remain private, and public failures are bounded `ConnectError` and
 `SessionError` values.

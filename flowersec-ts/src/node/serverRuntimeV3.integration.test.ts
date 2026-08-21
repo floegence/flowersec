@@ -10,10 +10,12 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   computeSessionContractHashV3,
   decodeArtifactV3JSON,
+  encodeArtifactV3JSON,
   type ArtifactV3,
   type ArtifactCandidateV3,
 } from "../v3/artifact.js";
 import { createArtifactLeaseV3Internal } from "../v3/artifactLease.js";
+import { parseArtifactV3 } from "../v3/publicApi.js";
 import type { Session } from "../public/contract.js";
 import { connectV3, createConnectionControllerV3 } from "./connectSessionV3.js";
 import { RPCHandlers, SessionHandlersV3 } from "./acceptor.js";
@@ -80,7 +82,7 @@ describe("Node production server runtime v3", () => {
       maxInboundStreams: directBase.session.max_inbound_streams,
       authorize: async (received) => {
         expect(Buffer.from(received.raw.subarray(0, 4)).toString("ascii")).toBe("FSB3");
-        return { accepted: true, artifact };
+        return { accepted: true, artifact: parseArtifactV3(encodeArtifactV3JSON(artifact)) };
       },
     });
     const port = acceptor.addresses()[0]!.port;
@@ -130,7 +132,7 @@ describe("Node production server runtime v3", () => {
         allowedOrigins: ["https://app.example"],
       }],
       maxInboundStreams: directBase.session.max_inbound_streams,
-      authorize: async () => ({ accepted: true, artifact }),
+      authorize: async () => ({ accepted: true, artifact: parseArtifactV3(encodeArtifactV3JSON(artifact)) }),
       resolveHandlers: () => handlers,
     });
     artifact = directArtifact(acceptor.addresses()[0]!.port);
@@ -178,7 +180,7 @@ describe("Node production server runtime v3", () => {
         allowedOrigins: ["https://app.example"],
       }],
       maxInboundStreams: directBase.session.max_inbound_streams,
-      authorize: async () => ({ accepted: true, artifact }),
+      authorize: async () => ({ accepted: true, artifact: parseArtifactV3(encodeArtifactV3JSON(artifact)) }),
     });
     artifact = directFailoverArtifact(acceptor.addresses()[0]!.port);
     try {
@@ -212,7 +214,7 @@ describe("Node production server runtime v3", () => {
         allowedOrigins: ["https://app.example"],
       }],
       maxInboundStreams: directBase.session.max_inbound_streams,
-      authorize: async () => ({ accepted: true, artifact }),
+      authorize: async () => ({ accepted: true, artifact: parseArtifactV3(encodeArtifactV3JSON(artifact)) }),
     });
     const pinExpiry = Math.floor(Date.now() / 1_000) + 3;
     artifact = directPinArtifact(acceptor.addresses()[0]!.port, pinExpiry);
@@ -283,7 +285,10 @@ describe("Node production server runtime v3", () => {
         allowedOrigins: ["https://app.example"],
       }],
       maxInboundStreams: directBase.session.max_inbound_streams,
-      authorize: async () => ({ accepted: true, artifact: authorizedArtifact }),
+      authorize: async () => ({
+        accepted: true,
+        artifact: parseArtifactV3(encodeArtifactV3JSON(authorizedArtifact)),
+      }),
     });
     const port = acceptor.addresses()[0]!.port;
     const source = {

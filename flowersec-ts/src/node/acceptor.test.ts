@@ -7,6 +7,7 @@ import { describe, expect, test } from "vitest";
 import {
   createRPCRouter,
   freezeRPCHandlers,
+  freezeSessionHandlers,
   freezeSessionHandlersV3,
   RPCHandlers,
   SessionHandlers,
@@ -80,6 +81,10 @@ describe("SessionHandlers", () => {
       expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
     );
     expect(() => freezeSessionHandlersV3(new SessionHandlersV3())).not.toThrow();
+    expect(() => freezeSessionHandlers(new SessionHandlersV3() as never)).toThrowError(
+      expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
+    );
+    expect(() => freezeSessionHandlers(new SessionHandlers())).not.toThrow();
   });
 });
 

@@ -16,8 +16,14 @@ import { parseArtifact, type Artifact } from "../v2/opaqueArtifact.js";
 import { connect, createConnectionController } from "./connectSession.js";
 import { createAcceptor, SessionHandlersV3 } from "./acceptor.js";
 import { createEndpointSet, Issuer } from "./controlplane.js";
-import { decodeArtifactV3JSON, type ArtifactCandidateV3, type ArtifactV3 } from "../v3/artifact.js";
+import {
+  decodeArtifactV3JSON,
+  encodeArtifactV3JSON,
+  type ArtifactCandidateV3,
+  type ArtifactV3,
+} from "../v3/artifact.js";
 import { createArtifactLeaseV3Internal } from "../v3/artifactLease.js";
+import { parseArtifactV3 } from "../v3/publicApi.js";
 import { connectV3 } from "./connectSessionV3.js";
 import { createAcceptorV3 } from "./acceptorV3.js";
 import { createTunnelRuntimeV3 } from "./tunnelRuntimeV3.js";
@@ -399,7 +405,7 @@ describe("Node production raw QUIC runtime v3", () => {
       maxInboundStreams: V3_DIRECT_BASE.session.max_inbound_streams,
       authorize: async (received) => {
         expect(Buffer.from(received.raw.subarray(0, 4)).toString("ascii")).toBe("FSB3");
-        return { accepted: true, artifact };
+        return { accepted: true, artifact: parseArtifactV3(encodeArtifactV3JSON(artifact)) };
       },
       resolveHandlers: () => handlers,
     });

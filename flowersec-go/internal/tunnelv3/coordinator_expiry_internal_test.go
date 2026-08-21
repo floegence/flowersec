@@ -3,6 +3,7 @@ package tunnelv3
 import (
 	"context"
 	"errors"
+	"io"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -153,6 +154,64 @@ func TestReleaseLeaseDoesNotBlockCoordinatorCleanup(t *testing.T) {
 	close(unblock)
 }
 
+func TestControlActivationTimeoutReleasesActiveQuotaAndLeases(t *testing.T) {
+	coordinator, err := NewCoordinator(Config{
+		ActivationTimeout:        20 * time.Millisecond,
+		AdmissionResponseTimeout: 20 * time.Millisecond,
+		MaxActivePairs:           1,
+	}, func(context.Context, *artifactv3.DecodedRequest) (Authorization, error) {
+		return Authorization{}, errors.New("unused authorizer")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstSession := newActivationTestSession(true)
+	secondSession := newActivationTestSession(true)
+	first := newActivationTestLeg(1, "activation-first", firstSession)
+	second := newActivationTestLeg(2, "activation-second", secondSession)
+	generation, err := coordinator.register(context.Background(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coordinator.register(context.Background(), second); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-generation.done:
+	case <-time.After(time.Second):
+		t.Fatal("silent admitted pair did not leave active quota")
+	}
+	if !errors.Is(generation.err, ErrActivationTimeout) {
+		t.Fatalf("generation error = %v, want activation timeout", generation.err)
+	}
+	coordinator.mu.Lock()
+	activePairs := coordinator.activePairs
+	coordinator.mu.Unlock()
+	if activePairs != 0 {
+		t.Fatalf("active pairs = %d, want zero", activePairs)
+	}
+	for role, leg := range map[uint8]*admittedLeg{1: first, 2: second} {
+		if releases := leg.authorization.Lease.(*expiryTestLease).releases.Load(); releases != 1 {
+			t.Fatalf("role %d lease releases = %d, want one", role, releases)
+		}
+	}
+
+	retryFirst := newActivationTestLeg(1, "activation-retry-first", newActivationTestSession(false))
+	retrySecond := newActivationTestLeg(2, "activation-retry-second", newActivationTestSession(false))
+	retryGeneration, err := coordinator.register(context.Background(), retryFirst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coordinator.register(context.Background(), retrySecond); err != nil {
+		t.Fatalf("later pair was not admitted after activation cleanup: %v", err)
+	}
+	select {
+	case <-retryGeneration.done:
+	case <-time.After(time.Second):
+		t.Fatal("later pair did not finish")
+	}
+}
+
 func TestServeBoundsAuthorizerThatIgnoresCancellation(t *testing.T) {
 	started := make(chan struct{})
 	unblock := make(chan struct{})
@@ -192,6 +251,76 @@ type blockingLease struct {
 }
 
 type blockingAuthorizePendingLeg struct{}
+
+type activationTestPendingLeg struct {
+	session carrier.Session
+}
+
+type activationTestSession struct {
+	hang       bool
+	terminated chan struct{}
+	closed     atomic.Bool
+}
+
+func newActivationTestSession(hang bool) *activationTestSession {
+	return &activationTestSession{hang: hang, terminated: make(chan struct{})}
+}
+
+func newActivationTestLeg(role uint8, credential string, session carrier.Session) *admittedLeg {
+	leg := newExpiryTestLeg(role, time.Now().Add(time.Minute))
+	leg.pending = &activationTestPendingLeg{session: session}
+	leg.authorization.Claims.CredentialID = credential
+	return leg
+}
+
+func (leg *activationTestPendingLeg) CarrierKind() carrier.Kind { return carrier.KindRawQUIC }
+func (leg *activationTestPendingLeg) ReceiveAdmission(context.Context) (*artifactv3.DecodedRequest, error) {
+	return nil, errors.New("unused admission read")
+}
+func (leg *activationTestPendingLeg) SendAdmission(context.Context, artifactv3.AdmissionResponse, artifactv3.ReasonRegistry) error {
+	return nil
+}
+func (leg *activationTestPendingLeg) Activate(context.Context, uint8) (carrier.Session, error) {
+	return leg.session, nil
+}
+func (leg *activationTestPendingLeg) CloseWithError(context.Context, carrier.ApplicationError) error {
+	return leg.session.Close()
+}
+
+func (*activationTestSession) Kind() carrier.Kind         { return carrier.KindRawQUIC }
+func (*activationTestSession) Path() carrier.Path         { return carrier.PathTunnel }
+func (*activationTestSession) MaxIncomingStreams() uint16 { return 130 }
+func (session *activationTestSession) OpenStream(ctx context.Context) (carrier.Stream, error) {
+	return session.controlStream(ctx)
+}
+func (session *activationTestSession) AcceptStream(ctx context.Context) (carrier.Stream, error) {
+	return session.controlStream(ctx)
+}
+func (session *activationTestSession) controlStream(ctx context.Context) (carrier.Stream, error) {
+	if !session.hang {
+		return nil, io.ErrClosedPipe
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-session.terminated:
+		return nil, io.ErrClosedPipe
+	}
+}
+func (session *activationTestSession) Termination() <-chan struct{} { return session.terminated }
+func (session *activationTestSession) CloseWithErrorContext(context.Context, carrier.ApplicationError) error {
+	return session.Close()
+}
+func (session *activationTestSession) CloseWithError(carrier.ApplicationError) error {
+	return session.Close()
+}
+func (session *activationTestSession) Abort(carrier.ApplicationError) error { return session.Close() }
+func (session *activationTestSession) Close() error {
+	if session.closed.CompareAndSwap(false, true) {
+		close(session.terminated)
+	}
+	return nil
+}
 
 func (blockingAuthorizePendingLeg) CarrierKind() carrier.Kind { return carrier.KindRawQUIC }
 func (blockingAuthorizePendingLeg) ReceiveAdmission(context.Context) (*artifactv3.DecodedRequest, error) {

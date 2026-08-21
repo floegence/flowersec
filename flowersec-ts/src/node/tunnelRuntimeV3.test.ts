@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { CarrierSessionV3, CarrierStreamV3 } from "../v3/carrier.js";
 import type { ReceivedSessionAdmissionV3 } from "../v3/serverAdmission.js";
 import {
+  rejectTunnelPairAdmissionsV3,
   respondTunnelPairAdmissionsV3,
   spliceTunnelStreamsV3,
 } from "./tunnelRuntimeV3.js";
@@ -27,6 +28,29 @@ describe("Node TunnelRuntimeV3 lifecycle bounds", () => {
     await rejection;
     expect(first.stream.closeWrite).toHaveBeenCalledOnce();
     expect(second.stream.closeWrite).toHaveBeenCalledOnce();
+  });
+
+  test("bounds paired rejection when an admission FIN never settles", async () => {
+    vi.useFakeTimers();
+    const first = fakeAdmission(fakeStream());
+    const second = fakeAdmission(fakeStream({ closeWrite: () => new Promise(() => {}) }));
+
+    const rejecting = rejectTunnelPairAdmissionsV3(
+      [first, second],
+      "pair_timeout",
+      true,
+      new Set(["pair_timeout"]),
+      new AbortController().signal,
+      20,
+    );
+    const rejection = expect(rejecting).rejects.toThrow(
+      "Flowersec tunnel admission rejection timed out",
+    );
+
+    await vi.advanceTimersByTimeAsync(20);
+    await rejection;
+    expect(first.carrier.abort).toHaveBeenCalledOnce();
+    expect(second.carrier.abort).toHaveBeenCalledOnce();
   });
 
   test("aborts both control streams after the reverse half-close grace", async () => {
@@ -98,7 +122,7 @@ function fakeAdmission(stream: CarrierStreamV3): ReceivedSessionAdmissionV3 {
     acceptStream: async () => stream,
     waitTermination: async () => undefined,
     close: async () => undefined,
-    abort: () => undefined,
+    abort: vi.fn(() => undefined),
   } satisfies CarrierSessionV3;
   return {
     carrier,

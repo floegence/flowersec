@@ -83,6 +83,28 @@ describe("transport v3 public entry surface", () => {
     expect(node.v2.ProxyServer).toBeTypeOf("function");
   });
 
+  test("composes the Node v3 authorizer with only an opaque public artifact", () => {
+    const artifact = parseArtifactV3(fixture.positive[0]!.artifact_json);
+    const authorize: node.AcceptorOptions["authorize"] = async () => ({
+      accepted: true,
+      artifact,
+    });
+    const reject: node.AcceptorOptions["authorize"] = async () => ({
+      accepted: false,
+      retryable: false,
+      reason: "not_authorized",
+    });
+    expect(authorize).toBeTypeOf("function");
+    expect(reject).toBeTypeOf("function");
+
+    const declaration = readFileSync(
+      new URL("../../dist/node/acceptorV3.d.ts", import.meta.url),
+      "utf8",
+    );
+    expect(declaration).toContain("ArtifactHandleV3");
+    expect(declaration).not.toMatch(/\bArtifactV3\b/u);
+  });
+
   test("keeps v2 parsing only behind the explicit namespace", () => {
     const raw = v2Fixture.positive[0]!.artifact_json;
     expect(() => parseArtifactV3(raw)).toThrowError(expect.objectContaining({ code: "invalid_artifact" }));
