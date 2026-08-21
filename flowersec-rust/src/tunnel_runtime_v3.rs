@@ -545,6 +545,8 @@ impl TunnelRuntime {
 
         loop {
             let notified = self.state.close_done.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             if self.state.close_finished.load(Ordering::Acquire) {
                 return;
             }
