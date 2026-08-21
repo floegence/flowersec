@@ -487,46 +487,69 @@ impl TunnelRuntime {
     }
 
     pub async fn close(&self) {
-        let dispatch_barrier = self.state.dispatch_barrier.lock().await;
-        self.state.closed.cancel();
-        if let Some(listener) = self
-            .listener
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take()
-        {
-            listener.abort();
+        let close_gate = self.state.close_gate.lock().await;
+        if !self.state.close_started.load(Ordering::Acquire) {
+            let dispatch_barrier = self.state.dispatch_barrier.lock().await;
+            if !self.state.close_started.swap(true, Ordering::AcqRel) {
+                self.state.closed.cancel();
+                if let Some(listener) = self
+                    .listener
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take()
+                {
+                    listener.abort();
+                }
+                drop(dispatch_barrier);
+
+                let state = self.state.clone();
+                let authorizer = self.authorizer.clone();
+                let admission_timeout = self.admission_options.admission_timeout;
+                tokio::spawn(async move {
+                    let _completion = CloseCompletionGuard {
+                        state: state.clone(),
+                    };
+                    wait_for_zero(&state.active_accepts, &state.accepts_done).await;
+                    let pending = state
+                        .pending
+                        .lock()
+                        .await
+                        .drain()
+                        .map(|(_, entry)| entry.value)
+                        .collect::<Vec<_>>();
+                    let cleanup_deadline = Instant::now() + admission_timeout;
+                    let authorizer = authorizer.as_ref();
+                    join_all(pending.into_iter().map(|leg| async move {
+                        leg.carrier.abort();
+                        release_bounded(authorizer, &leg.lease_id, cleanup_deadline).await;
+                    }))
+                    .await;
+                    let active = state
+                        .active_carriers
+                        .lock()
+                        .await
+                        .values()
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    for pair in active {
+                        pair.client.abort();
+                        pair.server.abort();
+                    }
+                    wait_for_zero(&state.active_tasks, &state.tasks_done).await;
+                });
+            } else {
+                drop(dispatch_barrier);
+            }
         }
-        drop(dispatch_barrier);
-        wait_for_zero(&self.state.active_accepts, &self.state.accepts_done).await;
-        let pending = self
-            .state
-            .pending
-            .lock()
-            .await
-            .drain()
-            .map(|(_, entry)| entry.value)
-            .collect::<Vec<_>>();
-        let cleanup_deadline = Instant::now() + self.admission_options.admission_timeout;
-        let authorizer = self.authorizer.as_ref();
-        join_all(pending.into_iter().map(|leg| async move {
-            leg.carrier.abort();
-            release_bounded(authorizer, &leg.lease_id, cleanup_deadline).await;
-        }))
-        .await;
-        let active = self
-            .state
-            .active_carriers
-            .lock()
-            .await
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        for pair in active {
-            pair.client.abort();
-            pair.server.abort();
+        drop(close_gate);
+
+        loop {
+            let notified = self.state.close_done.notified();
+            if self.state.close_finished.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
         }
-        wait_for_zero(&self.state.active_tasks, &self.state.tasks_done).await;
     }
 }
 
@@ -556,6 +579,10 @@ fn validate_options(
 
 struct TunnelState {
     dispatch_barrier: Mutex<()>,
+    close_gate: Mutex<()>,
+    close_started: AtomicBool,
+    close_finished: AtomicBool,
+    close_done: Notify,
     pending: Mutex<HashMap<AuthorityKey, PendingEntry<Leg>>>,
     credentials: Mutex<HashMap<String, SystemTime>>,
     active_pairs: Mutex<usize>,
@@ -568,6 +595,17 @@ struct TunnelState {
     active_accepts: AtomicUsize,
     accepts_done: Notify,
     closed: CancellationToken,
+}
+
+struct CloseCompletionGuard {
+    state: Arc<TunnelState>,
+}
+
+impl Drop for CloseCompletionGuard {
+    fn drop(&mut self) {
+        self.state.close_finished.store(true, Ordering::Release);
+        self.state.close_done.notify_waiters();
+    }
 }
 
 #[derive(Clone)]
@@ -586,6 +624,10 @@ impl TunnelState {
     fn new(max_concurrent_admissions: usize) -> Self {
         Self {
             dispatch_barrier: Mutex::new(()),
+            close_gate: Mutex::new(()),
+            close_started: AtomicBool::new(false),
+            close_finished: AtomicBool::new(false),
+            close_done: Notify::new(),
             pending: Mutex::new(HashMap::new()),
             credentials: Mutex::new(HashMap::new()),
             active_pairs: Mutex::new(0),
@@ -2499,6 +2541,72 @@ mod tests {
         runtime.close().await;
         assert!(started.elapsed() < Duration::from_millis(300));
         drop(peer_carriers);
+    }
+
+    #[tokio::test]
+    async fn canceled_close_leaves_owned_cleanup_for_later_close() {
+        let state = Arc::new(TunnelState::new(1));
+        let runtime = Arc::new(TunnelRuntime {
+            listener: StdMutex::new(None),
+            authorizer: Arc::new(HangingReleaseAuthorizer),
+            options: TunnelRuntimeOptions {
+                bind_address: "127.0.0.1:0".parse().unwrap(),
+                certificate_chain_der: Vec::new(),
+                private_key_der: Vec::new(),
+                allowed_origins: Vec::new(),
+                admission_reasons: Vec::new(),
+                max_inbound_streams: 8,
+                pair_timeout: Duration::from_secs(1),
+                max_pending_legs: 1,
+                max_active_pairs: 1,
+            },
+            admission_options: TunnelAdmissionOptions {
+                admission_timeout: Duration::from_millis(10),
+                max_concurrent_admissions: 1,
+            },
+            state: state.clone(),
+        });
+        let (carrier, peer_carrier) = crate::session_v3::memory_carrier_pair_v3();
+        let leg = test_leg(
+            "lease-canceled-close",
+            1,
+            "endpoint-canceled-close",
+            "peer-canceled-close",
+            SystemTime::now() + Duration::from_secs(30),
+            false,
+            carrier,
+        );
+        state.pending.lock().await.insert(
+            AuthorityKey::from(leg.claims.as_ref()),
+            PendingEntry {
+                generation_id: 1,
+                value: leg,
+            },
+        );
+
+        let first = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move { runtime.close().await })
+        };
+        tokio::time::timeout(Duration::from_millis(100), async {
+            loop {
+                if state.close_started.load(Ordering::Acquire)
+                    && state.pending.lock().await.is_empty()
+                {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("close did not take ownership of pending cleanup");
+        first.abort();
+
+        tokio::time::timeout(Duration::from_millis(300), runtime.close())
+            .await
+            .expect("later close did not await owned cleanup");
+        assert!(state.close_finished.load(Ordering::Acquire));
+        drop(peer_carrier);
     }
 
     #[tokio::test]
