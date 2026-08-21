@@ -1094,6 +1094,53 @@ final class ConnectionControllerTests: XCTestCase {
     }
   }
 
+  func testRetryNowRechecksAbsoluteDeadlineAfterWallClockRollback() async throws {
+    let deadline: UInt64 = 1_000
+    let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
+    let source = ResultArtifactSourceV3([
+      .failure(ArtifactSourceFailure(disposition: .retryAfter(deadline))),
+      .success(try lease(artifact: artifactV3(), retired: AsyncCounterV3())),
+    ])
+    let session = ControllerSessionV3()
+    let connectAttempts = AsyncCounterV3()
+    let controller = try ConnectionController(
+      source: source,
+      clock: clock.controllerClock,
+      connectOneShot: { lease, _ in
+        _ = await connectAttempts.increment()
+        let claimed = try await lease.claim()
+        try await claimed.commitSpend()
+        return session
+      })
+
+    await controller.start()
+    let reachedWaiting = await waitForState(.waiting, controller: controller)
+    let initialTimerArmed = await clock.waitForSleepCount(1)
+    XCTAssertTrue(reachedWaiting)
+    XCTAssertTrue(initialTimerArmed)
+    clock.overrideNextWallRead(milliseconds: Int64(deadline))
+
+    let manualWake = await controller.retryNow()
+    let timerRearmed = await clock.waitForSleepCount(2)
+    XCTAssertTrue(manualWake)
+    XCTAssertTrue(timerRearmed)
+    let acquisitionsDuringRollback = await source.acquisitions
+    let attemptsDuringRollback = await connectAttempts.value
+    let rollbackSnapshot = await controller.snapshot()
+    XCTAssertEqual(acquisitionsDuringRollback, 1)
+    XCTAssertEqual(attemptsDuringRollback, 0)
+    XCTAssertEqual(rollbackSnapshot.state, .waiting)
+
+    clock.advance(wallMilliseconds: Int64(deadline), monotonicMilliseconds: 0)
+    let connected = await waitForState(.connected, controller: controller)
+    XCTAssertTrue(connected)
+    let finalAcquisitions = await source.acquisitions
+    let finalAttempts = await connectAttempts.value
+    XCTAssertEqual(finalAcquisitions, 2)
+    XCTAssertEqual(finalAttempts, 1)
+    await controller.close()
+  }
+
   func testEveryV3ControllerScenarioExecutesProductionPaths() async throws {
     let root = try controllerVectorsV3()
     let scenarios = try XCTUnwrap(root["scenarios"] as? [[String: Any]])
@@ -2097,6 +2144,7 @@ private final class VectorManualClockV3: @unchecked Sendable {
   private let lock = NSLock()
   private var wallMilliseconds: Int64
   private var monotonicMilliseconds: UInt64
+  private var wallReadOverrides: [Int64] = []
   private var sleeps: [UInt64] = []
   private var waiters: [UUID: CheckedContinuation<Void, Error>] = [:]
   private var canceled = Set<UUID>()
@@ -2110,7 +2158,9 @@ private final class VectorManualClockV3: @unchecked Sendable {
     ConnectionControllerClockV3(
       wallNow: { [self] in
         lock.withLock {
-          Date(timeIntervalSince1970: Double(wallMilliseconds) / 1_000)
+          let current =
+            wallReadOverrides.isEmpty ? wallMilliseconds : wallReadOverrides.removeFirst()
+          return Date(timeIntervalSince1970: Double(current) / 1_000)
         }
       },
       monotonicMilliseconds: { [self] in lock.withLock { monotonicMilliseconds } },
@@ -2133,6 +2183,10 @@ private final class VectorManualClockV3: @unchecked Sendable {
       return current
     }
     for continuation in continuations { continuation.resume() }
+  }
+
+  func overrideNextWallRead(milliseconds: Int64) {
+    lock.withLock { wallReadOverrides.append(milliseconds) }
   }
 
   func requestedSleeps() -> [UInt64] { lock.withLock { sleeps } }

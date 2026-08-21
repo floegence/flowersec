@@ -319,11 +319,11 @@ impl ConnectionController {
     }
 
     pub fn start(&self) {
-        let runtime = tokio::runtime::Handle::current();
         let mut task = lock(&self.task);
         if task.is_some() || self.inner.status().state == ConnectionState::Closed {
             return;
         }
+        let runtime = tokio::runtime::Handle::current();
         *task = Some(runtime.spawn(run_controller(self.inner.clone())));
     }
 
@@ -1537,6 +1537,54 @@ mod tests {
         assert!(valid_retry_after(0));
         assert!(valid_retry_after(253_402_300_799_999));
         assert!(!valid_retry_after(253_402_300_800_000));
+    }
+
+    #[test]
+    fn closed_start_is_idempotent_outside_a_runtime() {
+        let controller = ConnectionController::new_with_connector(
+            Arc::new(QueueSource::new([])),
+            test_options(Some(1)),
+            scripted_connector(std::iter::empty::<ConnectorStep>()),
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(controller.close());
+        drop(runtime);
+
+        assert_eq!(controller.status().state, ConnectionState::Closed);
+        controller.start();
+        assert_eq!(controller.status().state, ConnectionState::Closed);
+    }
+
+    #[test]
+    fn repeated_start_is_idempotent_outside_a_runtime() {
+        let source = Arc::new(LateLeaseSource {
+            lease: Mutex::new(None),
+            acquisitions: AtomicU64::new(0),
+        });
+        let controller = ConnectionController::new_with_connector(
+            source.clone(),
+            test_options(Some(1)),
+            scripted_connector(std::iter::empty::<ConnectorStep>()),
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            controller.start();
+            while source.acquisitions.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        });
+
+        controller.start();
+
+        runtime.block_on(controller.close());
+        assert_eq!(source.acquisitions.load(Ordering::SeqCst), 1);
+        assert_eq!(controller.status().state, ConnectionState::Closed);
     }
 
     #[tokio::test]

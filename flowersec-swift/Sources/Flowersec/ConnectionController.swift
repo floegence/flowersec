@@ -145,7 +145,7 @@ public actor ConnectionController {
       return false
     }
     retryTimer?.cancel()
-    await retryGate.wake()
+    await retryGate.wake(.manual)
     return active
   }
 
@@ -173,7 +173,7 @@ public actor ConnectionController {
     publish()
     finishObservers()
     let cleanup = Task {
-      if let activeGate { await activeGate.wake() }
+      if let activeGate { await activeGate.wake(.cancellation) }
       try? await activeSession?.close()
       await activeScheduler?.value
     }
@@ -647,42 +647,62 @@ public actor ConnectionController {
     backoffDeadline: UInt64, notBefore: RetryNotBeforeV3?
   ) async -> Bool {
     guard active else { return false }
-    let gate = ConnectionRetryGateV3()
-    retryGate = gate
     retryNotBefore = notBefore
     retryDisposition = notBefore.map { .retryAfter($0.wallDeadlineMilliseconds) } ?? .retryable
     state = .waiting
     let clock = self.clock
-    retryTimer = Task {
-      while !Task.isCancelled {
-        let monotonicNow = min(clock.monotonicMilliseconds(), Self.maxSafeInteger)
-        let monotonicRemaining =
-          backoffDeadline > monotonicNow
-          ? backoffDeadline - monotonicNow : 0
-        let wallRemaining: UInt64 =
-          notBefore.map {
-            let now = wallNowMilliseconds(clock.wallNow())
-            return $0.wallDeadlineMilliseconds > now ? $0.wallDeadlineMilliseconds - now : 0
-          } ?? 0
-        if monotonicRemaining == 0, wallRemaining == 0 {
-          await gate.wake()
-          return
+    publish()
+    var manualBackoffBypass = false
+    while active {
+      let gate = ConnectionRetryGateV3()
+      retryGate = gate
+      let skipsBackoff = manualBackoffBypass
+      retryTimer = Task {
+        while !Task.isCancelled {
+          let monotonicNow = min(clock.monotonicMilliseconds(), Self.maxSafeInteger)
+          let monotonicRemaining =
+            skipsBackoff || backoffDeadline <= monotonicNow
+            ? 0 : backoffDeadline - monotonicNow
+          let wallRemaining: UInt64 =
+            notBefore.map {
+              let now = wallNowMilliseconds(clock.wallNow())
+              return $0.wallDeadlineMilliseconds > now ? $0.wallDeadlineMilliseconds - now : 0
+            } ?? 0
+          if monotonicRemaining == 0, wallRemaining == 0 {
+            await gate.wake(.timer)
+            return
+          }
+          let nextDeadline =
+            monotonicRemaining == 0
+            ? wallRemaining
+            : wallRemaining == 0 ? monotonicRemaining : min(monotonicRemaining, wallRemaining)
+          let remaining = min(nextDeadline, 1_000)
+          do { try await clock.sleep(.milliseconds(Int64(remaining))) } catch { return }
         }
-        let nextDeadline =
-          monotonicRemaining == 0
-          ? wallRemaining
-          : wallRemaining == 0 ? monotonicRemaining : min(monotonicRemaining, wallRemaining)
-        let remaining = min(nextDeadline, 1_000)
-        do { try await clock.sleep(.milliseconds(Int64(remaining))) } catch { return }
+      }
+
+      let wake = await gate.wait()
+      retryTimer?.cancel()
+      retryTimer = nil
+      guard active else { break }
+      if wake == .manual { manualBackoffBypass = true }
+
+      let monotonicReady =
+        manualBackoffBypass
+        || min(clock.monotonicMilliseconds(), Self.maxSafeInteger) >= backoffDeadline
+      let wallReady =
+        notBefore.map {
+          wallNowMilliseconds(clock.wallNow()) >= $0.wallDeadlineMilliseconds
+        } ?? true
+      if monotonicReady, wallReady {
+        retryGate = nil
+        retryNotBefore = nil
+        return true
       }
     }
-    publish()
-    await gate.wait()
-    retryTimer?.cancel()
-    retryTimer = nil
     retryGate = nil
     retryNotBefore = nil
-    return active
+    return false
   }
 
   private func backoff(failure: UInt64) -> Duration {
@@ -837,21 +857,23 @@ private struct CandidateFailureProvenanceV3: Sendable {
 
 private struct RetryNotBeforeV3: Sendable { let wallDeadlineMilliseconds: UInt64 }
 
-private actor ConnectionRetryGateV3 {
-  private var finished = false
-  private var waiter: CheckedContinuation<Void, Never>?
+private enum ConnectionRetryWakeV3: Sendable { case timer, manual, cancellation }
 
-  func wait() async {
-    if finished { return }
-    await withCheckedContinuation { continuation in
-      if finished { continuation.resume() } else { waiter = continuation }
+private actor ConnectionRetryGateV3 {
+  private var result: ConnectionRetryWakeV3?
+  private var waiter: CheckedContinuation<ConnectionRetryWakeV3, Never>?
+
+  func wait() async -> ConnectionRetryWakeV3 {
+    if let result { return result }
+    return await withCheckedContinuation { continuation in
+      if let result { continuation.resume(returning: result) } else { waiter = continuation }
     }
   }
 
-  func wake() {
-    guard !finished else { return }
-    finished = true
-    waiter?.resume()
+  func wake(_ result: ConnectionRetryWakeV3) {
+    guard self.result == nil else { return }
+    self.result = result
+    waiter?.resume(returning: result)
     waiter = nil
   }
 }

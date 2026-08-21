@@ -62,6 +62,7 @@ type ControllerScenario = Readonly<{
 type ControllerFixture = Readonly<{
   version: number;
   scenarios: readonly ControllerScenario[];
+  browser_capability_scenarios: readonly ControllerScenario[];
 }>;
 
 type ControllerObservation = Readonly<{
@@ -135,6 +136,10 @@ const scenarioRunners: Readonly<Record<string, ScenarioRunner>> = Object.freeze(
   "artifact-source-repeats-retired-lease": runDuplicateLease,
 });
 
+const browserScenarioRunners: Readonly<Record<string, ScenarioRunner>> = Object.freeze({
+  "concurrent-capability-invalidation-replacement-barrier": runConcurrentCapabilityReplacementBarrier,
+});
+
 describe("transport v3 shared controller vectors", () => {
   test("declares an exhaustive production runner map", () => {
     expect(fixture.version).toBe(3);
@@ -145,6 +150,21 @@ describe("transport v3 shared controller vectors", () => {
     test(scenario.id, async () => {
       const runner = scenarioRunners[scenario.id];
       if (runner === undefined) throw new Error(`missing TypeScript controller runner for ${scenario.id}`);
+      await runner(scenario);
+    });
+  }
+});
+
+describe("transport v3 browser controller vectors", () => {
+  test("declares an exhaustive production runner map", () => {
+    expect(Object.keys(browserScenarioRunners).sort())
+      .toEqual(fixture.browser_capability_scenarios.map(({ id }) => id).sort());
+  });
+
+  for (const scenario of fixture.browser_capability_scenarios) {
+    test(scenario.id, async () => {
+      const runner = browserScenarioRunners[scenario.id];
+      if (runner === undefined) throw new Error(`missing TypeScript browser controller runner for ${scenario.id}`);
       await runner(scenario);
     });
   }
@@ -620,6 +640,204 @@ async function runCapabilityBarrier(scenario: ControllerScenario): Promise<void>
   expect(scenario.expected.capability_rechecked).toBe(true);
 }
 
+async function runConcurrentCapabilityReplacementBarrier(scenario: ControllerScenario): Promise<void> {
+  const refreshPrimary = browserWebTransportArtifact(baseArtifact, [{
+    id: "refresh-pin",
+    host: "refresh-primary.example",
+    tls: "pin",
+  }]);
+  const refreshReplacement = browserWebTransportArtifact(withChangedPin(refreshPrimary), [
+    { id: "refresh-pin", host: "refresh-primary.example", tls: "existing" },
+    { id: "replacement-ca", host: "replacement-ca.example", tls: "ca" },
+  ]);
+  const stalePrimary = browserWebTransportArtifact(baseArtifact, [
+    { id: "stale-blocked", host: "stale-blocked.example", tls: "pin" },
+    { id: "stale-invalidator", host: "stale-invalidator.example", tls: "pin" },
+  ]);
+
+  type ConstructorCall = Readonly<{ pin: boolean; registryState: "enabled" | "ca_only"; url: string }>;
+  const constructorCalls: ConstructorCall[] = [];
+  let constructedTransports = 0;
+  let registry!: BrowserRuntimeCapabilityRegistryV3;
+  class CoordinatedWebTransport {
+    readonly ready: Promise<void>;
+    constructor(url: string, options?: unknown) {
+      constructorCalls.push({ pin: options !== undefined, registryState: registry.pinEnabled() ? "enabled" : "ca_only", url });
+      if (url.includes("stale-invalidator.example")) {
+        throw new DOMException("unsupported", "NotSupportedError");
+      }
+      constructedTransports += 1;
+      if (url.includes("refresh-primary.example")) {
+        this.ready = Promise.reject(new Error("opaque browser pin failure"));
+        return;
+      }
+      if (url.includes("replacement-ca.example")) {
+        this.ready = Promise.reject(new Error("ordinary CA transport failure"));
+        return;
+      }
+      throw new Error("the old capability snapshot must fail at the live gate");
+    }
+    close(): void {}
+  }
+  registry = await BrowserRuntimeCapabilityRegistryV3.create({
+    WebSocket: class {},
+    WebTransport: CoordinatedWebTransport,
+    navigator: {
+      userAgentData: {
+        async getHighEntropyValues() {
+          return { fullVersionList: [{ brand: "Chromium", version: "151.0.7922.34" }] };
+        },
+      },
+    },
+  });
+  expect(registry.pinEnabled()).toBe(true);
+
+  let releaseFirstAcquisitions!: () => void;
+  const firstAcquisitionsReleased = new Promise<void>((resolve) => { releaseFirstAcquisitions = resolve; });
+  let activeAcquisitions = 0;
+  let concurrentAcquisitionPeak = 0;
+  let acquisitions = 0;
+  const acquireFirst = async (lease: ArtifactLeaseV3): Promise<ArtifactSourceResultV3> => {
+    acquisitions += 1;
+    activeAcquisitions += 1;
+    concurrentAcquisitionPeak = Math.max(concurrentAcquisitionPeak, activeAcquisitions);
+    try {
+      await firstAcquisitionsReleased;
+      return { kind: "lease", lease };
+    } finally {
+      activeAcquisitions -= 1;
+    }
+  };
+
+  let releasePrimaryRetirement!: () => void;
+  const primaryRetirementReleased = new Promise<void>((resolve) => { releasePrimaryRetirement = resolve; });
+  let signalPrimaryRetirement!: () => void;
+  const primaryRetirementStarted = new Promise<void>((resolve) => { signalPrimaryRetirement = resolve; });
+  const spends = [vi.fn(async () => undefined), vi.fn(async () => undefined), vi.fn(async () => undefined)];
+  const retires = [
+    vi.fn(async () => {
+      signalPrimaryRetirement();
+      await primaryRetirementReleased;
+    }),
+    vi.fn(async () => undefined),
+    vi.fn(async () => undefined),
+  ];
+  const leases = [
+    createArtifactLeaseV3Internal(refreshPrimary, spends[0]!, retires[0]),
+    createArtifactLeaseV3Internal(refreshReplacement, spends[1]!, retires[1]),
+    createArtifactLeaseV3Internal(stalePrimary, spends[2]!, retires[2]),
+  ];
+
+  const capabilitySnapshots: Array<"enabled" | "ca_only"> = [];
+  const snapshot = () => {
+    capabilitySnapshots.push(registry.pinEnabled() ? "enabled" : "ca_only");
+    return registry.snapshot();
+  };
+  let connectorAttempts = 0;
+  let dialCalls = 0;
+  const replacementDialCandidateIDs: string[] = [];
+  let oldSnapshotLiveGateFailures = 0;
+  const runtime = (stale: boolean): SessionConnectorRuntimeV3 => ({
+    capabilitySnapshot: () => registry.snapshot(),
+    protocolRuntime: nodeSessionRuntimeV3,
+    dial: async (candidate, artifact, attemptNow, capability, signal) => {
+      dialCalls += 1;
+      if (candidate.id.startsWith("replacement-")) replacementDialCandidateIDs.push(candidate.id);
+      if (stale && candidate.id === "stale-invalidator") await primaryRetirementStarted;
+      if (stale && candidate.id === "stale-blocked") await waitFor(() => !registry.pinEnabled());
+      const callsBefore = constructorCalls.length;
+      try {
+        const carrier = await createBrowserWebTransportCarrierV3(
+          candidate,
+          attemptNow,
+          capability,
+          registry,
+          artifact.session.max_inbound_streams + 2,
+          signal,
+        );
+        return readyNativeAdmissionV3(candidate, carrier);
+      } catch (error) {
+        if (candidate.id === "stale-blocked" && constructorCalls.length === callsBefore &&
+            error instanceof TransportFailureV3 && error.code === "tls_unsupported") {
+          oldSnapshotLiveGateFailures += 1;
+        }
+        throw error;
+      }
+    },
+  });
+
+  let refreshAcquisition = 0;
+  let replacementAcquisitions = 0;
+  const refreshController = createConnectionControllerV3({
+    acquire: async () => {
+      const index = refreshAcquisition++;
+      if (index === 0) return await acquireFirst(leases[0]!);
+      if (index !== 1) throw new Error("refresh source exhausted");
+      acquisitions += 1;
+      replacementAcquisitions += 1;
+      return { kind: "lease", lease: leases[1]! };
+    },
+  }, async (context) => {
+    connectorAttempts += 1;
+    return await attemptClaimedArtifactLeaseV3(context, runtime(false));
+  }, {
+    ...controllerOptions(2),
+    capabilitySnapshot: snapshot,
+  });
+  const staleController = createConnectionControllerV3({
+    acquire: async () => await acquireFirst(leases[2]!),
+  }, async (context) => {
+    connectorAttempts += 1;
+    return await attemptClaimedArtifactLeaseV3(context, runtime(true));
+  }, {
+    ...controllerOptions(1),
+    capabilitySnapshot: snapshot,
+  });
+
+  refreshController.start();
+  staleController.start();
+  try {
+    await waitFor(() => concurrentAcquisitionPeak === 2);
+    releaseFirstAcquisitions();
+    await primaryRetirementStarted;
+    await waitFor(() => !registry.pinEnabled());
+    await waitForControllerState(staleController, "failed");
+    releasePrimaryRetirement();
+    await waitForControllerState(refreshController, "failed");
+
+    const observed = {
+      final_state: refreshController.state,
+      public_error: refreshController.failure?.code ?? null,
+      disposition: controllerDisposition(refreshController),
+      acquisitions,
+      connect_attempts: dialCalls,
+      transports_created: constructedTransports,
+      replacement_acquisitions: replacementAcquisitions,
+      replacement_quota_used: replacementAcquisitions,
+      spend_callbacks: spends.reduce((sum, callback) => sum + callback.mock.calls.length, 0),
+      retire_callbacks: retires.reduce((sum, callback) => sum + callback.mock.calls.length, 0),
+      lease_terminal_states: leases.map((lease) => artifactLeaseStateV3(lease)),
+      retry_delays_ms: [],
+      concurrent_acquisition_peak: concurrentAcquisitionPeak,
+      controller_connector_attempts: connectorAttempts,
+      capability_snapshots: capabilitySnapshots,
+      pin_constructor_calls: constructorCalls.filter(({ pin }) => pin).length,
+      ca_constructor_calls: constructorCalls.filter(({ pin }) => !pin).length,
+      old_snapshot_live_gate_failures: oldSnapshotLiveGateFailures,
+      post_invalidation_pin_constructor_calls: constructorCalls.filter(({ pin, registryState }) =>
+        pin && registryState === "ca_only").length,
+      replacement_dial_candidate_ids: replacementDialCandidateIDs,
+      peer_final_state: staleController.state,
+      peer_public_error: staleController.failure?.code ?? null,
+    };
+    expect(observed, scenario.id).toEqual(scenario.expected);
+  } finally {
+    releaseFirstAcquisitions();
+    releasePrimaryRetirement();
+    await Promise.all([refreshController.close(), staleController.close()]);
+  }
+}
+
 async function runAdmissionBoundary(scenario: ControllerScenario): Promise<void> {
   const replacement = scenario.input.phase === "replacement";
   const tracker = new VectorTracker(
@@ -904,6 +1122,30 @@ function withCandidateCA(input: ArtifactV3): ArtifactV3 {
   return output;
 }
 
+function browserWebTransportArtifact(
+  input: ArtifactV3,
+  candidates: readonly Readonly<{
+    id: string;
+    host: string;
+    tls: "ca" | "pin" | "existing";
+  }>[],
+): ArtifactV3 {
+  const output = structuredClone(input) as ArtifactV3;
+  const template = output.path.candidates.find(({ carrier }) => carrier === "webtransport");
+  if (template === undefined) throw new Error("WebTransport candidate required");
+  output.path.candidates = candidates.map(({ id, host, tls }) => {
+    const existing = output.path.candidates.find((candidate) => candidate.id === id);
+    return {
+      id,
+      carrier: "webtransport" as const,
+      url: `https://${host}:443/flowersec/webtransport/v3/direct`,
+      wire_profile: template.wire_profile,
+      tls: tls === "existing" ? (existing ?? template).tls : tls === "ca" ? { mode: "ca" } : template.tls,
+    };
+  });
+  return output;
+}
+
 function pinMismatch(context: LeaseAttemptContextV3) {
   const candidate = context.candidates.find(({ id }) => id === "t-pin") ??
     context.candidates.find(({ tls }) => tls.mode === "pin") ?? context.candidates[0]!;
@@ -943,6 +1185,15 @@ function numberInput(scenario: ControllerScenario, key: string): number {
   const value = scenario.input[key];
   if (typeof value !== "number") throw new Error(`${scenario.id}.${key} is not a number`);
   return value;
+}
+
+function controllerDisposition(controller: ReturnType<typeof createConnectionControllerV3>): string | null {
+  let disposition: string | null = null;
+  const unsubscribe = controller.subscribe((snapshot) => {
+    disposition = snapshot.retryDisposition?.kind ?? null;
+  });
+  unsubscribe();
+  return disposition;
 }
 
 async function waitForControllerState(

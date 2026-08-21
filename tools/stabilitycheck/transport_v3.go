@@ -648,6 +648,11 @@ func validateTransportV3ConsumerEvidence(fixtureID, language, body string) error
 		required = []string{"go_issuer_admission_vectors.json", "acceptor_admissions_hash_hex", "encode_fsb3"}
 	case "issuer_admission/swift":
 		required = []string{"go_issuer_admission_vectors.json", "acceptor_admissions_hash_hex", "encodeFSB3"}
+	case "controller/typescript":
+		required = []string{
+			"controller_vectors.json", "scenarios", "browser_capability_scenarios",
+			"concurrent-capability-invalidation-replacement-barrier",
+		}
 	case "version_isolation/go":
 		required = []string{"version_isolation_vectors.json", "v2_magic_hex", "v2_version_hex", "profile_mutations", "path_mutations", "alpn_mutations", "crypto_label_mutations", "assertRejects"}
 	case "version_isolation/typescript":

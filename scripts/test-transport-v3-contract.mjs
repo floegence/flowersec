@@ -116,6 +116,8 @@ assert.deepEqual(registry.capability.dynamic_conversions, [
   { runtime: "typescript/node", trigger: "native_addon_unavailable", carrier: "raw_quic", from: ["Q4N", ["ca", "pin"]], to: ["unsupported", "node_native_transport_unavailable"] },
   { runtime: "typescript/browser", trigger: "pin_provider_not_registered", carrier: "webtransport", from: ["H3", ["ca", "pin"]], to: ["H3", ["ca"]] },
 ]);
+assert.equal(registry.capability.browser_pin_provider.snapshot_semantics, "immutable_with_live_pin_gate");
+assert.equal(registry.capability.browser_pin_provider.replacement_refreshes_snapshot, true);
 assert.equal(registry.controller.maximum_policy_sensitive_replacement_leases_per_cycle, 1);
 assert.deepEqual(registry.url_normalization.forbidden_characters, ["\\", "?", "#", "%"]);
 assert.deepEqual(registry.lease.terminal_states, ["consumed", "retired"]);
@@ -497,6 +499,26 @@ assert.deepEqual(replacementBeforeRace.expected.lease_terminal_states, ["retired
 const replacementSearch = controller.scenarios.find((item) => item.id === "replacement-acquisition-retryable-continues-search");
 assert.equal(replacementSearch.input.replacement_acquisition_failure, "retryable");
 assert.deepEqual(replacementSearch.expected.retry_delays_ms, [500]);
+assert(Array.isArray(controller.browser_capability_scenarios));
+assert(controller.browser_capability_scenarios.length > 0);
+const sharedControllerIDs = new Set(controller.scenarios.map((item) => item.id));
+const browserCapabilityIDs = new Set();
+for (const scenario of controller.browser_capability_scenarios) {
+  assert.equal(typeof scenario.id, "string");
+  assert(!sharedControllerIDs.has(scenario.id), `browser capability scenario duplicates shared ID ${scenario.id}`);
+  assert(!browserCapabilityIDs.has(scenario.id), `duplicate browser capability scenario ${scenario.id}`);
+  browserCapabilityIDs.add(scenario.id);
+}
+const capabilityBarrier = controller.browser_capability_scenarios.find(
+  (item) => item.id === "concurrent-capability-invalidation-replacement-barrier",
+);
+assert(capabilityBarrier, "missing concurrent browser capability invalidation barrier");
+assert.equal(capabilityBarrier.driver, "capability-linearization-barrier");
+assert.deepEqual(capabilityBarrier.expected.capability_snapshots, ["enabled", "enabled", "ca_only"]);
+assert.equal(capabilityBarrier.expected.old_snapshot_live_gate_failures, 1);
+assert.equal(capabilityBarrier.expected.post_invalidation_pin_constructor_calls, 0);
+assert.equal(capabilityBarrier.expected.replacement_quota_used, 1);
+assert.deepEqual(capabilityBarrier.expected.lease_terminal_states, ["retired", "retired", "retired"]);
 
 const idna = json("testdata/transport_v3/idna_vectors.json");
 assert.equal(idna.unicode_version, "15.1.0");

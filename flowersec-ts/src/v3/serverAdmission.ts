@@ -99,17 +99,30 @@ export async function acceptReceivedSessionV3(
     signal?: AbortSignal;
   }>,
 ): Promise<SessionV3> {
+  return await acceptCarrierBoundSessionV3(received, artifact, options);
+}
+
+async function acceptCarrierBoundSessionV3(
+  received: ReceivedSessionAdmissionV3,
+  artifact: ArtifactV3,
+  options: Readonly<{
+    runtime: SessionProtocolRuntimeV3;
+    admissionReasons: ReadonlySet<string>;
+    resolveRPCRouter?(
+      request: DecodedFSB3RequestV3,
+      signal?: AbortSignal,
+    ): Promise<RpcRouter> | RpcRouter;
+    nowUnixSeconds?: () => number;
+    signal?: AbortSignal;
+  }>,
+): Promise<SessionV3> {
   try {
+    assertAdmissionCarrierBindingV3(received);
     validateArtifactV3(artifact);
     const expected = encodeFSB3RequestV3(
       buildFSB3RequestV3(artifact, received.decoded.request.chosen_candidate_id),
     );
     if (!equalBytes(expected, received.rawFSB3)) throw new Error("authorized artifact does not match admission");
-    const chosen = received.decoded.request.candidates.find(({ id }) =>
-      id === received.decoded.request.chosen_candidate_id);
-    if (chosen?.carrier !== received.carrier.kind || received.decoded.request.pathKind !== received.carrier.path) {
-      throw new Error("admission carrier binding mismatch");
-    }
     if ((options.nowUnixSeconds?.() ?? Math.floor(Date.now() / 1_000)) >= artifact.session.init_expire_at_unix_s) {
       return await rejectSessionAdmissionV3(received, {
         accepted: false,
@@ -180,6 +193,7 @@ export async function acceptCarrierSessionV3(
 ): Promise<SessionV3> {
   const received = await receiveSessionAdmissionV3(carrier, options.signal);
   try {
+    assertAdmissionCarrierBindingV3(received);
     const decision = await raceAbort(
       Promise.resolve().then(async () => await authorize(received.decoded, options.signal)),
       options.signal,
@@ -192,11 +206,19 @@ export async function acceptCarrierSessionV3(
         options.signal,
       );
     }
-    return await acceptReceivedSessionV3(received, decision.artifact, options);
+    return await acceptCarrierBoundSessionV3(received, decision.artifact, options);
   } catch (error) {
     received.stream.abort(asError(error));
     carrier.abort({ code: 6, reason: "admission failed" });
     throw error;
+  }
+}
+
+function assertAdmissionCarrierBindingV3(received: ReceivedSessionAdmissionV3): void {
+  const chosen = received.decoded.request.candidates.find(({ id }) =>
+    id === received.decoded.request.chosen_candidate_id);
+  if (chosen?.carrier !== received.carrier.kind || received.decoded.request.pathKind !== received.carrier.path) {
+    throw new Error("admission carrier binding mismatch");
   }
 }
 

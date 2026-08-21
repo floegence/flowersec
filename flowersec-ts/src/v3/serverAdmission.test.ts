@@ -13,6 +13,7 @@ import {
 } from "./artifact.js";
 import type { CarrierSessionV3, CarrierStreamV3 } from "./carrier.js";
 import {
+  acceptCarrierSessionV3,
   createAdmissionReasonRegistryV3,
   acceptReceivedSessionV3,
   rejectSessionAdmissionV3,
@@ -77,6 +78,71 @@ describe("transport v3 server admission", () => {
       nowUnixSeconds: () => directArtifact.session.init_expire_at_unix_s,
     })).rejects.toMatchObject({ reason: "expired_artifact" });
     expect(resolveRPCRouter).not.toHaveBeenCalled();
+  });
+
+  test("aborts direct received-session resources on carrier binding mismatch", async () => {
+    const received = validReceived(directArtifact);
+    const mismatched = {
+      ...received,
+      carrier: { ...received.carrier, kind: "raw_quic" as const },
+    } satisfies ReceivedSessionAdmissionV3;
+
+    await expect(acceptReceivedSessionV3(mismatched, directArtifact, {
+      runtime: {} as SessionProtocolRuntimeV3,
+      admissionReasons: new Set(["expired_artifact"]),
+    })).rejects.toThrow("admission carrier binding mismatch");
+
+    expect(received.stream.abort).toHaveBeenCalledOnce();
+    expect(received.carrier.abort).toHaveBeenCalledOnce();
+  });
+
+  test("rejects carrier binding before application authorization or stateful lease spend", async () => {
+    if (directArtifact.path.kind !== "direct") throw new Error("direct artifact required");
+    const chosen = directArtifact.path.candidates.find(({ carrier }) => carrier === "webtransport");
+    if (chosen === undefined) throw new Error("WebTransport candidate required");
+    const rawFSB3 = encodeFSB3RequestV3(buildFSB3RequestV3(directArtifact, chosen.id));
+    const write = vi.fn<CarrierStreamV3["write"]>(async (value) => value.length);
+    const streamAbort = vi.fn<CarrierStreamV3["abort"]>();
+    let nextRead: Uint8Array | null = rawFSB3;
+    const stream = {
+      read: async () => {
+        const value = nextRead;
+        nextRead = null;
+        return value;
+      },
+      write,
+      closeWrite: vi.fn(async () => undefined),
+      stopSending: async () => undefined,
+      reset: async () => undefined,
+      abort: streamAbort,
+    } satisfies CarrierStreamV3;
+    const carrierAbort = vi.fn<CarrierSessionV3["abort"]>();
+    const carrier = {
+      kind: "websocket",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+      openStream: async () => stream,
+      acceptStream: async () => stream,
+      waitTermination: async () => undefined,
+      close: async () => undefined,
+      abort: carrierAbort,
+    } satisfies CarrierSessionV3;
+    let spends = 0;
+    const authorize = vi.fn(async () => {
+      spends += 1;
+      return { accepted: true as const, artifact: directArtifact };
+    });
+
+    await expect(acceptCarrierSessionV3(carrier, authorize, {
+      runtime: {} as SessionProtocolRuntimeV3,
+      admissionReasons: new Set(["expired_artifact"]),
+    })).rejects.toThrow("admission carrier binding mismatch");
+
+    expect(authorize).not.toHaveBeenCalled();
+    expect(spends).toBe(0);
+    expect(write).not.toHaveBeenCalled();
+    expect(streamAbort).toHaveBeenCalledOnce();
+    expect(carrierAbort).toHaveBeenCalled();
   });
 
   test("cancels a handler resolver that ignores its admission signal", async () => {
