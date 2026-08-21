@@ -66,6 +66,20 @@ func TestWebSocketHTTPServerRejectsUnsafeConstructionAndFixesTLSProfile(t *testi
 	if _, err := flowersec.NewWebSocketHTTPServer(flowersec.WebSocketHTTPServerOptions{Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), TLSConfig: serverTLS}); err == nil {
 		t.Fatal("non-Flowersec handler unexpectedly accepted")
 	}
+	for name, mutate := range map[string]func(*flowersec.WebSocketHTTPServerOptions){
+		"read header": func(options *flowersec.WebSocketHTTPServerOptions) { options.ReadHeaderTimeout = -time.Second },
+		"read":        func(options *flowersec.WebSocketHTTPServerOptions) { options.ReadTimeout = -time.Second },
+		"write":       func(options *flowersec.WebSocketHTTPServerOptions) { options.WriteTimeout = -time.Second },
+		"idle":        func(options *flowersec.WebSocketHTTPServerOptions) { options.IdleTimeout = -time.Second },
+	} {
+		t.Run("negative "+name+" timeout", func(t *testing.T) {
+			options := flowersec.WebSocketHTTPServerOptions{Handler: acceptor.Handler(), TLSConfig: serverTLS}
+			mutate(&options)
+			if server, err := flowersec.NewWebSocketHTTPServer(options); err == nil || server != nil {
+				t.Fatal("negative WebSocket server timeout unexpectedly accepted")
+			}
+		})
+	}
 	response := httptest.NewRecorder()
 	acceptor.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, flowersec.WebSocketDirectPath, nil))
 	if response.Code != http.StatusForbidden {

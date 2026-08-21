@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -68,6 +69,11 @@ func TestBrowserTunnelTopologiesUseProductionWebTransportBrokerPath(t *testing.T
 			if !bytes.Equal(response, payload) {
 				t.Fatalf("RPC response = %s", response)
 			}
+			if topology == BrowserTunnelWTQUIC {
+				if err := roundTripTunnelDatagrams(ctx, browserSession, serverSession); err != nil {
+					t.Fatal(err)
+				}
+			}
 
 			serverDone := make(chan error, 1)
 			go func() { serverDone <- transporttest.ServeBrowserBulkV3(ctx, serverSession, []int64{4096}) }()
@@ -79,6 +85,48 @@ func TestBrowserTunnelTopologiesUseProductionWebTransportBrokerPath(t *testing.T
 			}
 		})
 	}
+}
+
+func roundTripTunnelDatagrams(ctx context.Context, client, server flowersession.Session) error {
+	clientChannel, err := client.UnreliableMessages()
+	if err != nil {
+		return err
+	}
+	serverChannel, err := server.UnreliableMessages()
+	if err != nil {
+		return err
+	}
+	request := []byte("webtransport-tunnel-datagram-request")
+	response := []byte("webtransport-tunnel-datagram-response")
+	status, err := clientChannel.Send(ctx, request, flowersession.UnreliableSendOptions{ExpiresAt: time.Now().Add(5 * time.Second)})
+	if err != nil {
+		return fmt.Errorf("client datagram send: %w", err)
+	}
+	if status != flowersession.UnreliableAccepted {
+		return fmt.Errorf("client datagram send status = %q", status)
+	}
+	received, err := serverChannel.Receive(ctx)
+	if err != nil {
+		return fmt.Errorf("server datagram receive: %w", err)
+	}
+	if !bytes.Equal(received, request) {
+		return fmt.Errorf("server datagram receive = %q", received)
+	}
+	status, err = serverChannel.Send(ctx, response, flowersession.UnreliableSendOptions{ExpiresAt: time.Now().Add(5 * time.Second)})
+	if err != nil {
+		return fmt.Errorf("server datagram send: %w", err)
+	}
+	if status != flowersession.UnreliableAccepted {
+		return fmt.Errorf("server datagram send status = %q", status)
+	}
+	received, err = clientChannel.Receive(ctx)
+	if err != nil {
+		return fmt.Errorf("client datagram receive: %w", err)
+	}
+	if !bytes.Equal(received, response) {
+		return fmt.Errorf("client datagram receive = %q", received)
+	}
+	return nil
 }
 
 func connectBrowserWebTransport(t *testing.T, ctx context.Context, endpoint *BrowserEndpoint, artifact artifactv3.Artifact) flowersession.Session {

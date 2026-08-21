@@ -10,7 +10,7 @@
       {"clause": "3.1", "title": "Version, profile, path, and routing identifiers", "source": ["flowersec-go/internal/artifactv3", "flowersec-ts/src/v3/artifact.ts", "flowersec-rust/src/artifact_v3.rs", "flowersec-swift/Sources/Flowersec/TransportV3.swift"], "tests": ["flowersec-go/internal/artifactv3/vectors_test.go", "flowersec-ts/src/v3/artifact.test.ts", "flowersec-rust/src/artifact_v3.rs", "flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift"], "docs": ["docs/TRANSPORT_V3_ARCHITECTURE.md", "docs/TRANSPORT_V3_WIRE.md"], "registry_vector": ["profiles", "routes", "wire_fixtures[id=version_isolation]"]},
       {"clause": "3.2", "title": "Frame family replacement", "source": ["flowersec-go/internal/protocolv3", "flowersec-ts/src/v3/protocol.ts", "flowersec-rust/src/protocol_v3.rs", "flowersec-swift/Sources/Flowersec/TransportV3.swift"], "tests": ["flowersec-go/internal/protocolv3/version_isolation_vectors_test.go", "flowersec-ts/src/v3/versionIsolation.test.ts", "flowersec-rust/src/protocol_v3.rs", "flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift"], "docs": ["docs/TRANSPORT_V3_WIRE.md"], "registry_vector": ["frame_family", "wire_fixtures[id=version_isolation]"]},
       {"clause": "3.3", "title": "Cryptographic and hash domain replacement", "source": ["flowersec-go/internal/protocolv3", "flowersec-ts/src/v3/protocol.ts", "flowersec-rust/src/protocol_v3.rs", "flowersec-swift/Sources/Flowersec/TransportV3Crypto.swift"], "tests": ["flowersec-go/internal/protocolv3/crypto_vectors_test.go", "flowersec-ts/src/v3/protocol.test.ts", "flowersec-rust/src/transport_v3_crypto_integration_tests.rs", "flowersec-swift/Tests/FlowersecTests/TransportV3CryptoTests.swift"], "docs": ["docs/TRANSPORT_V3_WIRE.md"], "registry_vector": ["domain_labels", "wire_fixtures[id=crypto]"]},
-      {"clause": "3.4", "title": "Version isolation", "source": ["flowersec-go/internal/protocolv3", "flowersec-ts/src/v3", "flowersec-rust/src/protocol_v3.rs", "flowersec-swift/Sources/Flowersec/TransportV3.swift"], "tests": ["flowersec-go/internal/protocolv3/version_isolation_vectors_test.go", "flowersec-ts/src/v3/versionIsolation.test.ts", "flowersec-rust/src/protocol_v3.rs", "flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift"], "docs": ["docs/TRANSPORT_V3_ARCHITECTURE.md", "docs/TRANSPORT_V3_WIRE.md"], "registry_vector": ["version_isolation", "wire_fixtures[id=version_isolation]"]},
+      {"clause": "3.4", "title": "Version isolation", "source": ["flowersec-go/internal/protocolv3", "flowersec-go/internal/sessionv3/unreliable.go", "flowersec-ts/src/v3", "flowersec-rust/src/protocol_v3.rs", "flowersec-rust/src/session_v3.rs", "flowersec-swift/Sources/Flowersec/TransportV3.swift", "flowersec-swift/Sources/Flowersec/TransportV3Handshake.swift"], "tests": ["flowersec-go/internal/protocolv3/version_isolation_vectors_test.go", "flowersec-go/internal/sessionv3/unreliable_version_test.go", "flowersec-ts/src/v3/versionIsolation.test.ts", "flowersec-rust/src/session_v3.rs", "flowersec-rust/src/session_v3_integration_tests.rs", "flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift"], "docs": ["docs/TRANSPORT_V3_ARCHITECTURE.md", "docs/TRANSPORT_V3_WIRE.md"], "registry_vector": ["version_isolation", "wire_fixtures[id=version_isolation]"]},
       {"clause": "4", "title": "Strict JSON and general limits", "source": ["flowersec-go/internal/artifactv3", "flowersec-ts/src/v3/artifact.ts", "flowersec-rust/src/artifact_v3.rs", "flowersec-swift/Sources/Flowersec/TransportV3.swift"], "tests": ["flowersec-go/internal/artifactv3/json_test.go", "flowersec-ts/src/v3/artifact.test.ts", "flowersec-rust/src/artifact_v3.rs", "flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift"], "docs": ["docs/TRANSPORT_V3_WIRE.md"], "registry_vector": ["limits", "array_rules", "wire_fixtures[id=artifact_admission]"]},
       {"clause": "5", "title": "Artifact v3 schema", "source": ["flowersec-go/internal/artifactv3", "flowersec-ts/src/v3/artifact.ts", "flowersec-rust/src/artifact_v3.rs", "flowersec-swift/Sources/Flowersec/TransportV3.swift"], "tests": ["flowersec-go/internal/artifactv3/vectors_test.go", "flowersec-ts/src/v3/artifact.test.ts", "flowersec-rust/src/artifact_v3.rs", "flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift"], "docs": ["docs/TRANSPORT_V3_ARCHITECTURE.md", "docs/TRANSPORT_V3_WIRE.md"], "registry_vector": ["artifact_schema", "wire_fixtures[id=artifact_admission]"]},
       {"clause": "6", "title": "TLS policy", "source": ["flowersec-go/internal/transportsecurity", "flowersec-ts/src/v3/artifact.ts", "flowersec-rust/src/tls_v3.rs", "flowersec-swift/Sources/Flowersec/TransportV3.swift"], "tests": ["flowersec-go/internal/transportsecurity/policy_test.go", "flowersec-ts/src/v3/artifact.test.ts", "flowersec-rust/src/transport_v3_crypto_integration_tests.rs", "flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift"], "docs": ["docs/TRANSPORT_V3_ARCHITECTURE.md", "docs/TRANSPORT_V3_WIRE.md"], "registry_vector": ["tls_policy", "wire_fixtures[id=artifact_admission]"]},
@@ -35,22 +35,38 @@
     "architecture": "docs/TRANSPORT_V3_ARCHITECTURE.md",
     "wire": "docs/TRANSPORT_V3_WIRE.md"
   },
-  "fixture_generation": {
-    "producer": "testdata/transport_v3/generate_contract_vectors.mjs",
-    "check_command": ["node", "testdata/transport_v3/generate_contract_vectors.mjs", "--check"],
-    "outputs": [
-      "testdata/transport_v3/artifact_vectors.json",
-      "testdata/transport_v3/capability_vectors.json",
-      "testdata/transport_v3/controller_vectors.json",
-      "testdata/transport_v3/idna_vectors.json",
-      "testdata/transport_v3/open_unicode_vectors.json",
-      "testdata/transport_v3/rpc_error_vectors.json",
-      "testdata/transport_v3/rpc_malformed_envelopes.json",
-      "testdata/transport_v3/rpc_notification_vectors.json",
-      "testdata/transport_v3/session_handler_vectors.json",
-      "testdata/transport_v3/version_isolation_vectors.json"
-    ]
-  },
+  "fixture_generation": [
+    {
+      "producer": "testdata/transport_v3/generate_contract_vectors.mjs",
+      "check_command": ["node", "testdata/transport_v3/generate_contract_vectors.mjs", "--check"],
+      "outputs": [
+        "testdata/transport_v3/artifact_vectors.json",
+        "testdata/transport_v3/capability_vectors.json",
+        "testdata/transport_v3/controller_vectors.json",
+        "testdata/transport_v3/idna_vectors.json",
+        "testdata/transport_v3/open_unicode_vectors.json",
+        "testdata/transport_v3/rpc_error_vectors.json",
+        "testdata/transport_v3/rpc_malformed_envelopes.json",
+        "testdata/transport_v3/rpc_notification_vectors.json",
+        "testdata/transport_v3/session_handler_vectors.json",
+        "testdata/transport_v3/version_isolation_vectors.json"
+      ]
+    },
+    {
+      "producer": "testdata/transport_v3/generate_crypto_vectors.mjs",
+      "check_command": ["node", "testdata/transport_v3/generate_crypto_vectors.mjs", "--check"],
+      "outputs": [
+        "testdata/transport_v3/crypto_vectors.json",
+        "testdata/transport_v3/datagram_vectors.json",
+        "testdata/transport_v3/session_wire_vectors.json"
+      ]
+    },
+    {
+      "producer": "testdata/transport_v3/generate_handshake_vectors.mjs",
+      "check_command": ["node", "testdata/transport_v3/generate_handshake_vectors.mjs", "--check"],
+      "outputs": ["testdata/transport_v3/handshake_vectors.json"]
+    }
+  ],
   "profiles": {
     "session": "flowersec/3",
     "direct": "flowersec-direct/3",
@@ -211,7 +227,7 @@
       "correlation.tags[].value": {"type": "ascii_string", "bytes_min": 1, "bytes_max": 128}
     },
     "collection_rules": {
-      "path.candidates": {"items_min": 1, "items_max": 4, "unique_by": ["id", "endpoint_key"]},
+      "path.candidates": {"items_min": 1, "items_max": 4, "unique_by": [["id"], ["endpoint_key"]]},
       "scoped": {"items_min": 0, "items_max": 8, "ordered": true, "unique_by": ["scope"]},
       "correlation.tags": {"items_min": 0, "items_max": 8, "ordered": true, "unique_by": ["key"]},
       "session.allowed_suites": {"items_min": 1, "strictly_ascending": true, "allowed_values": [1, 2]}

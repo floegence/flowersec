@@ -398,7 +398,7 @@ enum TransportV3Handshake {
     config: TransportV3SessionConfig
   ) async throws -> TransportV3HandshakeMaterial {
     let fsc3 = try await readExact(controlPrefaceBytes, from: control)
-    guard fsc3 == controlPreface() else { throw TransportV3SessionError.handshakeFailed }
+    try requireControlPreface(fsc3)
     let clientRaw = try await readFrame(from: control, expectedType: 1)
     let client = try decodeCanonical(ClientInitWire.self, frame: clientRaw, type: 1)
     try validateClient(client, config: config)
@@ -518,6 +518,10 @@ enum TransportV3Handshake {
     return data
   }
 
+  static func requireControlPreface(_ data: Data) throws {
+    guard data == controlPreface() else { throw TransportV3SessionError.handshakeFailed }
+  }
+
   static func writeAll(_ data: Data, to stream: any TransportV3CarrierStream) async throws {
     var offset = 0
     while offset < data.count {
@@ -543,7 +547,7 @@ enum TransportV3Handshake {
     return result
   }
 
-  private static func readFrame(
+  static func readFrame(
     from stream: any TransportV3CarrierStream,
     expectedType: UInt8
   ) async throws -> Data {

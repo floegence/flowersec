@@ -289,6 +289,7 @@ final class ConnectionControllerTests: XCTestCase {
         "replacement-acquisition", "post-spend-retry", "lease-cancel-race",
         "attempt-exhaustion", "retry-after-clock",
         "candidate-failure-aggregation", "failure-ordinal", "expiry-boundary", "cycle-reset",
+        "cycle-reset-terminal",
         "retry-clock-boundary", "candidate-security-aggregation", "multi-trigger-replacement",
         "retire-cleanup", "quota-preservation", "attempt-saturation", "capability-barrier",
         "admission-spend-boundary", "duplicate-lease-identity":
@@ -373,6 +374,36 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(expected["retry_delays_ms"] as? [Int], [])
     XCTAssertTrue(expected["public_error"] is NSNull)
     XCTAssertTrue(expected["disposition"] is NSNull)
+    await controller.close()
+  }
+
+  func testReplacementPreSpendFailurePreservesPrimarySecurityTrigger() async throws {
+    let retired = AsyncCounterV3()
+    let source = SequenceArtifactSourceV3([
+      try lease(artifact: artifactV3(), retired: retired),
+      try lease(artifact: changedPinArtifactV3(), retired: retired),
+    ])
+    let calls = AsyncCounterV3()
+    let controller = try ConnectionController(
+      source: source,
+      connectOneShot: { _, _ in
+        if await calls.increment() == 1 {
+          throw ControllerConnectFailureV3.connection(
+            .transportSecurityFailed, .retryable,
+            policyTriggerIDs: ["w-pin"], opaquePolicyTriggerIDs: [], failedIDs: ["w-pin"])
+        }
+        throw ConnectError.connectionFailed
+      }
+    )
+
+    await controller.start()
+    let failed = await waitForState(.failed, controller: controller)
+    let snapshot = await controller.snapshot()
+    let retirements = await retired.value
+    XCTAssertTrue(failed)
+    XCTAssertEqual(snapshot.failure, .connection(.transportSecurityFailed))
+    XCTAssertEqual(snapshot.retryDisposition, .terminal)
+    XCTAssertEqual(retirements, 2)
     await controller.close()
   }
 
@@ -1067,8 +1098,8 @@ final class ConnectionControllerTests: XCTestCase {
     let root = try controllerVectorsV3()
     let scenarios = try XCTUnwrap(root["scenarios"] as? [[String: Any]])
     let ids = scenarios.compactMap { $0["id"] as? String }
-    XCTAssertEqual(ids.count, 40)
-    XCTAssertEqual(Set(ids).count, 40)
+    XCTAssertEqual(ids.count, 41)
+    XCTAssertEqual(Set(ids).count, 41)
 
     for id in ids {
       switch id {
@@ -1106,6 +1137,8 @@ final class ConnectionControllerTests: XCTestCase {
         try await runExpiryBoundaryVectorV3(id)
       case "established-session-termination-resets-cycle":
         try await runCycleResetVectorV3(id)
+      case "established-session-terminal-termination-resets-cycle":
+        try await runTerminalCycleResetVectorV3(id)
       case "retry-after-wall-clock-forward-jump", "retry-after-wall-clock-backward-jump",
         "retry-after-wall-reread-bounded", "monotonic-timer-safe-integer-saturation":
         try await runClockBoundaryVectorV3(id)
@@ -1342,6 +1375,43 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(spends, expected["spend_callbacks"] as? Int, id)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
     XCTAssertEqual(clock.requestedSleeps(), [250, 250], id)
+    await controller.close()
+  }
+
+  private func runTerminalCycleResetVectorV3(_ id: String) async throws {
+    let expected = try controllerExpectedV3(id)
+    let spent = AsyncCounterV3()
+    let retired = AsyncCounterV3()
+    let source = SequenceArtifactSourceV3([
+      try lease(artifact: artifactV3(), spent: spent, retired: retired),
+    ])
+    let session = ControllerSessionV3(terminationError: .operationFailed)
+    let calls = AsyncCounterV3()
+    let controller = try ConnectionController(
+      source: source,
+      connectOneShot: { lease, _ in
+        _ = await calls.increment()
+        let claimed = try await lease.claim()
+        try await claimed.commitSpend()
+        return session
+      })
+    await controller.start()
+    assertTrueV3(await waitForState(.connected, controller: controller), id)
+    try await session.close()
+    assertTrueV3(await waitForState(.failed, controller: controller), id)
+    let snapshot = await controller.snapshot()
+    let acquisitions = await source.acquisitions
+    let attempts = await calls.value
+    let spends = await spent.value
+    let retirements = await retired.value
+    XCTAssertEqual(snapshot.attempt, (expected["attempt"] as? NSNumber)?.uint64Value, id)
+    XCTAssertEqual(snapshot.failure, .session(.operationFailed), id)
+    XCTAssertEqual(snapshot.retryDisposition, .terminal, id)
+    XCTAssertEqual(acquisitions, expected["acquisitions"] as? Int, id)
+    XCTAssertEqual(attempts, expected["connect_attempts"] as? Int, id)
+    XCTAssertEqual(spends, expected["spend_callbacks"] as? Int, id)
+    XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
+    XCTAssertEqual(expected["failure_ordinal"] as? Int, 1, id)
     await controller.close()
   }
 
@@ -2204,8 +2274,13 @@ private actor CandidateIDRecorderV3 {
 
 private actor ControllerSessionV3: Session {
   nonisolated let rpc: any RPCPeer = ControllerRPCPeerV3()
+  private let terminationError: SessionError
   private var closed = false
   private var terminationWaiters: [CheckedContinuation<SessionTermination, Never>] = []
+
+  init(terminationError: SessionError = .closed) {
+    self.terminationError = terminationError
+  }
 
   func openStream(kind: String, metadata: StreamMetadata) async throws -> any ByteStream {
     throw SessionError.closed
@@ -2214,14 +2289,14 @@ private actor ControllerSessionV3: Session {
   func rekey() async throws { throw SessionError.closed }
   func probeLiveness() async throws -> Duration { throw SessionError.closed }
   func waitTermination() async -> SessionTermination {
-    if closed { return SessionTermination(error: .closed) }
+    if closed { return SessionTermination(error: terminationError) }
     return await withCheckedContinuation { terminationWaiters.append($0) }
   }
   func close() async throws {
     closed = true
     let waiters = terminationWaiters
     terminationWaiters.removeAll()
-    for waiter in waiters { waiter.resume(returning: SessionTermination(error: .closed)) }
+    for waiter in waiters { waiter.resume(returning: SessionTermination(error: terminationError)) }
   }
 }
 

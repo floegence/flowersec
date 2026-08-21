@@ -3509,6 +3509,66 @@ async fn receive_rekey_commits_before_the_ack_is_exposed_to_unreliable_delivery(
 }
 
 #[tokio::test]
+async fn previous_version_datagram_fails_the_established_session() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../testdata/transport_v3/version_isolation_vectors.json"
+    ))
+    .unwrap();
+    let vector = fixture["frames"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|value| value["id"] == "fsd3")
+        .unwrap();
+    for field in ["v2_magic_hex", "v2_version_hex"] {
+        let encoded = vector[field].as_str().unwrap();
+        let wire = encoded
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect::<Vec<_>>();
+        let (client_inner, server_inner) = memory_carrier_pair_for_logical(1);
+        let (client_to_server_tx, client_to_server_rx) = mpsc::unbounded_channel();
+        let (server_to_client_tx, server_to_client_rx) = mpsc::unbounded_channel();
+        let inject_client = server_to_client_tx.clone();
+        let client_carrier: Arc<dyn CarrierSessionV3> = Arc::new(TestDatagramCarrierSession {
+            inner: client_inner,
+            outgoing: client_to_server_tx,
+            incoming: TokioMutex::new(server_to_client_rx),
+            streams: AtomicU64::new(0),
+            control_post_write_gate: None,
+        });
+        let server_carrier: Arc<dyn CarrierSessionV3> = Arc::new(TestDatagramCarrierSession {
+            inner: server_inner,
+            outgoing: server_to_client_tx,
+            incoming: TokioMutex::new(client_to_server_rx),
+            streams: AtomicU64::new(0),
+            control_post_write_gate: None,
+        });
+        let client_config = regression_config(SessionRole::Client, field, 1, None);
+        let server_config = regression_config(SessionRole::Server, field, 1, None);
+        let (client, server) = tokio::join!(
+            establish_session_v3(client_carrier, client_config),
+            establish_session_v3(server_carrier, server_config),
+        );
+        let client = client.expect("client Session");
+        let server = server.expect("server Session");
+        inject_client.send(Bytes::from(wire)).unwrap();
+        assert_eq!(
+            client.unreliable_messages().unwrap().receive().await,
+            Err(UnreliableMessageError::Closed),
+            "{field}"
+        );
+        assert_eq!(
+            client.wait_termination().await.error,
+            SessionError::OperationFailed,
+            "{field}"
+        );
+        let _ = server.close().await;
+    }
+}
+
+#[tokio::test]
 async fn close_omits_a_duplicate_goaway_after_a_prior_goaway() {
     let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
     let enabled = Arc::new(AtomicBool::new(false));

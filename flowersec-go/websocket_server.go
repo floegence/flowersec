@@ -15,6 +15,8 @@ import (
 // WebSocketHTTPServer so TLS policy is fixed before the first handshake.
 var ErrInvalidWebSocketServer = errors.New("invalid Flowersec WebSocket server")
 
+const defaultWebSocketReadHeaderTimeout = 10 * time.Second
+
 // WebSocketHTTPServerOptions configures the TLS-owned HTTP server used by
 // Flowersec direct and tunnel WebSocket handlers. Handler must be returned by
 // Acceptor.Handler or TunnelRuntime.Handler. The server owns a private clone
@@ -43,7 +45,8 @@ type WebSocketHTTPServer struct {
 // callbacks are rejected because they could replace that policy at handshake
 // time.
 func NewWebSocketHTTPServer(options WebSocketHTTPServerOptions) (*WebSocketHTTPServer, error) {
-	if options.Handler == nil || options.TLSConfig == nil {
+	if options.Handler == nil || options.TLSConfig == nil || options.ReadHeaderTimeout < 0 ||
+		options.ReadTimeout < 0 || options.WriteTimeout < 0 || options.IdleTimeout < 0 {
 		return nil, ErrInvalidWebSocketServer
 	}
 	boundary, ok := options.Handler.(webSocketHandlerBoundary)
@@ -54,10 +57,14 @@ func NewWebSocketHTTPServer(options WebSocketHTTPServerOptions) (*WebSocketHTTPS
 	if err != nil {
 		return nil, ErrInvalidWebSocketServer
 	}
+	readHeaderTimeout := options.ReadHeaderTimeout
+	if readHeaderTimeout == 0 {
+		readHeaderTimeout = defaultWebSocketReadHeaderTimeout
+	}
 	return &WebSocketHTTPServer{
 		httpServer: &http.Server{
 			Handler:           boundary.secureHandler(),
-			ReadHeaderTimeout: options.ReadHeaderTimeout,
+			ReadHeaderTimeout: readHeaderTimeout,
 			ReadTimeout:       options.ReadTimeout,
 			WriteTimeout:      options.WriteTimeout,
 			IdleTimeout:       options.IdleTimeout,

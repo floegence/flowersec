@@ -497,6 +497,8 @@ func runControllerVectorExtended(t *testing.T, scenario controllerVectorScenario
 		runControllerVectorExpiryBoundary(t, scenario)
 	case "cycle-reset":
 		runControllerVectorCycleReset(t, scenario)
+	case "cycle-reset-terminal":
+		runControllerVectorTerminalCycleReset(t, scenario)
 	case "retry-clock-boundary":
 		runControllerVectorClockBoundary(t, scenario)
 	case "candidate-security-aggregation":
@@ -621,6 +623,38 @@ func runControllerVectorCycleReset(t *testing.T, scenario controllerVectorScenar
 	assertControllerVectorRetryDelays(t, scenario.Expected.RetryDelaysMS, 1, 1)
 	assertControllerVectorObserved(t, scenario.Expected, controllerVectorObservation(
 		controller, source.callCount(), int(connects.Load()), int(connects.Load()), 0, leases, scenario.Expected.RetryDelaysMS,
+	))
+	closeController(t, controller)
+}
+
+func runControllerVectorTerminalCycleReset(t *testing.T, scenario controllerVectorScenario) {
+	lease := newControllerVectorLease(t, controllerPolicyArtifact(t,
+		controllerPinPolicy("ERERERERERERERERERERERERERERERERERERERERERE")))
+	source := &controllerTestSource{results: []controllerAcquireResult{{lease: lease.lease}}}
+	controller := newControllerForTest(t, source, 0)
+	session := newControllerTestSession(SessionOperationFailed)
+	var connects atomic.Int32
+	controller.connectDetailed = func(ctx context.Context, claimed claimedArtifactLease, _ ConnectorOptions, _ map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome) {
+		connects.Add(1)
+		if err := claimed.lease.commitSpend(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return session, controllerConnectOutcome{spendStarted: true}
+	}
+	controller.Start(context.Background())
+	waitControllerSession(t, controller, session)
+	session.terminate()
+	waitControllerState(t, controller, ConnectionFailed)
+	snapshot := controller.Snapshot()
+	if snapshot.Attempt != scenario.Expected.Attempt {
+		t.Fatalf("post-session terminal attempt = %d, want %d", snapshot.Attempt, scenario.Expected.Attempt)
+	}
+	if scenario.Expected.FailureOrdinal != 1 {
+		t.Fatalf("terminal session failure ordinal = %d, want 1", scenario.Expected.FailureOrdinal)
+	}
+	assertControllerVectorObserved(t, scenario.Expected, controllerVectorObservation(
+		controller, source.callCount(), int(connects.Load()), int(connects.Load()), 0,
+		[]*controllerVectorLease{lease}, nil,
 	))
 	closeController(t, controller)
 }

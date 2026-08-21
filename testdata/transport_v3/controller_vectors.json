@@ -902,6 +902,35 @@
       }
     },
     {
+      "id": "established-session-terminal-termination-resets-cycle",
+      "driver": "cycle-reset-terminal",
+      "steps": [
+        "establish_session",
+        "reset_failure_ordinal_and_quota",
+        "session_terminates_terminal",
+        "fail_new_cycle"
+      ],
+      "input": {},
+      "expected": {
+        "final_state": "failed",
+        "public_error": "connection_failed",
+        "disposition": "terminal",
+        "acquisitions": 1,
+        "connect_attempts": 1,
+        "transports_created": 1,
+        "replacement_acquisitions": 0,
+        "replacement_quota_used": 0,
+        "spend_callbacks": 1,
+        "retire_callbacks": 0,
+        "lease_terminal_states": [
+          "consumed"
+        ],
+        "retry_delays_ms": [],
+        "failure_ordinal": 1,
+        "attempt": 0
+      }
+    },
+    {
       "id": "retry-after-wall-clock-forward-jump",
       "driver": "retry-clock-boundary",
       "steps": [

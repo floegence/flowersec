@@ -11,6 +11,7 @@ import {
 import {
   createConnectionControllerV3,
   type ArtifactSourceResultV3,
+  type ConnectionControllerV3,
   type LeaseAttemptContextV3,
   type ManagedSessionV3,
 } from "./connectionController.js";
@@ -112,6 +113,7 @@ const scenarioRunners: Readonly<Record<string, ScenarioRunner>> = Object.freeze(
   "artifact-expiry-immediately-before-spend": runExpiryBoundary,
   "artifact-expiry-after-spend": runExpiryBoundary,
   "established-session-termination-resets-cycle": runCycleReset,
+  "established-session-terminal-termination-resets-cycle": runTerminalCycleReset,
   "retry-after-wall-clock-forward-jump": runClockBoundary,
   "retry-after-wall-clock-backward-jump": runClockBoundary,
   "retry-after-wall-reread-bounded": runClockBoundary,
@@ -437,6 +439,34 @@ async function runCycleReset(scenario: ControllerScenario): Promise<void> {
   resolveTermination({ error: new ConnectErrorV3("connection_failed", { kind: "retryable" }) });
   await waitFor(() => tracker.connectAttempts === 3);
   await waitForControllerState(controller, "connected");
+  assertObservation(scenario, tracker.observe(controller));
+  await controller.close();
+}
+
+async function runTerminalCycleReset(scenario: ControllerScenario): Promise<void> {
+  const tracker = new VectorTracker([baseArtifact]);
+  let resolveTermination!: (value: Readonly<{ error: Error }>) => void;
+  const session: ManagedSessionV3 = {
+    waitTermination: async () => await new Promise((resolve) => { resolveTermination = resolve; }),
+    close: async () => undefined,
+  };
+  const controller = createConnectionControllerV3(tracker.source(), async (context) => {
+    tracker.recordConnector(context, 1);
+    await commitArtifactLeaseSpendV3(context.claim);
+    return { kind: "established", session };
+  }, {
+    ...controllerOptions(0, tracker.clock),
+    projectSessionFailure: (error: Error) => error as ConnectErrorV3,
+  });
+  controller.start();
+  await waitForControllerState(controller, "connected");
+  resolveTermination({ error: new ConnectErrorV3("connection_failed", { kind: "terminal" }) });
+  await waitForControllerState(controller, "failed");
+  let attempt: number | undefined;
+  const unsubscribe = controller.subscribe((snapshot) => { attempt = snapshot.attempt; });
+  unsubscribe();
+  expect(attempt, scenario.id).toBe(scenario.expected.attempt);
+  expect(scenario.expected.failure_ordinal, scenario.id).toBe(1);
   assertObservation(scenario, tracker.observe(controller));
   await controller.close();
 }
@@ -782,11 +812,11 @@ function controllerOptions(maximumAttempts: number, clock: ControllerClockV3 = n
   };
 }
 
-async function finishControllerScenario(
-  controller: ReturnType<typeof createConnectionControllerV3>,
+async function finishControllerScenario<Session extends ManagedSessionV3>(
+  controller: ConnectionControllerV3<Session>,
   scenario: ControllerScenario,
   tracker: VectorTracker,
-  session?: ManagedSessionV3,
+  session?: Session,
 ): Promise<void> {
   controller.start();
   if (scenario.expected.final_state === "connected") {

@@ -92,4 +92,54 @@ describe("final public SDK names", () => {
     expect(publicSource).not.toMatch(/(?:^|["'\/])(?:v2|connector)(?:["'\/]|\.)/u);
     expect(publicSource).not.toMatch(/(?:^|["'\/])utils\/errors(?:["'\/]|\.)/u);
   });
+
+  test("Node v3 server callbacks expose only the opaque authorization lookup", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const root = path.resolve(process.cwd(), "dist/node");
+    const publicServerDeclarations = await Promise.all([
+      "acceptorV3.d.ts",
+      "runtimeAuthorizationV3.d.ts",
+      "tunnelRuntimeV3.d.ts",
+    ].map((file) => fs.readFile(path.join(root, file), "utf8")));
+    const source = publicServerDeclarations.join("\n");
+    expect(source).toContain("RuntimeAuthorizationRequestV3");
+    expect(source).toContain("lookupKey(): string");
+    expect(source).not.toContain("DecodedFSB3RequestV3");
+    expect(source).not.toContain("nowUnixSeconds");
+    for (const secretField of [
+      "localAdmissionBinding",
+      "routing_token",
+      "attach_token",
+      "candidates",
+      "pins",
+    ]) {
+      expect(source).not.toContain(secretField);
+    }
+  });
+
+  test("public Controller acquisition and options hide runtime capabilities and clocks", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const root = path.resolve(process.cwd(), "dist");
+    const core = await fs.readFile(path.join(root, "v3/connectionController.d.ts"), "utf8");
+    const artifactSource = core.slice(
+      core.indexOf("export type ArtifactSourceV3"),
+      core.indexOf("export type ManagedSessionV3"),
+    );
+    expect(artifactSource).toContain("signal: AbortSignal");
+    expect(artifactSource).not.toContain("RuntimeCapabilityDescriptorV3");
+    expect(artifactSource).not.toContain("capability:");
+
+    const facade = await fs.readFile(path.join(root, "facade.d.ts"), "utf8");
+    const publicOptions = facade.slice(
+      facade.indexOf("export type ConnectionControllerOptions ="),
+      facade.indexOf("export { ConnectionControllerV3Error"),
+    );
+    expect(publicOptions).toContain("maximumAttempts?: number");
+    expect(publicOptions).not.toContain("ControllerClockV3");
+    expect(publicOptions).not.toContain("nowUnixSeconds");
+    expect(publicOptions).not.toContain("capabilitySnapshot");
+    expect(publicOptions).not.toContain("projectSessionFailure");
+  });
 });

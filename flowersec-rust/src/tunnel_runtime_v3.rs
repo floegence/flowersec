@@ -24,7 +24,7 @@ use flowersec_native_transport::PathProfile as NativePathProfile;
 use futures_util::future::join_all;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -33,7 +33,8 @@ use crate::{
     artifact_v3::{CarrierWireV3, decode_tunnel_fsb3},
     raw_quic_v3::RawQuicListenerV3,
     transport_v3::{
-        CarrierKind, CarrierSessionV3, CarrierStreamV3, carrier_inbound_stream_limit_v3,
+        CarrierKind, CarrierSessionV3, CarrierStreamV3, CarrierUnreliableMessageErrorV3,
+        carrier_inbound_stream_limit_v3,
     },
     websocket_v3::WebSocketListener,
 };
@@ -1144,9 +1145,9 @@ impl TaskRuntime {
             self.admission_options.admission_timeout,
         )
         .await;
-        let _ = tokio::join!(client.close(), server.close());
+        close_carrier_pair_within(client.as_ref(), server.as_ref(), CONTROL_HALF_CLOSE_GRACE).await;
         self.state.active_carriers.lock().await.remove(&pair_id);
-        let release_deadline = Instant::now() + self.admission_options.admission_timeout;
+        let release_deadline = Instant::now() + CONTROL_HALF_CLOSE_GRACE;
         self.finish_active_pair(active_pair, release_deadline).await;
         Ok(())
     }
@@ -1249,6 +1250,22 @@ impl TaskRuntime {
             .await
             .retain(|_, current| !Arc::ptr_eq(&current.cleanup_claimed, &pair.cleanup_claimed));
         self.finish_active_pair(pair, deadline).await;
+    }
+}
+
+async fn close_carrier_pair_within(
+    client: &dyn CarrierSessionV3,
+    server: &dyn CarrierSessionV3,
+    timeout: Duration,
+) {
+    if tokio::time::timeout(timeout, async {
+        let _ = tokio::join!(client.close(), server.close());
+    })
+    .await
+    .is_err()
+    {
+        client.abort();
+        server.abort();
     }
 }
 
@@ -1559,7 +1576,12 @@ async fn bridge(
         Ok(Err(_)) | Err(_) => return,
     };
     let closed = CancellationToken::new();
-    let mut control_task = tokio::spawn(bridge_control_pair(control, control_peer, closed.clone()));
+    let mut control_task = tokio::spawn(bridge_control_pair_with_grace(
+        control,
+        control_peer,
+        closed.clone(),
+        CONTROL_HALF_CLOSE_GRACE,
+    ));
     let runtime_shutdown = tokio::select! {
         _ = runtime_closed.cancelled() => true,
         _ = closed.cancelled() => false,
@@ -1584,25 +1606,58 @@ async fn bridge(
     }
 }
 
-async fn bridge_control_pair(
+async fn bridge_control_pair_with_grace(
     first: Arc<dyn CarrierStreamV3>,
     second: Arc<dyn CarrierStreamV3>,
     closed: CancellationToken,
+    half_close_grace: Duration,
 ) {
-    let first_to_second = copy_stream(first.clone(), second.clone());
-    let second_to_first = copy_stream(second, first);
-    tokio::pin!(first_to_second);
-    tokio::pin!(second_to_first);
-    tokio::select! {
-        _ = &mut first_to_second => {
-            let _ = tokio::time::timeout(CONTROL_HALF_CLOSE_GRACE, &mut second_to_first).await;
-        }
-        _ = &mut second_to_first => {
-            let _ = tokio::time::timeout(CONTROL_HALF_CLOSE_GRACE, &mut first_to_second).await;
-        }
-        _ = closed.cancelled() => {}
+    let (first_eof_tx, first_eof_rx) = oneshot::channel();
+    let (second_eof_tx, second_eof_rx) = oneshot::channel();
+    let mut first_to_second = tokio::spawn(copy_control_stream(
+        first.clone(),
+        second.clone(),
+        first_eof_tx,
+    ));
+    let mut second_to_first = tokio::spawn(copy_control_stream(second, first, second_eof_tx));
+    let graceful_half_close = tokio::select! {
+        biased;
+        result = first_eof_rx => result.is_ok(),
+        result = second_eof_rx => result.is_ok(),
+        _ = closed.cancelled() => false,
+    };
+    if graceful_half_close {
+        let _ = tokio::time::timeout(half_close_grace, async {
+            let _ = tokio::join!(&mut first_to_second, &mut second_to_first);
+        })
+        .await;
     }
     closed.cancel();
+    if !first_to_second.is_finished() {
+        first_to_second.abort();
+    }
+    if !second_to_first.is_finished() {
+        second_to_first.abort();
+    }
+    let _ = tokio::join!(first_to_second, second_to_first);
+}
+
+async fn copy_control_stream(
+    source: Arc<dyn CarrierStreamV3>,
+    target: Arc<dyn CarrierStreamV3>,
+    eof: oneshot::Sender<()>,
+) -> io::Result<()> {
+    let mut buffer = vec![0_u8; 64 * 1024];
+    loop {
+        let count = source.read(&mut buffer).await?;
+        if count == 0 {
+            let _ = eof.send(());
+            return target.close_write().await;
+        }
+        write_all(target.as_ref(), &buffer[..count])
+            .await
+            .map_err(|_| io::Error::other("tunnel control stream forwarding failed"))?;
+    }
 }
 
 async fn bridge_stream_direction(
@@ -1656,10 +1711,15 @@ async fn bridge_datagram_direction(
                 Err(_) => { closed.cancel(); return; }
             }
         };
-        if payload.len() <= target_maximum && target.send_unreliable_message(payload).await.is_err()
-        {
-            closed.cancel();
-            return;
+        if payload.len() <= target_maximum {
+            match target.send_unreliable_message(payload).await {
+                Ok(()) | Err(CarrierUnreliableMessageErrorV3::Dropped) => {}
+                Err(CarrierUnreliableMessageErrorV3::TooLarge) => {}
+                Err(_) => {
+                    closed.cancel();
+                    return;
+                }
+            }
         }
     }
 }
@@ -1812,6 +1872,7 @@ pub enum TunnelRuntimeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
     use std::future::pending;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -1833,6 +1894,162 @@ mod tests {
     #[derive(Debug)]
     struct HangingActivationCarrier {
         aborted: Arc<AtomicBool>,
+    }
+
+    #[derive(Debug)]
+    struct ControlEofStream;
+
+    #[derive(Debug)]
+    struct ControlHangingStream;
+
+    #[derive(Debug)]
+    struct DatagramProbeCarrier {
+        received: StdMutex<std::collections::VecDeque<Bytes>>,
+        sends: AtomicUsize,
+        drop_first_send: bool,
+        aborted: AtomicBool,
+        hang_close: bool,
+    }
+
+    impl DatagramProbeCarrier {
+        fn source(payloads: impl IntoIterator<Item = Bytes>) -> Self {
+            Self {
+                received: StdMutex::new(payloads.into_iter().collect()),
+                sends: AtomicUsize::new(0),
+                drop_first_send: false,
+                aborted: AtomicBool::new(false),
+                hang_close: false,
+            }
+        }
+
+        fn dropping_target() -> Self {
+            Self {
+                received: StdMutex::new(std::collections::VecDeque::new()),
+                sends: AtomicUsize::new(0),
+                drop_first_send: true,
+                aborted: AtomicBool::new(false),
+                hang_close: false,
+            }
+        }
+
+        fn hanging_close() -> Self {
+            Self {
+                received: StdMutex::new(std::collections::VecDeque::new()),
+                sends: AtomicUsize::new(0),
+                drop_first_send: false,
+                aborted: AtomicBool::new(false),
+                hang_close: true,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl CarrierStreamV3 for ControlEofStream {
+        async fn read(&self, _payload: &mut [u8]) -> io::Result<usize> {
+            Ok(0)
+        }
+
+        async fn write(&self, payload: &[u8]) -> io::Result<usize> {
+            Ok(payload.len())
+        }
+
+        async fn close_write(&self) -> io::Result<()> {
+            Ok(())
+        }
+
+        async fn stop_sending(&self) -> io::Result<()> {
+            Ok(())
+        }
+
+        async fn reset(&self) -> io::Result<()> {
+            Ok(())
+        }
+
+        async fn close(&self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl CarrierStreamV3 for ControlHangingStream {
+        async fn read(&self, _payload: &mut [u8]) -> io::Result<usize> {
+            pending().await
+        }
+
+        async fn write(&self, payload: &[u8]) -> io::Result<usize> {
+            Ok(payload.len())
+        }
+
+        async fn close_write(&self) -> io::Result<()> {
+            pending().await
+        }
+
+        async fn stop_sending(&self) -> io::Result<()> {
+            Ok(())
+        }
+
+        async fn reset(&self) -> io::Result<()> {
+            Ok(())
+        }
+
+        async fn close(&self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl CarrierSessionV3 for DatagramProbeCarrier {
+        fn kind(&self) -> CarrierKind {
+            CarrierKind::RawQuic
+        }
+
+        fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+            8
+        }
+
+        async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV3>> {
+            pending().await
+        }
+
+        async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV3>> {
+            pending().await
+        }
+
+        fn unreliable_message_max_size(&self) -> Option<usize> {
+            Some(1_200)
+        }
+
+        async fn send_unreliable_message(
+            &self,
+            _payload: Bytes,
+        ) -> Result<(), CarrierUnreliableMessageErrorV3> {
+            let index = self.sends.fetch_add(1, Ordering::SeqCst);
+            if self.drop_first_send && index == 0 {
+                Err(CarrierUnreliableMessageErrorV3::Dropped)
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn receive_unreliable_message(
+            &self,
+        ) -> Result<Bytes, CarrierUnreliableMessageErrorV3> {
+            if let Some(payload) = self.received.lock().unwrap().pop_front() {
+                return Ok(payload);
+            }
+            pending().await
+        }
+
+        async fn close(&self) -> io::Result<()> {
+            if self.hang_close {
+                pending().await
+            }
+            Ok(())
+        }
+
+        fn abort(&self) {
+            self.aborted.store(true, Ordering::SeqCst);
+        }
     }
 
     #[async_trait]
@@ -3579,5 +3796,54 @@ mod tests {
                 Err(TunnelRuntimeError::InvalidConfiguration)
             );
         }
+    }
+
+    #[tokio::test]
+    async fn control_half_close_grace_starts_before_fin_delivery_completes() {
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            bridge_control_pair_with_grace(
+                Arc::new(ControlEofStream),
+                Arc::new(ControlHangingStream),
+                CancellationToken::new(),
+                Duration::from_millis(10),
+            ),
+        )
+        .await
+        .expect("control pair retained a stuck FIN past the half-close grace");
+    }
+
+    #[tokio::test]
+    async fn dropped_datagram_does_not_cancel_the_reliable_pair() {
+        let source = Arc::new(DatagramProbeCarrier::source([
+            Bytes::from_static(b"first"),
+            Bytes::from_static(b"second"),
+        ]));
+        let target = Arc::new(DatagramProbeCarrier::dropping_target());
+        let closed = CancellationToken::new();
+        let forwarding = tokio::spawn(bridge_datagram_direction(
+            source,
+            target.clone(),
+            closed.clone(),
+        ));
+        tokio::time::timeout(Duration::from_millis(100), async {
+            while target.sends.load(Ordering::SeqCst) < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("forwarding stopped after a lossy datagram drop");
+        assert!(!closed.is_cancelled());
+        closed.cancel();
+        forwarding.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn carrier_close_timeout_aborts_both_sides() {
+        let first = DatagramProbeCarrier::hanging_close();
+        let second = DatagramProbeCarrier::hanging_close();
+        close_carrier_pair_within(&first, &second, Duration::from_millis(10)).await;
+        assert!(first.aborted.load(Ordering::SeqCst));
+        assert!(second.aborted.load(Ordering::SeqCst));
     }
 }

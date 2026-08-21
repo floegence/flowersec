@@ -2,7 +2,6 @@
   "version": 1,
   "profile": "flowersec/3",
   "source": {
-    "runtime": "v26.7.0",
     "implementation": "Node.js built-in crypto only",
     "generator": "testdata/transport_v3/generate_handshake_vectors.mjs"
   },

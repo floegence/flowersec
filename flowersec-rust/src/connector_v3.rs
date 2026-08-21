@@ -63,13 +63,23 @@ impl fmt::Display for ConnectErrorCode {
 }
 
 /// A redacted v3 connection failure with a closed five-code public surface.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Clone, Copy, Eq, PartialEq, thiserror::Error)]
 #[error("Flowersec connection failed (code={code})")]
 pub struct ConnectError {
     code: ConnectErrorCode,
     controller_retryable: bool,
     policy_trigger_mask: u8,
     failed_candidate_mask: u8,
+}
+
+impl fmt::Debug for ConnectError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ConnectError")
+            .field("code", &self.code)
+            .field("retry_disposition", &self.retry_disposition())
+            .finish()
+    }
 }
 
 impl ConnectError {
@@ -132,10 +142,7 @@ pub struct ConnectorOptions {
 
 impl fmt::Debug for ConnectorOptions {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("ConnectorOptions")
-            .field("inner", &self.inner)
-            .finish()
+        formatter.write_str("ConnectorOptions { <redacted> }")
     }
 }
 
@@ -323,7 +330,7 @@ pub(crate) async fn connect_v3_with_cancellation_and_preparer(
         .iter()
         .map(|candidate| snapshot_candidate_policy(candidate, attempt_now))
         .collect();
-    let attempts = FuturesUnordered::new();
+    let mut attempts = FuturesUnordered::new();
 
     for (candidate_index, candidate) in plan.candidates.iter().enumerate() {
         if candidate.carrier == CarrierWireV3::Webtransport
@@ -370,17 +377,11 @@ pub(crate) async fn connect_v3_with_cancellation_and_preparer(
         )
         .await);
     }
-    tokio::pin!(attempts);
     while let Some((candidate_index, candidate, result)) = attempts.next().await {
         match result {
             Ok(carrier) => {
                 race_cancellation.cancel();
-                while let Some((_, _, loser)) = attempts.next().await {
-                    if let Ok(loser) = loser {
-                        loser.abort();
-                    }
-                }
-                return admit_candidate_and_establish(
+                let admission = admit_candidate_and_establish(
                     claimed,
                     candidate,
                     &plan,
@@ -388,8 +389,19 @@ pub(crate) async fn connect_v3_with_cancellation_and_preparer(
                     &options,
                     deadline,
                     &cancellation,
-                )
-                .await;
+                );
+                tokio::pin!(admission);
+                loop {
+                    tokio::select! {
+                        biased;
+                        result = &mut admission => return result,
+                        loser = attempts.next(), if !attempts.is_empty() => {
+                            if let Some((_, _, Ok(carrier))) = loser {
+                                carrier.abort();
+                            }
+                        }
+                    }
+                }
             }
             Err(failure) => {
                 if matches!(
@@ -1039,6 +1051,18 @@ mod tests {
         entered: Arc<tokio::sync::Notify>,
     }
 
+    struct WinnerWithUncooperativeLoserPreparer {
+        barrier: Arc<tokio::sync::Barrier>,
+        winner: Arc<dyn CarrierSessionV3>,
+    }
+
+    struct WinnerWithLatePreparedLoserPreparer {
+        barrier: Arc<tokio::sync::Barrier>,
+        release_loser: Arc<tokio::sync::Notify>,
+        winner: Arc<dyn CarrierSessionV3>,
+        loser: Arc<dyn CarrierSessionV3>,
+    }
+
     struct FailingCandidatePreparer {
         failures: Vec<(&'static str, CandidateFailureV3)>,
     }
@@ -1074,6 +1098,53 @@ mod tests {
             Box::pin(async move {
                 entered.notify_one();
                 std::future::pending().await
+            })
+        }
+    }
+
+    impl CandidatePreparerV3 for WinnerWithUncooperativeLoserPreparer {
+        fn prepare<'a>(
+            &'a self,
+            candidate: &'a CanonicalCandidateV3,
+            _plan: &'a ConnectionPlanV3,
+            _options: &'a ConnectorOptions,
+            _deadline: tokio::time::Instant,
+            _cancellation: &'a CancellationToken,
+        ) -> CandidatePrepareFutureV3<'a> {
+            let barrier = self.barrier.clone();
+            let winner = self.winner.clone();
+            Box::pin(async move {
+                barrier.wait().await;
+                if candidate.id == "winner" {
+                    Ok(winner)
+                } else {
+                    std::future::pending().await
+                }
+            })
+        }
+    }
+
+    impl CandidatePreparerV3 for WinnerWithLatePreparedLoserPreparer {
+        fn prepare<'a>(
+            &'a self,
+            candidate: &'a CanonicalCandidateV3,
+            _plan: &'a ConnectionPlanV3,
+            _options: &'a ConnectorOptions,
+            _deadline: tokio::time::Instant,
+            _cancellation: &'a CancellationToken,
+        ) -> CandidatePrepareFutureV3<'a> {
+            let barrier = self.barrier.clone();
+            let release_loser = self.release_loser.clone();
+            let winner = self.winner.clone();
+            let loser = self.loser.clone();
+            Box::pin(async move {
+                barrier.wait().await;
+                if candidate.id == "winner" {
+                    Ok(winner)
+                } else {
+                    release_loser.notified().await;
+                    Ok(loser)
+                }
             })
         }
     }
@@ -1709,6 +1780,130 @@ mod tests {
         .await
         .expect("dropped one-shot did not run retire cleanup");
         assert!(reusable.claim().is_err(), "dropped claim became reusable");
+    }
+
+    #[tokio::test]
+    async fn prepared_winner_enters_admission_without_waiting_for_an_uncooperative_loser() {
+        let artifact = artifact_with_candidates(vec![
+            json!({
+                "carrier": "raw_quic",
+                "id": "loser",
+                "tls": {"mode": "ca"},
+                "url": "quic://127.0.0.1:443",
+                "wire_profile": "flowersec-direct/3"
+            }),
+            json!({
+                "carrier": "raw_quic",
+                "id": "winner",
+                "tls": {"mode": "ca"},
+                "url": "quic://127.0.0.1:444",
+                "wire_profile": "flowersec-direct/3"
+            }),
+        ]);
+        let entered = Arc::new(tokio::sync::Semaphore::new(0));
+        let preparer = WinnerWithUncooperativeLoserPreparer {
+            barrier: Arc::new(tokio::sync::Barrier::new(2)),
+            winner: Arc::new(HangingAdmissionCarrier {
+                phase: HangingAdmissionPhase::Open,
+                entered: entered.clone(),
+                aborts: AtomicUsize::new(0),
+            }),
+        };
+        let mut operation = Box::pin(connect_v3_with_cancellation_and_preparer(
+            ArtifactLeaseV3::new(artifact, || async { Ok(()) }),
+            ConnectorOptions::new(),
+            CancellationToken::new(),
+            &preparer,
+        ));
+        tokio::time::timeout(Duration::from_millis(100), async {
+            tokio::select! {
+                permit = entered.acquire() => { permit.unwrap().forget(); }
+                result = &mut operation => panic!("winner admission unexpectedly completed: {result:?}"),
+            }
+        })
+        .await
+        .expect("prepared winner waited for an uncooperative loser");
+        drop(operation);
+    }
+
+    #[tokio::test]
+    async fn late_prepared_loser_is_aborted_while_winner_enters_admission() {
+        let artifact = artifact_with_candidates(vec![
+            json!({
+                "carrier": "raw_quic",
+                "id": "loser",
+                "tls": {"mode": "ca"},
+                "url": "quic://127.0.0.1:443",
+                "wire_profile": "flowersec-direct/3"
+            }),
+            json!({
+                "carrier": "raw_quic",
+                "id": "winner",
+                "tls": {"mode": "ca"},
+                "url": "quic://127.0.0.1:444",
+                "wire_profile": "flowersec-direct/3"
+            }),
+        ]);
+        let entered = Arc::new(tokio::sync::Semaphore::new(0));
+        let winner = Arc::new(HangingAdmissionCarrier {
+            phase: HangingAdmissionPhase::Open,
+            entered: entered.clone(),
+            aborts: AtomicUsize::new(0),
+        });
+        let loser = Arc::new(HangingAdmissionCarrier {
+            phase: HangingAdmissionPhase::Open,
+            entered: Arc::new(tokio::sync::Semaphore::new(0)),
+            aborts: AtomicUsize::new(0),
+        });
+        let release_loser = Arc::new(tokio::sync::Notify::new());
+        let preparer = WinnerWithLatePreparedLoserPreparer {
+            barrier: Arc::new(tokio::sync::Barrier::new(2)),
+            release_loser: release_loser.clone(),
+            winner: winner.clone(),
+            loser: loser.clone(),
+        };
+        let mut operation = Box::pin(connect_v3_with_cancellation_and_preparer(
+            ArtifactLeaseV3::new(artifact, || async { Ok(()) }),
+            ConnectorOptions::new(),
+            CancellationToken::new(),
+            &preparer,
+        ));
+        tokio::time::timeout(Duration::from_millis(100), async {
+            tokio::select! {
+                permit = entered.acquire() => { permit.unwrap().forget(); }
+                result = &mut operation => panic!("winner admission unexpectedly completed: {result:?}"),
+            }
+        })
+        .await
+        .expect("winner did not enter admission");
+        release_loser.notify_one();
+        tokio::time::timeout(Duration::from_millis(100), async {
+            while loser.aborts.load(Ordering::Acquire) != 1 {
+                tokio::select! {
+                    result = &mut operation => panic!("winner admission unexpectedly completed: {result:?}"),
+                    _ = tokio::task::yield_now() => {}
+                }
+            }
+        })
+        .await
+        .expect("late prepared loser was not aborted");
+        drop(operation);
+    }
+
+    #[test]
+    fn public_debug_output_redacts_candidate_masks_and_websocket_origin() {
+        let error = public_error(ConnectErrorCode::TransportSecurityFailed)
+            .with_v3_candidate_masks(0b1010, 0b1111);
+        let debug = format!("{error:?}");
+        assert!(!debug.contains("policy_trigger_mask"));
+        assert!(!debug.contains("failed_candidate_mask"));
+        assert!(!debug.contains("1010"));
+        assert!(!debug.contains("1111"));
+
+        let options = ConnectorOptions::new()
+            .with_websocket_origin("https://secret-origin.example")
+            .unwrap();
+        assert!(!format!("{options:?}").contains("secret-origin"));
     }
 
     #[tokio::test]

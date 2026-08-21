@@ -150,6 +150,11 @@ func TestProductDirectCarriersUsePublicConnectorAndAdmission(t *testing.T) {
 			if err := pair.RoundTrip(ctx, []byte("public request"), []byte("public response")); err != nil {
 				t.Fatal(err)
 			}
+			if kind == carrier.KindWebTransport {
+				if err := roundTripProductDirectDatagrams(ctx, pair); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if err := pair.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -158,6 +163,48 @@ func TestProductDirectCarriersUsePublicConnectorAndAdmission(t *testing.T) {
 			}
 		})
 	}
+}
+
+func roundTripProductDirectDatagrams(ctx context.Context, pair *ProductDirectPair) error {
+	clientChannel, err := pair.Client.UnreliableMessages()
+	if err != nil {
+		return err
+	}
+	serverChannel, err := pair.Server.UnreliableMessages()
+	if err != nil {
+		return err
+	}
+	request := []byte("go-webtransport-datagram-request")
+	response := []byte("go-webtransport-datagram-response")
+	status, err := clientChannel.Send(ctx, request, flowersec.UnreliableSendOptions{ExpiresAt: time.Now().Add(5 * time.Second)})
+	if err != nil {
+		return fmt.Errorf("client datagram send: %w", err)
+	}
+	if status != flowersec.UnreliableAccepted {
+		return fmt.Errorf("client datagram send status = %q", status)
+	}
+	received, err := serverChannel.Receive(ctx)
+	if err != nil {
+		return fmt.Errorf("server datagram receive: %w", err)
+	}
+	if !bytes.Equal(received, request) {
+		return fmt.Errorf("server datagram receive = %q", received)
+	}
+	serverStatus, err := serverChannel.Send(ctx, response, flowersessionv3.UnreliableSendOptions{ExpiresAt: time.Now().Add(5 * time.Second)})
+	if err != nil {
+		return fmt.Errorf("server datagram send: %w", err)
+	}
+	if serverStatus != flowersessionv3.UnreliableAccepted {
+		return fmt.Errorf("server datagram send status = %q", serverStatus)
+	}
+	received, err = clientChannel.Receive(ctx)
+	if err != nil {
+		return fmt.Errorf("client datagram receive: %w", err)
+	}
+	if !bytes.Equal(received, response) {
+		return fmt.Errorf("client datagram receive = %q", received)
+	}
+	return nil
 }
 
 func TestProductDirectRPCPreservesExactPayload(t *testing.T) {

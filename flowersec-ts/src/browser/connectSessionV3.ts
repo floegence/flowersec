@@ -1,4 +1,5 @@
 import type { Session } from "../public/contract.js";
+import { SDK_DEFAULTS } from "../defaults.js";
 import type { ArtifactLeaseV3 } from "../v3/artifactLease.js";
 import {
   createConnectionControllerV3 as createCoreControllerV3,
@@ -15,10 +16,14 @@ import { readyNativeAdmissionV3, readyWebSocketAdmissionV3, type WebSocketLikeV3
 import { TransportFailureV3, ConnectErrorV3 } from "../v3/security.js";
 import { browserSessionRuntimeV3 } from "../v3/browserSessionRuntime.js";
 
-export type SessionOptionsV3 = Readonly<{ signal?: AbortSignal }>;
+export type SessionOptionsV3 = Readonly<{
+  signal?: AbortSignal;
+  connectTimeoutMs?: number;
+}>;
 
 export type ConnectionControllerOptionsV3 = Readonly<{
   maximumAttempts?: number;
+  connectTimeoutMs?: number;
 }>;
 
 export async function connectV3(
@@ -26,7 +31,11 @@ export async function connectV3(
   options: SessionOptionsV3 = {},
 ): Promise<Session> {
   const registry = await BrowserRuntimeCapabilityRegistryV3.create();
-  return await connectArtifactLeaseV3(lease, browserRuntime(registry), options.signal);
+  return await connectArtifactLeaseV3(
+    lease,
+    browserRuntime(registry, options.connectTimeoutMs),
+    options.signal,
+  );
 }
 
 export async function createConnectionControllerV3(
@@ -34,7 +43,7 @@ export async function createConnectionControllerV3(
   options: ConnectionControllerOptionsV3 = {},
 ): Promise<ConnectionControllerV3<Session>> {
   const registry = await BrowserRuntimeCapabilityRegistryV3.create();
-  const runtime = browserRuntime(registry);
+  const runtime = browserRuntime(registry, options.connectTimeoutMs);
   const coreOptions: CoreControllerOptionsV3 = {
     capabilitySnapshot: runtime.capabilitySnapshot,
     projectSessionFailure,
@@ -47,9 +56,17 @@ export async function createConnectionControllerV3(
   );
 }
 
-function browserRuntime(registry: BrowserRuntimeCapabilityRegistryV3): SessionConnectorRuntimeV3 {
+function browserRuntime(
+  registry: BrowserRuntimeCapabilityRegistryV3,
+  connectTimeoutMs: number | undefined,
+): SessionConnectorRuntimeV3 {
+  const connectTimeoutMilliseconds = connectTimeoutMs ?? SDK_DEFAULTS.transport.connectTimeoutMs;
+  if (!Number.isSafeInteger(connectTimeoutMilliseconds) || connectTimeoutMilliseconds < 1) {
+    throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
+  }
   return {
     capabilitySnapshot: () => registry.snapshot(),
+    connectTimeoutMilliseconds,
     protocolRuntime: browserSessionRuntimeV3,
     dial: async (candidate, artifact, attemptNow, capability, signal) => {
       if (candidate.carrier === "webtransport") {

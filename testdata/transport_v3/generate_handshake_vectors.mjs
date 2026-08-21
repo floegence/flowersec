@@ -6,10 +6,14 @@ import {
   createPublicKey,
   diffieHellman,
 } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const outputPath = fileURLToPath(new URL("./handshake_vectors.json", import.meta.url));
+const checkOnly = process.argv.length === 3 && process.argv[2] === "--check";
+if (process.argv.length > (checkOnly ? 3 : 2)) {
+  throw new Error("usage: generate_handshake_vectors.mjs [--check]");
+}
 
 function sha256(...parts) {
   const hash = createHash("sha256");
@@ -242,11 +246,17 @@ const output = {
   version: 1,
   profile: "flowersec/3",
   source: {
-    runtime: process.version,
     implementation: "Node.js built-in crypto only",
     generator: "testdata/transport_v3/generate_handshake_vectors.mjs",
   },
   vectors,
 };
 
-writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`, "utf8");
+const rendered = `${JSON.stringify(output, null, 2)}\n`;
+if (checkOnly) {
+  if (readFileSync(outputPath, "utf8") !== rendered) {
+    throw new Error("handshake_vectors.json is not reproducible; regenerate handshake vectors");
+  }
+} else {
+  writeFileSync(outputPath, rendered, "utf8");
+}

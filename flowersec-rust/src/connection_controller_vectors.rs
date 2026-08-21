@@ -454,6 +454,7 @@ async fn spend(lease: ArtifactLeaseV3) -> Result<(), ConnectError> {
 struct ControlledSession {
     terminated: AtomicBool,
     changed: Notify,
+    termination_error: SessionError,
 }
 
 impl ControlledSession {
@@ -461,6 +462,15 @@ impl ControlledSession {
         Arc::new(Self {
             terminated: AtomicBool::new(false),
             changed: Notify::new(),
+            termination_error: SessionError::Closed,
+        })
+    }
+
+    fn terminal() -> Arc<Self> {
+        Arc::new(Self {
+            terminated: AtomicBool::new(false),
+            changed: Notify::new(),
+            termination_error: SessionError::OperationFailed,
         })
     }
 
@@ -501,7 +511,7 @@ impl Session for ControlledSession {
             self.changed.notified().await;
         }
         SessionTermination {
-            error: SessionError::Closed,
+            error: self.termination_error,
         }
     }
 
@@ -846,6 +856,9 @@ async fn run_scenario(scenario: &ScenarioV3) {
         | "artifact-expiry-immediately-before-spend"
         | "artifact-expiry-after-spend" => run_expiry_boundary(scenario).await,
         "established-session-termination-resets-cycle" => run_cycle_reset(scenario).await,
+        "established-session-terminal-termination-resets-cycle" => {
+            run_terminal_cycle_reset(scenario).await
+        }
         "retry-after-wall-clock-forward-jump"
         | "retry-after-wall-clock-backward-jump"
         | "retry-after-wall-reread-bounded"
@@ -1611,6 +1624,37 @@ async fn run_cycle_reset(scenario: &ScenarioV3) {
             &[&first, &second, &third],
             retry_delays([0, 0]),
         ),
+    );
+    controller.close().await;
+}
+
+async fn run_terminal_cycle_reset(scenario: &ScenarioV3) {
+    let lease = TrackedLease::new(ca_artifact());
+    let source = Arc::new(VectorSource::new([primary(&lease)]));
+    let metrics = Arc::new(ConnectorMetrics::default());
+    let session = ControlledSession::terminal();
+    let controller = ConnectionController::new_with_connector(
+        source.clone(),
+        test_options(None),
+        vector_connector(
+            [ConnectorAction {
+                attempts: 1,
+                transports: 1,
+                allowed_candidate_ids: None,
+                outcome: ConnectorOutcome::Success(session.clone()),
+            }],
+            metrics.clone(),
+        ),
+    );
+    controller.start();
+    let _ = wait_for_state(&controller, ConnectionState::Connected).await;
+    session.terminate();
+    let status = wait_for_state(&controller, ConnectionState::Failed).await;
+    assert_eq!(Some(status.attempt), scenario.expected.attempt);
+    assert_eq!(scenario.expected.failure_ordinal, Some(1));
+    assert_observed(
+        scenario,
+        observe(status, &source, &metrics, &[&lease], Vec::new()),
     );
     controller.close().await;
 }

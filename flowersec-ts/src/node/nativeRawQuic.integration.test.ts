@@ -404,7 +404,8 @@ describe("Node production raw QUIC runtime v3", () => {
       }],
       maxInboundStreams: V3_DIRECT_BASE.session.max_inbound_streams,
       authorize: async (received) => {
-        expect(Buffer.from(received.raw.subarray(0, 4)).toString("ascii")).toBe("FSB3");
+        expect(received.lookupKey()).toHaveLength(43);
+        expect(Object.keys(received)).toEqual([]);
         return { accepted: true, artifact: parseArtifactV3(encodeArtifactV3JSON(artifact)) };
       },
       resolveHandlers: () => handlers,
@@ -436,6 +437,7 @@ describe("Node production raw QUIC runtime v3", () => {
   }, 20_000);
 
   test("pairs raw QUIC tunnel roles through production v3 listeners", async () => {
+    const roles = new Map<string, 1 | 2>();
     const runtime = createTunnelRuntimeV3({
       listeners: [{
         carrier: "raw_quic",
@@ -444,24 +446,30 @@ describe("Node production raw QUIC runtime v3", () => {
         tls: { certificate: CERTIFICATE_PEM, privateKey: PRIVATE_KEY_PEM },
       }],
       maxInboundStreams: V3_TUNNEL_BASE.session.max_inbound_streams,
-      authorize: async ({ request }) => ({
-        decision: "allow",
-        credentialId: createHash("sha256").update(request.pathKind === "tunnel" ? request.attach_token : "").digest("base64url"),
-        leaseId: `raw-lease-${request.pathKind === "tunnel" ? request.role : 0}`,
-        expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
-        expectedPeerEndpointInstanceId: request.pathKind === "tunnel" && request.role === 1
-          ? "endpoint-server"
-          : "endpoint-client",
-      }),
+      authorize: async (request) => {
+        const role = roles.get(request.lookupKey());
+        if (role === undefined) return { decision: "reject" as const, reason: "not_authorized" };
+        return {
+          decision: "allow" as const,
+          credentialId: request.lookupKey(),
+          leaseId: `raw-lease-${role}`,
+          expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
+          expectedPeerEndpointInstanceId: role === 1 ? "endpoint-server" : "endpoint-client",
+        };
+      },
     });
     await runtime.start();
     const port = runtime.addresses()[0]!.port;
+    const first = v3TunnelRawQuicArtifact(port, 1);
+    const second = v3TunnelRawQuicArtifact(port, 2);
+    roles.set(v3TunnelLookupKey(first), 1);
+    roles.set(v3TunnelLookupKey(second), 2);
     try {
       const [client, server] = await Promise.all([
-        connectV3(v3Lease(v3TunnelRawQuicArtifact(port, 1)), {
+        connectV3(v3Lease(first), {
           roots: CERTIFICATE_DER,
         }),
-        connectV3(v3Lease(v3TunnelRawQuicArtifact(port, 2)), {
+        connectV3(v3Lease(second), {
           roots: CERTIFICATE_DER,
         }),
       ]);
@@ -732,6 +740,11 @@ function v3TunnelRawQuicArtifact(port: number, role: 1 | 2): ArtifactV3 {
       candidates: [v3RawQuicCandidate(port, "tunnel")],
     },
   };
+}
+
+function v3TunnelLookupKey(artifact: ArtifactV3): string {
+  if (artifact.path.kind !== "tunnel") throw new Error("expected tunnel artifact");
+  return createHash("sha256").update(artifact.path.token).digest("base64url");
 }
 
 function v3RawQuicCandidate(port: number, path: "direct" | "tunnel"): ArtifactCandidateV3 {

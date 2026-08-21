@@ -635,7 +635,7 @@ describe("transport v3 production connection controller", () => {
     controller.start();
     await expect(controller.waitForSession()).rejects.toMatchObject({
       code: "failed",
-      failure: { phase: "connect", code: "connection_failed" },
+      failure: { phase: "connect", code: "transport_security_failed" },
       retryDisposition: { kind: "terminal" },
     });
     expect(acquire).toHaveBeenCalledTimes(2);

@@ -35,6 +35,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/connectv2"
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv2"
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/session"
+	flowersessionv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest"
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/tunnelv2"
 	"github.com/gorilla/websocket"
@@ -56,10 +57,11 @@ func main() {
 	dropTransportAfterStreamsFlag := flag.Int("drop-transport-after-streams", 0, "drop the UDP transport after accepting this many logical streams")
 	v3ProductDirectFlag := flag.Bool("v3-product-direct", false, "serve one production v3 direct WebTransport session")
 	v3PublicCAFlag := flag.Bool("v3-public-ca", false, "use deployment-provided public-CA TLS material in v3 product-direct mode")
+	v3DatagramFlag := flag.Bool("v3-datagram", false, "exchange one encrypted v3 DATAGRAM in product-direct mode")
 	originFlag := flag.String("origin", "", "exact browser Origin for v3 product-direct mode")
 	flag.Parse()
 	if *v3ProductDirectFlag {
-		must(runV3ProductDirect(*originFlag, *v3PublicCAFlag))
+		must(runV3ProductDirect(*originFlag, *v3PublicCAFlag, *v3DatagramFlag))
 		return
 	}
 	tlsConfig, certificateHash, err := testTLSConfig(time.Now())
@@ -114,7 +116,7 @@ func main() {
 	}
 }
 
-func runV3ProductDirect(origin string, publicCA bool) error {
+func runV3ProductDirect(origin string, publicCA, exchangeDatagram bool) error {
 	if origin == "" {
 		return errors.New("v3 product-direct mode requires an exact browser Origin")
 	}
@@ -168,6 +170,26 @@ func runV3ProductDirect(origin string, publicCA bool) error {
 	established, err := issued.AwaitServer(ctx)
 	if err != nil {
 		return err
+	}
+	if exchangeDatagram {
+		channel, channelErr := established.UnreliableMessages()
+		if channelErr != nil {
+			return channelErr
+		}
+		request, receiveErr := channel.Receive(ctx)
+		if receiveErr != nil {
+			return receiveErr
+		}
+		if string(request) != "browser-webtransport-datagram-request" {
+			return errors.New("unexpected browser WebTransport datagram request")
+		}
+		status, sendErr := channel.Send(ctx, []byte("browser-webtransport-datagram-response"), flowersessionv3.UnreliableSendOptions{ExpiresAt: time.Now().Add(5 * time.Second)})
+		if sendErr != nil {
+			return fmt.Errorf("send browser WebTransport datagram response: %w", sendErr)
+		}
+		if status != flowersessionv3.UnreliableAccepted {
+			return fmt.Errorf("send browser WebTransport datagram response status = %s", status)
+		}
 	}
 	return established.Close()
 }

@@ -70,12 +70,13 @@ describe("transport v3 public entry surface", () => {
       "IssuedArtifact",
       "Issuer",
       "ProxyServer",
-      "RuntimeAuthorizationRequest",
       "authorizeRuntime",
       "authorizeTunnelRuntime",
     ]) {
       expect(legacyExport in node).toBe(false);
     }
+    expect(node.RuntimeAuthorizationRequest).toBe(node.RuntimeAuthorizationRequestV3);
+    expect(node.RuntimeAuthorizationRequest).toBeTypeOf("function");
     expect(node.v2.Issuer).toBeTypeOf("function");
     expect(node.v2.authorizeRuntime).toBeTypeOf("function");
     expect(node.v2.createAcceptor).toBeTypeOf("function");

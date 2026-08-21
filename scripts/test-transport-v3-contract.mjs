@@ -36,13 +36,28 @@ function digest(label, value) {
 }
 
 const registry = json("stability/transport_v3_contract.json");
-const generation = spawnSync(
-  registry.fixture_generation.check_command[0],
-  registry.fixture_generation.check_command.slice(1),
-  { cwd: root, encoding: "utf8" },
-);
-assert.equal(generation.status, 0,
-  `transport v3 fixture regeneration check failed: ${generation.stderr || generation.stdout}`);
+assert.equal(Array.isArray(registry.fixture_generation), true,
+  "transport v3 fixture generation ownership must be an explicit list");
+assert.deepEqual(registry.fixture_generation.map(({ producer }) => producer), [
+  "testdata/transport_v3/generate_contract_vectors.mjs",
+  "testdata/transport_v3/generate_crypto_vectors.mjs",
+  "testdata/transport_v3/generate_handshake_vectors.mjs",
+]);
+const generatedOutputs = new Set();
+for (const fixtureGeneration of registry.fixture_generation) {
+  assert.deepEqual(fixtureGeneration.check_command, ["node", fixtureGeneration.producer, "--check"]);
+  for (const output of fixtureGeneration.outputs) {
+    assert.equal(generatedOutputs.has(output), false, `fixture output has duplicate owners: ${output}`);
+    generatedOutputs.add(output);
+  }
+  const generation = spawnSync(
+    fixtureGeneration.check_command[0],
+    fixtureGeneration.check_command.slice(1),
+    { cwd: root, encoding: "utf8" },
+  );
+  assert.equal(generation.status, 0,
+    `transport v3 fixture regeneration check failed: ${generation.stderr || generation.stdout}`);
+}
 const artifactVectors = json("testdata/transport_v3/artifact_vectors.json");
 assert.equal(
   canonicalJSON(json("flowersec-swift/Tests/FlowersecTests/Fixtures/transport_v3_direct_artifact.json")),
@@ -66,6 +81,10 @@ assert.equal(
 assert.equal(registry.profiles.session, "flowersec/3");
 assert.equal(registry.frame_family.bootstrap, "FSB3");
 assert.equal(registry.frame_family.datagram, "FSD3");
+assert.deepEqual(registry.artifact_schema.collection_rules["path.candidates"].unique_by, [
+  ["id"],
+  ["endpoint_key"],
+], "candidate IDs and endpoint keys must each be independently unique");
 assert.deepEqual({
   open_kind_bytes_min: registry.limits.open_kind_bytes_min,
   open_kind_bytes_max: registry.limits.open_kind_bytes_max,
@@ -267,6 +286,10 @@ for (const entry of registry.design.traceability) {
 }
 for (const fixture of registry.wire_fixtures) {
   assert(fs.existsSync(path.join(root, fixture.path)), "missing fixture " + fixture.path);
+}
+for (const output of generatedOutputs) {
+  assert(registry.wire_fixtures.some(({ path: fixturePath }) => fixturePath === output),
+    `generated output is not registered as a wire fixture: ${output}`);
 }
 assert.deepEqual(new Set(registry.wire_fixtures.map((fixture) => fixture.id)), new Set([
   "artifact_admission",

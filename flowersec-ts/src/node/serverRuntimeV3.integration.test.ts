@@ -81,7 +81,9 @@ describe("Node production server runtime v3", () => {
       }],
       maxInboundStreams: directBase.session.max_inbound_streams,
       authorize: async (received) => {
-        expect(Buffer.from(received.raw.subarray(0, 4)).toString("ascii")).toBe("FSB3");
+        expect(received.lookupKey()).toHaveLength(43);
+        expect(Object.keys(received)).toEqual([]);
+        expect(JSON.stringify(received)).toBe("{}");
         return { accepted: true, artifact: parseArtifactV3(encodeArtifactV3JSON(artifact)) };
       },
     });
@@ -375,7 +377,61 @@ describe("Node production server runtime v3", () => {
     }
   });
 
+  test("bounds and expires pre-admission WebSocket sessions", async () => {
+    const listener = await startNodeWebSocketListenerV3({
+      host: "127.0.0.1",
+      port: 0,
+      path: "direct",
+      tls: { certificate: leafCertificate, privateKey: leafKey },
+      allowedOrigins: ["https://app.example"],
+      inboundBidirectionalStreamCapacity: 3,
+      maxPendingSessions: 1,
+      pendingSessionTimeoutMs: 30,
+    });
+    const require = createRequire(import.meta.url);
+    const wsModule = require("ws") as { WebSocket: new (...args: unknown[]) => any };
+    const address = `wss://localhost:${listener.address().port}/flowersec/v3/direct`;
+    const connect = async () => {
+      const socket = new wsModule.WebSocket(address, ["flowersec.direct.v3"], {
+        ca: rootCertificate,
+        origin: "https://app.example",
+      });
+      await new Promise<void>((resolve, reject) => {
+        socket.once("open", resolve);
+        socket.once("error", reject);
+      });
+      return socket;
+    };
+    const waitClosed = async (socket: any) => {
+      if (socket.readyState === socket.CLOSED) return;
+      await new Promise<void>((resolve) => socket.once("close", resolve));
+    };
+    let first: any;
+    let overflow: any;
+    let acceptedSocket: any;
+    try {
+      first = await connect();
+      overflow = await connect();
+      await expect(Promise.race([
+        Promise.all([waitClosed(first), waitClosed(overflow)]).then(() => "closed" as const),
+        new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 500)),
+      ])).resolves.toBe("closed");
+
+      const accepting = listener.accept();
+      acceptedSocket = await connect();
+      const session = await accepting;
+      session.abort({ code: 1, reason: "test complete" });
+      await waitClosed(acceptedSocket);
+    } finally {
+      first?.terminate();
+      overflow?.terminate();
+      acceptedSocket?.terminate();
+      await listener.close();
+    }
+  });
+
   test("pairs production v3 WSS tunnel roles without exposing the encrypted session", async () => {
+    const roles = new Map<string, 1 | 2>();
     let releaseStarted!: () => void;
     const releaseBegan = new Promise<void>((resolve) => { releaseStarted = resolve; });
     let allowRelease!: () => void;
@@ -390,15 +446,17 @@ describe("Node production server runtime v3", () => {
         allowedOrigins: ["https://app.example"],
       }],
       maxInboundStreams: tunnelBase.session.max_inbound_streams,
-      authorize: async ({ request }) => ({
-        decision: "allow",
-        credentialId: createHash("sha256").update(request.pathKind === "tunnel" ? request.attach_token : "").digest("base64url"),
-        leaseId: `lease-${request.pathKind === "tunnel" ? request.role : 0}`,
-        expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
-        expectedPeerEndpointInstanceId: request.pathKind === "tunnel" && request.role === 1
-          ? "endpoint-server"
-          : "endpoint-client",
-      }),
+      authorize: async (request) => {
+        const role = roles.get(request.lookupKey());
+        if (role === undefined) return { decision: "reject" as const, reason: "not_authorized" };
+        return {
+          decision: "allow" as const,
+          credentialId: request.lookupKey(),
+          leaseId: `lease-${role}`,
+          expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
+          expectedPeerEndpointInstanceId: role === 1 ? "endpoint-server" : "endpoint-client",
+        };
+      },
       release: async () => {
         releaseStarted();
         await releaseGate;
@@ -408,6 +466,8 @@ describe("Node production server runtime v3", () => {
     const port = runtime.addresses()[0]!.port;
     const first = tunnelArtifact(port, 1);
     const second = tunnelArtifact(port, 2);
+    roles.set(tunnelLookupKey(first), 1);
+    roles.set(tunnelLookupKey(second), 2);
     try {
       const [client, server] = await Promise.all([
         connectV3(lease(first), {
@@ -490,7 +550,7 @@ describe("Node production server runtime v3", () => {
       await runtime.close();
       resolveAuthorization({
         decision: "allow",
-        credentialId: createHash("sha256").update(artifact.path.token).digest("base64url"),
+        credentialId: tunnelLookupKey(artifact),
         leaseId: "late-authorization-lease",
         expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
         expectedPeerEndpointInstanceId: "endpoint-server",
@@ -504,6 +564,7 @@ describe("Node production server runtime v3", () => {
 
   test("keeps tunnel legs with different session hashes in separate generations", async () => {
     const released: string[] = [];
+    const roles = new Map<string, 1 | 2>();
     const runtime = createTunnelRuntimeV3({
       listeners: [{
         carrier: "websocket",
@@ -515,13 +576,17 @@ describe("Node production server runtime v3", () => {
       maxInboundStreams: tunnelBase.session.max_inbound_streams,
       maxPendingLegs: 2,
       pairTimeoutMs: 100,
-      authorize: async ({ request }) => ({
-        decision: "allow" as const,
-        credentialId: createHash("sha256").update(request.attach_token).digest("base64url"),
-        leaseId: `hash-isolation-${request.role}`,
-        expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
-        expectedPeerEndpointInstanceId: request.role === 1 ? "endpoint-server" : "endpoint-client",
-      }),
+      authorize: async (request) => {
+        const role = roles.get(request.lookupKey());
+        if (role === undefined) return { decision: "reject" as const, reason: "not_authorized" };
+        return {
+          decision: "allow" as const,
+          credentialId: request.lookupKey(),
+          leaseId: `hash-isolation-${role}`,
+          expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
+          expectedPeerEndpointInstanceId: role === 1 ? "endpoint-server" : "endpoint-client",
+        };
+      },
       release: (leaseId) => { released.push(leaseId); },
     });
     try {
@@ -529,6 +594,8 @@ describe("Node production server runtime v3", () => {
       const port = runtime.addresses()[0]!.port;
       const first = tunnelArtifactWithSession(port, 1, tunnelBase.session.max_inbound_streams);
       const second = tunnelArtifactWithSession(port, 2, tunnelBase.session.max_inbound_streams + 1);
+      roles.set(tunnelLookupKey(first), 1);
+      roles.set(tunnelLookupKey(second), 2);
       const results = await Promise.allSettled([
         connectV3(lease(first), { origin: "https://app.example", roots: rootCertificate, connectTimeoutMs: 3_000 }),
         connectV3(lease(second), { origin: "https://app.example", roots: rootCertificate, connectTimeoutMs: 3_000 }),
@@ -543,6 +610,7 @@ describe("Node production server runtime v3", () => {
 
   test("keeps tunnel legs with different candidate-set hashes in separate generations", async () => {
     const released: string[] = [];
+    const roles = new Map<string, 1 | 2>();
     const runtime = createTunnelRuntimeV3({
       listeners: [{
         carrier: "websocket",
@@ -554,13 +622,17 @@ describe("Node production server runtime v3", () => {
       maxInboundStreams: tunnelBase.session.max_inbound_streams,
       maxPendingLegs: 2,
       pairTimeoutMs: 100,
-      authorize: async ({ request }) => ({
-        decision: "allow" as const,
-        credentialId: createHash("sha256").update(request.attach_token).digest("base64url"),
-        leaseId: `candidate-isolation-${request.role}`,
-        expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
-        expectedPeerEndpointInstanceId: request.role === 1 ? "endpoint-server" : "endpoint-client",
-      }),
+      authorize: async (request) => {
+        const role = roles.get(request.lookupKey());
+        if (role === undefined) return { decision: "reject" as const, reason: "not_authorized" };
+        return {
+          decision: "allow" as const,
+          credentialId: request.lookupKey(),
+          leaseId: `candidate-isolation-${role}`,
+          expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
+          expectedPeerEndpointInstanceId: role === 1 ? "endpoint-server" : "endpoint-client",
+        };
+      },
       release: (leaseId) => { released.push(leaseId); },
     });
     try {
@@ -568,6 +640,8 @@ describe("Node production server runtime v3", () => {
       const port = runtime.addresses()[0]!.port;
       const first = tunnelArtifactWithCandidate(port, 1, "w-ca");
       const second = tunnelArtifactWithCandidate(port, 2, "w-cb");
+      roles.set(tunnelLookupKey(first), 1);
+      roles.set(tunnelLookupKey(second), 2);
       const results = await Promise.allSettled([
         connectV3(lease(first), { origin: "https://app.example", roots: rootCertificate, connectTimeoutMs: 3_000 }),
         connectV3(lease(second), { origin: "https://app.example", roots: rootCertificate, connectTimeoutMs: 3_000 }),
@@ -596,11 +670,11 @@ describe("Node production server runtime v3", () => {
       }],
       maxInboundStreams: tunnelBase.session.max_inbound_streams,
       cleanupTimeoutMs: 50,
-      authorize: async ({ request }) => {
+      authorize: async (request) => {
         authorizeStartedResolve();
         return {
           decision: "allow" as const,
-          credentialId: createHash("sha256").update(request.attach_token).digest("base64url"),
+          credentialId: request.lookupKey(),
           leaseId: "never-release",
           expiresAtUnixSeconds: Math.floor(Date.now() / 1_000) + 60,
           expectedPeerEndpointInstanceId: "endpoint-server",
@@ -794,6 +868,11 @@ function tunnelArtifactWithCandidate(port: number, role: 1 | 2, candidateID: str
       candidates: [{ ...candidate(port, "tunnel"), id: candidateID }],
     },
   };
+}
+
+function tunnelLookupKey(artifact: ArtifactV3): string {
+  if (artifact.path.kind !== "tunnel") throw new Error("expected tunnel artifact");
+  return createHash("sha256").update(artifact.path.token).digest("base64url");
 }
 
 function candidate(port: number, path: "direct" | "tunnel"): ArtifactCandidateV3 {

@@ -10,6 +10,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     task::Poll,
+    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -19,6 +20,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _},
     net::{TcpListener, TcpStream},
     sync::{Mutex, mpsc, oneshot},
+    task::JoinSet,
 };
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use tokio_tungstenite::{
@@ -39,6 +41,9 @@ use crate::transport_v3::{CarrierKind as CarrierKindV3, CarrierSessionV3, Carrie
 const MAX_BINARY_MESSAGE_BYTES: usize = 256 * 1024 + 12;
 const MAX_QUEUED_MESSAGES: usize = 64;
 const YAMUX_BYTE_BUFFER_BYTES: usize = 512 * 1024;
+const MAX_PENDING_SERVER_HANDSHAKES: usize = 64;
+const SERVER_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+type ServerHandshakeResult = Result<(Arc<WebSocketCarrier>, SocketAddr), WebSocketError>;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum WebSocketError {
@@ -61,6 +66,7 @@ pub(crate) struct WebSocketListener {
     capacity: u32,
     path: &'static str,
     subprotocol: &'static str,
+    pending_handshakes: Mutex<JoinSet<ServerHandshakeResult>>,
 }
 
 impl fmt::Debug for WebSocketListener {
@@ -104,6 +110,7 @@ impl WebSocketListener {
             capacity,
             path,
             subprotocol,
+            pending_handshakes: Mutex::new(JoinSet::new()),
         })
     }
 
@@ -114,45 +121,45 @@ impl WebSocketListener {
     pub(crate) async fn accept_with_peer(
         &self,
     ) -> Result<(Arc<WebSocketCarrier>, SocketAddr), WebSocketError> {
+        let mut pending = self.pending_handshakes.lock().await;
         loop {
-            let (stream, peer) = self
-                .listener
-                .accept()
-                .await
-                .map_err(|_| WebSocketError::Closed)?;
-            if self.tls.is_none()
-                && (!peer.ip().is_loopback()
-                    || !stream
-                        .local_addr()
-                        .map(|address| address.ip().is_loopback())
-                        .unwrap_or(false))
-            {
-                continue;
-            }
-            let accepted = if let Some(tls) = &self.tls {
-                match tls.accept(stream).await {
-                    Ok(stream) => {
-                        accept_server_websocket(
-                            stream,
-                            self.path,
-                            self.subprotocol,
-                            self.allowed_origins.clone(),
-                        )
-                        .await
+            tokio::select! {
+                biased;
+                result = pending.join_next(), if !pending.is_empty() => {
+                    if let Some(Ok(Ok(accepted))) = result {
+                        return Ok(accepted);
                     }
-                    Err(_) => continue,
                 }
-            } else {
-                accept_server_websocket(
-                    stream,
-                    self.path,
-                    self.subprotocol,
-                    self.allowed_origins.clone(),
-                )
-                .await
-            };
-            if let Ok(io) = accepted {
-                return Ok((WebSocketCarrier::pending(io, false, self.capacity), peer));
+                accepted = self.listener.accept(), if pending.len() < MAX_PENDING_SERVER_HANDSHAKES => {
+                    let (stream, peer) = accepted.map_err(|_| WebSocketError::Closed)?;
+                    if self.tls.is_none()
+                        && (!peer.ip().is_loopback()
+                            || !stream
+                                .local_addr()
+                                .map(|address| address.ip().is_loopback())
+                                .unwrap_or(false))
+                    {
+                        continue;
+                    }
+                    let tls = self.tls.clone();
+                    let path = self.path;
+                    let subprotocol = self.subprotocol;
+                    let allowed_origins = self.allowed_origins.clone();
+                    let capacity = self.capacity;
+                    pending.spawn(async move {
+                        tokio::time::timeout(SERVER_HANDSHAKE_TIMEOUT, async move {
+                            let io = if let Some(tls) = tls {
+                                let stream = tls.accept(stream).await.map_err(|_| WebSocketError::Connect)?;
+                                accept_server_websocket(stream, path, subprotocol, allowed_origins).await?
+                            } else {
+                                accept_server_websocket(stream, path, subprotocol, allowed_origins).await?
+                            };
+                            Ok((WebSocketCarrier::pending(io, false, capacity), peer))
+                        })
+                        .await
+                        .unwrap_or(Err(WebSocketError::Connect))
+                    });
+                }
             }
         }
     }
@@ -1339,13 +1346,18 @@ mod tests {
     use cert_test_builder::{CertificateParams, KeyPair};
     use futures_util::{SinkExt, io::AsyncRead, io::AsyncWrite};
     use tokio::io::{AsyncReadExt, duplex};
+    use tokio::net::TcpStream;
     use tokio::sync::{Mutex, mpsc};
-    use tokio_tungstenite::{accept_async, client_async, tungstenite::Message};
+    use tokio_tungstenite::{
+        accept_async, client_async, connect_async,
+        tungstenite::{Message, client::IntoClientRequest, http::HeaderValue},
+    };
     use tokio_util::sync::CancellationToken;
 
     use super::{
-        CarrierSessionV2, OutgoingMessage, WebSocketCarrier, WebSocketIo, run_yamux,
-        server_tls_config, spawn_binary_bridge, spawn_websocket_pump,
+        CarrierSessionV2, OutgoingMessage, WebSocketCarrier, WebSocketIo, WebSocketListener,
+        dial_with_trust_roots, run_yamux, server_tls_config, spawn_binary_bridge,
+        spawn_websocket_pump,
     };
 
     struct PendingIo;
@@ -1391,6 +1403,90 @@ mod tests {
 
         assert_eq!(config.max_early_data_size, 0);
         assert_eq!(config.send_tls13_tickets, 0);
+    }
+
+    #[tokio::test]
+    async fn stalled_upgrade_does_not_block_a_later_valid_connection() {
+        let listener = WebSocketListener::bind(
+            "127.0.0.1:0".parse().unwrap(),
+            Vec::new(),
+            Vec::new(),
+            vec!["http://app.example".into()],
+            3,
+            "/flowersec/v3/direct",
+            "flowersec.direct.v3",
+            false,
+            true,
+        )
+        .unwrap();
+        let address = listener.local_addr().unwrap();
+        let stalled = TcpStream::connect(address).await.unwrap();
+        let mut request = format!("ws://{address}/flowersec/v3/direct")
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("origin", HeaderValue::from_static("http://app.example"));
+        request.headers_mut().insert(
+            "sec-websocket-protocol",
+            HeaderValue::from_static("flowersec.direct.v3"),
+        );
+        let (accepted, connected) =
+            tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                tokio::join!(listener.accept_with_peer(), connect_async(request))
+            })
+            .await
+            .expect("stalled upgrade blocked the listener");
+        let (carrier, _) = accepted.expect("accept valid WebSocket");
+        let (mut client, _) = connected.expect("connect valid WebSocket");
+        drop(stalled);
+        let _ = client.close(None).await;
+        let _ = CarrierSessionV2::close(carrier.as_ref()).await;
+    }
+
+    #[tokio::test]
+    async fn stalled_tls_client_does_not_block_a_later_valid_connection() {
+        let key = KeyPair::generate().expect("generate test server key");
+        let certificate = CertificateParams::new(vec!["127.0.0.1".into()])
+            .expect("create test certificate parameters")
+            .self_signed(&key)
+            .expect("sign test certificate");
+        let certificate_der = certificate.der().to_vec();
+        let listener = WebSocketListener::bind(
+            "127.0.0.1:0".parse().unwrap(),
+            vec![certificate_der.clone()],
+            key.serialize_der(),
+            vec!["https://app.example".into()],
+            3,
+            "/flowersec/v3/direct",
+            "flowersec.direct.v3",
+            true,
+            true,
+        )
+        .unwrap();
+        let address = listener.local_addr().unwrap();
+        let stalled = TcpStream::connect(address).await.unwrap();
+        let url = format!("wss://{address}/flowersec/v3/direct");
+        let (accepted, connected) =
+            tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                tokio::join!(
+                    listener.accept_with_peer(),
+                    dial_with_trust_roots(
+                        &url,
+                        "flowersec.direct.v3",
+                        "https://app.example",
+                        vec![certificate_der],
+                        3,
+                    ),
+                )
+            })
+            .await
+            .expect("stalled TLS client blocked the listener");
+        let (server, _) = accepted.expect("accept valid WSS connection");
+        let client = connected.expect("connect valid WSS connection");
+        drop(stalled);
+        let _ = CarrierSessionV2::close(client.as_ref()).await;
+        let _ = CarrierSessionV2::close(server.as_ref()).await;
     }
 
     #[tokio::test]

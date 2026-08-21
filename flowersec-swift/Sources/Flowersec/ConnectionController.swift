@@ -464,7 +464,7 @@ public actor ConnectionController {
       if error == .expiredArtifact {
         return .retryPrimary(.connection(error), nil)
       }
-      return .terminal(.connection(publicError(for: .connection(error))))
+      return .terminal(.connection(trigger.publicError))
     } catch let error as ControllerConnectFailureV3 {
       switch error {
       case .connection(let publicError, let disposition, _, _, _):
@@ -479,7 +479,7 @@ public actor ConnectionController {
         if publicError == .expiredArtifact {
           return .retryPrimary(.connection(publicError), disposition)
         }
-        return .terminal(.connection(publicError))
+        return .terminal(.connection(trigger.publicError))
       }
     } catch {
       if !(await claimedLease.isConsumed) { await retire(claimedLease) }

@@ -3,9 +3,25 @@
 import { createCipheriv, createHmac } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const root = dirname(fileURLToPath(import.meta.url));
+const checkOnly = process.argv.length === 3 && process.argv[2] === "--check";
+if (process.argv.length > (checkOnly ? 3 : 2)) {
+  throw new Error("usage: generate_crypto_vectors.mjs [--check]");
+}
+
+function write(name, value) {
+  const rendered = `${JSON.stringify(value, null, 2)}\n`;
+  const output = join(root, name);
+  if (checkOnly) {
+    if (readFileSync(output, "utf8") !== rendered) {
+      throw new Error(`${name} is not reproducible; regenerate crypto vectors`);
+    }
+    return;
+  }
+  writeFileSync(output, rendered);
+}
 
 function hmac(key, ...parts) {
   const value = createHmac("sha256", key);
@@ -128,7 +144,7 @@ const cryptoVectors = {
     },
   ],
 };
-writeFileSync(join(root, "crypto_vectors.json"), `${JSON.stringify(cryptoVectors, null, 2)}\n`);
+write("crypto_vectors.json", cryptoVectors);
 
 function datagramVector(suite) {
   const datagramEpoch = 7;
@@ -194,14 +210,11 @@ function datagramVector(suite) {
   };
 }
 
-writeFileSync(
-  join(root, "datagram_vectors.json"),
-  `${JSON.stringify({ schema_version: 3, vectors: [datagramVector(1), datagramVector(2)] }, null, 2)}\n`,
-);
+write("datagram_vectors.json", { schema_version: 3, vectors: [datagramVector(1), datagramVector(2)] });
 
-writeFileSync(
-  join(root, "session_wire_vectors.json"),
-  `${JSON.stringify({
+write(
+  "session_wire_vectors.json",
+  {
     version: 3,
     profile: "flowersec/3",
     stream_key_update_ack: [{
@@ -210,5 +223,5 @@ writeFileSync(
       next_epoch_hex: "21222324",
       payload_hex: "0102030405060708111213141516171821222324",
     }],
-  }, null, 2)}\n`,
+  },
 );

@@ -411,7 +411,7 @@ struct TransportV3Tests {
       try AdmissionCodecV3.acceptorAdmissionsHash([admission]) == expectedAdmissions)
   }
 
-  @Test func versionIsolationVectorsRejectV2MutationsAtProductionBoundaries() throws {
+  @Test func versionIsolationVectorsRejectV2MutationsAtProductionBoundaries() async throws {
     let root = try Self.loadVectorObject("version_isolation_vectors.json")
     let frames = try #require(root["frames"] as? [[String: Any]])
     #expect(root["version"] as? Int == 3)
@@ -431,9 +431,13 @@ struct TransportV3Tests {
         #expect(throws: AdmissionCodecErrorV3.self) { try AdmissionCodecV3.decodeFSA3(version) }
         _ = try AdmissionCodecV3.decodeFSA3(valid)
       case "fsc3":
-        #expect(valid == TransportV3Handshake.controlPreface())
-        #expect(magic != TransportV3Handshake.controlPreface())
-        #expect(version != TransportV3Handshake.controlPreface())
+        try TransportV3Handshake.requireControlPreface(valid)
+        #expect(throws: TransportV3SessionError.self) {
+          try TransportV3Handshake.requireControlPreface(magic)
+        }
+        #expect(throws: TransportV3SessionError.self) {
+          try TransportV3Handshake.requireControlPreface(version)
+        }
       case "fss3":
         #expect(throws: TransportV3CryptoError.self) { try SetupPrefaceV3(encoded: magic) }
         #expect(throws: TransportV3CryptoError.self) { try SetupPrefaceV3(encoded: version) }
@@ -447,16 +451,33 @@ struct TransportV3Tests {
         #expect(throws: TransportV3CryptoError.self) { try UnreliableHeaderV3(encoded: version) }
         _ = try UnreliableHeaderV3(encoded: valid)
       case "fsh3":
-        // FSH3's canonical JSON decoder is exercised by the shared handshake suite.
-        #expect(valid.prefix(5) == Data([0x46, 0x53, 0x48, 0x33, 0x03]))
-        #expect(magic.prefix(5) != valid.prefix(5))
-        #expect(version.prefix(5) != valid.prefix(5))
+        #expect(
+          try await TransportV3Handshake.readFrame(
+            from: VersionIsolationCarrierStreamV3(valid), expectedType: valid[5]) == valid)
+        await #expect(throws: TransportV3SessionError.self) {
+          try await TransportV3Handshake.readFrame(
+            from: VersionIsolationCarrierStreamV3(magic), expectedType: valid[5])
+        }
+        await #expect(throws: TransportV3SessionError.self) {
+          try await TransportV3Handshake.readFrame(
+            from: VersionIsolationCarrierStreamV3(version), expectedType: valid[5])
+        }
       default:
         Issue.record("unexpected isolation frame \(id)")
       }
     }
 
     let artifactText = try #require(String(data: Self.validArtifact(), encoding: .utf8))
+    let artifactVectors = try Self.loadVectorObject("artifact_vectors.json")
+    let positiveArtifacts = try #require(artifactVectors["positive"] as? [[String: Any]])
+    let tunnelArtifacts: [String] = positiveArtifacts.compactMap {
+      $0["artifact_json"] as? String
+    }
+    let tunnelArtifactText = try #require(
+      tunnelArtifacts.first {
+        ($0.data(using: String.Encoding.utf8).flatMap { try? parseArtifactV3($0) })?.value.path.kind
+          == "tunnel"
+      })
     let profileMutations = try #require(root["profile_mutations"] as? [[String: Any]])
     for mutation in profileMutations {
       let id = try #require(mutation["id"] as? String)
@@ -465,9 +486,7 @@ struct TransportV3Tests {
       if id == "tunnel" {
         #expect(v3 == TransportV3Contract.tunnelProfile)
         #expect(v2 == "flowersec-tunnel/2")
-        continue
-      }
-      if id == "direct" {
+      } else if id == "direct" {
         #expect(v3 == TransportV3Contract.directProfile)
       } else {
         #expect(v3 == TransportV3Contract.sessionProfile)
@@ -476,7 +495,8 @@ struct TransportV3Tests {
         id == "session"
         ? "\"profile\":\"\(TransportV3Contract.sessionProfile)\""
         : "\"wire_profile\":\"\(TransportV3Contract.wireProfile(for: id))\""
-      let mutated = artifactText.replacingOccurrences(
+      let sourceText = id == "tunnel" ? tunnelArtifactText : artifactText
+      let mutated = sourceText.replacingOccurrences(
         of: marker, with: marker.replacingOccurrences(of: "/3", with: "/2"))
       #expect(throws: ArtifactErrorV3.self, Comment(rawValue: "profile_mutations/\(id)")) {
         try parseArtifactV3(Data(mutated.utf8))
@@ -810,6 +830,30 @@ struct TransportV3Tests {
       "v": 3,
     ])
   }
+}
+
+private actor VersionIsolationCarrierStreamV3: TransportV3CarrierStream {
+  nonisolated let carrierStreamID: UInt64 = 1
+  private let data: Data
+  private var offset = 0
+
+  init(_ data: Data) {
+    self.data = data
+  }
+
+  func read(maxBytes: Int) async throws -> Data? {
+    guard offset < data.count else { return nil }
+    let end = min(data.count, offset + maxBytes)
+    defer { offset = end }
+    return Data(data[offset..<end])
+  }
+
+  func write(_ data: Data) async throws -> Int { data.count }
+  func closeWrite() async throws {}
+  func stopSending(code: UInt16) async throws {}
+  func reset(code: UInt16) async {}
+  nonisolated func abort(code: UInt16) {}
+  func close() async {}
 }
 
 private enum SpendFailureV3: Error, Equatable {

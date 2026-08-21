@@ -65,8 +65,8 @@ Choose the SDK that matches your application:
 | Rust | Tokio services that need native QUIC | [Rust SDK](flowersec-rust/README.md) |
 
 The [cookbook index](examples/README.md) contains small, runnable examples for
-client connections, durable invitation use, control-plane issuance, liveness,
-and session lifecycle in each SDK.
+client connections, durable invitation use, liveness, and session lifecycle
+across the SDKs, plus the Go-owned v3 control-plane issuance flow.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
@@ -75,8 +75,8 @@ and session lifecycle in each SDK.
 
 Start with the [cookbook index](examples/README.md) for small examples that use
 the same public API as production applications. It covers client connections,
-control-plane invitation issuance, durable single-use handling, liveness, and
-session lifecycle.
+durable single-use handling, liveness, and session lifecycle, with v3
+control-plane invitation issuance provided by Go.
 
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
@@ -100,10 +100,10 @@ syntax without changing shared behavior.
 | Apple client connections | No | No | Yes | No |
 | Native QUIC connections | Yes | Node.js | No | Yes |
 | WebSocket connections | Yes | Yes | Yes | Yes |
-| WebTransport connections | Go direct (optional adapter) | Browser (WebTransport API when available) | No | No |
+| WebTransport connections | Go H4 | Browser H3 client (when available) | No | No |
 | Server-side session acceptance | Yes | Node.js | No | Yes |
 | Opaque tunnel runtime | Yes | Node.js | No | Yes |
-| Control-plane invitation issuance | Yes | Node.js | No | Yes |
+| Control-plane invitation issuance | Yes | No | No | No |
 | HTTP and WebSocket ProxyServer | Yes | Node.js | No | Yes |
 
 Deployment profiles keep platform availability separate from the shared
@@ -114,11 +114,12 @@ Flowersec application protocol:
 | `native-server-core` | Go, Rust, Node.js | WebSocket and raw QUIC endpoint client, direct server, and opaque tunnel runtime | WebTransport adapter |
 | `browser-client` | TypeScript browser | WebSocket endpoint client | Browser WebTransport adapter |
 | `apple-client` | Swift on Apple platforms | WSS endpoint client | None |
-| `webtransport-server` | No runtime currently claims it | Direct server and opaque tunnel runtime conformance are both required before claiming | None |
+| `webtransport-server` | Go | WebTransport direct server and opaque tunnel runtime | None |
 
-The machine-readable capability inventory contains 18 aggregate
+The machine-readable native-server-core profile contains 18 aggregate
 runtime-role-carrier tuples (six per native runtime) and 24 supported
-path-specific server units. The interoperability matrix separately declares a
+path-specific server units; Go H4 adds two WebTransport server tuples and two
+path-specific units. The interoperability matrix separately declares a
 coordinate universe of 18 direct cells and 18 tunnel cells. All 36 pairwise
 cells are currently explicit `unsupported` declarations because no
 release-gating v3 test exercises a cell's complete executable case set. A
@@ -129,9 +130,9 @@ See the SDK guides for the exact platform and connection combinations supported
 by each package.
 
 WebTransport is optional rather than part of the required native-server carrier
-contract. Go provides a direct adapter; the Browser profile uses the browser
-WebTransport API when present; Node.js and Rust do not currently provide a
-production WebTransport adapter. The native-server carrier surface is
+contract. Go claims the separate complete H4 webtransport-server profile;
+the Browser profile uses the H3 WebTransport API when present. Node.js and Rust
+do not currently provide a production WebTransport adapter. The native-server carrier surface is
 WebSocket and raw QUIC for Go, Rust, and Node.js; pairwise interoperability
 support is claimed only by supported entries in the matrix.
 

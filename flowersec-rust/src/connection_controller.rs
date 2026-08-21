@@ -1006,9 +1006,9 @@ async fn run_replacement(
                 RetryDisposition::Retryable,
             ))
         }
-        Err(error) => {
+        Err(_) => {
             let _ = claimed.retire().await;
-            ReplacementResult::Terminal(error.code())
+            ReplacementResult::Terminal(trigger.public_code)
         }
     }
 }
@@ -1375,6 +1375,7 @@ mod tests {
             | "failure-ordinal"
             | "expiry-boundary"
             | "cycle-reset"
+            | "cycle-reset-terminal"
             | "retry-clock-boundary"
             | "candidate-security-aggregation"
             | "multi-trigger-replacement"
@@ -1448,8 +1449,12 @@ mod tests {
             expected.monotonic_end_ms.is_some()
         );
         if let Some(attempt) = expected.attempt {
-            assert_eq!(scenario.driver, "attempt-saturation");
-            assert!(attempt > 0);
+            if scenario.driver == "attempt-saturation" {
+                assert!(attempt > 0);
+            } else {
+                assert_eq!(scenario.driver, "cycle-reset-terminal");
+                assert_eq!(attempt, 0);
+            }
         }
         if let Some(value) = expected.counter_saturated {
             assert!(value && scenario.driver == "attempt-saturation");
@@ -1468,7 +1473,7 @@ mod tests {
             assert_eq!(ordinal, 1);
             assert!(matches!(
                 scenario.driver.as_str(),
-                "failure-ordinal" | "cycle-reset"
+                "failure-ordinal" | "cycle-reset" | "cycle-reset-terminal"
             ));
         }
         if let Some(interval) = expected.maximum_wall_reread_ms {
@@ -1708,6 +1713,45 @@ mod tests {
         assert!(expected.retry_delays_ms.is_empty());
         assert_eq!(expected.public_error, None);
         assert_eq!(expected.disposition, None);
+        controller.close().await;
+    }
+
+    #[tokio::test]
+    async fn replacement_pre_spend_failure_preserves_the_primary_security_trigger() {
+        let retired = Arc::new(AtomicU64::new(0));
+        let spent = Arc::new(AtomicU64::new(0));
+        let source = Arc::new(QueueSource::new([
+            Ok(test_lease(
+                pin_only_artifact([0x11; 32]),
+                spent.clone(),
+                retired.clone(),
+            )),
+            Ok(test_lease(
+                pin_only_artifact([0x22; 32]),
+                spent.clone(),
+                retired.clone(),
+            )),
+        ]));
+        let controller = ConnectionController::new_with_connector(
+            source,
+            test_options(None),
+            scripted_connector([
+                ConnectorStep::PreSpendSecurity,
+                ConnectorStep::PreSpendConnection,
+            ]),
+        );
+
+        controller.start();
+        let status = wait_for_state(&controller, ConnectionState::Failed).await;
+        assert_eq!(
+            status.last_failure,
+            Some(connect_failure(
+                ConnectErrorCode::TransportSecurityFailed,
+                RetryDisposition::Terminal,
+            ))
+        );
+        assert_eq!(spent.load(Ordering::SeqCst), 0);
+        assert_eq!(retired.load(Ordering::SeqCst), 2);
         controller.close().await;
     }
 

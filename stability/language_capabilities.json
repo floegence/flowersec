@@ -48,8 +48,8 @@
       },
       {
         "id": "webtransport-server",
-        "claimed_runtimes": [],
-        "transport_runtime_ids": [],
+        "claimed_runtimes": ["go"],
+        "transport_runtime_ids": ["go/native"],
         "required_roles": ["direct-server", "tunnel-runtime"],
         "required_carriers": ["webtransport"],
         "required_paths": {
@@ -58,8 +58,8 @@
         },
         "required_capability_ids": ["secure_session", "rpc_call_notify", "validated_stream_metadata", "carrier_contract", "wire_security"],
         "optional_carriers": [],
-        "required_tuple_count": 0,
-        "required_path_unit_count": 0
+        "required_tuple_count": 2,
+        "required_path_unit_count": 2
       }
     ]
   },

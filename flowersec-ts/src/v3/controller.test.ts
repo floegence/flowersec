@@ -70,6 +70,7 @@ describe("transport v3 controller, lease, and retry semantics", () => {
       "candidate-security-aggregation",
       "capability-barrier",
       "cycle-reset",
+      "cycle-reset-terminal",
       "duplicate-lease-identity",
       "expiry-boundary",
       "failure-ordinal",

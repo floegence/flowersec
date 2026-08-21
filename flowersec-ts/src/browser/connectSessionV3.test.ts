@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   connect,
   createArtifactLease,
+  createConnectionController,
   parseArtifact,
 } from "./index.js";
 import type { ConnectError } from "./index.js";
@@ -56,6 +57,19 @@ describe("browser production v3 connector", () => {
     expect(spends).toBe(0);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toHaveLength(1);
+  });
+
+  test("validates the public browser connection timeout override", async () => {
+    installBrowserFeatures(class {});
+    const lease = createArtifactLease(parseArtifact(directFixture), async () => undefined);
+    await expect(connect(lease, { connectTimeoutMs: 0 })).rejects.toEqual(
+      expect.objectContaining<Partial<ConnectError>>({ code: "artifact_invalid" }),
+    );
+    await expect(createConnectionController({
+      acquire: async () => ({ kind: "failure", code: "artifact_invalid", disposition: { kind: "terminal" } }),
+    }, { connectTimeoutMs: 0 })).rejects.toEqual(
+      expect.objectContaining<Partial<ConnectError>>({ code: "artifact_invalid" }),
+    );
   });
 });
 

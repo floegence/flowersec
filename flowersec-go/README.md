@@ -129,8 +129,9 @@ The Go SDK supports WebSocket, raw QUIC, and WebTransport across H4: direct
 endpoint dial, client and server endpoint tunnel dial, direct listen, and
 tunnel listener pairing. `NewTunnelRuntime(...)` composes
 `NewWebTransportTunnelListener(...)` for opaque paired stream and datagram
-forwarding. No runtime currently claims the complete `webtransport-server`
-profile. The SDK provides the direct-only `NewAcceptor` for application-owned
+forwarding. These production-backed direct and tunnel paths make Go the H4
+runtime that claims the complete `webtransport-server` profile. The SDK provides
+the direct-only `NewAcceptor` for application-owned
 server sessions, the separate `NewTunnelRuntime` for opaque tunnel pairing and
 forwarding, and `NewProxyServer` for bounded browser HTTP/WebSocket proxy
 handling. A tunnel runtime never owns a `Session`, application handler, or E2EE

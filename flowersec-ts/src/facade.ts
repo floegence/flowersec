@@ -1,6 +1,5 @@
 import type { Session as PublicSession } from "./public/contract.js";
 import type {
-  ConnectionControllerOptionsV3 as CoreConnectionControllerOptionsV3,
   ConnectionControllerSnapshotV3 as CoreConnectionControllerSnapshotV3,
   ConnectionControllerV3 as CoreConnectionControllerV3,
 } from "./v3/connectionController.js";
@@ -69,7 +68,7 @@ export type {
 } from "./v3/connectionController.js";
 export type ConnectionController = CoreConnectionControllerV3<PublicSession>;
 export type ConnectionSnapshot = CoreConnectionControllerSnapshotV3<PublicSession>;
-export type ConnectionControllerOptions = CoreConnectionControllerOptionsV3;
+export type ConnectionControllerOptions = Readonly<{ maximumAttempts?: number }>;
 export {
   ConnectionControllerV3Error as ConnectionControllerError,
   ConnectionControllerV3Error,

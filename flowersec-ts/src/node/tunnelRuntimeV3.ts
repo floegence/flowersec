@@ -8,7 +8,6 @@ import { configureServerWebSocketCarrierRoleV3 } from "../v3/webSocketCarrier.js
 import {
   AdmissionStatusV3,
   encodeFSA3ResponseV3,
-  type DecodedFSB3RequestV3,
   type TunnelFSB3RequestV3,
 } from "../v3/artifact.js";
 import type {
@@ -17,10 +16,13 @@ import type {
   CarrierUnreliableDatagramsV3,
 } from "../v3/carrier.js";
 import type { OperationOptions } from "../public/contract.js";
-import { createHash } from "node:crypto";
 import { startNodeWebSocketListenerV3, type NodeWebSocketListenerV3 } from "./webSocketServerV3.js";
 import { createNativeRawQuicDriverV3 } from "./nativeTransportAddon.js";
 import { startNodeRawQuicListenerV3, type NodeRawQuicListenerV3 } from "./rawQuicServerV3.js";
+import {
+  runtimeAuthorizationRequestV3FromDecoded,
+  type RuntimeAuthorizationRequestV3,
+} from "./runtimeAuthorizationV3.js";
 
 const DEFAULT_PAIR_TIMEOUT_MS = 10_000;
 const DEFAULT_ADMISSION_TIMEOUT_MS = 10_000;
@@ -80,7 +82,7 @@ export type TunnelRuntimeOptionsV3 = Readonly<{
   cleanupTimeoutMs?: number;
   admissionReasons?: readonly string[];
   authorize(
-    request: DecodedFSB3RequestV3,
+    request: RuntimeAuthorizationRequestV3,
     options: OperationOptions,
   ): Promise<TunnelAuthorizationDecisionV3>;
   release?(leaseId: string, options: Readonly<{ signal: AbortSignal }>): Promise<void> | void;
@@ -209,6 +211,8 @@ async function startTunnelRuntimeV3(state: TunnelRuntimeStateV3): Promise<void> 
                 ...listener,
                 path: "tunnel",
                 inboundBidirectionalStreamCapacity: state.options.maxInboundStreams + 2,
+                maxPendingSessions: state.limits.maxConcurrentAdmissions,
+                pendingSessionTimeoutMs: state.limits.admissionTimeoutMs,
               })
             : await startNodeRawQuicListenerV3(
                 rawQuicDriver ??= createNativeRawQuicDriverV3(),
@@ -261,6 +265,7 @@ async function processCarrier(state: TunnelRuntimeStateV3, carrier: CarrierSessi
   try {
     const received = await receiveSessionAdmissionV3(carrier, admission.signal);
     const decoded = received.decoded;
+    const authorizationRequest = runtimeAuthorizationRequestV3FromDecoded(decoded);
     if (carrier.path !== "tunnel" || decoded.request.pathKind !== "tunnel" ||
       decoded.request.candidates.find((candidate) => candidate.id === decoded.request.chosen_candidate_id)?.carrier !== carrier.kind) {
       await reject(received, "invalid_credential", false, state.admissionReasons, admission.signal);
@@ -276,7 +281,7 @@ async function processCarrier(state: TunnelRuntimeStateV3, carrier: CarrierSessi
           try {
             // Admission cancellation must not free this slot while an
             // application-owned authorization Promise is still running.
-            return state.options.authorize(decoded, { signal: admission.signal }).finally(releaseAuthorizer);
+            return state.options.authorize(authorizationRequest, { signal: admission.signal }).finally(releaseAuthorizer);
           } catch (error) {
             releaseAuthorizer();
             throw error;
@@ -302,7 +307,7 @@ async function processCarrier(state: TunnelRuntimeStateV3, carrier: CarrierSessi
       );
       return;
     }
-    const leg = validatedLeg(state, received, decoded.request, decision);
+    const leg = validatedLeg(state, received, decoded.request, authorizationRequest, decision);
     if (leg === undefined) {
       releaseDecision(state, decision);
       const expired = decision.expiresAtUnixSeconds <= Math.floor(Date.now() / 1_000);
@@ -329,10 +334,11 @@ function validatedLeg(
   state: TunnelRuntimeStateV3,
   received: ReceivedSessionAdmissionV3,
   request: TunnelFSB3RequestV3,
+  authorizationRequest: RuntimeAuthorizationRequestV3,
   authorization: AllowedDecision,
 ): TunnelLeg | undefined {
   const now = Math.floor(Date.now() / 1_000);
-  if (!ID.test(authorization.credentialId) || authorization.credentialId !== credentialLookup(request.attach_token) ||
+  if (!ID.test(authorization.credentialId) || authorization.credentialId !== authorizationRequest.lookupKey() ||
     !ID.test(authorization.leaseId) || !Number.isSafeInteger(authorization.expiresAtUnixSeconds) ||
     authorization.expiresAtUnixSeconds <= now || !ID.test(authorization.expectedPeerEndpointInstanceId) ||
     authorization.expectedPeerEndpointInstanceId === request.endpoint_instance_id) return undefined;
@@ -987,10 +993,6 @@ function aborted(signal: AbortSignal): Promise<void> {
 
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
-}
-
-function credentialLookup(credential: string): string {
-  return createHash("sha256").update(credential, "utf8").digest("base64url");
 }
 
 class Slots {

@@ -510,10 +510,17 @@ func (controller *ConnectionController) run(ctx context.Context) {
 		}
 		cycle.consecutiveFailures = 1
 		cycle.lastFailure = terminalError
+		controller.resetAttempt()
 		if !controller.handleFailure(ctx, terminalError, disposition, cycle.consecutiveFailures, cycle.attempts) {
 			return
 		}
 	}
+}
+
+func (controller *ConnectionController) resetAttempt() {
+	controller.mu.Lock()
+	controller.snapshot.Attempt = 0
+	controller.mu.Unlock()
 }
 
 func newControllerCycle() controllerCycle {

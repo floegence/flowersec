@@ -19,6 +19,8 @@ export type NodeWebSocketListenerOptionsV3 = Readonly<{
   tls: Readonly<{ certificate: string; privateKey: string }>;
   allowedOrigins: readonly string[];
   inboundBidirectionalStreamCapacity: number;
+  maxPendingSessions?: number;
+  pendingSessionTimeoutMs?: number;
 }>;
 
 export type NodeWebSocketListenerV3 = Readonly<{
@@ -31,6 +33,8 @@ export async function startNodeWebSocketListenerV3(
   options: NodeWebSocketListenerOptionsV3,
 ): Promise<NodeWebSocketListenerV3> {
   validateOptions(options);
+  const maxPendingSessions = options.maxPendingSessions ?? 1_024;
+  const pendingSessionTimeoutMs = options.pendingSessionTimeoutMs ?? 10_000;
   const protocol = websocketSubprotocolForPathV3(options.path);
   const endpoint = FLOWERSEC_V3_PATHS.websocket[options.path];
   const require = createRequire(import.meta.url);
@@ -43,7 +47,7 @@ export async function startNodeWebSocketListenerV3(
     maxVersion: "TLSv1.3",
     secureOptions: constants.SSL_OP_NO_TICKET,
   });
-  const sessions = new SessionQueueV3();
+  const sessions = new SessionQueueV3(maxPendingSessions, pendingSessionTimeoutMs);
   const sockets = new Set<any>();
   const wss = new WebSocketServer({
     noServer: true,
@@ -64,11 +68,15 @@ export async function startNodeWebSocketListenerV3(
   });
   wss.on("connection", (socket: any) => {
     sockets.add(socket);
-    socket.once("close", () => sockets.delete(socket));
-    sessions.push(createServerWebSocketCarrierSessionV3(new WebSocketBinaryTransport(socket), {
+    const session = createServerWebSocketCarrierSessionV3(new WebSocketBinaryTransport(socket), {
       path: options.path,
       inboundBidirectionalStreamCapacity: options.inboundBidirectionalStreamCapacity,
-    }));
+    });
+    socket.once("close", () => {
+      sockets.delete(socket);
+      sessions.remove(session);
+    });
+    sessions.push(session);
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -100,6 +108,8 @@ function validateOptions(options: NodeWebSocketListenerOptionsV3): void {
       options.allowedOrigins.some((origin) => !validOrigin(origin)) ||
       !Number.isInteger(options.inboundBidirectionalStreamCapacity) ||
       options.inboundBidirectionalStreamCapacity < 3 || options.inboundBidirectionalStreamCapacity > 130 ||
+      (options.maxPendingSessions !== undefined && (!Number.isSafeInteger(options.maxPendingSessions) || options.maxPendingSessions < 1 || options.maxPendingSessions > 1_024)) ||
+      (options.pendingSessionTimeoutMs !== undefined && (!Number.isSafeInteger(options.pendingSessionTimeoutMs) || options.pendingSessionTimeoutMs < 1 || options.pendingSessionTimeoutMs > 600_000)) ||
       options.tls.certificate.length === 0 || options.tls.privateKey.length === 0) {
     throw new TypeError("invalid Node WebSocket v3 listener options");
   }
@@ -116,24 +126,59 @@ function validOrigin(raw: string): boolean {
 }
 
 class SessionQueueV3 {
-  private readonly values: CarrierSessionV3[] = [];
+  private readonly values: Array<Readonly<{
+    value: CarrierSessionV3;
+    timer: ReturnType<typeof setTimeout>;
+  }>> = [];
   private readonly waiters = new Set<Readonly<{
     resolve(value: CarrierSessionV3): void;
     reject(error: Error): void;
   }>>();
   private closed = false;
 
+  constructor(
+    private readonly maximum: number,
+    private readonly timeoutMs: number,
+  ) {}
+
   push(value: CarrierSessionV3): void {
-    if (this.closed) { void value.close(); return; }
+    if (this.closed) { value.abort({ code: 1, reason: "WebSocket v3 listener closed" }); return; }
     const waiter = this.waiters.values().next().value;
-    if (waiter === undefined) this.values.push(value);
-    else { this.waiters.delete(waiter); waiter.resolve(value); }
+    if (waiter !== undefined) {
+      this.waiters.delete(waiter);
+      waiter.resolve(value);
+      return;
+    }
+    if (this.values.length >= this.maximum) {
+      value.abort({ code: 1, reason: "WebSocket v3 pending capacity exceeded" });
+      return;
+    }
+    const entry = {
+      value,
+      timer: setTimeout(() => {
+        if (this.remove(value)) {
+          value.abort({ code: 1, reason: "WebSocket v3 pending admission timed out" });
+        }
+      }, this.timeoutMs),
+    };
+    this.values.push(entry);
+  }
+
+  remove(value: CarrierSessionV3): boolean {
+    const index = this.values.findIndex((entry) => entry.value === value);
+    if (index < 0) return false;
+    const [entry] = this.values.splice(index, 1);
+    if (entry !== undefined) clearTimeout(entry.timer);
+    return true;
   }
 
   async shift(signal?: AbortSignal): Promise<CarrierSessionV3> {
     if (signal?.aborted === true) throw signal.reason ?? new Error("accept canceled");
-    const value = this.values.shift();
-    if (value !== undefined) return value;
+    const entry = this.values.shift();
+    if (entry !== undefined) {
+      clearTimeout(entry.timer);
+      return entry.value;
+    }
     if (this.closed) throw new Error("WebSocket v3 listener is closed");
     return await new Promise<CarrierSessionV3>((resolve, reject) => {
       const waiter = {
@@ -156,7 +201,10 @@ class SessionQueueV3 {
     const error = new Error("WebSocket v3 listener is closed");
     for (const waiter of this.waiters) waiter.reject(error);
     this.waiters.clear();
-    for (const value of this.values) void value.close();
+    for (const entry of this.values) {
+      clearTimeout(entry.timer);
+      entry.value.abort({ code: 1, reason: "WebSocket v3 listener closed" });
+    }
     this.values.length = 0;
   }
 }

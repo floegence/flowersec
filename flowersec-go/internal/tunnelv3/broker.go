@@ -249,6 +249,9 @@ func closeBridgeSessions(timeout time.Duration, sessions ...carrier.Session) err
 }
 
 func spliceStreamPair(ctx context.Context, left, right carrier.Stream, bufferBytes int, halfCloseGrace time.Duration) error {
+	if halfCloseGrace > 0 {
+		return spliceControlStreamPair(ctx, left, right, bufferBytes, halfCloseGrace)
+	}
 	stopCancellation := context.AfterFunc(ctx, func() {
 		_ = left.Reset()
 		_ = right.Reset()
@@ -275,19 +278,75 @@ func spliceStreamPair(ctx context.Context, left, right carrier.Stream, bufferByt
 		_ = right.Reset()
 		return errors.Join(first, <-results)
 	}
-	if halfCloseGrace <= 0 {
-		return <-results
-	}
-	timer := time.NewTimer(halfCloseGrace)
-	defer timer.Stop()
-	select {
-	case second := <-results:
-		return second
-	case <-timer.C:
+	return <-results
+}
+
+type controlCopyEvent struct {
+	direction int
+	eof       bool
+	err       error
+}
+
+func spliceControlStreamPair(ctx context.Context, left, right carrier.Stream, bufferBytes int, halfCloseGrace time.Duration) error {
+	stopCancellation := context.AfterFunc(ctx, func() {
 		_ = left.Reset()
 		_ = right.Reset()
-		return <-results
+	})
+	defer func() { _ = stopCancellation() }()
+
+	events := make(chan controlCopyEvent, 4)
+	copyDirection := func(direction int, destination, source carrier.Stream) {
+		buffer := make([]byte, bufferBytes)
+		_, copyErr := io.CopyBuffer(destination, source, buffer)
+		if copyErr != nil {
+			events <- controlCopyEvent{direction: direction, err: copyErr}
+			return
+		}
+		events <- controlCopyEvent{direction: direction, eof: true}
+		events <- controlCopyEvent{direction: direction, err: destination.CloseWrite()}
 	}
+	go copyDirection(0, right, left)
+	go copyDirection(1, left, right)
+
+	done := [2]bool{}
+	var timer *time.Timer
+	var timerChannel <-chan time.Time
+	for !done[0] || !done[1] {
+		select {
+		case event := <-events:
+			if event.eof {
+				if timer == nil {
+					timer = time.NewTimer(halfCloseGrace)
+					timerChannel = timer.C
+				}
+				continue
+			}
+			done[event.direction] = true
+			if event.err != nil {
+				_ = left.Reset()
+				_ = right.Reset()
+				if timer != nil {
+					timer.Stop()
+				}
+				return event.err
+			}
+		case <-timerChannel:
+			_ = left.Reset()
+			_ = right.Reset()
+			return context.DeadlineExceeded
+		case <-ctx.Done():
+			_ = left.Reset()
+			_ = right.Reset()
+			if timer != nil {
+				timer.Stop()
+			}
+			return context.Cause(ctx)
+		}
+	}
+	if timer != nil {
+		timer.Stop()
+	}
+	return nil
 }
 
 func preferContextCause(ctx context.Context, fallback error) error {

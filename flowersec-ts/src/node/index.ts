@@ -30,6 +30,10 @@ export type {
   TunnelRuntimeOptionsV3 as TunnelRuntimeOptions,
   TunnelRuntimeOptionsV3,
 } from "./tunnelRuntimeV3.js";
+export {
+  RuntimeAuthorizationRequestV3 as RuntimeAuthorizationRequest,
+  RuntimeAuthorizationRequestV3,
+} from "./runtimeAuthorizationV3.js";
 export * from "../facade.js";
 export * as v2 from "./v2.js";
 import type { NodeTLSRootsV3 } from "./connectSessionV3.js";

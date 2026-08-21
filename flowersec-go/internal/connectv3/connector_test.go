@@ -167,11 +167,13 @@ func TestWinnerDoesNotWaitForStalledLoserAndClosesLatePreparedTransport(t *testi
 	artifact := loadV3Artifact(t)
 	winnerCommit := &recordingAdmissionCommit{commitErr: errors.New("admission failed"), closed: make(chan struct{})}
 	loserCommit := &recordingAdmissionCommit{closed: make(chan struct{})}
+	loserStarted := make(chan struct{})
 	loserReady := make(chan connectv3.AdmissionCommit, 1)
 	factory := &raceCandidateFactory{
 		capabilities: runtimev3.GoCapabilities(),
 		winnerID:     "w-ca",
 		winner:       winnerCommit,
+		loserStarted: loserStarted,
 		loserReady:   loserReady,
 	}
 	connector := connectv3.NewConnector(
@@ -215,6 +217,7 @@ type raceCandidateFactory struct {
 	capabilities runtimev3.CapabilityDescriptor
 	winnerID     string
 	winner       connectv3.AdmissionCommit
+	loserStarted chan struct{}
 	loserReady   <-chan connectv3.AdmissionCommit
 }
 
@@ -224,9 +227,15 @@ func (factory *raceCandidateFactory) Capabilities() runtimev3.CapabilityDescript
 
 func (factory *raceCandidateFactory) NewAttempt(candidate artifactv3.Candidate, _ artifactv3.SessionContract, _ time.Time) (connectv3.CandidateAttempt, error) {
 	if candidate.ID == factory.winnerID {
-		return &raceCandidateAttempt{ready: func() connectv3.AdmissionCommit { return factory.winner }}, nil
+		return &raceCandidateAttempt{ready: func() connectv3.AdmissionCommit {
+			<-factory.loserStarted
+			return factory.winner
+		}}, nil
 	}
-	return &raceCandidateAttempt{ready: func() connectv3.AdmissionCommit { return <-factory.loserReady }}, nil
+	return &raceCandidateAttempt{ready: func() connectv3.AdmissionCommit {
+		close(factory.loserStarted)
+		return <-factory.loserReady
+	}}, nil
 }
 
 type raceCandidateAttempt struct {

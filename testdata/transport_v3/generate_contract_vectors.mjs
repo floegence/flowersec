@@ -1412,6 +1412,18 @@ const controllerVectors = {
       }),
     },
     {
+      id: "established-session-terminal-termination-resets-cycle",
+      driver: "cycle-reset-terminal",
+      steps: ["establish_session", "reset_failure_ordinal_and_quota", "session_terminates_terminal", "fail_new_cycle"],
+      input: {},
+      expected: controllerExpected({
+        final_state: "failed", public_error: "connection_failed", disposition: "terminal",
+        acquisitions: 1, connect_attempts: 1, transports_created: 1,
+        spend_callbacks: 1, lease_terminal_states: ["consumed"], retry_delays_ms: [],
+        failure_ordinal: 1, replacement_quota_used: 0, attempt: 0,
+      }),
+    },
+    {
       id: "retry-after-wall-clock-forward-jump",
       driver: "retry-clock-boundary",
       steps: ["wait_retry_after", "wall_clock_jumps_forward", "monotonic_backoff_satisfied", "retry"],

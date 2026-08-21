@@ -7,7 +7,7 @@ import {
 } from "../v3/serverAdmission.js";
 import { nodeSessionRuntimeV3 } from "../v3/nodeSessionRuntime.js";
 import type { CarrierSessionV3 } from "../v3/carrier.js";
-import { AdmissionStatusV3, type DecodedFSB3RequestV3 } from "../v3/artifact.js";
+import { AdmissionStatusV3 } from "../v3/artifact.js";
 import {
   unwrapArtifactHandleV3,
   type ArtifactHandleV3,
@@ -31,6 +31,10 @@ import {
   startNodeWebSocketListenerV3,
   type NodeWebSocketListenerV3,
 } from "./webSocketServerV3.js";
+import {
+  runtimeAuthorizationRequestV3FromDecoded,
+  type RuntimeAuthorizationRequestV3,
+} from "./runtimeAuthorizationV3.js";
 
 export type AcceptorListenerV3 =
   | Readonly<{
@@ -55,10 +59,9 @@ export type AcceptorOptionsV3 = Readonly<{
   admissionReasons?: readonly string[];
   authorize: AcceptorAuthorizerV3;
   resolveHandlers?(
-    request: DecodedFSB3RequestV3,
+    request: RuntimeAuthorizationRequestV3,
     options: OperationOptions,
   ): Promise<SessionHandlersV3> | SessionHandlersV3;
-  nowUnixSeconds?: () => number;
 }>;
 
 export type AcceptorAuthorizationDecisionV3 =
@@ -66,7 +69,7 @@ export type AcceptorAuthorizationDecisionV3 =
   | Readonly<{ accepted: false; retryable: boolean; reason: string }>;
 
 export type AcceptorAuthorizerV3 = (
-  request: DecodedFSB3RequestV3,
+  request: RuntimeAuthorizationRequestV3,
   options: OperationOptions,
 ) => Promise<AcceptorAuthorizationDecisionV3> | AcceptorAuthorizationDecisionV3;
 
@@ -112,8 +115,9 @@ export class AcceptorV3 {
       try {
         let handlers: FrozenSessionHandlers | undefined;
         const authorize: AdmissionAuthorizerV3 = async (request, signal) => {
+          const authorizationRequest = runtimeAuthorizationRequestV3FromDecoded(request);
           const decision = await state.authorize(
-            request,
+            authorizationRequest,
             signal === undefined ? {} : { signal },
           );
           if (decision.accepted) {
@@ -131,13 +135,13 @@ export class AcceptorV3 {
           runtime: nodeSessionRuntimeV3,
           admissionReasons: state.admissionReasons,
           resolveRPCRouter: async (request, signal) => {
+            const authorizationRequest = runtimeAuthorizationRequestV3FromDecoded(request);
             const registry = state.resolveHandlers === undefined
               ? new SessionHandlersV3()
-              : await state.resolveHandlers(request, signal === undefined ? {} : { signal });
+              : await state.resolveHandlers(authorizationRequest, signal === undefined ? {} : { signal });
             handlers = freezeSessionHandlersV3(registry);
             return createRPCRouter(handlers.rpc);
           },
-          ...(state.nowUnixSeconds === undefined ? {} : { nowUnixSeconds: state.nowUnixSeconds }),
           signal: controller.signal,
         });
         if (handlers === undefined) throw new Error("Flowersec v3 handlers were not resolved");
@@ -174,7 +178,6 @@ type AcceptorStateV3 = {
   authorize: AcceptorAuthorizerV3;
   resolveHandlers?: AcceptorOptionsV3["resolveHandlers"];
   admissionReasons: ReadonlySet<string>;
-  nowUnixSeconds?: () => number;
   abort: AbortController;
   closed: boolean;
   cursor: number;
@@ -222,7 +225,6 @@ export async function createAcceptorV3(options: AcceptorOptionsV3): Promise<Acce
     authorize: options.authorize,
     ...(options.resolveHandlers === undefined ? {} : { resolveHandlers: options.resolveHandlers }),
     admissionReasons,
-    ...(options.nowUnixSeconds === undefined ? {} : { nowUnixSeconds: options.nowUnixSeconds }),
     abort: new AbortController(),
     closed: false,
     cursor: 0,

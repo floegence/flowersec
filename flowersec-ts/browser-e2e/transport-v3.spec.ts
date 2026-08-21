@@ -47,6 +47,7 @@ test("Chromium runs production v3 WebTransport with the artifact TLS pin", async
       "run",
       "./internal/cmd/browser-webtransport-peer",
       "--v3-product-direct",
+      "--v3-datagram",
       "--origin",
       site.origin,
     ],
@@ -77,18 +78,30 @@ test("Chromium runs production v3 WebTransport with the artifact TLS pin", async
       const artifact = sdk.parseArtifact(artifactJSON);
       const lease = sdk.createArtifactLease(artifact, async () => { spendCount += 1; });
       const session = await sdk.connect(lease);
+      if (session.unreliableMessages === undefined) {
+        throw new Error("production WebTransport did not negotiate DATAGRAM support");
+      }
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+      const datagramStatus = await session.unreliableMessages.send(
+        encoder.encode("browser-webtransport-datagram-request"),
+        { expiresAtUnixMs: Date.now() + 5_000 },
+      );
+      const datagramResponse = decoder.decode(await session.unreliableMessages.receive());
       const surface = {
         acceptStream: typeof session.acceptStream,
         openStream: typeof session.openStream,
         waitTermination: typeof session.waitTermination,
       };
       await session.close().catch(() => undefined);
-      return { spendCount, surface };
+      return { datagramResponse, datagramStatus, spendCount, surface };
     }, ready.artifact_json).catch((error: unknown) => {
       throw new Error(`${error instanceof Error ? error.message : String(error)}\nGo v3 WebTransport peer:\n${stderr.join("")}`);
     });
 
     expect(result).toEqual({
+      datagramResponse: "browser-webtransport-datagram-response",
+      datagramStatus: "accepted",
       spendCount: 1,
       surface: { acceptStream: "function", openStream: "function", waitTermination: "function" },
     });

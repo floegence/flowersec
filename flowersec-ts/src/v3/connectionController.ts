@@ -46,7 +46,6 @@ const ARTIFACT_SOURCE_FAILURE_CODES_V3 = new Set([
 export type ArtifactSourceV3 = Readonly<{
   acquire(options: Readonly<{
     signal: AbortSignal;
-    capability: RuntimeCapabilityDescriptorV3;
   }>): Promise<ArtifactSourceResultV3>;
 }>;
 
@@ -280,7 +279,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         this.#recordFailure("artifact", "artifact_invalid", { kind: "terminal" });
         return;
       }
-      const acquisition = await this.#acquire(capability);
+      const acquisition = await this.#acquire();
       if (this.#lifetime.signal.aborted) {
         if (acquisition.kind === "lease") await this.#claimAndRetire(acquisition.lease);
         return;
@@ -420,11 +419,11 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         }
         await retireArtifactLeaseV3(claim);
         this.#cycle.recordFailedAcquisitionOrLease();
-        const replacementPreSpendFailure = next === "replacement" && result.error.code !== "expired_artifact";
-        const disposition = replacementPreSpendFailure
-          ? { kind: "terminal" as const }
-          : result.error.disposition;
-        this.#recordFailure("connect", result.error.code, disposition);
+        const error = next === "replacement" && result.error.code !== "expired_artifact"
+          ? replacementTerminal(replacementContext)
+          : result.error;
+        const disposition = error.disposition;
+        this.#recordFailure("connect", error.code, disposition);
         if (disposition.kind === "terminal" || this.#attemptBudgetExhausted()) return;
         next = "primary";
         replacementContext = undefined;
@@ -487,9 +486,9 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
     }
   }
 
-  async #acquire(capability: RuntimeCapabilityDescriptorV3): Promise<ArtifactSourceResultV3> {
+  async #acquire(): Promise<ArtifactSourceResultV3> {
     try {
-      const result = await this.#source.acquire({ signal: this.#lifetime.signal, capability });
+      const result = await this.#source.acquire({ signal: this.#lifetime.signal });
       if (result === null || typeof result !== "object") return invalidSourceResult();
       if (result.kind === "lease") {
         if (result.lease === null || typeof result.lease !== "object") return invalidSourceResult();

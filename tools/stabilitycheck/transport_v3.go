@@ -28,11 +28,14 @@ type transportV3Registry struct {
 	Status            string            `json:"status"`
 	Design            transportV3Design `json:"design"`
 	Docs              map[string]string `json:"docs"`
-	FixtureGeneration struct {
-		Producer     string   `json:"producer"`
-		CheckCommand []string `json:"check_command"`
-		Outputs      []string `json:"outputs"`
-	} `json:"fixture_generation"`
+	FixtureGeneration []transportV3FixtureGeneration `json:"fixture_generation"`
+	ArtifactSchema    struct {
+		CollectionRules struct {
+			PathCandidates struct {
+				UniqueBy [][]string `json:"unique_by"`
+			} `json:"path.candidates"`
+		} `json:"collection_rules"`
+	} `json:"artifact_schema"`
 	Limits struct {
 		OpenKindBytesMin          int `json:"open_kind_bytes_min"`
 		OpenKindBytesMax          int `json:"open_kind_bytes_max"`
@@ -97,6 +100,12 @@ type transportV3Registry struct {
 		} `json:"v2_identifiers"`
 	} `json:"version_isolation"`
 	WireFixtures []transportV3Fixture `json:"wire_fixtures"`
+}
+
+type transportV3FixtureGeneration struct {
+	Producer     string   `json:"producer"`
+	CheckCommand []string `json:"check_command"`
+	Outputs      []string `json:"outputs"`
 }
 
 type transportV3Design struct {
@@ -309,27 +318,63 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	if registry.Design.Baseline != "026cb52d116d2a04de50d0f0621fff57c7657120" {
 		return fmt.Errorf("%s design baseline drifted", transportV3ContractPath)
 	}
-	wantGeneratedOutputs := []string{
-		"testdata/transport_v3/artifact_vectors.json",
-		"testdata/transport_v3/capability_vectors.json",
-		"testdata/transport_v3/controller_vectors.json",
-		"testdata/transport_v3/idna_vectors.json",
-		"testdata/transport_v3/open_unicode_vectors.json",
-		"testdata/transport_v3/rpc_error_vectors.json",
-		"testdata/transport_v3/rpc_malformed_envelopes.json",
-		"testdata/transport_v3/rpc_notification_vectors.json",
-		"testdata/transport_v3/session_handler_vectors.json",
-		"testdata/transport_v3/version_isolation_vectors.json",
+	wantFixtureGeneration := []transportV3FixtureGeneration{
+		{
+			Producer: "testdata/transport_v3/generate_contract_vectors.mjs",
+			CheckCommand: []string{"node", "testdata/transport_v3/generate_contract_vectors.mjs", "--check"},
+			Outputs: []string{
+				"testdata/transport_v3/artifact_vectors.json",
+				"testdata/transport_v3/capability_vectors.json",
+				"testdata/transport_v3/controller_vectors.json",
+				"testdata/transport_v3/idna_vectors.json",
+				"testdata/transport_v3/open_unicode_vectors.json",
+				"testdata/transport_v3/rpc_error_vectors.json",
+				"testdata/transport_v3/rpc_malformed_envelopes.json",
+				"testdata/transport_v3/rpc_notification_vectors.json",
+				"testdata/transport_v3/session_handler_vectors.json",
+				"testdata/transport_v3/version_isolation_vectors.json",
+			},
+		},
+		{
+			Producer: "testdata/transport_v3/generate_crypto_vectors.mjs",
+			CheckCommand: []string{"node", "testdata/transport_v3/generate_crypto_vectors.mjs", "--check"},
+			Outputs: []string{
+				"testdata/transport_v3/crypto_vectors.json",
+				"testdata/transport_v3/datagram_vectors.json",
+				"testdata/transport_v3/session_wire_vectors.json",
+			},
+		},
+		{
+			Producer: "testdata/transport_v3/generate_handshake_vectors.mjs",
+			CheckCommand: []string{"node", "testdata/transport_v3/generate_handshake_vectors.mjs", "--check"},
+			Outputs: []string{"testdata/transport_v3/handshake_vectors.json"},
+		},
 	}
-	if registry.FixtureGeneration.Producer != "testdata/transport_v3/generate_contract_vectors.mjs" ||
-		!slices.Equal(registry.FixtureGeneration.CheckCommand, []string{"node", registry.FixtureGeneration.Producer, "--check"}) ||
-		!slices.Equal(registry.FixtureGeneration.Outputs, wantGeneratedOutputs) {
+	if !slices.EqualFunc(registry.FixtureGeneration, wantFixtureGeneration, func(left, right transportV3FixtureGeneration) bool {
+		return left.Producer == right.Producer && slices.Equal(left.CheckCommand, right.CheckCommand) && slices.Equal(left.Outputs, right.Outputs)
+	}) {
 		return fmt.Errorf("%s fixture generation ownership drifted", transportV3ContractPath)
 	}
-	for _, relative := range append([]string{registry.FixtureGeneration.Producer}, registry.FixtureGeneration.Outputs...) {
-		if info, err := os.Stat(filepath.Join(repoRoot, relative)); err != nil || !info.Mode().IsRegular() {
-			return fmt.Errorf("%s fixture generation path %s is unavailable", transportV3ContractPath, relative)
+	generatedOutputs := make(map[string]struct{})
+	for _, generation := range registry.FixtureGeneration {
+		for _, relative := range append([]string{generation.Producer}, generation.Outputs...) {
+			if info, err := os.Stat(filepath.Join(repoRoot, relative)); err != nil || !info.Mode().IsRegular() {
+				return fmt.Errorf("%s fixture generation path %s is unavailable", transportV3ContractPath, relative)
+			}
 		}
+		for _, output := range generation.Outputs {
+			if _, duplicate := generatedOutputs[output]; duplicate {
+				return fmt.Errorf("%s fixture output %s has duplicate owners", transportV3ContractPath, output)
+			}
+			generatedOutputs[output] = struct{}{}
+		}
+	}
+	if !slices.EqualFunc(
+		registry.ArtifactSchema.CollectionRules.PathCandidates.UniqueBy,
+		[][]string{{"id"}, {"endpoint_key"}},
+		func(left, right []string) bool { return slices.Equal(left, right) },
+	) {
+		return fmt.Errorf("%s candidate IDs and endpoint keys must be independently unique", transportV3ContractPath)
 	}
 	if registry.Design.SourcePath == "" {
 		return fmt.Errorf("%s design source path is required", transportV3ContractPath)

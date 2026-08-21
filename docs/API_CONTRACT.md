@@ -27,13 +27,13 @@ Portable core, accepted-session lifecycle, control-plane issuance/authorization,
 
 The named deployment profiles are `native-server-core` for Go, Rust, and
 Node.js; `browser-client` for TypeScript browser clients; `apple-client` for
-Swift clients on Apple platforms; and the currently unclaimed optional
-`webtransport-server`. The native server profile records WebSocket and raw
+Swift clients on Apple platforms; and `webtransport-server`, claimed by Go.
+The native server profile records WebSocket and raw
 QUIC endpoint-client, direct-server, and opaque-tunnel runtime capabilities in
 all three languages. Its 18 tuples are aggregate capabilities, six per native
-runtime, rather than pairwise interoperability results. A runtime may claim
-`webtransport-server` only after both its direct server and tunnel runtime pass
-conformance. Profiles select carrier adapters; they never select a different
+runtime, rather than pairwise interoperability results. Go's H4 profile binds
+its WebTransport direct server and tunnel runtime, including encrypted
+DATAGRAM forwarding, to production-adapter tests. Profiles select carrier adapters; they never select a different
 Flowersec application wire. The separate interoperability matrix declares 18
 direct and 18 tunnel coordinates; every current cell is explicitly unsupported
 until one release-gating v3 test exercises its complete executable case set.
@@ -151,9 +151,11 @@ Browser and Node subpaths each expose `connect(...)` and
 Node subpath additionally exposes reusable `RPCHandlers`, direct-only
 `createAcceptor(...)`, `Acceptor`, `AcceptedSession`, and accepted-server-only
 `SessionHandlers`, plus opaque `createTunnelRuntime(...)` and `TunnelRuntime`.
-An `AcceptorOptions.authorize(...)` success returns the opaque `Artifact`
-created by `parseArtifact(...)`; the callback never constructs or receives the
-package-private artifact object containing PSK, candidate, or pin state.
+`RuntimeAuthorizationRequest` is an opaque, non-enumerable callback value whose
+`lookupKey()` returns only a SHA-256 credential digest. An
+`AcceptorOptions.authorize(...)` success returns the opaque `Artifact` created
+by `parseArtifact(...)`; neither the authorization nor handler-resolution
+callback receives raw FSB3, credentials, URLs, candidates, PSK, or pin state.
 `AcceptorOptions.resolveHandlers(...)` resolves and freezes the v3 registry
 only after artifact binding and expiry validation and before successful
 admission and session establishment. Every accepted Session receives a fresh
@@ -177,7 +179,7 @@ The proxy entrypoint exposes `PROXY_RUNTIME_SCOPE`, `assertProxyRuntimeScope(...
 
 ## Swift
 
-Applications `import Flowersec` from the `Flowersec` product. The public lifecycle is `parseArtifact(...)`, opaque `Artifact` and `ArtifactLease` values, `ConnectorOptions`, one-shot `connect(lease:options:)`, and `ConnectionController(source:options:maximumAttempts:)`. Artifact parsing reports `ArtifactError`; invalid stream metadata reports only `StreamMetadataError.invalidValue`, while metadata size limits remain implementation details. The returned `Session` exposes only `RPCPeer`, `ByteStream`, `IncomingStream`, and construction-validated `StreamMetadata`. Carrier-neutral `StreamHandlers`, `StreamHandlerOptions`, `StreamHandler`, and `HandlerRegistrationError` register and serve application streams on any established Session. The registry freezes on first serve, applies the exact 128-byte canonical OPEN kind contract, bounds concurrency, resets unknown, excess, and failed streams, closes successful write directions, and closes the Session before canceling and waiting for active handler tasks. Swift exposes no server `ProxyServer` or registrar. Session, stream, RPC peer, and notification subscription wrappers have fixed opaque description and reflection behavior. `RPCError` description, debug description, and reflection expose only its type and code; applications must explicitly read `message`. `ByteStream.read(maxBytes:)` requires a positive value and rejects invalid input as `SessionError.operationFailed`. `RPCPeer.subscribeNotification(_:as:handler:)` completes only after registration, decodes each payload as the requested `Decodable & Sendable` type, and returns an `RPCNotificationSubscription` whose async `cancel()` is idempotent. Decode failures are delivered as `Result.failure(RPCNotificationError.invalidPayload)` without passing unvalidated data, throwing handlers are isolated, and Session close removes all subscriptions. `ConnectError`, `SessionError`, and structured `RetryDisposition` are the public failure boundary. Swift represents `retryAfter` as an absolute `Date` while the controller waits on an internal monotonic deadline; retry timing is not publicly configurable. A controller requires a refreshable source and creates a fresh lease and session per attempt; connected and waiting snapshots retain the successful session's 1-based attempt ordinal, which resets before the next connection cycle starts. A `retryAfter` deadline cannot be bypassed by `retryNow()`, which returns a Boolean. When retries stop, the snapshot retains the last real `ConnectionAttemptFailure` without a policy wrapper. Old session work is never replayed. Concrete carrier sessions and runtime capability descriptors are internal.
+Applications `import Flowersec` from the `Flowersec` product. The public lifecycle is `parseArtifact(...)`, opaque `Artifact` and `ArtifactLease` values, `ConnectorOptions`, one-shot `connect(lease:options:)`, and `ConnectionController(source:options:maximumAttempts:)`. Artifact parsing reports `ArtifactError`; invalid stream metadata reports only `StreamMetadataError.invalidValue`, while metadata size limits remain implementation details. The returned `Session` exposes only `RPCPeer`, `ByteStream`, `IncomingStream`, and construction-validated `StreamMetadata`. Carrier-neutral `StreamHandlers`, `StreamHandlerOptions`, `StreamHandler`, and `HandlerRegistrationError` register and serve application streams on any established Session. The registry freezes on first serve, applies the exact 128-byte canonical OPEN kind contract, bounds concurrency, resets unknown, excess, and failed streams, closes successful write directions, and closes the Session before canceling and waiting for active handler tasks. Swift exposes no server `ProxyServer` or registrar. Session, stream, RPC peer, and notification subscription wrappers have fixed opaque description and reflection behavior. `RPCError` description, debug description, and reflection expose only its type and code; applications must explicitly read `message`. `ByteStream.read(maxBytes:)` requires a positive value and rejects invalid input as `SessionError.operationFailed`. `RPCPeer.subscribeNotification(_:as:handler:)` completes only after registration, decodes each payload as the requested `Decodable & Sendable` type, and returns an `RPCNotificationSubscription` whose async `cancel()` is idempotent. Decode failures are delivered as `Result.failure(RPCNotificationError.invalidPayload)` without passing unvalidated data, throwing handlers are isolated, and Session close removes all subscriptions. `ConnectError`, `SessionError`, and structured `RetryDisposition` are the public failure boundary. Swift represents `retryAfter` as an absolute `Date` while the controller waits on an internal monotonic deadline; retry timing is not publicly configurable. A controller requires a refreshable source and creates a fresh lease and session per attempt; a connected snapshot retains the successful session's 1-based attempt ordinal, while session termination starts a new cycle whose waiting or terminal snapshot has attempt 0 and whose first Acquire advances to 1. A `retryAfter` deadline cannot be bypassed by `retryNow()`, which returns a Boolean. When retries stop, the snapshot retains the last real `ConnectionAttemptFailure` without a policy wrapper. Old session work is never replayed. Concrete carrier sessions and runtime capability descriptors are internal.
 
 ## Rust
 

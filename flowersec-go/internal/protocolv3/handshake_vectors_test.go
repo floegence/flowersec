@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	protocolv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
@@ -17,7 +16,6 @@ type handshakeVectorFile struct {
 	Version int    `json:"version"`
 	Profile string `json:"profile"`
 	Source  struct {
-		Runtime        string `json:"runtime"`
 		Implementation string `json:"implementation"`
 		Generator      string `json:"generator"`
 	} `json:"source"`
@@ -61,7 +59,7 @@ type handshakeVector struct {
 
 func TestNodeHandshakeVectors(t *testing.T) {
 	vectorFile := loadHandshakeVectors(t)
-	if vectorFile.Version != 1 || vectorFile.Profile != "flowersec/3" || !strings.HasPrefix(vectorFile.Source.Runtime, "v") || vectorFile.Source.Implementation != "Node.js built-in crypto only" {
+	if vectorFile.Version != 1 || vectorFile.Profile != "flowersec/3" || vectorFile.Source.Implementation != "Node.js built-in crypto only" {
 		t.Fatalf("unexpected vector provenance: %+v", vectorFile)
 	}
 	if vectorFile.Source.Generator != "testdata/transport_v3/generate_handshake_vectors.mjs" || len(vectorFile.Vectors) != 2 {

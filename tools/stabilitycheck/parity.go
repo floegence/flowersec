@@ -1234,9 +1234,9 @@ func validateDeploymentProfiles(contract deploymentProfilesContract, parity *ser
 			RequiredTupleCount:    1, RequiredPathUnitCount: 2,
 		},
 		{
-			ID: "webtransport-server", RequiredRoles: []string{"direct-server", "tunnel-runtime"}, RequiredCarriers: []string{"webtransport"},
+			ID: "webtransport-server", ClaimedRuntimes: []string{"go"}, TransportRuntimeIDs: []string{"go/native"}, RequiredRoles: []string{"direct-server", "tunnel-runtime"}, RequiredCarriers: []string{"webtransport"},
 			RequiredPaths:         map[string][]string{"direct-server": {"direct"}, "tunnel-runtime": {"tunnel"}},
-			RequiredCapabilityIDs: []string{"secure_session", "rpc_call_notify", "validated_stream_metadata", "carrier_contract", "wire_security"}, RequiredPathUnitCount: 0,
+			RequiredCapabilityIDs: []string{"secure_session", "rpc_call_notify", "validated_stream_metadata", "carrier_contract", "wire_security"}, RequiredTupleCount: 2, RequiredPathUnitCount: 2,
 		},
 	}
 	if len(contract.Profiles) != len(expected) {
