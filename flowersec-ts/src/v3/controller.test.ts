@@ -237,6 +237,29 @@ describe("transport v3 controller, lease, and retry semantics", () => {
     await expect(retry.wait({ kind: "retryable" }, 1, new AbortController().signal)).resolves.toBe(true);
     expect(delays).toEqual([1]);
   });
+
+  test("uses a 250ms first timer with the default fractional monotonic clock", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    let monotonicReads = 0;
+    vi.spyOn(performance, "now").mockImplementation(() =>
+      Date.now() - 1_000 + (monotonicReads++ === 0 ? 0.125 : 0.375));
+    const timer = vi.spyOn(globalThis, "setTimeout");
+    const cancellation = new AbortController();
+    try {
+      const wait = new ControllerRetryWaitV3().wait(
+        { kind: "retryable" },
+        1,
+        cancellation.signal,
+      );
+      expect(timer).toHaveBeenCalledWith(expect.any(Function), 250);
+      cancellation.abort(new Error("test complete"));
+      await expect(wait).resolves.toBe(false);
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
 });
 
 function pinCandidate(id: string, normalizedURL: string, lastByte: number): CanonicalArtifactCandidateV3 {

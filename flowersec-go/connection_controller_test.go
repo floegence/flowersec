@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -30,6 +31,17 @@ type controllerV3VectorFile struct {
 		ConsecutiveFailure uint64 `json:"consecutive_failure"`
 		DelayMS            int    `json:"delay_ms"`
 	} `json:"backoff_vectors"`
+	InternalTransportResults [][]json.RawMessage `json:"internal_transport_results"`
+	RetryAfter               struct {
+		Valid     []int64           `json:"valid"`
+		Invalid   []json.RawMessage `json:"invalid"`
+		Aggregate string            `json:"aggregate"`
+	} `json:"retry_after"`
+	LeaseStateMachine struct {
+		States         []string   `json:"states"`
+		Transitions    [][]string `json:"transitions"`
+		TerminalStates []string   `json:"terminal_states"`
+	} `json:"lease_state_machine"`
 	Scenarios []controllerVectorScenario `json:"scenarios"`
 }
 
@@ -177,6 +189,173 @@ func TestConnectionControllerSharedLifecycleVectors(t *testing.T) {
 	}
 	if len(runners) != 0 {
 		t.Fatalf("missing v3 controller scenarios: %v", runners)
+	}
+}
+
+func TestConnectionControllerTopLevelContractVectors(t *testing.T) {
+	fixture := loadControllerVectors(t)
+	expectedActions := map[string]string{
+		"invalid_artifact/":                    "terminal",
+		"expired_artifact/":                    "acquire_primary",
+		"tls_unsupported/":                     "skip_candidate",
+		"tls_policy_expired/":                  "policy_refresh",
+		"tls_failed/ca_untrusted":              "candidate_terminal",
+		"tls_failed/pin_mismatch":              "policy_refresh",
+		"tls_failed/unknown":                   "policy_refresh_for_pin",
+		"connection_failed/browser_pin_opaque": "policy_sensitive_replacement",
+	}
+	projections := map[string]*ConnectError{
+		"invalid_artifact":   {code: ConnectArtifactInvalid},
+		"expired_artifact":   {code: ConnectExpired},
+		"tls_unsupported":    {code: ConnectTransportSecurityUnsupported},
+		"tls_policy_expired": {code: ConnectTransportSecurityFailed},
+		"tls_failed":         {code: ConnectTransportSecurityFailed},
+		"connection_failed":  {code: ConnectConnectionFailed},
+	}
+	expectedPublic := map[string]struct {
+		code        ConnectErrorCode
+		disposition RetryDispositionKind
+	}{
+		"invalid_artifact":   {ConnectArtifactInvalid, RetryDispositionTerminal},
+		"expired_artifact":   {ConnectExpired, RetryDispositionRetryable},
+		"tls_unsupported":    {ConnectTransportSecurityUnsupported, RetryDispositionTerminal},
+		"tls_policy_expired": {ConnectTransportSecurityFailed, RetryDispositionTerminal},
+		"tls_failed":         {ConnectTransportSecurityFailed, RetryDispositionTerminal},
+		"connection_failed":  {ConnectConnectionFailed, RetryDispositionRetryable},
+	}
+	seen := make(map[string]struct{}, len(fixture.InternalTransportResults))
+	for _, row := range fixture.InternalTransportResults {
+		if len(row) != 3 {
+			t.Fatalf("internal transport result must contain three fields: %s", row)
+		}
+		var code, action string
+		if err := json.Unmarshal(row[0], &code); err != nil || code == "" {
+			t.Fatalf("invalid internal transport code %s: %v", row[0], err)
+		}
+		var detail *string
+		if string(row[1]) != "null" {
+			var value string
+			if err := json.Unmarshal(row[1], &value); err != nil || value == "" {
+				t.Fatalf("invalid internal transport detail %s: %v", row[1], err)
+			}
+			detail = &value
+		}
+		if err := json.Unmarshal(row[2], &action); err != nil || action == "" {
+			t.Fatalf("invalid internal transport action %s: %v", row[2], err)
+		}
+		key := code + "/"
+		if detail != nil {
+			key += *detail
+		}
+		wantAction, ok := expectedActions[key]
+		if !ok || action != wantAction {
+			t.Fatalf("internal result %q action = %q, want %q", key, action, wantAction)
+		}
+		if _, duplicate := seen[key]; duplicate {
+			t.Fatalf("duplicate internal transport result %q", key)
+		}
+		seen[key] = struct{}{}
+		projected, ok := projections[code]
+		if !ok {
+			t.Fatalf("internal result %q has no production projection", key)
+		}
+		want := expectedPublic[code]
+		if projected.Code() != want.code || projected.RetryDisposition().Kind != want.disposition {
+			t.Fatalf("internal result %q projection = %s/%s, want %s/%s", key,
+				projected.Code(), projected.RetryDisposition().Kind, want.code, want.disposition)
+		}
+	}
+	if len(seen) != len(expectedActions) {
+		t.Fatalf("internal transport result count = %d, want %d", len(seen), len(expectedActions))
+	}
+
+	if fixture.RetryAfter.Aggregate != "maximum_absolute_unix_ms" {
+		t.Fatalf("retry_after aggregate = %q", fixture.RetryAfter.Aggregate)
+	}
+	var maximum int64
+	for _, value := range fixture.RetryAfter.Valid {
+		if !retryAfterDisposition(value).valid() {
+			t.Fatalf("valid retry_after value rejected: %d", value)
+		}
+		if value > maximum {
+			maximum = value
+		}
+	}
+	if maximum != maximumRetryAfterUnixMilliseconds {
+		t.Fatalf("maximum retry_after vector = %d, want %d", maximum, maximumRetryAfterUnixMilliseconds)
+	}
+	for _, raw := range fixture.RetryAfter.Invalid {
+		var value int64
+		if err := json.Unmarshal(raw, &value); err == nil && retryAfterDisposition(value).valid() {
+			t.Fatalf("invalid retry_after value accepted: %s", raw)
+		}
+	}
+
+	wantStates := []string{"idle", "claimed", "spending", "consumed", "retired"}
+	wantTransitions := [][]string{
+		{"idle", "claimed", "claim"},
+		{"claimed", "spending", "commitSpend"},
+		{"spending", "consumed", "durable_result"},
+		{"claimed", "retired", "retire"},
+	}
+	if strings.Join(fixture.LeaseStateMachine.States, ",") != strings.Join(wantStates, ",") ||
+		strings.Join(fixture.LeaseStateMachine.TerminalStates, ",") != "consumed,retired" ||
+		len(fixture.LeaseStateMachine.Transitions) != len(wantTransitions) {
+		t.Fatalf("lease state-machine vectors do not match the closed production model: %+v", fixture.LeaseStateMachine)
+	}
+	for index, want := range wantTransitions {
+		if strings.Join(fixture.LeaseStateMachine.Transitions[index], ",") != strings.Join(want, ",") {
+			t.Fatalf("lease transition %d = %v, want %v", index, fixture.LeaseStateMachine.Transitions[index], want)
+		}
+	}
+
+	spending, retiring := controllerTestLeases(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	spending.state.commitSpend = func(context.Context) error {
+		close(started)
+		<-release
+		return nil
+	}
+	claimed, ok := spending.claimArtifact()
+	if !ok || artifactLeaseStatusName(spending) != "claimed" {
+		t.Fatal("production lease did not perform idle -> claimed")
+	}
+	spent := make(chan error, 1)
+	go func() { spent <- claimed.lease.commitSpend(context.Background()) }()
+	<-started
+	if got := artifactLeaseStatusName(spending); got != "spending" {
+		t.Fatalf("production lease state during commitSpend = %q", got)
+	}
+	close(release)
+	if err := <-spent; err != nil || artifactLeaseStatusName(spending) != "consumed" {
+		t.Fatalf("production lease did not perform spending -> consumed: %v", err)
+	}
+	retireClaim, ok := retiring.claimArtifact()
+	if !ok {
+		t.Fatal("claim retirement lease")
+	}
+	if err := retireClaim.retire(context.Background()); err != nil || artifactLeaseStatusName(retiring) != "retired" {
+		t.Fatalf("production lease did not perform claimed -> retired: %v", err)
+	}
+}
+
+func artifactLeaseStatusName(lease ArtifactLease) string {
+	lease.state.mu.Lock()
+	defer lease.state.mu.Unlock()
+	switch lease.state.status {
+	case artifactLeaseIdle:
+		return "idle"
+	case artifactLeaseClaimed:
+		return "claimed"
+	case artifactLeaseSpending:
+		return "spending"
+	case artifactLeaseConsumed:
+		return "consumed"
+	case artifactLeaseRetired:
+		return "retired"
+	default:
+		return "unknown"
 	}
 }
 

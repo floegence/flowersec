@@ -80,6 +80,28 @@ struct ExpectedV3 {
     timer_saturated: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ControllerVectorsV3 {
+    internal_transport_results: Vec<(String, Option<String>, String)>,
+    retry_after: RetryAfterVectorsV3,
+    lease_state_machine: LeaseStateMachineVectorsV3,
+    scenarios: Vec<ScenarioV3>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RetryAfterVectorsV3 {
+    valid: Vec<u64>,
+    invalid: Vec<Value>,
+    aggregate: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LeaseStateMachineVectorsV3 {
+    states: Vec<String>,
+    transitions: Vec<(String, String, String)>,
+    terminal_states: Vec<String>,
+}
+
 #[derive(Debug)]
 struct TrackedLease {
     lease: ArtifactLeaseV3,
@@ -638,15 +660,147 @@ fn retry_delays(indices: impl IntoIterator<Item = u64>) -> Vec<u64> {
 }
 
 fn scenarios() -> Vec<ScenarioV3> {
-    #[derive(Deserialize)]
-    struct Vectors {
-        scenarios: Vec<ScenarioV3>,
-    }
-    serde_json::from_str::<Vectors>(include_str!(
+    controller_vectors().scenarios
+}
+
+fn controller_vectors() -> ControllerVectorsV3 {
+    serde_json::from_str::<ControllerVectorsV3>(include_str!(
         "../../testdata/transport_v3/controller_vectors.json"
     ))
     .expect("parse controller vectors")
-    .scenarios
+}
+
+#[tokio::test]
+async fn top_level_controller_vectors_bind_production_results_retry_and_lease_state() {
+    let vectors = controller_vectors();
+    let mut seen = HashSet::new();
+    for (code, detail, action) in &vectors.internal_transport_results {
+        let key = format!("{code}/{}", detail.as_deref().unwrap_or(""));
+        let (expected_action, public_code, disposition) = match (code.as_str(), detail.as_deref()) {
+            ("invalid_artifact", None) => (
+                "terminal",
+                ConnectErrorCode::ArtifactInvalid,
+                RetryDisposition::Terminal,
+            ),
+            ("expired_artifact", None) => (
+                "acquire_primary",
+                ConnectErrorCode::Expired,
+                RetryDisposition::Retryable,
+            ),
+            ("tls_unsupported", None) => (
+                "skip_candidate",
+                ConnectErrorCode::TransportSecurityUnsupported,
+                RetryDisposition::Terminal,
+            ),
+            ("tls_policy_expired", None) => (
+                "policy_refresh",
+                ConnectErrorCode::TransportSecurityFailed,
+                RetryDisposition::Terminal,
+            ),
+            ("tls_failed", Some("ca_untrusted")) => (
+                "candidate_terminal",
+                ConnectErrorCode::TransportSecurityFailed,
+                RetryDisposition::Terminal,
+            ),
+            ("tls_failed", Some("pin_mismatch")) => (
+                "policy_refresh",
+                ConnectErrorCode::TransportSecurityFailed,
+                RetryDisposition::Terminal,
+            ),
+            ("tls_failed", Some("unknown")) => (
+                "policy_refresh_for_pin",
+                ConnectErrorCode::TransportSecurityFailed,
+                RetryDisposition::Terminal,
+            ),
+            ("connection_failed", Some("browser_pin_opaque")) => (
+                "policy_sensitive_replacement",
+                ConnectErrorCode::ConnectionFailed,
+                RetryDisposition::Retryable,
+            ),
+            other => panic!("unknown internal transport result {other:?}"),
+        };
+        assert_eq!(action, expected_action, "{key}");
+        assert!(seen.insert(key), "duplicate internal transport result");
+        let projected = ConnectError::from_runtime_code(public_code);
+        assert_eq!(projected.code(), public_code);
+        assert_eq!(connect_disposition(projected), disposition);
+    }
+    assert_eq!(seen.len(), 8);
+
+    assert_eq!(vectors.retry_after.aggregate, "maximum_absolute_unix_ms");
+    for value in &vectors.retry_after.valid {
+        assert!(valid_retry_after(*value), "valid retry_after {value}");
+        assert_eq!(
+            ArtifactSourceError::retry_after(*value).disposition(),
+            RetryDisposition::RetryAfter(*value)
+        );
+    }
+    assert_eq!(
+        vectors.retry_after.valid.iter().copied().max(),
+        Some(MAX_RETRY_AFTER_UNIX_MILLISECONDS as u64)
+    );
+    for value in &vectors.retry_after.invalid {
+        assert!(
+            !value.as_u64().is_some_and(valid_retry_after),
+            "invalid retry_after accepted: {value}"
+        );
+    }
+
+    assert_eq!(
+        vectors.lease_state_machine.states,
+        ["idle", "claimed", "spending", "consumed", "retired"]
+    );
+    assert_eq!(
+        vectors.lease_state_machine.transitions,
+        [
+            ("idle".into(), "claimed".into(), "claim".into()),
+            ("claimed".into(), "spending".into(), "commitSpend".into()),
+            (
+                "spending".into(),
+                "consumed".into(),
+                "durable_result".into()
+            ),
+            ("claimed".into(), "retired".into(), "retire".into()),
+        ]
+    );
+    assert_eq!(
+        vectors.lease_state_machine.terminal_states,
+        ["consumed", "retired"]
+    );
+
+    let artifact = ArtifactV3::parse(
+        crate::artifact_v3::jcs_value(&base_artifact_value()).expect("artifact JCS"),
+    )
+    .expect("controller lease artifact");
+    let spent = TrackedLease::new(artifact.clone());
+    let duplicate = spent.lease.clone();
+    let claimed = spent.lease.claim_for_controller().expect("idle -> claimed");
+    assert!(
+        duplicate.claim_for_controller().is_err(),
+        "claimed lease was reusable"
+    );
+    let spending = claimed.begin_spend().expect("claimed -> spending");
+    assert!(
+        duplicate.claim_for_controller().is_err(),
+        "spending lease was reusable"
+    );
+    spending.commit().await.expect("spending -> consumed");
+    assert_eq!(spent.state(), "consumed");
+
+    let retired = TrackedLease::new(artifact);
+    let duplicate = retired.lease.clone();
+    retired
+        .lease
+        .claim_for_controller()
+        .expect("idle -> claimed")
+        .retire()
+        .await
+        .expect("claimed -> retired");
+    assert_eq!(retired.state(), "retired");
+    assert!(
+        duplicate.claim_for_controller().is_err(),
+        "retired lease was reusable"
+    );
 }
 
 #[tokio::test]

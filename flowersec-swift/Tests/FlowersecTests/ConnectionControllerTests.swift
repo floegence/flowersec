@@ -4,6 +4,97 @@ import XCTest
 @testable import Flowersec
 
 final class ConnectionControllerTests: XCTestCase {
+  func testTopLevelControllerVectorsBindProductionResultsRetryAndLeaseState() async throws {
+    let root = try controllerVectorsV3()
+    let rows = try XCTUnwrap(root["internal_transport_results"] as? [[Any]])
+    let expectedActions = [
+      "invalid_artifact/": "terminal",
+      "expired_artifact/": "acquire_primary",
+      "tls_unsupported/": "skip_candidate",
+      "tls_policy_expired/": "policy_refresh",
+      "tls_failed/ca_untrusted": "candidate_terminal",
+      "tls_failed/pin_mismatch": "policy_refresh",
+      "tls_failed/unknown": "policy_refresh_for_pin",
+      "connection_failed/browser_pin_opaque": "policy_sensitive_replacement",
+    ]
+    let projections: [String: ConnectError] = [
+      "invalid_artifact": .artifactInvalid,
+      "expired_artifact": .expiredArtifact,
+      "tls_unsupported": .transportSecurityUnsupported,
+      "tls_policy_expired": .transportSecurityFailed,
+      "tls_failed": .transportSecurityFailed,
+      "connection_failed": .connectionFailed,
+    ]
+    var seen = Set<String>()
+    for row in rows {
+      XCTAssertEqual(row.count, 3)
+      let code = try XCTUnwrap(row[0] as? String)
+      let detail = row[1] as? String
+      let action = try XCTUnwrap(row[2] as? String)
+      let key = "\(code)/\(detail ?? "")"
+      XCTAssertEqual(action, expectedActions[key], key)
+      XCTAssertTrue(seen.insert(key).inserted, "duplicate internal result \(key)")
+      let projected = try XCTUnwrap(projections[code])
+      switch code {
+      case "expired_artifact", "connection_failed":
+        XCTAssertEqual(projected.retryDispositionV3, .retryable, key)
+      default:
+        XCTAssertEqual(projected.retryDispositionV3, .terminal, key)
+      }
+    }
+    XCTAssertEqual(seen, Set(expectedActions.keys))
+
+    let retryAfter = try XCTUnwrap(root["retry_after"] as? [String: Any])
+    let valid = try XCTUnwrap(retryAfter["valid"] as? [NSNumber])
+    let invalid = try XCTUnwrap(retryAfter["invalid"] as? [Any])
+    XCTAssertEqual(retryAfter["aggregate"] as? String, "maximum_absolute_unix_ms")
+    for value in valid {
+      XCTAssertTrue(validRetryAfterVectorValue(value), "valid retry_after \(value)")
+      XCTAssertEqual(
+        RetryDispositionV3.retryAfter(value.uint64Value),
+        .retryAfter(value.uint64Value))
+    }
+    XCTAssertEqual(valid.map(\.uint64Value).max(), 253_402_300_799_999)
+    for value in invalid {
+      XCTAssertFalse(validRetryAfterVectorValue(value), "invalid retry_after \(value)")
+    }
+
+    let leaseMachine = try XCTUnwrap(root["lease_state_machine"] as? [String: Any])
+    XCTAssertEqual(
+      leaseMachine["states"] as? [String],
+      ["idle", "claimed", "spending", "consumed", "retired"])
+    XCTAssertEqual(
+      leaseMachine["transitions"] as? [[String]],
+      [
+        ["idle", "claimed", "claim"],
+        ["claimed", "spending", "commitSpend"],
+        ["spending", "consumed", "durable_result"],
+        ["claimed", "retired", "retire"],
+      ])
+    XCTAssertEqual(leaseMachine["terminal_states"] as? [String], ["consumed", "retired"])
+
+    let spends = AsyncCounterV3()
+    let spendingLease = ArtifactLeaseV3(
+      artifact: try artifactV3(), commitSpend: { _ = await spends.increment() })
+    let spendingCopy = spendingLease
+    let spendClaim = try await spendingLease.claim()
+    try await spendClaim.commitSpend()
+    let consumed = await spendClaim.isConsumed
+    let spendCount = await spends.value
+    XCTAssertTrue(consumed)
+    XCTAssertEqual(spendCount, 1)
+    await assertThrowsArtifactLeaseUnavailable { try await spendingCopy.claim() }
+
+    let retires = AsyncCounterV3()
+    let retiringLease = ArtifactLeaseV3(
+      artifact: try artifactV3(), commitSpend: {}, retire: { _ = await retires.increment() })
+    let retiringCopy = retiringLease
+    try await retiringLease.claim().retire()
+    let retireCount = await retires.value
+    XCTAssertEqual(retireCount, 1)
+    await assertThrowsArtifactLeaseUnavailable { try await retiringCopy.claim() }
+  }
+
   func testControllerClaimOwnsTheSharedOneShotLease() async throws {
     let spent = AsyncCounterV3()
     let lease = ArtifactLeaseV3(
@@ -1634,6 +1725,26 @@ private func controllerVectorsV3() throws -> [String: Any] {
   let url = packageRootV3().appendingPathComponent("testdata/transport_v3/controller_vectors.json")
   return try XCTUnwrap(
     JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+}
+
+private func validRetryAfterVectorValue(_ value: Any) -> Bool {
+  guard let number = value as? NSNumber else { return false }
+  let scalar = number.doubleValue
+  return scalar.isFinite && scalar.rounded(.towardZero) == scalar && scalar >= 0
+    && scalar <= 253_402_300_799_999
+}
+
+private func assertThrowsArtifactLeaseUnavailable(
+  _ operation: () async throws -> ClaimedArtifactLeaseV3,
+  file: StaticString = #filePath,
+  line: UInt = #line
+) async {
+  do {
+    _ = try await operation()
+    XCTFail("expected ArtifactLeaseErrorV3.unavailable", file: file, line: line)
+  } catch {
+    XCTAssertEqual(error as? ArtifactLeaseErrorV3, .unavailable, file: file, line: line)
+  }
 }
 
 private func controllerExpectedV3(_ id: String) throws -> [String: Any] {

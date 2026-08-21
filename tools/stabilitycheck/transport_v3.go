@@ -236,7 +236,7 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	if registry.Version != 3 || registry.Status != "final" || registry.Design.Version != "3.0.0" {
 		return fmt.Errorf("%s does not describe final transport v3.0.0", transportV3ContractPath)
 	}
-	if registry.Design.SHA256 != "f6c48593fafbc4ef409e5bf43985a52576ae6388100e5a6b3fe719c4189548bc" {
+	if registry.Design.SHA256 != "236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba" {
 		return fmt.Errorf("%s design hash drifted", transportV3ContractPath)
 	}
 	if registry.Design.SourcePath == "" {

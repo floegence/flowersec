@@ -26,6 +26,7 @@ const (
 var (
 	ErrInvalidConfig        = errors.New("invalid Flowersec v3 tunnel coordinator config")
 	ErrInvalidAuthorization = errors.New("invalid Flowersec v3 tunnel authorization")
+	errExpiredAuthorization = errors.New("expired Flowersec v3 tunnel authorization")
 	ErrCapacity             = errors.New("Flowersec v3 tunnel capacity exhausted")
 	ErrCredentialReplay     = errors.New("Flowersec v3 tunnel credential replay")
 	ErrPairMismatch         = errors.New("Flowersec v3 tunnel pair mismatch")
@@ -288,7 +289,11 @@ func (coordinator *Coordinator) Serve(ctx context.Context, pending PendingLeg) e
 	}
 	if err := validateAuthorization(decoded, authorization, coordinator.now()); err != nil {
 		coordinator.releaseLease(authorization.Lease)
-		coordinator.rejectUnregistered(admissionCtx, pending, artifactv3.AdmissionReject, ReasonInvalidCredential)
+		status, reason := artifactv3.AdmissionReject, ReasonInvalidCredential
+		if errors.Is(err, errExpiredAuthorization) {
+			status, reason = artifactv3.AdmissionRetryable, artifactv3.ReasonExpiredArtifact
+		}
+		coordinator.rejectUnregistered(admissionCtx, pending, status, reason)
 		return err
 	}
 	if err := admissionCtx.Err(); err != nil {
@@ -402,8 +407,11 @@ func validateCarrierBinding(decoded *artifactv3.DecodedRequest, actual carrier.K
 
 func validateAuthorization(decoded *artifactv3.DecodedRequest, authorization Authorization, now time.Time) error {
 	if decoded == nil || decoded.Request.PathKind != artifactv3.PathTunnel || authorization.Lease == nil ||
-		authorization.ExpiresAt.IsZero() || !authorization.ExpiresAt.After(now) {
+		authorization.ExpiresAt.IsZero() {
 		return ErrInvalidAuthorization
+	}
+	if !authorization.ExpiresAt.After(now) {
+		return errExpiredAuthorization
 	}
 	request := decoded.Request
 	claims := authorization.Claims

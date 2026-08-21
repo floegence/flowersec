@@ -350,7 +350,7 @@ function controllerBackoffForWait(consecutiveFailure: number): number {
 function defaultControllerClockV3(): ControllerClockV3 {
   return Object.freeze({
     wallNowMilliseconds: Date.now,
-    monotonicNowMilliseconds: () => performance.now(),
+    monotonicNowMilliseconds: () => Math.floor(performance.now()),
     sleep: async (milliseconds, signal) => await new Promise<void>((resolve, reject) => {
       if (signal.aborted) {
         reject(signal.reason);

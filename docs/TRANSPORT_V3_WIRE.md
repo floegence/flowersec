@@ -8,7 +8,7 @@ This is the normative English wire specification for Flowersec Transport v3.
 Its normative source is the final Chinese design recorded in
 `stability/transport_v3_contract.json` under `design`: version `3.0.0`,
 baseline commit `026cb52d116d2a04de50d0f0621fff57c7657120`, and SHA-256
-`f6c48593fafbc4ef409e5bf43985a52576ae6388100e5a6b3fe719c4189548bc`.
+`236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba`.
 The checked-in release-controlled source input is
 `docs/TRANSPORT_V3_DESIGN.zh-CN.md`; release tooling MUST verify that file
 against the recorded digest before regenerating derived artifacts. This

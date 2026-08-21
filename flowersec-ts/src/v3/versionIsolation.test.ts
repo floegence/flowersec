@@ -38,7 +38,6 @@ import {
   FLOWERSEC_V3_WIRE_PROFILES,
   FLOWERSEC_V3_WEBSOCKET_SUBPROTOCOLS,
   alpnForPathV3,
-  websocketSubprotocolForPathV3,
 } from "./transportConstants.js";
 
 type IsolationFixture = Readonly<{
@@ -46,6 +45,7 @@ type IsolationFixture = Readonly<{
   frames: readonly Readonly<{ id: string; v3_hex: string; v2_magic_hex: string; v2_version_hex: string }>[];
   profile_mutations: readonly Readonly<{ id: string; v3: string; v2: string; error_code: string }>[];
   path_mutations: readonly Readonly<{ id: string; v3: string; v2: string; error_code: string }>[];
+  subprotocol_mutations: readonly Readonly<{ id: string; v3: string; v2: string; error_code: string }>[];
   alpn_mutations: readonly Readonly<{ id: string; v3: string; v2: string; error_code: string }>[];
   crypto_label_mutations: readonly Readonly<{ id: string; v3: string; v2: string; error_code: string }>[];
   inherited_codecs: Readonly<{
@@ -95,11 +95,6 @@ describe("transport v3 version isolation", () => {
     for (const mutation of fixture.path_mutations) {
       expect(mutation.error_code).toBe("version_isolation");
       const kind = mutation.id.includes("-tunnel") ? "tunnel" : "direct";
-      if (mutation.id.endsWith("-subprotocol")) {
-        expect(mutation.v3).toBe(websocketSubprotocolForPathV3(kind));
-        expect(mutation.v2).toBe(mutation.v3.replace(/\.v3$/, ".v2"));
-        continue;
-      }
       const carrier = mutation.id.startsWith("webtransport") ? "webtransport" : "websocket";
       const validURL = carrier === "webtransport"
         ? FLOWERSEC_V3_PATHS.webtransport[kind]
@@ -133,8 +128,10 @@ describe("transport v3 version isolation", () => {
   });
 
   test("v2 WebSocket admission subprotocols are rejected by the production adapter", async () => {
-    for (const mutation of fixture.path_mutations.filter(({ id }) => id.endsWith("-subprotocol"))) {
-      const kind = mutation.id.endsWith("-tunnel-subprotocol") ? "tunnel" : "direct";
+    for (const mutation of fixture.subprotocol_mutations) {
+      const kind = mutation.id === "websocket-tunnel" ? "tunnel" : "direct";
+      expect(["websocket-direct", "websocket-tunnel"]).toContain(mutation.id);
+      expect(mutation.error_code).toBe("version_isolation");
       const artifactVector = JSON.parse(readFileSync(
         new URL("../../../testdata/transport_v3/artifact_vectors.json", import.meta.url),
         "utf8",

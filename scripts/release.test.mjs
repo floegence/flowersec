@@ -182,18 +182,12 @@ test("Rust registry publication waits for exact consumer resolution at each depe
   assert.ok(sdkConsumer > sdkPublish, "SDK registry consumer must run after SDK publication");
 });
 
-test("native prebuilt release performs an addon load and raw QUIC smoke before upload", () => {
+test("native prebuilt release only packages the built addon", () => {
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
-  const smoke = fs.readFileSync(path.join(sourceRoot, "scripts/native-addon-smoke.mjs"), "utf8");
-  assert.match(workflow, /node scripts\/native-addon-smoke\.mjs/);
-  assert.match(smoke, /contractVersion\(\)/);
-  assert.match(smoke, /bindRawQuic/);
-  assert.match(smoke, /connectRawQuic/);
-  assert.match(smoke, /close\(\)/);
-  assert.match(smoke, /waitTermination\(\)/);
-  const smokeIndex = workflow.indexOf("node scripts/native-addon-smoke.mjs");
+  assert.doesNotMatch(workflow, /node scripts\/native-addon-smoke\.mjs/);
   const uploadIndex = workflow.indexOf("name: Upload native prebuilt");
-  assert.ok(smokeIndex >= 0 && smokeIndex < uploadIndex, "native smoke must precede upload");
+  const buildIndex = workflow.indexOf("name: Build native addon");
+  assert.ok(buildIndex >= 0 && buildIndex < uploadIndex, "native build must precede upload");
 });
 
 test("documentation distinguishes injector, real weaknet, required performance, and optional WebTransport", () => {
@@ -226,22 +220,8 @@ test("npm release readback verifies tarball integrity, manifest, platform metada
   assert.match(readback, /libc/);
   assert.match(readback, /manifest\.main/);
   assert.match(readback, /flowersec-node-native/);
-  assert.match(workflow, /npm-consumer-smoke:/);
-  assert.match(workflow, /verify-npm-release-consumer\.mjs/);
-  const consumer = fs.readFileSync(path.join(sourceRoot, "scripts/verify-npm-release-consumer.mjs"), "utf8");
-  assert.match(consumer, /contractVersion\(\)/);
-  assert.match(consumer, /flowersec-core\/browser/);
-  assert.match(consumer, /--omit=optional/);
-  assert.match(consumer, /release\/npm-consumer\/go-node-raw-quic\/direct-session/);
-  assert.match(consumer, /@floegence\/flowersec-core\/node/);
-  assert.match(consumer, /parseArtifact/);
-  assert.match(consumer, /createArtifactLease/);
-  assert.match(consumer, /rpc\.call/);
-  assert.match(consumer, /openStream/);
-  assert.match(consumer, /session\.close/);
-  assert.match(consumer, /GOWORK/);
-  assert.match(consumer, /flowersec-go\/v3 v\$\{version\}/);
-  assert.doesNotMatch(consumer, /flowersec-ts\/src|server-parity|interop_matrix/);
+  assert.doesNotMatch(workflow, /npm-consumer-smoke:/);
+  assert.doesNotMatch(workflow, /verify-npm-release-consumer\.mjs/);
   assert.match(workflow, /actions\/setup-go/);
   const goConsumer = fs.readFileSync(
     path.join(sourceRoot, "scripts/fixtures/npm-release-go-node-raw-quic/main.go"),
@@ -322,10 +302,8 @@ test("release recovery preserves immutable assets and publishes npm from those e
   assert.doesNotMatch(workflow, /tar -tzf "\$archive" \| grep -Fxq/);
   assert.doesNotMatch(workflow, /tar -tzf "\$core_archive" \| grep -Fxq/);
   assert.match(workflow, /rust-publish:[\s\S]*if: needs\.prepare\.outputs\.mode == 'full'/);
-  assert.match(workflow, /npm-consumer-smoke:[\s\S]*needs: \[prepare, release, npm-recovery\]/);
-  assert.match(workflow, /npm-consumer-smoke:[\s\S]*needs\.npm-recovery\.result == 'success'/);
   const release = workflow.match(/  release:\n([\s\S]*?)\n  npm-recovery:/)?.[1] ?? "";
-  const recovery = workflow.match(/  npm-recovery:\n([\s\S]*?)\n  npm-consumer-smoke:/)?.[1] ?? "";
+  const recovery = workflow.match(/  npm-recovery:\n([\s\S]*)/)?.[1] ?? "";
   assert.doesNotMatch(release, /npm@11\.5\.1 publish|npm publish/);
   assert.doesNotMatch(recovery, /npm ci|npm run build|cargo build|go build|action-gh-release|docker\/build-push-action/);
 });
@@ -507,6 +485,7 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   const realMake = executablePath("make");
   fs.mkdirSync(path.join(repo, "scripts"), { recursive: true });
   fs.mkdirSync(path.join(repo, "flowersec-ts"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "flowersec-go"), { recursive: true });
   fs.mkdirSync(path.join(repo, "flowersec-rust/fuzz"), { recursive: true });
   fs.mkdirSync(path.join(repo, "examples/rust"), { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
@@ -529,6 +508,11 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
     path.join(repo, "flowersec-ts/package-lock.json"),
     JSON.stringify({ version: "0.26.0", packages: { "": { version: "0.26.0" } } }),
   );
+  fs.writeFileSync(
+    path.join(repo, "flowersec-go/go.mod"),
+    "module github.com/floegence/flowersec/flowersec-go/v0\n",
+  );
+  fs.writeFileSync(path.join(repo, "Package.swift"), "// Flowersec release major: 0\n");
   fs.writeFileSync(
     path.join(repo, "flowersec-rust/Cargo.toml"),
     "[package]\nname = \"flowersec\"\nversion = \"0.26.0\"\n",

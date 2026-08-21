@@ -152,6 +152,104 @@ describe("transport v3 production connection controller", () => {
     expect(snapshots.at(-1)).toEqual({ state: expected.final_state, disposition: expected.disposition });
   });
 
+  test.each([
+    [new TransportFailureV3("tls_failed", "pin_mismatch"), "transport_security_failed"],
+    [new TransportFailureV3("connection_failed", "browser_pin_opaque"), "connection_failed"],
+  ] as const)("retains %s trigger provenance when the replacement attempt budget is exhausted", async (
+    trigger,
+    expectedCode,
+  ) => {
+    const cleanup = vi.fn(async () => undefined);
+    const primary = singleCandidateArtifact(primaryArtifact, "t-pin");
+    const lease = createArtifactLeaseV3Internal(primary, async () => undefined, cleanup);
+    const acquire = vi.fn(async (): Promise<ArtifactSourceResultV3> => ({ kind: "lease", lease }));
+    const connector = vi.fn(async (context: LeaseAttemptContextV3) => ({
+      kind: "candidate_failures" as const,
+      failures: [{ candidate: context.candidates[0]!, failure: trigger }],
+    }));
+    const controller = createConnectionControllerV3({ acquire }, connector, {
+      maximumAttempts: 1,
+      nowUnixSeconds: () => 1_900_000_000,
+      clock: immediateClock(),
+      capabilitySnapshot,
+    });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "connect", code: expectedCode },
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(acquire).toHaveBeenCalledOnce();
+    expect(connector).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
+    expect(controller.retryNow()).toBe(false);
+    await controller.close();
+  });
+
+  test("retains the replacement source failure when its retry-after exhausts the attempt budget", async () => {
+    const observed: string[] = [];
+    const primary = singleCandidateArtifact(primaryArtifact, "t-pin");
+    const lease = createArtifactLeaseV3Internal(primary, async () => undefined);
+    const acquire = vi.fn()
+      .mockResolvedValueOnce({ kind: "lease", lease })
+      .mockResolvedValueOnce({
+        kind: "failure",
+        code: "connection_failed",
+        disposition: { kind: "retry_after", absoluteUnixMilliseconds: 2_000_000_000_000 },
+      });
+    const connector = vi.fn(async (context: LeaseAttemptContextV3) => ({
+      kind: "candidate_failures" as const,
+      failures: [{
+        candidate: context.candidates[0]!,
+        failure: new TransportFailureV3("tls_failed", "pin_mismatch"),
+      }],
+    }));
+    const controller = createConnectionControllerV3({ acquire }, connector, {
+      maximumAttempts: 2,
+      nowUnixSeconds: () => 1_900_000_000,
+      clock: immediateClock(observed),
+      capabilitySnapshot,
+    });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "artifact", code: "connection_failed" },
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(observed).toEqual([]);
+    expect(acquire).toHaveBeenCalledTimes(2);
+    expect(connector).toHaveBeenCalledOnce();
+    expect(controller.retryNow()).toBe(false);
+    await controller.close();
+  });
+
+  test("lets a synchronous waiting subscriber wake the registered retry", async () => {
+    const clock = new HoldingClock();
+    const acquire = vi.fn(async (): Promise<ArtifactSourceResultV3> => ({
+      kind: "failure",
+      code: "connection_failed",
+      disposition: { kind: "retryable" },
+    }));
+    const controller = createConnectionControllerV3({ acquire }, async () => {
+      throw new Error("connector must not run");
+    }, { maximumAttempts: 2, clock, capabilitySnapshot });
+    const retryResults: boolean[] = [];
+    controller.subscribe((snapshot) => {
+      if (snapshot.state === "waiting") retryResults.push(controller.retryNow());
+    });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "artifact", code: "connection_failed" },
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(retryResults).toEqual([true]);
+    expect(clock.delays).toEqual([250]);
+    expect(acquire).toHaveBeenCalledTimes(2);
+    await controller.close();
+  });
+
   test("rejects an unregistered source failure code terminally without retry", async () => {
     const acquire = vi.fn(async (): Promise<ArtifactSourceResultV3> => ({
       kind: "failure",
@@ -190,6 +288,38 @@ describe("transport v3 production connection controller", () => {
     expect(controller.state).toBe("failed");
     expect(connector).not.toHaveBeenCalled();
     expect(observed).toEqual([]);
+    await controller.close();
+  });
+
+  test.each([
+    ["NaN", Number.NaN],
+    ["positive Infinity", Number.POSITIVE_INFINITY],
+    ["negative Infinity", Number.NEGATIVE_INFINITY],
+    ["fractional sub-millisecond time", 0.5],
+    ["non-round-trippable integer", Number.MAX_SAFE_INTEGER + 1],
+  ])("projects a %s source retry-after to artifact_invalid without scheduling", async (_name, deadline) => {
+    const observed: string[] = [];
+    const acquire = vi.fn(async (): Promise<ArtifactSourceResultV3> => ({
+      kind: "failure",
+      code: "connection_failed",
+      disposition: { kind: "retry_after", absoluteUnixMilliseconds: deadline },
+    }));
+    const connector = vi.fn(async () => { throw new Error("connector must not run"); });
+    const controller = createConnectionControllerV3({ acquire }, connector, {
+      maximumAttempts: 2,
+      clock: immediateClock(observed),
+      capabilitySnapshot,
+    });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "artifact", code: "artifact_invalid" },
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(observed).toEqual([]);
+    expect(connector).not.toHaveBeenCalled();
+    expect(acquire).toHaveBeenCalledOnce();
+    expect(controller.retryNow()).toBe(false);
     await controller.close();
   });
 

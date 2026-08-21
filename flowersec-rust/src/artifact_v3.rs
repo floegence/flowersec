@@ -1995,16 +1995,6 @@ mod tests {
             let id = mutation["id"].as_str().unwrap();
             let v3 = mutation["v3"].as_str().unwrap();
             let v2 = mutation["v2"].as_str().unwrap();
-            if id.ends_with("-subprotocol") {
-                let expected = match id {
-                    "websocket-direct-subprotocol" => crate::websocket_v2::SUBPROTOCOL_DIRECT_V3,
-                    "websocket-tunnel-subprotocol" => crate::websocket_v2::SUBPROTOCOL_TUNNEL_V3,
-                    other => panic!("unknown subprotocol mutation {other}"),
-                };
-                assert_eq!(v3, expected);
-                assert_ne!(v2, expected);
-                continue;
-            }
             let carrier = if id.starts_with("webtransport") {
                 CarrierWireV3::Webtransport
             } else {
@@ -2038,6 +2028,19 @@ mod tests {
                 normalize_url_v3(kind, carrier, &legacy).is_err(),
                 "v2 path mutation {id} was accepted"
             );
+        }
+        for mutation in fixture["subprotocol_mutations"].as_array().unwrap() {
+            let id = mutation["id"].as_str().unwrap();
+            let v3 = mutation["v3"].as_str().unwrap();
+            let v2 = mutation["v2"].as_str().unwrap();
+            let expected = match id {
+                "websocket-direct" => crate::websocket_v2::SUBPROTOCOL_DIRECT_V3,
+                "websocket-tunnel" => crate::websocket_v2::SUBPROTOCOL_TUNNEL_V3,
+                other => panic!("unknown subprotocol mutation {other}"),
+            };
+            assert_eq!(mutation["error_code"], "version_isolation");
+            assert_eq!(v3, expected);
+            assert_ne!(v2, expected);
         }
     }
 

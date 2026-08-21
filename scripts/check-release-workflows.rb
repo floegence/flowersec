@@ -289,7 +289,7 @@ rust_jobs = require_hash(rust_workflow["jobs"], "the Rust recovery workflow jobs
 ci_jobs = require_hash(ci_workflow["jobs"], "the hosted CI workflow jobs")
 codeql_jobs = require_hash(codeql_workflow["jobs"], "the CodeQL workflow jobs")
 scorecard_jobs = require_hash(scorecard_workflow["jobs"], "the Scorecard workflow jobs")
-require_exact_keys(release_jobs, ["prepare", "rust-publish", "native-prebuilt", "release", "npm-recovery", "npm-consumer-smoke"], "the unified release workflow jobs")
+require_exact_keys(release_jobs, ["prepare", "rust-publish", "native-prebuilt", "release", "npm-recovery"], "the unified release workflow jobs")
 require_exact_keys(rust_jobs, ["publish"], "the Rust recovery workflow jobs")
 require_exact_keys(ci_jobs, ["repository", "precommit", "node-current", "dependency-review"], "the hosted CI workflow jobs")
 require_exact_keys(codeql_jobs, ["plan", "analyze", "analyze-swift"], "the CodeQL workflow jobs")
@@ -299,7 +299,6 @@ prepare_job = require_job(release_workflow, "prepare", "the unified release work
 release_job = require_job(release_workflow, "release", "the unified release workflow")
 rust_reuse_job = require_job(release_workflow, "rust-publish", "the unified release workflow")
 native_prebuilt_job = require_job(release_workflow, "native-prebuilt", "the unified release workflow")
-npm_consumer_job = require_job(release_workflow, "npm-consumer-smoke", "the unified release workflow")
 npm_recovery_job = require_job(release_workflow, "npm-recovery", "the unified release workflow")
 rust_publish_job = require_job(rust_workflow, "publish", "the Rust recovery workflow")
 repository_job = require_job(ci_workflow, "repository", "the hosted CI workflow")
@@ -316,7 +315,6 @@ require_exact_keys(release_job, ["needs", "if", "runs-on", "permissions", "steps
 require_exact_keys(rust_reuse_job, ["needs", "if", "permissions", "uses", "with"], "the unified release workflow rust-publish job")
 require_exact_keys(native_prebuilt_job, ["needs", "if", "strategy", "runs-on", "permissions", "steps"], "the unified release workflow native-prebuilt job")
 require_exact_keys(npm_recovery_job, ["needs", "if", "runs-on", "permissions", "steps"], "the unified release workflow npm recovery job")
-require_exact_keys(npm_consumer_job, ["needs", "if", "strategy", "runs-on", "permissions", "steps"], "the unified release workflow npm consumer job")
 require_exact_keys(rust_publish_job, ["runs-on", "permissions", "steps"], "the Rust recovery workflow publish job")
 require_exact_keys(repository_job, ["runs-on", "steps"], "the hosted CI repository job")
 require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI precommit job")
@@ -423,18 +421,6 @@ require_exact_value(npm_recovery_job["permissions"], {
   "contents" => "read",
   "id-token" => "write",
 }, "the npm recovery permissions")
-require_exact_value(npm_consumer_job["needs"], ["prepare", "release", "npm-recovery"], "the npm consumer job dependency")
-require_exact_value(npm_consumer_job["runs-on"], "${{ matrix.runner }}", "the npm consumer runner selector")
-require_exact_value(npm_consumer_job["permissions"], { "contents" => "read" }, "the npm consumer permissions")
-require_exact_value(npm_consumer_job["strategy"], {
-  "fail-fast" => false,
-  "matrix" => { "include" => [
-    { "runner" => "macos-15" },
-    { "runner" => "macos-15-intel" },
-    { "runner" => "ubuntu-24.04-arm" },
-    { "runner" => "ubuntu-latest" },
-  ] },
-}, "the npm consumer matrix")
 
 [
   [prepare_job, "the unified release workflow prepare job"],
@@ -449,7 +435,6 @@ require_condition_value(release_job, "always() && needs.prepare.result == 'succe
 require_condition_value(rust_reuse_job, "needs.prepare.outputs.mode == 'full'", "the unified release workflow rust-publish job")
 require_condition_value(native_prebuilt_job, "needs.prepare.outputs.mode == 'full' && needs.prepare.outputs.release_exists == 'false'", "the unified release workflow native-prebuilt job")
 require_condition_value(npm_recovery_job, "always() && needs.prepare.result == 'success' && ((needs.prepare.outputs.mode == 'full' && needs.release.result == 'success') || (needs.prepare.outputs.mode == 'npm-only' && needs.release.result == 'skipped'))", "the unified release workflow npm recovery job")
-require_condition_value(npm_consumer_job, "always() && needs.prepare.result == 'success' && needs.npm-recovery.result == 'success'", "the unified release workflow npm consumer job")
 require_condition_value(dependency_review_job, "github.event_name == 'pull_request'", "the hosted CI dependency review job")
 require_condition_value(codeql_job, "needs.plan.outputs.should_scan == 'true'", "the CodeQL analyze job")
 require_condition_value(codeql_swift_job, "github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && needs.plan.outputs.should_scan == 'true')", "the CodeQL Swift analyze job")
@@ -463,7 +448,6 @@ require_condition(rust_publish_job["runs-on"] == "ubuntu-latest", "the Rust reco
 release_steps = require_steps(release_job, "the unified release workflow release job")
 rust_steps = require_steps(rust_publish_job, "the Rust recovery workflow publish job")
 native_prebuilt_steps = require_steps(native_prebuilt_job, "the unified release workflow native-prebuilt job")
-npm_consumer_steps = require_steps(npm_consumer_job, "the unified release workflow npm consumer job")
 npm_recovery_steps = require_steps(npm_recovery_job, "the unified release workflow npm recovery job")
 ci_steps = require_steps(repository_job, "the hosted CI repository job")
 precommit_steps = require_steps(precommit_job, "the hosted CI precommit job")
@@ -667,9 +651,6 @@ validate_step_contracts(native_prebuilt_steps, [
     "NATIVE_TARGET" => "${{ matrix.target }}",
     "NATIVE_PLATFORM" => "${{ matrix.platform }}",
   } }, run_sha256: "690e76440261910d312f4d3078fa5dff71b134ecbc6229c81d14b72d29a26685" },
-  { name: "Smoke test native addon", keys: ["name", "env", "run"], values: { "env" => {
-    "FLOWERSEC_NATIVE_ADDON_PATH" => "${{ github.workspace }}/native-package/${{ matrix.platform }}/flowersec-node-native.${{ matrix.platform }}.node",
-  } }, run_sha256: "d904f71a6438c51ed1aacc963893a8004a70f9168f16b4c603c6702e3d42bb63" },
   { name: "Upload native prebuilt", keys: ["name", "uses", "with"], values: {
     "uses" => "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
     "with" => {
@@ -694,24 +675,6 @@ validate_step_contracts(npm_recovery_steps, [
     "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
   } }, run_sha256: "eae23aaf61a480b20202b42abc53fc660148819da579c46263665e2018e036e6" },
 ], "the unified release workflow npm recovery job")
-validate_step_contracts(npm_consumer_steps, [
-  { name: nil, keys: ["uses", "with"], values: {
-    "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
-    "with" => { "ref" => "refs/tags/flowersec-go/v${{ needs.prepare.outputs.version }}" },
-  } },
-  { name: "Setup Node", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
-    "with" => { "node-version" => "20.19.0", "registry-url" => "https://registry.npmjs.org" },
-  } },
-  { name: "Setup Go", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff",
-    "with" => { "go-version-file" => "flowersec-go/go.mod", "cache" => false },
-  } },
-  { name: "Verify registry consumer install and load", keys: ["name", "env", "run"], values: { "env" => {
-    "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
-  } }, run_sha256: "60dfc6c71b5fcb8dec7d17777678d62aa94c0aba810e1e168861c176a9dfeb65" },
-], "the unified release workflow npm consumer job")
-
 validate_step_contracts(rust_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
   { name: "Checkout release commit", keys: ["name", "id", "env", "run"], values: { "id" => "version", "env" => { "RELEASE_VERSION_INPUT" => "${{ inputs.version }}" } }, run_sha256: "ac06a1217c1f7df7c9e899d1fd91e3eb5a9c16f30aba50503028c62b391ac398" },

@@ -177,7 +177,10 @@ impl TunnelAuthorizationResponse {
 
     /// Builds a bounded terminal or retryable rejection response.
     pub fn reject(reason: &str, retryable: bool) -> Result<Self, TunnelAuthorizationError> {
-        if !valid_reason(reason) || forbidden_transport_security_reason(reason) {
+        if !valid_reason(reason)
+            || forbidden_transport_security_reason(reason)
+            || reason == "expired_artifact" && !retryable
+        {
             return Err(TunnelAuthorizationError);
         }
         let encoded = serde_json::to_vec(&json!({
@@ -1325,7 +1328,9 @@ fn parse_authorization_decision(
     match object["decision"].as_str().expect("validated decision") {
         "reject" | "retry" => {
             let reason = object["reason"].as_str().expect("validated reason");
-            if !valid_server_reason(reason, admission_reasons) {
+            if !valid_server_reason(reason, admission_reasons)
+                || reason == "expired_artifact" && object["decision"] != "retry"
+            {
                 return Err(TunnelRuntimeError::Rejected);
             }
             Ok(AuthorizationDecision::Deny {
@@ -1410,6 +1415,7 @@ async fn send_fsa3(
 ) -> Result<(), TunnelRuntimeError> {
     if !matches!(status, 0..=2)
         || status == 0 && !reason.is_empty()
+        || status == FSA3_REJECT && reason == "expired_artifact"
         || status != 0 && !valid_server_reason(reason, admission_reasons)
     {
         return Err(TunnelRuntimeError::InvalidWire);
@@ -2256,6 +2262,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fsa3_encoder_rejects_terminal_expired_artifact() {
+        let closed = CancellationToken::new();
+        let result = send_fsa3(
+            &ImmediateWriteStream,
+            FSA3_REJECT,
+            "expired_artifact",
+            &[],
+            Instant::now() + Duration::from_secs(1),
+            &closed,
+        )
+        .await;
+        assert!(matches!(result, Err(TunnelRuntimeError::InvalidWire)));
+    }
+
+    #[tokio::test]
     async fn malformed_authorization_releases_the_returned_lease() {
         let authorizer = Arc::new(MalformedAuthorizer::default());
         let runtime = test_runtime(authorizer.clone(), Duration::from_secs(1), 1);
@@ -2901,6 +2922,16 @@ mod tests {
             response_lease_id(br#"{"decision":"allow","lease_id":"lease-1"}"#),
             Some("lease-1".into())
         );
+        assert!(TunnelAuthorizationResponse::reject("expired_artifact", false).is_err());
+        assert!(TunnelAuthorizationResponse::reject("expired_artifact", true).is_ok());
+        assert!(matches!(
+            parse_authorization_decision(
+                br#"{"decision":"reject","reason":"expired_artifact"}"#,
+                "unused",
+                &[],
+            ),
+            Err(TunnelRuntimeError::Rejected)
+        ));
     }
 
     #[test]

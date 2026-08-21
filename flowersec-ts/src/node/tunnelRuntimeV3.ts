@@ -23,7 +23,9 @@ import { createNativeRawQuicDriverV3 } from "./nativeTransportAddon.js";
 import { startNodeRawQuicListenerV3, type NodeRawQuicListenerV3 } from "./rawQuicServerV3.js";
 
 const DEFAULT_PAIR_TIMEOUT_MS = 10_000;
+const DEFAULT_ADMISSION_TIMEOUT_MS = 10_000;
 const DEFAULT_CLEANUP_TIMEOUT_MS = 2_000;
+const DEFAULT_MAX_CONCURRENT_ADMISSIONS = 1_024;
 const DEFAULT_MAX_PENDING_LEGS = 1_024;
 const DEFAULT_MAX_ACTIVE_PAIRS = 1_024;
 const DEFAULT_MAX_CONCURRENT_STREAMS = 128;
@@ -72,14 +74,16 @@ export type TunnelRuntimeOptionsV3 = Readonly<{
   maxPendingLegs?: number;
   maxActivePairs?: number;
   maxConcurrentStreams?: number;
+  maxConcurrentAdmissions?: number;
   pairTimeoutMs?: number;
+  admissionTimeoutMs?: number;
   cleanupTimeoutMs?: number;
   admissionReasons?: readonly string[];
   authorize(
     request: DecodedFSB3RequestV3,
     options: OperationOptions,
   ): Promise<TunnelAuthorizationDecisionV3>;
-  release?(leaseId: string): Promise<void> | void;
+  release?(leaseId: string, options: Readonly<{ signal: AbortSignal }>): Promise<void> | void;
 }>;
 
 export class TunnelRuntimeV3 {
@@ -104,7 +108,11 @@ export class TunnelRuntimeV3 {
       const starting = starts.get(state);
       if (starting !== undefined) await Promise.allSettled([starting]);
       await Promise.allSettled(state.listeners.map(async (listener) => await listener.close()));
-      await boundedCleanup(state.tasks, state.limits.cleanupTimeoutMs);
+      await boundedCleanup(state.tasks, state.limits.cleanupTimeoutMs, () => {
+        for (const controller of state.releaseControllers) {
+          controller.abort(new Error("Flowersec tunnel lease cleanup timed out"));
+        }
+      });
     })();
     closes.set(state, closing);
     return await closing;
@@ -135,13 +143,18 @@ type TunnelRuntimeStateV3 = Readonly<{
     maxPendingLegs: number;
     maxActivePairs: number;
     maxConcurrentStreams: number;
+    maxConcurrentAdmissions: number;
     pairTimeoutMs: number;
+    admissionTimeoutMs: number;
     cleanupTimeoutMs: number;
   }>;
   abort: AbortController;
   generations: Map<string, Generation>;
   usedCredentials: Map<string, number>;
   legGenerations: WeakMap<TunnelLeg, Generation>;
+  admissionSlots: AdmissionSlots;
+  authorizerSlots: Slots;
+  releaseControllers: Set<AbortController>;
   tasks: Set<Promise<void>>;
   counts: { pendingLegs: number; activePairs: number };
 }>;
@@ -169,6 +182,9 @@ export function createTunnelRuntimeV3(options: TunnelRuntimeOptionsV3): TunnelRu
     generations: new Map(),
     usedCredentials: new Map(),
     legGenerations: new WeakMap(),
+    admissionSlots: new AdmissionSlots(limits.maxConcurrentAdmissions),
+    authorizerSlots: new Slots(limits.maxConcurrentAdmissions),
+    releaseControllers: new Set(),
     tasks: new Set(),
     counts: { pendingLegs: 0, activePairs: 0 },
   };
@@ -227,35 +243,62 @@ async function runListener(state: TunnelRuntimeStateV3, listener: Listener): Pro
     } catch {
       return;
     }
-    track(state, processCarrier(state, carrier));
+    const releaseAdmission = state.admissionSlots.tryAcquire();
+    if (releaseAdmission === undefined) {
+      carrier.abort({ code: 6, reason: "tunnel admission capacity" });
+      continue;
+    }
+    track(state, processCarrier(state, carrier).finally(releaseAdmission));
   }
 }
 
 async function processCarrier(state: TunnelRuntimeStateV3, carrier: CarrierSessionV3): Promise<void> {
+  const admission = new AbortController();
+  const unlinkRuntime = linkAbort(state.abort.signal, admission);
+  const deadline = setTimeout(() => {
+    admission.abort(new Error("Flowersec tunnel admission timed out"));
+  }, state.limits.admissionTimeoutMs);
   try {
-    const received = await receiveSessionAdmissionV3(carrier, state.abort.signal);
+    const received = await receiveSessionAdmissionV3(carrier, admission.signal);
     const decoded = received.decoded;
     if (carrier.path !== "tunnel" || decoded.request.pathKind !== "tunnel" ||
       decoded.request.candidates.find((candidate) => candidate.id === decoded.request.chosen_candidate_id)?.carrier !== carrier.kind) {
-      await reject(received, "invalid_credential", false, state.admissionReasons, state.abort.signal);
+      await reject(received, "invalid_credential", false, state.admissionReasons, admission.signal);
       return;
     }
-    const decision = await abortableCallback(
-      state.options.authorize(decoded, { signal: state.abort.signal }),
-      state.abort.signal,
-      (lateDecision) => {
-        if (lateDecision !== undefined && lateDecision.decision === "allow") {
-          releaseDecision(state, lateDecision);
-        }
-      },
-    );
+    const releaseAuthorizer = await state.authorizerSlots.acquire(admission.signal);
+    let authorizerStarted = false;
+    let decision: TunnelAuthorizationDecisionV3;
+    try {
+      decision = await abortableCallback(
+        () => {
+          authorizerStarted = true;
+          try {
+            // Admission cancellation must not free this slot while an
+            // application-owned authorization Promise is still running.
+            return state.options.authorize(decoded, { signal: admission.signal }).finally(releaseAuthorizer);
+          } catch (error) {
+            releaseAuthorizer();
+            throw error;
+          }
+        },
+        admission.signal,
+        (lateDecision) => {
+          if (lateDecision !== undefined && lateDecision.decision === "allow") {
+            releaseDecision(state, lateDecision);
+          }
+        },
+      );
+    } finally {
+      if (!authorizerStarted) releaseAuthorizer();
+    }
     if (decision.decision !== "allow") {
       await reject(
         received,
         decision.reason,
         decision.decision === "retry",
         state.admissionReasons,
-        state.abort.signal,
+        admission.signal,
       );
       return;
     }
@@ -268,7 +311,7 @@ async function processCarrier(state: TunnelRuntimeStateV3, carrier: CarrierSessi
         expired ? "expired_artifact" : "invalid_credential",
         expired,
         state.admissionReasons,
-        state.abort.signal,
+        admission.signal,
       );
       return;
     }
@@ -276,6 +319,9 @@ async function processCarrier(state: TunnelRuntimeStateV3, carrier: CarrierSessi
     registerLeg(state, leg);
   } catch {
     await carrier.close().catch(() => undefined);
+  } finally {
+    clearTimeout(deadline);
+    unlinkRuntime();
   }
 }
 
@@ -448,7 +494,7 @@ async function bridgePair(
   const cancel = () => controller.abort(signal.reason);
   signal.addEventListener("abort", cancel, { once: true });
   const tasks = new Set<Promise<void>>();
-  const slots = new StreamSlots(state.limits.maxConcurrentStreams);
+  const slots = new Slots(state.limits.maxConcurrentStreams);
   const start = (task: Promise<void>, fatal = true) => {
     tasks.add(task);
     void task.catch(() => { if (fatal) controller.abort(); }).finally(() => tasks.delete(task));
@@ -476,7 +522,7 @@ async function bridgePair(
 async function bridgeStreams(
   source: CarrierSessionV3,
   target: CarrierSessionV3,
-  slots: StreamSlots,
+  slots: Slots,
   signal: AbortSignal,
   start: (task: Promise<void>, fatal?: boolean) => void,
 ): Promise<void> {
@@ -659,13 +705,18 @@ function validateOptions(options: TunnelRuntimeOptionsV3): TunnelRuntimeStateV3[
     maxPendingLegs: options.maxPendingLegs ?? DEFAULT_MAX_PENDING_LEGS,
     maxActivePairs: options.maxActivePairs ?? DEFAULT_MAX_ACTIVE_PAIRS,
     maxConcurrentStreams: options.maxConcurrentStreams ?? DEFAULT_MAX_CONCURRENT_STREAMS,
+    maxConcurrentAdmissions: options.maxConcurrentAdmissions ?? DEFAULT_MAX_CONCURRENT_ADMISSIONS,
     pairTimeoutMs: options.pairTimeoutMs ?? DEFAULT_PAIR_TIMEOUT_MS,
+    admissionTimeoutMs: options.admissionTimeoutMs ?? DEFAULT_ADMISSION_TIMEOUT_MS,
     cleanupTimeoutMs: options.cleanupTimeoutMs ?? DEFAULT_CLEANUP_TIMEOUT_MS,
   };
   if (options.listeners.length === 0 || !Number.isSafeInteger(options.maxInboundStreams) ||
     options.maxInboundStreams < 1 || options.maxInboundStreams > 128 || typeof options.authorize !== "function" ||
     !boundedInteger(limits.maxPendingLegs, 1, 65_536) || !boundedInteger(limits.maxActivePairs, 1, 65_536) ||
-    !boundedInteger(limits.maxConcurrentStreams, 1, 128) || !boundedInteger(limits.pairTimeoutMs, 1, 60_000) ||
+    !boundedInteger(limits.maxConcurrentStreams, 1, 128) ||
+    !boundedInteger(limits.maxConcurrentAdmissions, 1, 65_536) ||
+    !boundedInteger(limits.pairTimeoutMs, 1, 60_000) ||
+    !boundedInteger(limits.admissionTimeoutMs, 1, 60_000) ||
     !boundedInteger(limits.cleanupTimeoutMs, 1, 60_000)) {
     throw new TypeError("invalid Flowersec TunnelRuntimeV3 options");
   }
@@ -690,17 +741,19 @@ function releaseDecision(state: TunnelRuntimeStateV3, decision: AllowedDecision)
 
 function trackRelease(state: TunnelRuntimeStateV3, leaseId: string): void {
   if (state.options.release === undefined) return;
+  const controller = new AbortController();
+  state.releaseControllers.add(controller);
   const release = Promise.resolve()
-    .then(async () => await state.options.release!(leaseId))
+    .then(async () => await state.options.release!(leaseId, { signal: controller.signal }))
     .then(() => undefined);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, state.limits.cleanupTimeoutMs);
-  });
-  track(state, Promise.race([release, timeout])
+  const timer = setTimeout(() => {
+    controller.abort(new Error("Flowersec tunnel lease cleanup timed out"));
+  }, state.limits.cleanupTimeoutMs);
+  track(state, Promise.race([release, aborted(controller.signal)])
     .then(() => undefined)
     .finally(() => {
-      if (timer !== undefined) clearTimeout(timer);
+      clearTimeout(timer);
+      state.releaseControllers.delete(controller);
     }));
 }
 
@@ -709,15 +762,24 @@ function track(state: TunnelRuntimeStateV3, task: Promise<void>): void {
   void task.catch(() => undefined).finally(() => state.tasks.delete(task));
 }
 
-async function boundedCleanup(tasks: ReadonlySet<Promise<void>>, timeoutMs: number): Promise<void> {
-  await Promise.race([
-    Promise.allSettled([...tasks]).then(() => undefined),
-    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
-  ]);
+async function boundedCleanup(
+  tasks: ReadonlySet<Promise<void>>,
+  timeoutMs: number,
+  onTimeout?: () => void,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      onTimeout?.();
+      resolve();
+    }, timeoutMs);
+  });
+  await Promise.race([Promise.allSettled([...tasks]).then(() => undefined), timeout]);
+  if (timer !== undefined) clearTimeout(timer);
 }
 
 async function abortableCallback<T>(
-  promise: Promise<T>,
+  callback: () => Promise<T>,
   signal: AbortSignal,
   onLateValue?: (value: T) => void,
 ): Promise<T> {
@@ -732,6 +794,15 @@ async function abortableCallback<T>(
       reject(asError(signal.reason));
     };
     signal.addEventListener("abort", abort, { once: true });
+    let promise: Promise<T>;
+    try {
+      promise = callback();
+    } catch (error) {
+      settled = true;
+      cleanup();
+      reject(error);
+      return;
+    }
     void promise.then(
       (value) => {
         if (settled) {
@@ -752,6 +823,13 @@ async function abortableCallback<T>(
   });
 }
 
+function linkAbort(source: AbortSignal, target: AbortController): () => void {
+  const abort = () => target.abort(source.reason);
+  source.addEventListener("abort", abort, { once: true });
+  if (source.aborted) abort();
+  return () => source.removeEventListener("abort", abort);
+}
+
 function aborted(signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
@@ -765,7 +843,7 @@ function credentialLookup(credential: string): string {
   return createHash("sha256").update(credential, "utf8").digest("base64url");
 }
 
-class StreamSlots {
+class Slots {
   private active = 0;
   private readonly waiters: Array<{
     grant: () => void;
@@ -814,6 +892,23 @@ class StreamSlots {
         waiter.grant();
         if (this.active <= this.maximum) break;
       }
+    };
+  }
+}
+
+class AdmissionSlots {
+  private active = 0;
+
+  constructor(private readonly maximum: number) {}
+
+  tryAcquire(): (() => void) | undefined {
+    if (this.active >= this.maximum) return undefined;
+    this.active += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.active -= 1;
     };
   }
 }

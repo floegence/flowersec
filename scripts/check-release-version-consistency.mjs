@@ -6,12 +6,14 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const releaseSources = [
+  "flowersec-go/go.mod",
   "flowersec-ts/package.json",
   "flowersec-ts/package-lock.json",
   "flowersec-rust/Cargo.toml",
   "flowersec-rust/Cargo.lock",
   "flowersec-rust/fuzz/Cargo.lock",
   "examples/rust/Cargo.lock",
+  "Package.swift",
 ];
 
 const nativeReleaseSources = [
@@ -39,6 +41,22 @@ function requireVersion(value, label) {
     throw new Error(`${label} must contain a semantic version`);
   }
   return value;
+}
+
+function goModuleVersion(root, packageVersion) {
+  const source = fs.readFileSync(path.join(root, "flowersec-go/go.mod"), "utf8");
+  const match = source.match(/^module\s+github\.com\/floegence\/flowersec\/flowersec-go\/v(\d+)\s*$/m);
+  if (match === null) throw new Error("flowersec-go/go.mod must declare the canonical /vN module path");
+  const [, minor, patch] = packageVersion.split(".");
+  return requireVersion(`${match[1]}.${minor}.${patch}`, "flowersec-go/go.mod module major");
+}
+
+function swiftPackageVersion(root, packageVersion) {
+  const source = fs.readFileSync(path.join(root, "Package.swift"), "utf8");
+  const match = source.match(/^\/\/ Flowersec release major: (\d+)\s*$/m);
+  if (match === null) throw new Error("Package.swift must declare the Flowersec release major");
+  const [, minor, patch] = packageVersion.split(".");
+  return requireVersion(`${match[1]}.${minor}.${patch}`, "Package.swift release major");
 }
 
 function cargoMetadataVersion(manifestPath, expectedPackageName = "flowersec") {
@@ -90,6 +108,9 @@ export function collectReleaseVersions(
     tsLock.packages?.[""]?.version,
     "flowersec-ts/package-lock.json packages['']",
   );
+
+  const goModuleVersionValue = goModuleVersion(root, tsPackageVersion);
+  const swiftPackageVersionValue = swiftPackageVersion(root, tsPackageVersion);
   if (tsLockVersion !== tsLockRootVersion) {
     throw new Error(
       `flowersec-ts/package-lock.json contains inconsistent versions: ${tsLockVersion} and ${tsLockRootVersion}`,
@@ -106,12 +127,14 @@ export function collectReleaseVersions(
     path.join(root, "examples/rust/Cargo.toml"),
   );
   const versions = [
-    { label: releaseSources[0], version: tsPackageVersion },
-    { label: releaseSources[1], version: tsLockVersion },
-    { label: releaseSources[2], version: rustManifestVersion },
+    { label: releaseSources[0], version: goModuleVersionValue },
+    { label: releaseSources[1], version: tsPackageVersion },
+    { label: releaseSources[2], version: tsLockVersion },
     { label: releaseSources[3], version: rustManifestVersion },
-    { label: releaseSources[4], version: fuzzLockVersion },
-    { label: releaseSources[5], version: exampleLockVersion },
+    { label: releaseSources[4], version: rustManifestVersion },
+    { label: releaseSources[5], version: fuzzLockVersion },
+    { label: releaseSources[6], version: exampleLockVersion },
+    { label: releaseSources[7], version: swiftPackageVersionValue },
   ];
   const nativeMarker = path.join(root, nativeReleaseSources[0]);
   if (!fs.existsSync(nativeMarker)) return versions;

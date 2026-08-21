@@ -11,12 +11,14 @@ import {
 } from "./check-release-version-consistency.mjs";
 
 const sourceLabels = [
+  "flowersec-go/go.mod",
   "flowersec-ts/package.json",
   "flowersec-ts/package-lock.json",
   "flowersec-rust/Cargo.toml",
   "flowersec-rust/Cargo.lock",
   "flowersec-rust/fuzz/Cargo.lock",
   "examples/rust/Cargo.lock",
+  "Package.swift",
 ];
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 
@@ -41,6 +43,11 @@ function createReleaseFixture(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
   fs.mkdirSync(path.join(root, "flowersec-ts"), { recursive: true });
+  fs.mkdirSync(path.join(root, "flowersec-go"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "flowersec-go/go.mod"),
+    "module github.com/floegence/flowersec/flowersec-go/v0\n",
+  );
   fs.writeFileSync(
     path.join(root, "flowersec-ts/package.json"),
     JSON.stringify({ version: "0.26.0" }),
@@ -49,6 +56,7 @@ function createReleaseFixture(t) {
     path.join(root, "flowersec-ts/package-lock.json"),
     JSON.stringify({ version: "0.26.0", packages: { "": { version: "0.26.0" } } }),
   );
+  fs.writeFileSync(path.join(root, "Package.swift"), "// Flowersec release major: 0\n");
 
   const manifests = [
     {
@@ -126,6 +134,19 @@ test("rejects drift in each release source", () => {
   }
 });
 
+test("rejects Go module and Swift package major drift", (t) => {
+  const root = createReleaseFixture(t);
+  fs.writeFileSync(
+    path.join(root, "flowersec-go/go.mod"),
+    "module github.com/floegence/flowersec/flowersec-go/v1\n",
+  );
+  assert.throws(() => validateReleaseVersions(collectReleaseVersions(root)), /inconsistent/);
+
+  const swiftRoot = createReleaseFixture(t);
+  fs.writeFileSync(path.join(swiftRoot, "Package.swift"), "// Flowersec release major: 1\n");
+  assert.throws(() => validateReleaseVersions(collectReleaseVersions(swiftRoot)), /inconsistent/);
+});
+
 test("rejects a requested release version that does not match the files", () => {
   assert.throws(
     () => validateReleaseVersions(matchingVersions("0.25.0"), "0.26.0"),
@@ -136,6 +157,11 @@ test("rejects a requested release version that does not match the files", () => 
 test("collects npm JSON and all Cargo lock contexts", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-release-version-"));
   fs.mkdirSync(path.join(root, "flowersec-ts"), { recursive: true });
+  fs.mkdirSync(path.join(root, "flowersec-go"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "flowersec-go/go.mod"),
+    "module github.com/floegence/flowersec/flowersec-go/v0\n",
+  );
   fs.writeFileSync(
     path.join(root, "flowersec-ts/package.json"),
     JSON.stringify({ version: "0.26.0" }),
@@ -144,6 +170,7 @@ test("collects npm JSON and all Cargo lock contexts", () => {
     path.join(root, "flowersec-ts/package-lock.json"),
     JSON.stringify({ version: "0.26.0", packages: { "": { version: "0.26.0" } } }),
   );
+  fs.writeFileSync(path.join(root, "Package.swift"), "// Flowersec release major: 0\n");
 
   const manifests = [
     "flowersec-rust/Cargo.toml",
@@ -170,6 +197,12 @@ test("collects npm JSON and all Cargo lock contexts", () => {
 test("rejects inconsistent top-level and root package-lock versions", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-release-lock-"));
   fs.mkdirSync(path.join(root, "flowersec-ts"), { recursive: true });
+  fs.mkdirSync(path.join(root, "flowersec-go"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "flowersec-go/go.mod"),
+    "module github.com/floegence/flowersec/flowersec-go/v0\n",
+  );
+  fs.writeFileSync(path.join(root, "Package.swift"), "// Flowersec release major: 0\n");
   fs.writeFileSync(
     path.join(root, "flowersec-ts/package.json"),
     JSON.stringify({ version: "0.26.0" }),

@@ -54,6 +54,7 @@ type versionIsolationFixture struct {
 	} `json:"inherited_codecs"`
 	ProfileMutations     []versionIsolationMutation `json:"profile_mutations"`
 	PathMutations        []versionIsolationMutation `json:"path_mutations"`
+	SubprotocolMutations []versionIsolationMutation `json:"subprotocol_mutations"`
 	ALPNMutations        []versionIsolationMutation `json:"alpn_mutations"`
 	CryptoLabelMutations []versionIsolationMutation `json:"crypto_label_mutations"`
 }
@@ -255,9 +256,6 @@ func TestVersionIsolationMutationsBindProductionBoundaries(t *testing.T) {
 
 	for _, mutation := range fixture.PathMutations {
 		mutation := mutation
-		if strings.Contains(mutation.ID, "subprotocol") {
-			continue
-		}
 		t.Run("path/"+mutation.ID, func(t *testing.T) {
 			carrier, kind, scheme := versionIsolationPathMutation(mutation.ID)
 			path := mutation.V3
@@ -286,15 +284,14 @@ func TestVersionIsolationMutationsBindProductionBoundaries(t *testing.T) {
 		})
 	}
 
-	for _, mutation := range fixture.PathMutations {
-		if !strings.Contains(mutation.ID, "subprotocol") {
-			continue
-		}
+	for _, mutation := range fixture.SubprotocolMutations {
 		mutation := mutation
 		t.Run("websocket-subprotocol/"+mutation.ID, func(t *testing.T) {
 			want := websocketv3.SubprotocolDirect
-			if strings.Contains(mutation.ID, "tunnel") {
+			if mutation.ID == "websocket-tunnel" {
 				want = websocketv3.SubprotocolTunnel
+			} else if mutation.ID != "websocket-direct" {
+				t.Fatalf("unknown WebSocket subprotocol mutation %q", mutation.ID)
 			}
 			if mutation.V3 != want || mutation.V2 == want {
 				t.Fatalf("subprotocol vector = (%q, %q), production = %q", mutation.V3, mutation.V2, want)

@@ -102,6 +102,39 @@ func TestDefaultReasonRegistryIncludesRetryableExpiredArtifact(t *testing.T) {
 	}
 }
 
+func TestServeClassifiesPostAuthorizationExpiryAsRetryableExpiredArtifact(t *testing.T) {
+	clock := time.Unix(2_000_000_000, 0)
+	lease := &expiryTestLease{}
+	pending := &serveExpiryPendingLeg{expiryTestPendingLeg: &expiryTestPendingLeg{}}
+	coordinator, err := NewCoordinator(Config{}, func(_ context.Context, decoded *artifactv3.DecodedRequest) (Authorization, error) {
+		request := decoded.Request
+		return Authorization{
+			Claims: VerifiedClaims{
+				CredentialID: "credential", ChannelID: request.ChannelID, Profile: request.Profile,
+				RendezvousGroupID: request.RendezvousGroupID, ListenerAudience: request.ListenerAudience,
+				SessionContractHash: request.SessionContractHash, CandidateSetHash: request.CandidateSetHash,
+				Role: request.Role, EndpointInstanceID: request.EndpointInstanceID,
+				ExpectedPeerEndpointInstanceID: "endpoint-peer",
+			},
+			ExpiresAt: clock,
+			Lease:     lease,
+		}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator.now = func() time.Time { return clock }
+	if err := coordinator.Serve(context.Background(), pending); !errors.Is(err, errExpiredAuthorization) {
+		t.Fatalf("Serve error = %v, want expired authorization", err)
+	}
+	if pending.responseStatus.Load() != int32(artifactv3.AdmissionRetryable) || pending.responseReason.Load() != artifactv3.ReasonExpiredArtifact {
+		t.Fatalf("expiry response = status:%d reason:%q", pending.responseStatus.Load(), pending.responseReason.Load())
+	}
+	if lease.releases.Load() != 1 || pending.closes.Load() != 1 {
+		t.Fatalf("expiry cleanup = releases:%d closes:%d", lease.releases.Load(), pending.closes.Load())
+	}
+}
+
 func TestReleaseLeaseDoesNotBlockCoordinatorCleanup(t *testing.T) {
 	coordinator, err := NewCoordinator(Config{AdmissionResponseTimeout: 20 * time.Millisecond}, func(context.Context, *artifactv3.DecodedRequest) (Authorization, error) {
 		return Authorization{}, errors.New("unused authorizer")
@@ -191,6 +224,17 @@ type expiryTestPendingLeg struct {
 	responseReason atomic.Value
 	activations    atomic.Int32
 	closes         atomic.Int32
+}
+
+type serveExpiryPendingLeg struct{ *expiryTestPendingLeg }
+
+func (leg *serveExpiryPendingLeg) ReceiveAdmission(context.Context) (*artifactv3.DecodedRequest, error) {
+	return &artifactv3.DecodedRequest{Request: artifactv3.Request{
+		PathKind: artifactv3.PathTunnel, ChosenCandidateID: "candidate",
+		Candidates: []artifactv3.CanonicalCandidate{{ID: "candidate", Carrier: artifactv3.CarrierRawQUIC}},
+		ChannelID:  "channel", Profile: artifactv3.Profile, RendezvousGroupID: "group",
+		ListenerAudience: "audience", Role: 1, EndpointInstanceID: "endpoint-client",
+	}}, nil
 }
 
 func newExpiryTestLeg(role uint8, expiresAt time.Time) *admittedLeg {

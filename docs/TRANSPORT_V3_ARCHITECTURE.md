@@ -89,18 +89,18 @@ ca_only. Old capability snapshots are immutable, but every pin construction
 also reads the live gate and therefore fails closed after invalidation.
 
 Browser WebTransport ready rejection is opaque. In CA mode it is ordinary
-connection_failed and does not trigger policy refresh. In pin mode it remains
-public connection_failed with retryable disposition and carries only the
-internal browser_pin_opaque marker. That marker permits one policy-sensitive
-replacement, does not claim a TLS reason, and cannot emit pin-mismatch
-telemetry.
+connection_failed with retryable disposition and does not trigger policy
+refresh. In pin mode it remains public connection_failed with retryable
+disposition and carries only the internal browser_pin_opaque marker. That
+marker permits one policy-sensitive replacement, does not claim a TLS reason,
+and cannot emit pin-mismatch telemetry.
 
 ### 3.2 Browser WebSocket
 
 Browser WebSocket supports CA only because its API has no per-connection
 certificate pin. Constructor, pre-open error, and pre-open close failures that
-cannot be layered are ordinary connection_failed. Error text is not parsed to
-guess TLS causes.
+cannot be layered are opaque connection_failed failures with retryable
+disposition. Error text is not parsed to guess TLS causes.
 
 ### 3.3 Native TLS
 
@@ -148,7 +148,39 @@ invalid. Reliable streams are always true. WebSocket datagrams and migration
 are false. Listen securityModes is empty. Dial securityModes is exactly ca,
 pin, or ca then pin.
 
-The initial support matrix is:
+The initial support matrix uses the following complete tuple sets. Field order is
+`(networkMode,path,sessionRole,reliableStreams,datagrams,migration)`:
+
+~~~text
+W4 = (dial,direct,client,true,false,false)
+     (dial,tunnel,client,true,false,false)
+     (dial,tunnel,server,true,false,false)
+     (listen,direct,server,true,false,false)
+W3 = (dial,direct,client,true,false,false)
+     (dial,tunnel,client,true,false,false)
+     (dial,tunnel,server,true,false,false)
+
+Q4M = (dial,direct,client,true,true,true)
+      (dial,tunnel,client,true,true,true)
+      (dial,tunnel,server,true,true,true)
+      (listen,direct,server,true,true,false)
+Q4N = (dial,direct,client,true,true,false)
+      (dial,tunnel,client,true,true,false)
+      (dial,tunnel,server,true,true,false)
+      (listen,direct,server,true,true,false)
+
+H4 = (dial,direct,client,true,true,false)
+     (dial,tunnel,client,true,true,false)
+     (dial,tunnel,server,true,true,false)
+     (listen,direct,server,true,true,false)
+H3 = (dial,direct,client,true,true,false)
+     (dial,tunnel,client,true,true,false)
+     (dial,tunnel,server,true,true,false)
+~~~
+
+`W*` applies only to WebSocket, `Q*` only to raw QUIC, and `H*` only to
+WebTransport. Every dial tuple takes the security modes shown in the matrix;
+every listen tuple has an empty security-mode list.
 
 | Runtime | WebSocket | Raw QUIC | WebTransport |
 | --- | --- | --- | --- |

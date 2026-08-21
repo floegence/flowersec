@@ -489,15 +489,6 @@ struct TransportV3Tests {
       let id = try #require(mutation["id"] as? String)
       let v3 = try #require(mutation["v3"] as? String)
       let v2 = try #require(mutation["v2"] as? String)
-      if id.hasSuffix("-subprotocol") {
-        let expected =
-          id.hasPrefix("websocket-direct")
-          ? TransportV3Contract.directWebSocketSubprotocol
-          : TransportV3Contract.tunnelWebSocketSubprotocol
-        #expect(v3 == expected, Comment(rawValue: "path_mutations/\(id)/v3"))
-        #expect(v2 != expected, Comment(rawValue: "path_mutations/\(id)/v2"))
-        continue
-      }
       let carrier = id.hasPrefix("webtransport") ? "webtransport" : "websocket"
       let kind = id.hasSuffix("-tunnel") ? "tunnel" : "direct"
       let expectedPath =
@@ -515,6 +506,25 @@ struct TransportV3Tests {
           "\(carrier == "webtransport" ? "https" : "wss")://example.com\(v2)", carrier: carrier,
           kind: kind)
       }
+    }
+
+    let subprotocolMutations = try #require(
+      root["subprotocol_mutations"] as? [[String: Any]])
+    for mutation in subprotocolMutations {
+      let id = try #require(mutation["id"] as? String)
+      let v3 = try #require(mutation["v3"] as? String)
+      let v2 = try #require(mutation["v2"] as? String)
+      let expected: String
+      switch id {
+      case "websocket-direct": expected = TransportV3Contract.directWebSocketSubprotocol
+      case "websocket-tunnel": expected = TransportV3Contract.tunnelWebSocketSubprotocol
+      default:
+        Issue.record("unexpected subprotocol mutation \(id)")
+        continue
+      }
+      #expect(mutation["error_code"] as? String == "version_isolation")
+      #expect(v3 == expected, Comment(rawValue: "subprotocol_mutations/\(id)/v3"))
+      #expect(v2 != expected, Comment(rawValue: "subprotocol_mutations/\(id)/v2"))
     }
 
     let alpnMutations = try #require(root["alpn_mutations"] as? [[String: Any]])

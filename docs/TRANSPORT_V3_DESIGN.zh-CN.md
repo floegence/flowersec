@@ -1,8 +1,8 @@
 # Flowersec v3 传输安全与 Wire Contract 最终设计
 
-状态：最终定稿
-规范版本：3.0.0
-基准提交：`026cb52d116d2a04de50d0f0621fff57c7657120`
+状态：最终定稿  
+规范版本：3.0.0  
+基准提交：`026cb52d116d2a04de50d0f0621fff57c7657120`  
 适用实现：TypeScript、Go、Rust、Swift
 
 ## 1. 结论

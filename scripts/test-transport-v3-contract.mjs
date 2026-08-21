@@ -46,7 +46,7 @@ assert.equal(registry.status, "final");
 assert.equal(registry.design.version, "3.0.0");
 assert.equal(
   registry.design.sha256,
-  "f6c48593fafbc4ef409e5bf43985a52576ae6388100e5a6b3fe719c4189548bc",
+  "236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba",
 );
 assert.equal(registry.design.source_path, "docs/TRANSPORT_V3_DESIGN.zh-CN.md");
 assert.equal(

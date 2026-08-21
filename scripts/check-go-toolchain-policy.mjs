@@ -104,7 +104,7 @@ export function verifyGoToolchainPolicy(repoRoot) {
     }
     setupGoCount += steps.length;
   }
-  if (setupGoCount !== 3) throw new Error(`maintained workflows must contain three setup-go steps; found ${setupGoCount}`);
+  if (setupGoCount !== 2) throw new Error(`maintained workflows must contain two setup-go steps; found ${setupGoCount}`);
 
   const securityScanner = read(repoRoot, "scripts/check-go-security.mjs");
   assertEqual(

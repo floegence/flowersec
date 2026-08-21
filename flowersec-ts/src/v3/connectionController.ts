@@ -255,12 +255,13 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
     while (!this.#lifetime.signal.aborted) {
       if (pendingDisposition !== undefined) {
         this.#disposition = pendingDisposition;
-        this.#transition("waiting");
-        const continued = await this.#retry.wait(
+        const waitOperation = this.#retry.wait(
           pendingDisposition,
           this.#cycle.snapshot().consecutiveFailures,
           this.#lifetime.signal,
         );
+        this.#transition("waiting");
+        const continued = await waitOperation;
         if (!continued) return;
         pendingDisposition = undefined;
       }
@@ -475,6 +476,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         const triggerKeys = blockPolicyRefreshTriggersV3(artifact.path.kind, result.failures, this.#cycle);
         const failedKeys = new Set(result.failures.map(({ candidate }) => endpointKeyV3(artifact.path.kind, candidate)));
         replacementContext = { artifact, candidates: allCandidates, failures: result.failures, triggerKeys, failedKeys };
+        this.#rememberFailure("connect", replacementTerminal(replacementContext).code);
         next = "replacement";
         continue;
       }
@@ -555,9 +557,13 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
   }
 
   #recordFailure(phase: ConnectionControllerFailureV3["phase"], code: string, disposition: RetryDispositionV3): void {
-    this.#failure = Object.freeze({ phase, code });
+    this.#rememberFailure(phase, code);
     this.#disposition = disposition;
     if (disposition.kind === "terminal") this.#transition("failed");
+  }
+
+  #rememberFailure(phase: ConnectionControllerFailureV3["phase"], code: string): void {
+    this.#failure = Object.freeze({ phase, code });
   }
 
   async #waitTermination(session: Session): Promise<Readonly<{ error: Error }> | undefined> {

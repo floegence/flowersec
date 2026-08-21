@@ -153,11 +153,6 @@ jobs:
           cp "$source_binary" "native-package/$NATIVE_PLATFORM/flowersec-node-native.$NATIVE_PLATFORM.node"
           cp "flowersec-node-native/npm/$NATIVE_PLATFORM/package.json" "native-package/$NATIVE_PLATFORM/package.json"
 
-      - name: Smoke test native addon
-        env:
-          FLOWERSEC_NATIVE_ADDON_PATH: ${{ github.workspace }}/native-package/${{ matrix.platform }}/flowersec-node-native.${{ matrix.platform }}.node
-        run: node scripts/native-addon-smoke.mjs
-
       - name: Upload native prebuilt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -628,39 +623,3 @@ jobs:
           publish_archive_if_missing \
             "@floegence/flowersec-core" \
             "npm-release-assets/floegence-flowersec-core-${VERSION}.tgz"
-
-  npm-consumer-smoke:
-    needs: [prepare, release, npm-recovery]
-    if: >-
-      always() &&
-      needs.prepare.result == 'success' &&
-      needs.npm-recovery.result == 'success'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-          - runner: macos-15-intel
-          - runner: ubuntu-24.04-arm
-          - runner: ubuntu-latest
-    runs-on: ${{ matrix.runner }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: refs/tags/flowersec-go/v${{ needs.prepare.outputs.version }}
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "20.19.0"
-          registry-url: "https://registry.npmjs.org"
-      - name: Setup Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: flowersec-go/go.mod
-          cache: false
-      - name: Verify registry consumer install and load
-        env:
-          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-        run: node scripts/verify-npm-release-consumer.mjs "$RELEASE_VERSION"

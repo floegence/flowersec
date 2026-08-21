@@ -444,7 +444,7 @@ const artifactVectors = {
   profile: PROFILE,
   source: {
     producer: "testdata/transport_v3/generate_contract_vectors.mjs",
-    design_sha256: "f6c48593fafbc4ef409e5bf43985a52576ae6388100e5a6b3fe719c4189548bc",
+    design_sha256: "236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba",
   },
   constants: {
     maximum_safe_integer: SAFE_MAX,
@@ -876,7 +876,7 @@ const v2CryptoLabels = [
 write("version_isolation_vectors.json", {
   version: 3,
   source: {
-    design_sha256: "f6c48593fafbc4ef409e5bf43985a52576ae6388100e5a6b3fe719c4189548bc",
+    design_sha256: "236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba",
     producer: "testdata/transport_v3/generate_contract_vectors.mjs",
     rules_are_not_extended_by_vectors: true,
   },
@@ -1190,6 +1190,19 @@ const controllerVectors = {
         replacement_acquisitions: 0, replacement_quota_used: 0,
         spend_callbacks: 0, retire_callbacks: 1,
         lease_terminal_states: ["retired"], retry_delays_ms: [],
+      },
+    },
+    {
+      id: "mixed-security-opaque-policy-refresh",
+      driver: "policy-replacement",
+      steps: ["tls_failed_ca_untrusted_w_ca", "browser_pin_opaque_w_pin", "refresh_on_union_of_native_and_opaque_triggers", "acquire_replacement_immediate", "claim_B", "changed_pin", "commit_spend_B", "established"],
+      input: { replacement_policy: "changed_pin", trigger: "mixed_security_opaque" },
+      expected: {
+        final_state: "connected", public_error: null, disposition: null,
+        acquisitions: 2, connect_attempts: 2, transports_created: 2,
+        replacement_acquisitions: 1, replacement_quota_used: 1,
+        spend_callbacks: 1, retire_callbacks: 1,
+        lease_terminal_states: ["retired", "consumed"], retry_delays_ms: [],
       },
     },
     {
