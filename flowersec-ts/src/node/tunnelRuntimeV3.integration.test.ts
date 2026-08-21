@@ -54,38 +54,43 @@ describe("Node TunnelRuntimeV3 bounded admission and cleanup", () => {
     if (directory !== "") rmSync(directory, { recursive: true, force: true });
   });
 
-  test("times out a silent admission without consuming pending-leg quota", async () => {
+  test("rejects a concurrent silent admission and releases the slot after timeout", async () => {
     let authorizations = 0;
     const runtime = createTunnelRuntimeV3({
       listeners: [listener()],
       maxInboundStreams: tunnelBase.session.max_inbound_streams,
       maxConcurrentAdmissions: 1,
       maxPendingLegs: 1,
-      // Keep enough room for instrumented coverage builds to open the probe
-      // connection while still exercising an independently bounded admission.
-      admissionTimeoutMs: 500,
+      admissionTimeoutMs: 1_000,
       authorize: async () => {
         authorizations += 1;
         return { decision: "reject", reason: "invalid_credential" };
       },
     });
     let silent: any;
+    let probe: any;
     try {
       await runtime.start();
       const port = runtime.addresses()[0]!.port;
       silent = await openSilentAdmission(port);
       const silentClosed = once(silent, "close");
 
-      await connect(port, 1).catch(() => undefined);
+      probe = await openSilentAdmission(port);
+      const probeClosed = once(probe, "close");
+      await expect(Promise.race([
+        probeClosed.then(() => "probe" as const),
+        silentClosed.then(() => "silent" as const),
+      ])).resolves.toBe("probe");
       expect(authorizations).toBe(0);
 
       await expect(Promise.race([
         silentClosed.then(() => "closed" as const),
-        delay(2_000).then(() => "timed-out" as const),
+        delay(3_000).then(() => "timed-out" as const),
       ])).resolves.toBe("closed");
       await connect(port, 1).catch(() => undefined);
       await waitFor(() => authorizations === 1);
     } finally {
+      probe?.terminate();
       silent?.terminate();
       await runtime.close();
     }
