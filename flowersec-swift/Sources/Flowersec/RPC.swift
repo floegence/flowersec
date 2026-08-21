@@ -258,7 +258,8 @@ internal actor RPCClient {
       if let error = envelope.error {
         _ = finishRequest(
           envelope.responseTo,
-          result: .failure(FlowersecRPCError(code: error.code, message: error.message))
+          result: .failure(
+            FlowersecRPCError(code: error.code, message: error.message ?? "RPC request failed."))
         )
       } else {
         _ = finishRequest(envelope.responseTo, result: .success(envelope.payload))
@@ -383,8 +384,7 @@ internal struct RPCEnvelope: Equatable, Sendable {
       if let rawMessage = errorObject["message"], !(rawMessage is String) {
         throw FlowersecError.invalidRPC("RPC error message is invalid.")
       }
-      let message = (errorObject["message"] as? String) ?? "RPC request failed."
-      error = try RPCErrorPayload(validatingCode: code, message: message)
+      error = try RPCErrorPayload(validatingCode: code, message: errorObject["message"] as? String)
     } else {
       error = nil
     }
@@ -403,10 +403,9 @@ internal struct RPCEnvelope: Equatable, Sendable {
     ]
     if let error {
       let error = error.sanitizedForWire
-      root["error"] = [
-        "code": NSNumber(value: error.code),
-        "message": error.message,
-      ]
+      var errorObject: [String: Any] = ["code": NSNumber(value: error.code)]
+      if let message = error.message { errorObject["message"] = message }
+      root["error"] = errorObject
     }
     return try JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
   }
@@ -457,22 +456,22 @@ internal struct RPCErrorPayload: Equatable, Sendable {
   private static let internalError = RPCErrorPayload(code: 500, message: "internal error")
 
   internal var code: UInt32
-  internal var message: String
+  internal var message: String?
 
-  internal init(code: UInt32, message: String) {
+  internal init(code: UInt32, message: String? = nil) {
     self.code = code
     self.message = message
   }
 
-  internal init(validatingCode code: UInt32, message: String) throws {
-    guard code != 0, message.utf8.count <= Self.maximumMessageBytes else {
+  internal init(validatingCode code: UInt32, message: String?) throws {
+    guard code != 0, (message?.utf8.count ?? 0) <= Self.maximumMessageBytes else {
       throw FlowersecError.invalidRPC("RPC error payload is invalid.")
     }
     self.init(code: code, message: message)
   }
 
   internal var sanitizedForWire: RPCErrorPayload {
-    guard code != 0, message.utf8.count <= Self.maximumMessageBytes else {
+    guard code != 0, (message?.utf8.count ?? 0) <= Self.maximumMessageBytes else {
       return Self.internalError
     }
     return self

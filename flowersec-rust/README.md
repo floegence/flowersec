@@ -34,11 +34,12 @@ let session = flowersec::connect(lease, options).await?;
 ## Supported Connections
 
 The native Rust runtime uses WebSocket and raw QUIC for direct and relayed client sessions,
-with the strict v3 client profile. It does not expose a v3 acceptor, tunnel runtime, artifact
-issuer, or WebTransport adapter. Deployments issue v3 artifacts and operate v3
-server endpoints through the Go runtime. The explicit `flowersec::v2` namespace
-contains the supported v2 client, acceptor, issuer, and tunnel runtime. Connection
-selection, credentials, and protocol state stay inside the crate.
+under the strict v3 profile, and also exposes the v3 direct `Acceptor` plus opaque `TunnelRuntime` server
+boundaries. It does not expose an artifact issuer or a WebTransport adapter. Deployments issue
+v3 artifacts through an application-owned control plane, such as the Go control-plane package;
+the Rust server runtimes accept only opaque validated authorization responses. The explicit
+`flowersec::v2` namespace contains the legacy v2 client, acceptor, issuer, and tunnel runtime.
+Connection selection, credentials, and protocol state stay inside the crate.
 
 ## Public API
 

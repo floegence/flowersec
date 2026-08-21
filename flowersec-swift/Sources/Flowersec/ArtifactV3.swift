@@ -131,6 +131,7 @@ struct ClaimedArtifactLeaseV3: Sendable {
   func commitSpend() async throws { try await state.commitSpend() }
   func retire() async throws { try await state.retire() }
   var isConsumed: Bool { get async { await state.isConsumed } }
+  var isSpending: Bool { get async { await state.isSpending } }
 
   func connectorLease() -> ArtifactLeaseV3 {
     connectorLease(artifact: artifact)
@@ -146,7 +147,7 @@ struct ClaimedArtifactLeaseV3: Sendable {
 private final class ControllerLeaseCapabilityV3: @unchecked Sendable {}
 
 private actor ArtifactLeaseStateV3 {
-  private enum State { case idle, claimed, consumed, retired }
+  private enum State { case idle, claimed, spending, consumed, retired }
 
   private let spend: @Sendable () async throws -> Void
   private let cleanup: @Sendable () async throws -> Void
@@ -183,9 +184,11 @@ private actor ArtifactLeaseStateV3 {
 
   var isConsumed: Bool { state == .consumed }
 
+  var isSpending: Bool { state == .spending }
+
   func commitSpend() async throws {
     guard state == .claimed else { throw ArtifactLeaseErrorV3.unavailable }
-    state = .consumed
+    state = .spending
 
     let completion = ArtifactSpendCompletionV3()
     let spend = self.spend
@@ -198,13 +201,19 @@ private actor ArtifactLeaseStateV3 {
       }
       completion.resolve(result)
     }
-    try await withTaskCancellationHandler {
-      try await withCheckedThrowingContinuation { continuation in
-        completion.install(continuation)
+    do {
+      try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+          completion.install(continuation)
+        }
+      } onCancel: {
+        callback.cancel()
+        completion.resolve(.failure(CancellationError()))
       }
-    } onCancel: {
-      callback.cancel()
-      completion.resolve(.failure(CancellationError()))
+      state = .consumed
+    } catch {
+      state = .consumed
+      throw error
     }
   }
 

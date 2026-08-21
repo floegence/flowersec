@@ -193,6 +193,8 @@ final class ConnectionControllerTests: XCTestCase {
 
     let spendStarted = await waitUntilV3 { await gate.started }
     XCTAssertTrue(spendStarted)
+    let spendingState = await claimed.isSpending
+    XCTAssertTrue(spendingState)
     spending.cancel()
     let returnedBeforeRelease = await waitUntilV3(timeout: .milliseconds(500)) {
       await finished.value

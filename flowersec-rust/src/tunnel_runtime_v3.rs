@@ -924,12 +924,16 @@ impl TaskRuntime {
                 } else {
                     "pair_timeout"
                 };
+                // Pairing may outlive admission intake. Give the terminal
+                // response and lease cleanup a fresh bounded window instead
+                // of reusing the already elapsed admission deadline.
+                let cleanup_deadline = Instant::now() + self.admission_options.admission_timeout;
                 let _ = send_fsa3(
                     expired.admission.as_ref(),
                     FSA3_RETRY,
                     reason,
                     &self.options.admission_reasons,
-                    admission_deadline,
+                    cleanup_deadline,
                     &self.state.closed,
                 )
                 .await;
@@ -937,7 +941,7 @@ impl TaskRuntime {
                 release_bounded(
                     self.authorizer.as_ref(),
                     &expired.lease_id,
-                    Instant::now() + self.admission_options.admission_timeout,
+                    cleanup_deadline,
                 )
                 .await;
                 return Err(TunnelRuntimeError::AdmissionFailed);
@@ -2381,12 +2385,7 @@ mod tests {
                     .await
             })
         };
-        for _ in 0..50 {
-            if !runtime.state.pending.lock().await.is_empty() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(2)).await;
-        }
+        wait_for_pending(runtime.as_ref()).await;
         assert_eq!(runtime.state.admission_permits.available_permits(), 1);
         runtime.state.closed.cancel();
         let _ = task.await;
@@ -2499,7 +2498,7 @@ mod tests {
                     false,
                     carrier,
                 ),
-                Instant::now() + Duration::from_secs(1),
+                Instant::now() + Duration::from_millis(10),
             )
             .await;
         let elapsed = started.elapsed();
@@ -2513,6 +2512,14 @@ mod tests {
     async fn replacement_retires_the_old_pending_generation() {
         let authorizer = Arc::new(CountingAuthorizer::default());
         let runtime = Arc::new(test_runtime(authorizer.clone(), Duration::from_secs(1), 1));
+        let key = AuthorityKey {
+            profile: "flowersec/3".into(),
+            channel: "channel".into(),
+            group: "group".into(),
+            audience: "audience".into(),
+            contract_hash: "contract".into(),
+            candidate_set_hash: "candidates".into(),
+        };
         let (first_inner, _first_peer_guard) = crate::session_v3::memory_carrier_pair_v3();
         let first_aborted = Arc::new(AtomicBool::new(false));
         let first_carrier: Arc<dyn CarrierSessionV3> = Arc::new(AbortProbeCarrier {
@@ -2536,25 +2543,7 @@ mod tests {
                 )
                 .await
         });
-        for _ in 0..20 {
-            if runtime
-                .state
-                .pending
-                .lock()
-                .await
-                .contains_key(&AuthorityKey {
-                    profile: "flowersec/3".into(),
-                    channel: "channel".into(),
-                    group: "group".into(),
-                    audience: "audience".into(),
-                    contract_hash: "contract".into(),
-                    candidate_set_hash: "candidates".into(),
-                })
-            {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(2)).await;
-        }
+        wait_for_pending_key(runtime.as_ref(), &key).await;
         let (second_inner, _second_peer_guard) = crate::session_v3::memory_carrier_pair_v3();
         let second_result = runtime
             .register_leg(
@@ -2613,12 +2602,7 @@ mod tests {
             contract_hash: "contract-a".into(),
             candidate_set_hash: "candidates-a".into(),
         };
-        for _ in 0..20 {
-            if runtime.state.pending.lock().await.contains_key(&key) {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(2)).await;
-        }
+        wait_for_pending_key(runtime.as_ref(), &key).await;
         let (incoming, _) = crate::session_v3::memory_carrier_pair_v3();
         let second_runtime = runtime.clone();
         let second_task = tokio::spawn(async move {
@@ -2639,12 +2623,7 @@ mod tests {
                 )
                 .await
         });
-        for _ in 0..20 {
-            if runtime.state.pending.lock().await.len() == 2 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(2)).await;
-        }
+        wait_for_pending_len(runtime.as_ref(), 2).await;
         let pending = runtime.state.pending.lock().await;
         assert_eq!(pending.len(), 2);
         assert_eq!(pending.get(&key).unwrap().value.lease_id, "pending-lease");
@@ -2682,13 +2661,55 @@ mod tests {
     }
 
     async fn wait_for_active_pair(runtime: &TaskRuntime) {
-        for _ in 0..50 {
-            if !runtime.state.active_carriers.lock().await.is_empty() {
-                return;
+        tokio::time::timeout(Duration::from_millis(500), async {
+            loop {
+                if !runtime.state.active_carriers.lock().await.is_empty() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
             }
-            tokio::time::sleep(Duration::from_millis(2)).await;
-        }
-        panic!("active pair was not registered");
+        })
+        .await
+        .expect("active pair was not registered");
+    }
+
+    async fn wait_for_pending(runtime: &TaskRuntime) {
+        tokio::time::timeout(Duration::from_millis(500), async {
+            loop {
+                if !runtime.state.pending.lock().await.is_empty() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .expect("pending leg was not registered");
+    }
+
+    async fn wait_for_pending_key(runtime: &TaskRuntime, key: &AuthorityKey) {
+        tokio::time::timeout(Duration::from_millis(500), async {
+            loop {
+                if runtime.state.pending.lock().await.contains_key(key) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .expect("expected pending leg was not registered");
+    }
+
+    async fn wait_for_pending_len(runtime: &TaskRuntime, expected: usize) {
+        tokio::time::timeout(Duration::from_millis(500), async {
+            loop {
+                if runtime.state.pending.lock().await.len() == expected {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .expect("expected pending leg count was not reached");
     }
 
     #[tokio::test]

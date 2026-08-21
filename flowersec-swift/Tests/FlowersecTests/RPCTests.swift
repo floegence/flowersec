@@ -84,6 +84,8 @@ final class FlowersecRPCTests: XCTestCase {
           XCTAssertEqual(decoded.error?.code, vector.code, id)
           if vector.message.presence == "present" {
             XCTAssertEqual(decoded.error?.message, message, id)
+          } else {
+            XCTAssertNil(decoded.error?.message, id)
           }
         } else {
           XCTAssertThrowsError(try RPCEnvelope(data: envelope(error: error)), id)
