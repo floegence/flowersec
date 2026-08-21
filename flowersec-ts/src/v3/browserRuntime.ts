@@ -3,6 +3,7 @@ import type { CanonicalArtifactCandidateV3 } from "./artifact.js";
 import { snapshotTransportSecurityPolicyV3, TransportFailureV3 } from "./security.js";
 import {
   adaptWebTransportCarrierSessionV3,
+  hasWebTransportConstructorSurfaceV3,
   type WebTransportSessionLikeV3,
 } from "./webTransportCarrier.js";
 import type { NativeCarrierSessionV3 } from "./carrier.js";
@@ -45,7 +46,7 @@ export class BrowserRuntimeCapabilityRegistryV3 {
   private constructor(features: BrowserFeaturesV3, pinEnabled: boolean) {
     this.#features = features;
     this.#hasWebSocket = typeof features.WebSocket === "function";
-    this.#hasWebTransport = typeof features.WebTransport === "function";
+    this.#hasWebTransport = hasWebTransportConstructorSurfaceV3(features.WebTransport);
     this.#pinState = pinEnabled ? "enabled" : "ca_only";
   }
 
@@ -82,7 +83,7 @@ export class BrowserRuntimeCapabilityRegistryV3 {
   }
 
   webTransportConstructor(): WebTransportConstructorV3 | undefined {
-    return typeof this.#features.WebTransport === "function"
+    return hasWebTransportConstructorSurfaceV3(this.#features.WebTransport)
       ? this.#features.WebTransport as WebTransportConstructorV3
       : undefined;
   }
@@ -152,14 +153,19 @@ export async function createBrowserWebTransportCarrierV3(
     registry,
     signal,
   );
-  return adaptWebTransportCarrierSessionV3(
-    transport as unknown as WebTransportSessionLikeV3,
-    { path, inboundBidirectionalStreamCapacity },
-  ) as unknown as NativeCarrierSessionV3;
+  try {
+    return adaptWebTransportCarrierSessionV3(
+      transport as unknown as WebTransportSessionLikeV3,
+      { path, inboundBidirectionalStreamCapacity },
+    ) as unknown as NativeCarrierSessionV3;
+  } catch (error) {
+    try { transport.close({ closeCode: 6, reason: "WebTransport adapter failed" }); } catch { /* best effort */ }
+    throw error;
+  }
 }
 
 async function exactChromiumPinProvider(features: BrowserFeaturesV3): Promise<boolean> {
-  if (typeof features.WebTransport !== "function") return false;
+  if (!hasWebTransportConstructorSurfaceV3(features.WebTransport)) return false;
   const provider = features.navigator?.userAgentData;
   if (provider === undefined || typeof provider.getHighEntropyValues !== "function") return false;
   let value: unknown;

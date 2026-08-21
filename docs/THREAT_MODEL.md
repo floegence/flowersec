@@ -44,6 +44,13 @@ Native Go, Rust, Node.js, and Swift adapters perform pin verification within
 their TLS boundary. No HTTP Upgrade, CONNECT, carrier, credential, or FSB3 is
 exposed before the relevant TLS proof succeeds.
 
+Browser JavaScript cannot inspect the peer leaf SPKI or independently prove
+the native P-256-only certificate profile. Browser policy may accept another
+non-RSA algorithm, so P-256-only endpoints reached through JavaScript have no
+cross-runtime profile or interoperability guarantee. The SDK does not claim
+that browser JavaScript verified P-256-only; deployments requiring that proof
+must use a native verifier or an explicitly browser-supported profile.
+
 ## Admission and Session Security
 
 The application durably commits a lease only after TLS establishes a candidate

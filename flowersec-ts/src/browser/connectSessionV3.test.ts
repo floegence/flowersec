@@ -86,6 +86,16 @@ function singleWebTransportArtifact(mode: "ca" | "pin"): string {
 
 function installBrowserFeatures(WebTransport: new (...args: never[]) => unknown): void {
   vi.stubGlobal("WebSocket", undefined);
+  const prototype = (WebTransport as unknown as { prototype?: Record<string, unknown> }).prototype;
+  if (prototype !== undefined) {
+    if (typeof prototype.createBidirectionalStream !== "function") {
+      prototype.createBidirectionalStream = async () => await new Promise(() => undefined);
+    }
+    if (typeof prototype.close !== "function") prototype.close = () => undefined;
+    for (const property of ["ready", "closed", "incomingBidirectionalStreams", "datagrams"]) {
+      if (!(property in prototype)) Object.defineProperty(prototype, property, { configurable: true, get: () => undefined });
+    }
+  }
   vi.stubGlobal("WebTransport", WebTransport);
   vi.stubGlobal("navigator", {
     userAgentData: {

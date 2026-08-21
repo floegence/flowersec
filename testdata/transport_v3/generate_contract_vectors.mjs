@@ -1082,7 +1082,15 @@ const capabilityInvalid = [
 const capabilityVectors = {
   version: 3,
   digest_label: "flowersec-v3-runtime-capability\u0000",
-  exact_browser_pin_provider: { family: "Chromium", full_version: "151.0.7922.34", playwright: "1.62.1" },
+  exact_browser_pin_provider: {
+    family: "Chromium",
+    full_version: "151.0.7922.34",
+    playwright: "1.62.1",
+    browser_js_p256_proof: false,
+    browser_may_accept_non_rsa_non_p256: true,
+    cross_runtime_interoperability: false,
+    sdk_must_not_claim_js_p256_verification: true,
+  },
   vectors: capabilityDescriptors,
   invalid: capabilityInvalid,
 };

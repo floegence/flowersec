@@ -109,6 +109,14 @@ certificate, enforce the portable X.509 profile, hash complete DER, and compare
 against active pins in constant time. The standard TLS provider still proves
 the handshake and private key.
 
+Browser JavaScript cannot inspect the leaf SPKI and cannot independently prove
+that a WebTransport peer is P-256-only. The browser `serverCertificateHashes`
+surface may accept another non-RSA algorithm according to browser policy, so an
+endpoint requiring P-256-only has no cross-runtime profile or interoperability
+guarantee through browser JavaScript. Flowersec SDKs MUST NOT describe this as
+JavaScript verification of P-256-only; use a native verifier or an explicitly
+browser-supported profile when that property is required.
+
 A provider callback may replace PKI identity validation for pin mode. An
 alternative private socket may temporarily suppress chain rejection only if
 the socket remains isolated until the standard cryptographic handshake and pin

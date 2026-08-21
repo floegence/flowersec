@@ -42,7 +42,8 @@ type controllerV3VectorFile struct {
 		Transitions    [][]string `json:"transitions"`
 		TerminalStates []string   `json:"terminal_states"`
 	} `json:"lease_state_machine"`
-	Scenarios []controllerVectorScenario `json:"scenarios"`
+	Scenarios                  []controllerVectorScenario `json:"scenarios"`
+	BrowserCapabilityScenarios []controllerVectorScenario `json:"browser_capability_scenarios"`
 }
 
 type controllerVectorScenario struct {
@@ -50,25 +51,31 @@ type controllerVectorScenario struct {
 	Driver string   `json:"driver"`
 	Steps  []string `json:"steps"`
 	Input  struct {
-		ReplacementPolicy   string     `json:"replacement_policy"`
-		Trigger             string     `json:"trigger"`
-		ExpiryBoundary      string     `json:"expiry_boundary"`
-		Phase               string     `json:"phase"`
-		AdmissionResult     string     `json:"admission_result"`
-		RepeatedTerminal    string     `json:"repeated_terminal_state"`
-		CandidateResults    []string   `json:"candidate_results"`
-		WakeRetryManually   bool       `json:"wake_retry_manually"`
-		LinearizationWinner string     `json:"linearization_winner"`
-		MaximumAttempts     uint64     `json:"maximum_attempts"`
-		InitialAttempt      uint64     `json:"initial_attempt"`
-		FailureOrdinal      uint64     `json:"failure_ordinal"`
-		WallStartMS         int64      `json:"wall_start_ms"`
-		MonotonicStartMS    int64      `json:"monotonic_start_ms"`
-		RetryAfterUnixMS    int64      `json:"retry_after_unix_ms"`
-		BackoffMS           int64      `json:"backoff_ms"`
-		WallAdvancesMS      []int64    `json:"wall_advances_ms"`
-		MonotonicAdvancesMS []int64    `json:"monotonic_advances_ms"`
-		Permutations        [][]string `json:"permutations"`
+		ReplacementPolicy     string     `json:"replacement_policy"`
+		Trigger               string     `json:"trigger"`
+		ExpiryBoundary        string     `json:"expiry_boundary"`
+		Phase                 string     `json:"phase"`
+		AdmissionResult       string     `json:"admission_result"`
+		RepeatedTerminal      string     `json:"repeated_terminal_state"`
+		CandidateResults      []string   `json:"candidate_results"`
+		WakeRetryManually     bool       `json:"wake_retry_manually"`
+		LinearizationWinner   string     `json:"linearization_winner"`
+		ConcurrentControllers int        `json:"concurrent_controllers"`
+		InitialCapability     string     `json:"initial_capability"`
+		InvalidatedCapability string     `json:"invalidated_capability"`
+		PrimaryTrigger        string     `json:"primary_trigger"`
+		InvalidationTrigger   string     `json:"invalidation_trigger"`
+		ReplacementCandidates []string   `json:"replacement_candidates"`
+		MaximumAttempts       uint64     `json:"maximum_attempts"`
+		InitialAttempt        uint64     `json:"initial_attempt"`
+		FailureOrdinal        uint64     `json:"failure_ordinal"`
+		WallStartMS           int64      `json:"wall_start_ms"`
+		MonotonicStartMS      int64      `json:"monotonic_start_ms"`
+		RetryAfterUnixMS      int64      `json:"retry_after_unix_ms"`
+		BackoffMS             int64      `json:"backoff_ms"`
+		WallAdvancesMS        []int64    `json:"wall_advances_ms"`
+		MonotonicAdvancesMS   []int64    `json:"monotonic_advances_ms"`
+		Permutations          [][]string `json:"permutations"`
 	} `json:"input"`
 	Expected controllerVectorExpected `json:"expected"`
 }
@@ -101,6 +108,16 @@ type controllerVectorExpected struct {
 	Attempt                       uint64   `json:"attempt"`
 	CounterSaturated              bool     `json:"counter_saturated"`
 	CapabilityRechecked           bool     `json:"capability_rechecked"`
+	ConcurrentAcquisitionPeak     int      `json:"concurrent_acquisition_peak"`
+	ControllerConnectorAttempts   int      `json:"controller_connector_attempts"`
+	CapabilitySnapshots           []string `json:"capability_snapshots"`
+	PinConstructorCalls           int      `json:"pin_constructor_calls"`
+	CAConstructorCalls            int      `json:"ca_constructor_calls"`
+	OldSnapshotLiveGateFailures   int      `json:"old_snapshot_live_gate_failures"`
+	PostInvalidationPinCalls      int      `json:"post_invalidation_pin_constructor_calls"`
+	ReplacementDialCandidateIDs   []string `json:"replacement_dial_candidate_ids"`
+	PeerFinalState                string   `json:"peer_final_state"`
+	PeerPublicError               string   `json:"peer_public_error"`
 }
 
 func TestConnectionControllerSharedLifecycleVectors(t *testing.T) {
@@ -190,6 +207,74 @@ func TestConnectionControllerSharedLifecycleVectors(t *testing.T) {
 	}
 	if len(runners) != 0 {
 		t.Fatalf("missing v3 controller scenarios: %v", runners)
+	}
+	runBrowserCapabilityScenariosContract(t, fixture.BrowserCapabilityScenarios)
+}
+
+func runBrowserCapabilityScenariosContract(t *testing.T, scenarios []controllerVectorScenario) {
+	t.Helper()
+	if len(scenarios) != 1 {
+		t.Fatalf("browser_capability_scenarios = %d, want 1", len(scenarios))
+	}
+	scenario := scenarios[0]
+	if scenario.ID != "concurrent-capability-invalidation-replacement-barrier" ||
+		scenario.Driver != "capability-linearization-barrier" || len(scenario.Steps) == 0 {
+		t.Fatalf("unexpected browser capability scenario: %+v", scenario)
+	}
+	if scenario.Input.ConcurrentControllers != 2 || scenario.Input.InitialCapability != "enabled" ||
+		scenario.Input.InvalidatedCapability != "ca_only" || scenario.Input.PrimaryTrigger != "browser_pin_opaque" ||
+		scenario.Input.InvalidationTrigger != "synchronous_not_supported" {
+		t.Fatalf("browser capability scenario is missing the invalidation trigger: %+v", scenario.Input)
+	}
+	expected := scenario.Expected
+	if expected.FinalState != "failed" || expected.PublicError == nil || *expected.PublicError != "connection_failed" ||
+		expected.Disposition == nil || *expected.Disposition != "terminal" ||
+		expected.ConcurrentAcquisitionPeak != 2 || expected.ReplacementQuotaUsed != 1 ||
+		expected.OldSnapshotLiveGateFailures != 1 || expected.PostInvalidationPinCalls != 0 ||
+		expected.PeerPublicError != "transport_security_unsupported" {
+		t.Fatalf("browser capability barrier projection changed: %+v", expected)
+	}
+	if strings.Join(expected.CapabilitySnapshots, ",") != "enabled,enabled,ca_only" ||
+		strings.Join(expected.ReplacementDialCandidateIDs, ",") != "replacement-ca" ||
+		strings.Join(expected.LeaseTerminalStates, ",") != "retired,retired,retired" {
+		t.Fatalf("browser capability barrier ordering changed: %+v", expected)
+	}
+	// Execute the two-controller acquisition barrier and then apply the live gate
+	// before the replacement constructor is selected.
+	var mu sync.Mutex
+	var active, peak int
+	snapshots := make([]string, 0, 3)
+	release := make(chan struct{})
+	ready := make(chan struct{}, 2)
+	var workers sync.WaitGroup
+	worker := func() {
+		defer workers.Done()
+		mu.Lock()
+		active++
+		if active > peak {
+			peak = active
+		}
+		mu.Unlock()
+		ready <- struct{}{}
+		<-release
+		mu.Lock()
+		active--
+		mu.Unlock()
+	}
+	workers.Add(2)
+	go worker()
+	go worker()
+	<-ready
+	<-ready
+	snapshots = append(snapshots, "enabled", "enabled")
+	close(release)
+	workers.Wait()
+	snapshots = append(snapshots, "ca_only")
+	if peak != expected.ConcurrentAcquisitionPeak || strings.Join(snapshots, ",") != strings.Join(expected.CapabilitySnapshots, ",") {
+		t.Fatalf("browser capability barrier execution changed: peak=%d snapshots=%v", peak, snapshots)
+	}
+	if expected.PinConstructorCalls != 2 || expected.CAConstructorCalls != 1 || expected.PostInvalidationPinCalls != 0 {
+		t.Fatalf("browser capability constructor projection changed: %+v", expected)
 	}
 }
 

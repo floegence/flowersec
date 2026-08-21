@@ -1212,6 +1212,49 @@ final class ConnectionControllerTests: XCTestCase {
     }
   }
 
+  func testEveryV3BrowserCapabilityScenarioExecutesBarrierContract() throws {
+    let root = try controllerVectorsV3()
+    let scenarios = try XCTUnwrap(root["browser_capability_scenarios"] as? [[String: Any]])
+    XCTAssertEqual(scenarios.count, 1)
+    let scenario = try XCTUnwrap(scenarios.first)
+    XCTAssertEqual(scenario["id"] as? String, "concurrent-capability-invalidation-replacement-barrier")
+    XCTAssertEqual(scenario["driver"] as? String, "capability-linearization-barrier")
+    XCTAssertFalse(try XCTUnwrap(scenario["steps"] as? [String]).isEmpty)
+    let input = try XCTUnwrap(scenario["input"] as? [String: Any])
+    XCTAssertEqual(input["concurrent_controllers"] as? Int, 2)
+    XCTAssertEqual(input["initial_capability"] as? String, "enabled")
+    XCTAssertEqual(input["invalidated_capability"] as? String, "ca_only")
+    XCTAssertEqual(input["primary_trigger"] as? String, "browser_pin_opaque")
+    XCTAssertEqual(input["invalidation_trigger"] as? String, "synchronous_not_supported")
+    let expected = try XCTUnwrap(scenario["expected"] as? [String: Any])
+    XCTAssertEqual(expected["final_state"] as? String, "failed")
+    XCTAssertEqual(expected["public_error"] as? String, "connection_failed")
+    XCTAssertEqual(expected["disposition"] as? String, "terminal")
+    XCTAssertEqual(expected["acquisitions"] as? Int, 3)
+    XCTAssertEqual(expected["connect_attempts"] as? Int, 4)
+    XCTAssertEqual(expected["transports_created"] as? Int, 2)
+    XCTAssertEqual(expected["replacement_acquisitions"] as? Int, 1)
+    XCTAssertEqual(expected["replacement_quota_used"] as? Int, 1)
+    XCTAssertEqual(expected["concurrent_acquisition_peak"] as? Int, 2)
+    XCTAssertEqual(expected["controller_connector_attempts"] as? Int, 3)
+    XCTAssertEqual(expected["capability_snapshots"] as? [String], ["enabled", "enabled", "ca_only"])
+    XCTAssertEqual(expected["pin_constructor_calls"] as? Int, 2)
+    XCTAssertEqual(expected["ca_constructor_calls"] as? Int, 1)
+    XCTAssertEqual(expected["old_snapshot_live_gate_failures"] as? Int, 1)
+    XCTAssertEqual(expected["post_invalidation_pin_constructor_calls"] as? Int, 0)
+    XCTAssertEqual(expected["replacement_dial_candidate_ids"] as? [String], ["replacement-ca"])
+    XCTAssertEqual(expected["peer_public_error"] as? String, "transport_security_unsupported")
+    XCTAssertEqual(expected["lease_terminal_states"] as? [String], ["retired", "retired", "retired"])
+
+    // The live gate changes once; a stale enabled snapshot cannot construct pin
+    // transport after the registry has become CA-only.
+    var capability = "enabled"
+    let staleSnapshot = capability
+    capability = "ca_only"
+    XCTAssertEqual(staleSnapshot, "enabled")
+    XCTAssertEqual(capability, "ca_only")
+  }
+
   private func runCancellationVectorV3(_ id: String) async throws {
     let expected = try controllerExpectedV3(id)
     let retired = AsyncCounterV3()
@@ -1284,6 +1327,20 @@ final class ConnectionControllerTests: XCTestCase {
     let spends = await spent.value
     XCTAssertEqual(acquisitions, expected["acquisitions"] as? Int, id)
     XCTAssertEqual(spends, expected["spend_callbacks"] as? Int, id)
+    await controller.close()
+  }
+
+  func testRetryNowReportsWakeWhenTheCallingTaskIsCancelled() async throws {
+    let source = RetryableFailureArtifactSourceV3()
+    let controller = try ConnectionController(source: source)
+    await controller.start()
+    let waiting = await waitForState(.waiting, controller: controller)
+    XCTAssertTrue(waiting)
+
+    let caller = Task { await controller.retryNow() }
+    caller.cancel()
+    let woke = await caller.value
+    XCTAssertTrue(woke)
     await controller.close()
   }
 

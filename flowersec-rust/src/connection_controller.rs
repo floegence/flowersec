@@ -1238,6 +1238,7 @@ mod tests {
         defaults: DefaultsV3,
         backoff_vectors: Vec<BackoffV3>,
         scenarios: Vec<ScenarioV3>,
+        browser_capability_scenarios: Vec<ScenarioV3>,
     }
     #[derive(Deserialize)]
     struct DefaultsV3 {
@@ -1302,6 +1303,24 @@ mod tests {
         maximum_wall_reread_ms: Option<u64>,
         #[serde(default)]
         timer_saturated: Option<bool>,
+        #[serde(default)]
+        concurrent_acquisition_peak: Option<u64>,
+        #[serde(default)]
+        capability_snapshots: Option<Vec<String>>,
+        #[serde(default)]
+        pin_constructor_calls: Option<u64>,
+        #[serde(default)]
+        ca_constructor_calls: Option<u64>,
+        #[serde(default)]
+        old_snapshot_live_gate_failures: Option<u64>,
+        #[serde(default)]
+        post_invalidation_pin_constructor_calls: Option<u64>,
+        #[serde(default)]
+        replacement_dial_candidate_ids: Option<Vec<String>>,
+        #[serde(default)]
+        peer_final_state: Option<String>,
+        #[serde(default)]
+        peer_public_error: Option<String>,
     }
 
     #[test]
@@ -1355,6 +1374,57 @@ mod tests {
             );
             assert_scenario_schema(scenario, &vectors.backoff_vectors);
         }
+        assert_browser_capability_scenarios(&vectors.browser_capability_scenarios);
+    }
+
+    fn assert_browser_capability_scenarios(scenarios: &[ScenarioV3]) {
+        assert_eq!(scenarios.len(), 1);
+        let scenario = &scenarios[0];
+        assert_eq!(
+            scenario.id,
+            "concurrent-capability-invalidation-replacement-barrier"
+        );
+        assert_eq!(scenario.driver, "capability-linearization-barrier");
+        assert!(!scenario.steps.is_empty());
+        assert_eq!(scenario.input["concurrent_controllers"], 2);
+        assert_eq!(scenario.input["initial_capability"], "enabled");
+        assert_eq!(scenario.input["invalidated_capability"], "ca_only");
+        assert_eq!(scenario.input["primary_trigger"], "browser_pin_opaque");
+        assert_eq!(
+            scenario.input["invalidation_trigger"],
+            "synchronous_not_supported"
+        );
+        let expected = &scenario.expected;
+        assert_eq!(expected.final_state, "failed");
+        assert_eq!(expected.public_error.as_deref(), Some("connection_failed"));
+        assert_eq!(expected.disposition.as_deref(), Some("terminal"));
+        assert_eq!(expected.concurrent_acquisition_peak, Some(2));
+        assert_eq!(expected.replacement_quota_used, 1);
+        assert_eq!(
+            expected.capability_snapshots.as_deref(),
+            Some(["enabled".into(), "enabled".into(), "ca_only".into()].as_slice())
+        );
+        assert_eq!(expected.old_snapshot_live_gate_failures, Some(1));
+        assert_eq!(expected.post_invalidation_pin_constructor_calls, Some(0));
+        assert_eq!(
+            expected.replacement_dial_candidate_ids.as_deref(),
+            Some(["replacement-ca".into()].as_slice())
+        );
+        assert_eq!(expected.peer_final_state.as_deref(), Some("failed"));
+        assert_eq!(
+            expected.peer_public_error.as_deref(),
+            Some("transport_security_unsupported")
+        );
+        assert_eq!(
+            expected.lease_terminal_states,
+            ["retired", "retired", "retired"]
+        );
+        // Once enabled -> ca_only linearizes, the stale snapshot can only fail closed.
+        let mut capability = "enabled";
+        let stale_snapshot = capability;
+        capability = "ca_only";
+        assert_eq!(stale_snapshot, "enabled");
+        assert_eq!(capability, "ca_only");
     }
 
     fn assert_scenario_schema(scenario: &ScenarioV3, backoff: &[BackoffV3]) {

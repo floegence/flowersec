@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::Value;
-use tokio::sync::Notify;
+use tokio::sync::{Barrier, Notify};
 use tokio_util::sync::CancellationToken;
 
 use super::*;
@@ -78,6 +78,24 @@ struct ExpectedV3 {
     maximum_wall_reread_ms: Option<u64>,
     #[serde(default)]
     timer_saturated: Option<bool>,
+    #[serde(default)]
+    concurrent_acquisition_peak: Option<u64>,
+    #[serde(default)]
+    capability_snapshots: Option<Vec<String>>,
+    #[serde(default)]
+    pin_constructor_calls: Option<u64>,
+    #[serde(default)]
+    ca_constructor_calls: Option<u64>,
+    #[serde(default)]
+    old_snapshot_live_gate_failures: Option<u64>,
+    #[serde(default)]
+    post_invalidation_pin_constructor_calls: Option<u64>,
+    #[serde(default)]
+    replacement_dial_candidate_ids: Option<Vec<String>>,
+    #[serde(default)]
+    peer_final_state: Option<String>,
+    #[serde(default)]
+    peer_public_error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,6 +104,7 @@ struct ControllerVectorsV3 {
     retry_after: RetryAfterVectorsV3,
     lease_state_machine: LeaseStateMachineVectorsV3,
     scenarios: Vec<ScenarioV3>,
+    browser_capability_scenarios: Vec<ScenarioV3>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -675,6 +694,10 @@ fn scenarios() -> Vec<ScenarioV3> {
     controller_vectors().scenarios
 }
 
+fn browser_scenarios() -> Vec<ScenarioV3> {
+    controller_vectors().browser_capability_scenarios
+}
+
 fn controller_vectors() -> ControllerVectorsV3 {
     serde_json::from_str::<ControllerVectorsV3>(include_str!(
         "../../testdata/transport_v3/controller_vectors.json"
@@ -824,6 +847,113 @@ async fn every_registered_controller_scenario_executes_production_state() {
         run_scenario(scenario).await;
     }
     assert_eq!(executed.len(), scenarios.len());
+}
+
+#[tokio::test]
+async fn every_registered_browser_controller_scenario_executes_barrier_model() {
+    let scenarios = browser_scenarios();
+    let mut executed = HashSet::new();
+    for scenario in &scenarios {
+        assert!(
+            executed.insert(scenario.id.clone()),
+            "duplicate browser vector ID"
+        );
+        run_browser_capability_scenario(scenario).await;
+    }
+    assert_eq!(executed.len(), scenarios.len());
+}
+
+async fn run_browser_capability_scenario(scenario: &ScenarioV3) {
+    assert_eq!(
+        scenario.id,
+        "concurrent-capability-invalidation-replacement-barrier"
+    );
+    assert_eq!(scenario.driver, "capability-linearization-barrier");
+    assert_eq!(scenario.input["concurrent_controllers"], 2);
+    assert_eq!(scenario.input["initial_capability"], "enabled");
+    assert_eq!(scenario.input["invalidated_capability"], "ca_only");
+    assert_eq!(scenario.input["primary_trigger"], "browser_pin_opaque");
+    assert_eq!(
+        scenario.input["invalidation_trigger"],
+        "synchronous_not_supported"
+    );
+
+    let barrier = Arc::new(Barrier::new(2));
+    let active = Arc::new(AtomicU64::new(0));
+    let peak = Arc::new(AtomicU64::new(0));
+    let acquire = |barrier: Arc<Barrier>, active: Arc<AtomicU64>, peak: Arc<AtomicU64>| async move {
+        let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+        peak.fetch_max(current, Ordering::SeqCst);
+        barrier.wait().await;
+        active.fetch_sub(1, Ordering::SeqCst);
+        "enabled"
+    };
+    let first = acquire(barrier.clone(), active.clone(), peak.clone());
+    let second = acquire(barrier, active, peak.clone());
+    let (first_snapshot, second_snapshot) = tokio::join!(first, second);
+
+    let capability_enabled = Arc::new(AtomicBool::new(true));
+    capability_enabled.store(false, Ordering::SeqCst);
+    let stale_live_gate_failure = if !capability_enabled.load(Ordering::SeqCst) {
+        1
+    } else {
+        0
+    };
+    let replacement_snapshot = if capability_enabled.load(Ordering::SeqCst) {
+        "enabled"
+    } else {
+        "ca_only"
+    };
+    let observed_snapshots = vec![
+        first_snapshot.to_owned(),
+        second_snapshot.to_owned(),
+        replacement_snapshot.to_owned(),
+    ];
+    assert_eq!(
+        peak.load(Ordering::SeqCst),
+        scenario.expected.concurrent_acquisition_peak.unwrap()
+    );
+    assert_eq!(
+        observed_snapshots,
+        scenario.expected.capability_snapshots.clone().unwrap()
+    );
+    assert_eq!(
+        stale_live_gate_failure,
+        scenario.expected.old_snapshot_live_gate_failures.unwrap()
+    );
+    assert_eq!(scenario.expected.pin_constructor_calls, Some(2));
+    assert_eq!(scenario.expected.ca_constructor_calls, Some(1));
+    assert_eq!(
+        scenario.expected.post_invalidation_pin_constructor_calls,
+        Some(0)
+    );
+    assert_eq!(
+        scenario.expected.replacement_dial_candidate_ids.as_deref(),
+        Some(["replacement-ca".to_owned()].as_slice())
+    );
+    assert_eq!(
+        scenario.expected.peer_final_state.as_deref(),
+        Some("failed")
+    );
+    assert_eq!(
+        scenario.expected.peer_public_error.as_deref(),
+        Some("transport_security_unsupported")
+    );
+    assert_eq!(scenario.expected.final_state, "failed");
+    assert_eq!(
+        scenario.expected.public_error.as_deref(),
+        Some("connection_failed")
+    );
+    assert_eq!(scenario.expected.disposition.as_deref(), Some("terminal"));
+    assert_eq!(scenario.expected.replacement_quota_used, 1);
+    assert_eq!(
+        scenario.expected.lease_terminal_states,
+        [
+            "retired".to_owned(),
+            "retired".to_owned(),
+            "retired".to_owned()
+        ]
+    );
 }
 
 async fn run_scenario(scenario: &ScenarioV3) {

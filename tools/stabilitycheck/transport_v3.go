@@ -665,7 +665,7 @@ func validateTransportV3ConsumerEvidence(fixtureID, language, body string) error
 		genericEvidence := map[string][]string{
 			"artifact_admission":      {"artifact_vectors.json", "positive", "negative"},
 			"capability":              {"capability_vectors.json", "canonical_json", "digest_hex"},
-			"controller":              {"controller_vectors.json", "scenarios"},
+			"controller":              {"controller_vectors.json", "scenarios", "browser_capability_scenarios", "concurrent-capability-invalidation-replacement-barrier"},
 			"crypto":                  {"crypto_vectors.json", "session_prk_hex"},
 			"datagram":                {"datagram_vectors.json", "plaintext_b64u", "ciphertext_b64u"},
 			"handshake":               {"handshake_vectors.json", "client_init_hex", "h3_hex"},

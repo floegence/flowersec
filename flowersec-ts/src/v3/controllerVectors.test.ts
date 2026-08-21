@@ -584,7 +584,7 @@ async function runCapabilityBarrier(scenario: ControllerScenario): Promise<void>
   }
   const registry = await BrowserRuntimeCapabilityRegistryV3.create({
     WebSocket: class {},
-    WebTransport: UnexpectedWebTransport,
+    WebTransport: completeWebTransportConstructor(UnexpectedWebTransport),
     navigator: {
       userAgentData: {
         async getHighEntropyValues() {
@@ -681,7 +681,7 @@ async function runConcurrentCapabilityReplacementBarrier(scenario: ControllerSce
   }
   registry = await BrowserRuntimeCapabilityRegistryV3.create({
     WebSocket: class {},
-    WebTransport: CoordinatedWebTransport,
+    WebTransport: completeWebTransportConstructor(CoordinatedWebTransport),
     navigator: {
       userAgentData: {
         async getHighEntropyValues() {
@@ -1120,6 +1120,19 @@ function withCandidateCA(input: ArtifactV3): ArtifactV3 {
   const output = structuredClone(input) as ArtifactV3;
   output.path.candidates = output.path.candidates.map((candidate) => ({ ...candidate, tls: { mode: "ca" } }));
   return output;
+}
+
+function completeWebTransportConstructor<T extends Function>(Constructor: T): T {
+  const prototype = (Constructor as unknown as { prototype?: Record<string, unknown> }).prototype;
+  if (prototype === undefined) return Constructor;
+  if (typeof prototype.createBidirectionalStream !== "function") {
+    prototype.createBidirectionalStream = async () => await new Promise(() => undefined);
+  }
+  if (typeof prototype.close !== "function") prototype.close = () => undefined;
+  for (const property of ["ready", "closed", "incomingBidirectionalStreams", "datagrams"]) {
+    if (!(property in prototype)) Object.defineProperty(prototype, property, { configurable: true, get: () => undefined });
+  }
+  return Constructor;
 }
 
 function browserWebTransportArtifact(

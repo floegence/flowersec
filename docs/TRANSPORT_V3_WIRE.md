@@ -267,6 +267,15 @@ uses a current X.509v3 leaf valid for at most 1,209,600 seconds with ECDSA
 P-256 SPKI. Native verifiers enforce that profile and compare leaf hashes in
 constant time. RSA leaf keys are invalid.
 
+Browser JavaScript cannot inspect the peer leaf SPKI or independently prove the
+P-256-only profile. The browser WebTransport `serverCertificateHashes` API may
+accept a non-RSA algorithm other than P-256, subject to browser policy. An
+endpoint that requires P-256-only therefore has no cross-runtime profile or
+interoperability guarantee when reached through browser JavaScript. The SDK
+MUST NOT claim that browser JavaScript verified P-256-only; deployments needing
+that proof must use a native verifier or an explicitly browser-supported
+profile.
+
 TLS 0-RTT, session tickets, and resumption are disabled. No HTTP Upgrade,
 CONNECT, application byte, carrier, or FSB3 is exposed before the provider
 proof and applicable policy succeed.

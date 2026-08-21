@@ -127,6 +127,23 @@ describe("runtime capability v3", () => {
     }
   });
 
+  test("does not advertise WebTransport for an incomplete constructor surface", async () => {
+    const registry = await BrowserRuntimeCapabilityRegistryV3.create({
+      WebSocket: class {},
+      WebTransport: class {},
+      navigator: {
+        userAgentData: {
+          async getHighEntropyValues() {
+            return { fullVersionList: [{ brand: "Chromium", version: "151.0.7922.34" }] };
+          },
+        },
+      },
+    });
+    expect(registry.snapshot().tuples.some(({ carrier }) => carrier === "webtransport")).toBe(false);
+    expect(registry.pinEnabled()).toBe(false);
+    expect(registry.webTransportConstructor()).toBeUndefined();
+  });
+
   test("passes only active hashes through the production WebTransport constructor", async () => {
     const calls: unknown[][] = [];
     const Constructor = class {
@@ -287,6 +304,23 @@ describe("runtime capability v3", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  test("closes a ready WebTransport when carrier adaptation fails", async () => {
+    const close = vi.fn();
+    const Constructor = class {
+      readonly ready = Promise.resolve();
+      readonly close = close;
+    };
+    const registry = await BrowserRuntimeCapabilityRegistryV3.create(browserFeatures(Constructor, "151.0.7922.34"));
+    await expect(createBrowserWebTransportCarrierV3(
+      pinCandidate,
+      1_999_999_999,
+      registry.snapshot(),
+      registry,
+      3,
+    )).rejects.toThrow(/required/);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   test("linearizes synchronous NotSupportedError and live-gates an old snapshot", async () => {
     const Constructor = vi.fn(function () {
       throw new DOMException("unsupported", "NotSupportedError");
@@ -303,6 +337,16 @@ describe("runtime capability v3", () => {
 });
 
 function browserFeatures(Constructor: unknown, version: string) {
+  const prototype = (Constructor as { prototype?: Record<string, unknown> }).prototype;
+  if (prototype !== undefined) {
+    if (typeof prototype.createBidirectionalStream !== "function") {
+      prototype.createBidirectionalStream = async () => await new Promise(() => undefined);
+    }
+    if (typeof prototype.close !== "function") prototype.close = () => undefined;
+    for (const property of ["ready", "closed", "incomingBidirectionalStreams", "datagrams"]) {
+      if (!(property in prototype)) Object.defineProperty(prototype, property, { configurable: true, get: () => undefined });
+    }
+  }
   return {
     WebSocket: class {},
     WebTransport: Constructor,

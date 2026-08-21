@@ -27,6 +27,8 @@ const fixture = JSON.parse(readFileSync(
 )) as Readonly<{ positive: readonly Readonly<{ artifact_json: string }>[] }>;
 const directArtifact = decodeArtifactV3JSON(fixture.positive.find(({ artifact_json }) =>
   JSON.parse(artifact_json).path.kind === "direct")!.artifact_json);
+const tunnelArtifact = decodeArtifactV3JSON(fixture.positive.find(({ artifact_json }) =>
+  JSON.parse(artifact_json).path.kind === "tunnel")!.artifact_json);
 
 describe("transport v3 server admission", () => {
   test("validates deployment reason registries at configuration time", () => {
@@ -145,6 +147,50 @@ describe("transport v3 server admission", () => {
     expect(carrierAbort).toHaveBeenCalled();
   });
 
+  test("rejects tunnel path mismatch before authorization, FSA3, or resource reuse", async () => {
+    if (tunnelArtifact.path.kind !== "tunnel") throw new Error("tunnel artifact required");
+    const chosen = tunnelArtifact.path.candidates.find(({ carrier }) => carrier === "websocket");
+    if (chosen === undefined) throw new Error("WebSocket candidate required");
+    const rawFSB3 = encodeFSB3RequestV3(buildFSB3RequestV3(tunnelArtifact, chosen.id));
+    let pending: Uint8Array | null = rawFSB3;
+    const write = vi.fn<CarrierStreamV3["write"]>(async (value) => value.length);
+    const streamAbort = vi.fn<CarrierStreamV3["abort"]>();
+    const stream = {
+      read: async () => {
+        const value = pending;
+        pending = null;
+        return value;
+      },
+      write,
+      closeWrite: vi.fn(async () => undefined),
+      stopSending: async () => undefined,
+      reset: async () => undefined,
+      abort: streamAbort,
+    } satisfies CarrierStreamV3;
+    const carrierAbort = vi.fn<CarrierSessionV3["abort"]>();
+    const carrier = {
+      kind: "websocket",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+      openStream: async () => stream,
+      acceptStream: async () => stream,
+      waitTermination: async () => undefined,
+      close: async () => undefined,
+      abort: carrierAbort,
+    } satisfies CarrierSessionV3;
+    const authorize = vi.fn(async () => ({ accepted: true as const, artifact: tunnelArtifact }));
+
+    await expect(acceptCarrierSessionV3(carrier, authorize, {
+      runtime: {} as SessionProtocolRuntimeV3,
+      admissionReasons: new Set(["expired_artifact"]),
+    })).rejects.toThrow("admission carrier binding mismatch");
+
+    expect(authorize).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    expect(streamAbort).toHaveBeenCalledOnce();
+    expect(carrierAbort).toHaveBeenCalledOnce();
+  });
+
   test("cancels a handler resolver that ignores its admission signal", async () => {
     const controller = new AbortController();
     let markStarted!: () => void;
@@ -166,7 +212,6 @@ describe("transport v3 server admission", () => {
 });
 
 function validReceived(artifact: ArtifactV3): ReceivedSessionAdmissionV3 {
-  if (artifact.path.kind !== "direct") throw new Error("direct artifact required");
   const chosen = artifact.path.candidates.find(({ carrier }) => carrier === "websocket");
   if (chosen === undefined) throw new Error("WebSocket candidate required");
   const rawFSB3 = encodeFSB3RequestV3(buildFSB3RequestV3(artifact, chosen.id));
@@ -180,7 +225,7 @@ function validReceived(artifact: ArtifactV3): ReceivedSessionAdmissionV3 {
   } satisfies CarrierStreamV3;
   const carrier = {
     kind: "websocket",
-    path: "direct",
+    path: artifact.path.kind,
     inboundBidirectionalStreamCapacity: 3,
     openStream: async () => stream,
     acceptStream: async () => stream,

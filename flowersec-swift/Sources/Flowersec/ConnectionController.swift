@@ -145,8 +145,7 @@ public actor ConnectionController {
       return false
     }
     retryTimer?.cancel()
-    await retryGate.wake(.manual)
-    return active
+    return await retryGate.wake(.manual)
   }
 
   public func close() async {
@@ -870,10 +869,12 @@ private actor ConnectionRetryGateV3 {
     }
   }
 
-  func wake(_ result: ConnectionRetryWakeV3) {
-    guard self.result == nil else { return }
+  @discardableResult
+  func wake(_ result: ConnectionRetryWakeV3) -> Bool {
+    guard self.result == nil else { return false }
     self.result = result
     waiter?.resume(returning: result)
     waiter = nil
+    return true
   }
 }

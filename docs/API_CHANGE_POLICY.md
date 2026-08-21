@@ -72,6 +72,14 @@ the TLS provider's CertificateVerify, Finished, transcript, ALPN, and private
 key proof. Browser pinning is available only through a registered production
 WebTransport provider and `serverCertificateHashes`.
 
+Browser JavaScript cannot inspect the peer leaf SPKI and cannot prove the
+P-256-only certificate profile. A browser may accept a different non-RSA key
+algorithm through its WebTransport policy; such an endpoint has no
+cross-runtime profile or interoperability guarantee. SDK documentation and
+APIs MUST NOT claim that JavaScript verified P-256-only. Use a native verifier
+or an explicitly browser-supported deployment profile when P-256-only is a
+requirement.
+
 WebTransport preserves transport-managed passive rebinding but does not expose
 application-managed active migration. Raw QUIC may declare active migration
 only when its production runtime and capability tuple implement it.

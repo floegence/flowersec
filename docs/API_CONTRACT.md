@@ -46,6 +46,13 @@ WebSocket is CA-only. Native adapters enforce the v3 TLS profile and declare
 unsupported tuples when they cannot do so. None of these choices changes the
 shared ten-second default connection timeout.
 
+Browser JavaScript cannot inspect the peer leaf SPKI or independently prove
+P-256-only. Browser WebTransport may accept another non-RSA algorithm according
+to browser policy, so an endpoint requiring P-256-only has no cross-runtime
+profile or interoperability guarantee through JavaScript. The SDK does not
+claim that JavaScript verified P-256-only; deployments requiring that proof use
+a native verifier or an explicitly browser-supported profile.
+
 Every production CA-mode TLS connector validates both the certificate chain and the requested target identity; an untrusted root or hostname/IP mismatch fails closed. Pin mode instead uses only the complete leaf DER hashes authorized by the artifact, while still enforcing the certificate profile and the TLS private-key proof; it never adds or falls back to CA chain or hostname authorization. Test-only roots are supplied explicitly by acceptance fixtures or the browser test runner. No production connector has an insecure verification fallback.
 
 The public contract is split into four layers. The portable core is the shared artifact, lease, one-shot connector, session, RPC, and stream model implemented by every SDK. An optional `ConnectionController` is the sole Flowersec long-lived connection owner above a refreshable artifact source. Each SDK profile records runtime-owned carrier support, listener support, and platform trust constraints. A language convenience is an ecosystem-specific API shape layered on top of the portable core, not a promise that every SDK exposes the same syntax. Retry decisions are structured as `terminal`, `retryable`, or an absolute `retry_after` deadline; raw public error code taxonomies remain SDK-local.
