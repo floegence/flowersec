@@ -21,6 +21,7 @@ use std::{
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use flowersec_native_transport::PathProfile as NativePathProfile;
+use futures_util::future::join_all;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore};
@@ -507,10 +508,12 @@ impl TunnelRuntime {
             .map(|(_, entry)| entry.value)
             .collect::<Vec<_>>();
         let cleanup_deadline = Instant::now() + self.admission_options.admission_timeout;
-        for leg in pending {
+        let authorizer = self.authorizer.as_ref();
+        join_all(pending.into_iter().map(|leg| async move {
             leg.carrier.abort();
-            release_bounded(self.authorizer.as_ref(), &leg.lease_id, cleanup_deadline).await;
-        }
+            release_bounded(authorizer, &leg.lease_id, cleanup_deadline).await;
+        }))
+        .await;
         let active = self
             .state
             .active_carriers
@@ -2441,6 +2444,61 @@ mod tests {
         let _ = close.await;
         assert!(aborted.load(Ordering::SeqCst));
         assert_eq!(state.admission_permits.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn close_releases_pending_legs_with_one_cleanup_window() {
+        let state = Arc::new(TunnelState::new(1));
+        let runtime = TunnelRuntime {
+            listener: StdMutex::new(None),
+            authorizer: Arc::new(HangingReleaseAuthorizer),
+            options: TunnelRuntimeOptions {
+                bind_address: "127.0.0.1:0".parse().unwrap(),
+                certificate_chain_der: Vec::new(),
+                private_key_der: Vec::new(),
+                allowed_origins: Vec::new(),
+                admission_reasons: Vec::new(),
+                max_inbound_streams: 8,
+                pair_timeout: Duration::from_secs(1),
+                max_pending_legs: 4,
+                max_active_pairs: 1,
+            },
+            admission_options: TunnelAdmissionOptions {
+                admission_timeout: Duration::from_millis(10),
+                max_concurrent_admissions: 1,
+            },
+            state: state.clone(),
+        };
+        let mut peer_carriers = Vec::new();
+        for index in 0..4 {
+            let lease_id = format!("lease-{index}");
+            let endpoint = format!("endpoint-{index}");
+            let expected_peer = format!("peer-{index}");
+            let (carrier, peer_carrier) = crate::session_v3::memory_carrier_pair_v3();
+            peer_carriers.push(peer_carrier);
+            let leg = test_leg(
+                &lease_id,
+                1,
+                &endpoint,
+                &expected_peer,
+                SystemTime::now() + Duration::from_secs(30),
+                false,
+                carrier,
+            );
+            let key = AuthorityKey::from(leg.claims.as_ref());
+            state.pending.lock().await.insert(
+                key,
+                PendingEntry {
+                    generation_id: index,
+                    value: leg,
+                },
+            );
+        }
+
+        let started = std::time::Instant::now();
+        runtime.close().await;
+        assert!(started.elapsed() < Duration::from_millis(300));
+        drop(peer_carriers);
     }
 
     #[tokio::test]
