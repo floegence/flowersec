@@ -246,6 +246,26 @@ assert.match(directParityRunner, /cell\.status === "supported"/,
   "direct matrix runner must execute only supported cells");
 assert.match(tunnelParityRunner, /topology\.status === "supported"/,
   "tunnel matrix runner must execute only supported topologies");
+assert.match(directParityRunner, /throw new Error\("server parity direct matrix selected no supported v3 cells"\)/,
+  "the direct matrix runner must fail closed when no supported v3 cells are selected");
+assert.match(tunnelParityRunner, /throw new Error\("server parity tunnel matrix selected no supported v3 topologies"\)/,
+  "the tunnel matrix runner must fail closed when no supported v3 topologies are selected");
+for (const [name, relative, expected] of [
+  ["direct", "scripts/test-server-parity-direct.mjs", /selected no supported v3 cells/],
+  ["tunnel", "scripts/test-server-parity-tunnel.mjs", /selected no supported v3 topologies/],
+]) {
+  const environment = { ...process.env };
+  delete environment.FLOWERSEC_PARITY_CLIENT_PROFILE;
+  delete environment.FLOWERSEC_PARITY_TEST_ID;
+  const result = spawnSync(process.execPath, [relative], {
+    cwd: root,
+    encoding: "utf8",
+    env: environment,
+  });
+  assert.notEqual(result.status, 0, `${name} matrix runner passed without a supported v3 cell`);
+  assert.match(`${result.stdout}\n${result.stderr}`, expected,
+    `${name} matrix runner failed for an unexpected reason`);
+}
 assert.match(parityMatrixGenerator, /language_capabilities\.json/,
   "server parity dimensions must derive from the capability manifest");
 assert.match(directParityRunner, /FLOWERSEC_PARITY_CLIENT_PROFILE/,
@@ -429,6 +449,12 @@ if (fs.existsSync(path.join(root, "flowersec-node-native/package.json"))) {
 assert.deepEqual(parityContractProblems, [], "server parity required tuple contract is incomplete");
 const interopCells = [...interopMatrix.direct_cells, ...interopMatrix.tunnel_topologies];
 assert.ok(interopMatrix.direct_cells.length > 0 && interopMatrix.tunnel_topologies.length > 0);
+assert.equal(interopCells.filter(({ status }) => status === "supported").length, 0,
+  "documentation declares that the current pairwise v3 matrix has no supported cells");
+assert.match(testMatrix, /All 36 declarations are unsupported/,
+  "the test matrix must state the current pairwise support boundary");
+assert.match(read("README.md"), /All 36 pairwise\s+cells are currently explicit `unsupported` declarations/,
+  "the root README must not promote the pairwise coordinate universe to supported parity");
 for (const cell of interopCells) {
   assert.ok(["supported", "unsupported"].includes(cell.status), `interop cell ${cell.id} has invalid status`);
   if (cell.status === "supported") {

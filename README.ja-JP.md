@@ -104,11 +104,11 @@ Flowersec はアプリケーションセッションを、それを運ぶネッ�
 | `apple-client` | Apple プラットフォームの Swift | WSS endpoint client | なし |
 | `webtransport-server` | 現在宣言しているランタイムなし | 宣言前に direct server と opaque tunnel runtime の conformance が必要 | なし |
 
-Go、Rust、Node.js は同じ 18 個の必須 `native-server-core` runtime-role-carrier tuple を実装します。Direct path と tunnel path を展開すると、path 固有の server unit は 24 個になります。Conformance は別に数え、direct client/server cell が 18 個、pairwise tunnel topology が 18 個です。profile が Artifact、handshake、RPC、stream、close、rekey、authorization の wire semantics を変更することはありません。
+機械可読な capability inventory には、native runtime ごとに 6 個、合計 18 個の集約 runtime-role-carrier tuple と、対応済みの path 固有 server unit 24 個があります。interoperability matrix は direct cell 18 個と tunnel cell 18 個を別に宣言します。36 個すべての pairwise cell は、cell の完全な executable case set を実行する release-gating v3 test がないため、現在は明示的な `unsupported` 宣言です。profile が Artifact、handshake、RPC、stream、close、rekey、authorization の wire semantics を変更することはありません。
 
 各パッケージが対応するプラットフォームと接続方式の組み合わせは、SDK ガイドで確認してください。
 
-WebTransport は必須の native-server carrier ではなく、オプションの adapter です。Go は direct adapter を提供し、Browser profile はブラウザーの WebTransport API が利用可能な場合に使用します。Node.js と Rust は現在 production WebTransport adapter を提供しません。必須の native-server parity は Go、Rust、Node.js の WebSocket と raw QUIC です。
+WebTransport は native-server carrier contract に含まれないオプションの adapter です。Go は direct adapter を提供し、Browser profile はブラウザーの WebTransport API が利用可能な場合に使用します。Node.js と Rust は現在 production WebTransport adapter を提供しません。Go、Rust、Node.js の native-server carrier surface は WebSocket と raw QUIC であり、pairwise interoperability は matrix の supported entry だけが宣言します。
 
 <!-- readme-section:security -->
 <a id="security"></a>

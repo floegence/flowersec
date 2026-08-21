@@ -39,7 +39,7 @@ func registry() []registeredTest {
 		vitestEntry("compat/v2/server/typescript-controlplane", "acceptance", "src/node/controlplane.test.ts", "Node control-plane public contract"),
 		commandEntry("compat/v2/server/rust-controlplane", "acceptance", 5*time.Minute, "rustup", "run", "1.88.0", "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--test", "controlplane"),
 		commandEntry("server/go-proxy", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestProxyServer", "."),
-		vitestEntry("server/typescript-acceptor", "acceptance", "src/node/serverRuntimeV3.integration.test.ts", "accepts a production v3 WSS direct session through FSB3 and FSH3"),
+		vitestEntry("server/typescript-acceptor", "acceptance", "src/node/serverRuntimeV3.integration.test.ts", "freezes and serves accepted-server v3 RPC, notification, and stream handlers"),
 		vitestEntry("controller/typescript-rpc-handlers-v3", "acceptance", "src/node/serverRuntimeV3.integration.test.ts", "reuses frozen client RPC handlers with a fresh router across v3 controller generations"),
 		vitestEntry("compat/v2/server/typescript-acceptor", "acceptance", "src/node/acceptor.integration.test.ts", "freezes handlers before establishing a direct WebSocket Session"),
 		vitestEntry("compat/v2/server/typescript-rpc-notification", "acceptance", "src/node/acceptor.test.ts", "keeps notification registrations isolated from request handlers and freezes them"),

@@ -677,8 +677,12 @@ func validateTransportV3FixtureShapes(repoRoot string) error {
 	}
 
 	var sessionHandlers struct {
-		StreamKinds   []json.RawMessage `json:"stream_kinds"`
-		DuplicateKind string            `json:"duplicate_kind"`
+		StreamKinds []struct {
+			ID    string `json:"id"`
+			Unit  string `json:"unit"`
+			Valid bool   `json:"valid"`
+		} `json:"stream_kinds"`
+		DuplicateKind string `json:"duplicate_kind"`
 		RPCTypeIDs    []struct {
 			Value uint64 `json:"value"`
 			Valid bool   `json:"valid"`
@@ -697,6 +701,15 @@ func validateTransportV3FixtureShapes(repoRoot string) error {
 		sessionHandlers.RPCTypeIDs[1].Value != 1 || !sessionHandlers.RPCTypeIDs[1].Valid ||
 		sessionHandlers.RPCTypeIDs[2].Value != uint64(^uint32(0)) || !sessionHandlers.RPCTypeIDs[2].Valid {
 		return fmt.Errorf("v3 session-handler fixture shape drifted")
+	}
+	reservedRPCKind := 0
+	for _, vector := range sessionHandlers.StreamKinds {
+		if vector.ID == "reserved-rpc-kind" && vector.Unit == "flowersec.rpc.v3" && !vector.Valid {
+			reservedRPCKind++
+		}
+	}
+	if reservedRPCKind != 1 {
+		return fmt.Errorf("v3 session-handler fixture omits the unique reserved flowersec.rpc.v3 kind")
 	}
 	return nil
 }

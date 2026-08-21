@@ -35,6 +35,7 @@ import {
 import {
   HandlerRegistrationError,
   StreamHandlers,
+  LegacyStreamHandlers,
   freezeStreamHandlers,
   registerStreamHandlersAtomically,
   serveFrozenStreamHandlers,
@@ -87,7 +88,7 @@ export class SessionHandlers {
   constructor(options: SessionHandlerOptions = {}) {
     sessionHandlerStates.set(this, {
       rpc: createRPCHandlerState(),
-      streams: new StreamHandlers(options),
+      streams: new LegacyStreamHandlers(options),
       frozen: false,
     });
   }
@@ -105,6 +106,20 @@ export class SessionHandlers {
   handleStream(kind: string, handler: StreamHandler): void {
     const state = mutableSessionHandlerState(this);
     state.streams.handleStream(kind, handler);
+  }
+}
+
+/** Strict-v3 accepted-session handlers. */
+export class SessionHandlersV3 extends SessionHandlers {
+  declare private readonly sessionHandlersV3Brand: void;
+
+  constructor(options: SessionHandlerOptions = {}) {
+    super(options);
+    sessionHandlerStates.set(this, {
+      rpc: createRPCHandlerState(),
+      streams: new StreamHandlers(options),
+      frozen: false,
+    });
   }
 }
 
@@ -238,7 +253,8 @@ export function createRPCRouter(snapshot: FrozenRPCHandlers): RpcRouter {
   return router;
 }
 
-function freezeSessionHandlers(handlers: SessionHandlers): FrozenSessionHandlers {
+/** @internal */
+export function freezeSessionHandlers(handlers: SessionHandlers): FrozenSessionHandlers {
   const state = sessionHandlerStates.get(handlers);
   if (state === undefined) throw new HandlerRegistrationError("invalid_handler");
   if (state.snapshot !== undefined) return state.snapshot;
@@ -250,7 +266,16 @@ function freezeSessionHandlers(handlers: SessionHandlers): FrozenSessionHandlers
   return state.snapshot;
 }
 
-type FrozenSessionHandlers = Readonly<{
+/** @internal */
+export function freezeSessionHandlersV3(handlers: SessionHandlersV3): FrozenSessionHandlers {
+  if (!(handlers instanceof SessionHandlersV3)) {
+    throw new HandlerRegistrationError("invalid_handler");
+  }
+  return freezeSessionHandlers(handlers);
+}
+
+/** @internal */
+export type FrozenSessionHandlers = Readonly<{
   rpc: FrozenRPCHandlers;
   streams: FrozenStreamHandlers;
 }>;

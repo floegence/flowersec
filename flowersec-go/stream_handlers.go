@@ -94,7 +94,7 @@ func (handlers *StreamHandlers) registerStreams(registrations map[string]StreamH
 }
 
 func validStreamHandler(kind string, handler StreamHandler) bool {
-	return handler != nil && internalprotocolv2.ValidApplicationStreamKind(kind) && kind != "flowersec.rpc.v2"
+	return handler != nil && internalprotocolv2.ValidApplicationStreamKind(kind) && kind != "flowersec.rpc.v3"
 }
 
 func (handlers *StreamHandlers) freeze() *streamHandlerSnapshot {

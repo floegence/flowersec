@@ -7,6 +7,14 @@ import {
 } from "../v3/serverAdmission.js";
 import { nodeSessionRuntimeV3 } from "../v3/nodeSessionRuntime.js";
 import type { CarrierSessionV3 } from "../v3/carrier.js";
+import type { DecodedFSB3RequestV3 } from "../v3/artifact.js";
+import {
+  SessionHandlersV3,
+  createRPCRouter,
+  freezeSessionHandlersV3,
+  type FrozenSessionHandlers,
+} from "./acceptor.js";
+import { serveFrozenStreamHandlers } from "../public/streamHandlers.js";
 import {
   createNativeRawQuicDriverV3,
   loadNativeTransportAddon,
@@ -42,14 +50,34 @@ export type AcceptorOptionsV3 = Readonly<{
   maxInboundStreams: number;
   admissionReasons?: readonly string[];
   authorize: AdmissionAuthorizerV3;
+  resolveHandlers?(
+    request: DecodedFSB3RequestV3,
+    options: OperationOptions,
+  ): Promise<SessionHandlersV3> | SessionHandlersV3;
   nowUnixSeconds?: () => number;
 }>;
 
 export class AcceptedSessionV3 {
-  private constructor(readonly session: Session) {}
+  private constructor() {}
+
+  get session(): Session {
+    return acceptedSessionStateV3(this).session;
+  }
+
+  async serve(options: OperationOptions = {}): Promise<void> {
+    const state = acceptedSessionStateV3(this);
+    await serveFrozenStreamHandlers(
+      state.handlers.streams,
+      state.session,
+      options,
+      async () => await this.close(),
+    );
+  }
 
   async close(): Promise<void> {
-    await this.session.close();
+    const state = acceptedSessionStateV3(this);
+    state.closePromise ??= state.session.close();
+    await state.closePromise;
   }
 }
 
@@ -69,13 +97,22 @@ export class AcceptorV3 {
     try {
       const carrier = await acceptAny(state, controller.signal);
       try {
+        let handlers: FrozenSessionHandlers | undefined;
         const internal = await acceptCarrierSessionV3(carrier, state.authorize, {
           runtime: nodeSessionRuntimeV3,
           admissionReasons: state.admissionReasons,
+          resolveRPCRouter: async (request, signal) => {
+            const registry = state.resolveHandlers === undefined
+              ? new SessionHandlersV3()
+              : await state.resolveHandlers(request, signal === undefined ? {} : { signal });
+            handlers = freezeSessionHandlersV3(registry);
+            return createRPCRouter(handlers.rpc);
+          },
           ...(state.nowUnixSeconds === undefined ? {} : { nowUnixSeconds: state.nowUnixSeconds }),
           signal: controller.signal,
         });
-        return createAcceptedSessionV3(projectSessionV3(internal));
+        if (handlers === undefined) throw new Error("Flowersec v3 handlers were not resolved");
+        return createAcceptedSessionV3(projectSessionV3(internal), handlers);
       } catch (error) {
         await carrier.close().catch(() => undefined);
         throw error;
@@ -106,6 +143,7 @@ type ListenerV3 = NodeWebSocketListenerV3 | NodeRawQuicListenerV3;
 type AcceptorStateV3 = {
   listeners: readonly ListenerV3[];
   authorize: AdmissionAuthorizerV3;
+  resolveHandlers?: AcceptorOptionsV3["resolveHandlers"];
   admissionReasons: ReadonlySet<string>;
   nowUnixSeconds?: () => number;
   abort: AbortController;
@@ -114,6 +152,12 @@ type AcceptorStateV3 = {
 };
 const acceptorStatesV3 = new WeakMap<AcceptorV3, AcceptorStateV3>();
 const closes = new WeakMap<AcceptorStateV3, Promise<void>>();
+type AcceptedSessionStateV3 = {
+  session: Session;
+  handlers: FrozenSessionHandlers;
+  closePromise?: Promise<void>;
+};
+const acceptedSessionStatesV3 = new WeakMap<AcceptedSessionV3, AcceptedSessionStateV3>();
 
 export async function createAcceptorV3(options: AcceptorOptionsV3): Promise<AcceptorV3> {
   validateOptions(options);
@@ -147,6 +191,7 @@ export async function createAcceptorV3(options: AcceptorOptionsV3): Promise<Acce
   acceptorStatesV3.set(acceptor, {
     listeners: Object.freeze(listeners),
     authorize: options.authorize,
+    ...(options.resolveHandlers === undefined ? {} : { resolveHandlers: options.resolveHandlers }),
     admissionReasons,
     ...(options.nowUnixSeconds === undefined ? {} : { nowUnixSeconds: options.nowUnixSeconds }),
     abort: new AbortController(),
@@ -156,8 +201,19 @@ export async function createAcceptorV3(options: AcceptorOptionsV3): Promise<Acce
   return Object.freeze(acceptor);
 }
 
-function createAcceptedSessionV3(session: Session): AcceptedSessionV3 {
-  return Object.freeze(new (AcceptedSessionV3 as unknown as { new(session: Session): AcceptedSessionV3 })(session));
+function createAcceptedSessionV3(
+  session: Session,
+  handlers: FrozenSessionHandlers,
+): AcceptedSessionV3 {
+  const accepted = new (AcceptedSessionV3 as unknown as { new(): AcceptedSessionV3 })();
+  acceptedSessionStatesV3.set(accepted, { session, handlers });
+  return Object.freeze(accepted);
+}
+
+function acceptedSessionStateV3(accepted: AcceptedSessionV3): AcceptedSessionStateV3 {
+  const state = acceptedSessionStatesV3.get(accepted);
+  if (state === undefined) throw new Error("invalid Flowersec v3 accepted session");
+  return state;
 }
 
 function acceptorState(value: AcceptorV3): AcceptorStateV3 {
@@ -205,6 +261,7 @@ function validateOptions(options: AcceptorOptionsV3): void {
   if (options.listeners.length === 0 ||
       !Number.isSafeInteger(options.maxInboundStreams) || options.maxInboundStreams < 1 ||
       options.maxInboundStreams > 128 || typeof options.authorize !== "function" ||
+      (options.resolveHandlers !== undefined && typeof options.resolveHandlers !== "function") ||
       options.listeners.some(({ path }) => path !== "direct")) {
     throw new TypeError("invalid Flowersec v3 Acceptor options");
   }

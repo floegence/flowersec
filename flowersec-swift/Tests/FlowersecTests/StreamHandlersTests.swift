@@ -34,22 +34,24 @@ func streamHandlersServeEstablishedEndpointClientSession() async throws {
 
 @Test
 func streamHandlersApplySharedOpenKindContract() throws {
-  let url = packageRoot().appendingPathComponent(
-    "testdata/transport_v2/session_handler_vectors.json")
-  let vectors = try JSONDecoder().decode(
-    StreamHandlerRegistrationVectors.self,
-    from: Data(contentsOf: url)
-  )
+  for version in [2, 3] {
+    let url = packageRoot().appendingPathComponent(
+      "testdata/transport_v\(version)/session_handler_vectors.json")
+    let vectors = try JSONDecoder().decode(
+      StreamHandlerRegistrationVectors.self,
+      from: Data(contentsOf: url)
+    )
 
-  for vector in vectors.streamKinds {
-    let handlers = try StreamHandlers()
-    let kind = String(repeating: vector.unit, count: vector.repetitions) + vector.suffix
-    do {
-      try handlers.handleStream(kind: kind) { _ in }
-      #expect(vector.valid, "unexpected valid stream kind: \(vector.id)")
-    } catch let error as HandlerRegistrationError {
-      #expect(!vector.valid, "unexpected invalid stream kind: \(vector.id)")
-      #expect(error == .invalidHandler)
+    for vector in vectors.streamKinds {
+      let handlers = try StreamHandlers()
+      let kind = String(repeating: vector.unit, count: vector.repetitions) + vector.suffix
+      do {
+        try handlers.handleStream(kind: kind) { _ in }
+        #expect(vector.valid, "unexpected valid v\(version) stream kind: \(vector.id)")
+      } catch let error as HandlerRegistrationError {
+        #expect(!vector.valid, "unexpected invalid v\(version) stream kind: \(vector.id)")
+        #expect(error == .invalidHandler)
+      }
     }
   }
 

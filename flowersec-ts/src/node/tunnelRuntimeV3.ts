@@ -456,10 +456,12 @@ async function activatePair(state: TunnelRuntimeStateV3, generation: Generation)
     return;
   }
   try {
-    await Promise.all([
-      acceptAdmission(first.received, generation.abort.signal),
-      acceptAdmission(second.received, generation.abort.signal),
-    ]);
+    await respondTunnelPairAdmissionsV3(
+      first.received,
+      second.received,
+      generation.abort.signal,
+      state.limits.admissionTimeoutMs,
+    );
     await bridgePair(state, first.received.carrier, second.received.carrier, generation.abort.signal);
   } catch {
     // Pair teardown below is the observable failure boundary for both endpoints.
@@ -500,9 +502,30 @@ async function bridgePair(
     void task.catch(() => { if (fatal) controller.abort(); }).finally(() => tasks.delete(task));
   };
   try {
-    const controlIn = await first.acceptStream({ signal: controller.signal });
-    const controlOut = await second.openStream({ signal: controller.signal });
-    start(spliceStreams(controlIn, controlOut, controller.signal, true));
+    const [controlIn, controlOut] = await runBoundedPhase(
+      controller.signal,
+      state.limits.admissionTimeoutMs,
+      "Flowersec tunnel activation timed out",
+      async (activationSignal) => {
+        const incoming = await first.acceptStream({ signal: activationSignal });
+        try {
+          return [incoming, await second.openStream({ signal: activationSignal })] as const;
+        } catch (error) {
+          incoming.abort(asError(error));
+          throw error;
+        }
+      },
+      ([incoming, outgoing]) => {
+        incoming.abort(new Error("Flowersec tunnel activation completed after timeout"));
+        outgoing.abort(new Error("Flowersec tunnel activation completed after timeout"));
+      },
+    );
+    start(spliceTunnelStreamsV3(
+      controlIn,
+      controlOut,
+      controller.signal,
+      state.limits.cleanupTimeoutMs,
+    ));
     start(bridgeStreams(first, second, slots, controller.signal, start));
     start(bridgeStreams(second, first, slots, controller.signal, start));
     if (first.unreliableDatagrams !== undefined && second.unreliableDatagrams !== undefined) {
@@ -541,24 +564,46 @@ async function bridgeStreams(
       await incoming.reset().catch(() => undefined);
       continue;
     }
-    start(spliceStreams(incoming, outgoing, signal, false).finally(release), false);
+    start(spliceTunnelStreamsV3(incoming, outgoing, signal).finally(release), false);
   }
 }
 
-async function spliceStreams(
+export async function spliceTunnelStreamsV3(
   left: CarrierStreamV3,
   right: CarrierStreamV3,
   signal: AbortSignal,
-  closePair: boolean,
+  halfCloseGraceMs = 0,
 ): Promise<void> {
+  const closePair = halfCloseGraceMs > 0;
   const abort = () => {
     left.abort(asError(signal.reason));
     right.abort(asError(signal.reason));
   };
   signal.addEventListener("abort", abort, { once: true });
   try {
-    await Promise.all([copyStream(left, right, signal), copyStream(right, left, signal)]);
-    if (closePair) throw new Error("Flowersec tunnel control stream closed");
+    let signalHalfClose!: () => void;
+    const halfClosed = new Promise<CopyEvent>((resolve) => {
+      signalHalfClose = () => resolve({ outcome: "half_closed" });
+    });
+    const copies = [
+      settledCopy(0, copyStream(left, right, signal, closePair ? signalHalfClose : undefined)),
+      settledCopy(1, copyStream(right, left, signal, closePair ? signalHalfClose : undefined)),
+    ] as const;
+    const first = await Promise.race(closePair ? [...copies, halfClosed] : copies);
+    if (first.outcome === "rejected") throw first.error;
+    if (closePair) {
+      const results = await awaitWithin(
+        Promise.all(copies),
+        halfCloseGraceMs,
+        "Flowersec tunnel control half-close timed out",
+      );
+      const failure = results.find((result) => result.outcome === "rejected");
+      if (failure?.outcome === "rejected") throw failure.error;
+      throw new Error("Flowersec tunnel control stream closed");
+    }
+    if (first.outcome === "half_closed") throw new Error("invalid tunnel stream half-close state");
+    const second = await copies[first.index === 0 ? 1 : 0];
+    if (second.outcome === "rejected") throw second.error;
   } catch (error) {
     if (closePair || signal.aborted) {
       left.abort(asError(error));
@@ -572,10 +617,33 @@ async function spliceStreams(
   }
 }
 
-async function copyStream(source: CarrierStreamV3, target: CarrierStreamV3, signal: AbortSignal): Promise<void> {
+type CopyEvent =
+  | SettledCopy
+  | Readonly<{ outcome: "half_closed" }>;
+
+type SettledCopy =
+  | Readonly<{ index: 0 | 1; outcome: "fulfilled" }>
+  | Readonly<{ index: 0 | 1; outcome: "rejected"; error: unknown }>;
+
+async function settledCopy(index: 0 | 1, copy: Promise<void>): Promise<SettledCopy> {
+  try {
+    await copy;
+    return { index, outcome: "fulfilled" };
+  } catch (error) {
+    return { index, outcome: "rejected", error };
+  }
+}
+
+async function copyStream(
+  source: CarrierStreamV3,
+  target: CarrierStreamV3,
+  signal: AbortSignal,
+  onEOF?: () => void,
+): Promise<void> {
   while (true) {
     const chunk = await source.read({ signal });
     if (chunk === null) {
+      onEOF?.();
       await target.closeWrite();
       return;
     }
@@ -671,6 +739,25 @@ function detachGeneration(state: TunnelRuntimeStateV3, generation: Generation): 
   if (state.generations.get(generation.key) === generation) state.generations.delete(generation.key);
 }
 
+export async function respondTunnelPairAdmissionsV3(
+  first: ReceivedSessionAdmissionV3,
+  second: ReceivedSessionAdmissionV3,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<void> {
+  await runBoundedPhase(
+    signal,
+    timeoutMs,
+    "Flowersec tunnel admission response timed out",
+    async (responseSignal) => {
+      await Promise.all([
+        acceptAdmission(first, responseSignal),
+        acceptAdmission(second, responseSignal),
+      ]);
+    },
+  );
+}
+
 async function acceptAdmission(received: ReceivedSessionAdmissionV3, signal: AbortSignal): Promise<void> {
   const response = encodeFSA3ResponseV3({ status: AdmissionStatusV3.Success, reason: "" });
   let offset = 0;
@@ -679,7 +766,7 @@ async function acceptAdmission(received: ReceivedSessionAdmissionV3, signal: Abo
     if (written < 1 || written > response.length - offset) throw new Error("invalid admission write");
     offset += written;
   }
-  await received.stream.closeWrite();
+  await abortableCallback(async () => await received.stream.closeWrite(), signal);
 }
 
 async function reject(
@@ -821,6 +908,40 @@ async function abortableCallback<T>(
       },
     );
   });
+}
+
+async function runBoundedPhase<T>(
+  parent: AbortSignal,
+  timeoutMs: number,
+  timeoutMessage: string,
+  operation: (signal: AbortSignal) => Promise<T>,
+  onLateValue?: (value: T) => void,
+): Promise<T> {
+  const controller = new AbortController();
+  const unlink = linkAbort(parent, controller);
+  const timer = setTimeout(() => controller.abort(new Error(timeoutMessage)), timeoutMs);
+  try {
+    return await abortableCallback(
+      async () => await operation(controller.signal),
+      controller.signal,
+      onLateValue,
+    );
+  } finally {
+    clearTimeout(timer);
+    unlink();
+  }
+}
+
+async function awaitWithin<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 function linkAbort(source: AbortSignal, target: AbortController): () => void {

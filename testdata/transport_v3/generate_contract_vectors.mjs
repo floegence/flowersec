@@ -1578,6 +1578,11 @@ for (const name of inherited) {
   const value = JSON.parse(readFileSync(join(root, "..", "transport_v2", name), "utf8"));
   value.inherited_codec_from = "transport_v2";
   value.transport_contract_version = 3;
+  if (name === "session_handler_vectors.json") {
+    const reserved = value.stream_kinds.find(({ id }) => id === "reserved-rpc-kind");
+    if (reserved === undefined) throw new Error("missing inherited reserved RPC stream-kind vector");
+    reserved.unit = "flowersec.rpc.v3";
+  }
   if (name === "idna_vectors.json") {
     value.url_normalization = {
       positive: [

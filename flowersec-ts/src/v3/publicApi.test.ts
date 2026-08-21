@@ -61,6 +61,8 @@ describe("transport v3 public entry surface", () => {
     expect(node.createAcceptor).toBe(node.createAcceptorV3);
     expect(node.createTunnelRuntime).toBe(node.createTunnelRuntimeV3);
     expect(node.RPCHandlers).toBeTypeOf("function");
+    expect(node.SessionHandlers).toBeTypeOf("function");
+    expect(node.SessionHandlers).not.toBe(node.v2.SessionHandlers);
     for (const legacyExport of [
       "AuthorizationRecord",
       "ControlPlaneError",

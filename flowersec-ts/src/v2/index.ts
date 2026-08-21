@@ -20,7 +20,7 @@ export { createStreamMetadata, StreamMetadataError } from "../public/streamMetad
 export type { StreamMetadata } from "../public/streamMetadata.js";
 export {
   HandlerRegistrationError,
-  StreamHandlers,
+  LegacyStreamHandlers as StreamHandlers,
 } from "../public/streamHandlers.js";
 export type {
   StreamHandler,

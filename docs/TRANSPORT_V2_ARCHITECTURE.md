@@ -26,9 +26,12 @@ must never manufacture a Flowersec handshake result.
 
 ## Carrier Profiles
 
-The required native server profile has 18 runtime-role-carrier tuples and 24
-path-specific units. Conformance is counted independently as 18 direct
-client/server cells and 18 pairwise tunnel topologies.
+The native server capability profile has 18 aggregate runtime-role-carrier
+tuples, six per runtime, and 24 supported path-specific units. The separate
+interoperability matrix declares 18 direct client/server coordinates and 18
+pairwise tunnel coordinates. All current pairwise cells are explicitly
+unsupported because none has one release-gating v3 test for its complete case
+set.
 
 WebSocket and raw QUIC are the required server carriers. Go, Rust, and Node.js
 implement both for client, direct-server, and opaque tunnel-runtime roles.
@@ -152,8 +155,8 @@ is a low-level listener adapter only; it is not a supported endpoint-client
 tunnel path or TunnelRuntime capability because the production opaque relay
 does not provide complete paired WebTransport datagram forwarding.
 `webtransport-server` remains unclaimed until its complete direct-server and
-opaque-tunnel conformance set is registered. Required server parity never
-infers WebTransport support from those lower-level tuples.
+opaque-tunnel conformance set is registered. Pairwise interoperability support
+never infers WebTransport support from those lower-level tuples.
 
 ## Rust Native Adapter
 

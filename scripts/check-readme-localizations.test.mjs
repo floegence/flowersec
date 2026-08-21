@@ -70,7 +70,7 @@ test("README support claims state WebTransport and native package boundaries", (
   const typescriptReadme = fs.readFileSync(path.join(repoRoot, "flowersec-ts/README.md"), "utf8");
   const nativeReadme = fs.readFileSync(path.join(repoRoot, "flowersec-node-native/README.md"), "utf8");
   assert.match(rootReadme, /Browser \(WebTransport API when available\)/u);
-  assert.match(rootReadme, /Required native-server parity is WebSocket and\s+raw QUIC across Go, Rust, and Node\.js/u);
+  assert.match(rootReadme, /native-server carrier surface is\s+WebSocket and raw QUIC for Go, Rust, and Node\.js/u);
   assert.match(goReadme, /supports WebSocket, raw QUIC, and WebTransport across H4/u);
   assert.match(goReadme, /No runtime currently claims the complete `webtransport-server`\s+profile/u);
   assert.match(typescriptReadme, /Browser WebTransport is capability-dependent/u);
@@ -82,10 +82,11 @@ test("README support claims state WebTransport and native package boundaries", (
 test("README states the machine-readable parity counts without ambiguous aliases", () => {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const content = fs.readFileSync(path.join(repoRoot, "README.md"), "utf8");
-  assert.match(content, /18 runtime-role-carrier tuples/u);
-  assert.match(content, /24\s+path-specific server units/u);
+  assert.match(content, /18 aggregate\s+runtime-role-carrier tuples/u);
+  assert.match(content, /24 supported\s+path-specific server units/u);
   assert.match(content, /18\s+direct cells/u);
   assert.match(content, /18\s+tunnel cells/u);
+  assert.match(content, /All 36 pairwise\s+cells are currently explicit `unsupported` declarations/u);
 });
 
 test("README localization contract captures structure and literals", () => {

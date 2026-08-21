@@ -104,11 +104,11 @@ Flowersec 將應用工作階段與承載它的網路路徑分離：
 | `apple-client` | Apple 平台上的 Swift | WSS endpoint client | 無 |
 | `webtransport-server` | 目前沒有執行環境宣告 | 宣告前必須同時通過 direct server 與 opaque tunnel runtime conformance | 無 |
 
-Go、Rust 和 Node.js 實作相同的 18 個必要 `native-server-core` 執行環境-角色-carrier tuple。展開 direct 與 tunnel path 後共有 24 個特定路徑的伺服器單元。Conformance 另行計數為 18 個 direct 用戶端/伺服器 cell 和 18 個兩兩 tunnel topology。profile 絕不會改變 Artifact、handshake、RPC、stream、close、rekey 或 authorization wire 語意。
+機器可讀的能力清單包含 18 個彙總的執行環境-角色-carrier tuple（每個原生執行環境 6 個）和 24 個已支援的特定路徑伺服器單元。互通矩陣另行宣告 18 個 direct cell 和 18 個 tunnel cell。由於目前沒有 release-gating v3 測試涵蓋任一 cell 的完整可執行案例集，全部 36 個兩兩 cell 都是明確的 `unsupported` 宣告。profile 絕不會改變 Artifact、handshake、RPC、stream、close、rekey 或 authorization wire 語意。
 
 請參閱各 SDK 指南，了解每個套件支援的平台與連線組合。
 
-WebTransport 是選用能力，不屬於必要的 native-server carrier 合約。Go 提供 direct adapter；Browser profile 會在瀏覽器 WebTransport API 可用時使用它；Node.js 與 Rust 目前沒有 production WebTransport adapter。必要的 native-server parity 僅涵蓋 Go、Rust 與 Node.js 的 WebSocket 與 raw QUIC。
+WebTransport 是選用能力，不屬於 native-server carrier 合約。Go 提供 direct adapter；Browser profile 會在瀏覽器 WebTransport API 可用時使用它；Node.js 與 Rust 目前沒有 production WebTransport adapter。Go、Rust 與 Node.js 的 native-server carrier 範圍是 WebSocket 與 raw QUIC；兩兩互通支援只由矩陣中標記 supported 的項目宣告。
 
 <!-- readme-section:security -->
 <a id="security"></a>

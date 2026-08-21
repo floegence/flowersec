@@ -16,7 +16,7 @@ import {
 import { createArtifactLeaseV3Internal } from "../v3/artifactLease.js";
 import type { Session } from "../public/contract.js";
 import { connectV3, createConnectionControllerV3 } from "./connectSessionV3.js";
-import { RPCHandlers } from "./acceptor.js";
+import { RPCHandlers, SessionHandlersV3 } from "./acceptor.js";
 import { createAcceptorV3 } from "./acceptorV3.js";
 import { createTunnelRuntimeV3 } from "./tunnelRuntimeV3.js";
 import { startNodeWebSocketListenerV3 } from "./webSocketServerV3.js";
@@ -103,6 +103,64 @@ describe("Node production server runtime v3", () => {
       expect(await incoming.stream.read()).toEqual(new Uint8Array([3, 0, 0]));
       await Promise.all([client.close(), accepted.close()]);
     } finally {
+      await acceptor.close();
+    }
+  });
+
+  test("freezes and serves accepted-server v3 RPC, notification, and stream handlers", async () => {
+    let artifact!: ArtifactV3;
+    let notifications = 0;
+    let resolveStream!: (payload: string) => void;
+    const streamHandled = new Promise<string>((resolve) => { resolveStream = resolve; });
+    const handlers = new SessionHandlersV3({ maxConcurrentStreams: 2 });
+    handlers.handleRPC(9_103, async (payload) => ({ payload: { server: payload } }));
+    handlers.handleNotification(9_104, () => { notifications += 1; });
+    handlers.handleStream("accepted-v3-handler", async (incoming) => {
+      const payload = await incoming.stream.read();
+      if (payload === null) throw new Error("missing accepted stream payload");
+      resolveStream(new TextDecoder().decode(payload));
+    });
+    const acceptor = await createAcceptorV3({
+      listeners: [{
+        carrier: "websocket",
+        path: "direct",
+        host: "127.0.0.1",
+        port: 0,
+        tls: { certificate: leafCertificate, privateKey: leafKey },
+        allowedOrigins: ["https://app.example"],
+      }],
+      maxInboundStreams: directBase.session.max_inbound_streams,
+      authorize: async () => ({ accepted: true, artifact }),
+      resolveHandlers: () => handlers,
+    });
+    artifact = directArtifact(acceptor.addresses()[0]!.port);
+    let accepted;
+    try {
+      const accepting = acceptor.accept();
+      const connecting = connectV3(lease(artifact), {
+        origin: "https://app.example",
+        roots: rootCertificate,
+        connectTimeoutMs: 3_000,
+      });
+      const established = await Promise.all([accepting, connecting]);
+      accepted = established[0];
+      const client = established[1];
+      expect(() => handlers.handleRPC(9_105, async () => ({ payload: null }))).toThrow(/frozen/);
+      const serving = accepted.serve().catch((error: unknown) => error);
+
+      expect(await client.rpc.call(9_103, { mode: "server" }, (payload) => payload))
+        .toEqual({ ok: true, payload: { server: { mode: "server" } } });
+      await client.rpc.notify(9_104, { event: "accepted" });
+      await waitFor(() => notifications === 1);
+      const stream = await client.openStream("accepted-v3-handler");
+      await stream.write(new TextEncoder().encode("handled-by-v3"));
+      await stream.closeWrite();
+      await expect(streamHandled).resolves.toBe("handled-by-v3");
+
+      await client.close();
+      await expect(serving).resolves.toMatchObject({ code: "closed" });
+    } finally {
+      await accepted?.close().catch(() => undefined);
       await acceptor.close();
     }
   });

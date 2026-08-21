@@ -647,7 +647,7 @@
       "go": ["flowersec-go/server_test.go"],
       "typescript": ["flowersec-ts/src/public/streamHandlers.test.ts", "flowersec-ts/src/node/acceptor.test.ts"],
       "rust": ["flowersec-rust/src/session_handlers.rs"],
-      "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3SessionTests.swift"]
+      "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV3SessionTests.swift", "flowersec-swift/Tests/FlowersecTests/StreamHandlersTests.swift"]
     }},
     {"id": "session_wire", "path": "testdata/transport_v3/session_wire_vectors.json", "consumers": {
       "go": ["flowersec-go/internal/sessionv3/session_wire_vectors_test.go"],

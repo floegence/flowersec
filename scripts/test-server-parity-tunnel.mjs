@@ -42,13 +42,15 @@ validateTopologyContract(matrix.tunnel_topologies);
 const selectedTopologies = clientProfile === undefined
   ? matrix.tunnel_topologies.filter((topology) => topology.status === "supported" && endpointAs.includes(topology.endpoint_a) && endpointBs.includes(topology.endpoint_b) && relayRuntimes.includes(topology.tunnel_runtime) && selectedCarriers.includes(topology.ingress_carrier_a))
   : selectClientProfileTopology();
+if (clientProfile === undefined && selectedTopologies.length === 0) {
+  throw new Error("server parity tunnel matrix selected no supported v3 topologies");
+}
 const nativeAddon = await prepareServerParityNativeAddon(repositoryRoot, selectedTopologies.some((topology) =>
   [topology.endpoint_a, topology.endpoint_b, topology.tunnel_runtime].includes("node-typescript")
 ));
 try {
   for (const topology of selectedTopologies) await runTopology(topology);
-  if (selectedTopologies.length === 0) console.log("server parity tunnel matrix: no topologies selected by the requested filters");
-  else console.log(`server parity tunnel matrix OK: ${selectedTopologies.length} supported production topologies`);
+  console.log(`server parity tunnel matrix OK: ${selectedTopologies.length} supported production topologies`);
 } finally {
   await nativeAddon.cleanup();
 }

@@ -15,7 +15,7 @@ npm install @floegence/flowersec-core
 
 - `@floegence/flowersec-core` exports the portable artifact, lease, session, stream, RPC, stream-metadata, and connection-controller API, plus profile-owned unreliable messages when negotiated.
 - `@floegence/flowersec-core/browser` adds `connect(...)`, `createConnectionController(...)`, and their options.
-- `@floegence/flowersec-core/node` adds the V3 `connect(...)`, `createConnectionController(...)`, direct-only `createAcceptor(...)`, opaque `createTunnelRuntime(...)`, `AcceptedSession`, and `RPCHandlers` APIs. Legacy V2 server, control-plane, and `ProxyServer` APIs are available only under the explicit `node.v2` namespace.
+- `@floegence/flowersec-core/node` adds the V3 `connect(...)`, `createConnectionController(...)`, direct-only `createAcceptor(...)`, opaque `createTunnelRuntime(...)`, `AcceptedSession`, `SessionHandlers`, and `RPCHandlers` APIs. Legacy V2 server, control-plane, and `ProxyServer` APIs are available only under the explicit `node.v2` namespace.
 - `@floegence/flowersec-core/proxy` adds the `Session`-based HTTP/WebSocket runtime, Service Worker and controller/app-window bridges, strict `proxy.runtime@2` validation, and `connectProxyBrowser(...)` composition.
 
 The root type exports are:
@@ -90,13 +90,13 @@ back between CA and pin modes.
 ### Accepted Node server Session
 
 ```ts
-import { v2 } from "@floegence/flowersec-core/node";
+import { SessionHandlers, createAcceptor } from "@floegence/flowersec-core/node";
 
-const handlers = new v2.SessionHandlers({ maxConcurrentStreams: 32 });
+const handlers = new SessionHandlers({ maxConcurrentStreams: 32 });
 handlers.handleRPC(7, async (payload) => ({ payload }));
 handlers.handleNotification(8, (payload) => onNotice(payload));
 handlers.handleStream("files/read", async (incoming) => serveFile(incoming));
-const acceptor = await v2.createAcceptor({
+const acceptor = await createAcceptor({
   listeners,
   maxInboundStreams: 32,
   authorize,
@@ -107,8 +107,8 @@ await accepted.serve();
 ```
 
 `RPCHandlers` is available only from the Node entrypoint and cannot register
-application streams. The legacy `SessionHandlers` is available as
-`node.v2.SessionHandlers` and is accepted-server-only.
+application streams. The default `SessionHandlers` is strict v3 and
+accepted-server-only; the v2 registry remains under `node.v2.SessionHandlers`.
 
 ## Connection Lifecycle
 
@@ -170,7 +170,7 @@ Cold-connection diagnostics require every independent carrier to meet the declar
 
 Node.js applications receive the same `Session` contract from `connect(...)`.
 The Node connector supports WSS and raw QUIC through the optional native
-package. WebSocket candidates require an absolute HTTPS `origin`;
+package. WebSocket candidates require an absolute HTTP(S) `origin`;
 raw-QUIC-only artifacts may omit it. CA candidates use platform or configured
 private roots. Pin candidates use their artifact-bound pin set and never
 downgrade to CA after a verification failure.

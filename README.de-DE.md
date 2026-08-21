@@ -104,11 +104,11 @@ Bereitstellungsprofile trennen die Plattformverfuegbarkeit vom gemeinsamen Flowe
 | `apple-client` | Swift auf Apple-Plattformen | WSS-Endpunktclient | Keine |
 | `webtransport-server` | Derzeit von keiner Laufzeit beansprucht | Vor einer Beanspruchung muessen direkter Server und opake Tunnellaufzeit konform sein | Keine |
 
-Go, Rust und Node.js implementieren dieselben 18 erforderlichen Runtime-Rollen-Carrier-Tupel von `native-server-core`. Durch die Aufschluesselung direkter und getunnelter Pfade entstehen 24 pfadspezifische Servereinheiten. Die Konformitaet wird separat als 18 direkte Client-Server-Zellen und 18 paarweise Tunneltopologien gezaehlt. Ein Profil aendert niemals die Wire-Semantik fuer Artifact, Handshake, RPC, Stream, Close, Rekey oder Autorisierung.
+Das maschinenlesbare Faehigkeitsinventar enthaelt 18 aggregierte Runtime-Rollen-Carrier-Tupel, sechs pro nativer Laufzeit, und 24 unterstuetzte pfadspezifische Servereinheiten. Die Interoperabilitaetsmatrix deklariert separat 18 direkte Zellen und 18 Tunnelzellen. Alle 36 paarweisen Zellen sind derzeit explizite `unsupported`-Deklarationen, weil kein release-sperrender v3-Test den vollstaendigen ausfuehrbaren Fallsatz einer Zelle prueft. Ein Profil aendert niemals die Wire-Semantik fuer Artifact, Handshake, RPC, Stream, Close, Rekey oder Autorisierung.
 
 Die SDK-Anleitungen nennen die genauen unterstützten Kombinationen aus Plattform und Verbindung.
 
-WebTransport ist optional und nicht Teil des erforderlichen native-server-carrier-Vertrags. Go bietet einen direkten Adapter; das Browser-Profil verwendet die Browser-WebTransport-API, wenn sie verfügbar ist. Node.js und Rust bieten derzeit keinen produktiven WebTransport-Adapter. Die erforderliche native-server-Parität umfasst bei Go, Rust und Node.js nur WebSocket und raw QUIC.
+WebTransport ist optional und nicht Teil des native-server-carrier-Vertrags. Go bietet einen direkten Adapter; das Browser-Profil verwendet die Browser-WebTransport-API, wenn sie verfügbar ist. Node.js und Rust bieten derzeit keinen produktiven WebTransport-Adapter. Die native-server-carrier-Oberflaeche ist WebSocket und raw QUIC fuer Go, Rust und Node.js; paarweise Interoperabilitaet wird nur durch unterstuetzte Matrixeintraege beansprucht.
 
 <!-- readme-section:security -->
 <a id="security"></a>

@@ -45,9 +45,14 @@ export type {
 export type SessionTLSOptions = Readonly<{
   ca?: NodeTLSRootsV3;
 }>;
-export { RPCHandlers } from "./acceptor.js";
+export {
+  HandlerRegistrationError,
+  RPCHandlers,
+  SessionHandlersV3 as SessionHandlers,
+} from "./acceptor.js";
 export type {
   NotificationHandler,
   RPCHandler,
   RPCHandlerResult,
+  SessionHandlerOptions,
 } from "./acceptor.js";

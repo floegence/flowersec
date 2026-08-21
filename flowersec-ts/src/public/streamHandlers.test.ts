@@ -10,6 +10,7 @@ import {
   StreamHandlers,
   type HandlerRegistrationError,
 } from "./streamHandlers.js";
+import { StreamHandlers as StreamHandlersV2 } from "../v2/index.js";
 
 type StreamKindVectors = Readonly<{
   stream_kinds: readonly Readonly<{
@@ -148,15 +149,22 @@ describe("StreamHandlers", () => {
     expect(() => handlers.handleStream("events", async () => undefined)).toThrowError(
       expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "already_registered" }),
     );
-    expect(() => handlers.handleStream("flowersec.rpc.v2", async () => undefined)).toThrowError(
+    expect(() => handlers.handleStream("flowersec.rpc.v3", async () => undefined)).toThrowError(
       expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
     );
+    expect(() => handlers.handleStream("flowersec.rpc.v2", async () => undefined)).not.toThrow();
+    const handlersV2 = new StreamHandlersV2();
+    expect(() => handlersV2.handleStream("flowersec.rpc.v2", async () => undefined)).toThrowError(
+      expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
+    );
+    expect(() => handlersV2.handleStream("flowersec.rpc.v3", async () => undefined)).not.toThrow();
   });
 
   test("applies the shared OPEN kind contract", () => {
+    const handlerTypes = [StreamHandlersV2, StreamHandlers] as const;
     for (const [index, vectors] of vectorFixtures.entries()) {
       for (const vector of vectors.stream_kinds) {
-        const handlers = new StreamHandlers();
+        const handlers = new handlerTypes[index]!();
         const kind = vector.unit.repeat(vector.repeat) + vector.suffix;
         const registration = (): void => handlers.handleStream(kind, async () => undefined);
         const id = `v${index + 2}/${vector.id}`;

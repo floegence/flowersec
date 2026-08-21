@@ -14,7 +14,7 @@ import type { NativeCarrierSessionV2 } from "../v2/carrier.js";
 import { createArtifactLeaseV2 } from "../v2/artifactLease.js";
 import { parseArtifact, type Artifact } from "../v2/opaqueArtifact.js";
 import { connect, createConnectionController } from "./connectSession.js";
-import { createAcceptor } from "./acceptor.js";
+import { createAcceptor, SessionHandlersV3 } from "./acceptor.js";
 import { createEndpointSet, Issuer } from "./controlplane.js";
 import { decodeArtifactV3JSON, type ArtifactCandidateV3, type ArtifactV3 } from "../v3/artifact.js";
 import { createArtifactLeaseV3Internal } from "../v3/artifactLease.js";
@@ -379,6 +379,15 @@ describe("Node native raw QUIC driver", () => {
 describe("Node production raw QUIC runtime v3", () => {
   test("connects and accepts direct raw QUIC through FSB3 and FSH3", async () => {
     let artifact: ArtifactV3;
+    let resolveStream!: (value: Uint8Array) => void;
+    const handledStream = new Promise<Uint8Array>((resolve) => { resolveStream = resolve; });
+    const handlers = new SessionHandlersV3();
+    handlers.handleRPC(9_106, async (payload) => ({ payload: { raw: payload } }));
+    handlers.handleStream("node-v3-raw-direct", async (incoming) => {
+      const value = await incoming.stream.read();
+      if (value === null) throw new Error("missing raw QUIC handler payload");
+      resolveStream(value);
+    });
     const acceptor = await createAcceptorV3({
       listeners: [{
         carrier: "raw_quic",
@@ -392,21 +401,30 @@ describe("Node production raw QUIC runtime v3", () => {
         expect(Buffer.from(received.raw.subarray(0, 4)).toString("ascii")).toBe("FSB3");
         return { accepted: true, artifact };
       },
+      resolveHandlers: () => handlers,
     });
     const port = acceptor.addresses()[0]!.port;
     artifact = v3DirectRawQuicArtifact(port);
+    let accepted;
     try {
-      const [client, accepted] = await Promise.all([
+      const established = await Promise.all([
         connectV3(v3Lease(artifact), { roots: CERTIFICATE_DER }),
         acceptor.accept(),
       ]);
-      const opened = client.openStream("node-v3-raw-direct");
-      const incoming = await accepted.session.acceptStream();
-      const outgoing = await opened;
+      const client = established[0];
+      accepted = established[1];
+      const serving = accepted.serve().catch((error: unknown) => error);
+      expect(await client.rpc.call(9_106, { carrier: "raw_quic" }, (payload) => payload))
+        .toEqual({ ok: true, payload: { raw: { carrier: "raw_quic" } } });
+      const outgoing = await client.openStream("node-v3-raw-direct");
       await outgoing.write(new Uint8Array([3, 0, 3]));
-      expect(await incoming.stream.read()).toEqual(new Uint8Array([3, 0, 3]));
-      await Promise.all([client.close(), accepted.close()]);
+      await outgoing.closeWrite();
+      await expect(handledStream).resolves.toEqual(new Uint8Array([3, 0, 3]));
+      await client.close();
+      await expect(serving).resolves.toMatchObject({ code: "closed" });
+      await accepted.close();
     } finally {
+      await accepted?.close().catch(() => undefined);
       await acceptor.close();
     }
   }, 20_000);

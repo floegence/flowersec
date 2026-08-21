@@ -17,8 +17,8 @@ instances, namespaces, faults, and temporary files that they create.
 | ConnectionController scheduling, blocked pin policies, one replacement lease, fresh primary artifacts, retry disposition, cancellation, and no replay | `testdata/transport_v3/controller_vectors.json` executed by all four SDKs |
 | Client inbound RPC/notification handlers across real Controller generations | Go, Rust, and Node TypeScript loopback WebSocket tests; Swift and Browser remain unsupported |
 | Accepted-session RPC, notification, stream dispatch, rejection, concurrency, and cleanup | Go, Rust, and Node TypeScript Acceptor handler suites |
-| Declared Go/Rust/Node WebSocket and raw QUIC direct matrix | `stability/interop_matrix.json` defines 18 client/server/carrier cells and each cell's complete executable case set |
-| Declared Go/Rust/Node WebSocket and raw QUIC tunnel matrix | `stability/interop_matrix.json` defines 18 endpoint-A/runtime/endpoint-B/carrier topologies and each topology's complete executable case set |
+| Declared Go/Rust/Node WebSocket and raw QUIC direct coordinate universe | `stability/interop_matrix.json` defines 18 client/server/carrier cells and each cell's complete executable case set; declaration alone is not a support claim |
+| Declared Go/Rust/Node WebSocket and raw QUIC tunnel coordinate universe | `stability/interop_matrix.json` defines 18 endpoint-A/runtime/endpoint-B/carrier topologies and each topology's complete executable case set; declaration alone is not a support claim |
 | Current direct and tunnel matrix support | All 36 declarations are unsupported because no single release-gating v3 test exercises the declaration's complete executable case set |
 | Scoped carrier, server, and cross-runtime behavior | Capability and product tests use their own stable IDs and remain support evidence for exactly the behavior they execute; they do not promote a complete matrix declaration to supported |
 | Go WebTransport H4 | Go carrier conformance covers direct and tunnel endpoint dial, direct listen, and tunnel listener pairing; Chromium direct checks run when the browser adapter is selected |

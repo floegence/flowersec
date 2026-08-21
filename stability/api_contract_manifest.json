@@ -1517,6 +1517,7 @@
           "`ConnectionController`",
           "`createAcceptor(...)`",
           "`RPCHandlers`",
+          "`SessionHandlers`",
           "`StreamHandlers`",
           "`HandlerRegistrationError`",
           "`AcceptedSession`"
@@ -1540,6 +1541,7 @@
           "ConnectionControllerV3Error",
           "HandlerRegistrationError",
           "RPCHandlers",
+          "SessionHandlers",
           "SessionError",
           "StreamHandlers",
           "StreamMetadataError",
@@ -1619,6 +1621,7 @@
           "Session",
           "SessionError",
           "SessionErrorCode",
+          "SessionHandlerOptions",
           "SessionOptions",
           "SessionOptionsV3",
           "SessionTLSOptions",

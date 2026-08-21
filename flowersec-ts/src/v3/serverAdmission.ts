@@ -13,6 +13,7 @@ import { AdmissionSessionV3Error } from "./admissionError.js";
 import type { CarrierSessionV3, CarrierStreamV3 } from "./carrier.js";
 import { configureServerWebSocketCarrierRoleV3 } from "./webSocketCarrier.js";
 import { establishSessionV3, type SessionProtocolRuntimeV3, type SessionV3 } from "./session.js";
+import type { RpcRouter } from "../rpc/server.js";
 
 export type AdmissionDecisionV3 =
   | Readonly<{ accepted: true; artifact: ArtifactV3 }>
@@ -90,6 +91,10 @@ export async function acceptReceivedSessionV3(
   options: Readonly<{
     runtime: SessionProtocolRuntimeV3;
     admissionReasons: ReadonlySet<string>;
+    resolveRPCRouter?(
+      request: DecodedFSB3RequestV3,
+      signal?: AbortSignal,
+    ): Promise<RpcRouter> | RpcRouter;
     nowUnixSeconds?: () => number;
     signal?: AbortSignal;
   }>,
@@ -112,6 +117,13 @@ export async function acceptReceivedSessionV3(
         reason: "expired_artifact",
       }, options.admissionReasons, options.signal);
     }
+    const rpcRouter = options.resolveRPCRouter === undefined
+      ? undefined
+      : await raceAbort(
+          Promise.resolve().then(async () =>
+            await options.resolveRPCRouter!(received.decoded, options.signal)),
+          options.signal,
+        );
     if (received.carrier.kind === "websocket") {
       configureServerWebSocketCarrierRoleV3(received.carrier, false);
     }
@@ -134,6 +146,7 @@ export async function acceptReceivedSessionV3(
       idleTimeoutMs: artifact.session.idle_timeout_seconds * 1_000,
       closeTimeoutMs: 5_000,
       runtime: options.runtime,
+      ...(rpcRouter === undefined ? {} : { rpcRouter }),
       localAdmissionBinding: binding,
       peerAdmissionBinding: binding,
       localEndpointInstanceID: "",
@@ -157,13 +170,20 @@ export async function acceptCarrierSessionV3(
   options: Readonly<{
     runtime: SessionProtocolRuntimeV3;
     admissionReasons: ReadonlySet<string>;
+    resolveRPCRouter?(
+      request: DecodedFSB3RequestV3,
+      signal?: AbortSignal,
+    ): Promise<RpcRouter> | RpcRouter;
     nowUnixSeconds?: () => number;
     signal?: AbortSignal;
   }>,
 ): Promise<SessionV3> {
   const received = await receiveSessionAdmissionV3(carrier, options.signal);
   try {
-    const decision = await authorize(received.decoded, options.signal);
+    const decision = await raceAbort(
+      Promise.resolve().then(async () => await authorize(received.decoded, options.signal)),
+      options.signal,
+    );
     if (!decision.accepted) {
       return await rejectSessionAdmissionV3(
         received,

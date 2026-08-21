@@ -69,13 +69,15 @@ validateDirectContract(matrix.direct_cells);
 const selectedCells = clientProfile === undefined
   ? matrix.direct_cells.filter((cell) => cell.status === "supported" && clients.includes(cell.client) && servers.includes(cell.server) && carriers.includes(cell.carrier))
   : [selectClientProfileCell()];
+if (clientProfile === undefined && selectedCells.length === 0) {
+  throw new Error("server parity direct matrix selected no supported v3 cells");
+}
 const nativeAddon = await prepareServerParityNativeAddon(repositoryRoot, selectedCells.some((cell) =>
   cell.client === "node-typescript" || cell.server === "node-typescript"
 ));
 try {
   for (const cell of selectedCells) await runCell(cell);
-  if (selectedCells.length === 0) console.log("server parity direct matrix: no cells selected by the requested filters");
-  else console.log(`server parity direct matrix OK: ${selectedCells.length} supported production cells`);
+  console.log(`server parity direct matrix OK: ${selectedCells.length} supported production cells`);
 } finally {
   await nativeAddon.cleanup();
 }

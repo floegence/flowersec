@@ -116,11 +116,14 @@ Flowersec application protocol:
 | `apple-client` | Swift on Apple platforms | WSS endpoint client | None |
 | `webtransport-server` | No runtime currently claims it | Direct server and opaque tunnel runtime conformance are both required before claiming | None |
 
-The machine-readable parity counts are 18 runtime-role-carrier tuples, 24
-path-specific server units, 18 direct cells, and 18 tunnel cells. Go, Rust,
-and Node.js implement the same 18 required `native-server-core`
-runtime-role-carrier tuples. A profile never changes Artifact, handshake, RPC,
-stream, close, rekey, or authorization wire semantics.
+The machine-readable capability inventory contains 18 aggregate
+runtime-role-carrier tuples (six per native runtime) and 24 supported
+path-specific server units. The interoperability matrix separately declares a
+coordinate universe of 18 direct cells and 18 tunnel cells. All 36 pairwise
+cells are currently explicit `unsupported` declarations because no
+release-gating v3 test exercises a cell's complete executable case set. A
+profile never changes Artifact, handshake, RPC, stream, close, rekey, or
+authorization wire semantics.
 
 See the SDK guides for the exact platform and connection combinations supported
 by each package.
@@ -128,8 +131,9 @@ by each package.
 WebTransport is optional rather than part of the required native-server carrier
 contract. Go provides a direct adapter; the Browser profile uses the browser
 WebTransport API when present; Node.js and Rust do not currently provide a
-production WebTransport adapter. Required native-server parity is WebSocket and
-raw QUIC across Go, Rust, and Node.js.
+production WebTransport adapter. The native-server carrier surface is
+WebSocket and raw QUIC for Go, Rust, and Node.js; pairwise interoperability
+support is claimed only by supported entries in the matrix.
 
 <!-- readme-section:security -->
 <a id="security"></a>

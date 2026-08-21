@@ -42,6 +42,14 @@ test("exports the final controller API from browser and Node entries", () => {
   expect(createNodeConnectionController).toBeTypeOf("function");
   expect(ConnectError).toBeTypeOf("function");
   expect(BrowserStreamHandlers).toBe(NodeStreamHandlers);
+  expect(BrowserV2.StreamHandlers).toBe(NodeV2.StreamHandlers);
+  expect(BrowserV2.StreamHandlers).not.toBe(BrowserStreamHandlers);
+  const v3Handlers = new BrowserStreamHandlers();
+  expect(() => v3Handlers.handleStream("flowersec.rpc.v3", async () => undefined)).toThrow();
+  expect(() => v3Handlers.handleStream("flowersec.rpc.v2", async () => undefined)).not.toThrow();
+  const v2Handlers = new BrowserV2.StreamHandlers();
+  expect(() => v2Handlers.handleStream("flowersec.rpc.v2", async () => undefined)).toThrow();
+  expect(() => v2Handlers.handleStream("flowersec.rpc.v3", async () => undefined)).not.toThrow();
   expect(BrowserV2.connect).toBeTypeOf("function");
   expect(NodeV2.connect).toBeTypeOf("function");
   void (undefined as unknown as BrowserArtifactSource);

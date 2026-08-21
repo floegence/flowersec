@@ -28,11 +28,15 @@ Portable core, accepted-session lifecycle, control-plane issuance/authorization,
 The named deployment profiles are `native-server-core` for Go, Rust, and
 Node.js; `browser-client` for TypeScript browser clients; `apple-client` for
 Swift clients on Apple platforms; and the currently unclaimed optional
-`webtransport-server`. The native server profile requires WebSocket and raw
-QUIC endpoint clients, direct servers, and opaque tunnel runtimes in all three
-languages. A runtime may claim `webtransport-server` only after both its direct
-server and tunnel runtime pass conformance. Profiles select carrier adapters;
-they never select a different Flowersec application wire.
+`webtransport-server`. The native server profile records WebSocket and raw
+QUIC endpoint-client, direct-server, and opaque-tunnel runtime capabilities in
+all three languages. Its 18 tuples are aggregate capabilities, six per native
+runtime, rather than pairwise interoperability results. A runtime may claim
+`webtransport-server` only after both its direct server and tunnel runtime pass
+conformance. Profiles select carrier adapters; they never select a different
+Flowersec application wire. The separate interoperability matrix declares 18
+direct and 18 tunnel coordinates; every current cell is explicitly unsupported
+until one release-gating v3 test exercises its complete executable case set.
 
 Trust-root sourcing is policy-specific. CA candidates use platform roots or
 deployment-provided private roots. Pin candidates use only the complete leaf
@@ -101,7 +105,67 @@ This package owns transport-neutral issuance and authorization mechanics. Tenant
 
 The supported package entrypoints are `@floegence/flowersec-core`, `@floegence/flowersec-core/browser`, `@floegence/flowersec-core/node`, and `@floegence/flowersec-core/proxy`.
 
-The root exposes v3 application names: `Artifact`, `ArtifactError`, `ArtifactErrorCode`, `ArtifactLease`, `ArtifactLeaseError`, `Session`, `SessionTermination`, `RpcPeer`, `JsonValue`, `ByteStream`, `StreamMetadata`, `createStreamMetadata(...)`, `StreamMetadataError`, `StreamHandlers`, `StreamHandler`, `StreamHandlerOptions`, `HandlerRegistrationError`, `ConnectionController`, `ArtifactSource`, `ConnectionSnapshot`, `ConnectionControllerError`, `RetryDisposition`, typed `RpcResult<Response>`, `ConnectError`, and `SessionError`. Default names bind only the v3 contract; version-explicit v3 aliases and the explicit `v2` namespace are available without negotiating or downgrading a v3 connection. `StreamHandlers.handleStream(...)` freezes on the first `serve(...)`, dispatches application streams on any established browser or Node Session, bounds concurrency, resets unknown and excess streams, isolates handler rejection, and closes the Session before waiting for active handlers during shutdown. Application stream kinds follow the exact OPEN contract: 1 through 128 canonical UTF-8 bytes, no leading or trailing Unicode whitespace, control, or unassigned scalars, and no reserved `flowersec.rpc.v3` name. Immutable controller snapshots publish `ConnectionSnapshot.retryDisposition` while the corresponding retry decision applies and omit it before a new attempt, after connection, and on close. `parseArtifact(...)` projects all parser implementation failures to the closed `ArtifactError` codes `artifact_too_large`, `invalid_artifact`, or `invalid_candidate`. `RpcPeer.call(...)` requires a successful-response decoder; `RpcResult<Response>` is a discriminated union whose success payload has passed application validation, while bounded remote application failures remain in the `ok: false` branch. RPC calls and notifications accept only `JsonValue` payloads and reject unsupported or non-finite values before wire I/O. `RpcPeer.call(...)` and `RpcPeer.notify(...)` use the local outbound reserved RPC stream. `RpcPeer.onNotify(typeId, decodePayload, handler)` subscribes to peer outbound notifications delivered through the local inbound reserved RPC stream and requires an explicit decoder; invalid payloads never reach the business handler, decoder and handler failures remain isolated, and unsubscribe is idempotent. Subscribers are independent from inbound request handlers. `Session.waitTermination()` is the sole public termination waiting entrypoint. A negotiated session may expose `UnreliableMessageChannel`, which sends and receives defensively copied `Uint8Array` values; invalid operations return `UnreliableMessageError`. Browser and Node subpaths each expose `connect(...)` and `createConnectionController(...)`; the module path identifies the runtime. The Node subpath additionally exposes reusable `RPCHandlers`, direct-only `createAcceptor(...)` and `Acceptor`, `AcceptedSession`, and opaque `createTunnelRuntime(...)` and `TunnelRuntime`. Node one-shot `SessionOptions.rpcHandlers` and `ConnectionControllerOptions.rpcHandlers` freeze the same reusable RPC/notification definition, while each established Session receives a fresh router. The tunnel runtime owns authorization, pairing, opaque forwarding, and cleanup but no `Session`, application handler, or PSK. The `flowersec-ts-cli` binary composes the same internal Node WebSocket connector and acceptor without exporting native carrier handles. Both connectors use a shared ten-second connection timeout by default and accept `connectTimeoutMs` without exposing internal clock or candidate-cleanup controls. Invalid public connector options are projected to `ConnectError`. Low-level carrier factories, capability descriptors, candidate diagnostics, wire contracts, and cryptographic state are not package exports.
+The root exposes v3 application names: `Artifact`, `ArtifactError`,
+`ArtifactErrorCode`, `ArtifactLease`, `ArtifactLeaseError`, `Session`,
+`SessionTermination`, `RpcPeer`, `JsonValue`, `ByteStream`, `StreamMetadata`,
+`createStreamMetadata(...)`, `StreamMetadataError`, `StreamHandlers`,
+`StreamHandler`, `StreamHandlerOptions`, `HandlerRegistrationError`,
+`ConnectionController`, `ArtifactSource`, `ConnectionSnapshot`,
+`ConnectionControllerError`, `RetryDisposition`, typed `RpcResult<Response>`,
+`ConnectError`, and `SessionError`. Default names bind only the v3 contract;
+version-explicit v3 aliases and the explicit `v2` namespace are available
+without negotiating or downgrading a v3 connection.
+
+`StreamHandlers.handleStream(...)` freezes on the first `serve(...)`,
+dispatches application streams on any established browser or Node Session,
+bounds concurrency, resets unknown and excess streams, isolates handler
+rejection, and closes the Session before waiting for active handlers during
+shutdown. Application stream kinds follow the exact OPEN contract: 1 through
+128 canonical UTF-8 bytes, no leading or trailing Unicode whitespace, control,
+or unassigned scalars, and no reserved `flowersec.rpc.v3` name. Immutable
+controller snapshots publish `ConnectionSnapshot.retryDisposition` while the
+corresponding retry decision applies and omit it before a new attempt, after
+connection, and on close.
+
+`parseArtifact(...)` projects all parser implementation failures to the closed
+`ArtifactError` codes `artifact_too_large` or `invalid_artifact`.
+`RpcPeer.call(...)` requires a successful-response decoder;
+`RpcResult<Response>` is a discriminated union whose success payload has passed
+application validation, while bounded remote application failures remain in
+the `ok: false` branch. RPC calls and notifications accept only `JsonValue`
+payloads and reject unsupported or non-finite values before wire I/O.
+`RpcPeer.call(...)` and `RpcPeer.notify(...)` use the local outbound reserved
+RPC stream. `RpcPeer.onNotify(typeId, decodePayload, handler)` subscribes to
+peer outbound notifications delivered through the local inbound reserved RPC
+stream and requires an explicit decoder; invalid payloads never reach the
+business handler, decoder and handler failures remain isolated, and
+unsubscribe is idempotent. Subscribers are independent from inbound request
+handlers. `Session.waitTermination()` is the sole public termination waiting
+entrypoint. A negotiated session may expose `UnreliableMessageChannel`, which
+sends and receives defensively copied `Uint8Array` values; invalid operations
+return `UnreliableMessageError`.
+
+Browser and Node subpaths each expose `connect(...)` and
+`createConnectionController(...)`; the module path identifies the runtime. The
+Node subpath additionally exposes reusable `RPCHandlers`, direct-only
+`createAcceptor(...)`, `Acceptor`, `AcceptedSession`, and accepted-server-only
+`SessionHandlers`, plus opaque `createTunnelRuntime(...)` and `TunnelRuntime`.
+`AcceptorOptions.resolveHandlers(...)` resolves and freezes the v3 registry
+only after artifact binding and expiry validation and before successful
+admission and session establishment. Every accepted Session receives a fresh
+RPC router, and `AcceptedSession.serve(...)` owns stream-dispatch lifecycle.
+Node one-shot `SessionOptions.rpcHandlers` and
+`ConnectionControllerOptions.rpcHandlers` freeze the same reusable
+RPC/notification definition, while each established Session receives a fresh
+router. The tunnel runtime owns authorization, pairing, opaque forwarding, and
+cleanup but no `Session`, application handler, or PSK. The `flowersec-ts-cli`
+binary composes the same internal Node WebSocket connector and acceptor without
+exporting native carrier handles. Both connectors use a shared ten-second
+connection timeout by default and accept `connectTimeoutMs` without exposing
+internal clock or candidate-cleanup controls. Invalid public connector options
+are projected to `ConnectError`. Low-level carrier factories, capability
+descriptors, candidate diagnostics, wire contracts, and cryptographic state
+are not package exports.
 
 Node `SessionOptions.origin` and `ConnectionControllerOptions.origin` are optional. An absolute HTTP(S) origin enables WebSocket candidates, while an omitted origin leaves only non-WebSocket candidates eligible.
 

@@ -29,6 +29,7 @@ export class HandlerRegistrationError extends Error {
 
 type StreamHandlerState = {
   maxConcurrentStreams: number;
+  reservedRPCKind: "flowersec.rpc.v2" | "flowersec.rpc.v3";
   streams: Map<string, StreamHandler>;
   frozen: boolean;
   snapshot?: FrozenStreamHandlers;
@@ -57,6 +58,7 @@ export class StreamHandlers {
     }
     streamHandlerStates.set(this, {
       maxConcurrentStreams: maximum,
+      reservedRPCKind: "flowersec.rpc.v3",
       streams: new Map(),
       frozen: false,
     });
@@ -79,6 +81,14 @@ export class StreamHandlers {
   }
 }
 
+/** Explicit-compatibility application-stream handlers. */
+export class LegacyStreamHandlers extends StreamHandlers {
+  constructor(options: StreamHandlerOptions = {}) {
+    super(options);
+    streamHandlerStates.get(this)!.reservedRPCKind = "flowersec.rpc.v2";
+  }
+}
+
 function mutableStreamHandlerState(handlers: StreamHandlers): StreamHandlerState {
   const state = streamHandlerStates.get(handlers);
   if (state === undefined) throw new HandlerRegistrationError("invalid_handler");
@@ -95,7 +105,7 @@ function registerIntoState(
   for (const [kind, handler] of entries) {
     if (
       !validApplicationStreamKind(kind) ||
-      kind === "flowersec.rpc.v2" ||
+      kind === state.reservedRPCKind ||
       typeof handler !== "function"
     ) {
       throw new HandlerRegistrationError("invalid_handler");

@@ -104,11 +104,11 @@ Flowersec отделяет сеанс приложения от сетевого
 | `apple-client` | Swift на платформах Apple | WSS endpoint client | Нет |
 | `webtransport-server` | Сейчас не заявлен ни одной средой | Перед заявлением обязательна conformance direct server и opaque tunnel runtime | Нет |
 
-Go, Rust и Node.js реализуют одинаковые 18 обязательных runtime-role-carrier tuple профиля `native-server-core`. Развёртывание direct- и tunnel-путей даёт 24 серверные единицы, специфичные для пути. Conformance считается отдельно как 18 direct client-server cells и 18 попарных tunnel topologies. Профиль никогда не меняет wire-семантику Artifact, handshake, RPC, stream, close, rekey или authorization.
+Машиночитаемый перечень возможностей содержит 18 агрегированных runtime-role-carrier tuple, по шесть для каждой нативной среды, и 24 поддерживаемые серверные единицы, специфичные для пути. Матрица interoperability отдельно объявляет 18 direct cells и 18 tunnel cells. Все 36 попарных cells сейчас являются явными объявлениями `unsupported`, поскольку ни один блокирующий release v3 test не выполняет полный набор случаев cell. Профиль никогда не меняет wire-семантику Artifact, handshake, RPC, stream, close, rekey или authorization.
 
 Точные сочетания платформ и типов соединений перечислены в руководствах SDK.
 
-WebTransport является необязательным адаптером и не входит в обязательный контракт carrier native-server. Go предоставляет direct-адаптер; профиль Browser использует API WebTransport браузера, если оно доступно. Node.js и Rust в настоящее время не предоставляют production-адаптер WebTransport. Обязательная native-server parity включает только WebSocket и raw QUIC для Go, Rust и Node.js.
+WebTransport является необязательным адаптером и не входит в контракт carrier native-server. Go предоставляет direct-адаптер; профиль Browser использует API WebTransport браузера, если оно доступно. Node.js и Rust в настоящее время не предоставляют production-адаптер WebTransport. Поверхность carrier native-server для Go, Rust и Node.js включает WebSocket и raw QUIC; попарная interoperability заявляется только поддерживаемыми записями матрицы.
 
 <!-- readme-section:security -->
 <a id="security"></a>

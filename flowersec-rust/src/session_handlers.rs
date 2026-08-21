@@ -187,7 +187,9 @@ fn validate_stream_registrations(
         return Err(HandlerRegistrationError::Invalid);
     }
     for (index, (kind, _)) in handlers.iter().enumerate() {
-        if !valid_open_kind(kind) || kind == "flowersec.rpc.v2" {
+        if !valid_open_kind(kind)
+            || matches!(kind.as_str(), "flowersec.rpc.v2" | "flowersec.rpc.v3")
+        {
             return Err(HandlerRegistrationError::Invalid);
         }
         if existing.contains_key(kind) || handlers[..index].iter().any(|(seen, _)| seen == kind) {

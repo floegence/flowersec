@@ -7,8 +7,10 @@ import { describe, expect, test } from "vitest";
 import {
   createRPCRouter,
   freezeRPCHandlers,
+  freezeSessionHandlersV3,
   RPCHandlers,
   SessionHandlers,
+  SessionHandlersV3,
   type HandlerRegistrationError,
 } from "./acceptor.js";
 
@@ -37,9 +39,12 @@ const vectorsV3 = JSON.parse(readFileSync(
 
 describe("SessionHandlers", () => {
   test("enforces the shared UTF-8 stream-kind registration contract", () => {
-    for (const [version, fixture] of [[2, vectors], [3, vectorsV3]] as const) {
+    for (const [version, fixture, createHandlers] of [
+      [2, vectors, () => new SessionHandlers()],
+      [3, vectorsV3, () => new SessionHandlersV3()],
+    ] as const) {
       for (const vector of fixture.stream_kinds) {
-        const handlers = new SessionHandlers();
+        const handlers = createHandlers();
         const kind = vector.unit.repeat(vector.repeat) + vector.suffix;
         const id = `v${version}/${vector.id}`;
         if (vector.valid) {
@@ -68,6 +73,13 @@ describe("SessionHandlers", () => {
     expect(() => handlers.handleRPC(41, async () => ({ payload: null }))).toThrowError(
       expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "already_registered" }),
     );
+  });
+
+  test("keeps v2 and v3 accepted-session registries nominally isolated", () => {
+    expect(() => freezeSessionHandlersV3(new SessionHandlers() as never)).toThrowError(
+      expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
+    );
+    expect(() => freezeSessionHandlersV3(new SessionHandlersV3())).not.toThrow();
   });
 });
 
