@@ -737,6 +737,16 @@ impl TaskRuntime {
         let allowed = match decision {
             AuthorizationDecision::Deny { status, reason } => {
                 self.state.credentials.lock().await.remove(&lookup);
+                // An expired allow is represented as a retryable deny so the
+                // caller receives the correct artifact-expiry reason. It
+                // still carries the authorizer's lease and must be released
+                // before retiring the admission.
+                if reason == "expired_artifact" {
+                    if let Some(lease_id) = response_lease_id(&response.encoded) {
+                        release_bounded(self.authorizer.as_ref(), &lease_id, admission_deadline)
+                            .await;
+                    }
+                }
                 let _ = send_fsa3(
                     admission.as_ref(),
                     status,
@@ -2061,6 +2071,35 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct ExpiredAuthorizer {
+        releases: StdMutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl TunnelAuthorizer for ExpiredAuthorizer {
+        async fn authorize(
+            &self,
+            request: RuntimeAuthorizationRequest,
+        ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
+            TunnelAuthorizationResponse::parse(
+                serde_json::to_vec(&json!({
+                    "allow_replacement": false,
+                    "credential_id": request.lookup_key(),
+                    "decision": "allow",
+                    "expected_peer_endpoint_instance_id": "endpoint-server",
+                    "expires_at": "2000-01-01T00:00:00Z",
+                    "lease_id": "lease-expired",
+                }))
+                .unwrap(),
+            )
+        }
+
+        async fn release(&self, lease_id: &str) {
+            self.releases.lock().unwrap().push(lease_id.to_owned());
+        }
+    }
+
     #[derive(Debug)]
     struct HangingWriteStream;
 
@@ -2263,6 +2302,35 @@ mod tests {
         assert_eq!(
             authorizer.releases.lock().unwrap().as_slice(),
             ["lease-malformed", "lease-malformed"]
+        );
+    }
+
+    #[tokio::test]
+    async fn expired_allow_releases_the_returned_lease() {
+        let authorizer = Arc::new(ExpiredAuthorizer::default());
+        let runtime = test_runtime(authorizer.clone(), Duration::from_secs(1), 1);
+        let permit = runtime
+            .state
+            .admission_permits
+            .clone()
+            .try_acquire_owned()
+            .unwrap();
+        let (accepted, writes) = accepted_with_recorded_admission(vector_tunnel_admission(
+            1,
+            "endpoint-client",
+            "attach-token-v3",
+        ));
+        let result = runtime.admit_and_pair(accepted, permit).await;
+        assert_eq!(result, Err(TunnelRuntimeError::Rejected));
+        let response = crate::artifact_v3::decode_fsa3(&writes.lock().unwrap()).unwrap();
+        assert_eq!(
+            response.status,
+            crate::artifact_v3::AdmissionStatusV3::Retryable
+        );
+        assert_eq!(response.reason, "expired_artifact");
+        assert_eq!(
+            authorizer.releases.lock().unwrap().as_slice(),
+            ["lease-expired"]
         );
     }
 
