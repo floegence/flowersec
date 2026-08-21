@@ -15,7 +15,7 @@ npm install @floegence/flowersec-core
 
 - `@floegence/flowersec-core` exports the portable artifact, lease, session, stream, RPC, stream-metadata, and connection-controller API, plus profile-owned unreliable messages when negotiated.
 - `@floegence/flowersec-core/browser` adds `connect(...)`, `createConnectionController(...)`, and their options.
-- `@floegence/flowersec-core/node` adds `connect(...)`, `createConnectionController(...)`, direct-only `createAcceptor(...)`, opaque `createTunnelRuntime(...)`, `SessionHandlers`, `AcceptedSession`, `Issuer`, authorization record/request/response types, `authorizeRuntime(...)`, `authorizeTunnelRuntime(...)`, and `ProxyServer`.
+- `@floegence/flowersec-core/node` adds the V3 `connect(...)`, `createConnectionController(...)`, direct-only `createAcceptor(...)`, opaque `createTunnelRuntime(...)`, `AcceptedSession`, and `RPCHandlers` APIs. Legacy V2 server, control-plane, and `ProxyServer` APIs are available only under the explicit `node.v2` namespace.
 - `@floegence/flowersec-core/proxy` adds the `Session`-based HTTP/WebSocket runtime, Service Worker and controller/app-window bridges, strict `proxy.runtime@2` validation, and `connectProxyBrowser(...)` composition.
 
 The root type exports are:
@@ -90,13 +90,13 @@ back between CA and pin modes.
 ### Accepted Node server Session
 
 ```ts
-import { SessionHandlers, createAcceptor } from "@floegence/flowersec-core/node";
+import { v2 } from "@floegence/flowersec-core/node";
 
-const handlers = new SessionHandlers({ maxConcurrentStreams: 32 });
+const handlers = new v2.SessionHandlers({ maxConcurrentStreams: 32 });
 handlers.handleRPC(7, async (payload) => ({ payload }));
 handlers.handleNotification(8, (payload) => onNotice(payload));
 handlers.handleStream("files/read", async (incoming) => serveFile(incoming));
-const acceptor = await createAcceptor({
+const acceptor = await v2.createAcceptor({
   listeners,
   maxInboundStreams: 32,
   authorize,
@@ -107,7 +107,8 @@ await accepted.serve();
 ```
 
 `RPCHandlers` is available only from the Node entrypoint and cannot register
-application streams. `SessionHandlers` is accepted-server-only.
+application streams. The legacy `SessionHandlers` is available as
+`node.v2.SessionHandlers` and is accepted-server-only.
 
 ## Connection Lifecycle
 
@@ -135,9 +136,10 @@ server sessions, and opaque `TunnelRuntime` relay legs. Raw QUIC uses the
 Flowersec-owned optional native addon wrapper and one of its supported
 prebuilt platform packages; it never loads from the browser entrypoint. The
 wrapper selects the matching optional package for macOS arm64/x64 or Linux
-arm64/x64 glibc. Windows and musl packages are not published. The same Node entrypoint provides the
-control plane and `ProxyServer`, and the relay never terminates an E2EE
-Session. WebTransport is an optional adapter profile and the Node.js runtime
+arm64/x64 glibc. Windows and musl packages are not published. The V3 Node
+entrypoint keeps the control plane and `ProxyServer` behind `node.v2`; the
+relay never terminates an E2EE Session. WebTransport is an optional adapter
+profile and the Node.js runtime
 does not currently expose a production adapter.
 The `/proxy` entrypoint adds browser bridges for applications that need to keep
 the session behind a Service Worker or another window.
