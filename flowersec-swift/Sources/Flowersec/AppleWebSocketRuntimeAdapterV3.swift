@@ -105,7 +105,7 @@ import Foundation
         components.path.isEmpty || components.path == "/",
         components.query == nil, components.fragment == nil
       else { return false }
-      return components.scheme == "https"
+      return components.scheme == "http" || components.scheme == "https"
     }
   }
 

@@ -38,6 +38,11 @@ final class ConnectorV2Tests: XCTestCase {
       await connection.close()
     }
 
+    func testProductionV3AdapterAcceptsHTTPOrigin() throws {
+      XCTAssertNoThrow(try AppleWebSocketRuntimeAdapterV3().validate(
+        options: ConnectorOptions(origin: "http://client.example", connectTimeout: .seconds(1))))
+    }
+
     func testProductionV3AdapterAcceptsSelfSignedPinAndOverlap() async throws {
       let oldTLS = try ConnectorTestTLS.makeShortLivedSelfSigned()
       let newTLS = try ConnectorTestTLS.makeShortLivedSelfSigned()
