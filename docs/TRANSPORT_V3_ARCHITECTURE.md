@@ -284,12 +284,14 @@ FSA3.
 
 Server admission is one bounded phase across FSB3 receive, deployment
 authorization, accepted-session handler resolution, FSA3 completion, and
-Session establishment. The authorization result carries an opaque stored
-artifact; the runtime reprojects and compares the complete FSB3 before success,
-so the relay cannot authorize a same-credential request with altered session,
-candidate, TLS, role, or endpoint claims. Listener shutdown first cancels the
-phase, then force-closes non-responsive upgraded and pre-upgrade sockets at its
-cleanup deadline.
+Session establishment. The trusted authorization-record verifier receives the
+opaque stored artifact and observed request, reprojects and compares the
+complete FSB3 before minting a request-bound, secret-free grant. The relay
+consumes only that grant, so it cannot authorize a same-credential request with
+altered session, candidate, TLS, role, or endpoint claims and never receives the
+Session contract or E2EE key. Listener shutdown first cancels the phase, then
+force-closes non-responsive upgraded and pre-upgrade sockets at its cleanup
+deadline.
 
 ## 6. Candidate Race and Aggregation
 

@@ -22,6 +22,10 @@ import { connectV3, createConnectionControllerV3 } from "./connectSessionV3.js";
 import { RPCHandlers, SessionHandlersV3 } from "./acceptor.js";
 import { createAcceptorV3 } from "./acceptorV3.js";
 import { createTunnelRuntimeV3 } from "./tunnelRuntimeV3.js";
+import {
+  verifyTunnelAuthorizationGrantV3,
+  type RuntimeAuthorizationRequestV3,
+} from "./runtimeAuthorizationV3.js";
 import { startNodeWebSocketListenerV3 } from "./webSocketServerV3.js";
 
 const opensslProbe = spawnSync("openssl", ["version"], { stdio: "ignore" });
@@ -146,6 +150,53 @@ describe("Node production server runtime v3", () => {
       await expect(accepting).rejects.toThrow("Flowersec v3 admission timed out");
       expect(authorizationSignal?.aborted).toBe(true);
     } finally {
+      await acceptor.close();
+      await connecting;
+    }
+  });
+
+  test("does not freeze a handler registry resolved after admission cancellation", async () => {
+    let artifact!: ArtifactV3;
+    const handlers = new SessionHandlersV3();
+    let resolverStarted!: () => void;
+    const started = new Promise<void>((resolve) => { resolverStarted = resolve; });
+    let resolveHandlers!: (value: SessionHandlersV3) => void;
+    const lateHandlers = new Promise<SessionHandlersV3>((resolve) => { resolveHandlers = resolve; });
+    const acceptor = await createAcceptorV3({
+      listeners: [{
+        carrier: "websocket",
+        path: "direct",
+        host: "127.0.0.1",
+        port: 0,
+        tls: { certificate: leafCertificate, privateKey: leafKey },
+        allowedOrigins: ["https://app.example"],
+      }],
+      maxInboundStreams: directBase.session.max_inbound_streams,
+      admissionTimeoutMs: 50,
+      authorize: async () => ({
+        accepted: true,
+        artifact: parseArtifactV3(encodeArtifactV3JSON(artifact)),
+      }),
+      resolveHandlers: async () => {
+        resolverStarted();
+        return await lateHandlers;
+      },
+    });
+    artifact = directArtifact(acceptor.addresses()[0]!.port);
+    const accepting = acceptor.accept();
+    const connecting = connectV3(lease(artifact), {
+      origin: "https://app.example",
+      roots: rootCertificate,
+      connectTimeoutMs: 1_000,
+    }).catch(() => undefined);
+    try {
+      await started;
+      await expect(accepting).rejects.toThrow("Flowersec v3 admission timed out");
+      resolveHandlers(handlers);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(() => handlers.handleRPC(9_102, async () => ({ payload: null }))).not.toThrow();
+    } finally {
+      resolveHandlers(handlers);
       await acceptor.close();
       await connecting;
     }
@@ -559,7 +610,7 @@ describe("Node production server runtime v3", () => {
         if (artifact === undefined || artifact.path.kind !== "tunnel") {
           return { decision: "reject" as const, reason: "not_authorized" };
         }
-        return tunnelAuthorization(artifact, `lease-${artifact.path.role}`);
+        return tunnelAuthorization(request, artifact, `lease-${artifact.path.role}`);
       },
       release: async () => {
         releaseStarted();
@@ -614,6 +665,7 @@ describe("Node production server runtime v3", () => {
     const lateAuthorization = new Promise<ReturnType<typeof tunnelAuthorization>>(
       (resolve) => { resolveAuthorization = resolve; },
     );
+    let authorizationRequest: RuntimeAuthorizationRequestV3 | undefined;
     const released: string[] = [];
     const runtime = createTunnelRuntimeV3({
       listeners: [{
@@ -624,7 +676,8 @@ describe("Node production server runtime v3", () => {
         allowedOrigins: ["https://app.example"],
       }],
       maxInboundStreams: tunnelBase.session.max_inbound_streams,
-      authorize: async () => {
+      authorize: async (request) => {
+        authorizationRequest = request;
         authorizeStarted();
         return await lateAuthorization;
       },
@@ -642,7 +695,12 @@ describe("Node production server runtime v3", () => {
       }).catch(() => undefined);
       await started;
       await runtime.close();
-      resolveAuthorization(tunnelAuthorization(artifact, "late-authorization-lease"));
+      if (authorizationRequest === undefined) throw new Error("authorization request was not observed");
+      resolveAuthorization(tunnelAuthorization(
+        authorizationRequest,
+        artifact,
+        "late-authorization-lease",
+      ));
       await waitFor(() => released.includes("late-authorization-lease"));
     } finally {
       await runtime.close().catch(() => undefined);
@@ -669,7 +727,7 @@ describe("Node production server runtime v3", () => {
         if (artifact === undefined || artifact.path.kind !== "tunnel") {
           return { decision: "reject" as const, reason: "not_authorized" };
         }
-        return tunnelAuthorization(artifact, `hash-isolation-${artifact.path.role}`);
+        return tunnelAuthorization(request, artifact, `hash-isolation-${artifact.path.role}`);
       },
       release: (leaseId) => { released.push(leaseId); },
     });
@@ -710,7 +768,7 @@ describe("Node production server runtime v3", () => {
           request.lookupKey() !== tunnelLookupKey(receivedArtifact)) {
           return { decision: "reject" as const, reason: "not_authorized" };
         }
-        return tunnelAuthorization(authorizedArtifact, "mismatched-artifact-lease");
+        return tunnelAuthorization(request, authorizedArtifact, "mismatched-artifact-lease");
       },
       release: (leaseId) => { released.push(leaseId); },
     });
@@ -728,7 +786,95 @@ describe("Node production server runtime v3", () => {
         roots: rootCertificate,
         connectTimeoutMs: 1_000,
       })).rejects.toBeDefined();
-      await waitFor(() => released.includes("mismatched-artifact-lease"));
+      expect(released).toEqual([]);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  test("rejects an expired authorization artifact before minting a tunnel grant", async () => {
+    const released: string[] = [];
+    let receivedArtifact: ArtifactV3 | undefined;
+    let expiredArtifact: ArtifactV3 | undefined;
+    const runtime = createTunnelRuntimeV3({
+      listeners: [{
+        carrier: "websocket",
+        host: "127.0.0.1",
+        port: 0,
+        tls: { certificate: leafCertificate, privateKey: leafKey },
+        allowedOrigins: ["https://app.example"],
+      }],
+      maxInboundStreams: tunnelBase.session.max_inbound_streams,
+      authorize: async (request) => {
+        if (receivedArtifact === undefined || expiredArtifact === undefined ||
+          request.lookupKey() !== tunnelLookupKey(receivedArtifact)) {
+          return { decision: "reject" as const, reason: "not_authorized" };
+        }
+        return tunnelAuthorization(request, expiredArtifact, "expired-grant-lease");
+      },
+      release: (leaseId) => { released.push(leaseId); },
+    });
+    try {
+      await runtime.start();
+      receivedArtifact = tunnelArtifact(runtime.addresses()[0]!.port, 1);
+      expiredArtifact = {
+        ...receivedArtifact,
+        session: {
+          ...receivedArtifact.session,
+          init_expire_at_unix_s: Math.floor(Date.now() / 1_000) - 1,
+        },
+      };
+      await expect(connectV3(lease(receivedArtifact), {
+        origin: "https://app.example",
+        roots: rootCertificate,
+        connectTimeoutMs: 1_000,
+      })).rejects.toBeDefined();
+      expect(released).toEqual([]);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  test("rejects tunnel grants whose expected peer claims do not mirror", async () => {
+    const released: string[] = [];
+    const artifacts = new Map<string, ArtifactV3>();
+    const runtime = createTunnelRuntimeV3({
+      listeners: [{
+        carrier: "websocket",
+        host: "127.0.0.1",
+        port: 0,
+        tls: { certificate: leafCertificate, privateKey: leafKey },
+        allowedOrigins: ["https://app.example"],
+      }],
+      maxInboundStreams: tunnelBase.session.max_inbound_streams,
+      pairTimeoutMs: 50,
+      authorize: async (request) => {
+        const artifact = artifacts.get(request.lookupKey());
+        if (artifact === undefined) {
+          return { decision: "reject" as const, reason: "not_authorized" };
+        }
+        return tunnelAuthorization(request, artifact, `peer-mismatch-${artifact.path.kind === "tunnel" ? artifact.path.role : 0}`);
+      },
+      release: (leaseId) => { released.push(leaseId); },
+    });
+    try {
+      await runtime.start();
+      const port = runtime.addresses()[0]!.port;
+      const first = tunnelArtifact(port, 1);
+      const second = tunnelArtifact(port, 2);
+      if (first.path.kind !== "tunnel") throw new Error("expected tunnel artifact");
+      artifacts.set(tunnelLookupKey(first), {
+        ...first,
+        path: { ...first.path, expected_peer_endpoint_instance_id: "unexpected-peer" },
+      });
+      artifacts.set(tunnelLookupKey(second), second);
+      const results = await Promise.allSettled([
+        connectV3(lease(first), { origin: "https://app.example", roots: rootCertificate, connectTimeoutMs: 1_000 }),
+        connectV3(lease(second), { origin: "https://app.example", roots: rootCertificate, connectTimeoutMs: 1_000 }),
+      ]);
+      expect(results.every(({ status }) => status === "rejected")).toBe(true);
+      await waitFor(() => released.length === 2);
+      expect(new Set(released)).toEqual(new Set(["peer-mismatch-1", "peer-mismatch-2"]));
     } finally {
       await runtime.close();
     }
@@ -753,7 +899,7 @@ describe("Node production server runtime v3", () => {
         if (artifact === undefined || artifact.path.kind !== "tunnel") {
           return { decision: "reject" as const, reason: "not_authorized" };
         }
-        return tunnelAuthorization(artifact, `candidate-isolation-${artifact.path.role}`);
+        return tunnelAuthorization(request, artifact, `candidate-isolation-${artifact.path.role}`);
       },
       release: (leaseId) => { released.push(leaseId); },
     });
@@ -798,7 +944,7 @@ describe("Node production server runtime v3", () => {
         if (connectedArtifact === undefined || request.lookupKey() !== tunnelLookupKey(connectedArtifact)) {
           return { decision: "reject" as const, reason: "not_authorized" };
         }
-        return tunnelAuthorization(connectedArtifact, "never-release");
+        return tunnelAuthorization(request, connectedArtifact, "never-release");
       },
       release: async () => {
         releaseStartedResolve();
@@ -995,15 +1141,19 @@ function tunnelLookupKey(artifact: ArtifactV3): string {
   return createHash("sha256").update(artifact.path.token).digest("base64url");
 }
 
-function tunnelAuthorization(artifact: ArtifactV3, leaseId: string) {
+function tunnelAuthorization(
+  request: RuntimeAuthorizationRequestV3,
+  artifact: ArtifactV3,
+  leaseId: string,
+) {
   if (artifact.path.kind !== "tunnel") throw new Error("expected tunnel artifact");
   return {
     decision: "allow" as const,
-    artifact: parseArtifactV3(encodeArtifactV3JSON(artifact)),
-    credentialId: tunnelLookupKey(artifact),
-    leaseId,
-    expiresAtUnixSeconds: artifact.session.init_expire_at_unix_s,
-    expectedPeerEndpointInstanceId: artifact.path.expected_peer_endpoint_instance_id,
+    grant: verifyTunnelAuthorizationGrantV3(
+      request,
+      parseArtifactV3(encodeArtifactV3JSON(artifact)),
+      { leaseId },
+    ),
   };
 }
 

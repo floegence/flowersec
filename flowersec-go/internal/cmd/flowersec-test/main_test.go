@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -99,6 +100,24 @@ func TestPerformanceRegistrySeparatesRequiredAndOptionalCarriers(t *testing.T) {
 func TestRegistryEntriesSatisfyRunnerBounds(t *testing.T) {
 	if _, err := selectSuite(registry(), "acceptance"); err != nil {
 		t.Fatalf("registry validation failed: %v", err)
+	}
+}
+
+func TestGoAcceptorRegistryPatternEnumeratesProductionNativeListeners(t *testing.T) {
+	command := exec.Command("go", "test", "-list", goAcceptorTestPattern, "../../..")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("list Go acceptor tests: %v\n%s", err, output)
+	}
+	listed := string(output)
+	for _, name := range []string{
+		"TestRawQUICAcceptorListenerEstablishesApplicationSession",
+		"TestRawQUICAcceptorServeCancellationWaitsForSessionCleanup",
+		"TestWebTransportAcceptorListenerEstablishesApplicationSession",
+	} {
+		if !strings.Contains(listed, name+"\n") {
+			t.Fatalf("server/go-acceptor pattern did not enumerate %s:\n%s", name, listed)
+		}
 	}
 }
 

@@ -27,6 +27,10 @@ import { parseArtifactV3 } from "../v3/publicApi.js";
 import { connectV3 } from "./connectSessionV3.js";
 import { createAcceptorV3 } from "./acceptorV3.js";
 import { createTunnelRuntimeV3 } from "./tunnelRuntimeV3.js";
+import {
+  verifyTunnelAuthorizationGrantV3,
+  type RuntimeAuthorizationRequestV3,
+} from "./runtimeAuthorizationV3.js";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -451,7 +455,7 @@ describe("Node production raw QUIC runtime v3", () => {
         if (artifact === undefined || artifact.path.kind !== "tunnel") {
           return { decision: "reject" as const, reason: "not_authorized" };
         }
-        return v3TunnelAuthorization(artifact, `raw-lease-${artifact.path.role}`);
+        return v3TunnelAuthorization(request, artifact, `raw-lease-${artifact.path.role}`);
       },
     });
     await runtime.start();
@@ -743,15 +747,19 @@ function v3TunnelLookupKey(artifact: ArtifactV3): string {
   return createHash("sha256").update(artifact.path.token).digest("base64url");
 }
 
-function v3TunnelAuthorization(artifact: ArtifactV3, leaseId: string) {
+function v3TunnelAuthorization(
+  request: RuntimeAuthorizationRequestV3,
+  artifact: ArtifactV3,
+  leaseId: string,
+) {
   if (artifact.path.kind !== "tunnel") throw new Error("expected tunnel artifact");
   return {
     decision: "allow" as const,
-    artifact: parseArtifactV3(encodeArtifactV3JSON(artifact)),
-    credentialId: v3TunnelLookupKey(artifact),
-    leaseId,
-    expiresAtUnixSeconds: artifact.session.init_expire_at_unix_s,
-    expectedPeerEndpointInstanceId: artifact.path.expected_peer_endpoint_instance_id,
+    grant: verifyTunnelAuthorizationGrantV3(
+      request,
+      parseArtifactV3(encodeArtifactV3JSON(artifact)),
+      { leaseId },
+    ),
   };
 }
 

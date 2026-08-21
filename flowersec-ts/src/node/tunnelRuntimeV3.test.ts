@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { CarrierSessionV3, CarrierStreamV3 } from "../v3/carrier.js";
 import type { ReceivedSessionAdmissionV3 } from "../v3/serverAdmission.js";
 import {
+  activateTunnelControlStreamsV3,
   rejectTunnelPairAdmissionsV3,
   respondTunnelPairAdmissionsV3,
   spliceTunnelStreamsV3,
@@ -111,25 +112,81 @@ describe("Node TunnelRuntimeV3 lifecycle bounds", () => {
     expect(left.reset).toHaveBeenCalledOnce();
     expect(right.reset).toHaveBeenCalledOnce();
   });
+
+  test("aborts an initial control stream when its peer never activates", async () => {
+    vi.useFakeTimers();
+    const incoming = fakeStream();
+    const first = fakeCarrier({ acceptStream: async () => incoming });
+    const second = fakeCarrier({ openStream: () => new Promise(() => {}) });
+
+    const activation = activateTunnelControlStreamsV3(
+      first,
+      second,
+      new AbortController().signal,
+      20,
+    );
+    const rejection = expect(activation).rejects.toThrow("Flowersec tunnel activation timed out");
+
+    await vi.advanceTimersByTimeAsync(20);
+    await rejection;
+    expect(incoming.abort).toHaveBeenCalledOnce();
+  });
+
+  test("aborts a control stream returned after the activation deadline", async () => {
+    vi.useFakeTimers();
+    let returnIncoming!: (stream: CarrierStreamV3) => void;
+    const incoming = fakeStream();
+    const first = fakeCarrier({
+      acceptStream: () => new Promise((resolve) => { returnIncoming = resolve; }),
+    });
+    const second = fakeCarrier();
+
+    const activation = activateTunnelControlStreamsV3(
+      first,
+      second,
+      new AbortController().signal,
+      20,
+    );
+    const rejection = expect(activation).rejects.toThrow("Flowersec tunnel activation timed out");
+
+    await vi.advanceTimersByTimeAsync(20);
+    await rejection;
+    returnIncoming(incoming);
+    await vi.runAllTimersAsync();
+    expect(incoming.abort).toHaveBeenCalledOnce();
+    expect(second.openStream).not.toHaveBeenCalled();
+  });
 });
 
 function fakeAdmission(stream: CarrierStreamV3): ReceivedSessionAdmissionV3 {
-  const carrier = {
-    kind: "websocket",
-    path: "tunnel",
-    inboundBidirectionalStreamCapacity: 3,
+  const carrier = fakeCarrier({
     openStream: async () => stream,
     acceptStream: async () => stream,
-    waitTermination: async () => undefined,
-    close: async () => undefined,
-    abort: vi.fn(() => undefined),
-  } satisfies CarrierSessionV3;
+  });
   return {
     carrier,
     stream,
     rawFSB3: new Uint8Array(),
     decoded: undefined,
   } as unknown as ReceivedSessionAdmissionV3;
+}
+
+function fakeCarrier(overrides: Partial<CarrierSessionV3> = {}): CarrierSessionV3 {
+  const carrier = {
+    kind: "websocket",
+    path: "tunnel",
+    inboundBidirectionalStreamCapacity: 3,
+    openStream: overrides.openStream ?? (async () => fakeStream()),
+    acceptStream: overrides.acceptStream ?? (async () => fakeStream()),
+    waitTermination: async () => undefined,
+    close: async () => undefined,
+    abort: vi.fn(() => undefined),
+  } satisfies CarrierSessionV3;
+  return {
+    ...carrier,
+    openStream: vi.fn(carrier.openStream),
+    acceptStream: vi.fn(carrier.acceptStream),
+  };
 }
 
 function fakeStream(overrides: Partial<CarrierStreamV3> = {}): CarrierStreamV3 {

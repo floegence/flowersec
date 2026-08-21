@@ -128,6 +128,11 @@ pub struct ConnectionControllerOptions {
     maximum_attempts: Option<NonZeroU64>,
 }
 
+/// Invalid public connection-controller configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("invalid Flowersec connection controller configuration")]
+pub struct ConnectionControllerConfigurationError;
+
 impl ConnectionControllerOptions {
     pub fn new(connector: ConnectorOptions) -> Self {
         Self {
@@ -135,9 +140,15 @@ impl ConnectionControllerOptions {
             maximum_attempts: None,
         }
     }
-    pub const fn with_maximum_attempts(mut self, maximum_attempts: NonZeroU64) -> Self {
+    pub fn with_maximum_attempts(
+        mut self,
+        maximum_attempts: NonZeroU64,
+    ) -> Result<Self, ConnectionControllerConfigurationError> {
+        if maximum_attempts.get() > MAX_SAFE_INTEGER {
+            return Err(ConnectionControllerConfigurationError);
+        }
         self.maximum_attempts = Some(maximum_attempts);
-        self
+        Ok(self)
     }
     pub const fn maximum_attempts(&self) -> Option<NonZeroU64> {
         self.maximum_attempts
@@ -695,21 +706,6 @@ fn primary_candidate_ids(artifact: &ArtifactV3, blocked: &HashSet<PinIdentity>) 
 }
 
 async fn run_controller(inner: Arc<ControllerInner>) {
-    if inner
-        .options
-        .maximum_attempts
-        .is_some_and(|maximum| maximum.get() > MAX_SAFE_INTEGER)
-    {
-        inner.set_failed(
-            0,
-            connect_failure(
-                ConnectErrorCode::ArtifactInvalid,
-                RetryDisposition::Terminal,
-            ),
-            false,
-        );
-        return;
-    }
     let mut attempt = 0_u64;
     let mut retry_index = 0_u64;
     let mut attempts_in_cycle = 0_u64;
@@ -1645,16 +1641,27 @@ mod tests {
         let source = Arc::new(QueueSource::new(std::iter::empty()));
         let options = ConnectionControllerOptions::new(ConnectorOptions::new())
             .with_maximum_attempts(NonZeroU64::new(MAX_SAFE_INTEGER + 1).unwrap());
-        let controller = ConnectionController::new_with_connector(
-            source.clone(),
+        assert!(matches!(
             options,
-            scripted_connector(std::iter::empty::<ConnectorStep>()),
-        );
-        controller.start();
-        let status = wait_for_state(&controller, ConnectionState::Failed).await;
+            Err(ConnectionControllerConfigurationError)
+        ));
         assert_eq!(source.acquisitions.load(Ordering::SeqCst), 0);
-        assert_eq!(status.attempt, 0);
-        controller.close().await;
+    }
+
+    #[test]
+    fn maximum_attempts_rejects_unsafe_integers_at_the_public_builder_boundary() {
+        let accepted = ConnectionControllerOptions::new(ConnectorOptions::new())
+            .with_maximum_attempts(NonZeroU64::new(MAX_SAFE_INTEGER).unwrap())
+            .expect("maximum safe integer");
+        assert_eq!(
+            accepted.maximum_attempts().map(NonZeroU64::get),
+            Some(MAX_SAFE_INTEGER)
+        );
+        assert!(matches!(
+            ConnectionControllerOptions::new(ConnectorOptions::new())
+                .with_maximum_attempts(NonZeroU64::new(MAX_SAFE_INTEGER + 1).unwrap()),
+            Err(ConnectionControllerConfigurationError)
+        ));
     }
 
     #[tokio::test]
@@ -2330,7 +2337,9 @@ mod tests {
     fn test_options(maximum_attempts: Option<u64>) -> ConnectionControllerOptions {
         let options = ConnectionControllerOptions::new(ConnectorOptions::new());
         maximum_attempts.map_or(options.clone(), |maximum| {
-            options.with_maximum_attempts(NonZeroU64::new(maximum).expect("nonzero"))
+            options
+                .with_maximum_attempts(NonZeroU64::new(maximum).expect("nonzero"))
+                .expect("safe maximum attempts")
         })
     }
 

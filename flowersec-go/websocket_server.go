@@ -41,6 +41,7 @@ type WebSocketHTTPServer struct {
 	mu              sync.Mutex
 	listener        net.Listener
 	closing         bool
+	connections     map[net.Conn]struct{}
 	upgrades        map[*webSocketServerUpgrade]struct{}
 	upgradesChanged chan struct{}
 }
@@ -69,11 +70,13 @@ func NewWebSocketHTTPServer(options WebSocketHTTPServerOptions) (*WebSocketHTTPS
 	}
 	server := &WebSocketHTTPServer{
 		tlsConfig:       tlsConfig,
+		connections:     make(map[net.Conn]struct{}),
 		upgrades:        make(map[*webSocketServerUpgrade]struct{}),
 		upgradesChanged: make(chan struct{}),
 	}
 	server.httpServer = &http.Server{
 		Handler:           http.HandlerFunc(server.serveHTTP(boundary.secureHandler())),
+		ConnState:         server.trackConnection,
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       options.ReadTimeout,
 		WriteTimeout:      options.WriteTimeout,
@@ -109,6 +112,7 @@ func (server *WebSocketHTTPServer) ListenAndServe(address string) error {
 	if err != nil {
 		return err
 	}
+	defer listener.Close()
 	return server.Serve(listener)
 }
 
@@ -121,24 +125,25 @@ func (server *WebSocketHTTPServer) Shutdown(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	server.stopWebSocketUpgrades(false)
+	server.stopWebSocketUpgrades(false, false)
 	shutdownErr := server.httpServer.Shutdown(ctx)
 	waitErr := server.waitForWebSocketUpgrades(ctx)
-	if waitErr != nil {
-		server.stopWebSocketUpgrades(true)
+	if shutdownErr != nil || waitErr != nil {
+		server.forceCloseOwnedConnections()
 	}
 	return errors.Join(shutdownErr, waitErr)
 }
 
 // Close immediately closes the HTTP server and upgraded WebSocket connections,
-// then waits for their handlers to release resources.
+// detaches server ownership, and returns without waiting for application
+// callbacks that ignore cancellation.
 func (server *WebSocketHTTPServer) Close() error {
 	if server == nil || server.httpServer == nil {
 		return ErrInvalidWebSocketServer
 	}
-	server.stopWebSocketUpgrades(true)
+	server.forceCloseOwnedConnections()
 	closeErr := server.httpServer.Close()
-	return errors.Join(closeErr, server.waitForWebSocketUpgrades(context.Background()))
+	return closeErr
 }
 
 func (server *WebSocketHTTPServer) serveHTTP(next http.Handler) func(http.ResponseWriter, *http.Request) {
@@ -165,12 +170,17 @@ func (server *WebSocketHTTPServer) serveHTTP(next http.Handler) func(http.Respon
 	}
 }
 
-func (server *WebSocketHTTPServer) stopWebSocketUpgrades(force bool) {
+func (server *WebSocketHTTPServer) stopWebSocketUpgrades(force, detach bool) {
 	server.mu.Lock()
 	server.closing = true
 	upgrades := make([]*webSocketServerUpgrade, 0, len(server.upgrades))
 	for upgrade := range server.upgrades {
 		upgrades = append(upgrades, upgrade)
+	}
+	if detach && len(server.upgrades) != 0 {
+		clear(server.upgrades)
+		close(server.upgradesChanged)
+		server.upgradesChanged = make(chan struct{})
 	}
 	server.mu.Unlock()
 	for _, upgrade := range upgrades {
@@ -180,6 +190,43 @@ func (server *WebSocketHTTPServer) stopWebSocketUpgrades(force bool) {
 		for _, upgrade := range upgrades {
 			upgrade.closeConnection()
 		}
+	}
+}
+
+func (server *WebSocketHTTPServer) forceCloseOwnedConnections() {
+	server.mu.Lock()
+	server.closing = true
+	connections := make([]net.Conn, 0, len(server.connections))
+	for connection := range server.connections {
+		connections = append(connections, connection)
+	}
+	clear(server.connections)
+	server.mu.Unlock()
+	server.stopWebSocketUpgrades(true, true)
+	for _, connection := range connections {
+		_ = connection.Close()
+	}
+}
+
+func (server *WebSocketHTTPServer) trackConnection(connection net.Conn, state http.ConnState) {
+	if connection == nil {
+		return
+	}
+	server.mu.Lock()
+	switch state {
+	case http.StateNew:
+		if !server.closing {
+			server.connections[connection] = struct{}{}
+			server.mu.Unlock()
+			return
+		}
+	case http.StateHijacked, http.StateClosed:
+		delete(server.connections, connection)
+	}
+	closing := server.closing
+	server.mu.Unlock()
+	if closing && state == http.StateNew {
+		_ = connection.Close()
 	}
 }
 

@@ -73,7 +73,7 @@ impl fmt::Debug for WebSocketAcceptorOptions {
             .field("bind_address", &self.bind_address)
             .field("certificate_chain_der", &"[REDACTED]")
             .field("private_key_der", &"[REDACTED]")
-            .field("allowed_origins", &self.allowed_origins)
+            .field("allowed_origins", &"[REDACTED]")
             .field("max_inbound_streams", &self.max_inbound_streams)
             .field("accept_timeout", &self.accept_timeout)
             .finish()
@@ -697,5 +697,28 @@ mod tests {
         let response = decode_fsa3(FSA3_EXPIRED).expect("canonical expired FSA3");
         assert_eq!(response.status, AdmissionStatusV3::Retryable);
         assert_eq!(response.reason, "expired_artifact");
+    }
+
+    #[test]
+    fn websocket_options_debug_redacts_tls_material_and_origins() {
+        let options = WebSocketAcceptorOptions {
+            bind_address: "127.0.0.1:43210".parse().unwrap(),
+            certificate_chain_der: vec![b"certificate-sentinel".to_vec()],
+            private_key_der: b"private-key-sentinel".to_vec(),
+            allowed_origins: vec!["https://origin-sentinel.example".into()],
+            max_inbound_streams: 7,
+            accept_timeout: Duration::from_secs(11),
+        };
+        let debug = format!("{options:?}");
+        for secret in [
+            "certificate-sentinel",
+            "private-key-sentinel",
+            "origin-sentinel",
+        ] {
+            assert!(!debug.contains(secret));
+        }
+        assert!(debug.contains("127.0.0.1:43210"));
+        assert!(debug.contains("max_inbound_streams: 7"));
+        assert!(debug.contains("accept_timeout: 11s"));
     }
 }

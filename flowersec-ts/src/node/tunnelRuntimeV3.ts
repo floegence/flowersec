@@ -7,15 +7,9 @@ import {
 import { configureServerWebSocketCarrierRoleV3 } from "../v3/webSocketCarrier.js";
 import {
   AdmissionStatusV3,
-  buildFSB3RequestV3,
   encodeFSA3ResponseV3,
-  encodeFSB3RequestV3,
   type TunnelFSB3RequestV3,
 } from "../v3/artifact.js";
-import {
-  unwrapArtifactHandleV3,
-  type ArtifactHandleV3,
-} from "../v3/publicApi.js";
 import type {
   CarrierSessionV3,
   CarrierStreamV3,
@@ -26,8 +20,14 @@ import { startNodeWebSocketListenerV3, type NodeWebSocketListenerV3 } from "./we
 import { createNativeRawQuicDriverV3 } from "./nativeTransportAddon.js";
 import { startNodeRawQuicListenerV3, type NodeRawQuicListenerV3 } from "./rawQuicServerV3.js";
 import {
+  consumeTunnelAuthorizationGrantV3,
+  inspectTunnelAuthorizationGrantV3,
+  retireTunnelAuthorizationGrantV3,
   runtimeAuthorizationRequestV3FromDecoded,
+  validateTunnelAuthorizationGrantV3,
   type RuntimeAuthorizationRequestV3,
+  type TunnelAuthorizationGrantClaimsV3,
+  type TunnelAuthorizationGrantV3,
 } from "./runtimeAuthorizationV3.js";
 
 const DEFAULT_PAIR_TIMEOUT_MS = 10_000;
@@ -53,12 +53,7 @@ const BUILT_IN_ADMISSION_REASONS = [
 export type TunnelAuthorizationDecisionV3 =
   | Readonly<{
       decision: "allow";
-      artifact: ArtifactHandleV3;
-      credentialId: string;
-      leaseId: string;
-      expiresAtUnixSeconds: number;
-      expectedPeerEndpointInstanceId: string;
-      allowReplacement?: boolean;
+      grant: TunnelAuthorizationGrantV3;
     }>
   | Readonly<{ decision: "reject" | "retry"; reason: string }>;
 
@@ -133,7 +128,7 @@ type AllowedDecision = Extract<TunnelAuthorizationDecisionV3, Readonly<{ decisio
 type TunnelLeg = Readonly<{
   received: ReceivedSessionAdmissionV3;
   request: TunnelFSB3RequestV3;
-  authorization: AllowedDecision;
+  authorization: TunnelAuthorizationGrantClaimsV3;
   release(): void;
 }>;
 type Generation = {
@@ -317,8 +312,10 @@ async function processCarrier(state: TunnelRuntimeStateV3, carrier: CarrierSessi
     }
     const leg = validatedLeg(state, received, decoded.request, authorizationRequest, decision);
     if (leg === undefined) {
+      const grant = inspectTunnelAuthorizationGrantV3(decision.grant);
       releaseDecision(state, decision);
-      const expired = decision.expiresAtUnixSeconds <= Math.floor(Date.now() / 1_000);
+      const expired = grant !== undefined &&
+        grant.expiresAtUnixSeconds <= Math.floor(Date.now() / 1_000);
       await reject(
         received,
         expired ? "expired_artifact" : "invalid_credential",
@@ -346,31 +343,24 @@ function validatedLeg(
   authorization: AllowedDecision,
 ): TunnelLeg | undefined {
   const now = Math.floor(Date.now() / 1_000);
-  try {
-    const artifact = unwrapArtifactHandleV3(authorization.artifact);
-    if (artifact.path.kind !== "tunnel" ||
-      !equalBytes(
-        encodeFSB3RequestV3(buildFSB3RequestV3(artifact, request.chosen_candidate_id)),
-        received.rawFSB3,
-      ) ||
-      !ID.test(authorization.credentialId) || authorization.credentialId !== authorizationRequest.lookupKey() ||
-      !ID.test(authorization.leaseId) || !Number.isSafeInteger(authorization.expiresAtUnixSeconds) ||
-      authorization.expiresAtUnixSeconds !== artifact.session.init_expire_at_unix_s ||
-      authorization.expiresAtUnixSeconds <= now || !ID.test(authorization.expectedPeerEndpointInstanceId) ||
-      authorization.expectedPeerEndpointInstanceId !== artifact.path.expected_peer_endpoint_instance_id ||
-      authorization.expectedPeerEndpointInstanceId === request.endpoint_instance_id) return undefined;
-  } catch {
-    return undefined;
-  }
+  const candidate = validateTunnelAuthorizationGrantV3(authorization.grant, authorizationRequest);
+  if (candidate === undefined ||
+    !ID.test(candidate.credentialId) || candidate.credentialId !== authorizationRequest.lookupKey() ||
+    !ID.test(candidate.leaseId) || !Number.isSafeInteger(candidate.expiresAtUnixSeconds) ||
+    candidate.expiresAtUnixSeconds <= now || !ID.test(candidate.expectedPeerEndpointInstanceId) ||
+    candidate.expectedPeerEndpointInstanceId === request.endpoint_instance_id) return undefined;
+  const grant = consumeTunnelAuthorizationGrantV3(authorization.grant, authorizationRequest);
+  if (grant === undefined ||
+    grant !== candidate) return undefined;
   let released = false;
   return {
     received,
     request,
-    authorization,
+    authorization: grant,
     release() {
       if (released) return;
       released = true;
-      trackRelease(state, authorization.leaseId);
+      trackRelease(state, grant.leaseId);
     },
   };
 }
@@ -393,7 +383,7 @@ function registerLeg(state: TunnelRuntimeStateV3, leg: TunnelLeg): void {
   let generation = state.generations.get(key);
   if (generation !== undefined && !generation.finished &&
     (generation.active || generation.roles.has(leg.request.role))) {
-    if (leg.authorization.allowReplacement !== true) {
+    if (!leg.authorization.allowReplacement) {
       leg.release();
       track(state, reject(
         leg.received,
@@ -404,7 +394,7 @@ function registerLeg(state: TunnelRuntimeStateV3, leg: TunnelLeg): void {
       ));
       return;
     }
-    rejectGeneration(state, generation, "replaced", false);
+    replaceGeneration(state, generation);
     generation = undefined;
   }
   if (generation === undefined || generation.finished) {
@@ -528,23 +518,11 @@ async function bridgePair(
     void task.catch(() => { if (fatal) controller.abort(); }).finally(() => tasks.delete(task));
   };
   try {
-    const [controlIn, controlOut] = await runBoundedPhase(
+    const [controlIn, controlOut] = await activateTunnelControlStreamsV3(
+      first,
+      second,
       controller.signal,
       state.limits.admissionTimeoutMs,
-      "Flowersec tunnel activation timed out",
-      async (activationSignal) => {
-        const incoming = await first.acceptStream({ signal: activationSignal });
-        try {
-          return [incoming, await second.openStream({ signal: activationSignal })] as const;
-        } catch (error) {
-          incoming.abort(asError(error));
-          throw error;
-        }
-      },
-      ([incoming, outgoing]) => {
-        incoming.abort(new Error("Flowersec tunnel activation completed after timeout"));
-        outgoing.abort(new Error("Flowersec tunnel activation completed after timeout"));
-      },
     );
     start(spliceTunnelStreamsV3(
       controlIn,
@@ -565,6 +543,52 @@ async function bridgePair(
     first.abort({ code: 1, reason: "tunnel bridge closed" });
     second.abort({ code: 1, reason: "tunnel bridge closed" });
     await boundedCleanup(tasks, state.limits.cleanupTimeoutMs);
+  }
+}
+
+/** @internal */
+export async function activateTunnelControlStreamsV3(
+  first: CarrierSessionV3,
+  second: CarrierSessionV3,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<readonly [CarrierStreamV3, CarrierStreamV3]> {
+  let partialIncoming: CarrierStreamV3 | undefined;
+  try {
+    return await runBoundedPhase(
+      signal,
+      timeoutMs,
+      "Flowersec tunnel activation timed out",
+      async (activationSignal) => {
+        const incoming = await first.acceptStream({ signal: activationSignal });
+        partialIncoming = incoming;
+        if (activationSignal.aborted) {
+          incoming.abort(asError(activationSignal.reason));
+          throw asError(activationSignal.reason);
+        }
+        try {
+          const outgoing = await second.openStream({ signal: activationSignal });
+          if (activationSignal.aborted) {
+            incoming.abort(asError(activationSignal.reason));
+            outgoing.abort(asError(activationSignal.reason));
+            throw asError(activationSignal.reason);
+          }
+          partialIncoming = undefined;
+          return [incoming, outgoing] as const;
+        } catch (error) {
+          incoming.abort(asError(error));
+          partialIncoming = undefined;
+          throw error;
+        }
+      },
+      ([incoming, outgoing]) => {
+        incoming.abort(new Error("Flowersec tunnel activation completed after timeout"));
+        outgoing.abort(new Error("Flowersec tunnel activation completed after timeout"));
+      },
+    );
+  } catch (error) {
+    partialIncoming?.abort(asError(error));
+    throw error;
   }
 }
 
@@ -755,6 +779,18 @@ function rejectGeneration(
   })());
 }
 
+function replaceGeneration(state: TunnelRuntimeStateV3, generation: Generation): void {
+  if (generation.finished) return;
+  const error = new Error("Flowersec tunnel pair replaced");
+  generation.abort.abort(error);
+  for (const leg of generation.roles.values()) {
+    leg.received.stream.abort(error);
+    leg.received.carrier.abort({ code: 6, reason: "tunnel pair replaced" });
+    leg.release();
+  }
+  detachGeneration(state, generation);
+}
+
 /** @internal */
 export async function rejectTunnelPairAdmissionsV3(
   admissions: readonly ReceivedSessionAdmissionV3[],
@@ -877,8 +913,9 @@ function pruneCredentials(state: TunnelRuntimeStateV3): void {
 }
 
 function releaseDecision(state: TunnelRuntimeStateV3, decision: AllowedDecision): void {
-  if (!ID.test(decision.leaseId)) return;
-  trackRelease(state, decision.leaseId);
+  const grant = retireTunnelAuthorizationGrantV3(decision.grant);
+  if (grant === undefined || !ID.test(grant.leaseId)) return;
+  trackRelease(state, grant.leaseId);
 }
 
 function trackRelease(state: TunnelRuntimeStateV3, leaseId: string): void {
@@ -1013,15 +1050,6 @@ function aborted(signal: AbortSignal): Promise<void> {
 
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
-}
-
-function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    difference |= left[index]! ^ right[index]!;
-  }
-  return difference === 0;
 }
 
 class Slots {

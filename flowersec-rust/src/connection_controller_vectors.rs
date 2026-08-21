@@ -634,7 +634,9 @@ const fn disposition_name(disposition: RetryDisposition) -> &'static str {
 fn test_options(maximum_attempts: Option<u64>) -> ConnectionControllerOptions {
     let options = ConnectionControllerOptions::new(ConnectorOptions::new());
     match maximum_attempts {
-        Some(maximum) => options.with_maximum_attempts(NonZeroU64::new(maximum).expect("nonzero")),
+        Some(maximum) => options
+            .with_maximum_attempts(NonZeroU64::new(maximum).expect("nonzero"))
+            .expect("safe maximum attempts"),
         None => options,
     }
 }
@@ -1010,7 +1012,8 @@ async fn run_capability_filter(scenario: &ScenarioV3) {
     let controller = ConnectionController::new_with_connector(
         source.clone(),
         ConnectionControllerOptions::new(options)
-            .with_maximum_attempts(NonZeroU64::new(1).expect("nonzero")),
+            .with_maximum_attempts(NonZeroU64::new(1).expect("nonzero"))
+            .expect("safe maximum attempts"),
         Arc::new({
             let preparer = Arc::clone(&preparer);
             move |lease, options, cancellation| {

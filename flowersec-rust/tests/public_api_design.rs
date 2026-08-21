@@ -207,7 +207,8 @@ fn connection_controller_requires_a_refreshable_artifact_source() {
         ConnectionController::new(
             source,
             ConnectionControllerOptions::new(connector)
-                .with_maximum_attempts(NonZeroU64::new(2).expect("nonzero")),
+                .with_maximum_attempts(NonZeroU64::new(2).expect("nonzero"))
+                .expect("safe maximum attempts"),
         )
     }
     let _ = compile_controller;

@@ -33,6 +33,14 @@ export type {
 export {
   RuntimeAuthorizationRequestV3 as RuntimeAuthorizationRequest,
   RuntimeAuthorizationRequestV3,
+  TunnelAuthorizationGrantV3 as TunnelAuthorizationGrant,
+  TunnelAuthorizationGrantV3,
+  verifyTunnelAuthorizationGrantV3 as verifyTunnelAuthorizationGrant,
+  verifyTunnelAuthorizationGrantV3,
+} from "./runtimeAuthorizationV3.js";
+export type {
+  TunnelAuthorizationGrantOptionsV3 as TunnelAuthorizationGrantOptions,
+  TunnelAuthorizationGrantOptionsV3,
 } from "./runtimeAuthorizationV3.js";
 export * from "../facade.js";
 export * as v2 from "./v2.js";

@@ -156,9 +156,11 @@ Node subpath additionally exposes reusable `RPCHandlers`, direct-only
 `AcceptorOptions.authorize(...)` success returns the opaque `Artifact` created
 by `parseArtifact(...)`; neither the authorization nor handler-resolution
 callback receives raw FSB3, credentials, URLs, candidates, PSK, or pin state.
-The same opaque `Artifact` is required in a successful tunnel authorization;
-the runtime reprojects and compares the complete canonical FSB3 before it
-accepts the leg, without exposing the artifact to the relay. Direct admission
+Node tunnel authorization uses `verifyTunnelAuthorizationGrant(...)` to verify
+the complete observed FSB3 against the trusted opaque `Artifact`, then returns
+only a request-bound, secret-free `TunnelAuthorizationGrant`. The relay
+consumes that grant and never unwraps or retains the artifact, Session contract,
+or E2EE key material. Direct admission
 uses a configurable `admissionTimeoutMs` with a ten-second default across FSB3
 receive, authorization, handler resolution, FSA3, and Session establishment.
 `AcceptorOptions.resolveHandlers(...)` resolves and freezes the v3 registry

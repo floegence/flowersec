@@ -349,6 +349,11 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 			CheckCommand: []string{"node", "testdata/transport_v3/generate_handshake_vectors.mjs", "--check"},
 			Outputs: []string{"testdata/transport_v3/handshake_vectors.json"},
 		},
+		{
+			Producer:    "flowersec-go/internal/cmd/issuer-admission-vectors/main.go",
+			CheckCommand: []string{"go", "-C", "flowersec-go", "run", "./internal/cmd/issuer-admission-vectors", "--check"},
+			Outputs:      []string{"testdata/transport_v3/go_issuer_admission_vectors.json"},
+		},
 	}
 	if !slices.EqualFunc(registry.FixtureGeneration, wantFixtureGeneration, func(left, right transportV3FixtureGeneration) bool {
 		return left.Producer == right.Producer && slices.Equal(left.CheckCommand, right.CheckCommand) && slices.Equal(left.Outputs, right.Outputs)
@@ -367,6 +372,17 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 				return fmt.Errorf("%s fixture output %s has duplicate owners", transportV3ContractPath, output)
 			}
 			generatedOutputs[output] = struct{}{}
+		}
+	}
+	for _, fixture := range registry.WireFixtures {
+		owners := 0
+		for _, generation := range registry.FixtureGeneration {
+			if slices.Contains(generation.Outputs, fixture.Path) {
+				owners++
+			}
+		}
+		if owners != 1 {
+			return fmt.Errorf("%s fixture %s must have exactly one generator owner", transportV3ContractPath, fixture.Path)
 		}
 	}
 	if !slices.EqualFunc(

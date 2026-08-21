@@ -993,10 +993,10 @@ mod tests {
         path::Path,
         process::{Child, Command, Stdio},
         sync::{
-            Arc,
+            Arc, Mutex as StdMutex,
             atomic::{AtomicUsize, Ordering},
         },
-        time::{Duration, SystemTime},
+        time::Duration,
     };
 
     use async_trait::async_trait;
@@ -2265,6 +2265,7 @@ mod tests {
     async fn production_wss_tunnel_runtime_relays_a_complete_v3_session() {
         let (_root, identity) = private_ca_identity();
         let pin = URL_SAFE_NO_PAD.encode(Sha256::digest(&identity.chain[0]));
+        let authorizer = Arc::new(TestTunnelAuthorizer::default());
         let runtime = Arc::new(
             TunnelRuntime::bind_websocket(
                 TunnelRuntimeOptions {
@@ -2278,7 +2279,7 @@ mod tests {
                     max_pending_legs: 8,
                     max_active_pairs: 4,
                 },
-                Arc::new(TestTunnelAuthorizer),
+                authorizer.clone(),
             )
             .unwrap(),
         );
@@ -2299,6 +2300,11 @@ mod tests {
             "server-token",
             &pin,
         );
+        authorizer
+            .artifacts
+            .lock()
+            .unwrap()
+            .extend([client_artifact.clone(), server_artifact.clone()]);
         let runtime_cancellation = CancellationToken::new();
         let runtime_task = tokio::spawn({
             let runtime = runtime.clone();
@@ -2364,7 +2370,10 @@ mod tests {
         runtime_task.await.unwrap().unwrap();
     }
 
-    struct TestTunnelAuthorizer;
+    #[derive(Default)]
+    struct TestTunnelAuthorizer {
+        artifacts: StdMutex<Vec<ArtifactV3>>,
+    }
 
     struct InvalidProofPeer {
         child: Child,
@@ -2417,19 +2426,20 @@ mod tests {
             request: crate::RuntimeAuthorizationRequest,
             _cancellation: CancellationToken,
         ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
-            let client_lookup = URL_SAFE_NO_PAD.encode(Sha256::digest(b"client-token"));
-            let expected_peer = if request.lookup_key() == client_lookup {
-                "endpoint-server"
-            } else {
-                "endpoint-client"
-            };
-            TunnelAuthorizationResponse::allow(
-                &request,
-                request.lookup_key(),
-                SystemTime::now() + Duration::from_secs(600),
-                expected_peer,
-                false,
-            )
+            self.artifacts
+                .lock()
+                .unwrap()
+                .iter()
+                .find_map(|artifact| {
+                    TunnelAuthorizationResponse::allow(
+                        &request,
+                        artifact,
+                        request.lookup_key(),
+                        false,
+                    )
+                    .ok()
+                })
+                .ok_or(TunnelAuthorizationError)
         }
     }
 

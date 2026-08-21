@@ -42,10 +42,11 @@ assert.deepEqual(registry.fixture_generation.map(({ producer }) => producer), [
   "testdata/transport_v3/generate_contract_vectors.mjs",
   "testdata/transport_v3/generate_crypto_vectors.mjs",
   "testdata/transport_v3/generate_handshake_vectors.mjs",
+  "flowersec-go/internal/cmd/issuer-admission-vectors/main.go",
 ]);
 const generatedOutputs = new Set();
 for (const fixtureGeneration of registry.fixture_generation) {
-  assert.deepEqual(fixtureGeneration.check_command, ["node", fixtureGeneration.producer, "--check"]);
+  assert.deepEqual(fixtureGeneration.check_command.at(-1), "--check");
   for (const output of fixtureGeneration.outputs) {
     assert.equal(generatedOutputs.has(output), false, `fixture output has duplicate owners: ${output}`);
     generatedOutputs.add(output);
@@ -290,6 +291,10 @@ for (const fixture of registry.wire_fixtures) {
 for (const output of generatedOutputs) {
   assert(registry.wire_fixtures.some(({ path: fixturePath }) => fixturePath === output),
     `generated output is not registered as a wire fixture: ${output}`);
+}
+for (const fixture of registry.wire_fixtures) {
+  const owners = registry.fixture_generation.filter((generation) => generation.outputs.includes(fixture.path));
+  assert.equal(owners.length, 1, `${fixture.path} must have exactly one fixture generator owner`);
 }
 assert.deepEqual(new Set(registry.wire_fixtures.map((fixture) => fixture.id)), new Set([
   "artifact_admission",

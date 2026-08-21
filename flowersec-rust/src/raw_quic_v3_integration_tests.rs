@@ -3,7 +3,7 @@ use std::{
     net::{Ipv4Addr, SocketAddr},
     process::{Child, Command, Stdio},
     sync::{
-        Arc,
+        Arc, Mutex as StdMutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, SystemTime},
@@ -67,6 +67,7 @@ async fn production_raw_quic_tunnel_runtime_relays_a_complete_v3_session() {
     let certificate = identity.certificate;
     let pin =
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(&certificate));
+    let authorizer = Arc::new(TestTunnelAuthorizer::default());
     let runtime = Arc::new(
         TunnelRuntime::bind_raw_quic(
             TunnelRuntimeOptions {
@@ -80,7 +81,7 @@ async fn production_raw_quic_tunnel_runtime_relays_a_complete_v3_session() {
                 max_pending_legs: 8,
                 max_active_pairs: 4,
             },
-            Arc::new(TestTunnelAuthorizer),
+            authorizer.clone(),
         )
         .unwrap(),
     );
@@ -101,6 +102,11 @@ async fn production_raw_quic_tunnel_runtime_relays_a_complete_v3_session() {
         "server-token",
         &pin,
     );
+    authorizer
+        .artifacts
+        .lock()
+        .unwrap()
+        .extend([client_artifact.clone(), server_artifact.clone()]);
     let runtime_cancellation = tokio_util::sync::CancellationToken::new();
     let runtime_task = tokio::spawn({
         let runtime = runtime.clone();
@@ -246,7 +252,10 @@ async fn production_raw_quic_acceptor_establishes_a_complete_v3_session() {
     let _ = tokio::join!(client.close(), server.close());
 }
 
-struct TestTunnelAuthorizer;
+#[derive(Default)]
+struct TestTunnelAuthorizer {
+    artifacts: StdMutex<Vec<ArtifactV3>>,
+}
 
 #[async_trait]
 impl TunnelAuthorizer for TestTunnelAuthorizer {
@@ -255,20 +264,15 @@ impl TunnelAuthorizer for TestTunnelAuthorizer {
         request: RuntimeAuthorizationRequest,
         _cancellation: CancellationToken,
     ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
-        let client_lookup = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(sha2::Sha256::digest(b"client-token"));
-        let expected_peer = if request.lookup_key() == client_lookup {
-            "endpoint-server"
-        } else {
-            "endpoint-client"
-        };
-        TunnelAuthorizationResponse::allow(
-            &request,
-            request.lookup_key(),
-            SystemTime::now() + Duration::from_secs(600),
-            expected_peer,
-            false,
-        )
+        self.artifacts
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|artifact| {
+                TunnelAuthorizationResponse::allow(&request, artifact, request.lookup_key(), false)
+                    .ok()
+            })
+            .ok_or(TunnelAuthorizationError)
     }
 }
 

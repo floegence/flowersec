@@ -77,6 +77,8 @@ describe("transport v3 public entry surface", () => {
     }
     expect(node.RuntimeAuthorizationRequest).toBe(node.RuntimeAuthorizationRequestV3);
     expect(node.RuntimeAuthorizationRequest).toBeTypeOf("function");
+    expect(node.TunnelAuthorizationGrant).toBe(node.TunnelAuthorizationGrantV3);
+    expect(node.verifyTunnelAuthorizationGrant).toBe(node.verifyTunnelAuthorizationGrantV3);
     expect(node.v2.Issuer).toBeTypeOf("function");
     expect(node.v2.authorizeRuntime).toBeTypeOf("function");
     expect(node.v2.createAcceptor).toBeTypeOf("function");

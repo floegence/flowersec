@@ -24,13 +24,14 @@ use flowersec_native_transport::PathProfile as NativePathProfile;
 use futures_util::future::join_all;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq as _;
 use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    artifact_v3::{CarrierWireV3, decode_tunnel_fsb3},
+    artifact_v3::{ArtifactV3, CarrierWireV3, decode_tunnel_fsb3},
     raw_quic_v3::RawQuicListenerV3,
     transport_v3::{
         CarrierKind, CarrierSessionV3, CarrierStreamV3, CarrierUnreliableMessageErrorV3,
@@ -80,6 +81,8 @@ pub struct TunnelAuthorizationError;
 #[derive(Clone)]
 pub struct RuntimeAuthorizationRequest {
     encoded: Arc<[u8]>,
+    raw_fsb3: Arc<[u8]>,
+    binding: [u8; 32],
     lookup_key: Arc<str>,
     carrier: &'static str,
     remote_address: Arc<str>,
@@ -112,12 +115,55 @@ impl RuntimeAuthorizationRequest {
     pub fn json(&self) -> Vec<u8> {
         self.encoded.to_vec()
     }
+
+    fn verify_artifact(
+        &self,
+        artifact: &ArtifactV3,
+    ) -> Result<VerifiedArtifactClaims, TunnelAuthorizationError> {
+        let expected = artifact
+            .encode_fsb3(&self.claims.chosen_candidate_id)
+            .map_err(|_| TunnelAuthorizationError)?;
+        if expected.raw.len() != self.raw_fsb3.len()
+            || expected.raw.ct_eq(self.raw_fsb3.as_ref()).unwrap_u8() != 1
+        {
+            return Err(TunnelAuthorizationError);
+        }
+        let expires_at_unix_seconds = artifact.expires_at_unix_seconds();
+        if expires_at_unix_seconds <= unix_seconds() {
+            return Err(TunnelAuthorizationError);
+        }
+        let expected_peer = artifact
+            .tunnel_expected_peer_endpoint_instance_id()
+            .ok_or(TunnelAuthorizationError)?
+            .to_owned();
+        Ok(VerifiedArtifactClaims {
+            request_binding: self.binding,
+            expected_peer,
+            expires_at: UNIX_EPOCH + Duration::from_secs(expires_at_unix_seconds),
+        })
+    }
+}
+
+struct VerifiedArtifactClaims {
+    request_binding: [u8; 32],
+    expected_peer: String,
+    expires_at: SystemTime,
+}
+
+#[derive(Clone)]
+struct VerifiedGrant {
+    request_binding: [u8; 32],
+    lease_id: String,
+    expected_peer: String,
+    expires_at: SystemTime,
+    allow_replacement: bool,
 }
 
 /// Opaque, secret-free deployment response for one tunnel leg.
 #[derive(Clone)]
 pub struct TunnelAuthorizationResponse {
     encoded: Arc<[u8]>,
+    verified_grant: Option<Arc<VerifiedGrant>>,
 }
 
 impl fmt::Debug for TunnelAuthorizationResponse {
@@ -137,28 +183,28 @@ impl TunnelAuthorizationResponse {
         validate_authorization_shape(&value)?;
         Ok(Self {
             encoded: encoded.into(),
+            verified_grant: None,
         })
     }
 
-    /// Builds a secret-free allow response after application-owned verification.
+    /// Builds a secret-free allow response after exact application-owned
+    /// verification against the stored Artifact.
     pub fn allow(
         request: &RuntimeAuthorizationRequest,
+        artifact: &ArtifactV3,
         lease_id: &str,
-        expires_at: SystemTime,
-        expected_peer_endpoint_instance_id: &str,
         allow_replacement: bool,
     ) -> Result<Self, TunnelAuthorizationError> {
-        if !valid_id(lease_id, 128)
-            || !valid_id(expected_peer_endpoint_instance_id, 128)
-            || expected_peer_endpoint_instance_id == request.claims.endpoint
-        {
+        if !valid_id(lease_id, 128) {
             return Err(TunnelAuthorizationError);
         }
-        let seconds = expires_at
+        let verified = request.verify_artifact(artifact)?;
+        let seconds = verified
+            .expires_at
             .duration_since(UNIX_EPOCH)
             .map_err(|_| TunnelAuthorizationError)?
             .as_secs();
-        if seconds <= unix_seconds() || seconds > i64::MAX as u64 {
+        if seconds > i64::MAX as u64 {
             return Err(TunnelAuthorizationError);
         }
         let expires_at = time::OffsetDateTime::from_unix_timestamp(seconds as i64)
@@ -169,12 +215,82 @@ impl TunnelAuthorizationResponse {
             "allow_replacement": allow_replacement,
             "credential_id": request.lookup_key(),
             "decision": "allow",
-            "expected_peer_endpoint_instance_id": expected_peer_endpoint_instance_id,
+            "expected_peer_endpoint_instance_id": verified.expected_peer,
             "expires_at": expires_at,
             "lease_id": lease_id,
         }))
         .map_err(|_| TunnelAuthorizationError)?;
-        Self::parse(encoded)
+        validate_authorization_shape(
+            &serde_json::from_slice(&encoded).map_err(|_| TunnelAuthorizationError)?,
+        )?;
+        Ok(Self {
+            encoded: encoded.into(),
+            verified_grant: Some(Arc::new(VerifiedGrant {
+                request_binding: verified.request_binding,
+                lease_id: lease_id.into(),
+                expected_peer: verified.expected_peer,
+                expires_at: verified.expires_at,
+                allow_replacement,
+            })),
+        })
+    }
+
+    /// Binds an allow response returned by an external authorization service
+    /// to the locally stored Artifact and the exact observed FSB3 request.
+    /// Parsed allow responses remain unusable until this verification succeeds.
+    pub fn bind_to_artifact(
+        mut self,
+        request: &RuntimeAuthorizationRequest,
+        artifact: &ArtifactV3,
+    ) -> Result<Self, TunnelAuthorizationError> {
+        let verified = request.verify_artifact(artifact)?;
+        let value: Value =
+            serde_json::from_slice(&self.encoded).map_err(|_| TunnelAuthorizationError)?;
+        validate_authorization_shape(&value)?;
+        let object = value.as_object().ok_or(TunnelAuthorizationError)?;
+        if object.get("decision").and_then(Value::as_str) != Some("allow")
+            || object.get("credential_id").and_then(Value::as_str) != Some(request.lookup_key())
+            || object
+                .get("expected_peer_endpoint_instance_id")
+                .and_then(Value::as_str)
+                != Some(verified.expected_peer.as_str())
+        {
+            return Err(TunnelAuthorizationError);
+        }
+        let lease_id = object
+            .get("lease_id")
+            .and_then(Value::as_str)
+            .ok_or(TunnelAuthorizationError)?;
+        let allow_replacement = object
+            .get("allow_replacement")
+            .and_then(Value::as_bool)
+            .ok_or(TunnelAuthorizationError)?;
+        let parsed_expiry = time::OffsetDateTime::parse(
+            object
+                .get("expires_at")
+                .and_then(Value::as_str)
+                .ok_or(TunnelAuthorizationError)?,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .map_err(|_| TunnelAuthorizationError)?;
+        let verified_seconds = verified
+            .expires_at
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| TunnelAuthorizationError)?
+            .as_secs();
+        if parsed_expiry.unix_timestamp() < 0
+            || parsed_expiry.unix_timestamp() as u64 != verified_seconds
+        {
+            return Err(TunnelAuthorizationError);
+        }
+        self.verified_grant = Some(Arc::new(VerifiedGrant {
+            request_binding: verified.request_binding,
+            lease_id: lease_id.into(),
+            expected_peer: verified.expected_peer,
+            expires_at: verified.expires_at,
+            allow_replacement,
+        }));
+        Ok(self)
     }
 
     /// Builds a bounded terminal or retryable rejection response.
@@ -248,8 +364,8 @@ impl fmt::Debug for TunnelRuntimeOptions {
             .field("bind_address", &self.bind_address)
             .field("certificate_chain_der", &"[REDACTED]")
             .field("private_key_der", &"[REDACTED]")
-            .field("allowed_origins", &self.allowed_origins)
-            .field("admission_reasons", &self.admission_reasons)
+            .field("allowed_origins", &"[REDACTED]")
+            .field("admission_reasons", &"[REDACTED]")
             .field("max_inbound_streams", &self.max_inbound_streams)
             .field("pair_timeout", &self.pair_timeout)
             .field("max_pending_legs", &self.max_pending_legs)
@@ -717,8 +833,8 @@ impl TaskRuntime {
                 let cleanup_deadline = Instant::now() + self.admission_options.admission_timeout;
                 match tokio::time::timeout_at(cleanup_deadline, &mut task).await {
                     Ok(Ok(Ok(response))) => {
-                        if let Some(lease_id) = response_lease_id(&response.encoded) {
-                            release_bounded(self.authorizer.as_ref(), &lease_id, cleanup_deadline)
+                        if let Some(lease_id) = response_lease_id(&response) {
+                            release_bounded(self.authorizer.as_ref(), lease_id, cleanup_deadline)
                                 .await;
                         }
                     }
@@ -805,15 +921,15 @@ impl TaskRuntime {
         // bridging are tracked by the pending/active registries instead.
         drop(permit);
         let decision = match parse_authorization_decision(
-            &response.encoded,
-            &lookup,
+            &response,
+            &request,
             &self.options.admission_reasons,
         ) {
             Ok(decision) => decision,
             Err(error) => {
                 self.state.credentials.lock().await.remove(&lookup);
-                if let Some(lease_id) = response_lease_id(&response.encoded) {
-                    release_bounded(self.authorizer.as_ref(), &lease_id, admission_deadline).await;
+                if let Some(lease_id) = response_lease_id(&response) {
+                    release_bounded(self.authorizer.as_ref(), lease_id, admission_deadline).await;
                 }
                 let _ = send_fsa3(
                     admission.as_ref(),
@@ -835,8 +951,8 @@ impl TaskRuntime {
                 // still carries the authorizer's lease and must be released
                 // before retiring the admission.
                 if reason == "expired_artifact" {
-                    if let Some(lease_id) = response_lease_id(&response.encoded) {
-                        release_bounded(self.authorizer.as_ref(), &lease_id, admission_deadline)
+                    if let Some(lease_id) = response_lease_id(&response) {
+                        release_bounded(self.authorizer.as_ref(), lease_id, admission_deadline)
                             .await;
                     }
                 }
@@ -1313,6 +1429,7 @@ struct FsbClaims {
     profile: String,
     role: u8,
     endpoint: String,
+    chosen_candidate_id: String,
     channel: String,
     group: String,
     audience: String,
@@ -1332,6 +1449,7 @@ fn parse_authorization_request(
         profile: "flowersec/3".into(),
         role: decoded.role,
         endpoint: decoded.endpoint_instance_id,
+        chosen_candidate_id: decoded.chosen_candidate_id,
         channel: decoded.channel_id,
         group: decoded.rendezvous_group_id,
         audience: decoded.listener_audience,
@@ -1348,6 +1466,11 @@ fn parse_authorization_request(
     .map_err(|_| TunnelRuntimeError::InvalidWire)?;
     Ok(RuntimeAuthorizationRequest {
         encoded: encoded.into(),
+        raw_fsb3: raw.into(),
+        binding: Sha256::digest(
+            [b"flowersec-v3-verified-tunnel-request\0".as_slice(), raw].concat(),
+        )
+        .into(),
         lookup_key: URL_SAFE_NO_PAD
             .encode(Sha256::digest(credential.as_bytes()))
             .into(),
@@ -1435,11 +1558,12 @@ fn validate_authorization_shape(value: &Value) -> Result<(), TunnelAuthorization
 }
 
 fn parse_authorization_decision(
-    encoded: &[u8],
-    lookup: &str,
+    response: &TunnelAuthorizationResponse,
+    request: &RuntimeAuthorizationRequest,
     admission_reasons: &[String],
 ) -> Result<AuthorizationDecision, TunnelRuntimeError> {
-    let value: Value = serde_json::from_slice(encoded).map_err(|_| TunnelRuntimeError::Rejected)?;
+    let value: Value =
+        serde_json::from_slice(&response.encoded).map_err(|_| TunnelRuntimeError::Rejected)?;
     validate_authorization_shape(&value).map_err(|_| TunnelRuntimeError::Rejected)?;
     let object = value.as_object().expect("validated object");
     match object["decision"].as_str().expect("validated decision") {
@@ -1460,7 +1584,17 @@ fn parse_authorization_decision(
             })
         }
         "allow" => {
-            if object["credential_id"].as_str() != Some(lookup) {
+            let grant = response
+                .verified_grant
+                .as_deref()
+                .ok_or(TunnelRuntimeError::Rejected)?;
+            if object["credential_id"].as_str() != Some(request.lookup_key())
+                || grant.request_binding.ct_eq(&request.binding).unwrap_u8() != 1
+                || object["lease_id"].as_str() != Some(grant.lease_id.as_str())
+                || object["expected_peer_endpoint_instance_id"].as_str()
+                    != Some(grant.expected_peer.as_str())
+                || object["allow_replacement"].as_bool() != Some(grant.allow_replacement)
+            {
                 return Err(TunnelRuntimeError::Rejected);
             }
             let parsed = time::OffsetDateTime::parse(
@@ -1469,6 +1603,14 @@ fn parse_authorization_decision(
             )
             .map_err(|_| TunnelRuntimeError::Rejected)?;
             let seconds = parsed.unix_timestamp();
+            let grant_seconds = grant
+                .expires_at
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| TunnelRuntimeError::Rejected)?
+                .as_secs();
+            if seconds < 0 || seconds as u64 != grant_seconds {
+                return Err(TunnelRuntimeError::Rejected);
+            }
             if seconds <= unix_seconds() as i64 {
                 return Ok(AuthorizationDecision::Deny {
                     status: FSA3_RETRY,
@@ -1476,29 +1618,21 @@ fn parse_authorization_decision(
                 });
             }
             Ok(AuthorizationDecision::Allow(AllowedClaims {
-                lease_id: object["lease_id"].as_str().expect("validated lease").into(),
-                expected_peer: object["expected_peer_endpoint_instance_id"]
-                    .as_str()
-                    .expect("validated peer")
-                    .into(),
-                expires_at: UNIX_EPOCH + Duration::from_secs(seconds as u64),
-                allow_replacement: object["allow_replacement"]
-                    .as_bool()
-                    .expect("validated replacement flag"),
+                lease_id: grant.lease_id.clone(),
+                expected_peer: grant.expected_peer.clone(),
+                expires_at: grant.expires_at,
+                allow_replacement: grant.allow_replacement,
             }))
         }
         _ => Err(TunnelRuntimeError::Rejected),
     }
 }
 
-fn response_lease_id(encoded: &[u8]) -> Option<String> {
-    let value: Value = serde_json::from_slice(encoded).ok()?;
-    let object = value.as_object()?;
-    (object.get("decision").and_then(Value::as_str) == Some("allow"))
-        .then(|| object.get("lease_id").and_then(Value::as_str))
-        .flatten()
-        .filter(|lease_id| valid_id(lease_id, 128))
-        .map(str::to_owned)
+fn response_lease_id(response: &TunnelAuthorizationResponse) -> Option<&str> {
+    response
+        .verified_grant
+        .as_deref()
+        .map(|grant| grant.lease_id.as_str())
 }
 
 async fn read_admission(stream: &dyn CarrierStreamV3) -> Result<Vec<u8>, TunnelRuntimeError> {
@@ -1614,12 +1748,13 @@ async fn bridge_control_pair_with_grace(
 ) {
     let (first_eof_tx, first_eof_rx) = oneshot::channel();
     let (second_eof_tx, second_eof_rx) = oneshot::channel();
-    let mut first_to_second = tokio::spawn(copy_control_stream(
+    let mut tasks = JoinSet::new();
+    tasks.spawn(copy_control_stream(
         first.clone(),
         second.clone(),
         first_eof_tx,
     ));
-    let mut second_to_first = tokio::spawn(copy_control_stream(second, first, second_eof_tx));
+    tasks.spawn(copy_control_stream(second, first, second_eof_tx));
     let graceful_half_close = tokio::select! {
         biased;
         result = first_eof_rx => result.is_ok(),
@@ -1627,19 +1762,19 @@ async fn bridge_control_pair_with_grace(
         _ = closed.cancelled() => false,
     };
     if graceful_half_close {
-        let _ = tokio::time::timeout(half_close_grace, async {
-            let _ = tokio::join!(&mut first_to_second, &mut second_to_first);
+        let completed = tokio::time::timeout(half_close_grace, async {
+            while tasks.join_next().await.is_some() {}
         })
-        .await;
+        .await
+        .is_ok();
+        if completed {
+            closed.cancel();
+            return;
+        }
     }
     closed.cancel();
-    if !first_to_second.is_finished() {
-        first_to_second.abort();
-    }
-    if !second_to_first.is_finished() {
-        second_to_first.abort();
-    }
-    let _ = tokio::join!(first_to_second, second_to_first);
+    tasks.abort_all();
+    while tasks.join_next().await.is_some() {}
 }
 
 async fn copy_control_stream(
@@ -2262,7 +2397,7 @@ mod tests {
         }
     }
 
-    fn vector_tunnel_admission(role: u8, endpoint: &str, token: &str) -> Vec<u8> {
+    fn vector_tunnel_artifact(role: u8, endpoint: &str, token: &str) -> ArtifactV3 {
         let vectors: Value = serde_json::from_str(include_str!(
             "../../testdata/transport_v3/artifact_vectors.json"
         ))
@@ -2273,21 +2408,57 @@ mod tests {
             .iter()
             .find(|value| value["id"] == "tunnel-mixed-security")
             .unwrap();
-        let hex = vector["winners"][0]["fsb3_hex"].as_str().unwrap();
-        let mut raw = hex
-            .as_bytes()
-            .chunks_exact(2)
-            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
-            .collect::<Vec<_>>();
-        let payload = String::from_utf8(raw[12..].to_vec()).unwrap();
-        let payload = payload
-            .replace("endpoint-client", endpoint)
-            .replace("attach-token-v3", token)
-            .replace("\"role\":1", &format!("\"role\":{role}"));
-        raw[8..12].copy_from_slice(&(payload.len() as u32).to_be_bytes());
-        raw.truncate(12);
-        raw.extend_from_slice(payload.as_bytes());
-        raw
+        let mut value: Value = serde_json::from_str(vector["artifact_json"].as_str().unwrap())
+            .expect("vector artifact JSON");
+        value["path"]["role"] = Value::from(role);
+        value["path"]["local_endpoint_instance_id"] = Value::String(endpoint.into());
+        value["path"]["expected_peer_endpoint_instance_id"] = Value::String(
+            if role == 1 {
+                "endpoint-server"
+            } else {
+                "endpoint-client"
+            }
+            .into(),
+        );
+        value["path"]["token"] = Value::String(token.into());
+        ArtifactV3::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap()
+    }
+
+    fn vector_tunnel_admission(role: u8, endpoint: &str, token: &str) -> Vec<u8> {
+        vector_tunnel_artifact(role, endpoint, token)
+            .encode_fsb3("q-pin")
+            .unwrap()
+            .raw
+    }
+
+    fn vector_authorization_request() -> RuntimeAuthorizationRequest {
+        parse_authorization_request(
+            &vector_tunnel_admission(1, "endpoint-client", "attach-token-v3"),
+            CarrierKind::RawQuic,
+            "127.0.0.1:12345".parse().unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn recompute_vector_session_contract(value: &mut Value) {
+        let session = &value["session"];
+        let projection = json!({
+            "allowed_suites": session["allowed_suites"],
+            "channel_id": session["channel_id"],
+            "default_suite": session["default_suite"],
+            "establish_timeout_seconds": session["establish_timeout_seconds"],
+            "idle_timeout_seconds": session["idle_timeout_seconds"],
+            "max_inbound_streams": session["max_inbound_streams"],
+            "profile": "flowersec/3",
+            "rekey_completion_timeout_seconds": session["rekey_completion_timeout_seconds"],
+            "rekey_prepare_timeout_seconds": session["rekey_prepare_timeout_seconds"],
+            "selected_features": session["selected_features"],
+        });
+        value["session"]["contract_hash_b64u"] =
+            Value::String(URL_SAFE_NO_PAD.encode(crate::artifact_v3::hash_lp(
+                crate::artifact_v3::SESSION_CONTRACT_LABEL_V3,
+                &crate::artifact_v3::jcs_value(&projection).unwrap(),
+            )));
     }
 
     fn accepted_with_admission(raw: Vec<u8>) -> AcceptedCarrier {
@@ -2376,6 +2547,7 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct LeaseRecordingAuthorizer {
+        artifacts: StdMutex<Vec<ArtifactV3>>,
         releases: StdMutex<Vec<String>>,
     }
 
@@ -2386,17 +2558,15 @@ mod tests {
             request: RuntimeAuthorizationRequest,
             _cancellation: CancellationToken,
         ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
-            TunnelAuthorizationResponse::allow(
-                &request,
-                "lease-allow",
-                SystemTime::now() + Duration::from_secs(30),
-                if request.claims.role == 1 {
-                    "endpoint-server"
-                } else {
-                    "endpoint-client"
-                },
-                false,
-            )
+            self.artifacts
+                .lock()
+                .unwrap()
+                .iter()
+                .find_map(|artifact| {
+                    TunnelAuthorizationResponse::allow(&request, artifact, "lease-allow", false)
+                        .ok()
+                })
+                .ok_or(TunnelAuthorizationError)
         }
 
         async fn release(&self, lease_id: &str) {
@@ -2407,6 +2577,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct LateAllowAuthorizer {
         cancellation_observed: AtomicBool,
+        artifacts: StdMutex<Vec<ArtifactV3>>,
         releases: StdMutex<Vec<String>>,
     }
 
@@ -2419,17 +2590,14 @@ mod tests {
         ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
             cancellation.cancelled().await;
             self.cancellation_observed.store(true, Ordering::SeqCst);
-            TunnelAuthorizationResponse::allow(
-                &request,
-                "lease-late",
-                SystemTime::now() + Duration::from_secs(30),
-                if request.claims.role == 1 {
-                    "endpoint-server"
-                } else {
-                    "endpoint-client"
-                },
-                false,
-            )
+            self.artifacts
+                .lock()
+                .unwrap()
+                .iter()
+                .find_map(|artifact| {
+                    TunnelAuthorizationResponse::allow(&request, artifact, "lease-late", false).ok()
+                })
+                .ok_or(TunnelAuthorizationError)
         }
 
         async fn release(&self, lease_id: &str) {
@@ -2624,6 +2792,7 @@ mod tests {
                 profile: "flowersec/3".into(),
                 role,
                 endpoint: endpoint.into(),
+                chosen_candidate_id: "candidate".into(),
                 channel: "channel".into(),
                 group: "group".into(),
                 audience: "audience".into(),
@@ -2668,7 +2837,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn malformed_authorization_releases_the_returned_lease() {
+    async fn malformed_authorization_cannot_release_an_unverified_lease() {
         let authorizer = Arc::new(MalformedAuthorizer::default());
         let runtime = test_runtime(authorizer.clone(), Duration::from_secs(1), 1);
         let permit = runtime
@@ -2711,14 +2880,11 @@ mod tests {
             crate::artifact_v3::AdmissionStatusV3::Reject
         );
         assert_eq!(retry_response.reason, "invalid_credential");
-        assert_eq!(
-            authorizer.releases.lock().unwrap().as_slice(),
-            ["lease-malformed", "lease-malformed"]
-        );
+        assert!(authorizer.releases.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn expired_allow_releases_the_returned_lease() {
+    async fn parsed_expired_allow_cannot_release_an_unverified_lease() {
         let authorizer = Arc::new(ExpiredAuthorizer::default());
         let runtime = test_runtime(authorizer.clone(), Duration::from_secs(1), 1);
         let permit = runtime
@@ -2737,18 +2903,24 @@ mod tests {
         let response = crate::artifact_v3::decode_fsa3(&writes.lock().unwrap()).unwrap();
         assert_eq!(
             response.status,
-            crate::artifact_v3::AdmissionStatusV3::Retryable
+            crate::artifact_v3::AdmissionStatusV3::Reject
         );
-        assert_eq!(response.reason, "expired_artifact");
-        assert_eq!(
-            authorizer.releases.lock().unwrap().as_slice(),
-            ["lease-expired"]
-        );
+        assert_eq!(response.reason, "invalid_credential");
+        assert!(authorizer.releases.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn authorization_timeout_cancels_and_releases_a_late_allow() {
         let authorizer = Arc::new(LateAllowAuthorizer::default());
+        authorizer
+            .artifacts
+            .lock()
+            .unwrap()
+            .push(vector_tunnel_artifact(
+                1,
+                "endpoint-client",
+                "attach-token-v3",
+            ));
         let mut runtime = test_runtime(authorizer.clone(), Duration::from_secs(1), 1);
         runtime.admission_options.admission_timeout = Duration::from_millis(10);
         let permit = runtime
@@ -2779,6 +2951,15 @@ mod tests {
     #[tokio::test]
     async fn admission_permit_is_available_during_pending_pair_wait() {
         let authorizer = Arc::new(LeaseRecordingAuthorizer::default());
+        authorizer
+            .artifacts
+            .lock()
+            .unwrap()
+            .push(vector_tunnel_artifact(
+                1,
+                "endpoint-client",
+                "attach-token-v3",
+            ));
         let runtime = Arc::new(test_runtime(authorizer.clone(), Duration::from_secs(1), 1));
         let permit = runtime
             .state
@@ -3177,6 +3358,7 @@ mod tests {
             profile: "flowersec/3".into(),
             role: 1,
             endpoint: "endpoint-first".into(),
+            chosen_candidate_id: "candidate".into(),
             channel: "channel".into(),
             group: "group".into(),
             audience: "audience".into(),
@@ -3607,45 +3789,159 @@ mod tests {
 
     #[test]
     fn built_in_authorizer_denials_use_the_runtime_registry() {
+        let request = vector_authorization_request();
         let response = TunnelAuthorizationResponse::reject("capacity", true).unwrap();
         assert!(matches!(
-            parse_authorization_decision(&response.encoded, "unused", &[]),
+            parse_authorization_decision(&response, &request, &[]),
             Ok(AuthorizationDecision::Deny {
                 status: FSA3_RETRY,
                 reason
             }) if reason == "capacity"
         ));
-        assert_eq!(
-            response_lease_id(br#"{"decision":"allow","lease_id":"lease-1"}"#),
-            Some("lease-1".into())
-        );
         assert!(TunnelAuthorizationResponse::reject("expired_artifact", false).is_err());
         assert!(TunnelAuthorizationResponse::reject("expired_artifact", true).is_ok());
+        let terminal_expiry = TunnelAuthorizationResponse::parse(
+            br#"{"decision":"reject","reason":"expired_artifact"}"#,
+        )
+        .unwrap();
         assert!(matches!(
-            parse_authorization_decision(
-                br#"{"decision":"reject","reason":"expired_artifact"}"#,
-                "unused",
-                &[],
-            ),
+            parse_authorization_decision(&terminal_expiry, &request, &[]),
             Err(TunnelRuntimeError::Rejected)
         ));
     }
 
     #[test]
-    fn expired_allow_decision_is_retryable_expired_artifact() {
+    fn parsed_allow_cannot_mint_a_verified_grant() {
+        let request = vector_authorization_request();
         let response = serde_json::to_vec(&json!({
             "allow_replacement": false,
-            "credential_id": "lookup",
+            "credential_id": request.lookup_key(),
             "decision": "allow",
-            "expected_peer_endpoint_instance_id": "peer",
-            "expires_at": "2000-01-01T00:00:00Z",
-            "lease_id": "lease-expired",
+            "expected_peer_endpoint_instance_id": "endpoint-server",
+            "expires_at": "2033-05-18T03:33:20Z",
+            "lease_id": "lease-forged",
         }))
         .unwrap();
+        let response = TunnelAuthorizationResponse::parse(response).unwrap();
         assert!(matches!(
-            parse_authorization_decision(&response, "lookup", &[]),
-            Ok(AuthorizationDecision::Deny { status: FSA3_RETRY, reason }) if reason == "expired_artifact"
+            parse_authorization_decision(&response, &request, &[]),
+            Err(TunnelRuntimeError::Rejected)
         ));
+    }
+
+    #[test]
+    fn verified_grant_binds_the_complete_observed_fsb3_to_the_artifact() {
+        let artifact = vector_tunnel_artifact(1, "endpoint-client", "attach-token-v3");
+        let raw = artifact.encode_fsb3("q-pin").unwrap().raw;
+        let request = parse_authorization_request(
+            &raw,
+            CarrierKind::RawQuic,
+            "127.0.0.1:12345".parse().unwrap(),
+        )
+        .unwrap();
+        let response =
+            TunnelAuthorizationResponse::allow(&request, &artifact, "lease-verified", false)
+                .unwrap();
+        assert!(matches!(
+            parse_authorization_decision(&response, &request, &[]),
+            Ok(AuthorizationDecision::Allow(AllowedClaims {
+                lease_id,
+                expected_peer,
+                ..
+            })) if lease_id == "lease-verified" && expected_peer == "endpoint-server"
+        ));
+
+        let encoded = response.json();
+        let rebound = TunnelAuthorizationResponse::parse(encoded)
+            .unwrap()
+            .bind_to_artifact(&request, &artifact)
+            .unwrap();
+        assert!(matches!(
+            parse_authorization_decision(&rebound, &request, &[]),
+            Ok(AuthorizationDecision::Allow(_))
+        ));
+
+        let base: Value = serde_json::from_slice(&artifact.encode()).unwrap();
+        let mut mutations = Vec::new();
+
+        let mut candidate = base.clone();
+        candidate["path"]["candidates"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|item| item["id"] == "q-pin")
+            .unwrap()["url"] = Value::String("quic://[2001:db8::2]".into());
+        mutations.push(("candidate", candidate));
+
+        let mut session = base.clone();
+        session["session"]["idle_timeout_seconds"] = Value::from(61);
+        recompute_vector_session_contract(&mut session);
+        mutations.push(("session", session));
+
+        let mut tls = base.clone();
+        tls["path"]["candidates"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|item| item["id"] == "q-pin")
+            .unwrap()["tls"]["pins"][0]["value_b64u"] =
+            Value::String(URL_SAFE_NO_PAD.encode([0x42_u8; 32]));
+        mutations.push(("TLS", tls));
+
+        let mut role = base.clone();
+        role["path"]["role"] = Value::from(2);
+        mutations.push(("role", role));
+
+        let mut endpoint = base.clone();
+        endpoint["path"]["local_endpoint_instance_id"] = Value::String("endpoint-other".into());
+        mutations.push(("endpoint", endpoint));
+
+        for (name, value) in mutations {
+            let mismatched =
+                ArtifactV3::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap();
+            assert!(
+                TunnelAuthorizationResponse::allow(&request, &mismatched, "lease-mismatch", false,)
+                    .is_err(),
+                "same-token {name} mutation minted a grant"
+            );
+            let mismatched_request = parse_authorization_request(
+                &mismatched.encode_fsb3("q-pin").unwrap().raw,
+                CarrierKind::RawQuic,
+                "127.0.0.1:12345".parse().unwrap(),
+            )
+            .unwrap();
+            assert!(
+                matches!(
+                    parse_authorization_decision(&response, &mismatched_request, &[]),
+                    Err(TunnelRuntimeError::Rejected)
+                ),
+                "grant was reusable for same-token {name} mutation"
+            );
+        }
+    }
+
+    #[test]
+    fn verified_grant_rejects_an_expired_artifact() {
+        let artifact = vector_tunnel_artifact(1, "endpoint-client", "attach-token-v3");
+        let raw = artifact.encode_fsb3("q-pin").unwrap().raw;
+        let request = parse_authorization_request(
+            &raw,
+            CarrierKind::RawQuic,
+            "127.0.0.1:12345".parse().unwrap(),
+        )
+        .unwrap();
+        let mut value: Value = serde_json::from_slice(&artifact.encode()).unwrap();
+        value["session"]["init_expire_at_unix_s"] = Value::from(1);
+        let expired = ArtifactV3::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap();
+        assert!(
+            TunnelAuthorizationResponse::allow(
+                &request,
+                &expired,
+                "lease-expired-artifact",
+                false,
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test]
@@ -3681,6 +3977,7 @@ mod tests {
                     profile: "flowersec/3".into(),
                     role: 1,
                     endpoint: endpoint.into(),
+                    chosen_candidate_id: "candidate".into(),
                     channel: "channel".into(),
                     group: "group".into(),
                     audience: "audience".into(),
@@ -3752,15 +4049,16 @@ mod tests {
 
     #[test]
     fn authorizer_denials_require_the_runtime_owned_registry() {
+        let request = vector_authorization_request();
         let response = TunnelAuthorizationResponse::reject("policy_denied", true).unwrap();
         assert!(matches!(
-            parse_authorization_decision(&response.encoded, "unused", &[]),
+            parse_authorization_decision(&response, &request, &[]),
             Err(TunnelRuntimeError::Rejected)
         ));
         assert!(matches!(
             parse_authorization_decision(
-                &response.encoded,
-                "unused",
+                &response,
+                &request,
                 &["policy_denied".into()]
             ),
             Ok(AuthorizationDecision::Deny {
@@ -3798,6 +4096,35 @@ mod tests {
         }
     }
 
+    #[test]
+    fn runtime_options_debug_redacts_tls_origins_and_admission_reasons() {
+        let options = TunnelRuntimeOptions {
+            bind_address: "127.0.0.1:43211".parse().unwrap(),
+            certificate_chain_der: vec![b"certificate-sentinel".to_vec()],
+            private_key_der: b"private-key-sentinel".to_vec(),
+            allowed_origins: vec!["https://origin-sentinel.example".into()],
+            admission_reasons: vec!["reason_sentinel".into()],
+            max_inbound_streams: 9,
+            pair_timeout: Duration::from_secs(13),
+            max_pending_legs: 17,
+            max_active_pairs: 19,
+        };
+        let debug = format!("{options:?}");
+        for secret in [
+            "certificate-sentinel",
+            "private-key-sentinel",
+            "origin-sentinel",
+            "reason_sentinel",
+        ] {
+            assert!(!debug.contains(secret));
+        }
+        assert!(debug.contains("127.0.0.1:43211"));
+        assert!(debug.contains("max_inbound_streams: 9"));
+        assert!(debug.contains("pair_timeout: 13s"));
+        assert!(debug.contains("max_pending_legs: 17"));
+        assert!(debug.contains("max_active_pairs: 19"));
+    }
+
     #[tokio::test]
     async fn control_half_close_grace_starts_before_fin_delivery_completes() {
         tokio::time::timeout(
@@ -3811,6 +4138,21 @@ mod tests {
         )
         .await
         .expect("control pair retained a stuck FIN past the half-close grace");
+    }
+
+    #[tokio::test]
+    async fn completed_control_copies_are_joined_exactly_once() {
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            bridge_control_pair_with_grace(
+                Arc::new(ControlEofStream),
+                Arc::new(ControlEofStream),
+                CancellationToken::new(),
+                Duration::from_millis(10),
+            ),
+        )
+        .await
+        .expect("completed control copies were not reaped");
     }
 
     #[tokio::test]

@@ -8,14 +8,22 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import {
+  AdmissionStatusV3,
+  buildFSB3RequestV3,
   decodeArtifactV3JSON,
+  decodeFSA3ResponseV3,
   encodeArtifactV3JSON,
+  encodeFSB3RequestV3,
   type ArtifactCandidateV3,
   type ArtifactV3,
 } from "../v3/artifact.js";
 import { createArtifactLeaseV3Internal } from "../v3/artifactLease.js";
 import { parseArtifactV3 } from "../v3/publicApi.js";
 import { connectV3 } from "./connectSessionV3.js";
+import {
+  verifyTunnelAuthorizationGrantV3,
+  type RuntimeAuthorizationRequestV3,
+} from "./runtimeAuthorizationV3.js";
 import {
   createTunnelRuntimeV3,
   type TunnelAuthorizationDecisionV3,
@@ -124,6 +132,7 @@ describe("Node TunnelRuntimeV3 bounded admission and cleanup", () => {
     const authorization = deferred<TunnelAuthorizationDecisionV3>();
     const authorizeStarted = deferred<void>();
     let authorizationSignal: AbortSignal | undefined;
+    let authorizationRequest: RuntimeAuthorizationRequestV3 | undefined;
     let authorizationCalls = 0;
     const releases: Array<Readonly<{ leaseId: string; signal: AbortSignal }>> = [];
     const runtime = createTunnelRuntimeV3({
@@ -132,8 +141,9 @@ describe("Node TunnelRuntimeV3 bounded admission and cleanup", () => {
       maxConcurrentAdmissions: 1,
       admissionTimeoutMs: 50,
       cleanupTimeoutMs: 100,
-      authorize: async (_request, options) => {
+      authorize: async (request, options) => {
         authorizationCalls += 1;
+        authorizationRequest = request;
         authorizationSignal = options.signal;
         authorizeStarted.resolve();
         return await authorization.promise;
@@ -156,7 +166,8 @@ describe("Node TunnelRuntimeV3 bounded admission and cleanup", () => {
       await waitFor(() => authorizationSignal?.aborted === true);
       await connect(port, 1).catch(() => undefined);
       expect(authorizationCalls).toBe(1);
-      authorization.resolve(allow(artifact, "late-admission-lease"));
+      if (authorizationRequest === undefined) throw new Error("authorization request was not observed");
+      authorization.resolve(allow(authorizationRequest, artifact, "late-admission-lease"));
       await waitFor(() => releases.length === 1);
       await delay(20);
       expect(releases.map(({ leaseId }) => leaseId)).toEqual(["late-admission-lease"]);
@@ -167,6 +178,28 @@ describe("Node TunnelRuntimeV3 bounded admission and cleanup", () => {
     }
   }, 10_000);
 
+  test("rejects a structurally forged allow decision without spending a lease", async () => {
+    const released: string[] = [];
+    const runtime = createTunnelRuntimeV3({
+      listeners: [listener()],
+      maxInboundStreams: tunnelBase.session.max_inbound_streams,
+      admissionTimeoutMs: 100,
+      authorize: async () => ({ decision: "allow", grant: {} } as never),
+      release: (leaseId) => { released.push(leaseId); },
+    });
+    try {
+      await runtime.start();
+      await expect(connectV3(lease(tunnelArtifact(runtime.addresses()[0]!.port, 1)), {
+        origin: "https://app.example",
+        roots: certificate,
+        connectTimeoutMs: 1_000,
+      })).rejects.toBeDefined();
+      expect(released).toEqual([]);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   test("cancels a stuck release callback at its cleanup deadline", async () => {
     const authorizeStarted = deferred<void>();
     const releaseStarted = deferred<AbortSignal>();
@@ -176,9 +209,9 @@ describe("Node TunnelRuntimeV3 bounded admission and cleanup", () => {
       maxInboundStreams: tunnelBase.session.max_inbound_streams,
       admissionTimeoutMs: 500,
       cleanupTimeoutMs: 50,
-      authorize: async () => {
+      authorize: async (request) => {
         authorizeStarted.resolve();
-        return allow(artifact, "bounded-release-lease");
+        return allow(request, artifact, "bounded-release-lease");
       },
       release: async (_leaseId, options) => {
         releaseStarted.resolve(options.signal);
@@ -212,6 +245,120 @@ describe("Node TunnelRuntimeV3 bounded admission and cleanup", () => {
       await connecting;
     }
   }, 10_000);
+
+  test("releases activation leases and active-pair quota when control streams never arrive", async () => {
+    const artifacts = new Map<string, ArtifactV3>();
+    const released: string[] = [];
+    const runtime = createTunnelRuntimeV3({
+      listeners: [listener()],
+      maxInboundStreams: tunnelBase.session.max_inbound_streams,
+      maxActivePairs: 1,
+      admissionTimeoutMs: 50,
+      cleanupTimeoutMs: 50,
+      authorize: async (request) => {
+        const artifact = artifacts.get(request.lookupKey());
+        return artifact === undefined
+          ? { decision: "reject" as const, reason: "invalid_credential" }
+          : allow(request, artifact, `activation-${artifact.path.kind === "tunnel" ? artifact.path.token : "invalid"}`);
+      },
+      release: (leaseId) => { released.push(leaseId); },
+    });
+    const sockets: any[] = [];
+    try {
+      await runtime.start();
+      const port = runtime.addresses()[0]!.port;
+      for (const generation of ["first", "second"]) {
+        const first = tunnelArtifactGeneration(port, 1, generation);
+        const second = tunnelArtifactGeneration(port, 2, generation);
+        artifacts.set(firstRequestKey(first), first);
+        artifacts.set(firstRequestKey(second), second);
+        const firstAdmission = await openTunnelAdmission(port, first);
+        const secondAdmission = await openTunnelAdmission(port, second);
+        sockets.push(firstAdmission.socket, secondAdmission.socket);
+        const firstClosed = once(firstAdmission.socket, "close");
+        const secondClosed = once(secondAdmission.socket, "close");
+        await expect(firstAdmission.response).resolves.toBe(AdmissionStatusV3.Success);
+        await expect(secondAdmission.response).resolves.toBe(AdmissionStatusV3.Success);
+        await Promise.all([firstClosed, secondClosed]);
+      }
+      await waitFor(() => released.length === 4);
+    } finally {
+      for (const socket of sockets) socket.terminate();
+      await runtime.close();
+    }
+  }, 10_000);
+
+  test("force-closes each replaced generation before reusing pair quotas", async () => {
+    const artifacts = new Map<string, ArtifactV3>();
+    const released: string[] = [];
+    const runtime = createTunnelRuntimeV3({
+      listeners: [listener()],
+      maxInboundStreams: tunnelBase.session.max_inbound_streams,
+      maxPendingLegs: 1,
+      maxActivePairs: 1,
+      admissionTimeoutMs: 500,
+      cleanupTimeoutMs: 50,
+      authorize: async (request) => {
+        const artifact = artifacts.get(request.lookupKey());
+        return artifact === undefined
+          ? { decision: "reject" as const, reason: "invalid_credential" }
+          : allow(
+              request,
+              artifact,
+              `replacement-${artifact.path.kind === "tunnel" ? artifact.path.token : "invalid"}`,
+              true,
+            );
+      },
+      release: (leaseId) => { released.push(leaseId); },
+    });
+    const sockets: any[] = [];
+    try {
+      await runtime.start();
+      const port = runtime.addresses()[0]!.port;
+      const initialFirst = tunnelArtifactGeneration(port, 1, "initial");
+      const initialSecond = tunnelArtifactGeneration(port, 2, "initial");
+      for (const artifact of [initialFirst, initialSecond]) {
+        artifacts.set(firstRequestKey(artifact), artifact);
+      }
+      const oldFirst = await openTunnelAdmission(port, initialFirst);
+      const oldSecond = await openTunnelAdmission(port, initialSecond);
+      sockets.push(oldFirst.socket, oldSecond.socket);
+      const oldFirstClosed = once(oldFirst.socket, "close");
+      const oldSecondClosed = once(oldSecond.socket, "close");
+      await expect(oldFirst.response).resolves.toBe(AdmissionStatusV3.Success);
+      await expect(oldSecond.response).resolves.toBe(AdmissionStatusV3.Success);
+
+      const replacementOne = tunnelArtifactGeneration(port, 1, "replacement-one");
+      artifacts.set(firstRequestKey(replacementOne), replacementOne);
+      const pendingOne = await openTunnelAdmission(port, replacementOne);
+      sockets.push(pendingOne.socket);
+      const pendingOneClosed = once(pendingOne.socket, "close");
+      await Promise.all([oldFirstClosed, oldSecondClosed]);
+      expect(oldFirst.messageCount()).toBe(1);
+      expect(oldSecond.messageCount()).toBe(1);
+
+      const replacementTwo = tunnelArtifactGeneration(port, 1, "replacement-two");
+      artifacts.set(firstRequestKey(replacementTwo), replacementTwo);
+      const pendingTwo = await openTunnelAdmission(port, replacementTwo);
+      sockets.push(pendingTwo.socket);
+      await pendingOneClosed;
+
+      const replacementPeer = tunnelArtifactGeneration(port, 2, "replacement-two");
+      artifacts.set(firstRequestKey(replacementPeer), replacementPeer);
+      const finalPeer = await openTunnelAdmission(port, replacementPeer);
+      sockets.push(finalPeer.socket);
+      const pendingTwoClosed = once(pendingTwo.socket, "close");
+      const finalPeerClosed = once(finalPeer.socket, "close");
+      await expect(pendingTwo.response).resolves.toBe(AdmissionStatusV3.Success);
+      await expect(finalPeer.response).resolves.toBe(AdmissionStatusV3.Success);
+      await Promise.all([pendingTwoClosed, finalPeerClosed]);
+      await waitFor(() => released.length === 5);
+      expect(new Set(released).size).toBe(5);
+    } finally {
+      for (const socket of sockets) socket.terminate();
+      await runtime.close();
+    }
+  }, 10_000);
 });
 
 function listener() {
@@ -239,6 +386,18 @@ function tunnelArtifact(port: number, role: 1 | 2): ArtifactV3 {
   };
 }
 
+function tunnelArtifactGeneration(port: number, role: 1 | 2, generation: string): ArtifactV3 {
+  const artifact = tunnelArtifact(port, role);
+  if (artifact.path.kind !== "tunnel") throw new Error("invalid tunnel fixture");
+  return {
+    ...artifact,
+    path: {
+      ...artifact.path,
+      token: `${artifact.path.token}-${generation}`,
+    },
+  };
+}
+
 function candidate(port: number): ArtifactCandidateV3 {
   return {
     carrier: "websocket",
@@ -262,18 +421,59 @@ function connect(port: number, role: 1 | 2): Promise<unknown> {
 }
 
 function allow(
+  request: RuntimeAuthorizationRequestV3,
   artifact: ArtifactV3,
   leaseId: string,
+  allowReplacement = false,
 ): Extract<TunnelAuthorizationDecisionV3, Readonly<{ decision: "allow" }>> {
   if (artifact.path.kind !== "tunnel") throw new Error("invalid tunnel fixture");
   return {
     decision: "allow",
-    artifact: parseArtifactV3(encodeArtifactV3JSON(artifact)),
-    credentialId: createHash("sha256").update(artifact.path.token).digest("base64url"),
-    leaseId,
-    expiresAtUnixSeconds: artifact.session.init_expire_at_unix_s,
-    expectedPeerEndpointInstanceId: artifact.path.expected_peer_endpoint_instance_id,
+    grant: verifyTunnelAuthorizationGrantV3(
+      request,
+      parseArtifactV3(encodeArtifactV3JSON(artifact)),
+      { leaseId, allowReplacement },
+    ),
   };
+}
+
+function firstRequestKey(artifact: ArtifactV3): string {
+  if (artifact.path.kind !== "tunnel") throw new Error("invalid tunnel fixture");
+  return createHash("sha256").update(artifact.path.token).digest("base64url");
+}
+
+async function openTunnelAdmission(
+  port: number,
+  artifact: ArtifactV3,
+): Promise<Readonly<{
+  socket: any;
+  response: Promise<AdmissionStatusV3>;
+  messageCount(): number;
+}>> {
+  const require = createRequire(import.meta.url);
+  const wsModule = require("ws") as { WebSocket: new (...args: unknown[]) => any };
+  const socket = new wsModule.WebSocket(
+    `wss://localhost:${port}/flowersec/v3/tunnel`,
+    ["flowersec.tunnel.v3"],
+    { ca: certificate, origin: "https://app.example" },
+  );
+  await once(socket, "open");
+  let messages = 0;
+  socket.on("message", () => { messages += 1; });
+  const response = new Promise<AdmissionStatusV3>((resolve, reject) => {
+    socket.once("message", (data: Uint8Array) => {
+      try {
+        resolve(decodeFSA3ResponseV3(new Uint8Array(data)).status);
+      } catch (error) {
+        reject(error);
+      }
+    });
+    socket.once("error", reject);
+  });
+  const chosen = artifact.path.candidates[0];
+  if (chosen === undefined) throw new Error("tunnel artifact has no candidate");
+  socket.send(encodeFSB3RequestV3(buildFSB3RequestV3(artifact, chosen.id)));
+  return { socket, response, messageCount: () => messages };
 }
 
 async function openSilentAdmission(port: number): Promise<any> {

@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+const goAcceptorTestPattern = "^(TestAcceptor|TestRawQUICAcceptorListenerEstablishesApplicationSession$|TestRawQUICAcceptorServeCancellationWaitsForSessionCleanup$|TestWebTransportAcceptorListenerEstablishesApplicationSession$)"
+
 func registry() []registeredTest {
 	tests := []registeredTest{
 		commandEntry("controller/go", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestConnectionControllerSharedLifecycleVectors$", "."),
@@ -33,7 +35,7 @@ func registry() []registeredTest {
 		commandEntry("compat/v2/protocol/typescript", "acceptance", 5*time.Minute, "npm", "--prefix", "flowersec-ts", "test", "--", "--run", "src/v2"),
 		commandEntry("protocol/rust", "acceptance", 5*time.Minute, "rustup", "run", "1.88.0", "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--all-features", "--lib", "v3"),
 		commandEntry("compat/v2/protocol/rust", "acceptance", 5*time.Minute, "rustup", "run", "1.88.0", "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--all-features", "--lib", "v2"),
-		commandEntry("server/go-acceptor", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestAcceptor", "."),
+		commandEntry("server/go-acceptor", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", goAcceptorTestPattern, "."),
 		commandEntry("server/go-rpc-notification", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^Test(SessionHandlersNotificationRegistrationIsBoundedAndFrozen|PublicRPCPeerAndSessionHandlersExposeNotifications)$", "."),
 		commandEntry("server/go-controlplane", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "./controlplane"),
 		vitestEntry("compat/v2/server/typescript-controlplane", "acceptance", "src/node/controlplane.test.ts", "Node control-plane public contract"),

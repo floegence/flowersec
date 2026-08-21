@@ -29,9 +29,10 @@ import (
 )
 
 const (
-	WebSocketDirectPath = "/flowersec/v3/direct"
-	WebSocketTunnelPath = "/flowersec/v3/tunnel"
-	leaseReleaseTimeout = 10 * time.Second
+	WebSocketDirectPath               = "/flowersec/v3/direct"
+	WebSocketTunnelPath               = "/flowersec/v3/tunnel"
+	leaseReleaseTimeout               = 10 * time.Second
+	applicationCallbackCleanupTimeout = 250 * time.Millisecond
 )
 
 var ErrInvalidAcceptor = errors.New("invalid Flowersec acceptor")
@@ -222,7 +223,7 @@ func (acceptor *Acceptor) serveNativeDirect(ctx context.Context, native carrier.
 		if parseErr != nil {
 			return artifactv3.AdmissionResponse{}, parseErr
 		}
-		response, parseErr = acceptor.options.Authorize(authCtx, authRequest)
+		response, parseErr = acceptor.authorize(authCtx, authRequest)
 		if parseErr != nil {
 			return artifactv3.AdmissionResponse{}, parseErr
 		}
@@ -234,7 +235,7 @@ func (acceptor *Acceptor) serveNativeDirect(ctx context.Context, native carrier.
 				return artifactv3.AdmissionResponse{}, parseErr
 			}
 			if acceptor.options.ResolveHandlers != nil {
-				handlers, handlerErr := acceptor.options.ResolveHandlers(authCtx, authRequest)
+				handlers, handlerErr := acceptor.resolveHandlers(authCtx, authRequest)
 				if handlerErr != nil {
 					return artifactv3.AdmissionResponse{}, handlerErr
 				}
@@ -262,7 +263,7 @@ func (acceptor *Acceptor) serveNativeDirect(ctx context.Context, native carrier.
 		err = acceptor.runAcceptedSession(ctx, accepted, wire.Direct.Session.ChannelID, serveHandlers)
 	}
 	if accepted != nil {
-		_ = accepted.Close()
+		acceptor.closeAcceptedSession(ctx, accepted)
 	}
 	return err
 }
@@ -335,7 +336,7 @@ func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http
 		if parseErr != nil {
 			return artifactv3.AdmissionResponse{}, parseErr
 		}
-		response, parseErr = acceptor.options.Authorize(authCtx, authRequest)
+		response, parseErr = acceptor.authorize(authCtx, authRequest)
 		if parseErr != nil {
 			return artifactv3.AdmissionResponse{}, parseErr
 		}
@@ -349,7 +350,7 @@ func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http
 				return artifactv3.AdmissionResponse{}, parseErr
 			}
 			if acceptor.options.ResolveHandlers != nil {
-				handlers, handlerErr := acceptor.options.ResolveHandlers(authCtx, authRequest)
+				handlers, handlerErr := acceptor.resolveHandlers(authCtx, authRequest)
 				if handlerErr != nil {
 					return artifactv3.AdmissionResponse{}, handlerErr
 				}
@@ -382,7 +383,7 @@ func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http
 		err = acceptor.runAcceptedSession(request.Context(), accepted, wire.Direct.Session.ChannelID, serveHandlers)
 	}
 	if accepted != nil {
-		_ = accepted.Close()
+		acceptor.closeAcceptedSession(request.Context(), accepted)
 	}
 }
 
@@ -397,25 +398,115 @@ func acceptedHandlerSnapshot(handlers *SessionHandlers) (*internalrpc.Router, fu
 }
 
 func (acceptor *Acceptor) runAcceptedSession(ctx context.Context, current session.Session, endpointID string, serveHandlers func(context.Context, session.Session) error) error {
-	if serveHandlers == nil {
-		return acceptor.options.OnSession(ctx, &opaqueSessionV3{inner: current}, endpointID)
+	callbackCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	callbacks := 1
+	results := make(chan error, 2)
+	go func() {
+		results <- acceptor.options.OnSession(callbackCtx, &opaqueSessionV3{inner: current}, endpointID)
+	}()
+	if serveHandlers != nil {
+		callbacks++
+		go func() { results <- serveHandlers(callbackCtx, current) }()
 	}
-	onSessionDone := make(chan error, 1)
-	handlersDone := make(chan error, 1)
-	go func() { onSessionDone <- acceptor.options.OnSession(ctx, &opaqueSessionV3{inner: current}, endpointID) }()
-	go func() { handlersDone <- serveHandlers(ctx, current) }()
 	var first error
 	select {
-	case first = <-onSessionDone:
-		_ = current.Close()
-		<-handlersDone
-	case first = <-handlersDone:
-		_ = current.Close()
-		if callbackErr := <-onSessionDone; callbackErr != nil {
-			first = errors.Join(first, callbackErr)
+	case first = <-results:
+		callbacks--
+	case <-ctx.Done():
+		first = context.Cause(ctx)
+	}
+	cancel()
+	if callbacks == 0 {
+		return first
+	}
+	timer := time.NewTimer(applicationCallbackCleanupTimeout)
+	defer timer.Stop()
+	for callbacks != 0 {
+		select {
+		case callbackErr := <-results:
+			callbacks--
+			if callbackErr != nil {
+				first = errors.Join(first, callbackErr)
+			}
+		case <-timer.C:
+			return first
 		}
 	}
 	return first
+}
+
+func (acceptor *Acceptor) closeAcceptedSession(ctx context.Context, current session.Session) {
+	if current == nil {
+		return
+	}
+	if ctx.Err() == nil {
+		_ = current.Close()
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = current.Close()
+	}()
+	timer := time.NewTimer(applicationCallbackCleanupTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+	}
+}
+
+type acceptorAuthorizationResult struct {
+	response controlplane.AuthorizationResponse
+	err      error
+}
+
+func (acceptor *Acceptor) authorize(ctx context.Context, request controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
+	result := make(chan acceptorAuthorizationResult, 1)
+	go func() {
+		response, err := acceptor.options.Authorize(ctx, request)
+		result <- acceptorAuthorizationResult{response: response, err: err}
+	}()
+	select {
+	case completed := <-result:
+		return completed.response, completed.err
+	case <-ctx.Done():
+		go func() {
+			completed := <-result
+			if completed.err != nil {
+				return
+			}
+			decision, err := responseDecision(completed.response)
+			if err != nil || decision != "allow" {
+				return
+			}
+			leaseID, err := responseLeaseID(completed.response)
+			if err == nil {
+				acceptor.releaseLease(context.Background(), leaseID)
+			}
+		}()
+		return controlplane.AuthorizationResponse{}, context.Cause(ctx)
+	}
+}
+
+type acceptorHandlersResult struct {
+	handlers *SessionHandlers
+	err      error
+}
+
+func (acceptor *Acceptor) resolveHandlers(ctx context.Context, request controlplane.RuntimeAuthorizationRequest) (*SessionHandlers, error) {
+	result := make(chan acceptorHandlersResult, 1)
+	go func() {
+		handlers, err := acceptor.options.ResolveHandlers(ctx, request)
+		result <- acceptorHandlersResult{handlers: handlers, err: err}
+	}()
+	select {
+	case completed := <-result:
+		return completed.handlers, completed.err
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	}
 }
 
 func establishAcceptedSession(ctx context.Context, carrierSession carrier.Session, contract artifactv3.SessionContract, path session.PathKind, role session.SessionRole, localEndpointID, expectedPeerEndpointID string, local, peer [32]byte, router *internalrpc.Router) (session.Session, error) {
@@ -435,8 +526,24 @@ func (acceptor *Acceptor) releaseDirect() { <-acceptor.directSlots }
 func (acceptor *Acceptor) releaseLease(ctx context.Context, leaseID string) {
 	if acceptor.options.Release != nil && leaseID != "" {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseReleaseTimeout)
-		defer cancel()
-		acceptor.options.Release(cleanupCtx, leaseID)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer cancel()
+			acceptor.options.Release(cleanupCtx, leaseID)
+		}()
+		select {
+		case <-done:
+		case <-ctx.Done():
+			timer := time.NewTimer(applicationCallbackCleanupTimeout)
+			defer timer.Stop()
+			select {
+			case <-done:
+			case <-cleanupCtx.Done():
+			case <-timer.C:
+			}
+		case <-cleanupCtx.Done():
+		}
 	}
 }
 func (acceptor *Acceptor) reasons() artifactv3.ReasonRegistry {

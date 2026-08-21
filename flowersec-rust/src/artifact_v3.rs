@@ -117,6 +117,16 @@ impl ArtifactV3 {
         self.0.wire.session.init_expire_at_unix_s
     }
 
+    pub(crate) fn tunnel_expected_peer_endpoint_instance_id(&self) -> Option<&str> {
+        match &self.0.wire.path {
+            PathWireV3::Tunnel {
+                expected_peer_endpoint_instance_id,
+                ..
+            } => Some(expected_peer_endpoint_instance_id),
+            PathWireV3::Direct { .. } => None,
+        }
+    }
+
     pub(crate) fn canonical_candidates(&self) -> &[CanonicalCandidateV3] {
         &self.0.candidates
     }
@@ -555,6 +565,7 @@ pub(crate) struct DecodedTunnelFsb3V3 {
     pub(crate) attach_token: String,
     pub(crate) candidate_set_hash_b64u: String,
     pub(crate) channel_id: String,
+    pub(crate) chosen_candidate_id: String,
     pub(crate) endpoint_instance_id: String,
     pub(crate) listener_audience: String,
     pub(crate) rendezvous_group_id: String,
@@ -619,6 +630,7 @@ pub(crate) fn decode_tunnel_fsb3(
         attach_token: wire.attach_token,
         candidate_set_hash_b64u: wire.candidate_set_hash_b64u,
         channel_id: wire.channel_id,
+        chosen_candidate_id: wire.chosen_candidate_id,
         endpoint_instance_id: wire.endpoint_instance_id,
         listener_audience: wire.listener_audience,
         rendezvous_group_id: wire.rendezvous_group_id,

@@ -133,8 +133,9 @@ pub use artifact_v3::{
     ArtifactV3 as Artifact, ArtifactV3,
 };
 pub use connection_controller::{
-    ArtifactSource, ArtifactSourceError, ConnectionController, ConnectionControllerOptions,
-    ConnectionFailure, ConnectionSnapshot, ConnectionState, RetryDisposition,
+    ArtifactSource, ArtifactSourceError, ConnectionController,
+    ConnectionControllerConfigurationError, ConnectionControllerOptions, ConnectionFailure,
+    ConnectionSnapshot, ConnectionState, RetryDisposition,
 };
 pub use connector_v3::{
     ConnectError, ConnectErrorCode, ConnectorOptions, connect_v3 as connect,
@@ -191,11 +192,12 @@ pub mod v3 {
     pub use crate::{
         AcceptError, AcceptErrorCode, Acceptor, AcceptorOptions, Artifact, ArtifactError,
         ArtifactLease, ArtifactSource, ArtifactSourceError, ArtifactSpendError, ConnectError,
-        ConnectErrorCode, ConnectionController, ConnectionControllerOptions, ConnectionFailure,
-        ConnectionSnapshot, ConnectionState, ConnectorOptions, RetryDisposition,
-        RuntimeAuthorizationRequest, Session, TunnelAdmissionOptions, TunnelAuthorizationError,
-        TunnelAuthorizationResponse, TunnelAuthorizer, TunnelRuntime, TunnelRuntimeError,
-        TunnelRuntimeOptions, WebSocketAcceptorOptions, connect, connect_with_cancellation,
+        ConnectErrorCode, ConnectionController, ConnectionControllerConfigurationError,
+        ConnectionControllerOptions, ConnectionFailure, ConnectionSnapshot, ConnectionState,
+        ConnectorOptions, RetryDisposition, RuntimeAuthorizationRequest, Session,
+        TunnelAdmissionOptions, TunnelAuthorizationError, TunnelAuthorizationResponse,
+        TunnelAuthorizer, TunnelRuntime, TunnelRuntimeError, TunnelRuntimeOptions,
+        WebSocketAcceptorOptions, connect, connect_with_cancellation,
     };
 }
 

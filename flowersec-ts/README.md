@@ -112,11 +112,13 @@ await accepted.serve();
 
 `loadAuthorizedArtifact(...)` returns the opaque `Artifact` produced by
 `parseArtifact(...)`; authorization code never reconstructs or receives
-package-private PSK, candidate, or pin fields.
+package-private PSK, candidate, or pin fields. Tunnel authorization verifies
+that artifact with `verifyTunnelAuthorizationGrant(...)` and returns only the
+request-bound, secret-free grant consumed by the relay.
 The admission deadline covers FSB3 receive, authorization, handler resolution,
-FSA3 completion, and Session establishment. Tunnel allow decisions likewise
-return the stored opaque `Artifact`; the relay reprojects and verifies the full
-FSB3 while remaining unable to inspect its E2EE session fields.
+FSA3 completion, and Session establishment. Tunnel allow decisions return the
+secret-free grant; the trusted verifier performs the full FSB3 projection while
+the relay remains unable to inspect the artifact or its E2EE session fields.
 
 `RPCHandlers` is available only from the Node entrypoint and cannot register
 application streams. The default `SessionHandlers` is strict v3 and
@@ -159,6 +161,14 @@ the session behind a Service Worker or another window.
 ## Opaque Boundaries
 
 `Artifact` is an opaque handle. Applications cannot inspect its connection data or serialize it back to protocol JSON. `ArtifactLease` exposes no spend operation; only the connector may invoke the durable callback. `Session` exposes RPC, stream operations, liveness, rekeying, `waitTermination()`, and closure without revealing the selected transport or peer endpoint identity. Public streams expose their kind and terminal state, but no protocol stream identifier.
+
+A Node tunnel authorizer returns an allow decision only after calling
+`verifyTunnelAuthorizationGrant(request, artifact, { leaseId, allowReplacement })`.
+The verifier compares the complete observed FSB3 with the opaque authorization
+artifact and mints a request-bound, secret-free `TunnelAuthorizationGrant`.
+The relay runtime retains only that grant; a structurally similar ordinary
+object is not an authorization and the relay never unwraps or retains the
+artifact's E2EE key material.
 
 `ConnectError` and `SessionError` expose only a closed `code`. They do not retain raw causes, credentials, URLs, candidate diagnostics, transport objects, peer details, or internal routing and handshake state.
 
