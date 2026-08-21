@@ -1548,6 +1548,8 @@
           "SessionError",
           "StreamHandlers",
           "StreamMetadataError",
+          "TunnelAuthorizationGrant",
+          "TunnelAuthorizationGrantV3",
           "TunnelRuntime",
           "TunnelRuntimeV3",
           "UnreliableMessageError",
@@ -1564,7 +1566,9 @@
           "createTunnelRuntimeV3",
           "parseArtifact",
           "parseArtifactV3",
-          "v2"
+          "v2",
+          "verifyTunnelAuthorizationGrant",
+          "verifyTunnelAuthorizationGrantV3"
         ],
         "type_exports": [
           "AcceptedSession",
@@ -1641,6 +1645,10 @@
           "StreamMetadata",
           "StreamMetadataError",
           "StreamOpenOptions",
+          "TunnelAuthorizationGrant",
+          "TunnelAuthorizationGrantOptions",
+          "TunnelAuthorizationGrantOptionsV3",
+          "TunnelAuthorizationGrantV3",
           "TunnelAuthorizationDecision",
           "TunnelAuthorizationDecisionV3",
           "TunnelRuntime",
