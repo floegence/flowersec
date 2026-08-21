@@ -1088,7 +1088,7 @@ const capabilityVectors = {
     playwright: "1.62.1",
     browser_js_p256_proof: false,
     browser_may_accept_non_rsa_non_p256: true,
-    cross_runtime_interoperability: false,
+    browser_non_p256_cross_runtime_interoperability: false,
     sdk_must_not_claim_js_p256_verification: true,
   },
   vectors: capabilityDescriptors,

@@ -229,7 +229,10 @@ func runBrowserCapabilityScenariosContract(t *testing.T, scenarios []controllerV
 	expected := scenario.Expected
 	if expected.FinalState != "failed" || expected.PublicError == nil || *expected.PublicError != "connection_failed" ||
 		expected.Disposition == nil || *expected.Disposition != "terminal" ||
-		expected.ConcurrentAcquisitionPeak != 2 || expected.ReplacementQuotaUsed != 1 ||
+		expected.Acquisitions != 3 || expected.ConnectAttempts != 4 || expected.TransportsCreated != 2 ||
+		expected.ReplacementAcquisitions != 1 || expected.ReplacementQuotaUsed != 1 ||
+		expected.SpendCallbacks != 0 || expected.RetireCallbacks != 3 || len(expected.RetryDelaysMS) != 0 ||
+		expected.ConcurrentAcquisitionPeak != 2 || expected.ControllerConnectorAttempts != 3 ||
 		expected.OldSnapshotLiveGateFailures != 1 || expected.PostInvalidationPinCalls != 0 ||
 		expected.PeerPublicError != "transport_security_unsupported" {
 		t.Fatalf("browser capability barrier projection changed: %+v", expected)

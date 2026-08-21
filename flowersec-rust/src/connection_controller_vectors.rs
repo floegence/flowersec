@@ -939,6 +939,13 @@ async fn run_browser_capability_scenario(scenario: &ScenarioV3) {
         scenario.expected.peer_public_error.as_deref(),
         Some("transport_security_unsupported")
     );
+    assert_eq!(scenario.expected.acquisitions, 3);
+    assert_eq!(scenario.expected.connect_attempts, 4);
+    assert_eq!(scenario.expected.transports_created, 2);
+    assert_eq!(scenario.expected.replacement_acquisitions, 1);
+    assert_eq!(scenario.expected.spend_callbacks, 0);
+    assert_eq!(scenario.expected.retire_callbacks, 3);
+    assert!(scenario.expected.retry_delays_ms.is_empty());
     assert_eq!(scenario.expected.final_state, "failed");
     assert_eq!(
         scenario.expected.public_error.as_deref(),
