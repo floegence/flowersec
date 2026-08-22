@@ -146,11 +146,18 @@ func browserCapacityFailureText(outputDirectory, captured string) string {
 
 func prepareBrowserCapacityBundle(ctx context.Context, sourceRoot string) (func(), error) {
 	dist := filepath.Join(sourceRoot, "flowersec-ts", "dist")
-	_, statErr := os.Stat(dist)
-	if statErr == nil {
-		return func() {}, nil
+	sourceSHA, err := browserCapacitySourceSHA(ctx, sourceRoot)
+	if err != nil {
+		return nil, err
 	}
-	if !errors.Is(statErr, os.ErrNotExist) {
+	marker := filepath.Join(dist, ".flowersec-source-sha")
+	if _, statErr := os.Stat(dist); statErr == nil {
+		bundle, bundleErr := os.Stat(filepath.Join(dist, "browser", "index.js"))
+		markerBytes, markerErr := os.ReadFile(marker)
+		if bundleErr == nil && bundle.Mode().IsRegular() && markerErr == nil && strings.TrimSpace(string(markerBytes)) == sourceSHA {
+			return func() {}, nil
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return nil, fmt.Errorf("inspect browser capacity build output: %w", statErr)
 	}
 	command := exec.CommandContext(ctx, "npm", "--prefix", filepath.Join(sourceRoot, "flowersec-ts"), "run", "build")
@@ -159,7 +166,23 @@ func prepareBrowserCapacityBundle(ctx context.Context, sourceRoot string) (func(
 	if err := command.Run(); err != nil {
 		return nil, fmt.Errorf("build browser capacity bundle: %w: %s", err, strings.TrimSpace(output.String()))
 	}
+	if err := os.WriteFile(marker, []byte(sourceSHA+"\n"), 0o600); err != nil {
+		return nil, fmt.Errorf("write browser capacity build marker: %w", err)
+	}
 	return func() { _ = os.RemoveAll(dist) }, nil
+}
+
+func browserCapacitySourceSHA(ctx context.Context, sourceRoot string) (string, error) {
+	command := exec.CommandContext(ctx, "git", "-C", sourceRoot, "rev-parse", "HEAD")
+	output, err := command.Output()
+	if err != nil {
+		return "", fmt.Errorf("resolve browser capacity source SHA: %w", err)
+	}
+	sha := strings.TrimSpace(string(output))
+	if len(sha) != 40 {
+		return "", fmt.Errorf("browser capacity source SHA is invalid: %q", sha)
+	}
+	return sha, nil
 }
 
 func browserCapacitySourceRoot(start string) (string, error) {
