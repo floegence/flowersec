@@ -539,10 +539,10 @@ test("freezes Chromium tunnel capacity at exactly 1000 live sessions", () => {
 test("matches Go performance-budget scaling for browser capacity deadlines", () => {
   assert.equal(browserCapacityOperationDeadlineMs("held_sessions", undefined), 30_000);
   assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", undefined), 60_000);
-  assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "5m0s"), 2_500);
-  assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "5m0s"), 5_000);
-  assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "10m0s"), 5_000);
-  assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "10m0s"), 10_000);
+  assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "5m0s"), 10_000);
+  assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "5m0s"), 20_000);
+  assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "10m0s"), 10_000);
+  assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "10m0s"), 20_000);
   assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "20m0s"), 10_000);
   assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "20m0s"), 20_000);
   assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "24h0m0s"), 25_000);

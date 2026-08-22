@@ -79,7 +79,7 @@ func TestBrowserCapacityOperationDeadlineUsesThePerformanceBudgetContract(t *tes
 		stream time.Duration
 	}{
 		{budget: "", tunnel: 30 * time.Second, stream: 60 * time.Second},
-		{budget: "10m", tunnel: 5 * time.Second, stream: 10 * time.Second},
+		{budget: "10m", tunnel: 10 * time.Second, stream: 20 * time.Second},
 		{budget: "20m", tunnel: 10 * time.Second, stream: 20 * time.Second},
 	}
 	caseIDs := []string{

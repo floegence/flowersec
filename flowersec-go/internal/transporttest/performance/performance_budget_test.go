@@ -19,9 +19,15 @@ func TestTenMinutePerformanceBudgetPreservesCoverageWithinSevenMinuteMeasurement
 		capacity.MaxConnectP50 != 5*time.Second || capacity.MaxConnectP95 != 15*time.Second || capacity.MaxConnectP99 != 25*time.Second {
 		t.Fatalf("capacity thresholds changed: capacity=%+v browser=%+v browser streams=%+v", capacity, browser, browserStreams)
 	}
-	for name, contract := range map[string]capacityContract{"capacity": capacity, "browser": browser, "browser streams": browserStreams} {
-		if got := contract.Ramp + contract.Hold + contract.Cleanup; got != 20*time.Second {
-			t.Fatalf("%s window = %s, want 20s", name, got)
+	if got := capacity.Ramp + capacity.Hold + capacity.Cleanup; got != 20*time.Second {
+		t.Fatalf("capacity window = %s, want 20s", got)
+	}
+	for name, contract := range map[string]capacityContract{"browser": browser, "browser streams": browserStreams} {
+		if got := contract.Ramp + contract.Hold + contract.Cleanup; got != 47*time.Second {
+			t.Fatalf("%s window = %s, want 47s", name, got)
+		}
+		if contract.Ramp != 20*time.Second || contract.Cleanup != 20*time.Second {
+			t.Fatalf("%s browser windows = ramp %s cleanup %s, want 20s/20s", name, contract.Ramp, contract.Cleanup)
 		}
 	}
 

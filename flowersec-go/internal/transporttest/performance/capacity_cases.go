@@ -78,6 +78,13 @@ func productionCapacityContract() capacityContract {
 
 func productionBrowserCapacityContract() capacityContract {
 	contract := productionCapacityContract()
+	// Chromium needs a larger minimum ramp and cleanup window than native
+	// carriers when the integrated budget scales the regular capacity plan.
+	// This keeps the frozen 1000-session browser workload measurable instead
+	// of turning the budget into an impossible connection deadline.
+	contract.Ramp = maxDuration(contract.Ramp, 20*time.Second)
+	contract.Cleanup = maxDuration(contract.Cleanup, 20*time.Second)
+	contract.Watchdog = contract.Ramp + contract.Hold + contract.Cleanup
 	contract.MaxRSS = 3 << 30
 	contract.MaxCPU = 150 * time.Second
 	contract.MaxOpenFDs = 12288
@@ -112,10 +119,10 @@ func browserCapacityOperationDeadlineForKind(kind capacityCaseKind) time.Duratio
 	if _, configured := performanceBudgetScale(); configured {
 		if kind == capacityBrowserStream {
 			deadline, _ := scaledPerformanceDuration(10 * time.Second)
-			return deadline
+			return maxDuration(deadline, 20*time.Second)
 		}
 		deadline, _ := scaledPerformanceDuration(5 * time.Second)
-		return deadline
+		return maxDuration(deadline, 10*time.Second)
 	}
 	if kind == capacityBrowserStream {
 		return 60 * time.Second
