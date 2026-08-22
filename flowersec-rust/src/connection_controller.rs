@@ -881,11 +881,25 @@ async fn run_controller(inner: Arc<ControllerInner>) {
 async fn acquire_lease(
     inner: &ControllerInner,
 ) -> Result<ClaimedArtifactLeaseV3, ConnectionFailure> {
-    let mut acquisition = Box::pin(inner.source.acquire(inner.cancellation.child_token()));
+    // ArtifactSource is a public async boundary. Isolate both panics while
+    // creating its future and panics while polling it so a source contract
+    // violation cannot terminate the controller scheduler.
+    let future = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        inner.source.acquire(inner.cancellation.child_token())
+    })) {
+        Ok(future) => future,
+        Err(_) => {
+            return Err(connect_failure(
+                ConnectErrorCode::ArtifactInvalid,
+                RetryDisposition::Terminal,
+            ));
+        }
+    };
+    let mut acquisition = Box::pin(std::panic::AssertUnwindSafe(future).catch_unwind());
     let result = tokio::select! {
         biased;
         _ = inner.cancellation.cancelled() => {
-            if let Ok(lease) = acquisition.await
+            if let Ok(Ok(lease)) = acquisition.await
                 && let Ok(claimed) = lease.claim()
             {
                 // Cancellation won before delivery, so the source-side
@@ -900,6 +914,12 @@ async fn acquire_lease(
         },
         result = &mut acquisition => result,
     };
+    let result = result.map_err(|_| {
+        connect_failure(
+            ConnectErrorCode::ArtifactInvalid,
+            RetryDisposition::Terminal,
+        )
+    })?;
     let lease = result.map_err(|error| match error.disposition() {
         RetryDisposition::RetryAfter(deadline) if !valid_retry_after(deadline) => connect_failure(
             ConnectErrorCode::ArtifactInvalid,
@@ -1812,6 +1832,25 @@ mod tests {
         assert_eq!(source.acquisitions.load(Ordering::SeqCst), 0);
     }
 
+    #[tokio::test]
+    async fn source_panic_projects_to_artifact_invalid_terminal() {
+        let controller = ConnectionController::new_with_connector(
+            Arc::new(PanicSource),
+            test_options(None),
+            scripted_connector(std::iter::empty::<ConnectorStep>()),
+        );
+        controller.start();
+        let status = wait_for_state(&controller, ConnectionState::Failed).await;
+        assert_eq!(
+            status.last_failure,
+            Some(connect_failure(
+                ConnectErrorCode::ArtifactInvalid,
+                RetryDisposition::Terminal,
+            ))
+        );
+        controller.close().await;
+    }
+
     #[test]
     fn maximum_attempts_rejects_unsafe_integers_at_the_public_builder_boundary() {
         let accepted = ConnectionControllerOptions::new(ConnectorOptions::new())
@@ -2433,6 +2472,19 @@ mod tests {
     struct LateLeaseSource {
         lease: Mutex<Option<ArtifactLeaseV3>>,
         acquisitions: AtomicU64,
+    }
+
+    #[derive(Debug)]
+    struct PanicSource;
+
+    #[async_trait]
+    impl ArtifactSource for PanicSource {
+        async fn acquire(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<ArtifactLeaseV3, ArtifactSourceError> {
+            panic!("source contract violation");
+        }
     }
 
     #[async_trait]
