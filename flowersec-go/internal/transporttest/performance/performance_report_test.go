@@ -218,10 +218,14 @@ func throughputMatrixPerformanceResult(caseID string, kind carrier.Kind, mode st
 		prefix := string(coordinate.Contract.Direction) + " / " + fmt.Sprintf("%d bytes", coordinate.Contract.PayloadBytes)
 		rates := make([]float64, 0, len(coordinate.Result.Samples))
 		operations := 0
+		var finCleanupFailures uint64
+		var resetCount uint64
 		for sampleIndex, sample := range coordinate.Result.Samples {
 			rate := sample.BytesPerSecond / float64(1<<20)
 			rates = append(rates, rate)
 			operations += len(sample.Latencies)
+			finCleanupFailures += sample.FINCleanupFailures
+			resetCount += sample.ResetCount
 			raw = append(raw, perfreport.RawSample{Round: coordinateIndex*100 + sampleIndex + 1, Phase: prefix + " measured", Values: map[string]float64{"verified_bytes": float64(sample.Bytes), "window_seconds": sample.Duration.Seconds(), "throughput_mib_s": rate, "operations": float64(len(sample.Latencies))}})
 		}
 		seconds := coordinate.Result.Summary.Duration.Seconds()
@@ -239,8 +243,8 @@ func throughputMatrixPerformanceResult(caseID string, kind carrier.Kind, mode st
 			measured(prefix+" operation p95", durationMS(coordinate.Result.Summary.P95), durationMS(coordinate.Contract.MaxP95), "ms", "<="),
 			measured(prefix+" operation p99", durationMS(coordinate.Result.Summary.P99), durationMS(coordinate.Contract.MaxP95), "ms", "<="),
 			measured(prefix+" verification failures", 0, 0, "failures", "<="),
-			measured(prefix+" FIN cleanup failures", 0, 0, "failures", "<="),
-			measured(prefix+" reset count", 0, 0, "resets", "<="),
+			measured(prefix+" FIN cleanup failures", float64(finCleanupFailures), 0, "failures", "<="),
+			measured(prefix+" reset count", float64(resetCount), 0, "resets", "<="),
 		)
 	}
 	measurements = append(measurements, throughputResourceMeasurements(results)...)

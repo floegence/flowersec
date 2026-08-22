@@ -157,6 +157,11 @@ func TestPayloadThroughputDirectionsTransferVerifiedBytes(t *testing.T) {
 				if result.Summary.Bytes == 0 || result.Summary.P99 <= 0 || len(result.Resources) != 4 {
 					t.Fatalf("direction %s result = %+v", direction, result)
 				}
+				for sampleIndex, sample := range result.Samples {
+					if sample.FINCleanupFailures != 0 || sample.ResetCount != 0 {
+						t.Fatalf("direction %s sample %d cleanup = FIN failures %d, resets %d", direction, sampleIndex+1, sample.FINCleanupFailures, sample.ResetCount)
+					}
+				}
 			})
 		}
 	}

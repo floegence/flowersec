@@ -43,8 +43,8 @@ The expensive inventory is grouped by execution boundary and has no second manif
 | Kernel fault injector | Four `diagnostic/kernel/*` lifecycle and exact-fault IDs |
 | Kernel-backed Flowersec weaknet | `diagnostic/flowersec-weaknet/{websocket,raw-quic}/direct/{delay-jitter,periodic-loss,burst-loss,outage,mtu-large-payload,rate-5mbps,rate-1mbps,reorder-duplicate}` and `diagnostic/flowersec-weaknet/{websocket,raw-quic}/tunnel/representative` |
 | v3 Controller weaknet | `diagnostic/flowersec-v3-controller-weaknet/{websocket,raw-quic}/{delay-jitter,periodic-loss,reorder,outage-reconnect,pin-rotation-refresh-backoff-lease}` |
-| Required Go performance | Six `performance/capacity/*` WSS/raw-QUIC IDs, raw QUIC migration soak, production WSS soak, and `performance/throughput/{wss,raw-quic}` |
-| Optional WebTransport performance | `performance-optional/webtransport-capability`, then six `performance/capacity/*` WebTransport/Chromium IDs plus `performance/soak/webtransport` in `performance-optional` |
+| Required Go performance | Six `performance/capacity/*` WSS/raw-QUIC IDs, raw QUIC migration soak, production WSS soak, `performance/single-connection/{wss,raw-quic}`, and `performance/throughput/{wss,raw-quic}` |
+| Optional WebTransport performance | `performance-optional/webtransport-capability`, six `performance/capacity/*` WebTransport/Chromium IDs, `performance/soak/webtransport`, `performance/single-connection/webtransport`, and `performance/throughput/webtransport` |
 
 Coverage and race run with `make coverage-race`. Browser compatibility uses
 real native connections: Firefox currently rejects the connection before
