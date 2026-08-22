@@ -641,6 +641,81 @@ func TestConnectionControllerClaimsAndRetiresLeaseReturnedAfterCancellation(t *t
 	}
 }
 
+func TestConnectionControllerSurvivesRetireCleanupPanic(t *testing.T) {
+	artifact := controllerPolicyArtifact(t, controllerPinPolicy("ERERERERERERERERERERERERERERERERERERERERERE"))
+	var retireCalls atomic.Int32
+	first, err := NewArtifactLeaseWithRetirement(
+		artifact,
+		func(context.Context) error { return nil },
+		func(context.Context) error {
+			retireCalls.Add(1)
+			panic("application cleanup panic")
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewArtifactLease(artifact, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := &controllerTestSource{results: []controllerAcquireResult{{lease: first}, {lease: second}}}
+	controller := newControllerForTest(t, source, 0)
+	session := newControllerTestSession(SessionClosed)
+	var connects atomic.Int32
+	controller.connectDetailed = func(ctx context.Context, claimed claimedArtifactLease, _ ConnectorOptions, _ map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome) {
+		if connects.Add(1) == 1 {
+			return nil, controllerConnectOutcome{err: &ConnectError{code: ConnectConnectionFailed}}
+		}
+		if err := claimed.lease.commitSpend(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return session, controllerConnectOutcome{spendStarted: true}
+	}
+	controller.Start(context.Background())
+	waitControllerState(t, controller, ConnectionWaiting)
+	if !controller.RetryNow() {
+		t.Fatal("retirement cleanup panic prevented retry")
+	}
+	waitControllerSession(t, controller, session)
+	if retireCalls.Load() != 1 || artifactLeaseStatusName(first) != "retired" ||
+		source.callCount() != 2 || connects.Load() != 2 {
+		t.Fatalf("retire/state/acquires/connects = %d/%s/%d/%d, want 1/retired/2/2",
+			retireCalls.Load(), artifactLeaseStatusName(first), source.callCount(), connects.Load())
+	}
+	closeController(t, controller)
+}
+
+func TestArtifactLeaseRetirePanicIsOpaqueAndOneShot(t *testing.T) {
+	artifact := controllerPolicyArtifact(t, controllerPinPolicy("ERERERERERERERERERERERERERERERERERERERERERE"))
+	var retireCalls atomic.Int32
+	lease, err := NewArtifactLeaseWithRetirement(
+		artifact,
+		func(context.Context) error { return nil },
+		func(context.Context) error {
+			retireCalls.Add(1)
+			panic("secret cleanup detail")
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok := lease.claimArtifact()
+	if !ok {
+		t.Fatal("claim retirement lease")
+	}
+	if err := claimed.retire(context.Background()); err == nil ||
+		err.Error() != "Flowersec artifact lease retirement cleanup failed" {
+		t.Fatalf("retirement panic error = %v, want opaque cleanup failure", err)
+	}
+	if err := claimed.retire(context.Background()); err != nil {
+		t.Fatalf("repeated retirement = %v, want terminal no-op", err)
+	}
+	if retireCalls.Load() != 1 || artifactLeaseStatusName(lease) != "retired" {
+		t.Fatalf("retire/state = %d/%s, want 1/retired", retireCalls.Load(), artifactLeaseStatusName(lease))
+	}
+}
+
 func TestConnectionControllerRejectsInvalidRetryAfterWithoutScheduling(t *testing.T) {
 	source := &controllerTestSource{results: []controllerAcquireResult{
 		{failure: &ArtifactSourceError{

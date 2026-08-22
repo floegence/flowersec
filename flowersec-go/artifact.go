@@ -218,7 +218,16 @@ func (lease ArtifactLease) retire(ctx context.Context) error {
 	}
 	lease.state.status = artifactLeaseRetired
 	lease.state.mu.Unlock()
-	return lease.state.retire(ctx)
+	var err error
+	func() {
+		defer func() {
+			if recover() != nil {
+				err = errors.New("Flowersec artifact lease retirement cleanup failed")
+			}
+		}()
+		err = lease.state.retire(ctx)
+	}()
+	return err
 }
 
 // MarshalJSON prevents generic serialization from exposing lease internals.
