@@ -174,7 +174,8 @@ struct TransportV3Tests {
     let leaf = PresentedLeafCertificateV3(
       der: der, x509Version: 3, notBeforeUnixSeconds: 10, notAfterUnixSeconds: 20,
       publicKey: .ecdsaP256, tlsProofComplete: true)
-    try PinVerifierV3.verify(leaf: leaf, activePins: [hash], nowUnixSeconds: 10)
+    try PinVerifierV3.verify(
+      leaf: leaf, activePins: [Data(repeating: 0, count: 32), hash], nowUnixSeconds: 10)
     #expect(throws: TransportSecurityFailureV3.pinMismatch) {
       try PinVerifierV3.verify(
         leaf: leaf, activePins: [Data(repeating: 0, count: 32)], nowUnixSeconds: 10)

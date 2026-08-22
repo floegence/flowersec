@@ -363,17 +363,18 @@ func TestChromiumPerformanceCapabilityResultClassification(t *testing.T) {
 	if err := parseChromiumPerformanceCapability([]byte(`{"status":"GREEN","secure_context":true,"webtransport":"function"}`)); err != nil {
 		t.Fatalf("GREEN capability result: %v", err)
 	}
-	err := parseChromiumPerformanceCapability([]byte(`{"status":"UNSUPPORTED","limitation":"WebTransport is unavailable"}`))
+	err := parseChromiumPerformanceCapability([]byte(`{"status":"UNSUPPORTED","limitation":"Chromium does not expose the WebTransport constructor"}`))
 	var unavailable *performanceCapabilityUnavailableError
-	if !errors.As(err, &unavailable) || unavailable.Error() != "WebTransport is unavailable" {
+	if !errors.As(err, &unavailable) || unavailable.Error() != chromiumWebTransportUnavailableLimitation {
 		t.Fatalf("UNSUPPORTED capability result = %T %v", err, err)
 	}
 	for name, payload := range map[string]string{
-		"malformed":           `{"status":"GREEN"} trailing`,
-		"unknown field":       `{"status":"GREEN","secure_context":true,"webtransport":"function","extra":true}`,
-		"incomplete green":    `{"status":"GREEN","secure_context":true}`,
-		"empty limitation":    `{"status":"UNSUPPORTED","limitation":" "}`,
-		"contradictory state": `{"status":"UNSUPPORTED","secure_context":true,"limitation":"missing"}`,
+		"malformed":                 `{"status":"GREEN"} trailing`,
+		"unknown field":             `{"status":"GREEN","secure_context":true,"webtransport":"function","extra":true}`,
+		"incomplete green":          `{"status":"GREEN","secure_context":true}`,
+		"empty limitation":          `{"status":"UNSUPPORTED","limitation":" "}`,
+		"runner failure limitation": `{"status":"UNSUPPORTED","limitation":"Chromium launch failed"}`,
+		"contradictory state":       `{"status":"UNSUPPORTED","secure_context":true,"limitation":"missing"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := parseChromiumPerformanceCapability([]byte(payload)); err == nil {
@@ -392,7 +393,7 @@ func TestPerformanceCapabilityOnlyStructuredUnavailableSkipsOptionalCases(t *tes
 		wantSuccess   bool
 		wantReport    string
 	}{
-		{name: "structured unavailable", capabilityErr: &performanceCapabilityUnavailableError{limitation: "WebTransport constructor unavailable"}, wantSuccess: true, wantReport: "UNSUPPORTED"},
+		{name: "structured unavailable", capabilityErr: &performanceCapabilityUnavailableError{limitation: chromiumWebTransportUnavailableLimitation}, wantSuccess: true, wantReport: "UNSUPPORTED"},
 		{name: "runner failure", capabilityErr: errors.New("synthetic Chromium launch failure"), wantSuccess: false, wantReport: "synthetic Chromium launch failure"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {

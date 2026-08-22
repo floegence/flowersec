@@ -235,10 +235,11 @@ fn verify_pin_profile(
         return Err(PinCertificateFailureV3::InvalidProfile);
     }
     let digest: [u8; 32] = Sha256::digest(certificate_der).into();
-    if !active_leaf_hashes
-        .iter()
-        .any(|pin| bool::from(digest.ct_eq(pin)))
-    {
+    let mut matched = 0u8;
+    for pin in active_leaf_hashes {
+        matched |= digest.ct_eq(pin).unwrap_u8();
+    }
+    if matched == 0 {
         return Err(PinCertificateFailureV3::PinMismatch);
     }
     Ok(())
@@ -304,7 +305,7 @@ mod tests {
     async fn self_signed_pin_succeeds_and_mismatch_fails_before_application_bytes() {
         let identity = self_signed_identity();
         let correct_pin: [u8; 32] = Sha256::digest(identity.leaf.as_ref()).into();
-        let client = NativeTlsPolicyV3::pin([correct_pin])
+        let client = NativeTlsPolicyV3::pin([[0xA5; 32], correct_pin])
             .unwrap()
             .client_config(b"flowersec-direct/3")
             .unwrap();

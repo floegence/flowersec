@@ -3876,6 +3876,29 @@ async fn accept_carrier_loop_v3(session: Arc<SelfSession>) {
     }
 }
 
+// A carrier that passed FSS3 admission belongs to the peer ledger even when
+// its OPEN cannot be delivered.  Reset that carrier and commit its terminal
+// ledger state without taking down otherwise healthy session carriers.
+async fn reset_inbound_before_delivery_v3(
+    session: &Arc<SelfSession>,
+    carrier: &Arc<dyn CarrierStreamV3>,
+    id: u64,
+) {
+    let _ = carrier.reset().await;
+    let mut payload = [0; 10];
+    payload[..8].copy_from_slice(&id.to_be_bytes());
+    payload[8..].copy_from_slice(&3_u16.to_be_bytes());
+    match send_control_cleanup_v3(session, InnerRecordTypeV3::StreamReset, &payload).await {
+        Ok(()) => {
+            if let Err(error) = session.peer_ledger.lock().await.mark_terminal(id) {
+                fail_session_v3(session, error);
+            }
+        }
+        Err(error) if !session.is_closed() => fail_session_v3(session, error),
+        Err(_) => {}
+    }
+}
+
 async fn accept_one_stream_v3(
     session: Arc<SelfSession>,
     carrier: Arc<dyn CarrierStreamV3>,
@@ -3903,15 +3926,14 @@ async fn accept_one_stream_v3(
     }
     let setup_root = {
         let state = session.state.lock().await;
-        if preface.initial_epoch() != state.recv_epoch {
-            return Err(invalid("invalid FSS3 epoch"));
-        }
-        let Some(roots) = state.recv_roots.get(&state.recv_epoch) else {
-            drop(state);
-            let _ = carrier.reset().await;
-            return Ok(());
-        };
-        *roots.setup_root()
+        (preface.initial_epoch() == state.recv_epoch)
+            .then(|| state.recv_roots.get(&state.recv_epoch))
+            .flatten()
+            .map(|roots| *roots.setup_root())
+    };
+    let Some(setup_root) = setup_root else {
+        let _ = carrier.reset().await;
+        return Ok(());
     };
     if !verify_setup_mac_v3(&setup_root, &session.h3, &preface) {
         let _ = carrier.reset().await;
@@ -3922,29 +3944,64 @@ async fn accept_one_stream_v3(
         && (session.sent_goaway_last.load(Ordering::Acquire) == 0
             || id > session.sent_goaway_last.load(Ordering::Acquire))
     {
-        carrier.reset().await?;
+        let _ = carrier.reset().await;
         return Ok(());
     }
     {
         let mut ledger = session.peer_ledger.lock().await;
-        if ledger.state(ledger.index(id)?) == LedgerStateV3::AbandonedNoFss3 {
+        let index = match ledger.index(id) {
+            Ok(index) => index,
+            Err(_) => {
+                drop(ledger);
+                let _ = carrier.reset().await;
+                return Ok(());
+            }
+        };
+        if ledger.state(index) == LedgerStateV3::AbandonedNoFss3 {
             ledger.mark_late_fss3_for_abandoned(id)?;
             drop(ledger);
-            carrier.reset().await?;
+            let _ = carrier.reset().await;
             return Ok(());
         }
         ledger.mark_fss3(id)?;
     }
-    let (kind, open_raw, epoch, sequence) = read_stream_record_v3(&session, &carrier, id).await?;
+    let (kind, open_raw, epoch, sequence) =
+        match read_stream_record_v3(&session, &carrier, id).await {
+            Ok(value) => value,
+            Err(_) => {
+                reset_inbound_before_delivery_v3(&session, &carrier, id).await;
+                return Ok(());
+            }
+        };
     if kind != InnerRecordTypeV3::Open || epoch != preface.initial_epoch() || sequence != 0 {
-        return Err(invalid("invalid initial OPEN"));
+        reset_inbound_before_delivery_v3(&session, &carrier, id).await;
+        return Ok(());
     }
-    let open = decode_open_payload_v3(&open_raw).map_err(proto)?;
-    let fss3_hash = compute_fss3_hash_v3(&raw_preface).map_err(proto)?;
+    let open = match decode_open_payload_v3(&open_raw).map_err(proto) {
+        Ok(open) => open,
+        Err(_) => {
+            reset_inbound_before_delivery_v3(&session, &carrier, id).await;
+            return Ok(());
+        }
+    };
+    let fss3_hash = match compute_fss3_hash_v3(&raw_preface).map_err(proto) {
+        Ok(hash) => hash,
+        Err(_) => {
+            reset_inbound_before_delivery_v3(&session, &carrier, id).await;
+            return Ok(());
+        }
+    };
     if open.logical_stream_id() != id || open.fss3_hash() != &fss3_hash {
-        return Err(invalid("OPEN does not bind FSS3"));
+        reset_inbound_before_delivery_v3(&session, &carrier, id).await;
+        return Ok(());
     }
-    let metadata: JsonObject = serde_json::from_slice(open.metadata()).map_err(proto)?;
+    let metadata: JsonObject = match serde_json::from_slice(open.metadata()).map_err(proto) {
+        Ok(metadata) => metadata,
+        Err(_) => {
+            reset_inbound_before_delivery_v3(&session, &carrier, id).await;
+            return Ok(());
+        }
+    };
     let reserved_rpc = open.kind() == RESERVED_RPC_KIND;
     let permit = if reserved_rpc {
         if session
@@ -3952,19 +4009,31 @@ async fn accept_one_stream_v3(
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            carrier.reset().await?;
-            return Err(invalid("duplicate reserved RPC stream"));
+            reset_inbound_before_delivery_v3(&session, &carrier, id).await;
+            return Ok(());
         }
         None
     } else {
-        Some(tokio::select! {
-            _ = session.canceled.cancelled() => return Err(closed()),
+        match tokio::select! {
+            _ = session.canceled.cancelled() => Err(closed()),
             permit = session.inbound_permits.clone().acquire_owned() => {
-                permit.map_err(|_| closed())?
+                permit.map_err(|_| closed())
             }
-        })
+        } {
+            Ok(permit) => Some(permit),
+            Err(_) => {
+                reset_inbound_before_delivery_v3(&session, &carrier, id).await;
+                return Ok(());
+            }
+        }
     };
-    let ack = compute_open_hash_v3(&open_raw).map_err(proto)?;
+    let ack = match compute_open_hash_v3(&open_raw).map_err(proto) {
+        Ok(ack) => ack,
+        Err(_) => {
+            reset_inbound_before_delivery_v3(&session, &carrier, id).await;
+            return Ok(());
+        }
+    };
     let send_epoch = session.state.lock().await.send_epoch;
     // Publish the peer ledger and stream before exposing OpenAck. An immediate
     // rekey may observe the ACK as soon as it is written and must include this
@@ -4005,21 +4074,30 @@ async fn accept_one_stream_v3(
         .lock()
         .expect("stream registry poisoned")
         .insert(id, Arc::downgrade(&stream));
-    write_stream_record_v3(
+    let stream_carrier = stream.carrier.clone();
+    if (write_stream_record_v3(
         &session,
-        &stream.carrier,
+        &stream_carrier,
         id,
         send_epoch,
         0,
         InnerRecordTypeV3::OpenAck,
         &ack,
     )
-    .await?;
+    .await)
+        .is_err()
+    {
+        reset_inbound_before_delivery_v3(&session, &stream_carrier, id).await;
+        return Ok(());
+    }
     if reserved_rpc {
         drop(responder);
-        return serve_rpc_stream_v3(&session, StreamHandleV3(stream)).await;
+        if (serve_rpc_stream_v3(&session, StreamHandleV3(stream)).await).is_err() {
+            reset_inbound_before_delivery_v3(&session, &stream_carrier, id).await;
+        }
+        return Ok(());
     }
-    session
+    if session
         .incoming_tx
         .send(IncomingStream::new(
             open.kind(),
@@ -4027,7 +4105,11 @@ async fn accept_one_stream_v3(
             Box::new(StreamHandleV3(stream)),
         ))
         .await
-        .map_err(|_| closed())
+        .is_err()
+    {
+        reset_inbound_before_delivery_v3(&session, &stream_carrier, id).await;
+    }
+    Ok(())
 }
 
 struct InboundResponderGuardV3 {
@@ -4777,11 +4859,13 @@ mod tests {
     const STREAM_FAULT_DELAY_NATIVE_FIN: u8 = 3;
     const STREAM_FAULT_CORRUPT_READ: u8 = 4;
     const STREAM_FAULT_CORRUPT_READ_PAYLOAD: u8 = 5;
+    const STREAM_FAULT_TRUNCATE_OPEN: u8 = 6;
 
     struct ObservedCarrierSessionV3 {
         inner: Arc<dyn CarrierSessionV3>,
         streams: Arc<StdMutex<Vec<Arc<ObservedCarrierStreamV3>>>>,
         resets: Arc<AtomicUsize>,
+        next_fault: AtomicU8,
     }
 
     impl std::fmt::Debug for ObservedCarrierSessionV3 {
@@ -4792,14 +4876,21 @@ mod tests {
 
     impl ObservedCarrierSessionV3 {
         fn wrap(&self, inner: Arc<dyn CarrierStreamV3>) -> Arc<dyn CarrierStreamV3> {
+            let mut streams = self.streams.lock().unwrap();
+            let fault = if streams.is_empty() {
+                STREAM_FAULT_NONE
+            } else {
+                self.next_fault.swap(STREAM_FAULT_NONE, Ordering::AcqRel)
+            };
             let stream = Arc::new(ObservedCarrierStreamV3 {
                 inner,
-                fault: AtomicU8::new(STREAM_FAULT_NONE),
+                fault: AtomicU8::new(fault),
+                write_calls: AtomicUsize::new(0),
                 resets: self.resets.clone(),
                 close_entered: Semaphore::new(0),
                 close_release: Semaphore::new(0),
             });
-            self.streams.lock().unwrap().push(stream.clone());
+            streams.push(stream.clone());
             stream
         }
     }
@@ -4838,6 +4929,7 @@ mod tests {
     struct ObservedCarrierStreamV3 {
         inner: Arc<dyn CarrierStreamV3>,
         fault: AtomicU8,
+        write_calls: AtomicUsize,
         resets: Arc<AtomicUsize>,
         close_entered: Semaphore,
         close_release: Semaphore,
@@ -4906,6 +4998,23 @@ mod tests {
         }
 
         async fn write(&self, payload: &[u8]) -> io::Result<usize> {
+            let write_call = self.write_calls.fetch_add(1, Ordering::AcqRel);
+            if write_call > 0
+                && payload.len() > SETUP_PREFACE_V3_SIZE
+                && self
+                    .fault
+                    .compare_exchange(
+                        STREAM_FAULT_TRUNCATE_OPEN,
+                        STREAM_FAULT_NONE,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+            {
+                self.inner.write(&payload[..1]).await?;
+                self.inner.close_write().await?;
+                return Ok(payload.len());
+            }
             if self
                 .fault
                 .compare_exchange(
@@ -4981,6 +5090,17 @@ mod tests {
         Arc<StdMutex<Vec<Arc<ObservedCarrierStreamV3>>>>,
         Arc<AtomicUsize>,
     ) {
+        observed_session_pair_v3_with_fault(STREAM_FAULT_NONE).await
+    }
+
+    async fn observed_session_pair_v3_with_fault(
+        client_next_fault: u8,
+    ) -> (
+        Arc<dyn Session>,
+        Arc<dyn Session>,
+        Arc<StdMutex<Vec<Arc<ObservedCarrierStreamV3>>>>,
+        Arc<AtomicUsize>,
+    ) {
         let (client_inner, server_inner) = memory_carrier_pair_v3_with_capacity(3);
         let client_streams = Arc::new(StdMutex::new(Vec::new()));
         let server_resets = Arc::new(AtomicUsize::new(0));
@@ -4988,11 +5108,13 @@ mod tests {
             inner: client_inner,
             streams: client_streams.clone(),
             resets: Arc::new(AtomicUsize::new(0)),
+            next_fault: AtomicU8::new(client_next_fault),
         });
         let server_carrier: Arc<dyn CarrierSessionV3> = Arc::new(ObservedCarrierSessionV3 {
             inner: server_inner,
             streams: Arc::new(StdMutex::new(Vec::new())),
             resets: server_resets.clone(),
+            next_fault: AtomicU8::new(STREAM_FAULT_NONE),
         });
         let (client, server) = tokio::join!(
             establish_session_v3(client_carrier, stream_lifecycle_config(SessionRole::Client)),
@@ -5058,6 +5180,38 @@ mod tests {
 
     async fn await_authenticated_stream_reset_v3(stream: &dyn ByteStream, resets: &AtomicUsize) {
         await_stream_reset_cleanup_v3(stream, resets, SessionError::StreamReset).await;
+    }
+
+    #[tokio::test]
+    async fn truncated_initial_open_resets_one_carrier_and_keeps_session_live() {
+        let (client, server, client_streams, server_resets) =
+            observed_session_pair_v3_with_fault(STREAM_FAULT_TRUNCATE_OPEN).await;
+        let malformed_client = client.clone();
+        let malformed = tokio::spawn(async move {
+            malformed_client
+                .open_stream("malformed", StreamMetadata::empty())
+                .await
+        });
+
+        tokio::time::timeout(Duration::from_millis(250), async {
+            loop {
+                if server_resets.load(Ordering::Acquire) == 1 {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("malformed carrier was not reset");
+        malformed.abort();
+        let _ = malformed.await;
+
+        let (outgoing, incoming, _) =
+            open_observed_stream_v3(&client, &server, &client_streams).await;
+        assert_eq!(outgoing.kind(), "test");
+        assert_eq!(incoming.stream().kind(), "test");
+        let _ = tokio::join!(outgoing.reset(), incoming.stream().reset());
+        let _ = tokio::join!(client.close(), server.close());
     }
 
     #[tokio::test]

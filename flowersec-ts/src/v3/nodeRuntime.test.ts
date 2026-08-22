@@ -337,6 +337,30 @@ describe("transport v3 Node TLS verifier and WebSocket production path", () => {
       Date.now(),
     )).toThrowError(expect.objectContaining({ code: "tls_failed", detail: "unknown" }));
   });
+
+  test("accepts a later matching pin after comparing the complete active set", () => {
+    const leaf = new X509Certificate(pinCertificate).raw;
+    expect(() => verifyPinnedLeafCertificateV3(
+      leaf,
+      {
+        mode: "pin",
+        activePins: [
+          {
+            algorithm: "sha-256",
+            not_after_unix_s: nowSeconds() + 600,
+            value_b64u: Buffer.alloc(32, 0).toString("base64url"),
+          },
+          {
+            algorithm: "sha-256",
+            not_after_unix_s: nowSeconds() + 600,
+            value_b64u: pinDigest.toString("base64url"),
+          },
+        ],
+        activeLeafDerSHA256: [Buffer.alloc(32, 0), pinDigest],
+      },
+      Date.now(),
+    )).not.toThrow();
+  });
 });
 
 function generateCertificates(target: string): void {

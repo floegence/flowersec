@@ -33,6 +33,8 @@ type chromiumPerformanceCapability struct {
 	Limitation    string `json:"limitation,omitempty"`
 }
 
+const chromiumWebTransportUnavailableLimitation = "Chromium does not expose the WebTransport constructor"
+
 type performanceCapabilityUnavailableError struct {
 	limitation string
 }
@@ -55,7 +57,7 @@ func parseChromiumPerformanceCapability(data []byte) error {
 		}
 		return nil
 	case "UNSUPPORTED":
-		if result.SecureContext || result.WebTransport != "" || strings.TrimSpace(result.Limitation) == "" {
+		if result.SecureContext || result.WebTransport != "" || result.Limitation != chromiumWebTransportUnavailableLimitation {
 			return errors.New("Chromium UNSUPPORTED capability result is invalid")
 		}
 		return &performanceCapabilityUnavailableError{limitation: result.Limitation}

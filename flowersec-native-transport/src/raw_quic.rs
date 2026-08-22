@@ -146,10 +146,11 @@ fn verify_pin_profile_v3(
         return Err(PinCertificateFailureV3::InvalidProfile);
     }
     let digest: [u8; 32] = Sha256::digest(certificate_der).into();
-    if !active_leaf_der_sha256
-        .iter()
-        .any(|pin| bool::from(digest.ct_eq(pin)))
-    {
+    let mut matched = 0u8;
+    for pin in active_leaf_der_sha256 {
+        matched |= digest.ct_eq(pin).unwrap_u8();
+    }
+    if matched == 0 {
         return Err(PinCertificateFailureV3::PinMismatch);
     }
     Ok(())

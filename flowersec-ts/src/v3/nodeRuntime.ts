@@ -209,7 +209,11 @@ export function verifyPinnedLeafCertificateV3(
     throw new TransportFailureV3("tls_failed", "unknown", error);
   }
   const digest = createHash("sha256").update(certificate.raw).digest();
-  if (!policy.activeLeafDerSHA256.some((pin) => pin.length === digest.length && timingSafeEqual(pin, digest))) {
+  let matched = 0;
+  for (const pin of policy.activeLeafDerSHA256) {
+    if (pin.length === digest.length && timingSafeEqual(pin, digest)) matched |= 1;
+  }
+  if (matched === 0) {
     throw new TransportFailureV3("tls_failed", "pin_mismatch");
   }
 }

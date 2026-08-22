@@ -414,7 +414,11 @@ enum PinVerifierV3 {
       throw TransportSecurityFailureV3.unknownTLS
     }
     let digest = Data(SHA256.hash(data: leaf.der))
-    guard activePins.contains(where: { constantTimeEqual($0, digest) }) else {
+    var matched: UInt8 = 0
+    for pin in activePins {
+      if constantTimeEqual(pin, digest) { matched |= 1 }
+    }
+    guard matched != 0 else {
       throw TransportSecurityFailureV3.pinMismatch
     }
   }

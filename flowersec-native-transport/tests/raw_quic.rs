@@ -297,8 +297,9 @@ async fn v3_raw_quic_enforces_ca_pin_and_versioned_alpn() {
 
     let pinned_identity = self_signed_identity();
     let pin: [u8; 32] = Sha256::digest(pinned_identity.leaf.as_ref()).into();
-    let pin_client = RawQuicClientConfig::new_v3_pin(PathProfile::Direct, vec![pin], limits())
-        .expect("v3 pin client config");
+    let pin_client =
+        RawQuicClientConfig::new_v3_pin(PathProfile::Direct, vec![[0xA5; 32], pin], limits())
+            .expect("v3 pin client config");
     let pin_server = RawQuicServerConfig::new_v3(
         PathProfile::Direct,
         pinned_identity.chain_der(),
