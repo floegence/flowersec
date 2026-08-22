@@ -530,7 +530,9 @@
         "lease_terminal_states": [
           "retired"
         ],
-        "retry_delays_ms": []
+        "retry_delays_ms": [],
+        "source_cancellation_propagated": true,
+        "close_waits_for_acquire_settlement": true
       }
     },
     {
@@ -561,7 +563,9 @@
         "lease_terminal_states": [
           "retired"
         ],
-        "retry_delays_ms": []
+        "retry_delays_ms": [],
+        "source_cancellation_propagated": true,
+        "close_waits_for_acquire_settlement": true
       }
     },
     {

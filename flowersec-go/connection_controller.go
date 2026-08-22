@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
@@ -338,6 +339,59 @@ func (controller *ConnectionController) Close(ctx context.Context) error {
 	}
 }
 
+type controllerSourceAcquireResult struct {
+	lease   ArtifactLease
+	failure *ArtifactSourceError
+}
+
+// acquire gives source delivery and controller cancellation one shared
+// linearization point. A cancellation winner keeps ownership of any late
+// lease, drains the source result, and performs the only legal claim/retire
+// cleanup before the scheduler can finish closing.
+func (controller *ConnectionController) acquire(ctx context.Context) (ArtifactLease, *ArtifactSourceError) {
+	result := make(chan controllerSourceAcquireResult, 1)
+	var gate atomic.Uint32 // 0 pending, 1 delivered, 2 cancellation
+	go func() {
+		var acquired controllerSourceAcquireResult
+		func() {
+			defer func() {
+				if recover() != nil {
+					acquired.failure = NewTerminalArtifactSourceError(ErrInvalidArtifact)
+				}
+			}()
+			acquired.lease, acquired.failure = controller.source.Acquire(ctx)
+		}()
+		if gate.CompareAndSwap(0, 1) {
+			result <- acquired
+			return
+		}
+		// Cancellation won. The source still owns the result and must drain it;
+		// late errors are intentionally not exposed to the Controller.
+		if acquired.lease.present() {
+			if claimed, ok := acquired.lease.claimArtifact(); ok {
+				_ = claimed.retire(ctx)
+			}
+		}
+		result <- controllerSourceAcquireResult{}
+	}()
+
+	select {
+	case acquired := <-result:
+		return acquired.lease, acquired.failure
+	case <-ctx.Done():
+		if gate.CompareAndSwap(0, 2) {
+			// Wait for source settlement and source-side cleanup so Close's done
+			// channel is a complete ownership barrier.
+			<-result
+			return ArtifactLease{}, nil
+		}
+		// Delivery linearized first. The Controller owns the result and the
+		// normal run loop will claim and retire it after observing cancellation.
+		acquired := <-result
+		return acquired.lease, acquired.failure
+	}
+}
+
 func (controller *ConnectionController) run(ctx context.Context) {
 	defer func() {
 		controller.mu.Lock()
@@ -357,11 +411,11 @@ func (controller *ConnectionController) run(ctx context.Context) {
 		}
 		cycle.attempts = saturatingControllerIncrement(cycle.attempts)
 		controller.beginNextAttempt(cycle.attempts)
-		lease, sourceFailure := controller.source.Acquire(ctx)
+		lease, sourceFailure := controller.acquire(ctx)
 		if sourceFailure != nil && lease.present() {
 			claimed, claimedOK := lease.claimArtifact()
 			if claimedOK {
-				_ = claimed.retire(context.WithoutCancel(ctx))
+				_ = claimed.retire(ctx)
 			}
 			if ctx.Err() != nil {
 				controller.finishClosed()
@@ -373,7 +427,7 @@ func (controller *ConnectionController) run(ctx context.Context) {
 		claimed, claimedOK := lease.claimArtifact()
 		if ctx.Err() != nil {
 			if claimedOK {
-				_ = claimed.retire(context.WithoutCancel(ctx))
+				_ = claimed.retire(ctx)
 			}
 			controller.finishClosed()
 			return
@@ -399,7 +453,7 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			cycle.replacementUsed = true
 		}
 		if claimed.lease.artifact.value.Session.InitExpireAtUnixSeconds <= controller.clock.wallNow().Unix() {
-			_ = claimed.retire(context.WithoutCancel(ctx))
+			_ = claimed.retire(ctx)
 			cycle.consecutiveFailures = saturatingControllerIncrement(cycle.consecutiveFailures)
 			cycle.lastFailure = &ConnectError{code: ConnectExpired}
 			cycle.mode = controllerAcquirePrimary
@@ -411,7 +465,7 @@ func (controller *ConnectionController) run(ctx context.Context) {
 
 		allowed, eligibilityErr := cycle.eligibleCandidates(claimed.lease.artifact.value)
 		if eligibilityErr != nil {
-			_ = claimed.retire(context.WithoutCancel(ctx))
+			_ = claimed.retire(ctx)
 			cycle.consecutiveFailures = saturatingControllerIncrement(cycle.consecutiveFailures)
 			cycle.lastFailure = eligibilityErr
 			controller.fail(eligibilityErr, terminalDisposition())
@@ -424,12 +478,12 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			session, outcome.err = controller.connect(ctx, claimed.lease, controller.options)
 			outcome.spendStarted = claimed.spendStarted()
 			if outcome.err != nil && !outcome.spendStarted {
-				_ = claimed.retire(context.WithoutCancel(ctx))
+				_ = claimed.retire(ctx)
 			}
 		} else if controller.connectDetailed != nil {
 			session, outcome = controller.connectDetailed(ctx, claimed, controller.options, allowed)
 			if outcome.err != nil && !outcome.spendStarted {
-				_ = claimed.retire(context.WithoutCancel(ctx))
+				_ = claimed.retire(ctx)
 			}
 		} else {
 			session, outcome = connectForController(ctx, claimed, controller.options, allowed)

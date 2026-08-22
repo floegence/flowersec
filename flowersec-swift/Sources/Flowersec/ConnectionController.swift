@@ -23,14 +23,12 @@ public enum ConnectionState: String, Equatable, Sendable {
 
 public enum ConnectionAttemptFailure: Error, Equatable, Sendable {
   case artifactSource(ArtifactSourceFailure)
-  case unknownArtifactSource
   case connection(ConnectError)
   case session(SessionError)
 
   public var retryDisposition: RetryDispositionV3 {
     switch self {
     case .artifactSource(let failure): failure.disposition
-    case .unknownArtifactSource: .terminal
     case .connection(let error): error.retryDispositionV3
     case .session(let error): error.retryDispositionV3
     }
@@ -69,6 +67,7 @@ public actor ConnectionController {
   private var retryGate: ConnectionRetryGateV3?
   private var retryTimer: Task<Void, Never>?
   private var retryNotBefore: RetryNotBeforeV3?
+  private var inFlightAcquisition: SourceAcquisitionRaceV3?
   private var observers: [UUID: AsyncStream<ConnectionSnapshot>.Continuation] = [:]
   private var closeTask: Task<Void, Never>?
   private var active: Bool { state != .closed && !Task.isCancelled }
@@ -155,6 +154,7 @@ public actor ConnectionController {
     }
     let activeScheduler = scheduler
     let activeAttempt = inFlightAttempt
+    let activeAcquisition = inFlightAcquisition
     let activeGate = retryGate
     let activeSession = currentSession
     state = .closed
@@ -162,17 +162,20 @@ public actor ConnectionController {
     failure = nil
     scheduler = nil
     inFlightAttempt = nil
+    inFlightAcquisition = nil
     retryGate = nil
     retryNotBefore = nil
     retryDisposition = nil
     retryTimer?.cancel()
     retryTimer = nil
     activeAttempt?.cancel()
+    activeAcquisition?.cancel()
     activeScheduler?.cancel()
     publish()
     finishObservers()
     let cleanup = Task {
       if let activeGate { await activeGate.wake(.cancellation) }
+      await activeAcquisition?.settle()
       try? await activeSession?.close()
       await activeScheduler?.value
     }
@@ -313,16 +316,18 @@ public actor ConnectionController {
     let source = self.source
     let options = self.options
     let connectOneShot = self.connectOneShot
+    let acquisition = SourceAcquisitionRaceV3(source: source)
+    inFlightAcquisition = acquisition
     let task = Task<AttemptOutcomeV3, Never> {
       let lease: ArtifactLeaseV3
       do {
-        lease = try await source.acquireArtifact()
+        lease = try await acquisition.value()
       } catch let sourceFailure as ArtifactSourceFailure {
         return .failed(.artifactSource(sourceFailure), nil, nil, nil)
       } catch is CancellationError {
         return .failed(.connection(.canceled), nil, nil, nil)
       } catch {
-        return .failed(.unknownArtifactSource, nil, nil, nil)
+        return .failed(.connection(.artifactInvalid), nil, .terminal, nil)
       }
       let claimedLease: ClaimedArtifactLeaseV3
       do {
@@ -382,7 +387,10 @@ public actor ConnectionController {
       }
     }
     inFlightAttempt = task
-    return await task.value
+    let result = await task.value
+    if inFlightAcquisition === acquisition { inFlightAcquisition = nil }
+    await acquisition.settle()
+    return result
   }
 
   private func runReplacement(
@@ -407,9 +415,13 @@ public actor ConnectionController {
       retryDisposition = nil
       publish()
       let lease: ArtifactLeaseV3
+      let acquisition = SourceAcquisitionRaceV3(source: source)
+      inFlightAcquisition = acquisition
       do {
-        lease = try await source.acquireArtifact()
+        lease = try await acquisition.value()
       } catch let sourceFailure as ArtifactSourceFailure {
+        if inFlightAcquisition === acquisition { inFlightAcquisition = nil }
+        await acquisition.settle()
         let sourceAttemptFailure = ConnectionAttemptFailure.artifactSource(sourceFailure)
         guard validRetryDisposition(sourceFailure.disposition) else {
           return .terminal(.connection(.artifactInvalid))
@@ -420,10 +432,16 @@ public actor ConnectionController {
         else { return .terminal(terminalFailure(sourceAttemptFailure)) }
         continue
       } catch is CancellationError {
+        if inFlightAcquisition === acquisition { inFlightAcquisition = nil }
+        await acquisition.settle()
         return .terminal(.connection(.canceled))
       } catch {
-        return .terminal(.unknownArtifactSource)
+        if inFlightAcquisition === acquisition { inFlightAcquisition = nil }
+        await acquisition.settle()
+        return .terminal(.connection(.artifactInvalid))
       }
+      if inFlightAcquisition === acquisition { inFlightAcquisition = nil }
+      await acquisition.settle()
       do {
         claimedLease = try await lease.claimForConnectionController()
       } catch is CancellationError {
@@ -802,6 +820,95 @@ struct ConnectionControllerClockV3: Sendable {
     },
     sleep: { duration in try await Task.sleep(for: duration) }
   )
+}
+
+/// Serializes source result delivery and cancellation at one shared boundary.
+/// A late lease is drained and retired before the race settles so controller
+/// close can join all source-side cleanup.
+private final class SourceAcquisitionRaceV3: @unchecked Sendable {
+  private let lock = NSLock()
+  private var result: Result<ArtifactLeaseV3, Error>?
+  private var continuation: CheckedContinuation<ArtifactLeaseV3, Error>?
+  private var sourceTask: Task<Void, Never>?
+
+  init(source: any ArtifactSource) {
+    sourceTask = nil
+    sourceTask = Task { [weak self] in
+      do {
+        let lease = try await source.acquireArtifact()
+        await self?.deliver(lease)
+      } catch {
+        self?.deliverFailure(error)
+      }
+    }
+  }
+
+  func value() async throws -> ArtifactLeaseV3 {
+    if Task.isCancelled { cancel() }
+    return try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        let resolved = lock.withLock { () -> Result<ArtifactLeaseV3, Error>? in
+          if let result { return result }
+          self.continuation = continuation
+          return nil
+        }
+        if let resolved { continuation.resume(with: resolved) }
+      }
+    } onCancel: {
+      cancel()
+    }
+  }
+
+  func cancel() {
+    var continuation: CheckedContinuation<ArtifactLeaseV3, Error>?
+    let won = lock.withLock { () -> Bool in
+      guard result == nil else { return false }
+      result = .failure(CancellationError())
+      continuation = self.continuation
+      self.continuation = nil
+      return true
+    }
+    guard won else { return }
+    sourceTask?.cancel()
+    continuation?.resume(throwing: CancellationError())
+  }
+
+  func settle() async {
+    await sourceTask?.value
+  }
+
+  private func deliver(_ lease: ArtifactLeaseV3) async {
+    var continuation: CheckedContinuation<ArtifactLeaseV3, Error>?
+    let late = lock.withLock { () -> Bool in
+      guard result == nil else { return true }
+      result = .success(lease)
+      continuation = self.continuation
+      self.continuation = nil
+      return false
+    }
+    if late {
+      do {
+        let claimed = try await lease.claim()
+        try await claimed.retire()
+      } catch {
+        // Cleanup failures are intentionally redacted at the public boundary.
+      }
+    } else {
+      continuation?.resume(returning: lease)
+    }
+  }
+
+  private func deliverFailure(_ failure: Error) {
+    var continuation: CheckedContinuation<ArtifactLeaseV3, Error>?
+    let won = lock.withLock { () -> Bool in
+      guard result == nil else { return false }
+      result = .failure(failure)
+      continuation = self.continuation
+      self.continuation = nil
+      return true
+    }
+    if won { continuation?.resume(throwing: failure) }
+  }
 }
 
 private enum AttemptOutcomeV3: Sendable {

@@ -1286,6 +1286,8 @@ const controllerVectors = {
         replacement_acquisitions: 0, replacement_quota_used: 0,
         spend_callbacks: 0, retire_callbacks: 1,
         lease_terminal_states: ["retired"], retry_delays_ms: [],
+        source_cancellation_propagated: true,
+        close_waits_for_acquire_settlement: true,
       },
     },
     {
@@ -1299,6 +1301,8 @@ const controllerVectors = {
         replacement_acquisitions: 0, replacement_quota_used: 0,
         spend_callbacks: 0, retire_callbacks: 1,
         lease_terminal_states: ["retired"], retry_delays_ms: [],
+        source_cancellation_propagated: true,
+        close_waits_for_acquire_settlement: true,
       },
     },
     {

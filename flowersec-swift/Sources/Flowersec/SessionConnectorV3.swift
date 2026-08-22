@@ -157,13 +157,13 @@ struct SessionConnectorV3: Sendable {
         try await Task.sleep(for: options.connectTimeout)
         if completion.resolve(.failure(ConnectError.timeout)) {
           operation.cancel()
-          connectionBox.close()
+          connectionBox.requestClose()
         }
       } catch {
         return
       }
     }
-    Task {
+    let observer = Task {
       let result: Result<any Session, Error>
       do {
         result = .success(try await operation.value)
@@ -176,16 +176,30 @@ struct SessionConnectorV3: Sendable {
         try? await session.close()
       }
     }
-    return try await withTaskCancellationHandler {
-      try await withCheckedThrowingContinuation { continuation in
-        completion.install(continuation)
-      }
-    } onCancel: {
-      operation.cancel()
-      timeout.cancel()
-      connectionBox.close()
-      completion.resolve(.failure(CancellationError()))
+    let resolved: Result<any Session, Error>
+    do {
+      resolved = .success(
+        try await withTaskCancellationHandler {
+          try await withCheckedThrowingContinuation { continuation in
+            completion.install(continuation)
+          }
+        } onCancel: {
+          operation.cancel()
+          timeout.cancel()
+          connectionBox.requestClose()
+          completion.resolve(.failure(CancellationError()))
+        })
+    } catch {
+      resolved = .failure(error)
     }
+    timeout.cancel()
+    if case .failure = resolved {
+      operation.cancel()
+      connectionBox.requestClose()
+    }
+    await observer.value
+    await connectionBox.waitForClose()
+    return try resolved.get()
   }
 
   private func connectWithoutDeadline(
@@ -273,7 +287,15 @@ struct SessionConnectorV3: Sendable {
       }
       race.register(task)
     }
-    let resolution = try await race.wait()
+    let resolution: CandidatePreparationResolutionV3
+    do {
+      resolution = try await race.wait()
+    } catch {
+      await race.join()
+      await connectionBox.waitForClose()
+      throw error
+    }
+    await race.join()
     let winner: (CanonicalCandidateV3, any PreparedCarrierConnectionV3)?
     switch resolution {
     case .winner(let candidate, let connection):
@@ -437,9 +459,8 @@ private final class CandidatePreparationRaceV3: @unchecked Sendable {
 
   func register(_ task: Task<Void, Never>) {
     let cancelImmediately = lock.withLock {
-      guard result == nil else { return true }
       tasks.append(task)
-      return false
+      return result != nil
     }
     if cancelImmediately { task.cancel() }
   }
@@ -463,7 +484,6 @@ private final class CandidatePreparationRaceV3: @unchecked Sendable {
           continuation = self.continuation
           self.continuation = nil
           tasksToCancel = tasks
-          tasks.removeAll()
           return connection
         }
         resolved = .success(.winner(candidate, connection))
@@ -477,7 +497,6 @@ private final class CandidatePreparationRaceV3: @unchecked Sendable {
       continuation = self.continuation
       self.continuation = nil
       tasksToCancel = tasks
-      tasks.removeAll()
       return nil
     }
     if let resolved { continuation?.resume(with: resolved) }
@@ -500,6 +519,11 @@ private final class CandidatePreparationRaceV3: @unchecked Sendable {
     }
   }
 
+  func join() async {
+    let pending = lock.withLock { tasks }
+    for task in pending { await task.value }
+  }
+
   private func cancel() {
     var continuation: CheckedContinuation<CandidatePreparationResolutionV3, Error>?
     var tasksToCancel: [Task<Void, Never>] = []
@@ -509,11 +533,10 @@ private final class CandidatePreparationRaceV3: @unchecked Sendable {
       continuation = self.continuation
       self.continuation = nil
       tasksToCancel = tasks
-      tasks.removeAll()
       return true
     }
     guard canceled else { return }
-    connectionBox.close()
+    connectionBox.requestClose()
     continuation?.resume(throwing: CancellationError())
     for task in tasksToCancel { task.cancel() }
   }
@@ -523,6 +546,7 @@ private final class PreparedConnectionCloseBoxV3: @unchecked Sendable {
   private let lock = NSLock()
   private var connection: (any PreparedCarrierConnectionV3)?
   private var closeRequested = false
+  private var closeTask: Task<Void, Never>?
 
   func accept(_ connection: any PreparedCarrierConnectionV3) -> Bool {
     lock.withLock {
@@ -536,14 +560,18 @@ private final class PreparedConnectionCloseBoxV3: @unchecked Sendable {
     lock.withLock { connection = nil }
   }
 
-  func close() {
-    let pending = lock.withLock {
+  func requestClose() {
+    lock.withLock {
       closeRequested = true
-      let pending = connection
+      guard closeTask == nil, let pending = connection else { return }
       connection = nil
-      return pending
+      closeTask = Task { await pending.close() }
     }
-    if let pending { Task { await pending.close() } }
+  }
+
+  func waitForClose() async {
+    let pending = lock.withLock { closeTask }
+    await pending?.value
   }
 }
 

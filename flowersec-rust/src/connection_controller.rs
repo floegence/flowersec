@@ -1682,6 +1682,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancellation_drain_close_completes_after_retire_panic() {
+        let retire_calls = Arc::new(AtomicU64::new(0));
+        let retire_calls_capture = retire_calls.clone();
+        let lease = ArtifactLeaseV3::new_with_retire(
+            pin_only_artifact([0x11; 32]),
+            || async { Ok(()) },
+            move || {
+                retire_calls_capture.fetch_add(1, Ordering::SeqCst);
+                async {
+                    panic!("secret cancellation retirement failure");
+                    #[allow(unreachable_code)]
+                    Ok(())
+                }
+            },
+        );
+        let lease_copy = lease.clone();
+        let source = Arc::new(LateLeaseSource {
+            lease: Mutex::new(Some(lease)),
+            acquisitions: AtomicU64::new(0),
+        });
+        let controller = ConnectionController::new_with_connector(
+            source.clone(),
+            test_options(None),
+            scripted_connector(std::iter::empty::<ConnectorStep>()),
+        );
+        controller.start();
+        while source.acquisitions.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+
+        tokio::time::timeout(Duration::from_millis(500), controller.close())
+            .await
+            .expect("controller close remained blocked after retire panic");
+
+        assert_eq!(controller.status().state, ConnectionState::Closed);
+        assert_eq!(retire_calls.load(Ordering::SeqCst), 1);
+        assert!(
+            lease_copy.claim().is_err(),
+            "cancellation-retired lease became reusable"
+        );
+    }
+
+    #[tokio::test]
     async fn canceled_first_close_still_waits_for_owned_scheduler_cleanup() {
         let retire_entered = Arc::new(Notify::new());
         let retire_release = Arc::new(Notify::new());
@@ -2095,6 +2138,58 @@ mod tests {
                 RetryDisposition::Terminal
             ))
         );
+        controller.close().await;
+    }
+
+    #[tokio::test]
+    async fn ordinary_pre_spend_retry_continues_after_retire_panic() {
+        let retire_calls = Arc::new(AtomicU64::new(0));
+        let retire_calls_capture = retire_calls.clone();
+        let first = ArtifactLeaseV3::new_with_retire(
+            pin_only_artifact([0x11; 32]),
+            || async { Ok(()) },
+            move || {
+                retire_calls_capture.fetch_add(1, Ordering::SeqCst);
+                async {
+                    panic!("secret retirement failure");
+                    #[allow(unreachable_code)]
+                    Ok(())
+                }
+            },
+        );
+        let first_copy = first.clone();
+        let second_spent = Arc::new(AtomicU64::new(0));
+        let source = Arc::new(QueueSource::new([
+            Ok(first),
+            Ok(test_lease(
+                pin_only_artifact([0x22; 32]),
+                second_spent.clone(),
+                Arc::new(AtomicU64::new(0)),
+            )),
+        ]));
+        let controller = ConnectionController::new_with_connector(
+            source.clone(),
+            test_options(Some(2)),
+            scripted_connector([ConnectorStep::PreSpendConnection, ConnectorStep::Success]),
+        );
+
+        controller.start();
+        let waiting = wait_for_state(&controller, ConnectionState::Waiting).await;
+        assert_eq!(
+            waiting.last_failure,
+            Some(connect_failure(
+                ConnectErrorCode::ConnectionFailed,
+                RetryDisposition::Retryable,
+            ))
+        );
+        assert!(controller.retry_now());
+        let connected = wait_for_state(&controller, ConnectionState::Connected).await;
+
+        assert_eq!(connected.state, ConnectionState::Connected);
+        assert_eq!(source.acquisitions.load(Ordering::SeqCst), 2);
+        assert_eq!(retire_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(second_spent.load(Ordering::SeqCst), 1);
+        assert!(first_copy.claim().is_err(), "retired lease became reusable");
         controller.close().await;
     }
 

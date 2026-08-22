@@ -435,25 +435,24 @@ final class ConnectorV2Tests: XCTestCase {
         recorder: recorder, gate: gate, immediateCandidateID: "w-pin")
     )
 
-    let started = ContinuousClock.now
+    let connecting = Task { try await connector.connect() }
+    let loserArrived = await waitUntilConnectorV3(timeout: .milliseconds(500)) {
+      await gate.arrivalCount == 1
+    }
+    XCTAssertTrue(loserArrived)
+    // Connector completion joins the late prepared loser before returning.
+    await gate.release()
     do {
-      _ = try await connector.connect()
+      _ = try await connecting.value
       XCTFail("recording winner unexpectedly established a session")
     } catch {
       XCTAssertEqual(error as? ConnectError, .connectionFailed)
     }
-    XCTAssertLessThan(started.duration(to: .now), .milliseconds(250))
+    let snapshot = await recorder.snapshot()
     let spendCount = await spent.value()
-    let winnerSnapshot = await recorder.snapshot()
     XCTAssertEqual(spendCount, 1)
-    XCTAssertEqual(winnerSnapshot.writes, ["w-pin"])
-    XCTAssertEqual(winnerSnapshot.closed, ["w-pin"])
-
-    await gate.release()
-    let loserClosed = await waitUntilConnectorV3(timeout: .milliseconds(500)) {
-      await recorder.snapshot().closed == ["w-ca", "w-pin"]
-    }
-    XCTAssertTrue(loserClosed)
+    XCTAssertEqual(snapshot.writes, ["w-pin"])
+    XCTAssertEqual(snapshot.closed, ["w-ca", "w-pin"])
   }
 
   func testV3TimeoutBeforeLatePreparationsSpendsNothingAndClosesReturnedConnections()
@@ -470,28 +469,26 @@ final class ConnectorV2Tests: XCTestCase {
       runtime: GatedCandidateRuntimeV3(recorder: recorder, gate: gate)
     )
 
-    let started = ContinuousClock.now
+    let connecting = Task { try await connector.connect() }
+    let preparationsArrived = await waitUntilConnectorV3(timeout: .milliseconds(500)) {
+      await gate.arrivalCount == 2
+    }
+    XCTAssertTrue(preparationsArrived)
+    // The timeout requests close, but connect waits for both late carriers.
+    try? await Task.sleep(for: .milliseconds(40))
+    await gate.release()
     do {
-      _ = try await connector.connect()
+      _ = try await connecting.value
       XCTFail("late preparations unexpectedly established a session")
     } catch {
       XCTAssertEqual((error as? ConnectError)?.code, .connectionFailed)
       XCTAssertEqual((error as? ConnectError)?.retryDisposition, .retryable)
     }
-    XCTAssertLessThan(started.duration(to: .now), .milliseconds(120))
-    let spendCountAfterTimeout = await spent.value()
-    XCTAssertEqual(spendCountAfterTimeout, 0)
-    let timedOutSnapshot = await recorder.snapshot()
-    XCTAssertTrue(timedOutSnapshot.writes.isEmpty)
-    XCTAssertTrue(timedOutSnapshot.closed.isEmpty)
-
-    await gate.release()
-    let lateConnectionsClosed = await waitUntilConnectorV3(timeout: .milliseconds(500)) {
-      await recorder.snapshot().closed == ["w-ca", "w-pin"]
-    }
-    XCTAssertTrue(lateConnectionsClosed)
-    let finalSpendCount = await spent.value()
-    XCTAssertEqual(finalSpendCount, 0)
+    let snapshot = await recorder.snapshot()
+    XCTAssertTrue(snapshot.writes.isEmpty)
+    XCTAssertEqual(snapshot.closed, ["w-ca", "w-pin"])
+    let spendCount = await spent.value()
+    XCTAssertEqual(spendCount, 0)
   }
 
   func testV3CancellationBeforeLatePreparationsSpendsNothingAndClosesReturnedConnections()
@@ -514,6 +511,8 @@ final class ConnectorV2Tests: XCTestCase {
     XCTAssertTrue(bothPreparing)
 
     connecting.cancel()
+    // Cancellation also joins late prepared carriers before returning.
+    await gate.release()
     do {
       _ = try await connecting.value
       XCTFail("cancelled preparations unexpectedly established a session")
@@ -524,15 +523,11 @@ final class ConnectorV2Tests: XCTestCase {
     let spendCountAfterCancellation = await spent.value()
     XCTAssertEqual(spendCountAfterCancellation, 0)
 
-    await gate.release()
-    let lateConnectionsClosed = await waitUntilConnectorV3(timeout: .milliseconds(500)) {
-      await recorder.snapshot().closed == ["w-ca", "w-pin"]
-    }
-    XCTAssertTrue(lateConnectionsClosed)
     let canceledSnapshot = await recorder.snapshot()
     XCTAssertTrue(canceledSnapshot.writes.isEmpty)
     let finalSpendCount = await spent.value()
     XCTAssertEqual(finalSpendCount, 0)
+    XCTAssertEqual(canceledSnapshot.closed, ["w-ca", "w-pin"])
   }
 
   func testV3NoWinnerRaceEndExpiryOverridesCandidateFailures() async throws {

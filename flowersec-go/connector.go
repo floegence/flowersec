@@ -275,12 +275,12 @@ func connectClaimed(
 ) (Session, error) {
 	connector, err := newConnectorWithFilter(claimed.lease, options, filter)
 	if err != nil {
-		_ = claimed.retire(context.WithoutCancel(nonNilContext(ctx)))
+		_ = claimed.retire(nonNilContext(ctx))
 		return nil, err
 	}
 	established, internalErr := connector.connectInternal(ctx)
 	if internalErr != nil && !claimed.spendStarted() {
-		_ = claimed.retire(context.WithoutCancel(nonNilContext(ctx)))
+		_ = claimed.retire(nonNilContext(ctx))
 	}
 	return established, redactConnectError(internalErr)
 }
@@ -798,13 +798,13 @@ func connectForController(
 	}
 	connector, err := newConnectorWithFilter(claimed.lease, options, filter)
 	if err != nil {
-		_ = claimed.retire(context.WithoutCancel(nonNilContext(ctx)))
+		_ = claimed.retire(nonNilContext(ctx))
 		return nil, controllerConnectOutcome{err: err}
 	}
 	established, internalErr := connector.connectInternal(ctx)
 	outcome := analyzeControllerConnectOutcome(claimed, internalErr)
 	if internalErr != nil && !outcome.spendStarted {
-		_ = claimed.retire(context.WithoutCancel(nonNilContext(ctx)))
+		_ = claimed.retire(nonNilContext(ctx))
 	}
 	return established, outcome
 }

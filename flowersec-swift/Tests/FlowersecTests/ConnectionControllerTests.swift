@@ -324,7 +324,8 @@ final class ConnectionControllerTests: XCTestCase {
       for key in Set(expected.keys).subtracting(required) {
         switch key {
         case "no_mode_downgrade", "blocked_policy_remains_blocked", "order_independent",
-          "counter_saturated", "capability_rechecked", "cleanup_error_ignored", "timer_saturated":
+          "counter_saturated", "capability_rechecked", "cleanup_error_ignored", "timer_saturated",
+          "source_cancellation_propagated", "close_waits_for_acquire_settlement":
           XCTAssertEqual(expected[key] as? Bool, true, "\(id) has invalid \(key)")
         case "tls_error_claimed", "retry_now_allowed_before_deadline":
           _ = try XCTUnwrap(expected[key] as? Bool)
@@ -1261,7 +1262,14 @@ final class ConnectionControllerTests: XCTestCase {
   private func runCancellationVectorV3(_ id: String) async throws {
     let expected = try controllerExpectedV3(id)
     let retired = AsyncCounterV3()
-    let tracked = try lease(artifact: artifactV3(), retired: retired)
+    let retireGate = BlockingRetireGateV3()
+    let tracked = ArtifactLeaseV3(
+      artifact: try artifactV3(),
+      commitSpend: {},
+      retire: {
+        await retireGate.wait()
+        _ = await retired.increment()
+      })
     if id == "lease-cancellation-first" {
       let source = BlockingArtifactSourceV3(tracked)
       let connects = AsyncCounterV3()
@@ -1276,13 +1284,24 @@ final class ConnectionControllerTests: XCTestCase {
       let closeTask = Task { await controller.close() }
       assertTrueV3(await waitUntilV3 { await controller.state == .closed }, id)
       await source.release()
-      await closeTask.value
+      assertTrueV3(await waitUntilV3 { await retireGate.entered }, id)
+      let closeFinished = AsyncFlagV3()
+      let joinedClose = Task {
+        await closeTask.value
+        await closeFinished.set()
+      }
+      let finishedBeforeRetireRelease = await closeFinished.value
+      XCTAssertFalse(finishedBeforeRetireRelease)
+      await retireGate.release()
+      await joinedClose.value
       let snapshot = await controller.snapshot()
       let attempts = await connects.value
       let retirements = await retired.value
       XCTAssertEqual(snapshot.state.rawValue, expected["final_state"] as? String, id)
       XCTAssertEqual(attempts, expected["connect_attempts"] as? Int, id)
       XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
+      XCTAssertEqual(expected["source_cancellation_propagated"] as? Bool, true, id)
+      XCTAssertEqual(expected["close_waits_for_acquire_settlement"] as? Bool, true, id)
       return
     }
 
@@ -1297,13 +1316,51 @@ final class ConnectionControllerTests: XCTestCase {
       })
     await controller.start()
     assertTrueV3(await waitUntilV3 { await started.value == 1 }, id)
-    await controller.close()
+    let closing = Task { await controller.close() }
+    assertTrueV3(await waitUntilV3 { await retireGate.entered }, id)
+    let closeFinished = AsyncFlagV3()
+    let joinedClose = Task {
+      await closing.value
+      await closeFinished.set()
+    }
+    let finishedBeforeRetireRelease = await closeFinished.value
+    XCTAssertFalse(finishedBeforeRetireRelease)
+    await retireGate.release()
+    await joinedClose.value
     let snapshot = await controller.snapshot()
     let attempts = await started.value
     let retirements = await retired.value
     XCTAssertEqual(snapshot.state.rawValue, expected["final_state"] as? String, id)
     XCTAssertEqual(attempts, expected["connect_attempts"] as? Int, id)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
+    XCTAssertEqual(expected["source_cancellation_propagated"] as? Bool, true, id)
+    XCTAssertEqual(expected["close_waits_for_acquire_settlement"] as? Bool, true, id)
+  }
+
+  func testControllerDrainsLateSourceErrorAfterCancellation() async throws {
+    let source = BlockingErrorArtifactSourceV3()
+    let controller = try ConnectionController(
+      source: source,
+      connectOneShot: { _, _ in throw ConnectError.connectionFailed }
+    )
+    await controller.start()
+    let acquired = await waitUntilV3 { await source.acquisitions == 1 }
+    XCTAssertTrue(acquired)
+
+    let closeFinished = AsyncFlagV3()
+    let closing = Task {
+      await controller.close()
+      await closeFinished.set()
+    }
+    let closed = await waitUntilV3 { await controller.state == .closed }
+    XCTAssertTrue(closed)
+    try? await Task.sleep(for: .milliseconds(20))
+    let finishedBeforeSourceRelease = await closeFinished.value
+    XCTAssertFalse(finishedBeforeSourceRelease)
+    await source.release()
+    await closing.value
+    let snapshot = await controller.snapshot()
+    XCTAssertEqual(snapshot.state, .closed)
   }
 
   private func runRetryAfterVectorV3(_ id: String) async throws {
@@ -2139,6 +2196,31 @@ private actor BlockingArtifactSourceV3: ArtifactSource {
   }
 }
 
+private actor BlockingErrorArtifactSourceV3: ArtifactSource {
+  private var released = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+  private(set) var acquisitions = 0
+
+  func acquireArtifact() async throws -> ArtifactLeaseV3 {
+    acquisitions += 1
+    if !released {
+      await withCheckedContinuation { waiters.append($0) }
+    }
+    throw LateArtifactSourceErrorV3.unexpected
+  }
+
+  func release() {
+    released = true
+    let current = waiters
+    waiters.removeAll()
+    for waiter in current { waiter.resume() }
+  }
+}
+
+private enum LateArtifactSourceErrorV3: Error {
+  case unexpected
+}
+
 private actor NeverArtifactSourceV3: ArtifactSource {
   func acquireArtifact() async throws -> ArtifactLeaseV3 {
     try await Task.sleep(for: .seconds(60))
@@ -2358,6 +2440,25 @@ private actor CancellationAwareRetireGateV3 {
       await Task.yield()
     }
     return entered
+  }
+}
+
+private actor BlockingRetireGateV3 {
+  private(set) var entered = false
+  private var released = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    entered = true
+    guard !released else { return }
+    await withCheckedContinuation { waiters.append($0) }
+  }
+
+  func release() {
+    released = true
+    let current = waiters
+    waiters.removeAll()
+    for waiter in current { waiter.resume() }
   }
 }
 

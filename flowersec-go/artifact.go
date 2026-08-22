@@ -211,6 +211,9 @@ func (lease ArtifactLease) retire(ctx context.Context) error {
 	if lease.state == nil || lease.state.retire == nil {
 		return ErrInvalidArtifact
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	lease.state.mu.Lock()
 	if lease.state.status != artifactLeaseClaimed {
 		lease.state.mu.Unlock()
@@ -218,15 +221,40 @@ func (lease ArtifactLease) retire(ctx context.Context) error {
 	}
 	lease.state.status = artifactLeaseRetired
 	lease.state.mu.Unlock()
-	var err error
-	func() {
+	if ctx.Done() == nil {
+		var err error
+		func() {
+			defer func() {
+				if recover() != nil {
+					err = errors.New("Flowersec artifact lease retirement cleanup failed")
+				}
+			}()
+			err = lease.state.retire(ctx)
+		}()
+		return err
+	}
+
+	// Retirement is irreversible before application cleanup starts. Run the
+	// callback with a buffered result so a cancellation cannot strand the
+	// controller scheduler or Close waiting for an uncooperative callback.
+	result := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
 		defer func() {
 			if recover() != nil {
-				err = errors.New("Flowersec artifact lease retirement cleanup failed")
+				result <- errors.New("Flowersec artifact lease retirement cleanup failed")
 			}
 		}()
-		err = lease.state.retire(ctx)
+		result <- lease.state.retire(ctx)
 	}()
+	<-started
+	var err error
+	select {
+	case err = <-result:
+	case <-ctx.Done():
+		err = ctx.Err()
+	}
 	return err
 }
 

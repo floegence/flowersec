@@ -591,7 +591,22 @@
     ],
     "terminal_states": ["consumed", "retired"],
     "claim_is_shared_atomic": true,
-    "ownership_token_is_internal": true
+    "ownership_token_is_internal": true,
+    "source_delivery_linearization": "shared_atomic_claim_gate",
+    "cancellation_first": {
+      "source_holds_ownership": true,
+      "late_lease_visible_to_controller": false,
+      "source_claims_and_retires": true,
+      "connector_invocations": 0
+    },
+    "delivery_first": {
+      "controller_claims_before_connect": true,
+      "cancellation_retires_claimed_lease": true
+    },
+    "close_waits_for_acquire_settlement": true,
+    "cleanup_cancellation": "propagate_lifecycle_context",
+    "cleanup_failure_projection": "redacted_ignored",
+    "cleanup_panic_projection": "redacted_ignored"
   },
   "control_plane": {
     "issuer_languages": ["go"],

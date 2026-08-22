@@ -3,6 +3,7 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use futures_util::FutureExt as _;
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor},
@@ -1691,10 +1692,15 @@ pub(crate) struct RetireOperationV3 {
 
 impl RetireOperationV3 {
     pub(crate) async fn finish(mut self) -> Result<(), ArtifactSpendErrorV3> {
-        match self.callback.take() {
-            Some(callback) => callback().await,
-            None => Ok(()),
-        }
+        let Some(callback) = self.callback.take() else {
+            return Ok(());
+        };
+        let future = std::panic::catch_unwind(std::panic::AssertUnwindSafe(callback))
+            .map_err(|_| ArtifactSpendErrorV3::CommitFailed)?;
+        std::panic::AssertUnwindSafe(future)
+            .catch_unwind()
+            .await
+            .map_err(|_| ArtifactSpendErrorV3::CommitFailed)?
     }
 }
 
@@ -2273,6 +2279,41 @@ mod tests {
         ));
         assert_eq!(spends.load(Ordering::SeqCst), 1);
         assert!(copy.claim().is_err(), "failed spend became reusable");
+    }
+
+    #[tokio::test]
+    async fn retire_panics_are_opaque_and_leave_the_lease_retired() {
+        for panic_while_polling in [false, true] {
+            let artifact = ArtifactV3::parse(valid_artifact()).unwrap();
+            let retire_calls = Arc::new(AtomicUsize::new(0));
+            let retire_calls_capture = retire_calls.clone();
+            let lease = ArtifactLeaseV3::new_with_retire(
+                artifact,
+                || async { Ok(()) },
+                move || {
+                    retire_calls_capture.fetch_add(1, Ordering::SeqCst);
+                    if !panic_while_polling {
+                        panic!("synchronous secret retire panic");
+                    }
+                    async move {
+                        panic!("asynchronous secret retire panic");
+                        #[allow(unreachable_code)]
+                        Ok(())
+                    }
+                },
+            );
+            let copy = lease.clone();
+
+            let result = lease.claim().unwrap().retire().await;
+
+            assert_eq!(result, Err(ArtifactSpendErrorV3::CommitFailed));
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "artifact spend commit failed"
+            );
+            assert_eq!(retire_calls.load(Ordering::SeqCst), 1);
+            assert!(copy.claim().is_err(), "panicking retire became reusable");
+        }
     }
 
     #[tokio::test]
