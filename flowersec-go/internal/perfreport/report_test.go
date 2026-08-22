@@ -86,6 +86,10 @@ func TestReportRejectsMissingMetricsAndUnnamedHost(t *testing.T) {
 		t.Fatal("successful case without observed metrics was accepted")
 	}
 	report.Cases[0].Measurements = []Measurement{{Name: "sessions", Observed: 1000, Threshold: 1000, Unit: "sessions", Comparator: ">=", Status: StatusPass}}
+	report.Environment.HostName = "orange"
+	if err := report.Validate(); err != nil {
+		t.Fatalf("performance report rejected a named non-default host: %v", err)
+	}
 	report.Environment.HostName = "  "
 	if err := report.Validate(); err == nil {
 		t.Fatal("performance report accepted an unnamed host")

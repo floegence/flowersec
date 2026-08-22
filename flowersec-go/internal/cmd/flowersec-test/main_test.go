@@ -19,6 +19,8 @@ import (
 
 const testSourceSHA = "0123456789abcdef0123456789abcdef01234567"
 
+var testPerformanceEnvironment = perfreport.Environment{HostName: "orange", OS: "Ubuntu 22.04", Kernel: "5.10", Architecture: "arm64", CPUModel: "Cortex-A55", LogicalCPUs: 8, MemoryBytes: 16 << 30, GoVersion: "go1.26", NodeVersion: "v22", ChromiumVersion: "Chromium 140"}
+
 func TestExactTitleMatchesTheCompleteTitleWithAnOptionalSuitePrefix(t *testing.T) {
 	title := "runs direct admission and Session semantics over WSS"
 	pattern := regexp.MustCompile(exactTitle(title))
@@ -225,18 +227,31 @@ func TestCPUModelFromSourcesSupportsARMWithoutProcModelName(t *testing.T) {
 	}
 }
 
+func TestCPUModelFromSourcesIgnoresMalformedProcModelName(t *testing.T) {
+	procCPUInfo := "model name\n"
+	lscpuOutput := "Model name: Cortex-A76\n"
+	if got := cpuModelFromSources(procCPUInfo, lscpuOutput); got != "Cortex-A76" {
+		t.Fatalf("malformed proc CPU model = %q, want lscpu fallback", got)
+	}
+}
+
 func TestPerformanceStateRestoresSameSHAAndRejectsDifferentSHA(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "performance-results.json")
-	state := performanceState{SourceSHA: testSourceSHA, StartedAt: time.Now(), Cases: []perfreport.CaseResult{{ID: "case/a", Section: perfreport.SectionCapacity, Status: perfreport.StatusPass, Measurements: []perfreport.Measurement{{Name: "sessions", Observed: 1000, Threshold: 1000, Unit: "sessions", Comparator: ">=", Status: perfreport.StatusPass}}}}}
+	state := performanceState{SourceSHA: testSourceSHA, StartedAt: time.Now(), Environment: testPerformanceEnvironment, Cases: []perfreport.CaseResult{{ID: "case/a", Section: perfreport.SectionCapacity, Status: perfreport.StatusPass, Measurements: []perfreport.Measurement{{Name: "sessions", Observed: 1000, Threshold: 1000, Unit: "sessions", Comparator: ">=", Status: perfreport.StatusPass}}}}}
 	if err := writePerformanceState(path, state); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := readPerformanceState(path, testSourceSHA)
+	loaded, err := readPerformanceState(path, testSourceSHA, testPerformanceEnvironment)
 	if err != nil || len(loaded.Cases) != 1 || loaded.Cases[0].Measurements[0].Observed != 1000 {
 		t.Fatalf("restored performance state = %+v, %v", loaded, err)
 	}
-	if _, err := readPerformanceState(path, strings.Repeat("f", 40)); err == nil || !strings.Contains(err.Error(), "source SHA") {
+	if _, err := readPerformanceState(path, strings.Repeat("f", 40), testPerformanceEnvironment); err == nil || !strings.Contains(err.Error(), "source SHA") {
 		t.Fatalf("different source SHA was not rejected: %v", err)
+	}
+	otherEnvironment := testPerformanceEnvironment
+	otherEnvironment.HostName = "other-host"
+	if _, err := readPerformanceState(path, testSourceSHA, otherEnvironment); err == nil || !strings.Contains(err.Error(), "environment") {
+		t.Fatalf("different environment was not rejected: %v", err)
 	}
 }
 
@@ -247,13 +262,13 @@ func TestPerformanceResumeRejectsDifferentBudget(t *testing.T) {
 	tests := []registeredTest{{ID: "performance/case", Suite: "performance", Timeout: time.Second, Run: func(_ context.Context, run runContext) error {
 		return perfreport.WriteCaseResult(run.ResultPath, perfreport.CaseResult{ID: "performance/case", Section: perfreport.SectionCapacity, Status: perfreport.StatusPass, Measurements: []perfreport.Measurement{{Name: "sessions", Observed: 1, Threshold: 1, Unit: "sessions", Comparator: "==", Status: perfreport.StatusPass}}})
 	}}}
-	environment := perfreport.Environment{HostName: "udesk24", OS: "Ubuntu", LogicalCPUs: 4, MemoryBytes: 8 << 30}
+	environment := testPerformanceEnvironment
 	var stdout, stderr bytes.Buffer
 	if err := executePerformanceSuite(context.Background(), &stdout, &stderr, "run", progressPath, root, testSourceSHA, tests, false, reportPath, environment, 10*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	statePath := filepath.Join(filepath.Dir(progressPath), "performance-results.json")
-	state := performanceState{SourceSHA: testSourceSHA, StartedAt: time.Now(), Budget: 10 * time.Minute, Cases: []perfreport.CaseResult{}}
+	state := performanceState{SourceSHA: testSourceSHA, StartedAt: time.Now(), Budget: 10 * time.Minute, Environment: environment, Cases: []perfreport.CaseResult{}}
 	if err := writePerformanceState(statePath, state); err != nil {
 		t.Fatal(err)
 	}

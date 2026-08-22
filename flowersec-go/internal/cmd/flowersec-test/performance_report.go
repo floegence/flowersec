@@ -19,10 +19,11 @@ import (
 )
 
 type performanceState struct {
-	SourceSHA string                  `json:"source_sha"`
-	StartedAt time.Time               `json:"started_at"`
-	Budget    time.Duration           `json:"budget_ns,omitempty"`
-	Cases     []perfreport.CaseResult `json:"cases"`
+	SourceSHA   string                  `json:"source_sha"`
+	StartedAt   time.Time               `json:"started_at"`
+	Budget      time.Duration           `json:"budget_ns,omitempty"`
+	Environment perfreport.Environment  `json:"environment"`
+	Cases       []perfreport.CaseResult `json:"cases"`
 }
 
 func selectPerformancePlan(all []registeredTest) ([]registeredTest, error) {
@@ -37,7 +38,7 @@ func selectPerformancePlan(all []registeredTest) ([]registeredTest, error) {
 	return append(required, optional...), nil
 }
 
-func readPerformanceState(path, sourceSHA string) (performanceState, error) {
+func readPerformanceState(path, sourceSHA string, environment perfreport.Environment) (performanceState, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return performanceState{}, err
@@ -51,8 +52,11 @@ func readPerformanceState(path, sourceSHA string) (performanceState, error) {
 	if state.SourceSHA != sourceSHA {
 		return performanceState{}, fmt.Errorf("performance result source SHA %s does not match current source SHA %s", state.SourceSHA, sourceSHA)
 	}
-	if state.StartedAt.IsZero() || state.Cases == nil {
+	if state.StartedAt.IsZero() || !validPerformanceEnvironment(state.Environment) || state.Cases == nil {
 		return performanceState{}, errors.New("performance result state is invalid")
+	}
+	if state.Environment != environment {
+		return performanceState{}, errors.New("performance result environment does not match the current host")
 	}
 	for _, result := range state.Cases {
 		if err := result.Validate(); err != nil {
@@ -63,7 +67,7 @@ func readPerformanceState(path, sourceSHA string) (performanceState, error) {
 }
 
 func writePerformanceState(path string, state performanceState) error {
-	if !validSourceSHA(state.SourceSHA) || state.StartedAt.IsZero() || state.Cases == nil {
+	if !validSourceSHA(state.SourceSHA) || state.StartedAt.IsZero() || !validPerformanceEnvironment(state.Environment) || state.Cases == nil {
 		return errors.New("performance result state is invalid")
 	}
 	for _, result := range state.Cases {
@@ -123,7 +127,7 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 	defer progressLock.Close()
 	statePath := filepath.Join(filepath.Dir(progressPath), "performance-results.json")
 	current := progress{Plan: planName, SourceSHA: sourceSHA, Suite: "performance", Completed: []string{}}
-	state := performanceState{SourceSHA: sourceSHA, StartedAt: time.Now(), Budget: budget, Cases: []perfreport.CaseResult{}}
+	state := performanceState{SourceSHA: sourceSHA, StartedAt: time.Now(), Budget: budget, Environment: environment, Cases: []perfreport.CaseResult{}}
 	if action == "run" {
 		if err := os.RemoveAll(filepath.Join(filepath.Dir(progressPath), "failures")); err != nil {
 			return fmt.Errorf("clear stale failure logs: %w", err)
@@ -139,7 +143,7 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 		if loadedProgress.SourceSHA != sourceSHA {
 			return fmt.Errorf("performance resume source SHA %s does not match current source SHA %s", loadedProgress.SourceSHA, sourceSHA)
 		}
-		loadedState, err := readPerformanceState(statePath, sourceSHA)
+		loadedState, err := readPerformanceState(statePath, sourceSHA, environment)
 		if err != nil {
 			return err
 		}
@@ -351,6 +355,10 @@ func performanceReport(sourceSHA string, state performanceState, environment per
 	return perfreport.Report{SourceSHA: sourceSHA, Status: status, StartedAt: state.StartedAt, EndedAt: time.Now(), Budget: state.Budget, Environment: environment, Cases: state.Cases}
 }
 
+func validPerformanceEnvironment(environment perfreport.Environment) bool {
+	return strings.TrimSpace(environment.HostName) != "" && environment.LogicalCPUs > 0 && environment.MemoryBytes > 0
+}
+
 func firstPerformanceCaseFailure(results []perfreport.CaseResult) error {
 	for _, result := range results {
 		if result.Status == perfreport.StatusFail {
@@ -431,7 +439,12 @@ func commandVersion(name string, arguments ...string) string {
 func cpuModelFromSources(procCPUInfo, lscpuOutput string) string {
 	for _, line := range strings.Split(procCPUInfo, "\n") {
 		if strings.HasPrefix(line, "model name") {
-			return strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				if model := strings.TrimSpace(parts[1]); model != "" {
+					return model
+				}
+			}
 		}
 	}
 	for _, line := range strings.Split(lscpuOutput, "\n") {
