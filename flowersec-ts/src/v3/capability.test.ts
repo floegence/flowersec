@@ -259,6 +259,28 @@ describe("runtime capability v3", () => {
     expect(registry.pinEnabled()).toBe(true);
   });
 
+  test("propagates cancellation without creating a browser pin policy trigger", async () => {
+    const close = vi.fn();
+    const Constructor = class {
+      ready = new Promise<void>(() => undefined);
+      close = close;
+    };
+    const registry = await BrowserRuntimeCapabilityRegistryV3.create(browserFeatures(Constructor, "151.0.7922.34"));
+    const abort = new AbortController();
+    const reason = new Error("cancelled by caller");
+    const result = createBrowserWebTransportV3(
+      pinCandidate,
+      1_999_999_999,
+      registry.snapshot(),
+      registry,
+      abort.signal,
+    );
+    abort.abort(reason);
+    await expect(result).rejects.toBe(reason);
+    expect(close).toHaveBeenCalledOnce();
+    expect(registry.pinEnabled()).toBe(true);
+  });
+
   test("fails exact-provider detection closed and rebuilds registry state independently", async () => {
     const Constructor = class { ready = Promise.resolve(); close() {} };
     const duplicate = browserFeatures(Constructor, "151.0.7922.34");

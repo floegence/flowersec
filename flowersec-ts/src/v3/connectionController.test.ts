@@ -394,6 +394,27 @@ describe("transport v3 production connection controller", () => {
     await controller.close();
   });
 
+  test("classifies a structurally malformed expired leased artifact as terminal", async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal({
+      session: { init_expire_at_unix_s: 0 },
+    } as unknown as ArtifactV3, async () => undefined, cleanup);
+    const connector = vi.fn(async () => { throw new Error("connector must not run"); });
+    const controller = createConnectionControllerV3({
+      acquire: async () => ({ kind: "lease", lease }),
+    }, connector, { nowUnixSeconds: () => 1_900_000_000, capabilitySnapshot });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "artifact", code: "artifact_invalid" },
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(connector).not.toHaveBeenCalled();
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
+    expect(cleanup).toHaveBeenCalledOnce();
+    await controller.close();
+  });
+
   test("retires a lease from a mixed failure-and-lease source result", async () => {
     const cleanup = vi.fn(async () => undefined);
     const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined, cleanup);

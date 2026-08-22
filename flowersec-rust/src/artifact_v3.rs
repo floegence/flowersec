@@ -69,6 +69,19 @@ pub enum ArtifactErrorV3 {
     Invalid,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Fsb3DecodeErrorV3 {
+    Invalid,
+    PayloadTooLarge,
+    NonCanonical,
+}
+
+impl From<ArtifactErrorV3> for Fsb3DecodeErrorV3 {
+    fn from(_: ArtifactErrorV3) -> Self {
+        Self::Invalid
+    }
+}
+
 #[derive(Debug)]
 struct ValidatedArtifactV3 {
     canonical_json: Box<[u8]>,
@@ -577,10 +590,10 @@ pub(crate) struct DecodedTunnelFsb3V3 {
     pub(crate) session_contract_hash_b64u: String,
 }
 
-pub(crate) fn decode_direct_fsb3(raw: &[u8]) -> Result<(), ArtifactErrorV3> {
+pub(crate) fn decode_direct_fsb3(raw: &[u8]) -> Result<(), Fsb3DecodeErrorV3> {
     let value = decode_fsb3_payload(raw, 1)?;
     let wire: DirectFsb3WireV3 =
-        serde_json::from_value(value).map_err(|_| ArtifactErrorV3::Invalid)?;
+        serde_json::from_value(value).map_err(|_| Fsb3DecodeErrorV3::Invalid)?;
     if wire.profile != SESSION_PROFILE_V3
         || !valid_ascii(&wire.routing_token, 8192)
         || !valid_registry_id(&wire.channel_id, 128)
@@ -588,7 +601,7 @@ pub(crate) fn decode_direct_fsb3(raw: &[u8]) -> Result<(), ArtifactErrorV3> {
         || !valid_registry_id(&wire.rendezvous_group_id, 128)
         || decode32(&wire.session_contract_hash_b64u).is_none()
     {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(Fsb3DecodeErrorV3::Invalid);
     }
     validate_fsb3_candidates(
         &wire.candidates,
@@ -603,10 +616,10 @@ pub(crate) fn decode_direct_fsb3(raw: &[u8]) -> Result<(), ArtifactErrorV3> {
 pub(crate) fn decode_tunnel_fsb3(
     raw: &[u8],
     observed_carrier: CarrierWireV3,
-) -> Result<DecodedTunnelFsb3V3, ArtifactErrorV3> {
+) -> Result<DecodedTunnelFsb3V3, Fsb3DecodeErrorV3> {
     let value = decode_fsb3_payload(raw, 2)?;
     let wire: TunnelFsb3WireV3 =
-        serde_json::from_value(value).map_err(|_| ArtifactErrorV3::Invalid)?;
+        serde_json::from_value(value).map_err(|_| Fsb3DecodeErrorV3::Invalid)?;
     if wire.profile != SESSION_PROFILE_V3
         || !matches!(wire.role, 1 | 2)
         || !valid_ascii(&wire.attach_token, 8192)
@@ -616,7 +629,7 @@ pub(crate) fn decode_tunnel_fsb3(
         || !valid_registry_id(&wire.rendezvous_group_id, 128)
         || decode32(&wire.session_contract_hash_b64u).is_none()
     {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(Fsb3DecodeErrorV3::Invalid);
     }
 
     let chosen = validate_fsb3_candidates(
@@ -627,7 +640,7 @@ pub(crate) fn decode_tunnel_fsb3(
         &wire.chosen_candidate_id,
     )?;
     if chosen.carrier != observed_carrier {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(Fsb3DecodeErrorV3::Invalid);
     }
 
     Ok(DecodedTunnelFsb3V3 {
@@ -643,31 +656,31 @@ pub(crate) fn decode_tunnel_fsb3(
     })
 }
 
-fn decode_fsb3_payload(raw: &[u8], path_code: u8) -> Result<Value, ArtifactErrorV3> {
+fn decode_fsb3_payload(raw: &[u8], path_code: u8) -> Result<Value, Fsb3DecodeErrorV3> {
     if raw.len() < 12
         || &raw[..4] != b"FSB3"
         || raw[4] != 3
         || raw[5] != path_code
         || raw[6..8] != [0, 0]
     {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(Fsb3DecodeErrorV3::Invalid);
     }
     let payload_length = u32::from_be_bytes(
         raw[8..12]
             .try_into()
-            .map_err(|_| ArtifactErrorV3::Invalid)?,
+            .map_err(|_| Fsb3DecodeErrorV3::Invalid)?,
     ) as usize;
-    if payload_length == 0
-        || payload_length > MAX_FSB3_PAYLOAD_BYTES
-        || raw.len() != 12 + payload_length
-    {
-        return Err(ArtifactErrorV3::Invalid);
+    if payload_length > MAX_FSB3_PAYLOAD_BYTES {
+        return Err(Fsb3DecodeErrorV3::PayloadTooLarge);
+    }
+    if payload_length == 0 || raw.len() != 12 + payload_length {
+        return Err(Fsb3DecodeErrorV3::Invalid);
     }
     let payload = &raw[12..];
     reject_duplicate_json_keys(payload)?;
-    let value: Value = serde_json::from_slice(payload).map_err(|_| ArtifactErrorV3::Invalid)?;
+    let value: Value = serde_json::from_slice(payload).map_err(|_| Fsb3DecodeErrorV3::Invalid)?;
     if jcs_value(&value)? != payload {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(Fsb3DecodeErrorV3::NonCanonical);
     }
     Ok(value)
 }
@@ -2608,31 +2621,37 @@ mod tests {
             }
         }
         for vector in vectors.artifact_byte_negative {
-            let _ = &vector.error_code;
-            assert!(
-                ArtifactV3::parse(decode_hex(&vector.value_hex)).is_err(),
-                "{} unexpectedly accepted",
+            assert_eq!(
+                ArtifactV3::parse(decode_hex(&vector.value_hex)).unwrap_err(),
+                artifact_vector_error(&vector.error_code),
+                "{}",
                 vector.id
             );
         }
         for vector in vectors.fsb3_negative {
-            let _ = &vector.error_code;
             let raw = decode_hex(&vector.value_hex);
-            let rejected = match raw.get(5) {
-                Some(1) => decode_direct_fsb3(&raw).is_err(),
-                Some(2) => decode_tunnel_fsb3(&raw, CarrierWireV3::RawQuic).is_err(),
+            let error = match raw.get(5) {
+                Some(1) => decode_direct_fsb3(&raw).unwrap_err(),
+                Some(2) => decode_tunnel_fsb3(&raw, CarrierWireV3::RawQuic).unwrap_err(),
                 _ => {
-                    decode_direct_fsb3(&raw).is_err()
-                        && decode_tunnel_fsb3(&raw, CarrierWireV3::RawQuic).is_err()
+                    let direct = decode_direct_fsb3(&raw).unwrap_err();
+                    let tunnel = decode_tunnel_fsb3(&raw, CarrierWireV3::RawQuic).unwrap_err();
+                    assert_eq!(direct, tunnel, "{} path-independent error", vector.id);
+                    direct
                 }
             };
-            assert!(rejected, "{} unexpectedly accepted", vector.id);
+            assert_eq!(
+                error,
+                fsb3_vector_error(&vector.error_code),
+                "{}",
+                vector.id
+            );
         }
         for vector in vectors.fsa3_negative {
-            let _ = &vector.error_code;
-            assert!(
-                decode_fsa3(&decode_hex(&vector.value_hex)).is_err(),
-                "{} unexpectedly accepted",
+            assert_eq!(
+                decode_fsa3(&decode_hex(&vector.value_hex)).unwrap_err(),
+                artifact_vector_error(&vector.error_code),
+                "{}",
                 vector.id
             );
         }
@@ -2647,6 +2666,22 @@ mod tests {
             };
             assert_eq!(decoded.status, expected_status, "{}", vector.id);
             assert_eq!(decoded.reason, vector.reason, "{}", vector.id);
+        }
+    }
+
+    fn artifact_vector_error(code: &str) -> ArtifactErrorV3 {
+        match code {
+            "invalid_artifact" | "invalid_fsb3" | "invalid_fsa3" => ArtifactErrorV3::Invalid,
+            other => panic!("unknown artifact vector error code {other}"),
+        }
+    }
+
+    fn fsb3_vector_error(code: &str) -> Fsb3DecodeErrorV3 {
+        match code {
+            "invalid_fsb3" => Fsb3DecodeErrorV3::Invalid,
+            "fsb3_payload_too_large" => Fsb3DecodeErrorV3::PayloadTooLarge,
+            "noncanonical_fsb3" => Fsb3DecodeErrorV3::NonCanonical,
+            other => panic!("unknown FSB3 vector error code {other}"),
         }
     }
 }

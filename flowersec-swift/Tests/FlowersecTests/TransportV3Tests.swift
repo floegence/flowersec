@@ -6,6 +6,11 @@ import Testing
 
 @Suite("Transport v3 contract")
 struct TransportV3Tests {
+  @Test func jcsSortsObjectKeysByUTF16CodeUnits() throws {
+    let value: [String: Any] = ["😀": 5, "a": 4]
+    #expect(try String(decoding: FlowersecJCSV3.encode(value), as: UTF8.self) == "{\"a\":4,\"😀\":5}")
+  }
+
   @Test func strictArtifactCanonicalizationFSBAndDomainBinding() throws {
     let artifact = try parseArtifactV3(Self.validArtifact())
     #expect(
@@ -323,13 +328,15 @@ struct TransportV3Tests {
     for vector in artifactByteNegative {
       let id = try #require(vector["id"] as? String)
       let value = try Data(hexV3: #require(vector["value_hex"] as? String))
-      #expect(throws: ArtifactErrorV3.self, Comment(rawValue: id)) { try parseArtifactV3(value) }
+      let expected = try Self.artifactError(code: #require(vector["error_code"] as? String))
+      #expect(throws: expected, Comment(rawValue: id)) { try parseArtifactV3(value) }
     }
     let fsb3Negative = try #require(vectors["fsb3_negative"] as? [[String: Any]])
     for vector in fsb3Negative {
       let id = try #require(vector["id"] as? String)
       let value = try Data(hexV3: #require(vector["value_hex"] as? String))
-      #expect(throws: AdmissionCodecErrorV3.self, Comment(rawValue: id)) {
+      let expected = try Self.admissionError(code: #require(vector["error_code"] as? String))
+      #expect(throws: expected, Comment(rawValue: id)) {
         try AdmissionCodecV3.decodeFSB3(value)
       }
     }
@@ -337,7 +344,8 @@ struct TransportV3Tests {
     for vector in fsa3Negative {
       let id = try #require(vector["id"] as? String)
       let value = try Data(hexV3: #require(vector["value_hex"] as? String))
-      #expect(throws: AdmissionCodecErrorV3.self, Comment(rawValue: id)) {
+      let expected = try Self.admissionError(code: #require(vector["error_code"] as? String))
+      #expect(throws: expected, Comment(rawValue: id)) {
         try AdmissionCodecV3.decodeFSA3(value)
       }
     }
@@ -391,6 +399,20 @@ struct TransportV3Tests {
           activePins.map { $0.base64URLEncodedStringV3() } == expectedActivePins,
           Comment(rawValue: id))
       }
+    }
+  }
+
+  private static func artifactError(code: String) throws -> ArtifactErrorV3 {
+    guard code == "invalid_artifact" else { throw ArtifactErrorV3.invalidArtifact }
+    return .invalidArtifact
+  }
+
+  private static func admissionError(code: String) throws -> AdmissionCodecErrorV3 {
+    switch code {
+    case "invalid_fsb3", "invalid_fsa3": return .invalid
+    case "fsb3_payload_too_large": return .payloadTooLarge
+    case "noncanonical_fsb3": return .nonCanonical
+    default: throw ArtifactErrorV3.invalidArtifact
     }
   }
 

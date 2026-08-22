@@ -834,8 +834,53 @@ enum ArtifactCodecV3 {
 enum FlowersecJCSV3 {
   static func encode(_ value: Any) throws -> Data {
     guard JSONSerialization.isValidJSONObject(value) else { throw ArtifactErrorV3.invalidArtifact }
-    return try JSONSerialization.data(
-      withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes])
+    return try encodeValue(value)
+  }
+
+  private static func encodeValue(_ value: Any) throws -> Data {
+    if let object = value as? [String: Any] {
+      let keys = object.keys.sorted {
+        Array($0.utf16).lexicographicallyPrecedes(Array($1.utf16))
+      }
+      var result = Data([0x7b])
+      for (index, key) in keys.enumerated() {
+        if index != 0 { result.append(0x2c) }
+        result.append(try encodeScalar(key))
+        result.append(0x3a)
+        result.append(try encodeValue(object[key]!))
+      }
+      result.append(0x7d)
+      return result
+    }
+    if let object = value as? NSDictionary {
+      var converted: [String: Any] = [:]
+      for (key, item) in object {
+        guard let key = key as? String else { throw ArtifactErrorV3.invalidArtifact }
+        converted[key] = item
+      }
+      return try encodeValue(converted)
+    }
+    if let array = value as? [Any] {
+      var result = Data([0x5b])
+      for (index, item) in array.enumerated() {
+        if index != 0 { result.append(0x2c) }
+        result.append(try encodeValue(item))
+      }
+      result.append(0x5d)
+      return result
+    }
+    if let array = value as? NSArray {
+      return try encodeValue(array.map { $0 })
+    }
+    return try encodeScalar(value)
+  }
+
+  private static func encodeScalar(_ value: Any) throws -> Data {
+    guard JSONSerialization.isValidJSONObject([value]),
+      let data = try? JSONSerialization.data(
+        withJSONObject: [value], options: [.withoutEscapingSlashes]),
+      data.count >= 2 else { throw ArtifactErrorV3.invalidArtifact }
+    return Data(data.dropFirst().dropLast())
   }
 
   static func hashLP(domain: String, value: Any) throws -> Data {

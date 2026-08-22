@@ -4,6 +4,7 @@ import Foundation
 enum AdmissionCodecErrorV3: Error, Equatable, Sendable {
   case invalid
   case payloadTooLarge
+  case nonCanonical
 }
 
 enum AdmissionStatusV3: UInt8, Equatable, Sendable {
@@ -110,7 +111,9 @@ enum AdmissionCodecV3 {
     do {
       try JSONPreflightV3.validate(payload)
       raw = try JSONSerialization.jsonObject(with: payload)
-      guard try FlowersecJCSV3.encode(raw) == payload else { throw AdmissionCodecErrorV3.invalid }
+      guard try FlowersecJCSV3.encode(raw) == payload else {
+        throw AdmissionCodecErrorV3.nonCanonical
+      }
     } catch let error as AdmissionCodecErrorV3 {
       throw error
     } catch {

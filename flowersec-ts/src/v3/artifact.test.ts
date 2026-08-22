@@ -173,13 +173,22 @@ describe("transport v3 artifact, TLS policy, and admission", () => {
 
   test("rejects shared invalid UTF-8, trailing bytes, and malformed admission frames", () => {
     for (const vector of fixture.artifact_byte_negative) {
-      expect(() => decodeArtifactV3JSON(fromHex(vector.value_hex)), vector.id).toThrowError(ArtifactV3Error);
+      expect(
+        () => decodeArtifactV3JSON(fromHex(vector.value_hex)),
+        vector.id,
+      ).toThrowError(expect.objectContaining({ code: vector.error_code }));
     }
     for (const vector of fixture.fsb3_negative) {
-      expect(() => decodeFSB3RequestV3(fromHex(vector.value_hex)), vector.id).toThrowError(ArtifactV3Error);
+      expect(
+        () => decodeFSB3RequestV3(fromHex(vector.value_hex)),
+        vector.id,
+      ).toThrowError(expect.objectContaining({ code: vector.error_code }));
     }
     for (const vector of fixture.fsa3_negative) {
-      expect(() => decodeFSA3ResponseV3(fromHex(vector.value_hex)), vector.id).toThrowError(ArtifactV3Error);
+      expect(
+        () => decodeFSA3ResponseV3(fromHex(vector.value_hex)),
+        vector.id,
+      ).toThrowError(expect.objectContaining({ code: vector.error_code }));
     }
   });
 

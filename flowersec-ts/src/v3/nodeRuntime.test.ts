@@ -28,6 +28,7 @@ let directory = "";
 let rootCertificate: Buffer;
 let leafCertificate: Buffer;
 let leafKey: Buffer;
+let purposeLeafCertificate: Buffer;
 let expiredLeafCertificate: Buffer;
 let futureLeafCertificate: Buffer;
 let expiredLeafDigest: Buffer;
@@ -53,6 +54,7 @@ describe("transport v3 Node TLS verifier and WebSocket production path", () => {
     rootCertificate = readFileSync(join(directory, "root.pem"));
     leafCertificate = readFileSync(join(directory, "leaf.pem"));
     leafKey = readFileSync(join(directory, "leaf.key"));
+    purposeLeafCertificate = readFileSync(join(directory, "leaf-purpose.pem"));
     expiredLeafCertificate = readFileSync(join(directory, "leaf-expired.pem"));
     futureLeafCertificate = readFileSync(join(directory, "leaf-future.pem"));
     expiredLeafDigest = createHash("sha256").update(readFileSync(join(directory, "leaf-expired.der"))).digest();
@@ -132,6 +134,24 @@ describe("transport v3 Node TLS verifier and WebSocket production path", () => {
     }
   });
 
+  test("classifies a trusted client-only certificate purpose as terminal CA trust failure", async () => {
+    const server = createTLSServer({ cert: purposeLeafCertificate, key: leafKey });
+    const port = await listen(server);
+    try {
+      await expect(connectNodeTLSSocketV3(
+        websocketCandidate(port, { mode: "ca" }),
+        nowSeconds(),
+        { roots: rootCertificate, timeoutMilliseconds: 2_000 },
+      )).rejects.toMatchObject({
+        code: "tls_failed",
+        detail: "ca_untrusted",
+        cause: expect.objectContaining({ code: "INVALID_PURPOSE" }),
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   test("classifies the authoritative Node/OpenSSL PKI verification codes", () => {
     for (const code of [
       "CERT_HAS_EXPIRED",
@@ -142,6 +162,7 @@ describe("transport v3 Node TLS verifier and WebSocket production path", () => {
       "DEPTH_ZERO_SELF_SIGNED_CERT",
       "ERR_TLS_CERT_ALTNAME_INVALID",
       "INVALID_CA",
+      "INVALID_PURPOSE",
       "PATH_LENGTH_EXCEEDED",
       "SELF_SIGNED_CERT_IN_CHAIN",
       "UNABLE_TO_DECRYPT_CERT_SIGNATURE",
@@ -336,10 +357,22 @@ function generateCertificates(target: string): void {
     "extendedKeyUsage=serverAuth",
     "",
   ].join("\n"));
+  writeFileSync(join(target, "leaf-purpose.ext"), [
+    "subjectAltName=DNS:localhost",
+    "basicConstraints=critical,CA:FALSE",
+    "keyUsage=critical,digitalSignature",
+    "extendedKeyUsage=clientAuth",
+    "",
+  ].join("\n"));
   runOpenSSL([
     "x509", "-req", "-in", join(target, "leaf.csr"), "-CA", join(target, "root.pem"),
     "-CAkey", join(target, "root.key"), "-CAcreateserial", "-days", "2", "-sha256",
     "-extfile", join(target, "leaf.ext"), "-out", join(target, "leaf.pem"),
+  ]);
+  runOpenSSL([
+    "x509", "-req", "-in", join(target, "leaf.csr"), "-CA", join(target, "root.pem"),
+    "-CAkey", join(target, "root.key"), "-CAcreateserial", "-days", "2", "-sha256",
+    "-extfile", join(target, "leaf-purpose.ext"), "-out", join(target, "leaf-purpose.pem"),
   ]);
   writeFileSync(join(target, "index.txt"), "");
   writeFileSync(join(target, "serial"), "1000\n");

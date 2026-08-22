@@ -129,6 +129,7 @@ export async function createBrowserWebTransportV3(
     return transport;
   } catch (error) {
     try { transport.close({ closeCode: 6, reason: "WebTransport start failed" }); } catch { /* best effort */ }
+    if (error instanceof BrowserRuntimeAbortV3) throw error.reason;
     throw new TransportFailureV3(
       "connection_failed",
       policy.mode === "pin" ? "browser_pin_opaque" : undefined,
@@ -222,11 +223,18 @@ function isNotSupportedError(error: unknown): boolean {
     typeof error === "object" && error !== null && (error as { name?: unknown }).name === "NotSupportedError";
 }
 
+class BrowserRuntimeAbortV3 {
+  constructor(readonly reason: unknown) {}
+}
+
 async function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (signal === undefined) return await promise;
-  if (signal.aborted) throw signal.reason;
+  if (signal.aborted) throw new BrowserRuntimeAbortV3(signal.reason);
   return await new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason);
+    const abort = () => {
+      signal.removeEventListener("abort", abort);
+      reject(new BrowserRuntimeAbortV3(signal.reason));
+    };
     signal.addEventListener("abort", abort, { once: true });
     void promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
   });

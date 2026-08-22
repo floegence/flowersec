@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -63,8 +64,9 @@ type artifactBoundaryVector struct {
 }
 
 type frameNegativeVector struct {
-	ID       string `json:"id"`
-	ValueHex string `json:"value_hex"`
+	ID        string `json:"id"`
+	ValueHex  string `json:"value_hex"`
+	ErrorCode string `json:"error_code"`
 }
 
 type urlNormalizationVectorFile struct {
@@ -191,8 +193,8 @@ func TestTransportV3ArtifactVectors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := DecodeArtifactJSON(bytes.NewReader(raw)); err == nil {
-				t.Fatal("invalid artifact bytes accepted")
+			if _, err := DecodeArtifactJSON(bytes.NewReader(raw)); !errors.Is(err, artifactVectorError(vector.ErrorCode)) {
+				t.Fatalf("error = %v, want %s", err, vector.ErrorCode)
 			}
 		})
 	}
@@ -202,8 +204,8 @@ func TestTransportV3ArtifactVectors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := ParseRequest(raw); err == nil {
-				t.Fatal("invalid FSB3 accepted")
+			if _, err := ParseRequest(raw); !errors.Is(err, artifactVectorError(vector.ErrorCode)) {
+				t.Fatalf("error = %v, want %s", err, vector.ErrorCode)
 			}
 		})
 	}
@@ -213,8 +215,8 @@ func TestTransportV3ArtifactVectors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := ParseClientResponse(raw); err == nil {
-				t.Fatal("invalid FSA3 accepted")
+			if _, err := ParseClientResponse(raw); !errors.Is(err, artifactVectorError(vector.ErrorCode)) {
+				t.Fatalf("error = %v, want %s", err, vector.ErrorCode)
 			}
 		})
 	}
@@ -259,6 +261,23 @@ func TestTransportV3ArtifactVectors(t *testing.T) {
 				t.Fatal("cross-version FSA3 accepted")
 			}
 		})
+	}
+}
+
+func artifactVectorError(code string) error {
+	switch code {
+	case "invalid_artifact":
+		return ErrInvalidArtifact
+	case "invalid_fsb3":
+		return ErrInvalidFSB3
+	case "fsb3_payload_too_large":
+		return ErrFSB3PayloadTooLarge
+	case "noncanonical_fsb3":
+		return ErrNonCanonicalFSB3
+	case "invalid_fsa3":
+		return ErrInvalidFSA3
+	default:
+		panic("unknown artifact vector error code: " + code)
 	}
 }
 

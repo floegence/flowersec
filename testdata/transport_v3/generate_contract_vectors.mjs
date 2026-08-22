@@ -566,6 +566,7 @@ const artifactVectors = {
     scopedPayloadBoundary("scope-payload-nodes-over", nodeCountPayload(257), false, true),
     scopedPayloadBoundary("scope-payload-object-members-max", Object.fromEntries(Array.from({ length: 64 }, (_, index) => [`k${String(index).padStart(2, "0")}`, null])), true, true),
     scopedPayloadBoundary("scope-payload-object-members-over", Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`k${String(index).padStart(2, "0")}`, null])), false, true),
+    scopedPayloadBoundary("scope-payload-key-order-utf16", { "\uE000": 2, "😀": 1, a: 3 }, true, true),
     scopedPayloadBoundary("scope-payload-array-items-max", Array(64).fill(null)),
     scopedPayloadBoundary("scope-payload-array-items-over", Array(65).fill(null), false),
     scopedPayloadBoundary("scope-payload-key-bytes-max", { [`a${"b".repeat(127)}`]: null }, true, true),

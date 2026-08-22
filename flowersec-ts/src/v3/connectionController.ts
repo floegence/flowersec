@@ -314,17 +314,22 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
       let allCandidates: readonly CanonicalArtifactCandidateV3[];
       try {
         validateArtifactV3(artifact);
-        this.#assertArtifactFresh(artifact);
         allCandidates = canonicalizeCandidatesV3(artifact.path.kind, artifact.path.candidates).candidates;
       } catch {
         await retireArtifactLeaseV3(claim);
         this.#cycle.recordFailedAcquisitionOrLease();
-        const expired = isExpired(artifact, this.#nowUnixSeconds);
-        const error = new ConnectErrorV3(expired ? "expired_artifact" : "artifact_invalid", {
-          kind: expired ? "retryable" : "terminal",
-        });
+        const error = new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
         this.#recordFailure("artifact", error.code, error.disposition);
-        if (error.disposition.kind === "terminal" || this.#attemptBudgetExhausted()) return;
+        return;
+      }
+      try {
+        this.#assertArtifactFresh(artifact);
+      } catch {
+        await retireArtifactLeaseV3(claim);
+        this.#cycle.recordFailedAcquisitionOrLease();
+        const error = new ConnectErrorV3("expired_artifact", { kind: "retryable" });
+        this.#recordFailure("artifact", error.code, error.disposition);
+        if (this.#attemptBudgetExhausted()) return;
         next = "primary";
         replacementContext = undefined;
         pendingDisposition = error.disposition;
