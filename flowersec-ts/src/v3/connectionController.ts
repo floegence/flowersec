@@ -768,9 +768,11 @@ function normalizeLeaseAttemptResultV3<Session extends ManagedSessionV3>(
     if (kind === "candidate_failures") {
       if (!hasExactOwnKeys(value, ["kind", "failures"])) return undefined;
       const failures = Reflect.get(value, "failures");
-      if (!Array.isArray(failures)) return undefined;
+      if (!Array.isArray(failures) || failures.length !== candidates.length) return undefined;
       const normalized = failures.map((failure) => normalizeCandidateFailureV3(failure, candidates));
       if (normalized.some((failure) => failure === undefined)) return undefined;
+      const seen = new Set(normalized.map((failure) => failure!.candidate));
+      if (seen.size !== candidates.length) return undefined;
       return Object.freeze({
         kind,
         failures: Object.freeze(normalized as CandidateFailureV3[]),
@@ -804,8 +806,8 @@ function normalizeCandidateFailureV3(
   const candidate = Reflect.get(value, "candidate");
   const failure = Reflect.get(value, "failure");
   if (!candidates.includes(candidate)) return undefined;
-  if (!(failure instanceof TransportFailureV3) || !TRANSPORT_FAILURE_CODES_V3.has(failure.code)) return undefined;
-  if (failure.detail !== undefined && !TRANSPORT_FAILURE_DETAILS_V3.has(failure.detail)) return undefined;
+  if (!(failure instanceof TransportFailureV3) || !TRANSPORT_FAILURE_CODES_V3.has(failure.code) ||
+      !isValidTransportFailurePairV3(failure.code, failure.detail)) return undefined;
   const disposition = Reflect.get(value, "disposition");
   const normalizedDisposition = disposition === undefined ? undefined : validateRetryDispositionV3(disposition);
   return Object.freeze({
@@ -813,6 +815,16 @@ function normalizeCandidateFailureV3(
     failure,
     ...(normalizedDisposition === undefined ? {} : { disposition: normalizedDisposition }),
   });
+}
+
+function isValidTransportFailurePairV3(
+  code: TransportFailureV3["code"],
+  detail: TransportFailureV3["detail"],
+): boolean {
+  if (detail !== undefined && !TRANSPORT_FAILURE_DETAILS_V3.has(detail)) return false;
+  if (code === "tls_failed") return detail === "ca_untrusted" || detail === "pin_mismatch" || detail === "unknown";
+  if (code === "connection_failed") return detail === undefined || detail === "browser_pin_opaque";
+  return detail === undefined;
 }
 
 function sessionFromMalformedConnectorResultV3(value: unknown): ManagedSessionV3 | undefined {

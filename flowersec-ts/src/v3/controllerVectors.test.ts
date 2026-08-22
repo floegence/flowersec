@@ -191,10 +191,11 @@ async function runPolicyReplacement(scenario: ControllerScenario): Promise<void>
       const ca = context.candidates.find(({ id }) => id === "w-ca");
       const pin = context.candidates.find(({ id }) => id === "w-pin");
       if (ca === undefined || pin === undefined) throw new Error("mixed fixture candidates missing");
-      return { kind: "candidate_failures", failures: [
-        { candidate: ca, failure: new TransportFailureV3("tls_failed", "ca_untrusted") },
-        { candidate: pin, failure: new TransportFailureV3("connection_failed", "browser_pin_opaque") },
-      ] };
+      return allCandidateFailures(context, (candidate) => candidate === ca
+        ? new TransportFailureV3("tls_failed", "ca_untrusted")
+        : candidate === pin
+          ? new TransportFailureV3("connection_failed", "browser_pin_opaque")
+          : new TransportFailureV3("connection_failed"));
     }
     const opaque = scenario.input.trigger === "browser_pin_opaque";
     return { kind: "candidate_failures", failures: [{
@@ -211,10 +212,7 @@ async function runAllUnsupported(scenario: ControllerScenario): Promise<void> {
   const tracker = new VectorTracker([baseArtifact]);
   const controller = createConnectionControllerV3(tracker.source(), async (context) => {
     tracker.recordConnector(context, 1, 0);
-    return { kind: "candidate_failures", failures: context.candidates.slice(0, 2).map((candidate) => ({
-      candidate,
-      failure: new TransportFailureV3("tls_unsupported"),
-    })) };
+    return allCandidateFailures(context, () => new TransportFailureV3("tls_unsupported"));
   }, controllerOptions(scenario.expected.acquisitions));
   await finishControllerScenario(controller, scenario, tracker);
 }
@@ -375,11 +373,11 @@ async function runRetryAfterController(scenario: ControllerScenario): Promise<vo
 async function runSecurityPriority(scenario: ControllerScenario): Promise<void> {
   const permutations = scenario.input.permutations as readonly (readonly string[])[];
   for (const permutation of permutations) {
-    const tracker = new VectorTracker([singleCandidateArtifact(baseArtifact, "w-ca")]);
+    const tracker = new VectorTracker([multiCandidateArtifact(baseArtifact, permutation.length)]);
     const controller = createConnectionControllerV3(tracker.source(), async (context) => {
       tracker.recordConnector(context, permutation.length);
-      const failures = permutation.map((result) => ({
-        candidate: context.candidates[0]!,
+      const failures = permutation.map((result, index) => ({
+        candidate: context.candidates[index]!,
         failure: transportFailure(result),
       }));
       const aggregate = aggregateCandidateFailuresV3(failures, false);
@@ -391,11 +389,11 @@ async function runSecurityPriority(scenario: ControllerScenario): Promise<void> 
 }
 
 async function runFailureOrdinal(scenario: ControllerScenario): Promise<void> {
-  const tracker = new VectorTracker([baseArtifact], new HoldingVectorClock());
+  const resultCount = (scenario.input.candidate_results as readonly string[]).length;
+  const tracker = new VectorTracker([multiCandidateArtifact(baseArtifact, resultCount)], new HoldingVectorClock());
   const controller = createConnectionControllerV3(tracker.source(), async (context) => {
-    const resultCount = (scenario.input.candidate_results as readonly string[]).length;
     tracker.recordConnector(context, resultCount);
-    return { kind: "candidate_failures", failures: context.candidates.slice(0, resultCount).map((candidate) => ({
+    return { kind: "candidate_failures", failures: context.candidates.map((candidate) => ({
       candidate,
       failure: new TransportFailureV3("connection_failed"),
     })) };
@@ -514,12 +512,12 @@ async function runClockBoundary(scenario: ControllerScenario): Promise<void> {
 }
 
 async function runCASecurity(scenario: ControllerScenario): Promise<void> {
-  const tracker = new VectorTracker([singleCandidateArtifact(baseArtifact, "w-ca")]);
   const results = scenario.input.candidate_results as readonly string[];
+  const tracker = new VectorTracker([multiCandidateArtifact(baseArtifact, results.length)]);
   const controller = createConnectionControllerV3(tracker.source(), async (context) => {
     tracker.recordConnector(context, results.length);
-    return { kind: "candidate_failures", failures: results.map((result) => ({
-      candidate: context.candidates[0]!,
+    return { kind: "candidate_failures", failures: results.map((result, index) => ({
+      candidate: context.candidates[index]!,
       failure: transportFailure(result),
     })) };
   }, controllerOptions(1));
@@ -1074,6 +1072,23 @@ function singleCandidateArtifact(input: ArtifactV3, id: string): ArtifactV3 {
   return { ...structuredClone(input), path: { ...structuredClone(input.path), candidates: [structuredClone(candidate)] } };
 }
 
+function multiCandidateArtifact(input: ArtifactV3, count: number): ArtifactV3 {
+  const output = structuredClone(input) as ArtifactV3;
+  output.path.candidates = output.path.candidates.slice(0, count);
+  if (output.path.candidates.length !== count) throw new Error(`fixture has fewer than ${count} candidates`);
+  return output;
+}
+
+function allCandidateFailures(
+  context: LeaseAttemptContextV3,
+  failureFor: (candidate: LeaseAttemptContextV3["candidates"][number]) => TransportFailureV3,
+) {
+  return {
+    kind: "candidate_failures" as const,
+    failures: context.candidates.map((candidate) => ({ candidate, failure: failureFor(candidate) })),
+  };
+}
+
 function mixedCAPinArtifact(input: ArtifactV3): ArtifactV3 {
   const output = structuredClone(input) as ArtifactV3;
   output.path.candidates = output.path.candidates
@@ -1164,14 +1179,22 @@ function pinMismatch(context: LeaseAttemptContextV3) {
     context.candidates.find(({ tls }) => tls.mode === "pin") ?? context.candidates[0]!;
   return {
     kind: "candidate_failures" as const,
-    failures: [{ candidate, failure: new TransportFailureV3("tls_failed", "pin_mismatch") }],
+    failures: context.candidates.map((value) => ({
+      candidate: value,
+      failure: value === candidate
+        ? new TransportFailureV3("tls_failed", "pin_mismatch")
+        : new TransportFailureV3("connection_failed"),
+    })),
   };
 }
 
 function ordinaryCandidateFailure(context: LeaseAttemptContextV3) {
   return {
     kind: "candidate_failures" as const,
-    failures: [{ candidate: context.candidates[0]!, failure: new TransportFailureV3("connection_failed") }],
+    failures: context.candidates.map((candidate) => ({
+      candidate,
+      failure: new TransportFailureV3("connection_failed"),
+    })),
   };
 }
 

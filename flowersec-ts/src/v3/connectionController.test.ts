@@ -104,12 +104,11 @@ describe("transport v3 production connection controller", () => {
     const connector = vi.fn(async (context: LeaseAttemptContextV3) => {
       const candidate = context.candidates.find(({ id }) => id === "t-pin")!;
       if (context.kind === "primary") {
-        return {
-          kind: "candidate_failures" as const,
-          failures: [{ candidate, failure: new TransportFailureV3("tls_failed", "pin_mismatch") }],
-        };
+        return allCandidateFailures(context, (value) => value === candidate
+          ? new TransportFailureV3("tls_failed", "pin_mismatch")
+          : new TransportFailureV3("connection_failed"));
       }
-      expect(context.candidates.map(({ id }) => id)).toEqual(["q-pin", "t-pin", "w-ca", "w-pin"]);
+      expect(context.candidates.map(({ id }) => id)).toEqual(["t-pin"]);
       context.assertArtifactFresh();
       await commitArtifactLeaseSpendV3(context.claim);
       return { kind: "established" as const, session };
@@ -469,6 +468,117 @@ describe("transport v3 production connection controller", () => {
     await controller.close();
   });
 
+  test("retires and cleans up a claimed lease for an established result with a valid session and extra fields", async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined, cleanup);
+    const sessionClose = vi.fn(async () => undefined);
+    const session: ManagedSessionV3 = {
+      waitTermination: async () => await new Promise<Readonly<{ error: Error }>>(() => undefined),
+      close: sessionClose,
+    };
+    const connector = vi.fn(async () => ({
+      kind: "established",
+      session,
+      unexpected: true,
+    } as unknown as LeaseAttemptResultV3<ManagedSessionV3>));
+    const controller = createConnectionControllerV3({
+      acquire: async () => ({ kind: "lease" as const, lease }),
+    }, connector, { maximumAttempts: 1, capabilitySnapshot });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "connect", code: "artifact_invalid" },
+    });
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(sessionClose).toHaveBeenCalledOnce();
+    await controller.close();
+  });
+
+  test.each([
+    ["subset", (candidates: readonly LeaseAttemptContextV3["candidates"][number][]) => candidates.slice(0, -1)],
+    ["empty", (_candidates: readonly LeaseAttemptContextV3["candidates"][number][]) => []],
+    ["duplicate", (candidates: readonly LeaseAttemptContextV3["candidates"][number][]) => candidates.map(() => candidates[0]!)],
+    ["foreign", (candidates: readonly LeaseAttemptContextV3["candidates"][number][]) => candidates.map((candidate, index) =>
+      index === 0 ? { ...candidate } : candidate)],
+  ] as const)("fails closed for %s candidate failure coverage and retires the lease", async (_name, selectCandidates) => {
+    const cleanup = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined, cleanup);
+    const connector = vi.fn(async (context: LeaseAttemptContextV3) => ({
+      kind: "candidate_failures" as const,
+      failures: selectCandidates(context.candidates).map((candidate) => ({
+        candidate,
+        failure: new TransportFailureV3("connection_failed"),
+      })),
+    }));
+    const controller = createConnectionControllerV3({
+      acquire: async () => ({ kind: "lease" as const, lease }),
+    }, connector, { maximumAttempts: 1, capabilitySnapshot });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "connect", code: "artifact_invalid" },
+    });
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
+    expect(cleanup).toHaveBeenCalledOnce();
+    await controller.close();
+  });
+
+  test.each([
+    ["tls_failed without detail", new TransportFailureV3("tls_failed")],
+    ["tls_unsupported with detail", new TransportFailureV3("tls_unsupported", "unknown")],
+    ["connection_failed with pin mismatch", new TransportFailureV3("connection_failed", "pin_mismatch")],
+    ["invalid_artifact with detail", new TransportFailureV3("invalid_artifact", "unknown")],
+  ] as const)("rejects an invalid transport failure code/detail pair: %s", async (_name, failure) => {
+    const cleanup = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined, cleanup);
+    const connector = vi.fn(async (context: LeaseAttemptContextV3) =>
+      allCandidateFailures(context, () => failure));
+    const controller = createConnectionControllerV3({
+      acquire: async () => ({ kind: "lease" as const, lease }),
+    }, connector, { maximumAttempts: 1, capabilitySnapshot });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "connect", code: "artifact_invalid" },
+    });
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
+    expect(cleanup).toHaveBeenCalledOnce();
+    await controller.close();
+  });
+
+  test.each([
+    ["candidate_failures", (context: LeaseAttemptContextV3) => ({
+      kind: "candidate_failures" as const,
+      failures: context.candidates.slice(0, -1).map((candidate) => ({
+        candidate,
+        failure: new TransportFailureV3("connection_failed"),
+      })),
+    })],
+    ["pre_spend_failure", (_context: LeaseAttemptContextV3) => ({
+      kind: "pre_spend_failure" as const,
+      error: new Error("adapter bug"),
+    })],
+  ] as const)("keeps a consumed lease when a malformed %s result is returned", async (_name, resultFor) => {
+    const cleanup = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined, cleanup);
+    const connector = vi.fn(async (context: LeaseAttemptContextV3) => {
+      await commitArtifactLeaseSpendV3(context.claim);
+      return resultFor(context) as unknown as LeaseAttemptResultV3<ManagedSessionV3>;
+    });
+    const controller = createConnectionControllerV3({
+      acquire: async () => ({ kind: "lease" as const, lease }),
+    }, connector, { maximumAttempts: 1, capabilitySnapshot });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "connect", code: "artifact_invalid" },
+    });
+    expect(artifactLeaseStateV3(lease)).toBe("consumed");
+    expect(cleanup).not.toHaveBeenCalled();
+    await controller.close();
+  });
+
   test("retires a lease from a mixed failure-and-lease source result", async () => {
     const cleanup = vi.fn(async () => undefined);
     const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined, cleanup);
@@ -552,13 +662,7 @@ describe("transport v3 production connection controller", () => {
     }, async (context) => {
       attempts += 1;
       if (attempts === 1) {
-        return {
-          kind: "candidate_failures",
-          failures: context.candidates.slice(0, 3).map((candidate) => ({
-            candidate,
-            failure: new TransportFailureV3("connection_failed"),
-          })),
-        };
+        return allCandidateFailures(context, () => new TransportFailureV3("connection_failed"));
       }
       await commitArtifactLeaseSpendV3(context.claim);
       return { kind: "established", session };
@@ -588,16 +692,13 @@ describe("transport v3 production connection controller", () => {
     }, async (context) => {
       kinds.push(context.kind);
       if (kinds.length === 1) {
-        return { kind: "candidate_failures", failures: [{
-          candidate: context.candidates[0]!,
-          failure: new TransportFailureV3("connection_failed"),
-        }] };
+        return allCandidateFailures(context, () => new TransportFailureV3("connection_failed"));
       }
       if (kinds.length === 2) {
-        return { kind: "candidate_failures", failures: [{
-          candidate: context.candidates.find(({ id }) => id === "t-pin")!,
-          failure: new TransportFailureV3("tls_failed", "pin_mismatch"),
-        }] };
+        const target = context.candidates.find(({ id }) => id === "t-pin")!;
+        return allCandidateFailures(context, (candidate) => candidate === target
+          ? new TransportFailureV3("tls_failed", "pin_mismatch")
+          : new TransportFailureV3("connection_failed"));
       }
       await commitArtifactLeaseSpendV3(context.claim);
       return { kind: "established", session };
@@ -691,10 +792,10 @@ describe("transport v3 production connection controller", () => {
     }, async (context) => {
       kinds.push(context.kind);
       if (kinds.length === 1) {
-        return { kind: "candidate_failures", failures: [{
-          candidate: context.candidates.find(({ id }) => id === "t-pin")!,
-          failure: new TransportFailureV3("tls_failed", "pin_mismatch"),
-        }] };
+        const target = context.candidates.find(({ id }) => id === "t-pin")!;
+        return allCandidateFailures(context, (candidate) => candidate === target
+          ? new TransportFailureV3("tls_failed", "pin_mismatch")
+          : new TransportFailureV3("connection_failed"));
       }
       if (kinds.length === 2) {
         await commitArtifactLeaseSpendV3(context.claim);
@@ -703,10 +804,10 @@ describe("transport v3 production connection controller", () => {
           error: new ConnectErrorV3("connection_failed", { kind: "retryable" }),
         };
       }
-      return { kind: "candidate_failures", failures: [{
-        candidate: context.candidates.find(({ id }) => id === "q-pin")!,
-        failure: new TransportFailureV3("tls_failed", "pin_mismatch"),
-      }] };
+      const target = context.candidates.find(({ id }) => id === "q-pin")!;
+      return allCandidateFailures(context, (candidate) => candidate === target
+        ? new TransportFailureV3("tls_failed", "pin_mismatch")
+        : new TransportFailureV3("connection_failed"));
     }, {
       maximumAttempts: expected.acquisitions + 1,
       nowUnixSeconds: () => 1_900_000_000,
@@ -741,13 +842,10 @@ describe("transport v3 production connection controller", () => {
     const controller = createConnectionControllerV3({ acquire }, async (context) => {
       calls += 1;
       if (calls === 1) {
-        return {
-          kind: "candidate_failures" as const,
-          failures: [{
-            candidate: context.candidates[0]!,
-            failure: new TransportFailureV3("tls_failed", "pin_mismatch"),
-          }],
-        };
+        const target = context.candidates[0]!;
+        return allCandidateFailures(context, (candidate) => candidate === target
+          ? new TransportFailureV3("tls_failed", "pin_mismatch")
+          : new TransportFailureV3("connection_failed"));
       }
       if (calls === 2) {
         await commitArtifactLeaseSpendV3(context.claim);
@@ -756,13 +854,10 @@ describe("transport v3 production connection controller", () => {
           error: new ConnectErrorV3("connection_failed", { kind: "retryable" }),
         };
       }
-      return {
-        kind: "candidate_failures" as const,
-        failures: [{
-          candidate: context.candidates[0]!,
-          failure: new TransportFailureV3("connection_failed", "browser_pin_opaque"),
-        }],
-      };
+      const target = context.candidates[0]!;
+      return allCandidateFailures(context, (candidate) => candidate === target
+        ? new TransportFailureV3("connection_failed", "browser_pin_opaque")
+        : new TransportFailureV3("connection_failed"));
     }, {
       maximumAttempts: 3,
       nowUnixSeconds: () => 1_900_000_000,
@@ -792,13 +887,10 @@ describe("transport v3 production connection controller", () => {
     const controller = createConnectionControllerV3({ acquire }, async (context) => {
       calls += 1;
       if (calls === 1) {
-        return {
-          kind: "candidate_failures" as const,
-          failures: [{
-            candidate: context.candidates[0]!,
-            failure: new TransportFailureV3("tls_failed", "pin_mismatch"),
-          }],
-        };
+        const target = context.candidates[0]!;
+        return allCandidateFailures(context, (candidate) => candidate === target
+          ? new TransportFailureV3("tls_failed", "pin_mismatch")
+          : new TransportFailureV3("connection_failed"));
       }
       if (calls === 2) {
         await commitArtifactLeaseSpendV3(context.claim);
@@ -809,13 +901,11 @@ describe("transport v3 production connection controller", () => {
       }
       const opaque = context.candidates.find(({ id }) => id === "q-pin")!;
       const ca = context.candidates.find(({ id }) => id === "w-ca")!;
-      return {
-        kind: "candidate_failures" as const,
-        failures: [
-          { candidate: opaque, failure: new TransportFailureV3("connection_failed", "browser_pin_opaque") },
-          { candidate: ca, failure: new TransportFailureV3("tls_failed", "ca_untrusted") },
-        ],
-      };
+      return allCandidateFailures(context, (candidate) => candidate === opaque
+        ? new TransportFailureV3("connection_failed", "browser_pin_opaque")
+        : candidate === ca
+          ? new TransportFailureV3("tls_failed", "ca_untrusted")
+          : new TransportFailureV3("connection_failed"));
     }, {
       maximumAttempts: 3,
       nowUnixSeconds: () => 1_900_000_000,
@@ -840,10 +930,10 @@ describe("transport v3 production connection controller", () => {
     const queue = [first, second];
     const connector = vi.fn(async (context: LeaseAttemptContextV3) => {
       if (context.kind === "primary") {
-        return { kind: "candidate_failures" as const, failures: [{
-          candidate: context.candidates.find(({ id }) => id === "t-pin")!,
-          failure: new TransportFailureV3("tls_failed", "pin_mismatch"),
-        }] };
+        const target = context.candidates.find(({ id }) => id === "t-pin")!;
+        return allCandidateFailures(context, (candidate) => candidate === target
+          ? new TransportFailureV3("tls_failed", "pin_mismatch")
+          : new TransportFailureV3("connection_failed"));
       }
       return {
         kind: "pre_spend_failure" as const,
@@ -898,10 +988,10 @@ describe("transport v3 production connection controller", () => {
       }, async (context) => {
         kinds.push(context.kind);
         if (input.phase === "replacement" && context.kind === "primary") {
-          return { kind: "candidate_failures", failures: [{
-            candidate: context.candidates.find(({ id }) => id === "t-pin")!,
-            failure: new TransportFailureV3("tls_failed", "pin_mismatch"),
-          }] };
+          const target = context.candidates.find(({ id }) => id === "t-pin")!;
+          return allCandidateFailures(context, (candidate) => candidate === target
+            ? new TransportFailureV3("tls_failed", "pin_mismatch")
+            : new TransportFailureV3("connection_failed"));
         }
         await commitArtifactLeaseSpendV3(context.claim);
         const terminal = input.admission_result === "fsa_reject";
@@ -1082,10 +1172,11 @@ describe("transport v3 production connection controller", () => {
       seen.push({ kind: context.kind, candidates: context.candidates.map(({ id }) => id) });
       if (context.kind === "primary" && seen.length === 1) {
         const candidate = context.candidates.find(({ id }) => id === "t-pin")!;
-        return { kind: "candidate_failures", failures: [{ candidate, failure: new TransportFailureV3("tls_failed", "pin_mismatch") }] };
+        return allCandidateFailures(context, (value) => value === candidate
+          ? new TransportFailureV3("tls_failed", "pin_mismatch")
+          : new TransportFailureV3("connection_failed"));
       }
-      const candidate = context.candidates[0]!;
-      return { kind: "candidate_failures", failures: [{ candidate, failure: new TransportFailureV3("connection_failed") }] };
+      return allCandidateFailures(context, () => new TransportFailureV3("connection_failed"));
     }, {
       maximumAttempts: 3,
       nowUnixSeconds: () => now,
@@ -1123,10 +1214,12 @@ describe("transport v3 production connection controller", () => {
       seen.push({ kind: context.kind, candidates: context.candidates.map(({ id }) => id) });
       const candidate = context.candidates.find(({ id }) => id === "t-pin") ?? context.candidates[0]!;
       if (context.kind === "primary" && seen.length === 1) {
-        return { kind: "candidate_failures", failures: [{ candidate, failure: new TransportFailureV3("tls_failed", "pin_mismatch") }] };
+        return allCandidateFailures(context, (value) => value === candidate
+          ? new TransportFailureV3("tls_failed", "pin_mismatch")
+          : new TransportFailureV3("connection_failed"));
       }
       if (context.kind === "replacement") now = replacement.session.init_expire_at_unix_s;
-      return { kind: "candidate_failures", failures: [{ candidate, failure: new TransportFailureV3("connection_failed") }] };
+      return allCandidateFailures(context, () => new TransportFailureV3("connection_failed"));
     }, {
       maximumAttempts: 3,
       nowUnixSeconds: () => now,
@@ -1137,7 +1230,7 @@ describe("transport v3 production connection controller", () => {
     await expect(controller.waitForSession()).rejects.toMatchObject({ code: "failed" });
     expect(seen).toEqual([
       { kind: "primary", candidates: ["q-pin", "t-pin", "w-ca", "w-pin"] },
-      { kind: "replacement", candidates: ["q-pin", "t-pin", "w-ca", "w-pin"] },
+      { kind: "replacement", candidates: ["t-pin"] },
       { kind: "primary", candidates: ["q-pin", "w-ca", "w-pin"] },
     ]);
     expect(primaryCount).toBe(expected.acquisitions);
@@ -1162,10 +1255,8 @@ describe("transport v3 production connection controller", () => {
       createArtifactLeaseV3Internal(primary, async () => undefined, cleanups[0]),
       createArtifactLeaseV3Internal(replacement, async () => undefined, cleanups[1]),
     ];
-    const connector = vi.fn(async (context) => ({
-      kind: "candidate_failures" as const,
-      failures: [{ candidate: context.candidates[0]!, failure: new TransportFailureV3("tls_failed", "pin_mismatch") }],
-    }));
+    const connector = vi.fn(async (context: LeaseAttemptContextV3) =>
+      allCandidateFailures(context, () => new TransportFailureV3("tls_failed", "pin_mismatch")));
     const controller = createConnectionControllerV3({
       acquire: async () => ({ kind: "lease", lease: leases.shift()! }),
     }, connector, {
@@ -1192,15 +1283,10 @@ describe("transport v3 production connection controller", () => {
         createArtifactLeaseV3Internal(primary, async () => undefined, cleanups[1]),
       ];
       const acquire = vi.fn(async () => ({ kind: "lease" as const, lease: leases.shift()! }));
-      const connector = vi.fn(async (context: LeaseAttemptContextV3) => ({
-        kind: "candidate_failures" as const,
-        failures: [{
-          candidate: context.candidates[0]!,
-          failure: id === "browser-opaque-exhausted"
-            ? new TransportFailureV3("connection_failed", "browser_pin_opaque")
-            : new TransportFailureV3("tls_failed", "pin_mismatch"),
-        }],
-      }));
+      const connector = vi.fn(async (context: LeaseAttemptContextV3) => allCandidateFailures(context, () =>
+        id === "browser-opaque-exhausted"
+          ? new TransportFailureV3("connection_failed", "browser_pin_opaque")
+          : new TransportFailureV3("tls_failed", "pin_mismatch")));
       const controller = createConnectionControllerV3({ acquire }, connector, {
         maximumAttempts: expected.acquisitions,
         nowUnixSeconds: () => 1_900_000_000,
@@ -1224,13 +1310,8 @@ describe("transport v3 production connection controller", () => {
     const cleanup = vi.fn(async () => undefined);
     const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined, cleanup);
     const transportsCreated = 0;
-    const connector = vi.fn(async (context: LeaseAttemptContextV3) => ({
-      kind: "candidate_failures" as const,
-      failures: context.candidates.slice(0, 2).map((candidate) => ({
-        candidate,
-        failure: new TransportFailureV3("tls_unsupported"),
-      })),
-    }));
+    const connector = vi.fn(async (context: LeaseAttemptContextV3) =>
+      allCandidateFailures(context, () => new TransportFailureV3("tls_unsupported")));
     const controller = createConnectionControllerV3({
       acquire: async () => ({ kind: "lease", lease }),
     }, connector, { maximumAttempts: expected.acquisitions, capabilitySnapshot });
@@ -1318,6 +1399,16 @@ function singleCandidateArtifact(input: ArtifactV3, id: string): ArtifactV3 {
   return artifact;
 }
 
+function allCandidateFailures(
+  context: LeaseAttemptContextV3,
+  failureFor: (candidate: LeaseAttemptContextV3["candidates"][number]) => TransportFailureV3,
+) {
+  return {
+    kind: "candidate_failures" as const,
+    failures: context.candidates.map((candidate) => ({ candidate, failure: failureFor(candidate) })),
+  };
+}
+
 function managedSession(): ManagedSessionV3 {
   return {
     waitTermination: async () => await new Promise<Readonly<{ error: Error }>>(() => undefined),
@@ -1375,10 +1466,9 @@ async function expectBlockedPrimaryAfterSpentReplacementRetry(
   }));
   const connector = vi.fn(async (context: LeaseAttemptContextV3) => {
     if (context.kind === "primary") {
-      return {
-        kind: "candidate_failures" as const,
-        failures: [{ candidate: context.candidates[0]!, failure: trigger }],
-      };
+      return allCandidateFailures(context, (candidate) => candidate === context.candidates[0]
+        ? trigger
+        : new TransportFailureV3("connection_failed"));
     }
     await commitArtifactLeaseSpendV3(context.claim);
     return {
