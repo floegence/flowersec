@@ -177,8 +177,7 @@ func registry() []registeredTest {
 		"CAP-STREAM-WT-DIRECT-100X128", "CAP-STREAM-WT-WSS-100X128", "CAP-STREAM-WT-QUIC-100X128",
 	} {
 		if id == "CAP-DIRECT-WT-1000" {
-			tests = append(tests, commandEntry("performance-optional/webtransport-capability", "performance-optional", time.Minute,
-				"node", "flowersec-ts/scripts/browser-test-runner.mjs", "--runtime-canary", os.Getenv("FLOWERSEC_CHROMIUM_EXECUTABLE")))
+			tests = append(tests, chromiumWebTransportPerformanceCapabilityEntry(os.Getenv("FLOWERSEC_CHROMIUM_EXECUTABLE")))
 		}
 		tests = append(tests, performanceCapacityEntry("performance/capacity/"+strings.ToLower(id), "performance-optional", id))
 	}
@@ -296,6 +295,22 @@ func exactTitle(title string) string {
 
 func commandEntry(id, suite string, timeout time.Duration, command string, arguments ...string) registeredTest {
 	return commandEntryWithEnvironment(id, suite, timeout, nil, command, arguments...)
+}
+
+func chromiumWebTransportPerformanceCapabilityEntry(executable string) registeredTest {
+	return registeredTest{
+		ID:      "performance-optional/webtransport-capability",
+		Suite:   "performance-optional",
+		Timeout: time.Minute,
+		Run: func(ctx context.Context, run runContext) error {
+			output, err := runCommandOutput(ctx, run.Root, withRunID(nil, run.RunID),
+				"node", "flowersec-ts/scripts/browser-test-runner.mjs", "--runtime-canary", executable)
+			if err != nil {
+				return err
+			}
+			return parseChromiumPerformanceCapability(output)
+		},
+	}
 }
 
 func commandEntryWithEnvironment(id, suite string, timeout time.Duration, environment []string, command string, arguments ...string) registeredTest {

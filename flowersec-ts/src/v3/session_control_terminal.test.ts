@@ -26,6 +26,69 @@ function config(role: "client" | "server"): SessionConfigV3 {
 }
 
 describe("SessionV3 control terminal serialization", () => {
+  test("requires native EOF after encrypted FIN before publishing EOF or releasing capacity", async () => {
+    const fault = new ApplicationFINFault("block");
+    const [rawClient, rawServer] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV3(new ApplicationFINFaultCarrier(rawClient, "client", fault), config("client")),
+      establishSessionV3(new ApplicationFINFaultCarrier(rawServer, "server", fault), config("server")),
+    ]);
+    const opening = client.openStream("native-eof-gate");
+    const incoming = await server.acceptStream();
+    const outgoing = await opening;
+
+    await incoming.stream.closeWrite();
+    await expect(outgoing.read()).resolves.toBeNull();
+    let readSettled = false;
+    const reading = incoming.stream.read().finally(() => { readSettled = true; });
+    const closing = outgoing.closeWrite();
+    await testDeadline(fault.clientCloseEntered.promise, "client native FIN block");
+    await testDeadline(fault.serverEOFReadEntered.promise, "server native EOF read");
+    await Promise.resolve();
+    expect(readSettled).toBe(false);
+    let replacementSettled = false;
+    const replacementOpening = client.openStream("after-native-eof").finally(() => {
+      replacementSettled = true;
+    });
+    await Promise.resolve();
+    expect(replacementSettled).toBe(false);
+
+    fault.releaseNativeFIN.resolve();
+    await expect(testDeadline(closing, "native FIN release")).resolves.toBeUndefined();
+    await expect(testDeadline(reading, "clean application EOF")).resolves.toBeNull();
+    const replacementIncoming = await testDeadline(server.acceptStream(), "replacement accept");
+    const replacement = await testDeadline(replacementOpening, "replacement open");
+    await Promise.all([
+      replacement.reset().catch(() => undefined),
+      replacementIncoming.stream.reset().catch(() => undefined),
+    ]);
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
+  test("rejects a trailing carrier byte after encrypted FIN", async () => {
+    const fault = new ApplicationFINFault("trailing");
+    const [rawClient, rawServer] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV3(new ApplicationFINFaultCarrier(rawClient, "client", fault), config("client")),
+      establishSessionV3(rawServer, config("server")),
+    ]);
+    const opening = client.openStream("trailing-fin");
+    const incoming = await server.acceptStream();
+    const outgoing = await opening;
+
+    await outgoing.closeWrite();
+    await expect(incoming.stream.read()).rejects.toMatchObject({ code: "protocol" });
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
   test("seals queued responses and appends GOAWAY, SESSION_CLOSE, and FIN after owned cleanup", async () => {
     const [rawClient, serverCarrier] = createMemoryCarrierPairV3({
       kind: "webtransport",
@@ -304,6 +367,77 @@ class TerminalOrderingCarrier implements CarrierSessionV3 {
   }
 }
 
+class ApplicationFINFault {
+  readonly clientCloseEntered = deferred<void>();
+  readonly serverEOFReadEntered = deferred<void>();
+  readonly releaseNativeFIN = deferred<void>();
+  blockingNativeFIN = false;
+
+  constructor(readonly mode: "block" | "trailing") {}
+}
+
+class ApplicationFINFaultCarrier implements CarrierSessionV3 {
+  readonly kind: CarrierSessionV3["kind"];
+  readonly path: CarrierSessionV3["path"];
+  readonly inboundBidirectionalStreamCapacity: number;
+  readonly unreliableDatagrams: CarrierSessionV3["unreliableDatagrams"];
+  private streams = 0;
+
+  constructor(
+    private readonly inner: CarrierSessionV3,
+    private readonly side: "client" | "server",
+    private readonly fault: ApplicationFINFault,
+  ) {
+    this.kind = inner.kind;
+    this.path = inner.path;
+    this.inboundBidirectionalStreamCapacity = inner.inboundBidirectionalStreamCapacity;
+    this.unreliableDatagrams = inner.unreliableDatagrams;
+  }
+
+  async openStream(options: OperationOptionsV3 = {}): Promise<CarrierStreamV3> {
+    return this.wrap(await this.inner.openStream(options));
+  }
+
+  async acceptStream(options: OperationOptionsV3 = {}): Promise<CarrierStreamV3> {
+    return this.wrap(await this.inner.acceptStream(options));
+  }
+
+  async waitTermination(): Promise<void> { await this.inner.waitTermination(); }
+  async close(error?: Readonly<{ code: number; reason: string }>): Promise<void> { await this.inner.close(error); }
+  abort(error?: Readonly<{ code: number; reason: string }>): void { this.inner.abort(error); }
+
+  private wrap(stream: CarrierStreamV3): CarrierStreamV3 {
+    const application = this.streams++ === 1;
+    if (!application) return stream;
+    return {
+      read: async (options) => {
+        if (this.side === "server" && this.fault.blockingNativeFIN) {
+          this.fault.serverEOFReadEntered.resolve();
+        }
+        return await stream.read(options);
+      },
+      write: async (data, options) => await stream.write(data, options),
+      closeWrite: async () => {
+        if (this.side !== "client") {
+          await stream.closeWrite();
+          return;
+        }
+        if (this.fault.mode === "trailing") {
+          await stream.write(new Uint8Array([0xa5]));
+        } else {
+          this.fault.blockingNativeFIN = true;
+          this.fault.clientCloseEntered.resolve();
+          await this.fault.releaseNativeFIN.promise;
+        }
+        await stream.closeWrite();
+      },
+      stopSending: async () => await stream.stopSending(),
+      reset: async () => await stream.reset(),
+      abort: (error) => stream.abort(error),
+    };
+  }
+}
+
 function idReason(id: bigint, reason: number): Uint8Array {
   const output = new Uint8Array(10);
   const view = new DataView(output.buffer);
@@ -328,4 +462,18 @@ function deferred<T = void>(): Readonly<{
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
   return { promise, resolve };
+}
+
+async function testDeadline<T>(promise: Promise<T>, stage: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${stage} did not settle`)), 1_000);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }

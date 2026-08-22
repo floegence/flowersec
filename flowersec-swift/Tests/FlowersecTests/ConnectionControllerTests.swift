@@ -1414,6 +1414,13 @@ final class ConnectionControllerTests: XCTestCase {
 
   private func runSecurityAggregationVectorV3(_ id: String) async throws {
     let expected = try controllerExpectedV3(id)
+    let input = try controllerInputV3(id)
+    if id == "race-order-independent-security-priority" {
+      let permutations = try XCTUnwrap(input["permutations"] as? [[String]])
+      try await runSecurityCompletionPermutationsV3(
+        permutations, expected: expected, scenarioID: id)
+      return
+    }
     let retired = AsyncCounterV3()
     let source = SequenceArtifactSourceV3([
       try lease(artifact: caOnlyArtifactV3(), retired: retired)
@@ -1437,6 +1444,79 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(actualAttempts, expectedAttempts, id)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
     await controller.close()
+  }
+
+  private func runSecurityCompletionPermutationsV3(
+    _ permutations: [[String]], expected: [String: Any], scenarioID: String
+  ) async throws {
+    let outcomeSet = Set(["tls_unsupported", "tls_failed", "connection_failed"])
+    XCTAssertEqual(permutations.count, 6, scenarioID)
+    var uniquePermutations = Set<String>()
+    for permutation in permutations {
+      XCTAssertEqual(permutation.count, outcomeSet.count, scenarioID)
+      XCTAssertEqual(Set(permutation), outcomeSet, scenarioID)
+      XCTAssertTrue(
+        uniquePermutations.insert(permutation.joined(separator: ",")).inserted,
+        "duplicate completion permutation \(permutation) in \(scenarioID)")
+    }
+    XCTAssertEqual(uniquePermutations.count, 6, scenarioID)
+
+    let expectedAttempts = try XCTUnwrap(expected["connect_attempts"] as? Int)
+    let expectedTransports = try XCTUnwrap(expected["transports_created"] as? Int)
+    let expectedAcquisitions = try XCTUnwrap(expected["acquisitions"] as? Int)
+    let expectedRetirements = try XCTUnwrap(expected["retire_callbacks"] as? Int)
+    let expectedSpends = try XCTUnwrap(expected["spend_callbacks"] as? Int)
+    let expectedPublicError = try XCTUnwrap(expected["public_error"] as? String)
+    let expectedDisposition = try XCTUnwrap(expected["disposition"] as? String)
+    XCTAssertEqual(expected["order_independent"] as? Bool, true, scenarioID)
+
+    for permutation in permutations {
+      let label = "\(scenarioID): \(permutation.joined(separator: " -> "))"
+      let spent = AsyncCounterV3()
+      let retired = AsyncCounterV3()
+      let runtime = PermutationFailureRuntimeV3()
+      let source = SequenceArtifactSourceV3([
+        try lease(artifact: threeFailureCandidateArtifactV3(), spent: spent, retired: retired)
+      ])
+      let controller = try ConnectionController(
+        source: source,
+        connectOneShot: { lease, options in
+          try await SessionConnectorV3(
+            lease: lease, options: options, runtime: runtime,
+            currentUnixSeconds: { 1_900_000_000 }
+          ).connectForController()
+        })
+
+      await controller.start()
+      await runtime.waitForAllCandidates(expectedCount: expectedAttempts)
+      for outcome in permutation { await runtime.complete(outcome) }
+      assertTrueV3(await waitForState(.failed, controller: controller), label)
+
+      let snapshot = await controller.snapshot()
+      let runtimeSnapshot = await runtime.snapshot()
+      let acquisitions = await source.acquisitions
+      let spendCount = await spent.value
+      let retireCount = await retired.value
+      XCTAssertEqual(snapshot.state.rawValue, expected["final_state"] as? String, label)
+      XCTAssertEqual(snapshot.attempt, UInt64(expectedAcquisitions), label)
+      guard case .connection(let failure) = snapshot.failure else {
+        XCTFail("expected public connection failure for \(label)")
+        await controller.close()
+        continue
+      }
+      XCTAssertEqual(failure.code.rawValue, expectedPublicError, label)
+      XCTAssertEqual(failure.retryDisposition, .terminal, label)
+      XCTAssertEqual(snapshot.retryDisposition, .terminal, label)
+      XCTAssertEqual(expectedDisposition, "terminal", label)
+      XCTAssertEqual(acquisitions, expectedAcquisitions, label)
+      XCTAssertEqual(runtimeSnapshot.arrivals, expectedAttempts, label)
+      XCTAssertEqual(runtimeSnapshot.arrivals, expectedTransports, label)
+      XCTAssertEqual(runtimeSnapshot.completions, permutation, label)
+      XCTAssertEqual(spendCount, expectedSpends, label)
+      XCTAssertEqual(retireCount, expectedRetirements, label)
+      XCTAssertEqual(expected["lease_terminal_states"] as? [String], ["retired"], label)
+      await controller.close()
+    }
   }
 
   private func runFailureOrdinalVectorV3(_ id: String) async throws {
@@ -2066,6 +2146,17 @@ private func caOnlyArtifactV3() throws -> ArtifactV3 {
   return try parseArtifactV3(FlowersecJCSV3.encode(root))
 }
 
+private func threeFailureCandidateArtifactV3() throws -> ArtifactV3 {
+  try mutateArtifactV3 { root in
+    var path = root["path"] as! [String: Any]
+    let candidates = path["candidates"] as! [[String: Any]]
+    path["candidates"] = candidates.filter {
+      ["w-ca", "q-pin", "t-pin"].contains($0["id"] as? String)
+    }
+    root["path"] = path
+  }
+}
+
 private func mixedCAPinArtifactV3() throws -> ArtifactV3 {
   try mutateArtifactV3 { root in
     var path = root["path"] as! [String: Any]
@@ -2284,6 +2375,88 @@ private actor CapabilityInvalidatingRuntimeV3: RuntimeCarrierAdapterV3 {
     let waiter = releaseWaiter
     releaseWaiter = nil
     waiter?.resume()
+  }
+}
+
+private actor PermutationFailureRuntimeV3: RuntimeCarrierAdapterV3 {
+  struct Snapshot: Sendable {
+    let arrivals: Int
+    let completions: [String]
+  }
+
+  nonisolated let capabilities = RuntimeCapabilityDescriptorV3(
+    language: "swift", runtime: "macos", schemaVersion: 3,
+    tuples: [
+      RuntimeCapabilityTupleV3(
+        carrier: .rawQUIC, datagrams: false, migration: false, networkMode: .dial,
+        path: .direct, reliableStreams: true, securityModes: ["pin"], sessionRole: .client),
+      RuntimeCapabilityTupleV3(
+        carrier: .webSocket, datagrams: false, migration: false, networkMode: .dial,
+        path: .direct, reliableStreams: true, securityModes: ["ca"], sessionRole: .client),
+      RuntimeCapabilityTupleV3(
+        carrier: .webTransport, datagrams: false, migration: false, networkMode: .dial,
+        path: .direct, reliableStreams: true, securityModes: ["pin"], sessionRole: .client),
+    ],
+    unsupported: [])
+
+  private var gates: [String: CheckedContinuation<Void, Never>] = [:]
+  private var arrivedCandidates = Set<String>()
+  private var completionOrder: [String] = []
+  private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
+  private var completionWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+
+  nonisolated func validate(options: ConnectorOptions) throws {}
+
+  func prepare(
+    candidate: CanonicalCandidateV3,
+    path: PathKind,
+    role: SessionRoleV3,
+    options: ConnectorOptions,
+    activePinHashes: [Data]?
+  ) async throws -> any PreparedCarrierConnectionV3 {
+    let outcome: String
+    switch candidate.id {
+    case "w-ca": outcome = "tls_failed"
+    case "q-pin": outcome = "tls_unsupported"
+    case "t-pin": outcome = "connection_failed"
+    default: preconditionFailure("unexpected permutation candidate \(candidate.id)")
+    }
+    arrivedCandidates.insert(candidate.id)
+    let waiters = arrivalWaiters
+    arrivalWaiters.removeAll()
+    for waiter in waiters { waiter.resume() }
+    await withCheckedContinuation { continuation in
+      precondition(gates[outcome] == nil, "duplicate permutation outcome \(outcome)")
+      gates[outcome] = continuation
+    }
+    completionOrder.append(outcome)
+    let completedWaiters = completionWaiters.removeValue(forKey: outcome) ?? []
+    for waiter in completedWaiters { waiter.resume() }
+    switch outcome {
+    case "tls_unsupported": throw ConnectorBoundaryErrorV3.runtimeUnsupported
+    case "tls_failed": throw ConnectorBoundaryErrorV3.securityFailed
+    case "connection_failed": throw ConnectorBoundaryErrorV3.runtimeFailed
+    default: preconditionFailure("unexpected permutation outcome \(outcome)")
+    }
+  }
+
+  func waitForAllCandidates(expectedCount: Int) async {
+    while arrivedCandidates.count < expectedCount {
+      await withCheckedContinuation { arrivalWaiters.append($0) }
+    }
+  }
+
+  func complete(_ outcome: String) async {
+    guard let gate = gates.removeValue(forKey: outcome) else {
+      preconditionFailure("completion released before candidate arrived: \(outcome)")
+    }
+    gate.resume()
+    if completionOrder.contains(outcome) { return }
+    await withCheckedContinuation { completionWaiters[outcome, default: []].append($0) }
+  }
+
+  func snapshot() -> Snapshot {
+    Snapshot(arrivals: arrivedCandidates.count, completions: completionOrder)
   }
 }
 

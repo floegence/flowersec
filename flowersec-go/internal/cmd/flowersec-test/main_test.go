@@ -359,6 +359,78 @@ func TestPerformanceFailureWritesPartialReportAndReturnsNonzero(t *testing.T) {
 	}
 }
 
+func TestChromiumPerformanceCapabilityResultClassification(t *testing.T) {
+	if err := parseChromiumPerformanceCapability([]byte(`{"status":"GREEN","secure_context":true,"webtransport":"function"}`)); err != nil {
+		t.Fatalf("GREEN capability result: %v", err)
+	}
+	err := parseChromiumPerformanceCapability([]byte(`{"status":"UNSUPPORTED","limitation":"WebTransport is unavailable"}`))
+	var unavailable *performanceCapabilityUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.Error() != "WebTransport is unavailable" {
+		t.Fatalf("UNSUPPORTED capability result = %T %v", err, err)
+	}
+	for name, payload := range map[string]string{
+		"malformed":           `{"status":"GREEN"} trailing`,
+		"unknown field":       `{"status":"GREEN","secure_context":true,"webtransport":"function","extra":true}`,
+		"incomplete green":    `{"status":"GREEN","secure_context":true}`,
+		"empty limitation":    `{"status":"UNSUPPORTED","limitation":" "}`,
+		"contradictory state": `{"status":"UNSUPPORTED","secure_context":true,"limitation":"missing"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := parseChromiumPerformanceCapability([]byte(payload)); err == nil {
+				t.Fatal("invalid Chromium capability result was accepted")
+			} else if errors.As(err, &unavailable) {
+				t.Fatalf("invalid result was classified as unavailable: %v", err)
+			}
+		})
+	}
+}
+
+func TestPerformanceCapabilityOnlyStructuredUnavailableSkipsOptionalCases(t *testing.T) {
+	for _, scenario := range []struct {
+		name          string
+		capabilityErr error
+		wantSuccess   bool
+		wantReport    string
+	}{
+		{name: "structured unavailable", capabilityErr: &performanceCapabilityUnavailableError{limitation: "WebTransport constructor unavailable"}, wantSuccess: true, wantReport: "UNSUPPORTED"},
+		{name: "runner failure", capabilityErr: errors.New("synthetic Chromium launch failure"), wantSuccess: false, wantReport: "synthetic Chromium launch failure"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			root := t.TempDir()
+			reportPath := filepath.Join(root, "performance-report.md")
+			progressPath := filepath.Join(root, "test-progress.json")
+			optionalRan := false
+			tests := []registeredTest{
+				{ID: "performance-optional/webtransport-capability", Suite: "performance-optional", Timeout: time.Second, Run: func(context.Context, runContext) error {
+					return scenario.capabilityErr
+				}},
+				{ID: "performance/single-connection/webtransport", Suite: "performance-optional", Timeout: time.Second, Run: func(context.Context, runContext) error {
+					optionalRan = true
+					return nil
+				}},
+			}
+			var stdout, stderr bytes.Buffer
+			err := executePerformanceSuite(context.Background(), &stdout, &stderr, "run", progressPath, root, testSourceSHA, tests, false, reportPath, testPerformanceEnvironment)
+			if (err == nil) != scenario.wantSuccess {
+				t.Fatalf("performance capability result = %v, stdout=%s stderr=%s", err, stdout.String(), stderr.String())
+			}
+			if optionalRan {
+				t.Fatal("optional performance case ran after capability preflight did not pass")
+			}
+			report, readErr := os.ReadFile(reportPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if !strings.Contains(string(report), scenario.wantReport) {
+				t.Fatalf("report missing %q:\n%s", scenario.wantReport, report)
+			}
+			if scenario.wantSuccess && !strings.Contains(stdout.String(), "ALL GREEN") {
+				t.Fatalf("unavailable optional capability did not complete the suite: %s", stdout.String())
+			}
+		})
+	}
+}
+
 func TestPerformanceStructuredFailureWritesImmediatelyAndContinues(t *testing.T) {
 	root := t.TempDir()
 	reportPath := filepath.Join(t.TempDir(), "performance-report.md")

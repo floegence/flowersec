@@ -1040,11 +1040,14 @@ mod tests {
         phase: HangingAdmissionPhase,
         entered: Arc<tokio::sync::Semaphore>,
         aborts: AtomicUsize,
+        opens: AtomicUsize,
+        credential_writes: Arc<AtomicUsize>,
     }
 
     #[derive(Debug)]
     struct HangingAdmissionStream {
         entered: Arc<tokio::sync::Semaphore>,
+        credential_writes: Arc<AtomicUsize>,
     }
 
     struct HangingCandidatePreparer {
@@ -1164,12 +1167,14 @@ mod tests {
         }
 
         async fn open_stream(&self) -> std::io::Result<Arc<dyn CarrierStreamV3>> {
+            self.opens.fetch_add(1, Ordering::SeqCst);
             if matches!(self.phase, HangingAdmissionPhase::Open) {
                 self.entered.add_permits(1);
                 return std::future::pending().await;
             }
             Ok(Arc::new(HangingAdmissionStream {
                 entered: self.entered.clone(),
+                credential_writes: self.credential_writes.clone(),
             }))
         }
 
@@ -1193,6 +1198,7 @@ mod tests {
         }
 
         async fn write(&self, payload: &[u8]) -> std::io::Result<usize> {
+            self.credential_writes.fetch_add(1, Ordering::SeqCst);
             Ok(payload.len())
         }
 
@@ -1320,6 +1326,8 @@ mod tests {
             phase: HangingAdmissionPhase::Open,
             entered: Arc::new(tokio::sync::Semaphore::new(0)),
             aborts: AtomicUsize::new(0),
+            opens: AtomicUsize::new(0),
+            credential_writes: Arc::new(AtomicUsize::new(0)),
         });
         let cancellation = CancellationToken::new();
         let options = ConnectorOptions::new();
@@ -1375,6 +1383,8 @@ mod tests {
             phase: HangingAdmissionPhase::Open,
             entered: Arc::new(tokio::sync::Semaphore::new(0)),
             aborts: AtomicUsize::new(0),
+            opens: AtomicUsize::new(0),
+            credential_writes: Arc::new(AtomicUsize::new(0)),
         });
         let cancellation = CancellationToken::new();
         let options = ConnectorOptions::new();
@@ -1436,6 +1446,8 @@ mod tests {
             phase,
             entered: Arc::new(tokio::sync::Semaphore::new(0)),
             aborts: AtomicUsize::new(0),
+            opens: AtomicUsize::new(0),
+            credential_writes: Arc::new(AtomicUsize::new(0)),
         });
         let cancellation = CancellationToken::new();
         let options = ConnectorOptions::new();
@@ -1807,6 +1819,8 @@ mod tests {
                 phase: HangingAdmissionPhase::Open,
                 entered: entered.clone(),
                 aborts: AtomicUsize::new(0),
+                opens: AtomicUsize::new(0),
+                credential_writes: Arc::new(AtomicUsize::new(0)),
             }),
         };
         let mut operation = Box::pin(connect_v3_with_cancellation_and_preparer(
@@ -1849,11 +1863,15 @@ mod tests {
             phase: HangingAdmissionPhase::Open,
             entered: entered.clone(),
             aborts: AtomicUsize::new(0),
+            opens: AtomicUsize::new(0),
+            credential_writes: Arc::new(AtomicUsize::new(0)),
         });
         let loser = Arc::new(HangingAdmissionCarrier {
             phase: HangingAdmissionPhase::Open,
             entered: Arc::new(tokio::sync::Semaphore::new(0)),
             aborts: AtomicUsize::new(0),
+            opens: AtomicUsize::new(0),
+            credential_writes: Arc::new(AtomicUsize::new(0)),
         });
         let release_loser = Arc::new(tokio::sync::Notify::new());
         let preparer = WinnerWithLatePreparedLoserPreparer {
@@ -1887,6 +1905,9 @@ mod tests {
         })
         .await
         .expect("late prepared loser was not aborted");
+        assert_eq!(loser.opens.load(Ordering::Acquire), 0);
+        assert_eq!(loser.credential_writes.load(Ordering::Acquire), 0);
+        assert_eq!(loser.aborts.load(Ordering::Acquire), 1);
         drop(operation);
     }
 

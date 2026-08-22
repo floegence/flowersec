@@ -15,8 +15,9 @@ import XCTest
 
 final class ConnectorV2Tests: XCTestCase {
   #if os(macOS)
-    func testProductionV3AdapterAcceptsConfiguredPrivateCA() async throws {
-      let tls = try ConnectorTestTLS.load()
+    func testProductionV3AdapterAcceptsConfiguredCAForDNSID() async throws {
+      let tls = try ConnectorTestTLS.makePrivateCAIssued(
+        subjectAlternativeName: "DNS:localhost")
       let accepted = ConnectorAcceptedTransport()
       let server = try await ConnectorWSSServer.start(
         tls: tls, selectedProtocol: "flowersec.direct.v3", accepted: accepted)
@@ -36,6 +37,80 @@ final class ConnectorV2Tests: XCTestCase {
 
       XCTAssertEqual(connection.carrier, .webSocket)
       await connection.close()
+    }
+
+    func testProductionV3AdapterAcceptsConfiguredCAForIPv4SANWithoutSNI() async throws {
+      let tls = try ConnectorTestTLS.makePrivateCAIssued(
+        subjectAlternativeName: "IP:127.0.0.1")
+      let accepted = ConnectorAcceptedTransport()
+      let server = try await ConnectorWSSServer.start(
+        tls: tls, selectedProtocol: "flowersec.direct.v3", accepted: accepted)
+      defer { Task { await server.close() } }
+      let artifact = try v3WebSocketArtifact(
+        port: server.port, host: "127.0.0.1", tls: ["mode": "ca"])
+
+      let connection = try await AppleWebSocketRuntimeAdapterV3().prepare(
+        candidate: try XCTUnwrap(artifact.canonicalCandidates.first),
+        path: .direct,
+        role: .client,
+        options: ConnectorOptions(
+          origin: "https://client.example", connectTimeout: .seconds(2),
+          trustRootsPEM: [tls.caPEM]),
+        activePinHashes: nil
+      )
+
+      XCTAssertEqual(connection.carrier, .webSocket)
+      await connection.close()
+    }
+
+    func testProductionV3AdapterRejectsRemoteIPOnlySANForDNSURL() async throws {
+      let tls = try ConnectorTestTLS.makePrivateCAIssued(
+        subjectAlternativeName: "IP:127.0.0.1")
+      let accepted = ConnectorAcceptedTransport()
+      let server = try await ConnectorWSSServer.start(
+        tls: tls, selectedProtocol: "flowersec.direct.v3", accepted: accepted)
+      defer { Task { await server.close() } }
+      let artifact = try v3WebSocketArtifact(port: server.port, tls: ["mode": "ca"])
+
+      do {
+        _ = try await AppleWebSocketRuntimeAdapterV3().prepare(
+          candidate: try XCTUnwrap(artifact.canonicalCandidates.first),
+          path: .direct,
+          role: .client,
+          options: ConnectorOptions(
+            origin: "https://client.example", connectTimeout: .seconds(2),
+            trustRootsPEM: [tls.caPEM]),
+          activePinHashes: nil
+        )
+        XCTFail("DNS URL accepted a certificate containing only the connected IP SAN")
+      } catch {
+        XCTAssertEqual(error as? ConnectorBoundaryErrorV3, .securityFailed)
+      }
+    }
+
+    func testProductionV3AdapterRejectsWrongDNSID() async throws {
+      let tls = try ConnectorTestTLS.makePrivateCAIssued(
+        subjectAlternativeName: "DNS:wrong.example")
+      let accepted = ConnectorAcceptedTransport()
+      let server = try await ConnectorWSSServer.start(
+        tls: tls, selectedProtocol: "flowersec.direct.v3", accepted: accepted)
+      defer { Task { await server.close() } }
+      let artifact = try v3WebSocketArtifact(port: server.port, tls: ["mode": "ca"])
+
+      do {
+        _ = try await AppleWebSocketRuntimeAdapterV3().prepare(
+          candidate: try XCTUnwrap(artifact.canonicalCandidates.first),
+          path: .direct,
+          role: .client,
+          options: ConnectorOptions(
+            origin: "https://client.example", connectTimeout: .seconds(2),
+            trustRootsPEM: [tls.caPEM]),
+          activePinHashes: nil
+        )
+        XCTFail("certificate for a different DNS-ID unexpectedly passed")
+      } catch {
+        XCTAssertEqual(error as? ConnectorBoundaryErrorV3, .securityFailed)
+      }
     }
 
     func testProductionV3AdapterAcceptsHTTPOrigin() throws {
@@ -81,6 +156,104 @@ final class ConnectorV2Tests: XCTestCase {
         await connection.close()
         await server.close()
       }
+    }
+
+    func testProductionV3AdapterAcceptsPinnedIPv4LiteralAndRejectsWrongPin() async throws {
+      let tls = try ConnectorTestTLS.makeShortLivedSelfSigned()
+      let pin = Data(SHA256.hash(data: Data(try tls.certificate.toDERBytes())))
+      let accepted = ConnectorAcceptedTransport()
+      let server = try await ConnectorWSSServer.start(
+        tls: tls, selectedProtocol: "flowersec.direct.v3", accepted: accepted)
+      defer { Task { await server.close() } }
+      let artifact = try v3WebSocketArtifact(
+        port: server.port, host: "127.0.0.1", tls: pinPolicyV3(hash: pin, expiresIn: 3_600))
+
+      let connection = try await AppleWebSocketRuntimeAdapterV3().prepare(
+        candidate: try XCTUnwrap(artifact.canonicalCandidates.first),
+        path: .direct,
+        role: .client,
+        options: ConnectorOptions(
+          origin: "https://client.example", connectTimeout: .seconds(2)),
+        activePinHashes: [pin]
+      )
+      XCTAssertEqual(connection.carrier, .webSocket)
+      await connection.close()
+
+      do {
+        _ = try await AppleWebSocketRuntimeAdapterV3().prepare(
+          candidate: try XCTUnwrap(artifact.canonicalCandidates.first),
+          path: .direct,
+          role: .client,
+          options: ConnectorOptions(
+            origin: "https://client.example", connectTimeout: .seconds(2)),
+          activePinHashes: [Data(repeating: 0xA5, count: 32)]
+        )
+        XCTFail("wrong pin for IPv4 literal unexpectedly passed")
+      } catch {
+        XCTAssertEqual(error as? ConnectorBoundaryErrorV3, .securityFailed)
+      }
+    }
+
+    func testProductionV3AdapterPinModeDoesNotRequireDNSID() async throws {
+      let tls = try ConnectorTestTLS.makeShortLivedSelfSigned(
+        subjectAlternativeName: "IP:127.0.0.1")
+      let pin = Data(SHA256.hash(data: Data(try tls.certificate.toDERBytes())))
+      let accepted = ConnectorAcceptedTransport()
+      let server = try await ConnectorWSSServer.start(
+        tls: tls, selectedProtocol: "flowersec.direct.v3", accepted: accepted)
+      defer { Task { await server.close() } }
+      let artifact = try v3WebSocketArtifact(
+        port: server.port, tls: pinPolicyV3(hash: pin, expiresIn: 3_600))
+
+      let connection = try await AppleWebSocketRuntimeAdapterV3().prepare(
+        candidate: try XCTUnwrap(artifact.canonicalCandidates.first),
+        path: .direct,
+        role: .client,
+        options: ConnectorOptions(
+          origin: "https://client.example", connectTimeout: .seconds(2)),
+        activePinHashes: [pin]
+      )
+      XCTAssertEqual(connection.carrier, .webSocket)
+      await connection.close()
+    }
+
+    func testProductionV3TLSHandlerAcceptsNormalizedIPv6LiteralWithoutSNI() throws {
+      let tls = try ConnectorTestTLS.makeShortLivedSelfSigned()
+      let der = Data(try tls.certificate.toDERBytes())
+      for policy in [
+        TransportSecurityPolicyV3.ca(serverName: "::1", rootsSource: .configured),
+        .pin(serverName: "::1", activeLeafDERSHA256: [Data(SHA256.hash(data: der))]),
+      ] {
+        let handler = try NativeTLSPolicyAdapterV3.makeClientHandlerFactory(
+          policy: policy, serverHostname: "[::1]", configuredRoots: [tls.certificate])
+        XCTAssertNoThrow(try handler.make())
+      }
+    }
+
+    func testProductionWebSocketRequestAuthorityBracketsIPv6Literals() throws {
+      let defaultPortURL = try XCTUnwrap(URL(string: "wss://[::1]/flowersec/v3/direct"))
+      XCTAssertEqual(
+        ProxyNIOWebSocketConnector.requestAuthority(
+          url: defaultPortURL, host: try XCTUnwrap(defaultPortURL.host), port: 443),
+        "[::1]")
+
+      let explicitDefaultPortURL = try XCTUnwrap(
+        URL(string: "wss://[::1]:443/flowersec/v3/direct"))
+      XCTAssertEqual(
+        ProxyNIOWebSocketConnector.requestAuthority(
+          url: explicitDefaultPortURL,
+          host: try XCTUnwrap(explicitDefaultPortURL.host),
+          port: try XCTUnwrap(explicitDefaultPortURL.port)),
+        "[::1]:443")
+
+      let explicitPortURL = try XCTUnwrap(
+        URL(string: "wss://[2001:db8::1]:8443/flowersec/v3/direct"))
+      XCTAssertEqual(
+        ProxyNIOWebSocketConnector.requestAuthority(
+          url: explicitPortURL,
+          host: try XCTUnwrap(explicitPortURL.host),
+          port: try XCTUnwrap(explicitPortURL.port)),
+        "[2001:db8::1]:8443")
     }
 
     func testV3UnsupportedCandidateCreatesNoTransportOrLeaseSpend() async throws {
@@ -1129,6 +1302,7 @@ final class ConnectorV2Tests: XCTestCase {
   #if os(macOS) || os(iOS)
     private func v3WebSocketArtifact(
       port: Int,
+      host: String = "localhost",
       tls: [String: Any]
     ) throws -> ArtifactV3 {
       let resources = try XCTUnwrap(Bundle.module.resourceURL?.appendingPathComponent("Fixtures"))
@@ -1140,7 +1314,7 @@ final class ConnectorV2Tests: XCTestCase {
         "carrier": "websocket",
         "id": "w-local",
         "tls": tls,
-        "url": "wss://localhost:\(port)/flowersec/v3/direct",
+        "url": "wss://\(host):\(port)/flowersec/v3/direct",
         "wire_profile": "flowersec-direct/3",
       ]]
       root["path"] = path
@@ -1621,7 +1795,9 @@ private struct ConnectorTestTLS {
   }
 
   #if os(macOS)
-    static func makeShortLivedSelfSigned() throws -> Self {
+    static func makeShortLivedSelfSigned(
+      subjectAlternativeName: String = "DNS:localhost,IP:127.0.0.1"
+    ) throws -> Self {
       let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("flowersec-swift-v3-tls-\(UUID().uuidString)", isDirectory: true)
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
@@ -1638,7 +1814,7 @@ private struct ConnectorTestTLS {
         "-addext", "basicConstraints=critical,CA:FALSE",
         "-addext", "keyUsage=critical,digitalSignature",
         "-addext", "extendedKeyUsage=serverAuth",
-        "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
+        "-addext", "subjectAltName=\(subjectAlternativeName)",
         "-keyout", privateKeyURL.path,
         "-out", certificateURL.path,
       ]
@@ -1658,6 +1834,69 @@ private struct ConnectorTestTLS {
         certificate: XCTUnwrap(NIOSSLCertificate.fromPEMBytes(Array(certificatePEM)).first),
         privateKey: NIOSSLPrivateKey(bytes: Array(privateKeyPEM), format: .pem)
       )
+    }
+
+    static func makePrivateCAIssued(subjectAlternativeName: String) throws -> Self {
+      let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("flowersec-swift-v3-ca-\(UUID().uuidString)", isDirectory: true)
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let caURL = directory.appendingPathComponent("ca.pem")
+      let caKeyURL = directory.appendingPathComponent("ca-key.pem")
+      let certificateURL = directory.appendingPathComponent("leaf.pem")
+      let privateKeyURL = directory.appendingPathComponent("leaf-key.pem")
+      let requestURL = directory.appendingPathComponent("leaf.csr")
+      let extensionsURL = directory.appendingPathComponent("leaf.ext")
+      try Data(
+        """
+        basicConstraints=critical,CA:FALSE
+        keyUsage=critical,digitalSignature
+        extendedKeyUsage=serverAuth
+        subjectAltName=\(subjectAlternativeName)
+        """.utf8
+      ).write(to: extensionsURL)
+      try runOpenSSL([
+        "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
+        "-sha256", "-nodes", "-days", "7", "-subj", "/CN=Flowersec Test CA",
+        "-addext", "basicConstraints=critical,CA:TRUE,pathlen:0",
+        "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+        "-keyout", caKeyURL.path, "-out", caURL.path,
+      ])
+      try runOpenSSL([
+        "req", "-new", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
+        "-sha256", "-nodes", "-subj", "/CN=localhost",
+        "-keyout", privateKeyURL.path, "-out", requestURL.path,
+      ])
+      try runOpenSSL([
+        "x509", "-req", "-in", requestURL.path, "-CA", caURL.path,
+        "-CAkey", caKeyURL.path, "-CAcreateserial", "-days", "7", "-sha256",
+        "-extfile", extensionsURL.path, "-out", certificateURL.path,
+      ])
+      let caPEM = try Data(contentsOf: caURL)
+      let certificatePEM = try Data(contentsOf: certificateURL)
+      let privateKeyPEM = try Data(contentsOf: privateKeyURL)
+      return try Self(
+        caPEM: caPEM,
+        certificate: XCTUnwrap(NIOSSLCertificate.fromPEMBytes(Array(certificatePEM)).first),
+        privateKey: NIOSSLPrivateKey(bytes: Array(privateKeyPEM), format: .pem)
+      )
+    }
+
+    private static func runOpenSSL(_ arguments: [String]) throws {
+      let process = Process()
+      let errors = Pipe()
+      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+      process.arguments = ["openssl"] + arguments
+      process.standardOutput = FileHandle.nullDevice
+      process.standardError = errors
+      try process.run()
+      process.waitUntilExit()
+      guard process.terminationStatus == 0 else {
+        throw ConnectorGeneratedTLSError.failed(
+          String(
+            data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+            ?? "openssl")
+      }
     }
 
     static func makeCertificate(curve: String, days: Int) throws -> NIOSSLCertificate {

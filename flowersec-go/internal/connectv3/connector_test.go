@@ -204,6 +204,15 @@ func TestWinnerDoesNotWaitForStalledLoserAndClosesLatePreparedTransport(t *testi
 	case <-time.After(time.Second):
 		t.Fatal("late prepared loser was not closed")
 	}
+	if got := loserCommit.commitCalls.Load(); got != 0 {
+		t.Fatalf("late loser Commit calls = %d, want 0", got)
+	}
+	if got := loserCommit.spendCalls.Load(); got != 0 {
+		t.Fatalf("late loser credential spend calls = %d, want 0", got)
+	}
+	if got := loserCommit.fsb3Writes.Load(); got != 0 {
+		t.Fatalf("late loser FSB3 writes = %d, want 0", got)
+	}
 }
 
 type failureFactory struct {
@@ -249,12 +258,23 @@ func (attempt *raceCandidateAttempt) Ready(context.Context) (connectv3.Admission
 func (*raceCandidateAttempt) Abort(context.Context) error { return nil }
 
 type recordingAdmissionCommit struct {
-	commitErr error
-	closed    chan struct{}
-	closedSet atomic.Bool
+	commitErr   error
+	closed      chan struct{}
+	closedSet   atomic.Bool
+	commitCalls atomic.Int32
+	spendCalls  atomic.Int32
+	fsb3Writes  atomic.Int32
 }
 
-func (commit *recordingAdmissionCommit) Commit(context.Context, func(context.Context) error, []byte) (carrier.Session, error) {
+func (commit *recordingAdmissionCommit) Commit(ctx context.Context, spend func(context.Context) error, fsb3 []byte) (carrier.Session, error) {
+	commit.commitCalls.Add(1)
+	commit.spendCalls.Add(1)
+	if err := spend(ctx); err != nil {
+		return nil, err
+	}
+	if len(fsb3) != 0 {
+		commit.fsb3Writes.Add(1)
+	}
 	return nil, commit.commitErr
 }
 

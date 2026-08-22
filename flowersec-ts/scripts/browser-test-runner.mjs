@@ -847,7 +847,7 @@ async function main(args) {
   if (args[0] === "--runtime-canary") {
     if (args.length !== 2) throw new Error("usage: browser-test-runner.mjs --runtime-canary ABSOLUTE_CHROMIUM_PATH");
     const result = await verifyChromiumWebTransportCapability(chromium, args[1]);
-    process.stdout.write(`${JSON.stringify({ status: "GREEN", ...result })}\n`);
+    process.stdout.write(`${JSON.stringify(result)}\n`);
     return;
   }
   if (args[0] === "--firefox-runtime-canary") {

@@ -1590,10 +1590,11 @@ class EncryptedStreamV3 implements ByteStreamV3 {
             break;
           case InnerTypeV3.FIN:
             if (this.remoteFIN) throw protocolError("duplicate FIN");
+            await this.reader.readEOF();
             this.remoteFIN = true;
             this.data.close();
             this.releaseIfClean();
-            break;
+            return;
           case InnerTypeV3.StreamKeyUpdate:
             await this.receiveStreamKeyUpdate(record.payload, record.header);
             break;
@@ -1608,10 +1609,6 @@ class EncryptedStreamV3 implements ByteStreamV3 {
       const normalized = asError(error);
       if (normalized instanceof CarrierError && normalized.code === "reset") {
         this.carrierReset();
-        return;
-      }
-      if (this.remoteFIN && /closed|EOF/i.test(normalized.message)) {
-        this.releaseIfClean();
         return;
       }
       await this.session.localReset(this, normalized);
@@ -1859,6 +1856,15 @@ class ExactReader {
       }
     }
     return out;
+  }
+
+  async readEOF(signal?: AbortSignal): Promise<void> {
+    if (this.bytes !== 0) throw protocolError("trailing carrier bytes after logical FIN");
+    while (true) {
+      const chunk = await this.stream.read(signal === undefined ? {} : { signal });
+      if (chunk === null) return;
+      if (chunk.length !== 0) throw protocolError("trailing carrier bytes after logical FIN");
+    }
   }
 }
 

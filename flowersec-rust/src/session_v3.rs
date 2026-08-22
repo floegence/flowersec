@@ -3178,11 +3178,14 @@ impl ByteStream for StreamHandleV3 {
         self.0.terminal_error()
     }
     async fn read(&self) -> Result<Option<Bytes>, SessionError> {
-        self.0
-            .read_next()
-            .await
-            .inspect_err(|error| self.0.record_terminal(error))
-            .map_err(|error| SessionError::from_io(&error))
+        match self.0.read_next().await {
+            Ok(payload) => Ok(payload),
+            Err(error) => {
+                self.0.record_terminal(&error);
+                self.0.begin_reset();
+                Err(SessionError::from_io(&error))
+            }
+        }
     }
     async fn write(&self, payload: Bytes) -> Result<usize, SessionError> {
         match self.0.write_data(payload).await {
@@ -3243,15 +3246,13 @@ impl EncryptedStreamV3 {
     }
 
     fn record_terminal(&self, error: &io::Error) {
-        let redacted = match error.kind() {
-            io::ErrorKind::TimedOut => SessionError::Timeout,
-            io::ErrorKind::ConnectionReset => SessionError::StreamReset,
-            io::ErrorKind::ConnectionAborted
-            | io::ErrorKind::BrokenPipe
-            | io::ErrorKind::NotConnected => SessionError::Closed,
-            _ => SessionError::OperationFailed,
-        };
-        let _ = self.terminal.set(redacted);
+        let _ = self.terminal.set(SessionError::from_io(error));
+    }
+
+    fn fail_read(self: &Arc<Self>, error: io::Error) -> io::Error {
+        self.record_terminal(&error);
+        self.begin_reset();
+        error
     }
 
     async fn write_data(&self, payload: Bytes) -> io::Result<usize> {
@@ -3501,8 +3502,7 @@ impl EncryptedStreamV3 {
             match kind {
                 InnerRecordTypeV3::Data => return Ok(Some(Bytes::from(payload))),
                 InnerRecordTypeV3::Fin => {
-                    self.remote_fin.store(true, Ordering::Release);
-                    self.release_if_clean();
+                    self.accept_remote_fin(&session).await?;
                     return Ok(None);
                 }
                 InnerRecordTypeV3::StreamKeyUpdate => {
@@ -3514,6 +3514,46 @@ impl EncryptedStreamV3 {
                 _ => return Err(invalid("unexpected logical stream record")),
             }
         }
+    }
+
+    async fn accept_remote_fin(&self, session: &EncryptedSessionV3) -> io::Result<()> {
+        let reset_changed = self.application_reset_changed.notified();
+        tokio::pin!(reset_changed);
+        reset_changed.as_mut().enable();
+        if self.reset.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "logical stream reset",
+            ));
+        }
+        let mut trailing = [0_u8; 1];
+        let read = tokio::select! {
+            biased;
+            _ = &mut reset_changed => return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "logical stream reset",
+            )),
+            _ = session.canceled.cancelled() => return Err(terminal_error_v3(session)),
+            read = self.carrier.read(&mut trailing) => read?,
+        };
+        if read != 0 {
+            return Err(invalid("trailing carrier bytes after logical FIN"));
+        }
+        if self.reset.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "logical stream reset",
+            ));
+        }
+        self.remote_fin.store(true, Ordering::Release);
+        if self.reset.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "logical stream reset",
+            ));
+        }
+        self.release_if_clean();
+        Ok(())
     }
 
     fn accept_normal_header(&self, epoch: u32, sequence: u64) -> io::Result<()> {
@@ -3603,7 +3643,11 @@ impl EncryptedStreamV3 {
         Ok(())
     }
 
-    async fn await_stream_update(&self, transition: u64, next_epoch: u32) -> io::Result<()> {
+    async fn await_stream_update(
+        self: &Arc<Self>,
+        transition: u64,
+        next_epoch: u32,
+    ) -> io::Result<()> {
         let session = self.session.upgrade().ok_or_else(closed)?;
         loop {
             if *self.recv_update.lock().await == Some((transition, next_epoch)) {
@@ -3623,31 +3667,45 @@ impl EncryptedStreamV3 {
                         return Ok(());
                     }
                     let (kind, payload, epoch, sequence) =
-                        read_stream_record_v3(&session, &self.carrier, self.id).await?;
-                    self.accept_normal_header(epoch, sequence)?;
+                        read_stream_record_v3(&session, &self.carrier, self.id)
+                            .await
+                            .map_err(|error| self.fail_read(error))?;
+                    self.accept_normal_header(epoch, sequence)
+                        .map_err(|error| self.fail_read(error))?;
                     match kind {
                         InnerRecordTypeV3::Data => {
-                            self.buffer_read_data(&session, Bytes::from(payload)).await?
+                            self.buffer_read_data(&session, Bytes::from(payload))
+                                .await
+                                .map_err(|error| self.fail_read(error))?
                         }
                         InnerRecordTypeV3::Fin => {
-                            self.remote_fin.store(true, Ordering::Release);
+                            self.accept_remote_fin(&session)
+                                .await
+                                .map_err(|error| self.fail_read(error))?;
                             if !self.buffered_reads.push_fin() {
-                                return Err(io::Error::new(
+                                return Err(self.fail_read(io::Error::new(
                                     io::ErrorKind::ConnectionReset,
                                     "logical stream reset",
-                                ));
+                                )));
                             }
-                            self.release_if_clean();
                             return Ok(());
                         }
                         InnerRecordTypeV3::StreamKeyUpdate => {
-                            self.handle_stream_update_locked(&session, &payload).await?;
+                            self.handle_stream_update_locked(&session, &payload)
+                                .await
+                                .map_err(|error| self.fail_read(error))?;
                             if *self.recv_update.lock().await != Some((transition, next_epoch)) {
-                                return Err(invalid("stream rekey transition mismatch"));
+                                return Err(self.fail_read(invalid(
+                                    "stream rekey transition mismatch",
+                                )));
                             }
                             return Ok(());
                         }
-                        _ => return Err(invalid("unexpected record while awaiting stream rekey")),
+                        _ => {
+                            return Err(self.fail_read(invalid(
+                                "unexpected record while awaiting stream rekey",
+                            )));
+                        }
                     }
                 }
             }
@@ -3705,7 +3763,11 @@ impl EncryptedStreamV3 {
             .await
     }
 
-    async fn await_stream_update_ack(&self, transition: u64, next_epoch: u32) -> io::Result<()> {
+    async fn await_stream_update_ack(
+        self: &Arc<Self>,
+        transition: u64,
+        next_epoch: u32,
+    ) -> io::Result<()> {
         let session = self.session.upgrade().ok_or_else(closed)?;
         loop {
             if *self.send_update_ack.lock().await == Some((transition, next_epoch)) {
@@ -3722,36 +3784,50 @@ impl EncryptedStreamV3 {
                         return Ok(());
                     }
                     let (kind, payload, epoch, sequence) =
-                        read_stream_record_v3(&session, &self.carrier, self.id).await?;
+                        read_stream_record_v3(&session, &self.carrier, self.id)
+                            .await
+                            .map_err(|error| self.fail_read(error))?;
                     let prior = *self.prior_ack.lock().await;
                     if kind == InnerRecordTypeV3::StreamKeyUpdateAck
                         && prior == Some((epoch, sequence))
                     {
                         *self.prior_ack.lock().await = None;
                     } else {
-                        self.accept_normal_header(epoch, sequence)?;
+                        self.accept_normal_header(epoch, sequence)
+                            .map_err(|error| self.fail_read(error))?;
                     }
                     match kind {
                         InnerRecordTypeV3::StreamKeyUpdateAck => {
-                            self.process_stream_update_ack(&payload).await?;
+                            self.process_stream_update_ack(&payload)
+                                .await
+                                .map_err(|error| self.fail_read(error))?;
                         }
                         InnerRecordTypeV3::Data => {
-                            self.buffer_read_data(&session, Bytes::from(payload)).await?
+                            self.buffer_read_data(&session, Bytes::from(payload))
+                                .await
+                                .map_err(|error| self.fail_read(error))?
                         }
                         InnerRecordTypeV3::Fin => {
-                            self.remote_fin.store(true, Ordering::Release);
+                            self.accept_remote_fin(&session)
+                                .await
+                                .map_err(|error| self.fail_read(error))?;
                             if !self.buffered_reads.push_fin() {
-                                return Err(io::Error::new(
+                                return Err(self.fail_read(io::Error::new(
                                     io::ErrorKind::ConnectionReset,
                                     "logical stream reset",
-                                ));
+                                )));
                             }
-                            self.release_if_clean();
                         }
                         InnerRecordTypeV3::StreamKeyUpdate => {
-                            self.handle_stream_update_locked(&session, &payload).await?;
+                            self.handle_stream_update_locked(&session, &payload)
+                                .await
+                                .map_err(|error| self.fail_read(error))?;
                         }
-                        _ => return Err(invalid("unexpected record while awaiting stream rekey ACK")),
+                        _ => {
+                            return Err(self.fail_read(invalid(
+                                "unexpected record while awaiting stream rekey ACK",
+                            )));
+                        }
                     }
                 }
             }
@@ -4691,7 +4767,513 @@ async fn write_all_v3(stream: &Arc<dyn CarrierStreamV3>, mut payload: &[u8]) -> 
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicUsize;
+
     use super::*;
+
+    const STREAM_FAULT_NONE: u8 = 0;
+    const STREAM_FAULT_CORRUPT_WRITE: u8 = 1;
+    const STREAM_FAULT_TRAILING_BYTE: u8 = 2;
+    const STREAM_FAULT_DELAY_NATIVE_FIN: u8 = 3;
+    const STREAM_FAULT_CORRUPT_READ: u8 = 4;
+    const STREAM_FAULT_CORRUPT_READ_PAYLOAD: u8 = 5;
+
+    struct ObservedCarrierSessionV3 {
+        inner: Arc<dyn CarrierSessionV3>,
+        streams: Arc<StdMutex<Vec<Arc<ObservedCarrierStreamV3>>>>,
+        resets: Arc<AtomicUsize>,
+    }
+
+    impl std::fmt::Debug for ObservedCarrierSessionV3 {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("ObservedCarrierSessionV3(..)")
+        }
+    }
+
+    impl ObservedCarrierSessionV3 {
+        fn wrap(&self, inner: Arc<dyn CarrierStreamV3>) -> Arc<dyn CarrierStreamV3> {
+            let stream = Arc::new(ObservedCarrierStreamV3 {
+                inner,
+                fault: AtomicU8::new(STREAM_FAULT_NONE),
+                resets: self.resets.clone(),
+                close_entered: Semaphore::new(0),
+                close_release: Semaphore::new(0),
+            });
+            self.streams.lock().unwrap().push(stream.clone());
+            stream
+        }
+    }
+
+    #[async_trait]
+    impl CarrierSessionV3 for ObservedCarrierSessionV3 {
+        fn kind(&self) -> CarrierKind {
+            self.inner.kind()
+        }
+
+        fn set_multiplexer_client(&self, client: bool) -> io::Result<()> {
+            self.inner.set_multiplexer_client(client)
+        }
+
+        fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+            self.inner.inbound_bidirectional_stream_capacity()
+        }
+
+        async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV3>> {
+            Ok(self.wrap(self.inner.open_stream().await?))
+        }
+
+        async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV3>> {
+            Ok(self.wrap(self.inner.accept_stream().await?))
+        }
+
+        async fn close(&self) -> io::Result<()> {
+            self.inner.close().await
+        }
+
+        fn abort(&self) {
+            self.inner.abort();
+        }
+    }
+
+    struct ObservedCarrierStreamV3 {
+        inner: Arc<dyn CarrierStreamV3>,
+        fault: AtomicU8,
+        resets: Arc<AtomicUsize>,
+        close_entered: Semaphore,
+        close_release: Semaphore,
+    }
+
+    impl std::fmt::Debug for ObservedCarrierStreamV3 {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("ObservedCarrierStreamV3(..)")
+        }
+    }
+
+    impl ObservedCarrierStreamV3 {
+        async fn before_native_fin(&self) -> io::Result<()> {
+            match self
+                .fault
+                .compare_exchange(
+                    STREAM_FAULT_TRAILING_BYTE,
+                    STREAM_FAULT_NONE,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .unwrap_or_else(|fault| fault)
+            {
+                STREAM_FAULT_TRAILING_BYTE => {
+                    write_all_v3(&self.inner, &[0xa5]).await?;
+                }
+                STREAM_FAULT_DELAY_NATIVE_FIN => {
+                    self.close_entered.add_permits(1);
+                    self.close_release.acquire().await.unwrap().forget();
+                    self.fault.store(STREAM_FAULT_NONE, Ordering::Release);
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+
+        async fn truncate(&self) -> io::Result<()> {
+            self.inner.close_write().await
+        }
+    }
+
+    #[async_trait]
+    impl CarrierStreamV3 for ObservedCarrierStreamV3 {
+        async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
+            let read = self.inner.read(payload).await?;
+            if read != 0 {
+                match self
+                    .fault
+                    .compare_exchange(
+                        STREAM_FAULT_CORRUPT_READ,
+                        STREAM_FAULT_CORRUPT_READ_PAYLOAD,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .unwrap_or_else(|fault| fault)
+                {
+                    STREAM_FAULT_CORRUPT_READ => {}
+                    STREAM_FAULT_CORRUPT_READ_PAYLOAD => {
+                        payload[read - 1] ^= 0x80;
+                        self.fault.store(STREAM_FAULT_NONE, Ordering::Release);
+                    }
+                    _ => {}
+                }
+            }
+            Ok(read)
+        }
+
+        async fn write(&self, payload: &[u8]) -> io::Result<usize> {
+            if self
+                .fault
+                .compare_exchange(
+                    STREAM_FAULT_CORRUPT_WRITE,
+                    STREAM_FAULT_NONE,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                let mut corrupted = payload.to_vec();
+                if let Some(last) = corrupted.last_mut() {
+                    *last ^= 0x80;
+                }
+                return self.inner.write(&corrupted).await;
+            }
+            self.inner.write(payload).await
+        }
+
+        async fn close_write(&self) -> io::Result<()> {
+            self.before_native_fin().await?;
+            self.inner.close_write().await
+        }
+
+        async fn close_write_delivered(&self) -> io::Result<()> {
+            self.before_native_fin().await?;
+            self.inner.close_write_delivered().await
+        }
+
+        async fn stop_sending(&self) -> io::Result<()> {
+            self.inner.stop_sending().await
+        }
+
+        async fn reset(&self) -> io::Result<()> {
+            let result = self.inner.reset().await;
+            self.resets.fetch_add(1, Ordering::SeqCst);
+            result
+        }
+
+        async fn close(&self) -> io::Result<()> {
+            self.inner.close().await
+        }
+    }
+
+    fn stream_lifecycle_config(role: SessionRole) -> SessionConfigV3 {
+        SessionConfigV3 {
+            role,
+            path: PathKind::Direct,
+            channel_id: "rust-stream-lifecycle".into(),
+            session_contract_hash: [0x24; 32],
+            suite: CipherSuiteV3::ChaCha20Poly1305,
+            psk: [0x42; 32],
+            max_inbound_streams: 1,
+            idle_timeout: Duration::ZERO,
+            local_admission_binding: match role {
+                SessionRole::Client => [1; 32],
+                SessionRole::Server => [2; 32],
+            },
+            peer_admission_binding: Some(match role {
+                SessionRole::Client => [2; 32],
+                SessionRole::Server => [1; 32],
+            }),
+            local_endpoint_instance_id: None,
+            expected_peer_endpoint_instance_id: None,
+            rpc_handler: None,
+            deadlines: SessionDeadlinesV3::default(),
+        }
+    }
+
+    async fn observed_session_pair_v3() -> (
+        Arc<dyn Session>,
+        Arc<dyn Session>,
+        Arc<StdMutex<Vec<Arc<ObservedCarrierStreamV3>>>>,
+        Arc<AtomicUsize>,
+    ) {
+        let (client_inner, server_inner) = memory_carrier_pair_v3_with_capacity(3);
+        let client_streams = Arc::new(StdMutex::new(Vec::new()));
+        let server_resets = Arc::new(AtomicUsize::new(0));
+        let client_carrier: Arc<dyn CarrierSessionV3> = Arc::new(ObservedCarrierSessionV3 {
+            inner: client_inner,
+            streams: client_streams.clone(),
+            resets: Arc::new(AtomicUsize::new(0)),
+        });
+        let server_carrier: Arc<dyn CarrierSessionV3> = Arc::new(ObservedCarrierSessionV3 {
+            inner: server_inner,
+            streams: Arc::new(StdMutex::new(Vec::new())),
+            resets: server_resets.clone(),
+        });
+        let (client, server) = tokio::join!(
+            establish_session_v3(client_carrier, stream_lifecycle_config(SessionRole::Client)),
+            establish_session_v3(server_carrier, stream_lifecycle_config(SessionRole::Server)),
+        );
+        (
+            client.expect("client session"),
+            server.expect("server session"),
+            client_streams,
+            server_resets,
+        )
+    }
+
+    async fn open_observed_stream_v3(
+        client: &Arc<dyn Session>,
+        server: &Arc<dyn Session>,
+        client_streams: &Arc<StdMutex<Vec<Arc<ObservedCarrierStreamV3>>>>,
+    ) -> (
+        Box<dyn ByteStream>,
+        IncomingStream,
+        Arc<ObservedCarrierStreamV3>,
+    ) {
+        let previous = client_streams.lock().unwrap().len();
+        let (outgoing, incoming) = tokio::join!(
+            client.open_stream("test", StreamMetadata::empty()),
+            server.accept_stream(),
+        );
+        let carrier = client_streams
+            .lock()
+            .unwrap()
+            .get(previous)
+            .expect("logical carrier stream")
+            .clone();
+        (
+            outgoing.expect("outgoing stream"),
+            incoming.expect("incoming stream"),
+            carrier,
+        )
+    }
+
+    async fn await_stream_reset_cleanup_v3(
+        stream: &dyn ByteStream,
+        resets: &AtomicUsize,
+        expected: SessionError,
+    ) {
+        let completed = tokio::time::timeout(Duration::from_millis(250), async {
+            loop {
+                if resets.load(Ordering::Acquire) == 1 && stream.terminal_error() == Some(expected)
+                {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(
+            completed.is_ok(),
+            "stream reset cleanup did not complete: resets={} terminal={:?}",
+            resets.load(Ordering::Acquire),
+            stream.terminal_error()
+        );
+    }
+
+    async fn await_authenticated_stream_reset_v3(stream: &dyn ByteStream, resets: &AtomicUsize) {
+        await_stream_reset_cleanup_v3(stream, resets, SessionError::StreamReset).await;
+    }
+
+    #[tokio::test]
+    async fn stream_read_authentication_failure_preserves_first_error_and_resets_both_peers() {
+        let (client, server, client_streams, server_resets) = observed_session_pair_v3().await;
+        let (outgoing, incoming, carrier) =
+            open_observed_stream_v3(&client, &server, &client_streams).await;
+        carrier
+            .fault
+            .store(STREAM_FAULT_CORRUPT_WRITE, Ordering::Release);
+
+        assert_eq!(outgoing.write(Bytes::from_static(b"payload")).await, Ok(7));
+        let error = incoming
+            .stream()
+            .read()
+            .await
+            .expect_err("corrupted authenticated record was accepted");
+        assert_eq!(error, SessionError::OperationFailed);
+        assert_eq!(incoming.stream().terminal_error(), Some(error));
+        await_authenticated_stream_reset_v3(outgoing.as_ref(), &server_resets).await;
+        assert_eq!(incoming.stream().terminal_error(), Some(error));
+
+        let (replacement_outgoing, replacement_incoming, _) = tokio::time::timeout(
+            Duration::from_millis(250),
+            open_observed_stream_v3(&client, &server, &client_streams),
+        )
+        .await
+        .expect("stream reset did not release logical stream capacity");
+        let _ = tokio::join!(
+            replacement_outgoing.reset(),
+            replacement_incoming.stream().reset(),
+        );
+        let _ = tokio::join!(client.close(), server.close());
+    }
+
+    #[tokio::test]
+    async fn truncated_stream_read_preserves_first_error_and_runs_reset_cleanup() {
+        let (client, server, client_streams, server_resets) = observed_session_pair_v3().await;
+        let (outgoing, incoming, carrier) =
+            open_observed_stream_v3(&client, &server, &client_streams).await;
+        carrier.truncate().await.expect("truncate native stream");
+
+        let error = incoming
+            .stream()
+            .read()
+            .await
+            .expect_err("truncated carrier stream was accepted");
+        assert_eq!(error, SessionError::Closed);
+        assert_eq!(incoming.stream().terminal_error(), Some(error));
+        await_authenticated_stream_reset_v3(outgoing.as_ref(), &server_resets).await;
+        assert_eq!(incoming.stream().terminal_error(), Some(error));
+        let _ = tokio::join!(client.close(), server.close());
+    }
+
+    #[tokio::test]
+    async fn rekey_stream_update_authentication_failure_preserves_error_and_resets_stream() {
+        let (client, server, client_streams, server_resets) = observed_session_pair_v3().await;
+        let (_outgoing, incoming, carrier) =
+            open_observed_stream_v3(&client, &server, &client_streams).await;
+        carrier
+            .fault
+            .store(STREAM_FAULT_CORRUPT_WRITE, Ordering::Release);
+
+        let rekey_client = client.clone();
+        let rekey = tokio::spawn(async move { rekey_client.rekey().await });
+        await_stream_reset_cleanup_v3(
+            incoming.stream(),
+            &server_resets,
+            SessionError::OperationFailed,
+        )
+        .await;
+        assert_eq!(
+            incoming.stream().terminal_error(),
+            Some(SessionError::OperationFailed)
+        );
+        let _ = tokio::join!(client.close(), server.close());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(250), rekey)
+                .await
+                .expect("rekey did not stop after stream update failure")
+                .expect("rekey task panicked")
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn rekey_stream_update_ack_authentication_failure_preserves_error_and_resets_stream() {
+        let (client, server, client_streams, _server_resets) = observed_session_pair_v3().await;
+        let (outgoing, _incoming, carrier) =
+            open_observed_stream_v3(&client, &server, &client_streams).await;
+        carrier
+            .fault
+            .store(STREAM_FAULT_CORRUPT_READ, Ordering::Release);
+
+        let rekey_client = client.clone();
+        let rekey = tokio::spawn(async move { rekey_client.rekey().await });
+        await_stream_reset_cleanup_v3(
+            outgoing.as_ref(),
+            carrier.resets.as_ref(),
+            SessionError::OperationFailed,
+        )
+        .await;
+        assert_eq!(
+            outgoing.terminal_error(),
+            Some(SessionError::OperationFailed)
+        );
+        let _ = tokio::join!(client.close(), server.close());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(250), rekey)
+                .await
+                .expect("rekey did not stop after stream update ACK failure")
+                .expect("rekey task panicked")
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn encrypted_fin_is_not_published_before_native_eof() {
+        let (client, server, client_streams, server_resets) = observed_session_pair_v3().await;
+        let (outgoing, incoming, carrier) =
+            open_observed_stream_v3(&client, &server, &client_streams).await;
+        incoming
+            .stream()
+            .close_write()
+            .await
+            .expect("receiver local FIN");
+        carrier
+            .fault
+            .store(STREAM_FAULT_DELAY_NATIVE_FIN, Ordering::Release);
+        let close_write = outgoing.close_write();
+        tokio::pin!(close_write);
+        tokio::select! {
+            permit = carrier.close_entered.acquire() => permit.unwrap().forget(),
+            result = &mut close_write => panic!("close_write completed before native FIN gate: {result:?}"),
+        }
+
+        let read = incoming.stream().read();
+        tokio::pin!(read);
+        tokio::select! {
+            biased;
+            result = &mut read => panic!("encrypted FIN was published before native EOF: {result:?}"),
+            _ = tokio::task::yield_now() => {}
+        }
+        assert_eq!(server.internal_test_inbound_available_permits(), 0);
+
+        carrier.close_release.add_permits(1);
+        close_write.await.expect("deliver native FIN");
+        assert_eq!(read.await.expect("read clean FIN"), None);
+        assert_eq!(server.internal_test_inbound_available_permits(), 1);
+        assert_eq!(server_resets.load(Ordering::Acquire), 0);
+        let _ = tokio::join!(client.close(), server.close());
+    }
+
+    #[tokio::test]
+    async fn reset_wins_race_with_native_eof_gate_and_never_publishes_clean_fin() {
+        let (client, server, client_streams, server_resets) = observed_session_pair_v3().await;
+        let (outgoing, incoming, carrier) =
+            open_observed_stream_v3(&client, &server, &client_streams).await;
+        incoming
+            .stream()
+            .close_write()
+            .await
+            .expect("receiver local FIN");
+        carrier
+            .fault
+            .store(STREAM_FAULT_DELAY_NATIVE_FIN, Ordering::Release);
+
+        let close_write = outgoing.close_write();
+        tokio::pin!(close_write);
+        tokio::select! {
+            permit = carrier.close_entered.acquire() => permit.unwrap().forget(),
+            result = &mut close_write => panic!("close_write completed before native FIN gate: {result:?}"),
+        }
+        let read = incoming.stream().read();
+        tokio::pin!(read);
+        tokio::select! {
+            biased;
+            result = &mut read => panic!("logical FIN did not wait for native EOF: {result:?}"),
+            _ = tokio::task::yield_now() => {}
+        }
+
+        incoming
+            .stream()
+            .reset()
+            .await
+            .expect("reset receiver during EOF gate");
+        assert_eq!(read.await, Err(SessionError::StreamReset));
+        assert_eq!(server.internal_test_inbound_available_permits(), 1);
+        assert_eq!(server_resets.load(Ordering::Acquire), 1);
+
+        carrier.close_release.add_permits(1);
+        assert!(close_write.await.is_err());
+        let _ = tokio::join!(client.close(), server.close());
+    }
+
+    #[tokio::test]
+    async fn encrypted_fin_with_trailing_carrier_bytes_fails_closed() {
+        let (client, server, client_streams, server_resets) = observed_session_pair_v3().await;
+        let (outgoing, incoming, carrier) =
+            open_observed_stream_v3(&client, &server, &client_streams).await;
+        carrier
+            .fault
+            .store(STREAM_FAULT_TRAILING_BYTE, Ordering::Release);
+
+        outgoing.close_write().await.expect("write encrypted FIN");
+        let error = incoming
+            .stream()
+            .read()
+            .await
+            .expect_err("trailing carrier bytes after encrypted FIN were accepted");
+        assert_eq!(error, SessionError::OperationFailed);
+        assert_eq!(incoming.stream().terminal_error(), Some(error));
+        await_authenticated_stream_reset_v3(outgoing.as_ref(), &server_resets).await;
+        assert_eq!(incoming.stream().terminal_error(), Some(error));
+        let _ = tokio::join!(client.close(), server.close());
+    }
 
     #[derive(Debug)]
     struct RpcReadTestStream {

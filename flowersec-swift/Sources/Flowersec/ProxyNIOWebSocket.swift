@@ -46,7 +46,7 @@
       let connection = NIOPromiseBox(
         group.any().makePromise(of: NIOProxyUpstreamWebSocket.self)
       )
-      let authority = url.port == nil ? host : "\(host):\(port)"
+      let authority = requestAuthority(url: url, host: host, port: port)
       let path = url.path.isEmpty ? "/" : url.path
       let requestHeaders = HTTPHeaders(headers.map { ($0.name, $0.value) })
 
@@ -163,6 +163,18 @@
         throw operation
       }
     }
+
+    static func requestAuthority(url: URL, host: String, port: Int) -> String {
+      let authorityHost: String
+      if host.hasPrefix("[") && host.hasSuffix("]") {
+        authorityHost = host
+      } else if host.contains(":") {
+        authorityHost = "[\(host)]"
+      } else {
+        authorityHost = host
+      }
+      return url.port == nil ? authorityHost : "\(authorityHost):\(port)"
+    }
   }
 
   private func proxyWebSocketInboundBufferBytes(maxFrameBytes: Int) -> Int {
@@ -265,7 +277,7 @@
 
     func errorCaught(context: ChannelHandlerContext, error: any Error) {
       let tlsLocated =
-        error is NIOSSLError || error is BoringSSLError
+        error is NIOSSLError || error is NIOSSLExtraError || error is BoringSSLError
         || error is TransportSecurityFailureV3
       connection.fail(
         ProxyUpstreamFailure(.dial, error, tlsLocated: tlsLocated)

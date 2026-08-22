@@ -1,4 +1,5 @@
 #if os(macOS) || os(iOS)
+  import Darwin
   import Foundation
   import NIOCore
   import NIOSSL
@@ -24,6 +25,7 @@
       var configuration = TLSConfiguration.makeClientConfiguration()
       configuration.minimumTLSVersion = .tlsv13
       configuration.maximumTLSVersion = .tlsv13
+      let tlsServerHostname = try tlsServerHostname(serverHostname)
 
       switch policy {
       case .ca(_, let rootsSource):
@@ -39,7 +41,20 @@
         }
         let context = try NIOSSLContext(configuration: configuration)
         return ProxyTLSClientHandler {
-          try NIOSSLClientHandler(context: context, serverHostname: serverHostname)
+          guard let dnsHostname = tlsServerHostname else {
+            return try NIOSSLClientHandler(context: context, serverHostname: nil)
+          }
+          return try NIOSSLClientHandler._makeSSLClientHandler(
+            context: context,
+            serverHostname: dnsHostname,
+            additionalPeerCertificateVerificationCallback: { certificate, channel in
+              guard certificateMatchesDNSHostname(certificate, hostname: dnsHostname) else {
+                return channel.eventLoop.makeFailedFuture(
+                  TransportSecurityFailureV3.unknownTLS)
+              }
+              return channel.eventLoop.makeSucceededVoidFuture()
+            }
+          )
         }
       case .pin(_, let activeLeafDERSHA256):
         guard activeLeafDERSHA256.count >= 1, activeLeafDERSHA256.count <= 4,
@@ -68,11 +83,113 @@
           }
           return try NIOSSLClientHandler(
             context: context,
-            serverHostname: serverHostname,
+            serverHostname: tlsServerHostname,
             customVerificationCallback: callback
           )
         }
       }
+    }
+
+    private static func tlsServerHostname(_ hostname: String) throws -> String? {
+      let unbracketed: String
+      if hostname.hasPrefix("[") && hostname.hasSuffix("]") {
+        unbracketed = String(hostname.dropFirst().dropLast())
+      } else {
+        unbracketed = hostname
+      }
+      guard !unbracketed.isEmpty else { throw NativeTLSPolicyErrorV3.invalidPolicy }
+      var ipv4 = in_addr()
+      var ipv6 = in6_addr()
+      if unbracketed.withCString({ inet_pton(AF_INET, $0, &ipv4) }) == 1
+        || unbracketed.withCString({ inet_pton(AF_INET6, $0, &ipv6) }) == 1
+      {
+        // NIOSSL's full-verification path matches IP SAN against the connected
+        // socket address when no DNS hostname is supplied. IP literals are
+        // never valid SNI values.
+        return nil
+      }
+      return unbracketed
+    }
+
+    private static func certificateMatchesDNSHostname(
+      _ certificate: NIOSSLCertificate,
+      hostname: String
+    ) -> Bool {
+      var target = Array(hostname.utf8)
+      if target.last == UInt8(ascii: ".") { target.removeLast() }
+      guard !target.isEmpty, target.allSatisfy(isDNSHostnameByte) else { return false }
+
+      for alternativeName in certificate._subjectAlternativeNames()
+      where alternativeName.nameType == .dnsName {
+        let presented = alternativeName.contents.withUnsafeBufferPointer(Array.init)
+        if dnsName(presented, matches: target) { return true }
+      }
+      return false
+    }
+
+    private static func dnsName(_ rawPresented: [UInt8], matches rawTarget: [UInt8]) -> Bool {
+      var presented = rawPresented
+      var target = rawTarget
+      if presented.last == UInt8(ascii: ".") { presented.removeLast() }
+      if target.last == UInt8(ascii: ".") { target.removeLast() }
+      guard !presented.isEmpty, !target.isEmpty else { return false }
+
+      let wildcardIndices = presented.indices.filter { presented[$0] == UInt8(ascii: "*") }
+      guard wildcardIndices.count <= 1,
+        presented.allSatisfy({ isDNSHostnameByte($0) || $0 == UInt8(ascii: "*") })
+      else { return false }
+
+      guard let wildcardIndex = wildcardIndices.first else {
+        return asciiCaseInsensitiveEqual(presented, target)
+      }
+      let presentedDot = presented.firstIndex(of: UInt8(ascii: "."))
+      guard presentedDot.map({ wildcardIndex < $0 }) ?? true else { return false }
+
+      let presentedLabelEnd = presentedDot ?? presented.endIndex
+      let targetDot = target.firstIndex(of: UInt8(ascii: "."))
+      let targetLabelEnd = targetDot ?? target.endIndex
+      let presentedLabel = presented[..<presentedLabelEnd]
+      let targetLabel = target[..<targetLabelEnd]
+      guard !hasIDNAPrefix(presentedLabel), !hasIDNAPrefix(targetLabel),
+        targetLabel.count >= presentedLabel.count
+      else { return false }
+
+      let presentedRemainder =
+        presentedDot.map { presented[presented.index(after: $0)...] }
+        ?? presented[presented.endIndex...]
+      let targetRemainder =
+        targetDot.map { target[target.index(after: $0)...] } ?? target[target.endIndex...]
+      guard asciiCaseInsensitiveEqual(presentedRemainder, targetRemainder) else { return false }
+
+      let wildcardOffset = presented.distance(from: presented.startIndex, to: wildcardIndex)
+      let prefix = presentedLabel.prefix(wildcardOffset)
+      let suffix = presentedLabel.dropFirst(wildcardOffset + 1)
+      return asciiCaseInsensitiveEqual(prefix, targetLabel.prefix(prefix.count))
+        && asciiCaseInsensitiveEqual(suffix, targetLabel.suffix(suffix.count))
+    }
+
+    private static func isDNSHostnameByte(_ byte: UInt8) -> Bool {
+      (UInt8(ascii: "a")...UInt8(ascii: "z")).contains(byte)
+        || (UInt8(ascii: "A")...UInt8(ascii: "Z")).contains(byte)
+        || (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(byte)
+        || byte == UInt8(ascii: "-") || byte == UInt8(ascii: ".")
+    }
+
+    private static func asciiCaseInsensitiveEqual<C1: Collection, C2: Collection>(
+      _ lhs: C1,
+      _ rhs: C2
+    ) -> Bool where C1.Element == UInt8, C2.Element == UInt8 {
+      lhs.elementsEqual(rhs) { asciiLowercase($0) == asciiLowercase($1) }
+    }
+
+    private static func asciiLowercase(_ byte: UInt8) -> UInt8 {
+      (UInt8(ascii: "A")...UInt8(ascii: "Z")).contains(byte) ? byte | 0x20 : byte
+    }
+
+    private static func hasIDNAPrefix<C: Collection>(_ bytes: C) -> Bool
+    where C.Element == UInt8 {
+      bytes.count >= 4
+        && asciiCaseInsensitiveEqual(bytes.prefix(4), Array("xn--".utf8))
     }
 
     static func verifyPinnedCertificate(

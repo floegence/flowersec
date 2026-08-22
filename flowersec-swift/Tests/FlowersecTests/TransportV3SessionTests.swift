@@ -1735,6 +1735,70 @@ final class TransportV3SessionTests: XCTestCase {
     try await serverSession.close()
   }
 
+  func testStreamProtocolReadFailureAuthenticatesResetAndReleasesCapacity() async throws {
+    try await exerciseEstablishedStreamReadFailure(
+      .corruptHeader, expected: .protocolViolation, closeWithFIN: false)
+  }
+
+  func testStreamAuthenticationReadFailureAuthenticatesResetAndReleasesCapacity() async throws {
+    try await exerciseEstablishedStreamReadFailure(
+      .corruptCiphertext, expected: .streamReset, closeWithFIN: false)
+  }
+
+  func testStreamTruncationAuthenticatesResetAndPreservesClosedError() async throws {
+    try await exerciseEstablishedStreamReadFailure(
+      .truncate, expected: .closed, closeWithFIN: false)
+  }
+
+  func testEncryptedFINRequiresImmediateNativeEOFAndRejectsTrailingByte() async throws {
+    try await exerciseEstablishedStreamReadFailure(
+      .trailingAfterEOF, expected: .protocolViolation, closeWithFIN: true)
+  }
+
+  func testEncryptedFINDoesNotReleaseCapacityBeforeNativeEOF() async throws {
+    let faults = EstablishedStreamFaults()
+    let (clientCarrier, serverBase) = MemoryCarrierSession.pair(
+      inboundBidirectionalStreamCapacity: 3)
+    let serverCarrier = FaultingEstablishedStreamCarrierSession(
+      base: serverBase, faults: faults, wrapAcceptedStreamNumber: 2)
+    let configs = try makeConfigs(maxInboundStreams: 1)
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+    let opening = Task { try await clientSession.openStream(kind: "blocked-native-eof") }
+    let incoming = try await serverSession.acceptStream()
+    let stream = try await opening.value
+
+    try await incoming.stream.closeWrite()
+    let clientEOF = try await stream.read(maxBytes: 1)
+    XCTAssertNil(clientEOF)
+    await faults.setReadFault(.blockEOF)
+    try await stream.closeWrite()
+    let readingFIN = Task { try await incoming.stream.read(maxBytes: 1) }
+    let eofReadStarted = await waitUntil { await faults.eofReadStarted }
+    XCTAssertTrue(eofReadStarted)
+
+    do {
+      _ = try await clientSession.openStream(kind: "before-native-eof")
+      XCTFail("stream capacity was released before native EOF")
+    } catch let error as TransportV3SessionError {
+      XCTAssertEqual(error, .openRejected(openRejectResourceExhaustedReasonV3))
+    }
+
+    await faults.releaseEOF()
+    let serverEOF = try await readingFIN.value
+    XCTAssertNil(serverEOF)
+    let replacementOpening = Task {
+      try await clientSession.openStream(kind: "after-native-eof")
+    }
+    let replacementIncoming = try await serverSession.acceptStream()
+    let replacement = try await replacementOpening.value
+    try await replacement.reset()
+    try? await replacementIncoming.stream.reset()
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
   func testFINRecordWriteFailureTerminatesEstablishedStream() async throws {
     let faults = EstablishedStreamFaults()
     let (clientBase, serverCarrier) = MemoryCarrierSession.pair()
@@ -1863,6 +1927,61 @@ final class TransportV3SessionTests: XCTestCase {
     waiting.cancel()
     try? await clientSession.close()
     try? await serverSession.close()
+  }
+
+  private func exerciseEstablishedStreamReadFailure(
+    _ readFault: EstablishedStreamReadFault,
+    expected: TransportV3SessionError,
+    closeWithFIN: Bool
+  ) async throws {
+    let faults = EstablishedStreamFaults()
+    let (clientCarrier, serverBase) = MemoryCarrierSession.pair(
+      inboundBidirectionalStreamCapacity: 3)
+    let serverCarrier = FaultingEstablishedStreamCarrierSession(
+      base: serverBase, faults: faults, wrapAcceptedStreamNumber: 2)
+    let configs = try makeConfigs(maxInboundStreams: 1)
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+    let opening = Task { try await clientSession.openStream(kind: "failed-read") }
+    let incoming = try await serverSession.acceptStream()
+    let stream = try await opening.value
+
+    await faults.setReadFault(readFault)
+    if closeWithFIN {
+      try await stream.closeWrite()
+    } else {
+      _ = try await stream.write(Data("fault-payload".utf8))
+    }
+    do {
+      _ = try await incoming.stream.read(maxBytes: 64)
+      XCTFail("injected stream read failure unexpectedly succeeded")
+    } catch let error as TransportV3SessionError {
+      XCTAssertEqual(error, expected)
+    } catch {
+      XCTFail("typed stream read failure was replaced: \(error)")
+    }
+
+    let resetCompleted = await waitUntil { await faults.resetCount == 1 }
+    XCTAssertTrue(resetCompleted)
+    do {
+      _ = try await stream.read(maxBytes: 1)
+      XCTFail("peer did not observe stream reset")
+    } catch let error as TransportV3SessionError {
+      XCTAssertEqual(error, .streamReset)
+    } catch {
+      XCTFail("peer reset was not projected as a typed stream error: \(error)")
+    }
+
+    let replacementOpening = Task {
+      try await clientSession.openStream(kind: "replacement-after-read-failure")
+    }
+    let replacementIncoming = try await serverSession.acceptStream()
+    let replacement = try await replacementOpening.value
+    try await replacement.reset()
+    try? await replacementIncoming.stream.reset()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   private func makeConfigs(
@@ -2085,6 +2204,14 @@ private actor CompletionProbe {
 
 private struct InjectedEstablishedStreamFailure: Error {}
 
+private enum EstablishedStreamReadFault: Equatable, Sendable {
+  case blockEOF
+  case corruptHeader
+  case corruptCiphertext
+  case truncate
+  case trailingAfterEOF
+}
+
 private actor EstablishedStreamFaults {
   private var failWrite = false
   private var failCloseWrite = false
@@ -2092,6 +2219,10 @@ private actor EstablishedStreamFaults {
   private(set) var resetEntered = false
   private var resetBlocked = false
   private let resetGate = EstablishedStreamResetGate()
+  private let eofGate = EstablishedStreamEOFGate()
+  private var readFault: EstablishedStreamReadFault?
+  private var readsBeforeFault = 0
+  private(set) var eofReadStarted = false
 
   func failNextWrite() { failWrite = true }
   func failNextCloseWrite() { failCloseWrite = true }
@@ -2104,6 +2235,47 @@ private actor EstablishedStreamFaults {
     return failCloseWrite
   }
   func recordReset() { resetCount += 1 }
+  func setReadFault(_ fault: EstablishedStreamReadFault) {
+    readFault = fault
+    readsBeforeFault = fault == .corruptCiphertext ? 1 : 0
+  }
+  func filterRead(_ data: Data?) async -> Data? {
+    guard let readFault else { return data }
+    if readFault == .blockEOF {
+      guard data == nil else { return data }
+      self.readFault = nil
+      eofReadStarted = true
+      await eofGate.wait()
+      return nil
+    }
+    if readFault == .trailingAfterEOF {
+      guard data == nil else { return data }
+      self.readFault = nil
+      return Data([0xA5])
+    }
+    guard readsBeforeFault == 0 else {
+      readsBeforeFault -= 1
+      return data
+    }
+    self.readFault = nil
+    switch readFault {
+    case .blockEOF:
+      return data
+    case .corruptHeader:
+      guard var data, data.count > 8 else { return data }
+      data[data.startIndex + 8] ^= 1
+      return data
+    case .corruptCiphertext:
+      guard var data, !data.isEmpty else { return data }
+      data[data.index(before: data.endIndex)] ^= 1
+      return data
+    case .truncate:
+      return nil
+    case .trailingAfterEOF:
+      return data
+    }
+  }
+  func releaseEOF() async { await eofGate.release() }
   func blockReset() { resetBlocked = true }
   func enterReset() async {
     resetEntered = true
@@ -2113,6 +2285,24 @@ private actor EstablishedStreamFaults {
 }
 
 private actor EstablishedStreamResetGate {
+  private var released = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    if released { return }
+    await withCheckedContinuation { waiters.append($0) }
+  }
+
+  func release() {
+    guard !released else { return }
+    released = true
+    let pending = waiters
+    waiters.removeAll()
+    for waiter in pending { waiter.resume() }
+  }
+}
+
+private actor EstablishedStreamEOFGate {
   private var released = false
   private var waiters: [CheckedContinuation<Void, Never>] = []
 
@@ -2188,7 +2378,9 @@ private actor FaultingEstablishedStreamCarrierStream: TransportV3CarrierStream {
     carrierStreamID = base.carrierStreamID
   }
 
-  func read(maxBytes: Int) async throws -> Data? { try await base.read(maxBytes: maxBytes) }
+  func read(maxBytes: Int) async throws -> Data? {
+    await faults.filterRead(try await base.read(maxBytes: maxBytes))
+  }
   func write(_ data: Data) async throws -> Int {
     if await faults.consumeWriteFailure() { throw InjectedEstablishedStreamFailure() }
     return try await base.write(data)

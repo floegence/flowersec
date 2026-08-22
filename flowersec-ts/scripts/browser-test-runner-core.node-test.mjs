@@ -621,7 +621,7 @@ test("preflight requires WebTransport in a secure non-loopback browser origin", 
   };
   assert.deepEqual(
     await verifyChromiumWebTransportCapability(chromium, "/cache/ms-playwright/chrome"),
-    { secure_context: true, webtransport: "function" },
+    { status: "GREEN", secure_context: true, webtransport: "function" },
   );
   assert.equal(launches[0].executablePath, "/cache/ms-playwright/chrome");
   assert.ok(launches[0].args.includes("--unsafely-treat-insecure-origin-as-secure=http://198.18.0.1:38123"));
@@ -631,15 +631,42 @@ test("preflight requires WebTransport in a secure non-loopback browser origin", 
     newPage: async () => ({
       route: async () => {},
       goto: async () => {},
-      evaluate: async () => ({ secureContext: false, webTransport: "undefined" }),
+      evaluate: async () => ({ secureContext: true, webTransport: "undefined" }),
+    }),
+    close: async () => { closed++; },
+  });
+  assert.deepEqual(
+    await verifyChromiumWebTransportCapability(chromium, "/cache/ms-playwright/chrome"),
+    { status: "UNSUPPORTED", limitation: "Chromium does not expose the WebTransport constructor" },
+  );
+  assert.equal(closed, 2);
+
+  chromium.launch = async () => ({
+    newPage: async () => ({
+      route: async () => {},
+      goto: async () => {},
+      evaluate: async () => ({ secureContext: false, webTransport: "function" }),
     }),
     close: async () => { closed++; },
   });
   await assert.rejects(
     verifyChromiumWebTransportCapability(chromium, "/cache/ms-playwright/chrome"),
-    /secure non-loopback origin with WebTransport/,
+    /did not establish a secure non-loopback origin/,
   );
-  assert.equal(closed, 2);
+  assert.equal(closed, 3);
+
+  chromium.launch = async () => ({
+    newPage: async () => ({
+      route: async () => {},
+      goto: async () => {},
+      evaluate: async () => ({ secureContext: true, webTransport: "undefined" }),
+    }),
+    close: async () => { throw new Error("synthetic Chromium cleanup failure"); },
+  });
+  await assert.rejects(
+    verifyChromiumWebTransportCapability(chromium, "/cache/ms-playwright/chrome"),
+    /synthetic Chromium cleanup failure/,
+  );
 });
 
 test("retries only transient initial module navigation failures", async () => {

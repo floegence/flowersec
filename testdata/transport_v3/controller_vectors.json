@@ -667,14 +667,29 @@
             "tls_failed"
           ],
           [
+            "tls_unsupported",
+            "tls_failed",
+            "connection_failed"
+          ],
+          [
             "tls_failed",
             "tls_unsupported",
             "connection_failed"
           ],
           [
+            "tls_failed",
+            "connection_failed",
+            "tls_unsupported"
+          ],
+          [
             "connection_failed",
             "tls_failed",
             "tls_unsupported"
+          ],
+          [
+            "connection_failed",
+            "tls_unsupported",
+            "tls_failed"
           ]
         ]
       },

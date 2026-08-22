@@ -371,6 +371,12 @@ derived exact vectors and negative examples; it cannot narrow or replace those
 general rules. Wrong magic, version, route, ALPN, subprotocol, reserved data,
 truncation, or trailing data fails closed.
 
+An authenticated logical-stream FIN is clean only when the carrier read side
+then reaches native EOF without another byte. The receiver does not publish
+clean application EOF or release stream capacity before that native EOF.
+Truncation, a trailing byte or record, and any record authentication or state
+failure use the inherited per-stream reset path.
+
 The v3 path exclusively uses these domain labels:
 
 ~~~text

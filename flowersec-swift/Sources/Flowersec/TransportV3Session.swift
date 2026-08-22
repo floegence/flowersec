@@ -1888,11 +1888,11 @@ private actor TransportV3ByteStream: ByteStream {
       do {
         _ = try await processNextRecord(stopWhenApplicationReadable: true)
       } catch let error as TransportV3SessionError {
-        terminal = error
-        throw error
+        await terminateLocally(error)
+        throw terminal ?? error
       } catch {
-        terminal = .streamReset
-        throw TransportV3SessionError.streamReset
+        await terminateLocally(.streamReset)
+        throw terminal ?? TransportV3SessionError.streamReset
       }
     }
     let count = min(maxBytes, readBuffer.count)
@@ -2137,6 +2137,9 @@ private actor TransportV3ByteStream: ByteStream {
       case .data:
         readBuffer.append(payload)
       case .fin:
+        guard try await carrier.read(maxBytes: 1) == nil else {
+          throw TransportV3SessionError.protocolViolation
+        }
         remoteFIN = true
         await releaseIfFinished()
       case .streamKeyUpdate:
@@ -2148,9 +2151,14 @@ private actor TransportV3ByteStream: ByteStream {
       }
       await readPermit.release()
       return true
+    } catch let error as TransportV3SessionError {
+      await readPermit.release()
+      await terminateLocally(error)
+      throw terminal ?? error
     } catch {
       await readPermit.release()
-      throw error
+      await terminateLocally(.streamReset)
+      throw terminal ?? TransportV3SessionError.streamReset
     }
   }
 

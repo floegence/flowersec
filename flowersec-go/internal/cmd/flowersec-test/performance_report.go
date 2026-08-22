@@ -26,6 +26,44 @@ type performanceState struct {
 	Cases       []perfreport.CaseResult `json:"cases"`
 }
 
+type chromiumPerformanceCapability struct {
+	Status        string `json:"status"`
+	SecureContext bool   `json:"secure_context,omitempty"`
+	WebTransport  string `json:"webtransport,omitempty"`
+	Limitation    string `json:"limitation,omitempty"`
+}
+
+type performanceCapabilityUnavailableError struct {
+	limitation string
+}
+
+func (err *performanceCapabilityUnavailableError) Error() string {
+	return err.limitation
+}
+
+func parseChromiumPerformanceCapability(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var result chromiumPerformanceCapability
+	if err := decoder.Decode(&result); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return errors.New("Chromium capability result is not strict JSON")
+	}
+	switch result.Status {
+	case "GREEN":
+		if !result.SecureContext || result.WebTransport != "function" || result.Limitation != "" {
+			return errors.New("Chromium GREEN capability result is incomplete")
+		}
+		return nil
+	case "UNSUPPORTED":
+		if result.SecureContext || result.WebTransport != "" || strings.TrimSpace(result.Limitation) == "" {
+			return errors.New("Chromium UNSUPPORTED capability result is invalid")
+		}
+		return &performanceCapabilityUnavailableError{limitation: result.Limitation}
+	default:
+		return fmt.Errorf("Chromium capability status %q is invalid", result.Status)
+	}
+}
+
 func selectPerformancePlan(all []registeredTest) ([]registeredTest, error) {
 	required, err := selectSuite(all, "performance")
 	if err != nil {
@@ -233,14 +271,17 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 		fmt.Fprintf(stdout, "[RUN ] %s\n", next.ID)
 		runErr := runRegisteredTest(executionCtx, *next, runContext{RunID: runID, TempDir: tempDir, ResultPath: resultPath, Root: root, Debug: debug, PerformanceBudget: budget})
 		duration := time.Since(started).Round(time.Millisecond)
-		if next.ID == "performance-optional/webtransport-capability" && runErr != nil {
-			reason := firstLine(runErr.Error())
+		var unavailable *performanceCapabilityUnavailableError
+		if next.ID == "performance-optional/webtransport-capability" && errors.As(runErr, &unavailable) {
+			reason := firstLine(unavailable.Error())
 			for _, candidate := range tests {
-				if candidate.Suite != "performance-optional" || candidate.ID == next.ID {
+				if candidate.Suite != "performance-optional" {
 					continue
 				}
 				state.Cases = append(state.Cases, perfreport.CaseResult{ID: candidate.ID, Section: sectionForCase(candidate.ID), Status: perfreport.StatusUnsupported, Limitation: "WebTransport/Chromium capability preflight failed: " + reason})
-				current.Completed = append(current.Completed, candidate.ID)
+				if candidate.ID != next.ID {
+					current.Completed = append(current.Completed, candidate.ID)
+				}
 			}
 			current.Completed = append(current.Completed, next.ID)
 			if err := writePerformanceState(statePath, state); err != nil {
@@ -253,7 +294,7 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 			fmt.Fprintf(stdout, "[UNSUPPORTED] WebTransport/Chromium: %s\n", reason)
 			continue
 		}
-		if next.ID == "performance-optional/webtransport-capability" {
+		if next.ID == "performance-optional/webtransport-capability" && runErr == nil {
 			current.Completed = append(current.Completed, next.ID)
 			if err := writeProgress(progressPath, current, tests); err != nil {
 				return err

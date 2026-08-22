@@ -46,6 +46,7 @@ type encryptedStream struct {
 	recvPriorACK      bool
 	readBuf           []byte
 	remoteEOF         bool
+	remoteCarrierEOF  atomic.Bool
 	recvUpdateMu      sync.Mutex
 	recvUpdateID      uint64
 	recvUpdateEpoch   uint32
@@ -699,6 +700,9 @@ func (s *encryptedStream) readNextRecordLocked() error {
 	case protocolv3.InnerData:
 		s.readBuf = append(s.readBuf, data...)
 	case protocolv3.InnerFIN:
+		if err := s.verifyCarrierEOF(); err != nil {
+			return err
+		}
 		s.remoteEOF = true
 		s.clearReceiveRootEpoch()
 		s.releaseIfClean()
@@ -710,6 +714,21 @@ func (s *encryptedStream) readNextRecordLocked() error {
 		return ErrSessionProtocol
 	}
 	return nil
+}
+
+func (s *encryptedStream) verifyCarrierEOF() error {
+	var trailing [1]byte
+	n, err := s.carrier.Read(trailing[:])
+	if n != 0 || !errors.Is(err, io.EOF) {
+		return ErrSessionProtocol
+	}
+	s.stateMu.Lock()
+	err = s.state.CarrierEOF()
+	s.stateMu.Unlock()
+	if err == nil {
+		s.remoteCarrierEOF.Store(true)
+	}
+	return err
 }
 
 func (s *encryptedStream) acquireReadOwner(owner uint8) error {
@@ -1353,7 +1372,7 @@ func (s *encryptedStream) finish(cause error, closeCarrier bool) {
 
 func (s *encryptedStream) releaseIfClean() {
 	s.stateMu.Lock()
-	clean := s.state.CleanClosed()
+	clean := s.state.CleanClosed() && s.remoteCarrierEOF.Load()
 	s.stateMu.Unlock()
 	if clean {
 		s.finish(nil, false)

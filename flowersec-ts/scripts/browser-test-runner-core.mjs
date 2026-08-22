@@ -47,10 +47,16 @@ export async function verifyChromiumWebTransportCapability(playwright, chromiumE
       secureContext: globalThis.isSecureContext === true,
       webTransport: typeof globalThis.WebTransport,
     }));
-    if (observed.secureContext !== true || observed.webTransport !== "function") {
-      throw new Error("Chromium must expose a secure non-loopback origin with WebTransport");
+    if (observed.secureContext !== true) {
+      throw new Error("Chromium capability canary did not establish a secure non-loopback origin");
     }
-    return Object.freeze({ secure_context: true, webtransport: "function" });
+    if (observed.webTransport !== "function") {
+      return Object.freeze({
+        status: "UNSUPPORTED",
+        limitation: "Chromium does not expose the WebTransport constructor",
+      });
+    }
+    return Object.freeze({ status: "GREEN", secure_context: true, webtransport: "function" });
   } finally {
     await browser?.close();
   }

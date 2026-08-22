@@ -1342,8 +1342,11 @@ const controllerVectors = {
       steps: ["run_each_completion_permutation", "aggregate_security_priority", "project_public_failure"],
       input: { permutations: [
           ["tls_unsupported", "connection_failed", "tls_failed"],
+          ["tls_unsupported", "tls_failed", "connection_failed"],
           ["tls_failed", "tls_unsupported", "connection_failed"],
+          ["tls_failed", "connection_failed", "tls_unsupported"],
           ["connection_failed", "tls_failed", "tls_unsupported"],
+          ["connection_failed", "tls_unsupported", "tls_failed"],
         ] },
       expected: {
         final_state: "failed", public_error: "transport_security_failed", disposition: "terminal",
