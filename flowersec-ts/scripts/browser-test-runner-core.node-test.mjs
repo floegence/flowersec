@@ -540,11 +540,11 @@ test("matches Go performance-budget scaling for browser capacity deadlines", () 
   assert.equal(browserCapacityOperationDeadlineMs("held_sessions", undefined), 30_000);
   assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", undefined), 60_000);
   assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "5m0s"), 10_000);
-  assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "5m0s"), 20_000);
+	assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "5m0s"), 30_000);
   assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "10m0s"), 10_000);
-  assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "10m0s"), 20_000);
+	assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "10m0s"), 30_000);
   assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "20m0s"), 10_000);
-  assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "20m0s"), 20_000);
+	assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "20m0s"), 30_000);
   assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "24h0m0s"), 25_000);
   assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "24h0m0s"), 50_000);
   assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "invalid"), 30_000);

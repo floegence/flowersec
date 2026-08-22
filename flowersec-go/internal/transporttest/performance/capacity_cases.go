@@ -100,6 +100,10 @@ func productionBrowserStreamCapacityContract() capacityContract {
 	contract.StreamsPerSession = 128
 	if _, configured := performanceBudgetScale(); !configured {
 		contract.Ramp = 60 * time.Second
+	} else {
+		// The 12,800-stream QUIC workload needs a larger completion window
+		// than the 1000-session browser tunnel workload on the release host.
+		contract.Ramp = maxDuration(contract.Ramp, 30*time.Second)
 	}
 	contract.MaxCPU = 240 * time.Second
 	contract.MaxOpenFDs = 32768
@@ -119,7 +123,7 @@ func browserCapacityOperationDeadlineForKind(kind capacityCaseKind) time.Duratio
 	if _, configured := performanceBudgetScale(); configured {
 		if kind == capacityBrowserStream {
 			deadline, _ := scaledPerformanceDuration(10 * time.Second)
-			return maxDuration(deadline, 20*time.Second)
+			return maxDuration(deadline, 30*time.Second)
 		}
 		deadline, _ := scaledPerformanceDuration(5 * time.Second)
 		return maxDuration(deadline, 10*time.Second)

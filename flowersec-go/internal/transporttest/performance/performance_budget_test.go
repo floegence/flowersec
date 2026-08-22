@@ -22,15 +22,18 @@ func TestTenMinutePerformanceBudgetPreservesCoverageWithinSevenMinuteMeasurement
 	if got := capacity.Ramp + capacity.Hold + capacity.Cleanup; got != 20*time.Second {
 		t.Fatalf("capacity window = %s, want 20s", got)
 	}
-	for name, contract := range map[string]capacityContract{"browser": browser, "browser streams": browserStreams} {
-		if got := contract.Ramp + contract.Hold + contract.Cleanup; got != 47*time.Second {
-			t.Fatalf("%s window = %s, want 47s", name, got)
-		}
-		if contract.Ramp != 20*time.Second || contract.Cleanup != 20*time.Second {
-			t.Fatalf("%s browser windows = ramp %s cleanup %s, want 20s/20s", name, contract.Ramp, contract.Cleanup)
-		}
+	if got := browser.Ramp + browser.Hold + browser.Cleanup; got != 47*time.Second {
+		t.Fatalf("browser window = %s, want 47s", got)
 	}
-
+	if browser.Ramp != 20*time.Second || browser.Cleanup != 20*time.Second {
+		t.Fatalf("browser windows = ramp %s cleanup %s, want 20s/20s", browser.Ramp, browser.Cleanup)
+	}
+	if got := browserStreams.Ramp + browserStreams.Hold + browserStreams.Cleanup; got != 57*time.Second {
+		t.Fatalf("browser streams window = %s, want 57s", got)
+	}
+	if browserStreams.Ramp != 30*time.Second || browserStreams.Cleanup != 20*time.Second {
+		t.Fatalf("browser streams windows = ramp %s cleanup %s, want 30s/20s", browserStreams.Ramp, browserStreams.Cleanup)
+	}
 	soak := productionSoakContract()
 	carrierSoak := productionCarrierSoakContract()
 	if soak.Duration != 30*time.Second || soak.Cycles != 3 || soak.Reconnects != 3 || soak.Migrations != 3 {
