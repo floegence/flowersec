@@ -29,8 +29,8 @@ func TestPrivateCAPolicyCompletesRealTLSHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.InsecureSkipVerify || config.VerifyConnection != nil {
-		t.Fatalf("CA policy must retain the standard verifier: insecure=%v callback=%v", config.InsecureSkipVerify, config.VerifyConnection != nil)
+	if config.InsecureSkipVerify || config.VerifyConnection != nil || !config.SessionTicketsDisabled {
+		t.Fatalf("CA policy TLS controls = insecure:%v callback:%v tickets_disabled:%v", config.InsecureSkipVerify, config.VerifyConnection != nil, config.SessionTicketsDisabled)
 	}
 	if err := realTLSHandshake(server, config); err != nil {
 		t.Fatalf("private CA handshake failed: %v", err)
@@ -56,6 +56,9 @@ func TestSelfSignedPinPolicyCompletesRealTLSHandshakeWithoutCADowngrade(t *testi
 	config, err := BuildClientTLS(&tls.Config{RootCAs: x509.NewCertPool()}, "wss://localhost/flowersec/v3/direct", policy, now)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !config.SessionTicketsDisabled || config.ClientSessionCache != nil {
+		t.Fatalf("pin policy must disable TLS resumption: tickets_disabled=%v cache=%v", config.SessionTicketsDisabled, config.ClientSessionCache != nil)
 	}
 	if err := realTLSHandshake(server, config); err != nil {
 		t.Fatalf("self-signed pin handshake failed: %v", err)

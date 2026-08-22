@@ -115,6 +115,7 @@ func BuildClientTLSSnapshot(base *tls.Config, normalizedURL string, policy artif
 	config.MinVersion = tls.VersionTLS13
 	config.MaxVersion = tls.VersionTLS13
 	config.ClientSessionCache = nil
+	config.SessionTicketsDisabled = true
 	config.ServerName = parsed.Hostname()
 	verificationTime := config.Time
 	if verificationTime == nil {
