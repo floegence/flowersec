@@ -254,19 +254,16 @@ func runPayloadThroughputStream(ctx context.Context, pair *transporttest.Product
 		buffer := make([]byte, len(payload))
 		for {
 			count, readErr := readFullPayload(incoming.Stream, buffer)
-			if count > 0 && !equalPayload(buffer[:count], payload[:count]) {
-				accepted <- errors.New("payload throughput request mismatch")
+			ack, validateErr := payloadThroughputAckAllowed(buffer, payload, count, readErr, "payload throughput request mismatch")
+			if validateErr != nil {
+				accepted <- validateErr
 				return
 			}
-			if count > 0 {
+			if ack {
 				if written, writeErr := incoming.Stream.Write([]byte{0xa5}); writeErr != nil || written != 1 {
 					accepted <- errors.Join(io.ErrShortWrite, writeErr)
 					return
 				}
-			}
-			if readErr != nil {
-				accepted <- readErr
-				return
 			}
 		}
 	}()
@@ -374,19 +371,16 @@ func runReversePayloadThroughputStream(ctx context.Context, pair *transporttest.
 		buffer := make([]byte, len(payload))
 		for {
 			count, readErr := readFullPayload(incoming.Stream, buffer)
-			if count > 0 && !equalPayload(buffer[:count], payload[:count]) {
-				accepted <- errors.New("reverse payload throughput mismatch")
+			ack, validateErr := payloadThroughputAckAllowed(buffer, payload, count, readErr, "reverse payload throughput mismatch")
+			if validateErr != nil {
+				accepted <- validateErr
 				return
 			}
-			if count > 0 {
+			if ack {
 				if written, writeErr := incoming.Stream.Write([]byte{0xa5}); writeErr != nil || written != 1 {
 					accepted <- errors.Join(io.ErrShortWrite, writeErr)
 					return
 				}
-			}
-			if readErr != nil {
-				accepted <- readErr
-				return
 			}
 		}
 	}()
@@ -539,6 +533,16 @@ func exchangeVerifiedStreamSide(stream throughputByteStream, payload []byte) err
 }
 
 func contractPayloadOperationGuard() time.Duration { return 2 * time.Millisecond }
+
+func payloadThroughputAckAllowed(buffer, payload []byte, count int, readErr error, mismatchMessage string) (bool, error) {
+	if count > 0 && !equalPayload(buffer[:count], payload[:count]) {
+		return false, errors.New(mismatchMessage)
+	}
+	if readErr != nil {
+		return false, readErr
+	}
+	return count > 0, nil
+}
 
 func readFullPayload(stream interface{ Read([]byte) (int, error) }, buffer []byte) (int, error) {
 	read := 0

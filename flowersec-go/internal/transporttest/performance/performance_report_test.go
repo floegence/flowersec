@@ -249,11 +249,32 @@ func throughputMatrixPerformanceResult(caseID string, kind carrier.Kind, mode st
 			raw = append(raw, perfreport.RawSample{Round: 10000 + coordinateIndex*100 + sampleIndex + 1, Phase: fmt.Sprintf("resource %s %d bytes %s", coordinate.Contract.Direction, coordinate.Contract.PayloadBytes, sample.Phase), Values: map[string]float64{"at_ms": float64(sample.AtNS) / 1e6, "rss_bytes": float64(sample.RSSBytes), "cpu_seconds": float64(sample.CPUNanoseconds) / 1e9, "open_fds": float64(sample.OpenFDs), "goroutines": float64(sample.Goroutines), "tasks": float64(sample.Tasks)}})
 		}
 	}
+	sampleWindow := throughputMatrixSampleWindow(mode, results)
 	return finalizePerformanceResult(perfreport.CaseResult{
 		ID: caseID, Section: section, Status: status, Stage: stage, FirstError: firstError,
-		Configuration: map[string]string{"carrier": string(kind), "mode": mode, "warm-up": "one verified 64 KiB bidirectional round trip before each measured window", "measured samples per coordinate": "3", "fixed sample window": "5s", "peak definition": "maximum sustained throughput across fixed measured windows", "byte accounting": "only fully read and content-verified bytes", "stream cleanup": "FIN required; reset only on failure", "resource scope": "Go test runner process", "resource sampling": "baseline and after each fixed measured window"},
+		Configuration: map[string]string{"carrier": string(kind), "mode": mode, "warm-up": "one verified 64 KiB bidirectional round trip before each measured window", "measured samples per coordinate": "3", "fixed sample window": sampleWindow.String(), "peak definition": "maximum sustained throughput across fixed measured windows", "byte accounting": "only fully read and content-verified bytes", "stream cleanup": "FIN required; reset only on failure", "resource scope": "Go test runner process", "resource sampling": "baseline and after each fixed measured window"},
 		Measurements:  measurements, RawSamples: raw,
 	})
+}
+
+func throughputMatrixSampleWindow(mode string, results []payloadThroughputCoordinateResult) time.Duration {
+	for _, coordinate := range results {
+		if coordinate.Contract.SampleDuration > 0 {
+			return coordinate.Contract.SampleDuration
+		}
+	}
+	if mode == "single-connection" {
+		contracts := productionSingleConnectionThroughputContracts()
+		if len(contracts) > 0 {
+			return contracts[0].SampleDuration
+		}
+	} else {
+		contracts := productionStreamingThroughputContracts()
+		if len(contracts) > 0 {
+			return contracts[0].SampleDuration
+		}
+	}
+	return 0
 }
 
 func throughputResourceMeasurements(results []payloadThroughputCoordinateResult) []perfreport.Measurement {
