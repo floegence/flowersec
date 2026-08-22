@@ -812,7 +812,10 @@ async fn run_controller(inner: Arc<ControllerInner>) {
                     if replacement_used {
                         inner.set_failed(
                             attempt,
-                            connect_failure(error.code(), RetryDisposition::Terminal),
+                            connect_failure(
+                                blocked_public_code.unwrap_or(error.code()),
+                                RetryDisposition::Terminal,
+                            ),
                             false,
                         );
                         return;
@@ -2507,6 +2510,58 @@ mod tests {
             Some("transport_security_failed")
         );
         assert_eq!(expected.disposition.as_deref(), Some("terminal"));
+        controller.close().await;
+    }
+
+    #[tokio::test]
+    async fn opaque_trigger_after_security_replacement_preserves_security_error() {
+        let spent = Arc::new(AtomicU64::new(0));
+        let retired = Arc::new(AtomicU64::new(0));
+        let source = Arc::new(QueueSource::new([
+            Ok(test_lease(
+                pin_only_artifact([0x11; 32]),
+                spent.clone(),
+                retired.clone(),
+            )),
+            Ok(test_lease(
+                pin_only_artifact([0x22; 32]),
+                spent.clone(),
+                retired.clone(),
+            )),
+            Ok(test_lease(
+                pin_only_artifact([0x22; 32]),
+                spent.clone(),
+                retired.clone(),
+            )),
+        ]));
+        let controller = ConnectionController::new_with_connector(
+            source,
+            test_options(None),
+            scripted_connector([
+                ConnectorStep::PreSpendSecurity,
+                ConnectorStep::PostSpendRetryable,
+                ConnectorStep::PreSpendOpaque,
+            ]),
+        );
+
+        controller.start();
+        let waiting = wait_for_state(&controller, ConnectionState::Waiting).await;
+        assert!(controller.retry_now());
+        let status = wait_for_state(&controller, ConnectionState::Failed).await;
+        assert_eq!(
+            state_name(status.state),
+            state_name(ConnectionState::Failed)
+        );
+        assert_eq!(
+            status.last_failure,
+            Some(connect_failure(
+                ConnectErrorCode::TransportSecurityFailed,
+                RetryDisposition::Terminal,
+            ))
+        );
+        assert_eq!(spent.load(Ordering::SeqCst), 1);
+        assert_eq!(retired.load(Ordering::SeqCst), 2);
+        assert!(waiting.next_retry_at.is_some());
         controller.close().await;
     }
 

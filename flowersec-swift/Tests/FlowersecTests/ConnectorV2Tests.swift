@@ -343,7 +343,7 @@ final class ConnectorV2Tests: XCTestCase {
 
   #endif
 
-  func testV3ControllerFailureProvenanceIncludesOnlyAttemptedFailures() async throws {
+  func testV3ControllerFailureProvenanceIncludesCapabilitySkippedCandidates() async throws {
     let artifact = try baseArtifactV3ForConnector()
     let runtime = CandidateFailureRuntimeV3()
     let spend = ConnectorSpendCounter()
@@ -365,7 +365,7 @@ final class ConnectorV2Tests: XCTestCase {
         .connection(
           .transportSecurityFailed, .terminal,
           policyTriggerIDs: ["w-pin"], opaquePolicyTriggerIDs: [],
-          failedIDs: ["w-ca", "w-pin"]))
+          failedIDs: ["q-pin", "t-pin", "w-ca", "w-pin"]))
     }
     let preparedIDs = await runtime.preparedIDs()
     let spendCount = await spend.value()
@@ -388,7 +388,8 @@ final class ConnectorV2Tests: XCTestCase {
         error,
         .connection(
           .connectionFailed, .retryable, policyTriggerIDs: [],
-          opaquePolicyTriggerIDs: ["w-pin"], failedIDs: ["w-ca", "w-pin"]))
+          opaquePolicyTriggerIDs: ["w-pin"],
+          failedIDs: ["q-pin", "t-pin", "w-ca", "w-pin"]))
     }
   }
 

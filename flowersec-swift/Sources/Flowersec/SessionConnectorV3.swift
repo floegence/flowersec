@@ -247,7 +247,11 @@ struct SessionConnectorV3: Sendable {
     var sawOrdinaryFailure = false
     var policyTriggerIDs = Set<String>()
     var opaquePolicyTriggerIDs = Set<String>()
-    var failedIDs = Set<String>()
+    // Capability-filtered candidates are skipped attempts for controller F. Keep
+    // them in provenance so replacement eligibility cannot treat an unsupported
+    // endpoint as a fresh candidate.
+    var failedIDs = Set(artifact.canonicalCandidates.map(\.id))
+    for candidate in supported { failedIDs.remove(candidate.id) }
     var attempts: [(candidate: CanonicalCandidateV3, activePinHashes: [Data]?)] = []
     for candidate in supported {
       do {
