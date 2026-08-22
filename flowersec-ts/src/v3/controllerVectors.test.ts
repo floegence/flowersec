@@ -189,7 +189,7 @@ async function runPolicyReplacement(scenario: ControllerScenario): Promise<void>
     }
     if (mixed) {
       const ca = context.candidates.find(({ id }) => id === "w-ca");
-      const pin = context.candidates.find(({ id }) => id === "w-pin");
+      const pin = context.candidates.find(({ id }) => id === "t-pin");
       if (ca === undefined || pin === undefined) throw new Error("mixed fixture candidates missing");
       return allCandidateFailures(context, (candidate) => candidate === ca
         ? new TransportFailureV3("tls_failed", "ca_untrusted")
@@ -204,7 +204,13 @@ async function runPolicyReplacement(scenario: ControllerScenario): Promise<void>
         ? new TransportFailureV3("connection_failed", "browser_pin_opaque")
         : new TransportFailureV3("tls_failed", "pin_mismatch"),
     }] };
-  }, controllerOptions(scenario.expected.acquisitions));
+  }, controllerOptions(
+    scenario.expected.acquisitions,
+    new ImmediateVectorClock(),
+    mixed || scenario.input.trigger === "browser_pin_opaque"
+      ? await browserCapabilitySnapshot()
+      : detectNodeRuntimeCapabilityV3(),
+  ));
   await finishControllerScenario(controller, scenario, tracker, session);
 }
 
@@ -1019,12 +1025,16 @@ class AdvancingVectorClock implements ControllerClockV3 {
   }
 }
 
-function controllerOptions(maximumAttempts: number, clock: ControllerClockV3 = new ImmediateVectorClock()) {
+function controllerOptions(
+  maximumAttempts: number,
+  clock: ControllerClockV3 = new ImmediateVectorClock(),
+  capability = detectNodeRuntimeCapabilityV3(),
+) {
   return {
     maximumAttempts,
     nowUnixSeconds: () => 1_900_000_000,
     clock,
-    capabilitySnapshot: () => detectNodeRuntimeCapabilityV3(),
+    capabilitySnapshot: () => capability,
   };
 }
 
@@ -1092,7 +1102,7 @@ function allCandidateFailures(
 function mixedCAPinArtifact(input: ArtifactV3): ArtifactV3 {
   const output = structuredClone(input) as ArtifactV3;
   output.path.candidates = output.path.candidates
-    .filter(({ id }) => id === "w-ca" || id === "w-pin")
+    .filter(({ id }) => id === "w-ca" || id === "t-pin")
     .map((candidate) => structuredClone(candidate));
   return output;
 }
@@ -1148,6 +1158,23 @@ function completeWebTransportConstructor<T extends Function>(Constructor: T): T 
     if (!(property in prototype)) Object.defineProperty(prototype, property, { configurable: true, get: () => undefined });
   }
   return Constructor;
+}
+
+async function browserCapabilitySnapshot() {
+  class MockWebTransport {}
+  completeWebTransportConstructor(MockWebTransport);
+  const registry = await BrowserRuntimeCapabilityRegistryV3.create({
+    WebSocket: class {},
+    WebTransport: MockWebTransport,
+    navigator: {
+      userAgentData: {
+        async getHighEntropyValues() {
+          return { fullVersionList: [{ brand: "Chromium", version: "151.0.7922.34" }] };
+        },
+      },
+    },
+  });
+  return registry.snapshot();
 }
 
 function browserWebTransportArtifact(

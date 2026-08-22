@@ -374,7 +374,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
           error: new ConnectErrorV3("connection_failed", { kind: "terminal" }),
         };
       }
-      let result = normalizeLeaseAttemptResultV3<Session>(rawResult, candidates);
+      let result = normalizeLeaseAttemptResultV3<Session>(rawResult, candidates, capability);
       if (result === undefined) {
         const malformedSession = sessionFromMalformedConnectorResultV3(rawResult);
         if (artifactLeaseStateV3(claim) === "claimed") await retireArtifactLeaseV3(claim);
@@ -754,6 +754,7 @@ const TRANSPORT_FAILURE_DETAILS_V3 = new Set([
 function normalizeLeaseAttemptResultV3<Session extends ManagedSessionV3>(
   value: unknown,
   candidates: readonly CanonicalArtifactCandidateV3[],
+  capability: RuntimeCapabilityDescriptorV3,
 ): LeaseAttemptResultV3<Session> | undefined {
   try {
     if (value === null || typeof value !== "object") return undefined;
@@ -769,7 +770,7 @@ function normalizeLeaseAttemptResultV3<Session extends ManagedSessionV3>(
       if (!hasExactOwnKeys(value, ["kind", "failures"])) return undefined;
       const failures = Reflect.get(value, "failures");
       if (!Array.isArray(failures) || failures.length !== candidates.length) return undefined;
-      const normalized = failures.map((failure) => normalizeCandidateFailureV3(failure, candidates));
+      const normalized = failures.map((failure) => normalizeCandidateFailureV3(failure, candidates, capability));
       if (normalized.some((failure) => failure === undefined)) return undefined;
       const seen = new Set(normalized.map((failure) => failure!.candidate));
       if (seen.size !== candidates.length) return undefined;
@@ -797,6 +798,7 @@ function isManagedSessionV3(value: unknown): value is ManagedSessionV3 {
 function normalizeCandidateFailureV3(
   value: unknown,
   candidates: readonly CanonicalArtifactCandidateV3[],
+  capability: RuntimeCapabilityDescriptorV3,
 ): CandidateFailureV3 | undefined {
   if (value === null || typeof value !== "object") return undefined;
   const keys = Reflect.ownKeys(value);
@@ -807,7 +809,7 @@ function normalizeCandidateFailureV3(
   const failure = Reflect.get(value, "failure");
   if (!candidates.includes(candidate)) return undefined;
   if (!(failure instanceof TransportFailureV3) || !TRANSPORT_FAILURE_CODES_V3.has(failure.code) ||
-      !isValidTransportFailurePairV3(failure.code, failure.detail)) return undefined;
+      !isValidTransportFailurePairV3(failure.code, failure.detail, candidate, capability)) return undefined;
   const disposition = Reflect.get(value, "disposition");
   const normalizedDisposition = disposition === undefined ? undefined : validateRetryDispositionV3(disposition);
   return Object.freeze({
@@ -820,10 +822,18 @@ function normalizeCandidateFailureV3(
 function isValidTransportFailurePairV3(
   code: TransportFailureV3["code"],
   detail: TransportFailureV3["detail"],
+  candidate: CanonicalArtifactCandidateV3,
+  capability: RuntimeCapabilityDescriptorV3,
 ): boolean {
   if (detail !== undefined && !TRANSPORT_FAILURE_DETAILS_V3.has(detail)) return false;
   if (code === "tls_failed") return detail === "ca_untrusted" || detail === "pin_mismatch" || detail === "unknown";
-  if (code === "connection_failed") return detail === undefined || detail === "browser_pin_opaque";
+  if (code === "connection_failed") {
+    if (detail === undefined) return true;
+    return detail === "browser_pin_opaque" && candidate.carrier === "webtransport" &&
+      candidate.tls.mode === "pin" && capability.language === "typescript" && capability.runtime === "browser" &&
+      capability.tuples.some((tuple) => tuple.carrier === "webtransport" &&
+        tuple.networkMode === "dial" && tuple.securityModes.includes("pin"));
+  }
   return detail === undefined;
 }
 

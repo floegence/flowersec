@@ -26,6 +26,7 @@ import {
   decodeArtifactV3JSON,
   type ArtifactV3,
 } from "./artifact.js";
+import { BrowserRuntimeCapabilityRegistryV3 } from "./browserRuntime.js";
 
 const fixture = JSON.parse(readFileSync(
   new URL("../../../testdata/transport_v3/artifact_vectors.json", import.meta.url),
@@ -165,6 +166,9 @@ describe("transport v3 production connection controller", () => {
     trigger,
     expectedCode,
   ) => {
+    const capability = trigger.detail === "browser_pin_opaque"
+      ? await browserCapabilitySnapshot()
+      : capabilitySnapshot();
     const cleanup = vi.fn(async () => undefined);
     const primary = singleCandidateArtifact(primaryArtifact, "t-pin");
     const lease = createArtifactLeaseV3Internal(primary, async () => undefined, cleanup);
@@ -177,7 +181,7 @@ describe("transport v3 production connection controller", () => {
       maximumAttempts: 1,
       nowUnixSeconds: () => 1_900_000_000,
       clock: immediateClock(),
-      capabilitySnapshot,
+      capabilitySnapshot: () => capability,
     });
     controller.start();
     await expect(controller.waitForSession()).rejects.toMatchObject({
@@ -190,6 +194,26 @@ describe("transport v3 production connection controller", () => {
     expect(cleanup).toHaveBeenCalledOnce();
     expect(artifactLeaseStateV3(lease)).toBe("retired");
     expect(controller.retryNow()).toBe(false);
+    await controller.close();
+  });
+
+  test("rejects browser_pin_opaque when the browser pin capability is ca-only", async () => {
+    const capability = await browserCapabilitySnapshot("151.0.7922.35");
+    const cleanup = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(singleCandidateArtifact(primaryArtifact, "t-pin"), async () => undefined, cleanup);
+    const connector = vi.fn(async (context: LeaseAttemptContextV3) =>
+      allCandidateFailures(context, () => new TransportFailureV3("connection_failed", "browser_pin_opaque")));
+    const controller = createConnectionControllerV3({
+      acquire: async () => ({ kind: "lease" as const, lease }),
+    }, connector, { maximumAttempts: 1, capabilitySnapshot: () => capability });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "connect", code: "artifact_invalid" },
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
+    expect(cleanup).toHaveBeenCalledOnce();
     await controller.close();
   });
 
@@ -829,9 +853,10 @@ describe("transport v3 production connection controller", () => {
   });
 
   test("preserves native security provenance before an opaque trigger after replacement retry", async () => {
+    const browserCapabilitySnapshotValue = await browserCapabilitySnapshot();
     const primary = singleCandidateArtifact(primaryArtifact, "t-pin");
     const replacement = withChangedWebTransportPin(primary);
-    const opaquePrimary = singleCandidateArtifact(primaryArtifact, "q-pin");
+    const opaquePrimary = withChangedWebTransportPin(singleCandidateArtifact(primaryArtifact, "t-pin"));
     const leases = [primary, replacement, opaquePrimary].map((artifact) =>
       createArtifactLeaseV3Internal(artifact, async () => undefined));
     const acquire = vi.fn(async (): Promise<ArtifactSourceResultV3> => ({
@@ -862,7 +887,7 @@ describe("transport v3 production connection controller", () => {
       maximumAttempts: 3,
       nowUnixSeconds: () => 1_900_000_000,
       clock: immediateClock(),
-      capabilitySnapshot,
+      capabilitySnapshot: () => browserCapabilitySnapshotValue,
     });
     controller.start();
     await expect(controller.waitForSession()).rejects.toMatchObject({
@@ -875,9 +900,11 @@ describe("transport v3 production connection controller", () => {
   });
 
   test("keeps TLS security precedence for mixed CA and opaque failures after replacement retry", async () => {
+    const browserCapabilitySnapshotValue = await browserCapabilitySnapshot();
     const primary = singleCandidateArtifact(primaryArtifact, "t-pin");
     const replacement = withChangedWebTransportPin(primary);
-    const leases = [primary, replacement, primaryArtifact].map((artifact) =>
+    const finalArtifact = withChangedWebTransportPin(primaryArtifact);
+    const leases = [primary, replacement, finalArtifact].map((artifact) =>
       createArtifactLeaseV3Internal(artifact, async () => undefined));
     const acquire = vi.fn(async (): Promise<ArtifactSourceResultV3> => ({
       kind: "lease",
@@ -899,7 +926,7 @@ describe("transport v3 production connection controller", () => {
           error: new ConnectErrorV3("connection_failed", { kind: "retryable" }),
         };
       }
-      const opaque = context.candidates.find(({ id }) => id === "q-pin")!;
+      const opaque = context.candidates.find(({ id }) => id === "t-pin")!;
       const ca = context.candidates.find(({ id }) => id === "w-ca")!;
       return allCandidateFailures(context, (candidate) => candidate === opaque
         ? new TransportFailureV3("connection_failed", "browser_pin_opaque")
@@ -910,7 +937,7 @@ describe("transport v3 production connection controller", () => {
       maximumAttempts: 3,
       nowUnixSeconds: () => 1_900_000_000,
       clock: immediateClock(),
-      capabilitySnapshot,
+      capabilitySnapshot: () => browserCapabilitySnapshotValue,
     });
     controller.start();
     await expect(controller.waitForSession()).rejects.toMatchObject({
@@ -1273,6 +1300,7 @@ describe("transport v3 production connection controller", () => {
   });
 
   test("executes same-pin and browser-opaque replacement terminal vectors", async () => {
+    const browserCapabilitySnapshotValue = await browserCapabilitySnapshot();
     for (const id of ["pin-mismatch-same-policy-terminal", "browser-opaque-exhausted"] as const) {
       const scenario = controllerScenario(id);
       const expected = scenario.expected;
@@ -1290,7 +1318,9 @@ describe("transport v3 production connection controller", () => {
       const controller = createConnectionControllerV3({ acquire }, connector, {
         maximumAttempts: expected.acquisitions,
         nowUnixSeconds: () => 1_900_000_000,
-        capabilitySnapshot,
+        capabilitySnapshot: () => id === "browser-opaque-exhausted"
+          ? browserCapabilitySnapshotValue
+          : capabilitySnapshot(),
       });
       controller.start();
       await expect(controller.waitForSession()).rejects.toMatchObject({
@@ -1435,6 +1465,36 @@ function capabilitySnapshot() {
   return detectNodeRuntimeCapabilityV3();
 }
 
+async function browserCapabilitySnapshot(version = "151.0.7922.34") {
+  class MockWebTransport {}
+  completeWebTransportConstructor(MockWebTransport);
+  const registry = await BrowserRuntimeCapabilityRegistryV3.create({
+    WebSocket: class {},
+    WebTransport: MockWebTransport,
+    navigator: {
+      userAgentData: {
+        async getHighEntropyValues() {
+          return { fullVersionList: [{ brand: "Chromium", version }] };
+        },
+      },
+    },
+  });
+  return registry.snapshot();
+}
+
+function completeWebTransportConstructor<T extends Function>(Constructor: T): T {
+  const prototype = (Constructor as unknown as { prototype?: Record<string, unknown> }).prototype;
+  if (prototype === undefined) return Constructor;
+  if (typeof prototype.createBidirectionalStream !== "function") {
+    prototype.createBidirectionalStream = async () => await new Promise(() => undefined);
+  }
+  if (typeof prototype.close !== "function") prototype.close = () => undefined;
+  for (const property of ["ready", "closed", "incomingBidirectionalStreams", "datagrams"]) {
+    if (!(property in prototype)) Object.defineProperty(prototype, property, { configurable: true, get: () => undefined });
+  }
+  return Constructor;
+}
+
 function controllerScenario(id: string) {
   const scenario = controllerFixture.scenarios.find((value) => value.id === id);
   if (scenario === undefined) throw new Error(`controller vector ${id} is missing`);
@@ -1476,11 +1536,14 @@ async function expectBlockedPrimaryAfterSpentReplacementRetry(
       error: new ConnectErrorV3("connection_failed", { kind: "retryable" }),
     };
   });
+  const capability = trigger.detail === "browser_pin_opaque"
+    ? await browserCapabilitySnapshot()
+    : capabilitySnapshot();
   const controller = createConnectionControllerV3({ acquire }, connector, {
     maximumAttempts: 3,
     nowUnixSeconds: () => 1_900_000_000,
     clock: immediateClock(),
-    capabilitySnapshot,
+    capabilitySnapshot: () => capability,
   });
   controller.start();
   await expect(controller.waitForSession()).rejects.toMatchObject({
