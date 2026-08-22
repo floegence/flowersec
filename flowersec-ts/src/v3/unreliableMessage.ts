@@ -175,6 +175,7 @@ export function encodeUnreliableMessageHeaderV3(
   expiresAtUnixMs: bigint,
   ciphertextLength: number,
 ): Uint8Array {
+  if (expiresAtUnixMs === 0n) throw new Error("invalid FSD3 expiry");
   const header = new Uint8Array(HEADER_BYTES);
   header.set(encoder.encode("FSD3"));
   header[4] = 3;
@@ -197,10 +198,12 @@ function decodeHeader(wire: Uint8Array): DecodedHeader | undefined {
   if (view.getUint16(6, false) !== HEADER_BYTES || view.getUint32(28, false) !== wire.byteLength - HEADER_BYTES) {
     return undefined;
   }
+  const expiresAtUnixMs = view.getBigUint64(20, false);
+  if (expiresAtUnixMs === 0n) return undefined;
   return {
     epoch: view.getUint32(8, false),
     sequence: view.getBigUint64(12, false),
-    expiresAtUnixMs: view.getBigUint64(20, false),
+    expiresAtUnixMs,
   };
 }
 

@@ -664,7 +664,11 @@ pub(crate) fn verify_pinned_leaf(
         return Err(PinVerificationErrorV3::InvalidCertificateProfile);
     }
     let digest: [u8; 32] = Sha256::digest(leaf.der).into();
-    if !active_pins.iter().any(|pin| digest.ct_eq(pin).into()) {
+    let mut matched = 0u8;
+    for pin in active_pins {
+        matched |= digest.ct_eq(pin).unwrap_u8();
+    }
+    if matched == 0 {
         return Err(PinVerificationErrorV3::PinMismatch);
     }
     if !leaf.tls_proof_complete {
@@ -792,7 +796,7 @@ mod tests {
             public_key: LeafPublicKeyV3::EcdsaP256,
             tls_proof_complete: true,
         };
-        assert_eq!(verify_pinned_leaf(leaf, &[pin], 10), Ok(()));
+        assert_eq!(verify_pinned_leaf(leaf, &[[0xA5; 32], pin], 10), Ok(()));
         assert_eq!(
             verify_pinned_leaf(
                 PresentedLeafV3 {

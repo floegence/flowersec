@@ -3,8 +3,10 @@ package protocolv3
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -56,6 +58,21 @@ func TestSharedUnreliableVectors(t *testing.T) {
 	for _, vector := range fixtures.Vectors {
 		vector := vector
 		t.Run(vector.Name, func(t *testing.T) { verifyUnreliableVector(t, vector) })
+	}
+}
+
+func TestUnreliableHeaderRejectsZeroExpiry(t *testing.T) {
+	header := UnreliableHeader{ExpiresAtUnixMS: 0, CiphertextLength: AEADTagBytes + 1}
+	if _, err := header.MarshalBinary(); !errors.Is(err, ErrInvalidUnreliableHeader) {
+		t.Fatalf("MarshalBinary error = %v, want %v", err, ErrInvalidUnreliableHeader)
+	}
+	raw := make([]byte, UnreliableHeaderSize)
+	copy(raw, []byte("FSD3"))
+	raw[4] = 3
+	binary.BigEndian.PutUint16(raw[6:8], UnreliableHeaderSize)
+	binary.BigEndian.PutUint32(raw[28:32], AEADTagBytes+1)
+	if _, err := ParseUnreliableHeader(raw); !errors.Is(err, ErrInvalidUnreliableHeader) {
+		t.Fatalf("ParseUnreliableHeader error = %v, want %v", err, ErrInvalidUnreliableHeader)
 	}
 }
 

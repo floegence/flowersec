@@ -56,6 +56,7 @@ const HANDSHAKE_HEADER_BYTES: usize = 12;
 pub(crate) const MAX_HANDSHAKE_PAYLOAD_BYTES: usize = 8_192;
 pub(crate) const MAX_BUFFERED_STREAM_BYTES_V3: usize = 4 * 1024 * 1024;
 const RESERVED_RPC_KIND: &str = "flowersec.rpc.v3";
+const OPEN_REJECT_INVALID_METADATA_V3: u16 = 4;
 const MAX_LEDGER_SLOTS: u64 = 1_048_576;
 const NORMAL_CLOSE_REASON_V3: u16 = 1;
 const IDLE_TIMEOUT_REASON_V3: u16 = 4;
@@ -587,15 +588,16 @@ pub async fn establish_session_v3(
         ));
     }
     let deadline = config.deadlines.establish;
-    tokio::time::timeout(deadline, establish_session_v3_inner(carrier, config))
+    let session = tokio::time::timeout(deadline, establish_session_v3_inner(carrier, config))
         .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Flowersec v3 establish timeout"))?
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Flowersec v3 establish timeout"))??;
+    Ok(session)
 }
 
 async fn establish_session_v3_inner(
     carrier: Arc<dyn CarrierSessionV3>,
     config: SessionConfigV3,
-) -> io::Result<Arc<dyn Session>> {
+) -> io::Result<Arc<SelfSession>> {
     let locally_supported_features = if carrier
         .unreliable_message_max_size()
         .is_some_and(|maximum| maximum >= MAX_UNRELIABLE_WIRE_V3_BYTES)
@@ -3899,6 +3901,50 @@ async fn reset_inbound_before_delivery_v3(
     }
 }
 
+async fn reject_inbound_open_v3(
+    session: &Arc<SelfSession>,
+    carrier: &Arc<dyn CarrierStreamV3>,
+    id: u64,
+    open_raw: &[u8],
+    reason: u16,
+) {
+    let open_hash = match compute_open_hash_v3(open_raw) {
+        Ok(hash) => hash,
+        Err(_) => {
+            reset_inbound_before_delivery_v3(session, carrier, id).await;
+            return;
+        }
+    };
+    let send_epoch = session.state.lock().await.send_epoch;
+    let mut payload = [0; 34];
+    payload[..32].copy_from_slice(&open_hash);
+    payload[32..].copy_from_slice(&reason.to_be_bytes());
+    if write_stream_record_v3(
+        session,
+        carrier,
+        id,
+        send_epoch,
+        0,
+        InnerRecordTypeV3::OpenReject,
+        &payload,
+    )
+    .await
+    .is_err()
+    {
+        reset_inbound_before_delivery_v3(session, carrier, id).await;
+        return;
+    }
+    if let Err(error) = carrier.close_write().await {
+        if !session.is_closed() {
+            fail_session_v3(session, error);
+        }
+        return;
+    }
+    if let Err(error) = session.peer_ledger.lock().await.mark_terminal(id) {
+        fail_session_v3(session, error);
+    }
+}
+
 async fn accept_one_stream_v3(
     session: Arc<SelfSession>,
     carrier: Arc<dyn CarrierStreamV3>,
@@ -4003,15 +4049,18 @@ async fn accept_one_stream_v3(
         }
     };
     let reserved_rpc = open.kind() == RESERVED_RPC_KIND;
+    if reserved_rpc && !metadata.is_empty() {
+        reject_inbound_open_v3(
+            &session,
+            &carrier,
+            id,
+            &open_raw,
+            OPEN_REJECT_INVALID_METADATA_V3,
+        )
+        .await;
+        return Ok(());
+    }
     let permit = if reserved_rpc {
-        if session
-            .inbound_rpc_opened
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            reset_inbound_before_delivery_v3(&session, &carrier, id).await;
-            return Ok(());
-        }
         None
     } else {
         match tokio::select! {
@@ -4092,6 +4141,14 @@ async fn accept_one_stream_v3(
     }
     if reserved_rpc {
         drop(responder);
+        if session
+            .inbound_rpc_opened
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            stream.begin_reset();
+            return Ok(());
+        }
         if (serve_rpc_stream_v3(&session, StreamHandleV3(stream)).await).is_err() {
             reset_inbound_before_delivery_v3(&session, &stream_carrier, id).await;
         }
@@ -5211,6 +5268,38 @@ mod tests {
         assert_eq!(outgoing.kind(), "test");
         assert_eq!(incoming.stream().kind(), "test");
         let _ = tokio::join!(outgoing.reset(), incoming.stream().reset());
+        let _ = tokio::join!(client.close(), server.close());
+    }
+
+    #[tokio::test]
+    async fn reserved_rpc_metadata_is_rejected_without_consuming_rpc_slot() {
+        let (client_carrier, server_carrier) = memory_carrier_pair_v3_with_capacity(3);
+        let (client, server) = tokio::join!(
+            establish_session_v3_inner(
+                client_carrier,
+                stream_lifecycle_config(SessionRole::Client),
+            ),
+            establish_session_v3_inner(
+                server_carrier,
+                stream_lifecycle_config(SessionRole::Server),
+            ),
+        );
+        let client = client.expect("client session");
+        let server = server.expect("server session");
+
+        let mut metadata = JsonObject::new();
+        metadata.insert("unexpected".into(), serde_json::Value::Bool(true));
+        let rejected = open_stream_with_capacity_v3(&client, RESERVED_RPC_KIND, metadata, false)
+            .await
+            .expect_err("reserved RPC metadata must be rejected");
+        assert_eq!(rejected.kind(), io::ErrorKind::PermissionDenied);
+        assert!(!server.inbound_rpc_opened.load(Ordering::Acquire));
+
+        let stream = open_reserved_rpc_stream_v3(&client)
+            .await
+            .expect("valid reserved RPC stream after metadata rejection");
+        assert!(server.inbound_rpc_opened.load(Ordering::Acquire));
+        stream.reset().await.expect("reset RPC stream");
         let _ = tokio::join!(client.close(), server.close());
     }
 

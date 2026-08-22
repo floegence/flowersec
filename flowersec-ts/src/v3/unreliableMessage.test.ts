@@ -3,7 +3,10 @@ import { describe, expect, test } from "vitest";
 
 import { base64urlDecode } from "../utils/base64url.js";
 import type { CipherSuiteV3, DirectionV3 } from "./protocol.js";
-import { sealUnreliableMessageDatagramV3 } from "./unreliableMessage.js";
+import {
+  encodeUnreliableMessageHeaderV3,
+  sealUnreliableMessageDatagramV3,
+} from "./unreliableMessage.js";
 
 type DatagramVector = Readonly<{
   suite: 1 | 2;
@@ -55,5 +58,9 @@ describe("transport v3 FSD3 unreliable messages", () => {
       expect(b64u(sealed.ciphertext)).toBe(vector.ciphertext_b64u);
       expect(b64u(sealed.wire)).toBe(vector.wire_b64u);
     }
+  });
+
+  test("rejects a zero FSD3 expiry", () => {
+    expect(() => encodeUnreliableMessageHeaderV3(0, 0n, 0n, 17)).toThrow("invalid FSD3 expiry");
   });
 });
