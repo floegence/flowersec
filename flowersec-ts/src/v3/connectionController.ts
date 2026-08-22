@@ -739,9 +739,19 @@ function replacementTerminal(context: Readonly<{ failures: readonly CandidateFai
 }
 
 function isExpired(artifact: ArtifactV3, nowUnixSeconds: () => number): boolean {
+  let expiry: unknown;
+  try {
+    if (artifact === null || typeof artifact !== "object") return false;
+    const session = Reflect.get(artifact, "session");
+    if (session === null || typeof session !== "object") return false;
+    expiry = Reflect.get(session, "init_expire_at_unix_s");
+  } catch {
+    return false;
+  }
+  if (!Number.isSafeInteger(expiry) || (expiry as number) < 0) return false;
   const now = nowUnixSeconds();
   if (!Number.isSafeInteger(now) || now < 0) return true;
-  return now >= artifact.session.init_expire_at_unix_s;
+  return now >= (expiry as number);
 }
 
 async function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
