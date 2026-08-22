@@ -1002,6 +1002,14 @@ final class ConnectionControllerTests: XCTestCase {
           try await claimed.commitSpend()
           throw ConnectError.connectionFailed
         }
+        if call == 3 {
+          throw ControllerConnectFailureV3.connection(
+            .connectionFailed,
+            .terminal,
+            policyTriggerIDs: [],
+            opaquePolicyTriggerIDs: ["w-pin"],
+            failedIDs: ["w-pin"])
+        }
         throw ConnectError.transportSecurityFailed
       }
     )

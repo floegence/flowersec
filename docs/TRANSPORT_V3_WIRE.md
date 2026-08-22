@@ -443,6 +443,20 @@ chosen-candidate FSB3 frames.
 A v3 path MUST NOT call a helper containing another protocol version's
 preimage, HKDF info, HMAC input, AAD, frame magic, or version byte.
 
+### 8.1 SDK Major and Deployment Isolation
+
+The v3 SDKs are versioned and deployed as an independent contract:
+
+- the Go module uses the `/v3` module path;
+- the TypeScript package, Rust crate, and Swift package/tag are released as
+  v3 majors;
+- v3 uses an independent server path, WebSocket subprotocol, and QUIC ALPN;
+- a v2 artifact MUST NOT be passed to a v3 API, and a v3 artifact MUST NOT be
+  passed to a v2 API;
+- during a parallel migration, the deployment runs independent v2 and v3
+  listeners and the application explicitly selects the SDK major;
+- runtime automatic upgrade or downgrade between v2 and v3 is not provided.
+
 ## 9. OPEN Metadata
 
 OPEN metadata is not JCS. Its root is an object. Values are objects, arrays,

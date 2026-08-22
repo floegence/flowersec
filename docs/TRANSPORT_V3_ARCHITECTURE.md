@@ -537,6 +537,21 @@ gates establish acceptance before release. The release step validates version
 and refs, packages and signs artifacts, publishes, and performs registry
 readback.
 
+### 12.4 SDK Major and Deployment Isolation
+
+The SDK and deployment boundary is explicit and versioned:
+
+- the Go module uses the `/v3` module path;
+- the TypeScript package, Rust crate, and Swift package/tag are released as
+  v3 majors;
+- v3 uses an independent server path, WebSocket subprotocol, and QUIC ALPN;
+- v2 artifacts cannot be passed to v3 APIs, and v3 artifacts cannot be passed
+  to v2 APIs;
+- a parallel migration runs independent v2 and v3 listeners, with the
+  application explicitly selecting the SDK major;
+- Flowersec provides no runtime automatic upgrade or downgrade between v2 and
+  v3.
+
 ## 13. Explicit Exclusions
 
 Transport v3 does not encode pins in URLs or imitate libp2p

@@ -171,8 +171,7 @@ export function aggregateCandidateFailuresV3(
     return new ConnectErrorV3("expired_artifact", { kind: "retryable" });
   }
   const securityTriggers = failures.filter(({ failure, candidate }) =>
-    candidate.tls.mode === "pin" && (failure.code === "tls_policy_expired" ||
-      failure.code === "tls_failed"));
+    isNativePolicyTriggerV3(candidate, failure));
   const opaqueTriggers = failures.filter(({ failure, candidate }) =>
     candidate.tls.mode === "pin" && failure.code === "connection_failed" &&
     failure.detail === "browser_pin_opaque");
@@ -228,10 +227,19 @@ function isPolicyTriggerV3(
   candidate: CanonicalArtifactCandidateV3,
   failure: CandidateFailureV3["failure"],
 ): boolean {
+  return isNativePolicyTriggerV3(candidate, failure) ||
+    (candidate.tls.mode === "pin" && failure.code === "connection_failed" &&
+      failure.detail === "browser_pin_opaque");
+}
+
+function isNativePolicyTriggerV3(
+  candidate: CanonicalArtifactCandidateV3,
+  failure: CandidateFailureV3["failure"],
+): boolean {
   return candidate.tls.mode === "pin" && (
     failure.code === "tls_policy_expired" ||
-    failure.code === "tls_failed" ||
-    (failure.code === "connection_failed" && failure.detail === "browser_pin_opaque")
+    (failure.code === "tls_failed" &&
+      (failure.detail === "pin_mismatch" || failure.detail === "unknown"))
   );
 }
 

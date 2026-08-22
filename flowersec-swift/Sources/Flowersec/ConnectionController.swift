@@ -244,14 +244,16 @@ public actor ConnectionController {
             await retire(claimedLease)
             return
           }
+          let trigger = policyIdentity(claimedLease.artifact, provenance: provenance!)
+          blockedPinPolicy.formUnion(trigger.pins, opaque: trigger.opaque)
           if replacementUsed {
             await retire(claimedLease)
-            fail(.connection(publicError(for: attemptFailure)))
+            let terminalError: ConnectError = blockedPinPolicy.hasNativeTrigger
+              ? .transportSecurityFailed : publicError(for: attemptFailure)
+            fail(.connection(terminalError))
             return
           }
           consecutiveFailures = increment(consecutiveFailures)
-          let trigger = policyIdentity(claimedLease.artifact, provenance: provenance!)
-          blockedPinPolicy.formUnion(trigger.pins, opaque: trigger.opaque)
           await retire(claimedLease)
           guard active else { return }
           let replacement = await runReplacement(

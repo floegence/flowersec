@@ -13,6 +13,7 @@ import {
   ControllerCycleStateV3,
   ControllerRetryWaitV3,
   aggregateCandidateFailuresV3,
+  blockPolicyRefreshTriggersV3,
   endpointKeyV3,
   filterBlockedCandidatesV3,
   selectReplacementCandidatesV3,
@@ -184,6 +185,19 @@ describe("transport v3 controller, lease, and retry semantics", () => {
       });
     }
     expect(aggregateCandidateFailuresV3(entries, true)).toBe("policy_refresh");
+  });
+
+  test("does not refresh a pin policy for a CA-untrusted pin failure", () => {
+    const failure = new TransportFailureV3("tls_failed", "ca_untrusted");
+    expect(aggregateCandidateFailuresV3([{ candidate: pinA, failure }], true))
+      .toMatchObject({
+        code: "transport_security_failed",
+        disposition: { kind: "terminal" },
+      });
+    const cycle = new ControllerCycleStateV3();
+    expect(blockPolicyRefreshTriggersV3("direct", [{ candidate: pinA, failure }], cycle))
+      .toEqual(new Set());
+    expect(cycle.snapshot().replacementUsed).toBe(false);
   });
 
   test("snapshots only active pins and never constructs an empty pin policy", () => {
