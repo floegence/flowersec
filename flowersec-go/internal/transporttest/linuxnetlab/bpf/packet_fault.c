@@ -7,6 +7,9 @@
 #include <bpf/bpf_helpers.h>
 
 #define FLOWERSEC_MAX_JITTER_VALUES 8
+/* Keep duplicate clones on the original veth ingress so legacy IFB drivers
+ * cannot mistake a BPF clone for an egress packet and discard it. */
+#define FLOWERSEC_DUPLICATE_MARK 0x4653
 #define FLOWERSEC_LOSS_NONE 0
 #define FLOWERSEC_LOSS_PERIODIC 1
 #define FLOWERSEC_LOSS_BURST 2
@@ -91,9 +94,16 @@ int flowersec_packet_fault(struct __sk_buff *skb)
 	__u32 l3_length = 0;
 	__u32 jitter_slot = 0;
 	__u8 reorder = 0;
+	__u8 duplicate_replay = 0;
 
 	if (!config || !stats)
 		return TC_ACT_SHOT;
+	/* A clone re-enters this classifier once; clear the private marker and
+	 * suppress another clone while retaining the normal fault schedule. */
+	if (skb->mark == FLOWERSEC_DUPLICATE_MARK) {
+		duplicate_replay = 1;
+		skb->mark = 0;
+	}
 	if (skb->protocol != bpf_htons(ETH_P_IP) && skb->protocol != bpf_htons(ETH_P_IPV6))
 		return TC_ACT_OK;
 	if (skb->protocol == bpf_htons(ETH_P_IP)) {
@@ -190,13 +200,15 @@ int flowersec_packet_fault(struct __sk_buff *skb)
 		if (reorder)
 			__sync_fetch_and_add(&stats->reorder_packets, 1);
 	}
-	if (config->duplicate_basis_points > 0 && config->duplicate_basis_points <= 10000) {
+	if (!duplicate_replay && config->duplicate_basis_points > 0 && config->duplicate_basis_points <= 10000) {
 		__u64 duplicate_period = 10000 / config->duplicate_basis_points;
 		if (selected_ordinal(ordinal, config->duplicate_basis_points, duplicate_period / 2)) {
-			if (bpf_clone_redirect(skb, config->duplicate_ifindex, 0) < 0)
+			skb->mark = FLOWERSEC_DUPLICATE_MARK;
+			if (bpf_clone_redirect(skb, config->duplicate_ifindex, BPF_F_INGRESS) < 0)
 				__sync_fetch_and_add(&stats->duplicate_errors, 1);
 			else
 				__sync_fetch_and_add(&stats->duplicate_packets, 1);
+			skb->mark = 0;
 		}
 	}
 	__sync_fetch_and_add(&stats->delivered_packets, 1);

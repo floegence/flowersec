@@ -191,11 +191,13 @@ func (lab *Lab) applyDirection(ctx context.Context, labDirectory, object string,
 	if profile.DuplicatePercent > 0 {
 		resolver, ok := lab.runner.(interfaceIndexResolver)
 		if !ok {
-			return errors.New("duplicate injection requires an IFB interface index resolver")
+			return errors.New("duplicate injection requires a device interface index resolver")
 		}
-		resolvedIndex, err := resolver.InterfaceIndex(ctx, namespace, ifb)
+		// Inject the clone through the original veth ingress. Older IFB drivers
+		// drop BPF clones before their tasklet can return them to the stack.
+		resolvedIndex, err := resolver.InterfaceIndex(ctx, namespace, device)
 		if err != nil {
-			return fmt.Errorf("resolve duplicate IFB %s in %s: %w", ifb, namespace, err)
+			return fmt.Errorf("resolve duplicate device %s in %s: %w", device, namespace, err)
 		}
 		duplicateIfIndex = resolvedIndex
 	}
@@ -298,7 +300,7 @@ func encodeFaultConfig(profile FaultProfile, duplicateIfIndex int) ([]byte, erro
 		return nil, err
 	}
 	if profile.DuplicatePercent > 0 && duplicateIfIndex <= 0 || profile.DuplicatePercent == 0 && duplicateIfIndex != 0 {
-		return nil, errors.New("duplicate IFB index does not match the frozen matrix")
+		return nil, errors.New("duplicate device index does not match the frozen matrix")
 	}
 	lossMode := uint32(0)
 	if profile.LossMode == LossPeriodic {

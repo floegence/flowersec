@@ -134,14 +134,14 @@ func TestApplyFaultProfileBuildsTwoIsolatedKernelDirections(t *testing.T) {
 		device    string
 	}{{config.ClientNamespace, config.ClientInterface}, {config.ServerNamespace, config.ServerInterface}} {
 		ifbUp := strings.Index(joined, "--net=/var/run/netns/"+side.namespace+" -- ip link set dev "+side.device+"i mtu 1280 up")
-		resolved := strings.Index(joined, "ifindex ["+side.namespace+" "+side.device+"i]")
+		resolved := strings.Index(joined, "ifindex ["+side.namespace+" "+side.device+"]")
 		encoded, err := encodeFaultConfig(periodicLossFaultProfile(t), 321+index)
 		if err != nil {
 			t.Fatal(err)
 		}
 		mapUpdate := strings.Index(joined, strings.Join(byteArguments(encoded), " "))
 		if ifbUp < 0 || resolved < ifbUp || mapUpdate < resolved {
-			t.Fatalf("IFB/config order is not fail-closed for %s:\n%s", side.namespace, joined)
+			t.Fatalf("device/config order is not fail-closed for %s:\n%s", side.namespace, joined)
 		}
 	}
 	if err := lab.Close(context.Background()); err != nil {
