@@ -760,10 +760,14 @@ public actor ConnectionController {
   nonisolated private func terminalFailure(
     _ value: ConnectionAttemptFailure
   ) -> ConnectionAttemptFailure {
-    if case .artifactSource = value {
+    switch value {
+    case .artifactSource:
       return .artifactSource(ArtifactSourceFailure(disposition: .terminal))
+    case .connection(let error):
+      return .connection(error.terminalized())
+    case .session(let error):
+      return .session(error.terminalized())
     }
-    return value
   }
 
   private func publicError(for failure: ConnectionAttemptFailure) -> ConnectError {

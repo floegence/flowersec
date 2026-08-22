@@ -1431,6 +1431,14 @@ mod unreliable_message_tests {
             ..header
         };
         assert!(oversized.encode().is_err());
+        let zero_expiry = UnreliableHeaderV3 {
+            expires_at_unix_ms: 0,
+            ..header
+        };
+        assert!(zero_expiry.encode().is_err());
+        let mut zero_raw = header.encode().unwrap();
+        zero_raw[20..28].fill(0);
+        assert!(UnreliableHeaderV3::decode(&zero_raw).is_err());
     }
 
     #[test]

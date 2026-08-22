@@ -3,6 +3,7 @@ import Crypto
 import Foundation
 
 let openRejectResourceExhaustedReasonV3: UInt16 = 2
+let openRejectInvalidMetadataReasonV3: UInt16 = 4
 
 private enum TransportV3SessionLifecycle: Equatable, Sendable {
   case opening
@@ -750,7 +751,16 @@ actor TransportV3Session {
       let metadata = try TransportV3MetadataCodec.decode(open.metadata)
       let internalRPC = open.kind == TransportV3ByteStream.reservedRPCStreamKind
       guard !internalRPC || metadata.values.isEmpty else {
-        throw TransportV3SessionError.protocolViolation
+        try await rejectOpen(
+          carrierStream: carrierStream,
+          reader: reader,
+          id: preface.logicalStreamID,
+          kind: open.kind,
+          epoch: header.epoch,
+          openRaw: openRaw,
+          reason: openRejectInvalidMetadataReasonV3
+        )
+        return
       }
       if !internalRPC {
         guard inboundApplicationStreams < Int(config.maxInboundStreams) else {

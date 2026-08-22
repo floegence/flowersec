@@ -299,17 +299,50 @@ public enum StreamMetadataError: Error, Equatable, Sendable {
 ///
 /// Wire close codes, carrier errors, cryptographic state, and peer credentials are
 /// intentionally collapsed into this closed set before crossing the public boundary.
-public enum SessionError: String, Error, Equatable, Sendable {
-  case canceled
-  case timeout
-  case closed
-  case goingAway = "going_away"
-  case resourceExhausted = "resource_exhausted"
-  case streamRejected = "stream_rejected"
-  case streamReset = "stream_reset"
-  case rekeyFailed = "rekey_failed"
-  case livenessFailed = "liveness_failed"
-  case operationFailed = "operation_failed"
+public struct SessionError: Error, Equatable, Sendable, CustomStringConvertible,
+  CustomDebugStringConvertible, CustomReflectable
+{
+  public let rawValue: String
+  let retryDispositionOverride: RetryDispositionV3?
+
+  public static let canceled = SessionError("canceled")
+  public static let timeout = SessionError("timeout")
+  public static let closed = SessionError("closed")
+  public static let goingAway = SessionError("going_away")
+  public static let resourceExhausted = SessionError("resource_exhausted")
+  public static let streamRejected = SessionError("stream_rejected")
+  public static let streamReset = SessionError("stream_reset")
+  public static let rekeyFailed = SessionError("rekey_failed")
+  public static let livenessFailed = SessionError("liveness_failed")
+  public static let operationFailed = SessionError("operation_failed")
+
+  public init?(rawValue: String) {
+    guard Self.knownRawValues.contains(rawValue) else { return nil }
+    self.init(rawValue)
+  }
+
+  init(_ rawValue: String, retryDispositionOverride: RetryDispositionV3? = nil) {
+    self.rawValue = rawValue
+    self.retryDispositionOverride = retryDispositionOverride
+  }
+
+  static let knownRawValues: Set<String> = [
+    canceled.rawValue, timeout.rawValue, closed.rawValue, goingAway.rawValue,
+    resourceExhausted.rawValue, streamRejected.rawValue, streamReset.rawValue,
+    rekeyFailed.rawValue, livenessFailed.rawValue, operationFailed.rawValue,
+  ]
+
+  func terminalized() -> SessionError {
+    SessionError(rawValue, retryDispositionOverride: .terminal)
+  }
+
+  public var description: String { "Flowersec.SessionError(\(rawValue))" }
+  public var debugDescription: String { description }
+  public var customMirror: Mirror { Mirror(self, unlabeledChildren: []) }
+
+  public static func == (lhs: SessionError, rhs: SessionError) -> Bool {
+    lhs.rawValue == rhs.rawValue
+  }
 }
 
 /// Stable, redacted reason for authoritative session termination.

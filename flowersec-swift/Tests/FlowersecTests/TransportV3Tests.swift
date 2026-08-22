@@ -725,6 +725,15 @@ struct TransportV3Tests {
       #expect(throws: TransportV3CryptoError.invalidUnreliableMessage) {
         try UnreliableHeaderV3(encoded: malformedHeader)
       }
+      let zeroExpiryHeader = UnreliableHeaderV3(
+        epoch: epoch,
+        sequence: sequence,
+        expiresAtUnixMilliseconds: 0,
+        ciphertextLength: UInt32(plaintext.count + TransportV3Crypto.aeadTagBytes)
+      )
+      #expect(throws: TransportV3CryptoError.invalidUnreliableMessage) {
+        try zeroExpiryHeader.encoded()
+      }
       var tampered = ciphertext
       tampered[tampered.startIndex] ^= 1
       #expect(throws: TransportV3CryptoError.authenticationFailed) {

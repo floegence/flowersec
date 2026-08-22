@@ -61,6 +61,11 @@ describe("transport v3 FSD3 unreliable messages", () => {
   });
 
   test("rejects a zero FSD3 expiry", () => {
-    expect(() => encodeUnreliableMessageHeaderV3(0, 0n, 0n, 17)).toThrow("invalid FSD3 expiry");
+    expect(() => encodeUnreliableMessageHeaderV3(0, 0n, 0n, 17)).toThrow("invalid FSD3 header");
+  });
+
+  test("rejects ciphertext lengths outside the FSD3 wire contract", () => {
+    expect(() => encodeUnreliableMessageHeaderV3(0, 0n, 1n, 16)).toThrow("invalid FSD3 header");
+    expect(() => encodeUnreliableMessageHeaderV3(0, 0n, 1n, 993)).toThrow("invalid FSD3 header");
   });
 });

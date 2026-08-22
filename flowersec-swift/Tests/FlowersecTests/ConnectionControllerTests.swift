@@ -1067,6 +1067,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertTrue(failed)
     XCTAssertEqual(
       snapshot.failure, .artifactSource(ArtifactSourceFailure(disposition: .terminal)))
+    XCTAssertEqual(snapshot.failure?.retryDisposition, .terminal)
     XCTAssertEqual(snapshot.retryDisposition, .terminal)
     XCTAssertEqual(expected["final_state"] as? String, "failed")
     XCTAssertEqual(expected["public_error"] as? String, "connection_failed")
@@ -1080,6 +1081,50 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(expected["retire_callbacks"] as? Int, 0)
     XCTAssertEqual(expected["lease_terminal_states"] as? [String], [])
     XCTAssertEqual(expected["retry_delays_ms"] as? [Int], [250])
+    await controller.close()
+  }
+
+  func testAttemptExhaustionTerminalizesConnectionFailureDisposition() async throws {
+    let retired = AsyncCounterV3()
+    let source = SequenceArtifactSourceV3([
+      try lease(artifact: artifactV3(), retired: retired),
+      try lease(artifact: artifactV3(), retired: retired),
+    ])
+    let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
+    let attempts = AsyncCounterV3()
+    let controller = try ConnectionController(
+      source: source,
+      maximumAttempts: 2,
+      clock: clock.controllerClock,
+      connectOneShot: { _, _ in
+        _ = await attempts.increment()
+        throw ConnectError.connectionFailed
+      })
+
+    await controller.start()
+    let waiting = await waitForState(.waiting, controller: controller)
+    XCTAssertTrue(waiting)
+    let sleeping = await clock.waitForSleepCount(1)
+    XCTAssertTrue(sleeping)
+    clock.advance(wallMilliseconds: 0, monotonicMilliseconds: 250)
+    let secondWaiting = await waitForState(.waiting, controller: controller)
+    XCTAssertTrue(secondWaiting)
+    let woke = await controller.retryNow()
+    XCTAssertTrue(woke)
+    let failed = await waitForState(.failed, controller: controller)
+    XCTAssertTrue(failed)
+    let snapshot = await controller.snapshot()
+    guard case .connection(let failure) = snapshot.failure else {
+      XCTFail("expected connection failure")
+      await controller.close()
+      return
+    }
+    XCTAssertEqual(failure.code, .connectionFailed)
+    let failureDisposition = snapshot.failure?.retryDisposition
+    XCTAssertEqual(failureDisposition, RetryDispositionV3.terminal)
+    XCTAssertEqual(snapshot.retryDisposition, .terminal)
+    let attemptCount = await attempts.value
+    XCTAssertEqual(attemptCount, 2)
     await controller.close()
   }
 

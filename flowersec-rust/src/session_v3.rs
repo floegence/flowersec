@@ -3934,12 +3934,7 @@ async fn reject_inbound_open_v3(
         reset_inbound_before_delivery_v3(session, carrier, id).await;
         return;
     }
-    if let Err(error) = carrier.close_write().await {
-        if !session.is_closed() {
-            fail_session_v3(session, error);
-        }
-        return;
-    }
+    let _ = carrier.close_write().await;
     if let Err(error) = session.peer_ledger.lock().await.mark_terminal(id) {
         fail_session_v3(session, error);
     }

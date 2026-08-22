@@ -21,6 +21,8 @@ export const UNRELIABLE_MESSAGE_WIRE_BYTES_V3 = 1_024 as const;
 
 const HEADER_BYTES = 32;
 const TAG_BYTES = 16;
+const MIN_CIPHERTEXT_BYTES = TAG_BYTES + 1;
+const MAX_CIPHERTEXT_BYTES = UNRELIABLE_MESSAGE_MAX_PLAINTEXT_BYTES_V3 + TAG_BYTES;
 const MAX_PENDING_SENDS = 64;
 const MAX_UINT64 = (1n << 64n) - 1n;
 const encoder = new TextEncoder();
@@ -175,7 +177,10 @@ export function encodeUnreliableMessageHeaderV3(
   expiresAtUnixMs: bigint,
   ciphertextLength: number,
 ): Uint8Array {
-  if (expiresAtUnixMs === 0n) throw new Error("invalid FSD3 expiry");
+  if (expiresAtUnixMs === 0n || !Number.isInteger(ciphertextLength) ||
+      ciphertextLength < MIN_CIPHERTEXT_BYTES || ciphertextLength > MAX_CIPHERTEXT_BYTES) {
+    throw new Error("invalid FSD3 header");
+  }
   const header = new Uint8Array(HEADER_BYTES);
   header.set(encoder.encode("FSD3"));
   header[4] = 3;

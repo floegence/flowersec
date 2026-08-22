@@ -52,6 +52,8 @@ public struct ConnectError: Error, Equatable, Sendable {
 
   public var retryDispositionV3: RetryDispositionV3 { retryDisposition }
 
+  func terminalized() -> ConnectError { ConnectError(code, .terminal) }
+
   internal static let invalidOptions = artifactInvalid
   internal static let runtimeUnsupported = transportSecurityUnsupported
   internal static let canceled = ConnectError(.connectionFailed, .terminal)
