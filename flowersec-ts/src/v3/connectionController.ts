@@ -473,14 +473,20 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         this.#recordFailure("connect", error.code, error.disposition);
         return;
       }
+      const triggerKeys = blockPolicyRefreshTriggersV3(artifact.path.kind, result.failures, this.#cycle);
       const refresh = aggregateCandidateFailuresV3(result.failures, !this.#cycle.snapshot().replacementUsed);
       if (refresh === "policy_refresh") {
-        const triggerKeys = blockPolicyRefreshTriggersV3(artifact.path.kind, result.failures, this.#cycle);
         const failedKeys = new Set(result.failures.map(({ candidate }) => endpointKeyV3(artifact.path.kind, candidate)));
         replacementContext = { artifact, candidates: allCandidates, failures: result.failures, triggerKeys, failedKeys };
         this.#rememberFailure("connect", replacementTerminal(replacementContext).code);
         next = "replacement";
         continue;
+      }
+      if (triggerKeys.size > 0 && refresh.code !== "artifact_invalid" &&
+          refresh.code !== "expired_artifact") {
+        const terminal = this.#cycle.blockedPolicyTerminal();
+        this.#recordFailure("connect", terminal.code, terminal.disposition);
+        return;
       }
       this.#recordFailure("connect", refresh.code, refresh.disposition);
       if (refresh.disposition.kind === "terminal" || this.#attemptBudgetExhausted()) return;
