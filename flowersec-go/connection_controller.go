@@ -802,9 +802,9 @@ drained:
 		}
 		delay := time.Duration(delayMilliseconds) * time.Millisecond
 		if !wallSatisfied {
-			wallDelayMilliseconds := notBeforeUnixMilliseconds - wallNow.UnixMilli()
+			wallDelayMilliseconds := controllerWallDelayMilliseconds(notBeforeUnixMilliseconds, wallNow.UnixMilli())
 			wallDelay := time.Second
-			if wallDelayMilliseconds < int64(time.Second/time.Millisecond) {
+			if wallDelayMilliseconds < uint64(time.Second/time.Millisecond) {
 				wallDelay = time.Duration(wallDelayMilliseconds) * time.Millisecond
 			}
 			if delay == 0 || wallDelay < delay {
@@ -827,6 +827,16 @@ drained:
 		case <-timer.channel:
 		}
 	}
+}
+
+// controllerWallDelayMilliseconds computes a non-negative deadline delta
+// without overflowing when an injected wall clock rolls back to a negative
+// Unix-millisecond value.
+func controllerWallDelayMilliseconds(deadline, now int64) uint64 {
+	if now >= 0 {
+		return uint64(deadline - now)
+	}
+	return uint64(deadline) + uint64(-(now + 1)) + 1
 }
 
 func (controller *ConnectionController) beginNextAttempt(attempt uint64) {

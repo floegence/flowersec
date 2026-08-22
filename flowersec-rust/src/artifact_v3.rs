@@ -132,6 +132,19 @@ impl ArtifactV3 {
         &self.0.candidates
     }
 
+    pub(crate) fn controller_candidates(&self) -> Vec<CanonicalCandidateV3> {
+        self.0
+            .candidates
+            .iter()
+            .filter(|candidate| {
+                self.1
+                    .as_ref()
+                    .is_none_or(|ids| ids.contains(&candidate.id))
+            })
+            .cloned()
+            .collect()
+    }
+
     pub(crate) fn path_kind_for_controller(&self) -> &'static str {
         self.0.wire.path.kind()
     }
@@ -172,17 +185,7 @@ impl ArtifactV3 {
             _ => return Err(ArtifactErrorV3::Invalid),
         };
         Ok(ConnectionPlanV3 {
-            candidates: self
-                .0
-                .candidates
-                .iter()
-                .filter(|candidate| {
-                    self.1
-                        .as_ref()
-                        .is_none_or(|ids| ids.contains(&candidate.id))
-                })
-                .cloned()
-                .collect(),
+            candidates: self.controller_candidates(),
             path,
             role,
             local_endpoint_instance_id,

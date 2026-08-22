@@ -88,6 +88,28 @@ func TestConnectionControllerWaitUsesInjectedWallAndMonotonicClocks(t *testing.T
 	}
 }
 
+func TestConnectionControllerWaitSaturatesNegativeWallRollbackDelta(t *testing.T) {
+	clock := newTestControllerClock(time.UnixMilli(-1<<63), 0)
+	controller := &ConnectionController{
+		retry: make(chan struct{}, 1), changed: make(chan struct{}), done: make(chan struct{}),
+		retryNotBeforeUnixMilliseconds: -1, clock: clock.options(),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan bool, 1)
+	go func() {
+		result <- controller.wait(ctx, &ConnectError{code: ConnectConnectionFailed}, retryableDisposition(), 0, 0, 0)
+	}()
+	clock.waitForTimer(t, 0)
+	if got := clock.delays()[0]; got != time.Second {
+		t.Fatalf("rollback timer delay = %s, want 1s", got)
+	}
+	cancel()
+	if <-result {
+		t.Fatal("canceled rollback wait returned success")
+	}
+}
+
 type testControllerClock struct {
 	mu          sync.Mutex
 	wall        time.Time

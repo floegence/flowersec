@@ -568,9 +568,25 @@ struct PinIdentity {
     digest: [u8; 32],
 }
 
+fn merge_policy_public_code(
+    current: Option<ConnectErrorCode>,
+    next: ConnectErrorCode,
+) -> ConnectErrorCode {
+    if matches!(current, Some(ConnectErrorCode::TransportSecurityFailed))
+        || next == ConnectErrorCode::TransportSecurityFailed
+    {
+        ConnectErrorCode::TransportSecurityFailed
+    } else {
+        next
+    }
+}
+
 fn policy_identity(artifact: &ArtifactV3, error: ConnectError) -> PolicyIdentity {
     let path = artifact.path_kind_for_controller();
-    let candidates = artifact.canonical_candidates();
+    // Connector candidate masks are indexed over the controller-filtered
+    // plan, so provenance must use that same ordering after blocked policies
+    // remove candidates from a later attempt.
+    let candidates = artifact.controller_candidates();
     let source_endpoints = candidates
         .iter()
         .map(|candidate| EndpointIdentity {
@@ -711,6 +727,7 @@ async fn run_controller(inner: Arc<ControllerInner>) {
     let mut attempts_in_cycle = 0_u64;
     let mut replacement_used = false;
     let mut blocked_pin_policy = HashSet::new();
+    let mut blocked_public_code = None;
     loop {
         if inner.cancellation.is_cancelled() {
             close_inner(&inner).await;
@@ -753,7 +770,7 @@ async fn run_controller(inner: Arc<ControllerInner>) {
             inner.set_failed(
                 attempt,
                 connect_failure(
-                    ConnectErrorCode::TransportSecurityFailed,
+                    blocked_public_code.unwrap_or(ConnectErrorCode::TransportSecurityFailed),
                     RetryDisposition::Terminal,
                 ),
                 false,
@@ -786,6 +803,10 @@ async fn run_controller(inner: Arc<ControllerInner>) {
                     && !policy_identity(&attempt_artifact, error).pins.is_empty();
                 if policy_sensitive {
                     let trigger = policy_identity(&attempt_artifact, error);
+                    blocked_public_code = Some(merge_policy_public_code(
+                        blocked_public_code,
+                        trigger.public_code,
+                    ));
                     blocked_pin_policy.extend(trigger.pins.iter().cloned());
                     let _ = claimed.retire().await;
                     if replacement_used {
@@ -853,6 +874,7 @@ async fn run_controller(inner: Arc<ControllerInner>) {
         attempts_in_cycle = 0;
         replacement_used = false;
         blocked_pin_policy.clear();
+        blocked_public_code = None;
         retry_index = 0;
         if !inner.set_connected(attempt, session.clone()) {
             let _ = session.close().await;
@@ -1623,6 +1645,18 @@ mod tests {
             "wss://pin.example.org/flowersec/v3/direct"
         );
         assert_eq!(pin_trigger.failed_endpoints.len(), 2);
+
+        let filtered = artifact.with_controller_candidate_ids(HashSet::from(["z-pin".to_owned()]));
+        let filtered_trigger = policy_identity(
+            &filtered,
+            ConnectError::from_runtime_code(ConnectErrorCode::TransportSecurityFailed)
+                .with_v3_candidate_masks(0b1, 0b1),
+        );
+        assert_eq!(filtered_trigger.pins.len(), 1);
+        assert_eq!(
+            filtered_trigger.pins[0].endpoint.url,
+            "wss://pin.example.org/flowersec/v3/direct"
+        );
     }
 
     #[test]
@@ -1845,6 +1879,67 @@ mod tests {
             status.last_failure,
             Some(connect_failure(
                 ConnectErrorCode::ArtifactInvalid,
+                RetryDisposition::Terminal,
+            ))
+        );
+        controller.close().await;
+    }
+
+    #[tokio::test]
+    async fn source_future_constructor_panic_projects_to_artifact_invalid_terminal() {
+        let controller = ConnectionController::new_with_connector(
+            Arc::new(ConstructorPanicSource),
+            test_options(None),
+            scripted_connector(std::iter::empty::<ConnectorStep>()),
+        );
+        controller.start();
+        let status = wait_for_state(&controller, ConnectionState::Failed).await;
+        assert_eq!(
+            status.last_failure,
+            Some(connect_failure(
+                ConnectErrorCode::ArtifactInvalid,
+                RetryDisposition::Terminal,
+            ))
+        );
+        controller.close().await;
+    }
+
+    #[tokio::test]
+    async fn filtered_browser_opaque_policy_exhaustion_stays_connection_failed() {
+        let source = Arc::new(QueueSource::new([
+            Ok(test_lease(
+                pin_only_artifact([0x11; 32]),
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+            )),
+            Ok(test_lease(
+                pin_only_artifact([0x22; 32]),
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+            )),
+            Ok(test_lease(
+                pin_only_artifact([0x11; 32]),
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+            )),
+        ]));
+        let controller = ConnectionController::new_with_connector(
+            source.clone(),
+            test_options(Some(3)),
+            scripted_connector([
+                ConnectorStep::PreSpendOpaque,
+                ConnectorStep::PostSpendRetryable,
+            ]),
+        );
+        controller.start();
+        let _ = wait_for_state(&controller, ConnectionState::Waiting).await;
+        assert!(controller.retry_now());
+        let status = wait_for_state(&controller, ConnectionState::Failed).await;
+        assert_eq!(source.acquisitions.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            status.last_failure,
+            Some(connect_failure(
+                ConnectErrorCode::ConnectionFailed,
                 RetryDisposition::Terminal,
             ))
         );
@@ -2477,6 +2572,9 @@ mod tests {
     #[derive(Debug)]
     struct PanicSource;
 
+    #[derive(Debug)]
+    struct ConstructorPanicSource;
+
     #[async_trait]
     impl ArtifactSource for PanicSource {
         async fn acquire(
@@ -2484,6 +2582,21 @@ mod tests {
             _cancellation: CancellationToken,
         ) -> Result<ArtifactLeaseV3, ArtifactSourceError> {
             panic!("source contract violation");
+        }
+    }
+
+    impl ArtifactSource for ConstructorPanicSource {
+        fn acquire<'source, 'future>(
+            &'source self,
+            _cancellation: CancellationToken,
+        ) -> Pin<
+            Box<dyn Future<Output = Result<ArtifactLeaseV3, ArtifactSourceError>> + Send + 'future>,
+        >
+        where
+            'source: 'future,
+            Self: 'future,
+        {
+            panic!("source future construction violation");
         }
     }
 
@@ -2528,6 +2641,7 @@ mod tests {
     #[derive(Clone, Copy)]
     enum ConnectorStep {
         PreSpendSecurity,
+        PreSpendOpaque,
         PreSpendConnection,
         PreSpendExpired,
         PostSpendRetryable,
@@ -2550,6 +2664,10 @@ mod tests {
                 match step {
                     ConnectorStep::PreSpendSecurity => Err(ConnectError::from_runtime_code(
                         ConnectErrorCode::TransportSecurityFailed,
+                    )
+                    .with_v3_candidate_masks(1, 1)),
+                    ConnectorStep::PreSpendOpaque => Err(ConnectError::from_runtime_code(
+                        ConnectErrorCode::ConnectionFailed,
                     )
                     .with_v3_candidate_masks(1, 1)),
                     ConnectorStep::PreSpendConnection => Err(ConnectError::from_runtime_code(

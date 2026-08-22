@@ -119,9 +119,15 @@ describe("transport v3 production connection controller", () => {
       clock: immediateClock(),
       capabilitySnapshot,
     });
+    const controllerSnapshots: Array<{ state: string; attempt: number }> = [];
+    controller.subscribe((snapshot) => controllerSnapshots.push({
+      state: snapshot.state,
+      attempt: snapshot.attempt,
+    }));
     controller.start();
     await expect(controller.waitForSession()).resolves.toBe(session);
     expect(controller.state).toBe(expected.final_state);
+    expect(controllerSnapshots.find((snapshot) => snapshot.state === "connected")?.attempt).toBe(2);
     expect(acquire).toHaveBeenCalledTimes(expected.acquisitions);
     expect(connector).toHaveBeenCalledTimes(expected.connect_attempts);
     expect(cleanups[0]).toHaveBeenCalledTimes(expected.retire_callbacks);
@@ -334,6 +340,28 @@ describe("transport v3 production connection controller", () => {
         code: "connection_failed",
         disposition: { kind: "retryable" },
       } as unknown as ArtifactSourceResultV3),
+    }, connector, { capabilitySnapshot });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "artifact", code: "artifact_invalid" },
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(connector).not.toHaveBeenCalled();
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
+    expect(cleanup).toHaveBeenCalledOnce();
+    await controller.close();
+  });
+
+  test("retires a lease when malformed source reflection throws", async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined, cleanup);
+    const malformed = new Proxy({ kind: "lease", lease }, {
+      ownKeys: () => { throw new Error("source reflection failure"); },
+    });
+    const connector = vi.fn(async () => { throw new Error("connector must not run"); });
+    const controller = createConnectionControllerV3({
+      acquire: async () => malformed as unknown as ArtifactSourceResultV3,
     }, connector, { capabilitySnapshot });
     controller.start();
     await expect(controller.waitForSession()).rejects.toMatchObject({

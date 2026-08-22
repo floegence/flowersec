@@ -126,6 +126,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
   #cycle: ControllerCycleStateV3;
   #state: ConnectionControllerStateV3 = "idle";
   #session: Session | undefined;
+  #connectedAttempt = 0;
   #failure: ConnectionControllerFailureV3 | undefined;
   #disposition: RetryDispositionV3 | undefined;
   #scheduler: Promise<void> | undefined;
@@ -384,6 +385,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
           await result.session.close().catch(() => undefined);
           return;
         }
+        this.#connectedAttempt = this.#cycle.snapshot().attempts;
         this.#cycle.established();
         this.#failure = undefined;
         this.#disposition = undefined;
@@ -392,6 +394,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         const termination = await this.#waitTermination(result.session);
         if (termination === undefined || this.#lifetime.signal.aborted) return;
         this.#session = undefined;
+        this.#connectedAttempt = 0;
         await result.session.close().catch(() => undefined);
         this.#cycle = new ControllerCycleStateV3(this.#maximumAttempts);
         let sessionFailure: ConnectErrorV3;
@@ -488,9 +491,11 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
 
   async #acquire(): Promise<ArtifactSourceResultV3> {
     const acquisition = new SourceAcquisitionRaceV3(this.#source, this.#lifetime.signal);
+    let delivered: unknown;
     try {
       const result = await acquisition.value();
       await acquisition.settle();
+      delivered = result;
       if (result === undefined) return invalidSourceResult();
       if (result === null || typeof result !== "object") return invalidSourceResult();
       if (result.kind === "lease") {
@@ -517,6 +522,8 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
       return invalidSourceResult();
     } catch (error) {
       await acquisition.settle();
+      const malformedLease = safeDeliveredLease(delivered);
+      if (malformedLease !== undefined) await this.#claimAndRetire(malformedLease);
       if (error instanceof ConnectErrorV3) {
         try {
           if (!ARTIFACT_SOURCE_FAILURE_CODES_V3.has(error.code)) return invalidSourceResult();
@@ -581,7 +588,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
   #snapshot(): ConnectionControllerSnapshotV3<Session> {
     return Object.freeze({
       state: this.#state,
-      attempt: this.#cycle.snapshot().attempts,
+      attempt: this.#state === "connected" ? this.#connectedAttempt : this.#cycle.snapshot().attempts,
       ...(this.currentSession === undefined ? {} : { currentSession: this.currentSession }),
       ...(this.#failure === undefined ? {} : { failure: this.#failure }),
       ...(this.#disposition === undefined ? {} : { retryDisposition: this.#disposition }),
@@ -701,6 +708,15 @@ function hasExactOwnKeys(value: object, expected: readonly string[]): boolean {
 function deliveredLease(value: object): ArtifactLeaseV3 | undefined {
   const lease = Reflect.get(value, "lease");
   return lease !== null && typeof lease === "object" ? lease as ArtifactLeaseV3 : undefined;
+}
+
+function safeDeliveredLease(value: unknown): ArtifactLeaseV3 | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  try {
+    return deliveredLease(value);
+  } catch {
+    return undefined;
+  }
 }
 
 function sourceFailure(result: Extract<ArtifactSourceResultV3, { kind: "failure" }>): ConnectErrorV3 {
