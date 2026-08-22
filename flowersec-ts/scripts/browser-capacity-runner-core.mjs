@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 import path from "node:path";
+import process from "node:process";
 
 import { chromiumExecutablePath } from "./browser-test-runner-core.mjs";
 
@@ -18,6 +19,7 @@ export function normalizeBrowserCapacityPlan(input) {
   if (streamCapacity && topology !== "browser_webtransport" && topology !== "browser_tunnel_wt_wss" && topology !== "browser_tunnel_wt_quic") {
     throw new TypeError("browser stream capacity topology is invalid");
   }
+  const operationDeadlineMs = browserCapacityOperationDeadlineMs(workload);
   return Object.freeze({
     schema_version: exactInteger(plan.schema_version, "schema_version", 1, 1),
     topology,
@@ -34,8 +36,20 @@ export function normalizeBrowserCapacityPlan(input) {
     control_bind_address: ipAddress(plan.control_bind_address, "control_bind_address"),
     event_sink_url: httpURL(plan.event_sink_url, "event_sink_url"),
     output_directory: absolutePath(plan.output_directory, "output_directory"),
-    operation_deadline_ms: exactInteger(plan.operation_deadline_ms, "operation_deadline_ms", streamCapacity ? 60_000 : 30_000, streamCapacity ? 60_000 : 30_000),
+    operation_deadline_ms: exactInteger(plan.operation_deadline_ms, "operation_deadline_ms", operationDeadlineMs, operationDeadlineMs),
   });
+}
+
+// The Go performance runner scales frozen capacity deadlines with its suite budget.
+// Keep the browser-side validation bound to that same deterministic contract.
+export function browserCapacityOperationDeadlineMs(workload, rawBudget = process.env.FLOWERSEC_PERFORMANCE_BUDGET) {
+  const streamCapacity = workload === "stream_capacity";
+  const defaultDeadlineMs = streamCapacity ? 60_000 : 30_000;
+  const budgetMs = parseGoDurationMilliseconds(rawBudget);
+  if (budgetMs === null || budgetMs < 5 * 60_000 || budgetMs > 24 * 60 * 60_000) return defaultDeadlineMs;
+  const baseDeadlineMs = streamCapacity ? 10_000 : 5_000;
+  const scale = Math.min(budgetMs / (10 * 60_000), 5);
+  return Math.round((baseDeadlineMs * scale) / 10) * 10;
 }
 
 export function capacityStreamAssignments(streams, workers) {
@@ -173,6 +187,17 @@ function positiveInteger(value, name) {
 function exactInteger(value, name, minimum, maximum) {
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new TypeError(`${name} must be between ${minimum} and ${maximum}`);
   return value;
+}
+
+function parseGoDurationMilliseconds(value) {
+  if (typeof value !== "string" || value.length === 0) return null;
+  const match = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?$/.exec(value);
+  if (match === null || match[0] === "") return null;
+  const hours = Number(match[1] ?? 0);
+  const minutes = Number(match[2] ?? 0);
+  const seconds = Number(match[3] ?? 0);
+  const milliseconds = ((hours * 60 + minutes) * 60 + seconds) * 1000;
+  return Number.isSafeInteger(Math.round(milliseconds)) ? milliseconds : null;
 }
 
 function finiteNumber(value, name, minimum) {

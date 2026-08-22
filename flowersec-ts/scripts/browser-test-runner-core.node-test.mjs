@@ -25,6 +25,7 @@ import {
 } from "./browser-test-runner-core.mjs";
 import {
   capacityStreamAssignments,
+  browserCapacityOperationDeadlineMs,
   chromiumCapacityLaunchOptions,
   createBrowserCapacityCloseBatcher,
   normalizeBrowserCapacityPlan,
@@ -533,6 +534,21 @@ test("freezes Chromium tunnel capacity at exactly 1000 live sessions", () => {
   assert.ok(!options.args.some((argument) => argument.startsWith("--unsafely-treat-insecure-origin-as-secure=")));
   assert.ok(options.args.includes(`--log-net-log=${path.join(outputDirectory, "chromium-netlog.json")}`));
   assert.ok(options.args.includes("--net-log-capture-mode=IncludeSensitive"));
+});
+
+test("matches Go performance-budget scaling for browser capacity deadlines", () => {
+  assert.equal(browserCapacityOperationDeadlineMs("held_sessions", undefined), 30_000);
+  assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", undefined), 60_000);
+  assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "5m0s"), 2_500);
+  assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "5m0s"), 5_000);
+  assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "10m0s"), 5_000);
+  assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "10m0s"), 10_000);
+  assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "20m0s"), 10_000);
+  assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "20m0s"), 20_000);
+  assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "24h0m0s"), 25_000);
+  assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "24h0m0s"), 50_000);
+  assert.equal(browserCapacityOperationDeadlineMs("held_sessions", "invalid"), 30_000);
+  assert.equal(browserCapacityOperationDeadlineMs("stream_capacity", "invalid"), 60_000);
 });
 
 test("can disable the competing WebSocket candidate without replacing WebTransport", async () => {
