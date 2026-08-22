@@ -90,10 +90,13 @@ also reads the live gate and therefore fails closed after invalidation.
 
 Browser WebTransport ready rejection is opaque. In CA mode it is ordinary
 connection_failed with retryable disposition and does not trigger policy
-refresh. In pin mode it remains public connection_failed with retryable
-disposition and carries only the internal browser_pin_opaque marker. That
-marker permits one policy-sensitive replacement, does not claim a TLS reason,
-and cannot emit pin-mismatch telemetry.
+refresh. In pin mode, a rejection from the WebTransport ready promise remains
+public connection_failed with retryable disposition and carries only the
+internal browser_pin_opaque marker. Caller cancellation, timeout, or race-loser
+abort is not a ready rejection: it remains ordinary cancellation/failure,
+without the marker or a policy-sensitive replacement. The marker permits one
+policy-sensitive replacement, does not claim a TLS reason, and cannot emit
+pin-mismatch telemetry.
 
 ### 3.2 Browser WebSocket
 
