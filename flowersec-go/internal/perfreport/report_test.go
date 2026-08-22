@@ -80,14 +80,14 @@ func TestWriteMarkdownPreservesObservedMetricsAndPartialFailure(t *testing.T) {
 	}
 }
 
-func TestReportRejectsMissingMetricsAndWrongHost(t *testing.T) {
+func TestReportRejectsMissingMetricsAndUnnamedHost(t *testing.T) {
 	report := Report{SourceSHA: strings.Repeat("b", 40), Status: StatusPass, StartedAt: time.Now(), EndedAt: time.Now().Add(time.Second), Environment: Environment{HostName: "udesk24", LogicalCPUs: 1, MemoryBytes: 1}, Cases: []CaseResult{{ID: "case", Section: SectionCapacity, Status: StatusPass}}}
 	if err := report.Validate(); err == nil {
 		t.Fatal("successful case without observed metrics was accepted")
 	}
 	report.Cases[0].Measurements = []Measurement{{Name: "sessions", Observed: 1000, Threshold: 1000, Unit: "sessions", Comparator: ">=", Status: StatusPass}}
-	report.Environment.HostName = "udesk"
+	report.Environment.HostName = "  "
 	if err := report.Validate(); err == nil {
-		t.Fatal("performance report accepted a host other than udesk24")
+		t.Fatal("performance report accepted an unnamed host")
 	}
 }

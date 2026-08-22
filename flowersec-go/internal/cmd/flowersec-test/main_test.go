@@ -217,6 +217,14 @@ func TestPerformanceBudgetEnvironmentIsExplicit(t *testing.T) {
 	}
 }
 
+func TestCPUModelFromSourcesSupportsARMWithoutProcModelName(t *testing.T) {
+	procCPUInfo := "processor\t: 0\nCPU part\t: 0xd05\n"
+	lscpuOutput := "Architecture: aarch64\nModel name: Cortex-A55\n"
+	if got := cpuModelFromSources(procCPUInfo, lscpuOutput); got != "Cortex-A55" {
+		t.Fatalf("ARM CPU model = %q, want Cortex-A55", got)
+	}
+}
+
 func TestPerformanceStateRestoresSameSHAAndRejectsDifferentSHA(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "performance-results.json")
 	state := performanceState{SourceSHA: testSourceSHA, StartedAt: time.Now(), Cases: []perfreport.CaseResult{{ID: "case/a", Section: perfreport.SectionCapacity, Status: perfreport.StatusPass, Measurements: []perfreport.Measurement{{Name: "sessions", Observed: 1000, Threshold: 1000, Unit: "sessions", Comparator: ">=", Status: perfreport.StatusPass}}}}}

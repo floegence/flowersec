@@ -404,12 +404,7 @@ func capturePerformanceEnvironment() (perfreport.Environment, error) {
 		}
 	}
 	cpuInfo, _ := os.ReadFile("/proc/cpuinfo")
-	for _, line := range strings.Split(string(cpuInfo), "\n") {
-		if strings.HasPrefix(line, "model name") {
-			environment.CPUModel = strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
-			break
-		}
-	}
+	environment.CPUModel = cpuModelFromSources(string(cpuInfo), commandVersion("lscpu"))
 	memoryInfo, _ := os.ReadFile("/proc/meminfo")
 	for _, line := range strings.Split(string(memoryInfo), "\n") {
 		fields := strings.Fields(line)
@@ -419,7 +414,7 @@ func capturePerformanceEnvironment() (perfreport.Environment, error) {
 			break
 		}
 	}
-	if environment.HostName != "udesk24" || environment.OS == "" || environment.Kernel == "" || environment.CPUModel == "" || environment.MemoryBytes == 0 {
+	if strings.TrimSpace(environment.HostName) == "" || environment.OS == "" || environment.Kernel == "" || environment.CPUModel == "" || environment.MemoryBytes == 0 {
 		return perfreport.Environment{}, fmt.Errorf("incomplete or unsupported performance environment: host=%q os=%q kernel=%q cpu=%q memory=%d", environment.HostName, environment.OS, environment.Kernel, environment.CPUModel, environment.MemoryBytes)
 	}
 	return environment, nil
@@ -431,4 +426,18 @@ func commandVersion(name string, arguments ...string) string {
 		return "unavailable"
 	}
 	return strings.TrimSpace(string(output))
+}
+
+func cpuModelFromSources(procCPUInfo, lscpuOutput string) string {
+	for _, line := range strings.Split(procCPUInfo, "\n") {
+		if strings.HasPrefix(line, "model name") {
+			return strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
+		}
+	}
+	for _, line := range strings.Split(lscpuOutput, "\n") {
+		if strings.HasPrefix(line, "Model name:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "Model name:"))
+		}
+	}
+	return ""
 }

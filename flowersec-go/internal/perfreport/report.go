@@ -169,8 +169,8 @@ func (value Report) Validate() error {
 	if value.StartedAt.IsZero() || value.EndedAt.Before(value.StartedAt) {
 		return errors.New("report timestamps are invalid")
 	}
-	if value.Environment.HostName != "udesk24" || value.Environment.LogicalCPUs <= 0 || value.Environment.MemoryBytes == 0 {
-		return errors.New("performance reports require the explicit udesk24 environment")
+	if strings.TrimSpace(value.Environment.HostName) == "" || value.Environment.LogicalCPUs <= 0 || value.Environment.MemoryBytes == 0 {
+		return errors.New("performance reports require a named host with logical CPUs and memory")
 	}
 	if len(value.Cases) == 0 {
 		return errors.New("report contains no cases")
