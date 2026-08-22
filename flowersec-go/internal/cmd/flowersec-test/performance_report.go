@@ -449,7 +449,9 @@ func cpuModelFromSources(procCPUInfo, lscpuOutput string) string {
 	}
 	for _, line := range strings.Split(lscpuOutput, "\n") {
 		if strings.HasPrefix(line, "Model name:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "Model name:"))
+			if model := strings.TrimSpace(strings.TrimPrefix(line, "Model name:")); model != "" {
+				return model
+			}
 		}
 	}
 	return ""

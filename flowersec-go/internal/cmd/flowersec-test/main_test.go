@@ -229,7 +229,7 @@ func TestCPUModelFromSourcesSupportsARMWithoutProcModelName(t *testing.T) {
 
 func TestCPUModelFromSourcesIgnoresMalformedProcModelName(t *testing.T) {
 	procCPUInfo := "model name\n"
-	lscpuOutput := "Model name: Cortex-A76\n"
+	lscpuOutput := "Model name:\nModel name: Cortex-A76\n"
 	if got := cpuModelFromSources(procCPUInfo, lscpuOutput); got != "Cortex-A76" {
 		t.Fatalf("malformed proc CPU model = %q, want lscpu fallback", got)
 	}
@@ -252,6 +252,29 @@ func TestPerformanceStateRestoresSameSHAAndRejectsDifferentSHA(t *testing.T) {
 	otherEnvironment.HostName = "other-host"
 	if _, err := readPerformanceState(path, testSourceSHA, otherEnvironment); err == nil || !strings.Contains(err.Error(), "environment") {
 		t.Fatalf("different environment was not rejected: %v", err)
+	}
+}
+
+func TestPerformanceStateRejectsMalformedOrUnboundEnvironment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "performance-results.json")
+	valid := performanceState{SourceSHA: testSourceSHA, StartedAt: time.Now(), Environment: testPerformanceEnvironment, Cases: []perfreport.CaseResult{}}
+	data, err := json.Marshal(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, payload := range map[string][]byte{
+		"unknown field":       append(append([]byte(nil), data[:len(data)-1]...), []byte(`,"extra":true}`)...),
+		"trailing json":       append(append([]byte(nil), data...), []byte(`{}`)...),
+		"missing environment": []byte(`{"source_sha":"0123456789abcdef0123456789abcdef01234567","started_at":"2026-08-22T00:00:00Z","cases":[]}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(path, payload, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := readPerformanceState(path, testSourceSHA, testPerformanceEnvironment); err == nil {
+				t.Fatal("malformed performance state was accepted")
+			}
+		})
 	}
 }
 
