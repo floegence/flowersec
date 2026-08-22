@@ -246,6 +246,9 @@ no connection.
 ## 6. TLS Policy
 
 Every candidate has exactly one mode.
+Every v3 endpoint is TLS 1.3-only. Native clients and servers configure their
+TLS providers to reject older protocol versions; browser adapters rely on the
+browser's secure transport and the server-side TLS 1.3 policy.
 
 CA mode is exactly the object containing mode equal to ca. It performs
 platform PKI chain, signature, validity, key-usage, security-policy, configured

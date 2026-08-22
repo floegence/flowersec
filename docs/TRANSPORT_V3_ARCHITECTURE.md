@@ -104,6 +104,10 @@ disposition. Error text is not parsed to guess TLS causes.
 
 ### 3.3 Native TLS
 
+Every v3 endpoint is TLS 1.3-only. Native clients and servers reject older
+protocol versions at provider configuration, while browser adapters rely on
+the browser secure transport and the server-side TLS 1.3 policy.
+
 Go, Rust, Node.js, and Swift pin adapters inspect the handshake leaf
 certificate, enforce the portable X.509 profile, hash complete DER, and compare
 against active pins in constant time. The standard TLS provider still proves
