@@ -46,6 +46,16 @@ func TestConfigureBrowserWorkerCommandAllowsSignalCleanup(t *testing.T) {
 	}
 }
 
+func TestBrowserCapacityWorkerCommandUsesSignalCleanup(t *testing.T) {
+	command := browserCapacityWorkerCommand(context.Background(), "fc-test", "/release/runner")
+	if command.Cancel == nil {
+		t.Fatal("browser capacity worker command has no cancellation hook")
+	}
+	if command.WaitDelay != 35*time.Second {
+		t.Fatalf("browser capacity worker wait delay = %s, want 35s", command.WaitDelay)
+	}
+}
+
 func runBrowserWorkerSignalHelper() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()

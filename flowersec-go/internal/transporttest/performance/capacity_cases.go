@@ -661,7 +661,10 @@ func writeCapacityDebugStack() error {
 
 func capacityCleanupCloseWindow(definition capacityCaseDefinition, contract capacityContract) time.Duration {
 	if definition.Kind == capacityBrowserTunnel || contract.StreamsPerSession > 0 {
-		return contract.Cleanup / 6
+		// The browser controller already batches close requests. A staggered
+		// browser schedule leaves most requests queued behind the first bounded
+		// batch when the scaled performance window is short.
+		return 0
 	}
 	return contract.Cleanup * 2 / 3
 }

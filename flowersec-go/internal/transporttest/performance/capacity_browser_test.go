@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,7 +21,9 @@ func TestBrowserCapacityWorkerProcess(t *testing.T) {
 	if os.Getenv("FLOWERSEC_BROWSER_CAPACITY_WORKER") != "1" {
 		t.Skip("browser capacity worker subprocess only")
 	}
-	ctx, cancel := context.WithTimeout(performanceTestContext, 5*time.Minute)
+	signalCtx, stopSignals := signal.NotifyContext(performanceTestContext, os.Interrupt)
+	defer stopSignals()
+	ctx, cancel := context.WithTimeout(signalCtx, 5*time.Minute)
 	defer cancel()
 	if err := runBrowserWorkerWithContext(ctx, os.Stdin, os.Stdout); err != nil {
 		t.Fatal(err)

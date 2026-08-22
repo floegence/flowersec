@@ -30,6 +30,7 @@ func nativeStreamID(stream carrier.Stream) int64 {
 func browserCapacityWorkerCommand(ctx context.Context, namespace, executable string) *exec.Cmd {
 	command := exec.CommandContext(ctx, "/usr/bin/nsenter", "--net=/var/run/netns/"+namespace, "--", executable, "-test.run=^TestBrowserCapacityWorkerProcess$")
 	command.Env = append(os.Environ(), "FLOWERSEC_BROWSER_CAPACITY_WORKER=1")
+	configureBrowserWorkerCommand(command)
 	return command
 }
 

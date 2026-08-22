@@ -166,11 +166,11 @@ func TestCapacityCleanupReservesResourceConvergenceWindow(t *testing.T) {
 		t.Fatalf("regular cleanup close window = %s, want 20s", got)
 	}
 	stream := capacityContract{Cleanup: 30 * time.Second, StreamsPerSession: 128}
-	if got := capacityCleanupCloseWindow(capacityCaseDefinition{Kind: capacityBrowserStream}, stream); got != 5*time.Second {
-		t.Fatalf("stream cleanup close window = %s, want 5s", got)
+	if got := capacityCleanupCloseWindow(capacityCaseDefinition{Kind: capacityBrowserStream}, stream); got != 0 {
+		t.Fatalf("stream cleanup close window = %s, want immediate batching", got)
 	}
-	if got := capacityCleanupCloseWindow(capacityCaseDefinition{Kind: capacityBrowserTunnel}, regular); got != 5*time.Second {
-		t.Fatalf("browser tunnel cleanup close window = %s, want 5s", got)
+	if got := capacityCleanupCloseWindow(capacityCaseDefinition{Kind: capacityBrowserTunnel}, regular); got != 0 {
+		t.Fatalf("browser tunnel cleanup close window = %s, want immediate batching", got)
 	}
 }
 
