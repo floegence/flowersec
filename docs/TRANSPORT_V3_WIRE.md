@@ -320,9 +320,33 @@ listener_audience, profile, rendezvous_group_id, role, and
 session_contract_hash_b64u.
 
 Every value is projected from a validated artifact. The caller cannot supply
-an independent value. The receiver repeats URL and TLS policy validation,
-ordering and endpoint uniqueness, both hashes, chosen-candidate membership,
-role interpretation, and every authorization-record equality.
+an independent value. The projection is exact:
+
+~~~text
+common.profile                    = artifact.profile = "flowersec/3"
+common.channel_id                 = artifact.session.channel_id
+common.session_contract_hash_b64u = artifact.session.contract_hash_b64u
+common.rendezvous_group_id        = artifact.path.rendezvous_group_id
+common.listener_audience          = artifact.path.listener_audience
+common.candidates                 = canonicalize(artifact.path.candidates)
+common.candidate_set_hash_b64u     = candidate_set_hash(common.candidates)
+common.chosen_candidate_id         = chosen_candidate.id
+
+direct.routing_token              = artifact.path.routing_token
+
+tunnel.attach_token               = artifact.path.token
+tunnel.endpoint_instance_id       = artifact.path.local_endpoint_instance_id
+tunnel.role                       = artifact.path.role
+~~~
+
+Direct FSB3 is generated only from a direct artifact and MUST omit
+`attach_token`, `endpoint_instance_id`, and `role`. Tunnel FSB3 is generated
+only from a tunnel artifact and MUST omit `routing_token`; tunnel role `1`
+means the Flowersec client role and role `2` means the Flowersec server role.
+The receiver repeats URL and TLS policy validation, ordering and endpoint
+uniqueness, both hashes, chosen-candidate membership, role interpretation, and
+every authorization-record equality. Any missing, cross-variant, role, or
+projection mismatch fails admission closed.
 
 ~~~text
 admission_binding = SHA-256(

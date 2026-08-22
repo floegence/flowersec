@@ -384,6 +384,31 @@
       "role",
       "session_contract_hash_b64u"
     ],
+    "projection": {
+      "common": {
+        "profile": "artifact.profile",
+        "channel_id": "artifact.session.channel_id",
+        "session_contract_hash_b64u": "artifact.session.contract_hash_b64u",
+        "rendezvous_group_id": "artifact.path.rendezvous_group_id",
+        "listener_audience": "artifact.path.listener_audience",
+        "candidates": "canonicalize(artifact.path.candidates)",
+        "candidate_set_hash_b64u": "candidate_set_hash(common.candidates)",
+        "chosen_candidate_id": "chosen_candidate.id"
+      },
+      "direct": {
+        "routing_token": "artifact.path.routing_token"
+      },
+      "tunnel": {
+        "attach_token": "artifact.path.token",
+        "endpoint_instance_id": "artifact.path.local_endpoint_instance_id",
+        "role": "artifact.path.role"
+      },
+      "forbidden_variant_fields": {
+        "direct": ["attach_token", "endpoint_instance_id", "role"],
+        "tunnel": ["routing_token"]
+      },
+      "role_values": {"1": "client", "2": "server"}
+    },
     "canonical_codec": "RFC8785",
     "frame_bytes": "12 + payload_length",
     "payload_bytes_min": 1,

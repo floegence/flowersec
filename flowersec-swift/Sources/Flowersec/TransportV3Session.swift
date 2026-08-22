@@ -2940,7 +2940,7 @@ private final class TransportV3RPCStreamAdapter: FlowersecRPCStream, @unchecked 
   func reset() async throws { try await stream.reset() }
 }
 
-private enum TransportV3MetadataCodec {
+enum TransportV3MetadataCodec {
   static func encode(_ metadata: StreamMetadata) throws -> Data {
     var output = Data()
     try appendObject(metadata.values, to: &output)
@@ -2948,7 +2948,8 @@ private enum TransportV3MetadataCodec {
   }
 
   static func decode(_ data: Data) throws -> StreamMetadata {
-    let raw = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+    let canonical = try OpenMetadataCanonicalizerV3.canonicalize(data, allowEmpty: false)
+    let raw = try JSONSerialization.jsonObject(with: canonical, options: [.fragmentsAllowed])
     guard let object = raw as? [String: Any] else {
       throw TransportV3SessionError.protocolViolation
     }
@@ -2959,7 +2960,18 @@ private enum TransportV3MetadataCodec {
     if value is NSNull { return .null }
     if let number = value as? NSNumber {
       if CFGetTypeID(number) == CFBooleanGetTypeID() { return .bool(number.boolValue) }
-      return .integer(number.int64Value)
+      let integer = number.int64Value
+      let double = number.doubleValue
+      guard
+        double.isFinite,
+        double == double.rounded(.towardZero),
+        double == Double(integer),
+        integer >= -9_007_199_254_740_991,
+        integer <= 9_007_199_254_740_991
+      else {
+        throw TransportV3SessionError.protocolViolation
+      }
+      return .integer(integer)
     }
     if let string = value as? String { return .string(string) }
     if let array = value as? [Any] { return .array(try array.map(decodeValue)) }

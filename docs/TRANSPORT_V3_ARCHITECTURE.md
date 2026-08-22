@@ -308,6 +308,16 @@ Session contract or E2EE key. Listener shutdown first cancels the phase, then
 force-closes non-responsive upgraded and pre-upgrade sockets at its cleanup
 deadline.
 
+The re-projection is field-exact. The common FSB3 fields are taken from the
+artifact profile, session channel and contract hash, path rendezvous group and
+listener audience, canonical candidate set and its hash, and the selected
+candidate ID. Direct artifacts additionally project `path.routing_token` and
+MUST omit `attach_token`, `endpoint_instance_id`, and `role`. Tunnel artifacts
+project `path.token`, `path.local_endpoint_instance_id`, and `path.role`, and
+MUST omit `routing_token`; tunnel roles `1` and `2` mean client and server
+respectively. Missing fields, cross-variant fields, role mismatches, or any
+unequal projected value fail admission closed.
+
 ## 6. Candidate Race and Aggregation
 
 Unsupported candidates are skipped without transport construction. Explicitly

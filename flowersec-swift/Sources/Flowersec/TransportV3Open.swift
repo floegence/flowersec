@@ -119,7 +119,7 @@ func computeOpenHashV3(_ rawOpenPayload: Data) throws -> Data {
   return Data(SHA256.hash(data: preimage))
 }
 
-private enum OpenMetadataCanonicalizerV3 {
+enum OpenMetadataCanonicalizerV3 {
   private static let maxDepth = 4
   private static let maxNodes = 64
   private static let maxObjectKeys = 64
