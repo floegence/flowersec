@@ -685,6 +685,59 @@ describe("transport v3 production connection controller", () => {
     expect(calls).toBe(3);
   });
 
+  test("keeps TLS security precedence for mixed CA and opaque failures after replacement retry", async () => {
+    const primary = singleCandidateArtifact(primaryArtifact, "t-pin");
+    const replacement = withChangedWebTransportPin(primary);
+    const leases = [primary, replacement, primaryArtifact].map((artifact) =>
+      createArtifactLeaseV3Internal(artifact, async () => undefined));
+    const acquire = vi.fn(async (): Promise<ArtifactSourceResultV3> => ({
+      kind: "lease",
+      lease: leases.shift()!,
+    }));
+    let calls = 0;
+    const controller = createConnectionControllerV3({ acquire }, async (context) => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          kind: "candidate_failures" as const,
+          failures: [{
+            candidate: context.candidates[0]!,
+            failure: new TransportFailureV3("tls_failed", "pin_mismatch"),
+          }],
+        };
+      }
+      if (calls === 2) {
+        await commitArtifactLeaseSpendV3(context.claim);
+        return {
+          kind: "post_spend_failure" as const,
+          error: new ConnectErrorV3("connection_failed", { kind: "retryable" }),
+        };
+      }
+      const opaque = context.candidates.find(({ id }) => id === "q-pin")!;
+      const ca = context.candidates.find(({ id }) => id === "w-ca")!;
+      return {
+        kind: "candidate_failures" as const,
+        failures: [
+          { candidate: opaque, failure: new TransportFailureV3("connection_failed", "browser_pin_opaque") },
+          { candidate: ca, failure: new TransportFailureV3("tls_failed", "ca_untrusted") },
+        ],
+      };
+    }, {
+      maximumAttempts: 3,
+      nowUnixSeconds: () => 1_900_000_000,
+      clock: immediateClock(),
+      capabilitySnapshot,
+    });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "connect", code: "transport_security_failed" },
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(acquire).toHaveBeenCalledTimes(3);
+    expect(calls).toBe(3);
+  });
+
   test("makes a non-expiry replacement pre-spend failure terminal", async () => {
     const replacement = withChangedWebTransportPin(primaryArtifact);
     const first = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined);

@@ -482,8 +482,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         next = "replacement";
         continue;
       }
-      if (triggerKeys.size > 0 && refresh.code !== "artifact_invalid" &&
-          refresh.code !== "expired_artifact") {
+      if (triggerKeys.size > 0 && refresh.code === "connection_failed") {
         const terminal = this.#cycle.blockedPolicyTerminal();
         this.#recordFailure("connect", terminal.code, terminal.disposition);
         return;
