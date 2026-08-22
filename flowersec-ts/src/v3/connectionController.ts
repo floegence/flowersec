@@ -675,9 +675,9 @@ class SourceAcquisitionRaceV3 {
 
   async #retireLateLease(result: ArtifactSourceResultV3): Promise<void> {
     if (result === null || typeof result !== "object") return;
-    const lease = deliveredLease(result);
-    if (lease === undefined) return;
     try {
+      const lease = deliveredLease(result);
+      if (lease === undefined) return;
       await retireArtifactLeaseV3(claimArtifactLeaseV3(lease));
     } catch {
       // Late source cleanup is intentionally redacted at the public boundary.
