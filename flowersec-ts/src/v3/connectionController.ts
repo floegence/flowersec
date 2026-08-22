@@ -25,6 +25,7 @@ import {
 } from "./controller.js";
 import {
   ConnectErrorV3,
+  TransportFailureV3,
   validateRetryDispositionV3,
   type RetryDispositionV3,
 } from "./security.js";
@@ -356,9 +357,9 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         return;
       }
 
-      let result: LeaseAttemptResultV3<Session>;
+      let rawResult: unknown;
       try {
-        result = await this.#connector({
+        rawResult = await this.#connector({
           kind: next,
           artifact,
           candidates,
@@ -368,14 +369,24 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
           assertArtifactFresh: () => this.#assertArtifactFresh(artifact),
         });
       } catch {
-        result = {
+        rawResult = {
           kind: "post_spend_failure",
           error: new ConnectErrorV3("connection_failed", { kind: "terminal" }),
         };
       }
+      let result = normalizeLeaseAttemptResultV3<Session>(rawResult, candidates);
+      if (result === undefined) {
+        const malformedSession = sessionFromMalformedConnectorResultV3(rawResult);
+        if (artifactLeaseStateV3(claim) === "claimed") await retireArtifactLeaseV3(claim);
+        if (malformedSession !== undefined) await closeManagedSessionV3(malformedSession);
+        if (this.#lifetime.signal.aborted) return;
+        this.#cycle.recordFailedAcquisitionOrLease();
+        this.#recordFailure("connect", "artifact_invalid", { kind: "terminal" });
+        return;
+      }
       if (this.#lifetime.signal.aborted) {
         if (result.kind === "established") {
-          await result.session.close().catch(() => undefined);
+          await closeManagedSessionV3(result.session);
         } else if (artifactLeaseStateV3(claim) === "claimed") {
           await retireArtifactLeaseV3(claim);
         }
@@ -387,7 +398,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
           if (artifactLeaseStateV3(claim) === "claimed") await retireArtifactLeaseV3(claim);
           this.#cycle.recordFailedAcquisitionOrLease();
           this.#recordFailure("connect", "artifact_invalid", { kind: "terminal" });
-          await result.session.close().catch(() => undefined);
+          await closeManagedSessionV3(result.session);
           return;
         }
         this.#connectedAttempt = this.#cycle.snapshot().attempts;
@@ -400,7 +411,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         if (termination === undefined || this.#lifetime.signal.aborted) return;
         this.#session = undefined;
         this.#connectedAttempt = 0;
-        await result.session.close().catch(() => undefined);
+        await closeManagedSessionV3(result.session);
         this.#cycle = new ControllerCycleStateV3(this.#maximumAttempts);
         let sessionFailure: ConnectErrorV3;
         try {
@@ -440,19 +451,20 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
       }
 
       if (result.kind === "post_spend_failure") {
+        let postSpendResult = result;
         if (artifactLeaseStateV3(claim) !== "consumed") {
           if (artifactLeaseStateV3(claim) === "claimed") await retireArtifactLeaseV3(claim);
-          result = {
+          postSpendResult = {
             kind: "post_spend_failure",
             error: new ConnectErrorV3("artifact_invalid", { kind: "terminal" }),
           };
         }
         this.#cycle.recordFailedAcquisitionOrLease();
-        this.#recordFailure("connect", result.error.code, result.error.disposition);
-        if (result.error.disposition.kind === "terminal" || this.#attemptBudgetExhausted()) return;
+        this.#recordFailure("connect", postSpendResult.error.code, postSpendResult.error.disposition);
+        if (postSpendResult.error.disposition.kind === "terminal" || this.#attemptBudgetExhausted()) return;
         next = "primary";
         replacementContext = undefined;
-        pendingDisposition = result.error.disposition;
+        pendingDisposition = postSpendResult.error.disposition;
         continue;
       }
 
@@ -708,6 +720,117 @@ function invalidSourceResult(): ArtifactSourceResultV3 {
     code: "artifact_invalid",
     disposition: Object.freeze({ kind: "terminal" as const }),
   });
+}
+
+const LEASE_ATTEMPT_RESULT_KINDS_V3 = new Set([
+  "established",
+  "candidate_failures",
+  "pre_spend_failure",
+  "post_spend_failure",
+]);
+const CONNECT_ERROR_CODES_V3 = new Set([
+  "artifact_invalid",
+  "expired_artifact",
+  "transport_security_unsupported",
+  "transport_security_failed",
+  "connection_failed",
+]);
+const TRANSPORT_FAILURE_CODES_V3 = new Set([
+  "invalid_artifact",
+  "expired_artifact",
+  "tls_unsupported",
+  "tls_policy_expired",
+  "tls_failed",
+  "connection_failed",
+]);
+const TRANSPORT_FAILURE_DETAILS_V3 = new Set([
+  "ca_untrusted",
+  "pin_mismatch",
+  "unknown",
+  "browser_pin_opaque",
+]);
+
+/** Enforces the runtime adapter boundary before the controller consumes a result. */
+function normalizeLeaseAttemptResultV3<Session extends ManagedSessionV3>(
+  value: unknown,
+  candidates: readonly CanonicalArtifactCandidateV3[],
+): LeaseAttemptResultV3<Session> | undefined {
+  try {
+    if (value === null || typeof value !== "object") return undefined;
+    const kind = Reflect.get(value, "kind");
+    if (typeof kind !== "string" || !LEASE_ATTEMPT_RESULT_KINDS_V3.has(kind)) return undefined;
+    if (kind === "established") {
+      if (!hasExactOwnKeys(value, ["kind", "session"])) return undefined;
+      const session = Reflect.get(value, "session");
+      if (!isManagedSessionV3(session)) return undefined;
+      return Object.freeze({ kind: "established" as const, session: session as Session }) as LeaseAttemptResultV3<Session>;
+    }
+    if (kind === "candidate_failures") {
+      if (!hasExactOwnKeys(value, ["kind", "failures"])) return undefined;
+      const failures = Reflect.get(value, "failures");
+      if (!Array.isArray(failures)) return undefined;
+      const normalized = failures.map((failure) => normalizeCandidateFailureV3(failure, candidates));
+      if (normalized.some((failure) => failure === undefined)) return undefined;
+      return Object.freeze({
+        kind,
+        failures: Object.freeze(normalized as CandidateFailureV3[]),
+      }) as LeaseAttemptResultV3<Session>;
+    }
+    if (!hasExactOwnKeys(value, ["kind", "error"])) return undefined;
+    const error = Reflect.get(value, "error");
+    if (!(error instanceof ConnectErrorV3) || !CONNECT_ERROR_CODES_V3.has(error.code)) return undefined;
+    const normalizedError = new ConnectErrorV3(error.code, validateRetryDispositionV3(error.disposition));
+    return Object.freeze({ kind, error: normalizedError }) as LeaseAttemptResultV3<Session>;
+  } catch {
+    return undefined;
+  }
+}
+
+function isManagedSessionV3(value: unknown): value is ManagedSessionV3 {
+  return value !== null && typeof value === "object" &&
+    typeof Reflect.get(value, "waitTermination") === "function" &&
+    typeof Reflect.get(value, "close") === "function";
+}
+
+function normalizeCandidateFailureV3(
+  value: unknown,
+  candidates: readonly CanonicalArtifactCandidateV3[],
+): CandidateFailureV3 | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  const keys = Reflect.ownKeys(value);
+  if (!hasExactOwnKeys(value, keys.includes("disposition")
+    ? ["candidate", "failure", "disposition"]
+    : ["candidate", "failure"])) return undefined;
+  const candidate = Reflect.get(value, "candidate");
+  const failure = Reflect.get(value, "failure");
+  if (!candidates.includes(candidate)) return undefined;
+  if (!(failure instanceof TransportFailureV3) || !TRANSPORT_FAILURE_CODES_V3.has(failure.code)) return undefined;
+  if (failure.detail !== undefined && !TRANSPORT_FAILURE_DETAILS_V3.has(failure.detail)) return undefined;
+  const disposition = Reflect.get(value, "disposition");
+  const normalizedDisposition = disposition === undefined ? undefined : validateRetryDispositionV3(disposition);
+  return Object.freeze({
+    candidate: candidate as CanonicalArtifactCandidateV3,
+    failure,
+    ...(normalizedDisposition === undefined ? {} : { disposition: normalizedDisposition }),
+  });
+}
+
+function sessionFromMalformedConnectorResultV3(value: unknown): ManagedSessionV3 | undefined {
+  try {
+    if (value === null || typeof value !== "object" || Reflect.get(value, "kind") !== "established") return undefined;
+    const session = Reflect.get(value, "session");
+    return isManagedSessionV3(session) ? session : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function closeManagedSessionV3(session: ManagedSessionV3): Promise<void> {
+  try {
+    await Promise.resolve(session.close());
+  } catch {
+    // Adapter cleanup is best-effort after ownership has already become terminal.
+  }
 }
 
 function hasExactOwnKeys(value: object, expected: readonly string[]): boolean {

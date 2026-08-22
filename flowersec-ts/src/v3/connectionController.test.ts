@@ -14,6 +14,7 @@ import {
 import {
   createConnectionControllerV3,
   type LeaseAttemptContextV3,
+  type LeaseAttemptResultV3,
   type ArtifactSourceResultV3,
   type ManagedSessionV3,
 } from "./connectionController.js";
@@ -412,6 +413,59 @@ describe("transport v3 production connection controller", () => {
     expect(connector).not.toHaveBeenCalled();
     expect(artifactLeaseStateV3(lease)).toBe("retired");
     expect(cleanup).toHaveBeenCalledOnce();
+    await controller.close();
+  });
+
+  test.each([
+    ["null", null],
+    ["unknown kind", { kind: "adapter_bug" }],
+    ["established without a session", { kind: "established" }],
+    ["established with a null session", { kind: "established", session: null }],
+    ["malformed candidate failures", { kind: "candidate_failures", failures: undefined }],
+    ["malformed failure error", { kind: "pre_spend_failure", error: new Error("adapter bug") }],
+  ])("fails closed and retires the lease for a fulfilled malformed connector result: %s", async (_name, malformed) => {
+    const cleanup = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined, cleanup);
+    const connector = vi.fn(async () => malformed as unknown as LeaseAttemptResultV3<ManagedSessionV3>);
+    const controller = createConnectionControllerV3({
+      acquire: async () => ({ kind: "lease" as const, lease }),
+    }, connector, { maximumAttempts: 1, capabilitySnapshot });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "connect", code: "artifact_invalid" },
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(controller.state).toBe("failed");
+    expect(connector).toHaveBeenCalledOnce();
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
+    expect(cleanup).toHaveBeenCalledOnce();
+    await controller.close();
+  });
+
+  test("fails closed after a consumed lease returns an established result with extra fields", async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined, cleanup);
+    const sessionClose = vi.fn(async () => undefined);
+    const session: ManagedSessionV3 = {
+      waitTermination: async () => await new Promise<Readonly<{ error: Error }>>(() => undefined),
+      close: sessionClose,
+    };
+    const connector = vi.fn(async (context: LeaseAttemptContextV3) => {
+      await commitArtifactLeaseSpendV3(context.claim);
+      return { kind: "established", session, unexpected: true } as unknown as LeaseAttemptResultV3<ManagedSessionV3>;
+    });
+    const controller = createConnectionControllerV3({
+      acquire: async () => ({ kind: "lease" as const, lease }),
+    }, connector, { maximumAttempts: 1, capabilitySnapshot });
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "connect", code: "artifact_invalid" },
+    });
+    expect(artifactLeaseStateV3(lease)).toBe("consumed");
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(sessionClose).toHaveBeenCalledOnce();
     await controller.close();
   });
 
