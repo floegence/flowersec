@@ -122,7 +122,7 @@ export async function createBrowserWebTransportV3(
       registry.invalidatePinSupport();
       throw new TransportFailureV3("tls_unsupported", undefined, error);
     }
-    throw new TransportFailureV3("connection_failed", policy.mode === "pin" ? "browser_pin_opaque" : undefined, error);
+    throw new TransportFailureV3("connection_failed", undefined, error);
   }
   try {
     await raceAbort(transport.ready, signal);

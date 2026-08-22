@@ -259,6 +259,18 @@ describe("runtime capability v3", () => {
     expect(registry.pinEnabled()).toBe(true);
   });
 
+  test("does not treat a synchronous pin constructor failure as a ready rejection", async () => {
+    const Constructor = class {
+      constructor() { throw new TypeError("constructor failed"); }
+      ready = Promise.resolve();
+      close() {}
+    };
+    const registry = await BrowserRuntimeCapabilityRegistryV3.create(browserFeatures(Constructor, "151.0.7922.34"));
+    await expect(createBrowserWebTransportV3(pinCandidate, 1_999_999_999, registry.snapshot(), registry))
+      .rejects.toMatchObject({ code: "connection_failed", detail: undefined });
+    expect(registry.pinEnabled()).toBe(true);
+  });
+
   test("propagates cancellation without creating a browser pin policy trigger", async () => {
     const close = vi.fn();
     const Constructor = class {
