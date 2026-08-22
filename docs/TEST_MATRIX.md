@@ -29,7 +29,7 @@ instances, namespaces, faults, and temporary files that they create.
 | Fault injector and kernel topology conformance | Four `diagnostic/kernel/*` tests using netns, tc, eBPF counters, and generic socket workloads |
 | Real Flowersec weak-network behavior | Production WSS/raw QUIC direct Sessions and representative opaque tunnels in the same netns/tc/eBPF lab |
 | Go-owned capacity, resource, soak, and payload throughput | Explicit `make performance`; this is not multi-language performance parity |
-| Optional WebTransport and Chromium performance | Explicit `flowersec-test --suite performance-optional` on the prepared privileged host |
+| Optional WebTransport and Chromium performance | The optional partition of integrated `make performance`; capability success executes it in the same structured report, while unavailable capability records its cases as `UNSUPPORTED` |
 | Manual published Go-to-Node raw QUIC consumer diagnostic | `release/npm-consumer/go-node-raw-quic/direct-session` can install registry packages and the tagged Go module, then verify handshake, RPC, stream FIN, close, and cleanup after publication. No workflow invokes this diagnostic, it is not release-gating evidence, and it is separate from the release workflow's package-integrity and source-commit readback. |
 | Apple/browser client-profile WSS interoperability | Registered scoped v3 interop IDs and the Chromium production runner validate only their named paths; Swift is Darwin-only and browser trust is runner-managed |
 
@@ -44,7 +44,7 @@ The expensive inventory is grouped by execution boundary and has no second manif
 | Kernel-backed Flowersec weaknet | `diagnostic/flowersec-weaknet/{websocket,raw-quic}/direct/{delay-jitter,periodic-loss,burst-loss,outage,mtu-large-payload,rate-5mbps,rate-1mbps,reorder-duplicate}` and `diagnostic/flowersec-weaknet/{websocket,raw-quic}/tunnel/representative` |
 | v3 Controller weaknet | `diagnostic/flowersec-v3-controller-weaknet/{websocket,raw-quic}/{delay-jitter,periodic-loss,reorder,outage-reconnect,pin-rotation-refresh-backoff-lease}` |
 | Required Go performance | Six `performance/capacity/*` WSS/raw-QUIC IDs, raw QUIC migration soak, production WSS soak, `performance/single-connection/{wss,raw-quic}`, and `performance/throughput/{wss,raw-quic}` |
-| Optional WebTransport performance | `performance-optional/webtransport-capability`, six `performance/capacity/*` WebTransport/Chromium IDs, `performance/soak/webtransport`, `performance/single-connection/webtransport`, and `performance/throughput/webtransport` |
+| Optional WebTransport performance | `performance-optional/webtransport-capability`, followed in the integrated plan by six `performance/capacity/*` WebTransport/Chromium IDs, `performance/soak/webtransport`, `performance/single-connection/webtransport`, and `performance/throughput/webtransport`; failed capability preflight records all remaining IDs as `UNSUPPORTED` rather than PASS |
 
 Coverage and race run with `make coverage-race`. Browser compatibility uses
 real native connections: Firefox currently rejects the connection before

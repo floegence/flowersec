@@ -68,6 +68,109 @@ func TestPairClosePreservesErrorsAndIsIdempotent(t *testing.T) {
 	}
 }
 
+type roundTripContractStream struct {
+	reader      *io.PipeReader
+	writer      *io.PipeWriter
+	resetOnce   sync.Once
+	closeWrites atomic.Int32
+	closes      atomic.Int32
+	resets      atomic.Int32
+}
+
+func (stream *roundTripContractStream) Read(buffer []byte) (int, error) {
+	return stream.reader.Read(buffer)
+}
+
+func (stream *roundTripContractStream) Write(buffer []byte) (int, error) {
+	return stream.writer.Write(buffer)
+}
+
+func (stream *roundTripContractStream) CloseWrite() error {
+	stream.closeWrites.Add(1)
+	return stream.writer.Close()
+}
+
+func (stream *roundTripContractStream) Close() error {
+	stream.closes.Add(1)
+	return stream.Reset()
+}
+
+func (stream *roundTripContractStream) Reset() error {
+	stream.resets.Add(1)
+	stream.resetOnce.Do(func() {
+		_ = stream.reader.CloseWithError(io.ErrClosedPipe)
+		_ = stream.writer.CloseWithError(io.ErrClosedPipe)
+	})
+	return nil
+}
+
+type roundTripPublicStream struct{ *roundTripContractStream }
+
+func (*roundTripPublicStream) Kind() string                           { return "public-release-roundtrip" }
+func (*roundTripPublicStream) TerminalError() *flowersec.SessionError { return nil }
+
+type roundTripInternalStream struct{ *roundTripContractStream }
+
+func (*roundTripInternalStream) ID() uint64           { return 1 }
+func (*roundTripInternalStream) Kind() string         { return "public-release-roundtrip" }
+func (*roundTripInternalStream) TerminalError() error { return nil }
+
+type roundTripPublicSession struct {
+	flowersec.Session
+	stream flowersec.ByteStream
+}
+
+func (session *roundTripPublicSession) OpenStream(context.Context, string, flowersec.StreamMetadata) (flowersec.ByteStream, error) {
+	return session.stream, nil
+}
+
+type roundTripInternalSession struct {
+	flowersessionv3.Session
+	stream flowersessionv3.ByteStream
+	kind   string
+}
+
+func (session *roundTripInternalSession) AcceptStream(context.Context) (flowersessionv3.IncomingStream, error) {
+	return flowersessionv3.IncomingStream{
+		ID: 1, Kind: session.kind, Metadata: flowersessionv3.Metadata{"direction": "client-to-server"}, Stream: session.stream,
+	}, nil
+}
+
+func newRoundTripContractPair(kind string) (*ProductDirectPair, *roundTripContractStream, *roundTripContractStream) {
+	clientReader, serverWriter := io.Pipe()
+	serverReader, clientWriter := io.Pipe()
+	client := &roundTripContractStream{reader: clientReader, writer: clientWriter}
+	server := &roundTripContractStream{reader: serverReader, writer: serverWriter}
+	return &ProductDirectPair{
+		Client: &roundTripPublicSession{stream: &roundTripPublicStream{client}},
+		Server: &roundTripInternalSession{stream: &roundTripInternalStream{server}, kind: kind},
+	}, client, server
+}
+
+func TestProductDirectRoundTripCompletesFINWithoutReset(t *testing.T) {
+	pair, client, server := newRoundTripContractPair("public-release-roundtrip")
+	if err := pair.RoundTrip(context.Background(), []byte("request"), []byte("response")); err != nil {
+		t.Fatal(err)
+	}
+	for label, stream := range map[string]*roundTripContractStream{"client": client, "server": server} {
+		if stream.closeWrites.Load() != 1 || stream.closes.Load() != 0 || stream.resets.Load() != 0 {
+			t.Fatalf("%s lifecycle = CloseWrite %d, Close %d, Reset %d", label, stream.closeWrites.Load(), stream.closes.Load(), stream.resets.Load())
+		}
+	}
+}
+
+func TestProductDirectRoundTripResetsBothStreamsOnFailure(t *testing.T) {
+	pair, client, server := newRoundTripContractPair("wrong-kind")
+	if err := pair.RoundTrip(context.Background(), []byte("request"), []byte("response")); err == nil {
+		t.Fatal("round trip accepted the wrong stream kind")
+	}
+	for label, stream := range map[string]*roundTripContractStream{"client": client, "server": server} {
+		if stream.closes.Load() != 0 || stream.resets.Load() != 1 {
+			t.Fatalf("%s failure lifecycle = Close %d, Reset %d", label, stream.closes.Load(), stream.resets.Load())
+		}
+	}
+}
+
 func TestEndpointAdmissionClaimsIssuedRequestExactlyOnce(t *testing.T) {
 	endpoint := &ProductDirectEndpoint{
 		ctx: context.Background(), pending: make(map[[32]byte]*admissionExpectation),

@@ -563,7 +563,7 @@ func runFullDuplexPayloadThroughputStream(ctx context.Context, pair *transportte
 		}
 		return incoming.Kind, incoming.Stream, nil
 	}, func(kind string, stream throughputByteStream) error {
-		return receiveFullDuplexPayloads(stream, kind, payload)
+		return receiveFullDuplexPayloads(attemptCtx, cancelAttempt, stream, kind, payload)
 	})
 	receiverJoined := false
 	defer func() {
@@ -600,7 +600,7 @@ func runFullDuplexPayloadThroughputStream(ctx context.Context, pair *transportte
 		if written, err := client.Write([]byte{0x5a}); err != nil || written != 1 {
 			return verified, latencies, errors.Join(io.ErrShortWrite, err)
 		}
-		if err := exchangeVerifiedStreamSide(client, payload); err != nil {
+		if err := exchangeVerifiedStreamSide(attemptCtx, cancelAttempt, client, payload); err != nil {
 			return verified, latencies, err
 		}
 		verified += uint64(len(payload) * 2)
@@ -643,7 +643,7 @@ func receiveAcknowledgedPayloads(stream throughputByteStream, kind string, paylo
 	}
 }
 
-func receiveFullDuplexPayloads(stream throughputByteStream, kind string, payload []byte) error {
+func receiveFullDuplexPayloads(ctx context.Context, cancel context.CancelCauseFunc, stream throughputByteStream, kind string, payload []byte) error {
 	if kind != "performance-throughput" {
 		return fmt.Errorf("payload throughput stream kind = %q", kind)
 	}
@@ -656,7 +656,7 @@ func receiveFullDuplexPayloads(stream throughputByteStream, kind string, payload
 		if readErr != nil || marker[0] != 0x5a {
 			return errors.Join(errors.New("full-duplex operation marker mismatch"), readErr)
 		}
-		if err := exchangeVerifiedStreamSide(stream, payload); err != nil {
+		if err := exchangeVerifiedStreamSide(ctx, cancel, stream, payload); err != nil {
 			return err
 		}
 	}
@@ -677,21 +677,32 @@ func requireCleanPayloadThroughputEOF(stream throughputByteStream) error {
 	return fmt.Errorf("payload throughput reciprocal FIN: %w", err)
 }
 
-func exchangeVerifiedStreamSide(stream throughputByteStream, payload []byte) error {
+func exchangeVerifiedStreamSide(ctx context.Context, cancel context.CancelCauseFunc, stream throughputByteStream, payload []byte) error {
 	type writeResult struct {
 		count int
 		err   error
 	}
 	written := make(chan writeResult, 1)
-	go func() { count, err := stream.Write(payload); written <- writeResult{count: count, err: err} }()
+	go func() {
+		count, err := stream.Write(payload)
+		if err != nil || count != len(payload) {
+			err = errors.Join(io.ErrShortWrite, err)
+			cancel(err)
+		}
+		written <- writeResult{count: count, err: err}
+	}()
 	buffer := make([]byte, len(payload))
 	_, readErr := io.ReadFull(stream, buffer)
-	result := <-written
 	if readErr != nil || !equalPayload(buffer, payload) {
-		return errors.Join(errors.New("full-duplex payload mismatch"), readErr, result.err)
+		readErr = errors.Join(errors.New("full-duplex payload mismatch"), readErr)
+		cancel(readErr)
 	}
-	if result.err != nil || result.count != len(payload) {
-		return errors.Join(io.ErrShortWrite, result.err)
+	result := <-written
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	if readErr != nil || result.err != nil || result.count != len(payload) {
+		return errors.Join(readErr, result.err)
 	}
 	return nil
 }

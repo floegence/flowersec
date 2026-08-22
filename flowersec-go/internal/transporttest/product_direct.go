@@ -498,7 +498,7 @@ func (pair *ProductDirectPair) SpendCount() int32 {
 }
 
 // RoundTrip transfers bytes through the public client session surface.
-func (pair *ProductDirectPair) RoundTrip(ctx context.Context, request, response []byte) error {
+func (pair *ProductDirectPair) RoundTrip(ctx context.Context, request, response []byte) (resultErr error) {
 	if pair == nil || pair.Client == nil || pair.Server == nil {
 		return errors.New("product direct pair is not established")
 	}
@@ -522,7 +522,12 @@ func (pair *ProductDirectPair) RoundTrip(ctx context.Context, request, response 
 	if err != nil {
 		return err
 	}
-	defer opened.Close()
+	openedCompleted := false
+	defer func() {
+		if !openedCompleted {
+			resultErr = errors.Join(resultErr, opened.Reset())
+		}
+	}()
 	var peer acceptResult
 	select {
 	case peer = <-accepted:
@@ -532,7 +537,12 @@ func (pair *ProductDirectPair) RoundTrip(ctx context.Context, request, response 
 	if peer.err != nil {
 		return peer.err
 	}
-	defer peer.incoming.Stream.Close()
+	peerCompleted := false
+	defer func() {
+		if !peerCompleted {
+			resultErr = errors.Join(resultErr, peer.incoming.Stream.Reset())
+		}
+	}()
 	if peer.incoming.Kind != "public-release-roundtrip" || peer.incoming.Metadata["direction"] != "client-to-server" {
 		return errors.New("public encrypted stream metadata mismatch")
 	}
@@ -568,6 +578,8 @@ func (pair *ProductDirectPair) RoundTrip(ctx context.Context, request, response 
 	if gotResponse.err != nil || !bytes.Equal(gotResponse.payload, response) {
 		return errors.Join(errors.New("public response payload mismatch"), gotResponse.err)
 	}
+	openedCompleted = true
+	peerCompleted = true
 	return nil
 }
 

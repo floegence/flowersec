@@ -68,6 +68,52 @@ type cancellationBlockedThroughputContractStream struct {
 	resets      atomic.Int32
 }
 
+type exchangeFailureThroughputContractStream struct {
+	mode         string
+	failure      error
+	readStarted  chan struct{}
+	writeStarted chan struct{}
+	readDone     chan struct{}
+	writeDone    chan struct{}
+	stopped      chan struct{}
+	readOnce     sync.Once
+	writeOnce    sync.Once
+	stopOnce     sync.Once
+	resets       atomic.Int32
+}
+
+func (stream *exchangeFailureThroughputContractStream) Read([]byte) (int, error) {
+	stream.readOnce.Do(func() { close(stream.readStarted) })
+	defer close(stream.readDone)
+	if stream.mode == "read-first" {
+		<-stream.writeStarted
+		return 0, stream.failure
+	}
+	<-stream.stopped
+	return 0, io.ErrClosedPipe
+}
+
+func (stream *exchangeFailureThroughputContractStream) Write([]byte) (int, error) {
+	stream.writeOnce.Do(func() { close(stream.writeStarted) })
+	defer close(stream.writeDone)
+	if stream.mode == "write-first" {
+		<-stream.readStarted
+		return 0, stream.failure
+	}
+	<-stream.stopped
+	return 0, io.ErrClosedPipe
+}
+
+func (*exchangeFailureThroughputContractStream) CloseWrite() error { return nil }
+func (stream *exchangeFailureThroughputContractStream) Close() error {
+	return stream.Reset()
+}
+func (stream *exchangeFailureThroughputContractStream) Reset() error {
+	stream.resets.Add(1)
+	stream.stopOnce.Do(func() { close(stream.stopped) })
+	return nil
+}
+
 func (stream *cancellationBlockedThroughputContractStream) Read([]byte) (int, error) {
 	stream.startOnce.Do(func() { close(stream.readStarted) })
 	<-stream.stopped
@@ -274,6 +320,48 @@ func TestPayloadThroughputWorkerFailureCancelsAndJoinsSibling(t *testing.T) {
 	case <-siblingStopped:
 	default:
 		t.Fatal("worker group returned before canceled sibling stopped")
+	}
+}
+
+func TestFullDuplexPayloadFailureCancelsAndJoinsOtherIO(t *testing.T) {
+	for _, mode := range []string{"read-first", "write-first"} {
+		t.Run(mode, func(t *testing.T) {
+			sentinel := errors.New(mode + " failure")
+			stream := &exchangeFailureThroughputContractStream{
+				mode: mode, failure: sentinel,
+				readStarted: make(chan struct{}), writeStarted: make(chan struct{}),
+				readDone: make(chan struct{}), writeDone: make(chan struct{}), stopped: make(chan struct{}),
+			}
+			ctx, cancel := context.WithCancelCause(context.Background())
+			owner := newPayloadThroughputStreamOwner(ctx, stream, &payloadThroughputLifecycleCounters{})
+			result := make(chan error, 1)
+			go func() { result <- exchangeVerifiedStreamSide(ctx, cancel, stream, []byte{0x11}) }()
+			var err error
+			select {
+			case err = <-result:
+			case <-time.After(time.Second):
+				t.Fatal("full-duplex exchange did not return after first I/O failure")
+			}
+			if !errors.Is(err, sentinel) || !errors.Is(context.Cause(ctx), sentinel) {
+				t.Fatalf("exchange error = %v, cause = %v, want %v", err, context.Cause(ctx), sentinel)
+			}
+			if finishErr := owner.Finish(false); !errors.Is(finishErr, sentinel) {
+				t.Fatalf("stream owner finish error = %v, want %v", finishErr, sentinel)
+			}
+			select {
+			case <-stream.readDone:
+			default:
+				t.Fatal("exchange returned before read worker stopped")
+			}
+			select {
+			case <-stream.writeDone:
+			default:
+				t.Fatal("exchange returned before write worker stopped")
+			}
+			if stream.resets.Load() != 1 {
+				t.Fatalf("Reset count = %d, want 1", stream.resets.Load())
+			}
+		})
 	}
 }
 
