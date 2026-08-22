@@ -2620,11 +2620,6 @@
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectionAttemptFailure.unknownArtifactSource",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
         "name": "ConnectionAttemptFailure.connection(_:)",
         "doc_token": ""
       },

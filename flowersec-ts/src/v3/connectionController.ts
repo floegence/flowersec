@@ -487,8 +487,11 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
   }
 
   async #acquire(): Promise<ArtifactSourceResultV3> {
+    const acquisition = new SourceAcquisitionRaceV3(this.#source, this.#lifetime.signal);
     try {
-      const result = await this.#source.acquire({ signal: this.#lifetime.signal });
+      const result = await acquisition.value();
+      await acquisition.settle();
+      if (result === undefined) return invalidSourceResult();
       if (result === null || typeof result !== "object") return invalidSourceResult();
       if (result.kind === "lease") {
         if (result.lease === null || typeof result.lease !== "object") return invalidSourceResult();
@@ -513,6 +516,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
       if (invalidLease !== undefined) await this.#claimAndRetire(invalidLease);
       return invalidSourceResult();
     } catch (error) {
+      await acquisition.settle();
       if (error instanceof ConnectErrorV3) {
         try {
           if (!ARTIFACT_SOURCE_FAILURE_CODES_V3.has(error.code)) return invalidSourceResult();
@@ -600,6 +604,85 @@ export function createConnectionControllerV3<Session extends ManagedSessionV3>(
   options: ConnectionControllerOptionsV3,
 ): ConnectionControllerV3<Session> {
   return new ConnectionControllerV3(source, connector, options);
+}
+
+/** Serializes source delivery and controller cancellation at one ownership gate. */
+class SourceAcquisitionRaceV3 {
+  #state: "pending" | "delivered" | "canceled" = "pending";
+  #cleanup = Promise.resolve();
+  #sourcePromise: Promise<ArtifactSourceResultV3>;
+  #settled: Promise<ArtifactSourceResultV3 | undefined>;
+  #resolveSettled!: (result: ArtifactSourceResultV3 | undefined) => void;
+  #rejectSettled!: (error: unknown) => void;
+  readonly #signal: AbortSignal;
+  readonly #abort: () => void;
+
+  constructor(source: ArtifactSourceV3, signal: AbortSignal) {
+    this.#signal = signal;
+    this.#settled = new Promise((resolve, reject) => {
+      this.#resolveSettled = resolve;
+      this.#rejectSettled = reject;
+    });
+    try {
+      // Invoke the source before returning so a synchronous close cannot abort
+      // before the source has installed its own cancellation observer.
+      this.#sourcePromise = Promise.resolve(source.acquire({ signal }));
+    } catch (error) {
+      this.#sourcePromise = Promise.reject(error);
+    }
+    this.#sourcePromise.then(
+      (result) => this.#deliver(result),
+      (error) => this.#deliverFailure(error),
+    );
+    this.#abort = () => this.#cancel();
+    signal.addEventListener("abort", this.#abort, { once: true });
+    if (signal.aborted) this.#cancel();
+  }
+
+  async value(): Promise<ArtifactSourceResultV3 | undefined> {
+    return await this.#settled;
+  }
+
+  async settle(): Promise<void> {
+    await this.#sourcePromise.catch(() => undefined);
+    await this.#cleanup;
+    this.#signal.removeEventListener("abort", this.#abort);
+  }
+
+  #cancel(): void {
+    if (this.#state !== "pending") return;
+    this.#state = "canceled";
+    this.#resolveSettled(undefined);
+  }
+
+  #deliver(result: ArtifactSourceResultV3): void {
+    if (this.#state === "pending") {
+      this.#state = "delivered";
+      this.#resolveSettled(result);
+      return;
+    }
+    if (this.#state === "canceled") {
+      this.#cleanup = this.#cleanup.then(() => this.#retireLateLease(result));
+    }
+  }
+
+  #deliverFailure(error: unknown): void {
+    if (this.#state === "pending") {
+      this.#state = "delivered";
+      this.#rejectSettled(error);
+    }
+  }
+
+  async #retireLateLease(result: ArtifactSourceResultV3): Promise<void> {
+    if (result === null || typeof result !== "object") return;
+    const lease = deliveredLease(result);
+    if (lease === undefined) return;
+    try {
+      await retireArtifactLeaseV3(claimArtifactLeaseV3(lease));
+    } catch {
+      // Late source cleanup is intentionally redacted at the public boundary.
+    }
+  }
 }
 
 function invalidSourceResult(): ArtifactSourceResultV3 {

@@ -727,6 +727,21 @@ describe("transport v3 production connection controller", () => {
     expect(cleanup).toHaveBeenCalledTimes(expected.retire_callbacks);
   });
 
+  test("drains an invalid late source result after cancellation", async () => {
+    let deliver!: (result: unknown) => void;
+    const controller = createConnectionControllerV3({
+      acquire: async () => await new Promise<ArtifactSourceResultV3>((resolve) => {
+        deliver = resolve as unknown as (result: unknown) => void;
+      }),
+    }, async () => { throw new Error("connector must not run"); }, { capabilitySnapshot });
+    controller.start();
+    await Promise.resolve();
+    const closing = controller.close();
+    deliver(null);
+    await closing;
+    expect(controller.state).toBe("closed");
+  });
+
   test("does not acquire after a connecting subscriber closes synchronously", async () => {
     const acquire = vi.fn(async (): Promise<ArtifactSourceResultV3> => {
       throw new Error("acquisition must not start after close");

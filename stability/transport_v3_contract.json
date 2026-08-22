@@ -603,10 +603,7 @@
       "controller_claims_before_connect": true,
       "cancellation_retires_claimed_lease": true
     },
-    "close_waits_for_acquire_settlement": true,
-    "cleanup_cancellation": "propagate_lifecycle_context",
-    "cleanup_failure_projection": "redacted_ignored",
-    "cleanup_panic_projection": "redacted_ignored"
+    "close_waits_for_acquire_settlement": true
   },
   "control_plane": {
     "issuer_languages": ["go"],

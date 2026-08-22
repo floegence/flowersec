@@ -191,6 +191,42 @@ func TestArtifactLeaseRetirementCallbackStopsAtCancellation(t *testing.T) {
 	}
 }
 
+func TestArtifactLeaseRetirementWaitsForCleanupAfterCancellation(t *testing.T) {
+	artifact := mustParseInternalFixtureArtifact(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	lease, err := NewArtifactLeaseWithRetirement(
+		artifact,
+		func(context.Context) error { return nil },
+		func(context.Context) error {
+			close(started)
+			<-release
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok := lease.claimArtifact()
+	if !ok {
+		t.Fatal("lease claim failed")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- claimed.retire(ctx) }()
+	<-started
+	cancel()
+	select {
+	case err := <-result:
+		t.Fatalf("canceled retire returned before cleanup settled: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	if err := <-result; err != nil {
+		t.Fatalf("retire after cleanup release = %v", err)
+	}
+}
+
 func TestArtifactLeaseBurnsAfterSpendCallbackPanic(t *testing.T) {
 	artifact := mustParseInternalFixtureArtifact(t)
 	lease, err := NewArtifactLease(artifact, func(context.Context) error { panic("unknown spend result") })

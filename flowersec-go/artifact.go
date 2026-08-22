@@ -234,27 +234,18 @@ func (lease ArtifactLease) retire(ctx context.Context) error {
 		return err
 	}
 
-	// Retirement is irreversible before application cleanup starts. Run the
-	// callback with a buffered result so a cancellation cannot strand the
-	// controller scheduler or Close waiting for an uncooperative callback.
-	result := make(chan error, 1)
-	started := make(chan struct{})
-	go func() {
-		close(started)
+	// Retirement is irreversible before application cleanup starts. Await the
+	// callback even after cancellation so controller Close cannot pass the
+	// ownership barrier while cleanup is still running.
+	var err error
+	func() {
 		defer func() {
 			if recover() != nil {
-				result <- errors.New("Flowersec artifact lease retirement cleanup failed")
+				err = errors.New("Flowersec artifact lease retirement cleanup failed")
 			}
 		}()
-		result <- lease.state.retire(ctx)
+		err = lease.state.retire(ctx)
 	}()
-	<-started
-	var err error
-	select {
-	case err = <-result:
-	case <-ctx.Done():
-		err = ctx.Err()
-	}
 	return err
 }
 

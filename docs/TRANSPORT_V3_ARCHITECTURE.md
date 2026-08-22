@@ -430,12 +430,6 @@ the Controller claims and retires even if cancellation follows immediately.
 Runtimes unable to atomically cancel promises drain the late result using the
 same ownership rule. Close publishes closed immediately but asynchronous Close
 waits for in-flight Acquire settlement and cleanup.
-The lifecycle cancellation context is propagated to source-side retirement and
-controller cleanup; cleanup is one-shot and redacted on failure or panic. The
-controller joins cancellation-aware cleanup before reporting Close complete,
-while an ArtifactSource must honor cancellation so its Acquire can settle at
-the Close barrier; an implementation must not replace this with an
-uncancelable cleanup context.
 
 Claim losers and ownership contract violations become artifact_invalid
 terminal and never reach a connector.

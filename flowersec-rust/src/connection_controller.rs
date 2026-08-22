@@ -886,8 +886,11 @@ async fn acquire_lease(
         biased;
         _ = inner.cancellation.cancelled() => {
             if let Ok(lease) = acquisition.await
-                && let Ok(claimed) = lease.claim_for_controller()
+                && let Ok(claimed) = lease.claim()
             {
+                // Cancellation won before delivery, so the source-side
+                // ownership token retires the late lease without exposing it
+                // to the Controller's connector path.
                 let _ = claimed.retire().await;
             }
             return Err(connect_failure(
