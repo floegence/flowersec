@@ -76,6 +76,22 @@ func TestUnreliableHeaderRejectsZeroExpiry(t *testing.T) {
 	}
 }
 
+func TestUnreliableHeaderRejectsEmptyPlaintextCiphertext(t *testing.T) {
+	header := UnreliableHeader{ExpiresAtUnixMS: 2_000_000_000_000, CiphertextLength: AEADTagBytes}
+	if _, err := header.MarshalBinary(); !errors.Is(err, ErrInvalidUnreliableHeader) {
+		t.Fatalf("MarshalBinary error = %v, want %v", err, ErrInvalidUnreliableHeader)
+	}
+	raw := make([]byte, UnreliableHeaderSize)
+	copy(raw, []byte("FSD3"))
+	raw[4] = 3
+	binary.BigEndian.PutUint16(raw[6:8], UnreliableHeaderSize)
+	binary.BigEndian.PutUint64(raw[20:28], 2_000_000_000_000)
+	binary.BigEndian.PutUint32(raw[28:32], AEADTagBytes)
+	if _, err := ParseUnreliableHeader(raw); !errors.Is(err, ErrInvalidUnreliableHeader) {
+		t.Fatalf("ParseUnreliableHeader error = %v, want %v", err, ErrInvalidUnreliableHeader)
+	}
+}
+
 func verifyUnreliableVector(t *testing.T, vector unreliableVector) {
 	t.Helper()
 	sessionPRK := decodeVector32(t, vector.SessionPRKBase64URL)

@@ -765,8 +765,10 @@ public actor ConnectionController {
       return .artifactSource(ArtifactSourceFailure(disposition: .terminal))
     case .connection(let error):
       return .connection(error.terminalized())
-    case .session(let error):
-      return .session(error.terminalized())
+    case .session:
+      // Session termination starts a fresh cycle with an empty attempt budget;
+      // a session failure cannot reach this exhaustion branch.
+      return value
     }
   }
 

@@ -253,7 +253,7 @@ impl UnreliableHeaderV3 {
     pub(crate) fn encode(self) -> Result<[u8; UNRELIABLE_HEADER_V3_SIZE], ProtocolV3Error> {
         let ciphertext_length = usize::try_from(self.ciphertext_length)
             .map_err(|_| ProtocolV3Error::InvalidUnreliableMessage)?;
-        if !(AEAD_TAG_V3_SIZE..=MAX_UNRELIABLE_PLAINTEXT_V3_BYTES + AEAD_TAG_V3_SIZE)
+        if !(AEAD_TAG_V3_SIZE + 1..=MAX_UNRELIABLE_PLAINTEXT_V3_BYTES + AEAD_TAG_V3_SIZE)
             .contains(&ciphertext_length)
             || self.expires_at_unix_ms == 0
         {
@@ -1439,6 +1439,14 @@ mod unreliable_message_tests {
         let mut zero_raw = header.encode().unwrap();
         zero_raw[20..28].fill(0);
         assert!(UnreliableHeaderV3::decode(&zero_raw).is_err());
+        let tag_only = UnreliableHeaderV3 {
+            ciphertext_length: AEAD_TAG_V3_SIZE as u32,
+            ..header
+        };
+        assert!(tag_only.encode().is_err());
+        let mut tag_only_raw = header.encode().unwrap();
+        tag_only_raw[28..32].copy_from_slice(&(AEAD_TAG_V3_SIZE as u32).to_be_bytes());
+        assert!(UnreliableHeaderV3::decode(&tag_only_raw).is_err());
     }
 
     #[test]

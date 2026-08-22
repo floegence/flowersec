@@ -203,6 +203,14 @@ actor TransportV3Session {
     try await openStream(kind: kind, metadata: .empty)
   }
 
+  // Test-only path for exercising the reserved RPC wire admission boundary.
+  func openReservedRPCForTesting(metadata: StreamMetadata) async throws -> any ByteStream {
+    try await openStream(
+      kind: TransportV3ByteStream.reservedRPCStreamKind,
+      metadata: metadata,
+      internalRPC: true)
+  }
+
   func acceptStream() async throws -> IncomingStream {
     try Task.checkCancellation()
     guard !closing, !closed else { throw TransportV3SessionError.closed }

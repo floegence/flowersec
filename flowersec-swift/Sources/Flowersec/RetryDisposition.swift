@@ -25,12 +25,11 @@ extension ConnectErrorV2 {
 
 extension SessionError {
   public var retryDisposition: RetryDisposition {
-    if let retryDispositionOverride { return retryDispositionOverride.asLegacy }
-    switch rawValue {
-    case SessionError.canceled.rawValue, SessionError.streamRejected.rawValue,
-      SessionError.operationFailed.rawValue:
+    switch self {
+    case .canceled, .streamRejected, .operationFailed:
       return .terminal
-    default:
+    case .timeout, .closed, .goingAway, .resourceExhausted, .streamReset, .rekeyFailed,
+      .livenessFailed:
       return .retryable
     }
   }
@@ -46,24 +45,12 @@ public enum RetryDispositionV3: Equatable, Sendable {
 
 extension SessionError {
   public var retryDispositionV3: RetryDispositionV3 {
-    if let retryDispositionOverride { return retryDispositionOverride }
-    switch rawValue {
-    case SessionError.canceled.rawValue, SessionError.streamRejected.rawValue,
-      SessionError.operationFailed.rawValue:
-      return .terminal
-    default:
-      return .retryable
-    }
-  }
-}
-
-private extension RetryDispositionV3 {
-  var asLegacy: RetryDisposition {
     switch self {
-    case .terminal: return .terminal
-    case .retryable: return .retryable
-    case .retryAfter(let deadline):
-      return .retryAfter(Date(timeIntervalSince1970: Double(deadline) / 1000))
+    case .canceled, .streamRejected, .operationFailed:
+      return .terminal
+    case .timeout, .closed, .goingAway, .resourceExhausted, .streamReset, .rekeyFailed,
+      .livenessFailed:
+      return .retryable
     }
   }
 }

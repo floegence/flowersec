@@ -230,6 +230,27 @@ final class TransportV3SessionTests: XCTestCase {
     )
   }
 
+  func testReservedRPCMetadataIsRejectedWithoutConsumingTheRPCSlot() async throws {
+    let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
+    let configs = try makeConfigs()
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+
+    do {
+      _ = try await clientSession.openReservedRPCForTesting(
+        metadata: try StreamMetadata(["invalid": .bool(true)]))
+      XCTFail("reserved RPC metadata unexpectedly passed admission")
+    } catch let error as TransportV3SessionError {
+      XCTAssertEqual(error, .openRejected(openRejectInvalidMetadataReasonV3))
+    }
+
+    let validRPC = try await clientSession.openReservedRPCForTesting(metadata: .empty)
+    try await validRPC.close()
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
   func testResourceExhaustionUsesRegisteredOpenRejectReason() {
     XCTAssertEqual(openRejectResourceExhaustedReasonV3, 2)
   }

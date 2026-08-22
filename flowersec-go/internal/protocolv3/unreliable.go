@@ -29,7 +29,7 @@ type UnreliableHeader struct {
 }
 
 func (header UnreliableHeader) MarshalBinary() ([]byte, error) {
-	if header.ExpiresAtUnixMS == 0 || header.CiphertextLength < AEADTagBytes || header.CiphertextLength > MaxUnreliableCiphertextBytes {
+	if header.ExpiresAtUnixMS == 0 || header.CiphertextLength < AEADTagBytes+1 || header.CiphertextLength > MaxUnreliableCiphertextBytes {
 		return nil, ErrInvalidUnreliableHeader
 	}
 	out := make([]byte, UnreliableHeaderSize)

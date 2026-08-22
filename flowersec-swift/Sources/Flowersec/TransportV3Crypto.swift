@@ -128,7 +128,7 @@ struct UnreliableHeaderV3: Equatable, Sendable {
 
   func encoded() throws -> Data {
     guard expiresAtUnixMilliseconds != 0,
-      (TransportV3Crypto.aeadTagBytes...TransportV3Crypto.maxUnreliableCiphertextBytes)
+      ((TransportV3Crypto.aeadTagBytes + 1)...TransportV3Crypto.maxUnreliableCiphertextBytes)
         .contains(Int(ciphertextLength))
     else { throw TransportV3CryptoError.invalidUnreliableMessage }
 
