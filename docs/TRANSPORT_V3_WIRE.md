@@ -419,7 +419,9 @@ error types may differ. Before rekey commit, caller cancellation cancels the
 operation. After commit, the session owns the bounded completion workflow:
 caller cancellation returns `canceled` only to that caller, while the rekey
 continues under `rekey_completion_timeout_seconds` and leaves the session open
-when it succeeds.
+when it succeeds. If that session-owned workflow reaches its completion
+deadline, a still-waiting rekey operation returns `rekey_failed`, a previously
+canceled caller remains `canceled`, and the session terminates with `timeout`.
 
 An authenticated logical-stream FIN is clean only when the carrier read side
 then reaches native EOF without another byte. The receiver does not publish

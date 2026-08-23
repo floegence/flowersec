@@ -1077,13 +1077,19 @@ export class SessionV3 implements SessionV3Contract {
       } as const;
       this.pendingSessionRekey = pending;
       this.preparingSendEpoch = undefined;
-      await this.sendControl(InnerTypeV3.SessionKeyUpdate, payload);
-      await raceAbort(pending.acknowledged.promise, completionSignal.signal);
+      await Promise.all([
+        this.sendControl(InnerTypeV3.SessionKeyUpdate, payload, completionSignal.signal),
+        raceAbort(pending.acknowledged.promise, completionSignal.signal),
+      ]);
       await Promise.all(updates.map(async (update) => await raceAbort(update.done.promise, completionSignal!.signal)));
       if (this.pendingSessionRekey === pending) this.pendingSessionRekey = undefined;
       this.cleanupEpochRoots();
     } catch (error) {
-      if (committed) this.fail(asError(error));
+      const failure = asError(error);
+      if (committed) this.fail(failure);
+      if (committed && failure instanceof SessionV3Error && failure.code === "timeout") {
+        throw new SessionV3Error("rekey_failed", "Flowersec v3 rekey completion deadline exceeded");
+      }
       throw error;
     } finally {
       prepareSignal.cancel();

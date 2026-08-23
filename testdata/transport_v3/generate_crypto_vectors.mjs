@@ -257,6 +257,13 @@ write(
         completion_deadline: "rekey_completion_timeout",
         session_state_after_success: "open",
       },
+      post_commit_completion_timeout: {
+        operation_error: "rekey_failed",
+        canceled_caller_error: "canceled",
+        termination_error: "timeout",
+        session_state: "closed",
+        completion_owner: "session",
+      },
     },
   },
 );

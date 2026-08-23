@@ -264,12 +264,12 @@ func (s *engineSession) controlWriterLoop() {
 			s.controlActorMu.Unlock()
 
 			if err := writeAll(s.control, record.raw); err != nil {
+				if s.ctx.Err() == nil {
+					s.fail(fmt.Errorf("%w: control write: %v", ErrSessionProtocol, err))
+				}
 				if record.delivery != nil {
 					record.delivery <- err
 					close(record.delivery)
-				}
-				if s.ctx.Err() == nil {
-					s.fail(fmt.Errorf("%w: control write: %v", ErrSessionProtocol, err))
 				}
 				return
 			}
@@ -690,8 +690,6 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 		return err
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-s.ctx.Done():
-		return s.sessionError()
 	}
 }
 
@@ -704,24 +702,33 @@ func (s *engineSession) completeOwnedRekey(pending *pendingRekey) error {
 	select {
 	case <-pending.done:
 	case <-completionContext.Done():
-		err := completionContext.Err()
-		s.clearPendingRekey(pending)
-		s.fail(fmt.Errorf("%w: %w", ErrRekey, err))
-		return fmt.Errorf("%w: %w", ErrRekey, err)
+		return s.failOwnedRekeyCompletion(pending, completionContext.Err())
 	case <-s.ctx.Done():
 		s.clearPendingRekey(pending)
 		return s.sessionError()
 	}
 	for _, streamPending := range pending.streams {
 		if err := s.waitRekeySignal(completionContext, streamPending.done); err != nil {
-			s.clearPendingRekey(pending)
-			s.fail(fmt.Errorf("%w: %w", ErrRekey, err))
-			return fmt.Errorf("%w: %w", ErrRekey, err)
+			return s.failOwnedRekeyCompletion(pending, err)
 		}
 	}
 	s.clearPendingRekey(pending)
 	s.cleanupEpochRoots()
 	return nil
+}
+
+func (s *engineSession) failOwnedRekeyCompletion(pending *pendingRekey, err error) error {
+	s.clearPendingRekey(pending)
+	if s.ctx.Err() != nil {
+		return s.sessionError()
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		s.fail(context.DeadlineExceeded)
+		return fmt.Errorf("%w: rekey completion deadline", ErrRekey)
+	}
+	operationErr := fmt.Errorf("%w: %w", ErrRekey, err)
+	s.fail(operationErr)
+	return operationErr
 }
 
 func advanceSessionTransition(current uint64) (next uint64, exhausted bool) {

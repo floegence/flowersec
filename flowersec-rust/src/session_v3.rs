@@ -6006,6 +6006,12 @@ mod tests {
             "rekey_completion_timeout"
         );
         assert_eq!(cancellation["session_state_after_success"], "open");
+        let timeout = &lifecycle["post_commit_completion_timeout"];
+        assert_eq!(timeout["operation_error"], "rekey_failed");
+        assert_eq!(timeout["canceled_caller_error"], "canceled");
+        assert_eq!(timeout["termination_error"], "timeout");
+        assert_eq!(timeout["session_state"], "closed");
+        assert_eq!(timeout["completion_owner"], "session");
     }
 
     #[tokio::test]

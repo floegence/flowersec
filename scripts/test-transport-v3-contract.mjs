@@ -297,6 +297,10 @@ assert.equal(registry.limits.session_rekey_post_commit_caller_error, "canceled")
 assert.equal(registry.limits.session_rekey_post_commit_completion_owner, "session");
 assert.equal(registry.limits.session_rekey_post_commit_completion_deadline, "rekey_completion_timeout");
 assert.equal(registry.limits.session_rekey_post_commit_success_state, "open");
+assert.equal(registry.limits.session_rekey_post_commit_timeout_operation_error, "rekey_failed");
+assert.equal(registry.limits.session_rekey_post_commit_timeout_canceled_caller_error, "canceled");
+assert.equal(registry.limits.session_rekey_post_commit_timeout_termination_error, "timeout");
+assert.equal(registry.limits.session_rekey_post_commit_timeout_state, "closed");
 for (const entry of registry.design.traceability) {
   assert(typeof entry.clause === "string" && entry.clause.length > 0, "traceability clause ID is required");
   assert(typeof entry.title === "string" && entry.title.length > 0, `${entry.clause} traceability title is required`);

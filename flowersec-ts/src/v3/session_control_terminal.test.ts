@@ -276,28 +276,27 @@ describe("SessionV3 control terminal serialization", () => {
   });
 
   test("fails closed on an exhaustion GOAWAY write error while preserving resource exhaustion", async () => {
-    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
+    const [rawClient, serverCarrier] = createMemoryCarrierPairV3({
       kind: "webtransport",
       path: "direct",
       inboundBidirectionalStreamCapacity: 3,
     });
+    const clientCarrier = new TerminalOrderingCarrier(rawClient);
     const [client, server] = await Promise.all([
       establishSessionV3(clientCarrier, config("client")),
       establishSessionV3(serverCarrier, config("server")),
     ]);
     const internals = sessionInternals(client);
     internals.nextTransition = 0n;
-    const originalSendControl = internals.sendControl.bind(client);
-    internals.sendControl = async (type, payload) => {
-      if (type === InnerTypeV3.GoAway) throw new Error("injected GOAWAY write failure");
-      await originalSendControl(type, payload);
-    };
+    clientCarrier.failNextControlWrite();
     const publicClient = projectSessionV3(client);
 
     await expect(publicClient.rekey()).rejects.toMatchObject({ code: "resource_exhausted" });
     await expect(publicClient.waitTermination()).resolves.toMatchObject({
       error: { code: "operation_failed" },
     });
+    expect(clientCarrier.controlEvents).toEqual(["write"]);
+    expect(clientCarrier.aborts).toBe(1);
 
     await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
   });
@@ -314,7 +313,13 @@ describe("SessionV3 control terminal serialization", () => {
     ]);
     const clientInternals = sessionInternals(client);
     const serverInternals = sessionInternals(server);
-    clientInternals.sendEpoch = 0xffffffff;
+    const maximum = 0xffffffff;
+    clientInternals.sendRoots.set(maximum, clientInternals.sendRoots.get(0)!);
+    serverInternals.receiveRoots.set(maximum, serverInternals.receiveRoots.get(0)!);
+    clientInternals.sendEpoch = maximum;
+    clientInternals.controlSendEpoch = maximum;
+    serverInternals.receiveEpoch = maximum;
+    serverInternals.controlReceiveEpoch = maximum;
 
     await expect(client.rekey()).rejects.toMatchObject({ code: "resource_exhausted" });
     await waitFor(() => serverInternals.receivedGoAway);
@@ -385,6 +390,78 @@ describe("SessionV3 control terminal serialization", () => {
     const internals = sessionInternals(client);
     await waitFor(() => internals.sendEpoch === 1 && internals.pendingSessionRekey === undefined);
     expect(client.terminalError).toBeUndefined();
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
+  test("post-commit completion timeout projects rekey failure and terminal timeout", async () => {
+    const [rawClient, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const clientCarrier = new TerminalOrderingCarrier(rawClient);
+    const clientConfig: SessionConfigV3 = {
+      ...config("client"),
+      deadlines: {
+        establishTimeoutMs: 1_000,
+        rekeyPrepareTimeoutMs: 1_000,
+        rekeyCompletionTimeoutMs: 25,
+      },
+    };
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, clientConfig),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const publicClient = projectSessionV3(client);
+    clientCarrier.blockNextControlWrite();
+
+    const operation = publicClient.rekey();
+    await clientCarrier.blockedWriteEntered.promise;
+    await expect(testDeadline(operation, "post-commit completion timeout")).rejects.toMatchObject({
+      code: "rekey_failed",
+    });
+    await expect(testDeadline(publicClient.waitTermination(), "post-commit timeout termination")).resolves.toMatchObject({
+      error: { code: "timeout" },
+    });
+    expect(clientCarrier.aborts).toBe(1);
+
+    clientCarrier.releaseBlockedWrite();
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
+  test("caller cancellation leaves a post-commit timeout owned by the session", async () => {
+    const [rawClient, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const clientCarrier = new TerminalOrderingCarrier(rawClient);
+    const clientConfig: SessionConfigV3 = {
+      ...config("client"),
+      deadlines: {
+        establishTimeoutMs: 1_000,
+        rekeyPrepareTimeoutMs: 1_000,
+        rekeyCompletionTimeoutMs: 100,
+      },
+    };
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, clientConfig),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const publicClient = projectSessionV3(client);
+    const controller = new AbortController();
+    clientCarrier.blockNextControlWrite();
+
+    const operation = publicClient.rekey({ signal: controller.signal });
+    await clientCarrier.blockedWriteEntered.promise;
+    controller.abort(new SessionV3Error("aborted", "test cancellation"));
+    await expect(testDeadline(operation, "post-commit caller cancellation")).rejects.toMatchObject({ code: "canceled" });
+    await expect(testDeadline(publicClient.waitTermination(), "owned completion timeout")).resolves.toMatchObject({
+      error: { code: "timeout" },
+    });
+    expect(clientCarrier.aborts).toBe(1);
+
+    clientCarrier.releaseBlockedWrite();
     await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
   });
 
@@ -569,12 +646,15 @@ type SessionInternals = {
   receiveSessionRekey(payload: Uint8Array): Promise<void>;
   receiveSessionRekeyBeforeDeadline(payload: Uint8Array, signal: AbortSignal): Promise<void>;
   receiveEpoch: number;
+  controlReceiveEpoch: number;
   receiveTransition: bigint;
   receivedGoAway: boolean;
   pendingReceiveEpoch: number | undefined;
   receiveRoots: Map<number, unknown>;
   nextTransition: bigint;
   sendEpoch: number;
+  controlSendEpoch: number;
+  sendRoots: Map<number, unknown>;
   pendingSessionRekey: unknown;
   waitOutboundFrontier(watermark: bigint, signal: AbortSignal): Promise<void>;
   activeInboundResponders: number;
@@ -626,6 +706,7 @@ class TerminalOrderingCarrier implements CarrierSessionV3 {
   private opens = 0;
   private tracking = false;
   private blockNext = false;
+  private failNext = false;
   private fin = false;
   private readonly blockedWriteRelease = deferred<void>();
 
@@ -639,6 +720,11 @@ class TerminalOrderingCarrier implements CarrierSessionV3 {
   blockNextControlWrite(): void {
     this.tracking = true;
     this.blockNext = true;
+  }
+
+  failNextControlWrite(): void {
+    this.tracking = true;
+    this.failNext = true;
   }
 
   releaseBlockedWrite(): void {
@@ -666,6 +752,10 @@ class TerminalOrderingCarrier implements CarrierSessionV3 {
         if (this.tracking) {
           if (this.fin) this.writesAfterFIN++;
           this.controlEvents.push("write");
+          if (this.failNext) {
+            this.failNext = false;
+            throw new Error("injected control writer failure");
+          }
           if (this.blockNext) {
             this.blockNext = false;
             this.blockedWriteEntered.resolve();

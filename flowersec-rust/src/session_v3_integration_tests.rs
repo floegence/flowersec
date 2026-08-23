@@ -3060,6 +3060,97 @@ async fn dropping_a_committed_rekey_future_keeps_owned_completion_running() {
 }
 
 #[tokio::test]
+async fn committed_rekey_completion_timeout_projects_rekey_failed_and_timeout() {
+    let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
+    let gate = Arc::new(AtomicBool::new(false));
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let client_carrier: Arc<dyn CarrierSessionV3> = Arc::new(GatedCarrierSession {
+        inner: client_inner,
+        gate: gate.clone(),
+        write_entered: entered.clone(),
+        release_write: release.clone(),
+    });
+    let mut client_config = regression_config(SessionRole::Client, "rekey-owned-timeout", 1, None);
+    let server_config = regression_config(SessionRole::Server, "rekey-owned-timeout", 1, None);
+    client_config.deadlines.rekey_prepare = Duration::from_millis(500);
+    client_config.deadlines.rekey_completion = Duration::from_millis(25);
+    let (client, server) = tokio::join!(
+        establish_session_v3(client_carrier, client_config),
+        establish_session_v3(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+
+    gate.store(true, Ordering::Release);
+    let rekeying = {
+        let client = client.clone();
+        tokio::spawn(async move { client.rekey().await })
+    };
+    tokio::time::timeout(Duration::from_millis(250), entered.notified())
+        .await
+        .expect("rekey never reached its committed control write");
+    assert_eq!(
+        rekeying.await.expect("join rekey task"),
+        Err(SessionError::RekeyFailed)
+    );
+    let termination = tokio::time::timeout(Duration::from_millis(500), client.wait_termination())
+        .await
+        .expect("owned rekey completion timeout did not terminate the session");
+    assert_eq!(termination.error, SessionError::Timeout);
+
+    gate.store(false, Ordering::Release);
+    release.notify_one();
+    let _ = tokio::join!(client.close(), server.close());
+}
+
+#[tokio::test]
+async fn dropped_committed_rekey_still_times_out_under_session_ownership() {
+    let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
+    let gate = Arc::new(AtomicBool::new(false));
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let client_carrier: Arc<dyn CarrierSessionV3> = Arc::new(GatedCarrierSession {
+        inner: client_inner,
+        gate: gate.clone(),
+        write_entered: entered.clone(),
+        release_write: release.clone(),
+    });
+    let mut client_config =
+        regression_config(SessionRole::Client, "dropped-rekey-timeout", 1, None);
+    let server_config = regression_config(SessionRole::Server, "dropped-rekey-timeout", 1, None);
+    client_config.deadlines.rekey_prepare = Duration::from_millis(500);
+    client_config.deadlines.rekey_completion = Duration::from_millis(100);
+    let (client, server) = tokio::join!(
+        establish_session_v3(client_carrier, client_config),
+        establish_session_v3(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+
+    gate.store(true, Ordering::Release);
+    let rekeying = {
+        let client = client.clone();
+        tokio::spawn(async move { client.rekey().await })
+    };
+    tokio::time::timeout(Duration::from_millis(250), entered.notified())
+        .await
+        .expect("rekey never reached its committed control write");
+    rekeying.abort();
+    rekeying
+        .await
+        .expect_err("caller future must be canceled after commit");
+    let termination = tokio::time::timeout(Duration::from_millis(500), client.wait_termination())
+        .await
+        .expect("session-owned completion timeout did not terminate the session");
+    assert_eq!(termination.error, SessionError::Timeout);
+
+    gate.store(false, Ordering::Release);
+    release.notify_one();
+    let _ = tokio::join!(client.close(), server.close());
+}
+
+#[tokio::test]
 async fn failed_outbound_carrier_open_commits_abandonment_before_later_rekey() {
     let (client_inner, server_carrier) = memory_carrier_pair_for_logical(2);
     let client_carrier: Arc<dyn CarrierSessionV3> = Arc::new(FailingNthOpenCarrierSession {

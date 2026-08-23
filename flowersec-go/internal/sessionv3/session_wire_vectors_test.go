@@ -61,6 +61,13 @@ func TestSharedSessionWireV3Vectors(t *testing.T) {
 				CompletionDeadline       string `json:"completion_deadline"`
 				SessionStateAfterSuccess string `json:"session_state_after_success"`
 			} `json:"post_commit_caller_cancellation"`
+			PostCommitCompletionTimeout struct {
+				OperationError      string `json:"operation_error"`
+				CanceledCallerError string `json:"canceled_caller_error"`
+				TerminationError    string `json:"termination_error"`
+				SessionState        string `json:"session_state"`
+				CompletionOwner     string `json:"completion_owner"`
+			} `json:"post_commit_completion_timeout"`
 		} `json:"rekey_lifecycle"`
 	}
 	raw, err := os.ReadFile("../../../testdata/transport_v3/session_wire_vectors.json")
@@ -121,6 +128,11 @@ func TestSharedSessionWireV3Vectors(t *testing.T) {
 		cancellation.CompletionOwner != "session" || cancellation.CompletionDeadline != "rekey_completion_timeout" ||
 		cancellation.SessionStateAfterSuccess != "open" {
 		t.Fatalf("invalid post-commit cancellation lifecycle: %+v", cancellation)
+	}
+	if timeout := lifecycle.PostCommitCompletionTimeout; timeout.OperationError != "rekey_failed" ||
+		timeout.CanceledCallerError != "canceled" || timeout.TerminationError != "timeout" ||
+		timeout.SessionState != "closed" || timeout.CompletionOwner != "session" {
+		t.Fatalf("invalid post-commit completion timeout lifecycle: %+v", timeout)
 	}
 }
 
@@ -222,8 +234,8 @@ func TestExhaustionGoAwayWriteFailureFailsClosed(t *testing.T) {
 	}
 	waitContext, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := session.WaitClosed(waitContext); !errors.Is(err, io.ErrClosedPipe) {
-		t.Fatalf("exhaustion write termination = %v, want write failure", err)
+	if err := session.WaitClosed(waitContext); !errors.Is(err, ErrSessionProtocol) {
+		t.Fatalf("exhaustion write termination = %v, want protocol-owned write failure", err)
 	}
 }
 
@@ -304,6 +316,79 @@ func TestPostCommitCallerCancellationLeavesOwnedRekeyRunning(t *testing.T) {
 	case <-session.Termination():
 		t.Fatalf("caller cancellation terminated session: %v", session.sessionError())
 	default:
+	}
+}
+
+func TestPostCommitCompletionTimeoutProjectsRekeyFailureAndTerminalTimeout(t *testing.T) {
+	session, control := newRekeyBoundarySession(t, rekeyControlWriteBlocked, time.Second)
+	session.config.RekeyCompletionTimeout = 25 * time.Millisecond
+
+	err := session.Rekey(context.Background())
+	if !errors.Is(err, ErrRekey) || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("completion timeout Rekey = %v, want rekey failure without deadline projection", err)
+	}
+	select {
+	case <-control.writeEntered:
+	default:
+		t.Fatal("committed rekey never reached the control writer")
+	}
+	waitContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := session.WaitClosed(waitContext); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("completion timeout termination = %v, want deadline exceeded", err)
+	}
+	assertOwnedRekeyGatesReleased(t, session)
+}
+
+func TestPostCommitCallerCancellationLeavesCompletionTimeoutOwnedBySession(t *testing.T) {
+	session, control := newRekeyBoundarySession(t, rekeyControlWriteBlocked, time.Second)
+	session.config.RekeyCompletionTimeout = 50 * time.Millisecond
+	callerContext, cancelCaller := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- session.Rekey(callerContext) }()
+	select {
+	case <-control.writeEntered:
+	case <-time.After(time.Second):
+		t.Fatal("rekey never reached the committed control write")
+	}
+	cancelCaller()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("post-commit caller result = %v, want canceled", err)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("post-commit caller cancellation did not release the caller")
+	}
+	waitContext, cancelWait := context.WithTimeout(context.Background(), time.Second)
+	defer cancelWait()
+	if err := session.WaitClosed(waitContext); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("owned completion timeout termination = %v, want deadline exceeded", err)
+	}
+	assertOwnedRekeyGatesReleased(t, session)
+}
+
+func assertOwnedRekeyGatesReleased(t *testing.T, session *engineSession) {
+	t.Helper()
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for {
+		if session.rekeyMu.TryLock() {
+			session.rekeyMu.Unlock()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("owned completion did not release the rekey gate")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	session.openMu.Lock()
+	openFrozen := session.openFrozen
+	session.openMu.Unlock()
+	session.responderMu.Lock()
+	respondersFrozen := session.responderLocalFrozen
+	session.responderMu.Unlock()
+	if openFrozen || respondersFrozen {
+		t.Fatalf("owned completion gates = open:%t responders:%t, want released", openFrozen, respondersFrozen)
 	}
 }
 

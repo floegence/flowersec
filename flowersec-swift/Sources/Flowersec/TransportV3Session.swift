@@ -1294,7 +1294,14 @@ actor TransportV3Session {
 
   private func expireReceiveRekey(transition: UInt64) async {
     guard pendingReceiveRekeyTransition == transition, !closed else { return }
-    await failProtocol()
+    let signal = initiateClose(
+      goAwayReason: 6,
+      closeReason: 6,
+      carrierCode: 6,
+      carrierReason: "peer rekey completion timeout",
+      terminalError: .timeout
+    )
+    await signal.wait()
   }
 
   private func handleSessionKeyUpdateACK(_ payload: Data) async throws {
@@ -1521,7 +1528,14 @@ actor TransportV3Session {
   private func expireRekey(transition: UInt64) async {
     guard let pendingRekey, pendingRekey.transition == transition else { return }
     await pendingRekey.signal.fail(TransportV3SessionError.rekeyFailed)
-    await failProtocol()
+    let signal = initiateClose(
+      goAwayReason: 6,
+      closeReason: 6,
+      carrierCode: 6,
+      carrierReason: "rekey completion timeout",
+      terminalError: .timeout
+    )
+    await signal.wait()
   }
 
   private func cancelIncomingWaiter(_ waiterID: UInt64) {

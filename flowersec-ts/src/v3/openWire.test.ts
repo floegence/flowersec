@@ -70,6 +70,13 @@ const wireFixture = JSON.parse(readFileSync(
       completion_deadline: string;
       session_state_after_success: string;
     }>;
+    post_commit_completion_timeout: Readonly<{
+      operation_error: string;
+      canceled_caller_error: string;
+      termination_error: string;
+      session_state: string;
+      completion_owner: string;
+    }>;
   }>;
 }>;
 const bytes = (value: string): Uint8Array => new TextEncoder().encode(value);
@@ -194,6 +201,13 @@ describe("transport v3 inherited session wire boundaries", () => {
         completion_owner: "session",
         completion_deadline: "rekey_completion_timeout",
         session_state_after_success: "open",
+      },
+      post_commit_completion_timeout: {
+        operation_error: "rekey_failed",
+        canceled_caller_error: "canceled",
+        termination_error: "timeout",
+        session_state: "closed",
+        completion_owner: "session",
       },
     });
   });

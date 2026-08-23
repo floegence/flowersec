@@ -544,6 +544,7 @@ func TestV3RekeyLifecycleProjectsPortableErrors(t *testing.T) {
 		{name: "counter exhaustion", internal: protocolv3.ErrCounterExhausted, want: SessionResourceExhausted},
 		{name: "GOAWAY write failure", internal: io.ErrClosedPipe, want: SessionOperationFailed},
 		{name: "GOAWAY deadline", internal: fmt.Errorf("%w: exhaustion GOAWAY preparation deadline", session.ErrRekey), want: SessionRekeyFailed},
+		{name: "rekey completion deadline", internal: fmt.Errorf("%w: rekey completion deadline", session.ErrRekey), want: SessionRekeyFailed},
 		{name: "terminal timeout", internal: context.DeadlineExceeded, want: SessionTimeout},
 	} {
 		t.Run(test.name, func(t *testing.T) {

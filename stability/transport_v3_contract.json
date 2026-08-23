@@ -174,6 +174,10 @@
     "session_rekey_post_commit_completion_owner": "session",
     "session_rekey_post_commit_completion_deadline": "rekey_completion_timeout",
     "session_rekey_post_commit_success_state": "open",
+    "session_rekey_post_commit_timeout_operation_error": "rekey_failed",
+    "session_rekey_post_commit_timeout_canceled_caller_error": "canceled",
+    "session_rekey_post_commit_timeout_termination_error": "timeout",
+    "session_rekey_post_commit_timeout_state": "closed",
     "retry_after_unix_ms_max": 253402300799999
   },
   "artifact_schema": {
