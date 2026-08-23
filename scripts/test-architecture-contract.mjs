@@ -538,6 +538,13 @@ assert.doesNotMatch(hostInit + hostEntry, /SUDO_USER|runuser|chown|\/home\/tang|
 assert.match(hostEntry, /sudo -n true/);
 assert.ok(hostEntry.split("\n").includes("    https://ghfast.top/https://github.com/*) printf '%s\\n' \"$1\" ;;"));
 assert.match(hostEntry, /HOME="\$host_home" PATH="\$host_path" TMPDIR="\$host_tmp"/);
+assert.match(hostEntry, /readonly host_go_root=\$host_cache\/toolchains\/go/);
+assert.equal(hostEntry.match(/GOROOT="\$host_go_root" GOCACHE="\$host_cache\/go-build" GOMODCACHE="\$host_cache\/go-mod"/g)?.length, 2,
+  "direct-root and sudo host entries must use the installed Go root");
+assert.match(hostEntry, /\$\{GOROOT:-\} == "\$host_go_root"/);
+assert.match(hostInit, /readonly host_go_root=\$host_cache\/toolchains\/go/);
+assert.match(hostInit, /\$\{GOROOT:-\} == "\$host_go_root"/);
+assert.match(hostInit, /\$\(go env GOROOT\) == "\$host_go_root"/);
 assert.match(hostEntry, /git -C "\$host_workspace" checkout --detach --force "\$source_sha"/);
 assert.match(hostEntry, /status --porcelain --untracked-files=all/);
 assert.doesNotMatch(hostEntry, /status --porcelain --untracked-files=no/);

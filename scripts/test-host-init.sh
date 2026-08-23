@@ -6,13 +6,14 @@ readonly host_home=$host_root/home
 readonly host_workspace=$host_root/workspace
 readonly host_tmp=$host_root/tmp
 readonly host_cache=$host_root/cache
-readonly host_path="$host_cache/toolchains/go/bin:$host_cache/toolchains/node/bin:$host_home/.cargo/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$host_home/.local/bin:$host_home/.swiftly/bin"
+readonly host_go_root=$host_cache/toolchains/go
+readonly host_path="$host_go_root/bin:$host_cache/toolchains/node/bin:$host_home/.cargo/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$host_home/.local/bin:$host_home/.swiftly/bin"
 readonly playwright_download_host=https://npmmirror.com/mirrors/playwright
 readonly playwright_download_timeout=120000
 
 (($# == 0)) || { echo "usage: test-host-init.sh" >&2; exit 2; }
 ((EUID == 0)) || { echo "test-host-init requires EUID 0" >&2; exit 1; }
-[[ $HOME == "$host_home" && $PATH == "$host_path" && $TMPDIR == "$host_tmp" && ${FLOWERSEC_TEST_STATE_DIR:-} == "$host_root/state" ]] || {
+[[ $HOME == "$host_home" && $PATH == "$host_path" && $TMPDIR == "$host_tmp" && ${GOROOT:-} == "$host_go_root" && ${FLOWERSEC_TEST_STATE_DIR:-} == "$host_root/state" ]] || {
   echo "test-host-init requires the canonical root environment" >&2
   exit 1
 }
@@ -107,7 +108,7 @@ if ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/
 fi
 
 install_go() {
-  local destination=$host_cache/toolchains/go archive
+  local destination=$host_go_root archive
   if [[ -x $destination/bin/go ]] && "$destination/bin/go" version | grep -Fq "go${go_version}"; then return; fi
   archive=$(mktemp "$host_tmp/go.XXXXXX.tar.gz")
   curl -fL --retry 3 -o "$archive" "https://mirrors.aliyun.com/golang/go${go_version}.linux-${go_arch}.tar.gz"
@@ -216,6 +217,7 @@ for required in "${required_commands[@]}"; do
   [[ -n $resolved && $resolved == /* && -x $resolved ]] || { echo "missing host capability: $required" >&2; exit 1; }
 done
 go version | grep -F "go${go_version}" >/dev/null || { echo "missing host capability: Go ${go_version}" >&2; exit 1; }
+[[ $(go env GOROOT) == "$host_go_root" ]] || { echo "non-canonical root environment: Go root is $(go env GOROOT), expected $host_go_root" >&2; exit 1; }
 [[ $(node --version) == v24.14.1 ]] || { echo "missing host capability: Node 24.14.1" >&2; exit 1; }
 rustc --version | grep -Eq 'rustc 1\.88\.0([[:space:]]|$)' || { echo "missing host capability: Rust 1.88.0" >&2; exit 1; }
 swift --version | grep -Eq 'Swift version 6\.1(\.[0-9]+)?([[:space:]]|$)' || { echo "missing host capability: Swift 6.1" >&2; exit 1; }
