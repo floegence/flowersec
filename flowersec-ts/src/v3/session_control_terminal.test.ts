@@ -157,6 +157,28 @@ describe("SessionV3 control terminal serialization", () => {
   });
 
   test("publishes receive epoch before the rekey ACK can be exposed", async () => {
+    const [clientCarrier, rawServerCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const serverCarrier = new TerminalOrderingCarrier(rawServerCarrier);
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, config("client")),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const internals = sessionInternals(server);
+    serverCarrier.blockNextControlWrite();
+    const rekeying = client.rekey();
+    await serverCarrier.blockedWriteEntered.promise;
+    expect(internals.receiveEpoch).toBe(1);
+    expect(internals.receiveTransition).toBe(1n);
+    serverCarrier.releaseBlockedWrite();
+    await expect(rekeying).resolves.toBeUndefined();
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
+  test("ignores a duplicate session rekey ACK while a later rekey is pending", async () => {
     const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
       kind: "webtransport",
       path: "direct",
@@ -167,28 +189,25 @@ describe("SessionV3 control terminal serialization", () => {
       establishSessionV3(serverCarrier, config("server")),
     ]);
     const internals = sessionInternals(client);
-    const originalSendResponse = internals.sendControlResponse.bind(client);
-    const entered = deferred<void>();
-    const release = deferred<void>();
-    internals.sendControlResponse = async (type, _payload, publish) => {
-      expect(type).toBe(InnerTypeV3.SessionKeyUpdateACK);
-      publish?.();
-      entered.resolve();
-      await release.promise;
-      return true;
+    const accepted = sessionRekeyPayload();
+    const pending = sessionRekeyPayload(2n, 2);
+    internals.lastSessionRekeyACK = accepted;
+    internals.pendingSessionRekey = {
+      payload: pending,
+      epoch: 2,
+      acknowledged: deferred<void>(),
+      committed: { value: false },
     };
+    internals.sendEpoch = 1;
+    internals.controlSendEpoch = 1;
+    internals.controlSendSequence = 9n;
 
-    const receiving = internals.receiveSessionRekeyBeforeDeadline(
-      sessionRekeyPayload(),
-      new AbortController().signal,
-    );
-    await entered.promise;
-    expect(internals.receiveEpoch).toBe(1);
-    expect(internals.receiveTransition).toBe(1n);
-    release.resolve();
-    await receiving;
+    expect(() => internals.receiveSessionRekeyACK(accepted)).not.toThrow();
+    expect(internals.sendEpoch).toBe(1);
+    expect(internals.controlSendEpoch).toBe(1);
+    expect(internals.controlSendSequence).toBe(9n);
+    expect(internals.pendingSessionRekey.committed.value).toBe(false);
 
-    internals.sendControlResponse = originalSendResponse;
     await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
   });
 
@@ -763,6 +782,7 @@ type SessionInternals = {
   sendControl(type: InnerTypeV3, payload: Uint8Array): Promise<void>;
   sendControlResponse(type: InnerTypeV3, payload: Uint8Array, publish?: () => void): Promise<boolean>;
   sendControlCleanup(type: InnerTypeV3, payload: Uint8Array): Promise<boolean>;
+  receiveSessionRekeyACK(payload: Uint8Array): void;
   receiveSessionRekey(payload: Uint8Array): Promise<void>;
   receiveSessionRekeyBeforeDeadline(payload: Uint8Array, signal: AbortSignal): Promise<void>;
   receiveEpoch: number;
@@ -774,8 +794,18 @@ type SessionInternals = {
   nextTransition: bigint;
   sendEpoch: number;
   controlSendEpoch: number;
+  controlSendSequence: bigint;
   sendRoots: Map<number, unknown>;
-  pendingSessionRekey: unknown;
+  pendingSessionRekey: {
+    payload: Uint8Array;
+    epoch: number;
+    acknowledged: {
+      promise: Promise<void>;
+      resolve(value: void | PromiseLike<void>): void;
+    };
+    committed: { value: boolean };
+  } | undefined;
+  lastSessionRekeyACK: Uint8Array | undefined;
   waitOutboundFrontier(watermark: bigint, signal: AbortSignal): Promise<void>;
   activeInboundResponders: number;
   localResponderFrozen: boolean;
@@ -823,7 +853,7 @@ class TerminalOrderingCarrier implements CarrierSessionV3 {
   readonly controlEvents: string[] = [];
   writesAfterFIN = 0;
   aborts = 0;
-  private opens = 0;
+  private controlStreamBound = false;
   private tracking = false;
   private blockNext = false;
   private failNext = false;
@@ -853,12 +883,16 @@ class TerminalOrderingCarrier implements CarrierSessionV3 {
 
   async openStream(options: OperationOptionsV3 = {}): Promise<CarrierStreamV3> {
     const stream = await this.inner.openStream(options);
-    const control = this.opens++ === 0;
+    const control = !this.controlStreamBound;
+    this.controlStreamBound = true;
     return control ? this.wrapControl(stream) : stream;
   }
 
   async acceptStream(options: OperationOptionsV3 = {}): Promise<CarrierStreamV3> {
-    return await this.inner.acceptStream(options);
+    const stream = await this.inner.acceptStream(options);
+    const control = !this.controlStreamBound;
+    this.controlStreamBound = true;
+    return control ? this.wrapControl(stream) : stream;
   }
 
   async waitTermination(): Promise<void> { await this.inner.waitTermination(); }
@@ -1024,11 +1058,11 @@ function idReason(id: bigint, reason: number): Uint8Array {
   return output;
 }
 
-function sessionRekeyPayload(): Uint8Array {
+function sessionRekeyPayload(transition = 1n, nextEpoch = 1): Uint8Array {
   const output = new Uint8Array(20);
   const view = new DataView(output.buffer);
-  view.setBigUint64(0, 1n);
-  view.setUint32(8, 1);
+  view.setBigUint64(0, transition);
+  view.setUint32(8, nextEpoch);
   view.setBigUint64(12, 0n);
   return output;
 }

@@ -1256,9 +1256,9 @@ export class SessionV3 implements SessionV3Contract {
   }
 
   private receiveSessionRekeyACK(payload: Uint8Array): void {
+    if (this.lastSessionRekeyACK !== undefined && bytesEqual(payload, this.lastSessionRekeyACK)) return;
     const pending = this.pendingSessionRekey;
     if (pending === undefined) {
-      if (this.lastSessionRekeyACK !== undefined && bytesEqual(payload, this.lastSessionRekeyACK)) return;
       throw protocolError("unexpected SESSION_KEY_UPDATE_ACK");
     }
     if (!bytesEqual(payload, pending.payload)) throw protocolError("unexpected SESSION_KEY_UPDATE_ACK");
