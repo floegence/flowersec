@@ -884,6 +884,58 @@ func TestCancelledCommandWaitsForSigkillFallbackGroupCleanup(t *testing.T) {
 	}
 }
 
+func TestCancelledCommandWaitsForSigkillGroupBarrierAndReportsFailure(t *testing.T) {
+	directory := t.TempDir()
+	ready := filepath.Join(directory, "ready")
+	ctx, cancel := context.WithCancel(context.Background())
+	barrierEntered := make(chan struct{})
+	releaseBarrier := make(chan struct{})
+	defer func() {
+		select {
+		case <-releaseBarrier:
+		default:
+			close(releaseBarrier)
+		}
+	}()
+	done := make(chan error, 1)
+	go func() {
+		_, err := runCommandOutputWithGraceAndGroupWait(ctx, 20*time.Millisecond, func(_ int, _ time.Duration) bool {
+			close(barrierEntered)
+			<-releaseBarrier
+			return false
+		}, directory, []string{"READY=" + ready}, "sh", "-c", `trap '' TERM; sh -c 'trap '\'' '\'' TERM; while :; do sleep 1; done' & touch "$READY"; wait`)
+		done <- err
+	}()
+	deadline := time.Now().Add(time.Second)
+	for !regularFile(ready) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !regularFile(ready) {
+		cancel()
+		t.Fatal("SIGKILL barrier command did not become ready")
+	}
+	cancel()
+	select {
+	case <-barrierEntered:
+	case <-time.After(time.Second):
+		t.Fatal("SIGKILL process-group barrier was not called")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("runner returned before the process-group barrier completed: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseBarrier)
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "subprocess group did not exit after SIGKILL") {
+			t.Fatalf("SIGKILL barrier failure = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runner did not report the process-group barrier failure")
+	}
+}
+
 func TestCancelledGoTestFinishesTestOwnedCleanup(t *testing.T) {
 	directory := t.TempDir()
 	ready := filepath.Join(directory, "ready")

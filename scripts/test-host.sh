@@ -10,8 +10,6 @@ readonly host_cache=$host_root/cache
 readonly host_lock=$host_root/test-host.lock
 readonly host_go_root=$host_cache/toolchains/go
 readonly host_path="$host_go_root/bin:$host_cache/toolchains/node/bin:$host_home/.cargo/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$host_home/.local/bin:$host_home/.swiftly/bin"
-readonly playwright_download_host=https://npmmirror.com/mirrors/playwright
-readonly playwright_download_timeout=120000
 readonly host_open_file_limit=65536
 
 usage() {
@@ -58,11 +56,9 @@ enter_root() {
       CARGO_HOME="$host_home/.cargo" RUSTUP_HOME="$host_home/.rustup" \
       SWIFTLY_HOME_DIR="$host_home/.swiftly" SWIFTLY_BIN_DIR="$host_home/.local/bin" \
       PLAYWRIGHT_BROWSERS_PATH="$host_cache/playwright" npm_config_cache="$host_cache/npm" \
-      PLAYWRIGHT_DOWNLOAD_HOST="$playwright_download_host" PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT="$playwright_download_timeout" \
       FLOWERSEC_CHROMIUM_EXECUTABLE="$host_cache/chromium" \
       npm_config_registry=https://registry.npmmirror.com \
       GOPROXY=https://goproxy.cn,direct GOSUMDB=sum.golang.google.cn \
-      RUSTUP_DIST_SERVER=https://rsproxy.cn RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup \
       CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse \
       CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://rsproxy.cn/index/ \
       /bin/bash "$script" --root "$source_sha" "$source_url" "$@"
@@ -76,11 +72,9 @@ enter_root() {
     CARGO_HOME="$host_home/.cargo" RUSTUP_HOME="$host_home/.rustup" \
     SWIFTLY_HOME_DIR="$host_home/.swiftly" SWIFTLY_BIN_DIR="$host_home/.local/bin" \
     PLAYWRIGHT_BROWSERS_PATH="$host_cache/playwright" npm_config_cache="$host_cache/npm" \
-    PLAYWRIGHT_DOWNLOAD_HOST="$playwright_download_host" PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT="$playwright_download_timeout" \
     FLOWERSEC_CHROMIUM_EXECUTABLE="$host_cache/chromium" \
     npm_config_registry=https://registry.npmmirror.com \
     GOPROXY=https://goproxy.cn,direct GOSUMDB=sum.golang.google.cn \
-    RUSTUP_DIST_SERVER=https://rsproxy.cn RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup \
     CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse \
     CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://rsproxy.cn/index/ \
     /bin/bash "$script" --root "$source_sha" "$source_url" "$@"

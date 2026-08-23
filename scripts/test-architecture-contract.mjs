@@ -503,10 +503,12 @@ assert.match(hostInit, /goproxy\.cn|npmmirror\.com|rsproxy\.cn/);
 assert.match(hostInit, /\[source\.crates-io\][\s\S]*replace-with = "rsproxy"[\s\S]*\[source\.rsproxy\]/);
 assert.match(hostInit, /BTF|bpftool|netns|cgroup|Chromium|Swift 6\.1/i);
 assert.match(hostInit, /clang -target bpf -O2 -x c -c/);
-assert.match(hostInit, /npm --prefix "\$source_root\/flowersec-ts" run ensure:browser/);
-assert.match(hostInit, /PLAYWRIGHT_DOWNLOAD_HOST|playwright_download_host/);
-assert.match(hostInit, /PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT|playwright_download_timeout/);
-assert.match(hostInit, /curl -fILsS --max-time/);
+assert.doesNotMatch(hostInit, /npm --prefix "\$source_root\/flowersec-ts" run ensure:browser/);
+assert.match(hostInit, /playwright_download_host/);
+assert.match(hostInit, /install_verified_playwright_archive/);
+assert.match(hostInit, /Playwright browser metadata does not match the authenticated archive set/);
+assert.match(hostInit, /--connect-timeout 20 --max-time 900/);
+assert.doesNotMatch(hostEntry, /PLAYWRIGHT_DOWNLOAD_HOST|PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT|RUSTUP_DIST_SERVER|RUSTUP_UPDATE_ROOT/);
 assert.doesNotMatch(hostInit, /ensure:browser:webkit|install chromium webkit/);
 assert.match(browserEnsure, /requested\.length === 0 \? \["chromium"\]/);
 assert.match(browserEnsure, /import \{ chromium, firefox, webkit \}/);
@@ -514,6 +516,7 @@ assert.match(browserEnsure, /const browsers = \{ chromium, firefox, webkit \}/);
 assert.match(browserEnsure, /PLAYWRIGHT_DOWNLOAD_HOST/);
 assert.match(browserEnsure, /PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT/);
 assert.match(browserEnsure, /fs\.accessSync\(file, fs\.constants\.X_OK\)/);
+assert.match(browserEnsure, /process\.getuid\?\.\(\) === 0[\s\S]*not authenticated/);
 assert.match(packageManifest, /"ensure:browser": "node \.\/scripts\/ensure-playwright-browsers\.mjs chromium"/);
 assert.match(packageManifest, /"test:browser:firefox": "npm run ensure:browser:firefox[^"]*--project=firefox-compat"/);
 assert.match(packageManifest, /"ensure:browser:webkit": "node \.\/scripts\/ensure-playwright-browsers\.mjs webkit"/);
@@ -526,7 +529,7 @@ for (const temporaryName of ["archive", "installer", "bootstrap", "post_install"
     `host initialization must track ${temporaryName} for EXIT cleanup`);
 }
 assert.doesNotMatch(hostInit, /chromium_path=.*command -v chromium/);
-for (const executable of ["go", "make", "node", "npm", "rustup", "cargo", "rustc", "swift", "swiftc", "git", "curl", "jq", "tar", "xz", "gcc", "g++", "clang", "clang++", "pkg-config", "python3", "sh", "realpath", "ip", "nsenter", "tc", "nft", "iptables", "ethtool", "bpftool", "sysctl", "mount", "mountpoint", "umount", "flock", "sha256sum"]) {
+for (const executable of ["go", "make", "node", "npm", "rustup", "cargo", "rustc", "swift", "swiftc", "git", "curl", "jq", "tar", "unzip", "xz", "gcc", "g++", "clang", "clang++", "pkg-config", "python3", "sh", "realpath", "ip", "nsenter", "tc", "nft", "iptables", "ethtool", "bpftool", "sysctl", "mount", "mountpoint", "umount", "flock", "sha256sum"]) {
   const boundary = /^[A-Za-z0-9_]+$/.test(executable) ? `\\b${escapeRegex(executable)}\\b` : escapeRegex(executable);
   assert.match(hostInit, new RegExp(boundary), `host init must check ${executable}`);
 }

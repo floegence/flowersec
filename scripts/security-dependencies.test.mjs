@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +19,12 @@ function run(command, args, options = {}) {
     throw new Error(`${command} ${args.join(" ")} failed: ${result.stderr}`);
   }
   return result.stdout;
+}
+
+function extractShellFunction(source, name) {
+  const match = new RegExp(`^${name}\\(\\) \\{\\n[\\s\\S]*?^\\}\\n`, "m").exec(source);
+  assert.ok(match, `missing shell function ${name}`);
+  return match[0];
 }
 
 function parseReleaseVersion(actual, label) {
@@ -162,6 +169,8 @@ test("security dependency checks stay wired into local gates", () => {
 
 test("privileged host bootstrap verifies every root-executed toolchain download", () => {
   const source = fs.readFileSync(path.join(sourceRoot, "scripts/test-host-init.sh"), "utf8");
+  const browserEnsure = fs.readFileSync(path.join(sourceRoot, "flowersec-ts/scripts/ensure-playwright-browsers.mjs"), "utf8");
+  const hostEntry = fs.readFileSync(path.join(sourceRoot, "scripts/test-host.sh"), "utf8");
   for (const digest of [
     "708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89",
     "d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e",
@@ -171,16 +180,131 @@ test("privileged host bootstrap verifies every root-executed toolchain download"
     "cc4f912fff6c7f53704fc6d22f9e8ee7fdf6bd574ad276998f7502418bf5a45a",
     "e7ce91d07b4419ea779da6b575721c17eb7c44f932e63b6e2d03a9afe75cce61",
     "6531421eeb80eb69db21e41b1ed94bac1467548972eb82861fc4beb6664bd6aa",
+    "7b5437c1d18a174faae253a18eac22c32288dccfc09ff78d5ee99b7467e21bca",
+    "d5decc46123eb888f809f2ee3b118d13586a37ffad38afaefe56aa7139481d34",
+    "ae8736ac28bc69278551500f219fc749575648263c43ec5990749eff43b9fcf8",
+    "b5ad7d8fe70f230b34198ddb5626d717c016db2f627cb44b922babbcaf3479b9",
+    "3cfc2bd00d1bafcf8a68dc74c9c92bb7150ddc8d26ade948a776316e1cec4f14",
+    "b03443e1e1a60d06e07b6cdfe650b8c2bfcbb3db497d2b652f73dc6912f4ae15",
+    "ebc74fc5b94830176a3c2914ae96bd8bc7f6a91f4f33890230f84a172ee61ccc",
+    "2628c03f05318ff812c8c9baaf207dea2ddf53e818c0dc936714b0fbe3afb009",
   ]) assert.match(source, new RegExp(digest));
   assert.match(source, /rustup\/archive\/1\.28\.2\/\$\{rustup_target\}\/rustup-init/);
   assert.match(source, /rustup_sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c/);
   assert.match(source, /rustup_sha256=e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c/);
-  assert.match(source, /sha256sum --check --status/);
-  for (const label of ["Go archive", "Node archive", "Swiftly archive", "Swiftly binary"]) {
+  assert.match(source, /sha256sum -c/);
+  assert.match(source, /--connect-timeout 20 --max-time 900/);
+  for (const label of [
+    "Go archive", "Node archive", "Rustup installer", "Rust distribution archive",
+    "Swiftly archive", "Swiftly extracted binary", "Swiftly binary",
+  ]) {
     assert.match(source, new RegExp(`verify_download [^\\n]*"${label}"`));
   }
+  for (const label of ["Playwright Chromium archive", "Playwright Chromium headless archive", "Playwright FFmpeg archive"]) {
+    assert.match(source, new RegExp(`install_verified_playwright_archive "${label}"`));
+  }
+  assert.match(source, /--default-toolchain none/);
+  assert.match(source, /rust-\$\{rust_version\}-\$\{rustup_target\}\.tar\.xz/);
+  assert.match(source, /authentication_marker_matches "\$rust_archive_sha256"/);
+  assert.match(source, /authentication_marker_matches "\$swift_verification_marker"/);
+  assert.match(source, /authentication_marker_matches "\$expected" "\$marker"/);
+  assert.doesNotMatch(source, /npm --prefix "\$source_root\/flowersec-ts" run ensure:browser/);
+  assert.doesNotMatch(hostEntry, /RUSTUP_DIST_SERVER|RUSTUP_UPDATE_ROOT|PLAYWRIGHT_DOWNLOAD_HOST|PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT/);
+  assert.match(browserEnsure, /process\.getuid\?\.\(\) === 0[\s\S]*not authenticated/);
   assert.match(source, /swiftly" install "\$swift_version" --use --verify/);
   assert.doesNotMatch(source, /curl[^\n]*\|\s*(?:bash|sh)\b/);
+});
+
+test("privileged archive verification rejects corrupt bytes before the next action", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-host-download-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const archive = path.join(root, "archive");
+  const reached = path.join(root, "reached");
+  fs.writeFileSync(archive, "corrupt archive");
+  const source = fs.readFileSync(path.join(sourceRoot, "scripts/test-host-init.sh"), "utf8");
+  const result = spawnSync("bash", ["-s", "--", "0".repeat(64), archive, reached], {
+    encoding: "utf8",
+    input: `set -e\n${extractShellFunction(source, "verify_download")}\nverify_download "$1" "$2" "Injected archive"\nprintf reached >"$3"\n`,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Injected archive checksum mismatch/);
+  assert.equal(fs.existsSync(reached), false);
+});
+
+test("authentication markers reject missing, mismatched, and symlinked legacy state", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-auth-marker-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const marker = path.join(root, "marker");
+  const linked = path.join(root, "linked");
+  const expected = "a".repeat(64);
+  const source = fs.readFileSync(path.join(sourceRoot, "scripts/test-host-init.sh"), "utf8");
+  const check = (pathValue) => spawnSync("bash", ["-s", "--", expected, pathValue], {
+    encoding: "utf8",
+    input: `${extractShellFunction(source, "authentication_marker_matches")}\nauthentication_marker_matches "$1" "$2"\n`,
+  }).status;
+  assert.notEqual(check(marker), 0);
+  fs.writeFileSync(marker, `${"b".repeat(64)}\n`);
+  assert.notEqual(check(marker), 0);
+  fs.writeFileSync(marker, `${expected}\n`);
+  assert.equal(check(marker), 0);
+  fs.symlinkSync(marker, linked);
+  assert.notEqual(check(linked), 0);
+});
+
+test("generic Playwright installation refuses unauthenticated root downloads", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-root-browser-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const ensure = path.join(sourceRoot, "flowersec-ts/scripts/ensure-playwright-browsers.mjs");
+  const result = spawnSync(process.execPath, [
+    "--import", "data:text/javascript,process.getuid=()=>0", ensure, "chromium",
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: root },
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /is not authenticated/);
+  assert.deepEqual(fs.readdirSync(root), []);
+});
+
+test("fresh Swiftly bootstrap initializes configuration before version validation", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-swiftly-bootstrap-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const hostHome = path.join(root, "home");
+  const bin = path.join(hostHome, ".local/bin");
+  const bootstrap = path.join(root, "swiftly");
+  const installed = path.join(bin, "swiftly");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(bootstrap, `#!/bin/sh
+if [ "$1" = init ]; then
+  mkdir -p "$SWIFTLY_HOME_DIR" "$SWIFTLY_BIN_DIR"
+  printf '{}\\n' >"$SWIFTLY_HOME_DIR/config.json"
+  cp "$0" "$SWIFTLY_BIN_DIR/swiftly"
+  chmod 0755 "$SWIFTLY_BIN_DIR/swiftly"
+  exit 0
+fi
+if [ "$1" = --version ] && [ -f "$SWIFTLY_HOME_DIR/config.json" ]; then
+  printf '1.1.3\\n'
+  exit 0
+fi
+exit 1
+`);
+  fs.chmodSync(bootstrap, 0o755);
+  const digest = createHash("sha256").update(fs.readFileSync(bootstrap)).digest("hex");
+  const source = fs.readFileSync(path.join(sourceRoot, "scripts/test-host-init.sh"), "utf8");
+  const result = spawnSync("bash", ["-s", "--", hostHome, bootstrap, installed, digest], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      SWIFTLY_HOME_DIR: path.join(hostHome, ".swiftly"),
+      SWIFTLY_BIN_DIR: bin,
+    },
+    input: `set -e\n${extractShellFunction(source, "verify_download")}\n${extractShellFunction(source, "initialize_swiftly_binary")}\nhost_home="$1"\nswiftly_binary_sha256="$4"\nswiftly_version=1.1.3\ninitialize_swiftly_binary "$2" "$3"\n`,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(path.join(hostHome, ".swiftly/config.json")), true);
+  assert.equal(run(installed, ["--version"], {
+    env: { SWIFTLY_HOME_DIR: path.join(hostHome, ".swiftly"), SWIFTLY_BIN_DIR: bin },
+  }), "1.1.3\n");
 });
 
 test("module-local Go checks cannot be masked by workspace MVS", (t) => {

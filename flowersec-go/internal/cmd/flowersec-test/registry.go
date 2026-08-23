@@ -330,6 +330,10 @@ func runCommandOutput(ctx context.Context, directory string, environment []strin
 }
 
 func runCommandOutputWithGrace(ctx context.Context, grace time.Duration, directory string, environment []string, name string, arguments ...string) ([]byte, error) {
+	return runCommandOutputWithGraceAndGroupWait(ctx, grace, waitForProcessGroup, directory, environment, name, arguments...)
+}
+
+func runCommandOutputWithGraceAndGroupWait(ctx context.Context, grace time.Duration, groupWait func(int, time.Duration) bool, directory string, environment []string, name string, arguments ...string) ([]byte, error) {
 	command := exec.Command(name, arguments...)
 	command.Dir = directory
 	command.Env = append(os.Environ(), environment...)
@@ -373,7 +377,7 @@ func runCommandOutputWithGrace(ctx context.Context, grace time.Duration, directo
 		err, processDone, drained := waitForCommandGroup(command.Process.Pid, done, grace)
 		if !drained {
 			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-			groupFinished := waitForProcessGroup(command.Process.Pid, grace)
+			groupFinished := groupWait(command.Process.Pid, grace)
 			if !processDone {
 				select {
 				case err = <-done:

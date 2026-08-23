@@ -19,9 +19,14 @@ temporary files, and caches remain root-owned under `/var/lib/flowersec-test`.
 Root tests never use the invoking user's checkout or cache.
 
 `test-host-init.sh` idempotently installs and verifies host-wide prerequisites.
-Downloaded Go, Node, Rustup, and Swiftly artifacts are checked against pinned
-per-architecture SHA-256 digests before root use; Swiftly also verifies the
-PGP signature of the exact Swift toolchain release before installation.
+Downloaded Go, Node, Rustup, complete Rust distributions, Swiftly, Chromium,
+Chromium Headless Shell, and Playwright FFmpeg artifacts are checked against
+pinned per-architecture SHA-256 digests before root extraction or execution.
+The bootstrap records root-owned authentication markers and reinstalls legacy
+Rust, Swift, or browser caches that have no matching marker. Swiftly also
+verifies the PGP signature of the exact Swift toolchain release before marking
+it authenticated. Generic Playwright downloads fail closed under root; only
+the bootstrap may provision root browser archives.
 `flowersec-test` is the only test runner; it records only the source SHA, suite,
 plan, and completed canonical test IDs under `/var/lib/flowersec-test/state`.
 Each test owns its resources and cleanup. GREEN retains no artifacts, while RED

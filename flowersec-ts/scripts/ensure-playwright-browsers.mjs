@@ -23,6 +23,9 @@ const isExecutable = (file) => {
 const missing = browserNames.filter((name) => !isExecutable(executable(name)));
 
 if (missing.length > 0) {
+  if (process.getuid?.() === 0) {
+    throw new Error(`Playwright ${missing.join(", ")} is not authenticated; provision root browser archives with scripts/test-host-init.sh`);
+  }
   const downloadHost = process.env.PLAYWRIGHT_DOWNLOAD_HOST ?? "https://npmmirror.com/mirrors/playwright";
   const downloadTimeout = process.env.PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT ?? "120000";
   const env = {
