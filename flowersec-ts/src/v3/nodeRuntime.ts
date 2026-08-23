@@ -1,6 +1,11 @@
 import { X509Certificate, constants, createHash, timingSafeEqual } from "node:crypto";
 import { createRequire } from "node:module";
-import { connect as tlsConnect, type ConnectionOptions, type TLSSocket } from "node:tls";
+import {
+  checkServerIdentity as tlsCheckServerIdentity,
+  connect as tlsConnect,
+  type ConnectionOptions,
+  type TLSSocket,
+} from "node:tls";
 
 import type { WebSocketLike } from "../ws-client/binaryTransport.js";
 import type { CanonicalArtifactCandidateV3 } from "./artifact.js";
@@ -67,7 +72,10 @@ export async function connectNodeTLSSocketV3(
     ALPNProtocols: ["http/1.1"],
     secureOptions: constants.SSL_OP_NO_TICKET,
     rejectUnauthorized: policy.mode === "ca",
-    ...(isIPAddress(host) ? {} : { servername: host }),
+    ...(isIPAddress(host)
+      ? { checkServerIdentity: (_servername: string, certificate: Parameters<typeof tlsCheckServerIdentity>[1]) =>
+        tlsCheckServerIdentity(host, certificate) }
+      : { servername: host }),
     ...(policy.mode === "ca" && options.roots !== undefined ? { ca: options.roots as ConnectionOptions["ca"] } : {}),
   };
   const timeout = options.timeoutMilliseconds ?? 10_000;

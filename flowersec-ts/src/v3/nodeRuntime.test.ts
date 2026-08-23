@@ -96,6 +96,24 @@ describe("transport v3 Node TLS verifier and WebSocket production path", () => {
     }
   });
 
+  test("enforces IP SAN hostname validation for a CA-trusted socket", async () => {
+    const server = createTLSServer({ cert: leafCertificate, key: leafKey });
+    const port = await listen(server);
+    try {
+      const candidate = websocketCandidateForHost(port, "127.0.0.1", { mode: "ca" });
+      await expect(connectNodeTLSSocketV3(candidate, nowSeconds(), {
+        roots: rootCertificate,
+        timeoutMilliseconds: 2_000,
+      })).rejects.toMatchObject({
+        code: "tls_failed",
+        detail: "ca_untrusted",
+        cause: expect.objectContaining({ code: "ERR_TLS_CERT_ALTNAME_INVALID" }),
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   test("does not resume or accept TLS session tickets for v3 clients", async () => {
     expect(readFileSync(new URL("./nodeRuntime.ts", import.meta.url), "utf8"))
       .toContain("secureOptions: constants.SSL_OP_NO_TICKET");
@@ -509,10 +527,18 @@ function overlapPinPolicy(...digests: readonly Uint8Array[]): TransportSecurityP
 }
 
 function websocketCandidate(port: number, tls: TransportSecurityPolicyV3): CanonicalArtifactCandidateV3 {
+  return websocketCandidateForHost(port, "localhost", tls);
+}
+
+function websocketCandidateForHost(
+  port: number,
+  host: string,
+  tls: TransportSecurityPolicyV3,
+): CanonicalArtifactCandidateV3 {
   return {
     carrier: "websocket",
     id: "node-websocket",
-    normalized_url: `wss://localhost:${port}/flowersec/v3/direct`,
+    normalized_url: `wss://${host}:${port}/flowersec/v3/direct`,
     tls,
     wire_profile: "flowersec-direct/3",
   };

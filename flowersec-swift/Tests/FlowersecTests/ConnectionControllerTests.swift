@@ -1307,14 +1307,19 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(input["primary_trigger"] as? String, "browser_pin_opaque")
     XCTAssertEqual(input["invalidation_trigger"] as? String, "synchronous_not_supported")
     let expected = try XCTUnwrap(scenario["expected"] as? [String: Any])
+    let spent = AsyncCounterV3()
     let retired = AsyncCounterV3()
     let barrier = CapabilityLinearizationBarrierV3()
+    let leaseStates = [LeaseTerminalStateV3(), LeaseTerminalStateV3(), LeaseTerminalStateV3()]
     let refreshSource = SequenceArtifactSourceV3([
-      try lease(artifact: artifactV3(), retired: retired),
-      try lease(artifact: changedPinWithCAArtifactV3(), retired: retired),
+      try leaseWithState(
+        artifact: artifactV3(), spent: spent, retired: retired, state: leaseStates[0]),
+      try leaseWithState(
+        artifact: changedPinWithCAArtifactV3(), spent: spent, retired: retired, state: leaseStates[1]),
     ])
     let staleSource = SequenceArtifactSourceV3([
-      try lease(artifact: artifactV3(), retired: retired)
+      try leaseWithState(
+        artifact: staleCapabilityArtifactV3(), spent: spent, retired: retired, state: leaseStates[2])
     ])
     let refreshRuntime = CoordinatedCapabilityRuntimeV3(barrier: barrier, stale: false)
     let staleRuntime = CoordinatedCapabilityRuntimeV3(barrier: barrier, stale: true)
@@ -1323,12 +1328,12 @@ final class ConnectionControllerTests: XCTestCase {
       source: refreshSource,
       connectOneShot: { lease, options in
         if await refreshCalls.increment() == 1 {
-          _ = await barrier.arrive()
-          await barrier.waitForRelease()
-          throw ControllerConnectFailureV3.connection(
-            .connectionFailed, .retryable, policyTriggerIDs: [],
-            opaquePolicyTriggerIDs: ["w-pin"], failedIDs: ["w-pin"])
+          return try await SessionConnectorV3(
+            lease: lease, options: options, runtime: refreshRuntime,
+            currentUnixSeconds: { 1_900_000_000 }
+          ).connectForController()
         }
+        await barrier.waitForInvalidation()
         await barrier.recordReplacementSnapshot()
         return try await SessionConnectorV3(
           lease: lease, options: options, runtime: refreshRuntime,
@@ -1347,7 +1352,7 @@ final class ConnectionControllerTests: XCTestCase {
     await refreshController.start()
     await staleController.start()
     await barrier.waitForInitialAcquisitions()
-    await barrier.invalidateAndRelease()
+    await barrier.releaseInitialAcquisitions()
     let staleFailed = await waitForState(.failed, controller: staleController)
     let refreshFailed = await waitForState(.failed, controller: refreshController)
     XCTAssertTrue(staleFailed, "stale controller")
@@ -1357,17 +1362,56 @@ final class ConnectionControllerTests: XCTestCase {
     let staleSnapshot = await staleController.snapshot()
     let acquisitions = await refreshSource.acquisitions + staleSource.acquisitions
     let retirements = await retired.value
+    let spends = await spent.value
     let concurrentPeak = await barrier.concurrentAcquisitionPeak
     let snapshots = await barrier.capabilitySnapshots
     let replacementAcquisitions = await barrier.replacementAcquisitions
+    let connectAttempts = await barrier.connectAttempts
+    let transportsCreated = await barrier.transportsCreated
+    let replacementQuotaUsed = await barrier.replacementQuotaUsed
+    let pinConstructorCalls = await barrier.pinConstructorCalls
+    let caConstructorCalls = await barrier.caConstructorCalls
+    let oldSnapshotLiveGateFailures = await barrier.oldSnapshotLiveGateFailures
+    let postInvalidationPinConstructorCalls = await barrier.postInvalidationPinConstructorCalls
+    let replacementDialCandidateIDs = await barrier.replacementDialCandidateIDs
+    let controllerConnectorAttempts = await refreshCalls.value + 1
+    var leaseTerminalStates: [String] = []
+    for state in leaseStates { leaseTerminalStates.append(await state.value) }
     XCTAssertEqual(refreshSnapshot.state.rawValue, expected["final_state"] as? String)
-    XCTAssertEqual(refreshSnapshot.failure, .connection(.connectionFailed))
-    XCTAssertEqual(staleSnapshot.failure, .connection(.transportSecurityUnsupported))
     XCTAssertEqual(acquisitions, expected["acquisitions"] as? Int)
+    XCTAssertEqual(connectAttempts, expected["connect_attempts"] as? Int)
+    XCTAssertEqual(transportsCreated, expected["transports_created"] as? Int)
+    XCTAssertEqual(replacementQuotaUsed, expected["replacement_quota_used"] as? Int)
+    XCTAssertEqual(spends, expected["spend_callbacks"] as? Int)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int)
+    XCTAssertEqual(leaseTerminalStates, expected["lease_terminal_states"] as? [String])
     XCTAssertEqual(concurrentPeak, expected["concurrent_acquisition_peak"] as? Int)
     XCTAssertEqual(snapshots, expected["capability_snapshots"] as? [String])
     XCTAssertEqual(replacementAcquisitions, expected["replacement_acquisitions"] as? Int)
+    XCTAssertEqual(controllerConnectorAttempts, expected["controller_connector_attempts"] as? Int)
+    XCTAssertEqual(pinConstructorCalls, expected["pin_constructor_calls"] as? Int)
+    XCTAssertEqual(caConstructorCalls, expected["ca_constructor_calls"] as? Int)
+    XCTAssertEqual(oldSnapshotLiveGateFailures, expected["old_snapshot_live_gate_failures"] as? Int)
+    XCTAssertEqual(
+      postInvalidationPinConstructorCalls,
+      expected["post_invalidation_pin_constructor_calls"] as? Int)
+    XCTAssertEqual(
+      replacementDialCandidateIDs,
+      expected["replacement_dial_candidate_ids"] as? [String])
+    XCTAssertEqual(staleSnapshot.state.rawValue, expected["peer_final_state"] as? String)
+    guard case .connection(let refreshFailure) = refreshSnapshot.failure,
+      case .connection(let staleFailure) = staleSnapshot.failure
+    else {
+      XCTFail("browser barrier did not produce connection failures")
+      await refreshController.close()
+      await staleController.close()
+      return
+    }
+    XCTAssertEqual(refreshFailure.code.rawValue, expected["public_error"] as? String)
+    XCTAssertEqual(refreshSnapshot.retryDisposition, RetryDispositionV3.terminal)
+    XCTAssertEqual(staleFailure.code.rawValue, expected["peer_public_error"] as? String)
+    XCTAssertEqual(staleSnapshot.retryDisposition, RetryDispositionV3.terminal)
+    XCTAssertEqual(expected["disposition"] as? String, "terminal")
     await refreshController.close()
     await staleController.close()
   }
@@ -1502,7 +1546,11 @@ final class ConnectionControllerTests: XCTestCase {
     assertTrueV3(await waitForState(.waiting, controller: controller), id)
     assertTrueV3(await clock.waitForSleepCount(1), id)
     XCTAssertEqual(clock.requestedSleeps().first, 250, id)
-    assertFalseV3(await controller.retryNow(), id)
+    let retryNowAllowed = await controller.retryNow()
+    XCTAssertEqual(
+      retryNowAllowed,
+      try XCTUnwrap(expected["retry_now_allowed_before_deadline"] as? Bool),
+      id)
     let wallAdvances = try XCTUnwrap(input["wall_advances_ms"] as? [Int])
     let monotonicAdvances = try XCTUnwrap(input["monotonic_advances_ms"] as? [Int])
     clock.advance(
@@ -2278,6 +2326,24 @@ private func changedPinWithCAArtifactV3() throws -> ArtifactV3 {
   }
 }
 
+private func staleCapabilityArtifactV3() throws -> ArtifactV3 {
+  try mutateArtifactV3 { root in
+    var path = root["path"] as! [String: Any]
+    var candidates = path["candidates"] as! [[String: Any]]
+    let caIndex = candidates.firstIndex { $0["id"] as? String == "w-ca" }!
+    candidates[caIndex]["tls"] = [
+      "mode": "pin",
+      "pins": [[
+        "algorithm": "sha-256",
+        "not_after_unix_s": 2_000_000_500,
+        "value_b64u": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo",
+      ]],
+    ]
+    path["candidates"] = candidates.filter { ["w-ca", "w-pin"].contains($0["id"] as? String) }
+    root["path"] = path
+  }
+}
+
 private func changedPinExpiryArtifactV3() throws -> ArtifactV3 {
   try mutateArtifactV3 { root in
     var path = root["path"] as! [String: Any]
@@ -2385,6 +2451,24 @@ private func lease(
     commitSpend: { _ = await spent.increment() },
     retire: { _ = await retired.increment() }
   )
+}
+
+private func leaseWithState(
+  artifact: ArtifactV3,
+  spent: AsyncCounterV3,
+  retired: AsyncCounterV3,
+  state: LeaseTerminalStateV3
+) -> ArtifactLeaseV3 {
+  ArtifactLeaseV3(
+    artifact: artifact,
+    commitSpend: {
+      _ = await spent.increment()
+      await state.markSpent()
+    },
+    retire: {
+      _ = await retired.increment()
+      await state.markRetired()
+    })
 }
 
 private func packageRootV3() -> URL {
@@ -2537,42 +2621,70 @@ private actor CapabilityInvalidatingRuntimeV3: RuntimeCarrierAdapterV3 {
 
 private actor CapabilityLinearizationBarrierV3 {
   private var initialArrivals = 0
+  private var staleArrivals = 0
   private var activeInitialAcquisitions = 0
-  private var released = false
+  private var initialReleased = false
+  private var invalidated = false
   private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
   private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+  private var invalidationWaiters: [CheckedContinuation<Void, Never>] = []
   private(set) var concurrentAcquisitionPeak = 0
   private(set) var capabilitySnapshots: [String] = []
   private(set) var replacementAcquisitions = 0
+  private(set) var connectAttempts = 0
+  private(set) var transportsCreated = 0
+  private(set) var replacementQuotaUsed = 0
+  private(set) var pinConstructorCalls = 0
+  private(set) var caConstructorCalls = 0
+  private(set) var oldSnapshotLiveGateFailures = 0
+  private(set) var postInvalidationPinConstructorCalls = 0
+  private(set) var replacementDialCandidateIDs: [String] = []
 
-  func arrive() -> Int {
-    let index = initialArrivals + 1
-    initialArrivals = index
-    if index <= 2 {
+  func arrivePrimaryCandidate() {
+    initialArrivals += 1
+    activeInitialAcquisitions += 1
+    concurrentAcquisitionPeak = max(concurrentAcquisitionPeak, activeInitialAcquisitions)
+    capabilitySnapshots.append("enabled")
+    signalInitialArrivalsIfReady()
+  }
+
+  func recordPrimaryConstructor() {
+    connectAttempts += 1
+    pinConstructorCalls += 1
+    transportsCreated += 1
+  }
+
+  func arriveStaleCandidate() {
+    initialArrivals += 1
+    staleArrivals += 1
+    if staleArrivals == 1 {
       activeInitialAcquisitions += 1
       concurrentAcquisitionPeak = max(concurrentAcquisitionPeak, activeInitialAcquisitions)
       capabilitySnapshots.append("enabled")
-      if index == 2 {
-        let waiters = arrivalWaiters
-        arrivalWaiters.removeAll()
-        for waiter in waiters { waiter.resume() }
-      }
     }
-    return index
+    signalInitialArrivalsIfReady()
   }
 
   func recordReplacementSnapshot() {
     capabilitySnapshots.append("ca_only")
     replacementAcquisitions += 1
+    replacementQuotaUsed += 1
   }
 
   func waitForInitialAcquisitions() async {
-    if initialArrivals >= 2 { return }
+    if initialArrivals >= 3 { return }
     await withCheckedContinuation { arrivalWaiters.append($0) }
   }
 
-  func waitForRelease() async {
-    if released { return }
+  private func signalInitialArrivalsIfReady() {
+    guard initialArrivals >= 3 else { return }
+    let waiters = arrivalWaiters
+    arrivalWaiters.removeAll()
+    for waiter in waiters { waiter.resume() }
+  }
+
+  func waitForInitialRelease() async {
+    if initialReleased { return }
     await withCheckedContinuation { releaseWaiters.append($0) }
   }
 
@@ -2580,12 +2692,44 @@ private actor CapabilityLinearizationBarrierV3 {
     activeInitialAcquisitions = max(0, activeInitialAcquisitions - 1)
   }
 
-  func invalidateAndRelease() {
-    released = true
+  func releaseInitialAcquisitions() {
+    initialReleased = true
     let waiters = releaseWaiters
     releaseWaiters.removeAll()
     for waiter in waiters { waiter.resume() }
   }
+
+  func invalidateCapability() {
+    invalidated = true
+    let waiters = invalidationWaiters
+    invalidationWaiters.removeAll()
+    for waiter in waiters { waiter.resume() }
+  }
+
+  func waitForInvalidation() async {
+    if invalidated { return }
+    await withCheckedContinuation { invalidationWaiters.append($0) }
+  }
+
+  func recordStaleLiveGateFailure() {
+    connectAttempts += 1
+    oldSnapshotLiveGateFailures += 1
+  }
+
+  func recordStalePinConstructor() {
+    connectAttempts += 1
+    pinConstructorCalls += 1
+    if invalidated { postInvalidationPinConstructorCalls += 1 }
+  }
+
+  func recordReplacementCA() {
+    connectAttempts += 1
+    caConstructorCalls += 1
+    transportsCreated += 1
+    replacementDialCandidateIDs.append("replacement-ca")
+  }
+
+  func recordReplacementPinSkipped() {}
 
 }
 
@@ -2593,6 +2737,7 @@ private actor CoordinatedCapabilityRuntimeV3: RuntimeCarrierAdapterV3 {
   nonisolated let capabilities = RuntimeCapabilitiesV3.macOS
   private let barrier: CapabilityLinearizationBarrierV3
   private let stale: Bool
+  private var primaryAttempt = true
 
   init(barrier: CapabilityLinearizationBarrierV3, stale: Bool) {
     self.barrier = barrier
@@ -2608,14 +2753,38 @@ private actor CoordinatedCapabilityRuntimeV3: RuntimeCarrierAdapterV3 {
     options: ConnectorOptions,
     activePinHashes: [Data]?
   ) async throws -> any PreparedCarrierConnectionV3 {
-    let arrival = await barrier.arrive()
-    if arrival <= 2 {
-      await barrier.waitForRelease()
+    if stale {
+      await barrier.arriveStaleCandidate()
+      await barrier.waitForInitialRelease()
+      switch candidate.id {
+      case "w-ca":
+        await barrier.waitForInvalidation()
+        await barrier.recordStaleLiveGateFailure()
+      case "w-pin":
+        await barrier.recordStalePinConstructor()
+        await barrier.invalidateCapability()
+      default:
+        throw ConnectorBoundaryErrorV3.runtimeUnsupported
+      }
       await barrier.leaveInitialAcquisition()
+      throw ConnectorBoundaryErrorV3.runtimeUnsupported
     }
-    if stale { throw ConnectorBoundaryErrorV3.runtimeUnsupported }
-    if candidate.id == "w-pin" { throw ConnectorBoundaryErrorV3.browserPinOpaque }
-    if candidate.id == "w-ca" { throw ConnectorBoundaryErrorV3.admissionRejected }
+    if primaryAttempt {
+      primaryAttempt = false
+      await barrier.arrivePrimaryCandidate()
+      await barrier.waitForInitialRelease()
+      await barrier.leaveInitialAcquisition()
+      await barrier.recordPrimaryConstructor()
+      throw ConnectorBoundaryErrorV3.browserPinOpaque
+    }
+    if candidate.id == "w-pin" {
+      await barrier.recordReplacementPinSkipped()
+      throw ConnectorBoundaryErrorV3.browserPinOpaque
+    }
+    if candidate.id == "w-ca" {
+      await barrier.recordReplacementCA()
+      throw ConnectorBoundaryErrorV3.admissionRejected
+    }
     throw ConnectorBoundaryErrorV3.runtimeFailed
   }
 }
@@ -2838,6 +3007,13 @@ private actor AsyncCounterV3 {
     value += 1
     return value
   }
+}
+
+private actor LeaseTerminalStateV3 {
+  private(set) var value = "idle"
+
+  func markSpent() { value = "consumed" }
+  func markRetired() { value = "retired" }
 }
 
 private actor AsyncFlagV3 {
