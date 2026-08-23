@@ -350,7 +350,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       connectOneShot: { lease, _ in
-        if await attempts.increment() == 1 { throw ConnectError.transportSecurityFailed }
+        if await attempts.increment() == 1 { throw nativePinFailureV3() }
         let claimed = try await lease.claim()
         try await claimed.commitSpend()
         return session
@@ -420,7 +420,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       connectOneShot: { lease, _ in
-        if await calls.increment() == 1 { throw ConnectError.transportSecurityFailed }
+        if await calls.increment() == 1 { throw nativePinFailureV3() }
         let claimed = try await lease.claim()
         try await claimed.commitSpend()
         return session
@@ -452,7 +452,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       connectOneShot: { lease, _ in
-        if await calls.increment() == 1 { throw ConnectError.transportSecurityFailed }
+        if await calls.increment() == 1 { throw nativePinFailureV3() }
         let claimed = try await lease.claim()
         try await claimed.commitSpend()
         return session
@@ -488,7 +488,7 @@ final class ConnectionControllerTests: XCTestCase {
       let controller = try ConnectionController(
         source: source,
         maximumAttempts: maximumAttempts,
-        connectOneShot: { _, _ in throw ConnectError.transportSecurityFailed }
+        connectOneShot: { _, _ in throw nativePinFailureV3() }
       )
 
       await controller.start()
@@ -518,7 +518,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       maximumAttempts: 2,
-      connectOneShot: { _, _ in throw ConnectError.transportSecurityFailed }
+      connectOneShot: { _, _ in throw nativePinFailureV3() }
     )
 
     await controller.start()
@@ -543,7 +543,7 @@ final class ConnectionControllerTests: XCTestCase {
       source: source,
       connectOneShot: { _, _ in
         _ = await attempts.increment()
-        throw ConnectError.transportSecurityFailed
+        throw nativePinFailureV3()
       }
     )
 
@@ -607,7 +607,7 @@ final class ConnectionControllerTests: XCTestCase {
       source: source,
       connectOneShot: { _, _ in
         if await attempts.increment() == 1 {
-          throw ConnectError.transportSecurityFailed
+          throw nativePinFailureV3()
         }
         throw ControllerConnectFailureV3.connection(
           .transportSecurityFailed,
@@ -724,7 +724,7 @@ final class ConnectionControllerTests: XCTestCase {
         source: source,
         connectOneShot: { _, _ in
           _ = await calls.increment()
-          throw ConnectError.transportSecurityFailed
+          throw nativePinFailureV3()
         }
       )
       await controller.start()
@@ -783,6 +783,36 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(snapshot.retryDisposition, .terminal)
     XCTAssertEqual(acquisitions, 1)
     XCTAssertEqual(attempts, 1)
+    XCTAssertEqual(retirements, 1)
+    await controller.close()
+  }
+
+  func testPublicTransportSecurityFailureWithoutProvenanceDoesNotRefreshPolicy() async throws {
+    let retired = AsyncCounterV3()
+    let source = SequenceArtifactSourceV3([
+      try lease(artifact: artifactV3(), retired: retired),
+      try lease(artifact: changedPinArtifactV3(), retired: retired),
+    ])
+    let calls = AsyncCounterV3()
+    let controller = try ConnectionController(
+      source: source,
+      connectOneShot: { _, _ in
+        _ = await calls.increment()
+        throw ConnectError.transportSecurityFailed
+      }
+    )
+
+    await controller.start()
+    let failed = await waitForState(.failed, controller: controller)
+    let snapshot = await controller.snapshot()
+    let acquisitions = await source.acquisitions
+    let connectAttempts = await calls.value
+    let retirements = await retired.value
+    XCTAssertTrue(failed)
+    XCTAssertEqual(snapshot.failure, .connection(.transportSecurityFailed))
+    XCTAssertEqual(snapshot.retryDisposition, .terminal)
+    XCTAssertEqual(acquisitions, 1)
+    XCTAssertEqual(connectAttempts, 1)
     XCTAssertEqual(retirements, 1)
     await controller.close()
   }
@@ -896,7 +926,7 @@ final class ConnectionControllerTests: XCTestCase {
       source: source,
       connectOneShot: { lease, _ in
         switch await calls.increment() {
-        case 1: throw ConnectError.transportSecurityFailed
+        case 1: throw nativePinFailureV3()
         case 2 where !beforeRace: throw ConnectError.expiredArtifact
         default:
           await primaryCandidates.record(Set(lease.artifact.canonicalCandidates.map(\.id)))
@@ -954,7 +984,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       connectOneShot: { lease, _ in
-        if await calls.increment() == 1 { throw ConnectError.transportSecurityFailed }
+        if await calls.increment() == 1 { throw nativePinFailureV3() }
         let claimed = try await lease.claim()
         try await claimed.commitSpend()
         return session
@@ -1010,7 +1040,7 @@ final class ConnectionControllerTests: XCTestCase {
             opaquePolicyTriggerIDs: ["w-pin"],
             failedIDs: ["w-pin"])
         }
-        throw ConnectError.transportSecurityFailed
+        throw nativePinFailureV3()
       }
     )
     await controller.start()
@@ -1905,7 +1935,7 @@ final class ConnectionControllerTests: XCTestCase {
       connectOneShot: { lease, _ in
         switch await calls.increment() {
         case 1: throw ConnectError.connectionFailed
-        case 2: throw ConnectError.transportSecurityFailed
+        case 2: throw nativePinFailureV3()
         default:
           let claimed = try await lease.claim()
           try await claimed.commitSpend()
@@ -2001,7 +2031,7 @@ final class ConnectionControllerTests: XCTestCase {
       clock: clock.controllerClock,
       connectOneShot: { lease, _ in
         let call = await calls.increment()
-        if replacement && call == 1 { throw ConnectError.transportSecurityFailed }
+        if replacement && call == 1 { throw nativePinFailureV3() }
         let claimed = try await lease.claim()
         try await claimed.commitSpend()
         if id.contains("fsa3") {
@@ -2084,6 +2114,18 @@ final class ConnectionControllerTests: XCTestCase {
     }
     return await controller.snapshot().state == expected
   }
+}
+
+private func nativePinFailureV3(
+  disposition: RetryDispositionV3 = .terminal,
+  failedIDs: Set<String> = ["w-pin"]
+) -> ControllerConnectFailureV3 {
+  .connection(
+    .transportSecurityFailed,
+    disposition,
+    policyTriggerIDs: failedIDs,
+    opaquePolicyTriggerIDs: [],
+    failedIDs: failedIDs)
 }
 
 private func controllerVectorsV3() throws -> [String: Any] {

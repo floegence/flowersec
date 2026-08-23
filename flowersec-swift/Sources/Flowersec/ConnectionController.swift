@@ -358,16 +358,7 @@ public actor ConnectionController {
           try await connectOneShot(
             claimedLease.connectorLease(artifact: connectorArtifact), options))
       } catch let error as ConnectError {
-        let pinIDs = connectorArtifact.canonicalCandidates.filter { $0.tls.mode == "pin" }
-          .map(\.id)
-        let provenance =
-          error == .transportSecurityFailed && pinIDs.count == 1
-          ? CandidateFailureProvenanceV3(
-            policyTriggerIDs: Set(pinIDs),
-            opaquePolicyTriggerIDs: [],
-            failedIDs: Set(connectorArtifact.canonicalCandidates.map(\.id)))
-          : nil
-        return .failed(.connection(error), claimedLease, nil, provenance)
+        return .failed(.connection(error), claimedLease, nil, nil)
       } catch let error as ControllerConnectFailureV3 {
         switch error {
         case .connection(
