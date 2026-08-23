@@ -366,6 +366,31 @@ func TestPerformanceBudgetCancellationWritesPartialReport(t *testing.T) {
 	}
 }
 
+func TestPerformanceCancellationRemovesCaseTempDirectory(t *testing.T) {
+	root := t.TempDir()
+	reportPath := filepath.Join(t.TempDir(), "performance-report.md")
+	progressPath := filepath.Join(t.TempDir(), "test-progress.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var tempDir string
+	tests := []registeredTest{{ID: "performance/cancelled", Suite: "performance", Timeout: time.Second, Run: func(ctx context.Context, run runContext) error {
+		tempDir = run.TempDir
+		cancel()
+		<-ctx.Done()
+		return context.Cause(ctx)
+	}}}
+	var stdout, stderr bytes.Buffer
+	if err := executePerformanceSuite(ctx, &stdout, &stderr, "run", progressPath, root, testSourceSHA, tests, false, reportPath, testPerformanceEnvironment, 5*time.Minute); err == nil {
+		t.Fatal("cancelled performance case returned success")
+	}
+	if tempDir == "" {
+		t.Fatal("performance case did not receive a temp directory")
+	}
+	if _, err := os.Stat(tempDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled performance case retained temp directory: %v", err)
+	}
+}
+
 func TestPerformanceFailureWritesPartialReportAndReturnsNonzero(t *testing.T) {
 	root := t.TempDir()
 	reportPath := filepath.Join(t.TempDir(), "performance-report.md")
@@ -780,6 +805,18 @@ func TestCancelledCommandReceivesTermAndIsWaited(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("descendant teardown did not finish before the runner returned: %v", err)
+	}
+}
+
+func TestSuccessfulCommandCleansDescendantsBeforeReturning(t *testing.T) {
+	directory := t.TempDir()
+	marker := filepath.Join(directory, "descendant-survived")
+	if err := runCommand(context.Background(), directory, []string{"MARKER=" + marker}, "sh", "-c", `sh -c 'sleep 1; touch "$MARKER"' & exit 0`); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1200 * time.Millisecond)
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("successful command left a descendant running: %v", err)
 	}
 }
 

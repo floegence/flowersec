@@ -347,12 +347,21 @@ func runCommandOutput(ctx context.Context, directory string, environment []strin
 	go func() { done <- command.Wait() }()
 	select {
 	case err := <-done:
+		cleanupErr := cleanupCommandGroup(command.Process.Pid, 5*time.Second)
 		output, outputErr := readCommandOutput(outputFile)
 		if outputErr != nil {
-			return nil, fmt.Errorf("read %s output: %w", name, outputErr)
+			var commandErr error
+			if err != nil {
+				commandErr = fmt.Errorf("%s: %w", name, err)
+			}
+			return nil, errors.Join(commandErr, cleanupErr, fmt.Errorf("read %s output: %w", name, outputErr))
 		}
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w: %s", name, err, output)
+		if err != nil || cleanupErr != nil {
+			var commandErr error
+			if err != nil {
+				commandErr = fmt.Errorf("%s: %w", name, err)
+			}
+			return nil, errors.Join(commandErr, cleanupErr, errors.New(string(output)))
 		}
 		return output, nil
 	case <-ctx.Done():
@@ -460,6 +469,38 @@ func waitForCommandGroup(processGroup int, done <-chan error, grace time.Duratio
 func processGroupFinished(processGroup int) bool {
 	err := syscall.Kill(-processGroup, 0)
 	return errors.Is(err, syscall.ESRCH)
+}
+
+func cleanupCommandGroup(processGroup int, grace time.Duration) error {
+	if processGroupFinished(processGroup) {
+		return nil
+	}
+	_ = syscall.Kill(-processGroup, syscall.SIGTERM)
+	if waitForProcessGroup(processGroup, grace) {
+		return nil
+	}
+	_ = syscall.Kill(-processGroup, syscall.SIGKILL)
+	if waitForProcessGroup(processGroup, grace) {
+		return nil
+	}
+	return errors.New("subprocess group did not finish teardown after command exit")
+}
+
+func waitForProcessGroup(processGroup int, grace time.Duration) bool {
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if processGroupFinished(processGroup) {
+			return true
+		}
+		select {
+		case <-ticker.C:
+		case <-timer.C:
+			return false
+		}
+	}
 }
 
 func readCommandOutput(file *os.File) ([]byte, error) {

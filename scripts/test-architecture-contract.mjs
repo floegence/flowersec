@@ -91,6 +91,7 @@ assert.match(pushMain, /FLOWERSEC_PUSH_MAIN_SHA="\$head" git push origin "refs\/
 
 const main = read("flowersec-go/internal/cmd/flowersec-test/main.go");
 const registry = read("flowersec-go/internal/cmd/flowersec-test/registry.go");
+const performanceReport = read("flowersec-go/internal/cmd/flowersec-test/performance_report.go");
 const goWebTransportAdapter = read("flowersec-go/internal/carrier/webtransport/webtransport.go");
 const dependencyContracts = read("stability/dependency_contracts.json");
 const transportContract = read("stability/transport_v2_contract.json");
@@ -520,7 +521,7 @@ assert.match(hostInit, /browser-test-runner\.mjs" --runtime-canary/);
 assert.match(hostInit, /playwright_chromium/);
 assert.match(hostInit, /init_tmp_baseline=\$\(mktemp[\s\S]*finalize_init_temps[\s\S]*comm -13[\s\S]*swift_canary=\$\(mktemp -d[\s\S]*TMPDIR="\$swift_canary" swiftc/);
 assert.match(hostInit, /temporary_paths=\(\)[\s\S]*cleanup_temporary_paths[\s\S]*trap cleanup_temporary_paths EXIT/);
-for (const temporaryName of ["archive", "installer", "bootstrap", "post_install"]) {
+for (const temporaryName of ["archive", "installer", "bootstrap", "post_install", "bpf_probe", "swift_canary"]) {
   assert.match(hostInit, new RegExp(`temporary_paths\\s*\\+=\\s*\\([^\\n]*\\$${temporaryName}`),
     `host initialization must track ${temporaryName} for EXIT cleanup`);
 }
@@ -558,6 +559,10 @@ assert.match(main, /goroot != wantGoRoot/);
 assert.match(main, /validateExecutionEnvironment\(\s*\*suite,\s*runtime\.GOOS,\s*os\.Geteuid\(\),\s*os\.Getenv\("HOME"\),\s*os\.Getenv\("PATH"\),\s*os\.Getenv\("GOROOT"\),\s*os\.Getenv\("TMPDIR"\),\s*os\.Getenv\("FLOWERSEC_TEST_STATE_DIR"\),\s*workingDirectory,\s*\)/s,
   "runner environment validation must preserve the HOME/PATH/GOROOT/TMPDIR/state argument order");
 assert.match(main, /performance-optional is only available through the integrated/);
+assert.match(performanceReport, /executionCtx, cancelExecution := context\.WithTimeout\(ctx, budget-teardownGrace\)[\s\S]*lockProgress\(executionCtx, progressPath\)/,
+  "integrated performance progress locking must respect the suite budget context");
+assert.match(registry, /case err := <-done:[\s\S]*cleanupCommandGroup\(command\.Process\.Pid, 5\*time\.Second\)/,
+  "successful subprocess completion must clean descendants before reporting pass");
 assert.match(hostEntry, /git -C "\$host_workspace" checkout --detach --force "\$source_sha"/);
 assert.match(hostEntry, /status --porcelain --untracked-files=all/);
 assert.doesNotMatch(hostEntry, /status --porcelain --untracked-files=no/);

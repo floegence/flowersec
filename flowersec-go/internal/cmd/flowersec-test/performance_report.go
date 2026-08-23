@@ -160,7 +160,7 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 	}
 	executionCtx, cancelExecution := context.WithTimeout(ctx, budget-teardownGrace)
 	defer cancelExecution()
-	progressLock, err := lockProgress(ctx, progressPath)
+	progressLock, err := lockProgress(executionCtx, progressPath)
 	if err != nil {
 		return err
 	}

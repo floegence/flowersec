@@ -249,6 +249,7 @@ if ! printf '#include <memory>\nint main() { return 0; }\n' | clang++ -std=c++17
   exit 1
 fi
 bpf_probe=$(mktemp "$host_tmp/bpf-probe.XXXXXX.o")
+temporary_paths+=("$bpf_probe")
 if ! printf 'int flowersec_bpf_probe;\n' | clang -target bpf -O2 -x c -c -o "$bpf_probe" -; then
   rm -f -- "$bpf_probe"
   echo "missing host capability: clang BPF target" >&2
@@ -310,6 +311,7 @@ FLOWERSEC_CHROMIUM_EXECUTABLE="$playwright_chromium" node "$source_root/flowerse
 ln -sfn -- "$playwright_chromium" "$host_cache/chromium"
 
 swift_canary=$(mktemp -d "$host_tmp/swift-canary.XXXXXX")
+temporary_paths+=("$swift_canary")
 printf 'print("flowersec-swift-canary")\n' >"$swift_canary/main.swift"
 if ! TMPDIR="$swift_canary" swiftc "$swift_canary/main.swift" -o "$swift_canary/canary" ||
    ! "$swift_canary/canary" | grep -Fx 'flowersec-swift-canary' >/dev/null; then
