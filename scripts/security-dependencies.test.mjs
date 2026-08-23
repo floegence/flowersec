@@ -27,6 +27,54 @@ function extractShellFunction(source, name) {
   return match[0];
 }
 
+function architectureCaseBlock(source, selector) {
+  const start = `  ${selector})\n`;
+  const startIndex = source.indexOf(start);
+  assert.notEqual(startIndex, -1, `missing architecture case ${selector}`);
+  const endIndex = source.indexOf("    ;;\n", startIndex + start.length);
+  assert.notEqual(endIndex, -1, `unterminated architecture case ${selector}`);
+  return source.slice(startIndex + start.length, endIndex);
+}
+
+function assertHostArchitectureBindings(source) {
+  const expectations = [
+    {
+      selector: "x86_64|amd64",
+      architecture: "amd64",
+      tuples: {
+        Go: "    go_arch=amd64\n    go_sha256=708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89\n",
+        Node: "    node_arch=x64\n    node_sha256=84d38715d449447117d05c3e71acd78daa49d5b1bfa8aacf610303920c3322be\n",
+        Rust: "    rustup_target=x86_64-unknown-linux-gnu\n    rustup_sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c\n    rust_archive_sha256=7b5437c1d18a174faae253a18eac22c32288dccfc09ff78d5ee99b7467e21bca\n",
+        Swiftly: "    swiftly_arch=x86_64\n    swiftly_sha256=4c4adb7b7ad7910f38c52b94a938c309586fe395e1fe1538c397384ee36bfff0\n    swiftly_binary_sha256=e7ce91d07b4419ea779da6b575721c17eb7c44f932e63b6e2d03a9afe75cce61\n",
+        Playwright: "    playwright_chromium_archive=builds/cft/${playwright_chromium_version}/linux64/chrome-linux64.zip\n    playwright_chromium_sha256=ae8736ac28bc69278551500f219fc749575648263c43ec5990749eff43b9fcf8\n    playwright_chromium_executable=chrome-linux64/chrome\n    playwright_headless_archive=builds/cft/${playwright_chromium_version}/linux64/chrome-headless-shell-linux64.zip\n    playwright_headless_sha256=3cfc2bd00d1bafcf8a68dc74c9c92bb7150ddc8d26ade948a776316e1cec4f14\n    playwright_headless_executable=chrome-headless-shell-linux64/chrome-headless-shell\n    playwright_ffmpeg_archive=builds/ffmpeg/${playwright_ffmpeg_revision}/ffmpeg-linux.zip\n    playwright_ffmpeg_sha256=ebc74fc5b94830176a3c2914ae96bd8bc7f6a91f4f33890230f84a172ee61ccc\n",
+      },
+    },
+    {
+      selector: "aarch64|arm64",
+      architecture: "arm64",
+      tuples: {
+        Go: "    go_arch=arm64\n    go_sha256=d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e\n",
+        Node: "    node_arch=arm64\n    node_sha256=71e427e28b78846f201d4d5ecc30cb13d1508ca099ef3871889a1256c7d6f67e\n",
+        Rust: "    rustup_target=aarch64-unknown-linux-gnu\n    rustup_sha256=e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c\n    rust_archive_sha256=d5decc46123eb888f809f2ee3b118d13586a37ffad38afaefe56aa7139481d34\n",
+        Swiftly: "    swiftly_arch=aarch64\n    swiftly_sha256=cc4f912fff6c7f53704fc6d22f9e8ee7fdf6bd574ad276998f7502418bf5a45a\n    swiftly_binary_sha256=6531421eeb80eb69db21e41b1ed94bac1467548972eb82861fc4beb6664bd6aa\n",
+        Playwright: "    playwright_chromium_archive=builds/chromium/${playwright_chromium_revision}/chromium-linux-arm64.zip\n    playwright_chromium_sha256=b5ad7d8fe70f230b34198ddb5626d717c016db2f627cb44b922babbcaf3479b9\n    playwright_chromium_executable=chrome-linux/chrome\n    playwright_headless_archive=builds/chromium/${playwright_chromium_revision}/chromium-headless-shell-linux-arm64.zip\n    playwright_headless_sha256=b03443e1e1a60d06e07b6cdfe650b8c2bfcbb3db497d2b652f73dc6912f4ae15\n    playwright_headless_executable=chrome-linux/headless_shell\n    playwright_ffmpeg_archive=builds/ffmpeg/${playwright_ffmpeg_revision}/ffmpeg-linux-arm64.zip\n    playwright_ffmpeg_sha256=2628c03f05318ff812c8c9baaf207dea2ddf53e818c0dc936714b0fbe3afb009\n",
+      },
+    },
+  ];
+  for (const { selector, architecture, tuples } of expectations) {
+    const block = architectureCaseBlock(source, selector);
+    for (const [label, tuple] of Object.entries(tuples)) {
+      assert.ok(block.includes(tuple), `${architecture} ${label} tuple is not bound`);
+    }
+  }
+}
+
+function swapLiterals(source, first, second) {
+  const placeholder = "__FLOWERSEC_DIGEST_SWAP__";
+  assert.ok(!source.includes(placeholder));
+  return source.replace(first, placeholder).replace(second, first).replace(placeholder, second);
+}
+
 function parseReleaseVersion(actual, label) {
   const match = /^(?:v)?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.exec(actual);
   assert.ok(match, `${label} has invalid release version ${actual}`);
@@ -171,6 +219,7 @@ test("privileged host bootstrap verifies every root-executed toolchain download"
   const source = fs.readFileSync(path.join(sourceRoot, "scripts/test-host-init.sh"), "utf8");
   const browserEnsure = fs.readFileSync(path.join(sourceRoot, "flowersec-ts/scripts/ensure-playwright-browsers.mjs"), "utf8");
   const hostEntry = fs.readFileSync(path.join(sourceRoot, "scripts/test-host.sh"), "utf8");
+  assertHostArchitectureBindings(source);
   for (const digest of [
     "708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89",
     "d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e",
@@ -213,6 +262,22 @@ test("privileged host bootstrap verifies every root-executed toolchain download"
   assert.match(browserEnsure, /process\.getuid\?\.\(\) === 0[\s\S]*not authenticated/);
   assert.match(source, /swiftly" install "\$swift_version" --use --verify/);
   assert.doesNotMatch(source, /curl[^\n]*\|\s*(?:bash|sh)\b/);
+});
+
+test("privileged archive tuples reject cross-architecture digest swaps", () => {
+  const source = fs.readFileSync(path.join(sourceRoot, "scripts/test-host-init.sh"), "utf8");
+  const rustSwap = swapLiterals(
+    source,
+    "7b5437c1d18a174faae253a18eac22c32288dccfc09ff78d5ee99b7467e21bca",
+    "d5decc46123eb888f809f2ee3b118d13586a37ffad38afaefe56aa7139481d34",
+  );
+  assert.throws(() => assertHostArchitectureBindings(rustSwap), /amd64 Rust tuple is not bound/);
+  const chromiumSwap = swapLiterals(
+    source,
+    "ae8736ac28bc69278551500f219fc749575648263c43ec5990749eff43b9fcf8",
+    "b5ad7d8fe70f230b34198ddb5626d717c016db2f627cb44b922babbcaf3479b9",
+  );
+  assert.throws(() => assertHostArchitectureBindings(chromiumSwap), /amd64 Playwright tuple is not bound/);
 });
 
 test("privileged archive verification rejects corrupt bytes before the next action", (t) => {

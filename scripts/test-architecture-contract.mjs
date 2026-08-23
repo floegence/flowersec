@@ -187,6 +187,11 @@ assert.match(main, /atomicWrite|firstIncomplete|context\.WithTimeout|signal\.Not
 assert.match(main, /externalHostRoot = "\/var\/lib\/flowersec-test"/);
 assert.doesNotMatch(main, /\bsudo\b|runuser|SUDO_USER|reexec/i);
 assert.match(registry, /func registry\(\) \[\]registeredTest/);
+assert.match(
+  registry,
+  /func runCommandOutputWithGrace\([\s\S]*?return runCommandOutputWithGraceAndGroupWait\(ctx, grace, waitForProcessGroup, directory, environment, name, arguments\.\.\.\)/,
+  "the production command runner must use the real process-group waiter",
+);
 for (const id of [
   "controller/go", "controller/go-real-network-restart", "controller/go-websocket-handlers", "controller/typescript", "controller/rust", "controller/swift",
   "protocol/go", "protocol/typescript", "protocol/rust",
