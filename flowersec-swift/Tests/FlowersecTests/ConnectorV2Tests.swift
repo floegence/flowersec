@@ -884,6 +884,7 @@ final class ConnectorV2Tests: XCTestCase {
     }
   #endif
 
+  #if os(macOS) || os(iOS)
   func testRealLocalWSSDirectEndToEnd() async throws {
     try await exerciseRealWSS(vectorIndex: 0)
   }
@@ -1200,6 +1201,7 @@ final class ConnectorV2Tests: XCTestCase {
     }
     await server.close(code: 0, reason: "done")
   }
+  #endif
 
   func testConnectRejectsInvalidPublicOptions() async throws {
     let artifact = try loadArtifact()
@@ -1265,6 +1267,7 @@ final class ConnectorV2Tests: XCTestCase {
     XCTAssertEqual(settledEvents, ["dial", "spend-start", "spend-finished", "close"])
   }
 
+  #if os(macOS) || os(iOS)
   func testRealWSSFailureCancelsServerAcceptWithinDeadline() async throws {
     let tls = try ConnectorTestTLS.load()
     let accepted = ConnectorAcceptedTransport()
@@ -1294,6 +1297,7 @@ final class ConnectorV2Tests: XCTestCase {
     XCTAssertLessThan(started.duration(to: .now), .seconds(1))
     await server.close()
   }
+  #endif
 
   private func loadArtifact() throws -> ArtifactV2 {
     try parseArtifactV2(Data(loadArtifactJSON(index: 0).utf8))

@@ -1,3 +1,5 @@
+#if os(macOS) || os(iOS)
+
 import Foundation
 import NIOCore
 import NIOHTTP1
@@ -434,3 +436,5 @@ private actor AsyncTestResult<Value: Sendable> {
     self.value = value
   }
 }
+
+#endif
