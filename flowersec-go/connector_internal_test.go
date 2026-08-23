@@ -535,10 +535,22 @@ func TestProtocolStreamResetProjectsStablePublicCode(t *testing.T) {
 	}
 }
 
-func TestV3CounterExhaustionProjectsResourceExhausted(t *testing.T) {
-	err := redactSessionError(protocolv3.ErrCounterExhausted)
-	if err.Code() != SessionResourceExhausted {
-		t.Fatalf("counter exhaustion code = %q, want %q", err.Code(), SessionResourceExhausted)
+func TestV3RekeyLifecycleProjectsPortableErrors(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		internal error
+		want     SessionErrorCode
+	}{
+		{name: "counter exhaustion", internal: protocolv3.ErrCounterExhausted, want: SessionResourceExhausted},
+		{name: "GOAWAY write failure", internal: io.ErrClosedPipe, want: SessionOperationFailed},
+		{name: "GOAWAY deadline", internal: fmt.Errorf("%w: exhaustion GOAWAY preparation deadline", session.ErrRekey), want: SessionRekeyFailed},
+		{name: "terminal timeout", internal: context.DeadlineExceeded, want: SessionTimeout},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := redactSessionError(test.internal).Code(); got != test.want {
+				t.Fatalf("rekey lifecycle code = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

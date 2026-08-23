@@ -166,6 +166,14 @@
     "session_epoch_maximum_is_usable": true,
     "session_epoch_rekey_after_maximum": "resource_exhausted",
     "session_rekey_exhaustion_goaway_delivery_failure": "session_failure",
+    "session_rekey_exhaustion_goaway_write_operation_error": "resource_exhausted",
+    "session_rekey_exhaustion_goaway_write_termination_error": "operation_failed",
+    "session_rekey_exhaustion_goaway_deadline_operation_error": "rekey_failed",
+    "session_rekey_exhaustion_goaway_deadline_termination_error": "timeout",
+    "session_rekey_post_commit_caller_error": "canceled",
+    "session_rekey_post_commit_completion_owner": "session",
+    "session_rekey_post_commit_completion_deadline": "rekey_completion_timeout",
+    "session_rekey_post_commit_success_state": "open",
     "retry_after_unix_ms_max": 253402300799999
   },
   "artifact_schema": {

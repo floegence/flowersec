@@ -57,10 +57,26 @@ func (s *engineSession) commitControl(typ protocolv3.InnerType, payload []byte, 
 func (s *engineSession) commitControlPriority(typ protocolv3.InnerType, payload []byte, publish func() error, priority controlPriority) error {
 	s.controlActorMu.Lock()
 	defer s.controlActorMu.Unlock()
-	return s.commitControlPriorityLocked(typ, payload, publish, priority, false)
+	return s.commitControlPriorityLocked(typ, payload, publish, priority, false, nil)
 }
 
-func (s *engineSession) commitControlPriorityLocked(typ protocolv3.InnerType, payload []byte, publish func() error, priority controlPriority, terminal bool) error {
+func (s *engineSession) commitControlPriorityDelivery(
+	typ protocolv3.InnerType,
+	payload []byte,
+	publish func() error,
+	priority controlPriority,
+) (<-chan error, error) {
+	delivery := make(chan error, 1)
+	s.controlActorMu.Lock()
+	err := s.commitControlPriorityLocked(typ, payload, publish, priority, false, delivery)
+	s.controlActorMu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return delivery, nil
+}
+
+func (s *engineSession) commitControlPriorityLocked(typ protocolv3.InnerType, payload []byte, publish func() error, priority controlPriority, terminal bool, delivery chan error) error {
 	if s.controlTerminalSealed || (s.controlClosing && !terminal && typ != protocolv3.InnerStreamReset) {
 		return ErrSessionClosed
 	}
@@ -125,7 +141,7 @@ func (s *engineSession) commitControlPriorityLocked(typ protocolv3.InnerType, pa
 		s.controlIdle = make(chan struct{})
 	}
 	s.controlQueue = append(s.controlQueue, queuedControlRecord{
-		typ: typ, epoch: epoch, sequence: sequence, raw: raw, priority: priority,
+		typ: typ, epoch: epoch, sequence: sequence, raw: raw, priority: priority, delivery: delivery,
 	})
 	switch priority {
 	case controlPriorityCritical:
@@ -160,9 +176,9 @@ func (s *engineSession) closeControlTerminal(ctx context.Context, goAwayPayload 
 	s.controlClosing = true
 	var protocolErr error
 	if goAwayPayload != nil {
-		protocolErr = s.commitControlPriorityLocked(protocolv3.InnerGoAway, goAwayPayload, nil, controlPriorityCritical, true)
+		protocolErr = s.commitControlPriorityLocked(protocolv3.InnerGoAway, goAwayPayload, nil, controlPriorityCritical, true, nil)
 	}
-	protocolErr = errors.Join(protocolErr, s.commitControlPriorityLocked(protocolv3.InnerSessionClose, []byte{0, 1}, nil, controlPriorityCritical, true))
+	protocolErr = errors.Join(protocolErr, s.commitControlPriorityLocked(protocolv3.InnerSessionClose, []byte{0, 1}, nil, controlPriorityCritical, true, nil))
 	s.controlTerminalSealed = true
 	close(s.controlCapacityChanged)
 	s.controlCapacityChanged = make(chan struct{})
@@ -248,12 +264,20 @@ func (s *engineSession) controlWriterLoop() {
 			s.controlActorMu.Unlock()
 
 			if err := writeAll(s.control, record.raw); err != nil {
+				if record.delivery != nil {
+					record.delivery <- err
+					close(record.delivery)
+				}
 				if s.ctx.Err() == nil {
 					s.fail(fmt.Errorf("%w: control write: %v", ErrSessionProtocol, err))
 				}
 				return
 			}
 			s.touchActivity()
+			if record.delivery != nil {
+				record.delivery <- nil
+				close(record.delivery)
+			}
 
 			s.controlActorMu.Lock()
 			s.controlQueue[0] = queuedControlRecord{}
@@ -557,7 +581,12 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 		}
 		return ErrRekeyInProgress
 	}
-	defer s.rekeyMu.Unlock()
+	rekeyOwned := true
+	defer func() {
+		if rekeyOwned {
+			s.rekeyMu.Unlock()
+		}
+	}()
 	prepareContext, cancelPrepare := context.WithTimeout(ctx, s.config.RekeyPrepareTimeout)
 	defer cancelPrepare()
 	s.cryptoMu.RLock()
@@ -569,7 +598,7 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 	transitionExhausted := s.transitionExhausted
 	s.pendingRekeyMu.Unlock()
 	if currentEpoch == math.MaxUint32 || transition == 0 || transitionExhausted {
-		return s.exhaustRekeyCounter()
+		return s.exhaustRekeyCounter(prepareContext, ctx)
 	}
 	if err := s.freezeOpens(); err != nil {
 		return err
@@ -611,7 +640,10 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 	transition = s.nextTransition
 	if transition == 0 || s.transitionExhausted {
 		s.pendingRekeyMu.Unlock()
-		return s.exhaustRekeyCounter()
+		s.cryptoMu.Lock()
+		delete(s.sendRoots, nextEpoch)
+		s.cryptoMu.Unlock()
+		return s.exhaustRekeyCounter(prepareContext, ctx)
 	}
 	s.nextTransition, s.transitionExhausted = advanceSessionTransition(transition)
 	pending := &pendingRekey{done: make(chan struct{}), next: nextRoots, epoch: nextEpoch}
@@ -645,6 +677,28 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 		return fmt.Errorf("%w: %v", ErrRekey, err)
 	}
 	cancelPrepare()
+	completion := make(chan error, 1)
+	rekeyOwned = false
+	opensFrozen = false
+	respondersFrozen = false
+	go func() {
+		completion <- s.completeOwnedRekey(pending)
+		close(completion)
+	}()
+	select {
+	case err := <-completion:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.ctx.Done():
+		return s.sessionError()
+	}
+}
+
+func (s *engineSession) completeOwnedRekey(pending *pendingRekey) error {
+	defer s.rekeyMu.Unlock()
+	defer s.unfreezeOpens()
+	defer s.unfreezeResponders(false)
 	completionContext, cancelCompletion := context.WithTimeout(s.ctx, s.config.RekeyCompletionTimeout)
 	defer cancelCompletion()
 	select {
@@ -655,6 +709,7 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 		s.fail(fmt.Errorf("%w: %w", ErrRekey, err))
 		return fmt.Errorf("%w: %w", ErrRekey, err)
 	case <-s.ctx.Done():
+		s.clearPendingRekey(pending)
 		return s.sessionError()
 	}
 	for _, streamPending := range pending.streams {
@@ -666,10 +721,6 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 	}
 	s.clearPendingRekey(pending)
 	s.cleanupEpochRoots()
-	s.unfreezeOpens()
-	opensFrozen = false
-	s.unfreezeResponders(false)
-	respondersFrozen = false
 	return nil
 }
 

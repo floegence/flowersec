@@ -216,6 +216,8 @@ func redactTransportErrorV3(_ error: any Error) -> SessionError {
       return .streamRejected
     case .streamReset:
       return .streamReset
+    case .timeout:
+      return .timeout
     case .rekeyFailed:
       return .rekeyFailed
     case .livenessFailed:

@@ -53,6 +53,24 @@ const wireFixture = JSON.parse(readFileSync(
     receive_after_maximum: string;
     goaway_delivery_failure: string;
   }>;
+  rekey_lifecycle: Readonly<{
+    exhaustion_goaway_write_failure: Readonly<{
+      operation_error: string;
+      termination_error: string;
+      session_state: string;
+    }>;
+    exhaustion_goaway_deadline_expiry: Readonly<{
+      operation_error: string;
+      termination_error: string;
+      session_state: string;
+    }>;
+    post_commit_caller_cancellation: Readonly<{
+      caller_error: string;
+      completion_owner: string;
+      completion_deadline: string;
+      session_state_after_success: string;
+    }>;
+  }>;
 }>;
 const bytes = (value: string): Uint8Array => new TextEncoder().encode(value);
 const fromHex = (value: string): Uint8Array => Uint8Array.from(Buffer.from(value, "hex"));
@@ -159,6 +177,24 @@ describe("transport v3 inherited session wire boundaries", () => {
       exhaustion_goaway_reason: 5,
       receive_after_maximum: "protocol_failure",
       goaway_delivery_failure: "session_failure",
+    });
+    expect(wireFixture.rekey_lifecycle).toEqual({
+      exhaustion_goaway_write_failure: {
+        operation_error: "resource_exhausted",
+        termination_error: "operation_failed",
+        session_state: "closed",
+      },
+      exhaustion_goaway_deadline_expiry: {
+        operation_error: "rekey_failed",
+        termination_error: "timeout",
+        session_state: "closed",
+      },
+      post_commit_caller_cancellation: {
+        caller_error: "canceled",
+        completion_owner: "session",
+        completion_deadline: "rekey_completion_timeout",
+        session_state_after_success: "open",
+      },
     });
   });
 });

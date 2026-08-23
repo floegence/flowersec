@@ -289,6 +289,14 @@ assert.equal(registry.limits.session_epoch_maximum_hex, "ffffffff");
 assert.equal(registry.limits.session_epoch_maximum_is_usable, true);
 assert.equal(registry.limits.session_epoch_rekey_after_maximum, "resource_exhausted");
 assert.equal(registry.limits.session_rekey_exhaustion_goaway_delivery_failure, "session_failure");
+assert.equal(registry.limits.session_rekey_exhaustion_goaway_write_operation_error, "resource_exhausted");
+assert.equal(registry.limits.session_rekey_exhaustion_goaway_write_termination_error, "operation_failed");
+assert.equal(registry.limits.session_rekey_exhaustion_goaway_deadline_operation_error, "rekey_failed");
+assert.equal(registry.limits.session_rekey_exhaustion_goaway_deadline_termination_error, "timeout");
+assert.equal(registry.limits.session_rekey_post_commit_caller_error, "canceled");
+assert.equal(registry.limits.session_rekey_post_commit_completion_owner, "session");
+assert.equal(registry.limits.session_rekey_post_commit_completion_deadline, "rekey_completion_timeout");
+assert.equal(registry.limits.session_rekey_post_commit_success_state, "open");
 for (const entry of registry.design.traceability) {
   assert(typeof entry.clause === "string" && entry.clause.length > 0, "traceability clause ID is required");
   assert(typeof entry.title === "string" && entry.title.length > 0, `${entry.clause} traceability title is required`);

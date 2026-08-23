@@ -55,6 +55,7 @@ enum TransportV3SessionError: Error, Equatable, Sendable {
   case resourceExhausted
   case openRejected(UInt16)
   case streamReset
+  case timeout
   case rekeyFailed
   case livenessFailed
 }

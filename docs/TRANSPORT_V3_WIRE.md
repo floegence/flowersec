@@ -411,6 +411,16 @@ protocol failure before waiting for responders. The
 boundaries and their lifecycle alongside the inherited session payload
 vectors.
 
+An exhaustion GOAWAY write failure returns `resource_exhausted` for the rekey
+attempt and terminates the session with `operation_failed`. Missing the
+preparation deadline returns `rekey_failed` and terminates the session with
+`timeout`. These are portable public error codes; language-specific internal
+error types may differ. Before rekey commit, caller cancellation cancels the
+operation. After commit, the session owns the bounded completion workflow:
+caller cancellation returns `canceled` only to that caller, while the rekey
+continues under `rekey_completion_timeout_seconds` and leaves the session open
+when it succeeds.
+
 An authenticated logical-stream FIN is clean only when the carrier read side
 then reaches native EOF without another byte. The receiver does not publish
 clean application EOF or release stream capacity before that native EOF.

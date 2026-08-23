@@ -198,6 +198,7 @@ type queuedControlRecord struct {
 	sequence uint64
 	raw      []byte
 	priority controlPriority
+	delivery chan error
 }
 
 type controlPriority uint8
@@ -829,6 +830,32 @@ func (s *engineSession) sendGoAway(reason uint16) error {
 	})
 }
 
+func (s *engineSession) sendGoAwayAndWait(ctx context.Context, reason uint16) error {
+	payload := s.localGoAwayPayload(reason)
+	delivery, err := s.commitControlPriorityDelivery(
+		protocolv3.InnerGoAway,
+		payload,
+		func() error {
+			s.openMu.Lock()
+			s.sentGoAwayCommitted = true
+			s.openMu.Unlock()
+			return nil
+		},
+		controlPriorityCritical,
+	)
+	if err != nil {
+		return err
+	}
+	select {
+	case err := <-delivery:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.ctx.Done():
+		return s.sessionError()
+	}
+}
+
 func (s *engineSession) localGoAwayPayload(reason uint16) []byte {
 	lastAccepted := s.peerResolvedFrontier()
 	s.openMu.Lock()
@@ -855,9 +882,15 @@ func (s *engineSession) localTerminalGoAwayPayload(reason uint16) []byte {
 	return s.localGoAwayPayload(reason)
 }
 
-func (s *engineSession) exhaustRekeyCounter() error {
-	if err := s.sendGoAway(5); err != nil {
+func (s *engineSession) exhaustRekeyCounter(prepareContext, callerContext context.Context) error {
+	if err := s.sendGoAwayAndWait(prepareContext, 5); err != nil {
 		s.fail(err)
+		if callerContext.Err() != nil {
+			return callerContext.Err()
+		}
+		if errors.Is(prepareContext.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("%w: exhaustion GOAWAY preparation deadline", ErrRekey)
+		}
 	}
 	return protocolv3.ErrCounterExhausted
 }

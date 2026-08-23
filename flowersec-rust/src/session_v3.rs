@@ -1995,7 +1995,13 @@ async fn send_exhaustion_goaway_v3(session: &Arc<SelfSession>) {
     };
     if let Err(error) = send_goaway_v3(session, 5).await {
         guard.armed = false;
-        fail_session_v3(session, error);
+        fail_session_v3(
+            session,
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Flowersec v3 exhaustion GOAWAY failed: {error}"),
+            ),
+        );
         return;
     }
     guard.armed = false;
@@ -5983,6 +5989,23 @@ mod tests {
         assert_eq!(epoch["exhaustion_goaway_reason"], 5);
         assert_eq!(epoch["receive_after_maximum"], "protocol_failure");
         assert_eq!(epoch["goaway_delivery_failure"], "session_failure");
+        let lifecycle = &fixture["rekey_lifecycle"];
+        let write = &lifecycle["exhaustion_goaway_write_failure"];
+        assert_eq!(write["operation_error"], "resource_exhausted");
+        assert_eq!(write["termination_error"], "operation_failed");
+        assert_eq!(write["session_state"], "closed");
+        let deadline = &lifecycle["exhaustion_goaway_deadline_expiry"];
+        assert_eq!(deadline["operation_error"], "rekey_failed");
+        assert_eq!(deadline["termination_error"], "timeout");
+        assert_eq!(deadline["session_state"], "closed");
+        let cancellation = &lifecycle["post_commit_caller_cancellation"];
+        assert_eq!(cancellation["caller_error"], "canceled");
+        assert_eq!(cancellation["completion_owner"], "session");
+        assert_eq!(
+            cancellation["completion_deadline"],
+            "rekey_completion_timeout"
+        );
+        assert_eq!(cancellation["session_state_after_success"], "open");
     }
 
     #[tokio::test]
@@ -6094,7 +6117,10 @@ mod tests {
             .store(STREAM_FAULT_FAIL_WRITE, Ordering::Release);
 
         assert_eq!(client.rekey().await, Err(SessionError::ResourceExhausted));
-        assert_eq!(client.wait_termination().await.error, SessionError::Closed);
+        assert_eq!(
+            client.wait_termination().await.error,
+            SessionError::OperationFailed
+        );
 
         let _ = tokio::join!(client.close(), server.close());
     }

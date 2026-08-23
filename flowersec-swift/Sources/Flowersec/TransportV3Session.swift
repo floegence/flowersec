@@ -276,13 +276,15 @@ actor TransportV3Session {
     }
     guard !closing, !closed else { throw TransportV3SessionError.closed }
     rekeyInProgress = true
+    var rekeyGateOwned = true
     var inboundRespondersFrozen = false
     defer {
       if inboundRespondersFrozen { unfreezeInboundResponders(peerInitiated: false) }
-      finishRekeyGate()
+      if rekeyGateOwned { finishRekeyGate() }
     }
 
     var committed = false
+    var ownershipTransferred = false
     var nextEpochToRollback: UInt32? = nil
     do {
       guard sendEpoch != UInt32.max,
@@ -340,8 +342,51 @@ actor TransportV3Session {
         transition: transition,
         duration: config.deadlines.rekeyCompletion
       )
-      defer { completionDeadline.cancel() }
+      let ownedCompletion = RekeySignalV3()
+      ownershipTransferred = true
+      rekeyGateOwned = false
+      inboundRespondersFrozen = false
+      Task {
+        await self.completeOwnedRekey(
+          waiter: waiter,
+          transition: transition,
+          nextEpoch: nextEpoch,
+          completionDeadline: completionDeadline,
+          result: ownedCompletion
+        )
+      }
+      try await ownedCompletion.waitAsObserver()
+    } catch {
+      if ownershipTransferred {
+        if error is CancellationError || Task.isCancelled { throw CancellationError() }
+        if let sessionError = error as? TransportV3SessionError { throw sessionError }
+        throw TransportV3SessionError.rekeyFailed
+      }
+      pendingRekey = nil
+      if !committed {
+        if let nextEpochToRollback { sendRoots.removeValue(forKey: nextEpochToRollback) }
+        if error is CancellationError || Task.isCancelled { throw CancellationError() }
+        if let sessionError = error as? TransportV3SessionError { throw sessionError }
+        throw TransportV3SessionError.rekeyFailed
+      }
+      await failProtocol()
+      throw TransportV3SessionError.rekeyFailed
+    }
+  }
 
+  private func completeOwnedRekey(
+    waiter: PendingSessionRekeyV3,
+    transition: UInt64,
+    nextEpoch: UInt32,
+    completionDeadline: Task<Void, Never>,
+    result: RekeySignalV3
+  ) async {
+    defer {
+      completionDeadline.cancel()
+      unfreezeInboundResponders(peerInitiated: false)
+      finishRekeyGate()
+    }
+    do {
       var streamWaiters: [RekeySignalV3] = []
       let activeStreams = Array(streams.values)
       for stream in activeStreams {
@@ -355,18 +400,13 @@ actor TransportV3Session {
       try await sendControl(.sessionKeyUpdate, payload: waiter.payload)
       try await waiter.wait()
       for signal in streamWaiters { try await signal.wait() }
-      pendingRekey = nil
+      if pendingRekey === waiter { pendingRekey = nil }
       trimSendRoots()
+      await result.succeed()
     } catch {
-      pendingRekey = nil
-      if !committed {
-        if let nextEpochToRollback { sendRoots.removeValue(forKey: nextEpochToRollback) }
-        if error is CancellationError || Task.isCancelled { throw CancellationError() }
-        if let sessionError = error as? TransportV3SessionError { throw sessionError }
-        throw TransportV3SessionError.rekeyFailed
-      }
+      if pendingRekey === waiter { pendingRekey = nil }
       await failProtocol()
-      throw TransportV3SessionError.rekeyFailed
+      await result.fail(TransportV3SessionError.rekeyFailed)
     }
   }
 
@@ -404,12 +444,15 @@ actor TransportV3Session {
       try await result.waitAsObserver()
     } catch {
       delivery.cancel()
+      let terminalError: TransportV3SessionError =
+        !Task.isCancelled && failedRekeyPreparations.contains(requestID)
+        ? .timeout : .protocolViolation
       _ = initiateClose(
         goAwayReason: 6,
         closeReason: 6,
         carrierCode: 6,
         carrierReason: "session exhaustion GOAWAY failed",
-        terminalError: .protocolViolation
+        terminalError: terminalError
       )
       try Task.checkCancellation()
       try checkRekeyPreparation(requestID: requestID)

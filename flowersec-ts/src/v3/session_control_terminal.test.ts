@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import { createMemoryCarrierPairV3, type CarrierSessionV3, type CarrierStreamV3 } from "./carrier.js";
 import type { OperationOptionsV3 } from "./contract.js";
 import { CipherSuiteV3, InnerTypeV3 } from "./protocol.js";
+import { projectSessionV3 } from "./publicSession.js";
 import { establishSessionV3, SessionV3Error, type SessionConfigV3, type SessionV3 } from "./session.js";
 import { nodeSessionRuntimeV3 } from "./nodeSessionRuntime.js";
 
@@ -260,11 +261,12 @@ describe("SessionV3 control terminal serialization", () => {
     ]);
     sessionInternals(client).nextTransition = 0n;
     clientCarrier.blockNextControlWrite();
+    const publicClient = projectSessionV3(client);
 
-    const operation = client.rekey();
+    const operation = publicClient.rekey();
     await clientCarrier.blockedWriteEntered.promise;
-    await expect(testDeadline(operation, "exhaustion GOAWAY deadline")).rejects.toMatchObject({ code: "timeout" });
-    await expect(testDeadline(client.waitTermination(), "exhaustion termination")).resolves.toMatchObject({
+    await expect(testDeadline(operation, "exhaustion GOAWAY deadline")).rejects.toMatchObject({ code: "rekey_failed" });
+    await expect(testDeadline(publicClient.waitTermination(), "exhaustion termination")).resolves.toMatchObject({
       error: { code: "timeout" },
     });
     expect(clientCarrier.aborts).toBe(1);
@@ -290,10 +292,11 @@ describe("SessionV3 control terminal serialization", () => {
       if (type === InnerTypeV3.GoAway) throw new Error("injected GOAWAY write failure");
       await originalSendControl(type, payload);
     };
+    const publicClient = projectSessionV3(client);
 
-    await expect(client.rekey()).rejects.toMatchObject({ code: "resource_exhausted" });
-    await expect(client.waitTermination()).resolves.toMatchObject({
-      error: { message: "injected GOAWAY write failure" },
+    await expect(publicClient.rekey()).rejects.toMatchObject({ code: "resource_exhausted" });
+    await expect(publicClient.waitTermination()).resolves.toMatchObject({
+      error: { code: "operation_failed" },
     });
 
     await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);

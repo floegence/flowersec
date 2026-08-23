@@ -155,6 +155,7 @@ export class SessionV3Error extends Error {
       | "handshake"
       | "open_rejected"
       | "protocol"
+      | "rekey_failed"
       | "resource_exhausted"
       | "stream_reset"
       | "timeout",
@@ -1031,10 +1032,10 @@ export class SessionV3 implements SessionV3Contract {
     try {
       const currentEpoch = this.sendEpoch;
       if (currentEpoch === MAX_UINT32) {
-        await this.rejectExhaustedRekey("session epoch exhausted", prepareSignal.signal);
+        await this.rejectExhaustedRekey("session epoch exhausted", prepareSignal.signal, options.signal);
       }
       if (this.nextTransition < 1n || this.nextTransition > MAX_UINT64) {
-        await this.rejectExhaustedRekey("session transition exhausted", prepareSignal.signal);
+        await this.rejectExhaustedRekey("session transition exhausted", prepareSignal.signal, options.signal);
       }
       await this.freezeInboundResponders(false, prepareSignal.signal);
       respondersFrozen = true;
@@ -1097,12 +1098,17 @@ export class SessionV3 implements SessionV3Contract {
     }
   }
 
-  private async rejectExhaustedRekey(message: string, signal: AbortSignal): Promise<never> {
+  private async rejectExhaustedRekey(
+    message: string,
+    signal: AbortSignal,
+    callerSignal?: AbortSignal,
+  ): Promise<never> {
     try {
       await this.sendGoAway(5, signal);
     } catch (error) {
       this.fail(asError(error));
-      if (signal.aborted) throw abortReason(signal);
+      if (callerSignal?.aborted === true) throw abortReason(callerSignal);
+      if (signal.aborted) throw new SessionV3Error("rekey_failed", "exhaustion GOAWAY preparation failed");
     }
     throw new SessionV3Error("resource_exhausted", message);
   }

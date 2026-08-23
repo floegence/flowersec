@@ -7,8 +7,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,6 +44,24 @@ func TestSharedSessionWireV3Vectors(t *testing.T) {
 			ReceiveAfterMaximum    string `json:"receive_after_maximum"`
 			GoAwayDeliveryFailure  string `json:"goaway_delivery_failure"`
 		} `json:"epoch_boundary"`
+		RekeyLifecycle struct {
+			ExhaustionGoAwayWriteFailure struct {
+				OperationError   string `json:"operation_error"`
+				TerminationError string `json:"termination_error"`
+				SessionState     string `json:"session_state"`
+			} `json:"exhaustion_goaway_write_failure"`
+			ExhaustionGoAwayDeadlineExpiry struct {
+				OperationError   string `json:"operation_error"`
+				TerminationError string `json:"termination_error"`
+				SessionState     string `json:"session_state"`
+			} `json:"exhaustion_goaway_deadline_expiry"`
+			PostCommitCallerCancellation struct {
+				CallerError              string `json:"caller_error"`
+				CompletionOwner          string `json:"completion_owner"`
+				CompletionDeadline       string `json:"completion_deadline"`
+				SessionStateAfterSuccess string `json:"session_state_after_success"`
+			} `json:"post_commit_caller_cancellation"`
+		} `json:"rekey_lifecycle"`
 	}
 	raw, err := os.ReadFile("../../../testdata/transport_v3/session_wire_vectors.json")
 	if err != nil {
@@ -88,11 +108,24 @@ func TestSharedSessionWireV3Vectors(t *testing.T) {
 		epoch.ReceiveAfterMaximum != "protocol_failure" || epoch.GoAwayDeliveryFailure != "session_failure" {
 		t.Fatalf("invalid session epoch boundary: %+v", epoch)
 	}
+	lifecycle := fixture.RekeyLifecycle
+	if write := lifecycle.ExhaustionGoAwayWriteFailure; write.OperationError != "resource_exhausted" ||
+		write.TerminationError != "operation_failed" || write.SessionState != "closed" {
+		t.Fatalf("invalid exhaustion GOAWAY write lifecycle: %+v", write)
+	}
+	if deadline := lifecycle.ExhaustionGoAwayDeadlineExpiry; deadline.OperationError != "rekey_failed" ||
+		deadline.TerminationError != "timeout" || deadline.SessionState != "closed" {
+		t.Fatalf("invalid exhaustion GOAWAY deadline lifecycle: %+v", deadline)
+	}
+	if cancellation := lifecycle.PostCommitCallerCancellation; cancellation.CallerError != "canceled" ||
+		cancellation.CompletionOwner != "session" || cancellation.CompletionDeadline != "rekey_completion_timeout" ||
+		cancellation.SessionStateAfterSuccess != "open" {
+		t.Fatalf("invalid post-commit cancellation lifecycle: %+v", cancellation)
+	}
 }
 
 func TestSessionTransitionMaximumUsesProductionRekeyOnceThenExhausts(t *testing.T) {
-	session := newRekeyBoundarySession(t)
-	defer session.cancel(ErrSessionClosed)
+	session, _ := newRekeyBoundarySession(t, rekeyControlWriteSuccess, time.Second)
 	session.pendingRekeyMu.Lock()
 	session.nextTransition = math.MaxUint64
 	session.pendingRekeyMu.Unlock()
@@ -136,10 +169,12 @@ func TestSessionTransitionMaximumUsesProductionRekeyOnceThenExhausts(t *testing.
 }
 
 func TestSessionEpochExhaustionUsesProductionRekeyLifecycle(t *testing.T) {
-	session := newRekeyBoundarySession(t)
-	defer session.cancel(ErrSessionClosed)
+	session, control := newRekeyBoundarySession(t, rekeyControlWriteSuccess, time.Second)
 	session.cryptoMu.Lock()
+	maximumRoots := session.sendRoots[0]
+	session.sendRoots[math.MaxUint32] = maximumRoots
 	session.sendEpoch = math.MaxUint32
+	session.controlSendEpoch = math.MaxUint32
 	session.cryptoMu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -150,11 +185,130 @@ func TestSessionEpochExhaustionUsesProductionRekeyLifecycle(t *testing.T) {
 	if !session.sentGoAwayCommitted || session.sentGoAwayReason != 5 {
 		t.Fatalf("epoch exhaustion GOAWAY = committed:%t reason:%d", session.sentGoAwayCommitted, session.sentGoAwayReason)
 	}
+	raw := <-control.writes
+	header, err := protocolv3.ParseRecordHeader(raw[:protocolv3.RecordHeaderSize])
+	if err != nil || header.Epoch != math.MaxUint32 {
+		t.Fatalf("maximum-epoch GOAWAY header = %+v error=%v", header, err)
+	}
+	material, err := protocolv3.DeriveControlMaterial(maximumRoots.ControlRoot, session.h3, session.sendDir, math.MaxUint32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner, err := protocolv3.OpenRecord(
+		session.config.Suite, material.RecordKey, material.NoncePrefix, session.h3, 0, session.sendDir,
+		header, raw[protocolv3.RecordHeaderSize:],
+	)
+	if err != nil {
+		t.Fatalf("open maximum-epoch GOAWAY: %v", err)
+	}
+	typ, payload, err := protocolv3.ParseInnerRecord(inner)
+	if err != nil || typ != protocolv3.InnerGoAway {
+		t.Fatalf("maximum-epoch control record = %d error=%v", typ, err)
+	}
+	_, reason, err := parseIDReason(payload)
+	if err != nil || reason != 5 {
+		t.Fatalf("maximum-epoch GOAWAY reason = %d error=%v", reason, err)
+	}
+}
+
+func TestExhaustionGoAwayWriteFailureFailsClosed(t *testing.T) {
+	session, _ := newRekeyBoundarySession(t, rekeyControlWriteFailure, time.Second)
+	session.pendingRekeyMu.Lock()
+	session.nextTransition = 0
+	session.pendingRekeyMu.Unlock()
+
+	if err := session.Rekey(context.Background()); !errors.Is(err, protocolv3.ErrCounterExhausted) {
+		t.Fatalf("exhaustion write failure Rekey = %v, want counter exhaustion", err)
+	}
+	waitContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := session.WaitClosed(waitContext); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("exhaustion write termination = %v, want write failure", err)
+	}
+}
+
+func TestExhaustionGoAwayDeadlineFailsClosed(t *testing.T) {
+	session, control := newRekeyBoundarySession(t, rekeyControlWriteBlocked, 25*time.Millisecond)
+	session.pendingRekeyMu.Lock()
+	session.nextTransition = 0
+	session.pendingRekeyMu.Unlock()
+
+	started := time.Now()
+	err := session.Rekey(context.Background())
+	if !errors.Is(err, ErrRekey) || time.Since(started) > 300*time.Millisecond {
+		t.Fatalf("blocked exhaustion Rekey = %v after %s, want bounded rekey failure", err, time.Since(started))
+	}
+	select {
+	case <-control.writeEntered:
+	default:
+		t.Fatal("exhaustion GOAWAY never reached the control writer")
+	}
+	waitContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := session.WaitClosed(waitContext); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("exhaustion deadline termination = %v, want deadline exceeded", err)
+	}
+}
+
+func TestPostCommitCallerCancellationLeavesOwnedRekeyRunning(t *testing.T) {
+	session, control := newRekeyBoundarySession(t, rekeyControlWriteBlocked, time.Second)
+	callerContext, cancelCaller := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- session.Rekey(callerContext) }()
+	select {
+	case <-control.writeEntered:
+	case <-time.After(time.Second):
+		t.Fatal("rekey never reached the committed control write")
+	}
+	cancelCaller()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("post-commit caller result = %v, want canceled", err)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("post-commit caller cancellation did not release the caller")
+	}
+
+	session.pendingRekeyMu.Lock()
+	pending := session.pendingRekey
+	var payload []byte
+	if pending != nil {
+		payload = append(payload, pending.payload[:]...)
+	}
+	session.pendingRekeyMu.Unlock()
+	if payload == nil {
+		t.Fatal("committed rekey did not retain owned pending state")
+	}
+	control.release()
+	select {
+	case <-control.writes:
+	case <-time.After(time.Second):
+		t.Fatal("owned rekey control write did not complete")
+	}
+	if err := session.handleSessionUpdateACK(payload); err != nil {
+		t.Fatalf("complete owned rekey: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		if session.rekeyMu.TryLock() {
+			session.rekeyMu.Unlock()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("owned rekey did not release its gate")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case <-session.Termination():
+		t.Fatalf("caller cancellation terminated session: %v", session.sessionError())
+	default:
+	}
 }
 
 func TestPostMaximumSessionUpdateRejectsBeforeResponderDrain(t *testing.T) {
-	session := newRekeyBoundarySession(t)
-	defer session.cancel(ErrSessionClosed)
+	session, _ := newRekeyBoundarySession(t, rekeyControlWriteSuccess, time.Second)
 	session.responderMu.Lock()
 	session.activeResponders = 1
 	session.responderMu.Unlock()
@@ -182,16 +336,72 @@ func TestPostMaximumSessionUpdateRejectsBeforeResponderDrain(t *testing.T) {
 	}
 }
 
-func newRekeyBoundarySession(t *testing.T) *engineSession {
+type rekeyControlWriteMode uint8
+
+const (
+	rekeyControlWriteSuccess rekeyControlWriteMode = iota
+	rekeyControlWriteFailure
+	rekeyControlWriteBlocked
+)
+
+type rekeyBoundaryControlStream struct {
+	ctx          context.Context
+	mode         rekeyControlWriteMode
+	writes       chan []byte
+	writeEntered chan struct{}
+	releaseWrite chan struct{}
+	enteredOnce  sync.Once
+	releaseOnce  sync.Once
+}
+
+func (stream *rekeyBoundaryControlStream) Read([]byte) (int, error) { return 0, io.EOF }
+func (stream *rekeyBoundaryControlStream) Write(payload []byte) (int, error) {
+	stream.enteredOnce.Do(func() { close(stream.writeEntered) })
+	switch stream.mode {
+	case rekeyControlWriteFailure:
+		return 0, io.ErrClosedPipe
+	case rekeyControlWriteBlocked:
+		select {
+		case <-stream.releaseWrite:
+		case <-stream.ctx.Done():
+			return 0, stream.ctx.Err()
+		}
+	}
+	stream.writes <- append([]byte(nil), payload...)
+	return len(payload), nil
+}
+func (*rekeyBoundaryControlStream) CloseWrite() error  { return nil }
+func (*rekeyBoundaryControlStream) StopSending() error { return nil }
+func (*rekeyBoundaryControlStream) Reset() error       { return nil }
+func (*rekeyBoundaryControlStream) Close() error       { return nil }
+func (stream *rekeyBoundaryControlStream) Context() context.Context {
+	return stream.ctx
+}
+func (stream *rekeyBoundaryControlStream) release() {
+	stream.releaseOnce.Do(func() { close(stream.releaseWrite) })
+}
+
+func newRekeyBoundarySession(t *testing.T, mode rekeyControlWriteMode, prepareTimeout time.Duration) (*engineSession, *rekeyBoundaryControlStream) {
 	t.Helper()
-	session, err := newEngineSession(nil, nil, Config{
+	control := &rekeyBoundaryControlStream{
+		mode: mode, writes: make(chan []byte, 8), writeEntered: make(chan struct{}), releaseWrite: make(chan struct{}),
+	}
+	carrierSession := newVersionIsolationDatagramCarrier(nil)
+	session, err := newEngineSession(carrierSession, control, Config{
 		Role: RoleClient, Path: PathDirect, Suite: protocolv3.SuiteChaCha20Poly1305,
-		MaxInboundStreams: 1, RekeyPrepareTimeout: time.Second, RekeyCompletionTimeout: time.Second,
+		MaxInboundStreams: 1, RekeyPrepareTimeout: prepareTimeout, RekeyCompletionTimeout: time.Second,
 	}, handshakeMaterial{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return session
+	control.ctx = session.ctx
+	session.startControlWriter()
+	t.Cleanup(func() {
+		control.release()
+		session.cancel(ErrSessionClosed)
+		session.wg.Wait()
+	})
+	return session, control
 }
 
 func decodeVectorUint(t *testing.T, value string, bytes int) uint64 {
