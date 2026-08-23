@@ -257,6 +257,8 @@ test("privileged host bootstrap verifies every root-executed toolchain download"
   assert.match(source, /authentication_marker_matches "\$rust_archive_sha256"/);
   assert.match(source, /authentication_marker_matches "\$swift_verification_marker"/);
   assert.match(source, /authentication_marker_matches "\$expected" "\$marker"/);
+  assert.equal((hostEntry.match(/SWIFTLY_TOOLCHAINS_DIR="\$host_swift_toolchains"/g) ?? []).length, 2);
+  assert.match(source, /swiftly" init --overwrite --assume-yes --skip-install/);
   assert.doesNotMatch(source, /npm --prefix "\$source_root\/flowersec-ts" run ensure:browser/);
   assert.doesNotMatch(hostEntry, /RUSTUP_DIST_SERVER|RUSTUP_UPDATE_ROOT|PLAYWRIGHT_DOWNLOAD_HOST|PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT/);
   assert.match(browserEnsure, /process\.getuid\?\.\(\) === 0[\s\S]*not authenticated/);
@@ -370,6 +372,81 @@ exit 1
   assert.equal(run(installed, ["--version"], {
     env: { SWIFTLY_HOME_DIR: path.join(hostHome, ".swiftly"), SWIFTLY_BIN_DIR: bin },
   }), "1.1.3\n");
+});
+
+test("Swiftly stale configuration is reset into the canonical toolchain directory", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-swiftly-stale-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const hostHome = path.join(root, "home");
+  const hostTmp = path.join(root, "tmp");
+  const bin = path.join(hostHome, ".local/bin");
+  const swiftlyHome = path.join(hostHome, ".swiftly");
+  const toolchains = path.join(root, "cache/toolchains/swift");
+  const swiftly = path.join(bin, "swiftly");
+  const swift = path.join(bin, "swift");
+  const log = path.join(root, "swiftly.log");
+  const stale = path.join(toolchains, "6.1.3/stale");
+  fs.mkdirSync(path.dirname(stale), { recursive: true });
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(swiftlyHome, { recursive: true });
+  fs.mkdirSync(hostTmp, { recursive: true });
+  fs.writeFileSync(stale, "unauthenticated\n");
+  fs.writeFileSync(path.join(swiftlyHome, "config.json"), '{"installedToolchains":["6.1.3"],"inUse":"6.1.3"}\n');
+  fs.writeFileSync(swiftly, `#!/bin/sh
+set -eu
+if [ "$(basename "$0")" = swift ]; then
+  [ -f "$SWIFTLY_TOOLCHAINS_DIR/swift-ready" ] || exit 1
+  printf 'Swift version 6.1.3 (swift-6.1.3-RELEASE)\\n'
+  exit 0
+fi
+case "$1" in
+  --version)
+    printf '1.1.3\\n'
+    ;;
+  init)
+    case " $* " in *" --overwrite "*) ;; *) exit 20 ;; esac
+    [ "$SWIFTLY_TOOLCHAINS_DIR" = "$EXPECTED_SWIFTLY_TOOLCHAINS_DIR" ]
+    printf 'init\\n' >>"$FLOWERSEC_TEST_LOG"
+    printf '{"installedToolchains":[]}\\n' >"$SWIFTLY_HOME_DIR/config.json"
+    ;;
+  install)
+    case " $* " in *" --verify "*) ;; *) exit 21 ;; esac
+    [ "$SWIFTLY_TOOLCHAINS_DIR" = "$EXPECTED_SWIFTLY_TOOLCHAINS_DIR" ]
+    printf 'install\\n' >>"$FLOWERSEC_TEST_LOG"
+    mkdir -p "$SWIFTLY_TOOLCHAINS_DIR"
+    printf ready >"$SWIFTLY_TOOLCHAINS_DIR/swift-ready"
+    ;;
+  *) exit 22 ;;
+esac
+`);
+  fs.chmodSync(swiftly, 0o755);
+  fs.symlinkSync("swiftly", swift);
+  const digest = createHash("sha256").update(fs.readFileSync(swiftly)).digest("hex");
+  const markerValue = "c".repeat(64);
+  const source = fs.readFileSync(path.join(sourceRoot, "scripts/test-host-init.sh"), "utf8");
+  const result = spawnSync("bash", ["-s", "--", hostHome, hostTmp, toolchains, digest, markerValue], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      SWIFTLY_HOME_DIR: swiftlyHome,
+      SWIFTLY_BIN_DIR: bin,
+      SWIFTLY_TOOLCHAINS_DIR: toolchains,
+      EXPECTED_SWIFTLY_TOOLCHAINS_DIR: toolchains,
+      FLOWERSEC_TEST_LOG: log,
+    },
+    input: `set -e\n${extractShellFunction(source, "verify_download")}\n${extractShellFunction(source, "checksum_matches")}\n${extractShellFunction(source, "authentication_marker_matches")}\n${extractShellFunction(source, "install_swift")}\nhost_home="$1"\nhost_tmp="$2"\nhost_swift_toolchains="$3"\nswiftly_binary_sha256="$4"\nswift_verification_marker="$5"\nswiftly_version=1.1.3\nswift_version=6.1.3\ntemporary_paths=()\ninstall_swift\n`,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.readFileSync(log, "utf8"), "init\ninstall\n");
+  assert.equal(fs.existsSync(stale), false);
+  assert.equal(
+    fs.readFileSync(path.join(swiftlyHome, ".flowersec-6.1.3-pgp-verified"), "utf8"),
+    `${markerValue}\n`,
+  );
+  assert.equal(run(swift, ["--version"], {
+    env: { SWIFTLY_HOME_DIR: swiftlyHome, SWIFTLY_BIN_DIR: bin, SWIFTLY_TOOLCHAINS_DIR: toolchains },
+  }), "Swift version 6.1.3 (swift-6.1.3-RELEASE)\n");
 });
 
 test("module-local Go checks cannot be masked by workspace MVS", (t) => {

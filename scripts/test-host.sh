@@ -9,6 +9,7 @@ readonly host_tmp=$host_root/tmp
 readonly host_cache=$host_root/cache
 readonly host_lock=$host_root/test-host.lock
 readonly host_go_root=$host_cache/toolchains/go
+readonly host_swift_toolchains=$host_cache/toolchains/swift
 readonly host_path="$host_go_root/bin:$host_cache/toolchains/node/bin:$host_home/.cargo/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$host_home/.local/bin:$host_home/.swiftly/bin"
 readonly host_open_file_limit=65536
 
@@ -54,7 +55,7 @@ enter_root() {
       FLOWERSEC_TEST_STATE_DIR="$host_state" XDG_CACHE_HOME="$host_cache/xdg" \
       GOROOT="$host_go_root" GOCACHE="$host_cache/go-build" GOMODCACHE="$host_cache/go-mod" \
       CARGO_HOME="$host_home/.cargo" RUSTUP_HOME="$host_home/.rustup" \
-      SWIFTLY_HOME_DIR="$host_home/.swiftly" SWIFTLY_BIN_DIR="$host_home/.local/bin" \
+      SWIFTLY_HOME_DIR="$host_home/.swiftly" SWIFTLY_BIN_DIR="$host_home/.local/bin" SWIFTLY_TOOLCHAINS_DIR="$host_swift_toolchains" \
       PLAYWRIGHT_BROWSERS_PATH="$host_cache/playwright" npm_config_cache="$host_cache/npm" \
       FLOWERSEC_CHROMIUM_EXECUTABLE="$host_cache/chromium" \
       npm_config_registry=https://registry.npmmirror.com \
@@ -70,7 +71,7 @@ enter_root() {
     FLOWERSEC_TEST_STATE_DIR="$host_state" XDG_CACHE_HOME="$host_cache/xdg" \
     GOROOT="$host_go_root" GOCACHE="$host_cache/go-build" GOMODCACHE="$host_cache/go-mod" \
     CARGO_HOME="$host_home/.cargo" RUSTUP_HOME="$host_home/.rustup" \
-    SWIFTLY_HOME_DIR="$host_home/.swiftly" SWIFTLY_BIN_DIR="$host_home/.local/bin" \
+    SWIFTLY_HOME_DIR="$host_home/.swiftly" SWIFTLY_BIN_DIR="$host_home/.local/bin" SWIFTLY_TOOLCHAINS_DIR="$host_swift_toolchains" \
     PLAYWRIGHT_BROWSERS_PATH="$host_cache/playwright" npm_config_cache="$host_cache/npm" \
     FLOWERSEC_CHROMIUM_EXECUTABLE="$host_cache/chromium" \
     npm_config_registry=https://registry.npmmirror.com \
@@ -105,7 +106,7 @@ if [[ ${1:-} == --root ]]; then
   action=$4
   shift 4
   [[ $source_sha =~ ^[0-9a-f]{40}$ ]] || { echo "source SHA must be a full Git object ID" >&2; exit 1; }
-  [[ $HOME == "$host_home" && $PATH == "$host_path" && $TMPDIR == "$host_tmp" && ${GOROOT:-} == "$host_go_root" && ${FLOWERSEC_TEST_STATE_DIR:-} == "$host_state" ]] || {
+  [[ $HOME == "$host_home" && $PATH == "$host_path" && $TMPDIR == "$host_tmp" && ${GOROOT:-} == "$host_go_root" && ${SWIFTLY_TOOLCHAINS_DIR:-} == "$host_swift_toolchains" && ${FLOWERSEC_TEST_STATE_DIR:-} == "$host_state" ]] || {
     echo "root test environment is not canonical" >&2
     exit 1
   }

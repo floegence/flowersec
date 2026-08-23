@@ -17,6 +17,8 @@ The entrypoint switches to root once, sets a fixed environment, and checks out
 the exact source SHA under `/var/lib/flowersec-test/workspace`. Home, state,
 temporary files, and caches remain root-owned under `/var/lib/flowersec-test`.
 Root tests never use the invoking user's checkout or cache.
+Swiftly's configuration, proxy binaries, and toolchains are each pinned to an
+explicit directory under that root-owned environment.
 
 `test-host-init.sh` idempotently installs and verifies host-wide prerequisites.
 Downloaded Go, Node, Rustup, complete Rust distributions, Swiftly, Chromium,

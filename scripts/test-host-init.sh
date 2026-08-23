@@ -7,6 +7,7 @@ readonly host_workspace=$host_root/workspace
 readonly host_tmp=$host_root/tmp
 readonly host_cache=$host_root/cache
 readonly host_go_root=$host_cache/toolchains/go
+readonly host_swift_toolchains=$host_cache/toolchains/swift
 readonly host_path="$host_go_root/bin:$host_cache/toolchains/node/bin:$host_home/.cargo/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$host_home/.local/bin:$host_home/.swiftly/bin"
 readonly playwright_download_host=https://npmmirror.com/mirrors/playwright
 readonly go_version=1.26.6
@@ -23,7 +24,7 @@ readonly playwright_ffmpeg_revision=1011
 
 (($# == 0)) || { echo "usage: test-host-init.sh" >&2; exit 2; }
 ((EUID == 0)) || { echo "test-host-init requires EUID 0" >&2; exit 1; }
-[[ $HOME == "$host_home" && $PATH == "$host_path" && $TMPDIR == "$host_tmp" && ${GOROOT:-} == "$host_go_root" && ${FLOWERSEC_TEST_STATE_DIR:-} == "$host_root/state" ]] || {
+[[ $HOME == "$host_home" && $PATH == "$host_path" && $TMPDIR == "$host_tmp" && ${GOROOT:-} == "$host_go_root" && ${SWIFTLY_TOOLCHAINS_DIR:-} == "$host_swift_toolchains" && ${FLOWERSEC_TEST_STATE_DIR:-} == "$host_root/state" ]] || {
   echo "test-host-init requires the canonical root environment" >&2
   exit 1
 }
@@ -86,7 +87,8 @@ case $(uname -m) in
 esac
 
 install -d -m 0700 "$host_home" "$host_root/state" "$host_tmp" "$host_cache" "$host_cache/toolchains" \
-  "$host_cache/go-build" "$host_cache/go-mod" "$host_cache/npm" "$host_cache/playwright" "$host_home/.local/bin"
+  "$host_cache/go-build" "$host_cache/go-mod" "$host_cache/npm" "$host_cache/playwright" "$host_home/.local/bin" \
+  "$host_swift_toolchains"
 
 temporary_paths=()
 cleanup_temporary_paths() {
@@ -277,19 +279,19 @@ install_swift() {
     rm -rf -- "$bootstrap"
   fi
   if command -v swift >/dev/null 2>&1 && swift --version | grep -Fq "Swift version ${swift_version}" &&
-     ! authentication_marker_matches "$swift_verification_marker" "$marker"; then
-    "$swiftly" uninstall "$swift_version" --assume-yes
-  fi
-  if ! command -v swift >/dev/null 2>&1 || ! swift --version | grep -Fq "Swift version ${swift_version}" ||
-     ! authentication_marker_matches "$swift_verification_marker" "$marker"; then
-    post_install=$(mktemp "$host_tmp/swift-post-install.XXXXXX")
-    temporary_paths+=("$post_install")
-    (cd "$host_home" && "$swiftly" install "$swift_version" --use --verify --assume-yes --post-install-file="$post_install")
-    [[ ! -s $post_install ]] || /bin/bash "$post_install"
-    swift --version | grep -Fq "Swift version ${swift_version}" || { echo "Swift version mismatch" >&2; exit 1; }
-    printf '%s\n' "$swift_verification_marker" >"$marker"
-    rm -f -- "$post_install"
-  fi
+     authentication_marker_matches "$swift_verification_marker" "$marker"; then return; fi
+  rm -f -- "$marker"
+  rm -rf -- "$host_swift_toolchains"
+  install -d -m 0700 "$host_swift_toolchains"
+  "$swiftly" init --overwrite --assume-yes --skip-install --no-modify-profile --quiet-shell-followup
+  verify_download "$swiftly_binary_sha256" "$swiftly" "Swiftly binary"
+  post_install=$(mktemp "$host_tmp/swift-post-install.XXXXXX")
+  temporary_paths+=("$post_install")
+  (cd "$host_home" && "$swiftly" install "$swift_version" --use --verify --assume-yes --post-install-file="$post_install")
+  [[ ! -s $post_install ]] || /bin/bash "$post_install"
+  swift --version | grep -Fq "Swift version ${swift_version}" || { echo "Swift version mismatch" >&2; exit 1; }
+  printf '%s\n' "$swift_verification_marker" >"$marker"
+  rm -f -- "$post_install"
 }
 
 install_verified_playwright_archive() {
