@@ -10,10 +10,14 @@ import { pathToFileURL } from "node:url";
 const sourceRoot = path.resolve(import.meta.dirname, "..");
 
 function run(command, args, options = {}) {
+  const environment = { ...process.env, ...options.env };
+  for (const [key, value] of Object.entries(environment)) {
+    if (value === null) delete environment[key];
+  }
   const result = spawnSync(command, args, {
     encoding: "utf8",
     ...options,
-    env: { ...process.env, ...options.env },
+    env: environment,
   });
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed: ${result.stderr}`);
@@ -508,6 +512,32 @@ test("same-version system Swift cannot satisfy the canonical toolchain check", (
   assert.notEqual(result.status, 0);
 });
 
+test("canonical Swift proxies reject mismatched underlying toolchain binaries", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-swift-underlying-shadow-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const hostHome = path.join(root, "home");
+  const bin = path.join(hostHome, ".local/bin");
+  const toolchains = path.join(root, "toolchains/swift");
+  const underlying = path.join(toolchains, "6.1.3/usr/bin");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(underlying, { recursive: true });
+  for (const executable of ["swift", "swiftc"]) {
+    const proxy = path.join(bin, executable);
+    fs.writeFileSync(proxy, "#!/bin/sh\nprintf 'Swift version 6.1.3 (proxy)\\n'\n");
+    fs.chmodSync(proxy, 0o755);
+    const direct = path.join(underlying, executable);
+    fs.writeFileSync(direct, "#!/bin/sh\nprintf 'Swift version 6.1.2 (wrong underlying)\\n'\n");
+    fs.chmodSync(direct, 0o755);
+  }
+  const source = fs.readFileSync(path.join(sourceRoot, "scripts/test-host-init.sh"), "utf8");
+  const result = spawnSync("bash", ["-s", "--", hostHome, toolchains], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    input: `set -e\n${extractShellFunction(source, "swift_toolchain_is_canonical")}\nhost_home="$1"\nhost_swift_toolchains="$2"\nswift_version=6.1.3\nswift_toolchain_is_canonical\n`,
+  });
+  assert.notEqual(result.status, 0);
+});
+
 test("test-host lock timeout reports a bounded failure reason", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-test-host-lock-"));
   const lock = path.join(root, "test-host.lock");
@@ -526,6 +556,34 @@ test("test-host lock timeout reports a bounded failure reason", () => {
   assert.equal(result.status, 124);
   assert.match(result.stderr, /test-host lock timeout after 1s/);
   assert.match(result.stderr, /test-host\.lock/);
+});
+
+test("test-host materializes a fresh no-checkout workspace at the default HEAD", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-test-host-fresh-workspace-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const cleanGitEnvironment = { ...process.env };
+  const gitEnvironmentKeys = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"];
+  for (const key of gitEnvironmentKeys) delete cleanGitEnvironment[key];
+  const source = path.join(root, "source");
+  const fakeBin = path.join(root, "bin");
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.writeFileSync(path.join(fakeBin, "stat"), "#!/bin/sh\nif [ \"$1\" = -c ]; then printf '0\\n'; else exec /usr/bin/stat \"$@\"; fi\n");
+  fs.chmodSync(path.join(fakeBin, "stat"), 0o755);
+  const gitOptions = { env: Object.fromEntries(gitEnvironmentKeys.map((key) => [key, null])) };
+  run("git", ["init", "-q", source], gitOptions);
+  run("git", ["-C", source, "config", "user.email", "flowersec-test@example.invalid"], gitOptions);
+  run("git", ["-C", source, "config", "user.name", "Flowersec Test"], gitOptions);
+  fs.writeFileSync(path.join(source, "materialized.txt"), "fresh workspace\n");
+  run("git", ["-C", source, "add", "materialized.txt"], gitOptions);
+  run("git", ["-C", source, "commit", "-q", "-m", "fixture"], gitOptions);
+  const sourceSha = run("git", ["-C", source, "rev-parse", "HEAD"], gitOptions).trim();
+  const hostEntry = fs.readFileSync(path.join(sourceRoot, "scripts/test-host.sh"), "utf8");
+  const result = spawnSync("bash", ["-s", "--", sourceSha, source, root], {
+    encoding: "utf8",
+    env: { ...cleanGitEnvironment, PATH: `${fakeBin}:${cleanGitEnvironment.PATH}` },
+    input: `set -Eeuo pipefail\n${extractShellFunction(hostEntry, "sync_workspace")}\nhost_root="$3/host-root"\nhost_home="$3/home"\nhost_state="$3/state"\nhost_tmp="$3/tmp"\nhost_cache="$3/cache"\nhost_workspace="$3/workspace"\nsync_workspace "$1" "$2"\ntest -f "$host_workspace/materialized.txt"\ntest -z "$(git -C "$host_workspace" status --porcelain --untracked-files=all)"\n`,
+  });
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test("module-local Go checks cannot be masked by workspace MVS", (t) => {

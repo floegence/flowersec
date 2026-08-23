@@ -581,13 +581,18 @@ assert.match(performanceReport, /executionCtx, cancelExecution := context\.WithT
   "integrated performance progress locking must respect the suite budget context");
 assert.match(registry, /case err := <-done:[\s\S]*cleanupCommandGroup\(command\.Process\.Pid, 5\*time\.Second\)/,
   "successful subprocess completion must clean descendants before reporting pass");
-assert.match(hostEntry, /git -C "\$host_workspace" checkout --detach --force "\$source_sha"/);
+assert.match(hostEntry, /local workspace_created=0/);
+assert.match(hostEntry, /git clone --no-checkout "\$source_url" "\$host_workspace"[\s\S]*workspace_created=1/);
+assert.match(hostEntry, /if \(\(workspace_created == 1\)\) \|\| \[\[ .*rev-parse HEAD.* != "\$source_sha" \]\]/);
+assert.match(hostEntry, /git -C "\$host_workspace" checkout --detach "\$source_sha"/);
+assert.doesNotMatch(hostEntry, /git -C "\$host_workspace" checkout --detach --force/);
 assert.match(hostEntry, /status --porcelain --untracked-files=all/);
 assert.doesNotMatch(hostEntry, /status --porcelain --untracked-files=no/);
 const workspaceStatusBeforeCheckout = hostEntry.indexOf('status --porcelain --untracked-files=all', hostEntry.indexOf('sync_workspace()'));
-const workspaceCheckout = hostEntry.indexOf('checkout --detach --force "$source_sha"', workspaceStatusBeforeCheckout);
-assert.ok(workspaceStatusBeforeCheckout >= 0 && workspaceCheckout > workspaceStatusBeforeCheckout,
-  "root workspace must be verified clean before any force checkout");
+const workspaceCheckout = hostEntry.indexOf('checkout --detach "$source_sha"', hostEntry.indexOf('sync_workspace()'));
+const workspaceCreatedGuard = hostEntry.indexOf('if ((workspace_created == 0)); then', hostEntry.indexOf('sync_workspace()'));
+assert.ok(workspaceStatusBeforeCheckout >= 0 && workspaceCheckout > workspaceStatusBeforeCheckout && workspaceCreatedGuard > 0,
+  "existing root workspace must be verified clean before checkout");
 assert.doesNotMatch(hostEntry, /sudo -E|sudo su|ssh |scp |rsync /);
 assert.match(hostEntry, /readonly host_open_file_limit=65536/);
 assert.match(hostEntry, /hard_limit=\$\(ulimit -Hn\)/);

@@ -1292,7 +1292,7 @@ final class ConnectionControllerTests: XCTestCase {
     }
   }
 
-  func testEveryV3BrowserCapabilityScenarioExecutesBarrierContract() throws {
+  func testEveryV3BrowserCapabilityScenarioExecutesBarrierContract() async throws {
     let root = try controllerVectorsV3()
     let scenarios = try XCTUnwrap(root["browser_capability_scenarios"] as? [[String: Any]])
     XCTAssertEqual(scenarios.count, 1)
@@ -1307,35 +1307,69 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(input["primary_trigger"] as? String, "browser_pin_opaque")
     XCTAssertEqual(input["invalidation_trigger"] as? String, "synchronous_not_supported")
     let expected = try XCTUnwrap(scenario["expected"] as? [String: Any])
-    XCTAssertEqual(expected["final_state"] as? String, "failed")
-    XCTAssertEqual(expected["public_error"] as? String, "connection_failed")
-    XCTAssertEqual(expected["disposition"] as? String, "terminal")
-    XCTAssertEqual(expected["acquisitions"] as? Int, 3)
-    XCTAssertEqual(expected["connect_attempts"] as? Int, 4)
-    XCTAssertEqual(expected["transports_created"] as? Int, 2)
-    XCTAssertEqual(expected["replacement_acquisitions"] as? Int, 1)
-    XCTAssertEqual(expected["replacement_quota_used"] as? Int, 1)
-    XCTAssertEqual(expected["spend_callbacks"] as? Int, 0)
-    XCTAssertEqual(expected["retire_callbacks"] as? Int, 3)
-    XCTAssertEqual(expected["retry_delays_ms"] as? [Int], [])
-    XCTAssertEqual(expected["concurrent_acquisition_peak"] as? Int, 2)
-    XCTAssertEqual(expected["controller_connector_attempts"] as? Int, 3)
-    XCTAssertEqual(expected["capability_snapshots"] as? [String], ["enabled", "enabled", "ca_only"])
-    XCTAssertEqual(expected["pin_constructor_calls"] as? Int, 2)
-    XCTAssertEqual(expected["ca_constructor_calls"] as? Int, 1)
-    XCTAssertEqual(expected["old_snapshot_live_gate_failures"] as? Int, 1)
-    XCTAssertEqual(expected["post_invalidation_pin_constructor_calls"] as? Int, 0)
-    XCTAssertEqual(expected["replacement_dial_candidate_ids"] as? [String], ["replacement-ca"])
-    XCTAssertEqual(expected["peer_public_error"] as? String, "transport_security_unsupported")
-    XCTAssertEqual(expected["lease_terminal_states"] as? [String], ["retired", "retired", "retired"])
+    let retired = AsyncCounterV3()
+    let barrier = CapabilityLinearizationBarrierV3()
+    let refreshSource = SequenceArtifactSourceV3([
+      try lease(artifact: artifactV3(), retired: retired),
+      try lease(artifact: changedPinWithCAArtifactV3(), retired: retired),
+    ])
+    let staleSource = SequenceArtifactSourceV3([
+      try lease(artifact: artifactV3(), retired: retired)
+    ])
+    let refreshRuntime = CoordinatedCapabilityRuntimeV3(barrier: barrier, stale: false)
+    let staleRuntime = CoordinatedCapabilityRuntimeV3(barrier: barrier, stale: true)
+    let refreshCalls = AsyncCounterV3()
+    let refreshController = try ConnectionController(
+      source: refreshSource,
+      connectOneShot: { lease, options in
+        if await refreshCalls.increment() == 1 {
+          _ = await barrier.arrive()
+          await barrier.waitForRelease()
+          throw ControllerConnectFailureV3.connection(
+            .connectionFailed, .retryable, policyTriggerIDs: [],
+            opaquePolicyTriggerIDs: ["w-pin"], failedIDs: ["w-pin"])
+        }
+        await barrier.recordReplacementSnapshot()
+        return try await SessionConnectorV3(
+          lease: lease, options: options, runtime: refreshRuntime,
+          currentUnixSeconds: { 1_900_000_000 }
+        ).connectForController()
+      })
+    let staleController = try ConnectionController(
+      source: staleSource,
+      connectOneShot: { lease, options in
+        try await SessionConnectorV3(
+          lease: lease, options: options, runtime: staleRuntime,
+          currentUnixSeconds: { 1_900_000_000 }
+        ).connectForController()
+      })
 
-    // The live gate changes once; a stale enabled snapshot cannot construct pin
-    // transport after the registry has become CA-only.
-    var capability = "enabled"
-    let staleSnapshot = capability
-    capability = "ca_only"
-    XCTAssertEqual(staleSnapshot, "enabled")
-    XCTAssertEqual(capability, "ca_only")
+    await refreshController.start()
+    await staleController.start()
+    await barrier.waitForInitialAcquisitions()
+    await barrier.invalidateAndRelease()
+    let staleFailed = await waitForState(.failed, controller: staleController)
+    let refreshFailed = await waitForState(.failed, controller: refreshController)
+    XCTAssertTrue(staleFailed, "stale controller")
+    XCTAssertTrue(refreshFailed, "refresh controller")
+
+    let refreshSnapshot = await refreshController.snapshot()
+    let staleSnapshot = await staleController.snapshot()
+    let acquisitions = await refreshSource.acquisitions + staleSource.acquisitions
+    let retirements = await retired.value
+    let concurrentPeak = await barrier.concurrentAcquisitionPeak
+    let snapshots = await barrier.capabilitySnapshots
+    let replacementAcquisitions = await barrier.replacementAcquisitions
+    XCTAssertEqual(refreshSnapshot.state.rawValue, expected["final_state"] as? String)
+    XCTAssertEqual(refreshSnapshot.failure, .connection(.connectionFailed))
+    XCTAssertEqual(staleSnapshot.failure, .connection(.transportSecurityUnsupported))
+    XCTAssertEqual(acquisitions, expected["acquisitions"] as? Int)
+    XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int)
+    XCTAssertEqual(concurrentPeak, expected["concurrent_acquisition_peak"] as? Int)
+    XCTAssertEqual(snapshots, expected["capability_snapshots"] as? [String])
+    XCTAssertEqual(replacementAcquisitions, expected["replacement_acquisitions"] as? Int)
+    await refreshController.close()
+    await staleController.close()
   }
 
   private func runCancellationVectorV3(_ id: String) async throws {
@@ -1444,8 +1478,13 @@ final class ConnectionControllerTests: XCTestCase {
 
   private func runRetryAfterVectorV3(_ id: String) async throws {
     let expected = try controllerExpectedV3(id)
+    let input = try controllerInputV3(id)
+    let clock = VectorManualClockV3(
+      wallMilliseconds: Int64(try XCTUnwrap(input["wall_start_ms"] as? Int)),
+      monotonicMilliseconds: UInt64(try XCTUnwrap(input["monotonic_start_ms"] as? Int))
+    )
     let spent = AsyncCounterV3()
-    let retryAtMilliseconds = UInt64(ceil((Date().timeIntervalSince1970 + 0.08) * 1_000))
+    let retryAtMilliseconds = UInt64(try XCTUnwrap(input["retry_after_unix_ms"] as? Int))
     let source = ResultArtifactSourceV3([
       .failure(ArtifactSourceFailure(disposition: .retryAfter(retryAtMilliseconds))),
       .success(try lease(artifact: artifactV3(), spent: spent, retired: AsyncCounterV3())),
@@ -1453,6 +1492,7 @@ final class ConnectionControllerTests: XCTestCase {
     let session = ControllerSessionV3()
     let controller = try ConnectionController(
       source: source,
+      clock: clock.controllerClock,
       connectOneShot: { lease, _ in
         let claimed = try await lease.claim()
         try await claimed.commitSpend()
@@ -1460,12 +1500,28 @@ final class ConnectionControllerTests: XCTestCase {
       })
     await controller.start()
     assertTrueV3(await waitForState(.waiting, controller: controller), id)
+    assertTrueV3(await clock.waitForSleepCount(1), id)
+    XCTAssertEqual(clock.requestedSleeps().first, 250, id)
     assertFalseV3(await controller.retryNow(), id)
+    let wallAdvances = try XCTUnwrap(input["wall_advances_ms"] as? [Int])
+    let monotonicAdvances = try XCTUnwrap(input["monotonic_advances_ms"] as? [Int])
+    clock.advance(
+      wallMilliseconds: Int64(wallAdvances[0]), monotonicMilliseconds: UInt64(monotonicAdvances[0]))
+    assertTrueV3(await clock.waitForSleepCount(2), id)
+    XCTAssertEqual(clock.requestedSleeps().dropFirst().first, 1_000, id)
+    clock.advance(
+      wallMilliseconds: Int64(wallAdvances[1]), monotonicMilliseconds: UInt64(monotonicAdvances[1]))
     assertTrueV3(await waitForState(.connected, controller: controller), id)
     let acquisitions = await source.acquisitions
     let spends = await spent.value
     XCTAssertEqual(acquisitions, expected["acquisitions"] as? Int, id)
     XCTAssertEqual(spends, expected["spend_callbacks"] as? Int, id)
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
+    XCTAssertEqual(clock.wallMillisecondsValue, Int64(try XCTUnwrap(expected["wall_end_ms"] as? Int)), id)
+    XCTAssertEqual(
+      clock.monotonicMillisecondsValue,
+      UInt64(try XCTUnwrap(expected["monotonic_end_ms"] as? Int)),
+      id)
     await controller.close()
   }
 
@@ -2204,6 +2260,24 @@ private func changedPinArtifactV3() throws -> ArtifactV3 {
   }
 }
 
+private func changedPinWithCAArtifactV3() throws -> ArtifactV3 {
+  try mutateArtifactV3 { root in
+    var path = root["path"] as! [String: Any]
+    var candidates = path["candidates"] as! [[String: Any]]
+    let pinIndex = candidates.firstIndex { $0["id"] as? String == "w-pin" }!
+    candidates[pinIndex]["tls"] = [
+      "mode": "pin",
+      "pins": [[
+        "algorithm": "sha-256",
+        "not_after_unix_s": 2_000_000_500,
+        "value_b64u": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo",
+      ]],
+    ]
+    path["candidates"] = candidates.filter { ["w-pin", "w-ca"].contains($0["id"] as? String) }
+    root["path"] = path
+  }
+}
+
 private func changedPinExpiryArtifactV3() throws -> ArtifactV3 {
   try mutateArtifactV3 { root in
     var path = root["path"] as! [String: Any]
@@ -2461,6 +2535,91 @@ private actor CapabilityInvalidatingRuntimeV3: RuntimeCarrierAdapterV3 {
   }
 }
 
+private actor CapabilityLinearizationBarrierV3 {
+  private var initialArrivals = 0
+  private var activeInitialAcquisitions = 0
+  private var released = false
+  private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
+  private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+  private(set) var concurrentAcquisitionPeak = 0
+  private(set) var capabilitySnapshots: [String] = []
+  private(set) var replacementAcquisitions = 0
+
+  func arrive() -> Int {
+    let index = initialArrivals + 1
+    initialArrivals = index
+    if index <= 2 {
+      activeInitialAcquisitions += 1
+      concurrentAcquisitionPeak = max(concurrentAcquisitionPeak, activeInitialAcquisitions)
+      capabilitySnapshots.append("enabled")
+      if index == 2 {
+        let waiters = arrivalWaiters
+        arrivalWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+      }
+    }
+    return index
+  }
+
+  func recordReplacementSnapshot() {
+    capabilitySnapshots.append("ca_only")
+    replacementAcquisitions += 1
+  }
+
+  func waitForInitialAcquisitions() async {
+    if initialArrivals >= 2 { return }
+    await withCheckedContinuation { arrivalWaiters.append($0) }
+  }
+
+  func waitForRelease() async {
+    if released { return }
+    await withCheckedContinuation { releaseWaiters.append($0) }
+  }
+
+  func leaveInitialAcquisition() {
+    activeInitialAcquisitions = max(0, activeInitialAcquisitions - 1)
+  }
+
+  func invalidateAndRelease() {
+    released = true
+    let waiters = releaseWaiters
+    releaseWaiters.removeAll()
+    for waiter in waiters { waiter.resume() }
+  }
+
+}
+
+private actor CoordinatedCapabilityRuntimeV3: RuntimeCarrierAdapterV3 {
+  nonisolated let capabilities = RuntimeCapabilitiesV3.macOS
+  private let barrier: CapabilityLinearizationBarrierV3
+  private let stale: Bool
+
+  init(barrier: CapabilityLinearizationBarrierV3, stale: Bool) {
+    self.barrier = barrier
+    self.stale = stale
+  }
+
+  nonisolated func validate(options: ConnectorOptions) throws {}
+
+  func prepare(
+    candidate: CanonicalCandidateV3,
+    path: PathKind,
+    role: SessionRoleV3,
+    options: ConnectorOptions,
+    activePinHashes: [Data]?
+  ) async throws -> any PreparedCarrierConnectionV3 {
+    let arrival = await barrier.arrive()
+    if arrival <= 2 {
+      await barrier.waitForRelease()
+      await barrier.leaveInitialAcquisition()
+    }
+    if stale { throw ConnectorBoundaryErrorV3.runtimeUnsupported }
+    if candidate.id == "w-pin" { throw ConnectorBoundaryErrorV3.browserPinOpaque }
+    if candidate.id == "w-ca" { throw ConnectorBoundaryErrorV3.admissionRejected }
+    throw ConnectorBoundaryErrorV3.runtimeFailed
+  }
+}
+
 private actor PermutationFailureRuntimeV3: RuntimeCarrierAdapterV3 {
   struct Snapshot: Sendable {
     let arrivals: Int
@@ -2596,6 +2755,10 @@ private final class VectorManualClockV3: @unchecked Sendable {
   }
 
   func requestedSleeps() -> [UInt64] { lock.withLock { sleeps } }
+
+  var wallMillisecondsValue: Int64 { lock.withLock { wallMilliseconds } }
+
+  var monotonicMillisecondsValue: UInt64 { lock.withLock { monotonicMilliseconds } }
 
   func waitForSleepCount(_ count: Int, timeout: Duration = .seconds(1)) async -> Bool {
     let deadline = ContinuousClock.now + timeout

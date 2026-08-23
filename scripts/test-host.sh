@@ -91,20 +91,24 @@ enter_root() {
 
 sync_workspace() {
   local source_sha=$1 source_url=$2
+  local workspace_created=0
   install -d -m 0700 "$host_root" "$host_home" "$host_state" "$host_tmp" "$host_cache" "$host_cache/toolchains"
   if [[ ! -d $host_workspace/.git ]]; then
     [[ ! -e $host_workspace ]] || { echo "root workspace exists but is not a Git checkout" >&2; exit 1; }
     git clone --no-checkout "$source_url" "$host_workspace"
+    workspace_created=1
   fi
   [[ $(stat -c %u "$host_workspace") == 0 ]] || { echo "root workspace must be root-owned" >&2; exit 1; }
   git -C "$host_workspace" remote set-url origin "$source_url"
-  [[ -z $(git -C "$host_workspace" status --porcelain --untracked-files=all) ]] || {
-    echo "root workspace is not clean before sync" >&2
-    exit 1
-  }
-  if [[ $(git -C "$host_workspace" rev-parse HEAD 2>/dev/null || true) != "$source_sha" ]]; then
+  if ((workspace_created == 0)); then
+    [[ -z $(git -C "$host_workspace" status --porcelain --untracked-files=all) ]] || {
+      echo "root workspace is not clean before sync" >&2
+      exit 1
+    }
+  fi
+  if ((workspace_created == 1)) || [[ $(git -C "$host_workspace" rev-parse HEAD 2>/dev/null || true) != "$source_sha" ]]; then
     git -C "$host_workspace" fetch --force origin "$source_sha"
-    git -C "$host_workspace" checkout --detach --force "$source_sha"
+    git -C "$host_workspace" checkout --detach "$source_sha"
   fi
   [[ $(git -C "$host_workspace" rev-parse HEAD) == "$source_sha" ]] || { echo "root workspace SHA mismatch" >&2; exit 1; }
   [[ -z $(git -C "$host_workspace" status --porcelain --untracked-files=all) ]] || { echo "root workspace is not clean" >&2; exit 1; }
