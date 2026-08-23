@@ -406,6 +406,8 @@ test("constructs opaque stream metadata through the public browser API", async (
   assert.match(capacitySource, /__flowersecCapacityRecordDiagnostic/);
   assert.match(capacitySource, /browserDiagnostics/);
   assert.match(capacitySource, /session\.waitTermination\(\)/);
+  assert.match(capacitySource, /browserIndex < plan\.browser_processes/);
+  assert.match(capacitySource, /const completions = \[\];[\s\S]*void completion\.catch\(\(\) => undefined\);[\s\S]*await Promise\.all\(completions\)/);
   assert.doesNotMatch(capacitySource, /waitClosed/);
   assert.doesNotMatch(capacitySource, /openStream\([^\n]+\{ metadata: \{/);
 });
@@ -532,6 +534,8 @@ test("freezes Chromium tunnel capacity at exactly 1000 live sessions", () => {
   );
   assert.equal(options.env.FLOWERSEC_CLIENT_NETNS, forcedPlan.client_netns);
   assert.ok(!options.args.some((argument) => argument.startsWith("--unsafely-treat-insecure-origin-as-secure=")));
+  assert.ok(options.args.includes("--disable-gpu"));
+  assert.ok(options.args.includes("--disable-software-rasterizer"));
   assert.ok(options.args.includes(`--log-net-log=${path.join(outputDirectory, "chromium-netlog.json")}`));
   assert.ok(options.args.includes("--net-log-capture-mode=IncludeSensitive"));
 });
@@ -706,15 +710,31 @@ test("freezes Chromium stream capacity at 100 sessions and 128 streams each", ()
   };
   const normalized = normalizeBrowserCapacityPlan(plan);
   assert.equal(normalized.sessions * normalized.connections_per_session * normalized.streams_per_session, 12_800);
-  assert.equal(normalized.stream_workers_per_session, 8);
-  assert.equal(normalized.renderer_shards, 4);
+  assert.equal(normalized.stream_workers_per_session, 16);
+  assert.equal(normalized.renderer_shards, 2);
+  assert.equal(normalized.browser_processes, 2);
+  const secondBrowser = chromiumCapacityLaunchOptions(
+    normalized,
+    "/cache/playwright/chromium/chrome",
+    path.resolve("scripts/chromium-netns-launcher.sh"),
+    "https://192.0.2.1:38123",
+    1,
+  );
+  assert.ok(secondBrowser.args.includes(`--log-net-log=${path.join(normalized.output_directory, "chromium-netlog-shard-2.json")}`));
+  assert.throws(() => chromiumCapacityLaunchOptions(
+    normalized,
+    "/cache/playwright/chromium/chrome",
+    path.resolve("scripts/chromium-netns-launcher.sh"),
+    "https://192.0.2.1:38123",
+    2,
+  ), /browser process index/);
   assert.throws(() => normalizeBrowserCapacityPlan({ ...plan, sessions: 101 }), /100/);
   assert.throws(() => normalizeBrowserCapacityPlan({ ...plan, streams_per_session: 127 }), /128/);
 });
 
-test("partitions all 128 capacity stream indexes across eight bounded workers", () => {
-  const assignments = capacityStreamAssignments(128, 8);
-  assert.deepEqual(assignments.map((indexes) => indexes.length), [16, 16, 16, 16, 16, 16, 16, 16]);
+test("partitions all 128 capacity stream indexes across sixteen bounded workers", () => {
+  const assignments = capacityStreamAssignments(128, 16);
+  assert.deepEqual(assignments.map((indexes) => indexes.length), Array.from({ length: 16 }, () => 8));
   assert.deepEqual(assignments.flat().toSorted((left, right) => left - right), Array.from({ length: 128 }, (_, index) => index));
   assert.throws(() => capacityStreamAssignments(128, 0), /workers/);
   assert.throws(() => capacityStreamAssignments(3, 4), /workers/);

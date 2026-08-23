@@ -651,8 +651,11 @@ func (endpoint *browserCapacityEndpoint) CaptureResourceSnapshot() (transporttes
 	if snapshot.RSSBytes > contract.MaxRSS || snapshot.OpenFDs > contract.MaxOpenFDs ||
 		snapshot.Goroutines > contract.MaxGoroutines || snapshot.Tasks > contract.MaxTasks {
 		return transporttest.ResourceSnapshot{}, fmt.Errorf(
-			"Chromium capacity resource limit exceeded: rss=%d/%d open_fds=%d/%d goroutines=%d/%d tasks=%d/%d",
-			snapshot.RSSBytes, contract.MaxRSS, snapshot.OpenFDs, contract.MaxOpenFDs,
+			"Chromium capacity resource limit exceeded: rss=%d/%d process_tree_rss=%d cgroup_memory_current=%d cgroup_memory_peak=%d sampled_rss_peak=%d accounting=%s open_fds=%d/%d goroutines=%d/%d tasks=%d/%d",
+			snapshot.RSSBytes, contract.MaxRSS, controller.ProcessTree.RSSBytes,
+			controller.ProcessTree.CgroupMemoryCurrent,
+			controller.ProcessTree.CgroupMemoryPeak, controller.ProcessTree.SampledRSSPeak,
+			controller.ProcessTree.AccountingMode, snapshot.OpenFDs, contract.MaxOpenFDs,
 			snapshot.Goroutines, contract.MaxGoroutines, snapshot.Tasks, contract.MaxTasks,
 		)
 	}
@@ -670,12 +673,17 @@ func (endpoint *browserCapacityEndpoint) CaptureResourceSnapshot() (transporttes
 }
 
 func aggregateBrowserCapacityResources(runner transporttest.ResourceSnapshot, tree linuxProcessTreeSnapshot) (transporttest.ResourceSnapshot, error) {
-	browserMemory := tree.RSSBytes
-	if tree.CgroupMemoryPeak > browserMemory {
+	var browserMemory uint64
+	switch tree.AccountingMode {
+	case "cgroup_v2", "cgroup_v2_sampled_peak":
+		if tree.CgroupMemoryCurrent == 0 || tree.CgroupMemoryPeak < tree.CgroupMemoryCurrent {
+			return transporttest.ResourceSnapshot{}, errors.New("browser capacity cgroup memory counters are invalid")
+		}
 		browserMemory = tree.CgroupMemoryPeak
-	}
-	if tree.SampledRSSPeak > browserMemory {
-		browserMemory = tree.SampledRSSPeak
+	case "pid_starttime_process_tree_fallback":
+		browserMemory = max(tree.RSSBytes, tree.SampledRSSPeak)
+	default:
+		return transporttest.ResourceSnapshot{}, errors.New("browser capacity memory accounting mode is invalid")
 	}
 	if runner.At.IsZero() || tree.At.IsZero() || tree.RootPID <= 0 || tree.PGID <= 0 || tree.ProcessCount <= 0 || tree.Tasks < tree.ProcessCount ||
 		runner.RSSBytes > math.MaxUint64-browserMemory || runner.CPUNanoseconds > math.MaxUint64-tree.CPUNanoseconds ||

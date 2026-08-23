@@ -16,6 +16,8 @@ import (
 
 const linuxProcClockTicksPerSecond = 100
 
+var errLinuxProcessTreeSnapshotIncomplete = errors.New("process-tree resource snapshot is incomplete")
+
 type linuxProcessTreeSnapshot struct {
 	At                  time.Time `json:"at"`
 	RootPID             int       `json:"root_pid"`
@@ -48,6 +50,7 @@ type linuxProcessTreeSampler struct {
 	knownCPU     map[linuxProcessIdentity]uint64
 	retiredTicks uint64
 	peakRSS      uint64
+	cgroupPeak   uint64
 	stop         chan struct{}
 	done         chan struct{}
 }
@@ -82,18 +85,31 @@ func newLinuxProcessTreeSampler(pid int, cgroupPath string, fallbackReason ...st
 	if len(fallbackReason) > 0 {
 		sampler.fallbackReason = fallbackReason[0]
 	}
-	if cgroupPath != "" {
-		close(sampler.done)
-	} else {
-		go sampler.runFallbackSampler()
-	}
+	go sampler.runResourceSampler()
 	return sampler, nil
 }
 
 func (sampler *linuxProcessTreeSampler) Snapshot() (linuxProcessTreeSnapshot, error) {
-	sampler.sampleMu.Lock()
-	defer sampler.sampleMu.Unlock()
-	return sampler.snapshotLocked()
+	return retryLinuxProcessTreeSnapshot(func() (linuxProcessTreeSnapshot, error) {
+		sampler.sampleMu.Lock()
+		defer sampler.sampleMu.Unlock()
+		return sampler.snapshotLocked()
+	}, time.Sleep)
+}
+
+func retryLinuxProcessTreeSnapshot(
+	capture func() (linuxProcessTreeSnapshot, error),
+	wait func(time.Duration),
+) (linuxProcessTreeSnapshot, error) {
+	const attempts = 40
+	for attempt := 0; attempt < attempts; attempt++ {
+		snapshot, err := capture()
+		if !errors.Is(err, errLinuxProcessTreeSnapshotIncomplete) || attempt == attempts-1 {
+			return snapshot, err
+		}
+		wait(25 * time.Millisecond)
+	}
+	panic("unreachable")
 }
 
 func (sampler *linuxProcessTreeSampler) snapshotLocked() (linuxProcessTreeSnapshot, error) {
@@ -148,9 +164,7 @@ func (sampler *linuxProcessTreeSampler) snapshotLocked() (linuxProcessTreeSnapsh
 		}
 	}
 	snapshot := linuxProcessTreeSnapshot{At: time.Now().UTC(), RootPID: sampler.rootPID, PGID: sampler.pgid}
-	if sampler.cgroupPath != "" {
-		snapshot.AccountingMode = "cgroup_v2"
-	} else {
+	if sampler.cgroupPath == "" {
 		snapshot.AccountingMode = "pid_starttime_process_tree_fallback"
 		snapshot.FallbackReason = sampler.fallbackReason
 		snapshot.SampleIntervalMS = 10
@@ -203,16 +217,26 @@ func (sampler *linuxProcessTreeSampler) snapshotLocked() (linuxProcessTreeSnapsh
 		}
 	}
 	if snapshot.ProcessCount == 0 || snapshot.Tasks < snapshot.ProcessCount || snapshot.OpenFDs < 0 || snapshot.ZombieProcesses != 0 {
-		return linuxProcessTreeSnapshot{}, errors.New("process-tree resource snapshot is incomplete")
+		return linuxProcessTreeSnapshot{}, errLinuxProcessTreeSnapshotIncomplete
 	}
 	if snapshot.RSSBytes > sampler.peakRSS {
 		sampler.peakRSS = snapshot.RSSBytes
 	}
 	snapshot.SampledRSSPeak = sampler.peakRSS
 	if sampler.cgroupPath != "" {
-		cpu, currentMemory, peakMemory, pidsCurrent, err := readLinuxCgroupResources(sampler.cgroupPath)
+		cpu, currentMemory, peakMemory, pidsCurrent, nativePeak, err := readLinuxCgroupResources(sampler.cgroupPath)
 		if err != nil {
 			return linuxProcessTreeSnapshot{}, err
+		}
+		if currentMemory > sampler.cgroupPeak {
+			sampler.cgroupPeak = currentMemory
+		}
+		if nativePeak {
+			snapshot.AccountingMode = "cgroup_v2"
+		} else {
+			snapshot.AccountingMode = "cgroup_v2_sampled_peak"
+			snapshot.SampleIntervalMS = 10
+			peakMemory = sampler.cgroupPeak
 		}
 		snapshot.CPUNanoseconds = cpu
 		snapshot.CgroupMemoryCurrent = currentMemory
@@ -267,7 +291,7 @@ func readLinuxCgroupProcesses(directory string) ([]int, error) {
 	return pids, nil
 }
 
-func (sampler *linuxProcessTreeSampler) runFallbackSampler() {
+func (sampler *linuxProcessTreeSampler) runResourceSampler() {
 	defer close(sampler.done)
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
@@ -275,11 +299,22 @@ func (sampler *linuxProcessTreeSampler) runFallbackSampler() {
 		select {
 		case <-ticker.C:
 			sampler.sampleMu.Lock()
-			_, _ = sampler.snapshotLocked()
+			sampler.sampleResourcePeakLocked()
 			sampler.sampleMu.Unlock()
 		case <-sampler.stop:
 			return
 		}
+	}
+}
+
+func (sampler *linuxProcessTreeSampler) sampleResourcePeakLocked() {
+	if sampler.cgroupPath == "" {
+		_, _ = sampler.snapshotLocked()
+		return
+	}
+	currentMemory, err := readLinuxCgroupUint(sampler.cgroupPath, "memory.current")
+	if err == nil && currentMemory > sampler.cgroupPeak {
+		sampler.cgroupPeak = currentMemory
 	}
 }
 
@@ -305,8 +340,24 @@ func (sampler *linuxProcessTreeSampler) Kill() error {
 	}
 	if sampler.cgroupPath != "" {
 		var result error
-		if err := os.WriteFile(filepath.Join(sampler.cgroupPath, "cgroup.kill"), []byte("1"), 0o600); err != nil {
-			result = fmt.Errorf("kill private cgroup: %w", err)
+		killPath := filepath.Join(sampler.cgroupPath, "cgroup.kill")
+		_, statErr := os.Stat(killPath)
+		if statErr == nil {
+			if err := os.WriteFile(killPath, []byte("1"), 0o600); err != nil {
+				result = fmt.Errorf("kill private cgroup: %w", err)
+			}
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			result = fmt.Errorf("inspect private cgroup kill capability: %w", statErr)
+		} else {
+			if pids, readErr := readLinuxCgroupProcesses(sampler.cgroupPath); readErr != nil {
+				result = fmt.Errorf("read private cgroup for kill: %w", readErr)
+			} else {
+				for _, pid := range pids {
+					if signalErr := syscall.Kill(pid, syscall.SIGKILL); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
+						result = errors.Join(result, signalErr)
+					}
+				}
+			}
 		}
 		if sampler.pgid > 0 {
 			if err := syscall.Kill(-sampler.pgid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
@@ -372,10 +423,10 @@ func (sampler *linuxProcessTreeSampler) Kill() error {
 	return result
 }
 
-func readLinuxCgroupResources(directory string) (cpu, memoryCurrent, memoryPeak uint64, pidsCurrent int, resultErr error) {
+func readLinuxCgroupResources(directory string) (cpu, memoryCurrent, memoryPeak uint64, pidsCurrent int, nativeMemoryPeak bool, resultErr error) {
 	cpuData, err := os.ReadFile(filepath.Join(directory, "cpu.stat"))
 	if err != nil {
-		return 0, 0, 0, 0, err
+		return 0, 0, 0, 0, false, err
 	}
 	var usageMicroseconds uint64
 	for _, line := range strings.Split(string(cpuData), "\n") {
@@ -386,28 +437,33 @@ func readLinuxCgroupResources(directory string) (cpu, memoryCurrent, memoryPeak 
 		}
 	}
 	if err != nil || usageMicroseconds == 0 || usageMicroseconds > math.MaxUint64/1000 {
-		return 0, 0, 0, 0, errors.New("cgroup CPU usage is invalid")
+		return 0, 0, 0, 0, false, errors.New("cgroup CPU usage is invalid")
 	}
-	readUint := func(name string) (uint64, error) {
-		data, readErr := os.ReadFile(filepath.Join(directory, name))
-		if readErr != nil {
-			return 0, readErr
-		}
-		return strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
-	}
-	memoryCurrent, err = readUint("memory.current")
+	memoryCurrent, err = readLinuxCgroupUint(directory, "memory.current")
 	if err != nil {
-		return 0, 0, 0, 0, err
+		return 0, 0, 0, 0, false, err
 	}
-	memoryPeak, err = readUint("memory.peak")
-	if err != nil || memoryPeak < memoryCurrent {
-		return 0, 0, 0, 0, errors.New("cgroup memory counters are invalid")
+	memoryPeak, err = readLinuxCgroupUint(directory, "memory.peak")
+	if errors.Is(err, os.ErrNotExist) {
+		memoryPeak = 0
+	} else if err != nil || memoryPeak < memoryCurrent {
+		return 0, 0, 0, 0, false, errors.New("cgroup memory counters are invalid")
+	} else {
+		nativeMemoryPeak = true
 	}
-	pids, err := readUint("pids.current")
+	pids, err := readLinuxCgroupUint(directory, "pids.current")
 	if err != nil || pids == 0 || pids > math.MaxInt {
-		return 0, 0, 0, 0, errors.New("cgroup task counter is invalid")
+		return 0, 0, 0, 0, false, errors.New("cgroup task counter is invalid")
 	}
-	return usageMicroseconds * 1000, memoryCurrent, memoryPeak, int(pids), nil
+	return usageMicroseconds * 1000, memoryCurrent, memoryPeak, int(pids), nativeMemoryPeak, nil
+}
+
+func readLinuxCgroupUint(directory, name string) (uint64, error) {
+	data, err := os.ReadFile(filepath.Join(directory, name))
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
 }
 
 func readLinuxProcStat(procRoot string, pid int) (linuxProcStat, error) {

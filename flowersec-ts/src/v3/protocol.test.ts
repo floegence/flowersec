@@ -6,6 +6,8 @@ import {
   ProtocolV3Error,
   buildDataInner,
   buildRecordAAD,
+  computeFSS3HashV3,
+  computeValidatedFSS3HashV3Internal,
   computeSetupMAC,
   decodeRecordHeader,
   decodeSetupPrefaceV3,
@@ -14,7 +16,9 @@ import {
   encodeRecordHeader,
   encodeSetupPreface,
   openRecord,
+  openRecordWithRawHeaderV3Internal,
   sealRecord,
+  sealRecordWireV3Internal,
   type RecordHeaderV3,
   type DirectionV3,
   type SetupPrefaceV3,
@@ -85,6 +89,7 @@ describe("transport v3 record protocol", () => {
       const rawPreface = encodeSetupPreface({ ...prefaceWithoutMAC, setupMAC });
       expect(hex(rawPreface)).toBe(vector.fss3_hex);
       expect(decodeSetupPrefaceV3(rawPreface).setupMAC).toEqual(setupMAC);
+      expect(computeValidatedFSS3HashV3Internal(rawPreface)).toEqual(computeFSS3HashV3(rawPreface));
 
       const inner = buildDataInner(Uint8Array.from([0x61, 0x62, 0x63]));
       expect(hex(inner)).toBe(vector.inner_hex);
@@ -106,6 +111,14 @@ describe("transport v3 record protocol", () => {
         expect(hex(ciphertext)).toBe(expected);
         expect(openRecord(suite, material, h3, BigInt(vector.logical_stream_id), direction, header, ciphertext))
           .toEqual(inner);
+        const sealed = sealRecordWireV3Internal(
+          suite, material, h3, BigInt(vector.logical_stream_id), direction, header, inner,
+        );
+        expect(sealed.rawHeader).toEqual(rawHeader);
+        expect(sealed.ciphertext).toEqual(ciphertext);
+        expect(openRecordWithRawHeaderV3Internal(
+          suite, material, h3, BigInt(vector.logical_stream_id), direction, header, rawHeader, ciphertext,
+        )).toEqual(inner);
       }
     }
   });

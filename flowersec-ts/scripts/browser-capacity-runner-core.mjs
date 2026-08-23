@@ -28,8 +28,9 @@ export function normalizeBrowserCapacityPlan(input) {
     sessions: exactInteger(plan.sessions, "sessions", heldSessions ? 1000 : 100, heldSessions ? 1000 : 100),
     connections_per_session: exactInteger(plan.connections_per_session ?? 1, "connections_per_session", 1, 1),
     streams_per_session: exactInteger(plan.streams_per_session ?? (heldSessions ? 0 : 128), "streams_per_session", heldSessions ? 0 : 128, heldSessions ? 0 : 128),
-    stream_workers_per_session: streamCapacity ? 8 : 0,
-    renderer_shards: streamCapacity ? 4 : 1,
+    stream_workers_per_session: streamCapacity ? 16 : 0,
+    renderer_shards: streamCapacity ? 2 : 1,
+    browser_processes: streamCapacity ? 2 : 1,
     certificate_hash: certificateHash(plan.certificate_hash),
     client_netns: namespace(plan.client_netns),
     module_bind_address: ipAddress(plan.module_bind_address, "module_bind_address"),
@@ -100,8 +101,9 @@ export function createBrowserCapacityCloseBatcher(executeBatch, options = {}) {
   });
 }
 
-export function chromiumCapacityLaunchOptions(plan, chromiumExecutable, launcherPath, moduleOrigin) {
+export function chromiumCapacityLaunchOptions(plan, chromiumExecutable, launcherPath, moduleOrigin, browserProcessIndex = 0) {
   const normalized = normalizeBrowserCapacityPlan(plan);
+  exactInteger(browserProcessIndex, "browser process index", 0, normalized.browser_processes - 1);
   const executable = absolutePath(chromiumExecutable, "Chromium executable");
   const launcher = absolutePath(launcherPath, "Chromium netns launcher");
   const secureOrigin = browserModuleOrigin(moduleOrigin, normalized.module_advertise_host);
@@ -110,8 +112,10 @@ export function chromiumCapacityLaunchOptions(plan, chromiumExecutable, launcher
     headless: true,
     executablePath: launcher,
     args: [
+      "--disable-gpu",
+      "--disable-software-rasterizer",
       "--quic-client-connection-options=TBBR",
-      `--log-net-log=${path.join(normalized.output_directory, "chromium-netlog.json")}`,
+      `--log-net-log=${path.join(normalized.output_directory, browserProcessIndex === 0 ? "chromium-netlog.json" : `chromium-netlog-shard-${browserProcessIndex + 1}.json`)}`,
       "--net-log-capture-mode=IncludeSensitive",
     ],
     env: {

@@ -478,6 +478,21 @@ func TestRunCapacityCaseClosesEndpointBeforeCleanupResourceSnapshot(t *testing.T
 	}
 }
 
+func TestRunCapacityCaseClosesEndpointWhenBaselineCaptureFails(t *testing.T) {
+	endpoint := &fakeCapacityEndpoint{}
+	want := errors.New("baseline unavailable")
+	_, err := runCapacityCase(context.Background(), capacityCaseDefinition{ID: "baseline-cleanup"}, capacityContract{
+		Sessions: 1, Ramp: 20 * time.Millisecond, Hold: 20 * time.Millisecond, Cleanup: 20 * time.Millisecond,
+		Watchdog: 60 * time.Millisecond, MaxRSS: 1 << 30, MaxCPU: time.Second,
+		MaxOpenFDs: 100, MaxGoroutines: 100, MaxTasks: 100,
+	}, endpoint, func() (transporttest.ResourceSnapshot, error) {
+		return transporttest.ResourceSnapshot{}, want
+	})
+	if !errors.Is(err, want) || endpoint.closes != 1 {
+		t.Fatalf("baseline error/closes = %v / %d", err, endpoint.closes)
+	}
+}
+
 func TestRunCapacityCaseSnapshotsQuiescedBrowserBeforeFinalClose(t *testing.T) {
 	contract := capacityContract{
 		Sessions: 2, Ramp: 20 * time.Millisecond, Hold: 20 * time.Millisecond,

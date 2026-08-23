@@ -290,13 +290,6 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 	if capture == nil {
 		capture = transporttest.CaptureResourceSnapshot
 	}
-	base, err := capture()
-	if err != nil {
-		return result, fmt.Errorf("capture capacity resource baseline: %w", err)
-	}
-	result.Baseline = caseResourceRecord{Phase: "baseline", AtNS: 0, RSSBytes: base.RSSBytes, OpenFDs: base.OpenFDs, Goroutines: base.Goroutines, Tasks: base.Tasks}
-	started := time.Now()
-	watchdogAt := started.Add(contract.Watchdog)
 	sessions := make([]capacitySession, 0, contract.Sessions)
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), maxDuration(contract.Cleanup, time.Second))
@@ -309,6 +302,13 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 		resultErr = errors.Join(resultErr, closeCapacitySessions(cleanupCtx, sessions))
 		resultErr = errors.Join(resultErr, endpoint.Close(cleanupCtx))
 	}()
+	base, err := capture()
+	if err != nil {
+		return result, fmt.Errorf("capture capacity resource baseline: %w", err)
+	}
+	result.Baseline = caseResourceRecord{Phase: "baseline", AtNS: 0, RSSBytes: base.RSSBytes, OpenFDs: base.OpenFDs, Goroutines: base.Goroutines, Tasks: base.Tasks}
+	started := time.Now()
+	watchdogAt := started.Add(contract.Watchdog)
 
 	type connectResult struct {
 		session capacitySession

@@ -44,8 +44,8 @@ import {
 import {
   DirectionV3,
   InnerTypeV3,
-  computeFSS3HashV3,
-  computeOpenHashV3,
+  computeValidatedFSS3HashV3Internal,
+  computeValidatedOpenHashV3Internal,
   computeSetupMAC,
   decodeInnerRecordV3,
   decodeOpenACKV3,
@@ -61,13 +61,12 @@ import {
   deriveStreamMaterial,
   encodeInnerRecordV3,
   encodeOpenACKV3,
-  encodeOpenPayload,
+  encodeOpenPayloadFromMetadataV3Internal,
   encodeOpenRejectV3,
-  encodeRecordHeader,
   encodeSetupPreface,
   encodeStreamKeyUpdateACKV3,
-  openRecord,
-  sealRecord,
+  openRecordWithRawHeaderV3Internal,
+  sealRecordWireV3Internal,
   verifySetupMAC,
   type EpochRootsV3,
   type RecordMaterialV3,
@@ -85,7 +84,6 @@ import {
   createInternalUnreliableMessageChannelV3,
 } from "./unreliableMessage.js";
 
-const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const MAX_DATA_BYTES = 16_384;
 const MAX_BUFFERED_STREAM_BYTES = 4 * 1024 * 1024;
@@ -462,9 +460,11 @@ export class SessionV3 implements SessionV3Contract {
       sequence: stream.sendSequence,
       ciphertextLength: inner.length + 16,
     };
-    const ciphertext = sealRecord(this.config.suite, material, this.h3, stream.id, this.sendDirection, header, inner);
+    const sealed = sealRecordWireV3Internal(
+      this.config.suite, material, this.h3, stream.id, this.sendDirection, header, inner,
+    );
     stream.sendSequence += 1n;
-    await writeAll(stream.carrier, concat(encodeRecordHeader(header), ciphertext), signal);
+    await writeAll(stream.carrier, concat(sealed.rawHeader, sealed.ciphertext), signal);
     this.markAuthenticatedActivity();
   }
 
@@ -473,7 +473,8 @@ export class SessionV3 implements SessionV3Contract {
     payload: Uint8Array;
     header: RecordHeaderV3;
   }>> {
-    const header = decodeRecordHeader(await stream.reader.readExactly(24));
+    const rawHeader = await stream.reader.readExactly(24);
+    const header = decodeRecordHeader(rawHeader);
     const priorACK = stream.priorACK !== undefined &&
       header.epoch === stream.priorACK.epoch && header.sequence === stream.priorACK.sequence;
     if (!priorACK && (header.epoch !== stream.receiveEpoch || header.sequence !== stream.receiveSequence)) {
@@ -482,13 +483,14 @@ export class SessionV3 implements SessionV3Contract {
     const roots = this.rootForReceive(header.epoch);
     const material = stream.receiveMaterial(roots, this.h3, this.receiveDirection, header.epoch);
     const ciphertext = await stream.reader.readExactly(header.ciphertextLength);
-    const inner = decodeInnerRecordV3(openRecord(
+    const inner = decodeInnerRecordV3(openRecordWithRawHeaderV3Internal(
       this.config.suite,
       material,
       this.h3,
       stream.id,
       this.receiveDirection,
       header,
+      rawHeader,
       ciphertext,
     ));
     if (priorACK) {
@@ -599,12 +601,11 @@ export class SessionV3 implements SessionV3Contract {
       if (!this.localOpeningAllowedAfterGoAway(id)) {
         throw new SessionV3Error("going_away", "logical stream is beyond the peer GOAWAY boundary");
       }
-      const metadata = encodeMetadata(options.metadata ?? {});
-      const openRaw = encodeOpenPayload({
+      const openRaw = encodeOpenPayloadFromMetadataV3Internal({
         logicalStreamID: id,
-        fss3Hash: computeFSS3HashV3(prefaceRaw),
+        fss3Hash: computeValidatedFSS3HashV3Internal(prefaceRaw),
         kind,
-        metadata,
+        metadata: options.metadata ?? {},
       });
       stream = new EncryptedStreamV3(
         this,
@@ -616,7 +617,7 @@ export class SessionV3 implements SessionV3Contract {
         releasePermit,
       );
       this.streams.set(id, stream);
-      stream.setOpenHash(computeOpenHashV3(openRaw));
+      stream.setOpenHash(computeValidatedOpenHashV3Internal(openRaw));
       await stream.send(InnerTypeV3.Open, openRaw, options.signal);
       stream.startPump();
       await raceAbort(stream.opened.promise, options.signal);
@@ -726,21 +727,22 @@ export class SessionV3 implements SessionV3Contract {
       const first = await this.readStreamRecord(temporary);
       if (first.type !== InnerTypeV3.Open) throw protocolError("OPEN must be first");
       const open = decodeOpenPayload(first.payload);
+      const openHash = computeValidatedOpenHashV3Internal(first.payload);
       if (open.logicalStreamID !== preface.logicalStreamID ||
-          !bytesEqual(open.fss3Hash, computeFSS3HashV3(prefaceRaw))) {
+          !bytesEqual(open.fss3Hash, computeValidatedFSS3HashV3Internal(prefaceRaw))) {
         throw protocolError("OPEN binding mismatch");
       }
       this.peerLedger.validOpen(preface.logicalStreamID);
       const internalRPC = open.kind === RESERVED_RPC_KIND;
       if (internalRPC && decoder.decode(open.metadata) !== "{}") {
-        await temporary.send(InnerTypeV3.OpenReject, encodeOpenRejectV3(computeOpenHashV3(first.payload), 4));
+        await temporary.send(InnerTypeV3.OpenReject, encodeOpenRejectV3(openHash, 4));
         temporary.wipeRecordMaterials();
         await carrierStream.closeWrite();
         return;
       }
       const releasePermit = internalRPC ? () => undefined : this.inboundPermits.tryAcquire();
       if (releasePermit === undefined) {
-        await temporary.send(InnerTypeV3.OpenReject, encodeOpenRejectV3(computeOpenHashV3(first.payload), 2));
+        await temporary.send(InnerTypeV3.OpenReject, encodeOpenRejectV3(openHash, 2));
         temporary.wipeRecordMaterials();
         await carrierStream.closeWrite();
         return;
@@ -759,7 +761,7 @@ export class SessionV3 implements SessionV3Contract {
       stream.receiveSequence = temporary.receiveSequence;
       temporary.transferReceiveMaterialsTo(stream);
       this.streams.set(stream.id, stream);
-      await stream.send(InnerTypeV3.OpenACK, encodeOpenACKV3(computeOpenHashV3(first.payload)));
+      await stream.send(InnerTypeV3.OpenACK, encodeOpenACKV3(openHash));
       stream.markOpen();
       stream.startPump();
       if (!this.acceptsPeerStreamAfterGoAway(stream.id)) {
@@ -885,14 +887,17 @@ export class SessionV3 implements SessionV3Contract {
       sequence: this.controlSendSequence,
       ciphertextLength: inner.length + 16,
     };
-    const ciphertext = sealRecord(this.config.suite, material, this.h3, 0n, this.sendDirection, header, inner);
+    const sealed = sealRecordWireV3Internal(
+      this.config.suite, material, this.h3, 0n, this.sendDirection, header, inner,
+    );
     this.controlSendSequence += 1n;
-    await writeAll(this.control, concat(encodeRecordHeader(header), ciphertext), signal);
+    await writeAll(this.control, concat(sealed.rawHeader, sealed.ciphertext), signal);
     this.markAuthenticatedActivity();
   }
 
   private async readControl(): Promise<Readonly<{ type: InnerTypeV3; payload: Uint8Array }>> {
-    const header = decodeRecordHeader(await this.controlReader.readExactly(24));
+    const rawHeader = await this.controlReader.readExactly(24);
+    const header = decodeRecordHeader(rawHeader);
     const cutover = header.epoch === this.controlReceiveEpoch + 1 &&
       header.epoch <= this.receiveEpoch && header.sequence === 0n;
     if (!cutover && (header.epoch !== this.controlReceiveEpoch || header.sequence !== this.controlReceiveSequence)) {
@@ -901,13 +906,14 @@ export class SessionV3 implements SessionV3Contract {
     const roots = this.rootForReceive(header.epoch);
     const material = deriveControlMaterial(roots.controlRoot, this.h3, this.receiveDirection, header.epoch);
     const ciphertext = await this.controlReader.readExactly(header.ciphertextLength);
-    const inner = decodeInnerRecordV3(openRecord(
+    const inner = decodeInnerRecordV3(openRecordWithRawHeaderV3Internal(
       this.config.suite,
       material,
       this.h3,
       0n,
       this.receiveDirection,
       header,
+      rawHeader,
       ciphertext,
     ));
     if (cutover) {
@@ -2228,21 +2234,8 @@ function requireUnreliableDatagrams(
   return datagrams;
 }
 
-function encodeMetadata(value: JsonObjectV3): Uint8Array {
-  return encoder.encode(canonicalJSON(value));
-}
-
 function decodeMetadata(raw: Uint8Array): JsonObjectV3 {
   return JSON.parse(decoder.decode(raw)) as JsonObjectV3;
-}
-
-function canonicalJSON(value: unknown): string {
-  if (value === null || typeof value === "boolean" || typeof value === "number") return JSON.stringify(value);
-  if (typeof value === "string") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJSON).join(",")}]`;
-  if (typeof value !== "object" || value === null) throw new TypeError("metadata must be JSON");
-  const object = value as Record<string, unknown>;
-  return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonicalJSON(object[key])}`).join(",")}}`;
 }
 
 async function writeAll(stream: CarrierStreamV3, value: Uint8Array, signal?: AbortSignal): Promise<void> {

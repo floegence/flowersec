@@ -2,9 +2,13 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 import {
+  ProtocolV3Error,
+  computeOpenHashV3,
+  computeValidatedOpenHashV3Internal,
   decodeOpenPayload,
   decodeStreamKeyUpdateACKV3,
   encodeOpenPayload,
+  encodeOpenPayloadFromMetadataV3Internal,
   encodeStreamKeyUpdateACKV3,
 } from "./protocol.js";
 
@@ -49,7 +53,26 @@ describe("transport v3 inherited session wire boundaries", () => {
       const decoded = decodeOpenPayload(encoded);
       expect(decoded.kind, vector.id).toBe(vector.kind);
       expect(new TextDecoder().decode(decoded.metadata), vector.id).toBe(vector.metadata_json);
+      const internal = encodeOpenPayloadFromMetadataV3Internal({
+        logicalStreamID: 1n,
+        fss3Hash: new Uint8Array(32),
+        kind: vector.kind!,
+        metadata: JSON.parse(vector.metadata_json!) as unknown,
+      });
+      expect(internal, vector.id).toEqual(encoded);
+      expect(computeValidatedOpenHashV3Internal(internal), vector.id).toEqual(computeOpenHashV3(encoded));
     }
+  });
+
+  test("internal OPEN encoding preserves strict metadata validation", () => {
+    const encode = (metadata: unknown) => encodeOpenPayloadFromMetadataV3Internal({
+      logicalStreamID: 1n,
+      fss3Hash: new Uint8Array(32),
+      kind: "data",
+      metadata,
+    });
+    expect(() => encode({ unsafe: Number.MAX_SAFE_INTEGER + 1 })).toThrowError(ProtocolV3Error);
+    expect(() => encode({ "control\u0000": true })).toThrowError(ProtocolV3Error);
   });
 
   test("rejects every invalid OPEN Unicode or canonical encoding", () => {

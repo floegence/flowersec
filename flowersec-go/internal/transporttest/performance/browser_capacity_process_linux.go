@@ -64,11 +64,19 @@ func createLinuxProcessCgroup() (string, error) {
 			return "", err
 		}
 	}
+	directory, err := createLinuxProcessCgroupUnder(parent)
+	if err != nil && os.Getenv("FLOWERSEC_LANE_CGROUP") == "" && os.Geteuid() == 0 {
+		directory, err = createLinuxProcessCgroupUnder(root)
+	}
+	return directory, err
+}
+
+func createLinuxProcessCgroupUnder(parent string) (string, error) {
 	directory, err := os.MkdirTemp(parent, "flowersec-browser-capacity-")
 	if err != nil {
 		return "", err
 	}
-	for _, name := range []string{"cpu.stat", "memory.current", "memory.peak", "pids.current"} {
+	for _, name := range []string{"cpu.stat", "memory.current", "pids.current"} {
 		if _, statErr := os.Stat(filepath.Join(directory, name)); statErr != nil {
 			_ = os.Remove(directory)
 			return "", statErr

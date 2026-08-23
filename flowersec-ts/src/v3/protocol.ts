@@ -355,6 +355,11 @@ export function verifySetupMAC(
 
 export function computeFSS3HashV3(raw: Uint8Array): Uint8Array {
   decodeSetupPrefaceV3(raw);
+  return computeValidatedFSS3HashV3Internal(raw);
+}
+
+/** @internal Hashes an FSS3 preface that was encoded or decoded by this module. */
+export function computeValidatedFSS3HashV3Internal(raw: Uint8Array): Uint8Array {
   return sha256(raw);
 }
 
@@ -431,12 +436,37 @@ export function encodeOpenPayload(payload: OpenPayloadV3): Uint8Array {
   assertBytes("FSS3 hash", payload.fss3Hash, 32);
   const kind = validateOpenKind(payload.kind);
   const metadata = canonicalMetadata(payload.metadata, true);
+  return encodeValidatedOpenPayload(payload.logicalStreamID, payload.fss3Hash, kind, metadata);
+}
+
+/** @internal Encodes OPEN directly from an application metadata value after one strict validation pass. */
+export function encodeOpenPayloadFromMetadataV3Internal(
+  payload: Readonly<{
+    logicalStreamID: bigint;
+    fss3Hash: Uint8Array;
+    kind: string;
+    metadata: unknown;
+  }>,
+): Uint8Array {
+  assertLogicalStreamID(payload.logicalStreamID);
+  assertBytes("FSS3 hash", payload.fss3Hash, 32);
+  const kind = validateOpenKind(payload.kind);
+  const metadata = encoder.encode(canonicalStreamMetadataJSONV3Internal(payload.metadata));
+  return encodeValidatedOpenPayload(payload.logicalStreamID, payload.fss3Hash, kind, metadata);
+}
+
+function encodeValidatedOpenPayload(
+  logicalStreamID: bigint,
+  fss3Hash: Uint8Array,
+  kind: Uint8Array,
+  metadata: Uint8Array,
+): Uint8Array {
   const total = OPEN_FIXED_PAYLOAD_BYTES + kind.length + metadata.length;
   if (total > MAX_OPEN_BYTES)
     throw new ProtocolV3Error("OPEN payload is too large");
   const out = new Uint8Array(total);
-  out.set(u64be(payload.logicalStreamID), 0);
-  out.set(payload.fss3Hash, 8);
+  out.set(u64be(logicalStreamID), 0);
+  out.set(fss3Hash, 8);
   new DataView(out.buffer).setUint16(40, kind.length, false);
   new DataView(out.buffer).setUint32(42, metadata.length, false);
   out.set(kind, OPEN_FIXED_PAYLOAD_BYTES);
@@ -482,6 +512,11 @@ export function decodeOpenPayload(raw: Uint8Array): OpenPayloadV3 {
 
 export function computeOpenHashV3(rawOpenPayload: Uint8Array): Uint8Array {
   decodeOpenPayload(rawOpenPayload);
+  return computeValidatedOpenHashV3Internal(rawOpenPayload);
+}
+
+/** @internal Hashes an OPEN payload that was encoded or decoded by this module. */
+export function computeValidatedOpenHashV3Internal(rawOpenPayload: Uint8Array): Uint8Array {
   return sha256(concat(
     encoder.encode(FLOWERSEC_V3_CRYPTO_LABELS.open),
     u32be(rawOpenPayload.length),
@@ -547,6 +582,15 @@ export function buildRecordAAD(
   assertU64("logical stream ID", logicalStreamID);
   assertDirection(direction);
   decodeRecordHeader(rawHeader);
+  return buildValidatedRecordAAD(h3, logicalStreamID, direction, rawHeader);
+}
+
+function buildValidatedRecordAAD(
+  h3: Uint8Array,
+  logicalStreamID: bigint,
+  direction: DirectionV3,
+  rawHeader: Uint8Array,
+): Uint8Array {
   return exactLabelWith(
     FLOWERSEC_V3_CRYPTO_LABELS["record-aad"],
     h3,
@@ -565,6 +609,19 @@ export function sealRecord(
   header: RecordHeaderV3,
   plaintext: Uint8Array,
 ): Uint8Array {
+  return sealRecordWireV3Internal(suite, material, h3, logicalStreamID, direction, header, plaintext).ciphertext;
+}
+
+/** @internal Seals a validated record and returns the single encoded header used as AAD and on wire. */
+export function sealRecordWireV3Internal(
+  suite: CipherSuiteV3,
+  material: RecordMaterialV3,
+  h3: Uint8Array,
+  logicalStreamID: bigint,
+  direction: DirectionV3,
+  header: RecordHeaderV3,
+  plaintext: Uint8Array,
+): Readonly<{ rawHeader: Uint8Array; ciphertext: Uint8Array }> {
   validateMaterial(material);
   if (plaintext.length + 16 !== header.ciphertextLength) {
     throw new ProtocolV3Error(
@@ -573,8 +630,8 @@ export function sealRecord(
   }
   const rawHeader = encodeRecordHeader(header);
   const nonce = concat(material.noncePrefix, u64be(header.sequence));
-  const aad = buildRecordAAD(h3, logicalStreamID, direction, rawHeader);
-  return cipher(suite, material.recordKey, nonce, aad).encrypt(plaintext);
+  const aad = buildValidatedRecordAAD(h3, logicalStreamID, direction, rawHeader);
+  return { rawHeader, ciphertext: cipher(suite, material.recordKey, nonce, aad).encrypt(plaintext) };
 }
 
 export function openRecord(
@@ -586,15 +643,31 @@ export function openRecord(
   header: RecordHeaderV3,
   ciphertext: Uint8Array,
 ): Uint8Array {
+  const rawHeader = encodeRecordHeader(header);
+  return openRecordWithRawHeaderV3Internal(
+    suite, material, h3, logicalStreamID, direction, header, rawHeader, ciphertext,
+  );
+}
+
+/** @internal Opens a record whose exact raw header was already decoded by this module. */
+export function openRecordWithRawHeaderV3Internal(
+  suite: CipherSuiteV3,
+  material: RecordMaterialV3,
+  h3: Uint8Array,
+  logicalStreamID: bigint,
+  direction: DirectionV3,
+  header: RecordHeaderV3,
+  rawHeader: Uint8Array,
+  ciphertext: Uint8Array,
+): Uint8Array {
   validateMaterial(material);
   if (ciphertext.length !== header.ciphertextLength) {
     throw new ProtocolV3Error(
       "FSR3 ciphertext length does not match the header",
     );
   }
-  const rawHeader = encodeRecordHeader(header);
   const nonce = concat(material.noncePrefix, u64be(header.sequence));
-  const aad = buildRecordAAD(h3, logicalStreamID, direction, rawHeader);
+  const aad = buildValidatedRecordAAD(h3, logicalStreamID, direction, rawHeader);
   try {
     return cipher(suite, material.recordKey, nonce, aad).decrypt(ciphertext);
   } catch {

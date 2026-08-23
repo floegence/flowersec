@@ -218,13 +218,25 @@ func (*fakeBrowserCapacityControl) Snapshot(context.Context) (browserCapacityCon
 
 func TestAggregateBrowserCapacityResourcesIncludesChromiumProcessTree(t *testing.T) {
 	runner := transporttest.ResourceSnapshot{At: time.Now(), RSSBytes: 100, CPUNanoseconds: 200, AllocatedBytes: 300, OpenFDs: 4, Goroutines: 5, Tasks: 6}
-	tree := linuxProcessTreeSnapshot{At: time.Now(), RootPID: 10, PGID: 10, RSSBytes: 1000, CgroupMemoryPeak: 1500, CPUNanoseconds: 2000, OpenFDs: 40, Tasks: 60, ProcessCount: 7, AccountingMode: "cgroup_v2"}
+	tree := linuxProcessTreeSnapshot{At: time.Now(), RootPID: 10, PGID: 10, RSSBytes: 2000, CgroupMemoryCurrent: 1400, CgroupMemoryPeak: 1500, CPUNanoseconds: 2000, OpenFDs: 40, Tasks: 60, ProcessCount: 7, AccountingMode: "cgroup_v2"}
 	got, err := aggregateBrowserCapacityResources(runner, tree)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.RSSBytes != 1600 || got.CPUNanoseconds != 2200 || got.OpenFDs != 44 || got.Goroutines != 5 || got.Tasks != 66 || got.AllocatedBytes != 300 {
 		t.Fatalf("aggregate = %+v", got)
+	}
+	tree.AccountingMode = "cgroup_v2_sampled_peak"
+	tree.SampleIntervalMS = 10
+	got, err = aggregateBrowserCapacityResources(runner, tree)
+	if err != nil || got.RSSBytes != 1600 {
+		t.Fatalf("sampled cgroup aggregate = %+v, error = %v", got, err)
+	}
+
+	tree = linuxProcessTreeSnapshot{At: time.Now(), RootPID: 10, PGID: 10, RSSBytes: 1000, SampledRSSPeak: 1200, CPUNanoseconds: 2000, OpenFDs: 40, Tasks: 60, ProcessCount: 7, AccountingMode: "pid_starttime_process_tree_fallback", FallbackReason: "test", SampleIntervalMS: 10}
+	got, err = aggregateBrowserCapacityResources(runner, tree)
+	if err != nil || got.RSSBytes != 1300 {
+		t.Fatalf("fallback aggregate = %+v, error = %v", got, err)
 	}
 }
 
