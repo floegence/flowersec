@@ -271,6 +271,8 @@ swift_toolchain_is_canonical() {
   "$swift_proxy" --version | grep -Fq "Swift version ${swift_version}" || return 1
   "$swiftc_proxy" --version | grep -Fq "Swift version ${swift_version}" || return 1
   [[ -x $toolchain_bin/swift && -x $toolchain_bin/swiftc ]] || return 1
+  "$toolchain_bin/swift" --version | grep -Fq "Swift version ${swift_version}" || return 1
+  "$toolchain_bin/swiftc" --version | grep -Fq "Swift version ${swift_version}" || return 1
 }
 
 install_swift() {

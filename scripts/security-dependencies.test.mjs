@@ -399,6 +399,11 @@ fs.writeFileSync(swiftly, `#!/bin/sh
 set -eu
 case "$(basename "$0")" in
 swift|swiftc)
+  if [ -f "$SWIFTLY_HOME_DIR/config.json" ] && grep -Fq 'installedToolchains' "$SWIFTLY_HOME_DIR/config.json"; then
+    printf 'Swift version 6.1.3 (swift-6.1.3-RELEASE)\\n'
+    exit 0
+  fi
+  [ -x "$SWIFTLY_TOOLCHAINS_DIR/6.1.3/usr/bin/$(basename "$0")" ] || exit 1
   printf 'Swift version 6.1.3 (swift-6.1.3-RELEASE)\\n'
   exit 0
   ;;
@@ -415,11 +420,12 @@ case "$1" in
     ;;
   install)
     case " $* " in *" --verify "*) ;; *) exit 21 ;; esac
+    [ "\${FAIL_INSTALL:-0}" = 1 ] && exit 23
     [ "$SWIFTLY_TOOLCHAINS_DIR" = "$EXPECTED_SWIFTLY_TOOLCHAINS_DIR" ]
     printf 'install\\n' >>"$FLOWERSEC_TEST_LOG"
     mkdir -p "$SWIFTLY_TOOLCHAINS_DIR/6.1.3/usr/bin"
-    printf '#!/bin/sh\\nprintf toolchain\\n' >"$SWIFTLY_TOOLCHAINS_DIR/6.1.3/usr/bin/swift"
-    printf '#!/bin/sh\\nprintf toolchain\\n' >"$SWIFTLY_TOOLCHAINS_DIR/6.1.3/usr/bin/swiftc"
+    printf '#!/bin/sh\\nprintf "Swift version 6.1.3 (swift-6.1.3-RELEASE)\\\\n"\\n' >"$SWIFTLY_TOOLCHAINS_DIR/6.1.3/usr/bin/swift"
+    printf '#!/bin/sh\\nprintf "Swift version 6.1.3 (swift-6.1.3-RELEASE)\\\\n"\\n' >"$SWIFTLY_TOOLCHAINS_DIR/6.1.3/usr/bin/swiftc"
     chmod 0755 "$SWIFTLY_TOOLCHAINS_DIR/6.1.3/usr/bin/swift" "$SWIFTLY_TOOLCHAINS_DIR/6.1.3/usr/bin/swiftc"
     ;;
   *) exit 22 ;;
@@ -453,6 +459,27 @@ const source = fs.readFileSync(path.join(sourceRoot, "scripts/test-host-init.sh"
   assert.equal(run(swift, ["--version"], {
     env: { SWIFTLY_HOME_DIR: swiftlyHome, SWIFTLY_BIN_DIR: bin, SWIFTLY_TOOLCHAINS_DIR: toolchains },
   }), "Swift version 6.1.3 (swift-6.1.3-RELEASE)\n");
+
+  fs.rmSync(toolchains, { recursive: true, force: true });
+  fs.mkdirSync(toolchains, { recursive: true });
+  fs.writeFileSync(path.join(swiftlyHome, "config.json"), '{"installedToolchains":["6.1.3"],"inUse":"6.1.3"}\n');
+  fs.writeFileSync(path.join(swiftlyHome, ".flowersec-6.1.3-pgp-verified"), `${markerValue}\n`);
+  const failed = spawnSync("bash", ["-s", "--", hostHome, hostTmp, toolchains, digest, markerValue], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      SWIFTLY_HOME_DIR: swiftlyHome,
+      SWIFTLY_BIN_DIR: bin,
+      SWIFTLY_TOOLCHAINS_DIR: toolchains,
+      EXPECTED_SWIFTLY_TOOLCHAINS_DIR: toolchains,
+      FLOWERSEC_TEST_LOG: log,
+      FAIL_INSTALL: "1",
+    },
+    input: `set -e\n${extractShellFunction(source, "verify_download")}\n${extractShellFunction(source, "checksum_matches")}\n${extractShellFunction(source, "authentication_marker_matches")}\n${extractShellFunction(source, "swift_toolchain_is_canonical")}\n${extractShellFunction(source, "install_swift")}\nhost_home="$1"\nhost_tmp="$2"\nhost_swift_toolchains="$3"\nswiftly_binary_sha256="$4"\nswift_verification_marker="$5"\nswiftly_version=1.1.3\nswift_version=6.1.3\ntemporary_paths=()\ninstall_swift\n`,
+  });
+  assert.notEqual(failed.status, 0);
+  assert.equal(fs.existsSync(path.join(swiftlyHome, ".flowersec-6.1.3-pgp-verified")), false);
 });
 
 test("same-version system Swift cannot satisfy the canonical toolchain check", (t) => {
