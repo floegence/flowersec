@@ -26,6 +26,8 @@ const externalHostRoot = "/var/lib/flowersec-test"
 
 const externalHostPath = "/var/lib/flowersec-test/cache/toolchains/go/bin:/var/lib/flowersec-test/cache/toolchains/node/bin:/var/lib/flowersec-test/home/.cargo/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/var/lib/flowersec-test/home/.local/bin:/var/lib/flowersec-test/home/.swiftly/bin"
 
+const externalHostGoRoot = "/var/lib/flowersec-test/cache/toolchains/go"
+
 const teardownGrace = 10 * time.Second
 
 const (
@@ -107,7 +109,7 @@ func runCLI(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateExecutionEnvironment(*suite, runtime.GOOS, os.Geteuid(), os.Getenv("HOME"), os.Getenv("PATH"), os.Getenv("TMPDIR"), os.Getenv("FLOWERSEC_TEST_STATE_DIR"), workingDirectory); err != nil {
+	if err := validateExecutionEnvironment(*suite, runtime.GOOS, os.Geteuid(), os.Getenv("HOME"), os.Getenv("PATH"), os.Getenv("GOROOT"), os.Getenv("TMPDIR"), os.Getenv("FLOWERSEC_TEST_STATE_DIR"), workingDirectory); err != nil {
 		return err
 	}
 	stateDir, err := testStateDirectory(*suite)
@@ -180,7 +182,7 @@ func validatePerformanceReportPath(path, root string) error {
 	return nil
 }
 
-func validateExecutionEnvironment(suite, goos string, euid int, home, path, temporary, state, workingDirectory string) error {
+func validateExecutionEnvironment(suite, goos string, euid int, home, path, goroot, temporary, state, workingDirectory string) error {
 	if suite != "diagnostic" && suite != "performance" && suite != "performance-optional" {
 		return nil
 	}
@@ -189,10 +191,11 @@ func validateExecutionEnvironment(suite, goos string, euid int, home, path, temp
 	}
 	wantHome := filepath.Join(externalHostRoot, "home")
 	wantPath := externalHostPath
+	wantGoRoot := externalHostGoRoot
 	wantTemporary := filepath.Join(externalHostRoot, "tmp")
 	wantState := filepath.Join(externalHostRoot, "state")
 	wantWorkspace := filepath.Join(externalHostRoot, "workspace")
-	if home != wantHome || path != wantPath || temporary != wantTemporary || state != wantState || (workingDirectory != wantWorkspace && !strings.HasPrefix(workingDirectory, wantWorkspace+string(os.PathSeparator))) {
+	if home != wantHome || path != wantPath || goroot != wantGoRoot || temporary != wantTemporary || state != wantState || (workingDirectory != wantWorkspace && !strings.HasPrefix(workingDirectory, wantWorkspace+string(os.PathSeparator))) {
 		return errors.New("privileged test suite environment is not the fixed root context")
 	}
 	return nil

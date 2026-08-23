@@ -124,10 +124,10 @@ func TestGoAcceptorRegistryPatternEnumeratesProductionNativeListeners(t *testing
 }
 
 func TestOptionalPerformanceUsesThePrivilegedHostBoundary(t *testing.T) {
-	if err := validateExecutionEnvironment("performance-optional", "linux", 0, "/var/lib/flowersec-test/home", externalHostPath, "/var/lib/flowersec-test/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace"); err != nil {
+	if err := validateExecutionEnvironment("performance-optional", "linux", 0, "/var/lib/flowersec-test/home", externalHostPath, externalHostGoRoot, "/var/lib/flowersec-test/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace"); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateExecutionEnvironment("performance-optional", "darwin", 501, "/Users/test", "/usr/bin", "/tmp", "", "/tmp/flowersec"); err == nil {
+	if err := validateExecutionEnvironment("performance-optional", "darwin", 501, "/Users/test", "/usr/bin", "", "/tmp", "", "/tmp/flowersec"); err == nil {
 		t.Fatal("optional performance was allowed outside the fixed privileged host")
 	}
 }
@@ -833,20 +833,26 @@ func TestCancelledSuiteDoesNotScheduleAnotherTest(t *testing.T) {
 }
 
 func TestPrivilegedSuitesRequireFixedRootEnvironment(t *testing.T) {
-	if err := validateExecutionEnvironment("diagnostic", "linux", 1000, "/var/lib/flowersec-test/home", externalHostPath, "/var/lib/flowersec-test/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace"); err == nil {
+	if err := validateExecutionEnvironment("diagnostic", "linux", 1000, "/var/lib/flowersec-test/home", externalHostPath, externalHostGoRoot, "/var/lib/flowersec-test/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace"); err == nil {
 		t.Fatal("non-root external suite was accepted")
 	}
-	if err := validateExecutionEnvironment("performance", "linux", 0, "/home/user", externalHostPath, "/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace"); err == nil {
+	if err := validateExecutionEnvironment("performance", "linux", 0, "/home/user", externalHostPath, externalHostGoRoot, "/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace"); err == nil {
 		t.Fatal("wrong root environment was accepted")
 	}
-	if err := validateExecutionEnvironment("diagnostic", "linux", 0, "/var/lib/flowersec-test/home", externalHostPath, "/var/lib/flowersec-test/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace/flowersec"); err != nil {
+	if err := validateExecutionEnvironment("diagnostic", "linux", 0, "/var/lib/flowersec-test/home", externalHostPath, "/usr/local/go", "/var/lib/flowersec-test/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace"); err == nil {
+		t.Fatal("wrong Go root was accepted")
+	}
+	if err := validateExecutionEnvironment("performance", "linux", 0, "/var/lib/flowersec-test/home", externalHostPath, "", "/var/lib/flowersec-test/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace"); err == nil {
+		t.Fatal("missing Go root was accepted")
+	}
+	if err := validateExecutionEnvironment("diagnostic", "linux", 0, "/var/lib/flowersec-test/home", externalHostPath, externalHostGoRoot, "/var/lib/flowersec-test/tmp", "/var/lib/flowersec-test/state", "/var/lib/flowersec-test/workspace/flowersec"); err != nil {
 		t.Fatalf("fixed root environment rejected: %v", err)
 	}
 }
 
 func TestLocalSuitesDoNotRequireRoot(t *testing.T) {
 	for _, suite := range []string{"acceptance", "browser-smoke"} {
-		if err := validateExecutionEnvironment(suite, "darwin", 501, "/Users/test", "/usr/bin:/bin", "/tmp", "", "/repo"); err != nil {
+		if err := validateExecutionEnvironment(suite, "darwin", 501, "/Users/test", "/usr/bin:/bin", "", "/tmp", "", "/repo"); err != nil {
 			t.Fatalf("local suite %q rejected ordinary user: %v", suite, err)
 		}
 	}
