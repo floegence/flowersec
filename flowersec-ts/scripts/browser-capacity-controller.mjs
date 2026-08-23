@@ -54,8 +54,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
   let browser;
   let browserVersion = "";
   let context;
-  let page;
-  let cdp;
+  const rendererShards = [];
   let server;
   let quiesced = false;
   let lastChromiumMetrics = {};
@@ -120,51 +119,64 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
     browserVersion = browser.version();
     context = await browser.newContext({ ignoreHTTPSErrors: true });
     await context.tracing.start({ screenshots: false, snapshots: false, sources: false });
-    page = await context.newPage();
-    page.on("requestfailed", (request) => recordBrowserDiagnostic(
-      `request failed: ${request.url()} ${request.failure()?.errorText ?? "unknown"}`,
-    ));
-    page.on("response", (response) => {
-      if (response.status() >= 400) recordBrowserDiagnostic(`response ${response.status()}: ${response.url()}`);
-    });
-    page.on("pageerror", (error) => recordBrowserDiagnostic(`page error: ${error.message}`));
-    page.on("console", (message) => {
-      if (message.type() === "error") recordBrowserDiagnostic(`console error: ${message.text()}`);
-    });
-    await page.exposeBinding("__flowersecCapacitySpend", async (_source, token) => {
-      const response = await fetchImpl(plan.event_sink_url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ schema_version: 1, action: "spend", token: stringValue(token, "spend token") }),
+    for (let shardIndex = 0; shardIndex < plan.renderer_shards; shardIndex++) {
+      const page = await context.newPage();
+      page.on("requestfailed", (request) => recordBrowserDiagnostic(
+        `request failed: ${request.url()} ${request.failure()?.errorText ?? "unknown"}`,
+      ));
+      page.on("response", (response) => {
+        if (response.status() >= 400) recordBrowserDiagnostic(`response ${response.status()}: ${response.url()}`);
       });
-      if (!response.ok) throw new Error(`artifact spend failed with HTTP ${response.status}`);
-    });
-    await page.exposeBinding("__flowersecCapacityTerminated", async (_source, value) => {
-      await notifyTermination(value);
-    });
-    await page.exposeBinding("__flowersecCapacityRecordDiagnostic", async (_source, value) => {
-      recordBrowserDiagnostic(value);
-    });
-    if (plan.topology === "browser_tunnel_wt_wss") await disableBrowserWebSocket(page);
-    await page.goto(site.origin, { waitUntil: "networkidle" });
-    await preloadBrowserSDK(page);
-    cdp = await context.newCDPSession(page);
-    await cdp.send("Performance.enable");
+      page.on("pageerror", (error) => recordBrowserDiagnostic(`page error: ${error.message}`));
+      page.on("console", (message) => {
+        if (message.type() === "error") recordBrowserDiagnostic(`console error: ${message.text()}`);
+      });
+      await page.exposeBinding("__flowersecCapacitySpend", async (_source, token) => {
+        const response = await fetchImpl(plan.event_sink_url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ schema_version: 1, action: "spend", token: stringValue(token, "spend token") }),
+        });
+        if (!response.ok) throw new Error(`artifact spend failed with HTTP ${response.status}`);
+      });
+      await page.exposeBinding("__flowersecCapacityTerminated", async (_source, value) => {
+        await notifyTermination(value);
+      });
+      await page.exposeBinding("__flowersecCapacityRecordDiagnostic", async (_source, value) => {
+        recordBrowserDiagnostic(value);
+      });
+      if (plan.topology === "browser_tunnel_wt_wss") await disableBrowserWebSocket(page);
+      await page.goto(site.origin, { waitUntil: "networkidle" });
+      await preloadBrowserSDK(page);
+      const cdp = await context.newCDPSession(page);
+      await cdp.send("Performance.enable");
+      rendererShards.push({ page, cdp });
+    }
 
     const closeSession = createBrowserCapacityCloseBatcher(async (batch) => {
-      await withTimeout(page.evaluate(async (entries) => {
-        const sessions = globalThis.__flowersecCapacitySessions;
-        const results = await Promise.allSettled(entries.map(async ({ id, spendToken }) => {
-          const entry = sessions?.get(id);
-          if (entry === undefined || entry.token !== spendToken) throw new Error("browser capacity session is unavailable");
-          await Promise.allSettled((entry.streams ?? []).map(async (stream) => await stream.close()));
-          await entry.session.close();
-          await entry.session.waitTermination();
-          sessions.delete(id);
-        }));
-        const failed = results.find((result) => result.status === "rejected");
-        if (failed !== undefined) throw failed.reason;
-      }, batch), plan.operation_deadline_ms, "browser session cleanup batch");
+      const shardBatches = rendererShards.map(() => []);
+      for (const entry of batch) {
+        const record = records.get(entry.id);
+        if (record === undefined) throw new Error("browser capacity session record is unavailable");
+        shardBatches[record.shard].push(entry);
+      }
+      await withTimeout(Promise.all(rendererShards.map(async ({ page }, shardIndex) => {
+        const entries = shardBatches[shardIndex];
+        if (entries.length === 0) return;
+        await page.evaluate(async (values) => {
+          const sessions = globalThis.__flowersecCapacitySessions;
+          const results = await Promise.allSettled(values.map(async ({ id, spendToken }) => {
+            const entry = sessions?.get(id);
+            if (entry === undefined || entry.token !== spendToken) throw new Error("browser capacity session is unavailable");
+            await Promise.allSettled((entry.streams ?? []).map(async (stream) => await stream.close()));
+            await entry.session.close();
+            await entry.session.waitTermination();
+            sessions.delete(id);
+          }));
+          const failed = results.find((result) => result.status === "rejected");
+          if (failed !== undefined) throw failed.reason;
+        }, entries);
+      })), plan.operation_deadline_ms, "browser session cleanup batch");
     });
 
     server = http.createServer(async (request, response) => {
@@ -177,10 +189,11 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
           JSON.parse(artifactJSON);
           if (records.has(sessionID)) return respondJSON(response, 409, { error: "duplicate session_id" });
           if (records.size >= plan.sessions) return respondJSON(response, 409, { error: "capacity exceeded" });
-          const record = { token, status: "connecting", activeStreams: 0 };
+          const record = { token, status: "connecting", activeStreams: 0, shard: records.size % rendererShards.length };
           records.set(sessionID, record);
           recordEvent("connect_started", sessionID);
           try {
+            const page = rendererShards[record.shard].page;
             await withTimeout(page.evaluate(async ({ id, spendToken, rawArtifact }) => {
               const sdk = await import("/dist/browser/index.js");
               globalThis.__flowersecCapacitySessions ??= new Map();
@@ -253,45 +266,63 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
             return respondJSON(response, 409, { error: "stream capacity precondition failed" });
           }
           let streamResult;
+          const shardSessions = rendererShards.map(() => []);
+          for (const [sessionIndex, [id, record]] of [...records.entries()].sort(([left], [right]) => left.localeCompare(right)).entries()) {
+            shardSessions[record.shard].push({ id, sessionIndex });
+          }
+          const assignments = capacityStreamAssignments(128, plan.stream_workers_per_session);
           try {
-            streamResult = await withTimeout(page.evaluate(async ({ sessionCount, streamsPerSession, assignments }) => {
-              const sdk = await import("/dist/browser/index.js");
-              const entries = [...(globalThis.__flowersecCapacitySessions?.entries() ?? [])].sort(([left], [right]) => left.localeCompare(right));
-              if (entries.length !== sessionCount) throw new Error("browser stream capacity session count mismatch");
-              globalThis.__flowersecCapacityStreamProgress = { opened_streams: 0, writes_completed: 0, acks_read: 0 };
-			  const results = await Promise.all(entries.map(async ([id, entry], sessionIndex) => {
-				const streams = new Array(streamsPerSession);
-				await Promise.all(assignments.map(async (indexes) => {
-				  for (const streamIndex of indexes) {
-					const stream = await entry.session.openStream("capacity-bidi", {
-					  metadata: sdk.createStreamMetadata({ session_index: sessionIndex, stream_index: streamIndex }),
-					});
-					globalThis.__flowersecCapacityStreamProgress.opened_streams++;
-					const payload = new Uint8Array([sessionIndex & 255, streamIndex & 255]);
-					const written = await stream.write(payload);
-					if (written !== payload.byteLength) throw new Error("browser stream capacity short write");
-					globalThis.__flowersecCapacityStreamProgress.writes_completed++;
-					await stream.closeWrite();
-					const ack = await stream.read();
-					if (!(ack instanceof Uint8Array) || ack.byteLength !== 2 || ack[0] !== (payload[0] ^ 255) || ack[1] !== (payload[1] ^ 255)) {
-					  throw new Error("browser stream capacity acknowledgement mismatch");
-					}
-					globalThis.__flowersecCapacityStreamProgress.acks_read++;
-					streams[streamIndex] = stream;
-				  }
-				}));
-				if (streams.some((stream) => stream === undefined)) throw new Error("browser stream capacity assignment was incomplete");
-                entry.streams = streams;
-                return { id, streams: streams.length };
-              }));
-              return { sessions: results.length, streams: results.reduce((total, result) => total + result.streams, 0), progress: globalThis.__flowersecCapacityStreamProgress };
-            }, {
-              sessionCount: 100,
-              streamsPerSession: 128,
-              assignments: capacityStreamAssignments(128, plan.stream_workers_per_session),
-            }), plan.operation_deadline_ms, "browser 12800-stream capacity");
+            const shardResults = await withTimeout(Promise.all(rendererShards.map(async ({ page }, shardIndex) => {
+              return await page.evaluate(async ({ sessions, streamsPerSession, assignments }) => {
+                const sdk = await import("/dist/browser/index.js");
+                const stored = globalThis.__flowersecCapacitySessions;
+                if (stored?.size !== sessions.length) throw new Error("browser stream capacity shard session count mismatch");
+                globalThis.__flowersecCapacityStreamProgress = { opened_streams: 0, writes_completed: 0, acks_read: 0 };
+                const results = await Promise.all(sessions.map(async ({ id, sessionIndex }) => {
+                  const entry = stored.get(id);
+                  if (entry === undefined) throw new Error("browser stream capacity session is unavailable");
+                  const streams = new Array(streamsPerSession);
+                  await Promise.all(assignments.map(async (indexes) => {
+                    for (const streamIndex of indexes) {
+                      const stream = await entry.session.openStream("capacity-bidi", {
+                        metadata: sdk.createStreamMetadata({ session_index: sessionIndex, stream_index: streamIndex }),
+                      });
+                      globalThis.__flowersecCapacityStreamProgress.opened_streams++;
+                      const payload = new Uint8Array([sessionIndex & 255, streamIndex & 255]);
+                      const written = await stream.write(payload);
+                      if (written !== payload.byteLength) throw new Error("browser stream capacity short write");
+                      globalThis.__flowersecCapacityStreamProgress.writes_completed++;
+                      await stream.closeWrite();
+                      const ack = await stream.read();
+                      if (!(ack instanceof Uint8Array) || ack.byteLength !== 2 || ack[0] !== (payload[0] ^ 255) || ack[1] !== (payload[1] ^ 255)) {
+                        throw new Error("browser stream capacity acknowledgement mismatch");
+                      }
+                      globalThis.__flowersecCapacityStreamProgress.acks_read++;
+                      streams[streamIndex] = stream;
+                    }
+                  }));
+                  if (streams.some((stream) => stream === undefined)) throw new Error("browser stream capacity assignment was incomplete");
+                  entry.streams = streams;
+                  return streams.length;
+                }));
+                return {
+                  sessions: results.length,
+                  streams: results.reduce((total, count) => total + count, 0),
+                  progress: globalThis.__flowersecCapacityStreamProgress,
+                };
+              }, { sessions: shardSessions[shardIndex], streamsPerSession: 128, assignments });
+            })), plan.operation_deadline_ms, "browser 12800-stream capacity");
+            streamResult = {
+              sessions: shardResults.reduce((total, result) => total + result.sessions, 0),
+              streams: shardResults.reduce((total, result) => total + result.streams, 0),
+              progress: sumStreamProgress(shardResults.map((result) => result.progress)),
+            };
           } catch (error) {
-            streamProgress = await page.evaluate(() => globalThis.__flowersecCapacityStreamProgress ?? { opened_streams: 0, writes_completed: 0, acks_read: 0 }).catch(() => streamProgress);
+            const progress = await Promise.all(rendererShards.map(async ({ page }) => {
+              return await page.evaluate(() => globalThis.__flowersecCapacityStreamProgress ?? { opened_streams: 0, writes_completed: 0, acks_read: 0 })
+                .catch(() => ({ opened_streams: 0, writes_completed: 0, acks_read: 0 }));
+            }));
+            streamProgress = sumStreamProgress(progress);
             const reason = error instanceof Error ? error.message : String(error);
             throw new Error(`browser stream capacity failed: opened=${streamProgress.opened_streams} writes=${streamProgress.writes_completed} acks=${streamProgress.acks_read}: ${reason}`, { cause: error });
           }
@@ -324,7 +355,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
         }
         if (request.method === "GET" && request.url === "/v1/snapshot") {
 		  if (livenessError !== undefined) throw livenessError;
-          const snapshot = await captureResourceSnapshot(cdp, records, lastChromiumMetrics);
+          const snapshot = await captureResourceSnapshot(rendererShards, records, lastChromiumMetrics);
           lastChromiumMetrics = snapshot.chromium;
           resourceSamples.push(snapshot);
           return respondJSON(response, 200, { schema_version: 1, ...snapshot });
@@ -335,13 +366,15 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
         }
         if (request.method === "POST" && request.url === "/v1/shutdown") {
 		  livenessEnabled = false;
-		  await livenessTask;
+          await livenessTask;
           if (activeSessions(records) !== 0) {
-            await page.evaluate(async () => {
-              const entries = [...(globalThis.__flowersecCapacitySessions?.values() ?? [])];
-              await Promise.allSettled(entries.map(async (entry) => await entry.session.close()));
-              globalThis.__flowersecCapacitySessions?.clear();
-            });
+            await Promise.all(rendererShards.map(async ({ page }) => {
+              await page.evaluate(async () => {
+                const entries = [...(globalThis.__flowersecCapacitySessions?.values() ?? [])];
+                await Promise.allSettled(entries.map(async (entry) => await entry.session.close()));
+                globalThis.__flowersecCapacitySessions?.clear();
+              });
+            }));
             for (const [sessionID, record] of records) {
               if (record.status === "connecting" || record.status === "connected" || record.status === "terminated") {
 				closedStreams += record.activeStreams;
@@ -368,17 +401,22 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
     recordEvent("controller_ready");
 	  livenessTimer = setInterval(() => {
 		if (!livenessEnabled || livenessError !== undefined) return;
-		const sessionIDs = [...records.entries()].filter(([, record]) => record.status === "connected").map(([sessionID]) => sessionID);
-		if (sessionIDs.length === 0) return;
+		const shardSessionIDs = rendererShards.map(() => []);
+		for (const [sessionID, record] of records) if (record.status === "connected") shardSessionIDs[record.shard].push(sessionID);
+		if (shardSessionIDs.every((sessionIDs) => sessionIDs.length === 0)) return;
 		livenessTask = livenessTask.then(async () => {
-		  await withTimeout(page.evaluate(async (ids) => {
-			const sessions = globalThis.__flowersecCapacitySessions;
-			await Promise.all(ids.map(async (id) => {
-			  const entry = sessions?.get(id);
-			  if (entry === undefined) throw new Error("browser capacity liveness session is unavailable");
-			  await entry.session.probeLiveness();
-			}));
-		  }, sessionIDs), plan.operation_deadline_ms, "browser capacity liveness sweep");
+		  await withTimeout(Promise.all(rendererShards.map(async ({ page }, shardIndex) => {
+			const sessionIDs = shardSessionIDs[shardIndex];
+			if (sessionIDs.length === 0) return;
+			await page.evaluate(async (ids) => {
+			  const sessions = globalThis.__flowersecCapacitySessions;
+			  await Promise.all(ids.map(async (id) => {
+				const entry = sessions?.get(id);
+				if (entry === undefined) throw new Error("browser capacity liveness session is unavailable");
+				await entry.session.probeLiveness();
+			  }));
+			}, sessionIDs);
+		  })), plan.operation_deadline_ms, "browser capacity liveness sweep");
 		  livenessSweeps++;
 		  recordEvent("liveness_sweep_completed");
 		}).catch((error) => {
@@ -450,13 +488,13 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
       throw new Error("browser capacity quiesce requires zero active sessions and streams");
     }
     recordEvent("controller_quiescing");
-    const finalChromiumSnapshot = await captureResourceSnapshot(cdp, records, lastChromiumMetrics);
+    const finalChromiumSnapshot = await captureResourceSnapshot(rendererShards, records, lastChromiumMetrics);
     lastChromiumMetrics = finalChromiumSnapshot.chromium;
     resourceSamples.push(finalChromiumSnapshot);
     await context.tracing.stop({ path: path.join(plan.output_directory, "chromium-trace.zip") });
     await browser.close();
     browser = undefined;
-    cdp = undefined;
+    rendererShards.length = 0;
     await site.close();
     site = undefined;
     quiesced = true;
@@ -485,8 +523,10 @@ function activeStreamsCount(records) {
   return active;
 }
 
-async function captureResourceSnapshot(cdp, records, previousChromium = {}) {
-  const performanceMetrics = cdp === undefined ? undefined : await cdp.send("Performance.getMetrics");
+async function captureResourceSnapshot(rendererShards, records, previousChromium = {}) {
+  const performanceMetrics = rendererShards.length === 0
+    ? undefined
+    : await Promise.all(rendererShards.map(async ({ cdp }) => await cdp.send("Performance.getMetrics")));
   const memory = process.memoryUsage();
   const usage = process.resourceUsage();
   return {
@@ -502,8 +542,30 @@ async function captureResourceSnapshot(cdp, records, previousChromium = {}) {
     },
     chromium: performanceMetrics === undefined
       ? previousChromium
-      : Object.fromEntries(performanceMetrics.metrics.map(({ name, value }) => [name, value])),
+      : aggregateChromiumMetrics(performanceMetrics),
   };
+}
+
+function aggregateChromiumMetrics(samples) {
+  const aggregate = {};
+  for (const { metrics } of samples) {
+    for (const { name, value } of metrics) {
+      if (name === "Timestamp" || name === "NavigationStart") {
+        aggregate[name] = Math.max(aggregate[name] ?? 0, value);
+      } else {
+        aggregate[name] = (aggregate[name] ?? 0) + value;
+      }
+    }
+  }
+  return aggregate;
+}
+
+function sumStreamProgress(values) {
+  return values.reduce((total, value) => ({
+    opened_streams: total.opened_streams + value.opened_streams,
+    writes_completed: total.writes_completed + value.writes_completed,
+    acks_read: total.acks_read + value.acks_read,
+  }), { opened_streams: 0, writes_completed: 0, acks_read: 0 });
 }
 
 async function ensureEmptyOutputDirectory(directory) {

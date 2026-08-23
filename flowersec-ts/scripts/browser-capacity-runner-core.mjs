@@ -29,6 +29,7 @@ export function normalizeBrowserCapacityPlan(input) {
     connections_per_session: exactInteger(plan.connections_per_session ?? 1, "connections_per_session", 1, 1),
     streams_per_session: exactInteger(plan.streams_per_session ?? (heldSessions ? 0 : 128), "streams_per_session", heldSessions ? 0 : 128, heldSessions ? 0 : 128),
     stream_workers_per_session: streamCapacity ? 8 : 0,
+    renderer_shards: streamCapacity ? 4 : 1,
     certificate_hash: certificateHash(plan.certificate_hash),
     client_netns: namespace(plan.client_netns),
     module_bind_address: ipAddress(plan.module_bind_address, "module_bind_address"),

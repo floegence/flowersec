@@ -707,6 +707,7 @@ test("freezes Chromium stream capacity at 100 sessions and 128 streams each", ()
   const normalized = normalizeBrowserCapacityPlan(plan);
   assert.equal(normalized.sessions * normalized.connections_per_session * normalized.streams_per_session, 12_800);
   assert.equal(normalized.stream_workers_per_session, 8);
+  assert.equal(normalized.renderer_shards, 4);
   assert.throws(() => normalizeBrowserCapacityPlan({ ...plan, sessions: 101 }), /100/);
   assert.throws(() => normalizeBrowserCapacityPlan({ ...plan, streams_per_session: 127 }), /128/);
 });
