@@ -126,7 +126,8 @@ func TestCapacityLatencyAndThroughputBudgetsFailClosed(t *testing.T) {
 	}
 	result := capacityCaseResult{
 		ConnectP50: 2 * time.Millisecond, ConnectP95: 4 * time.Millisecond, ConnectP99: 6 * time.Millisecond,
-		ConnectsPerSecond: 20, LivenessP99: 3 * time.Millisecond, LivenessOpsPerSecond: 12,
+		ConnectsPerSecond: 20, LivenessSweeps: capacityLivenessSweepCount,
+		LivenessP99: 3 * time.Millisecond, LivenessOpsPerSecond: 12,
 	}
 	contract := capacityContract{
 		MaxConnectP50: 3 * time.Millisecond, MaxConnectP95: 5 * time.Millisecond, MaxConnectP99: 7 * time.Millisecond,
@@ -143,6 +144,11 @@ func TestCapacityLatencyAndThroughputBudgetsFailClosed(t *testing.T) {
 		t.Fatal("accepted connect p99 above budget")
 	}
 	result.ConnectP99 = 6 * time.Millisecond
+	result.LivenessSweeps = capacityLivenessSweepCount - 1
+	if err := assertCapacityLivenessBudget(contract, result); err == nil {
+		t.Fatal("accepted an incomplete liveness schedule")
+	}
+	result.LivenessSweeps = capacityLivenessSweepCount
 	result.LivenessOpsPerSecond = 9
 	if err := assertCapacityLivenessBudget(contract, result); err == nil {
 		t.Fatal("accepted liveness throughput below budget")
@@ -198,6 +204,21 @@ func TestRunCapacityCaseDoesNotDeriveLivenessDeadlineFromShortHold(t *testing.T)
 	}
 	if result.LivenessSweeps != 4 || result.LivenessFailures != 0 || result.LivenessP99 < 10*time.Millisecond || result.LivenessP99 > contract.MaxLivenessP99 {
 		t.Fatalf("liveness result = %+v", result)
+	}
+}
+
+func TestRunCapacityCaseFailsClosedWhenSlowSweepsCannotMeetFixedSchedule(t *testing.T) {
+	contract := capacityContract{
+		Sessions: 2, Ramp: 20 * time.Millisecond, Hold: 70 * time.Millisecond,
+		Cleanup: 20 * time.Millisecond, Watchdog: 110 * time.Millisecond,
+		MaxRSS: 1 << 30, MaxCPU: time.Second, MaxOpenFDs: 100, MaxGoroutines: 100, MaxTasks: 100,
+		MaxLivenessP99: 50 * time.Millisecond, MinLivenessOpsPerSecond: 1,
+	}
+	endpoint := &fakeCapacityEndpoint{sessionProbeDelay: 20 * time.Millisecond}
+	result, err := runCapacityCase(context.Background(), capacityCaseDefinition{ID: "slow-liveness"}, contract, endpoint, monotonicSnapshots())
+	if err == nil || !strings.Contains(err.Error(), "capacity hold deadline reached after completed") ||
+		result.LivenessSweeps >= capacityLivenessSweepCount || result.LivenessFailures != 1 {
+		t.Fatalf("slow liveness result/error = %+v / %v", result, err)
 	}
 }
 

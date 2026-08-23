@@ -120,6 +120,30 @@ struct TransportV3Tests {
     await #expect(throws: ArtifactLeaseErrorV3.unavailable) { try await lease.claim() }
   }
 
+  #if !os(macOS) && !os(iOS)
+    @Test func unsupportedPublicConnectorRetiresItsClaimedLease() async throws {
+      let spend = CounterV3()
+      let retired = CounterV3()
+      let lease = ArtifactLeaseV3(
+        artifact: try parseArtifactV3(Self.validArtifact()),
+        commitSpend: { await spend.increment() },
+        retire: { await retired.increment() })
+
+      await #expect(throws: ConnectError.transportSecurityUnsupported) {
+        _ = try await connectV3(lease: lease)
+      }
+      #expect(await spend.value == 0)
+      #expect(await retired.value == 1)
+      await #expect(throws: ArtifactLeaseErrorV3.unavailable) {
+        try await lease.claim()
+      }
+      await #expect(throws: ConnectError.artifactInvalid) {
+        _ = try await connectV3(lease: lease)
+      }
+      #expect(await retired.value == 1)
+    }
+  #endif
+
   @Test func canceledSpendWithUnknownCallbackResultIsConsumed() async throws {
     let artifact = try parseArtifactV3(Self.validArtifact())
     let started = AsyncStream<Void>.makeStream()

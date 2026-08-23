@@ -107,6 +107,13 @@ public func connectV3(
     ).connect()
   #else
     _ = options
+    let claimed: ClaimedArtifactLeaseV3
+    do {
+      claimed = try await lease.claim()
+    } catch is ArtifactLeaseErrorV3 {
+      throw ConnectError.artifactInvalid
+    }
+    try? await claimed.retire()
     throw ConnectError.transportSecurityUnsupported
   #endif
 }

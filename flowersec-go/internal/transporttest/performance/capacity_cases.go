@@ -29,6 +29,7 @@ const (
 	capacityCleanupMaxGoroutineDelta = 64
 	capacityCleanupMaxOpenFDDelta    = 16
 	capacityCleanupMaxTaskDelta      = 16
+	capacityLivenessSweepCount       = 4
 )
 
 type capacityContract struct {
@@ -444,36 +445,48 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 		}()
 	}
 	holdEnd := rampEnd.Add(contract.Hold)
-	liveness := time.NewTicker(contract.Hold / 5)
-	defer liveness.Stop()
-	timer := time.NewTimer(time.Until(holdEnd))
-	holdComplete := false
-	for !holdComplete {
-		select {
-		case id := <-terminated:
-			stopTimer(timer)
-			result.HoldDisconnects++
-			return result, fmt.Errorf("%w: %s", errCapacityHoldDisconnect, id)
-		case <-liveness.C:
-			probeTimeout := capacityLivenessProbeTimeout(contract)
-			probeCtx, cancelProbe := context.WithTimeout(ctx, probeTimeout)
-			probeStarted := time.Now()
-			probeErr := probeCapacitySessions(probeCtx, sessions)
-			probeLatency := time.Since(probeStarted)
-			cancelProbe()
-			result.LivenessSweeps++
-			livenessLatencies = append(livenessLatencies, probeLatency)
-			if probeErr != nil {
-				result.LivenessFailures++
-				stopTimer(timer)
-				return result, fmt.Errorf("capacity hold liveness sweep %d: %w", result.LivenessSweeps, probeErr)
+	livenessPeriod := contract.Hold / (capacityLivenessSweepCount + 1)
+	for sweep := 1; sweep <= capacityLivenessSweepCount; sweep++ {
+		due := rampEnd.Add(time.Duration(sweep) * livenessPeriod)
+		if err := waitCapacityHoldUntil(ctx, terminated, due, watchdogAt); err != nil {
+			if errors.Is(err, errCapacityHoldDisconnect) {
+				result.HoldDisconnects++
 			}
-		case <-timer.C:
-			holdComplete = true
-		case <-ctx.Done():
-			stopTimer(timer)
-			return result, context.Cause(ctx)
+			return result, err
 		}
+		probeTimeout := capacityLivenessProbeTimeout(contract)
+		probeStarted := time.Now()
+		probeDeadline := minTime(probeStarted.Add(probeTimeout), holdEnd, watchdogAt)
+		if !probeStarted.Before(probeDeadline) {
+			result.LivenessFailures++
+			return result, fmt.Errorf("capacity hold deadline reached after completed %d/%d liveness sweeps", result.LivenessSweeps, capacityLivenessSweepCount)
+		}
+		probeCtx, cancelProbe := context.WithDeadline(ctx, probeDeadline)
+		probeErr := probeCapacitySessions(probeCtx, sessions)
+		probeLatency := time.Since(probeStarted)
+		cancelProbe()
+		livenessLatencies = append(livenessLatencies, probeLatency)
+		if probeErr != nil {
+			result.LivenessFailures++
+			if probeDeadline.Equal(holdEnd) {
+				return result, fmt.Errorf("capacity hold deadline reached after completed %d/%d liveness sweeps: sweep %d: %w",
+					result.LivenessSweeps, capacityLivenessSweepCount, sweep, probeErr)
+			}
+			if probeDeadline.Equal(watchdogAt) {
+				result.WatchdogTimeouts++
+				return result, fmt.Errorf("%w after completed %d/%d liveness sweeps: sweep %d: %v",
+					errCapacityWatchdog, result.LivenessSweeps, capacityLivenessSweepCount, sweep, probeErr)
+			}
+			return result, fmt.Errorf("capacity hold liveness sweep %d after completed %d/%d sweeps: %w",
+				sweep, result.LivenessSweeps, capacityLivenessSweepCount, probeErr)
+		}
+		result.LivenessSweeps++
+	}
+	if err := waitCapacityHoldUntil(ctx, terminated, holdEnd, watchdogAt); err != nil {
+		if errors.Is(err, errCapacityHoldDisconnect) {
+			result.HoldDisconnects++
+		}
+		return result, err
 	}
 	result.LivenessP50 = percentileDuration(livenessLatencies, 50)
 	result.LivenessP95 = percentileDuration(livenessLatencies, 95)
@@ -614,8 +627,8 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 		{Key: "sessions", Value: strconv.Itoa(contract.Sessions)},
 		{Key: "ramp_duration_ns", Value: strconv.FormatInt(contract.Ramp.Nanoseconds(), 10)},
 		{Key: "hold_duration_ns", Value: strconv.FormatInt(contract.Hold.Nanoseconds(), 10)},
-		{Key: "liveness_sweep_count", Value: "4"},
-		{Key: "liveness_sweep_period_ns", Value: strconv.FormatInt((contract.Hold / 5).Nanoseconds(), 10)},
+		{Key: "liveness_sweep_count", Value: strconv.Itoa(capacityLivenessSweepCount)},
+		{Key: "liveness_sweep_period_ns", Value: strconv.FormatInt((contract.Hold / (capacityLivenessSweepCount + 1)).Nanoseconds(), 10)},
 		{Key: "cleanup_duration_ns", Value: strconv.FormatInt(contract.Cleanup.Nanoseconds(), 10)},
 		{Key: "cleanup_close_window_ns", Value: strconv.FormatInt(cleanupCloseWindow.Nanoseconds(), 10)},
 		{Key: "watchdog_duration_ns", Value: strconv.FormatInt(contract.Watchdog.Nanoseconds(), 10)},
@@ -710,6 +723,9 @@ func assertCapacityLatencyBudget(contract capacityContract, result capacityCaseR
 }
 
 func assertCapacityLivenessBudget(contract capacityContract, result capacityCaseResult) error {
+	if result.LivenessSweeps != capacityLivenessSweepCount {
+		return fmt.Errorf("capacity completed %d/%d required liveness sweeps", result.LivenessSweeps, capacityLivenessSweepCount)
+	}
 	if contract.MaxLivenessP99 > 0 && result.LivenessP99 > contract.MaxLivenessP99 {
 		return fmt.Errorf("capacity liveness p99 %s exceeds budget %s", result.LivenessP99, contract.MaxLivenessP99)
 	}
@@ -815,6 +831,44 @@ func capacityLivenessProbeTimeout(contract capacityContract) time.Duration {
 		return contract.MaxLivenessP99
 	}
 	return minDuration(5*time.Second, contract.Hold/10)
+}
+
+func minTime(values ...time.Time) time.Time {
+	minimum := values[0]
+	for _, value := range values[1:] {
+		if value.Before(minimum) {
+			minimum = value
+		}
+	}
+	return minimum
+}
+
+func waitCapacityHoldUntil(ctx context.Context, terminated <-chan string, due, watchdog time.Time) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	if due.After(watchdog) || !time.Now().Before(watchdog) {
+		return errCapacityWatchdog
+	}
+	remaining := time.Until(due)
+	if remaining <= 0 {
+		select {
+		case id := <-terminated:
+			return fmt.Errorf("%w: %s", errCapacityHoldDisconnect, id)
+		default:
+			return nil
+		}
+	}
+	timer := time.NewTimer(remaining)
+	defer stopTimer(timer)
+	select {
+	case <-timer.C:
+		return nil
+	case id := <-terminated:
+		return fmt.Errorf("%w: %s", errCapacityHoldDisconnect, id)
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
 }
 
 func closeCapacitySessions(ctx context.Context, sessions []capacitySession) error {
