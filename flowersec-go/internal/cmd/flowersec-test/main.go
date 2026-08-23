@@ -85,6 +85,9 @@ func runCLI(args []string) error {
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 || (action == "status" && (*debug || *report != "" || *budgetValue != "")) {
 		return errors.New("usage: flowersec-test <run|resume|status|preflight-public-ca> [--suite NAME] [--report ABSOLUTE.md] [--budget DURATION] [--debug]")
 	}
+	if *suite == "performance-optional" {
+		return errors.New("performance-optional is only available through the integrated --suite performance plan")
+	}
 	performanceBudget := time.Duration(0)
 	if *suite == "performance" && action != "status" {
 		var err error
@@ -109,7 +112,17 @@ func runCLI(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateExecutionEnvironment(*suite, runtime.GOOS, os.Geteuid(), os.Getenv("HOME"), os.Getenv("PATH"), os.Getenv("GOROOT"), os.Getenv("TMPDIR"), os.Getenv("FLOWERSEC_TEST_STATE_DIR"), workingDirectory); err != nil {
+	if err := validateExecutionEnvironment(
+		*suite,
+		runtime.GOOS,
+		os.Geteuid(),
+		os.Getenv("HOME"),
+		os.Getenv("PATH"),
+		os.Getenv("GOROOT"),
+		os.Getenv("TMPDIR"),
+		os.Getenv("FLOWERSEC_TEST_STATE_DIR"),
+		workingDirectory,
+	); err != nil {
 		return err
 	}
 	stateDir, err := testStateDirectory(*suite)
@@ -133,7 +146,7 @@ func runCLI(args []string) error {
 		return err
 	}
 	if action == "status" {
-		return printStatus(os.Stdout, path, tests, *suite, sha)
+		return printStatus(context.Background(), os.Stdout, path, tests, *suite, sha)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -241,7 +254,7 @@ func validSourceSHA(value string) bool {
 }
 
 func executeSuite(ctx context.Context, stdout, stderr io.Writer, action, path, root, suite, sourceSHA string, tests []registeredTest, debug bool) error {
-	progressLock, err := lockProgress(path)
+	progressLock, err := lockProgress(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -394,7 +407,7 @@ func regularFile(path string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-func lockProgress(path string) (*os.File, error) {
+func lockProgress(ctx context.Context, path string) (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create test progress directory: %w", err)
 	}
@@ -402,11 +415,24 @@ func lockProgress(path string) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open test progress lock: %w", err)
 	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		_ = lock.Close()
-		return nil, fmt.Errorf("lock test progress: %w", err)
+	for {
+		err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return lock, nil
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) && !errors.Is(err, syscall.EINTR) {
+			_ = lock.Close()
+			return nil, fmt.Errorf("lock test progress: %w", err)
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			_ = lock.Close()
+			return nil, context.Cause(ctx)
+		case <-timer.C:
+		}
 	}
-	return lock, nil
 }
 
 func readProgress(path string, tests []registeredTest, suite string) (progress, error) {
@@ -521,7 +547,12 @@ func firstIncomplete(tests []registeredTest, completed []string) *registeredTest
 	return nil
 }
 
-func printStatus(output io.Writer, path string, tests []registeredTest, suite, sourceSHA string) error {
+func printStatus(ctx context.Context, output io.Writer, path string, tests []registeredTest, suite, sourceSHA string) error {
+	progressLock, err := lockProgress(ctx, path)
+	if err != nil {
+		return err
+	}
+	defer progressLock.Close()
 	current, err := readProgress(path, tests, suite)
 	if errors.Is(err, os.ErrNotExist) {
 		current = progress{Plan: planName, SourceSHA: sourceSHA, Suite: suite, Completed: []string{}}

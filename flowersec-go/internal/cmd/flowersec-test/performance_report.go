@@ -160,7 +160,7 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 	}
 	executionCtx, cancelExecution := context.WithTimeout(ctx, budget-teardownGrace)
 	defer cancelExecution()
-	progressLock, err := lockProgress(progressPath)
+	progressLock, err := lockProgress(ctx, progressPath)
 	if err != nil {
 		return err
 	}
@@ -268,6 +268,12 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 		if err != nil {
 			return err
 		}
+		preserveTempDir := debug
+		defer func() {
+			if !preserveTempDir {
+				_ = os.RemoveAll(tempDir)
+			}
+		}()
 		resultPath := filepath.Join(tempDir, "case-result.json")
 		started := time.Now()
 		fmt.Fprintf(stdout, "[RUN ] %s\n", next.ID)
@@ -364,8 +370,8 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 			}
 			failure := boundedText(runErr.Error(), 64<<10)
 			logPath, logErr := writeFailure(progressPath, next.ID, failure)
-			if !debug && !errors.Is(runErr, errTeardownTimeout) {
-				_ = os.RemoveAll(tempDir)
+			if errors.Is(runErr, errTeardownTimeout) {
+				preserveTempDir = true
 			}
 			fmt.Fprintf(stderr, "[FAIL] %s %s: %s\n", next.ID, duration, firstLine(failure))
 			if logErr == nil {

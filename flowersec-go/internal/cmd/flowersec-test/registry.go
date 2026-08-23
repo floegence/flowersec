@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -329,9 +330,16 @@ func runCommandOutput(ctx context.Context, directory string, environment []strin
 	command.Dir = directory
 	command.Env = append(os.Environ(), environment...)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	var output tailBuffer
-	output.limit = 64 << 10
-	command.Stdout, command.Stderr = &output, &output
+	outputFile, err := os.CreateTemp("", "flowersec-command-output-*")
+	if err != nil {
+		return nil, fmt.Errorf("create command output file: %w", err)
+	}
+	outputPath := outputFile.Name()
+	defer func() {
+		_ = outputFile.Close()
+		_ = os.Remove(outputPath)
+	}()
+	command.Stdout, command.Stderr = outputFile, outputFile
 	if err := command.Start(); err != nil {
 		return nil, err
 	}
@@ -339,21 +347,38 @@ func runCommandOutput(ctx context.Context, directory string, environment []strin
 	go func() { done <- command.Wait() }()
 	select {
 	case err := <-done:
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w: %s", name, err, output.String())
+		output, outputErr := readCommandOutput(outputFile)
+		if outputErr != nil {
+			return nil, fmt.Errorf("read %s output: %w", name, outputErr)
 		}
-		return append([]byte(nil), output.Bytes()...), nil
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w: %s", name, err, output)
+		}
+		return output, nil
 	case <-ctx.Done():
 		_ = syscall.Kill(-command.Process.Pid, syscall.SIGTERM)
-		err, drained := waitForCommandGroup(command.Process.Pid, done, 5*time.Second)
+		err, processDone, drained := waitForCommandGroup(command.Process.Pid, done, 5*time.Second)
 		if !drained {
 			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-			if err == nil {
-				err = <-done
+			if !processDone {
+				select {
+				case err = <-done:
+					processDone = true
+				case <-time.After(5 * time.Second):
+					return nil, errors.Join(context.Cause(ctx), errors.New("subprocess did not exit after SIGKILL"))
+				}
 			}
-			return nil, errors.Join(context.Cause(ctx), err, errors.New("subprocess group did not finish teardown after SIGTERM"), errors.New(output.String()))
+			output, outputErr := readCommandOutput(outputFile)
+			if outputErr != nil {
+				return nil, errors.Join(context.Cause(ctx), err, outputErr)
+			}
+			return nil, errors.Join(context.Cause(ctx), err, errors.New("subprocess group did not finish teardown after SIGTERM"), errors.New(string(output)))
 		}
-		return nil, errors.Join(context.Cause(ctx), err, errors.New(output.String()))
+		output, outputErr := readCommandOutput(outputFile)
+		if outputErr != nil {
+			return nil, errors.Join(context.Cause(ctx), err, outputErr)
+		}
+		return nil, errors.Join(context.Cause(ctx), err, errors.New(string(output)))
 	}
 }
 
@@ -411,7 +436,7 @@ func matchesGoTestPackage(actual, expected string) bool {
 	return expected != "" && strings.HasSuffix(actual, "/"+expected)
 }
 
-func waitForCommandGroup(processGroup int, done <-chan error, grace time.Duration) (error, bool) {
+func waitForCommandGroup(processGroup int, done <-chan error, grace time.Duration) (error, bool, bool) {
 	timer := time.NewTimer(grace)
 	defer timer.Stop()
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -420,14 +445,14 @@ func waitForCommandGroup(processGroup int, done <-chan error, grace time.Duratio
 	processDone := false
 	for {
 		if processDone && processGroupFinished(processGroup) {
-			return processErr, true
+			return processErr, true, true
 		}
 		select {
 		case processErr = <-done:
 			processDone = true
 		case <-ticker.C:
 		case <-timer.C:
-			return processErr, false
+			return processErr, processDone, false
 		}
 	}
 }
@@ -437,21 +462,17 @@ func processGroupFinished(processGroup int) bool {
 	return errors.Is(err, syscall.ESRCH)
 }
 
-type tailBuffer struct {
-	bytes.Buffer
-	limit int
-}
-
-func (buffer *tailBuffer) Write(value []byte) (int, error) {
-	written, err := buffer.Buffer.Write(value)
-	if buffer.Len() > buffer.limit {
-		retained := append([]byte(nil), buffer.Bytes()[buffer.Len()-buffer.limit:]...)
-		buffer.Reset()
-		_, _ = buffer.Buffer.Write(retained)
+func readCommandOutput(file *os.File) ([]byte, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
 	}
-	return written, err
-}
-
-func (buffer *tailBuffer) String() string {
-	return strings.TrimSpace(buffer.Buffer.String())
+	offset := info.Size() - 64<<10
+	if offset < 0 {
+		offset = 0
+	}
+	if _, err := file.Seek(offset, 0); err != nil {
+		return nil, err
+	}
+	return io.ReadAll(io.LimitReader(file, 64<<10))
 }

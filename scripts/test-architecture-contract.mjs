@@ -519,8 +519,13 @@ assert.match(packageManifest, /"ensure:browser:webkit": "node \.\/scripts\/ensur
 assert.match(hostInit, /browser-test-runner\.mjs" --runtime-canary/);
 assert.match(hostInit, /playwright_chromium/);
 assert.match(hostInit, /init_tmp_baseline=\$\(mktemp[\s\S]*finalize_init_temps[\s\S]*comm -13[\s\S]*swift_canary=\$\(mktemp -d[\s\S]*TMPDIR="\$swift_canary" swiftc/);
+assert.match(hostInit, /temporary_paths=\(\)[\s\S]*cleanup_temporary_paths[\s\S]*trap cleanup_temporary_paths EXIT/);
+for (const temporaryName of ["archive", "installer", "bootstrap", "post_install"]) {
+  assert.match(hostInit, new RegExp(`temporary_paths\\s*\\+=\\s*\\([^\\n]*\\$${temporaryName}`),
+    `host initialization must track ${temporaryName} for EXIT cleanup`);
+}
 assert.doesNotMatch(hostInit, /chromium_path=.*command -v chromium/);
-for (const executable of ["go", "make", "node", "npm", "rustup", "cargo", "rustc", "swift", "swiftc", "git", "curl", "jq", "tar", "xz", "gcc", "g++", "clang", "clang++", "pkg-config", "python3", "sh", "realpath", "ip", "nsenter", "tc", "nft", "iptables", "ethtool", "bpftool", "sysctl", "mount", "mountpoint", "umount"]) {
+for (const executable of ["go", "make", "node", "npm", "rustup", "cargo", "rustc", "swift", "swiftc", "git", "curl", "jq", "tar", "xz", "gcc", "g++", "clang", "clang++", "pkg-config", "python3", "sh", "realpath", "ip", "nsenter", "tc", "nft", "iptables", "ethtool", "bpftool", "sysctl", "mount", "mountpoint", "umount", "flock"]) {
   const boundary = /^[A-Za-z0-9_]+$/.test(executable) ? `\\b${escapeRegex(executable)}\\b` : escapeRegex(executable);
   assert.match(hostInit, new RegExp(boundary), `host init must check ${executable}`);
 }
@@ -550,6 +555,9 @@ assert.match(hostInit, /\$\(go env GOROOT\) == "\$host_go_root"/);
 assert.match(main, /const externalHostGoRoot = "\/var\/lib\/flowersec-test\/cache\/toolchains\/go"/);
 assert.match(main, /os\.Getenv\("GOROOT"\)/);
 assert.match(main, /goroot != wantGoRoot/);
+assert.match(main, /validateExecutionEnvironment\(\s*\*suite,\s*runtime\.GOOS,\s*os\.Geteuid\(\),\s*os\.Getenv\("HOME"\),\s*os\.Getenv\("PATH"\),\s*os\.Getenv\("GOROOT"\),\s*os\.Getenv\("TMPDIR"\),\s*os\.Getenv\("FLOWERSEC_TEST_STATE_DIR"\),\s*workingDirectory,\s*\)/s,
+  "runner environment validation must preserve the HOME/PATH/GOROOT/TMPDIR/state argument order");
+assert.match(main, /performance-optional is only available through the integrated/);
 assert.match(hostEntry, /git -C "\$host_workspace" checkout --detach --force "\$source_sha"/);
 assert.match(hostEntry, /status --porcelain --untracked-files=all/);
 assert.doesNotMatch(hostEntry, /status --porcelain --untracked-files=no/);
@@ -558,6 +566,8 @@ assert.match(hostEntry, /readonly host_open_file_limit=65536/);
 assert.match(hostEntry, /hard_limit=\$\(ulimit -Hn\)/);
 assert.match(hostEntry, /ulimit -Sn "\$host_open_file_limit"/);
 assert.match(hostEntry, /soft_limit=\$\(ulimit -Sn\)/);
+assert.match(hostEntry, /readonly host_lock=\$host_root\/test-host\.lock/);
+assert.match(hostEntry, /exec \{host_lock_fd\}>"\$host_lock"[\s\S]*flock -x "\$host_lock_fd"/);
 const rootLimitCheck = hostEntry.indexOf("  configure_open_file_limit\n", hostEntry.indexOf("if [[ ${1:-} == --root ]]"));
 const workspaceSync = hostEntry.indexOf('  sync_workspace "$source_sha" "$source_url"', rootLimitCheck);
 const runnerExec = hostEntry.indexOf('  exec "$runner" "$action" "$@"', workspaceSync);

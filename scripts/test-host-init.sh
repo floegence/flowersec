@@ -56,12 +56,23 @@ esac
 install -d -m 0700 "$host_home" "$host_root/state" "$host_tmp" "$host_cache" "$host_cache/toolchains" \
   "$host_cache/go-build" "$host_cache/go-mod" "$host_cache/npm" "$host_cache/playwright" "$host_home/.local/bin"
 
+temporary_paths=()
+cleanup_temporary_paths() {
+  local path
+  for path in "${temporary_paths[@]}"; do
+    [[ -n $path ]] || continue
+    rm -rf -- "$path" >/dev/null 2>&1 || true
+  done
+}
+init_tmp_baseline=
+trap cleanup_temporary_paths EXIT
+
 install -d -m 0755 /etc/apt/sources.list.d
 source_file=/etc/apt/sources.list.d/flowersec-ubuntu.sources
 source_uri="https://mirrors.tuna.tsinghua.edu.cn/ubuntu${ports_suffix}"
 rm -f -- /etc/profile.d/flowersec-mainland-sources.sh
 temporary=$(mktemp /etc/apt/sources.list.d/.flowersec-ubuntu.sources.XXXXXX)
-trap 'rm -f -- "$temporary"' EXIT
+temporary_paths+=("$temporary")
 cat >"$temporary" <<EOF
 Types: deb
 URIs: ${source_uri}
@@ -85,8 +96,6 @@ if [[ -n $equivalent_source ]]; then
 elif [[ ! -f $source_file ]] || ! cmp -s "$temporary" "$source_file"; then
   mv -f -- "$temporary" "$source_file"
 fi
-trap - EXIT
-
 apt-get update
 packages=(ca-certificates curl git jq xz-utils gnupg openssl build-essential clang gcc g++ g++-12 libstdc++-12-dev pkg-config libbpf-dev ethtool iproute2 iptables nftables libatomic1 libcurl4 libedit2 libicu-dev libncurses6 libpython3-dev libsqlite3-0 libxml2-dev tzdata zlib1g)
 readonly go_version=1.26.6
@@ -111,6 +120,7 @@ install_go() {
   local destination=$host_go_root archive
   if [[ -x $destination/bin/go ]] && "$destination/bin/go" version | grep -Fq "go${go_version}"; then return; fi
   archive=$(mktemp "$host_tmp/go.XXXXXX.tar.gz")
+  temporary_paths+=("$archive")
   curl -fL --retry 3 -o "$archive" "https://mirrors.aliyun.com/golang/go${go_version}.linux-${go_arch}.tar.gz"
   rm -rf -- "$destination"
   tar -C "$host_cache/toolchains" -xzf "$archive"
@@ -121,6 +131,7 @@ install_node() {
   local destination=$host_cache/toolchains/node extracted=$host_cache/toolchains/node-v24.14.1-linux-${node_arch} archive
   if [[ -x $destination/bin/node ]] && [[ $($destination/bin/node --version) == v24.14.1 ]]; then return; fi
   archive=$(mktemp "$host_tmp/node.XXXXXX.tar.xz")
+  temporary_paths+=("$archive")
   curl -fL --retry 3 -o "$archive" "https://npmmirror.com/mirrors/node/v24.14.1/node-v24.14.1-linux-${node_arch}.tar.xz"
   rm -rf -- "$destination" "$extracted"
   tar -C "$host_cache/toolchains" -xJf "$archive"
@@ -132,6 +143,7 @@ install_rust() {
   local installer
   if [[ -x $host_home/.cargo/bin/rustc ]] && "$host_home/.cargo/bin/rustc" --version | grep -Eq 'rustc 1\.88\.0([[:space:]]|$)'; then return; fi
   installer=$(mktemp "$host_tmp/rustup-init.XXXXXX")
+  temporary_paths+=("$installer")
   curl -fL --retry 3 -o "$installer" "https://static.rust-lang.org/rustup/archive/1.28.2/${rustup_target}/rustup-init"
   if ! printf '%s  %s\n' "$rustup_sha256" "$installer" | sha256sum --check --status; then
     rm -f -- "$installer"
@@ -148,6 +160,7 @@ install_swift() {
   if [[ ! -x $swiftly ]]; then
     archive=$(mktemp "$host_tmp/swiftly.XXXXXX.tar.gz")
     bootstrap=$(mktemp -d "$host_tmp/swiftly-bootstrap.XXXXXX")
+    temporary_paths+=("$archive" "$bootstrap")
     curl -fL --retry 3 -o "$archive" "https://download.swift.org/swiftly/linux/swiftly-${swiftly_arch}.tar.gz"
     tar -C "$bootstrap" -xzf "$archive" swiftly
     chmod 0755 "$bootstrap/swiftly"
@@ -157,6 +170,7 @@ install_swift() {
   fi
   if ! command -v swift >/dev/null 2>&1 || ! swift --version | grep -Eq 'Swift version 6\.1(\.[0-9]+)?([[:space:]]|$)'; then
     post_install=$(mktemp "$host_tmp/swift-post-install.XXXXXX")
+    temporary_paths+=("$post_install")
     (cd "$host_home" && "$swiftly" install 6.1 --use --assume-yes --post-install-file="$post_install")
     [[ ! -s $post_install ]] || /bin/bash "$post_install"
     rm -f -- "$post_install"
@@ -195,6 +209,10 @@ cleanup_init_temps() {
   done < <(comm -13 "$init_tmp_baseline" <(find "$host_tmp" -maxdepth 1 -type d -name 'TemporaryDirectory.*' -printf '%f\n' | sort))
 }
 finalize_init_temps() {
+  if [[ -z ${init_tmp_baseline:-} ]]; then
+    cleanup_temporary_paths
+    return
+  fi
   for _ in {1..20}; do
     cleanup_init_temps
     residual_count=$(comm -13 "$init_tmp_baseline" <(find "$host_tmp" -maxdepth 1 -type d -name 'TemporaryDirectory.*' -printf '%f\n' | sort) | wc -l)
@@ -202,6 +220,8 @@ finalize_init_temps() {
     sleep 0.1
   done
   rm -f -- "$init_tmp_baseline"
+  init_tmp_baseline=
+  cleanup_temporary_paths
 }
 trap finalize_init_temps EXIT
 
@@ -211,7 +231,7 @@ if [[ -e "$source_root/.swift-version" ]] && ! git -C "$source_root" ls-files --
   rm -f -- "$source_root/.swift-version"
 fi
 
-required_commands=(go make node npm rustup cargo rustc swift swiftc git curl jq tar xz gcc g++ clang clang++ openssl pkg-config python3 sh realpath ip nsenter tc nft iptables ethtool bpftool sysctl mount mountpoint umount)
+required_commands=(go make node npm rustup cargo rustc swift swiftc git curl jq tar xz gcc g++ clang clang++ openssl pkg-config python3 sh realpath ip nsenter tc nft iptables ethtool bpftool sysctl mount mountpoint umount flock)
 for required in "${required_commands[@]}"; do
   resolved=$(type -P "$required" || true)
   [[ -n $resolved && $resolved == /* && -x $resolved ]] || { echo "missing host capability: $required" >&2; exit 1; }

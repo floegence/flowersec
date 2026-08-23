@@ -7,6 +7,7 @@ readonly host_workspace=$host_root/workspace
 readonly host_state=$host_root/state
 readonly host_tmp=$host_root/tmp
 readonly host_cache=$host_root/cache
+readonly host_lock=$host_root/test-host.lock
 readonly host_go_root=$host_cache/toolchains/go
 readonly host_path="$host_go_root/bin:$host_cache/toolchains/node/bin:$host_home/.cargo/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$host_home/.local/bin:$host_home/.swiftly/bin"
 readonly playwright_download_host=https://npmmirror.com/mirrors/playwright
@@ -120,6 +121,9 @@ if [[ ${1:-} == --root ]]; then
     run|resume|status) ;;
     *) usage ;;
   esac
+  install -d -m 0700 "$host_root"
+  exec {host_lock_fd}>"$host_lock"
+  flock -x "$host_lock_fd" || { echo "cannot acquire test-host lock: $host_lock" >&2; exit 1; }
   sync_workspace "$source_sha" "$source_url"
   cd "$host_workspace"
   if [[ $action == init ]]; then

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -139,6 +140,40 @@ func TestOptionalPerformanceStartsWithWebTransportCapabilityPreflight(t *testing
 	}
 	if tests[0].ID != "performance-optional/webtransport-capability" {
 		t.Fatalf("optional performance first test = %q", tests[0].ID)
+	}
+}
+
+func TestStandaloneOptionalPerformanceIsRejected(t *testing.T) {
+	err := runCLI([]string{"run", "--suite", "performance-optional"})
+	if err == nil || !strings.Contains(err.Error(), "only available through the integrated") {
+		t.Fatalf("standalone optional performance error = %v", err)
+	}
+}
+
+func TestProgressLockHonorsCancellation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "progress.json")
+	owner, err := lockProgress(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := lockProgress(ctx, path)
+		done <- err
+	}()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled progress lock = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("progress lock did not honor cancellation")
+	}
+	if err := syscall.Flock(int(owner.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -691,7 +726,7 @@ func TestStatusMigratesSourceSHAWithoutDroppingCompletedIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	if err := printStatus(&output, progressPath, tests, "acceptance", testSourceSHA); err != nil {
+	if err := printStatus(context.Background(), &output, progressPath, tests, "acceptance", testSourceSHA); err != nil {
 		t.Fatal(err)
 	}
 	current, err := readProgress(progressPath, tests, "acceptance")
