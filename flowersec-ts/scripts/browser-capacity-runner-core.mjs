@@ -50,7 +50,7 @@ export function browserCapacityOperationDeadlineMs(workload, rawBudget = process
   const baseDeadlineMs = streamCapacity ? 10_000 : 5_000;
   const scale = Math.min(budgetMs / (10 * 60_000), 5);
   const scaled = Math.round((baseDeadlineMs * scale) / 10) * 10;
-	return Math.max(scaled, streamCapacity ? 30_000 : 10_000);
+  return Math.max(scaled, streamCapacity ? 20_000 : 10_000);
 }
 
 export function capacityStreamAssignments(streams, workers) {

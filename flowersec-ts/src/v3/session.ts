@@ -721,69 +721,84 @@ export class SessionV3 implements SessionV3Contract {
       () => undefined,
       reader,
     );
-    const first = await this.readStreamRecord(temporary);
-    if (first.type !== InnerTypeV3.Open) throw protocolError("OPEN must be first");
-    const open = decodeOpenPayload(first.payload);
-    if (open.logicalStreamID !== preface.logicalStreamID ||
-        !bytesEqual(open.fss3Hash, computeFSS3HashV3(prefaceRaw))) {
-      throw protocolError("OPEN binding mismatch");
-    }
-    this.peerLedger.validOpen(preface.logicalStreamID);
-    const internalRPC = open.kind === RESERVED_RPC_KIND;
-    if (internalRPC && decoder.decode(open.metadata) !== "{}") {
-      await temporary.send(InnerTypeV3.OpenReject, encodeOpenRejectV3(computeOpenHashV3(first.payload), 4));
-      await carrierStream.closeWrite();
-      return;
-    }
-    const releasePermit = internalRPC ? () => undefined : this.inboundPermits.tryAcquire();
-    if (releasePermit === undefined) {
-      await temporary.send(InnerTypeV3.OpenReject, encodeOpenRejectV3(computeOpenHashV3(first.payload), 2));
-      await carrierStream.closeWrite();
-      return;
-    }
-    const stream = new EncryptedStreamV3(
-      this,
-      carrierStream,
-      preface.logicalStreamID,
-      open.kind,
-      this.sendEpoch,
-      preface.initialSendEpoch,
-      releasePermit,
-      reader,
-    );
-    this.assertOpen();
-    stream.receiveSequence = temporary.receiveSequence;
-    this.streams.set(stream.id, stream);
-    await stream.send(InnerTypeV3.OpenACK, encodeOpenACKV3(computeOpenHashV3(first.payload)));
-    stream.markOpen();
-    stream.startPump();
-    if (!this.acceptsPeerStreamAfterGoAway(stream.id)) {
-      await this.localReset(stream, new SessionV3Error("going_away", "peer stream exceeds the sent GOAWAY boundary"));
-      return;
-    }
-    if (internalRPC) {
-      if (this.rpcServing) {
-        await this.localReset(stream, protocolError("duplicate reserved RPC stream"));
+    let stream: EncryptedStreamV3 | undefined;
+    try {
+      const first = await this.readStreamRecord(temporary);
+      if (first.type !== InnerTypeV3.Open) throw protocolError("OPEN must be first");
+      const open = decodeOpenPayload(first.payload);
+      if (open.logicalStreamID !== preface.logicalStreamID ||
+          !bytesEqual(open.fss3Hash, computeFSS3HashV3(prefaceRaw))) {
+        throw protocolError("OPEN binding mismatch");
+      }
+      this.peerLedger.validOpen(preface.logicalStreamID);
+      const internalRPC = open.kind === RESERVED_RPC_KIND;
+      if (internalRPC && decoder.decode(open.metadata) !== "{}") {
+        await temporary.send(InnerTypeV3.OpenReject, encodeOpenRejectV3(computeOpenHashV3(first.payload), 4));
+        temporary.wipeRecordMaterials();
+        await carrierStream.closeWrite();
         return;
       }
-      this.rpcServing = true;
-      const rpcReader = new ExactReader(stream);
-      const server = new RpcServer({
-        readExactly: async (length) => await rpcReader.readExactly(length),
-        write: async (payload) => { await stream.write(payload); },
-        close: () => { void stream.reset(); },
-      }, this.config.rpcServerOptions, this.rpcRouter);
-      void server.serve().catch((error) => {
-        if (this.lifecycle !== "closed") this.fail(asError(error));
+      const releasePermit = internalRPC ? () => undefined : this.inboundPermits.tryAcquire();
+      if (releasePermit === undefined) {
+        await temporary.send(InnerTypeV3.OpenReject, encodeOpenRejectV3(computeOpenHashV3(first.payload), 2));
+        temporary.wipeRecordMaterials();
+        await carrierStream.closeWrite();
+        return;
+      }
+      stream = new EncryptedStreamV3(
+        this,
+        carrierStream,
+        preface.logicalStreamID,
+        open.kind,
+        this.sendEpoch,
+        preface.initialSendEpoch,
+        releasePermit,
+        reader,
+      );
+      this.assertOpen();
+      stream.receiveSequence = temporary.receiveSequence;
+      temporary.transferReceiveMaterialsTo(stream);
+      this.streams.set(stream.id, stream);
+      await stream.send(InnerTypeV3.OpenACK, encodeOpenACKV3(computeOpenHashV3(first.payload)));
+      stream.markOpen();
+      stream.startPump();
+      if (!this.acceptsPeerStreamAfterGoAway(stream.id)) {
+        await this.localReset(stream, new SessionV3Error("going_away", "peer stream exceeds the sent GOAWAY boundary"));
+        return;
+      }
+      if (internalRPC) {
+        if (this.rpcServing) {
+          await this.localReset(stream, protocolError("duplicate reserved RPC stream"));
+          return;
+        }
+        this.rpcServing = true;
+        const rpcStream = stream;
+        const rpcReader = new ExactReader(rpcStream);
+        const server = new RpcServer({
+          readExactly: async (length) => await rpcReader.readExactly(length),
+          write: async (payload) => { await rpcStream.write(payload); },
+          close: () => { void rpcStream.reset(); },
+        }, this.config.rpcServerOptions, this.rpcRouter);
+        void server.serve().catch((error) => {
+          if (this.lifecycle !== "closed") this.fail(asError(error));
+        });
+        return;
+      }
+      this.incoming.push({
+        id: stream.id,
+        kind: stream.kind,
+        metadata: decodeMetadata(open.metadata),
+        stream,
       });
-      return;
+    } catch (error) {
+      if (stream !== undefined) {
+        stream.markTerminal(asError(error));
+        this.releaseStream(stream);
+      }
+      throw error;
+    } finally {
+      temporary.wipeRecordMaterials();
     }
-    this.incoming.push({
-      id: stream.id,
-      kind: stream.kind,
-      metadata: decodeMetadata(open.metadata),
-      stream,
-    });
   }
 
   private async resetInboundBeforeDelivery(id: bigint, carrierStream: CarrierStreamV3): Promise<void> {
@@ -1610,6 +1625,12 @@ class EncryptedStreamV3 implements ByteStreamV3 {
     pruneRecordMaterials(this.receiveMaterials, new Set());
   }
 
+  transferReceiveMaterialsTo(destination: EncryptedStreamV3): void {
+    if (destination.receiveMaterials.size !== 0) throw protocolError("receive material destination is not empty");
+    for (const [epoch, material] of this.receiveMaterials) destination.receiveMaterials.set(epoch, material);
+    this.receiveMaterials.clear();
+  }
+
   private async pump(): Promise<void> {
     try {
       while (this.terminalError === undefined) {
@@ -1628,8 +1649,8 @@ class EncryptedStreamV3 implements ByteStreamV3 {
             this.session.resolveOutboundOpen(this.id);
             const error = new SessionV3Error("open_rejected", `logical stream rejected (${reject.reason})`);
             this.markTerminal(error);
-            await this.carrier.closeWrite().catch(() => undefined);
             this.session.releaseStream(this);
+            await this.carrier.closeWrite().catch(() => undefined);
             return;
           }
           throw protocolError("expected OPEN ACK or REJECT");

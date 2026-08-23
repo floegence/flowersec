@@ -252,7 +252,56 @@ describe("SessionV3 control terminal serialization", () => {
     await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
   });
 
-  test("coalesces authenticated activity onto one idle watchdog timer", async () => {
+  test("coalesces authenticated activity while preserving the signed idle deadline", async () => {
+    const clock = { now: 0 };
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, {
+        ...config("client"),
+        runtime: { ...nodeSessionRuntimeV3, monotonicMilliseconds: () => clock.now },
+      }),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const internals = sessionInternals(client);
+    internals.config.idleTimeoutMs = 1_000;
+    const callbacks: Array<() => void> = [];
+    const schedule = ((callback: (...args: unknown[]) => void) => {
+      callbacks.push(() => callback());
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout;
+    const performanceSpy = vi.spyOn(globalThis.performance, "now").mockImplementation(() => clock.now);
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(schedule);
+    try {
+      sessionInternals(server).markAuthenticatedActivity();
+      expect(callbacks).toHaveLength(0);
+
+      internals.markAuthenticatedActivity();
+      expect(callbacks).toHaveLength(1);
+      clock.now = 900;
+      internals.markAuthenticatedActivity();
+      expect(callbacks).toHaveLength(1);
+
+      clock.now = 1_000;
+      callbacks[0]!();
+      expect(client.terminalError).toBeUndefined();
+      expect(callbacks).toHaveLength(2);
+
+      clock.now = 1_900;
+      callbacks[1]!();
+      expect(client.terminalError).toMatchObject({ code: "timeout" });
+      await expect(client.waitTermination()).resolves.toMatchObject({ error: { code: "timeout" } });
+    } finally {
+      setTimeoutSpy.mockRestore();
+      performanceSpy.mockRestore();
+      await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+    }
+  });
+
+  test("transfers temporary inbound record material and wipes it at stream terminal", async () => {
     const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
       kind: "webtransport",
       path: "direct",
@@ -262,26 +311,90 @@ describe("SessionV3 control terminal serialization", () => {
       establishSessionV3(clientCarrier, config("client")),
       establishSessionV3(serverCarrier, config("server")),
     ]);
+    const serverInternals = sessionInternals(server);
+    const originalRead = serverInternals.readStreamRecord.bind(serverInternals);
+    let temporary: StreamInternals | undefined;
+    let transferred: RecordMaterialInternals | undefined;
+    serverInternals.readStreamRecord = async (stream) => {
+      const record = await originalRead(stream);
+      if (!serverInternals.streams.has(stream.id) && stream.receiveMaterials.size !== 0) {
+        temporary = stream;
+        transferred = [...stream.receiveMaterials.values()][0];
+      }
+      return record;
+    };
+
+    const opening = client.openStream("record-material-transfer");
+    const incoming = await server.acceptStream();
+    const outgoing = await opening;
+    const accepted = serverInternals.streams.get(incoming.id);
+    expect(temporary).toBeDefined();
+    expect(temporary!.receiveMaterials.size).toBe(0);
+    expect(transferred).toBeDefined();
+    expect(accepted?.receiveMaterials.get(0)).toBe(transferred);
+
+    await outgoing.reset();
+    await waitFor(() => materialIsZero(transferred!));
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
+  test("releases and wipes an OPEN_REJECT stream before hanging carrier cleanup", async () => {
+    const [rawClient, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const clientCarrier = new HangingApplicationCloseWriteCarrier(rawClient);
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, config("client")),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
     const internals = sessionInternals(client);
-    internals.config.idleTimeoutMs = 1_000;
-    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
-    try {
-      internals.markAuthenticatedActivity();
-      const scheduled = setTimeoutSpy.mock.calls.length;
-      expect(scheduled).toBe(1);
-      internals.markAuthenticatedActivity();
-      internals.markAuthenticatedActivity();
-      expect(setTimeoutSpy.mock.calls.length).toBe(scheduled);
-    } finally {
-      setTimeoutSpy.mockRestore();
-      await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
-    }
+    const originalRelease = internals.releaseStream.bind(internals);
+    let released: StreamInternals | undefined;
+    let releasedMaterials: readonly RecordMaterialInternals[] = [];
+    internals.releaseStream = (stream) => {
+      released = stream;
+      releasedMaterials = [...stream.sendMaterials.values(), ...stream.receiveMaterials.values()];
+      originalRelease(stream);
+    };
+
+    const opening = internals.openLogicalStream("flowersec.rpc.v3", { metadata: { unexpected: true } }, true);
+    await expect(opening).rejects.toMatchObject({ code: "open_rejected" });
+    await clientCarrier.closeWriteEntered.promise;
+    internals.fail(new SessionV3Error("closed", "test termination"), false);
+
+    expect(released).toBeDefined();
+    expect(internals.streams.size).toBe(0);
+    expect(released!.sendMaterials.size).toBe(0);
+    expect(released!.receiveMaterials.size).toBe(0);
+    expect(releasedMaterials.length).toBeGreaterThan(0);
+    expect(releasedMaterials.every(materialIsZero)).toBe(true);
+
+    clientCarrier.releaseCloseWrite();
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
   });
 });
+
+type RecordMaterialInternals = Readonly<{
+  secret: Uint8Array;
+  recordKey: Uint8Array;
+  noncePrefix: Uint8Array;
+}>;
+
+type StreamInternals = {
+  id: bigint;
+  sendMaterials: Map<number, RecordMaterialInternals>;
+  receiveMaterials: Map<number, RecordMaterialInternals>;
+};
 
 type SessionInternals = {
   config: { idleTimeoutMs?: number };
   markAuthenticatedActivity(): void;
+  streams: Map<bigint, StreamInternals>;
+  readStreamRecord(stream: StreamInternals): Promise<unknown>;
+  openLogicalStream(kind: string, options: Readonly<{ metadata?: Readonly<Record<string, unknown>> }>, internal: boolean): Promise<unknown>;
+  releaseStream(stream: StreamInternals): void;
   sendControl(type: InnerTypeV3, payload: Uint8Array): Promise<void>;
   sendControlResponse(type: InnerTypeV3, payload: Uint8Array): Promise<boolean>;
   sendControlCleanup(type: InnerTypeV3, payload: Uint8Array): Promise<boolean>;
@@ -299,6 +412,11 @@ type SessionInternals = {
 
 function sessionInternals(session: SessionV3): SessionInternals {
   return session as unknown as SessionInternals;
+}
+
+function materialIsZero(material: RecordMaterialInternals): boolean {
+  return [material.secret, material.recordKey, material.noncePrefix]
+    .every((value) => value.every((byte) => byte === 0));
 }
 
 async function abortableWait<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -386,6 +504,53 @@ class TerminalOrderingCarrier implements CarrierSessionV3 {
           this.fin = true;
           this.controlEvents.push("fin");
         }
+        await stream.closeWrite();
+      },
+      stopSending: async () => await stream.stopSending(),
+      reset: async () => await stream.reset(),
+      abort: (error) => stream.abort(error),
+    };
+  }
+}
+
+class HangingApplicationCloseWriteCarrier implements CarrierSessionV3 {
+  readonly kind: CarrierSessionV3["kind"];
+  readonly path: CarrierSessionV3["path"];
+  readonly inboundBidirectionalStreamCapacity: number;
+  readonly unreliableDatagrams: CarrierSessionV3["unreliableDatagrams"];
+  readonly closeWriteEntered = deferred<void>();
+  private readonly closeWriteRelease = deferred<void>();
+  private opens = 0;
+
+  constructor(private readonly inner: CarrierSessionV3) {
+    this.kind = inner.kind;
+    this.path = inner.path;
+    this.inboundBidirectionalStreamCapacity = inner.inboundBidirectionalStreamCapacity;
+    this.unreliableDatagrams = inner.unreliableDatagrams;
+  }
+
+  releaseCloseWrite(): void { this.closeWriteRelease.resolve(); }
+
+  async openStream(options: OperationOptionsV3 = {}): Promise<CarrierStreamV3> {
+    const stream = await this.inner.openStream(options);
+    return this.opens++ === 0 ? stream : this.wrap(stream);
+  }
+
+  async acceptStream(options: OperationOptionsV3 = {}): Promise<CarrierStreamV3> {
+    return await this.inner.acceptStream(options);
+  }
+
+  async waitTermination(): Promise<void> { await this.inner.waitTermination(); }
+  async close(error?: Readonly<{ code: number; reason: string }>): Promise<void> { await this.inner.close(error); }
+  abort(error?: Readonly<{ code: number; reason: string }>): void { this.closeWriteRelease.resolve(); this.inner.abort(error); }
+
+  private wrap(stream: CarrierStreamV3): CarrierStreamV3 {
+    return {
+      read: async (options) => await stream.read(options),
+      write: async (data, options) => await stream.write(data, options),
+      closeWrite: async () => {
+        this.closeWriteEntered.resolve();
+        await this.closeWriteRelease.promise;
         await stream.closeWrite();
       },
       stopSending: async () => await stream.stopSending(),
