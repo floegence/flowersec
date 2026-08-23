@@ -841,7 +841,7 @@ function validateMetadataValue(
     throw new ProtocolV2Error("OPEN metadata exceeds node limit");
   if (value === null || typeof value === "boolean") return;
   if (typeof value === "number") {
-    if (!Number.isSafeInteger(value))
+    if (!Number.isSafeInteger(value) || Object.is(value, -0))
       throw new ProtocolV2Error(
         "OPEN metadata number is not an I-JSON safe integer",
       );

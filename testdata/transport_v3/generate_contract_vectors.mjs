@@ -1755,5 +1755,12 @@ for (const name of inherited) {
       })),
     };
   }
+  if (name === "open_unicode_vectors.json") {
+    value.negative.push({
+      id: "metadata-negative-zero",
+      kind: "rpc",
+      metadata_json: "{\"a\":-0}",
+    });
+  }
   write(name, value);
 }

@@ -20,6 +20,7 @@ describe("public stream metadata", () => {
   test("rejects values that cannot enter the shared OPEN contract", () => {
     expect(() => createStreamMetadataV2({ fraction: 1.5 })).toThrow(StreamMetadataError);
     expect(() => createStreamMetadataV2({ unsafe: 9_007_199_254_740_992 })).toThrow(StreamMetadataError);
+    expect(() => createStreamMetadataV2({ negative_zero: -0 })).toThrow(StreamMetadataError);
     expect(() => createStreamMetadataV2({ value: "a".repeat(513) })).toThrow(StreamMetadataError);
   });
 });

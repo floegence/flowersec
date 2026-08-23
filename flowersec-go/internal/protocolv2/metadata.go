@@ -240,7 +240,7 @@ func parseMetadataValue(decoder *json.Decoder, depth int, limits *metadataLimits
 		}
 		return value, nil
 	case json.Number:
-		if !integerJSONPattern.MatchString(string(value)) {
+		if string(value) == "-0" || !integerJSONPattern.MatchString(string(value)) {
 			return nil, ErrInvalidOpenMetadata
 		}
 		integer, err := strconv.ParseInt(string(value), 10, 64)

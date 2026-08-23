@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"reflect"
 	"strings"
@@ -247,6 +248,11 @@ func TestMetadataPublicConstructorValidatesAndCopiesJSONObjectBoundary(t *testin
 	}
 	if _, err := flowersec.NewStreamMetadata(map[string]any{"unsafe": int64(9_007_199_254_740_992)}); !errors.Is(err, flowersec.ErrInvalidMetadata) {
 		t.Fatalf("NewStreamMetadata() unsafe integer error = %v, want ErrInvalidMetadata", err)
+	}
+	for _, negativeZero := range []any{math.Copysign(0, -1), json.Number("-0")} {
+		if _, err := flowersec.NewStreamMetadata(map[string]any{"negative_zero": negativeZero}); !errors.Is(err, flowersec.ErrInvalidMetadata) {
+			t.Fatalf("NewStreamMetadata() negative zero error = %v, want ErrInvalidMetadata", err)
+		}
 	}
 	if got := flowersec.EmptyStreamMetadata().Values(); len(got) != 0 {
 		t.Fatalf("EmptyStreamMetadata() = %#v, want empty", got)

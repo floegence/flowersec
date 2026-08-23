@@ -168,6 +168,11 @@
       "id": "metadata-nonobject",
       "kind": "rpc",
       "metadata_json": "[]"
+    },
+    {
+      "id": "metadata-negative-zero",
+      "kind": "rpc",
+      "metadata_json": "{\"a\":-0}"
     }
   ],
   "inherited_codec_from": "transport_v2",
