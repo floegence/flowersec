@@ -160,12 +160,26 @@ test("security dependency checks stay wired into local gates", () => {
   assert.match(makefile, /^final-offline-contracts:\n\t\$\(MAKE\) security-dependency-check$/m);
 });
 
-test("privileged host bootstrap verifies the pinned rustup installer", () => {
+test("privileged host bootstrap verifies every root-executed toolchain download", () => {
   const source = fs.readFileSync(path.join(sourceRoot, "scripts/test-host-init.sh"), "utf8");
+  for (const digest of [
+    "708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89",
+    "d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e",
+    "84d38715d449447117d05c3e71acd78daa49d5b1bfa8aacf610303920c3322be",
+    "71e427e28b78846f201d4d5ecc30cb13d1508ca099ef3871889a1256c7d6f67e",
+    "4c4adb7b7ad7910f38c52b94a938c309586fe395e1fe1538c397384ee36bfff0",
+    "cc4f912fff6c7f53704fc6d22f9e8ee7fdf6bd574ad276998f7502418bf5a45a",
+    "e7ce91d07b4419ea779da6b575721c17eb7c44f932e63b6e2d03a9afe75cce61",
+    "6531421eeb80eb69db21e41b1ed94bac1467548972eb82861fc4beb6664bd6aa",
+  ]) assert.match(source, new RegExp(digest));
   assert.match(source, /rustup\/archive\/1\.28\.2\/\$\{rustup_target\}\/rustup-init/);
   assert.match(source, /rustup_sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c/);
   assert.match(source, /rustup_sha256=e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c/);
   assert.match(source, /sha256sum --check --status/);
+  for (const label of ["Go archive", "Node archive", "Swiftly archive", "Swiftly binary"]) {
+    assert.match(source, new RegExp(`verify_download [^\\n]*"${label}"`));
+  }
+  assert.match(source, /swiftly" install "\$swift_version" --use --verify/);
   assert.doesNotMatch(source, /curl[^\n]*\|\s*(?:bash|sh)\b/);
 });
 

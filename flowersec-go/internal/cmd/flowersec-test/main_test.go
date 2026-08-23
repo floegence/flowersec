@@ -366,6 +366,34 @@ func TestPerformanceBudgetCancellationWritesPartialReport(t *testing.T) {
 	}
 }
 
+func TestPerformanceBudgetBoundsProgressLockContention(t *testing.T) {
+	root := t.TempDir()
+	reportPath := filepath.Join(t.TempDir(), "performance-report.md")
+	progressPath := filepath.Join(t.TempDir(), "test-progress.json")
+	owner, err := lockProgress(context.Background(), progressPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	var runs atomic.Int32
+	tests := []registeredTest{{ID: "performance/blocked", Suite: "performance", Timeout: time.Second, Run: func(context.Context, runContext) error {
+		runs.Add(1)
+		return nil
+	}}}
+	var stdout, stderr bytes.Buffer
+	started := time.Now()
+	err = executePerformanceSuiteWithLimits(context.Background(), &stdout, &stderr, "run", progressPath, root, testSourceSHA, tests, false, reportPath, testPerformanceEnvironment, 60*time.Millisecond, 10*time.Millisecond, time.Second, 20*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "exhausted its 60ms wall-clock budget while waiting for progress lock") {
+		t.Fatalf("performance lock contention = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed < 30*time.Millisecond || elapsed > time.Second {
+		t.Fatalf("performance lock contention duration = %s", elapsed)
+	}
+	if runs.Load() != 0 {
+		t.Fatal("performance case started before the progress lock was acquired")
+	}
+}
+
 func TestPerformanceCancellationRemovesCaseTempDirectory(t *testing.T) {
 	root := t.TempDir()
 	reportPath := filepath.Join(t.TempDir(), "performance-report.md")
@@ -817,6 +845,42 @@ func TestSuccessfulCommandCleansDescendantsBeforeReturning(t *testing.T) {
 	time.Sleep(1200 * time.Millisecond)
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("successful command left a descendant running: %v", err)
+	}
+}
+
+func TestCancelledCommandWaitsForSigkillFallbackGroupCleanup(t *testing.T) {
+	directory := t.TempDir()
+	ready := filepath.Join(directory, "ready")
+	marker := filepath.Join(directory, "descendant-survived")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := runCommandOutputWithGrace(ctx, 20*time.Millisecond, directory, []string{
+			"READY=" + ready,
+			"MARKER=" + marker,
+		}, "sh", "-c", `trap '' TERM; sh -c 'trap '\'' '\'' TERM; sleep 0.2; touch "$MARKER"; while :; do sleep 1; done' & touch "$READY"; wait`)
+		done <- err
+	}()
+	deadline := time.Now().Add(time.Second)
+	for !regularFile(ready) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !regularFile(ready) {
+		cancel()
+		t.Fatal("SIGKILL fallback command did not become ready")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("SIGKILL fallback command = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SIGKILL fallback did not finish group cleanup")
+	}
+	time.Sleep(250 * time.Millisecond)
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("SIGKILL fallback left a descendant running: %v", err)
 	}
 }
 

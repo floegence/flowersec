@@ -19,6 +19,9 @@ temporary files, and caches remain root-owned under `/var/lib/flowersec-test`.
 Root tests never use the invoking user's checkout or cache.
 
 `test-host-init.sh` idempotently installs and verifies host-wide prerequisites.
+Downloaded Go, Node, Rustup, and Swiftly artifacts are checked against pinned
+per-architecture SHA-256 digests before root use; Swiftly also verifies the
+PGP signature of the exact Swift toolchain release before installation.
 `flowersec-test` is the only test runner; it records only the source SHA, suite,
 plan, and completed canonical test IDs under `/var/lib/flowersec-test/state`.
 Each test owns its resources and cleanup. GREEN retains no artifacts, while RED

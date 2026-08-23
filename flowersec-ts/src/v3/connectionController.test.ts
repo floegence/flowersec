@@ -1211,7 +1211,8 @@ describe("transport v3 production connection controller", () => {
   });
 
   test("closes an established session delivered after controller close wins", async () => {
-    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined);
+    const retire = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined, retire);
     let markConnectorStarted!: () => void;
     const connectorStarted = new Promise<void>((resolve) => { markConnectorStarted = resolve; });
     const close = vi.fn(async () => undefined);
@@ -1233,6 +1234,8 @@ describe("transport v3 production connection controller", () => {
     resolveConnector({ kind: "established", session });
     await closing;
     expect(close).toHaveBeenCalledOnce();
+    expect(retire).toHaveBeenCalledOnce();
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
   });
 
   test("records the A pin digest before an expired B and filters it on the next primary", async () => {

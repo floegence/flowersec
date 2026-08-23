@@ -526,7 +526,7 @@ for (const temporaryName of ["archive", "installer", "bootstrap", "post_install"
     `host initialization must track ${temporaryName} for EXIT cleanup`);
 }
 assert.doesNotMatch(hostInit, /chromium_path=.*command -v chromium/);
-for (const executable of ["go", "make", "node", "npm", "rustup", "cargo", "rustc", "swift", "swiftc", "git", "curl", "jq", "tar", "xz", "gcc", "g++", "clang", "clang++", "pkg-config", "python3", "sh", "realpath", "ip", "nsenter", "tc", "nft", "iptables", "ethtool", "bpftool", "sysctl", "mount", "mountpoint", "umount", "flock"]) {
+for (const executable of ["go", "make", "node", "npm", "rustup", "cargo", "rustc", "swift", "swiftc", "git", "curl", "jq", "tar", "xz", "gcc", "g++", "clang", "clang++", "pkg-config", "python3", "sh", "realpath", "ip", "nsenter", "tc", "nft", "iptables", "ethtool", "bpftool", "sysctl", "mount", "mountpoint", "umount", "flock", "sha256sum"]) {
   const boundary = /^[A-Za-z0-9_]+$/.test(executable) ? `\\b${escapeRegex(executable)}\\b` : escapeRegex(executable);
   assert.match(hostInit, new RegExp(boundary), `host init must check ${executable}`);
 }
@@ -559,7 +559,7 @@ assert.match(main, /goroot != wantGoRoot/);
 assert.match(main, /validateExecutionEnvironment\(\s*\*suite,\s*runtime\.GOOS,\s*os\.Geteuid\(\),\s*os\.Getenv\("HOME"\),\s*os\.Getenv\("PATH"\),\s*os\.Getenv\("GOROOT"\),\s*os\.Getenv\("TMPDIR"\),\s*os\.Getenv\("FLOWERSEC_TEST_STATE_DIR"\),\s*workingDirectory,\s*\)/s,
   "runner environment validation must preserve the HOME/PATH/GOROOT/TMPDIR/state argument order");
 assert.match(main, /performance-optional is only available through the integrated/);
-assert.match(performanceReport, /executionCtx, cancelExecution := context\.WithTimeout\(ctx, budget-teardownGrace\)[\s\S]*lockProgress\(executionCtx, progressPath\)/,
+assert.match(performanceReport, /executionCtx, cancelExecution := context\.WithTimeout\(ctx, budget-teardownReserve\)[\s\S]*lockProgress\(executionCtx, progressPath\)/,
   "integrated performance progress locking must respect the suite budget context");
 assert.match(registry, /case err := <-done:[\s\S]*cleanupCommandGroup\(command\.Process\.Pid, 5\*time\.Second\)/,
   "successful subprocess completion must clean descendants before reporting pass");
@@ -584,7 +584,8 @@ assert.doesNotMatch(hostInit, /ulimit -n 65536/);
 assert.match(hostEntry, /flowersec-test-\$source_sha/);
 assert.match(hostEntry, /go -C flowersec-go build -o "\$temporary_runner"/);
 assert.doesNotMatch(hostEntry, /go -C flowersec-go run/);
-assert.match(hostInit, /\(cd "\$host_home" && "\$swiftly" install 6\.1/);
+assert.match(hostInit, /readonly swift_version=6\.1\.3/);
+assert.match(hostInit, /\(cd "\$host_home" && "\$swiftly" install "\$swift_version" --use --verify/);
 assert.match(hostInit, /\.swift-version/);
 assert.doesNotMatch(registry, /runtime\.GOOS == "darwin" \|\| runtime\.GOOS == "linux"/);
 

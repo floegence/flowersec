@@ -155,13 +155,20 @@ func executePerformanceSuite(ctx context.Context, stdout, stderr io.Writer, acti
 	if len(configuredBudget) > 0 {
 		budget = configuredBudget[0]
 	}
-	if budget < minimumPerformanceBudget || budget > maximumPerformanceBudget {
-		return fmt.Errorf("performance budget must be between %s and %s", minimumPerformanceBudget, maximumPerformanceBudget)
+	return executePerformanceSuiteWithLimits(ctx, stdout, stderr, action, progressPath, root, sourceSHA, tests, debug, reportPath, environment, budget, minimumPerformanceBudget, maximumPerformanceBudget, teardownGrace)
+}
+
+func executePerformanceSuiteWithLimits(ctx context.Context, stdout, stderr io.Writer, action, progressPath, root, sourceSHA string, tests []registeredTest, debug bool, reportPath string, environment perfreport.Environment, budget, minimumBudget, maximumBudget, teardownReserve time.Duration) error {
+	if budget < minimumBudget || budget > maximumBudget || teardownReserve <= 0 || budget <= teardownReserve {
+		return fmt.Errorf("performance budget must be between %s and %s", minimumBudget, maximumBudget)
 	}
-	executionCtx, cancelExecution := context.WithTimeout(ctx, budget-teardownGrace)
+	executionCtx, cancelExecution := context.WithTimeout(ctx, budget-teardownReserve)
 	defer cancelExecution()
 	progressLock, err := lockProgress(executionCtx, progressPath)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("performance suite exhausted its %s wall-clock budget while waiting for progress lock: %w", budget, err)
+		}
 		return err
 	}
 	defer progressLock.Close()

@@ -386,6 +386,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
       }
       if (this.#lifetime.signal.aborted) {
         if (result.kind === "established") {
+          if (artifactLeaseStateV3(claim) === "claimed") await retireArtifactLeaseV3(claim);
           await closeManagedSessionV3(result.session);
         } else if (artifactLeaseStateV3(claim) === "claimed") {
           await retireArtifactLeaseV3(claim);

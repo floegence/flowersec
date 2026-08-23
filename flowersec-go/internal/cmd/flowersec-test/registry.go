@@ -326,6 +326,10 @@ func runCommand(ctx context.Context, directory string, environment []string, nam
 }
 
 func runCommandOutput(ctx context.Context, directory string, environment []string, name string, arguments ...string) ([]byte, error) {
+	return runCommandOutputWithGrace(ctx, 5*time.Second, directory, environment, name, arguments...)
+}
+
+func runCommandOutputWithGrace(ctx context.Context, grace time.Duration, directory string, environment []string, name string, arguments ...string) ([]byte, error) {
 	command := exec.Command(name, arguments...)
 	command.Dir = directory
 	command.Env = append(os.Environ(), environment...)
@@ -366,16 +370,20 @@ func runCommandOutput(ctx context.Context, directory string, environment []strin
 		return output, nil
 	case <-ctx.Done():
 		_ = syscall.Kill(-command.Process.Pid, syscall.SIGTERM)
-		err, processDone, drained := waitForCommandGroup(command.Process.Pid, done, 5*time.Second)
+		err, processDone, drained := waitForCommandGroup(command.Process.Pid, done, grace)
 		if !drained {
 			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+			groupFinished := waitForProcessGroup(command.Process.Pid, grace)
 			if !processDone {
 				select {
 				case err = <-done:
 					processDone = true
-				case <-time.After(5 * time.Second):
+				case <-time.After(grace):
 					return nil, errors.Join(context.Cause(ctx), errors.New("subprocess did not exit after SIGKILL"))
 				}
+			}
+			if !groupFinished {
+				return nil, errors.Join(context.Cause(ctx), err, errors.New("subprocess group did not exit after SIGKILL"))
 			}
 			output, outputErr := readCommandOutput(outputFile)
 			if outputErr != nil {

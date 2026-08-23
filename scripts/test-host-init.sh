@@ -35,19 +35,27 @@ case $(uname -m) in
   x86_64|amd64)
     architecture=amd64
     go_arch=amd64
+    go_sha256=708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
     node_arch=x64
+    node_sha256=84d38715d449447117d05c3e71acd78daa49d5b1bfa8aacf610303920c3322be
     rustup_target=x86_64-unknown-linux-gnu
     rustup_sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c
     swiftly_arch=x86_64
+    swiftly_sha256=4c4adb7b7ad7910f38c52b94a938c309586fe395e1fe1538c397384ee36bfff0
+    swiftly_binary_sha256=e7ce91d07b4419ea779da6b575721c17eb7c44f932e63b6e2d03a9afe75cce61
     ports_suffix=
     ;;
   aarch64|arm64)
     architecture=arm64
     go_arch=arm64
+    go_sha256=d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e
     node_arch=arm64
+    node_sha256=71e427e28b78846f201d4d5ecc30cb13d1508ca099ef3871889a1256c7d6f67e
     rustup_target=aarch64-unknown-linux-gnu
     rustup_sha256=e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c
     swiftly_arch=aarch64
+    swiftly_sha256=cc4f912fff6c7f53704fc6d22f9e8ee7fdf6bd574ad276998f7502418bf5a45a
+    swiftly_binary_sha256=6531421eeb80eb69db21e41b1ed94bac1467548972eb82861fc4beb6664bd6aa
     ports_suffix=-ports
     ;;
   *) echo "missing host capability: unsupported architecture $(uname -m)" >&2; exit 1 ;;
@@ -99,6 +107,22 @@ fi
 apt-get update
 packages=(ca-certificates curl git jq xz-utils gnupg openssl build-essential clang gcc g++ g++-12 libstdc++-12-dev pkg-config libbpf-dev ethtool iproute2 iptables nftables libatomic1 libcurl4 libedit2 libicu-dev libncurses6 libpython3-dev libsqlite3-0 libxml2-dev tzdata zlib1g)
 readonly go_version=1.26.6
+readonly node_version=24.14.1
+readonly swiftly_version=1.1.3
+readonly swift_version=6.1.3
+
+verify_download() {
+  local expected=$1 path=$2 label=$3
+  if ! printf '%s  %s\n' "$expected" "$path" | sha256sum --check --status; then
+    echo "$label checksum mismatch" >&2
+    exit 1
+  fi
+}
+
+checksum_matches() {
+  local expected=$1 path=$2
+  printf '%s  %s\n' "$expected" "$path" | sha256sum --check --status
+}
 if ! command -v bpftool >/dev/null 2>&1; then
   kernel_tools="linux-tools-$(uname -r)"
   if apt-cache show "$kernel_tools" >/dev/null 2>&1; then
@@ -118,24 +142,32 @@ fi
 
 install_go() {
   local destination=$host_go_root archive
-  if [[ -x $destination/bin/go ]] && "$destination/bin/go" version | grep -Fq "go${go_version}"; then return; fi
+  if [[ -x $destination/bin/go && -f $destination/.flowersec-archive.sha256 ]] &&
+     "$destination/bin/go" version | grep -Fq "go${go_version}" &&
+     [[ $(<"$destination/.flowersec-archive.sha256") == "$go_sha256" ]]; then return; fi
   archive=$(mktemp "$host_tmp/go.XXXXXX.tar.gz")
   temporary_paths+=("$archive")
   curl -fL --retry 3 -o "$archive" "https://mirrors.aliyun.com/golang/go${go_version}.linux-${go_arch}.tar.gz"
+  verify_download "$go_sha256" "$archive" "Go archive"
   rm -rf -- "$destination"
   tar -C "$host_cache/toolchains" -xzf "$archive"
+  printf '%s\n' "$go_sha256" >"$destination/.flowersec-archive.sha256"
   rm -f -- "$archive"
 }
 
 install_node() {
-  local destination=$host_cache/toolchains/node extracted=$host_cache/toolchains/node-v24.14.1-linux-${node_arch} archive
-  if [[ -x $destination/bin/node ]] && [[ $($destination/bin/node --version) == v24.14.1 ]]; then return; fi
+  local destination=$host_cache/toolchains/node extracted=$host_cache/toolchains/node-v${node_version}-linux-${node_arch} archive
+  if [[ -x $destination/bin/node && -f $destination/.flowersec-archive.sha256 ]] &&
+     [[ $($destination/bin/node --version) == v${node_version} ]] &&
+     [[ $(<"$destination/.flowersec-archive.sha256") == "$node_sha256" ]]; then return; fi
   archive=$(mktemp "$host_tmp/node.XXXXXX.tar.xz")
   temporary_paths+=("$archive")
-  curl -fL --retry 3 -o "$archive" "https://npmmirror.com/mirrors/node/v24.14.1/node-v24.14.1-linux-${node_arch}.tar.xz"
+  curl -fL --retry 3 -o "$archive" "https://npmmirror.com/mirrors/node/v${node_version}/node-v${node_version}-linux-${node_arch}.tar.xz"
+  verify_download "$node_sha256" "$archive" "Node archive"
   rm -rf -- "$destination" "$extracted"
   tar -C "$host_cache/toolchains" -xJf "$archive"
   mv -- "$extracted" "$destination"
+  printf '%s\n' "$node_sha256" >"$destination/.flowersec-archive.sha256"
   rm -f -- "$archive"
 }
 
@@ -157,21 +189,24 @@ install_rust() {
 
 install_swift() {
   local swiftly=$host_home/.local/bin/swiftly archive bootstrap post_install
-  if [[ ! -x $swiftly ]]; then
+  if [[ ! -x $swiftly ]] || ! checksum_matches "$swiftly_binary_sha256" "$swiftly"; then
     archive=$(mktemp "$host_tmp/swiftly.XXXXXX.tar.gz")
     bootstrap=$(mktemp -d "$host_tmp/swiftly-bootstrap.XXXXXX")
     temporary_paths+=("$archive" "$bootstrap")
     curl -fL --retry 3 -o "$archive" "https://download.swift.org/swiftly/linux/swiftly-${swiftly_arch}.tar.gz"
+    verify_download "$swiftly_sha256" "$archive" "Swiftly archive"
     tar -C "$bootstrap" -xzf "$archive" swiftly
     chmod 0755 "$bootstrap/swiftly"
+    [[ $("$bootstrap/swiftly" --version) == "$swiftly_version" ]] || { echo "Swiftly version mismatch" >&2; exit 1; }
     "$bootstrap/swiftly" init --assume-yes --skip-install --no-modify-profile --quiet-shell-followup
+    verify_download "$swiftly_binary_sha256" "$swiftly" "Swiftly binary"
     rm -f -- "$archive"
     rm -rf -- "$bootstrap"
   fi
-  if ! command -v swift >/dev/null 2>&1 || ! swift --version | grep -Eq 'Swift version 6\.1(\.[0-9]+)?([[:space:]]|$)'; then
+  if ! command -v swift >/dev/null 2>&1 || ! swift --version | grep -Fq "Swift version ${swift_version}"; then
     post_install=$(mktemp "$host_tmp/swift-post-install.XXXXXX")
     temporary_paths+=("$post_install")
-    (cd "$host_home" && "$swiftly" install 6.1 --use --assume-yes --post-install-file="$post_install")
+    (cd "$host_home" && "$swiftly" install "$swift_version" --use --verify --assume-yes --post-install-file="$post_install")
     [[ ! -s $post_install ]] || /bin/bash "$post_install"
     rm -f -- "$post_install"
   fi
@@ -231,16 +266,16 @@ if [[ -e "$source_root/.swift-version" ]] && ! git -C "$source_root" ls-files --
   rm -f -- "$source_root/.swift-version"
 fi
 
-required_commands=(go make node npm rustup cargo rustc swift swiftc git curl jq tar xz gcc g++ clang clang++ openssl pkg-config python3 sh realpath ip nsenter tc nft iptables ethtool bpftool sysctl mount mountpoint umount flock)
+required_commands=(go make node npm rustup cargo rustc swift swiftc git curl jq tar xz gcc g++ clang clang++ openssl pkg-config python3 sh realpath ip nsenter tc nft iptables ethtool bpftool sysctl mount mountpoint umount flock sha256sum)
 for required in "${required_commands[@]}"; do
   resolved=$(type -P "$required" || true)
   [[ -n $resolved && $resolved == /* && -x $resolved ]] || { echo "missing host capability: $required" >&2; exit 1; }
 done
 go version | grep -F "go${go_version}" >/dev/null || { echo "missing host capability: Go ${go_version}" >&2; exit 1; }
 [[ $(go env GOROOT) == "$host_go_root" ]] || { echo "non-canonical root environment: Go root is $(go env GOROOT), expected $host_go_root" >&2; exit 1; }
-[[ $(node --version) == v24.14.1 ]] || { echo "missing host capability: Node 24.14.1" >&2; exit 1; }
+[[ $(node --version) == v${node_version} ]] || { echo "missing host capability: Node ${node_version}" >&2; exit 1; }
 rustc --version | grep -Eq 'rustc 1\.88\.0([[:space:]]|$)' || { echo "missing host capability: Rust 1.88.0" >&2; exit 1; }
-swift --version | grep -Eq 'Swift version 6\.1(\.[0-9]+)?([[:space:]]|$)' || { echo "missing host capability: Swift 6.1" >&2; exit 1; }
+swift --version | grep -F "Swift version ${swift_version}" >/dev/null || { echo "missing host capability: Swift ${swift_version}" >&2; exit 1; }
 make --version | grep -F 'GNU Make' >/dev/null || { echo "missing host capability: make" >&2; exit 1; }
 python3 --version >/dev/null || { echo "missing host capability: python3" >&2; exit 1; }
 rustup run 1.88.0 rustc --version | grep -Eq 'rustc 1\.88\.0([[:space:]]|$)' || { echo "missing host capability: rustup toolchain 1.88.0" >&2; exit 1; }
