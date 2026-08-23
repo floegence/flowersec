@@ -28,6 +28,7 @@ import {
   browserCapacityOperationDeadlineMs,
   chromiumCapacityLaunchOptions,
   createBrowserCapacityCloseBatcher,
+  createBrowserCapacityFinalizer,
   normalizeBrowserCapacityPlan,
 } from "./browser-capacity-runner-core.mjs";
 
@@ -758,6 +759,25 @@ test("batches browser capacity closes into one browser-context operation", async
   assert.equal(batches.length, 1);
   assert.equal(batches[0].length, 1000);
   assert.equal(batches[0][999].id, "session-1000");
+});
+
+test("shares browser capacity finalization and force-closes after its first failure", async () => {
+  const failure = new Error("trace failed");
+  let finalizeCalls = 0;
+  let forceCloseCalls = 0;
+  const finalize = createBrowserCapacityFinalizer(async () => {
+    finalizeCalls++;
+    throw failure;
+  }, async () => {
+    forceCloseCalls++;
+  });
+  const results = await Promise.allSettled([finalize(), finalize()]);
+  assert.deepEqual(results.map((result) => result.status), ["rejected", "rejected"]);
+  assert.equal(results[0].reason, failure);
+  assert.equal(results[1].reason, failure);
+  await assert.rejects(finalize(), failure);
+  assert.equal(finalizeCalls, 1);
+  assert.equal(forceCloseCalls, 1);
 });
 
 test("open-loop scheduler preserves ordinals, rate schedule, and inflight cap", async () => {

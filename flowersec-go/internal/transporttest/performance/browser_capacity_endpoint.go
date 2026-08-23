@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -511,7 +512,9 @@ func (endpoint *browserCapacityEndpoint) verifyOutput() error {
 	if len(endpoint.output) == 0 {
 		return nil
 	}
-	if len(endpoint.output) != 5 {
+	workload, browserProcesses, rendererShards := browserCapacityExpectedShape(endpoint.streamsPerSession)
+	expectedOutput := browserCapacityOutputPaths(filepath.Dir(endpoint.output[0]), browserProcesses)
+	if !slices.Equal(endpoint.output, expectedOutput) {
 		return errors.New("browser capacity endpoint has an incomplete output inventory")
 	}
 	for _, path := range endpoint.output {
@@ -519,7 +522,8 @@ func (endpoint *browserCapacityEndpoint) verifyOutput() error {
 			return fmt.Errorf("browser capacity output is missing: %s", filepath.Base(path))
 		}
 	}
-	resultData, err := os.ReadFile(endpoint.output[2])
+	resultIndex := browserProcesses * 2
+	resultData, err := os.ReadFile(endpoint.output[resultIndex])
 	if err != nil {
 		return err
 	}
@@ -556,7 +560,7 @@ func (endpoint *browserCapacityEndpoint) verifyOutput() error {
 	if result.CompletedStreams != wantStreams || result.PeakActiveStreams != wantStreams || result.ClosedStreams != wantStreams || result.ResidualStreams != 0 {
 		return errors.New("Chromium capacity output does not prove the exact stream contract")
 	}
-	configData, err := os.ReadFile(endpoint.output[3])
+	configData, err := os.ReadFile(endpoint.output[resultIndex+1])
 	if err != nil {
 		return err
 	}
@@ -568,26 +572,59 @@ func (endpoint *browserCapacityEndpoint) verifyOutput() error {
 		Workload              string                         `json:"workload"`
 		ConnectionsPerSession int                            `json:"connections_per_session"`
 		StreamsPerSession     int                            `json:"streams_per_session"`
+		RendererShards        int                            `json:"renderer_shards"`
+		BrowserProcesses      int                            `json:"browser_processes"`
 	}
 	if err := json.Unmarshal(configData, &config); err != nil || config.SchemaVersion != 1 || config.Topology != endpoint.topology ||
 		config.ProfileID != endpoint.profileID || config.Sessions != endpoint.sessions || config.ConnectionsPerSession != 1 ||
-		config.StreamsPerSession != endpoint.streamsPerSession || config.Workload != func() string {
-		if endpoint.streamsPerSession > 0 {
-			return "stream_capacity"
-		}
-		return "held_sessions"
-	}() {
+		config.StreamsPerSession != endpoint.streamsPerSession || config.Workload != workload ||
+		config.RendererShards != rendererShards || config.BrowserProcesses != browserProcesses {
 		return errors.New("Chromium capacity output configuration is mismatched")
 	}
-	traceHeader := make([]byte, 4)
-	trace, err := os.Open(endpoint.output[1])
-	if err != nil {
-		return err
+	return verifyBrowserCapacityTraceArchives(endpoint.output, browserProcesses)
+}
+
+func browserCapacityExpectedShape(streamsPerSession int) (workload string, browserProcesses, rendererShards int) {
+	if streamsPerSession > 0 {
+		return "stream_capacity", 2, 2
 	}
-	_, readErr := io.ReadFull(trace, traceHeader)
-	closeErr := trace.Close()
-	if readErr != nil || closeErr != nil || !bytes.Equal(traceHeader, []byte{'P', 'K', 3, 4}) {
-		return errors.New("Chromium capacity trace is not a non-empty Playwright trace archive")
+	return "held_sessions", 1, 1
+}
+
+func browserCapacityOutputPaths(outputDirectory string, browserProcesses int) []string {
+	output := make([]string, 0, browserProcesses*2+3)
+	for browserIndex := 0; browserIndex < browserProcesses; browserIndex++ {
+		netlogName := "chromium-netlog.json"
+		traceName := "chromium-trace.zip"
+		if browserIndex > 0 {
+			netlogName = fmt.Sprintf("chromium-netlog-shard-%d.json", browserIndex+1)
+			traceName = fmt.Sprintf("chromium-trace-shard-%d.zip", browserIndex+1)
+		}
+		output = append(output, filepath.Join(outputDirectory, netlogName), filepath.Join(outputDirectory, traceName))
+	}
+	return append(output,
+		filepath.Join(outputDirectory, "controller-result.json"),
+		filepath.Join(outputDirectory, "controller-config.json"),
+		filepath.Join(outputDirectory, "producer-resource.json"),
+	)
+}
+
+func verifyBrowserCapacityTraceArchives(output []string, browserProcesses int) error {
+	if browserProcesses <= 0 || len(output) < browserProcesses*2 {
+		return errors.New("Chromium capacity trace inventory is incomplete")
+	}
+	for browserIndex := 0; browserIndex < browserProcesses; browserIndex++ {
+		tracePath := output[browserIndex*2+1]
+		traceHeader := make([]byte, 4)
+		trace, err := os.Open(tracePath)
+		if err != nil {
+			return err
+		}
+		_, readErr := io.ReadFull(trace, traceHeader)
+		closeErr := trace.Close()
+		if readErr != nil || closeErr != nil || !bytes.Equal(traceHeader, []byte{'P', 'K', 3, 4}) {
+			return fmt.Errorf("Chromium capacity trace %s is not a non-empty Playwright trace archive", filepath.Base(tracePath))
+		}
 	}
 	return nil
 }
@@ -1076,13 +1113,8 @@ func startBrowserCapacityControl(ctx context.Context, config browserCapacityEndp
 			return errors.Join(context.Cause(waitCtx), killErr, waitErr, stderrErr, samplerErr, removeErr)
 		}
 	}
-	output := []string{
-		filepath.Join(config.OutputDirectory, "chromium-netlog.json"),
-		filepath.Join(config.OutputDirectory, "chromium-trace.zip"),
-		filepath.Join(config.OutputDirectory, "controller-result.json"),
-		filepath.Join(config.OutputDirectory, "controller-config.json"),
-		filepath.Join(config.OutputDirectory, "producer-resource.json"),
-	}
+	_, browserProcesses, _ := browserCapacityExpectedShape(config.StreamsPerSession)
+	output := browserCapacityOutputPaths(config.OutputDirectory, browserProcesses)
 	return control, wait, output, nil
 }
 

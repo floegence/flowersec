@@ -132,4 +132,42 @@ describe("transport v3 record protocol", () => {
       expect(() => decode(source)).toThrowError(ProtocolV3Error);
     }
   });
+
+  test("public record helpers reject invalid AAD domain inputs", () => {
+    const vector = fixture.vectors[0]!;
+    const direction = vector.direction as DirectionV3;
+    const h3 = fromHex(vector.h3_hex);
+    const roots = deriveEpochZero(fromHex(vector.session_prk_hex), direction);
+    const material = deriveStreamMaterial(
+      roots.streamRoot,
+      h3,
+      BigInt(vector.logical_stream_id),
+      direction,
+      vector.epoch,
+    );
+    const inner = buildDataInner(Uint8Array.of(1));
+    const header: RecordHeaderV3 = {
+      epoch: vector.epoch,
+      sequence: BigInt(vector.sequence),
+      ciphertextLength: inner.length + 16,
+    };
+    const ciphertext = sealRecord(
+      CipherSuiteV3.ChaCha20Poly1305,
+      material,
+      h3,
+      BigInt(vector.logical_stream_id),
+      direction,
+      header,
+      inner,
+    );
+    const badDirection = 3 as DirectionV3;
+    for (const operation of [
+      () => sealRecord(CipherSuiteV3.ChaCha20Poly1305, material, new Uint8Array(31), 1n, direction, header, inner),
+      () => sealRecord(CipherSuiteV3.ChaCha20Poly1305, material, h3, 1n, badDirection, header, inner),
+      () => openRecord(CipherSuiteV3.ChaCha20Poly1305, material, new Uint8Array(31), 1n, direction, header, ciphertext),
+      () => openRecord(CipherSuiteV3.ChaCha20Poly1305, material, h3, 1n, badDirection, header, ciphertext),
+    ]) {
+      expect(operation).toThrowError(ProtocolV3Error);
+    }
+  });
 });

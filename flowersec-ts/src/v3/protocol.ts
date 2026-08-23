@@ -609,6 +609,8 @@ export function sealRecord(
   header: RecordHeaderV3,
   plaintext: Uint8Array,
 ): Uint8Array {
+  assertBytes("H3", h3, 32);
+  assertDirection(direction);
   return sealRecordWireV3Internal(suite, material, h3, logicalStreamID, direction, header, plaintext).ciphertext;
 }
 
@@ -643,6 +645,8 @@ export function openRecord(
   header: RecordHeaderV3,
   ciphertext: Uint8Array,
 ): Uint8Array {
+  assertBytes("H3", h3, 32);
+  assertDirection(direction);
   const rawHeader = encodeRecordHeader(header);
   return openRecordWithRawHeaderV3Internal(
     suite, material, h3, logicalStreamID, direction, header, rawHeader, ciphertext,
@@ -904,73 +908,64 @@ function canonicalMetadata(raw: Uint8Array, allowEmpty: boolean): Uint8Array {
 export function canonicalStreamMetadataJSONV3Internal(value: unknown): string {
   if (!isJSONObject(value)) throw new ProtocolV3Error("OPEN metadata root must be an object");
   const state = { nodes: -1 };
-  validateMetadataValue(value, 1, state);
-  const canonical = canonicalJSONString(value);
+  const canonical = canonicalValidatedMetadataJSONString(value, 1, state);
   if (encoder.encode(canonical).length > MAX_OPEN_METADATA_BYTES) {
     throw new ProtocolV3Error("OPEN metadata is too large");
   }
   return canonical;
 }
 
-function validateMetadataValue(
+function canonicalValidatedMetadataJSONString(
   value: unknown,
   depth: number,
   state: { nodes: number },
-): void {
+): string {
   if (depth > MAX_OPEN_METADATA_DEPTH)
     throw new ProtocolV3Error("OPEN metadata exceeds depth limit");
   state.nodes += 1;
   if (state.nodes > MAX_OPEN_METADATA_NODES)
     throw new ProtocolV3Error("OPEN metadata exceeds node limit");
-  if (value === null || typeof value === "boolean") return;
+  if (value === null) return "null";
+  if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") {
-    if (!Number.isSafeInteger(value))
+    if (!Number.isSafeInteger(value) || Object.is(value, -0))
       throw new ProtocolV3Error(
         "OPEN metadata number is not an I-JSON safe integer",
       );
-    return;
+    return value.toString(10);
   }
   if (typeof value === "string") {
     if (!validOpenUnicodeString(value, MAX_OPEN_METADATA_STRING_BYTES, true)) {
       throw new ProtocolV3Error("invalid OPEN metadata string");
     }
-    return;
+    return quoteCanonicalJSONString(value);
   }
   if (Array.isArray(value)) {
-    if (value.length > MAX_OPEN_METADATA_ARRAY)
+    const length = value.length;
+    if (length > MAX_OPEN_METADATA_ARRAY)
       throw new ProtocolV3Error("OPEN metadata array is too large");
-    for (const item of value) validateMetadataValue(item, depth + 1, state);
-    return;
+    const items = new Array<string>(length);
+    for (let index = 0; index < length; index++) {
+      const item = value[index];
+      items[index] = canonicalValidatedMetadataJSONString(item, depth + 1, state);
+    }
+    return `[${items.join(",")}]`;
   }
   if (!isJSONObject(value))
     throw new ProtocolV3Error("unsupported OPEN metadata value");
-  const keys = Object.keys(value);
+  const keys = Object.keys(value).sort();
   if (keys.length > MAX_OPEN_METADATA_KEYS)
     throw new ProtocolV3Error("OPEN metadata object is too large");
+  const members = new Array<string>(keys.length);
+  let index = 0;
   for (const key of keys) {
     if (!validOpenUnicodeString(key, MAX_OPEN_METADATA_KEY_BYTES, false)) {
       throw new ProtocolV3Error("invalid OPEN metadata key");
     }
-    validateMetadataValue(value[key], depth + 1, state);
+    const item = value[key];
+    members[index++] = `${quoteCanonicalJSONString(key)}:${canonicalValidatedMetadataJSONString(item, depth + 1, state)}`;
   }
-}
-
-function canonicalJSONString(value: unknown): string {
-  if (value === null) return "null";
-  if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "number") return value.toString(10);
-  if (typeof value === "string") return quoteCanonicalJSONString(value);
-  if (Array.isArray(value))
-    return `[${value.map(canonicalJSONString).join(",")}]`;
-  if (!isJSONObject(value))
-    throw new ProtocolV3Error("unsupported OPEN metadata value");
-  return `{${Object.keys(value)
-    .sort()
-    .map(
-      (key) =>
-        `${quoteCanonicalJSONString(key)}:${canonicalJSONString(value[key])}`,
-    )
-    .join(",")}}`;
+  return `{${members.join(",")}}`;
 }
 
 function quoteCanonicalJSONString(value: string): string {

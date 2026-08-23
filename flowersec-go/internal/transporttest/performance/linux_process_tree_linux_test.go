@@ -70,13 +70,14 @@ func TestReadLinuxCgroupResourcesSupportsSampledAndNativeMemoryPeak(t *testing.T
 			t.Fatal(err)
 		}
 	}
-	write("cpu.stat", "usage_usec 42\n")
+	write("cpu.stat", "usage_usec 0\n")
 	write("memory.current", "1024\n")
 	write("pids.current", "3\n")
 	cpu, current, peak, pids, native, err := readLinuxCgroupResources(directory)
-	if err != nil || cpu != 42_000 || current != 1024 || peak != 0 || pids != 3 || native {
+	if err != nil || cpu != 0 || current != 1024 || peak != 0 || pids != 3 || native {
 		t.Fatalf("sampled resources = %d/%d/%d/%d/%t, error = %v", cpu, current, peak, pids, native, err)
 	}
+	write("cpu.stat", "usage_usec 42\n")
 	write("memory.peak", "2048\n")
 	cpu, current, peak, pids, native, err = readLinuxCgroupResources(directory)
 	if err != nil || cpu != 42_000 || current != 1024 || peak != 2048 || pids != 3 || !native {

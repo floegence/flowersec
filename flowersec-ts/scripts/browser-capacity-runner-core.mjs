@@ -101,6 +101,24 @@ export function createBrowserCapacityCloseBatcher(executeBatch, options = {}) {
   });
 }
 
+export function createBrowserCapacityFinalizer(finalizeStep, forceClose) {
+  if (typeof finalizeStep !== "function" || typeof forceClose !== "function") {
+    throw new TypeError("browser capacity finalizer callbacks are required");
+  }
+  let finalization;
+  return async function finalize() {
+    finalization ??= (async () => {
+      try {
+        await finalizeStep();
+      } catch (error) {
+        await Promise.resolve().then(forceClose).catch(() => undefined);
+        throw error;
+      }
+    })();
+    return await finalization;
+  };
+}
+
 export function chromiumCapacityLaunchOptions(plan, chromiumExecutable, launcherPath, moduleOrigin, browserProcessIndex = 0) {
   const normalized = normalizeBrowserCapacityPlan(plan);
   exactInteger(browserProcessIndex, "browser process index", 0, normalized.browser_processes - 1);

@@ -13,6 +13,7 @@ import {
   chromiumCapacityLaunchOptions,
   chromiumExecutablePath,
   createBrowserCapacityCloseBatcher,
+  createBrowserCapacityFinalizer,
   normalizeBrowserCapacityPlan,
 } from "./browser-capacity-runner-core.mjs";
 import {
@@ -58,7 +59,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
   let server;
   let quiesced = false;
   let lastChromiumMetrics = {};
-  let finalized = false;
+  const finalize = createBrowserCapacityFinalizer(finalizeController, forceClose);
 
   const recordEvent = (event, sessionID = "") => {
     events.push({
@@ -457,9 +458,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
     async close() { await finalize(); },
   };
 
-  async function finalize() {
-    if (finalized) return;
-    finalized = true;
+  async function finalizeController() {
     await quiesce();
     const residualSessions = activeSessions(records);
     recordEvent("controller_shutdown");

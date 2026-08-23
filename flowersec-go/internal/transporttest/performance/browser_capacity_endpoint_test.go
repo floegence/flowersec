@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
@@ -237,6 +239,49 @@ func TestAggregateBrowserCapacityResourcesIncludesChromiumProcessTree(t *testing
 	got, err = aggregateBrowserCapacityResources(runner, tree)
 	if err != nil || got.RSSBytes != 1300 {
 		t.Fatalf("fallback aggregate = %+v, error = %v", got, err)
+	}
+}
+
+func TestBrowserCapacityOutputInventoryAndTracesCoverEveryChromiumProcess(t *testing.T) {
+	directory := t.TempDir()
+	streamPaths := browserCapacityOutputPaths(directory, 2)
+	wantNames := []string{
+		"chromium-netlog.json", "chromium-trace.zip",
+		"chromium-netlog-shard-2.json", "chromium-trace-shard-2.zip",
+		"controller-result.json", "controller-config.json", "producer-resource.json",
+	}
+	if len(streamPaths) != len(wantNames) {
+		t.Fatalf("stream output paths = %v", streamPaths)
+	}
+	for index, name := range wantNames {
+		if filepath.Base(streamPaths[index]) != name {
+			t.Fatalf("stream output[%d] = %q, want %q", index, filepath.Base(streamPaths[index]), name)
+		}
+	}
+	heldPaths := browserCapacityOutputPaths(directory, 1)
+	if len(heldPaths) != 5 || filepath.Base(heldPaths[2]) != "controller-result.json" {
+		t.Fatalf("held output paths = %v", heldPaths)
+	}
+	for _, traceIndex := range []int{1, 3} {
+		if err := os.WriteFile(streamPaths[traceIndex], []byte{'P', 'K', 3, 4}, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := verifyBrowserCapacityTraceArchives(streamPaths, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(streamPaths[3], []byte("bad"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyBrowserCapacityTraceArchives(streamPaths, 2); err == nil {
+		t.Fatal("second Chromium trace corruption was accepted")
+	}
+
+	if workload, processes, shards := browserCapacityExpectedShape(128); workload != "stream_capacity" || processes != 2 || shards != 2 {
+		t.Fatalf("stream shape = %q/%d/%d", workload, processes, shards)
+	}
+	if workload, processes, shards := browserCapacityExpectedShape(0); workload != "held_sessions" || processes != 1 || shards != 1 {
+		t.Fatalf("held shape = %q/%d/%d", workload, processes, shards)
 	}
 }
 

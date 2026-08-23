@@ -429,14 +429,16 @@ func readLinuxCgroupResources(directory string) (cpu, memoryCurrent, memoryPeak 
 		return 0, 0, 0, 0, false, err
 	}
 	var usageMicroseconds uint64
+	foundUsage := false
 	for _, line := range strings.Split(string(cpuData), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 2 && fields[0] == "usage_usec" {
+			foundUsage = true
 			usageMicroseconds, err = strconv.ParseUint(fields[1], 10, 64)
 			break
 		}
 	}
-	if err != nil || usageMicroseconds == 0 || usageMicroseconds > math.MaxUint64/1000 {
+	if !foundUsage || err != nil || usageMicroseconds > math.MaxUint64/1000 {
 		return 0, 0, 0, 0, false, errors.New("cgroup CPU usage is invalid")
 	}
 	memoryCurrent, err = readLinuxCgroupUint(directory, "memory.current")

@@ -72,7 +72,20 @@ describe("transport v3 inherited session wire boundaries", () => {
       metadata,
     });
     expect(() => encode({ unsafe: Number.MAX_SAFE_INTEGER + 1 })).toThrowError(ProtocolV3Error);
+    expect(() => encode({ negative_zero: -0 })).toThrowError(ProtocolV3Error);
     expect(() => encode({ "control\u0000": true })).toThrowError(ProtocolV3Error);
+
+    let reads = 0;
+    const changing = Object.defineProperty({}, "value", {
+      enumerable: true,
+      get() {
+        reads++;
+        return reads === 1 ? 1 : Number.MAX_SAFE_INTEGER + 1;
+      },
+    });
+    const decoded = decodeOpenPayload(encode(changing));
+    expect(new TextDecoder().decode(decoded.metadata)).toBe('{"value":1}');
+    expect(reads).toBe(1);
   });
 
   test("rejects every invalid OPEN Unicode or canonical encoding", () => {
