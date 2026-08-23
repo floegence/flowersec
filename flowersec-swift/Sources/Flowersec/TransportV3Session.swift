@@ -408,9 +408,6 @@ actor TransportV3Session {
     unfreezeInboundResponders(peerInitiated: false)
     finishRekeyGate()
     if completionFailed {
-      // Publish the bounded operation result only after releasing its gates,
-      // but before starting the independent close flush.
-      await result.fail(TransportV3SessionError.rekeyFailed)
       if !closing, !closed {
         _ = initiateClose(
           goAwayReason: 6,
@@ -420,6 +417,9 @@ actor TransportV3Session {
           terminalError: .protocolViolation
         )
       }
+      // Seal the session before resuming the public rekey waiter. Actor
+      // reentrancy must not expose a failed post-commit epoch as still open.
+      await result.fail(TransportV3SessionError.rekeyFailed)
     } else {
       await result.succeed()
     }
@@ -1304,24 +1304,24 @@ actor TransportV3Session {
     let freezeWaiterID = allocateLifecycleWaiterID()
     try await freezeInboundResponders(peerInitiated: true, waiterID: freezeWaiterID)
     defer { unfreezeInboundResponders(peerInitiated: true) }
-    let hadReceiveRoot = receiveRoots[nextEpoch] != nil
     try prepareReceiveEpoch(nextEpoch)
     let activeStreams = Array(streams.values)
     for stream in activeStreams {
       try await stream.awaitReceiveRekey(transition: transition, nextEpoch: nextEpoch)
       guard !closed else { throw TransportV3SessionError.closed }
     }
-    do {
-      try await sendControl(.sessionKeyUpdateACK, payload: payload)
-    } catch let error as TransportV3SessionError where error == .closed {
-      if !hadReceiveRoot { receiveRoots.removeValue(forKey: nextEpoch) }
-      return
-    }
+    // Publish the receive cutover before the ACK write can become visible to
+    // the peer and authorize its next-epoch traffic.
     receiveEpoch = nextEpoch
     receivedTransition = transition
     trimReceiveRoots()
     for stream in activeStreams {
       await stream.publishReceiveRekey(transition: transition, nextEpoch: nextEpoch)
+    }
+    do {
+      try await sendControl(.sessionKeyUpdateACK, payload: payload)
+    } catch let error as TransportV3SessionError where error == .closed {
+      return
     }
   }
 
@@ -1560,7 +1560,6 @@ actor TransportV3Session {
 
   private func expireRekey(transition: UInt64) async {
     guard let pendingRekey, pendingRekey.transition == transition else { return }
-    await pendingRekey.signal.fail(TransportV3SessionError.rekeyFailed)
     _ = initiateClose(
       goAwayReason: 6,
       closeReason: 6,
@@ -1568,6 +1567,7 @@ actor TransportV3Session {
       carrierReason: "rekey completion timeout",
       terminalError: .timeout
     )
+    await pendingRekey.signal.fail(TransportV3SessionError.rekeyFailed)
   }
 
   private func cancelIncomingWaiter(_ waiterID: UInt64) {
@@ -1954,6 +1954,8 @@ actor TransportV3Session {
   }
 
   func sendEpochForTesting() -> UInt32 { sendEpoch }
+
+  func receiveEpochForTesting() -> UInt32 { receiveEpoch }
 
   func nextTransitionForTesting() -> UInt64 { nextTransition }
 
@@ -2753,8 +2755,8 @@ func classifyRekeyACKV3<Value: Equatable>(
   pending: Value?,
   lastAccepted: Value?
 ) throws -> RekeyACKDispositionV3 {
-  if pending == received { return .accepted }
   if lastAccepted == received { return .duplicate }
+  if pending == received { return .accepted }
   throw TransportV3ProtocolStateError.invalidTransition
 }
 

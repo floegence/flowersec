@@ -835,10 +835,15 @@ export class SessionV3 implements SessionV3Contract {
     else await raceAbort(task, signal);
   }
 
-  private async sendControlResponse(type: InnerTypeV3, payload: Uint8Array): Promise<boolean> {
+  private async sendControlResponse(
+    type: InnerTypeV3,
+    payload: Uint8Array,
+    publish?: () => void,
+  ): Promise<boolean> {
     if (this.lifecycle !== "open" || this.controlTerminalSealed) return false;
     const task = this.controlWriteTail.then(async () => {
       if (this.lifecycle !== "open" || this.controlTerminalSealed) return false;
+      publish?.();
       await this.writeControl(type, payload);
       return true;
     });
@@ -1221,18 +1226,23 @@ export class SessionV3 implements SessionV3Contract {
     }
     const streams = [...this.streams.values()];
     await Promise.all(streams.map(async (stream) => await stream.waitReceiveRekey(transition, nextEpoch, signal)));
-    const acknowledged = await raceAbort(this.sendControlResponse(InnerTypeV3.SessionKeyUpdateACK, payload), signal);
+    const acknowledged = await raceAbort(this.sendControlResponse(
+      InnerTypeV3.SessionKeyUpdateACK,
+      payload,
+      () => {
+        this.receiveEpoch = nextEpoch;
+        this.receiveTransition = transition;
+        this.pendingReceiveEpoch = undefined;
+        for (const stream of streams) stream.publishReceiveRekey(transition, nextEpoch);
+        this.cleanupEpochRoots();
+      },
+    ), signal);
     if (!acknowledged) {
       this.pendingReceiveEpoch = undefined;
       this.cleanupEpochRoots();
       return;
     }
     throwIfAborted(signal);
-    this.receiveEpoch = nextEpoch;
-    this.receiveTransition = transition;
-    this.pendingReceiveEpoch = undefined;
-    for (const stream of streams) stream.publishReceiveRekey(transition, nextEpoch);
-    this.cleanupEpochRoots();
   }
 
   private validateSessionRekeySequence(payload: Uint8Array): void {

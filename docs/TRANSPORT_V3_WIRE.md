@@ -408,25 +408,7 @@ closed. After accepting `UINT64_MAX`, or while receiving at epoch
 `UINT32_MAX`, a receiver rejects every further SESSION_KEY_UPDATE as a
 protocol failure before waiting for responders. The
 `testdata/transport_v3/session_wire_vectors.json` fixture freezes both
-boundaries and their lifecycle alongside the inherited session payload
-vectors.
-
-An exhaustion GOAWAY write failure returns `resource_exhausted` for the rekey
-attempt and terminates the session with `operation_failed`. Missing the
-preparation deadline returns `rekey_failed` and terminates the session with
-`timeout`. These are portable public error codes; language-specific internal
-error types may differ. Before rekey commit, caller cancellation cancels the
-operation. After commit, the session owns the bounded completion workflow:
-caller cancellation returns `canceled` only to that caller, while the rekey
-continues under `rekey_completion_timeout_seconds` and leaves the session open
-when it succeeds. If that session-owned workflow reaches its completion
-deadline, a still-waiting rekey operation returns `rekey_failed`, a previously
-canceled caller remains `canceled`, and the session terminates with `timeout`.
-An ordinary pre-commit preparation deadline returns `rekey_failed` and leaves
-the session open. Any other post-commit completion failure returns
-`rekey_failed`, terminates the session with `operation_failed`, and leaves it
-closed. Session `Close` is a completion barrier for the session-owned rekey
-workflow and does not return while its gates or pending state remain owned.
+boundaries alongside the inherited session payload vectors.
 
 An authenticated logical-stream FIN is clean only when the carrier read side
 then reaches native EOF without another byte. The receiver does not publish

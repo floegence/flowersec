@@ -2072,7 +2072,12 @@ async fn run_owned_rekey_v3(session: &SelfSession, prepared: PreparedRekeyV3) ->
     )
     .await
     {
-        Ok(result) => result,
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(_)) if session.is_closed() => Err(terminal_error_v3(session)),
+        Ok(Err(error)) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Flowersec v3 rekey completion failed: {error}"),
+        )),
         Err(_) => Err(io::Error::new(
             io::ErrorKind::TimedOut,
             "Flowersec v3 rekey completion timeout",
@@ -5995,37 +6000,6 @@ mod tests {
         assert_eq!(epoch["exhaustion_goaway_reason"], 5);
         assert_eq!(epoch["receive_after_maximum"], "protocol_failure");
         assert_eq!(epoch["goaway_delivery_failure"], "session_failure");
-        let lifecycle = &fixture["rekey_lifecycle"];
-        let write = &lifecycle["exhaustion_goaway_write_failure"];
-        assert_eq!(write["operation_error"], "resource_exhausted");
-        assert_eq!(write["termination_error"], "operation_failed");
-        assert_eq!(write["session_state"], "closed");
-        let deadline = &lifecycle["exhaustion_goaway_deadline_expiry"];
-        assert_eq!(deadline["operation_error"], "rekey_failed");
-        assert_eq!(deadline["termination_error"], "timeout");
-        assert_eq!(deadline["session_state"], "closed");
-        let cancellation = &lifecycle["post_commit_caller_cancellation"];
-        assert_eq!(cancellation["caller_error"], "canceled");
-        assert_eq!(cancellation["completion_owner"], "session");
-        assert_eq!(
-            cancellation["completion_deadline"],
-            "rekey_completion_timeout_seconds"
-        );
-        assert_eq!(cancellation["session_state_after_success"], "open");
-        let preparation = &lifecycle["pre_commit_preparation_timeout"];
-        assert_eq!(preparation["operation_error"], "rekey_failed");
-        assert_eq!(preparation["session_state"], "open");
-        let failure = &lifecycle["post_commit_failure"];
-        assert_eq!(failure["operation_error"], "rekey_failed");
-        assert_eq!(failure["termination_error"], "operation_failed");
-        assert_eq!(failure["session_state"], "closed");
-        let timeout = &lifecycle["post_commit_completion_timeout"];
-        assert_eq!(timeout["operation_error"], "rekey_failed");
-        assert_eq!(timeout["canceled_caller_error"], "canceled");
-        assert_eq!(timeout["termination_error"], "timeout");
-        assert_eq!(timeout["session_state"], "closed");
-        assert_eq!(timeout["completion_owner"], "session");
-        assert_eq!(lifecycle["close_waits_for_owned_completion"], true);
     }
 
     #[tokio::test]

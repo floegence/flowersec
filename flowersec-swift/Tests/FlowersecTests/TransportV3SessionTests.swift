@@ -1208,6 +1208,9 @@ final class TransportV3SessionTests: XCTestCase {
     } catch let error as SessionError {
       XCTAssertEqual(error, .rekeyFailed)
     }
+    await assertThrowsAsync {
+      _ = try await clientSession.probeLiveness()
+    }
     let terminal = await publicSession.waitTermination()
     XCTAssertEqual(terminal.error, .operationFailed)
 
@@ -1613,31 +1616,6 @@ final class TransportV3SessionTests: XCTestCase {
     XCTAssertEqual(epoch.receiveAfterMaximum, "protocol_failure")
     XCTAssertEqual(epoch.goAwayDeliveryFailure, "session_failure")
 
-    let lifecycle = vectors.rekeyLifecycle
-    XCTAssertEqual(lifecycle.exhaustionGoAwayWriteFailure.operationError, "resource_exhausted")
-    XCTAssertEqual(lifecycle.exhaustionGoAwayWriteFailure.terminationError, "operation_failed")
-    XCTAssertEqual(lifecycle.exhaustionGoAwayWriteFailure.sessionState, "closed")
-    XCTAssertEqual(lifecycle.exhaustionGoAwayDeadlineExpiry.operationError, "rekey_failed")
-    XCTAssertEqual(lifecycle.exhaustionGoAwayDeadlineExpiry.terminationError, "timeout")
-    XCTAssertEqual(lifecycle.exhaustionGoAwayDeadlineExpiry.sessionState, "closed")
-    XCTAssertEqual(lifecycle.postCommitCallerCancellation.callerError, "canceled")
-    XCTAssertEqual(lifecycle.postCommitCallerCancellation.completionOwner, "session")
-    XCTAssertEqual(
-      lifecycle.postCommitCallerCancellation.completionDeadline,
-      "rekey_completion_timeout_seconds"
-    )
-    XCTAssertEqual(lifecycle.postCommitCallerCancellation.sessionStateAfterSuccess, "open")
-    XCTAssertEqual(lifecycle.preCommitPreparationTimeout.operationError, "rekey_failed")
-    XCTAssertEqual(lifecycle.preCommitPreparationTimeout.sessionState, "open")
-    XCTAssertEqual(lifecycle.postCommitFailure.operationError, "rekey_failed")
-    XCTAssertEqual(lifecycle.postCommitFailure.terminationError, "operation_failed")
-    XCTAssertEqual(lifecycle.postCommitFailure.sessionState, "closed")
-    XCTAssertEqual(lifecycle.postCommitCompletionTimeout.operationError, "rekey_failed")
-    XCTAssertEqual(lifecycle.postCommitCompletionTimeout.canceledCallerError, "canceled")
-    XCTAssertEqual(lifecycle.postCommitCompletionTimeout.terminationError, "timeout")
-    XCTAssertEqual(lifecycle.postCommitCompletionTimeout.sessionState, "closed")
-    XCTAssertEqual(lifecycle.postCommitCompletionTimeout.completionOwner, "session")
-    XCTAssertTrue(lifecycle.closeWaitsForOwnedCompletion)
   }
 
   func testTransitionMaximumUsesProductionRekeyOnceThenExhausts() async throws {
@@ -1809,6 +1787,10 @@ final class TransportV3SessionTests: XCTestCase {
       try classifyRekeyACKV3(received: expected, pending: nil, lastAccepted: expected),
       .duplicate
     )
+    XCTAssertEqual(
+      try classifyRekeyACKV3(received: expected, pending: expected, lastAccepted: expected),
+      .duplicate
+    )
     XCTAssertThrowsError(
       try classifyRekeyACKV3(
         received: StreamKeyUpdateACKPayloadV3(
@@ -1820,6 +1802,31 @@ final class TransportV3SessionTests: XCTestCase {
         lastAccepted: expected
       )
     )
+  }
+
+  func testReceiveEpochIsPublishedBeforeSessionRekeyACKWriteCompletes() async throws {
+    let blocker = SwitchableWriteBlocker()
+    let (clientCarrier, serverBase) = MemoryCarrierSession.pair()
+    let serverCarrier = StallableWriteCarrierSession(
+      base: serverBase,
+      blocker: blocker,
+      blockAcceptedStreamNumber: 1
+    )
+    let configs = try makeConfigs()
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+
+    await blocker.enable(afterSuccessfulWrites: 0)
+    let rekeying = Task { try await clientSession.rekey() }
+    await blocker.waitUntilBlocked()
+    let receiveEpoch = await serverSession.receiveEpochForTesting()
+    XCTAssertEqual(receiveEpoch, 1)
+    await blocker.release()
+    try await rekeying.value
+
+    try? await clientSession.close()
+    try? await serverSession.close()
   }
 
   func testGoAwayUsesResolvedBoundaryAndRejectsNewOpen() async throws {
@@ -2484,85 +2491,11 @@ private struct SessionWireVectors: Decodable {
   let streamKeyUpdateACK: [StreamKeyUpdateACKVector]
   let transitionBoundary: TransitionBoundaryVector
   let epochBoundary: EpochBoundaryVector
-  let rekeyLifecycle: RekeyLifecycleVector
 
   enum CodingKeys: String, CodingKey {
     case streamKeyUpdateACK = "stream_key_update_ack"
     case transitionBoundary = "transition_boundary"
     case epochBoundary = "epoch_boundary"
-    case rekeyLifecycle = "rekey_lifecycle"
-  }
-}
-
-private struct RekeyFailureLifecycleVector: Decodable {
-  let operationError: String
-  let terminationError: String
-  let sessionState: String
-
-  enum CodingKeys: String, CodingKey {
-    case operationError = "operation_error"
-    case terminationError = "termination_error"
-    case sessionState = "session_state"
-  }
-}
-
-private struct RekeyCallerCancellationVector: Decodable {
-  let callerError: String
-  let completionOwner: String
-  let completionDeadline: String
-  let sessionStateAfterSuccess: String
-
-  enum CodingKeys: String, CodingKey {
-    case callerError = "caller_error"
-    case completionOwner = "completion_owner"
-    case completionDeadline = "completion_deadline"
-    case sessionStateAfterSuccess = "session_state_after_success"
-  }
-}
-
-private struct RekeyOperationLifecycleVector: Decodable {
-  let operationError: String
-  let sessionState: String
-
-  enum CodingKeys: String, CodingKey {
-    case operationError = "operation_error"
-    case sessionState = "session_state"
-  }
-}
-
-private struct RekeyCompletionTimeoutVector: Decodable {
-  let operationError: String
-  let canceledCallerError: String
-  let terminationError: String
-  let sessionState: String
-  let completionOwner: String
-
-  enum CodingKeys: String, CodingKey {
-    case operationError = "operation_error"
-    case canceledCallerError = "canceled_caller_error"
-    case terminationError = "termination_error"
-    case sessionState = "session_state"
-    case completionOwner = "completion_owner"
-  }
-}
-
-private struct RekeyLifecycleVector: Decodable {
-  let exhaustionGoAwayWriteFailure: RekeyFailureLifecycleVector
-  let exhaustionGoAwayDeadlineExpiry: RekeyFailureLifecycleVector
-  let postCommitCallerCancellation: RekeyCallerCancellationVector
-  let preCommitPreparationTimeout: RekeyOperationLifecycleVector
-  let postCommitFailure: RekeyFailureLifecycleVector
-  let postCommitCompletionTimeout: RekeyCompletionTimeoutVector
-  let closeWaitsForOwnedCompletion: Bool
-
-  enum CodingKeys: String, CodingKey {
-    case exhaustionGoAwayWriteFailure = "exhaustion_goaway_write_failure"
-    case exhaustionGoAwayDeadlineExpiry = "exhaustion_goaway_deadline_expiry"
-    case postCommitCallerCancellation = "post_commit_caller_cancellation"
-    case preCommitPreparationTimeout = "pre_commit_preparation_timeout"
-    case postCommitFailure = "post_commit_failure"
-    case postCommitCompletionTimeout = "post_commit_completion_timeout"
-    case closeWaitsForOwnedCompletion = "close_waits_for_owned_completion"
   }
 }
 

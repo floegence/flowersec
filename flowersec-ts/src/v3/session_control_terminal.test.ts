@@ -156,6 +156,42 @@ describe("SessionV3 control terminal serialization", () => {
     await server.waitTermination();
   });
 
+  test("publishes receive epoch before the rekey ACK can be exposed", async () => {
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, config("client")),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const internals = sessionInternals(client);
+    const originalSendResponse = internals.sendControlResponse.bind(client);
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    internals.sendControlResponse = async (type, _payload, publish) => {
+      expect(type).toBe(InnerTypeV3.SessionKeyUpdateACK);
+      publish?.();
+      entered.resolve();
+      await release.promise;
+      return true;
+    };
+
+    const receiving = internals.receiveSessionRekeyBeforeDeadline(
+      sessionRekeyPayload(),
+      new AbortController().signal,
+    );
+    await entered.promise;
+    expect(internals.receiveEpoch).toBe(1);
+    expect(internals.receiveTransition).toBe(1n);
+    release.resolve();
+    await receiving;
+
+    internals.sendControlResponse = originalSendResponse;
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
   test("does not consume a session rekey transition when prepare is cancelled", async () => {
     const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
       kind: "webtransport",
@@ -725,7 +761,7 @@ type SessionInternals = {
   openLogicalStream(kind: string, options: Readonly<{ metadata?: Readonly<Record<string, unknown>> }>, internal: boolean): Promise<unknown>;
   releaseStream(stream: StreamInternals): void;
   sendControl(type: InnerTypeV3, payload: Uint8Array): Promise<void>;
-  sendControlResponse(type: InnerTypeV3, payload: Uint8Array): Promise<boolean>;
+  sendControlResponse(type: InnerTypeV3, payload: Uint8Array, publish?: () => void): Promise<boolean>;
   sendControlCleanup(type: InnerTypeV3, payload: Uint8Array): Promise<boolean>;
   receiveSessionRekey(payload: Uint8Array): Promise<void>;
   receiveSessionRekeyBeforeDeadline(payload: Uint8Array, signal: AbortSignal): Promise<void>;

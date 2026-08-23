@@ -898,13 +898,13 @@ func (s *engineSession) handleSessionUpdateACK(payload []byte) error {
 		return ErrSessionProtocol
 	}
 	s.pendingRekeyMu.Lock()
+	if s.hasLastRekeyACK && bytes.Equal(payload, s.lastRekeyACK[:]) {
+		s.pendingRekeyMu.Unlock()
+		return nil
+	}
 	pending := s.pendingRekey
 	if pending == nil {
-		duplicate := s.hasLastRekeyACK && bytes.Equal(payload, s.lastRekeyACK[:])
 		s.pendingRekeyMu.Unlock()
-		if duplicate {
-			return nil
-		}
 		return ErrSessionProtocol
 	}
 	if !bytes.Equal(payload, pending.payload[:]) {

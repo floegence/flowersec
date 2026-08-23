@@ -240,40 +240,5 @@ write(
       receive_after_maximum: "protocol_failure",
       goaway_delivery_failure: "session_failure",
     },
-    rekey_lifecycle: {
-      exhaustion_goaway_write_failure: {
-        operation_error: "resource_exhausted",
-        termination_error: "operation_failed",
-        session_state: "closed",
-      },
-      exhaustion_goaway_deadline_expiry: {
-        operation_error: "rekey_failed",
-        termination_error: "timeout",
-        session_state: "closed",
-      },
-      post_commit_caller_cancellation: {
-        caller_error: "canceled",
-        completion_owner: "session",
-        completion_deadline: "rekey_completion_timeout_seconds",
-        session_state_after_success: "open",
-      },
-      pre_commit_preparation_timeout: {
-        operation_error: "rekey_failed",
-        session_state: "open",
-      },
-      post_commit_failure: {
-        operation_error: "rekey_failed",
-        termination_error: "operation_failed",
-        session_state: "closed",
-      },
-      post_commit_completion_timeout: {
-        operation_error: "rekey_failed",
-        canceled_caller_error: "canceled",
-        termination_error: "timeout",
-        session_state: "closed",
-        completion_owner: "session",
-      },
-      close_waits_for_owned_completion: true,
-    },
   },
 );

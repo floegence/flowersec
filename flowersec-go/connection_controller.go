@@ -499,7 +499,14 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			cycle.consecutiveFailures = saturatingControllerIncrement(cycle.consecutiveFailures)
 			cycle.lastFailure = outcome.err
 			code := connectErrorCode(outcome.err)
-			if len(outcome.triggerCandidates) != 0 && !outcome.spendStarted {
+			// The mandatory race-end expiry check is authoritative over any
+			// candidate diagnostic collected before that boundary. In particular,
+			// stale TLS diagnostics cannot turn an expired artifact into a policy
+			// replacement attempt.
+			if code == ConnectExpired {
+				cycle.mode = controllerAcquirePrimary
+			}
+			if code != ConnectExpired && len(outcome.triggerCandidates) != 0 && !outcome.spendStarted {
 				cycle.recordTriggers(claimed.lease.artifact.value, outcome)
 				if cycle.mode == controllerAcquirePrimary && !cycle.replacementUsed &&
 					(controller.maximumAttempts == 0 || cycle.attempts < controller.maximumAttempts) {
@@ -528,8 +535,6 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			case ConnectTransportSecurityFailed:
 				controller.fail(outcome.err, terminalDisposition())
 				return
-			case ConnectExpired:
-				cycle.mode = controllerAcquirePrimary
 			}
 			disposition := connectErrorDisposition(outcome.err)
 			if outcome.hasDisposition {

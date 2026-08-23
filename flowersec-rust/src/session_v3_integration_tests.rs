@@ -3166,6 +3166,36 @@ async fn committed_rekey_completion_timeout_projects_rekey_failed_and_timeout() 
 }
 
 #[tokio::test]
+async fn committed_rekey_control_write_failure_projects_rekey_failed_and_operation_failed() {
+    let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
+    let fail_next_control_write = Arc::new(AtomicBool::new(false));
+    let client_carrier: Arc<dyn CarrierSessionV3> = Arc::new(FailingControlWriteCarrierSession {
+        inner: client_inner,
+        opens: AtomicU64::new(0),
+        fail_next_control_write: fail_next_control_write.clone(),
+        application_reset_entered: Arc::new(AtomicU64::new(0)),
+        application_resets: Arc::new(AtomicU64::new(0)),
+    });
+    let client_config = regression_config(SessionRole::Client, "rekey-write-failure", 1, None);
+    let server_config = regression_config(SessionRole::Server, "rekey-write-failure", 1, None);
+    let (client, server) = tokio::join!(
+        establish_session_v3(client_carrier, client_config),
+        establish_session_v3(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+
+    fail_next_control_write.store(true, Ordering::Release);
+    assert_eq!(client.rekey().await, Err(SessionError::RekeyFailed));
+    let termination = tokio::time::timeout(Duration::from_millis(500), client.wait_termination())
+        .await
+        .expect("post-commit write failure did not terminate the session");
+    assert_eq!(termination.error, SessionError::OperationFailed);
+
+    let _ = tokio::join!(client.close(), server.close());
+}
+
+#[tokio::test]
 async fn dropped_committed_rekey_still_times_out_under_session_ownership() {
     let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
     let gate = Arc::new(AtomicBool::new(false));

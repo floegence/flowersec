@@ -64,6 +64,33 @@ func TestConnectionControllerUsesInjectedClockForArtifactExpiry(t *testing.T) {
 	closeController(t, controller)
 }
 
+func TestConnectionControllerRaceEndExpiryOverridesPolicyRefreshDiagnostics(t *testing.T) {
+	artifact := controllerPolicyArtifact(t, controllerPinPolicy("ERERERERERERERERERERERERERERERERERERERERERE"))
+	lease, _ := controllerTrackedLease(t, artifact)
+	source := &controllerTestSource{results: []controllerAcquireResult{{lease: lease}}}
+	controller := newControllerForTest(t, source, 1)
+	controller.connectDetailed = func(_ context.Context, claimed claimedArtifactLease, _ ConnectorOptions, _ map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome) {
+		candidate := claimed.lease.artifact.value.Path.Candidates[0]
+		key := endpointKey(claimed.lease.artifact.value.Path.Kind, candidate)
+		return nil, controllerConnectOutcome{
+			err:               &ConnectError{code: ConnectExpired},
+			securityFailure:   true,
+			triggerCandidates: map[transportEndpointKey]artifactv3.Candidate{key: candidate},
+			failedEndpoints:   map[transportEndpointKey]struct{}{key: {}},
+		}
+	}
+
+	controller.Start(context.Background())
+	waitControllerState(t, controller, ConnectionFailed)
+	if got := connectErrorCode(controller.Snapshot().Failure.Error); got != ConnectExpired {
+		t.Fatalf("race-end expiry with stale TLS diagnostics = %q, want %q", got, ConnectExpired)
+	}
+	if source.callCount() != 1 {
+		t.Fatalf("race-end expiry acquired a replacement lease: calls = %d", source.callCount())
+	}
+	closeController(t, controller)
+}
+
 func TestConnectionControllerWaitUsesInjectedWallAndMonotonicClocks(t *testing.T) {
 	clock := newTestControllerClock(time.UnixMilli(1_000), 0)
 	controller := &ConnectionController{

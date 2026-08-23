@@ -44,41 +44,6 @@ func TestSharedSessionWireV3Vectors(t *testing.T) {
 			ReceiveAfterMaximum    string `json:"receive_after_maximum"`
 			GoAwayDeliveryFailure  string `json:"goaway_delivery_failure"`
 		} `json:"epoch_boundary"`
-		RekeyLifecycle struct {
-			ExhaustionGoAwayWriteFailure struct {
-				OperationError   string `json:"operation_error"`
-				TerminationError string `json:"termination_error"`
-				SessionState     string `json:"session_state"`
-			} `json:"exhaustion_goaway_write_failure"`
-			ExhaustionGoAwayDeadlineExpiry struct {
-				OperationError   string `json:"operation_error"`
-				TerminationError string `json:"termination_error"`
-				SessionState     string `json:"session_state"`
-			} `json:"exhaustion_goaway_deadline_expiry"`
-			PostCommitCallerCancellation struct {
-				CallerError              string `json:"caller_error"`
-				CompletionOwner          string `json:"completion_owner"`
-				CompletionDeadline       string `json:"completion_deadline"`
-				SessionStateAfterSuccess string `json:"session_state_after_success"`
-			} `json:"post_commit_caller_cancellation"`
-			PreCommitPreparationTimeout struct {
-				OperationError string `json:"operation_error"`
-				SessionState   string `json:"session_state"`
-			} `json:"pre_commit_preparation_timeout"`
-			PostCommitFailure struct {
-				OperationError   string `json:"operation_error"`
-				TerminationError string `json:"termination_error"`
-				SessionState     string `json:"session_state"`
-			} `json:"post_commit_failure"`
-			PostCommitCompletionTimeout struct {
-				OperationError      string `json:"operation_error"`
-				CanceledCallerError string `json:"canceled_caller_error"`
-				TerminationError    string `json:"termination_error"`
-				SessionState        string `json:"session_state"`
-				CompletionOwner     string `json:"completion_owner"`
-			} `json:"post_commit_completion_timeout"`
-			CloseWaitsForOwnedCompletion bool `json:"close_waits_for_owned_completion"`
-		} `json:"rekey_lifecycle"`
 	}
 	raw, err := os.ReadFile("../../../testdata/transport_v3/session_wire_vectors.json")
 	if err != nil {
@@ -125,36 +90,6 @@ func TestSharedSessionWireV3Vectors(t *testing.T) {
 		epoch.ReceiveAfterMaximum != "protocol_failure" || epoch.GoAwayDeliveryFailure != "session_failure" {
 		t.Fatalf("invalid session epoch boundary: %+v", epoch)
 	}
-	lifecycle := fixture.RekeyLifecycle
-	if write := lifecycle.ExhaustionGoAwayWriteFailure; write.OperationError != "resource_exhausted" ||
-		write.TerminationError != "operation_failed" || write.SessionState != "closed" {
-		t.Fatalf("invalid exhaustion GOAWAY write lifecycle: %+v", write)
-	}
-	if deadline := lifecycle.ExhaustionGoAwayDeadlineExpiry; deadline.OperationError != "rekey_failed" ||
-		deadline.TerminationError != "timeout" || deadline.SessionState != "closed" {
-		t.Fatalf("invalid exhaustion GOAWAY deadline lifecycle: %+v", deadline)
-	}
-	if cancellation := lifecycle.PostCommitCallerCancellation; cancellation.CallerError != "canceled" ||
-		cancellation.CompletionOwner != "session" || cancellation.CompletionDeadline != "rekey_completion_timeout_seconds" ||
-		cancellation.SessionStateAfterSuccess != "open" {
-		t.Fatalf("invalid post-commit cancellation lifecycle: %+v", cancellation)
-	}
-	if preparation := lifecycle.PreCommitPreparationTimeout; preparation.OperationError != "rekey_failed" ||
-		preparation.SessionState != "open" {
-		t.Fatalf("invalid pre-commit preparation timeout lifecycle: %+v", preparation)
-	}
-	if failure := lifecycle.PostCommitFailure; failure.OperationError != "rekey_failed" ||
-		failure.TerminationError != "operation_failed" || failure.SessionState != "closed" {
-		t.Fatalf("invalid post-commit failure lifecycle: %+v", failure)
-	}
-	if timeout := lifecycle.PostCommitCompletionTimeout; timeout.OperationError != "rekey_failed" ||
-		timeout.CanceledCallerError != "canceled" || timeout.TerminationError != "timeout" ||
-		timeout.SessionState != "closed" || timeout.CompletionOwner != "session" {
-		t.Fatalf("invalid post-commit completion timeout lifecycle: %+v", timeout)
-	}
-	if !lifecycle.CloseWaitsForOwnedCompletion {
-		t.Fatal("session Close must wait for owned rekey completion")
-	}
 }
 
 func TestSessionTransitionMaximumUsesProductionRekeyOnceThenExhausts(t *testing.T) {
@@ -198,6 +133,38 @@ func TestSessionTransitionMaximumUsesProductionRekeyOnceThenExhausts(t *testing.
 	}
 	if !session.sentGoAwayCommitted || session.sentGoAwayReason != 5 {
 		t.Fatalf("transition exhaustion GOAWAY = committed:%t reason:%d", session.sentGoAwayCommitted, session.sentGoAwayReason)
+	}
+}
+
+func TestDuplicateSessionRekeyACKDoesNotRepeatEpochCutover(t *testing.T) {
+	session, _ := newRekeyBoundarySession(t, rekeyControlWriteSuccess, time.Second)
+	payload := [20]byte{}
+	binary.BigEndian.PutUint64(payload[0:8], 7)
+	binary.BigEndian.PutUint32(payload[8:12], 1)
+	pending := &pendingRekey{payload: payload, done: make(chan struct{}), epoch: 1}
+	session.pendingRekeyMu.Lock()
+	session.pendingRekey = pending
+	session.lastRekeyACK = payload
+	session.hasLastRekeyACK = true
+	session.pendingRekeyMu.Unlock()
+	session.cryptoMu.Lock()
+	session.controlSendEpoch = 1
+	session.controlSendSeq = 9
+	session.cryptoMu.Unlock()
+
+	if err := session.handleSessionUpdateACK(payload[:]); err != nil {
+		t.Fatalf("duplicate session rekey ACK: %v", err)
+	}
+	session.cryptoMu.RLock()
+	epoch, sequence := session.controlSendEpoch, session.controlSendSeq
+	session.cryptoMu.RUnlock()
+	if epoch != 1 || sequence != 9 {
+		t.Fatalf("duplicate ACK changed control epoch/sequence to %d/%d", epoch, sequence)
+	}
+	select {
+	case <-pending.done:
+		t.Fatal("duplicate ACK republished the pending rekey completion")
+	default:
 	}
 }
 
