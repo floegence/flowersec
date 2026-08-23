@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import { base64urlDecode } from "../utils/base64url.js";
 import type { CipherSuiteV3, DirectionV3 } from "./protocol.js";
 import {
+  deriveUnreliableMessageMaterialV3,
   encodeUnreliableMessageHeaderV3,
   sealUnreliableMessageDatagramV3,
 } from "./unreliableMessage.js";
@@ -67,5 +68,27 @@ describe("transport v3 FSD3 unreliable messages", () => {
   test("rejects ciphertext lengths outside the FSD3 wire contract", () => {
     expect(() => encodeUnreliableMessageHeaderV3(0, 0n, 1n, 16)).toThrow("invalid FSD3 header");
     expect(() => encodeUnreliableMessageHeaderV3(0, 0n, 1n, 993)).toThrow("invalid FSD3 header");
+  });
+
+  test("rejects fixed-width integers instead of allowing DataView truncation", () => {
+    const maxUint64 = (1n << 64n) - 1n;
+    expect(() => encodeUnreliableMessageHeaderV3(-1, 0n, 1n, 17)).toThrow("invalid FSD3 header");
+    expect(() => encodeUnreliableMessageHeaderV3(0x1_0000_0000, 0n, 1n, 17)).toThrow("invalid FSD3 header");
+    expect(() => encodeUnreliableMessageHeaderV3(0, -1n, 1n, 17)).toThrow("invalid FSD3 header");
+    expect(() => encodeUnreliableMessageHeaderV3(0, maxUint64 + 1n, 1n, 17)).toThrow("invalid FSD3 header");
+    expect(() => encodeUnreliableMessageHeaderV3(0, 0n, maxUint64 + 1n, 17)).toThrow("invalid FSD3 header");
+
+    const maximum = encodeUnreliableMessageHeaderV3(0xffff_ffff, maxUint64, maxUint64, 17);
+    const view = new DataView(maximum.buffer, maximum.byteOffset, maximum.byteLength);
+    expect(view.getUint32(8, false)).toBe(0xffff_ffff);
+    expect(view.getBigUint64(12, false)).toBe(maxUint64);
+    expect(view.getBigUint64(20, false)).toBe(maxUint64);
+
+    expect(() => deriveUnreliableMessageMaterialV3(
+      new Uint8Array(32),
+      new Uint8Array(32),
+      0 as DirectionV3,
+      0x1_0000_0000,
+    )).toThrow("invalid FSD3 uint32");
   });
 });

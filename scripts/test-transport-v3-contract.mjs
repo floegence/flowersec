@@ -271,6 +271,9 @@ for (const clause of ["12.1", "13.1"]) {
   assert.deepEqual(fixtureReferences, allFixtureReferences,
     `${clause} traceability must cover the complete v3 fixture inventory`);
 }
+const clause4 = registry.design.traceability.find((candidate) => candidate.clause === "4");
+assert(clause4.registry_vector.includes("wire_fixtures[id=open_unicode]"),
+  "clause 4 traceability must cover the OPEN Unicode fixture");
 for (const entry of registry.design.traceability) {
   assert(typeof entry.clause === "string" && entry.clause.length > 0, "traceability clause ID is required");
   assert(typeof entry.title === "string" && entry.title.length > 0, `${entry.clause} traceability title is required`);

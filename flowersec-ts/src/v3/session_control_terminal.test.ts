@@ -187,6 +187,30 @@ describe("SessionV3 control terminal serialization", () => {
     }
   });
 
+  test("uses the maximum session transition once and then fails before wire wrap", async () => {
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, config("client")),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const maximum = (1n << 64n) - 1n;
+    const clientInternals = sessionInternals(client);
+    const serverInternals = sessionInternals(server);
+    clientInternals.nextTransition = maximum;
+    serverInternals.receiveTransition = maximum - 1n;
+
+    await expect(client.rekey()).resolves.toBeUndefined();
+    expect(clientInternals.nextTransition).toBe(maximum + 1n);
+    await expect(client.rekey()).rejects.toMatchObject({ code: "resource_exhausted" });
+    expect(clientInternals.nextTransition).toBe(maximum + 1n);
+
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
   test("caller cancellation after rekey commit does not terminate the session", async () => {
     const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
       kind: "webtransport",

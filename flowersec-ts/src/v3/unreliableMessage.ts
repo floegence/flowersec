@@ -24,6 +24,7 @@ const TAG_BYTES = 16;
 const MIN_CIPHERTEXT_BYTES = TAG_BYTES + 1;
 const MAX_CIPHERTEXT_BYTES = UNRELIABLE_MESSAGE_MAX_PLAINTEXT_BYTES_V3 + TAG_BYTES;
 const MAX_PENDING_SENDS = 64;
+const MAX_UINT32 = 0xffffffff;
 const MAX_UINT64 = (1n << 64n) - 1n;
 const encoder = new TextEncoder();
 
@@ -177,7 +178,8 @@ export function encodeUnreliableMessageHeaderV3(
   expiresAtUnixMs: bigint,
   ciphertextLength: number,
 ): Uint8Array {
-  if (expiresAtUnixMs === 0n || !Number.isInteger(ciphertextLength) ||
+  if (!isUint32(epoch) || !isUint64(sequence) || !isUint64(expiresAtUnixMs) ||
+      expiresAtUnixMs === 0n || !Number.isInteger(ciphertextLength) ||
       ciphertextLength < MIN_CIPHERTEXT_BYTES || ciphertextLength > MAX_CIPHERTEXT_BYTES) {
     throw new Error("invalid FSD3 header");
   }
@@ -372,13 +374,23 @@ function byte(value: number): Uint8Array {
 }
 
 function u32be(value: number): Uint8Array {
+  if (!isUint32(value)) throw new Error("invalid FSD3 uint32");
   const out = new Uint8Array(4);
   new DataView(out.buffer).setUint32(0, value, false);
   return out;
 }
 
 function u64be(value: bigint): Uint8Array {
+  if (!isUint64(value)) throw new Error("invalid FSD3 uint64");
   const out = new Uint8Array(8);
   new DataView(out.buffer).setBigUint64(0, value, false);
   return out;
+}
+
+function isUint32(value: number): boolean {
+  return Number.isInteger(value) && value >= 0 && value <= MAX_UINT32;
+}
+
+function isUint64(value: bigint): boolean {
+  return typeof value === "bigint" && value >= 0n && value <= MAX_UINT64;
 }

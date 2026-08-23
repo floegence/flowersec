@@ -91,6 +91,8 @@ const RESERVED_RPC_KIND = "flowersec.rpc.v3";
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 const DEFAULT_CLOSE_TIMEOUT_MS = 2_000;
 const DEFAULT_CONTROL_CONFIRM_TIMEOUT_MS = 2_000;
+const MAX_UINT32 = 0xffffffff;
+const MAX_UINT64 = (1n << 64n) - 1n;
 
 type SessionTerminationV3 = Readonly<{ error: Error }>;
 
@@ -1045,6 +1047,9 @@ export class SessionV3 implements SessionV3Contract {
       // Do not consume a transition id until preparation has completed and
       // the caller has not cancelled the operation.
       throwIfAborted(options.signal);
+      if (this.nextTransition < 1n || this.nextTransition > MAX_UINT64) {
+        throw new SessionV3Error("resource_exhausted", "session transition exhausted");
+      }
       prepareSignal.cancel();
       prepareDeadline.cancel();
       completionDeadline = createSessionDeadline(this.config, "rekey_completion");
@@ -1054,7 +1059,8 @@ export class SessionV3 implements SessionV3Contract {
       completionSignal = combineSignals(completionDeadline.signal);
       committed = true;
       throwIfAborted(completionSignal.signal);
-      const transition = this.nextTransition++;
+      const transition = this.nextTransition;
+      this.nextTransition = transition + 1n;
       const payload = concat(u64(transition), u32(nextEpoch), u64(watermark));
       const active = [...this.streams.values()].filter((stream) => stream.canRekeySend());
       const updates = active.map((stream) => stream.startSendRekey(transition, nextEpoch));
@@ -2302,12 +2308,18 @@ function parseIDReason(payload: Uint8Array): Readonly<{ id: bigint; reason: numb
 }
 
 function u64(value: bigint): Uint8Array {
+  if (typeof value !== "bigint" || value < 0n || value > MAX_UINT64) {
+    throw new RangeError("uint64 value is out of range");
+  }
   const out = new Uint8Array(8);
   new DataView(out.buffer).setBigUint64(0, value, false);
   return out;
 }
 
 function u32(value: number): Uint8Array {
+  if (!Number.isInteger(value) || value < 0 || value > MAX_UINT32) {
+    throw new RangeError("uint32 value is out of range");
+  }
   const out = new Uint8Array(4);
   new DataView(out.buffer).setUint32(0, value, false);
   return out;
