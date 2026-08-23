@@ -18,7 +18,9 @@ the exact source SHA under `/var/lib/flowersec-test/workspace`. Home, state,
 temporary files, and caches remain root-owned under `/var/lib/flowersec-test`.
 Root tests never use the invoking user's checkout or cache.
 Swiftly's configuration, proxy binaries, and toolchains are each pinned to an
-explicit directory under that root-owned environment.
+explicit directory under that root-owned environment. The runner places the
+Swiftly proxy directory before system toolchain directories and verifies both
+proxy resolution and the installed toolchain before writing its PGP marker.
 
 `test-host-init.sh` idempotently installs and verifies host-wide prerequisites.
 Downloaded Go, Node, Rustup, complete Rust distributions, Swiftly, Chromium,

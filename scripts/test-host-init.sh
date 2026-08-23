@@ -8,15 +8,16 @@ readonly host_tmp=$host_root/tmp
 readonly host_cache=$host_root/cache
 readonly host_go_root=$host_cache/toolchains/go
 readonly host_swift_toolchains=$host_cache/toolchains/swift
-readonly host_path="$host_go_root/bin:$host_cache/toolchains/node/bin:$host_home/.cargo/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$host_home/.local/bin:$host_home/.swiftly/bin"
+readonly host_path="$host_go_root/bin:$host_cache/toolchains/node/bin:$host_home/.cargo/bin:$host_home/.local/bin:$host_home/.swiftly/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 readonly playwright_download_host=https://npmmirror.com/mirrors/playwright
 readonly go_version=1.26.6
 readonly node_version=24.14.1
 readonly rust_version=1.88.0
 readonly swiftly_version=1.1.3
 readonly swift_version=6.1.3
-# SHA-256 of "swift=6.1.3\nswiftly=1.1.3\nverification=pgp\n".
-readonly swift_verification_marker=3a34f803fcb10b2c1cd1959f77755c0d5135db47ee65bfa0d35978b0b3358621
+# SHA-256 of the Swift version, Swiftly version, PGP verification, and the
+# canonical root-owned toolchain directory.
+readonly swift_verification_marker=2cfe642c07bc6b03dcdcf6673440891654cf063b916fae3686bb33728f7dd29f
 readonly playwright_version=1.62.1
 readonly playwright_chromium_revision=1234
 readonly playwright_chromium_version=151.0.7922.34
@@ -264,6 +265,14 @@ initialize_swiftly_binary() {
   [[ $("$swiftly" --version) == "$swiftly_version" ]] || { echo "Swiftly version mismatch" >&2; return 1; }
 }
 
+swift_toolchain_is_canonical() {
+  local swift_proxy=$host_home/.local/bin/swift swiftc_proxy=$host_home/.local/bin/swiftc toolchain_bin=$host_swift_toolchains/$swift_version/usr/bin
+  [[ $(type -P swift) == "$swift_proxy" && $(type -P swiftc) == "$swiftc_proxy" ]] || return 1
+  "$swift_proxy" --version | grep -Fq "Swift version ${swift_version}" || return 1
+  "$swiftc_proxy" --version | grep -Fq "Swift version ${swift_version}" || return 1
+  [[ -x $toolchain_bin/swift && -x $toolchain_bin/swiftc ]] || return 1
+}
+
 install_swift() {
   local swiftly=$host_home/.local/bin/swiftly marker=$host_home/.swiftly/.flowersec-${swift_version}-pgp-verified archive bootstrap post_install
   if [[ ! -x $swiftly ]] || ! checksum_matches "$swiftly_binary_sha256" "$swiftly"; then
@@ -278,8 +287,7 @@ install_swift() {
     rm -f -- "$archive"
     rm -rf -- "$bootstrap"
   fi
-  if command -v swift >/dev/null 2>&1 && swift --version | grep -Fq "Swift version ${swift_version}" &&
-     authentication_marker_matches "$swift_verification_marker" "$marker"; then return; fi
+  if swift_toolchain_is_canonical && authentication_marker_matches "$swift_verification_marker" "$marker"; then return; fi
   rm -f -- "$marker"
   rm -rf -- "$host_swift_toolchains"
   install -d -m 0700 "$host_swift_toolchains"
@@ -289,7 +297,7 @@ install_swift() {
   temporary_paths+=("$post_install")
   (cd "$host_home" && "$swiftly" install "$swift_version" --use --verify --assume-yes --post-install-file="$post_install")
   [[ ! -s $post_install ]] || /bin/bash "$post_install"
-  swift --version | grep -Fq "Swift version ${swift_version}" || { echo "Swift version mismatch" >&2; exit 1; }
+  swift_toolchain_is_canonical || { echo "Swift toolchain is not canonical" >&2; exit 1; }
   printf '%s\n' "$swift_verification_marker" >"$marker"
   rm -f -- "$post_install"
 }

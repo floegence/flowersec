@@ -24,7 +24,7 @@ const planName = "flowersec-tests-v1"
 
 const externalHostRoot = "/var/lib/flowersec-test"
 
-const externalHostPath = "/var/lib/flowersec-test/cache/toolchains/go/bin:/var/lib/flowersec-test/cache/toolchains/node/bin:/var/lib/flowersec-test/home/.cargo/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/var/lib/flowersec-test/home/.local/bin:/var/lib/flowersec-test/home/.swiftly/bin"
+const externalHostPath = "/var/lib/flowersec-test/cache/toolchains/go/bin:/var/lib/flowersec-test/cache/toolchains/node/bin:/var/lib/flowersec-test/home/.cargo/bin:/var/lib/flowersec-test/home/.local/bin:/var/lib/flowersec-test/home/.swiftly/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 const externalHostGoRoot = "/var/lib/flowersec-test/cache/toolchains/go"
 

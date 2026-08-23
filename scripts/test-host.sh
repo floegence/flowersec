@@ -8,9 +8,10 @@ readonly host_state=$host_root/state
 readonly host_tmp=$host_root/tmp
 readonly host_cache=$host_root/cache
 readonly host_lock=$host_root/test-host.lock
+readonly host_lock_wait=30
 readonly host_go_root=$host_cache/toolchains/go
 readonly host_swift_toolchains=$host_cache/toolchains/swift
-readonly host_path="$host_go_root/bin:$host_cache/toolchains/node/bin:$host_home/.cargo/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$host_home/.local/bin:$host_home/.swiftly/bin"
+readonly host_path="$host_go_root/bin:$host_cache/toolchains/node/bin:$host_home/.cargo/bin:$host_home/.local/bin:$host_home/.swiftly/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 readonly host_open_file_limit=65536
 
 usage() {
@@ -44,6 +45,13 @@ configure_open_file_limit() {
     echo "root test environment has file descriptor limit $soft_limit, expected $host_open_file_limit" >&2
     exit 1
   }
+}
+
+acquire_host_lock() {
+  if ! flock -w "$host_lock_wait" -x "$host_lock_fd"; then
+    echo "test-host lock timeout after ${host_lock_wait}s: $host_lock" >&2
+    exit 124
+  fi
 }
 
 enter_root() {
@@ -118,7 +126,7 @@ if [[ ${1:-} == --root ]]; then
   esac
   install -d -m 0700 "$host_root"
   exec {host_lock_fd}>"$host_lock"
-  flock -x "$host_lock_fd" || { echo "cannot acquire test-host lock: $host_lock" >&2; exit 1; }
+  acquire_host_lock
   sync_workspace "$source_sha" "$source_url"
   cd "$host_workspace"
   if [[ $action == init ]]; then

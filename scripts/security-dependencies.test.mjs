@@ -389,16 +389,20 @@ test("Swiftly stale configuration is reset into the canonical toolchain director
   fs.mkdirSync(path.dirname(stale), { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
   fs.mkdirSync(swiftlyHome, { recursive: true });
-  fs.mkdirSync(hostTmp, { recursive: true });
-  fs.writeFileSync(stale, "unauthenticated\n");
-  fs.writeFileSync(path.join(swiftlyHome, "config.json"), '{"installedToolchains":["6.1.3"],"inUse":"6.1.3"}\n');
-  fs.writeFileSync(swiftly, `#!/bin/sh
+fs.mkdirSync(hostTmp, { recursive: true });
+fs.writeFileSync(stale, "unauthenticated\n");
+fs.writeFileSync(path.join(swiftlyHome, "config.json"), '{"installedToolchains":["6.1.3"],"inUse":"6.1.3"}\n');
+const markerValue = "c".repeat(64);
+fs.mkdirSync(swiftlyHome, { recursive: true });
+fs.writeFileSync(path.join(swiftlyHome, ".flowersec-6.1.3-pgp-verified"), `${markerValue}\n`);
+fs.writeFileSync(swiftly, `#!/bin/sh
 set -eu
-if [ "$(basename "$0")" = swift ]; then
-  [ -f "$SWIFTLY_TOOLCHAINS_DIR/swift-ready" ] || exit 1
+case "$(basename "$0")" in
+swift|swiftc)
   printf 'Swift version 6.1.3 (swift-6.1.3-RELEASE)\\n'
   exit 0
-fi
+  ;;
+esac
 case "$1" in
   --version)
     printf '1.1.3\\n'
@@ -413,17 +417,19 @@ case "$1" in
     case " $* " in *" --verify "*) ;; *) exit 21 ;; esac
     [ "$SWIFTLY_TOOLCHAINS_DIR" = "$EXPECTED_SWIFTLY_TOOLCHAINS_DIR" ]
     printf 'install\\n' >>"$FLOWERSEC_TEST_LOG"
-    mkdir -p "$SWIFTLY_TOOLCHAINS_DIR"
-    printf ready >"$SWIFTLY_TOOLCHAINS_DIR/swift-ready"
+    mkdir -p "$SWIFTLY_TOOLCHAINS_DIR/6.1.3/usr/bin"
+    printf '#!/bin/sh\\nprintf toolchain\\n' >"$SWIFTLY_TOOLCHAINS_DIR/6.1.3/usr/bin/swift"
+    printf '#!/bin/sh\\nprintf toolchain\\n' >"$SWIFTLY_TOOLCHAINS_DIR/6.1.3/usr/bin/swiftc"
+    chmod 0755 "$SWIFTLY_TOOLCHAINS_DIR/6.1.3/usr/bin/swift" "$SWIFTLY_TOOLCHAINS_DIR/6.1.3/usr/bin/swiftc"
     ;;
   *) exit 22 ;;
 esac
 `);
-  fs.chmodSync(swiftly, 0o755);
-  fs.symlinkSync("swiftly", swift);
-  const digest = createHash("sha256").update(fs.readFileSync(swiftly)).digest("hex");
-  const markerValue = "c".repeat(64);
-  const source = fs.readFileSync(path.join(sourceRoot, "scripts/test-host-init.sh"), "utf8");
+fs.chmodSync(swiftly, 0o755);
+fs.symlinkSync("swiftly", swift);
+fs.symlinkSync("swiftly", path.join(bin, "swiftc"));
+const digest = createHash("sha256").update(fs.readFileSync(swiftly)).digest("hex");
+const source = fs.readFileSync(path.join(sourceRoot, "scripts/test-host-init.sh"), "utf8");
   const result = spawnSync("bash", ["-s", "--", hostHome, hostTmp, toolchains, digest, markerValue], {
     encoding: "utf8",
     env: {
@@ -435,7 +441,7 @@ esac
       EXPECTED_SWIFTLY_TOOLCHAINS_DIR: toolchains,
       FLOWERSEC_TEST_LOG: log,
     },
-    input: `set -e\n${extractShellFunction(source, "verify_download")}\n${extractShellFunction(source, "checksum_matches")}\n${extractShellFunction(source, "authentication_marker_matches")}\n${extractShellFunction(source, "install_swift")}\nhost_home="$1"\nhost_tmp="$2"\nhost_swift_toolchains="$3"\nswiftly_binary_sha256="$4"\nswift_verification_marker="$5"\nswiftly_version=1.1.3\nswift_version=6.1.3\ntemporary_paths=()\ninstall_swift\n`,
+    input: `set -e\n${extractShellFunction(source, "verify_download")}\n${extractShellFunction(source, "checksum_matches")}\n${extractShellFunction(source, "authentication_marker_matches")}\n${extractShellFunction(source, "swift_toolchain_is_canonical")}\n${extractShellFunction(source, "install_swift")}\nhost_home="$1"\nhost_tmp="$2"\nhost_swift_toolchains="$3"\nswiftly_binary_sha256="$4"\nswift_verification_marker="$5"\nswiftly_version=1.1.3\nswift_version=6.1.3\ntemporary_paths=()\ninstall_swift\n`,
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(fs.readFileSync(log, "utf8"), "init\ninstall\n");
@@ -447,6 +453,52 @@ esac
   assert.equal(run(swift, ["--version"], {
     env: { SWIFTLY_HOME_DIR: swiftlyHome, SWIFTLY_BIN_DIR: bin, SWIFTLY_TOOLCHAINS_DIR: toolchains },
   }), "Swift version 6.1.3 (swift-6.1.3-RELEASE)\n");
+});
+
+test("same-version system Swift cannot satisfy the canonical toolchain check", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-swift-system-shadow-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const hostHome = path.join(root, "home");
+  const bin = path.join(hostHome, ".local/bin");
+  const systemBin = path.join(root, "system/bin");
+  const toolchains = path.join(root, "toolchains/swift");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(systemBin, { recursive: true });
+  fs.mkdirSync(path.join(toolchains, "6.1.3/usr/bin"), { recursive: true });
+  for (const directory of [bin, systemBin, path.join(toolchains, "6.1.3/usr/bin")]) {
+    for (const executable of ["swift", "swiftc"]) {
+      const file = path.join(directory, executable);
+      fs.writeFileSync(file, "#!/bin/sh\nprintf 'Swift version 6.1.3 (shadow)\\n'\n");
+      fs.chmodSync(file, 0o755);
+    }
+  }
+  const source = fs.readFileSync(path.join(sourceRoot, "scripts/test-host-init.sh"), "utf8");
+  const result = spawnSync("bash", ["-s", "--", hostHome, toolchains], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${systemBin}:${bin}:${process.env.PATH}` },
+    input: `set -e\n${extractShellFunction(source, "swift_toolchain_is_canonical")}\nhost_home="$1"\nhost_swift_toolchains="$2"\nswift_version=6.1.3\nswift_toolchain_is_canonical\n`,
+  });
+  assert.notEqual(result.status, 0);
+});
+
+test("test-host lock timeout reports a bounded failure reason", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-test-host-lock-"));
+  const lock = path.join(root, "test-host.lock");
+  const fakeBin = path.join(root, "bin");
+  const fakeFlock = path.join(fakeBin, "flock");
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.writeFileSync(fakeFlock, "#!/bin/sh\ncase \"$1\" in -x) exit 0 ;; -w) exit 1 ;; *) exit 2 ;; esac\n");
+  fs.chmodSync(fakeFlock, 0o755);
+  const source = fs.readFileSync(path.join(sourceRoot, "scripts/test-host.sh"), "utf8");
+  const result = spawnSync("bash", ["-s", "--", lock], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
+    input: `set -e\n${extractShellFunction(source, "acquire_host_lock")}\nexec 9>"$1"\nflock -x 9\nexec 10>"$1"\nhost_lock="$1"\nhost_lock_fd=10\nhost_lock_wait=1\nacquire_host_lock\n`,
+  });
+  fs.rmSync(root, { recursive: true, force: true });
+  assert.equal(result.status, 124);
+  assert.match(result.stderr, /test-host lock timeout after 1s/);
+  assert.match(result.stderr, /test-host\.lock/);
 });
 
 test("module-local Go checks cannot be masked by workspace MVS", (t) => {
