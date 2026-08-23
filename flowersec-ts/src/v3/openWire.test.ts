@@ -36,6 +36,14 @@ const wireFixture = JSON.parse(readFileSync(
     next_epoch_hex: string;
     payload_hex: string;
   }>[];
+  transition_boundary: Readonly<{
+    maximum_transition_id_hex: string;
+    next_after_maximum_hex: string;
+    maximum_is_usable_once: boolean;
+    exhaustion_error: string;
+    exhaustion_goaway_reason: number;
+    receive_after_maximum: string;
+  }>;
 }>;
 const bytes = (value: string): Uint8Array => new TextEncoder().encode(value);
 const fromHex = (value: string): Uint8Array => Uint8Array.from(Buffer.from(value, "hex"));
@@ -125,5 +133,14 @@ describe("transport v3 inherited session wire boundaries", () => {
       expect(Buffer.from(encodeStreamKeyUpdateACKV3(value)).toString("hex")).toBe(vector.payload_hex);
       expect(decodeStreamKeyUpdateACKV3(fromHex(vector.payload_hex))).toEqual(value);
     }
+
+    expect(wireFixture.transition_boundary).toEqual({
+      maximum_transition_id_hex: "ffffffffffffffff",
+      next_after_maximum_hex: "0000000000000000",
+      maximum_is_usable_once: true,
+      exhaustion_error: "resource_exhausted",
+      exhaustion_goaway_reason: 5,
+      receive_after_maximum: "protocol_failure",
+    });
   });
 });

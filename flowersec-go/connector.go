@@ -714,6 +714,8 @@ func redactSessionError(err error) *SessionError {
 		code = SessionGoingAway
 	case errors.Is(err, session.ErrResourceExhausted), errors.Is(err, sessionv3.ErrResourceExhausted):
 		code = SessionResourceExhausted
+	case errors.Is(err, protocolv3.ErrCounterExhausted):
+		code = SessionResourceExhausted
 	case errors.Is(err, session.ErrOpenRejected), errors.Is(err, sessionv3.ErrOpenRejected):
 		code = SessionStreamRejected
 	case errors.Is(err, protocolv2.ErrStreamReset), errors.Is(err, protocolv3.ErrStreamReset):

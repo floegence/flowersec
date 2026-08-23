@@ -535,6 +535,13 @@ func TestProtocolStreamResetProjectsStablePublicCode(t *testing.T) {
 	}
 }
 
+func TestV3CounterExhaustionProjectsResourceExhausted(t *testing.T) {
+	err := redactSessionError(protocolv3.ErrCounterExhausted)
+	if err.Code() != SessionResourceExhausted {
+		t.Fatalf("counter exhaustion code = %q, want %q", err.Code(), SessionResourceExhausted)
+	}
+}
+
 func TestPublicByteStreamPreservesEOF(t *testing.T) {
 	stream := &opaqueByteStreamV3{inner: staticByteStream{err: io.EOF}}
 	if count, err := stream.Read(make([]byte, 1)); count != 0 || !errors.Is(err, io.EOF) {

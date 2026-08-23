@@ -120,6 +120,7 @@ type transportV3Traceability struct {
 	Clause         string   `json:"clause"`
 	Title          string   `json:"title"`
 	Source         []string `json:"source"`
+	SharedSource   []string `json:"shared_source,omitempty"`
 	Tests          []string `json:"tests"`
 	Docs           []string `json:"docs"`
 	RegistryVector []string `json:"registry_vector"`
@@ -416,7 +417,8 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 			len(entry.Docs) == 0 || len(entry.RegistryVector) == 0 {
 			return fmt.Errorf("%s traceability clause %q is incomplete", transportV3ContractPath, entry.Clause)
 		}
-		for _, relative := range append(append(slices.Clone(entry.Source), entry.Tests...), entry.Docs...) {
+		paths := append(slices.Clone(entry.Source), entry.SharedSource...)
+		for _, relative := range append(append(paths, entry.Tests...), entry.Docs...) {
 			if _, err := os.Stat(filepath.Join(repoRoot, relative)); err != nil {
 				return fmt.Errorf("%s traceability clause %q path %s: %w", transportV3ContractPath, entry.Clause, relative, err)
 			}
@@ -424,6 +426,15 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	}
 	if !slices.Equal(gotClauses, wantClauses) {
 		return fmt.Errorf("%s traceability clauses = %v, want %v", transportV3ContractPath, gotClauses, wantClauses)
+	}
+	clause4 := traceabilityByClause["4"]
+	wantClause4Shared := []string{
+		"flowersec-ts/src/v2/protocol.ts",
+		"flowersec-swift/Sources/Flowersec/TransportV2.swift",
+		"flowersec-swift/Sources/Flowersec/TransportV2Open.swift",
+	}
+	if !slices.Equal(clause4.SharedSource, wantClause4Shared) {
+		return fmt.Errorf("%s traceability clause %q shared_source = %v, want %v", transportV3ContractPath, clause4.Clause, clause4.SharedSource, wantClause4Shared)
 	}
 	if err := validateTransportV3ProviderTraceability(traceabilityByClause); err != nil {
 		return err
@@ -1008,6 +1019,8 @@ func transportV3OwnedSourceFiles(repoRoot string, registry *transportV3Registry)
 		if slices.Contains([]string{"12.1", "12.4", "13.1", "13.4"}, entry.Clause) {
 			continue
 		}
+		// SharedSource records inherited non-v3 helpers without making their
+		// versioned files owned by the v3 source-domain scanner.
 		for _, relative := range entry.Source {
 			info, err := os.Stat(filepath.Join(repoRoot, relative))
 			if err != nil || !info.Mode().IsRegular() {

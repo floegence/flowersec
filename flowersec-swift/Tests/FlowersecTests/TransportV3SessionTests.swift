@@ -1407,6 +1407,19 @@ final class TransportV3SessionTests: XCTestCase {
     )
     XCTAssertEqual(payload.encoded(), try decodeHex(vector.payloadHex))
     XCTAssertEqual(try StreamKeyUpdateACKPayloadV3(encoded: payload.encoded()), payload)
+
+    let boundary = vectors.transitionBoundary
+    let maximum = try XCTUnwrap(UInt64(boundary.maximumTransitionIDHex, radix: 16))
+    let nextAfterMaximum = try XCTUnwrap(UInt64(boundary.nextAfterMaximumHex, radix: 16))
+    XCTAssertEqual(maximum, UInt64.max)
+    XCTAssertEqual(nextAfterMaximum, 0)
+    XCTAssertEqual(nextSessionTransitionV3(maximum), nextAfterMaximum)
+    XCTAssertNil(nextSessionTransitionV3(nextAfterMaximum))
+    XCTAssertNil(expectedSessionTransitionV3(after: maximum))
+    XCTAssertTrue(boundary.maximumIsUsableOnce)
+    XCTAssertEqual(boundary.exhaustionError, "resource_exhausted")
+    XCTAssertEqual(boundary.exhaustionGoAwayReason, 5)
+    XCTAssertEqual(boundary.receiveAfterMaximum, "protocol_failure")
   }
 
   func testIdenticalRekeyACKIsIdempotentButDifferentACKIsRejected() throws {
@@ -2096,9 +2109,29 @@ final class TransportV3SessionTests: XCTestCase {
 
 private struct SessionWireVectors: Decodable {
   let streamKeyUpdateACK: [StreamKeyUpdateACKVector]
+  let transitionBoundary: TransitionBoundaryVector
 
   enum CodingKeys: String, CodingKey {
     case streamKeyUpdateACK = "stream_key_update_ack"
+    case transitionBoundary = "transition_boundary"
+  }
+}
+
+private struct TransitionBoundaryVector: Decodable {
+  let maximumTransitionIDHex: String
+  let nextAfterMaximumHex: String
+  let maximumIsUsableOnce: Bool
+  let exhaustionError: String
+  let exhaustionGoAwayReason: UInt16
+  let receiveAfterMaximum: String
+
+  enum CodingKeys: String, CodingKey {
+    case maximumTransitionIDHex = "maximum_transition_id_hex"
+    case nextAfterMaximumHex = "next_after_maximum_hex"
+    case maximumIsUsableOnce = "maximum_is_usable_once"
+    case exhaustionError = "exhaustion_error"
+    case exhaustionGoAwayReason = "exhaustion_goaway_reason"
+    case receiveAfterMaximum = "receive_after_maximum"
   }
 }
 

@@ -223,5 +223,13 @@ write(
       next_epoch_hex: "21222324",
       payload_hex: "0102030405060708111213141516171821222324",
     }],
+    transition_boundary: {
+      maximum_transition_id_hex: "ffffffffffffffff",
+      next_after_maximum_hex: "0000000000000000",
+      maximum_is_usable_once: true,
+      exhaustion_error: "resource_exhausted",
+      exhaustion_goaway_reason: 5,
+      receive_after_maximum: "protocol_failure",
+    },
   },
 );

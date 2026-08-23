@@ -73,10 +73,12 @@ describe("transport v3 FSD3 unreliable messages", () => {
   test("rejects fixed-width integers instead of allowing DataView truncation", () => {
     const maxUint64 = (1n << 64n) - 1n;
     expect(() => encodeUnreliableMessageHeaderV3(-1, 0n, 1n, 17)).toThrow("invalid FSD3 header");
+    expect(() => encodeUnreliableMessageHeaderV3(1.5, 0n, 1n, 17)).toThrow("invalid FSD3 header");
     expect(() => encodeUnreliableMessageHeaderV3(0x1_0000_0000, 0n, 1n, 17)).toThrow("invalid FSD3 header");
     expect(() => encodeUnreliableMessageHeaderV3(0, -1n, 1n, 17)).toThrow("invalid FSD3 header");
     expect(() => encodeUnreliableMessageHeaderV3(0, maxUint64 + 1n, 1n, 17)).toThrow("invalid FSD3 header");
     expect(() => encodeUnreliableMessageHeaderV3(0, 0n, maxUint64 + 1n, 17)).toThrow("invalid FSD3 header");
+    expect(() => encodeUnreliableMessageHeaderV3(0, 0n, 1n, 17.5)).toThrow("invalid FSD3 header");
 
     const maximum = encodeUnreliableMessageHeaderV3(0xffff_ffff, maxUint64, maxUint64, 17);
     const view = new DataView(maximum.buffer, maximum.byteOffset, maximum.byteLength);
@@ -89,6 +91,12 @@ describe("transport v3 FSD3 unreliable messages", () => {
       new Uint8Array(32),
       0 as DirectionV3,
       0x1_0000_0000,
+    )).toThrow("invalid FSD3 uint32");
+    expect(() => deriveUnreliableMessageMaterialV3(
+      new Uint8Array(32),
+      new Uint8Array(32),
+      0 as DirectionV3,
+      1.5,
     )).toThrow("invalid FSD3 uint32");
   });
 });

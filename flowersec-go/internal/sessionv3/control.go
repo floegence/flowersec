@@ -609,11 +609,7 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 		s.pendingRekeyMu.Unlock()
 		return s.exhaustRekeyCounter()
 	}
-	if transition == math.MaxUint64 {
-		s.transitionExhausted = true
-	} else {
-		s.nextTransition++
-	}
+	s.nextTransition, s.transitionExhausted = advanceSessionTransition(transition)
 	pending := &pendingRekey{done: make(chan struct{}), next: nextRoots, epoch: nextEpoch}
 	binary.BigEndian.PutUint64(pending.payload[0:8], transition)
 	binary.BigEndian.PutUint32(pending.payload[8:12], nextEpoch)
@@ -671,6 +667,13 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 	s.unfreezeResponders(false)
 	respondersFrozen = false
 	return nil
+}
+
+func advanceSessionTransition(current uint64) (next uint64, exhausted bool) {
+	if current == math.MaxUint64 {
+		return 0, true
+	}
+	return current + 1, false
 }
 
 func (s *engineSession) handleSessionUpdate(payload []byte) error {

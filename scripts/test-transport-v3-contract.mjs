@@ -274,13 +274,27 @@ for (const clause of ["12.1", "13.1"]) {
 const clause4 = registry.design.traceability.find((candidate) => candidate.clause === "4");
 assert(clause4.registry_vector.includes("wire_fixtures[id=open_unicode]"),
   "clause 4 traceability must cover the OPEN Unicode fixture");
+assert.deepEqual(clause4.shared_source, [
+  "flowersec-ts/src/v2/protocol.ts",
+  "flowersec-swift/Sources/Flowersec/TransportV2.swift",
+  "flowersec-swift/Sources/Flowersec/TransportV2Open.swift",
+], "clause 4 traceability must name the inherited OPEN helpers without assigning them v3 ownership");
+assert.equal(registry.limits.session_transition_id_bits, 64);
+assert.equal(registry.limits.session_transition_maximum_hex, "ffffffffffffffff");
+assert.equal(registry.limits.session_transition_maximum_is_usable_once, true);
+assert.equal(registry.limits.session_transition_exhaustion_error, "resource_exhausted");
+assert.equal(registry.limits.session_transition_exhaustion_goaway_reason, 5);
 for (const entry of registry.design.traceability) {
   assert(typeof entry.clause === "string" && entry.clause.length > 0, "traceability clause ID is required");
   assert(typeof entry.title === "string" && entry.title.length > 0, `${entry.clause} traceability title is required`);
   for (const field of ["source", "tests", "docs", "registry_vector"]) {
     assert(Array.isArray(entry[field]) && entry[field].length > 0, `${entry.clause} ${field} is required`);
   }
-  for (const relative of [...entry.source, ...entry.tests, ...entry.docs]) {
+  if (entry.shared_source !== undefined) {
+    assert(Array.isArray(entry.shared_source) && entry.shared_source.length > 0,
+      `${entry.clause} shared_source must be a non-empty array when present`);
+  }
+  for (const relative of [...entry.source, ...(entry.shared_source ?? []), ...entry.tests, ...entry.docs]) {
     assert(fs.existsSync(path.join(root, relative)), `${entry.clause} missing traceability path ${relative}`);
   }
   assert(entry.registry_vector.some((reference) => reference.startsWith("wire_fixtures[id=")),

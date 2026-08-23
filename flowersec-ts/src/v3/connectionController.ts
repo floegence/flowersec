@@ -513,39 +513,41 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
 
   async #acquire(): Promise<ArtifactSourceResultV3> {
     const acquisition = new SourceAcquisitionRaceV3(this.#source, this.#lifetime.signal);
-    let delivered: unknown;
+    let deliveredLeaseSnapshot: ArtifactLeaseV3 | undefined;
     try {
       const result = await acquisition.value();
       await acquisition.settle();
-      delivered = result;
       if (result === undefined) return invalidSourceResult();
       if (result === null || typeof result !== "object") return invalidSourceResult();
-      if (result.kind === "lease") {
-        if (result.lease === null || typeof result.lease !== "object") return invalidSourceResult();
-        if (!hasExactOwnKeys(result, ["kind", "lease"])) {
-          await this.#claimAndRetire(result.lease);
+      const kind = Reflect.get(result, "kind");
+      const deliveredLease = Reflect.get(result, "lease");
+      if (deliveredLease !== null && typeof deliveredLease === "object") {
+        deliveredLeaseSnapshot = deliveredLease as ArtifactLeaseV3;
+      }
+      const ownKeys = Reflect.ownKeys(result);
+      if (kind === "lease") {
+        if (deliveredLeaseSnapshot === undefined) return invalidSourceResult();
+        if (!hasExactOwnKeyList(ownKeys, ["kind", "lease"])) {
+          await this.#claimAndRetire(deliveredLeaseSnapshot);
           return invalidSourceResult();
         }
-        return { kind: "lease", lease: result.lease };
+        return { kind: "lease", lease: deliveredLeaseSnapshot };
       }
-      if (result.kind === "failure") {
-        const mixedLease = deliveredLease(result);
-        if (mixedLease !== undefined) {
-          await this.#claimAndRetire(mixedLease);
-        }
-        if (!hasExactOwnKeys(result, ["kind", "code", "disposition"]) ||
-            typeof result.code !== "string" || !ARTIFACT_SOURCE_FAILURE_CODES_V3.has(result.code)) {
+      if (kind === "failure") {
+        if (deliveredLeaseSnapshot !== undefined) await this.#claimAndRetire(deliveredLeaseSnapshot);
+        const code = Reflect.get(result, "code");
+        const disposition = Reflect.get(result, "disposition");
+        if (!hasExactOwnKeyList(ownKeys, ["kind", "code", "disposition"]) ||
+            typeof code !== "string" || !ARTIFACT_SOURCE_FAILURE_CODES_V3.has(code)) {
           return invalidSourceResult();
         }
-        return { kind: "failure", code: result.code, disposition: validateRetryDispositionV3(result.disposition) };
+        return { kind: "failure", code, disposition: validateRetryDispositionV3(disposition) };
       }
-      const invalidLease = deliveredLease(result);
-      if (invalidLease !== undefined) await this.#claimAndRetire(invalidLease);
+      if (deliveredLeaseSnapshot !== undefined) await this.#claimAndRetire(deliveredLeaseSnapshot);
       return invalidSourceResult();
     } catch (error) {
       await acquisition.settle();
-      const malformedLease = safeDeliveredLease(delivered);
-      if (malformedLease !== undefined) await this.#claimAndRetire(malformedLease);
+      if (deliveredLeaseSnapshot !== undefined) await this.#claimAndRetire(deliveredLeaseSnapshot);
       if (error instanceof ConnectErrorV3) {
         try {
           if (!ARTIFACT_SOURCE_FAILURE_CODES_V3.has(error.code)) return invalidSourceResult();
@@ -857,21 +859,16 @@ async function closeManagedSessionV3(session: ManagedSessionV3): Promise<void> {
 
 function hasExactOwnKeys(value: object, expected: readonly string[]): boolean {
   const keys = Reflect.ownKeys(value);
+  return hasExactOwnKeyList(keys, expected);
+}
+
+function hasExactOwnKeyList(keys: readonly PropertyKey[], expected: readonly string[]): boolean {
   return keys.length === expected.length && expected.every((key) => keys.includes(key));
 }
 
 function deliveredLease(value: object): ArtifactLeaseV3 | undefined {
   const lease = Reflect.get(value, "lease");
   return lease !== null && typeof lease === "object" ? lease as ArtifactLeaseV3 : undefined;
-}
-
-function safeDeliveredLease(value: unknown): ArtifactLeaseV3 | undefined {
-  if (value === null || typeof value !== "object") return undefined;
-  try {
-    return deliveredLease(value);
-  } catch {
-    return undefined;
-  }
 }
 
 function sourceFailure(result: Extract<ArtifactSourceResultV3, { kind: "failure" }>): ConnectErrorV3 {

@@ -1031,7 +1031,10 @@ export class SessionV3 implements SessionV3Contract {
       await this.freezeInboundResponders(false, prepareSignal.signal);
       respondersFrozen = true;
       const currentEpoch = this.sendEpoch;
-      if (currentEpoch === 0xffffffff) throw new SessionV3Error("resource_exhausted", "session epoch exhausted");
+      if (currentEpoch === MAX_UINT32) await this.rejectExhaustedRekey("session epoch exhausted");
+      if (this.nextTransition < 1n || this.nextTransition > MAX_UINT64) {
+        await this.rejectExhaustedRekey("session transition exhausted");
+      }
       const nextEpoch = currentEpoch + 1;
       const currentRoots = this.rootForSend(currentEpoch);
       const nextRoots = deriveEpochRoots(deriveNextEpoch(
@@ -1047,9 +1050,6 @@ export class SessionV3 implements SessionV3Contract {
       // Do not consume a transition id until preparation has completed and
       // the caller has not cancelled the operation.
       throwIfAborted(options.signal);
-      if (this.nextTransition < 1n || this.nextTransition > MAX_UINT64) {
-        throw new SessionV3Error("resource_exhausted", "session transition exhausted");
-      }
       prepareSignal.cancel();
       prepareDeadline.cancel();
       completionDeadline = createSessionDeadline(this.config, "rekey_completion");
@@ -1060,7 +1060,7 @@ export class SessionV3 implements SessionV3Contract {
       committed = true;
       throwIfAborted(completionSignal.signal);
       const transition = this.nextTransition;
-      this.nextTransition = transition + 1n;
+      this.nextTransition = transition === MAX_UINT64 ? 0n : transition + 1n;
       const payload = concat(u64(transition), u32(nextEpoch), u64(watermark));
       const active = [...this.streams.values()].filter((stream) => stream.canRekeySend());
       const updates = active.map((stream) => stream.startSendRekey(transition, nextEpoch));
@@ -1092,6 +1092,15 @@ export class SessionV3 implements SessionV3Contract {
       this.preparingSendEpoch = undefined;
       this.cleanupEpochRoots();
     }
+  }
+
+  private async rejectExhaustedRekey(message: string): Promise<never> {
+    try {
+      await this.sendGoAway(5);
+    } catch (error) {
+      this.fail(asError(error));
+    }
+    throw new SessionV3Error("resource_exhausted", message);
   }
 
   private async receiveSessionRekey(payload: Uint8Array): Promise<void> {
@@ -1127,9 +1136,14 @@ export class SessionV3 implements SessionV3Contract {
     if (peer) this.peerResponderFrozen = true;
     else this.localResponderFrozen = true;
     this.notifyResponderChanged();
-    while (this.activeInboundResponders !== 0) {
-      await raceAbort(this.responderChanged.promise, signal);
-      this.assertOpen();
+    try {
+      while (this.activeInboundResponders !== 0) {
+        await raceAbort(this.responderChanged.promise, signal);
+        this.assertOpen();
+      }
+    } catch (error) {
+      this.unfreezeInboundResponders(peer);
+      throw error;
     }
   }
 

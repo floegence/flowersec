@@ -1026,7 +1026,10 @@ impl Session for SelfSession {
         rekey_v3(self).await.map_err(|error| {
             let public = SessionError::from_io(&error);
             match public {
-                SessionError::Canceled | SessionError::Closed | SessionError::GoingAway => public,
+                SessionError::Canceled
+                | SessionError::Closed
+                | SessionError::GoingAway
+                | SessionError::ResourceExhausted => public,
                 _ => SessionError::RekeyFailed,
             }
         })
@@ -1273,6 +1276,15 @@ fn map_carrier_unreliable_send_error(
 
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
+}
+fn resource_exhausted(message: &'static str) -> io::Error {
+    io::Error::new(io::ErrorKind::OutOfMemory, message)
+}
+fn next_session_transition_v3(current: u64) -> Option<u64> {
+    (current != 0).then(|| current.wrapping_add(1))
+}
+fn expected_session_transition_v3(current: u64) -> Option<u64> {
+    current.checked_add(1)
 }
 fn closed() -> io::Error {
     io::Error::new(
@@ -1967,12 +1979,16 @@ async fn prepare_rekey_v3(session: &Arc<SelfSession>) -> io::Result<PreparedReke
     let responder_freeze = freeze_inbound_responders_v3(session, false).await?;
     let watermark = session.local_open_high_watermark.load(Ordering::Acquire);
     wait_outbound_frontier_v3(session, watermark).await?;
+    if session.state.lock().await.send_epoch == u32::MAX {
+        let _ = send_goaway_v3(session, 5).await;
+        return Err(resource_exhausted("session epoch exhausted"));
+    }
     let (next_epoch, next_roots) = {
         let state = session.state.lock().await;
         let next = state
             .send_epoch
             .checked_add(1)
-            .ok_or_else(|| invalid("session epoch exhausted"))?;
+            .ok_or_else(|| resource_exhausted("session epoch exhausted"))?;
         let roots = state
             .send_roots
             .get(&state.send_epoch)
@@ -1987,8 +2003,9 @@ async fn prepare_rekey_v3(session: &Arc<SelfSession>) -> io::Result<PreparedReke
         (next, next_roots)
     };
     let transition = session.next_transition.load(Ordering::Acquire);
-    if transition == 0 || transition.checked_add(1).is_none() {
-        return Err(invalid("rekey transition exhausted"));
+    if transition == 0 {
+        let _ = send_goaway_v3(session, 5).await;
+        return Err(resource_exhausted("rekey transition exhausted"));
     }
     let streams = active_send_streams_v3(session);
     let mut payload = [0; 20];
@@ -2027,10 +2044,8 @@ async fn commit_and_complete_rekey_v3(
     session: &EncryptedSessionV3,
     prepared: PreparedRekeyV3,
 ) -> io::Result<()> {
-    let next_transition = prepared
-        .transition
-        .checked_add(1)
-        .ok_or_else(|| invalid("rekey transition exhausted"))?;
+    let next_transition = next_session_transition_v3(prepared.transition)
+        .ok_or_else(|| resource_exhausted("rekey transition exhausted"))?;
     session
         .next_transition
         .compare_exchange(
@@ -2159,11 +2174,9 @@ async fn receive_rekey_inner_v3(session: &EncryptedSessionV3, payload: &[u8]) ->
     let transition = u64::from_be_bytes(payload[..8].try_into().unwrap());
     let next = u32::from_be_bytes(payload[8..12].try_into().unwrap());
     let watermark = u64::from_be_bytes(payload[12..20].try_into().unwrap());
-    let expected_transition = session
-        .recv_transition
-        .load(Ordering::Acquire)
-        .checked_add(1)
-        .ok_or_else(|| invalid("receive transition exhausted"))?;
+    let expected_transition =
+        expected_session_transition_v3(session.recv_transition.load(Ordering::Acquire))
+            .ok_or_else(|| invalid("receive transition exhausted"))?;
     if transition == 0 || transition != expected_transition {
         return Err(invalid("non-consecutive receive transition"));
     }
@@ -5820,6 +5833,124 @@ mod tests {
             decode_stream_key_update_ack_v3(&payload).unwrap(),
             (logical_id, transition, next_epoch)
         );
+
+        let boundary = &fixture["transition_boundary"];
+        let maximum =
+            u64::from_str_radix(boundary["maximum_transition_id_hex"].as_str().unwrap(), 16)
+                .unwrap();
+        let next_after_maximum =
+            u64::from_str_radix(boundary["next_after_maximum_hex"].as_str().unwrap(), 16).unwrap();
+        assert_eq!(maximum, u64::MAX);
+        assert_eq!(next_after_maximum, 0);
+        assert_eq!(
+            next_session_transition_v3(maximum),
+            Some(next_after_maximum)
+        );
+        assert_eq!(next_session_transition_v3(next_after_maximum), None);
+        assert_eq!(expected_session_transition_v3(maximum), None);
+        assert_eq!(boundary["maximum_is_usable_once"], true);
+        assert_eq!(boundary["exhaustion_error"], "resource_exhausted");
+        assert_eq!(boundary["exhaustion_goaway_reason"], 5);
+        assert_eq!(boundary["receive_after_maximum"], "protocol_failure");
+    }
+
+    #[tokio::test]
+    async fn maximum_session_transition_is_used_once_then_exhausts_with_goaway() {
+        let (client_carrier, server_carrier) = memory_carrier_pair_v3_with_capacity(3);
+        let (client, server) = tokio::join!(
+            establish_session_v3_inner(
+                client_carrier,
+                stream_lifecycle_config(SessionRole::Client)
+            ),
+            establish_session_v3_inner(
+                server_carrier,
+                stream_lifecycle_config(SessionRole::Server)
+            ),
+        );
+        let client = client.expect("client session");
+        let server = server.expect("server session");
+        client.next_transition.store(u64::MAX, Ordering::Release);
+        server
+            .recv_transition
+            .store(u64::MAX - 1, Ordering::Release);
+
+        assert_eq!(client.rekey().await, Ok(()));
+        assert_eq!(client.next_transition.load(Ordering::Acquire), 0);
+        assert_eq!(client.rekey().await, Err(SessionError::ResourceExhausted));
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !server.received_goaway.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("peer did not receive transition-exhaustion GOAWAY");
+        assert_eq!(
+            server
+                .open_stream("after-transition-exhaustion", StreamMetadata::empty())
+                .await
+                .err(),
+            Some(SessionError::GoingAway),
+        );
+
+        let _ = tokio::join!(client.close(), server.close());
+    }
+
+    #[tokio::test]
+    async fn session_epoch_exhaustion_returns_resource_exhausted_with_goaway() {
+        let (client_carrier, server_carrier) = memory_carrier_pair_v3_with_capacity(3);
+        let (client, server) = tokio::join!(
+            establish_session_v3_inner(
+                client_carrier,
+                stream_lifecycle_config(SessionRole::Client)
+            ),
+            establish_session_v3_inner(
+                server_carrier,
+                stream_lifecycle_config(SessionRole::Server)
+            ),
+        );
+        let client = client.expect("client session");
+        let server = server.expect("server session");
+        {
+            let mut state = client.state.lock().await;
+            let roots = state
+                .send_roots
+                .get(&0)
+                .expect("client epoch zero roots")
+                .clone();
+            state.send_roots.insert(u32::MAX, roots);
+            state.send_epoch = u32::MAX;
+            state.control_send_sequence = 0;
+        }
+        {
+            let mut state = server.state.lock().await;
+            let roots = state
+                .recv_roots
+                .get(&0)
+                .expect("server epoch zero roots")
+                .clone();
+            state.recv_roots.insert(u32::MAX, roots);
+            state.recv_epoch = u32::MAX;
+            state.control_recv_epoch = u32::MAX;
+            state.control_recv_sequence = 0;
+        }
+
+        assert_eq!(client.rekey().await, Err(SessionError::ResourceExhausted));
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !server.received_goaway.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("peer did not receive epoch-exhaustion GOAWAY");
+        assert_eq!(
+            server
+                .open_stream("after-epoch-exhaustion", StreamMetadata::empty())
+                .await
+                .err(),
+            Some(SessionError::GoingAway),
+        );
+
+        let _ = tokio::join!(client.close(), server.close());
     }
 
     #[test]

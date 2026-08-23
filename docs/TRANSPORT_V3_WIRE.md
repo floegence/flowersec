@@ -395,6 +395,14 @@ derived exact vectors and negative examples; it cannot narrow or replace those
 general rules. Wrong magic, version, route, ALPN, subprotocol, reserved data,
 truncation, or trailing data fails closed.
 
+The session rekey transition counter starts at 1 and never wraps on the wire.
+`UINT64_MAX` is usable exactly once; its committed successor is the internal
+zero exhaustion sentinel. A later local rekey attempt sends GOAWAY reason 5
+and returns the public `resource_exhausted` error. After accepting
+`UINT64_MAX`, a receiver rejects every further SESSION_KEY_UPDATE as a
+protocol failure. `testdata/transport_v3/session_wire_vectors.json` freezes
+this boundary and lifecycle alongside the inherited session payload vectors.
+
 An authenticated logical-stream FIN is clean only when the carrier read side
 then reaches native EOF without another byte. The receiver does not publish
 clean application EOF or release stream capacity before that native EOF.

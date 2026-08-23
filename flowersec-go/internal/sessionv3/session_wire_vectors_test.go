@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"os"
 	"testing"
 )
@@ -18,6 +19,14 @@ func TestSharedSessionWireV3Vectors(t *testing.T) {
 			NextEpochHex    string `json:"next_epoch_hex"`
 			PayloadHex      string `json:"payload_hex"`
 		} `json:"stream_key_update_ack"`
+		TransitionBoundary struct {
+			MaximumTransitionIDHex string `json:"maximum_transition_id_hex"`
+			NextAfterMaximumHex    string `json:"next_after_maximum_hex"`
+			MaximumIsUsableOnce    bool   `json:"maximum_is_usable_once"`
+			ExhaustionError        string `json:"exhaustion_error"`
+			ExhaustionGoAwayReason uint16 `json:"exhaustion_goaway_reason"`
+			ReceiveAfterMaximum    string `json:"receive_after_maximum"`
+		} `json:"transition_boundary"`
 	}
 	raw, err := os.ReadFile("../../../testdata/transport_v3/session_wire_vectors.json")
 	if err != nil {
@@ -47,6 +56,15 @@ func TestSharedSessionWireV3Vectors(t *testing.T) {
 		if err != nil || gotLogicalID != logicalID || gotTransitionID != transitionID || uint64(gotNextEpoch) != nextEpoch {
 			t.Fatalf("vector %d decode = (%d,%d,%d,%v)", index, gotLogicalID, gotTransitionID, gotNextEpoch, err)
 		}
+	}
+	boundary := fixture.TransitionBoundary
+	maximum := decodeVectorUint(t, boundary.MaximumTransitionIDHex, 8)
+	nextAfterMaximum := decodeVectorUint(t, boundary.NextAfterMaximumHex, 8)
+	next, exhausted := advanceSessionTransition(maximum)
+	if maximum != math.MaxUint64 || nextAfterMaximum != 0 || next != nextAfterMaximum || !exhausted ||
+		!boundary.MaximumIsUsableOnce || boundary.ExhaustionError != "resource_exhausted" ||
+		boundary.ExhaustionGoAwayReason != 5 || boundary.ReceiveAfterMaximum != "protocol_failure" {
+		t.Fatalf("invalid session transition boundary: %+v next=%d exhausted=%t", boundary, next, exhausted)
 	}
 }
 

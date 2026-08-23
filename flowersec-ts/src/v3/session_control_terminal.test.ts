@@ -187,6 +187,32 @@ describe("SessionV3 control terminal serialization", () => {
     }
   });
 
+  test("unfreezes inbound responders when rekey is cancelled during responder drain", async () => {
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, config("client")),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const internals = sessionInternals(client);
+    const controller = new AbortController();
+    internals.activeInboundResponders = 1;
+
+    const operation = client.rekey({ signal: controller.signal });
+    await waitFor(() => internals.localResponderFrozen);
+    controller.abort(new SessionV3Error("aborted", "test cancellation"));
+    await expect(operation).rejects.toMatchObject({ code: "aborted" });
+    expect(internals.localResponderFrozen).toBe(false);
+    await expect(internals.enterInboundResponder()).resolves.toBeUndefined();
+    internals.activeInboundResponders = 0;
+    internals.notifyResponderChanged();
+
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
   test("uses the maximum session transition once and then fails before wire wrap", async () => {
     const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
       kind: "webtransport",
@@ -204,9 +230,11 @@ describe("SessionV3 control terminal serialization", () => {
     serverInternals.receiveTransition = maximum - 1n;
 
     await expect(client.rekey()).resolves.toBeUndefined();
-    expect(clientInternals.nextTransition).toBe(maximum + 1n);
+    expect(clientInternals.nextTransition).toBe(0n);
     await expect(client.rekey()).rejects.toMatchObject({ code: "resource_exhausted" });
-    expect(clientInternals.nextTransition).toBe(maximum + 1n);
+    expect(clientInternals.nextTransition).toBe(0n);
+    await waitFor(() => serverInternals.receivedGoAway);
+    await expect(server.openStream("after-transition-exhaustion")).rejects.toMatchObject({ code: "going_away" });
 
     await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
   });
@@ -425,12 +453,17 @@ type SessionInternals = {
   receiveSessionRekeyBeforeDeadline(payload: Uint8Array, signal: AbortSignal): Promise<void>;
   receiveEpoch: number;
   receiveTransition: bigint;
+  receivedGoAway: boolean;
   pendingReceiveEpoch: number | undefined;
   receiveRoots: Map<number, unknown>;
   nextTransition: bigint;
   sendEpoch: number;
   pendingSessionRekey: unknown;
   waitOutboundFrontier(watermark: bigint, signal: AbortSignal): Promise<void>;
+  activeInboundResponders: number;
+  localResponderFrozen: boolean;
+  enterInboundResponder(): Promise<void>;
+  notifyResponderChanged(): void;
   fail(error: Error, abortCarrier?: boolean): void;
 };
 

@@ -5,6 +5,16 @@ import Foundation
 let openRejectResourceExhaustedReasonV3: UInt16 = 2
 let openRejectInvalidMetadataReasonV3: UInt16 = 4
 
+func nextSessionTransitionV3(_ current: UInt64) -> UInt64? {
+  guard current != 0 else { return nil }
+  return current &+ 1
+}
+
+func expectedSessionTransitionV3(after current: UInt64) -> UInt64? {
+  let (next, overflow) = current.addingReportingOverflow(1)
+  return overflow ? nil : next
+}
+
 private enum TransportV3SessionLifecycle: Equatable, Sendable {
   case opening
   case open
@@ -286,7 +296,9 @@ actor TransportV3Session {
       guard outboundLedger.frontier == watermark else {
         throw TransportV3SessionError.rekeyFailed
       }
-      guard sendEpoch != UInt32.max, nextTransition != 0 else {
+      guard sendEpoch != UInt32.max,
+        let followingTransition = nextSessionTransitionV3(nextTransition)
+      else {
         try? await sendGoAway(reason: 5)
         throw TransportV3SessionError.resourceExhausted
       }
@@ -310,7 +322,7 @@ actor TransportV3Session {
         epoch: nextEpoch,
         watermark: watermark
       )
-      nextTransition &+= 1
+      nextTransition = followingTransition
       pendingRekey = waiter
       preparationDeadline.cancel()
       activeRekeyPreparations.remove(requestID)
@@ -1135,7 +1147,8 @@ actor TransportV3Session {
     let watermark = payload.readUInt64BE(at: 12)
     guard
       transition != 0,
-      transition == receivedTransition + 1,
+      let expectedTransition = expectedSessionTransitionV3(after: receivedTransition),
+      transition == expectedTransition,
       receiveEpoch != UInt32.max,
       nextEpoch == receiveEpoch + 1,
       peerHighWatermark() == watermark
