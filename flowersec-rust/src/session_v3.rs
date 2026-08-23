@@ -909,11 +909,11 @@ fn classify_ack_v3<T: Eq>(
     last: Option<&T>,
     received: &T,
 ) -> io::Result<AckDispositionV3> {
+    if last.is_some_and(|value| value == received) {
+        return Ok(AckDispositionV3::Duplicate);
+    }
     if pending.is_some_and(|value| value == received) {
         return Ok(AckDispositionV3::Pending);
-    }
-    if pending.is_none() && last.is_some_and(|value| value == received) {
-        return Ok(AckDispositionV3::Duplicate);
     }
     Err(invalid("unexpected rekey ACK"))
 }
@@ -6484,6 +6484,21 @@ mod tests {
         );
         assert!(classify_ack_v3(Some(&ack), None, &(8, 3)).is_err());
         assert!(classify_ack_v3(None, Some(&ack), &(7, 4)).is_err());
+    }
+
+    #[test]
+    fn stream_rekey_duplicate_ack_precedes_later_pending_transition() {
+        let prior = (7_u64, 3_u32);
+        let later = (8_u64, 4_u32);
+        assert_eq!(
+            classify_ack_v3(Some(&later), Some(&prior), &prior).unwrap(),
+            AckDispositionV3::Duplicate
+        );
+        assert_eq!(
+            classify_ack_v3(Some(&later), Some(&prior), &later).unwrap(),
+            AckDispositionV3::Pending
+        );
+        assert!(classify_ack_v3(Some(&later), Some(&prior), &(7, 4)).is_err());
     }
 
     #[test]

@@ -179,6 +179,60 @@ describe("SessionV3 control terminal serialization", () => {
   });
 
   test("ignores a duplicate session rekey ACK while a later rekey is pending", async () => {
+    const [clientCarrier, rawServerCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const serverCarrier = new TerminalOrderingCarrier(rawServerCarrier);
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, config("client")),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const internals = sessionInternals(client);
+    const serverInternals = sessionInternals(server);
+    let ackCalls = 0;
+    let duplicateObservedWithPending = false;
+    const receiveACK = internals.receiveSessionRekeyACK;
+    internals.receiveSessionRekeyACK = (payload) => {
+      ackCalls++;
+      if (ackCalls === 2) duplicateObservedWithPending = internals.pendingSessionRekey !== undefined;
+      receiveACK.call(client, payload);
+    };
+
+    await client.rekey();
+    const accepted = internals.lastSessionRekeyACK;
+    expect(accepted).toBeDefined();
+
+    serverCarrier.trackControlWrites();
+    serverCarrier.blockNextControlWrite();
+    const oldACK = serverInternals.sendControlResponse(InnerTypeV3.SessionKeyUpdateACK, accepted!);
+    await serverCarrier.blockedWriteEntered.promise;
+    const second = client.rekey();
+    await waitFor(() => internals.pendingSessionRekey !== undefined);
+    const before = {
+      sendEpoch: internals.sendEpoch,
+      controlSendEpoch: internals.controlSendEpoch,
+      controlSendSequence: internals.controlSendSequence,
+    };
+    serverCarrier.releaseBlockedWrite();
+    serverCarrier.blockNextControlWrite();
+    await oldACK;
+    await waitFor(() => ackCalls >= 2);
+    await serverCarrier.secondBlockedWriteEntered.promise;
+
+    expect(duplicateObservedWithPending).toBe(true);
+    expect(internals.sendEpoch).toBe(before.sendEpoch);
+    expect(internals.controlSendEpoch).toBe(before.controlSendEpoch);
+    expect(internals.controlSendSequence).toBe(before.controlSendSequence);
+    expect(internals.pendingSessionRekey).toBeDefined();
+
+    serverCarrier.releaseBlockedWrite();
+    await expect(second).resolves.toBeUndefined();
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
+  test("fails closed for a mismatched session rekey ACK without a pending transition", async () => {
     const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
       kind: "webtransport",
       path: "direct",
@@ -188,27 +242,14 @@ describe("SessionV3 control terminal serialization", () => {
       establishSessionV3(clientCarrier, config("client")),
       establishSessionV3(serverCarrier, config("server")),
     ]);
-    const internals = sessionInternals(client);
-    const accepted = sessionRekeyPayload();
-    const pending = sessionRekeyPayload(2n, 2);
-    internals.lastSessionRekeyACK = accepted;
-    internals.pendingSessionRekey = {
-      payload: pending,
-      epoch: 2,
-      acknowledged: deferred<void>(),
-      committed: { value: false },
-    };
-    internals.sendEpoch = 1;
-    internals.controlSendEpoch = 1;
-    internals.controlSendSequence = 9n;
-
-    expect(() => internals.receiveSessionRekeyACK(accepted)).not.toThrow();
-    expect(internals.sendEpoch).toBe(1);
-    expect(internals.controlSendEpoch).toBe(1);
-    expect(internals.controlSendSequence).toBe(9n);
-    expect(internals.pendingSessionRekey.committed.value).toBe(false);
-
-    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+    const serverInternals = sessionInternals(server);
+    await expect(serverInternals.sendControlResponse(
+      InnerTypeV3.SessionKeyUpdateACK,
+      new Uint8Array(20),
+    )).resolves.toBe(true);
+    const termination = await testDeadline(client.termination, "mismatched ACK termination");
+    expect(termination.error).toMatchObject({ code: "protocol" });
+    await server.close().catch(() => undefined);
   });
 
   test("does not consume a session rekey transition when prepare is cancelled", async () => {
@@ -850,6 +891,7 @@ class TerminalOrderingCarrier implements CarrierSessionV3 {
   readonly inboundBidirectionalStreamCapacity: number;
   readonly unreliableDatagrams: CarrierSessionV3["unreliableDatagrams"];
   readonly blockedWriteEntered = deferred<void>();
+  readonly secondBlockedWriteEntered = deferred<void>();
   readonly controlEvents: string[] = [];
   writesAfterFIN = 0;
   aborts = 0;
@@ -858,7 +900,8 @@ class TerminalOrderingCarrier implements CarrierSessionV3 {
   private blockNext = false;
   private failNext = false;
   private fin = false;
-  private readonly blockedWriteRelease = deferred<void>();
+  private blockedWriteRelease = deferred<void>();
+  private blockedWriteCount = 0;
 
   constructor(private readonly inner: CarrierSessionV3) {
     this.kind = inner.kind;
@@ -876,6 +919,8 @@ class TerminalOrderingCarrier implements CarrierSessionV3 {
     this.tracking = true;
     this.failNext = true;
   }
+
+  trackControlWrites(): void { this.tracking = true; }
 
   releaseBlockedWrite(): void {
     this.blockedWriteRelease.resolve();
@@ -912,8 +957,11 @@ class TerminalOrderingCarrier implements CarrierSessionV3 {
           }
           if (this.blockNext) {
             this.blockNext = false;
-            this.blockedWriteEntered.resolve();
-            await this.blockedWriteRelease.promise;
+            if (this.blockedWriteCount++ === 0) this.blockedWriteEntered.resolve();
+            else this.secondBlockedWriteEntered.resolve();
+            const release = this.blockedWriteRelease;
+            await release.promise;
+            this.blockedWriteRelease = deferred<void>();
           }
         }
         return await stream.write(data, options);

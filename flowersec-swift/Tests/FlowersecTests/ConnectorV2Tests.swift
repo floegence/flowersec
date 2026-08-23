@@ -63,6 +63,28 @@ final class ConnectorV2Tests: XCTestCase {
       await connection.close()
     }
 
+    func testProductionV3PlatformRootIPVerificationRejectsSANMismatch() throws {
+      let tls = try ConnectorTestTLS.makePrivateCAIssued(
+        subjectAlternativeName: "IP:127.0.0.2")
+
+      // Platform roots use Security.framework, whose trust policy receives no
+      // hostname when an IP literal is intentionally omitted from SNI. The
+      // production CA verification boundary must still enforce the IP SAN.
+      XCTAssertFalse(
+        NativeTLSPolicyAdapterV3.certificateMatchesIPAddress(
+          tls.certificate, address: [127, 0, 0, 1]))
+
+      let matching = try ConnectorTestTLS.makePrivateCAIssued(
+        subjectAlternativeName: "IP:127.0.0.1")
+      XCTAssertTrue(
+        NativeTLSPolicyAdapterV3.certificateMatchesIPAddress(
+          matching.certificate, address: [127, 0, 0, 1]))
+
+      _ = try NativeTLSPolicyAdapterV3.makeClientHandlerFactory(
+        policy: .ca(serverName: "127.0.0.1", rootsSource: .platform),
+        serverHostname: "127.0.0.1")
+    }
+
     func testProductionV3AdapterRejectsRemoteIPOnlySANForDNSURL() async throws {
       let tls = try ConnectorTestTLS.makePrivateCAIssued(
         subjectAlternativeName: "IP:127.0.0.1")

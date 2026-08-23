@@ -1835,9 +1835,9 @@ class EncryptedStreamV3 implements ByteStreamV3 {
     const decoded = decodeStreamKeyUpdateACKV3(payload);
     if (decoded.logicalStreamID !== this.id) throw protocolError("invalid STREAM_KEY_UPDATE_ACK");
     const { transition, epoch } = decoded;
+    if (this.lastSendRekeyACK?.transition === transition && this.lastSendRekeyACK.epoch === epoch) return;
     const pending = this.pendingSendRekey;
     if (pending === undefined) {
-      if (this.lastSendRekeyACK?.transition === transition && this.lastSendRekeyACK.epoch === epoch) return;
       throw protocolError("unexpected STREAM_KEY_UPDATE_ACK");
     }
     if (pending.transition !== transition || pending.epoch !== epoch) throw protocolError("unexpected STREAM_KEY_UPDATE_ACK");

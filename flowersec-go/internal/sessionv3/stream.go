@@ -1154,13 +1154,13 @@ func (s *encryptedStream) receiveStreamKeyUpdateACK(payload []byte) error {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
 	s.sendRekeyMu.Lock()
+	if s.lastSendRekeyTransition == transition && s.lastSendRekeyEpoch == epoch {
+		s.sendRekeyMu.Unlock()
+		return nil
+	}
 	pending := s.sendRekey
 	if pending == nil {
-		duplicate := s.lastSendRekeyTransition == transition && s.lastSendRekeyEpoch == epoch
 		s.sendRekeyMu.Unlock()
-		if duplicate {
-			return nil
-		}
 		return ErrSessionProtocol
 	}
 	if pending.transition != transition || pending.epoch != epoch {

@@ -402,9 +402,7 @@ and returns the public `resource_exhausted` error. The 32-bit session epoch
 also never wraps: epoch `UINT32_MAX` is usable, and a local rekey attempt from
 that epoch has the same exhaustion result. Both exhaustion checks occur before
 waiting for stream frontiers or responders, freezing responders, or deriving
-new roots. Exhaustion GOAWAY handling remains bounded by the original rekey
-preparation deadline; a write failure or deadline expiry fails the session
-closed. After accepting `UINT64_MAX`, or while receiving at epoch
+new roots. After accepting `UINT64_MAX`, or while receiving at epoch
 `UINT32_MAX`, a receiver rejects every further SESSION_KEY_UPDATE as a
 protocol failure before waiting for responders. The
 `testdata/transport_v3/session_wire_vectors.json` fixture freezes both

@@ -42,7 +42,20 @@
         let context = try NIOSSLContext(configuration: configuration)
         return ProxyTLSClientHandler {
           guard let dnsHostname = tlsServerHostname else {
-            return try NIOSSLClientHandler(context: context, serverHostname: nil)
+            guard let ipAddress = ipAddressBytes(serverHostname) else {
+              throw NativeTLSPolicyErrorV3.invalidPolicy
+            }
+            return try NIOSSLClientHandler._makeSSLClientHandler(
+              context: context,
+              serverHostname: nil,
+              additionalPeerCertificateVerificationCallback: { certificate, channel in
+                guard certificateMatchesIPAddress(certificate, address: ipAddress) else {
+                  return channel.eventLoop.makeFailedFuture(
+                    TransportSecurityFailureV3.unknownTLS)
+                }
+                return channel.eventLoop.makeSucceededVoidFuture()
+              }
+            )
           }
           return try NIOSSLClientHandler._makeSSLClientHandler(
             context: context,
@@ -98,17 +111,42 @@
         unbracketed = hostname
       }
       guard !unbracketed.isEmpty else { throw NativeTLSPolicyErrorV3.invalidPolicy }
-      var ipv4 = in_addr()
-      var ipv6 = in6_addr()
-      if unbracketed.withCString({ inet_pton(AF_INET, $0, &ipv4) }) == 1
-        || unbracketed.withCString({ inet_pton(AF_INET6, $0, &ipv6) }) == 1
-      {
-        // NIOSSL's full-verification path matches IP SAN against the connected
-        // socket address when no DNS hostname is supplied. IP literals are
-        // never valid SNI values.
-        return nil
-      }
+      if ipAddressBytes(unbracketed) != nil { return nil }
       return unbracketed
+    }
+
+    private static func ipAddressBytes(_ hostname: String) -> [UInt8]? {
+      let unbracketed: String
+      if hostname.hasPrefix("[") && hostname.hasSuffix("]") {
+        unbracketed = String(hostname.dropFirst().dropLast())
+      } else {
+        unbracketed = hostname
+      }
+      guard !unbracketed.isEmpty else { return nil }
+
+      var ipv4 = in_addr()
+      if unbracketed.withCString({ inet_pton(AF_INET, $0, &ipv4) }) == 1 {
+        return withUnsafeBytes(of: ipv4) { Array($0) }
+      }
+
+      var ipv6 = in6_addr()
+      if unbracketed.withCString({ inet_pton(AF_INET6, $0, &ipv6) }) == 1 {
+        return withUnsafeBytes(of: ipv6) { Array($0) }
+      }
+      return nil
+    }
+
+    static func certificateMatchesIPAddress(
+      _ certificate: NIOSSLCertificate,
+      address: [UInt8]
+    ) -> Bool {
+      guard address.count == 4 || address.count == 16 else { return false }
+      for alternativeName in certificate._subjectAlternativeNames()
+      where alternativeName.nameType == .ipAddress {
+        let presented = alternativeName.contents.withUnsafeBufferPointer(Array.init)
+        if presented == address { return true }
+      }
+      return false
     }
 
     private static func certificateMatchesDNSHostname(

@@ -320,50 +320,44 @@ pub(crate) async fn connect_v3_with_cancellation_and_preparer(
     let deadline = tokio::time::Instant::now() + options.connect_timeout();
     let mut aggregate = CandidateFailureV3::Unsupported;
     let mut policy_trigger_mask = 0_u8;
-    let failed_candidate_mask = (1_u8 << plan.candidates.len()) - 1;
+    // Only candidates that pass the local capability filter can contribute to
+    // failure provenance.  A skipped carrier is not an attempted endpoint and
+    // must not influence policy refresh or replacement selection.
+    let mut failed_candidate_mask = 0_u8;
     let mut attempted = false;
     let race_cancellation = cancellation.child_token();
     let plan_ref = &plan;
     let options_ref = &options;
-    let snapshots: Vec<Result<CanonicalCandidateV3, CandidateFailureV3>> = plan
-        .candidates
-        .iter()
-        .map(|candidate| snapshot_candidate_policy(candidate, attempt_now))
-        .collect();
     let mut attempts = FuturesUnordered::new();
 
     for (candidate_index, candidate) in plan.candidates.iter().enumerate() {
-        if candidate.carrier == CarrierWireV3::Webtransport
-            || candidate.carrier == CarrierWireV3::Websocket && options.websocket_origin().is_none()
-        {
+        if !candidate_is_supported(candidate, &options) {
             continue;
         }
-        let snapshot = match &snapshots[candidate_index] {
+        let snapshot = match snapshot_candidate_policy(candidate, attempt_now) {
             Ok(snapshot) => snapshot,
             Err(failure) => {
+                failed_candidate_mask |= 1_u8 << candidate_index;
                 if matches!(failure, CandidateFailureV3::PolicyExpired) {
                     policy_trigger_mask |= 1_u8 << candidate_index;
                 }
-                aggregate = aggregate_failure(aggregate, *failure);
+                aggregate = aggregate_failure(aggregate, failure);
                 continue;
             }
         };
         attempted = true;
         let attempt_cancellation = race_cancellation.child_token();
         attempts.push(async move {
-            (
-                candidate_index,
-                candidate,
-                preparer
-                    .prepare(
-                        snapshot,
-                        plan_ref,
-                        options_ref,
-                        deadline,
-                        &attempt_cancellation,
-                    )
-                    .await,
-            )
+            let result = preparer
+                .prepare(
+                    &snapshot,
+                    plan_ref,
+                    options_ref,
+                    deadline,
+                    &attempt_cancellation,
+                )
+                .await;
+            (candidate_index, candidate, result)
         });
     }
 
@@ -404,6 +398,7 @@ pub(crate) async fn connect_v3_with_cancellation_and_preparer(
                 }
             }
             Err(failure) => {
+                failed_candidate_mask |= 1_u8 << candidate_index;
                 if matches!(
                     candidate.tls,
                     crate::artifact_v3::TlsPolicyWireV3::Pin { .. }
@@ -597,6 +592,14 @@ fn snapshot_candidate_policy(
         }
     }
     Ok(snapshot)
+}
+
+fn candidate_is_supported(candidate: &CanonicalCandidateV3, options: &ConnectorOptions) -> bool {
+    match candidate.carrier {
+        CarrierWireV3::Websocket => options.websocket_origin().is_some(),
+        CarrierWireV3::RawQuic => true,
+        CarrierWireV3::Webtransport => false,
+    }
 }
 
 async fn admit_and_establish(
@@ -1619,6 +1622,53 @@ mod tests {
             snapshot_candidate_policy(declared, 200),
             Err(CandidateFailureV3::PolicyExpired)
         );
+    }
+
+    #[tokio::test]
+    async fn unsupported_candidates_do_not_snapshot_expired_pins_or_trigger_refresh() {
+        for candidate in [
+            json!({
+                "carrier": "webtransport",
+                "id": "unsupported-webtransport",
+                "tls": {"mode": "pin", "pins": [{
+                    "algorithm": "sha-256",
+                    "not_after_unix_s": unix_seconds().saturating_sub(1),
+                    "value_b64u": URL_SAFE_NO_PAD.encode([0x11_u8; 32])
+                }]},
+                "url": "https://127.0.0.1:443/flowersec/webtransport/v3/direct",
+                "wire_profile": "flowersec-direct/3"
+            }),
+            json!({
+                "carrier": "websocket",
+                "id": "websocket-without-origin",
+                "tls": {"mode": "pin", "pins": [{
+                    "algorithm": "sha-256",
+                    "not_after_unix_s": unix_seconds().saturating_sub(1),
+                    "value_b64u": URL_SAFE_NO_PAD.encode([0x22_u8; 32])
+                }]},
+                "url": "wss://127.0.0.1:443/flowersec/v3/direct",
+                "wire_profile": "flowersec-direct/3"
+            }),
+        ] {
+            let spends = Arc::new(AtomicUsize::new(0));
+            let spend_capture = spends.clone();
+            let error = connect_v3_with_cancellation_and_preparer(
+                ArtifactLeaseV3::new(artifact_with_candidates(vec![candidate]), move || {
+                    spend_capture.fetch_add(1, Ordering::SeqCst);
+                    async { Ok(()) }
+                }),
+                ConnectorOptions::new(),
+                CancellationToken::new(),
+                &FailingCandidatePreparer { failures: vec![] },
+            )
+            .await
+            .expect_err("unsupported candidate unexpectedly connected");
+
+            assert_eq!(error.code(), ConnectErrorCode::TransportSecurityUnsupported);
+            assert_eq!(error.v3_policy_trigger_mask(), 0);
+            assert_eq!(error.v3_failed_candidate_mask(), 0);
+            assert_eq!(spends.load(Ordering::SeqCst), 0);
+        }
     }
 
     #[tokio::test]
