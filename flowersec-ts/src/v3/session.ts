@@ -70,6 +70,7 @@ import {
   sealRecord,
   verifySetupMAC,
   type EpochRootsV3,
+  type RecordMaterialV3,
   type RecordHeaderV3,
   type CipherSuiteV3,
 } from "./protocol.js";
@@ -454,7 +455,7 @@ export class SessionV3 implements SessionV3Contract {
     this.assertOpen();
     const inner = encodeInnerRecordV3(type, payload);
     const roots = this.rootForSend(stream.sendEpoch);
-    const material = deriveStreamMaterial(roots.streamRoot, this.h3, stream.id, this.sendDirection, stream.sendEpoch);
+    const material = stream.sendMaterial(roots, this.h3, this.sendDirection);
     const header: RecordHeaderV3 = {
       epoch: stream.sendEpoch,
       sequence: stream.sendSequence,
@@ -478,7 +479,7 @@ export class SessionV3 implements SessionV3Contract {
       throw protocolError("unexpected stream epoch or sequence");
     }
     const roots = this.rootForReceive(header.epoch);
-    const material = deriveStreamMaterial(roots.streamRoot, this.h3, stream.id, this.receiveDirection, header.epoch);
+    const material = stream.receiveMaterial(roots, this.h3, this.receiveDirection, header.epoch);
     const ciphertext = await stream.reader.readExactly(header.ciphertextLength);
     const inner = decodeInnerRecordV3(openRecord(
       this.config.suite,
@@ -492,6 +493,7 @@ export class SessionV3 implements SessionV3Contract {
     if (priorACK) {
       if (inner.type !== InnerTypeV3.StreamKeyUpdateACK) throw protocolError("late old-epoch record is not rekey ACK");
       stream.priorACK = undefined;
+      stream.pruneReceiveMaterials();
       this.cleanupEpochRoots();
     } else {
       stream.receiveSequence += 1n;
@@ -520,6 +522,7 @@ export class SessionV3 implements SessionV3Contract {
   }
 
   releaseStream(stream: EncryptedStreamV3): void {
+    stream.wipeRecordMaterials();
     if (stream.terminalError !== undefined) {
       this.releasedStreams.delete(stream.id);
       this.releasedStreamCleanup.unregister(stream);
@@ -1387,6 +1390,8 @@ class EncryptedStreamV3 implements ByteStreamV3 {
     epoch: number;
     acknowledged: Deferred<void>;
   }> | undefined;
+  private readonly sendMaterials = new Map<number, RecordMaterialV3>();
+  private readonly receiveMaterials = new Map<number, RecordMaterialV3>();
 
   constructor(
     readonly session: SessionV3,
@@ -1558,6 +1563,38 @@ class EncryptedStreamV3 implements ByteStreamV3 {
     this.permitRelease();
   }
 
+  sendMaterial(roots: EpochRootsV3, h3: Uint8Array, direction: DirectionV3): RecordMaterialV3 {
+    let material = this.sendMaterials.get(this.sendEpoch);
+    if (material === undefined) {
+      material = deriveStreamMaterial(roots.streamRoot, h3, this.id, direction, this.sendEpoch);
+      this.sendMaterials.set(this.sendEpoch, material);
+    }
+    return material;
+  }
+
+  receiveMaterial(
+    roots: EpochRootsV3,
+    h3: Uint8Array,
+    direction: DirectionV3,
+    epoch: number,
+  ): RecordMaterialV3 {
+    let material = this.receiveMaterials.get(epoch);
+    if (material === undefined) {
+      material = deriveStreamMaterial(roots.streamRoot, h3, this.id, direction, epoch);
+      this.receiveMaterials.set(epoch, material);
+    }
+    return material;
+  }
+
+  pruneReceiveMaterials(): void {
+    pruneRecordMaterials(this.receiveMaterials, new Set([this.receiveEpoch]));
+  }
+
+  wipeRecordMaterials(): void {
+    pruneRecordMaterials(this.sendMaterials, new Set());
+    pruneRecordMaterials(this.receiveMaterials, new Set());
+  }
+
   private async pump(): Promise<void> {
     try {
       while (this.terminalError === undefined) {
@@ -1659,6 +1696,10 @@ class EncryptedStreamV3 implements ByteStreamV3 {
     }
     this.receiveEpoch = nextEpoch;
     this.receiveSequence = 0n;
+    pruneRecordMaterials(
+      this.receiveMaterials,
+      new Set(this.priorACK === undefined ? [nextEpoch] : [header.epoch, nextEpoch]),
+    );
     const pending = { transition, epoch: nextEpoch, acknowledged: deferred<void>() } as const;
     this.receiveRekey = pending;
     await this.send(InnerTypeV3.StreamKeyUpdateACK, encodeStreamKeyUpdateACKV3({
@@ -1681,6 +1722,7 @@ class EncryptedStreamV3 implements ByteStreamV3 {
     if (pending.transition !== transition || pending.epoch !== epoch) throw protocolError("unexpected STREAM_KEY_UPDATE_ACK");
     this.sendEpoch = epoch;
     this.sendSequence = 0n;
+    pruneRecordMaterials(this.sendMaterials, new Set([epoch]));
     this.pendingSendRekey = undefined;
     this.lastSendRekeyACK = { transition, epoch };
     pending.done.resolve();
@@ -2282,6 +2324,16 @@ function wipeEpochRoots(roots: EpochRootsV3): void {
   roots.streamRoot.fill(0);
   roots.setupRoot.fill(0);
   roots.rekeyRoot.fill(0);
+}
+
+function pruneRecordMaterials(materials: Map<number, RecordMaterialV3>, retained: ReadonlySet<number>): void {
+  for (const [epoch, material] of materials) {
+    if (retained.has(epoch)) continue;
+    material.secret.fill(0);
+    material.recordKey.fill(0);
+    material.noncePrefix.fill(0);
+    materials.delete(epoch);
+  }
 }
 
 async function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {

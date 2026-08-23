@@ -706,14 +706,14 @@ test("freezes Chromium stream capacity at 100 sessions and 128 streams each", ()
   };
   const normalized = normalizeBrowserCapacityPlan(plan);
   assert.equal(normalized.sessions * normalized.connections_per_session * normalized.streams_per_session, 12_800);
-  assert.equal(normalized.stream_workers_per_session, 8);
+  assert.equal(normalized.stream_workers_per_session, 4);
   assert.throws(() => normalizeBrowserCapacityPlan({ ...plan, sessions: 101 }), /100/);
   assert.throws(() => normalizeBrowserCapacityPlan({ ...plan, streams_per_session: 127 }), /128/);
 });
 
-test("partitions all 128 capacity stream indexes across eight bounded workers", () => {
-  const assignments = capacityStreamAssignments(128, 8);
-  assert.deepEqual(assignments.map((indexes) => indexes.length), [16, 16, 16, 16, 16, 16, 16, 16]);
+test("partitions all 128 capacity stream indexes across four bounded workers", () => {
+  const assignments = capacityStreamAssignments(128, 4);
+  assert.deepEqual(assignments.map((indexes) => indexes.length), [32, 32, 32, 32]);
   assert.deepEqual(assignments.flat().toSorted((left, right) => left - right), Array.from({ length: 128 }, (_, index) => index));
   assert.throws(() => capacityStreamAssignments(128, 0), /workers/);
   assert.throws(() => capacityStreamAssignments(3, 4), /workers/);
