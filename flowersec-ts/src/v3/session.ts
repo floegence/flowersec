@@ -295,6 +295,7 @@ export class SessionV3 implements SessionV3Contract {
   private peerResponderFrozen = false;
   private responderChanged = deferred<void>();
   private idleWatchdogStarted = false;
+  private idleDeadlineMs: number | undefined;
   private idleTimerCancel: (() => void) | undefined;
   private readonly terminationState = deferred<SessionTerminationV3>();
   private readonly rpcRouter: RpcRouter;
@@ -1314,11 +1315,24 @@ export class SessionV3 implements SessionV3Contract {
     if (!this.idleWatchdogStarted || this.lifecycle !== "open") return;
     const timeoutMs = sessionIdleTimeoutMs(this.config);
     if (timeoutMs === 0) return;
-    this.idleTimerCancel?.();
+    this.idleDeadlineMs = this.config.runtime.monotonicMilliseconds() + timeoutMs;
+    if (this.idleTimerCancel !== undefined) return;
+    this.scheduleIdleWatchdog();
+  }
+
+  private scheduleIdleWatchdog(): void {
+    const deadlineMs = this.idleDeadlineMs;
+    if (deadlineMs === undefined || this.lifecycle !== "open") return;
+    const remainingMs = Math.max(0, deadlineMs - this.config.runtime.monotonicMilliseconds());
     this.idleTimerCancel = scheduleLongTimeout(() => {
       this.idleTimerCancel = undefined;
+      if (this.lifecycle !== "open" || this.idleDeadlineMs === undefined) return;
+      if (this.config.runtime.monotonicMilliseconds() < this.idleDeadlineMs) {
+        this.scheduleIdleWatchdog();
+        return;
+      }
       this.fail(new SessionV3Error("timeout", "Flowersec v3 session idle timeout exceeded"));
-    }, timeoutMs);
+    }, remainingMs);
   }
 
   private fail(error: Error, abortCarrier = true): void {
@@ -1335,6 +1349,7 @@ export class SessionV3 implements SessionV3Contract {
     this.terminationState.resolve({ error });
     this.idleTimerCancel?.();
     this.idleTimerCancel = undefined;
+    this.idleDeadlineMs = undefined;
     this.incoming.fail(error);
     this.outboundPermits.fail(error);
     this.inboundPermits.fail(error);

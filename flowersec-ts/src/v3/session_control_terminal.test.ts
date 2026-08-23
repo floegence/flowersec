@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { createMemoryCarrierPairV3, type CarrierSessionV3, type CarrierStreamV3 } from "./carrier.js";
 import type { OperationOptionsV3 } from "./contract.js";
@@ -251,9 +251,37 @@ describe("SessionV3 control terminal serialization", () => {
     release.resolve();
     await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
   });
+
+  test("coalesces authenticated activity onto one idle watchdog timer", async () => {
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, config("client")),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const internals = sessionInternals(client);
+    internals.config.idleTimeoutMs = 1_000;
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    try {
+      internals.markAuthenticatedActivity();
+      const scheduled = setTimeoutSpy.mock.calls.length;
+      expect(scheduled).toBe(1);
+      internals.markAuthenticatedActivity();
+      internals.markAuthenticatedActivity();
+      expect(setTimeoutSpy.mock.calls.length).toBe(scheduled);
+    } finally {
+      setTimeoutSpy.mockRestore();
+      await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+    }
+  });
 });
 
 type SessionInternals = {
+  config: { idleTimeoutMs?: number };
+  markAuthenticatedActivity(): void;
   sendControl(type: InnerTypeV3, payload: Uint8Array): Promise<void>;
   sendControlResponse(type: InnerTypeV3, payload: Uint8Array): Promise<boolean>;
   sendControlCleanup(type: InnerTypeV3, payload: Uint8Array): Promise<boolean>;
