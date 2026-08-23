@@ -98,6 +98,10 @@ sync_workspace() {
   fi
   [[ $(stat -c %u "$host_workspace") == 0 ]] || { echo "root workspace must be root-owned" >&2; exit 1; }
   git -C "$host_workspace" remote set-url origin "$source_url"
+  [[ -z $(git -C "$host_workspace" status --porcelain --untracked-files=all) ]] || {
+    echo "root workspace is not clean before sync" >&2
+    exit 1
+  }
   if [[ $(git -C "$host_workspace" rev-parse HEAD 2>/dev/null || true) != "$source_sha" ]]; then
     git -C "$host_workspace" fetch --force origin "$source_sha"
     git -C "$host_workspace" checkout --detach --force "$source_sha"

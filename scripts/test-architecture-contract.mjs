@@ -584,6 +584,10 @@ assert.match(registry, /case err := <-done:[\s\S]*cleanupCommandGroup\(command\.
 assert.match(hostEntry, /git -C "\$host_workspace" checkout --detach --force "\$source_sha"/);
 assert.match(hostEntry, /status --porcelain --untracked-files=all/);
 assert.doesNotMatch(hostEntry, /status --porcelain --untracked-files=no/);
+const workspaceStatusBeforeCheckout = hostEntry.indexOf('status --porcelain --untracked-files=all', hostEntry.indexOf('sync_workspace()'));
+const workspaceCheckout = hostEntry.indexOf('checkout --detach --force "$source_sha"', workspaceStatusBeforeCheckout);
+assert.ok(workspaceStatusBeforeCheckout >= 0 && workspaceCheckout > workspaceStatusBeforeCheckout,
+  "root workspace must be verified clean before any force checkout");
 assert.doesNotMatch(hostEntry, /sudo -E|sudo su|ssh |scp |rsync /);
 assert.match(hostEntry, /readonly host_open_file_limit=65536/);
 assert.match(hostEntry, /hard_limit=\$\(ulimit -Hn\)/);
