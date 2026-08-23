@@ -70,6 +70,15 @@ const wireFixture = JSON.parse(readFileSync(
       completion_deadline: string;
       session_state_after_success: string;
     }>;
+    pre_commit_preparation_timeout: Readonly<{
+      operation_error: string;
+      session_state: string;
+    }>;
+    post_commit_failure: Readonly<{
+      operation_error: string;
+      termination_error: string;
+      session_state: string;
+    }>;
     post_commit_completion_timeout: Readonly<{
       operation_error: string;
       canceled_caller_error: string;
@@ -77,6 +86,7 @@ const wireFixture = JSON.parse(readFileSync(
       session_state: string;
       completion_owner: string;
     }>;
+    close_waits_for_owned_completion: boolean;
   }>;
 }>;
 const bytes = (value: string): Uint8Array => new TextEncoder().encode(value);
@@ -199,8 +209,17 @@ describe("transport v3 inherited session wire boundaries", () => {
       post_commit_caller_cancellation: {
         caller_error: "canceled",
         completion_owner: "session",
-        completion_deadline: "rekey_completion_timeout",
+        completion_deadline: "rekey_completion_timeout_seconds",
         session_state_after_success: "open",
+      },
+      pre_commit_preparation_timeout: {
+        operation_error: "rekey_failed",
+        session_state: "open",
+      },
+      post_commit_failure: {
+        operation_error: "rekey_failed",
+        termination_error: "operation_failed",
+        session_state: "closed",
       },
       post_commit_completion_timeout: {
         operation_error: "rekey_failed",
@@ -209,6 +228,7 @@ describe("transport v3 inherited session wire boundaries", () => {
         session_state: "closed",
         completion_owner: "session",
       },
+      close_waits_for_owned_completion: true,
     });
   });
 });

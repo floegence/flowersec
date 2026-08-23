@@ -850,6 +850,9 @@ func (s *engineSession) sendGoAwayAndWait(ctx context.Context, reason uint16) er
 	case err := <-delivery:
 		return err
 	case <-ctx.Done():
+		if s.ctx.Err() != nil {
+			return s.sessionError()
+		}
 		return ctx.Err()
 	case <-s.ctx.Done():
 		return s.sessionError()
@@ -885,10 +888,10 @@ func (s *engineSession) localTerminalGoAwayPayload(reason uint16) []byte {
 func (s *engineSession) exhaustRekeyCounter(prepareContext, callerContext context.Context) error {
 	if err := s.sendGoAwayAndWait(prepareContext, 5); err != nil {
 		s.fail(err)
-		if callerContext.Err() != nil {
+		if errors.Is(err, context.Canceled) && callerContext.Err() != nil {
 			return callerContext.Err()
 		}
-		if errors.Is(prepareContext.Err(), context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) {
 			return fmt.Errorf("%w: exhaustion GOAWAY preparation deadline", ErrRekey)
 		}
 	}

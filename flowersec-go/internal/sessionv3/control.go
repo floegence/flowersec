@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
@@ -611,11 +612,11 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 	}()
 	watermark := s.localOpenHighWatermark()
 	if err := s.waitOutboundFrontier(prepareContext, watermark); err != nil {
-		return err
+		return rekeyPreparationError(prepareContext, ctx, err)
 	}
 	if err := s.freezeResponders(prepareContext, false); err != nil {
 		s.unfreezeResponders(false)
-		return err
+		return rekeyPreparationError(prepareContext, ctx, err)
 	}
 	respondersFrozen := true
 	defer func() {
@@ -637,6 +638,13 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 	s.sendRoots[nextEpoch] = nextRoots
 	s.cryptoMu.Unlock()
 	s.pendingRekeyMu.Lock()
+	if err := prepareContext.Err(); err != nil {
+		s.pendingRekeyMu.Unlock()
+		s.cryptoMu.Lock()
+		delete(s.sendRoots, nextEpoch)
+		s.cryptoMu.Unlock()
+		return rekeyPreparationError(prepareContext, ctx, err)
+	}
 	transition = s.nextTransition
 	if transition == 0 || s.transitionExhausted {
 		s.pendingRekeyMu.Unlock()
@@ -652,39 +660,22 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 	binary.BigEndian.PutUint64(pending.payload[12:20], watermark)
 	s.pendingRekey = pending
 	s.pendingRekeyMu.Unlock()
-
-	for _, stream := range s.snapshotStreams() {
-		streamPending := stream.startSendRekey(transition, nextEpoch)
-		if streamPending != nil {
-			pending.streams = append(pending.streams, streamPending)
-			go func(stream *encryptedStream, streamPending *pendingStreamRekey) {
-				if err := stream.awaitSendRekeyACK(s.ctx, streamPending); err != nil && s.ctx.Err() == nil {
-					s.fail(err)
-				}
-			}(stream, streamPending)
-		}
-	}
-	for _, streamPending := range pending.streams {
-		if err := s.waitStreamRekeyCommit(prepareContext, streamPending.armed); err != nil {
-			s.clearPendingRekey(pending)
-			s.fail(fmt.Errorf("%w: %v", ErrRekey, err))
-			return fmt.Errorf("%w: %v", ErrRekey, err)
-		}
-	}
-	if err := s.sendControl(protocolv3.InnerSessionKeyUpdate, pending.payload[:]); err != nil {
-		s.clearPendingRekey(pending)
-		s.fail(fmt.Errorf("%w: %v", ErrRekey, err))
-		return fmt.Errorf("%w: %v", ErrRekey, err)
-	}
+	activeStreams := s.snapshotStreams()
 	cancelPrepare()
 	completion := make(chan error, 1)
 	rekeyOwned = false
 	opensFrozen = false
 	respondersFrozen = false
-	go func() {
-		completion <- s.completeOwnedRekey(pending)
+	if !s.startOwnedWorker(func() {
+		completion <- s.completeOwnedRekey(pending, activeStreams)
 		close(completion)
-	}()
+	}) {
+		s.clearPendingRekey(pending)
+		s.rekeyMu.Unlock()
+		s.unfreezeOpens()
+		s.unfreezeResponders(false)
+		return s.sessionError()
+	}
 	select {
 	case err := <-completion:
 		return err
@@ -693,19 +684,44 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 	}
 }
 
-func (s *engineSession) completeOwnedRekey(pending *pendingRekey) error {
+func (s *engineSession) completeOwnedRekey(pending *pendingRekey, activeStreams []*encryptedStream) error {
 	defer s.rekeyMu.Unlock()
 	defer s.unfreezeOpens()
 	defer s.unfreezeResponders(false)
 	completionContext, cancelCompletion := context.WithTimeout(s.ctx, s.config.RekeyCompletionTimeout)
-	defer cancelCompletion()
+	var ackWorkers sync.WaitGroup
+	defer func() {
+		cancelCompletion()
+		ackWorkers.Wait()
+	}()
+	for _, stream := range activeStreams {
+		streamPending := stream.startSendRekey(binary.BigEndian.Uint64(pending.payload[0:8]), pending.epoch)
+		if streamPending == nil {
+			continue
+		}
+		pending.streams = append(pending.streams, streamPending)
+		ackWorkers.Add(1)
+		go func(stream *encryptedStream, streamPending *pendingStreamRekey) {
+			defer ackWorkers.Done()
+			if err := stream.awaitSendRekeyACK(completionContext, streamPending); err != nil && completionContext.Err() == nil && s.ctx.Err() == nil {
+				s.fail(err)
+			}
+		}(stream, streamPending)
+	}
+	for _, streamPending := range pending.streams {
+		if err := s.waitStreamRekeyCommit(completionContext, streamPending.armed); err != nil {
+			return s.failOwnedRekeyCompletion(pending, err)
+		}
+	}
+	if err := s.sendControl(protocolv3.InnerSessionKeyUpdate, pending.payload[:]); err != nil {
+		return s.failOwnedRekeyCompletion(pending, err)
+	}
 	select {
 	case <-pending.done:
 	case <-completionContext.Done():
 		return s.failOwnedRekeyCompletion(pending, completionContext.Err())
 	case <-s.ctx.Done():
-		s.clearPendingRekey(pending)
-		return s.sessionError()
+		return s.failOwnedRekeyCompletion(pending, s.sessionError())
 	}
 	for _, streamPending := range pending.streams {
 		if err := s.waitRekeySignal(completionContext, streamPending.done); err != nil {
@@ -720,15 +736,28 @@ func (s *engineSession) completeOwnedRekey(pending *pendingRekey) error {
 func (s *engineSession) failOwnedRekeyCompletion(pending *pendingRekey, err error) error {
 	s.clearPendingRekey(pending)
 	if s.ctx.Err() != nil {
-		return s.sessionError()
+		terminalErr := s.sessionError()
+		if errors.Is(terminalErr, ErrSessionClosed) && !errors.Is(terminalErr, ErrSessionProtocol) {
+			return terminalErr
+		}
+		return fmt.Errorf("%w: post-commit completion failed", ErrRekey)
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		s.fail(context.DeadlineExceeded)
 		return fmt.Errorf("%w: rekey completion deadline", ErrRekey)
 	}
-	operationErr := fmt.Errorf("%w: %w", ErrRekey, err)
-	s.fail(operationErr)
-	return operationErr
+	s.fail(err)
+	return fmt.Errorf("%w: post-commit completion failed", ErrRekey)
+}
+
+func rekeyPreparationError(prepareContext, callerContext context.Context, err error) error {
+	if callerErr := callerContext.Err(); callerErr != nil {
+		return callerErr
+	}
+	if errors.Is(err, context.DeadlineExceeded) && errors.Is(prepareContext.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%w: rekey preparation deadline", ErrRekey)
+	}
+	return err
 }
 
 func advanceSessionTransition(current uint64) (next uint64, exhausted bool) {

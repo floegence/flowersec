@@ -422,6 +422,11 @@ continues under `rekey_completion_timeout_seconds` and leaves the session open
 when it succeeds. If that session-owned workflow reaches its completion
 deadline, a still-waiting rekey operation returns `rekey_failed`, a previously
 canceled caller remains `canceled`, and the session terminates with `timeout`.
+An ordinary pre-commit preparation deadline returns `rekey_failed` and leaves
+the session open. Any other post-commit completion failure returns
+`rekey_failed`, terminates the session with `operation_failed`, and leaves it
+closed. Session `Close` is a completion barrier for the session-owned rekey
+workflow and does not return while its gates or pending state remain owned.
 
 An authenticated logical-stream FIN is clean only when the carrier read side
 then reaches native EOF without another byte. The receiver does not publish

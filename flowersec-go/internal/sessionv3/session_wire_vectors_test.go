@@ -61,6 +61,15 @@ func TestSharedSessionWireV3Vectors(t *testing.T) {
 				CompletionDeadline       string `json:"completion_deadline"`
 				SessionStateAfterSuccess string `json:"session_state_after_success"`
 			} `json:"post_commit_caller_cancellation"`
+			PreCommitPreparationTimeout struct {
+				OperationError string `json:"operation_error"`
+				SessionState   string `json:"session_state"`
+			} `json:"pre_commit_preparation_timeout"`
+			PostCommitFailure struct {
+				OperationError   string `json:"operation_error"`
+				TerminationError string `json:"termination_error"`
+				SessionState     string `json:"session_state"`
+			} `json:"post_commit_failure"`
 			PostCommitCompletionTimeout struct {
 				OperationError      string `json:"operation_error"`
 				CanceledCallerError string `json:"canceled_caller_error"`
@@ -68,6 +77,7 @@ func TestSharedSessionWireV3Vectors(t *testing.T) {
 				SessionState        string `json:"session_state"`
 				CompletionOwner     string `json:"completion_owner"`
 			} `json:"post_commit_completion_timeout"`
+			CloseWaitsForOwnedCompletion bool `json:"close_waits_for_owned_completion"`
 		} `json:"rekey_lifecycle"`
 	}
 	raw, err := os.ReadFile("../../../testdata/transport_v3/session_wire_vectors.json")
@@ -125,14 +135,25 @@ func TestSharedSessionWireV3Vectors(t *testing.T) {
 		t.Fatalf("invalid exhaustion GOAWAY deadline lifecycle: %+v", deadline)
 	}
 	if cancellation := lifecycle.PostCommitCallerCancellation; cancellation.CallerError != "canceled" ||
-		cancellation.CompletionOwner != "session" || cancellation.CompletionDeadline != "rekey_completion_timeout" ||
+		cancellation.CompletionOwner != "session" || cancellation.CompletionDeadline != "rekey_completion_timeout_seconds" ||
 		cancellation.SessionStateAfterSuccess != "open" {
 		t.Fatalf("invalid post-commit cancellation lifecycle: %+v", cancellation)
+	}
+	if preparation := lifecycle.PreCommitPreparationTimeout; preparation.OperationError != "rekey_failed" ||
+		preparation.SessionState != "open" {
+		t.Fatalf("invalid pre-commit preparation timeout lifecycle: %+v", preparation)
+	}
+	if failure := lifecycle.PostCommitFailure; failure.OperationError != "rekey_failed" ||
+		failure.TerminationError != "operation_failed" || failure.SessionState != "closed" {
+		t.Fatalf("invalid post-commit failure lifecycle: %+v", failure)
 	}
 	if timeout := lifecycle.PostCommitCompletionTimeout; timeout.OperationError != "rekey_failed" ||
 		timeout.CanceledCallerError != "canceled" || timeout.TerminationError != "timeout" ||
 		timeout.SessionState != "closed" || timeout.CompletionOwner != "session" {
 		t.Fatalf("invalid post-commit completion timeout lifecycle: %+v", timeout)
+	}
+	if !lifecycle.CloseWaitsForOwnedCompletion {
+		t.Fatal("session Close must wait for owned rekey completion")
 	}
 }
 
@@ -368,6 +389,97 @@ func TestPostCommitCallerCancellationLeavesCompletionTimeoutOwnedBySession(t *te
 	assertOwnedRekeyGatesReleased(t, session)
 }
 
+func TestRekeyPreparationTimeoutProjectsRekeyFailureAndLeavesSessionOpen(t *testing.T) {
+	session, _ := newRekeyBoundarySession(t, rekeyControlWriteSuccess, 25*time.Millisecond)
+	session.openMu.Lock()
+	session.nextID = 3
+	session.openMu.Unlock()
+
+	err := session.Rekey(context.Background())
+	if !errors.Is(err, ErrRekey) || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("pre-commit timeout Rekey = %v, want rekey failure without deadline projection", err)
+	}
+	select {
+	case <-session.Termination():
+		t.Fatalf("pre-commit timeout terminated session: %v", session.sessionError())
+	default:
+	}
+}
+
+func TestPostCommitWriteFailureProjectsRekeyFailureAndOperationFailedTermination(t *testing.T) {
+	session, _ := newRekeyBoundarySession(t, rekeyControlWriteFailure, time.Second)
+
+	err := session.Rekey(context.Background())
+	if !errors.Is(err, ErrRekey) || errors.Is(err, ErrSessionProtocol) {
+		t.Fatalf("post-commit write failure Rekey = %v, want rekey failure", err)
+	}
+	waitContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := session.WaitClosed(waitContext); !errors.Is(err, ErrSessionProtocol) {
+		t.Fatalf("post-commit write termination = %v, want operation failure", err)
+	}
+}
+
+func TestCallerCancellationDuringFirstActiveStreamUpdateTransfersOwnershipAndCloseJoins(t *testing.T) {
+	session, _ := newRekeyBoundarySession(t, rekeyControlWriteSuccess, time.Second)
+	streamCarrier := &rekeyBoundaryControlStream{
+		ctx: session.ctx, mode: rekeyControlWriteBlocked, writes: make(chan []byte, 1),
+		writeEntered: make(chan struct{}), releaseWrite: make(chan struct{}),
+	}
+	state, err := protocolv3.NewOutboundLogicalStreamState(1, [32]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	openPayload, err := protocolv3.MarshalOpenPayload(protocolv3.OpenPayload{LogicalStreamID: 1, Kind: "owned-rekey"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SendOpen(openPayload); err != nil {
+		t.Fatal(err)
+	}
+	openHash, err := protocolv3.ComputeOpenHash(openPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ReceiveOpenACK(protocolv3.MarshalOpenACK(openHash)); err != nil {
+		t.Fatal(err)
+	}
+	stream := &encryptedStream{
+		session: session, carrier: streamCarrier, id: 1, kind: "owned-rekey", state: state,
+		readOwnerChanged: make(chan struct{}), recvUpdateChanged: make(chan struct{}), release: func() {},
+	}
+	stream.setSendRootEpoch(0)
+	stream.setReceiveRootEpoch(0)
+	session.registerStream(stream)
+
+	callerContext, cancelCaller := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- session.Rekey(callerContext) }()
+	select {
+	case <-streamCarrier.writeEntered:
+	case <-time.After(time.Second):
+		select {
+		case err := <-result:
+			t.Fatalf("active-stream rekey failed before its first irreversible write: %v", err)
+		default:
+			t.Fatalf("active-stream rekey never reached its first irreversible write; active=%t terminal=%v", stream.canRekeySend(), session.sessionError())
+		}
+	}
+	cancelCaller()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("post-commit active-stream caller result = %v, want canceled", err)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("caller cancellation did not release after active-stream commit")
+	}
+	if err := session.Close(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Close after owned rekey = %v", err)
+	}
+	assertOwnedRekeyGatesReleased(t, session)
+}
+
 func assertOwnedRekeyGatesReleased(t *testing.T, session *engineSession) {
 	t.Helper()
 	deadline := time.Now().Add(300 * time.Millisecond)
@@ -439,7 +551,10 @@ type rekeyBoundaryControlStream struct {
 	releaseOnce  sync.Once
 }
 
-func (stream *rekeyBoundaryControlStream) Read([]byte) (int, error) { return 0, io.EOF }
+func (stream *rekeyBoundaryControlStream) Read([]byte) (int, error) {
+	<-stream.ctx.Done()
+	return 0, stream.ctx.Err()
+}
 func (stream *rekeyBoundaryControlStream) Write(payload []byte) (int, error) {
 	stream.enteredOnce.Do(func() { close(stream.writeEntered) })
 	switch stream.mode {

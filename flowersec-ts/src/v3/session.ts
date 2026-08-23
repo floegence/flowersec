@@ -386,14 +386,19 @@ export class SessionV3 implements SessionV3Contract {
   }
 
   async rekey(options: OperationOptionsV3 = {}): Promise<void> {
-    this.assertOpen();
-    throwIfAborted(options.signal);
-    const task = this.rekeyTail.then(async () => {
-      throwIfAborted(options.signal);
-      await this.rekeyOnce(options);
-    });
-    this.rekeyTail = task.catch(() => undefined);
-    await raceAbort(task, options.signal);
+    const callerCancellation = canonicalCallerCancellation(options.signal);
+    try {
+      this.assertOpen();
+      throwIfAborted(callerCancellation.signal);
+      const task = this.rekeyTail.then(async () => {
+        throwIfAborted(callerCancellation.signal);
+        await this.rekeyOnce({ signal: callerCancellation.signal });
+      });
+      this.rekeyTail = task.catch(() => undefined);
+      await raceAbort(task, callerCancellation.signal);
+    } finally {
+      callerCancellation.cancel();
+    }
   }
 
   close(): Promise<void> {
@@ -993,7 +998,10 @@ export class SessionV3 implements SessionV3Contract {
   }
 
   private async closeOnce(): Promise<void> {
-    if (this.lifecycle === "closed") return;
+    if (this.lifecycle === "closed") {
+      await this.rekeyTail;
+      return;
+    }
     const closed = new SessionV3Error("closed", "Flowersec v3 session closed");
     const terminal = this.sendTerminalControl(1);
     const work = (async () => {
@@ -1012,6 +1020,10 @@ export class SessionV3 implements SessionV3Contract {
       void work.catch(() => undefined);
     }
     this.fail(closed, false);
+    // Close is the barrier for every workflow the session owns. A caller may
+    // already have stopped observing a committed rekey, but its internal task
+    // must release all gates before Close returns.
+    await this.rekeyTail;
   }
 
   async waitTermination(): Promise<SessionTerminationV3> {
@@ -1053,7 +1065,7 @@ export class SessionV3 implements SessionV3Contract {
       await this.waitOutboundFrontier(watermark, prepareSignal.signal);
       // Do not consume a transition id until preparation has completed and
       // the caller has not cancelled the operation.
-      throwIfAborted(options.signal);
+      throwIfAborted(prepareSignal.signal);
       prepareSignal.cancel();
       prepareDeadline.cancel();
       completionDeadline = createSessionDeadline(this.config, "rekey_completion");
@@ -1086,9 +1098,16 @@ export class SessionV3 implements SessionV3Contract {
       this.cleanupEpochRoots();
     } catch (error) {
       const failure = asError(error);
-      if (committed) this.fail(failure);
-      if (committed && failure instanceof SessionV3Error && failure.code === "timeout") {
-        throw new SessionV3Error("rekey_failed", "Flowersec v3 rekey completion deadline exceeded");
+      if (committed) {
+        this.fail(failure);
+        if (failure instanceof SessionV3Error && failure.code === "closed") throw failure;
+        const message = failure instanceof SessionV3Error && failure.code === "timeout"
+          ? "Flowersec v3 rekey completion deadline exceeded"
+          : "Flowersec v3 rekey completion failed";
+        throw new SessionV3Error("rekey_failed", message);
+      }
+      if (failure instanceof SessionV3Error && failure.code === "timeout") {
+        throw new SessionV3Error("rekey_failed", "Flowersec v3 rekey preparation deadline exceeded");
       }
       throw error;
     } finally {
@@ -1112,9 +1131,14 @@ export class SessionV3 implements SessionV3Contract {
     try {
       await this.sendGoAway(5, signal);
     } catch (error) {
-      this.fail(asError(error));
-      if (callerSignal?.aborted === true) throw abortReason(callerSignal);
-      if (signal.aborted) throw new SessionV3Error("rekey_failed", "exhaustion GOAWAY preparation failed");
+      const failure = asError(error);
+      this.fail(failure);
+      if (failure instanceof SessionV3Error && failure.code === "aborted" && callerSignal?.aborted === true) {
+        throw abortedError();
+      }
+      if (failure instanceof SessionV3Error && failure.code === "timeout") {
+        throw new SessionV3Error("rekey_failed", "exhaustion GOAWAY preparation deadline exceeded");
+      }
     }
     throw new SessionV3Error("resource_exhausted", message);
   }
@@ -2511,6 +2535,20 @@ function combineSignals(...signals: Array<AbortSignal | undefined>): SessionDead
   return {
     signal: controller.signal,
     cancel: () => { for (const cleanup of cleanups.splice(0)) cleanup(); },
+  };
+}
+
+function canonicalCallerCancellation(signal?: AbortSignal): SessionDeadlineHandleV3 {
+  const controller = new AbortController();
+  if (signal === undefined) return { signal: controller.signal, cancel: () => undefined };
+  const abort = () => {
+    if (!controller.signal.aborted) controller.abort(abortedError());
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
+  return {
+    signal: controller.signal,
+    cancel: () => signal.removeEventListener("abort", abort),
   };
 }
 

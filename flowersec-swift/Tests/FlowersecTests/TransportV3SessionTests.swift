@@ -1187,6 +1187,34 @@ final class TransportV3SessionTests: XCTestCase {
     try? await serverSession.close()
   }
 
+  func testPostCommitWriterFailureProjectsRekeyFailureAndOperationFailedTermination() async throws {
+    let blocker = SwitchableWriteBlocker()
+    let (clientBase, serverCarrier) = MemoryCarrierSession.pair()
+    let clientCarrier = StallableWriteCarrierSession(
+      base: clientBase,
+      blocker: blocker,
+      blockOpenStreamNumber: 1
+    )
+    let configs = try makeConfigs()
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+    let publicSession: any Session = OpaqueSessionV3(clientSession)
+
+    await blocker.failNextWrite()
+    do {
+      try await publicSession.rekey()
+      XCTFail("post-commit writer failure unexpectedly succeeded")
+    } catch let error as SessionError {
+      XCTAssertEqual(error, .rekeyFailed)
+    }
+    let terminal = await publicSession.waitTermination()
+    XCTAssertEqual(terminal.error, .operationFailed)
+
+    try? await clientSession.close()
+    try? await serverSession.close()
+  }
+
   func testCallerCancellationLeavesPostCommitTimeoutOwnedBySession() async throws {
     let blocker = SwitchableWriteBlocker()
     let (clientCarrier, serverBase) = MemoryCarrierSession.pair()
@@ -1221,6 +1249,44 @@ final class TransportV3SessionTests: XCTestCase {
 
     await blocker.release()
     try? await clientSession.close()
+    try? await serverSession.close()
+  }
+
+  func testCloseWaitsForCallerCancelledOwnedRekeyToReleaseLifecycleGates() async throws {
+    let blocker = SwitchableWriteBlocker()
+    let (clientCarrier, serverBase) = MemoryCarrierSession.pair()
+    let serverCarrier = StallableWriteCarrierSession(
+      base: serverBase,
+      blocker: blocker,
+      blockAcceptedStreamNumber: 1
+    )
+    var configs = try makeConfigs()
+    configs.client.deadlines.rekeyCompletion = .seconds(1)
+    let clientConfig = configs.client
+    let serverConfig = configs.server
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: serverConfig)
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: clientConfig)
+    let (clientSession, serverSession) = try await (client, server)
+    let publicSession: any Session = OpaqueSessionV3(clientSession)
+
+    await blocker.enable(afterSuccessfulWrites: 0)
+    let rekeying = Task { try await publicSession.rekey() }
+    await blocker.waitUntilBlocked()
+    rekeying.cancel()
+    do {
+      try await rekeying.value
+      XCTFail("cancelled committed rekey unexpectedly completed for its caller")
+    } catch let error as SessionError {
+      XCTAssertEqual(error, .canceled)
+    }
+
+    let closing = Task { try await clientSession.close() }
+    await blocker.release()
+    try await closing.value
+    let lifecycle = await clientSession.lifecycleWaiterCountsForTesting()
+    XCTAssertFalse(lifecycle.rekeyInProgress)
+    XCTAssertFalse(lifecycle.localRespondersFrozen)
+
     try? await serverSession.close()
   }
 
@@ -1558,14 +1624,20 @@ final class TransportV3SessionTests: XCTestCase {
     XCTAssertEqual(lifecycle.postCommitCallerCancellation.completionOwner, "session")
     XCTAssertEqual(
       lifecycle.postCommitCallerCancellation.completionDeadline,
-      "rekey_completion_timeout"
+      "rekey_completion_timeout_seconds"
     )
     XCTAssertEqual(lifecycle.postCommitCallerCancellation.sessionStateAfterSuccess, "open")
+    XCTAssertEqual(lifecycle.preCommitPreparationTimeout.operationError, "rekey_failed")
+    XCTAssertEqual(lifecycle.preCommitPreparationTimeout.sessionState, "open")
+    XCTAssertEqual(lifecycle.postCommitFailure.operationError, "rekey_failed")
+    XCTAssertEqual(lifecycle.postCommitFailure.terminationError, "operation_failed")
+    XCTAssertEqual(lifecycle.postCommitFailure.sessionState, "closed")
     XCTAssertEqual(lifecycle.postCommitCompletionTimeout.operationError, "rekey_failed")
     XCTAssertEqual(lifecycle.postCommitCompletionTimeout.canceledCallerError, "canceled")
     XCTAssertEqual(lifecycle.postCommitCompletionTimeout.terminationError, "timeout")
     XCTAssertEqual(lifecycle.postCommitCompletionTimeout.sessionState, "closed")
     XCTAssertEqual(lifecycle.postCommitCompletionTimeout.completionOwner, "session")
+    XCTAssertTrue(lifecycle.closeWaitsForOwnedCompletion)
   }
 
   func testTransitionMaximumUsesProductionRekeyOnceThenExhausts() async throws {
@@ -2448,6 +2520,16 @@ private struct RekeyCallerCancellationVector: Decodable {
   }
 }
 
+private struct RekeyOperationLifecycleVector: Decodable {
+  let operationError: String
+  let sessionState: String
+
+  enum CodingKeys: String, CodingKey {
+    case operationError = "operation_error"
+    case sessionState = "session_state"
+  }
+}
+
 private struct RekeyCompletionTimeoutVector: Decodable {
   let operationError: String
   let canceledCallerError: String
@@ -2468,13 +2550,19 @@ private struct RekeyLifecycleVector: Decodable {
   let exhaustionGoAwayWriteFailure: RekeyFailureLifecycleVector
   let exhaustionGoAwayDeadlineExpiry: RekeyFailureLifecycleVector
   let postCommitCallerCancellation: RekeyCallerCancellationVector
+  let preCommitPreparationTimeout: RekeyOperationLifecycleVector
+  let postCommitFailure: RekeyFailureLifecycleVector
   let postCommitCompletionTimeout: RekeyCompletionTimeoutVector
+  let closeWaitsForOwnedCompletion: Bool
 
   enum CodingKeys: String, CodingKey {
     case exhaustionGoAwayWriteFailure = "exhaustion_goaway_write_failure"
     case exhaustionGoAwayDeadlineExpiry = "exhaustion_goaway_deadline_expiry"
     case postCommitCallerCancellation = "post_commit_caller_cancellation"
+    case preCommitPreparationTimeout = "pre_commit_preparation_timeout"
+    case postCommitFailure = "post_commit_failure"
     case postCommitCompletionTimeout = "post_commit_completion_timeout"
+    case closeWaitsForOwnedCompletion = "close_waits_for_owned_completion"
   }
 }
 

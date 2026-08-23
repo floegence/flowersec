@@ -178,7 +178,7 @@ describe("SessionV3 control terminal serialization", () => {
     try {
       const operation = client.rekey({ signal: controller.signal });
       await entered.promise;
-      controller.abort(new SessionV3Error("aborted", "test cancellation"));
+      controller.abort(new Error("caller supplied cancellation reason"));
       await expect(operation).rejects.toMatchObject({ code: "aborted" });
       expect(internals.nextTransition).toBe(1n);
     } finally {
@@ -204,7 +204,7 @@ describe("SessionV3 control terminal serialization", () => {
 
     const operation = client.rekey({ signal: controller.signal });
     await waitFor(() => internals.localResponderFrozen);
-    controller.abort(new SessionV3Error("aborted", "test cancellation"));
+    controller.abort(new Error("caller supplied cancellation reason"));
     await expect(operation).rejects.toMatchObject({ code: "aborted" });
     expect(internals.localResponderFrozen).toBe(false);
     await expect(internals.enterInboundResponder()).resolves.toBeUndefined();
@@ -384,7 +384,7 @@ describe("SessionV3 control terminal serialization", () => {
     const controller = new AbortController();
     const operation = client.rekey({ signal: controller.signal });
     await entered.promise;
-    controller.abort(new SessionV3Error("aborted", "test cancellation"));
+    controller.abort(new Error("caller supplied cancellation reason"));
     await expect(operation).rejects.toMatchObject({ code: "aborted" });
     release.resolve();
     const internals = sessionInternals(client);
@@ -429,6 +429,61 @@ describe("SessionV3 control terminal serialization", () => {
     await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
   });
 
+  test("ordinary preparation timeout projects rekey failure without closing the session", async () => {
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const clientConfig: SessionConfigV3 = {
+      ...config("client"),
+      deadlines: {
+        establishTimeoutMs: 1_000,
+        rekeyPrepareTimeoutMs: 25,
+        rekeyCompletionTimeoutMs: 1_000,
+      },
+    };
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, clientConfig),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const internals = sessionInternals(client);
+    const originalWait = internals.waitOutboundFrontier;
+    internals.waitOutboundFrontier = async (_watermark, signal) => {
+      await abortableWait(new Promise<void>(() => undefined), signal);
+    };
+    try {
+      await expect(projectSessionV3(client).rekey()).rejects.toMatchObject({ code: "rekey_failed" });
+      expect(client.terminalError).toBeUndefined();
+      expect(internals.openFrozen).toBe(false);
+    } finally {
+      internals.waitOutboundFrontier = originalWait;
+      await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+    }
+  });
+
+  test("post-commit writer failure returns rekey failure and terminates as operation failed", async () => {
+    const [rawClient, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const clientCarrier = new TerminalOrderingCarrier(rawClient);
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, config("client")),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const publicClient = projectSessionV3(client);
+    clientCarrier.failNextControlWrite();
+
+    await expect(publicClient.rekey()).rejects.toMatchObject({ code: "rekey_failed" });
+    await expect(publicClient.waitTermination()).resolves.toMatchObject({
+      error: { code: "operation_failed" },
+    });
+
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
   test("caller cancellation leaves a post-commit timeout owned by the session", async () => {
     const [rawClient, serverCarrier] = createMemoryCarrierPairV3({
       kind: "webtransport",
@@ -454,7 +509,7 @@ describe("SessionV3 control terminal serialization", () => {
 
     const operation = publicClient.rekey({ signal: controller.signal });
     await clientCarrier.blockedWriteEntered.promise;
-    controller.abort(new SessionV3Error("aborted", "test cancellation"));
+    controller.abort(new Error("caller supplied cancellation reason"));
     await expect(testDeadline(operation, "post-commit caller cancellation")).rejects.toMatchObject({ code: "canceled" });
     await expect(testDeadline(publicClient.waitTermination(), "owned completion timeout")).resolves.toMatchObject({
       error: { code: "timeout" },
@@ -463,6 +518,35 @@ describe("SessionV3 control terminal serialization", () => {
 
     clientCarrier.releaseBlockedWrite();
     await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
+  test("Close joins a committed rekey after its caller cancels", async () => {
+    const [rawClient, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const clientCarrier = new TerminalOrderingCarrier(rawClient);
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, config("client")),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const publicClient = projectSessionV3(client);
+    const controller = new AbortController();
+    clientCarrier.blockNextControlWrite();
+
+    const operation = publicClient.rekey({ signal: controller.signal });
+    await clientCarrier.blockedWriteEntered.promise;
+    controller.abort(new Error("caller supplied cancellation reason"));
+    await expect(operation).rejects.toMatchObject({ code: "canceled" });
+    await expect(testDeadline(publicClient.close(), "Close owned-rekey barrier")).resolves.toBeUndefined();
+
+    const internals = sessionInternals(client);
+    expect(internals.pendingSessionRekey).toBeUndefined();
+    expect(internals.openFrozen).toBe(false);
+    expect(internals.localResponderFrozen).toBe(false);
+    clientCarrier.releaseBlockedWrite();
+    await server.close().catch(() => undefined);
   });
 
   test("session failure rejects and clears a pending session rekey ACK immediately", async () => {

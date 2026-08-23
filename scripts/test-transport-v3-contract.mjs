@@ -295,8 +295,14 @@ assert.equal(registry.limits.session_rekey_exhaustion_goaway_deadline_operation_
 assert.equal(registry.limits.session_rekey_exhaustion_goaway_deadline_termination_error, "timeout");
 assert.equal(registry.limits.session_rekey_post_commit_caller_error, "canceled");
 assert.equal(registry.limits.session_rekey_post_commit_completion_owner, "session");
-assert.equal(registry.limits.session_rekey_post_commit_completion_deadline, "rekey_completion_timeout");
+assert.equal(registry.limits.session_rekey_post_commit_completion_deadline, "rekey_completion_timeout_seconds");
 assert.equal(registry.limits.session_rekey_post_commit_success_state, "open");
+assert.equal(registry.limits.session_rekey_pre_commit_timeout_operation_error, "rekey_failed");
+assert.equal(registry.limits.session_rekey_pre_commit_timeout_state, "open");
+assert.equal(registry.limits.session_rekey_post_commit_failure_operation_error, "rekey_failed");
+assert.equal(registry.limits.session_rekey_post_commit_failure_termination_error, "operation_failed");
+assert.equal(registry.limits.session_rekey_post_commit_failure_state, "closed");
+assert.equal(registry.limits.session_close_waits_for_owned_rekey_completion, true);
 assert.equal(registry.limits.session_rekey_post_commit_timeout_operation_error, "rekey_failed");
 assert.equal(registry.limits.session_rekey_post_commit_timeout_canceled_caller_error, "canceled");
 assert.equal(registry.limits.session_rekey_post_commit_timeout_termination_error, "timeout");

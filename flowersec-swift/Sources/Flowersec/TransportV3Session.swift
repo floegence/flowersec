@@ -86,6 +86,7 @@ actor TransportV3Session {
   private var failedRekeyPreparations: Set<UInt64> = []
   private var nextLifecycleWaiterID: UInt64 = 1
   private var pendingRekey: PendingSessionRekeyV3?
+  private var ownedRekeyCompletion: (transition: UInt64, signal: RekeySignalV3)?
   private var lastAcceptedSessionRekeyACK: Data?
   private var pendingReceiveRekeyTransition: UInt64?
   private var terminationError: TransportV3SessionError?
@@ -343,6 +344,7 @@ actor TransportV3Session {
         duration: config.deadlines.rekeyCompletion
       )
       let ownedCompletion = RekeySignalV3()
+      ownedRekeyCompletion = (transition, ownedCompletion)
       ownershipTransferred = true
       rekeyGateOwned = false
       inboundRespondersFrozen = false
@@ -381,11 +383,7 @@ actor TransportV3Session {
     completionDeadline: Task<Void, Never>,
     result: RekeySignalV3
   ) async {
-    defer {
-      completionDeadline.cancel()
-      unfreezeInboundResponders(peerInitiated: false)
-      finishRekeyGate()
-    }
+    var completionFailed = false
     do {
       var streamWaiters: [RekeySignalV3] = []
       let activeStreams = Array(streams.values)
@@ -402,11 +400,31 @@ actor TransportV3Session {
       for signal in streamWaiters { try await signal.wait() }
       if pendingRekey === waiter { pendingRekey = nil }
       trimSendRoots()
-      await result.succeed()
     } catch {
+      completionFailed = true
       if pendingRekey === waiter { pendingRekey = nil }
-      await failProtocol()
+    }
+    completionDeadline.cancel()
+    unfreezeInboundResponders(peerInitiated: false)
+    finishRekeyGate()
+    if completionFailed {
+      // Publish the bounded operation result only after releasing its gates,
+      // but before starting the independent close flush.
       await result.fail(TransportV3SessionError.rekeyFailed)
+      if !closing, !closed {
+        _ = initiateClose(
+          goAwayReason: 6,
+          closeReason: 6,
+          carrierCode: 6,
+          carrierReason: "session rekey completion failed",
+          terminalError: .protocolViolation
+        )
+      }
+    } else {
+      await result.succeed()
+    }
+    if ownedRekeyCompletion?.transition == transition {
+      ownedRekeyCompletion = nil
     }
   }
 
@@ -434,7 +452,7 @@ actor TransportV3Session {
         return
       }
       await self?.expireRekeyPreparation(requestID: requestID)
-      await result.fail(TransportV3SessionError.rekeyFailed)
+      await result.fail(TransportV3SessionError.timeout)
     }
     defer {
       delivery.cancel()
@@ -444,18 +462,28 @@ actor TransportV3Session {
       try await result.waitAsObserver()
     } catch {
       delivery.cancel()
-      let terminalError: TransportV3SessionError =
-        !Task.isCancelled && failedRekeyPreparations.contains(requestID)
-        ? .timeout : .protocolViolation
+      if error is CancellationError || Task.isCancelled {
+        _ = initiateClose(
+          goAwayReason: 6,
+          closeReason: 6,
+          carrierCode: 6,
+          carrierReason: "session exhaustion GOAWAY cancelled",
+          terminalError: .protocolViolation
+        )
+        throw CancellationError()
+      }
+      let deadlineWon = (error as? TransportV3SessionError) == .timeout
       _ = initiateClose(
         goAwayReason: 6,
         closeReason: 6,
         carrierCode: 6,
         carrierReason: "session exhaustion GOAWAY failed",
-        terminalError: terminalError
+        terminalError: deadlineWon ? .timeout : .protocolViolation
       )
-      try Task.checkCancellation()
-      try checkRekeyPreparation(requestID: requestID)
+      if deadlineWon { throw TransportV3SessionError.rekeyFailed }
+      // A concrete writer failure still reports resource exhaustion for this
+      // operation; only the session termination exposes operation_failed.
+      return
     }
   }
 
@@ -490,7 +518,11 @@ actor TransportV3Session {
   }
 
   func close() async throws {
-    if closed { return }
+    let rekeyCompletion = ownedRekeyCompletion?.signal
+    if closed {
+      await rekeyCompletion?.waitForSettlement()
+      return
+    }
     let signal = initiateClose(
       goAwayReason: 1,
       closeReason: 1,
@@ -499,6 +531,7 @@ actor TransportV3Session {
       terminalError: .closed
     )
     await signal.wait()
+    await rekeyCompletion?.waitForSettlement()
   }
 
   func sendGoAway(reason: UInt16) async throws {
@@ -1528,14 +1561,13 @@ actor TransportV3Session {
   private func expireRekey(transition: UInt64) async {
     guard let pendingRekey, pendingRekey.transition == transition else { return }
     await pendingRekey.signal.fail(TransportV3SessionError.rekeyFailed)
-    let signal = initiateClose(
+    _ = initiateClose(
       goAwayReason: 6,
       closeReason: 6,
       carrierCode: 6,
       carrierReason: "rekey completion timeout",
       terminalError: .timeout
     )
-    await signal.wait()
   }
 
   private func cancelIncomingWaiter(_ waiterID: UInt64) {
@@ -2940,6 +2972,7 @@ private actor RekeySignalV3 {
   private var result: Result<Void, Error>?
   private var waiters: [CheckedContinuation<Void, Error>] = []
   private var observers: [UInt64: CheckedContinuation<Void, Error>] = [:]
+  private var settlementWaiters: [CheckedContinuation<Void, Never>] = []
   private var nextObserverID: UInt64 = 1
 
   func wait() async throws {
@@ -2975,6 +3008,11 @@ private actor RekeySignalV3 {
   func succeed() { finish(.success(())) }
   func fail(_ error: Error) { finish(.failure(error)) }
 
+  func waitForSettlement() async {
+    if result != nil { return }
+    await withCheckedContinuation { settlementWaiters.append($0) }
+  }
+
   private func finish(_ result: Result<Void, Error>) {
     guard self.result == nil else { return }
     self.result = result
@@ -2984,6 +3022,9 @@ private actor RekeySignalV3 {
     let pendingObservers = Array(observers.values)
     observers.removeAll()
     for observer in pendingObservers { observer.resume(with: result) }
+    let pendingSettlementWaiters = settlementWaiters
+    settlementWaiters.removeAll()
+    for waiter in pendingSettlementWaiters { waiter.resume() }
   }
 
   private func cancelObserver(_ observerID: UInt64) {

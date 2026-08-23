@@ -3060,6 +3060,67 @@ async fn dropping_a_committed_rekey_future_keeps_owned_completion_running() {
 }
 
 #[tokio::test]
+async fn close_waits_for_a_dropped_committed_rekey_to_release_its_lock() {
+    let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
+    let gate = Arc::new(AtomicBool::new(false));
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let client_carrier: Arc<dyn CarrierSessionV3> = Arc::new(GatedCarrierSession {
+        inner: client_inner,
+        gate: gate.clone(),
+        write_entered: entered.clone(),
+        release_write: release.clone(),
+    });
+    let mut client_config = regression_config(SessionRole::Client, "close-owned-rekey", 1, None);
+    let mut server_config = regression_config(SessionRole::Server, "close-owned-rekey", 1, None);
+    client_config.deadlines.rekey_prepare = Duration::from_millis(500);
+    server_config.deadlines.rekey_prepare = Duration::from_millis(500);
+    client_config.deadlines.rekey_completion = Duration::from_millis(500);
+    server_config.deadlines.rekey_completion = Duration::from_millis(500);
+    client_config.deadlines.close_flush = Duration::from_millis(25);
+    server_config.deadlines.close_flush = Duration::from_millis(25);
+    let (client, server) = tokio::join!(
+        establish_session_v3(client_carrier, client_config),
+        establish_session_v3(server_carrier, server_config),
+    );
+    let client = client.expect("client session");
+    let server = server.expect("server session");
+
+    gate.store(true, Ordering::Release);
+    let rekeying = {
+        let client = client.clone();
+        tokio::spawn(async move { client.rekey().await })
+    };
+    tokio::time::timeout(Duration::from_millis(250), entered.notified())
+        .await
+        .expect("rekey never reached its committed control write");
+    rekeying.abort();
+    rekeying
+        .await
+        .expect_err("caller future must be canceled after commit");
+
+    let mut closing = {
+        let client = client.clone();
+        tokio::spawn(async move { client.close().await })
+    };
+    assert!(
+        tokio::time::timeout(Duration::from_millis(75), &mut closing)
+            .await
+            .is_err(),
+        "Close returned while the session-owned rekey still held its lock"
+    );
+    release.notify_waiters();
+    let close_result = tokio::time::timeout(Duration::from_millis(500), closing)
+        .await
+        .expect("Close did not join the released owned rekey")
+        .expect("join Close");
+    assert_eq!(close_result, Err(SessionError::Timeout));
+    assert_eq!(client.rekey().await, Err(SessionError::Closed));
+
+    let _ = server.close().await;
+}
+
+#[tokio::test]
 async fn committed_rekey_completion_timeout_projects_rekey_failed_and_timeout() {
     let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
     let gate = Arc::new(AtomicBool::new(false));
