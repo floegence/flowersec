@@ -212,7 +212,7 @@ func (control *fakeBrowserCapacityControl) Quiesce(context.Context) error {
 func (*fakeBrowserCapacityControl) Snapshot(context.Context) (browserCapacityControlSnapshot, error) {
 	return browserCapacityControlSnapshot{
 		SchemaVersion: 1, At: time.Now(), Process: browserCapacityControllerProcessSnapshot{RSSBytes: 1, HeapTotalBytes: 1, MaxRSSKiB: 1},
-		Chromium: map[string]float64{"Timestamp": 1}, ProcessTree: linuxProcessTreeSnapshot{At: time.Now(), RootPID: 1, PGID: 1, RSSBytes: 1, OpenFDs: 1, Tasks: 1, ProcessCount: 1, AccountingMode: "pid_starttime_process_tree_fallback", FallbackReason: "test", SampleIntervalMS: 10},
+		Chromium: map[string]float64{"Timestamp": 1}, ProcessTree: linuxProcessTreeSnapshot{At: time.Now(), RootPID: 1, PGID: 1, RSSBytes: 1, CPUNanoseconds: 2, OpenFDs: 1, Tasks: 1, ProcessCount: 1, AccountingMode: "pid_starttime_process_tree_fallback", FallbackReason: "test", SampleIntervalMS: 10},
 	}, nil
 }
 
@@ -228,15 +228,19 @@ func TestAggregateBrowserCapacityResourcesIncludesChromiumProcessTree(t *testing
 	}
 }
 
-func TestBrowserCapacityResourceSnapshotAppendsOnePhaseAndUnlocks(t *testing.T) {
+func TestBrowserCapacityResourceSnapshotDefersCumulativeCPUCheckToCapacityRunner(t *testing.T) {
 	endpoint := &browserCapacityEndpoint{
 		control: &fakeBrowserCapacityControl{},
 		contract: capacityContract{
-			MaxRSS: 1 << 30, MaxCPU: time.Minute, MaxOpenFDs: 1024, MaxGoroutines: 1024, MaxTasks: 1024,
+			MaxRSS: 1 << 30, MaxCPU: time.Nanosecond, MaxOpenFDs: 1024, MaxGoroutines: 1024, MaxTasks: 1024,
 		},
 	}
-	if _, err := endpoint.CaptureResourceSnapshot(); err != nil {
+	snapshot, err := endpoint.CaptureResourceSnapshot()
+	if err != nil {
 		t.Fatal(err)
+	}
+	if snapshot.CPUNanoseconds <= uint64(endpoint.contract.MaxCPU) {
+		t.Fatalf("absolute CPU counter = %d, want more than fixture delta budget", snapshot.CPUNanoseconds)
 	}
 	endpoint.resourceMu.Lock()
 	defer endpoint.resourceMu.Unlock()

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -145,6 +146,98 @@ func TestCapacityLatencyAndThroughputBudgetsFailClosed(t *testing.T) {
 	result.LivenessOpsPerSecond = 9
 	if err := assertCapacityLivenessBudget(contract, result); err == nil {
 		t.Fatal("accepted liveness throughput below budget")
+	}
+}
+
+func TestCaptureCapacityResourceEnforcesCPUDeltaFromBaseline(t *testing.T) {
+	base := transporttest.ResourceSnapshot{CPUNanoseconds: uint64(10 * time.Second)}
+	contract := capacityContract{
+		MaxRSS: 1 << 30, MaxCPU: 5 * time.Second, MaxOpenFDs: 100, MaxGoroutines: 100, MaxTasks: 100,
+	}
+	capture := func() (transporttest.ResourceSnapshot, error) {
+		return transporttest.ResourceSnapshot{
+			RSSBytes: 1024, CPUNanoseconds: uint64(14 * time.Second), OpenFDs: 4, Goroutines: 4, Tasks: 4,
+		}, nil
+	}
+	record, err := captureCapacityResource(capture, base, contract, "hold", time.Second, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.CPUNanoseconds != uint64(4*time.Second) {
+		t.Fatalf("CPU delta = %d, want %d", record.CPUNanoseconds, 4*time.Second)
+	}
+	contract.MaxCPU = 3 * time.Second
+	if _, err := captureCapacityResource(capture, base, contract, "hold", time.Second, 1, 1); err == nil || !strings.Contains(err.Error(), "cpu_ns=4000000000/3000000000") {
+		t.Fatalf("CPU limit error = %v", err)
+	}
+}
+
+func TestCapacityLivenessProbeTimeoutPreservesExplicitLatencyBudget(t *testing.T) {
+	t.Setenv("FLOWERSEC_PERFORMANCE_BUDGET", "10m")
+	contract := productionBrowserCapacityContract()
+	if got := capacityLivenessProbeTimeout(contract); got != 5*time.Second {
+		t.Fatalf("browser liveness probe timeout = %s, want explicit p99 budget 5s", got)
+	}
+	fallback := capacityContract{Hold: 20 * time.Millisecond}
+	if got := capacityLivenessProbeTimeout(fallback); got != 2*time.Millisecond {
+		t.Fatalf("fixture liveness probe timeout = %s, want hold-derived 2ms", got)
+	}
+}
+
+func TestRunCapacityCaseDoesNotDeriveLivenessDeadlineFromShortHold(t *testing.T) {
+	contract := capacityContract{
+		Sessions: 2, Ramp: 20 * time.Millisecond, Hold: 70 * time.Millisecond,
+		Cleanup: 20 * time.Millisecond, Watchdog: 110 * time.Millisecond,
+		MaxRSS: 1 << 30, MaxCPU: time.Second, MaxOpenFDs: 100, MaxGoroutines: 100, MaxTasks: 100,
+		MaxLivenessP99: 50 * time.Millisecond, MinLivenessOpsPerSecond: 1,
+	}
+	endpoint := &fakeCapacityEndpoint{sessionProbeDelay: 10 * time.Millisecond}
+	result, err := runCapacityCase(context.Background(), capacityCaseDefinition{ID: "liveness-budget"}, contract, endpoint, monotonicSnapshots())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.LivenessSweeps != 4 || result.LivenessFailures != 0 || result.LivenessP99 < 10*time.Millisecond || result.LivenessP99 > contract.MaxLivenessP99 {
+		t.Fatalf("liveness result = %+v", result)
+	}
+}
+
+func TestCloseCapacitySessionsStartsEveryCloseConcurrently(t *testing.T) {
+	const count = 32
+	entered := make(chan struct{}, count)
+	release := make(chan struct{})
+	sessions := make([]capacitySession, 0, count)
+	for index := range count {
+		sessions = append(sessions, &blockingCloseCapacitySession{
+			id: fmt.Sprintf("session-%d", index), entered: entered, release: release,
+		})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- closeCapacitySessions(ctx, sessions) }()
+	for range count {
+		select {
+		case <-entered:
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("capacity session cleanup did not start concurrently")
+		}
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProbeCapacitySessionsReportsCompletedWork(t *testing.T) {
+	wantErr := errors.New("probe failed")
+	sessions := []capacitySession{
+		&fakeCapacitySession{id: "ok-1", done: make(chan struct{})},
+		&fakeCapacitySession{id: "failed", done: make(chan struct{}), probeErr: wantErr},
+		&fakeCapacitySession{id: "ok-2", done: make(chan struct{})},
+	}
+	err := probeCapacitySessions(context.Background(), sessions)
+	if !errors.Is(err, wantErr) || !strings.Contains(err.Error(), "completed 2/3 liveness probes") {
+		t.Fatalf("probe error = %v", err)
 	}
 }
 
@@ -484,11 +577,25 @@ type fakeCapacitySession struct {
 	closeOnce  sync.Once
 	onClose    func()
 	closeDelay time.Duration
+	probeDelay time.Duration
+	probeErr   error
 }
 
 func (session *fakeCapacitySession) ID() string                   { return session.id }
 func (session *fakeCapacitySession) Termination() <-chan struct{} { return session.done }
-func (*fakeCapacitySession) ProbeLiveness(context.Context) error  { return nil }
+
+func (session *fakeCapacitySession) ProbeLiveness(ctx context.Context) error {
+	if session.probeDelay > 0 {
+		timer := time.NewTimer(session.probeDelay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		}
+	}
+	return session.probeErr
+}
 func (session *fakeCapacitySession) Close(ctx context.Context) error {
 	if session.closeDelay > 0 {
 		timer := time.NewTimer(session.closeDelay)
@@ -508,6 +615,31 @@ func (session *fakeCapacitySession) Close(ctx context.Context) error {
 	return nil
 }
 
+type blockingCloseCapacitySession struct {
+	id      string
+	entered chan<- struct{}
+	release <-chan struct{}
+}
+
+func (session *blockingCloseCapacitySession) ID() string { return session.id }
+func (session *blockingCloseCapacitySession) Termination() <-chan struct{} {
+	return make(chan struct{})
+}
+func (*blockingCloseCapacitySession) ProbeLiveness(context.Context) error { return nil }
+func (session *blockingCloseCapacitySession) Close(ctx context.Context) error {
+	select {
+	case session.entered <- struct{}{}:
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+	select {
+	case <-session.release:
+		return nil
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+}
+
 type fakeCapacityEndpoint struct {
 	mu                   sync.Mutex
 	connects             int
@@ -523,6 +655,7 @@ type fakeCapacityEndpoint struct {
 	connectedOnce        sync.Once
 	closeOrder           []string
 	sessionCloseDelay    time.Duration
+	sessionProbeDelay    time.Duration
 }
 
 type fakeQuiescingCapacityEndpoint struct {
@@ -564,7 +697,7 @@ func (endpoint *fakeCapacityEndpoint) Connect(context.Context) (capacitySession,
 	if endpoint.duplicateID {
 		id = "duplicate"
 	}
-	session := &fakeCapacitySession{id: id, done: make(chan struct{}), closeDelay: endpoint.sessionCloseDelay, onClose: func() {
+	session := &fakeCapacitySession{id: id, done: make(chan struct{}), closeDelay: endpoint.sessionCloseDelay, probeDelay: endpoint.sessionProbeDelay, onClose: func() {
 		endpoint.mu.Lock()
 		endpoint.disconnects++
 		endpoint.closeOrder = append(endpoint.closeOrder, "session")

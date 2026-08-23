@@ -644,11 +644,15 @@ func (endpoint *browserCapacityEndpoint) CaptureResourceSnapshot() (transporttes
 		return transporttest.ResourceSnapshot{}, err
 	}
 	contract := endpoint.contract
-	if snapshot.RSSBytes > contract.MaxRSS || snapshot.CPUNanoseconds > uint64(contract.MaxCPU) ||
-		snapshot.OpenFDs > contract.MaxOpenFDs || snapshot.Goroutines > contract.MaxGoroutines || snapshot.Tasks > contract.MaxTasks {
+	// CPU is cumulative for both the Go runner and Chromium cgroup. The
+	// capacity runner owns the baseline and enforces MaxCPU against the delta;
+	// rejecting the absolute counter here would charge pre-workload CPU to the
+	// measured case and suppress its final resource artifact.
+	if snapshot.RSSBytes > contract.MaxRSS || snapshot.OpenFDs > contract.MaxOpenFDs ||
+		snapshot.Goroutines > contract.MaxGoroutines || snapshot.Tasks > contract.MaxTasks {
 		return transporttest.ResourceSnapshot{}, fmt.Errorf(
-			"Chromium capacity resource limit exceeded: rss=%d/%d cpu_ns=%d/%d open_fds=%d/%d goroutines=%d/%d tasks=%d/%d",
-			snapshot.RSSBytes, contract.MaxRSS, snapshot.CPUNanoseconds, contract.MaxCPU.Nanoseconds(), snapshot.OpenFDs, contract.MaxOpenFDs,
+			"Chromium capacity resource limit exceeded: rss=%d/%d open_fds=%d/%d goroutines=%d/%d tasks=%d/%d",
+			snapshot.RSSBytes, contract.MaxRSS, snapshot.OpenFDs, contract.MaxOpenFDs,
 			snapshot.Goroutines, contract.MaxGoroutines, snapshot.Tasks, contract.MaxTasks,
 		)
 	}

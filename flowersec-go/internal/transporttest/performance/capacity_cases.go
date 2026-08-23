@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
@@ -305,14 +306,10 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 		defer cancel()
 		if context.Cause(ctx) != nil {
 			resultErr = errors.Join(resultErr, endpoint.Close(cleanupCtx))
-			for _, session := range sessions {
-				_ = session.Close(cleanupCtx)
-			}
+			resultErr = errors.Join(resultErr, closeCapacitySessions(cleanupCtx, sessions))
 			return
 		}
-		for _, session := range sessions {
-			_ = session.Close(cleanupCtx)
-		}
+		resultErr = errors.Join(resultErr, closeCapacitySessions(cleanupCtx, sessions))
 		resultErr = errors.Join(resultErr, endpoint.Close(cleanupCtx))
 	}()
 
@@ -458,7 +455,7 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 			result.HoldDisconnects++
 			return result, fmt.Errorf("%w: %s", errCapacityHoldDisconnect, id)
 		case <-liveness.C:
-			probeTimeout := minDuration(5*time.Second, contract.Hold/10)
+			probeTimeout := capacityLivenessProbeTimeout(contract)
 			probeCtx, cancelProbe := context.WithTimeout(ctx, probeTimeout)
 			probeStarted := time.Now()
 			probeErr := probeCapacitySessions(probeCtx, sessions)
@@ -813,22 +810,48 @@ func minDuration(left, right time.Duration) time.Duration {
 	return right
 }
 
-func probeCapacitySessions(ctx context.Context, sessions []capacitySession) error {
-	results := make(chan error, len(sessions))
+func capacityLivenessProbeTimeout(contract capacityContract) time.Duration {
+	if contract.MaxLivenessP99 > 0 {
+		return contract.MaxLivenessP99
+	}
+	return minDuration(5*time.Second, contract.Hold/10)
+}
+
+func closeCapacitySessions(ctx context.Context, sessions []capacitySession) error {
+	errs := make([]error, len(sessions))
 	var group sync.WaitGroup
+	for index, session := range sessions {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			errs[index] = session.Close(ctx)
+		}()
+	}
+	group.Wait()
+	return errors.Join(errs...)
+}
+
+func probeCapacitySessions(ctx context.Context, sessions []capacitySession) error {
+	var group sync.WaitGroup
+	var completed atomic.Int64
+	var firstErr error
+	var firstErrOnce sync.Once
 	for _, session := range sessions {
 		group.Add(1)
 		go func() {
 			defer group.Done()
 			if err := session.ProbeLiveness(ctx); err != nil {
-				results <- fmt.Errorf("session %s: %w", session.ID(), err)
+				firstErrOnce.Do(func() {
+					firstErr = fmt.Errorf("session %s: %w", session.ID(), err)
+				})
+				return
 			}
+			completed.Add(1)
 		}()
 	}
 	group.Wait()
-	close(results)
-	for err := range results {
-		return err
+	if firstErr != nil {
+		return fmt.Errorf("completed %d/%d liveness probes: %w", completed.Load(), len(sessions), firstErr)
 	}
 	return nil
 }
