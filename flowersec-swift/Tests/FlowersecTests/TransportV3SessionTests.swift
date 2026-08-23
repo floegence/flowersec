@@ -1420,6 +1420,168 @@ final class TransportV3SessionTests: XCTestCase {
     XCTAssertEqual(boundary.exhaustionError, "resource_exhausted")
     XCTAssertEqual(boundary.exhaustionGoAwayReason, 5)
     XCTAssertEqual(boundary.receiveAfterMaximum, "protocol_failure")
+    XCTAssertEqual(boundary.goAwayDeliveryFailure, "session_failure")
+
+    let epoch = vectors.epochBoundary
+    XCTAssertEqual(try XCTUnwrap(UInt32(epoch.maximumEpochHex, radix: 16)), UInt32.max)
+    XCTAssertTrue(epoch.maximumIsUsable)
+    XCTAssertEqual(epoch.rekeyAfterMaximum, "resource_exhausted")
+    XCTAssertEqual(epoch.exhaustionGoAwayReason, 5)
+    XCTAssertEqual(epoch.receiveAfterMaximum, "protocol_failure")
+    XCTAssertEqual(epoch.goAwayDeliveryFailure, "session_failure")
+  }
+
+  func testTransitionMaximumUsesProductionRekeyOnceThenExhausts() async throws {
+    let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
+    let configs = try makeConfigs()
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+    try await clientSession.setRekeyBoundaryStateForTesting(nextTransition: UInt64.max)
+    try await serverSession.setRekeyBoundaryStateForTesting(receivedTransition: UInt64.max - 1)
+
+    try await clientSession.rekey()
+    let nextTransition = await clientSession.nextTransitionForTesting()
+    XCTAssertEqual(nextTransition, 0)
+    do {
+      try await clientSession.rekey()
+      XCTFail("post-maximum transition rekey unexpectedly succeeded")
+    } catch let error as TransportV3SessionError {
+      XCTAssertEqual(error, .resourceExhausted)
+    }
+    let receivedGoAway = await waitUntil {
+      await serverSession.goAwayStateForTesting().receivedReason == 5
+    }
+    XCTAssertTrue(receivedGoAway)
+
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
+  func testEpochMaximumProjectsResourceExhaustedAndGoAway() async throws {
+    let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
+    let configs = try makeConfigs()
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+    try await clientSession.setRekeyBoundaryStateForTesting(sendEpoch: UInt32.max)
+    try await serverSession.setRekeyBoundaryStateForTesting(receiveEpoch: UInt32.max)
+
+    do {
+      try await clientSession.rekey()
+      XCTFail("post-maximum epoch rekey unexpectedly succeeded")
+    } catch let error as TransportV3SessionError {
+      XCTAssertEqual(error, .resourceExhausted)
+    }
+    let receivedGoAway = await waitUntil {
+      await serverSession.goAwayStateForTesting().receivedReason == 5
+    }
+    XCTAssertTrue(receivedGoAway)
+
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
+  func testPostMaximumRekeyRejectsBeforeResponderDrain() async throws {
+    let (clientCarrier, serverCarrier) = MemoryCarrierSession.pair()
+    let configs = try makeConfigs()
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+    try await clientSession.setRekeyBoundaryStateForTesting(receivedTransition: UInt64.max)
+    await clientSession.setActiveInboundRespondersForTesting(1)
+    let payload = try decodeHex("0000000000000001000000010000000000000000")
+
+    do {
+      try await clientSession.receiveSessionKeyUpdateForTesting(payload)
+      XCTFail("post-maximum transition update unexpectedly succeeded")
+    } catch let error as TransportV3SessionError {
+      XCTAssertEqual(error, .protocolViolation)
+    }
+    var waiterCounts = await clientSession.lifecycleWaiterCountsForTesting()
+    XCTAssertFalse(waiterCounts.peerRespondersFrozen)
+
+    try await clientSession.setRekeyBoundaryStateForTesting(
+      receivedTransition: 0,
+      receiveEpoch: UInt32.max
+    )
+    do {
+      try await clientSession.receiveSessionKeyUpdateForTesting(payload)
+      XCTFail("post-maximum epoch update unexpectedly succeeded")
+    } catch let error as TransportV3SessionError {
+      XCTAssertEqual(error, .protocolViolation)
+    }
+    waiterCounts = await clientSession.lifecycleWaiterCountsForTesting()
+    XCTAssertFalse(waiterCounts.peerRespondersFrozen)
+    await clientSession.setActiveInboundRespondersForTesting(0)
+
+    try await clientSession.close()
+    try await serverSession.close()
+  }
+
+  func testExhaustionGoAwayWriteFailureTerminatesSession() async throws {
+    let blocker = SwitchableWriteBlocker()
+    let (clientBase, serverCarrier) = MemoryCarrierSession.pair()
+    let clientCarrier = StallableWriteCarrierSession(
+      base: clientBase,
+      blocker: blocker,
+      blockOpenStreamNumber: 1
+    )
+    let configs = try makeConfigs()
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: configs.server)
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: configs.client)
+    let (clientSession, serverSession) = try await (client, server)
+    try await clientSession.setRekeyBoundaryStateForTesting(nextTransition: 0)
+    await blocker.failNextWrite()
+
+    do {
+      try await clientSession.rekey()
+      XCTFail("exhaustion rekey unexpectedly succeeded")
+    } catch let error as TransportV3SessionError {
+      XCTAssertEqual(error, .resourceExhausted)
+    }
+    let terminal = await clientSession.waitClosed()
+    XCTAssertEqual(terminal, .protocolViolation)
+
+    try? await clientSession.close()
+    try? await serverSession.close()
+  }
+
+  func testExhaustionGoAwayUsesThePreparationDeadline() async throws {
+    let blocker = SwitchableWriteBlocker()
+    let (clientBase, serverCarrier) = MemoryCarrierSession.pair()
+    let clientCarrier = StallableWriteCarrierSession(
+      base: clientBase,
+      blocker: blocker,
+      blockOpenStreamNumber: 1
+    )
+    var configs = try makeConfigs()
+    configs.client.deadlines.rekeyPrepare = .milliseconds(25)
+    let serverConfig = configs.server
+    let clientConfig = configs.client
+    async let server = TransportV3Session.establish(carrier: serverCarrier, config: serverConfig)
+    async let client = TransportV3Session.establish(carrier: clientCarrier, config: clientConfig)
+    let (clientSession, serverSession) = try await (client, server)
+    try await clientSession.setRekeyBoundaryStateForTesting(nextTransition: 0)
+    await blocker.enable(afterSuccessfulWrites: 0)
+    let rekey = Task { try await clientSession.rekey() }
+    await blocker.waitUntilBlocked()
+
+    do {
+      try await rekey.value
+      XCTFail("blocked exhaustion GOAWAY unexpectedly succeeded")
+    } catch let error as TransportV3SessionError {
+      XCTAssertEqual(error, .rekeyFailed)
+    }
+    await assertThrowsAsync {
+      _ = try await clientSession.openStream(kind: "after-exhaustion-timeout")
+    }
+    await blocker.release()
+    let terminal = await clientSession.waitClosed()
+    XCTAssertEqual(terminal, .protocolViolation)
+
+    try? await clientSession.close()
+    try? await serverSession.close()
   }
 
   func testIdenticalRekeyACKIsIdempotentButDifferentACKIsRejected() throws {
@@ -2110,10 +2272,12 @@ final class TransportV3SessionTests: XCTestCase {
 private struct SessionWireVectors: Decodable {
   let streamKeyUpdateACK: [StreamKeyUpdateACKVector]
   let transitionBoundary: TransitionBoundaryVector
+  let epochBoundary: EpochBoundaryVector
 
   enum CodingKeys: String, CodingKey {
     case streamKeyUpdateACK = "stream_key_update_ack"
     case transitionBoundary = "transition_boundary"
+    case epochBoundary = "epoch_boundary"
   }
 }
 
@@ -2124,6 +2288,7 @@ private struct TransitionBoundaryVector: Decodable {
   let exhaustionError: String
   let exhaustionGoAwayReason: UInt16
   let receiveAfterMaximum: String
+  let goAwayDeliveryFailure: String
 
   enum CodingKeys: String, CodingKey {
     case maximumTransitionIDHex = "maximum_transition_id_hex"
@@ -2132,6 +2297,25 @@ private struct TransitionBoundaryVector: Decodable {
     case exhaustionError = "exhaustion_error"
     case exhaustionGoAwayReason = "exhaustion_goaway_reason"
     case receiveAfterMaximum = "receive_after_maximum"
+    case goAwayDeliveryFailure = "goaway_delivery_failure"
+  }
+}
+
+private struct EpochBoundaryVector: Decodable {
+  let maximumEpochHex: String
+  let maximumIsUsable: Bool
+  let rekeyAfterMaximum: String
+  let exhaustionGoAwayReason: UInt16
+  let receiveAfterMaximum: String
+  let goAwayDeliveryFailure: String
+
+  enum CodingKeys: String, CodingKey {
+    case maximumEpochHex = "maximum_epoch_hex"
+    case maximumIsUsable = "maximum_is_usable"
+    case rekeyAfterMaximum = "rekey_after_maximum"
+    case exhaustionGoAwayReason = "exhaustion_goaway_reason"
+    case receiveAfterMaximum = "receive_after_maximum"
+    case goAwayDeliveryFailure = "goaway_delivery_failure"
   }
 }
 
@@ -2915,7 +3099,7 @@ private actor StallableWriteCarrierStream: TransportV3CarrierStream {
   func read(maxBytes: Int) async throws -> Data? { try await base.read(maxBytes: maxBytes) }
 
   func write(_ data: Data) async throws -> Int {
-    await blocker.beforeWrite()
+    try await blocker.beforeWrite()
     return try await base.write(data)
   }
 
@@ -2933,6 +3117,7 @@ private actor SwitchableWriteBlocker {
   private var remainingSuccessfulWrites: Int?
   private var blocked = false
   private var released = false
+  private var failNext = false
   private var blockWaiters: [CheckedContinuation<Void, Never>] = []
   private var enteredWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -2942,7 +3127,13 @@ private actor SwitchableWriteBlocker {
     remainingSuccessfulWrites = afterSuccessfulWrites
   }
 
-  func beforeWrite() async {
+  func failNextWrite() { failNext = true }
+
+  func beforeWrite() async throws {
+    if failNext {
+      failNext = false
+      throw InjectedEstablishedStreamFailure()
+    }
     guard !released, let remainingSuccessfulWrites else { return }
     if remainingSuccessfulWrites > 0 {
       self.remainingSuccessfulWrites = remainingSuccessfulWrites - 1

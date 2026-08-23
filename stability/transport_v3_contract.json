@@ -161,6 +161,11 @@
     "session_transition_maximum_is_usable_once": true,
     "session_transition_exhaustion_error": "resource_exhausted",
     "session_transition_exhaustion_goaway_reason": 5,
+    "session_epoch_bits": 32,
+    "session_epoch_maximum_hex": "ffffffff",
+    "session_epoch_maximum_is_usable": true,
+    "session_epoch_rekey_after_maximum": "resource_exhausted",
+    "session_rekey_exhaustion_goaway_delivery_failure": "session_failure",
     "retry_after_unix_ms_max": 253402300799999
   },
   "artifact_schema": {

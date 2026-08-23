@@ -560,6 +560,17 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 	defer s.rekeyMu.Unlock()
 	prepareContext, cancelPrepare := context.WithTimeout(ctx, s.config.RekeyPrepareTimeout)
 	defer cancelPrepare()
+	s.cryptoMu.RLock()
+	currentEpoch := s.sendEpoch
+	currentRoots := s.sendRoots[currentEpoch]
+	s.cryptoMu.RUnlock()
+	s.pendingRekeyMu.Lock()
+	transition := s.nextTransition
+	transitionExhausted := s.transitionExhausted
+	s.pendingRekeyMu.Unlock()
+	if currentEpoch == math.MaxUint32 || transition == 0 || transitionExhausted {
+		return s.exhaustRekeyCounter()
+	}
 	if err := s.freezeOpens(); err != nil {
 		return err
 	}
@@ -584,13 +595,6 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 		}
 	}()
 
-	s.cryptoMu.RLock()
-	currentEpoch := s.sendEpoch
-	currentRoots := s.sendRoots[currentEpoch]
-	s.cryptoMu.RUnlock()
-	if currentEpoch == math.MaxUint32 {
-		return s.exhaustRekeyCounter()
-	}
 	nextEpoch := currentEpoch + 1
 	nextSecret, err := protocolv3.DeriveNextEpoch(currentRoots.RekeyRoot, s.h3, s.sendDir, nextEpoch)
 	if err != nil {
@@ -604,7 +608,7 @@ func (s *engineSession) Rekey(ctx context.Context) error {
 	s.sendRoots[nextEpoch] = nextRoots
 	s.cryptoMu.Unlock()
 	s.pendingRekeyMu.Lock()
-	transition := s.nextTransition
+	transition = s.nextTransition
 	if transition == 0 || s.transitionExhausted {
 		s.pendingRekeyMu.Unlock()
 		return s.exhaustRekeyCounter()

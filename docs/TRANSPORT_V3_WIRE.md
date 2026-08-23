@@ -398,10 +398,18 @@ truncation, or trailing data fails closed.
 The session rekey transition counter starts at 1 and never wraps on the wire.
 `UINT64_MAX` is usable exactly once; its committed successor is the internal
 zero exhaustion sentinel. A later local rekey attempt sends GOAWAY reason 5
-and returns the public `resource_exhausted` error. After accepting
-`UINT64_MAX`, a receiver rejects every further SESSION_KEY_UPDATE as a
-protocol failure. `testdata/transport_v3/session_wire_vectors.json` freezes
-this boundary and lifecycle alongside the inherited session payload vectors.
+and returns the public `resource_exhausted` error. The 32-bit session epoch
+also never wraps: epoch `UINT32_MAX` is usable, and a local rekey attempt from
+that epoch has the same exhaustion result. Both exhaustion checks occur before
+waiting for stream frontiers or responders, freezing responders, or deriving
+new roots. Exhaustion GOAWAY handling remains bounded by the original rekey
+preparation deadline; a write failure or deadline expiry fails the session
+closed. After accepting `UINT64_MAX`, or while receiving at epoch
+`UINT32_MAX`, a receiver rejects every further SESSION_KEY_UPDATE as a
+protocol failure before waiting for responders. The
+`testdata/transport_v3/session_wire_vectors.json` fixture freezes both
+boundaries and their lifecycle alongside the inherited session payload
+vectors.
 
 An authenticated logical-stream FIN is clean only when the carrier read side
 then reaches native EOF without another byte. The receiver does not publish

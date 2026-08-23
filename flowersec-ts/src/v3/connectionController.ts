@@ -519,11 +519,11 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
       await acquisition.settle();
       if (result === undefined) return invalidSourceResult();
       if (result === null || typeof result !== "object") return invalidSourceResult();
-      const kind = Reflect.get(result, "kind");
       const deliveredLease = Reflect.get(result, "lease");
       if (deliveredLease !== null && typeof deliveredLease === "object") {
         deliveredLeaseSnapshot = deliveredLease as ArtifactLeaseV3;
       }
+      const kind = Reflect.get(result, "kind");
       const ownKeys = Reflect.ownKeys(result);
       if (kind === "lease") {
         if (deliveredLeaseSnapshot === undefined) return invalidSourceResult();

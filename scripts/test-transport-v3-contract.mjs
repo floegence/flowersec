@@ -284,6 +284,11 @@ assert.equal(registry.limits.session_transition_maximum_hex, "ffffffffffffffff")
 assert.equal(registry.limits.session_transition_maximum_is_usable_once, true);
 assert.equal(registry.limits.session_transition_exhaustion_error, "resource_exhausted");
 assert.equal(registry.limits.session_transition_exhaustion_goaway_reason, 5);
+assert.equal(registry.limits.session_epoch_bits, 32);
+assert.equal(registry.limits.session_epoch_maximum_hex, "ffffffff");
+assert.equal(registry.limits.session_epoch_maximum_is_usable, true);
+assert.equal(registry.limits.session_epoch_rekey_after_maximum, "resource_exhausted");
+assert.equal(registry.limits.session_rekey_exhaustion_goaway_delivery_failure, "session_failure");
 for (const entry of registry.design.traceability) {
   assert(typeof entry.clause === "string" && entry.clause.length > 0, "traceability clause ID is required");
   assert(typeof entry.title === "string" && entry.title.length > 0, `${entry.clause} traceability title is required`);

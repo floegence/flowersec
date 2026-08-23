@@ -399,6 +399,32 @@ describe("transport v3 production connection controller", () => {
     await controller.close();
   });
 
+  test("retires a delivered lease when reading kind throws", async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined, cleanup);
+    const malformed = {
+      lease,
+      get kind(): "lease" {
+        throw new Error("source kind failure");
+      },
+    };
+    const connector = vi.fn(async () => { throw new Error("connector must not run"); });
+    const controller = createConnectionControllerV3({
+      acquire: async () => malformed as unknown as ArtifactSourceResultV3,
+    }, connector, { capabilitySnapshot });
+    controller.start();
+
+    await expect(controller.waitForSession()).rejects.toMatchObject({
+      code: "failed",
+      failure: { phase: "artifact", code: "artifact_invalid" },
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(connector).not.toHaveBeenCalled();
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
+    expect(cleanup).toHaveBeenCalledOnce();
+    await controller.close();
+  });
+
   test("snapshots a dynamic source lease exactly once before claiming it", async () => {
     const cleanup = vi.fn(async () => undefined);
     const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined, cleanup);

@@ -239,6 +239,119 @@ describe("SessionV3 control terminal serialization", () => {
     await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
   });
 
+  test("fails closed if an exhaustion GOAWAY cannot meet the preparation deadline", async () => {
+    const [rawClient, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const clientCarrier = new TerminalOrderingCarrier(rawClient);
+    const clientConfig: SessionConfigV3 = {
+      ...config("client"),
+      deadlines: {
+        establishTimeoutMs: 1_000,
+        rekeyPrepareTimeoutMs: 25,
+        rekeyCompletionTimeoutMs: 1_000,
+      },
+    };
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, clientConfig),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    sessionInternals(client).nextTransition = 0n;
+    clientCarrier.blockNextControlWrite();
+
+    const operation = client.rekey();
+    await clientCarrier.blockedWriteEntered.promise;
+    await expect(testDeadline(operation, "exhaustion GOAWAY deadline")).rejects.toMatchObject({ code: "timeout" });
+    await expect(testDeadline(client.waitTermination(), "exhaustion termination")).resolves.toMatchObject({
+      error: { code: "timeout" },
+    });
+    expect(clientCarrier.aborts).toBe(1);
+
+    clientCarrier.releaseBlockedWrite();
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
+  test("fails closed on an exhaustion GOAWAY write error while preserving resource exhaustion", async () => {
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, config("client")),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const internals = sessionInternals(client);
+    internals.nextTransition = 0n;
+    const originalSendControl = internals.sendControl.bind(client);
+    internals.sendControl = async (type, payload) => {
+      if (type === InnerTypeV3.GoAway) throw new Error("injected GOAWAY write failure");
+      await originalSendControl(type, payload);
+    };
+
+    await expect(client.rekey()).rejects.toMatchObject({ code: "resource_exhausted" });
+    await expect(client.waitTermination()).resolves.toMatchObject({
+      error: { message: "injected GOAWAY write failure" },
+    });
+
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
+  test("projects epoch exhaustion through the production rekey lifecycle", async () => {
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, config("client")),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const clientInternals = sessionInternals(client);
+    const serverInternals = sessionInternals(server);
+    clientInternals.sendEpoch = 0xffffffff;
+
+    await expect(client.rekey()).rejects.toMatchObject({ code: "resource_exhausted" });
+    await waitFor(() => serverInternals.receivedGoAway);
+    await expect(server.openStream("after-epoch-exhaustion")).rejects.toMatchObject({ code: "going_away" });
+
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
+  test("rejects post-maximum rekeys before waiting for inbound responders", async () => {
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV3(clientCarrier, config("client")),
+      establishSessionV3(serverCarrier, config("server")),
+    ]);
+    const internals = sessionInternals(client);
+    internals.activeInboundResponders = 1;
+    internals.receiveTransition = (1n << 64n) - 1n;
+    await expect(testDeadline(
+      internals.receiveSessionRekey(sessionRekeyPayload()),
+      "post-maximum transition validation",
+    )).rejects.toMatchObject({ code: "protocol" });
+    expect(internals.peerResponderFrozen).toBe(false);
+
+    internals.receiveTransition = 0n;
+    internals.receiveEpoch = 0xffffffff;
+    await expect(testDeadline(
+      internals.receiveSessionRekey(sessionRekeyPayload()),
+      "post-maximum epoch validation",
+    )).rejects.toMatchObject({ code: "protocol" });
+    expect(internals.peerResponderFrozen).toBe(false);
+    internals.activeInboundResponders = 0;
+    internals.notifyResponderChanged();
+
+    await Promise.all([client.close().catch(() => undefined), server.close().catch(() => undefined)]);
+  });
+
   test("caller cancellation after rekey commit does not terminate the session", async () => {
     const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
       kind: "webtransport",
@@ -450,6 +563,7 @@ type SessionInternals = {
   sendControl(type: InnerTypeV3, payload: Uint8Array): Promise<void>;
   sendControlResponse(type: InnerTypeV3, payload: Uint8Array): Promise<boolean>;
   sendControlCleanup(type: InnerTypeV3, payload: Uint8Array): Promise<boolean>;
+  receiveSessionRekey(payload: Uint8Array): Promise<void>;
   receiveSessionRekeyBeforeDeadline(payload: Uint8Array, signal: AbortSignal): Promise<void>;
   receiveEpoch: number;
   receiveTransition: bigint;
@@ -462,6 +576,7 @@ type SessionInternals = {
   waitOutboundFrontier(watermark: bigint, signal: AbortSignal): Promise<void>;
   activeInboundResponders: number;
   localResponderFrozen: boolean;
+  peerResponderFrozen: boolean;
   enterInboundResponder(): Promise<void>;
   notifyResponderChanged(): void;
   fail(error: Error, abortCarrier?: boolean): void;

@@ -825,7 +825,8 @@ export class SessionV3 implements SessionV3Contract {
       await this.writeControl(type, payload, signal);
     });
     this.controlWriteTail = task.catch(() => undefined);
-    await task;
+    if (signal === undefined) await task;
+    else await raceAbort(task, signal);
   }
 
   private async sendControlResponse(type: InnerTypeV3, payload: Uint8Array): Promise<boolean> {
@@ -1028,13 +1029,15 @@ export class SessionV3 implements SessionV3Contract {
     let completionSignal: SessionDeadlineHandleV3 | undefined;
     let respondersFrozen = false;
     try {
+      const currentEpoch = this.sendEpoch;
+      if (currentEpoch === MAX_UINT32) {
+        await this.rejectExhaustedRekey("session epoch exhausted", prepareSignal.signal);
+      }
+      if (this.nextTransition < 1n || this.nextTransition > MAX_UINT64) {
+        await this.rejectExhaustedRekey("session transition exhausted", prepareSignal.signal);
+      }
       await this.freezeInboundResponders(false, prepareSignal.signal);
       respondersFrozen = true;
-      const currentEpoch = this.sendEpoch;
-      if (currentEpoch === MAX_UINT32) await this.rejectExhaustedRekey("session epoch exhausted");
-      if (this.nextTransition < 1n || this.nextTransition > MAX_UINT64) {
-        await this.rejectExhaustedRekey("session transition exhausted");
-      }
       const nextEpoch = currentEpoch + 1;
       const currentRoots = this.rootForSend(currentEpoch);
       const nextRoots = deriveEpochRoots(deriveNextEpoch(
@@ -1094,16 +1097,18 @@ export class SessionV3 implements SessionV3Contract {
     }
   }
 
-  private async rejectExhaustedRekey(message: string): Promise<never> {
+  private async rejectExhaustedRekey(message: string, signal: AbortSignal): Promise<never> {
     try {
-      await this.sendGoAway(5);
+      await this.sendGoAway(5, signal);
     } catch (error) {
       this.fail(asError(error));
+      if (signal.aborted) throw abortReason(signal);
     }
     throw new SessionV3Error("resource_exhausted", message);
   }
 
   private async receiveSessionRekey(payload: Uint8Array): Promise<void> {
+    this.validateSessionRekeySequence(payload);
     const completionDeadline = createSessionDeadline(this.config, "rekey_completion");
     let respondersFrozen = false;
     try {
@@ -1163,12 +1168,10 @@ export class SessionV3 implements SessionV3Contract {
     signal: AbortSignal,
   ): Promise<void> {
     throwIfAborted(signal);
+    this.validateSessionRekeySequence(payload);
     const transition = readU64(payload);
     const nextEpoch = readU32(payload, 8);
     const watermark = readU64At(payload, 12);
-    if (payload.length !== 20 || transition !== this.receiveTransition + 1n || nextEpoch !== this.receiveEpoch + 1) {
-      throw protocolError("invalid SESSION_KEY_UPDATE");
-    }
     if (watermark !== this.peerLedger.frontier) throw protocolError("SESSION_KEY_UPDATE watermark mismatch");
     this.pendingReceiveEpoch = nextEpoch;
     const current = this.rootForReceive(this.receiveEpoch);
@@ -1194,6 +1197,16 @@ export class SessionV3 implements SessionV3Contract {
     this.pendingReceiveEpoch = undefined;
     for (const stream of streams) stream.publishReceiveRekey(transition, nextEpoch);
     this.cleanupEpochRoots();
+  }
+
+  private validateSessionRekeySequence(payload: Uint8Array): void {
+    if (payload.length !== 20) throw protocolError("invalid SESSION_KEY_UPDATE");
+    const transition = readU64(payload);
+    const nextEpoch = readU32(payload, 8);
+    if (this.receiveTransition >= MAX_UINT64 || this.receiveEpoch >= MAX_UINT32 ||
+        transition !== this.receiveTransition + 1n || nextEpoch !== this.receiveEpoch + 1) {
+      throw protocolError("invalid SESSION_KEY_UPDATE");
+    }
   }
 
   private receiveSessionRekeyACK(payload: Uint8Array): void {
@@ -1264,7 +1277,7 @@ export class SessionV3 implements SessionV3Contract {
     return this.isLocalLogicalID(lastAccepted) && lastAccepted <= this.localOpenHighWatermark();
   }
 
-  private async sendGoAway(reason: number): Promise<void> {
+  private async sendGoAway(reason: number, signal?: AbortSignal): Promise<void> {
     if (!Number.isInteger(reason) || reason < 1 || reason > 0xffff) throw protocolError("invalid GOAWAY reason");
     if (this.sentGoAway) {
       if (this.sentGoAwayReason !== reason) throw protocolError("conflicting local GOAWAY reason");
@@ -1274,7 +1287,7 @@ export class SessionV3 implements SessionV3Contract {
     this.sentGoAway = true;
     this.sentGoAwayLastAccepted = lastAccepted;
     this.sentGoAwayReason = reason;
-    await this.sendControl(InnerTypeV3.GoAway, idReason(lastAccepted, reason));
+    await this.sendControl(InnerTypeV3.GoAway, idReason(lastAccepted, reason), signal);
   }
 
   private async receiveGoAway(payload: Uint8Array): Promise<void> {

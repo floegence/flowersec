@@ -230,6 +230,15 @@ write(
       exhaustion_error: "resource_exhausted",
       exhaustion_goaway_reason: 5,
       receive_after_maximum: "protocol_failure",
+      goaway_delivery_failure: "session_failure",
+    },
+    epoch_boundary: {
+      maximum_epoch_hex: "ffffffff",
+      maximum_is_usable: true,
+      rekey_after_maximum: "resource_exhausted",
+      exhaustion_goaway_reason: 5,
+      receive_after_maximum: "protocol_failure",
+      goaway_delivery_failure: "session_failure",
     },
   },
 );

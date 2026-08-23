@@ -256,6 +256,8 @@ actor TransportV3Session {
 
   private func runRekey(requestID: UInt64) async throws {
     activeRekeyPreparations.insert(requestID)
+    let preparationDeadlineInstant = ContinuousClock.now.advanced(
+      by: config.deadlines.rekeyPrepare)
     let preparationDeadline = startRekeyPreparationDeadline(
       requestID: requestID,
       duration: config.deadlines.rekeyPrepare
@@ -283,6 +285,15 @@ actor TransportV3Session {
     var committed = false
     var nextEpochToRollback: UInt32? = nil
     do {
+      guard sendEpoch != UInt32.max,
+        nextSessionTransitionV3(nextTransition) != nil
+      else {
+        try await sendExhaustionGoAway(
+          requestID: requestID,
+          deadline: preparationDeadlineInstant
+        )
+        throw TransportV3SessionError.resourceExhausted
+      }
       while activeOpenOperations != 0 {
         guard !closing, !closed else { throw TransportV3SessionError.closed }
         try await waitForActiveOpenOperations(requestID: requestID)
@@ -296,11 +307,8 @@ actor TransportV3Session {
       guard outboundLedger.frontier == watermark else {
         throw TransportV3SessionError.rekeyFailed
       }
-      guard sendEpoch != UInt32.max,
-        let followingTransition = nextSessionTransitionV3(nextTransition)
-      else {
-        try? await sendGoAway(reason: 5)
-        throw TransportV3SessionError.resourceExhausted
+      guard let followingTransition = nextSessionTransitionV3(nextTransition) else {
+        throw TransportV3SessionError.rekeyFailed
       }
       let transition = nextTransition
       let nextEpoch = sendEpoch + 1
@@ -359,6 +367,52 @@ actor TransportV3Session {
       }
       await failProtocol()
       throw TransportV3SessionError.rekeyFailed
+    }
+  }
+
+  private func sendExhaustionGoAway(
+    requestID: UInt64,
+    deadline: ContinuousClock.Instant
+  ) async throws {
+    let result = RekeySignalV3()
+    let delivery = Task { [weak self] in
+      guard let self else {
+        await result.fail(TransportV3SessionError.closed)
+        return
+      }
+      do {
+        try await self.sendGoAway(reason: 5)
+        await result.succeed()
+      } catch {
+        await result.fail(error)
+      }
+    }
+    let timeout = Task { [weak self] in
+      do {
+        try await Task.sleep(until: deadline, clock: .continuous)
+      } catch {
+        return
+      }
+      await self?.expireRekeyPreparation(requestID: requestID)
+      await result.fail(TransportV3SessionError.rekeyFailed)
+    }
+    defer {
+      delivery.cancel()
+      timeout.cancel()
+    }
+    do {
+      try await result.waitAsObserver()
+    } catch {
+      delivery.cancel()
+      _ = initiateClose(
+        goAwayReason: 6,
+        closeReason: 6,
+        carrierCode: 6,
+        carrierReason: "session exhaustion GOAWAY failed",
+        terminalError: .protocolViolation
+      )
+      try Task.checkCancellation()
+      try checkRekeyPreparation(requestID: requestID)
     }
   }
 
@@ -1796,7 +1850,8 @@ actor TransportV3Session {
     inboundResponders: Int,
     pings: Int,
     rekeyInProgress: Bool,
-    localRespondersFrozen: Bool
+    localRespondersFrozen: Bool,
+    peerRespondersFrozen: Bool
   ) {
     (
       rekeyWaiters.count,
@@ -1804,11 +1859,52 @@ actor TransportV3Session {
       inboundResponderWaiters.count,
       pings.count,
       rekeyInProgress,
-      localInboundRespondersFrozen
+      localInboundRespondersFrozen,
+      peerInboundRespondersFrozen
     )
   }
 
   func sendEpochForTesting() -> UInt32 { sendEpoch }
+
+  func nextTransitionForTesting() -> UInt64 { nextTransition }
+
+  func setRekeyBoundaryStateForTesting(
+    nextTransition: UInt64? = nil,
+    sendEpoch: UInt32? = nil,
+    receivedTransition: UInt64? = nil,
+    receiveEpoch: UInt32? = nil
+  ) throws {
+    if let nextTransition { self.nextTransition = nextTransition }
+    if let sendEpoch {
+      guard let roots = sendRoots[self.sendEpoch] else {
+        throw TransportV3SessionError.rekeyFailed
+      }
+      sendRoots[sendEpoch] = roots
+      self.sendEpoch = sendEpoch
+      controlSendSequence = 0
+      controlSendExhausted = false
+    }
+    if let receivedTransition { self.receivedTransition = receivedTransition }
+    if let receiveEpoch {
+      guard let roots = receiveRoots[self.receiveEpoch] else {
+        throw TransportV3SessionError.rekeyFailed
+      }
+      receiveRoots[receiveEpoch] = roots
+      self.receiveEpoch = receiveEpoch
+      controlReceiveEpoch = receiveEpoch
+      controlReceiveSequence = 0
+      controlReceiveExhausted = false
+    }
+  }
+
+  func setActiveInboundRespondersForTesting(_ count: Int) {
+    activeInboundResponders = count
+    notifyInboundResponderWaiters()
+  }
+
+  func receiveSessionKeyUpdateForTesting(_ payload: Data) async throws {
+    try await handleSessionKeyUpdate(payload)
+  }
 }
 
 private actor TransportV3ByteStream: ByteStream {
