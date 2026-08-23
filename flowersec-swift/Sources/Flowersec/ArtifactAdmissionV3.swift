@@ -1,3 +1,4 @@
+import CoreFoundation
 import Crypto
 import Foundation
 
