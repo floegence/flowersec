@@ -265,7 +265,7 @@ final class TransportV3SessionTests: XCTestCase {
 
     let outbound = try await clientSession.openStream(
       kind: "测试/echo",
-      metadata: try StreamMetadata(["name": .string("cafe\u{301}")])
+      metadata: try StreamMetadata(["name": .string("café")])
     )
     let inbound = try await serverSession.acceptStream()
     XCTAssertEqual(inbound.kind, "测试/echo")

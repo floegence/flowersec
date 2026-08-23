@@ -394,9 +394,7 @@ public struct StreamMetadata: Equatable, Sendable {
     guard depth <= maxDepth else { throw StreamMetadataError.invalidValue }
     guard object.count <= maxObjectKeys else { throw StreamMetadataError.invalidValue }
     for (key, value) in object {
-      guard !key.isEmpty else { throw StreamMetadataError.invalidValue }
-      guard key.utf8.count <= maxKeyBytes else { throw StreamMetadataError.invalidValue }
-      guard key == key.precomposedStringWithCanonicalMapping else {
+      guard OpenUnicodeV2.valid(key, maxBytes: maxKeyBytes, allowEmpty: false) else {
         throw StreamMetadataError.invalidValue
       }
       try validate(value, depth: depth + 1, nodeCount: &nodeCount)
@@ -419,7 +417,7 @@ public struct StreamMetadata: Equatable, Sendable {
         throw StreamMetadataError.invalidValue
       }
     case .string(let string):
-      guard string.utf8.count <= maxStringBytes else {
+      guard OpenUnicodeV2.valid(string, maxBytes: maxStringBytes, allowEmpty: true) else {
         throw StreamMetadataError.invalidValue
       }
     case .array(let array):

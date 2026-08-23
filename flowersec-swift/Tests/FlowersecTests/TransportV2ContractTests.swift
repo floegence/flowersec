@@ -60,6 +60,19 @@ struct TransportV2ContractTests {
     }
   }
 
+  @Test func metadataRejectsNoncanonicalAndDisallowedUnicode() {
+    for value in ["cafe\u{301}", "line\nfeed", "c1\u{85}", "post-15.1-\u{1C89}"] {
+      #expect(throws: StreamMetadataError.invalidValue) {
+        try StreamMetadata(["value": .string(value)])
+      }
+    }
+    for key in ["cafe\u{301}", "control\u{1}", "c1\u{85}", "post-15.1-\u{1C89}"] {
+      #expect(throws: StreamMetadataError.invalidValue) {
+        try StreamMetadata([key: .null])
+      }
+    }
+  }
+
   @Test func metadataRejectsDepthNodeAndArrayLimitViolations() {
     let tooDeep: JSONValue = .array([.array([.array([.array([.array([.null])])])])])
     #expect(throws: StreamMetadataError.invalidValue) {

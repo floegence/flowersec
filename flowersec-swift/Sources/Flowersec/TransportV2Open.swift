@@ -252,7 +252,7 @@ private enum OpenMetadataCanonicalizerV2 {
   }
 }
 
-private enum OpenUnicodeV2 {
+enum OpenUnicodeV2 {
   static func valid(_ value: String, maxBytes: Int, allowEmpty: Bool) -> Bool {
     let normalized = value.precomposedStringWithCanonicalMapping
     guard

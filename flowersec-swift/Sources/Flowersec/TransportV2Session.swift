@@ -2968,7 +2968,7 @@ private enum TransportV2MetadataCodec {
     case .integer(let value):
       output.append(Data(String(value).utf8))
     case .string(let value):
-      appendString(value.precomposedStringWithCanonicalMapping, to: &output)
+      appendString(value, to: &output)
     case .array(let values):
       output.append(0x5B)
       for (index, child) in values.enumerated() {
