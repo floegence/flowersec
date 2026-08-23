@@ -23,4 +23,20 @@ describe("public stream metadata", () => {
     expect(() => createStreamMetadataV2({ negative_zero: -0 })).toThrow(StreamMetadataError);
     expect(() => createStreamMetadataV2({ value: "a".repeat(513) })).toThrow(StreamMetadataError);
   });
+
+  test("reads dynamic properties once while creating the canonical snapshot", () => {
+    let reads = 0;
+    const source = Object.defineProperty({}, "value", {
+      enumerable: true,
+      get() {
+        reads++;
+        return reads === 1 ? 1 : Number.MAX_SAFE_INTEGER + 1;
+      },
+    });
+
+    const metadata = createStreamMetadataV2(source);
+
+    expect(metadata.values).toEqual({ value: 1 });
+    expect(reads).toBe(1);
+  });
 });
