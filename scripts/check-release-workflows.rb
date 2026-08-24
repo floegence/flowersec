@@ -604,7 +604,7 @@ validate_step_contracts(release_steps, [
     "RELEASE_DATE" => "${{ steps.vars.outputs.date }}",
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
-  } }, run_sha256: "eb7519a7567db3218ec428f1fa4fc876db6e0cf1c9a032a966b9af20d2608ab5" },
+  } }, run_sha256: "26aba6fb64fb35e6c5bcc407afac4d1ee220314296dae9210a859d4e6c17f5bc" },
   { name: "Generate release notes", keys: ["name", "if", "env", "run"], values: { "if" => "needs.prepare.outputs.release_exists == 'false'", "env" => {
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_TAG" => "${{ steps.vars.outputs.tag }}",
@@ -673,7 +673,7 @@ validate_step_contracts(npm_recovery_steps, [
   { name: "Publish or recover npm registry packages from immutable release assets", keys: ["name", "env", "run"], values: { "env" => {
     "GH_TOKEN" => "${{ github.token }}",
     "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
-  } }, run_sha256: "eae23aaf61a480b20202b42abc53fc660148819da579c46263665e2018e036e6" },
+  } }, run_sha256: "98e690f3bcda9155b5151de002a96412d1ced5c8d3f4bbb9ddf4e0ff259194c0" },
 ], "the unified release workflow npm recovery job")
 validate_step_contracts(rust_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
