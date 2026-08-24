@@ -404,6 +404,13 @@ or replacement Acquire, the cycle counter is checked and then incremented with
 saturation. Exhaustion keeps the last redacted code and phase but forces
 terminal disposition and removes retry_after.
 
+The public failure phase is the closed `artifact`, `connect`, or `session` set
+in every SDK. Go exposes it through `ConnectionFailure.Phase()` while retaining
+the original two-field `ConnectionFailure` layout; its internal phase carrier
+preserves normal `errors.Is` and `errors.As` traversal. TypeScript carries the
+same string in the failure snapshot, while Rust and Swift preserve it in their
+closed failure enum cases.
+
 A source failure increments consecutive failures once. Each claimed lease
 that does not establish a Session increments once at its unique final result.
 Candidate failures, loser cancellation, repeated checks, and Close do not add

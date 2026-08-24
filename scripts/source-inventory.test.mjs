@@ -1029,6 +1029,74 @@ test("source inventory includes the shared native transport and Node addon Cargo
   }
 });
 
+test("TypeScript runtime inventory includes the complete optional native package closure", async () => {
+  const { generateSourceArtifacts } = await loadGenerator();
+  const artifacts = generateSourceArtifacts(sourceRoot);
+  const inventory = JSON.parse(artifacts.get("sbom/source-inventory.json"));
+  const context = inventory.contexts.find(({ id }) => id === "npm:flowersec-ts");
+  assert.ok(context, "missing TypeScript npm context");
+
+  const expectedNames = [
+    "@floegence/flowersec-node-native",
+    ...nativePlatforms.map((platform) => `@floegence/flowersec-node-native-${platform}`),
+  ];
+  const nativeComponents = new Map(context.components
+    .filter(({ name }) => expectedNames.includes(name))
+    .map((component) => [component.name, component]));
+  assert.deepEqual([...nativeComponents.keys()].sort(), [...expectedNames].sort());
+  for (const name of expectedNames) {
+    const component = nativeComponents.get(name);
+    assert.equal(component.version, "3.0.2", `${name} version`);
+    assert.equal(component.review.sourceEvidenceKind, "repository-package-manifest", `${name} evidence`);
+  }
+
+  const wrapper = nativeComponents.get("@floegence/flowersec-node-native");
+  assert.ok(context.edges.some((edge) => (
+    edge.from === context.root.purl && edge.to === wrapper.purl && edge.kind === "optional"
+  )), "TypeScript root must optionally depend on the native wrapper");
+  for (const platform of nativePlatforms) {
+    const platformPackage = nativeComponents.get(`@floegence/flowersec-node-native-${platform}`);
+    assert.ok(context.edges.some((edge) => (
+      edge.from === wrapper.purl && edge.to === platformPackage.purl && edge.kind === "optional"
+    )), `native wrapper must optionally depend on ${platform}`);
+  }
+
+  for (const sbomPath of ["flowersec-ts/sbom/spdx.json", "flowersec-ts/sbom/cyclonedx.json"]) {
+    const sbom = JSON.parse(artifacts.get(sbomPath));
+    const names = new Set((sbom.packages ?? sbom.components).map(({ name }) => name));
+    for (const name of expectedNames) assert.equal(names.has(name), true, `${sbomPath} missing ${name}`);
+  }
+});
+
+test("unresolved first-party optional npm packages fail closed on manifest version mismatch", async () => {
+  const { collectNpmContext } = await loadGenerator();
+  const policy = JSON.parse(fs.readFileSync(path.join(sourceRoot, "scripts/source-license-policy.json"), "utf8"));
+  const name = "@floegence/flowersec-node-native";
+  const manifest = {
+    name,
+    version: "3.0.1",
+    license: "MIT",
+    repository: { type: "git", url: "git+https://github.com/floegence/flowersec.git" },
+  };
+  const lockfile = {
+    packages: {
+      "": {
+        name: "@floegence/flowersec-core",
+        version: "3.0.2",
+        license: "MIT",
+        optionalDependencies: { [name]: "3.0.2" },
+      },
+      [`node_modules/${name}`]: { optional: true },
+    },
+  };
+  assert.throws(
+    () => collectNpmContext(lockfile, policy, {
+      localOptionalPackages: new Map([[name, { relative: "flowersec-node-native/package.json", metadata: manifest }]]),
+    }),
+    /version does not match its manifest/,
+  );
+});
+
 test("native npm package SBOM roots use the canonical purl builder", () => {
   const source = fs.readFileSync(generatorPath, "utf8");
   assert.doesNotMatch(source, /packageName\.replace\("@", "%40"\)/);

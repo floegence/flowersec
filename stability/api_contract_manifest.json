@@ -903,6 +903,31 @@
           },
           {
             "kind": "type",
+            "expr": "flowersec.ConnectionFailurePhase",
+            "doc_token": "`flowersec.ConnectionFailurePhase`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ConnectionFailure).Phase",
+            "doc_token": "`flowersec.ConnectionFailure.Phase()`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.ConnectionFailureArtifact",
+            "doc_token": "`flowersec.ConnectionFailureArtifact`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.ConnectionFailureConnect",
+            "doc_token": "`flowersec.ConnectionFailureConnect`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.ConnectionFailureSession",
+            "doc_token": "`flowersec.ConnectionFailureSession`"
+          },
+          {
+            "kind": "type",
             "expr": "flowersec.ConnectionState",
             "doc_token": "`flowersec.ConnectionState`"
           },

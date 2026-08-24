@@ -582,6 +582,7 @@
     "public_errors_are_redacted": true
   },
   "controller": {
+    "failure_phases": ["artifact", "connect", "session"],
     "initial_backoff_ms": 250,
     "maximum_backoff_ms": 30000,
     "jitter_ms": 0,

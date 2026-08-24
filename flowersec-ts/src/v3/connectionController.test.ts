@@ -37,6 +37,7 @@ const primaryArtifact = decodeArtifactV3JSON(fixture.positive[0]!.artifact_json)
 type ControllerScenarioExpected = Readonly<{
   final_state: string;
   public_error: string | null;
+  failure_phase?: "artifact" | "connect" | "session" | null;
   disposition: string | null;
   acquisitions: number;
   connect_attempts: number;
@@ -52,7 +53,7 @@ type ControllerScenarioExpected = Readonly<{
 const controllerFixture = JSON.parse(readFileSync(
   new URL("../../../testdata/transport_v3/controller_vectors.json", import.meta.url),
   "utf8",
-)) as Readonly<{ scenarios: readonly Readonly<{
+)) as Readonly<{ failure_phases: readonly string[]; scenarios: readonly Readonly<{
   id: string;
   driver: string;
   input: Readonly<Record<string, unknown>>;
@@ -60,6 +61,14 @@ const controllerFixture = JSON.parse(readFileSync(
 }>[] }>;
 
 describe("transport v3 production connection controller", () => {
+  test("binds the closed shared failure-phase set", () => {
+    expect(controllerFixture.failure_phases).toEqual(["artifact", "connect", "session"]);
+    for (const scenario of controllerFixture.scenarios) {
+      if (scenario.expected.public_error === null) expect(scenario.expected.failure_phase).toBeNull();
+      else expect(scenario.expected.failure_phase).toMatch(/^(artifact|connect|session)$/);
+    }
+  });
+
   test("consumes a spend whose callback outlives caller cancellation", async () => {
     let signalStarted!: () => void;
     const started = new Promise<void>((resolve) => { signalStarted = resolve; });
@@ -157,6 +166,8 @@ describe("transport v3 production connection controller", () => {
     expect(acquire).toHaveBeenCalledTimes(expected.acquisitions);
     expect(observed).toEqual(expected.retry_delays_ms.map((delay) => `sleep:${delay}`));
     expect(snapshots.at(-1)).toEqual({ state: expected.final_state, disposition: expected.disposition });
+    expect(expected.failure_phase).toBe("artifact");
+    expect(controller.failure?.phase).toBe(expected.failure_phase);
   });
 
   test.each([
@@ -177,11 +188,12 @@ describe("transport v3 production connection controller", () => {
       kind: "candidate_failures" as const,
       failures: [{ candidate: context.candidates[0]!, failure: trigger }],
     }));
+    const readCapability = vi.fn(() => capability);
     const controller = createConnectionControllerV3({ acquire }, connector, {
       maximumAttempts: 1,
       nowUnixSeconds: () => 1_900_000_000,
       clock: immediateClock(),
-      capabilitySnapshot: () => capability,
+      capabilitySnapshot: readCapability,
     });
     controller.start();
     await expect(controller.waitForSession()).rejects.toMatchObject({
@@ -191,6 +203,7 @@ describe("transport v3 production connection controller", () => {
     });
     expect(acquire).toHaveBeenCalledOnce();
     expect(connector).toHaveBeenCalledOnce();
+    expect(readCapability).toHaveBeenCalledOnce();
     expect(cleanup).toHaveBeenCalledOnce();
     expect(artifactLeaseStateV3(lease)).toBe("retired");
     expect(controller.retryNow()).toBe(false);
@@ -465,7 +478,7 @@ describe("transport v3 production connection controller", () => {
     controller.start();
     await expect(controller.waitForSession()).rejects.toMatchObject({
       code: "failed",
-      failure: { phase: "artifact", code: "artifact_invalid" },
+      failure: { phase: "connect", code: "artifact_invalid" },
       retryDisposition: { kind: "terminal" },
     });
     expect(connector).not.toHaveBeenCalled();
@@ -486,7 +499,7 @@ describe("transport v3 production connection controller", () => {
     controller.start();
     await expect(controller.waitForSession()).rejects.toMatchObject({
       code: "failed",
-      failure: { phase: "artifact", code: "artifact_invalid" },
+      failure: { phase: "connect", code: "artifact_invalid" },
       retryDisposition: { kind: "terminal" },
     });
     expect(connector).not.toHaveBeenCalled();
@@ -852,7 +865,7 @@ describe("transport v3 production connection controller", () => {
     controller.start();
     await expect(controller.waitForSession()).rejects.toMatchObject({
       code: "failed",
-      failure: { phase: "artifact", code: "artifact_invalid" },
+      failure: { phase: "connect", code: "artifact_invalid" },
     });
     expect(connector).toHaveBeenCalledOnce();
     expect(artifactLeaseStateV3(original)).toBe("retired");
@@ -1166,6 +1179,27 @@ describe("transport v3 production connection controller", () => {
     expect(controller.state).toBe("closed");
     expect(acquire).not.toHaveBeenCalled();
     expect(connector).not.toHaveBeenCalled();
+  });
+
+  test("does not count an acquisition when the capability snapshot is invalid", async () => {
+    const acquire = vi.fn(async (): Promise<ArtifactSourceResultV3> => {
+      throw new Error("acquisition must not start");
+    });
+    const controller = createConnectionControllerV3(
+      { acquire },
+      async () => { throw new Error("connector must not run"); },
+      { capabilitySnapshot: () => { throw new Error("invalid capability provider"); } },
+    );
+
+    controller.start();
+    await waitForControllerState(controller, "failed");
+
+    expect(acquire).not.toHaveBeenCalled();
+    expect(controller.failure).toEqual({ phase: "connect", code: "artifact_invalid" });
+    const snapshots: ConnectionControllerSnapshotV3[] = [];
+    controller.subscribe((snapshot) => snapshots.push(snapshot));
+    expect(snapshots.at(-1)).toMatchObject({ state: "failed", attempt: 0 });
+    await controller.close();
   });
 
   test("returns one close promise when a closed subscriber closes synchronously", async () => {

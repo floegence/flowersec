@@ -266,19 +266,23 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         if (!continued) return;
         pendingDisposition = undefined;
       }
-      if (!this.#cycle.beginAcquisition()) {
-        this.#forceTerminalDisposition();
-        return;
-      }
       this.#disposition = undefined;
       this.#transition("connecting");
       if (this.#lifetime.signal.aborted) return;
+      if (this.#maximumAttempts !== 0 && this.#cycle.snapshot().attempts >= this.#maximumAttempts) {
+        this.#forceTerminalDisposition();
+        return;
+      }
       let capability: RuntimeCapabilityDescriptorV3;
       try {
         capability = this.#capabilitySnapshot();
         validateRuntimeCapabilityDescriptorV3(capability);
       } catch {
-        this.#recordFailure("artifact", "artifact_invalid", { kind: "terminal" });
+        this.#recordFailure("connect", "artifact_invalid", { kind: "terminal" });
+        return;
+      }
+      if (!this.#cycle.beginAcquisition()) {
+        this.#forceTerminalDisposition();
         return;
       }
       const acquisition = await this.#acquire();
@@ -301,7 +305,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         claim = claimArtifactLeaseV3(acquisition.lease);
       } catch {
         this.#cycle.recordFailedAcquisitionOrLease();
-        this.#recordFailure("artifact", "artifact_invalid", { kind: "terminal" });
+        this.#recordFailure("connect", "artifact_invalid", { kind: "terminal" });
         return;
       }
       if (next === "replacement" && !this.#cycle.claimReplacementQuota()) {
@@ -320,7 +324,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         await retireArtifactLeaseV3(claim);
         this.#cycle.recordFailedAcquisitionOrLease();
         const error = new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
-        this.#recordFailure("artifact", error.code, error.disposition);
+        this.#recordFailure("connect", error.code, error.disposition);
         return;
       }
       try {
@@ -329,7 +333,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         await retireArtifactLeaseV3(claim);
         this.#cycle.recordFailedAcquisitionOrLease();
         const error = new ConnectErrorV3("expired_artifact", { kind: "retryable" });
-        this.#recordFailure("artifact", error.code, error.disposition);
+        this.#recordFailure("connect", error.code, error.disposition);
         if (this.#attemptBudgetExhausted()) return;
         next = "primary";
         replacementContext = undefined;

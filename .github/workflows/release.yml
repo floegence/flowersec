@@ -25,9 +25,14 @@ env:
 permissions:
   contents: read
 
+concurrency:
+  group: flowersec-release
+  cancel-in-progress: false
+
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
       mode: ${{ steps.version.outputs.mode }}
@@ -116,6 +121,7 @@ jobs:
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -170,6 +176,7 @@ jobs:
       ((needs.prepare.outputs.release_exists == 'false' && needs.native-prebuilt.result == 'success') ||
       (needs.prepare.outputs.release_exists == 'true' && needs.native-prebuilt.result == 'skipped'))
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
       packages: write
@@ -178,6 +185,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: refs/tags/flowersec-go/v${{ needs.prepare.outputs.version }}
 
       - name: Compute version vars
@@ -247,7 +255,6 @@ jobs:
           merge-multiple: false
 
       - name: Setup cosign
-        if: needs.prepare.outputs.release_exists == 'false'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: v3.0.6
@@ -383,39 +390,312 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push runtime image
+      - name: Inspect immutable GHCR version tag
+        id: runtime-state
+        env:
+          IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/flowersec-runtime
+          IMAGE_VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          set -euo pipefail
+          image="$IMAGE_REPOSITORY:$IMAGE_VERSION"
+          error_file="$(mktemp)"
+          set +e
+          output="$(timeout --kill-after=5s 30s docker buildx imagetools inspect "$image" 2>"$error_file")"
+          status=$?
+          set -e
+          error_text="$(cat "$error_file")"
+          unlink "$error_file"
+          if [[ $status -eq 124 || $status -eq 137 ]]; then
+            echo "GHCR version-tag inspection timed out after 30s (killed after 5s grace): $image" >&2
+            exit 124
+          fi
+          if [[ $status -eq 0 ]]; then
+            digest="$(awk '$1 == "Digest:" { print $2; exit }' <<<"$output")"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              echo "GHCR version tag has no valid manifest digest: $image" >&2
+              exit 1
+            }
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if grep -Eiq 'manifest unknown|not found' <<<"$error_text"; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "digest=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sed -E 's/(token|authorization)[^ ]*/\1=<redacted>/Ig' <<<"$error_text" >&2
+          echo "GHCR version-tag inspection failed with exit $status: $image" >&2
+          exit "$status"
+
+      - name: Build and push runtime image by digest
         id: runtime-image
+        if: steps.runtime-state.outputs.exists == 'false'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: docker/flowersec-runtime/Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: true
+          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/flowersec-runtime,push-by-digest=true,name-canonical=true,push=true
+          provenance: mode=max
           sbom: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/flowersec-runtime:${{ steps.vars.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/flowersec-runtime:latest
           build-args: |
             VERSION=v${{ steps.vars.outputs.version }}
             COMMIT=${{ steps.vars.outputs.sha }}
             DATE=${{ steps.vars.outputs.date }}
 
-      - name: Verify GHCR runtime manifest readback
+      - name: Sign new GHCR runtime digest
+        if: steps.runtime-state.outputs.exists == 'false'
         env:
           IMAGE_DIGEST: ${{ steps.runtime-image.outputs.digest }}
           IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/flowersec-runtime
           IMAGE_VERSION: ${{ steps.vars.outputs.version }}
         run: |
           set -euo pipefail
-          test -n "$IMAGE_DIGEST"
-          for tag in "$IMAGE_VERSION" latest; do
-            image="$IMAGE_REPOSITORY:$tag"
-            observed="$(docker buildx imagetools inspect "$image" | awk '$1 == "Digest:" { print $2; exit }')"
-            if [[ -z "$observed" || "$observed" != "$IMAGE_DIGEST" ]]; then
-              echo "GHCR manifest readback mismatch for $image: expected $IMAGE_DIGEST got ${observed:-<missing>}" >&2
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "runtime build returned an invalid digest: ${IMAGE_DIGEST:-<missing>}" >&2
+            exit 1
+          }
+          case "$GITHUB_WORKFLOW_REF" in
+            "${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/heads/main" | \
+            "${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/flowersec-go/v${IMAGE_VERSION}") ;;
+            *)
+              echo "GHCR signing requires the exact main or release-version-tag workflow identity" >&2
               exit 1
-            fi
-          done
+              ;;
+          esac
+          set +e
+          timeout --kill-after=5s 120s cosign sign --yes \
+            --use-signing-config=false \
+            "$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          status=$?
+          set -e
+          if [[ $status -eq 124 || $status -eq 137 ]]; then
+            echo "GHCR keyless signing timed out after 120s (killed after 5s grace): $IMAGE_REPOSITORY@$IMAGE_DIGEST" >&2
+            exit 124
+          fi
+          if [[ $status -ne 0 ]]; then
+            echo "GHCR keyless signing failed with exit $status: $IMAGE_REPOSITORY@$IMAGE_DIGEST" >&2
+            exit "$status"
+          fi
+
+      - name: Verify GHCR runtime digest
+        env:
+          IMAGE_DIGEST: ${{ steps.runtime-image.outputs.digest || steps.runtime-state.outputs.digest }}
+          IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/flowersec-runtime
+          IMAGE_VERSION: ${{ steps.vars.outputs.version }}
+          RELEASE_SHA: ${{ steps.vars.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "GHCR runtime verification requires a valid digest: ${IMAGE_DIGEST:-<missing>}" >&2
+            exit 1
+          }
+          digest_ref="$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          verify_digest_manifest() {
+            local max_attempts=6
+            local inspect_timeout_seconds=30
+            local attempt output observed status detail timeout_marker
+            for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+              timeout_marker="$(mktemp)"
+              set +e
+              output="$(TIMEOUT_MARKER="$timeout_marker" timeout --preserve-status --signal=USR1 --kill-after=5s "${inspect_timeout_seconds}s" bash -c 'trap "printf timeout > \"$TIMEOUT_MARKER\"; exit 75" USR1; docker buildx imagetools inspect "$1" 2>&1' -- "$digest_ref" 2>&1)"
+              status=$?
+              set -e
+              if [[ -s "$timeout_marker" ]]; then
+                detail="inspect timed out after ${inspect_timeout_seconds}s (killed after 5s grace)"
+              elif [[ "$status" -eq 0 ]]; then
+                observed="$(awk '$1 == "Digest:" { print $2; exit }' <<<"$output")"
+                if [[ "$observed" == "$IMAGE_DIGEST" ]]; then
+                  unlink "$timeout_marker"
+                  echo "GHCR digest manifest readback passed for $digest_ref"
+                  return 0
+                fi
+                detail="digest ${observed:-<missing>}"
+              else
+                detail="inspect exit $status: $(tail -n 1 <<<"$output")"
+              fi
+              unlink "$timeout_marker"
+              echo "GHCR digest manifest readback attempt $attempt/$max_attempts failed for $digest_ref: expected $IMAGE_DIGEST, got $detail" >&2
+              if (( attempt < max_attempts )); then
+                sleep $((attempt * 5))
+              fi
+            done
+            echo "GHCR digest manifest readback failed after $max_attempts attempts for $digest_ref" >&2
+            return 1
+          }
+          verify_digest_manifest
+
+          verify_signature() {
+            local identity status output
+            local identities=(
+              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/heads/main"
+              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/flowersec-go/v${IMAGE_VERSION}"
+            )
+            for identity in "${identities[@]}"; do
+              set +e
+              output="$(timeout --kill-after=5s 60s cosign verify \
+                --certificate-identity "$identity" \
+                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+                "$digest_ref" 2>&1)"
+              status=$?
+              set -e
+              if [[ $status -eq 0 ]]; then
+                echo "GHCR signature verification passed for $digest_ref with $identity"
+                return 0
+              fi
+              if [[ $status -eq 124 || $status -eq 137 ]]; then
+                echo "GHCR signature verification timed out after 60s (killed after 5s grace): $digest_ref ($identity)" >&2
+                exit 124
+              fi
+            done
+            echo "GHCR signature does not match the exact main or release-version-tag workflow identity: $digest_ref" >&2
+            tail -n 1 <<<"$output" >&2
+            return 1
+          }
+          verify_signature
+
+          provenance_file="$(mktemp)"
+          timeout_marker="$(mktemp)"
+          set +e
+          TIMEOUT_MARKER="$timeout_marker" timeout --preserve-status --signal=USR1 --kill-after=5s 30s \
+            bash -c 'trap "printf timeout > \"$TIMEOUT_MARKER\"; exit 75" USR1; docker buildx imagetools inspect --format "{{json .Provenance}}" "$1"' \
+            -- "$digest_ref" >"$provenance_file" 2>&1
+          provenance_status=$?
+          set -e
+          if [[ -s "$timeout_marker" ]]; then
+            rm -f -- "$timeout_marker" "$provenance_file"
+            echo "GHCR provenance readback timed out after 30s (killed after 5s grace): $digest_ref" >&2
+            exit 124
+          fi
+          unlink "$timeout_marker"
+          if [[ $provenance_status -ne 0 ]]; then
+            tail -n 1 "$provenance_file" >&2
+            unlink "$provenance_file"
+            echo "GHCR provenance readback failed with exit $provenance_status: $digest_ref" >&2
+            exit "$provenance_status"
+          fi
+          jq -e --arg version "v$IMAGE_VERSION" --arg sha "$RELEASE_SHA" '
+            keys == ["linux/amd64", "linux/arm64"] and
+            all(.[];
+              .SLSA.buildDefinition.buildType == "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md" and
+              .SLSA.buildDefinition.externalParameters.request.args["build-arg:COMMIT"] == $sha and
+              .SLSA.buildDefinition.externalParameters.request.args["build-arg:VERSION"] == $version and
+              .SLSA.buildDefinition.externalParameters.request.root.request.args["vcs:revision"] == $sha and
+              .SLSA.buildDefinition.externalParameters.request.root.request.args["vcs:source"] == "https://github.com/floegence/flowersec"
+            )
+          ' "$provenance_file" >/dev/null
+          unlink "$provenance_file"
+          echo "GHCR provenance readback passed for $digest_ref ($RELEASE_SHA)"
+
+      - name: Publish immutable GHCR version tag
+        if: steps.runtime-state.outputs.exists == 'false'
+        env:
+          IMAGE_DIGEST: ${{ steps.runtime-image.outputs.digest }}
+          IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/flowersec-runtime
+          IMAGE_VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          set -euo pipefail
+          version_ref="$IMAGE_REPOSITORY:$IMAGE_VERSION"
+          error_file="$(mktemp)"
+          set +e
+          timeout --kill-after=5s 30s docker buildx imagetools inspect "$version_ref" >/dev/null 2>"$error_file"
+          inspect_status=$?
+          set -e
+          if [[ $inspect_status -eq 0 ]]; then
+            unlink "$error_file"
+            echo "refusing to overwrite existing immutable GHCR version tag: $version_ref" >&2
+            exit 1
+          fi
+          if [[ $inspect_status -eq 124 || $inspect_status -eq 137 ]]; then
+            unlink "$error_file"
+            echo "GHCR immutable-tag prepublication inspection timed out after 30s (killed after 5s grace): $version_ref" >&2
+            exit 124
+          fi
+          if ! grep -Eiq 'manifest unknown|not found' "$error_file"; then
+            sed -E 's/(token|authorization)[^ ]*/\1=<redacted>/Ig' "$error_file" >&2
+            unlink "$error_file"
+            echo "GHCR immutable-tag prepublication inspection failed with exit $inspect_status: $version_ref" >&2
+            exit "$inspect_status"
+          fi
+          unlink "$error_file"
+          set +e
+          timeout --kill-after=5s 60s docker buildx imagetools create \
+            --tag "$version_ref" \
+            "$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          publish_status=$?
+          set -e
+          if [[ $publish_status -eq 124 || $publish_status -eq 137 ]]; then
+            echo "GHCR immutable version-tag publication timed out after 60s (killed after 5s grace): $version_ref" >&2
+            exit 124
+          fi
+          if [[ $publish_status -ne 0 ]]; then
+            echo "GHCR immutable version-tag publication failed with exit $publish_status: $version_ref" >&2
+            exit "$publish_status"
+          fi
+
+      - name: Promote GHCR latest tag
+        env:
+          IMAGE_DIGEST: ${{ steps.runtime-image.outputs.digest || steps.runtime-state.outputs.digest }}
+          IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/flowersec-runtime
+        run: |
+          set -euo pipefail
+          set +e
+          timeout --kill-after=5s 60s docker buildx imagetools create \
+            --tag "$IMAGE_REPOSITORY:latest" \
+            "$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          promote_status=$?
+          set -e
+          if [[ $promote_status -eq 124 || $promote_status -eq 137 ]]; then
+            echo "GHCR latest-tag promotion timed out after 60s (killed after 5s grace): $IMAGE_REPOSITORY:latest" >&2
+            exit 124
+          fi
+          if [[ $promote_status -ne 0 ]]; then
+            echo "GHCR latest-tag promotion failed with exit $promote_status: $IMAGE_REPOSITORY:latest" >&2
+            exit "$promote_status"
+          fi
+
+      - name: Verify GHCR runtime tag readback
+        env:
+          IMAGE_DIGEST: ${{ steps.runtime-image.outputs.digest || steps.runtime-state.outputs.digest }}
+          IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/flowersec-runtime
+          IMAGE_VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          set -euo pipefail
+          verify_tag() {
+            local image="$1"
+            local max_attempts=6
+            local attempt output observed status detail timeout_marker
+            for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+              timeout_marker="$(mktemp)"
+              set +e
+              output="$(TIMEOUT_MARKER="$timeout_marker" timeout --preserve-status --signal=USR1 --kill-after=5s 30s bash -c 'trap "printf timeout > \"$TIMEOUT_MARKER\"; exit 75" USR1; docker buildx imagetools inspect "$1" 2>&1' -- "$image" 2>&1)"
+              status=$?
+              set -e
+              if [[ -s "$timeout_marker" ]]; then
+                detail="inspect timed out after 30s (killed after 5s grace)"
+              elif [[ $status -eq 0 ]]; then
+                observed="$(awk '$1 == "Digest:" { print $2; exit }' <<<"$output")"
+                if [[ "$observed" == "$IMAGE_DIGEST" ]]; then
+                  unlink "$timeout_marker"
+                  echo "GHCR tag readback passed for $image ($observed)"
+                  return 0
+                fi
+                detail="digest ${observed:-<missing>}"
+              else
+                detail="inspect exit $status: $(tail -n 1 <<<"$output")"
+              fi
+              unlink "$timeout_marker"
+              echo "GHCR tag readback attempt $attempt/$max_attempts failed for $image: expected $IMAGE_DIGEST, got $detail" >&2
+              if (( attempt < max_attempts )); then
+                sleep $((attempt * 5))
+              fi
+            done
+            echo "GHCR tag readback failed after $max_attempts attempts for $image: expected $IMAGE_DIGEST" >&2
+            return 1
+          }
+          verify_tag "$IMAGE_REPOSITORY:$IMAGE_VERSION"
+          verify_tag "$IMAGE_REPOSITORY:latest"
 
   npm-recovery:
     needs: [prepare, release]
@@ -425,6 +705,7 @@ jobs:
       ((needs.prepare.outputs.mode == 'full' && needs.release.result == 'success') ||
       (needs.prepare.outputs.mode == 'npm-only' && needs.release.result == 'skipped'))
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       contents: read
       id-token: write
@@ -453,10 +734,14 @@ jobs:
           set -euo pipefail
           VERSION="$RELEASE_VERSION"
           SHA="$(git rev-parse HEAD)"
+          git checkout "$GITHUB_SHA" -- \
+            scripts/release-readback.mjs \
+            scripts/verify-npm-release-package.mjs
           scripts/verify-release-tags.sh "$VERSION" "$SHA"
 
           mkdir npm-release-assets
-          gh release download "flowersec-go/v${VERSION}" \
+          set +e
+          timeout --kill-after=5s 120s gh release download "flowersec-go/v${VERSION}" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern checksums.txt \
             --pattern 'checksums.txt.sig' \
@@ -465,6 +750,16 @@ jobs:
             --pattern 'floegence-flowersec-*.tgz.sig' \
             --pattern 'floegence-flowersec-*.tgz.pem' \
             --dir npm-release-assets
+          download_status=$?
+          set -e
+          if [[ $download_status -eq 124 || $download_status -eq 137 ]]; then
+            echo "GitHub Release asset download timed out after 120s (killed after 5s grace): flowersec-go/v${VERSION}" >&2
+            exit 124
+          fi
+          if [[ $download_status -ne 0 ]]; then
+            echo "GitHub Release asset download failed with exit $download_status: flowersec-go/v${VERSION}" >&2
+            exit "$download_status"
+          fi
 
           archives=(
             "floegence-flowersec-node-native-darwin-arm64-${VERSION}.tgz"
@@ -586,11 +881,15 @@ jobs:
             local_integrity="sha512-$(openssl dgst -sha512 -binary "$archive" | openssl base64 -A)"
             npm_error="$(mktemp)"
             set +e
-            metadata="$(npm view "${package}@${VERSION}" --json 2>"$npm_error")"
+            metadata="$(timeout --kill-after=5s 60s npm view "${package}@${VERSION}" --json 2>"$npm_error")"
             view_status=$?
             set -e
             npm_error_text="$(cat "$npm_error")"
             unlink "$npm_error"
+            if [[ $view_status -eq 124 || $view_status -eq 137 ]]; then
+              echo "npm view timed out after 60s (killed after 5s grace): ${package}@${VERSION}" >&2
+              return 124
+            fi
             if [[ $view_status -eq 0 ]]; then
               jq -e \
                 --arg package "$package" \
@@ -608,7 +907,18 @@ jobs:
                 echo "unsupported package repository URL: $repository_url" >&2
                 return 2
               fi
-              npx -y npm@11.5.1 publish "${publish_args[@]}" "./$archive"
+              set +e
+              timeout --kill-after=5s 180s npx -y npm@11.5.1 publish "${publish_args[@]}" "./$archive"
+              publish_status=$?
+              set -e
+              if [[ $publish_status -eq 124 || $publish_status -eq 137 ]]; then
+                echo "npm publish timed out after 180s (killed after 5s grace): ${package}@${VERSION}" >&2
+                return 124
+              fi
+              if [[ $publish_status -ne 0 ]]; then
+                echo "npm publish failed with exit $publish_status: ${package}@${VERSION}" >&2
+                return "$publish_status"
+              fi
             else
               sed -E 's/(token|authorization)[^ ]*/\1=<redacted>/Ig' <<<"$npm_error_text" >&2
               return "$view_status"

@@ -99,7 +99,7 @@ func TestConnectionControllerWaitUsesInjectedWallAndMonotonicClocks(t *testing.T
 	}
 	result := make(chan bool, 1)
 	go func() {
-		result <- controller.wait(context.Background(), &ConnectError{code: ConnectConnectionFailed}, retryableDisposition(), 5_000, 250*time.Millisecond, 0)
+		result <- controller.wait(context.Background(), ConnectionFailureConnect, &ConnectError{code: ConnectConnectionFailed}, retryableDisposition(), 5_000, 250*time.Millisecond, 0)
 	}()
 	clock.waitForTimer(t, 0)
 	clock.advance(1_000, 250)
@@ -125,7 +125,7 @@ func TestConnectionControllerWaitSaturatesNegativeWallRollbackDelta(t *testing.T
 	defer cancel()
 	result := make(chan bool, 1)
 	go func() {
-		result <- controller.wait(ctx, &ConnectError{code: ConnectConnectionFailed}, retryableDisposition(), 0, 0, 0)
+		result <- controller.wait(ctx, ConnectionFailureConnect, &ConnectError{code: ConnectConnectionFailed}, retryableDisposition(), 0, 0, 0)
 	}()
 	clock.waitForTimer(t, 0)
 	if got := clock.delays()[0]; got != time.Second {

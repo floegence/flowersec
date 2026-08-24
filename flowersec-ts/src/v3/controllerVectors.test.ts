@@ -38,6 +38,7 @@ import {
 type ScenarioExpected = Readonly<{
   final_state: string;
   public_error: string | null;
+  failure_phase: "artifact" | "connect" | "session" | null;
   disposition: string | null;
   acquisitions: number;
   connect_attempts: number;
@@ -68,6 +69,7 @@ type ControllerFixture = Readonly<{
 type ControllerObservation = Readonly<{
   final_state: string;
   public_error: string | null;
+  failure_phase: "artifact" | "connect" | "session" | null;
   disposition: string | null;
   acquisitions: number;
   connect_attempts: number;
@@ -812,6 +814,7 @@ async function runConcurrentCapabilityReplacementBarrier(scenario: ControllerSce
     const observed = {
       final_state: refreshController.state,
       public_error: refreshController.failure?.code ?? null,
+      failure_phase: refreshController.failure?.phase ?? null,
       disposition: controllerDisposition(refreshController),
       acquisitions,
       connect_attempts: dialCalls,
@@ -943,6 +946,7 @@ class VectorTracker {
     return {
       final_state: controller.state,
       public_error: controller.failure?.code ?? null,
+      failure_phase: controller.failure?.phase ?? null,
       disposition,
       acquisitions: this.acquisitions,
       connect_attempts: this.connectAttempts,
@@ -1062,6 +1066,7 @@ function assertObservation(scenario: ControllerScenario, observed: ControllerObs
   const expected: ControllerObservation = {
     final_state: scenario.expected.final_state,
     public_error: scenario.expected.public_error,
+    failure_phase: scenario.expected.failure_phase,
     disposition: scenario.expected.disposition,
     acquisitions: scenario.expected.acquisitions,
     connect_attempts: scenario.expected.connect_attempts,

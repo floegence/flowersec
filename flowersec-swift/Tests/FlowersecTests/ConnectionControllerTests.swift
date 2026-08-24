@@ -1101,6 +1101,20 @@ final class ConnectionControllerTests: XCTestCase {
   }
 
   func testAttemptExhaustionUsesFirstBackoffAndCreatesNoTransport() async throws {
+    let root = try controllerVectorsV3()
+    XCTAssertEqual(root["failure_phases"] as? [String], ["artifact", "connect", "session"])
+    let scenarios = try XCTUnwrap(root["scenarios"] as? [[String: Any]])
+    for scenario in scenarios {
+      let expected = try XCTUnwrap(scenario["expected"] as? [String: Any])
+      let phase = expected["failure_phase"]
+      if expected["public_error"] is NSNull {
+        XCTAssertTrue(phase is NSNull, scenario["id"] as? String ?? "unknown")
+      } else {
+        XCTAssertTrue(
+          ["artifact", "connect", "session"].contains(phase as? String ?? ""),
+          scenario["id"] as? String ?? "unknown")
+      }
+    }
     let expected = try controllerExpectedV3("attempt-exhaustion")
     let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let source = RetryableFailureArtifactSourceV3()
@@ -1128,6 +1142,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertTrue(failed)
     XCTAssertEqual(
       snapshot.failure, .artifactSource(ArtifactSourceFailure(disposition: .terminal)))
+    XCTAssertEqual(expected["failure_phase"] as? String, "artifact")
     XCTAssertEqual(snapshot.failure?.retryDisposition, .terminal)
     XCTAssertEqual(snapshot.retryDisposition, .terminal)
     XCTAssertEqual(expected["final_state"] as? String, "failed")

@@ -16,6 +16,11 @@
     "transport_security_failed",
     "connection_failed"
   ],
+  "failure_phases": [
+    "artifact",
+    "connect",
+    "session"
+  ],
   "internal_transport_results": [
     [
       "invalid_artifact",
@@ -157,7 +162,8 @@
           "retired",
           "consumed"
         ],
-        "retry_delays_ms": []
+        "retry_delays_ms": [],
+        "failure_phase": null
       }
     },
     {
@@ -191,7 +197,8 @@
           "retired",
           "retired"
         ],
-        "retry_delays_ms": []
+        "retry_delays_ms": [],
+        "failure_phase": "connect"
       }
     },
     {
@@ -223,7 +230,8 @@
           "retired"
         ],
         "retry_delays_ms": [],
-        "no_mode_downgrade": true
+        "no_mode_downgrade": true,
+        "failure_phase": "connect"
       }
     },
     {
@@ -244,6 +252,7 @@
       "expected": {
         "final_state": "failed",
         "public_error": "connection_failed",
+        "failure_phase": "connect",
         "disposition": "terminal",
         "acquisitions": 2,
         "connect_attempts": 1,
@@ -290,7 +299,8 @@
         "lease_terminal_states": [
           "retired"
         ],
-        "retry_delays_ms": []
+        "retry_delays_ms": [],
+        "failure_phase": "connect"
       }
     },
     {
@@ -325,7 +335,8 @@
           "retired",
           "consumed"
         ],
-        "retry_delays_ms": []
+        "retry_delays_ms": [],
+        "failure_phase": null
       }
     },
     {
@@ -369,7 +380,8 @@
         "retry_delays_ms": [
           500
         ],
-        "blocked_policy_remains_blocked": true
+        "blocked_policy_remains_blocked": true,
+        "failure_phase": null
       }
     },
     {
@@ -414,7 +426,8 @@
         "retry_delays_ms": [
           500
         ],
-        "blocked_policy_remains_blocked": true
+        "blocked_policy_remains_blocked": true,
+        "failure_phase": null
       }
     },
     {
@@ -455,7 +468,8 @@
         ],
         "retry_delays_ms": [
           500
-        ]
+        ],
+        "failure_phase": null
       }
     },
     {
@@ -499,7 +513,8 @@
         ],
         "retry_delays_ms": [
           500
-        ]
+        ],
+        "failure_phase": "connect"
       }
     },
     {
@@ -532,7 +547,8 @@
         ],
         "retry_delays_ms": [],
         "source_cancellation_propagated": true,
-        "close_waits_for_acquire_settlement": true
+        "close_waits_for_acquire_settlement": true,
+        "failure_phase": null
       }
     },
     {
@@ -565,7 +581,8 @@
         ],
         "retry_delays_ms": [],
         "source_cancellation_propagated": true,
-        "close_waits_for_acquire_settlement": true
+        "close_waits_for_acquire_settlement": true,
+        "failure_phase": null
       }
     },
     {
@@ -584,6 +601,7 @@
       "expected": {
         "final_state": "failed",
         "public_error": "connection_failed",
+        "failure_phase": "artifact",
         "disposition": "terminal",
         "acquisitions": 2,
         "connect_attempts": 0,
@@ -648,7 +666,8 @@
         ],
         "retry_now_allowed_before_deadline": false,
         "wall_end_ms": 5000,
-        "monotonic_end_ms": 250
+        "monotonic_end_ms": 250,
+        "failure_phase": null
       }
     },
     {
@@ -708,7 +727,8 @@
           "retired"
         ],
         "retry_delays_ms": [],
-        "order_independent": true
+        "order_independent": true,
+        "failure_phase": "connect"
       }
     },
     {
@@ -744,7 +764,8 @@
         "retry_delays_ms": [
           250
         ],
-        "failure_ordinal": 1
+        "failure_ordinal": 1,
+        "failure_phase": "connect"
       }
     },
     {
@@ -776,7 +797,8 @@
         "retry_delays_ms": [
           250
         ],
-        "credential_bytes_written": 0
+        "credential_bytes_written": 0,
+        "failure_phase": "connect"
       }
     },
     {
@@ -811,7 +833,8 @@
         "retry_delays_ms": [
           250
         ],
-        "credential_bytes_written": 0
+        "credential_bytes_written": 0,
+        "failure_phase": "connect"
       }
     },
     {
@@ -845,7 +868,8 @@
         "retry_delays_ms": [
           250
         ],
-        "credential_bytes_written": 0
+        "credential_bytes_written": 0,
+        "failure_phase": "connect"
       }
     },
     {
@@ -879,7 +903,8 @@
         "retry_delays_ms": [
           250
         ],
-        "credential_bytes_written": 0
+        "credential_bytes_written": 0,
+        "failure_phase": "connect"
       }
     },
     {
@@ -917,7 +942,8 @@
           250,
           250
         ],
-        "failure_ordinal": 1
+        "failure_ordinal": 1,
+        "failure_phase": null
       }
     },
     {
@@ -946,7 +972,8 @@
         ],
         "retry_delays_ms": [],
         "failure_ordinal": 1,
-        "attempt": 0
+        "attempt": 0,
+        "failure_phase": "session"
       }
     },
     {
@@ -987,7 +1014,8 @@
           250
         ],
         "wall_end_ms": 6000,
-        "monotonic_end_ms": 250
+        "monotonic_end_ms": 250,
+        "failure_phase": null
       }
     },
     {
@@ -1031,7 +1059,8 @@
           1000
         ],
         "wall_end_ms": 5000,
-        "monotonic_end_ms": 2000
+        "monotonic_end_ms": 2000,
+        "failure_phase": null
       }
     },
     {
@@ -1072,7 +1101,8 @@
         ],
         "wall_end_ms": 1000,
         "monotonic_end_ms": 1000,
-        "maximum_wall_reread_ms": 1000
+        "maximum_wall_reread_ms": 1000,
+        "failure_phase": null
       }
     },
     {
@@ -1114,7 +1144,8 @@
         ],
         "wall_end_ms": 0,
         "monotonic_end_ms": 9007199254740991,
-        "timer_saturated": true
+        "timer_saturated": true,
+        "failure_phase": null
       }
     },
     {
@@ -1147,7 +1178,8 @@
           "retired"
         ],
         "retry_delays_ms": [],
-        "tls_error_claimed": true
+        "tls_error_claimed": true,
+        "failure_phase": "connect"
       }
     },
     {
@@ -1183,7 +1215,8 @@
         ],
         "retry_delays_ms": [],
         "tls_error_claimed": true,
-        "order_independent": true
+        "order_independent": true,
+        "failure_phase": "connect"
       }
     },
     {
@@ -1220,7 +1253,8 @@
           "retired"
         ],
         "retry_delays_ms": [],
-        "no_mode_downgrade": true
+        "no_mode_downgrade": true,
+        "failure_phase": "connect"
       }
     },
     {
@@ -1255,7 +1289,8 @@
         "retry_delays_ms": [
           250
         ],
-        "cleanup_error_ignored": true
+        "cleanup_error_ignored": true,
+        "failure_phase": null
       }
     },
     {
@@ -1294,7 +1329,8 @@
         ],
         "retry_delays_ms": [
           250
-        ]
+        ],
+        "failure_phase": null
       }
     },
     {
@@ -1323,7 +1359,8 @@
         "lease_terminal_states": [],
         "retry_delays_ms": [],
         "attempt": 9007199254740991,
-        "counter_saturated": true
+        "counter_saturated": true,
+        "failure_phase": null
       }
     },
     {
@@ -1357,7 +1394,8 @@
           "retired"
         ],
         "retry_delays_ms": [],
-        "capability_rechecked": true
+        "capability_rechecked": true,
+        "failure_phase": "connect"
       }
     },
     {
@@ -1389,7 +1427,8 @@
         "lease_terminal_states": [
           "consumed"
         ],
-        "retry_delays_ms": []
+        "retry_delays_ms": [],
+        "failure_phase": "connect"
       }
     },
     {
@@ -1423,7 +1462,8 @@
         ],
         "retry_delays_ms": [
           250
-        ]
+        ],
+        "failure_phase": "connect"
       }
     },
     {
@@ -1460,7 +1500,8 @@
           "retired",
           "consumed"
         ],
-        "retry_delays_ms": []
+        "retry_delays_ms": [],
+        "failure_phase": "connect"
       }
     },
     {
@@ -1499,7 +1540,8 @@
         ],
         "retry_delays_ms": [
           500
-        ]
+        ],
+        "failure_phase": "connect"
       }
     },
     {
@@ -1533,7 +1575,8 @@
         ],
         "retry_delays_ms": [
           250
-        ]
+        ],
+        "failure_phase": "connect"
       }
     },
     {
@@ -1572,7 +1615,8 @@
         ],
         "retry_delays_ms": [
           500
-        ]
+        ],
+        "failure_phase": "connect"
       }
     },
     {
@@ -1606,7 +1650,8 @@
         ],
         "retry_delays_ms": [
           250
-        ]
+        ],
+        "failure_phase": "connect"
       }
     },
     {
@@ -1640,7 +1685,8 @@
         ],
         "retry_delays_ms": [
           250
-        ]
+        ],
+        "failure_phase": "connect"
       }
     }
   ],
@@ -1705,7 +1751,8 @@
           "replacement-ca"
         ],
         "peer_final_state": "failed",
-        "peer_public_error": "transport_security_unsupported"
+        "peer_public_error": "transport_security_unsupported",
+        "failure_phase": "connect"
       }
     }
   ],

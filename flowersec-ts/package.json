@@ -1,6 +1,6 @@
 {
   "name": "@floegence/flowersec-core",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "Flowersec core TypeScript library for carrier-neutral encrypted sessions and multiplexed streams.",
   "license": "MIT",
   "repository": {
@@ -77,7 +77,7 @@
     "ws": "^8.21.2"
   },
   "optionalDependencies": {
-    "@floegence/flowersec-node-native": "3.0.1"
+    "@floegence/flowersec-node-native": "3.0.2"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

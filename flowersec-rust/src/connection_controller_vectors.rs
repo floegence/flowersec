@@ -38,6 +38,8 @@ struct ScenarioV3 {
 struct ExpectedV3 {
     final_state: String,
     public_error: Option<String>,
+    #[serde(default)]
+    failure_phase: Option<String>,
     disposition: Option<String>,
     acquisitions: u64,
     connect_attempts: u64,
@@ -102,6 +104,7 @@ struct ExpectedV3 {
 
 #[derive(Debug, Deserialize)]
 struct ControllerVectorsV3 {
+    failure_phases: Vec<String>,
     internal_transport_results: Vec<(String, Option<String>, String)>,
     retry_after: RetryAfterVectorsV3,
     lease_state_machine: LeaseStateMachineVectorsV3,
@@ -639,6 +642,7 @@ impl Session for ControlledSession {
 struct ObservedV3 {
     final_state: String,
     public_error: Option<String>,
+    failure_phase: Option<String>,
     disposition: Option<String>,
     acquisitions: u64,
     connect_attempts: u64,
@@ -676,20 +680,29 @@ fn observe_counts(
     leases: &[&TrackedLease],
     retry_delays_ms: Vec<u64>,
 ) -> ObservedV3 {
-    let (public_error, disposition) = status.last_failure.map_or((None, None), |failure| {
-        let (code, disposition) = match failure {
-            ConnectionFailure::ArtifactSource(error) => ("connection_failed", error.disposition()),
-            ConnectionFailure::Connect { code, disposition } => (code.as_str(), disposition),
-            ConnectionFailure::Session { disposition, .. } => ("connection_failed", disposition),
-        };
-        (
-            Some(code.to_owned()),
-            Some(disposition_name(disposition).to_owned()),
-        )
-    });
+    let (public_error, failure_phase, disposition) =
+        status.last_failure.map_or((None, None, None), |failure| {
+            let (code, phase, disposition) = match failure {
+                ConnectionFailure::ArtifactSource(error) => {
+                    ("connection_failed", "artifact", error.disposition())
+                }
+                ConnectionFailure::Connect { code, disposition } => {
+                    (code.as_str(), "connect", disposition)
+                }
+                ConnectionFailure::Session { disposition, .. } => {
+                    ("connection_failed", "session", disposition)
+                }
+            };
+            (
+                Some(code.to_owned()),
+                Some(phase.to_owned()),
+                Some(disposition_name(disposition).to_owned()),
+            )
+        });
     ObservedV3 {
         final_state: state_name(status.state).to_owned(),
         public_error,
+        failure_phase,
         disposition,
         acquisitions,
         connect_attempts: metrics.attempts.load(Ordering::SeqCst),
@@ -714,6 +727,7 @@ fn assert_observed(scenario: &ScenarioV3, observed: ObservedV3) {
     let wanted = ObservedV3 {
         final_state: expected.final_state.clone(),
         public_error: expected.public_error.clone(),
+        failure_phase: expected.failure_phase.clone(),
         disposition: expected.disposition.clone(),
         acquisitions: expected.acquisitions,
         connect_attempts: expected.connect_attempts,
@@ -804,6 +818,7 @@ fn controller_vectors() -> ControllerVectorsV3 {
 #[tokio::test]
 async fn top_level_controller_vectors_bind_production_results_retry_and_lease_state() {
     let vectors = controller_vectors();
+    assert_eq!(vectors.failure_phases, ["artifact", "connect", "session"]);
     let mut seen = HashSet::new();
     for (code, detail, action) in &vectors.internal_transport_results {
         let key = format!("{code}/{}", detail.as_deref().unwrap_or(""));
@@ -1117,6 +1132,7 @@ async fn run_browser_capability_scenario(scenario: &ScenarioV3) {
         ObservedV3 {
             final_state: state_name(refresh_status.state).to_owned(),
             public_error,
+            failure_phase: Some("connect".to_owned()),
             disposition,
             acquisitions: acquisitions.acquisitions.load(Ordering::SeqCst),
             connect_attempts: state.dial_attempts.load(Ordering::SeqCst),
@@ -2013,6 +2029,13 @@ async fn run_attempt_exhaustion(scenario: &ScenarioV3) {
     let _ = wait_for_state(&controller, ConnectionState::Waiting).await;
     assert!(controller.retry_now());
     let status = wait_for_state(&controller, ConnectionState::Failed).await;
+    let phase = match status.last_failure {
+        Some(ConnectionFailure::ArtifactSource(_)) => "artifact",
+        Some(ConnectionFailure::Connect { .. }) => "connect",
+        Some(ConnectionFailure::Session { .. }) => "session",
+        None => panic!("attempt exhaustion did not retain a failure"),
+    };
+    assert_eq!(Some(phase), scenario.expected.failure_phase.as_deref());
     assert_observed(
         scenario,
         observe(status, &source, &metrics, &[], retry_delays([0])),
@@ -2412,6 +2435,7 @@ async fn run_clock_boundary(scenario: &ScenarioV3) {
         ObservedV3 {
             final_state: state_name(status.state).to_owned(),
             public_error: None,
+            failure_phase: None,
             disposition: None,
             acquisitions: 0,
             connect_attempts: 0,
@@ -2656,6 +2680,7 @@ fn run_attempt_saturation(scenario: &ScenarioV3) {
         ObservedV3 {
             final_state: "connecting".to_owned(),
             public_error: None,
+            failure_phase: None,
             disposition: None,
             acquisitions: 0,
             connect_attempts: 0,

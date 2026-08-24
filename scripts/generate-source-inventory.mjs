@@ -883,7 +883,7 @@ export function collectGoReleaseDistributions(repoRoot) {
   const npmDistribution = collectNpmContext(
     readJson(path.join(repoRoot, "flowersec-ts/package-lock.json")),
     policy,
-    { allowUnresolvedOptionalNames: firstPartyNativePackageNames(repoRoot) },
+    { localOptionalPackages: firstPartyNativePackages(repoRoot) },
   ).distribution;
   return collectGoReleaseDistributionsWithInputs(
     repoRoot,
@@ -893,8 +893,8 @@ export function collectGoReleaseDistributions(repoRoot) {
   );
 }
 
-function firstPartyNativePackageNames(repoRoot) {
-  const names = new Set();
+function firstPartyNativePackages(repoRoot) {
+  const packages = new Map();
   for (const relative of [
     "flowersec-node-native/package.json",
     "flowersec-node-native/npm/darwin-arm64/package.json",
@@ -905,15 +905,29 @@ function firstPartyNativePackageNames(repoRoot) {
     const file = path.join(repoRoot, relative);
     if (!fs.existsSync(file)) continue;
     const metadata = readJson(file);
-    if (typeof metadata.name === "string") names.add(metadata.name);
+    if (typeof metadata.name !== "string" || typeof metadata.version !== "string") {
+      throw new Error(`first-party native manifest ${relative} has no exact name and version`);
+    }
+    if (packages.has(metadata.name)) throw new Error(`duplicate first-party native package ${metadata.name}`);
+    packages.set(metadata.name, { relative, metadata });
   }
-  return names;
+  return packages;
 }
 
 function npmPackageName(packagePath) {
   const marker = "node_modules/";
   const index = packagePath.lastIndexOf(marker);
   return index < 0 ? undefined : packagePath.slice(index + marker.length);
+}
+
+function npmManifestRepositoryUrl(metadata, relative) {
+  const repository = typeof metadata.repository === "string"
+    ? metadata.repository
+    : metadata.repository?.url;
+  if (typeof repository !== "string" || repository.length === 0) {
+    throw new Error(`first-party native manifest ${relative} has no repository URL`);
+  }
+  return repository.replace(/^git\+/, "");
 }
 
 function resolveNpmDependency(packages, fromPath, dependencyName) {
@@ -941,7 +955,7 @@ export function collectNpmComponents(lockfile, policy) {
   return collectNpmContext(lockfile, policy).source.components;
 }
 
-function collectNpmContext(lockfile, policy, options = {}) {
+export function collectNpmContext(lockfile, policy, options = {}) {
   if (!lockfile || typeof lockfile.packages !== "object" || lockfile.packages === null) {
     throw new Error("npm lockfile has no packages object");
   }
@@ -953,13 +967,40 @@ function collectNpmContext(lockfile, policy, options = {}) {
     rootMetadata.version,
     npmPurl(rootMetadata.name, rootMetadata.version),
   );
+  const packages = { ...lockfile.packages };
+  const localByPackagePath = new Map();
+  for (const [name, local] of options.localOptionalPackages ?? []) {
+    const packagePath = `node_modules/${name}`;
+    const locked = packages[packagePath];
+    if (locked === undefined) packages[packagePath] = { optional: true };
+    else if (locked.link === true) throw new Error(`first-party native package ${name} cannot be a lockfile link`);
+    if (typeof packages[packagePath].version !== "string") localByPackagePath.set(packagePath, local);
+  }
+
   const byPackagePath = new Map();
-  for (const [packagePath, metadata] of Object.entries(lockfile.packages)) {
+  for (const [packagePath, metadata] of Object.entries(packages)) {
     const name = npmPackageName(packagePath);
     if (!name || metadata.link === true) continue;
     if (typeof metadata.version !== "string" || typeof metadata.integrity !== "string") {
-      if (metadata.optional === true && options.allowUnresolvedOptionalNames?.has(name)) continue;
-      throw new Error(`npm package ${packagePath} has no exact version`);
+      const local = localByPackagePath.get(packagePath);
+      if (metadata.optional !== true || local === undefined) {
+        throw new Error(`npm package ${packagePath} has no exact version`);
+      }
+      const { relative, metadata: localMetadata } = local;
+      byPackagePath.set(packagePath, makeComponent({
+        ecosystem: "npm",
+        name,
+        version: localMetadata.version,
+        license: localMetadata.license,
+        source: npmManifestRepositoryUrl(localMetadata, relative),
+        purl: npmPurl(name, localMetadata.version),
+        policy,
+        sourceEvidence: {
+          kind: "repository-package-manifest",
+          value: stableJson({ path: relative, manifest: localMetadata }),
+        },
+      }));
+      continue;
     }
     byPackagePath.set(packagePath, makeComponent({
       ecosystem: "npm",
@@ -974,7 +1015,8 @@ function collectNpmContext(lockfile, policy, options = {}) {
   }
 
   const edges = [];
-  for (const [packagePath, metadata] of Object.entries(lockfile.packages)) {
+  for (const [packagePath, lockedMetadata] of Object.entries(packages)) {
+    const metadata = localByPackagePath.get(packagePath)?.metadata ?? lockedMetadata;
     const from = packagePath === "" ? root : byPackagePath.get(packagePath);
     if (!from) continue;
     const dependencyGroups = [
@@ -985,7 +1027,7 @@ function collectNpmContext(lockfile, policy, options = {}) {
     ];
     for (const [kind, dependencies] of dependencyGroups) {
       for (const dependencyName of Object.keys(dependencies)) {
-        const targetPath = resolveNpmDependency(lockfile.packages, packagePath, dependencyName);
+        const targetPath = resolveNpmDependency(packages, packagePath, dependencyName);
         if (!targetPath) {
           const peerOptional = kind === "peer" && metadata.peerDependenciesMeta?.[dependencyName]?.optional === true;
           if (kind === "optional" || peerOptional) continue;
@@ -996,6 +1038,15 @@ function collectNpmContext(lockfile, policy, options = {}) {
           const peerOptional = kind === "peer" && metadata.peerDependenciesMeta?.[dependencyName]?.optional === true;
           if (kind === "optional" || peerOptional) continue;
           throw new Error(`npm dependency ${dependencyName} from ${packagePath || "<root>"} has no inventory metadata`);
+        }
+        const localTarget = localByPackagePath.get(targetPath);
+        if (localTarget !== undefined) {
+          if (kind !== "optional") {
+            throw new Error(`first-party native package ${dependencyName} must remain optional`);
+          }
+          if (dependencies[dependencyName] !== localTarget.metadata.version) {
+            throw new Error(`first-party native package ${dependencyName} version does not match its manifest`);
+          }
         }
         edges.push({ from: from.purl, to: target.purl, kind });
       }
@@ -1669,7 +1720,7 @@ export function generateSourceArtifacts(repoRoot) {
   const npmContext = collectNpmContext(
     readJson(path.join(repoRoot, "flowersec-ts/package-lock.json")),
     policy,
-    { allowUnresolvedOptionalNames: firstPartyNativePackageNames(repoRoot) },
+    { localOptionalPackages: firstPartyNativePackages(repoRoot) },
   );
   const rustDefinitions = [
     ["rust:flowersec-rust", "flowersec-rust/Cargo.toml", "flowersec-rust/Cargo.lock"],
