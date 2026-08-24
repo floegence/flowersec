@@ -458,7 +458,9 @@ public actor ConnectionController {
       } catch is CancellationError {
         return .terminal(.connection(.canceled))
       } catch {
-        return .terminal(.connection(.artifactInvalid))
+        return .terminal(
+          .artifactSource(
+            ArtifactSourceFailure(code: .artifactInvalid, disposition: .terminal)))
       }
       replacementUsed = true
       break

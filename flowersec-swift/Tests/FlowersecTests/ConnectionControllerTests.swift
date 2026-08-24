@@ -569,7 +569,9 @@ final class ConnectionControllerTests: XCTestCase {
     let connectAttempts = await attempts.value
     let retirements = await retired.value
     XCTAssertTrue(failed)
-    XCTAssertEqual(snapshot.failure, .connection(.artifactInvalid))
+    XCTAssertEqual(
+      snapshot.failure,
+      .artifactSource(ArtifactSourceFailure(code: .artifactInvalid, disposition: .terminal)))
     XCTAssertEqual(snapshot.retryDisposition, .terminal)
     XCTAssertEqual(acquisitions, 2)
     XCTAssertEqual(connectAttempts, 1)
