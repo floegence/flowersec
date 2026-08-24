@@ -372,6 +372,11 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 	if client == nil {
 		return errors.New("controller connected without a client session")
 	}
+	// Controller endpoint setup, TLS, admission, and artifact acquisition are
+	// outside the workload boundary used for kernel fault observations.
+	if err := linuxnetlab.ResetFaultObservation(ctx, clientNamespace, serverNamespace); err != nil {
+		return err
+	}
 	if scenarioName == "pin-rotation-refresh-backoff-lease" {
 		times := source.AcquisitionTimes()
 		if len(times) < 3 || times[1].Sub(times[0]) < 200*time.Millisecond {
