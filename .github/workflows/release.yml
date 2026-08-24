@@ -332,12 +332,15 @@ jobs:
           ((${#release_assets[@]} > 0))
           for asset in "${release_assets[@]}"; do
             cosign sign-blob --yes \
+              --new-bundle-format=false \
+              --use-signing-config=false \
               --output-signature "${asset}.sig" \
               --output-certificate "${asset}.pem" \
               "$asset"
           done
           for asset in "${release_assets[@]}"; do
             cosign verify-blob \
+              --new-bundle-format=false \
               --signature "${asset}.sig" \
               --certificate "${asset}.pem" \
               --certificate-identity "$certificate_identity" \
@@ -488,6 +491,7 @@ jobs:
             )
             for identity in "${identities[@]}"; do
               if cosign verify-blob \
+                --new-bundle-format=false \
                 --signature "${asset}.sig" \
                 --certificate "${asset}.pem" \
                 --certificate-identity "$identity" \
