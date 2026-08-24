@@ -1,32 +1,27 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { execFile, spawn } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
+import { execFileBounded, fetchResponseBody, killProcessGroup } from "./release-readback.mjs";
 
-const execFileAsync = promisify(execFile);
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 16 * 1024 * 1024;
-const REQUEST_TIMEOUT_MS = 30_000;
 const COMMAND_TIMEOUT_MS = 30_000;
+const MAX_ATTEMPTS = 12;
 const [packageName, version, sourceSHA] = process.argv.slice(2);
 assert.match(packageName ?? "", /^@floegence\//);
 assert.match(version ?? "", /^\d+\.\d+\.\d+$/);
 assert.match(sourceSHA ?? "", /^[0-9a-f]{40}$/);
 
 let metadata;
-for (let attempt = 1; attempt <= 30; attempt++) {
+for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
   try {
-    metadata = JSON.parse((await execFileAsync("npm", ["view", `${packageName}@${version}`, "--json"], {
-      encoding: "utf8",
-      timeout: COMMAND_TIMEOUT_MS,
-      killSignal: "SIGKILL",
-    })).stdout);
+    metadata = JSON.parse((await execFileBounded("npm", ["view", `${packageName}@${version}`, "--json"], { maxStdoutBytes: 4 * 1024 * 1024 }, COMMAND_TIMEOUT_MS)).stdout);
     if (metadata?.version === version && metadata?.dist?.tarball && metadata?.dist?.integrity) break;
   } catch (error) {
-    if (attempt === 30) throw error;
+    if (attempt === MAX_ATTEMPTS) throw error;
   }
-  if (attempt === 30) throw new Error(`${packageName}@${version} did not become readable`);
+  if (attempt === MAX_ATTEMPTS) throw new Error(`${packageName}@${version} did not become readable`);
   await new Promise((resolve) => setTimeout(resolve, 10_000));
 }
 assert.equal(metadata.name, packageName);
@@ -35,12 +30,10 @@ assert.match(metadata.dist?.tarball ?? "", /^https:\/\//);
 assert.match(metadata.dist?.integrity ?? "", /^sha512-/);
 assertRegistryURL(metadata.dist.tarball, new Set(["registry.npmjs.org"]));
 
-const response = await fetchWithTimeout(metadata.dist.tarball);
+const { response, body } = await fetchResponseBody(metadata.dist.tarball, {}, MAX_ARCHIVE_BYTES);
 assert.equal(response.ok, true);
 assertRegistryURL(response.url, new Set(["registry.npmjs.org"]));
-assertResponseSize(response, MAX_ARCHIVE_BYTES);
-const tarball = new Uint8Array(await response.arrayBuffer());
-assert.ok(tarball.byteLength <= MAX_ARCHIVE_BYTES, "npm archive exceeds the readback limit");
+const tarball = new Uint8Array(body);
 const digest = `sha512-${crypto.createHash("sha512").update(tarball).digest("base64")}`;
 assert.equal(digest, metadata.dist.integrity, `${packageName}@${version} tarball integrity mismatch`);
 const entries = await assertSafeArchive(tarball, "package/");
@@ -71,28 +64,6 @@ if (platform !== null) {
   assert.equal(manifest.main, expectedMain);
   assert.ok(manifest.files?.includes(expectedMain));
   assert.ok(entries.has(`package/${expectedMain}`));
-}
-
-function assertResponseSize(response, maximum) {
-  const value = response.headers.get("content-length");
-  if (value === null) return;
-  const length = Number(value);
-  assert.ok(Number.isSafeInteger(length) && length >= 0 && length <= maximum, "invalid registry archive size");
-}
-
-async function fetchWithTimeout(url, options = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } catch (error) {
-    if (error?.name === "AbortError") {
-      throw new Error(`registry request timed out after ${REQUEST_TIMEOUT_MS}ms: ${url}`, { cause: error });
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 function assertRegistryURL(value, allowedHosts) {
@@ -134,7 +105,9 @@ async function readArchiveEntry(archiveBytes, entry) {
 
 async function runTar(args, archiveBytes, maximumOutputBytes) {
   return await new Promise((resolve, reject) => {
-    const child = spawn("tar", args, { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("tar", args, { stdio: ["pipe", "pipe", "pipe"], detached: true });
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; killProcessGroup(child); }, COMMAND_TIMEOUT_MS);
     const stdout = [];
     const stderr = [];
     let stdoutBytes = 0;
@@ -143,7 +116,13 @@ async function runTar(args, archiveBytes, maximumOutputBytes) {
     const fail = (error) => {
       if (settled) return;
       settled = true;
-      child.kill("SIGKILL");
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(new Error(`tar readback timed out after ${COMMAND_TIMEOUT_MS}ms`));
+        return;
+      }
+      clearTimeout(timer);
+      killProcessGroup(child);
       reject(error);
     };
     child.stdout.on("data", (chunk) => {
@@ -159,6 +138,11 @@ async function runTar(args, archiveBytes, maximumOutputBytes) {
     child.once("close", (code) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(new Error(`tar readback timed out after ${COMMAND_TIMEOUT_MS}ms`));
+        return;
+      }
       if (code === 0) resolve(Buffer.concat(stdout));
       else reject(new Error(`tar readback failed: ${Buffer.concat(stderr).toString("utf8").trim()}`));
     });

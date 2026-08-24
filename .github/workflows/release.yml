@@ -457,7 +457,7 @@ jobs:
       ((needs.prepare.outputs.mode == 'full' && needs.release.result == 'success') ||
       (needs.prepare.outputs.mode == 'npm-only' && needs.release.result == 'skipped'))
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     permissions:
       contents: read
       id-token: write

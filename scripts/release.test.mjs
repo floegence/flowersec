@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { fetchResponseBody } from "./release-readback.mjs";
 
 const sourceRoot = path.resolve(import.meta.dirname, "..");
 const releaseMutationConcurrency = 4;
@@ -209,7 +211,7 @@ test("crates registry readback sends a compliant User-Agent for metadata and dow
     /const requestHeaders = Object\.freeze\(\{\s*"User-Agent": `flowersec-release-readback\/\$\{version\} \(https:\/\/github\.com\/floegence\/flowersec\)`,\s*\}\);/,
   );
   assert.equal(
-    [...readback.matchAll(/fetchWithTimeout\([^;]+, \{ headers: requestHeaders \}\)/g)].length,
+    [...readback.matchAll(/fetchResponseBody\([^;]+, \{ headers: requestHeaders \}/g)].length,
     2,
     "metadata and crate download requests must both send the reviewed User-Agent",
   );
@@ -226,6 +228,8 @@ test("registry package readback avoids dynamic regex and network-derived archive
     assert.match(readback, /"-xOzf", "-"/, `${filename} must read only exact archive entries from standard input`);
     assert.match(readback, /assertSafeArchive/, `${filename} must reject unsafe paths, links, and duplicates`);
     assert.match(readback, /assertRegistryURL/, `${filename} must bind downloads to the reviewed registry hosts`);
+    assert.match(readback, /tar readback timed out after/, `${filename} must classify tar timeouts`);
+    assert.match(readback, /detached: true/, `${filename} must isolate tar process groups`);
   }
 });
 
@@ -235,7 +239,7 @@ test("Rust registry publication waits for exact consumer resolution at each depe
   assert.match(consumer, /cargo.*add/);
   assert.match(consumer, /@=\$\{version\}/);
   assert.match(consumer, /cargo.*check/);
-  assert.match(consumer, /for \(let attempt = 1; attempt <= 30; attempt\+\+\)/);
+  assert.match(consumer, /const MAX_ATTEMPTS = 12/);
   const nativeConsumer = workflow.indexOf("verify-crates-release-consumer.mjs flowersec-native-transport");
   const sdkPublish = workflow.indexOf("name: Publish Flowersec Rust SDK");
   const sdkConsumer = workflow.indexOf("verify-crates-release-consumer.mjs flowersec ");
@@ -269,6 +273,24 @@ test("GHCR manifest readback retries, classifies timeout, and checks both tags",
   assert.notEqual(childExit.result.status, 0);
   assert.match(childExit.result.stderr, /inspect exit 124:/);
   assert.doesNotMatch(childExit.result.stderr, /inspect timed out/);
+});
+
+test("registry readback bounds chunked bodies and metadata deadlines", async (t) => {
+  let mode = "stall";
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/octet-stream" });
+    if (mode === "stall") {
+      response.write("partial");
+      return;
+    }
+    response.end("0123456789abcdef");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.address().port}`;
+  await assert.rejects(fetchResponseBody(url, {}, 64, 50), /timed out after 50ms/);
+  mode = "oversize";
+  await assert.rejects(fetchResponseBody(url, {}, 8, 500), /exceeds 8-byte limit/);
 });
 
 test("documentation distinguishes injector, real weaknet, required performance, and optional WebTransport", () => {
@@ -1081,7 +1103,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/rust-release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
-    const marker = "  publish:\n    runs-on: ubuntu-latest\n    timeout-minutes: 60\n    permissions:\n      contents: read\n      id-token: write\n    steps:\n";
+    const marker = "  publish:\n    runs-on: ubuntu-latest\n    timeout-minutes: 120\n    permissions:\n      contents: read\n      id-token: write\n    steps:\n";
     assert.ok(workflow.includes(marker));
     fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}      - name: Unreviewed cargo publication\n        run: cargo publish\n\n`));
     const result = runReleasePolicy(root);
