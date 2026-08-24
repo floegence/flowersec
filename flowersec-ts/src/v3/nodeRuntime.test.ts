@@ -27,6 +27,7 @@ const wsModule = require("ws") as { WebSocketServer: new (...args: unknown[]) =>
 let directory = "";
 let rootCertificate: Buffer;
 let leafCertificate: Buffer;
+let ipLeafCertificate: Buffer;
 let leafKey: Buffer;
 let purposeLeafCertificate: Buffer;
 let expiredLeafCertificate: Buffer;
@@ -53,6 +54,7 @@ describe("transport v3 Node TLS verifier and WebSocket production path", () => {
     generateCertificates(directory);
     rootCertificate = readFileSync(join(directory, "root.pem"));
     leafCertificate = readFileSync(join(directory, "leaf.pem"));
+    ipLeafCertificate = readFileSync(join(directory, "leaf-ip.pem"));
     leafKey = readFileSync(join(directory, "leaf.key"));
     purposeLeafCertificate = readFileSync(join(directory, "leaf-purpose.pem"));
     expiredLeafCertificate = readFileSync(join(directory, "leaf-expired.pem"));
@@ -109,6 +111,22 @@ describe("transport v3 Node TLS verifier and WebSocket production path", () => {
         detail: "ca_untrusted",
         cause: expect.objectContaining({ code: "ERR_TLS_CERT_ALTNAME_INVALID" }),
       });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("accepts a CA-trusted certificate with the exact IP SAN", async () => {
+    const server = createTLSServer({ cert: ipLeafCertificate, key: leafKey });
+    const port = await listen(server);
+    try {
+      const socket = await connectNodeTLSSocketV3(
+        websocketCandidateForHost(port, "127.0.0.1", { mode: "ca" }),
+        nowSeconds(),
+        { roots: rootCertificate, timeoutMilliseconds: 2_000 },
+      );
+      expect(socket.authorized).toBe(true);
+      socket.destroy();
     } finally {
       await closeServer(server);
     }
@@ -406,6 +424,13 @@ function generateCertificates(target: string): void {
     "extendedKeyUsage=clientAuth",
     "",
   ].join("\n"));
+  writeFileSync(join(target, "leaf-ip.ext"), [
+    "subjectAltName=IP:127.0.0.1",
+    "basicConstraints=critical,CA:FALSE",
+    "keyUsage=critical,digitalSignature",
+    "extendedKeyUsage=serverAuth",
+    "",
+  ].join("\n"));
   runOpenSSL([
     "x509", "-req", "-in", join(target, "leaf.csr"), "-CA", join(target, "root.pem"),
     "-CAkey", join(target, "root.key"), "-CAcreateserial", "-days", "2", "-sha256",
@@ -415,6 +440,11 @@ function generateCertificates(target: string): void {
     "x509", "-req", "-in", join(target, "leaf.csr"), "-CA", join(target, "root.pem"),
     "-CAkey", join(target, "root.key"), "-CAcreateserial", "-days", "2", "-sha256",
     "-extfile", join(target, "leaf-purpose.ext"), "-out", join(target, "leaf-purpose.pem"),
+  ]);
+  runOpenSSL([
+    "x509", "-req", "-in", join(target, "leaf.csr"), "-CA", join(target, "root.pem"),
+    "-CAkey", join(target, "root.key"), "-CAcreateserial", "-days", "2", "-sha256",
+    "-extfile", join(target, "leaf-ip.ext"), "-out", join(target, "leaf-ip.pem"),
   ]);
   writeFileSync(join(target, "index.txt"), "");
   writeFileSync(join(target, "serial"), "1000\n");
