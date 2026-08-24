@@ -7,6 +7,11 @@ on:
         description: "Rust crate version to publish"
         required: true
         type: string
+      release_lock_held:
+        description: "Caller already holds the coordinated release lock"
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       version:
@@ -21,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: flowersec-release
+  group: ${{ inputs.release_lock_held && format('flowersec-release-child-{0}', github.run_id) || 'flowersec-release' }}
   cancel-in-progress: false
 
 jobs:

@@ -233,8 +233,9 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
     this.#closeOperation = closeOperation;
     const active = this.#session;
     this.#session = undefined;
+    this.#failure = undefined;
     this.#disposition = undefined;
-    this.#lifetime.abort(new ConnectionControllerV3Error("closed", this.#failure));
+    this.#lifetime.abort(new ConnectionControllerV3Error("closed"));
     this.#transition("closed");
     void Promise.allSettled([
       this.#scheduler ?? Promise.resolve(),

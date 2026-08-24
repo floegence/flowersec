@@ -279,11 +279,19 @@ require_exact_value(release_workflow["concurrency"], {
   "cancel-in-progress" => false,
 }, "unified release concurrency")
 require_exact_value(rust_workflow[true], {
-  "workflow_call" => { "inputs" => { "version" => {
-    "description" => "Rust crate version to publish",
-    "required" => true,
-    "type" => "string",
-  } } },
+  "workflow_call" => { "inputs" => {
+    "version" => {
+      "description" => "Rust crate version to publish",
+      "required" => true,
+      "type" => "string",
+    },
+    "release_lock_held" => {
+      "description" => "Caller already holds the coordinated release lock",
+      "required" => false,
+      "default" => false,
+      "type" => "boolean",
+    },
+  } },
   "workflow_dispatch" => { "inputs" => { "version" => {
     "description" => "Rust crate version to recover",
     "required" => true,
@@ -292,7 +300,7 @@ require_exact_value(rust_workflow[true], {
 }, "Rust recovery triggers")
 require_exact_value(rust_workflow["permissions"], { "contents" => "read" }, "Rust recovery permissions")
 require_exact_value(rust_workflow["concurrency"], {
-  "group" => "flowersec-release",
+  "group" => "${{ inputs.release_lock_held && format('flowersec-release-child-{0}', github.run_id) || 'flowersec-release' }}",
   "cancel-in-progress" => false,
 }, "Rust recovery concurrency")
 
@@ -409,7 +417,10 @@ require_exact_value(rust_reuse_job["permissions"], {
   "contents" => "read",
   "id-token" => "write",
 }, "the rust-publish job permissions")
-require_exact_value(rust_reuse_job["with"], { "version" => "${{ needs.prepare.outputs.version }}" }, "the rust-publish job inputs")
+require_exact_value(rust_reuse_job["with"], {
+  "version" => "${{ needs.prepare.outputs.version }}",
+  "release_lock_held" => true,
+}, "the rust-publish job inputs")
 require_exact_value(release_job["needs"], ["prepare", "rust-publish", "native-prebuilt"], "the release job dependency")
 require_exact_value(release_job["permissions"], {
   "contents" => "write",

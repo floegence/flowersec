@@ -1,7 +1,6 @@
 //! Long-lived Flowersec v3 connection ownership and policy refresh.
 
 use std::{
-    any::Any,
     collections::HashSet,
     fmt,
     future::Future,
@@ -11,7 +10,6 @@ use std::{
         Arc, Mutex, MutexGuard,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    task::Poll,
     time::{Duration, SystemTime},
 };
 
@@ -39,17 +37,6 @@ const MAX_RETRY_AFTER_UNIX_MILLISECONDS: u128 = 253_402_300_799_999;
 type ConnectFuture =
     Pin<Box<dyn Future<Output = Result<Arc<dyn Session>, ConnectError>> + Send + 'static>>;
 type ClockSleep = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
-type SourceAcquisitionFuture<'source> = Pin<
-    Box<
-        dyn Future<
-                Output = Result<
-                    Result<ArtifactLeaseV3, ArtifactSourceError>,
-                    Box<dyn Any + Send + 'static>,
-                >,
-            > + Send
-            + 'source,
-    >,
->;
 type ConnectOneShot = Arc<
     dyn Fn(ArtifactLeaseV3, ConnectorOptions, CancellationToken) -> ConnectFuture
         + Send
@@ -261,9 +248,9 @@ struct ControllerInner {
     scheduler_join_complete: AtomicBool,
     scheduler_join_complete_changed: Notify,
     state: Mutex<ControllerState>,
-    // Admission, source invocation, and close publication share one short
-    // synchronous critical section. This closes the gap between Connecting
-    // and the first source poll without holding a lock across awaits.
+    // Admission, source-future construction, and close publication share one
+    // short synchronous critical section. Third-party futures are polled only
+    // after this gate is released.
     acquisition_gate: Mutex<()>,
     #[cfg(test)]
     before_acquire_admission: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
@@ -423,9 +410,18 @@ impl ConnectionController {
             self.inner.start_close_workflow();
         }
         let task = lock(&self.task).take();
+        let reentrant_scheduler_close = task
+            .as_ref()
+            .is_some_and(|task| tokio::task::try_id().is_some_and(|current| current == task.id()));
         self.inner.start_scheduler_join_workflow(task);
         self.inner.wait_close_completion().await;
-        self.inner.wait_scheduler_join_completion().await;
+        // A source future is polled by the scheduler. If it closes its own
+        // controller, waiting for that scheduler here would wait on the
+        // current task. The join workflow still publishes the full barrier as
+        // soon as this reentrant call returns and lets the scheduler exit.
+        if !reentrant_scheduler_close {
+            self.inner.wait_scheduler_join_completion().await;
+        }
     }
 }
 
@@ -537,6 +533,7 @@ impl ControllerInner {
                 state.status.state = ConnectionState::Closed;
                 state.status.next_retry_at = None;
                 state.status.retry_not_before = None;
+                state.status.last_failure = None;
                 state.status.revision = state.status.revision.saturating_add(1);
             }
             (state.current.take(), changed)
@@ -956,12 +953,6 @@ async fn run_controller(inner: Arc<ControllerInner>) {
     }
 }
 
-enum AcquisitionPoll {
-    Stopped,
-    ConstructorPanic,
-    Result(Result<Result<ArtifactLeaseV3, ArtifactSourceError>, Box<dyn Any + Send + 'static>>),
-}
-
 async fn acquire_lease(
     inner: &ControllerInner,
     attempt: u64,
@@ -969,42 +960,30 @@ async fn acquire_lease(
     // ArtifactSource is a public async boundary. Isolate both panics while
     // creating its future and panics while polling it so a source contract
     // violation cannot terminate the controller scheduler.
-    let mut started = false;
-    let mut acquisition: Option<SourceAcquisitionFuture<'_>> = None;
-    let acquisition = futures_util::future::poll_fn(|context| {
-        if let Some(future) = acquisition.as_mut() {
-            return future.as_mut().poll(context).map(AcquisitionPoll::Result);
-        }
-        if !started {
-            started = true;
-            #[cfg(test)]
-            inner.run_before_acquire_admission();
-        }
+    #[cfg(test)]
+    inner.run_before_acquire_admission();
+    let future = {
         let _admission = lock(&inner.acquisition_gate);
         if inner.cancellation.is_cancelled() || !inner.set_connecting(attempt) {
-            return Poll::Ready(AcquisitionPoll::Stopped);
+            return Ok(None);
         }
-        let future = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             inner.source.acquire(inner.cancellation.child_token())
         })) {
             Ok(future) => future,
-            Err(_) => return Poll::Ready(AcquisitionPoll::ConstructorPanic),
-        };
-        acquisition = Some(Box::pin(
-            std::panic::AssertUnwindSafe(future).catch_unwind(),
-        ));
-        acquisition
-            .as_mut()
-            .expect("source future initialized")
-            .as_mut()
-            .poll(context)
-            .map(AcquisitionPoll::Result)
-    });
+            Err(_) => {
+                return Err(ConnectionFailure::ArtifactSource(
+                    ArtifactSourceError::invalid(),
+                ));
+            }
+        }
+    };
+    let acquisition = std::panic::AssertUnwindSafe(future).catch_unwind();
     tokio::pin!(acquisition);
     let result = tokio::select! {
         biased;
         _ = inner.cancellation.cancelled() => {
-            if let AcquisitionPoll::Result(Ok(Ok(lease))) = acquisition.await
+            if let Ok(Ok(lease)) = acquisition.await
                 && let Ok(claimed) = lease.claim()
             {
                 // Cancellation won before delivery, so the source-side
@@ -1016,21 +995,8 @@ async fn acquire_lease(
         },
         result = &mut acquisition => result,
     };
-    let result = match result {
-        AcquisitionPoll::Stopped => return Ok(None),
-        AcquisitionPoll::ConstructorPanic => {
-            return Err(connect_failure(
-                ConnectErrorCode::ArtifactInvalid,
-                RetryDisposition::Terminal,
-            ));
-        }
-        AcquisitionPoll::Result(result) => result.map_err(|_| {
-            connect_failure(
-                ConnectErrorCode::ArtifactInvalid,
-                RetryDisposition::Terminal,
-            )
-        })?,
-    };
+    let result =
+        result.map_err(|_| ConnectionFailure::ArtifactSource(ArtifactSourceError::invalid()))?;
     let lease = result.map_err(|error| match error.disposition() {
         RetryDisposition::RetryAfter(deadline) if !valid_retry_after(deadline) => {
             ConnectionFailure::ArtifactSource(ArtifactSourceError::invalid())
@@ -2095,12 +2061,12 @@ mod tests {
         let status = wait_for_state(&controller, ConnectionState::Failed).await;
         assert_eq!(
             status.last_failure,
-            Some(connect_failure(
-                ConnectErrorCode::ArtifactInvalid,
-                RetryDisposition::Terminal,
+            Some(ConnectionFailure::ArtifactSource(
+                ArtifactSourceError::invalid()
             ))
         );
         controller.close().await;
+        assert_eq!(controller.snapshot().failure, None);
     }
 
     #[tokio::test]
@@ -2114,12 +2080,37 @@ mod tests {
         let status = wait_for_state(&controller, ConnectionState::Failed).await;
         assert_eq!(
             status.last_failure,
-            Some(connect_failure(
-                ConnectErrorCode::ArtifactInvalid,
-                RetryDisposition::Terminal,
+            Some(ConnectionFailure::ArtifactSource(
+                ArtifactSourceError::invalid()
             ))
         );
         controller.close().await;
+        assert_eq!(controller.snapshot().failure, None);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn source_first_poll_can_close_controller_without_locking_the_acquisition_gate() {
+        let source = Arc::new(ReentrantCloseSource {
+            controller: Mutex::new(None),
+            close_returned: AtomicBool::new(false),
+        });
+        let controller = Arc::new(ConnectionController::new_with_connector(
+            source.clone(),
+            test_options(None),
+            scripted_connector(std::iter::empty::<ConnectorStep>()),
+        ));
+        *lock(&source.controller) = Some(Arc::downgrade(&controller));
+
+        controller.start();
+        tokio::time::timeout(Duration::from_millis(500), async {
+            while !source.close_returned.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("source reentrant close did not return");
+        assert_eq!(controller.snapshot().state, ConnectionState::Closed);
+        assert_eq!(controller.snapshot().failure, None);
     }
 
     #[tokio::test]
@@ -2845,6 +2836,12 @@ mod tests {
     #[derive(Debug)]
     struct ConstructorPanicSource;
 
+    #[derive(Debug)]
+    struct ReentrantCloseSource {
+        controller: Mutex<Option<std::sync::Weak<ConnectionController>>>,
+        close_returned: AtomicBool,
+    }
+
     #[async_trait]
     impl ArtifactSource for PanicSource {
         async fn acquire(
@@ -2867,6 +2864,22 @@ mod tests {
             Self: 'future,
         {
             panic!("source future construction violation");
+        }
+    }
+
+    #[async_trait]
+    impl ArtifactSource for ReentrantCloseSource {
+        async fn acquire(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<ArtifactLeaseV3, ArtifactSourceError> {
+            let controller = lock(&self.controller)
+                .as_ref()
+                .and_then(std::sync::Weak::upgrade)
+                .expect("controller installed");
+            controller.close().await;
+            self.close_returned.store(true, Ordering::Release);
+            Err(ArtifactSourceError::terminal())
         }
     }
 

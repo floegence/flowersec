@@ -141,6 +141,7 @@ jobs:
     uses: ./.github/workflows/rust-release.yml
     with:
       version: ${{ needs.prepare.outputs.version }}
+      release_lock_held: true
 
   native-prebuilt:
     needs: prepare

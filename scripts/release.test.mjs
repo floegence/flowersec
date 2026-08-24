@@ -301,8 +301,10 @@ if [[ "$FAKE_DOCKER_MODE" == timeout ]]; then exit "$FAKE_TIMEOUT_EXIT"; fi
 set -euo pipefail
 case "$FAKE_DOCKER_MODE" in
   existing) printf 'Digest: sha256:%064d\n' 0 ;;
+  invalid-digest) printf 'Digest: sha256:invalid\n' ;;
   missing) printf 'manifest unknown\n' >&2; exit 1 ;;
-  *) printf 'registry unavailable\n' >&2; exit 70 ;;
+  failure) printf 'registry unavailable\n' >&2; exit 70 ;;
+  *) printf 'unexpected fake docker mode\n' >&2; exit 71 ;;
 esac
 `);
   const outputFile = path.join(root, "github-output");
@@ -433,6 +435,133 @@ if [[ "$1" == rev-parse ]]; then printf '%s\n' "$FAKE_RELEASE_SHA"; fi
     cwd: root,
     encoding: "utf8",
     env: isolatedEnvironment({
+      FAKE_RELEASE_SHA: "88d8064370733ca512b7994479d52fae33d91665",
+      GITHUB_REPOSITORY: "floegence/flowersec",
+      GITHUB_SHA: "a4a96fac92e63d21d2086902f7c4ae62dcfa6be1",
+      PATH: `${fakeBin}:${process.env.PATH}`,
+      RELEASE_VERSION: "3.0.1",
+    }),
+  });
+}
+
+function runNpmRecoveryValidationHarness(t, mode) {
+  const run = extractWorkflowStepRun(
+    path.join(sourceRoot, ".github/workflows/release.yml"),
+    "npm-recovery",
+    "Publish or recover npm registry packages from immutable release assets",
+  );
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `flowersec-npm-recovery-${mode}-`));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const fakeBin = path.join(root, "bin");
+  fs.mkdirSync(fakeBin);
+  writeExecutable(path.join(fakeBin, "git"), `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == rev-parse ]]; then printf '%s\n' "$FAKE_RELEASE_SHA"; fi
+`);
+  writeExecutable(path.join(fakeBin, "timeout"), `#!/usr/bin/env bash
+set -euo pipefail
+while [[ "$1" == --* ]]; do shift; done
+shift
+"$@"
+`);
+  writeExecutable(path.join(fakeBin, "gh"), `#!/usr/bin/env bash
+set -euo pipefail
+destination=""
+while (( $# > 0 )); do
+  if [[ "$1" == --dir ]]; then destination="$2"; shift 2; else shift; fi
+done
+test -n "$destination"
+archives=(
+  "floegence-flowersec-node-native-darwin-arm64-\${RELEASE_VERSION}.tgz"
+  "floegence-flowersec-node-native-darwin-x64-\${RELEASE_VERSION}.tgz"
+  "floegence-flowersec-node-native-linux-arm64-gnu-\${RELEASE_VERSION}.tgz"
+  "floegence-flowersec-node-native-linux-x64-gnu-\${RELEASE_VERSION}.tgz"
+  "floegence-flowersec-node-native-\${RELEASE_VERSION}.tgz"
+  "floegence-flowersec-core-\${RELEASE_VERSION}.tgz"
+)
+: > "$destination/checksums.txt"
+touch "$destination/checksums.txt.sig" "$destination/checksums.txt.pem"
+for archive in "\${archives[@]}"; do
+  printf archive > "$destination/$archive"
+  touch "$destination/$archive.sig" "$destination/$archive.pem"
+  printf '%064d  %s\n' 0 "$archive" >> "$destination/checksums.txt"
+done
+if [[ "$FAKE_RECOVERY_MODE" == asset-closure ]]; then
+  rm "$destination/\${archives[0]}.pem"
+fi
+`);
+  writeExecutable(path.join(fakeBin, "cosign"), `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$FAKE_RECOVERY_MODE" == signature ]]; then
+  printf 'injected signature mismatch\n' >&2
+  exit 1
+fi
+`);
+  writeExecutable(path.join(fakeBin, "sha256sum"), `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$FAKE_RECOVERY_MODE" == checksum ]]; then
+  printf 'injected checksum mismatch\n' >&2
+  exit 1
+fi
+`);
+  writeExecutable(path.join(fakeBin, "find"), `#!/usr/bin/env bash
+set -euo pipefail
+for file in "$1"/*; do basename "$file"; done
+`);
+  writeExecutable(path.join(fakeBin, "jq"), `#!/usr/bin/env bash
+set -euo pipefail
+query=""
+for value in "$@"; do
+  if [[ "$value" == *'.name == $package'* || "$value" == *'.os == [$os]'* ]]; then query="$value"; fi
+done
+if [[ "$FAKE_RECOVERY_MODE" == source-manifest && "$query" == *'.name == $package'* ]]; then
+  printf 'injected source manifest mismatch\n' >&2
+  exit 1
+fi
+if [[ "$FAKE_RECOVERY_MODE" == platform-manifest && "$query" == *'.os == [$os]'* ]]; then
+  printf 'injected platform manifest mismatch\n' >&2
+  exit 1
+fi
+`);
+  writeExecutable(path.join(fakeBin, "tar"), `#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+  -xOf) printf '{}\n' ;;
+  -tzf)
+    archive="$(basename "$2")"
+    printf 'package/package.json\n'
+    case "$archive" in
+      *node-native-darwin-arm64*) member='package/flowersec-node-native.darwin-arm64.node' ;;
+      *node-native-darwin-x64*) member='package/flowersec-node-native.darwin-x64.node' ;;
+      *node-native-linux-arm64-gnu*) member='package/flowersec-node-native.linux-arm64-gnu.node' ;;
+      *node-native-linux-x64-gnu*) member='package/flowersec-node-native.linux-x64-gnu.node' ;;
+      *flowersec-core*)
+        if [[ "$FAKE_RECOVERY_MODE" != archive-member ]]; then
+          printf 'package/dist/node/index.js\npackage/dist/browser/index.js\n'
+        fi
+        exit 0
+        ;;
+      *) exit 0 ;;
+    esac
+    printf '%s\n' "$member"
+    ;;
+  *) exit 2 ;;
+esac
+`);
+  fs.mkdirSync(path.join(root, "scripts"));
+  writeExecutable(path.join(root, "scripts/verify-release-tags.sh"), "#!/usr/bin/env bash\nexit 0\n");
+  const bash3Mapfile = `mapfile() {
+  local target
+  if [[ "$1" == -t ]]; then target="$2"; else target="$1"; fi
+  eval "$target=()"
+  while IFS= read -r line; do eval "$target+=(\\"\\$line\\")"; done
+}
+`;
+  return spawnSync("bash", ["-c", `${bash3Mapfile}\n${run}`], {
+    cwd: root,
+    encoding: "utf8",
+    env: isolatedEnvironment({
+      FAKE_RECOVERY_MODE: mode,
       FAKE_RELEASE_SHA: "88d8064370733ca512b7994479d52fae33d91665",
       GITHUB_REPOSITORY: "floegence/flowersec",
       GITHUB_SHA: "a4a96fac92e63d21d2086902f7c4ae62dcfa6be1",
@@ -1121,6 +1250,32 @@ test("GHCR version-state inspection distinguishes existing, missing, and timed-o
   const recoveryMissing = runGhcrVersionStateHarness(t, { docker: "missing", githubReleaseExists: true });
   assert.equal(recoveryMissing.result.status, 0, recoveryMissing.result.stderr);
   assert.equal(recoveryMissing.output, "exists=false\ndigest=\n");
+
+  const invalidDigest = runGhcrVersionStateHarness(t, { docker: "invalid-digest", githubReleaseExists: true });
+  assert.notEqual(invalidDigest.result.status, 0);
+  assert.match(invalidDigest.result.stderr, /no valid manifest digest/);
+  assert.equal(invalidDigest.output, "");
+
+  const registryFailure = runGhcrVersionStateHarness(t, { docker: "failure", githubReleaseExists: true });
+  assert.equal(registryFailure.result.status, 70);
+  assert.match(registryFailure.result.stderr, /registry unavailable/);
+  assert.match(registryFailure.result.stderr, /inspection failed with exit 70/);
+  assert.equal(registryFailure.output, "");
+});
+
+test("npm recovery fails closed for downloaded asset and package validation errors", (t) => {
+  for (const [mode, evidence] of [
+    ["asset-closure", ""],
+    ["signature", "release asset signature does not match"],
+    ["checksum", "injected checksum mismatch"],
+    ["source-manifest", "injected source manifest mismatch"],
+    ["platform-manifest", "injected platform manifest mismatch"],
+    ["archive-member", ""],
+  ]) {
+    const result = runNpmRecoveryValidationHarness(t, mode);
+    assert.notEqual(result.status, 0, `${mode} was accepted`);
+    if (evidence !== "") assert.match(result.stderr, new RegExp(evidence));
+  }
 });
 
 test("GHCR release is serialized and builds an unsigned digest before tag mutation", () => {
@@ -1134,6 +1289,10 @@ test("GHCR release is serialized and builds an unsigned digest before tag mutati
   assert.equal(parsed.status, 0, parsed.stderr);
   const workflow = JSON.parse(parsed.stdout);
   assert.deepEqual(workflow.concurrency, { group: "flowersec-release", "cancel-in-progress": false });
+  assert.deepEqual(workflow.jobs["rust-publish"].with, {
+    version: "${{ needs.prepare.outputs.version }}",
+    release_lock_held: true,
+  });
   const steps = workflow.jobs.release.steps;
   const build = steps.find((step) => step.name === "Build and push runtime image by digest");
   assert.equal(build.if, "steps.runtime-state.outputs.exists == 'false'");
@@ -2300,7 +2459,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     ["CARGO_REGISTRY_TOKEN: ${{ steps.native-auth.outputs.token }}", "CARGO_REGISTRY_TOKEN: attacker-token"],
     ["timeout --kill-after=5s 600s cargo publish --no-verify", "timeout --kill-after=5s 600s cargo publish --allow-dirty"],
     ["uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18", "uses: example/auth-action@v1"],
-    ["group: flowersec-release", "group: flowersec-rust-release"],
+    ["group: ${{ inputs.release_lock_held && format('flowersec-release-child-{0}', github.run_id) || 'flowersec-release' }}", "group: flowersec-rust-release"],
   ]) {
     schedulePolicyTest(`Rust publication rejects changed contract ${mutation[0]}`, () => {
       const root = createReleasePolicyFixture(t);

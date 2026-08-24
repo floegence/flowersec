@@ -541,7 +541,8 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertTrue(failed)
     XCTAssertEqual(
       snapshot.failure,
-      .artifactSource(ArtifactSourceFailure(disposition: .terminal)))
+      .artifactSource(
+        ArtifactSourceFailure(code: .artifactInvalid, disposition: .terminal)))
     XCTAssertEqual(snapshot.retryDisposition, .terminal)
     XCTAssertEqual(acquisitions, 2)
     XCTAssertEqual(retirements, 1)
@@ -1244,7 +1245,8 @@ final class ConnectionControllerTests: XCTestCase {
     let acquisitions = await source.acquisitions
     XCTAssertEqual(
       snapshot.failure,
-      .artifactSource(ArtifactSourceFailure(disposition: .terminal)),
+      .artifactSource(
+        ArtifactSourceFailure(code: .artifactInvalid, disposition: .terminal)),
       id)
     XCTAssertEqual(snapshot.retryDisposition, .terminal, id)
     XCTAssertEqual(snapshot.attempt, (expected["attempt"] as? NSNumber)?.uint64Value, id)
@@ -1255,7 +1257,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(expected["connect_attempts"] as? Int, 0, id)
     XCTAssertEqual(expected["transports_created"] as? Int, 0, id)
     XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
-    assertControllerFailurePhaseV3(snapshot.failure, expected: expected, id: id)
+    assertControllerSnapshotV3(snapshot, expected: expected, id: id)
     await controller.close()
   }
 
@@ -1274,7 +1276,8 @@ final class ConnectionControllerTests: XCTestCase {
       XCTAssertTrue(failed, "deadline \(deadline) did not fail")
       XCTAssertEqual(
         snapshot.failure,
-        .artifactSource(ArtifactSourceFailure(disposition: .terminal)))
+        .artifactSource(
+          ArtifactSourceFailure(code: .artifactInvalid, disposition: .terminal)))
       XCTAssertEqual(snapshot.retryDisposition, .terminal)
       XCTAssertEqual(acquisitions, 1)
       await controller.close()
@@ -1575,6 +1578,11 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(staleFailure.code.rawValue, expected["peer_public_error"] as? String)
     XCTAssertEqual(staleSnapshot.retryDisposition, RetryDispositionV3.terminal)
     XCTAssertEqual(expected["disposition"] as? String, "terminal")
+    assertControllerSnapshotV3(refreshSnapshot, expected: expected, id: "browser refresh")
+    var peerExpected = expected
+    peerExpected["final_state"] = expected["peer_final_state"]
+    peerExpected["public_error"] = expected["peer_public_error"]
+    assertControllerSnapshotV3(staleSnapshot, expected: peerExpected, id: "browser stale")
     await refreshController.close()
     await staleController.close()
   }
@@ -1687,6 +1695,26 @@ final class ConnectionControllerTests: XCTestCase {
     await closing.value
     let snapshot = await controller.snapshot()
     XCTAssertEqual(snapshot.state, .closed)
+  }
+
+  func testUnknownSourceErrorProjectsToArtifactInvalidArtifactPhase() async throws {
+    let source = BlockingErrorArtifactSourceV3()
+    await source.release()
+    let controller = try ConnectionController(
+      source: source,
+      connectOneShot: { _, _ in throw ConnectError.connectionFailed }
+    )
+
+    await controller.start()
+    let failed = await waitForState(.failed, controller: controller)
+    XCTAssertTrue(failed)
+    let snapshot = await controller.snapshot()
+    XCTAssertEqual(
+      snapshot.failure,
+      .artifactSource(
+        ArtifactSourceFailure(code: .artifactInvalid, disposition: .terminal)))
+    XCTAssertEqual(snapshot.retryDisposition, .terminal)
+    await controller.close()
   }
 
   private func runRetryAfterVectorV3(_ id: String) async throws {
@@ -2460,26 +2488,49 @@ private func controllerExpectedV3(_ id: String) throws -> [String: Any] {
   return try XCTUnwrap(scenario["expected"] as? [String: Any])
 }
 
-private func assertControllerFailurePhaseV3(
-  _ failure: ConnectionAttemptFailure?, expected: [String: Any], id: String
+private func assertControllerSnapshotV3(
+  _ snapshot: ConnectionSnapshot, expected: [String: Any], id: String
 ) {
-  let actual: String?
-  switch failure {
-  case .artifactSource: actual = "artifact"
-  case .connection: actual = "connect"
-  case .session: actual = "session"
-  case nil: actual = nil
+  let actualCode: String?
+  let actualPhase: String?
+  switch snapshot.failure {
+  case .artifactSource(let failure):
+    actualCode = failure.code.rawValue
+    actualPhase = "artifact"
+  case .connection(let error):
+    actualCode = error.code.rawValue
+    actualPhase = "connect"
+  case .session:
+    actualCode = ConnectErrorCode.connectionFailed.rawValue
+    actualPhase = "session"
+  case nil:
+    actualCode = nil
+    actualPhase = nil
+  }
+  let actualDisposition: String?
+  switch snapshot.retryDisposition {
+  case .terminal: actualDisposition = "terminal"
+  case .retryable: actualDisposition = "retryable"
+  case .retryAfter: actualDisposition = "retry_after"
+  case nil: actualDisposition = nil
   }
   let expectedPhase = expected["failure_phase"] is NSNull
     ? nil : expected["failure_phase"] as? String
-  XCTAssertEqual(actual, expectedPhase, "\(id) failure phase")
+  let expectedCode = expected["public_error"] is NSNull
+    ? nil : expected["public_error"] as? String
+  let expectedDisposition = expected["disposition"] is NSNull
+    ? nil : expected["disposition"] as? String
+  XCTAssertEqual(snapshot.state.rawValue, expected["final_state"] as? String, "\(id) state")
+  XCTAssertEqual(actualCode, expectedCode, "\(id) public error")
+  XCTAssertEqual(actualPhase, expectedPhase, "\(id) failure phase")
+  XCTAssertEqual(actualDisposition, expectedDisposition, "\(id) disposition")
 }
 
 private func assertControllerFailurePhaseV3(
   _ controller: ConnectionController, expected: [String: Any], id: String
 ) async {
   let snapshot = await controller.snapshot()
-  assertControllerFailurePhaseV3(snapshot.failure, expected: expected, id: id)
+  assertControllerSnapshotV3(snapshot, expected: expected, id: id)
 }
 
 private func controllerInputV3(_ id: String) throws -> [String: Any] {

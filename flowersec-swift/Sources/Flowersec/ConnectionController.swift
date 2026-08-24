@@ -7,9 +7,18 @@ public protocol ArtifactSource: Sendable {
 }
 
 public struct ArtifactSourceFailure: Error, Equatable, Sendable {
+  public let code: ConnectErrorCode
   public let disposition: RetryDispositionV3
 
-  public init(disposition: RetryDispositionV3) { self.disposition = disposition }
+  public init(disposition: RetryDispositionV3) {
+    self.code = .connectionFailed
+    self.disposition = disposition
+  }
+
+  init(code: ConnectErrorCode, disposition: RetryDispositionV3) {
+    self.code = code
+    self.disposition = disposition
+  }
 }
 
 public enum ConnectionState: String, Equatable, Sendable {
@@ -329,7 +338,9 @@ public actor ConnectionController {
       } catch is CancellationError {
         return .failed(.connection(.canceled), nil, nil, nil)
       } catch {
-        return .failed(.connection(.artifactInvalid), nil, .terminal, nil)
+        return .failed(
+          .artifactSource(ArtifactSourceFailure(code: .artifactInvalid, disposition: .terminal)),
+          nil, nil, nil)
       }
       let claimedLease: ClaimedArtifactLeaseV3
       do {
@@ -418,7 +429,8 @@ public actor ConnectionController {
         let sourceAttemptFailure = ConnectionAttemptFailure.artifactSource(sourceFailure)
         guard validRetryDisposition(sourceFailure.disposition) else {
           return .terminal(
-            .artifactSource(ArtifactSourceFailure(disposition: .terminal)))
+            .artifactSource(
+              ArtifactSourceFailure(code: .artifactInvalid, disposition: .terminal)))
         }
         guard
           await scheduleRetry(
@@ -432,7 +444,9 @@ public actor ConnectionController {
       } catch {
         if inFlightAcquisition === acquisition { inFlightAcquisition = nil }
         await acquisition.settle()
-        return .terminal(.connection(.artifactInvalid))
+        return .terminal(
+          .artifactSource(
+            ArtifactSourceFailure(code: .artifactInvalid, disposition: .terminal)))
       }
       if inFlightAcquisition === acquisition { inFlightAcquisition = nil }
       await acquisition.settle()
@@ -627,7 +641,9 @@ public actor ConnectionController {
     guard validRetryDisposition(disposition) else {
       switch attemptFailure {
       case .artifactSource:
-        fail(.artifactSource(ArtifactSourceFailure(disposition: .terminal)))
+        fail(
+          .artifactSource(
+            ArtifactSourceFailure(code: .artifactInvalid, disposition: .terminal)))
       case .connection, .session:
         fail(.connection(.artifactInvalid))
       }
@@ -759,8 +775,9 @@ public actor ConnectionController {
     _ value: ConnectionAttemptFailure
   ) -> ConnectionAttemptFailure {
     switch value {
-    case .artifactSource:
-      return .artifactSource(ArtifactSourceFailure(disposition: .terminal))
+    case .artifactSource(let failure):
+      return .artifactSource(
+        ArtifactSourceFailure(code: failure.code, disposition: .terminal))
     case .connection(let error):
       return .connection(error.terminalized())
     case .session:
@@ -771,8 +788,18 @@ public actor ConnectionController {
   }
 
   private func publicError(for failure: ConnectionAttemptFailure) -> ConnectError {
-    if case .connection(let error) = failure { return error }
-    return .connectionFailed
+    switch failure {
+    case .artifactSource(let failure):
+      switch failure.code {
+      case .artifactInvalid: return .artifactInvalid
+      case .expiredArtifact: return .expiredArtifact
+      case .transportSecurityUnsupported: return .transportSecurityUnsupported
+      case .transportSecurityFailed: return .transportSecurityFailed
+      case .connectionFailed: return .connectionFailed
+      }
+    case .connection(let error): return error
+    case .session: return .connectionFailed
+    }
   }
 
   private func publish() {

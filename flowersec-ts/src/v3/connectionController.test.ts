@@ -212,6 +212,29 @@ describe("transport v3 production connection controller", () => {
     await controller.close();
   });
 
+  test("closed snapshots do not retain the preceding failure", async () => {
+    const snapshots: ConnectionControllerSnapshotV3[] = [];
+    const controller = createConnectionControllerV3({
+      acquire: async () => ({
+        kind: "failure",
+        code: "connection_failed",
+        disposition: { kind: "terminal" },
+      }),
+    }, async () => { throw new Error("connector must not run"); }, { capabilitySnapshot });
+    controller.subscribe((snapshot) => snapshots.push(snapshot));
+
+    controller.start();
+    await expect(controller.waitForSession()).rejects.toMatchObject({ code: "failed" });
+    expect(snapshots.at(-1)).toMatchObject({
+      state: "failed",
+      failure: { phase: "artifact", code: "connection_failed" },
+      retryDisposition: { kind: "terminal" },
+    });
+    await controller.close();
+
+    expect(snapshots.at(-1)).toEqual({ state: "closed", attempt: 1 });
+  });
+
   test("rejects browser_pin_opaque when the browser pin capability is ca-only", async () => {
     const capability = await browserCapabilitySnapshot("151.0.7922.35");
     const cleanup = vi.fn(async () => undefined);

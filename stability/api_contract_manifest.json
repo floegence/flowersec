@@ -2579,6 +2579,11 @@
         "doc_token": ""
       },
       {
+        "kind": "swift.property",
+        "name": "ArtifactSourceFailure.code",
+        "doc_token": ""
+      },
+      {
         "kind": "swift.init",
         "name": "ArtifactSourceFailure.init(disposition:)",
         "doc_token": ""
