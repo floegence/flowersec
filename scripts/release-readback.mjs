@@ -1,11 +1,34 @@
 const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_REDIRECTS = 4;
 
-export async function fetchResponseBody(url, options = {}, maximumBytes, timeoutMs = DEFAULT_TIMEOUT_MS) {
+export async function fetchResponseBody(url, options = {}, maximumBytes, timeoutMs = DEFAULT_TIMEOUT_MS, validateResponse = undefined) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response;
+  let currentURL = url;
   try {
-    response = await fetch(url, { ...options, signal: controller.signal });
+    for (let redirects = 0; ; redirects++) {
+      response = await fetch(currentURL, {
+        ...options,
+        ...(validateResponse === undefined ? {} : { redirect: "manual" }),
+        signal: controller.signal,
+      });
+      if (validateResponse !== undefined && response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (location === null) throw new Error("registry response redirect has no location");
+        if (redirects >= MAX_REDIRECTS) throw new Error(`registry response exceeded ${MAX_REDIRECTS} redirects`);
+        const nextURL = new URL(location, currentURL).href;
+        try {
+          validateResponse({ url: nextURL, redirectedFrom: currentURL });
+        } finally {
+          await response.body?.cancel();
+        }
+        currentURL = nextURL;
+        continue;
+      }
+      break;
+    }
+    validateResponse?.(response);
     assertResponseSize(response, maximumBytes);
     if (response.body === null) throw new Error("registry response has no body");
     const reader = response.body.getReader();
@@ -28,7 +51,7 @@ export async function fetchResponseBody(url, options = {}, maximumBytes, timeout
     return { response, body: Buffer.concat(chunks, total) };
   } catch (error) {
     if (error?.name === "AbortError") {
-      throw new Error(`registry request timed out after ${timeoutMs}ms: ${url}`, { cause: error });
+      throw new Error(`registry request timed out after ${timeoutMs}ms: ${currentURL}`, { cause: error });
     }
     throw error;
   } finally {
@@ -66,9 +89,27 @@ export function execFileBounded(file, args, options = {}, timeoutMs = DEFAULT_TI
     const stderr = [];
     let timedOut = false;
     let outputTooLarge = false;
+    let terminationError;
+    let settled = false;
+    const terminate = () => {
+      try {
+        killProcessGroup(child);
+        return undefined;
+      } catch (error) {
+        return error;
+      }
+    };
+    const rejectTerminationFailure = (error) => {
+      terminationError = error;
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(`${file} failed to terminate child process group`, { cause: error }));
+    };
     const timer = setTimeout(() => {
       timedOut = true;
-      killProcessGroup(child);
+      const error = terminate();
+      if (error !== undefined) rejectTerminationFailure(error);
     }, timeoutMs);
     const maxStdoutBytes = options.maxStdoutBytes ?? 4 * 1024 * 1024;
     const maxStderrBytes = options.maxStderrBytes ?? 64 * 1024;
@@ -76,20 +117,37 @@ export function execFileBounded(file, args, options = {}, timeoutMs = DEFAULT_TI
     let stderrBytes = 0;
     child.stdout.on("data", (chunk) => {
       stdoutBytes += chunk.length;
+      if (stdoutBytes > maxStdoutBytes) {
+        outputTooLarge = true;
+        const error = terminate();
+        if (error !== undefined) rejectTerminationFailure(error);
+        return;
+      }
       stdout.push(chunk);
-      if (stdoutBytes > maxStdoutBytes) { outputTooLarge = true; killProcessGroup(child); }
     });
     child.stderr.on("data", (chunk) => {
       stderrBytes += chunk.length;
+      if (stderrBytes > maxStderrBytes) {
+        outputTooLarge = true;
+        const error = terminate();
+        if (error !== undefined) rejectTerminationFailure(error);
+        return;
+      }
       stderr.push(chunk);
-      if (stderrBytes > maxStderrBytes) { outputTooLarge = true; killProcessGroup(child); }
     });
     child.once("error", (error) => {
       clearTimeout(timer);
+      settled = true;
       reject(error);
     });
     child.once("close", (code, signal) => {
       clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      if (terminationError !== undefined) {
+        reject(new Error(`${file} failed to terminate child process group`, { cause: terminationError }));
+        return;
+      }
       const stdoutText = Buffer.concat(stdout).toString("utf8");
       const stderrText = Buffer.concat(stderr).toString("utf8");
       if (timedOut) {

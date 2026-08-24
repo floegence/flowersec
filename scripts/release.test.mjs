@@ -211,7 +211,7 @@ test("crates registry readback sends a compliant User-Agent for metadata and dow
     /const requestHeaders = Object\.freeze\(\{\s*"User-Agent": `flowersec-release-readback\/\$\{version\} \(https:\/\/github\.com\/floegence\/flowersec\)`,\s*\}\);/,
   );
   assert.equal(
-    [...readback.matchAll(/fetchResponseBody\([^;]+, \{ headers: requestHeaders \}/g)].length,
+    [...readback.matchAll(/fetchResponseBody\([\s\S]*?\{ headers: requestHeaders \}/g)].length,
     2,
     "metadata and crate download requests must both send the reviewed User-Agent",
   );
@@ -277,7 +277,17 @@ test("GHCR manifest readback retries, classifies timeout, and checks both tags",
 
 test("registry readback bounds chunked bodies and metadata deadlines", async (t) => {
   let mode = "stall";
-  const server = createServer((_request, response) => {
+  const server = createServer((request, response) => {
+    if (mode === "redirect" && request.url !== "/final") {
+      response.writeHead(302, { location: "/final" });
+      response.end();
+      return;
+    }
+    if (mode === "untrusted-redirect") {
+      response.writeHead(302, { location: "https://evil.invalid/archive" });
+      response.end();
+      return;
+    }
     response.writeHead(200, { "content-type": "application/octet-stream" });
     if (mode === "stall") {
       response.write("partial");
@@ -291,6 +301,18 @@ test("registry readback bounds chunked bodies and metadata deadlines", async (t)
   await assert.rejects(fetchResponseBody(url, {}, 64, 50), /timed out after 50ms/);
   mode = "oversize";
   await assert.rejects(fetchResponseBody(url, {}, 8, 500), /exceeds 8-byte limit/);
+  mode = "redirect";
+  const redirected = await fetchResponseBody(url, {}, 64, 500, (candidate) => {
+    assert.equal(new URL(candidate.url).hostname, "127.0.0.1");
+  });
+  assert.equal(redirected.body.toString("utf8"), "0123456789abcdef");
+  mode = "untrusted-redirect";
+  await assert.rejects(
+    fetchResponseBody(url, {}, 64, 500, (candidate) => {
+      assert.equal(new URL(candidate.url).hostname, "127.0.0.1");
+    }),
+    /127\.0\.0\.1|evil\.invalid/,
+  );
 });
 
 test("documentation distinguishes injector, real weaknet, required performance, and optional WebTransport", () => {

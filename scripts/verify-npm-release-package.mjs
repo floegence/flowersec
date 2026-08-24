@@ -19,7 +19,7 @@ for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     metadata = JSON.parse((await execFileBounded("npm", ["view", `${packageName}@${version}`, "--json"], { maxStdoutBytes: 4 * 1024 * 1024 }, COMMAND_TIMEOUT_MS)).stdout);
     if (metadata?.version === version && metadata?.dist?.tarball && metadata?.dist?.integrity) break;
   } catch (error) {
-    if (attempt === MAX_ATTEMPTS) throw error;
+    if (attempt === MAX_ATTEMPTS || !isRetryableNpmError(error)) throw error;
   }
   if (attempt === MAX_ATTEMPTS) throw new Error(`${packageName}@${version} did not become readable`);
   await new Promise((resolve) => setTimeout(resolve, 10_000));
@@ -30,7 +30,28 @@ assert.match(metadata.dist?.tarball ?? "", /^https:\/\//);
 assert.match(metadata.dist?.integrity ?? "", /^sha512-/);
 assertRegistryURL(metadata.dist.tarball, new Set(["registry.npmjs.org"]));
 
-const { response, body } = await fetchResponseBody(metadata.dist.tarball, {}, MAX_ARCHIVE_BYTES);
+let archive;
+for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  try {
+    archive = await fetchResponseBody(
+      metadata.dist.tarball,
+      {},
+      MAX_ARCHIVE_BYTES,
+      undefined,
+      (candidate) => assertRegistryURL(candidate.url, new Set(["registry.npmjs.org"]), candidate.redirectedFrom),
+    );
+    if (!archive.response.ok) {
+      const error = new Error(`${packageName}@${version} download status ${archive.response.status}`);
+      error.retryable = archive.response.status === 408 || archive.response.status === 429 || archive.response.status >= 500;
+      throw error;
+    }
+    break;
+  } catch (error) {
+    if (!isRetryableRegistryError(error) || attempt === MAX_ATTEMPTS) throw error;
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+  }
+}
+const { response, body } = archive;
 assert.equal(response.ok, true);
 assertRegistryURL(response.url, new Set(["registry.npmjs.org"]));
 const tarball = new Uint8Array(body);
@@ -66,10 +87,23 @@ if (platform !== null) {
   assert.ok(entries.has(`package/${expectedMain}`));
 }
 
-function assertRegistryURL(value, allowedHosts) {
+function isRetryableNpmError(error) {
+  const text = `${error.code ?? ""} ${error.message ?? ""} ${error.stderr ?? ""}`;
+  return /E404|E5\d\d|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|timed out/i.test(text);
+}
+
+function isRetryableRegistryError(error) {
+  if (error?.retryable !== undefined) return error.retryable;
+  return /timed out|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket/i.test(`${error?.code ?? ""} ${error?.message ?? ""}`);
+}
+
+function assertRegistryURL(value, allowedHosts, redirectedFrom = undefined) {
   const url = new URL(value);
   assert.equal(url.protocol, "https:");
   assert.ok(allowedHosts.has(url.hostname), `unexpected registry download host ${url.hostname}`);
+  if (redirectedFrom !== undefined) {
+    assert.equal(new URL(redirectedFrom).hostname, url.hostname);
+  }
 }
 
 async function assertSafeArchive(archiveBytes, requiredRoot) {
@@ -107,23 +141,38 @@ async function runTar(args, archiveBytes, maximumOutputBytes) {
   return await new Promise((resolve, reject) => {
     const child = spawn("tar", args, { stdio: ["pipe", "pipe", "pipe"], detached: true });
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; killProcessGroup(child); }, COMMAND_TIMEOUT_MS);
     const stdout = [];
     const stderr = [];
     let stdoutBytes = 0;
     let stderrBytes = 0;
     let settled = false;
+    const terminate = () => {
+      try {
+        killProcessGroup(child);
+        return undefined;
+      } catch (error) {
+        return error;
+      }
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      const terminationError = terminate();
+      if (terminationError !== undefined && !settled) {
+        settled = true;
+        clearTimeout(timer);
+        reject(new Error("tar readback failed to terminate timed-out child process group", { cause: terminationError }));
+      }
+    }, COMMAND_TIMEOUT_MS);
     const fail = (error) => {
       if (settled) return;
-      settled = true;
       clearTimeout(timer);
+      const terminationError = terminate();
+      settled = true;
       if (timedOut) {
-        reject(new Error(`tar readback timed out after ${COMMAND_TIMEOUT_MS}ms`));
+        reject(terminationError === undefined ? new Error(`tar readback timed out after ${COMMAND_TIMEOUT_MS}ms`) : new Error("tar readback failed to terminate child process group", { cause: terminationError }));
         return;
       }
-      clearTimeout(timer);
-      killProcessGroup(child);
-      reject(error);
+      reject(terminationError === undefined ? error : new Error("tar readback failed to terminate child process group", { cause: terminationError }));
     };
     child.stdout.on("data", (chunk) => {
       stdoutBytes += chunk.length;

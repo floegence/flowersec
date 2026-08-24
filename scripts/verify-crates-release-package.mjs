@@ -19,21 +19,57 @@ const requestHeaders = Object.freeze({
 let metadata;
 for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
   try {
-    const { response, body } = await fetchResponseBody(`https://crates.io/api/v1/crates/${crateName}/${version}`, { headers: requestHeaders }, MAX_ENTRY_BYTES);
+    const { response, body } = await fetchResponseBody(
+      `https://crates.io/api/v1/crates/${crateName}/${version}`,
+      { headers: requestHeaders },
+      MAX_ENTRY_BYTES,
+      undefined,
+      (candidate) => assertRegistryURL(candidate.url, new Set(["crates.io"])),
+    );
     if (response.ok) {
-      metadata = JSON.parse(body.toString("utf8"));
+      try {
+        metadata = JSON.parse(body.toString("utf8"));
+      } catch (error) {
+        error.retryable = false;
+        throw error;
+      }
       break;
     }
-    if (response.status !== 404 || attempt === MAX_ATTEMPTS) throw new Error(`${crateName}@${version} registry status ${response.status}`);
+    if (response.status !== 404) {
+      const error = new Error(`${crateName}@${version} registry status ${response.status}`);
+      error.retryable = response.status >= 500;
+      throw error;
+    }
   } catch (error) {
-    if (attempt === MAX_ATTEMPTS) throw error;
+    if (!isRetryableRegistryError(error) || attempt === MAX_ATTEMPTS) throw error;
   }
   if (attempt === MAX_ATTEMPTS) throw new Error(`${crateName}@${version} did not become readable`);
   await new Promise((resolve) => setTimeout(resolve, 10_000));
 }
 assert.equal(metadata.version?.num, version);
 assert.match(metadata.version?.checksum ?? "", /^[0-9a-f]{64}$/);
-const { response, body } = await fetchResponseBody(`https://crates.io/api/v1/crates/${crateName}/${version}/download`, { headers: requestHeaders }, MAX_ARCHIVE_BYTES);
+let archive;
+for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  try {
+    archive = await fetchResponseBody(
+      `https://crates.io/api/v1/crates/${crateName}/${version}/download`,
+      { headers: requestHeaders },
+      MAX_ARCHIVE_BYTES,
+      undefined,
+      (candidate) => assertRegistryURL(candidate.url, new Set(["static.crates.io"]), candidate.redirectedFrom),
+    );
+    if (!archive.response.ok) {
+      const error = new Error(`${crateName}@${version} download status ${archive.response.status}`);
+      error.retryable = archive.response.status === 408 || archive.response.status === 429 || archive.response.status >= 500;
+      throw error;
+    }
+    break;
+  } catch (error) {
+    if (!isRetryableRegistryError(error) || attempt === MAX_ATTEMPTS) throw error;
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+  }
+}
+const { response, body } = archive;
 assert.equal(response.ok, true);
 assertRegistryURL(response.url, new Set(["crates.io", "static.crates.io"]));
 const archiveBytes = new Uint8Array(body);
@@ -56,10 +92,20 @@ if (crateName === "flowersec") {
   assert.equal(dependencySection.some((line) => line.startsWith("path =") || line.startsWith("git =")), false);
 }
 
-function assertRegistryURL(value, allowedHosts) {
+function assertRegistryURL(value, allowedHosts, redirectedFrom = undefined) {
   const url = new URL(value);
   assert.equal(url.protocol, "https:");
   assert.ok(allowedHosts.has(url.hostname), `unexpected registry download host ${url.hostname}`);
+  if (redirectedFrom !== undefined) {
+    const source = new URL(redirectedFrom);
+    assert.equal(source.hostname, "crates.io");
+    assert.equal(url.hostname, "static.crates.io");
+  }
+}
+
+function isRetryableRegistryError(error) {
+  if (error?.retryable !== undefined) return error.retryable;
+  return /timed out|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket/i.test(`${error?.code ?? ""} ${error?.message ?? ""}`);
 }
 
 function tomlSection(source, name) {
@@ -114,18 +160,34 @@ async function runTar(args, archiveBytes, maximumOutputBytes) {
   return await new Promise((resolve, reject) => {
     const child = spawn("tar", args, { stdio: ["pipe", "pipe", "pipe"], detached: true });
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; killProcessGroup(child); }, 30_000);
     const stdout = [];
     const stderr = [];
     let stdoutBytes = 0;
     let stderrBytes = 0;
     let settled = false;
+    const terminate = () => {
+      try {
+        killProcessGroup(child);
+        return undefined;
+      } catch (error) {
+        return error;
+      }
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      const terminationError = terminate();
+      if (terminationError !== undefined && !settled) {
+        settled = true;
+        clearTimeout(timer);
+        reject(new Error("tar readback failed to terminate timed-out child process group", { cause: terminationError }));
+      }
+    }, 30_000);
     const fail = (error) => {
       if (settled) return;
-      settled = true;
       clearTimeout(timer);
-      killProcessGroup(child);
-      reject(error);
+      const terminationError = terminate();
+      settled = true;
+      reject(terminationError === undefined ? error : new Error("tar readback failed to terminate child process group", { cause: terminationError }));
     };
     child.stdout.on("data", (chunk) => {
       stdoutBytes += chunk.length;
