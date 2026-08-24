@@ -890,7 +890,7 @@ describe("transport v3 production connection controller", () => {
     controller.start();
     await expect(controller.waitForSession()).rejects.toMatchObject({
       code: "failed",
-      failure: { phase: "connect", code: "artifact_invalid" },
+      failure: { phase: "artifact", code: "artifact_invalid" },
     });
     expect(connector).toHaveBeenCalledOnce();
     expect(artifactLeaseStateV3(original)).toBe("retired");

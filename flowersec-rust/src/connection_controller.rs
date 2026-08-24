@@ -1005,12 +1005,9 @@ async fn acquire_lease(
         }
         _ => ConnectionFailure::ArtifactSource(error),
     })?;
-    let claimed = lease.claim_for_controller().map_err(|_| {
-        connect_failure(
-            ConnectErrorCode::ArtifactInvalid,
-            RetryDisposition::Terminal,
-        )
-    })?;
+    let claimed = lease
+        .claim_for_controller()
+        .map_err(|_| ConnectionFailure::ArtifactSource(ArtifactSourceError::invalid()))?;
     #[cfg(test)]
     inner.run_after_acquire_claim();
     if inner.cancellation.is_cancelled() {

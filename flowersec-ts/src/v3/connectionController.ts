@@ -309,7 +309,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         claim = claimArtifactLeaseV3(acquisition.lease);
       } catch {
         this.#cycle.recordFailedAcquisitionOrLease();
-        this.#recordFailure("connect", "artifact_invalid", { kind: "terminal" });
+        this.#recordFailure("artifact", "artifact_invalid", { kind: "terminal" });
         return;
       }
       if (next === "replacement" && !this.#cycle.claimReplacementQuota()) {

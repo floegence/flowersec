@@ -529,7 +529,7 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			continue
 		}
 		if !claimedOK || !claimed.valid() {
-			controller.fail(ConnectionFailureConnect, &ConnectError{code: ConnectArtifactInvalid}, terminalDisposition())
+			controller.fail(ConnectionFailureArtifact, &ConnectError{code: ConnectArtifactInvalid}, terminalDisposition())
 			return
 		}
 		if cycle.mode == controllerAcquireReplacement {

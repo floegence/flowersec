@@ -346,7 +346,10 @@ public actor ConnectionController {
       do {
         claimedLease = try await lease.claimForConnectionController()
       } catch {
-        return .failed(.connection(.artifactInvalid), nil, .terminal, nil)
+        return .failed(
+          .artifactSource(
+            ArtifactSourceFailure(code: .artifactInvalid, disposition: .terminal)),
+          nil, nil, nil)
       }
       guard !Task.isCancelled else {
         return .failed(.connection(.canceled), claimedLease, nil, nil)

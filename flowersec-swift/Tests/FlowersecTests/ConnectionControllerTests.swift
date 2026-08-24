@@ -2420,7 +2420,9 @@ final class ConnectionControllerTests: XCTestCase {
     let attempts = await calls.value
     let spends = await spent.value
     let retirements = await retired.value
-    XCTAssertEqual(snapshot.failure, .connection(.artifactInvalid), id)
+    XCTAssertEqual(
+      snapshot.failure,
+      .artifactSource(ArtifactSourceFailure(code: .artifactInvalid, disposition: .terminal)), id)
     XCTAssertEqual(acquisitions, expected["acquisitions"] as? Int, id)
     XCTAssertEqual(attempts, expected["connect_attempts"] as? Int, id)
     XCTAssertEqual(spends, expected["spend_callbacks"] as? Int, id)

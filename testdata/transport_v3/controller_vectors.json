@@ -1680,7 +1680,7 @@
         "retry_delays_ms": [
           250
         ],
-        "failure_phase": "connect"
+        "failure_phase": "artifact"
       }
     },
     {
@@ -1715,7 +1715,7 @@
         "retry_delays_ms": [
           250
         ],
-        "failure_phase": "connect"
+        "failure_phase": "artifact"
       }
     }
   ],

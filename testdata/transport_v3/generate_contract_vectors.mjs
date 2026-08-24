@@ -1683,8 +1683,8 @@ const controllerFailurePhaseByScenario = new Map([
   ["replacement-fsa3-retryable-consumes-spent", "connect"],
   ["primary-fsh3-failure-consumes-spent", "connect"],
   ["replacement-fsh3-failure-consumes-spent", "connect"],
-  ["artifact-source-repeats-consumed-lease", "connect"],
-  ["artifact-source-repeats-retired-lease", "connect"],
+  ["artifact-source-repeats-consumed-lease", "artifact"],
+  ["artifact-source-repeats-retired-lease", "artifact"],
   ["concurrent-capability-invalidation-replacement-barrier", "connect"],
 ]);
 for (const scenario of [...controllerVectors.scenarios, ...controllerVectors.browser_capability_scenarios]) {

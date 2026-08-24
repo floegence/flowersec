@@ -690,6 +690,64 @@ func TestConnectionControllerClaimsAndRetiresLeaseReturnedAfterCancellation(t *t
 	}
 }
 
+func TestConnectionControllerSourceOwnershipViolationsFailAtArtifactPhase(t *testing.T) {
+	t.Run("empty lease", func(t *testing.T) {
+		source := &controllerTestSource{results: []controllerAcquireResult{{}}}
+		controller := newControllerForTest(t, source, 0)
+		var connects atomic.Int32
+		controller.connectDetailed = func(context.Context, claimedArtifactLease, ConnectorOptions, map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome) {
+			connects.Add(1)
+			return nil, controllerConnectOutcome{}
+		}
+		controller.Start(context.Background())
+		waitControllerState(t, controller, ConnectionFailed)
+		snapshot := controller.Snapshot()
+		if snapshot.Failure == nil || connectErrorCode(snapshot.Failure.Error) != ConnectArtifactInvalid ||
+			snapshot.Failure.Phase() != ConnectionFailureArtifact ||
+			snapshot.Failure.Disposition.Kind != RetryDispositionTerminal {
+			t.Fatalf("empty lease failure = %+v, want artifact_invalid/artifact/terminal", snapshot.Failure)
+		}
+		if connects.Load() != 0 || source.callCount() != 1 {
+			t.Fatalf("empty lease acquisitions/connects = %d/%d, want 1/0", source.callCount(), connects.Load())
+		}
+		closeController(t, controller)
+	})
+
+	for _, terminalState := range []string{"consumed", "retired"} {
+		t.Run("duplicate "+terminalState+" lease", func(t *testing.T) {
+			lease, _ := controllerTrackedLease(t, controllerPolicyArtifact(t, controllerPinPolicy("ERERERERERERERERERERERERERERERERERERERERERE")))
+			source := &controllerTestSource{results: []controllerAcquireResult{{lease: lease}, {lease: lease}}}
+			controller := newControllerForTest(t, source, 2)
+			var connects atomic.Int32
+			controller.connectDetailed = func(ctx context.Context, claimed claimedArtifactLease, _ ConnectorOptions, _ map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome) {
+				connects.Add(1)
+				if terminalState == "consumed" {
+					if err := claimed.lease.commitSpend(ctx); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return nil, controllerConnectOutcome{err: &ConnectError{code: ConnectConnectionFailed}, spendStarted: claimed.spendStarted()}
+			}
+			controller.Start(context.Background())
+			waitControllerState(t, controller, ConnectionWaiting)
+			if !controller.RetryNow() {
+				t.Fatal("duplicate lease retry was not waiting")
+			}
+			waitControllerState(t, controller, ConnectionFailed)
+			snapshot := controller.Snapshot()
+			if snapshot.Failure == nil || connectErrorCode(snapshot.Failure.Error) != ConnectArtifactInvalid ||
+				snapshot.Failure.Phase() != ConnectionFailureArtifact ||
+				snapshot.Failure.Disposition.Kind != RetryDispositionTerminal {
+				t.Fatalf("duplicate lease failure = %+v, want artifact_invalid/artifact/terminal", snapshot.Failure)
+			}
+			if connects.Load() != 1 || source.callCount() != 2 {
+				t.Fatalf("duplicate lease acquisitions/connects = %d/%d, want 2/1", source.callCount(), connects.Load())
+			}
+			closeController(t, controller)
+		})
+	}
+}
+
 func TestConnectionControllerSurvivesRetireCleanupPanic(t *testing.T) {
 	artifact := controllerPolicyArtifact(t, controllerPinPolicy("ERERERERERERERERERERERERERERERERERERERERERE"))
 	var retireCalls atomic.Int32
