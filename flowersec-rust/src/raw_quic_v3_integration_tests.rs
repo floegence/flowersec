@@ -643,11 +643,7 @@ fn session_config(
 }
 
 fn interop_psk() -> [u8; 32] {
-    let mut psk = [0_u8; 32];
-    for (index, byte) in psk.iter_mut().enumerate() {
-        *byte = u8::try_from(index + 1).unwrap();
-    }
-    psk
+    std::array::from_fn(|index| u8::try_from(index + 1).expect("interop PSK index fits in u8"))
 }
 
 #[derive(Debug)]

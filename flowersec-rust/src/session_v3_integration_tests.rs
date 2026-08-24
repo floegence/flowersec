@@ -23,6 +23,10 @@ use crate::{
 use bytes::Bytes;
 use tokio::sync::{Mutex as TokioMutex, Notify, Semaphore, mpsc};
 
+fn deterministic_test_bytes(seed: u8) -> [u8; 32] {
+    std::array::from_fn(|index| seed ^ index as u8)
+}
+
 #[tokio::test]
 async fn exact_handshake_and_ready_boundary_establish_a_memory_pair() {
     let (client_carrier, server_carrier) = memory_carrier_pair_v3();
@@ -2849,7 +2853,7 @@ async fn injected_establish_deadline_bounds_a_blackholed_peer() {
             channel_id: "establish-deadline".into(),
             session_contract_hash: [1; 32],
             suite: CipherSuiteV3::ChaCha20Poly1305,
-            psk: [2; 32],
+            psk: deterministic_test_bytes(2),
             max_inbound_streams: 4,
             idle_timeout: Duration::ZERO,
             local_admission_binding: [3; 32],
@@ -4141,7 +4145,7 @@ fn regression_config(
         channel_id: channel_id.into(),
         session_contract_hash: [0x81; 32],
         suite: CipherSuiteV3::ChaCha20Poly1305,
-        psk: [0x82; 32],
+        psk: deterministic_test_bytes(0x82),
         max_inbound_streams,
         idle_timeout: Duration::ZERO,
         local_admission_binding,
