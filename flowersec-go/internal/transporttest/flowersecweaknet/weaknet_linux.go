@@ -327,6 +327,10 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 	if err := linuxnetlab.RequireCurrentNamespace(clientNamespace); err != nil {
 		return err
 	}
+	scenario, err := scenarioFor(scenarioName)
+	if err != nil {
+		return err
+	}
 	var endpoint *transporttest.ProductDirectEndpoint
 	if err := linuxnetlab.InNamespace(serverNamespace, func() error {
 		var openErr error
@@ -381,7 +385,9 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 			return fmt.Errorf("controller rotation lease finalization = retire(%d,%d) spend(%d)", source.RetireCount(0), source.RetireCount(1), source.SpendCount(2))
 		}
 	}
-	if err := transporttest.NewProductControllerPair(client, server).RoundTrip(ctx, bytes.Repeat([]byte("controller-weaknet"), 1024), []byte("controller-response")); err != nil {
+	// Use the scenario's bulk payload so packet-level faults remain observable
+	// through stream framing (periodic loss needs to reach its 50-packet period).
+	if err := transporttest.NewProductControllerPair(client, server).RoundTrip(ctx, bytes.Repeat([]byte("controller-weaknet"), scenario.payloadBytes/len("controller-weaknet")), []byte("controller-response")); err != nil {
 		return err
 	}
 	if scenarioName == "outage-reconnect" {
@@ -711,7 +717,7 @@ func validateObservation(scenario string, observation linuxnetlab.KernelFaultObs
 	switch scenario {
 	case "periodic-loss":
 		if observation.Client.PeriodicLossPackets+observation.Server.PeriodicLossPackets == 0 {
-			return errors.New("periodic loss was not observed")
+			return fmt.Errorf("periodic loss was not observed: client=%d server=%d packets=%d/%d", observation.Client.PeriodicLossPackets, observation.Server.PeriodicLossPackets, observation.Client.Packets, observation.Server.Packets)
 		}
 	case "burst-loss":
 		if observation.Client.BurstLossPackets+observation.Server.BurstLossPackets == 0 {
