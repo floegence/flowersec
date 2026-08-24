@@ -382,10 +382,12 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 		}
 	}
 	pair := transporttest.NewProductControllerPair(client, server)
-	// Accumulate enough independent RPC packets to cross the periodic-loss
-	// schedule without turning the application stream into a large-frame test.
-	if _, err := transporttest.RunRPC(ctx, pair, 64, 4, 256, 5*time.Second); err != nil {
-		return err
+	if scenarioName == "periodic-loss" {
+		// Accumulate enough independent RPC packets to cross the periodic-loss
+		// schedule without turning the application stream into a large-frame test.
+		if _, err := transporttest.RunRPC(ctx, pair, 64, 4, 256, 5*time.Second); err != nil {
+			return err
+		}
 	}
 	if err := pair.RoundTrip(ctx, bytes.Repeat([]byte("controller-weaknet"), 1024), []byte("controller-response")); err != nil {
 		return err
