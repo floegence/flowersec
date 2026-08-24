@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { fetchResponseBody } from "./release-readback.mjs";
+import { execFileBounded, fetchResponseBody } from "./release-readback.mjs";
 
 const sourceRoot = path.resolve(import.meta.dirname, "..");
 const releaseMutationConcurrency = 4;
@@ -312,6 +312,17 @@ test("registry readback bounds chunked bodies and metadata deadlines", async (t)
       assert.equal(new URL(candidate.url).hostname, "127.0.0.1");
     }),
     /127\.0\.0\.1|evil\.invalid/,
+  );
+});
+
+test("bounded child readback classifies output caps and timeouts", async () => {
+  await assert.rejects(
+    execFileBounded("bash", ["-c", "printf '%1000000s' x"], { maxStdoutBytes: 1024 }, 10_000),
+    /output exceeded the bounded readback limit/,
+  );
+  await assert.rejects(
+    execFileBounded("bash", ["-c", "sleep 2"], {}, 50),
+    (error) => error.code === "ETIMEDOUT" && /timed out after 50ms/.test(error.message),
   );
 });
 

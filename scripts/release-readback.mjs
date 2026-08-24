@@ -1,5 +1,6 @@
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_REDIRECTS = 4;
+const killedGroups = new WeakSet();
 
 export async function fetchResponseBody(url, options = {}, maximumBytes, timeoutMs = DEFAULT_TIMEOUT_MS, validateResponse = undefined) {
   const controller = new AbortController();
@@ -14,16 +15,16 @@ export async function fetchResponseBody(url, options = {}, maximumBytes, timeout
         signal: controller.signal,
       });
       if (validateResponse !== undefined && response.status >= 300 && response.status < 400) {
-        const location = response.headers.get("location");
-        if (location === null) throw new Error("registry response redirect has no location");
-        if (redirects >= MAX_REDIRECTS) throw new Error(`registry response exceeded ${MAX_REDIRECTS} redirects`);
-        const nextURL = new URL(location, currentURL).href;
         try {
+          const location = response.headers.get("location");
+          if (location === null) throw new Error("registry response redirect has no location");
+          if (redirects >= MAX_REDIRECTS) throw new Error(`registry response exceeded ${MAX_REDIRECTS} redirects`);
+          const nextURL = new URL(location, currentURL).href;
           validateResponse({ url: nextURL, redirectedFrom: currentURL });
+          currentURL = nextURL;
         } finally {
           await response.body?.cancel();
         }
-        currentURL = nextURL;
         continue;
       }
       break;
@@ -70,10 +71,13 @@ export function assertResponseSize(response, maximumBytes) {
 
 export function killProcessGroup(child) {
   if (child.pid === undefined) return;
+  if (killedGroups.has(child)) return;
   try {
     process.kill(-child.pid, "SIGKILL");
+    killedGroups.add(child);
   } catch (error) {
-    if (error.code !== "ESRCH") throw error;
+    if (error.code === "ESRCH") killedGroups.add(child);
+    else throw error;
   }
 }
 

@@ -7,7 +7,7 @@ import { fetchResponseBody, killProcessGroup } from "./release-readback.mjs";
 
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 2 * 1024 * 1024;
-const MAX_ATTEMPTS = 12;
+const MAX_ATTEMPTS = 6;
 const [crateName, version, sourceSHA] = process.argv.slice(2);
 assert.match(crateName ?? "", /^flowersec(?:-native-transport)?$/);
 assert.match(version ?? "", /^\d+\.\d+\.\d+$/);
@@ -37,7 +37,7 @@ for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     }
     if (response.status !== 404) {
       const error = new Error(`${crateName}@${version} registry status ${response.status}`);
-      error.retryable = response.status >= 500;
+      error.retryable = response.status === 408 || response.status === 429 || response.status >= 500;
       throw error;
     }
   } catch (error) {

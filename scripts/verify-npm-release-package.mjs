@@ -7,7 +7,7 @@ import { execFileBounded, fetchResponseBody, killProcessGroup } from "./release-
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 16 * 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
-const MAX_ATTEMPTS = 12;
+const MAX_ATTEMPTS = 6;
 const [packageName, version, sourceSHA] = process.argv.slice(2);
 assert.match(packageName ?? "", /^@floegence\//);
 assert.match(version ?? "", /^\d+\.\d+\.\d+$/);
@@ -89,7 +89,7 @@ if (platform !== null) {
 
 function isRetryableNpmError(error) {
   const text = `${error.code ?? ""} ${error.message ?? ""} ${error.stderr ?? ""}`;
-  return /E404|E5\d\d|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|timed out/i.test(text);
+  return /E404|E408|E429|E5\d\d|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|timed out/i.test(text);
 }
 
 function isRetryableRegistryError(error) {
