@@ -393,7 +393,7 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 		return err
 	}
 	if scenarioName == "outage-reconnect" {
-		if err := waitForControllerOutageWindow(ctx, 3500*time.Millisecond); err != nil {
+		if err := verifyOutageBehavior(ctx, pair); err != nil {
 			return err
 		}
 		if err := server.Close(); err != nil {
@@ -445,17 +445,6 @@ func waitForControllerReplacement(ctx context.Context, controller *flowersec.Con
 			return context.Cause(ctx)
 		case <-time.After(10 * time.Millisecond):
 		}
-	}
-}
-
-func waitForControllerOutageWindow(ctx context.Context, duration time.Duration) error {
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
-		return context.Cause(ctx)
 	}
 }
 
@@ -727,7 +716,7 @@ func validateObservation(scenario string, observation linuxnetlab.KernelFaultObs
 		}
 	case "outage", "outage-reconnect":
 		if observation.Client.OutageDropPackets+observation.Server.OutageDropPackets == 0 {
-			return errors.New("outage drops were not observed")
+			return fmt.Errorf("outage drops were not observed: client=%d server=%d packets=%d/%d", observation.Client.OutageDropPackets, observation.Server.OutageDropPackets, observation.Client.Packets, observation.Server.Packets)
 		}
 	case "representative":
 		if observation.Client.PeriodicLossPackets+observation.Server.PeriodicLossPackets == 0 {
