@@ -411,10 +411,11 @@ jobs:
           verify_manifest() {
             local image="$1"
             local max_attempts=6
+            local inspect_timeout_seconds=30
             local attempt output observed status detail
             # GHCR can take a short time to expose a just-pushed manifest.
             for ((attempt = 1; attempt <= max_attempts; attempt++)); do
-              if output="$(docker buildx imagetools inspect "$image" 2>&1)"; then
+              if output="$(timeout --foreground --kill-after=5s "${inspect_timeout_seconds}s" docker buildx imagetools inspect "$image" 2>&1)"; then
                 observed="$(awk '$1 == "Digest:" { print $2; exit }' <<<"$output")"
                 if [[ "$observed" == "$IMAGE_DIGEST" ]]; then
                   echo "GHCR manifest readback passed for $image ($observed)"
@@ -423,7 +424,11 @@ jobs:
                 detail="digest ${observed:-<missing>}"
               else
                 status=$?
-                detail="inspect exit $status: $(tail -n 1 <<<"$output")"
+                if [[ "$status" -eq 124 ]]; then
+                  detail="inspect timed out after ${inspect_timeout_seconds}s"
+                else
+                  detail="inspect exit $status: $(tail -n 1 <<<"$output")"
+                fi
               fi
               echo "GHCR manifest readback attempt $attempt/$max_attempts failed for $image: expected $IMAGE_DIGEST, got $detail" >&2
               if (( attempt < max_attempts )); then

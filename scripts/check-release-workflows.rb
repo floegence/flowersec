@@ -632,7 +632,7 @@ validate_step_contracts(release_steps, [
       "IMAGE_REPOSITORY" => "ghcr.io/${{ github.repository_owner }}/flowersec-runtime",
       "IMAGE_VERSION" => "${{ steps.vars.outputs.version }}",
     },
-  }, run_sha256: "d9901d5d032e207a5094fda15b5241715e332df3a1c9b5bd701566ca7657807b" },
+  }, run_sha256: "dc44dfc798e48cba289ef21361d4fd3772b7579f631637c4729caf05511e01f8" },
 ], "the unified release workflow release job")
 validate_step_contracts(native_prebuilt_steps, [
   { name: nil, keys: ["uses", "with"], values: {
