@@ -327,10 +327,6 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 	if err := linuxnetlab.RequireCurrentNamespace(clientNamespace); err != nil {
 		return err
 	}
-	scenario, err := scenarioFor(scenarioName)
-	if err != nil {
-		return err
-	}
 	var endpoint *transporttest.ProductDirectEndpoint
 	if err := linuxnetlab.InNamespace(serverNamespace, func() error {
 		var openErr error
@@ -385,9 +381,13 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 			return fmt.Errorf("controller rotation lease finalization = retire(%d,%d) spend(%d)", source.RetireCount(0), source.RetireCount(1), source.SpendCount(2))
 		}
 	}
-	// Use the scenario's bulk payload so packet-level faults remain observable
-	// through stream framing (periodic loss needs to reach its 50-packet period).
-	if err := transporttest.NewProductControllerPair(client, server).RoundTrip(ctx, bytes.Repeat([]byte("controller-weaknet"), scenario.payloadBytes/len("controller-weaknet")), []byte("controller-response")); err != nil {
+	pair := transporttest.NewProductControllerPair(client, server)
+	// Accumulate enough independent RPC packets to cross the periodic-loss
+	// schedule without turning the application stream into a large-frame test.
+	if _, err := transporttest.RunRPC(ctx, pair, 64, 4, 256, 5*time.Second); err != nil {
+		return err
+	}
+	if err := pair.RoundTrip(ctx, bytes.Repeat([]byte("controller-weaknet"), 1024), []byte("controller-response")); err != nil {
 		return err
 	}
 	if scenarioName == "outage-reconnect" {
