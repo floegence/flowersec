@@ -135,10 +135,46 @@ func newArtifactSourceError(cause error, disposition RetryDisposition) *Artifact
 	return &ArtifactSourceError{cause: cause, disposition: disposition}
 }
 
+// ConnectionFailurePhase identifies the controller boundary that produced a
+// public failure.
+type ConnectionFailurePhase string
+
+const (
+	ConnectionFailureArtifact ConnectionFailurePhase = "artifact"
+	ConnectionFailureConnect  ConnectionFailurePhase = "connect"
+	ConnectionFailureSession  ConnectionFailurePhase = "session"
+)
+
 // ConnectionFailure is the current terminal or retrying controller failure.
 type ConnectionFailure struct {
 	Error       error
 	Disposition RetryDisposition
+}
+
+// Phase reports the controller boundary that produced the failure. The phase
+// is empty only for a ConnectionFailure value constructed outside Flowersec.
+func (failure *ConnectionFailure) Phase() ConnectionFailurePhase {
+	if failure == nil || failure.Error == nil {
+		return ""
+	}
+	var phased interface {
+		connectionFailurePhase() ConnectionFailurePhase
+	}
+	if errors.As(failure.Error, &phased) {
+		return phased.connectionFailurePhase()
+	}
+	return ""
+}
+
+type phasedConnectionFailureError struct {
+	phase ConnectionFailurePhase
+	cause error
+}
+
+func (failure *phasedConnectionFailureError) Error() string { return failure.cause.Error() }
+func (failure *phasedConnectionFailureError) Unwrap() error { return failure.cause }
+func (failure *phasedConnectionFailureError) connectionFailurePhase() ConnectionFailurePhase {
+	return failure.phase
 }
 
 // ConnectionSnapshot is an immutable controller snapshot.
@@ -177,6 +213,7 @@ type controllerCycle struct {
 	securityTrigger     bool
 	opaqueTrigger       bool
 	lastFailure         error
+	lastFailurePhase    ConnectionFailurePhase
 }
 
 // ConnectionController is the sole Flowersec session reconnect scheduler. It
@@ -247,7 +284,7 @@ func (controller *ConnectionController) Start(ctx context.Context) {
 	controller.started = true
 	lifecycle, cancel := context.WithCancel(ctx)
 	controller.cancel = cancel
-	controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionConnecting, Attempt: 1})
+	controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionConnecting})
 	controller.mu.Unlock()
 	go controller.run(lifecycle)
 }
@@ -370,15 +407,16 @@ func (controller *ConnectionController) Close(ctx context.Context) error {
 }
 
 type controllerSourceAcquireResult struct {
-	lease   ArtifactLease
-	failure *ArtifactSourceError
+	lease    ArtifactLease
+	failure  *ArtifactSourceError
+	admitted bool
 }
 
 // acquire gives source delivery and controller cancellation one shared
 // linearization point. A cancellation winner keeps ownership of any late
 // lease, drains the source result, and performs the only legal claim/retire
 // cleanup before the scheduler can finish closing.
-func (controller *ConnectionController) acquire(ctx context.Context) (ArtifactLease, *ArtifactSourceError) {
+func (controller *ConnectionController) acquire(ctx context.Context, attempt uint64) (ArtifactLease, *ArtifactSourceError, bool) {
 	result := make(chan controllerSourceAcquireResult, 1)
 	var gate atomic.Uint32 // 0 pending, 1 delivered, 2 cancellation
 	go func() {
@@ -396,6 +434,8 @@ func (controller *ConnectionController) acquire(ctx context.Context) (ArtifactLe
 		// linearization point. Close cannot publish closed before this decision;
 		// once admitted, the source call belongs to the closing controller and
 		// done remains open until its result and cleanup settle.
+		acquired.admitted = true
+		controller.beginNextAttemptLocked(attempt)
 		controller.mu.Unlock()
 		func() {
 			defer func() {
@@ -421,18 +461,18 @@ func (controller *ConnectionController) acquire(ctx context.Context) (ArtifactLe
 
 	select {
 	case acquired := <-result:
-		return acquired.lease, acquired.failure
+		return acquired.lease, acquired.failure, acquired.admitted
 	case <-ctx.Done():
 		if gate.CompareAndSwap(0, 2) {
 			// Wait for source settlement and source-side cleanup so Close's done
 			// channel is a complete ownership barrier.
 			<-result
-			return ArtifactLease{}, nil
+			return ArtifactLease{}, nil, false
 		}
 		// Delivery linearized first. The Controller owns the result and the
 		// normal run loop will claim and retire it after observing cancellation.
 		acquired := <-result
-		return acquired.lease, acquired.failure
+		return acquired.lease, acquired.failure, acquired.admitted
 	}
 }
 
@@ -446,12 +486,14 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			return
 		}
 		if controller.maximumAttempts != 0 && cycle.attempts >= controller.maximumAttempts {
-			controller.fail(cycle.failureOrDefault(), terminalDisposition())
+			controller.fail(cycle.failurePhaseOrDefault(), cycle.failureOrDefault(), terminalDisposition())
 			return
 		}
-		cycle.attempts = saturatingControllerIncrement(cycle.attempts)
-		controller.beginNextAttempt(cycle.attempts)
-		lease, sourceFailure := controller.acquire(ctx)
+		nextAttempt := saturatingControllerIncrement(cycle.attempts)
+		lease, sourceFailure, admitted := controller.acquire(ctx, nextAttempt)
+		if admitted {
+			cycle.attempts = nextAttempt
+		}
 		if sourceFailure != nil && lease.present() {
 			claimed, claimedOK := lease.claimArtifact()
 			if claimedOK {
@@ -461,7 +503,7 @@ func (controller *ConnectionController) run(ctx context.Context) {
 				controller.finishClosed()
 				return
 			}
-			controller.fail(&ConnectError{code: ConnectArtifactInvalid}, terminalDisposition())
+			controller.fail(ConnectionFailureArtifact, &ConnectError{code: ConnectArtifactInvalid}, terminalDisposition())
 			return
 		}
 		claimed, claimedOK := lease.claimArtifact()
@@ -475,18 +517,19 @@ func (controller *ConnectionController) run(ctx context.Context) {
 		if sourceFailure != nil {
 			cycle.consecutiveFailures = saturatingControllerIncrement(cycle.consecutiveFailures)
 			cycle.lastFailure = projectArtifactSourceFailure(sourceFailure)
+			cycle.lastFailurePhase = ConnectionFailureArtifact
 			disposition := sourceFailure.RetryDisposition()
 			if !sourceFailure.valid() {
 				cycle.lastFailure = &ConnectError{code: ConnectArtifactInvalid}
 				disposition = terminalDisposition()
 			}
-			if !controller.handleFailure(ctx, cycle.lastFailure, disposition, cycle.consecutiveFailures, cycle.attempts) {
+			if !controller.handleFailure(ctx, cycle.lastFailurePhase, cycle.lastFailure, disposition, cycle.consecutiveFailures, cycle.attempts) {
 				return
 			}
 			continue
 		}
 		if !claimedOK || !claimed.valid() {
-			controller.fail(&ConnectError{code: ConnectArtifactInvalid}, terminalDisposition())
+			controller.fail(ConnectionFailureArtifact, &ConnectError{code: ConnectArtifactInvalid}, terminalDisposition())
 			return
 		}
 		if cycle.mode == controllerAcquireReplacement {
@@ -496,8 +539,9 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			_ = claimed.retire(ctx)
 			cycle.consecutiveFailures = saturatingControllerIncrement(cycle.consecutiveFailures)
 			cycle.lastFailure = &ConnectError{code: ConnectExpired}
+			cycle.lastFailurePhase = ConnectionFailureConnect
 			cycle.mode = controllerAcquirePrimary
-			if !controller.handleFailure(ctx, cycle.lastFailure, retryableDisposition(), cycle.consecutiveFailures, cycle.attempts) {
+			if !controller.handleFailure(ctx, cycle.lastFailurePhase, cycle.lastFailure, retryableDisposition(), cycle.consecutiveFailures, cycle.attempts) {
 				return
 			}
 			continue
@@ -508,7 +552,7 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			_ = claimed.retire(ctx)
 			cycle.consecutiveFailures = saturatingControllerIncrement(cycle.consecutiveFailures)
 			cycle.lastFailure = eligibilityErr
-			controller.fail(eligibilityErr, terminalDisposition())
+			controller.fail(ConnectionFailureConnect, eligibilityErr, terminalDisposition())
 			return
 		}
 
@@ -535,6 +579,7 @@ func (controller *ConnectionController) run(ctx context.Context) {
 		if outcome.err != nil {
 			cycle.consecutiveFailures = saturatingControllerIncrement(cycle.consecutiveFailures)
 			cycle.lastFailure = outcome.err
+			cycle.lastFailurePhase = ConnectionFailureConnect
 			code := connectErrorCode(outcome.err)
 			// The mandatory race-end expiry check is authoritative over any
 			// candidate diagnostic collected before that boundary. In particular,
@@ -550,40 +595,40 @@ func (controller *ConnectionController) run(ctx context.Context) {
 					cycle.mode = controllerAcquireReplacement
 					continue
 				}
-				controller.fail(cycle.triggerFailure(), terminalDisposition())
+				controller.fail(ConnectionFailureConnect, cycle.triggerFailure(), terminalDisposition())
 				return
 			}
 			switch code {
 			case ConnectArtifactInvalid:
-				controller.fail(outcome.err, terminalDisposition())
+				controller.fail(ConnectionFailureConnect, outcome.err, terminalDisposition())
 				return
 			}
 			if outcome.spendStarted {
 				cycle.mode = controllerAcquirePrimary
 			}
 			if cycle.mode == controllerAcquireReplacement && !outcome.spendStarted && code != ConnectExpired {
-				controller.fail(cycle.triggerFailure(), terminalDisposition())
+				controller.fail(ConnectionFailureConnect, cycle.triggerFailure(), terminalDisposition())
 				return
 			}
 			switch code {
 			case ConnectTransportSecurityUnsupported:
-				controller.fail(outcome.err, terminalDisposition())
+				controller.fail(ConnectionFailureConnect, outcome.err, terminalDisposition())
 				return
 			case ConnectTransportSecurityFailed:
-				controller.fail(outcome.err, terminalDisposition())
+				controller.fail(ConnectionFailureConnect, outcome.err, terminalDisposition())
 				return
 			}
 			disposition := connectErrorDisposition(outcome.err)
 			if outcome.hasDisposition {
 				disposition = outcome.retryDisposition
 			}
-			if !controller.handleFailure(ctx, outcome.err, disposition, cycle.consecutiveFailures, cycle.attempts) {
+			if !controller.handleFailure(ctx, ConnectionFailureConnect, outcome.err, disposition, cycle.consecutiveFailures, cycle.attempts) {
 				return
 			}
 			continue
 		}
 		if session == nil {
-			controller.fail(&ConnectError{code: ConnectConnectionFailed}, terminalDisposition())
+			controller.fail(ConnectionFailureConnect, &ConnectError{code: ConnectConnectionFailed}, terminalDisposition())
 			return
 		}
 
@@ -613,7 +658,8 @@ func (controller *ConnectionController) run(ctx context.Context) {
 		}
 		cycle.consecutiveFailures = 1
 		cycle.lastFailure = terminalError
-		if !controller.handleFailure(ctx, terminalError, disposition, cycle.consecutiveFailures, cycle.attempts) {
+		cycle.lastFailurePhase = ConnectionFailureSession
+		if !controller.handleFailure(ctx, cycle.lastFailurePhase, terminalError, disposition, cycle.consecutiveFailures, cycle.attempts) {
 			return
 		}
 	}
@@ -653,6 +699,13 @@ func (cycle *controllerCycle) failureOrDefault() error {
 		return cycle.lastFailure
 	}
 	return &ConnectError{code: ConnectConnectionFailed}
+}
+
+func (cycle *controllerCycle) failurePhaseOrDefault() ConnectionFailurePhase {
+	if cycle == nil || cycle.lastFailurePhase == "" {
+		return ConnectionFailureArtifact
+	}
+	return cycle.lastFailurePhase
 }
 
 func (cycle *controllerCycle) triggerFailure() error {
@@ -789,6 +842,7 @@ func connectErrorCode(err error) ConnectErrorCode {
 
 func (controller *ConnectionController) handleFailure(
 	ctx context.Context,
+	phase ConnectionFailurePhase,
 	err error,
 	disposition RetryDisposition,
 	failureOrdinal uint64,
@@ -800,14 +854,14 @@ func (controller *ConnectionController) handleFailure(
 	}
 	if disposition.Kind == RetryDispositionTerminal ||
 		(controller.maximumAttempts != 0 && attemptsSinceConnected >= controller.maximumAttempts) {
-		controller.failAtAttempt(err, terminalDisposition(), attemptsSinceConnected)
+		controller.failAtAttempt(phase, err, terminalDisposition(), attemptsSinceConnected)
 		return false
 	}
 	notBeforeUnixMilliseconds := int64(-1)
 	if disposition.Kind == RetryDispositionRetryAfter {
 		notBeforeUnixMilliseconds = disposition.RetryAtUnixMilliseconds
 	}
-	if !controller.wait(ctx, err, disposition, notBeforeUnixMilliseconds, connectionControllerBackoff(failureOrdinal), attemptsSinceConnected) {
+	if !controller.wait(ctx, phase, err, disposition, notBeforeUnixMilliseconds, connectionControllerBackoff(failureOrdinal), attemptsSinceConnected) {
 		controller.finishClosed()
 		return false
 	}
@@ -830,6 +884,7 @@ func connectionControllerBackoff(failureOrdinal uint64) time.Duration {
 
 func (controller *ConnectionController) wait(
 	ctx context.Context,
+	phase ConnectionFailurePhase,
 	err error,
 	disposition RetryDisposition,
 	notBeforeUnixMilliseconds int64,
@@ -848,7 +903,7 @@ drained:
 	controller.retryNotBeforeUnixMilliseconds = notBeforeUnixMilliseconds
 	controller.setSnapshotLocked(ConnectionSnapshot{
 		State: ConnectionWaiting, Attempt: attempt,
-		Failure: connectionFailure(err, disposition),
+		Failure: connectionFailure(phase, err, disposition),
 	})
 	controller.mu.Unlock()
 	backoffMilliseconds := uint64(max(backoff/time.Millisecond, 0))
@@ -910,11 +965,9 @@ func controllerWallDelayMilliseconds(deadline, now int64) uint64 {
 	return uint64(deadline) + uint64(-(now + 1)) + 1
 }
 
-func (controller *ConnectionController) beginNextAttempt(attempt uint64) {
-	controller.mu.Lock()
+func (controller *ConnectionController) beginNextAttemptLocked(attempt uint64) {
 	controller.retryNotBeforeUnixMilliseconds = -1
 	controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionConnecting, Attempt: attempt})
-	controller.mu.Unlock()
 }
 
 func (controller *ConnectionController) publishConnected(session Session) bool {
@@ -928,22 +981,22 @@ func (controller *ConnectionController) publishConnected(session Session) bool {
 	return true
 }
 
-func (controller *ConnectionController) fail(err error, disposition RetryDisposition) {
+func (controller *ConnectionController) fail(phase ConnectionFailurePhase, err error, disposition RetryDisposition) {
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
-	controller.setFailureLocked(err, disposition, controller.snapshot.Attempt)
+	controller.setFailureLocked(phase, err, disposition, controller.snapshot.Attempt)
 }
 
-func (controller *ConnectionController) failAtAttempt(err error, disposition RetryDisposition, attempt uint64) {
+func (controller *ConnectionController) failAtAttempt(phase ConnectionFailurePhase, err error, disposition RetryDisposition, attempt uint64) {
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
-	controller.setFailureLocked(err, disposition, attempt)
+	controller.setFailureLocked(phase, err, disposition, attempt)
 }
 
-func (controller *ConnectionController) setFailureLocked(err error, disposition RetryDisposition, attempt uint64) {
+func (controller *ConnectionController) setFailureLocked(phase ConnectionFailurePhase, err error, disposition RetryDisposition, attempt uint64) {
 	controller.setSnapshotLocked(ConnectionSnapshot{
 		State: ConnectionFailed, Attempt: attempt,
-		Failure: connectionFailure(err, disposition),
+		Failure: connectionFailure(phase, err, disposition),
 	})
 }
 
@@ -1008,11 +1061,14 @@ func copyConnectionSnapshot(snapshot ConnectionSnapshot) ConnectionSnapshot {
 	return copy
 }
 
-func connectionFailure(err error, disposition RetryDisposition) *ConnectionFailure {
+func connectionFailure(phase ConnectionFailurePhase, err error, disposition RetryDisposition) *ConnectionFailure {
 	if err == nil {
 		err = ErrConnectionFailed
 	}
-	return &ConnectionFailure{Error: err, Disposition: disposition}
+	return &ConnectionFailure{
+		Error:       &phasedConnectionFailureError{phase: phase, cause: err},
+		Disposition: disposition,
+	}
 }
 
 func connectErrorDisposition(err error) RetryDisposition {

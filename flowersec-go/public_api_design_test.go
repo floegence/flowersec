@@ -2,12 +2,20 @@ package flowersec_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
 	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
 )
+
+// compileConnectionFailureLayout intentionally uses the historical two-field
+// unkeyed form so a patch release cannot silently change ConnectionFailure's
+// public struct layout.
+func compileConnectionFailureLayout(err error, disposition flowersec.RetryDisposition) flowersec.ConnectionFailure {
+	return flowersec.ConnectionFailure{err, disposition}
+}
 
 func compileConnectFunction(
 	ctx context.Context,
@@ -27,5 +35,12 @@ func TestOfficialExampleLoadsTrustRootsAndReportsSetupErrors(t *testing.T) {
 		if !strings.Contains(text, required) {
 			t.Errorf("official example is missing %q", required)
 		}
+	}
+}
+
+func TestConnectionFailureKeepsTwoFieldExternalLiteralLayout(t *testing.T) {
+	failure := compileConnectionFailureLayout(errors.New("layout"), flowersec.RetryDisposition{})
+	if failure.Error == nil {
+		t.Fatal("unkeyed ConnectionFailure literal did not preserve Error field")
 	}
 }

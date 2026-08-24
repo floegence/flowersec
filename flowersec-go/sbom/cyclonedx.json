@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:8dae35b6-d970-5ff4-80c6-4e860cc06dcf",
+  "serialNumber": "urn:uuid:98622be7-fe3a-5562-8af4-649d87752cdf",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "github.com/floegence/flowersec/flowersec-go/v3",
-      "version": "v3.0.1",
-      "purl": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v3@v3.0.1",
-      "bom-ref": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v3@v3.0.1"
+      "version": "v3.0.2",
+      "purl": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v3@v3.0.2",
+      "bom-ref": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v3@v3.0.2"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "428d40c24d97553e640a89f6e0397fed24c3106752eb8397571157fb9ea19172"
+        "value": "e8ae21231918c515d87037589e2479d87b894cc7347dda3205213a8415069678"
       }
     ]
   },
@@ -358,7 +358,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v3@v3.0.1",
+      "ref": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v3@v3.0.2",
       "dependsOn": [
         "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
         "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.5.4",

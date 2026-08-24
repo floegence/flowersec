@@ -1124,6 +1124,7 @@ const controllerVectors = {
     "transport_security_failed",
     "connection_failed",
   ],
+  failure_phases: ["artifact", "connect", "session"],
   internal_transport_results: [
     ["invalid_artifact", null, "terminal"],
     ["expired_artifact", null, "acquire_primary"],
@@ -1189,7 +1190,8 @@ const controllerVectors = {
       steps: ["browser_pin_opaque_A", "retire_A", "acquire_replacement_immediate", "claim_B", "replacement_same_digest", "retire_B"],
       input: { replacement_policy: "same_pin", trigger: "browser_pin_opaque" },
       expected: {
-        final_state: "failed", public_error: "connection_failed", disposition: "terminal",
+        final_state: "failed", public_error: "connection_failed", failure_phase: "connect",
+        disposition: "terminal",
         acquisitions: 2, connect_attempts: 1, transports_created: 1,
         replacement_acquisitions: 1, replacement_quota_used: 1,
         spend_callbacks: 0, retire_callbacks: 2,
@@ -1312,11 +1314,25 @@ const controllerVectors = {
       steps: ["acquire_primary_failure", "wait_backoff_ordinal_1", "acquire_primary_failure", "budget_exhausted"],
       input: { maximum_attempts: 2, wake_retry_manually: true },
       expected: {
-        final_state: "failed", public_error: "connection_failed", disposition: "terminal",
+        final_state: "failed", public_error: "connection_failed", failure_phase: "artifact",
+        disposition: "terminal",
         acquisitions: 2, connect_attempts: 0, transports_created: 0,
         replacement_acquisitions: 0, replacement_quota_used: 0,
         spend_callbacks: 0, retire_callbacks: 0,
         lease_terminal_states: [], retry_delays_ms: [250],
+      },
+    },
+    {
+      id: "invalid-source-retry-after",
+      driver: "source-contract-validation",
+      steps: ["acquire_primary_invalid_retry_after", "reject_source_contract", "terminalize_artifact_invalid"],
+      input: { retry_after_unix_ms: 253402300800000 },
+      expected: {
+        final_state: "failed", public_error: "artifact_invalid", failure_phase: "artifact",
+        disposition: "terminal", acquisitions: 1, connect_attempts: 0, transports_created: 0,
+        replacement_acquisitions: 0, replacement_quota_used: 0,
+        spend_callbacks: 0, retire_callbacks: 0,
+        lease_terminal_states: [], retry_delays_ms: [], attempt: 1, failure_ordinal: 1,
       },
     },
     {
@@ -1641,6 +1657,43 @@ const controllerVectors = {
     terminal_states: ["consumed", "retired"],
   },
 };
+
+const controllerFailurePhaseByScenario = new Map([
+  ["pin-mismatch-same-policy-terminal", "connect"],
+  ["pin-to-ca-filtered", "connect"],
+  ["browser-opaque-exhausted", "connect"],
+  ["all-unsupported", "connect"],
+  ["post-spend-retry-preserves-quota", "connect"],
+  ["attempt-exhaustion", "artifact"],
+  ["invalid-source-retry-after", "artifact"],
+  ["race-order-independent-security-priority", "connect"],
+  ["failure-ordinal-counts-attempt-once", "connect"],
+  ["artifact-expiry-before-race", "connect"],
+  ["artifact-expiry-at-race-end", "connect"],
+  ["artifact-expiry-immediately-before-spend", "connect"],
+  ["artifact-expiry-after-spend", "connect"],
+  ["established-session-terminal-termination-resets-cycle", "session"],
+  ["single-ca-untrusted-terminal", "connect"],
+  ["ca-untrusted-dominates-ordinary-failure", "connect"],
+  ["multiple-pin-trigger-endpoints-filtered", "connect"],
+  ["capability-snapshot-invalidation-barrier", "connect"],
+  ["primary-fsa3-reject-consumes-spent", "connect"],
+  ["primary-fsa3-retryable-consumes-spent", "connect"],
+  ["replacement-fsa3-reject-consumes-spent", "connect"],
+  ["replacement-fsa3-retryable-consumes-spent", "connect"],
+  ["primary-fsh3-failure-consumes-spent", "connect"],
+  ["replacement-fsh3-failure-consumes-spent", "connect"],
+  ["artifact-source-repeats-consumed-lease", "artifact"],
+  ["artifact-source-repeats-retired-lease", "artifact"],
+  ["concurrent-capability-invalidation-replacement-barrier", "connect"],
+]);
+for (const scenario of [...controllerVectors.scenarios, ...controllerVectors.browser_capability_scenarios]) {
+  const failurePhase = controllerFailurePhaseByScenario.get(scenario.id) ?? null;
+  if ((scenario.expected.public_error === null) !== (failurePhase === null)) {
+    throw new Error(`controller failure phase is incomplete for ${scenario.id}`);
+  }
+  scenario.expected.failure_phase = failurePhase;
+}
 write("controller_vectors.json", controllerVectors);
 
 const inherited = [

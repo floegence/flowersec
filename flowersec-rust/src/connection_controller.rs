@@ -91,26 +91,39 @@ pub enum RetryDisposition {
 #[error("Flowersec artifact acquisition failed")]
 pub struct ArtifactSourceError {
     disposition: RetryDisposition,
+    code: ConnectErrorCode,
 }
 
 impl ArtifactSourceError {
     pub const fn terminal() -> Self {
         Self {
             disposition: RetryDisposition::Terminal,
+            code: ConnectErrorCode::ConnectionFailed,
         }
     }
     pub const fn retryable() -> Self {
         Self {
             disposition: RetryDisposition::Retryable,
+            code: ConnectErrorCode::ConnectionFailed,
         }
     }
     pub const fn retry_after(not_before_unix_milliseconds: u64) -> Self {
         Self {
             disposition: RetryDisposition::RetryAfter(not_before_unix_milliseconds),
+            code: ConnectErrorCode::ConnectionFailed,
+        }
+    }
+    const fn invalid() -> Self {
+        Self {
+            disposition: RetryDisposition::Terminal,
+            code: ConnectErrorCode::ArtifactInvalid,
         }
     }
     pub const fn disposition(self) -> RetryDisposition {
         self.disposition
+    }
+    pub const fn code(self) -> ConnectErrorCode {
+        self.code
     }
 }
 
@@ -179,6 +192,14 @@ pub enum ConnectionFailure {
 }
 
 impl ConnectionFailure {
+    pub const fn code(self) -> ConnectErrorCode {
+        match self {
+            Self::ArtifactSource(error) => error.code(),
+            Self::Connect { code, .. } => code,
+            Self::Session { .. } => ConnectErrorCode::ConnectionFailed,
+        }
+    }
+
     pub const fn disposition(self) -> RetryDisposition {
         match self {
             Self::ArtifactSource(error) => error.disposition(),
@@ -227,6 +248,14 @@ struct ControllerInner {
     scheduler_join_complete: AtomicBool,
     scheduler_join_complete_changed: Notify,
     state: Mutex<ControllerState>,
+    // Admission, source-future construction, and close publication share one
+    // short synchronous critical section. Third-party futures are polled only
+    // after this gate is released.
+    acquisition_gate: Mutex<()>,
+    #[cfg(test)]
+    before_acquire_admission: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    #[cfg(test)]
+    after_acquire_claim: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl fmt::Debug for ControllerInner {
@@ -312,6 +341,11 @@ impl ConnectionController {
                     },
                     current: None,
                 }),
+                acquisition_gate: Mutex::new(()),
+                #[cfg(test)]
+                before_acquire_admission: Mutex::new(None),
+                #[cfg(test)]
+                after_acquire_claim: Mutex::new(None),
             }),
             task: Mutex::new(None),
             close_lock: AsyncMutex::new(()),
@@ -373,9 +407,12 @@ impl ConnectionController {
     pub async fn close(&self) {
         // Serialize close callers so every caller waits for the same cleanup barrier.
         let _close = self.close_lock.lock().await;
-        self.inner.cancellation.cancel();
-        self.inner.retry_wake.notify_waiters();
-        self.inner.start_close_workflow();
+        {
+            let _admission = lock(&self.inner.acquisition_gate);
+            self.inner.cancellation.cancel();
+            self.inner.retry_wake.notify_waiters();
+            self.inner.start_close_workflow();
+        }
         let task = lock(&self.task).take();
         self.inner.start_scheduler_join_workflow(task);
         self.inner.wait_close_completion().await;
@@ -385,6 +422,7 @@ impl ConnectionController {
 
 impl Drop for ConnectionController {
     fn drop(&mut self) {
+        let _admission = lock(&self.inner.acquisition_gate);
         self.inner.cancellation.cancel();
         self.inner.retry_wake.notify_waiters();
     }
@@ -424,6 +462,21 @@ impl ControllerInner {
             state.status.retry_not_before = None;
             state.status.last_failure = None;
         })
+    }
+
+    #[cfg(test)]
+    fn run_before_acquire_admission(&self) {
+        let hook = lock(&self.before_acquire_admission).clone();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+    #[cfg(test)]
+    fn run_after_acquire_claim(&self) {
+        let hook = lock(&self.after_acquire_claim).clone();
+        if let Some(hook) = hook {
+            hook();
+        }
     }
     fn set_connected(&self, attempt: u64, session: Arc<dyn Session>) -> bool {
         self.update(|state| {
@@ -482,6 +535,7 @@ impl ControllerInner {
                 state.status.state = ConnectionState::Closed;
                 state.status.next_retry_at = None;
                 state.status.retry_not_before = None;
+                state.status.last_failure = None;
                 state.status.revision = state.status.revision.saturating_add(1);
             }
             (state.current.take(), changed)
@@ -735,11 +789,9 @@ async fn run_controller(inner: Arc<ControllerInner>) {
         }
         attempt = increment_safe_counter(attempt);
         attempts_in_cycle = increment_safe_counter(attempts_in_cycle);
-        if !inner.set_connecting(attempt) {
-            return;
-        }
-        let claimed = match acquire_lease(&inner).await {
-            Ok(claimed) => claimed,
+        let claimed = match acquire_lease(&inner, attempt).await {
+            Ok(Some(claimed)) => claimed,
+            Ok(None) => return,
             Err(failure) => {
                 if !schedule_retry(&inner, attempt, attempts_in_cycle, retry_index, failure).await {
                     return;
@@ -905,22 +957,31 @@ async fn run_controller(inner: Arc<ControllerInner>) {
 
 async fn acquire_lease(
     inner: &ControllerInner,
-) -> Result<ClaimedArtifactLeaseV3, ConnectionFailure> {
+    attempt: u64,
+) -> Result<Option<ClaimedArtifactLeaseV3>, ConnectionFailure> {
     // ArtifactSource is a public async boundary. Isolate both panics while
     // creating its future and panics while polling it so a source contract
     // violation cannot terminate the controller scheduler.
-    let future = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        inner.source.acquire(inner.cancellation.child_token())
-    })) {
-        Ok(future) => future,
-        Err(_) => {
-            return Err(connect_failure(
-                ConnectErrorCode::ArtifactInvalid,
-                RetryDisposition::Terminal,
-            ));
+    #[cfg(test)]
+    inner.run_before_acquire_admission();
+    let future = {
+        let _admission = lock(&inner.acquisition_gate);
+        if inner.cancellation.is_cancelled() || !inner.set_connecting(attempt) {
+            return Ok(None);
+        }
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            inner.source.acquire(inner.cancellation.child_token())
+        })) {
+            Ok(future) => future,
+            Err(_) => {
+                return Err(ConnectionFailure::ArtifactSource(
+                    ArtifactSourceError::invalid(),
+                ));
+            }
         }
     };
-    let mut acquisition = Box::pin(std::panic::AssertUnwindSafe(future).catch_unwind());
+    let acquisition = std::panic::AssertUnwindSafe(future).catch_unwind();
+    tokio::pin!(acquisition);
     let result = tokio::select! {
         biased;
         _ = inner.cancellation.cancelled() => {
@@ -931,33 +992,31 @@ async fn acquire_lease(
                 // ownership token retires the late lease without exposing it
                 // to the Controller's connector path.
                 let _ = claimed.retire().await;
-            }
-            return Err(connect_failure(
-                ConnectErrorCode::ConnectionFailed,
-                RetryDisposition::Terminal,
-            ));
+                }
+            return Ok(None);
         },
         result = &mut acquisition => result,
     };
-    let result = result.map_err(|_| {
-        connect_failure(
-            ConnectErrorCode::ArtifactInvalid,
-            RetryDisposition::Terminal,
-        )
-    })?;
+    let result =
+        result.map_err(|_| ConnectionFailure::ArtifactSource(ArtifactSourceError::invalid()))?;
     let lease = result.map_err(|error| match error.disposition() {
-        RetryDisposition::RetryAfter(deadline) if !valid_retry_after(deadline) => connect_failure(
-            ConnectErrorCode::ArtifactInvalid,
-            RetryDisposition::Terminal,
-        ),
+        RetryDisposition::RetryAfter(deadline) if !valid_retry_after(deadline) => {
+            ConnectionFailure::ArtifactSource(ArtifactSourceError::invalid())
+        }
         _ => ConnectionFailure::ArtifactSource(error),
     })?;
-    lease.claim_for_controller().map_err(|_| {
-        connect_failure(
-            ConnectErrorCode::ArtifactInvalid,
-            RetryDisposition::Terminal,
-        )
-    })
+    let claimed = lease
+        .claim_for_controller()
+        .map_err(|_| ConnectionFailure::ArtifactSource(ArtifactSourceError::invalid()))?;
+    #[cfg(test)]
+    inner.run_after_acquire_claim();
+    if inner.cancellation.is_cancelled() {
+        // Delivery won the source race, so the Controller owns the lease even
+        // when cancellation is observed immediately afterward.
+        let _ = claimed.retire().await;
+        return Ok(None);
+    }
+    Ok(Some(claimed))
 }
 
 fn valid_retry_after(deadline: u64) -> bool {
@@ -994,11 +1053,9 @@ async fn run_replacement(
         }
         *status_attempt = increment_safe_counter(*status_attempt);
         *attempts_in_cycle = increment_safe_counter(*attempts_in_cycle);
-        if !inner.set_connecting(*status_attempt) {
-            return ReplacementResult::Stopped;
-        }
-        match acquire_lease(inner).await {
-            Ok(claimed) => break claimed,
+        match acquire_lease(inner, *status_attempt).await {
+            Ok(Some(claimed)) => break claimed,
+            Ok(None) => return ReplacementResult::Stopped,
             Err(failure) => {
                 if !schedule_retry(
                     inner,
@@ -1498,7 +1555,8 @@ mod tests {
             | "attempt-saturation"
             | "capability-barrier"
             | "admission-spend-boundary"
-            | "duplicate-lease-identity" => {}
+            | "duplicate-lease-identity"
+            | "source-contract-validation" => {}
             driver => panic!("unknown controller vector driver {driver}"),
         }
         let expected = &scenario.expected;
@@ -1565,6 +1623,8 @@ mod tests {
         if let Some(attempt) = expected.attempt {
             if scenario.driver == "attempt-saturation" {
                 assert!(attempt > 0);
+            } else if scenario.driver == "source-contract-validation" {
+                assert_eq!(attempt, 1);
             } else {
                 assert_eq!(scenario.driver, "cycle-reset-terminal");
                 assert_eq!(attempt, 0);
@@ -1587,7 +1647,10 @@ mod tests {
             assert_eq!(ordinal, 1);
             assert!(matches!(
                 scenario.driver.as_str(),
-                "failure-ordinal" | "cycle-reset" | "cycle-reset-terminal"
+                "failure-ordinal"
+                    | "cycle-reset"
+                    | "cycle-reset-terminal"
+                    | "source-contract-validation"
             ));
         }
         if let Some(interval) = expected.maximum_wall_reread_ms {
@@ -1718,6 +1781,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn source_admission_publishes_one_connecting_revision() {
+        let source = Arc::new(LateLeaseSource {
+            lease: Mutex::new(None),
+            acquisitions: AtomicU64::new(0),
+        });
+        let controller = ConnectionController::new_with_connector(
+            source.clone(),
+            test_options(None),
+            scripted_connector(std::iter::empty::<ConnectorStep>()),
+        );
+        controller.start();
+        while source.acquisitions.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+
+        let status = controller.status();
+        assert_eq!(status.state, ConnectionState::Connecting);
+        assert_eq!(status.revision, 1);
+        controller.close().await;
+    }
+
+    #[tokio::test]
     async fn cancellation_drains_and_retires_a_late_delivered_lease() {
         let retired = Arc::new(AtomicU64::new(0));
         let source = Arc::new(LateLeaseSource {
@@ -1837,6 +1922,94 @@ mod tests {
             .expect("later close remained blocked after scheduler cleanup");
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn delivery_first_close_waits_for_claimed_lease_retirement() {
+        let claim_entered = Arc::new(std::sync::Barrier::new(2));
+        let claim_release = Arc::new(std::sync::Barrier::new(2));
+        let claim_entered_hook = claim_entered.clone();
+        let claim_release_hook = claim_release.clone();
+        let retire_entered = Arc::new(Notify::new());
+        let retire_release = Arc::new(Notify::new());
+        let retire_entered_capture = retire_entered.clone();
+        let retire_release_capture = retire_release.clone();
+        let spends = Arc::new(AtomicU64::new(0));
+        let spends_capture = spends.clone();
+        let retires = Arc::new(AtomicU64::new(0));
+        let retires_capture = retires.clone();
+        let connector_calls = Arc::new(AtomicU64::new(0));
+        let lease = ArtifactLeaseV3::new_with_retire(
+            pin_only_artifact([0x11; 32]),
+            move || async move {
+                spends_capture.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+            move || async move {
+                retires_capture.fetch_add(1, Ordering::SeqCst);
+                retire_entered_capture.notify_one();
+                retire_release_capture.notified().await;
+                Ok(())
+            },
+        );
+        let lease_copy = lease.clone();
+        let controller = Arc::new(ConnectionController::new_with_connector(
+            Arc::new(QueueSource::new([Ok(lease)])),
+            test_options(None),
+            counting_connector([ConnectorStep::Success], connector_calls.clone()),
+        ));
+        *lock(&controller.inner.after_acquire_claim) = Some(Arc::new(move || {
+            claim_entered_hook.wait();
+            claim_release_hook.wait();
+        }));
+
+        controller.start();
+        tokio::task::block_in_place(|| claim_entered.wait());
+        let close_controller = controller.clone();
+        let mut close = tokio::spawn(async move {
+            close_controller.close().await;
+        });
+        let closed = tokio::time::timeout(Duration::from_millis(500), async {
+            let closed = controller.snapshot();
+            if closed.state == ConnectionState::Closed {
+                closed
+            } else {
+                controller.wait_for_snapshot_change(&closed).await
+            }
+        })
+        .await
+        .expect("close did not publish Closed while acquisition was paused");
+        assert_eq!(closed.state, ConnectionState::Closed);
+        assert_eq!(closed.failure, None);
+        assert!(!close.is_finished());
+        assert_eq!(connector_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(spends.load(Ordering::SeqCst), 0);
+        assert_eq!(retires.load(Ordering::SeqCst), 0);
+
+        tokio::task::block_in_place(|| claim_release.wait());
+        tokio::select! {
+            biased;
+            result = &mut close => panic!("close returned before retirement started: {result:?}"),
+            _ = retire_entered.notified() => {}
+        }
+        assert_eq!(retires.load(Ordering::SeqCst), 1);
+        assert_eq!(connector_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(spends.load(Ordering::SeqCst), 0);
+        assert!(
+            lease_copy.claim().is_err(),
+            "Controller-claimed lease became reusable"
+        );
+
+        retire_release.notify_one();
+        tokio::time::timeout(Duration::from_millis(500), &mut close)
+            .await
+            .expect("close did not complete after retirement cleanup")
+            .expect("close task panicked");
+        assert_eq!(controller.snapshot().state, ConnectionState::Closed);
+        assert_eq!(controller.snapshot().failure, None);
+        assert_eq!(retires.load(Ordering::SeqCst), 1);
+        assert_eq!(connector_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(spends.load(Ordering::SeqCst), 0);
+    }
+
     #[tokio::test]
     async fn invalid_retry_after_and_maximum_attempts_fail_before_retry() {
         let source = Arc::new(QueueSource::new([Err(ArtifactSourceError::retry_after(
@@ -1852,10 +2025,13 @@ mod tests {
         assert_eq!(source.acquisitions.load(Ordering::SeqCst), 1);
         assert_eq!(
             status.last_failure,
-            Some(connect_failure(
-                ConnectErrorCode::ArtifactInvalid,
-                RetryDisposition::Terminal
+            Some(ConnectionFailure::ArtifactSource(
+                ArtifactSourceError::invalid()
             ))
+        );
+        assert_eq!(
+            status.last_failure.map(ConnectionFailure::code),
+            Some(ConnectErrorCode::ArtifactInvalid)
         );
         controller.close().await;
 
@@ -1869,6 +2045,104 @@ mod tests {
         assert_eq!(source.acquisitions.load(Ordering::SeqCst), 0);
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn close_winning_primary_admission_prevents_source_call() {
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let entered_hook = entered.clone();
+        let release_hook = release.clone();
+        let source = Arc::new(QueueSource::new(std::iter::empty()));
+        let controller = ConnectionController::new_with_connector(
+            source.clone(),
+            test_options(None),
+            scripted_connector(std::iter::empty::<ConnectorStep>()),
+        );
+        *lock(&controller.inner.before_acquire_admission) = Some(Arc::new(move || {
+            entered_hook.wait();
+            release_hook.wait();
+        }));
+
+        controller.start();
+        tokio::task::block_in_place(|| entered.wait());
+        let mut close = Box::pin(controller.close());
+        tokio::time::timeout(Duration::from_millis(500), async {
+            loop {
+                tokio::select! {
+                    () = &mut close => panic!("close completed before the scheduler barrier released"),
+                    () = tokio::task::yield_now() => {
+                        if controller.status().state == ConnectionState::Closed {
+                            return;
+                        }
+                    }
+                }
+            }
+        })
+        .await
+        .expect("close did not publish Closed before primary admission");
+        assert_eq!(source.acquisitions.load(Ordering::SeqCst), 0);
+
+        tokio::task::block_in_place(|| release.wait());
+        tokio::time::timeout(Duration::from_millis(500), &mut close)
+            .await
+            .expect("close did not complete after primary admission released");
+        assert_eq!(source.acquisitions.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn close_winning_replacement_admission_prevents_source_call() {
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let hook_calls = Arc::new(AtomicU64::new(0));
+        let entered_hook = entered.clone();
+        let release_hook = release.clone();
+        let hook_calls_capture = hook_calls.clone();
+        let spent = Arc::new(AtomicU64::new(0));
+        let retired = Arc::new(AtomicU64::new(0));
+        let source = Arc::new(QueueSource::new([Ok(test_lease(
+            pin_only_artifact([0x11; 32]),
+            spent,
+            retired,
+        ))]));
+        let controller = ConnectionController::new_with_connector(
+            source.clone(),
+            test_options(None),
+            scripted_connector([ConnectorStep::PreSpendSecurity]),
+        );
+        *lock(&controller.inner.before_acquire_admission) = Some(Arc::new(move || {
+            if hook_calls_capture.fetch_add(1, Ordering::SeqCst) == 1 {
+                entered_hook.wait();
+                release_hook.wait();
+            }
+        }));
+
+        controller.start();
+        tokio::task::block_in_place(|| entered.wait());
+        assert_eq!(source.acquisitions.load(Ordering::SeqCst), 1);
+        let mut close = Box::pin(controller.close());
+        tokio::time::timeout(Duration::from_millis(500), async {
+            loop {
+                tokio::select! {
+                    () = &mut close => panic!("close completed before the scheduler barrier released"),
+                    () = tokio::task::yield_now() => {
+                        if controller.status().state == ConnectionState::Closed {
+                            return;
+                        }
+                    }
+                }
+            }
+        })
+        .await
+        .expect("close did not publish Closed before replacement admission");
+        assert_eq!(source.acquisitions.load(Ordering::SeqCst), 1);
+
+        tokio::task::block_in_place(|| release.wait());
+        tokio::time::timeout(Duration::from_millis(500), &mut close)
+            .await
+            .expect("close did not complete after replacement admission released");
+        assert_eq!(source.acquisitions.load(Ordering::SeqCst), 1);
+        assert_eq!(hook_calls.load(Ordering::SeqCst), 2);
+    }
+
     #[tokio::test]
     async fn source_panic_projects_to_artifact_invalid_terminal() {
         let controller = ConnectionController::new_with_connector(
@@ -1880,12 +2154,12 @@ mod tests {
         let status = wait_for_state(&controller, ConnectionState::Failed).await;
         assert_eq!(
             status.last_failure,
-            Some(connect_failure(
-                ConnectErrorCode::ArtifactInvalid,
-                RetryDisposition::Terminal,
+            Some(ConnectionFailure::ArtifactSource(
+                ArtifactSourceError::invalid()
             ))
         );
         controller.close().await;
+        assert_eq!(controller.snapshot().failure, None);
     }
 
     #[tokio::test]
@@ -1899,12 +2173,50 @@ mod tests {
         let status = wait_for_state(&controller, ConnectionState::Failed).await;
         assert_eq!(
             status.last_failure,
-            Some(connect_failure(
-                ConnectErrorCode::ArtifactInvalid,
-                RetryDisposition::Terminal,
+            Some(ConnectionFailure::ArtifactSource(
+                ArtifactSourceError::invalid()
             ))
         );
         controller.close().await;
+        assert_eq!(controller.snapshot().failure, None);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn source_first_poll_close_drains_late_lease_before_returning() {
+        let spent = Arc::new(AtomicU64::new(0));
+        let retired = Arc::new(AtomicU64::new(0));
+        let connector_calls = Arc::new(AtomicU64::new(0));
+        let close_returned = Arc::new(AtomicBool::new(false));
+        let source = Arc::new(FirstPollCloseSource {
+            controller: Mutex::new(None),
+            lease: Mutex::new(Some(test_lease(
+                pin_only_artifact([0x11; 32]),
+                spent.clone(),
+                retired.clone(),
+            ))),
+            close_returned: close_returned.clone(),
+        });
+        let controller = Arc::new(ConnectionController::new_with_connector(
+            source.clone(),
+            test_options(None),
+            counting_connector([ConnectorStep::Success], connector_calls.clone()),
+        ));
+        *lock(&source.controller) = Some(Arc::downgrade(&controller));
+
+        controller.start();
+        tokio::time::timeout(Duration::from_millis(500), async {
+            while !close_returned.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("close started by the source first poll did not return");
+        assert_eq!(retired.load(Ordering::SeqCst), 1);
+        assert_eq!(spent.load(Ordering::SeqCst), 0);
+        assert_eq!(connector_calls.load(Ordering::SeqCst), 0);
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.state, ConnectionState::Closed);
+        assert_eq!(snapshot.failure, None);
     }
 
     #[tokio::test]
@@ -2630,6 +2942,13 @@ mod tests {
     #[derive(Debug)]
     struct ConstructorPanicSource;
 
+    #[derive(Debug)]
+    struct FirstPollCloseSource {
+        controller: Mutex<Option<std::sync::Weak<ConnectionController>>>,
+        lease: Mutex<Option<ArtifactLeaseV3>>,
+        close_returned: Arc<AtomicBool>,
+    }
+
     #[async_trait]
     impl ArtifactSource for PanicSource {
         async fn acquire(
@@ -2652,6 +2971,28 @@ mod tests {
             Self: 'future,
         {
             panic!("source future construction violation");
+        }
+    }
+
+    #[async_trait]
+    impl ArtifactSource for FirstPollCloseSource {
+        async fn acquire(
+            &self,
+            cancellation: CancellationToken,
+        ) -> Result<ArtifactLeaseV3, ArtifactSourceError> {
+            let controller = lock(&self.controller)
+                .as_ref()
+                .and_then(std::sync::Weak::upgrade)
+                .expect("controller installed");
+            let close_returned = self.close_returned.clone();
+            tokio::spawn(async move {
+                controller.close().await;
+                close_returned.store(true, Ordering::Release);
+            });
+            cancellation.cancelled().await;
+            lock(&self.lease)
+                .take()
+                .ok_or_else(ArtifactSourceError::terminal)
         }
     }
 

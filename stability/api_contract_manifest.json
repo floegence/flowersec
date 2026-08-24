@@ -903,6 +903,31 @@
           },
           {
             "kind": "type",
+            "expr": "flowersec.ConnectionFailurePhase",
+            "doc_token": "`flowersec.ConnectionFailurePhase`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ConnectionFailure).Phase",
+            "doc_token": "`flowersec.ConnectionFailure.Phase()`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.ConnectionFailureArtifact",
+            "doc_token": "`flowersec.ConnectionFailureArtifact`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.ConnectionFailureConnect",
+            "doc_token": "`flowersec.ConnectionFailureConnect`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.ConnectionFailureSession",
+            "doc_token": "`flowersec.ConnectionFailureSession`"
+          },
+          {
+            "kind": "type",
             "expr": "flowersec.ConnectionState",
             "doc_token": "`flowersec.ConnectionState`"
           },
@@ -2554,6 +2579,11 @@
         "doc_token": ""
       },
       {
+        "kind": "swift.property",
+        "name": "ArtifactSourceFailure.code",
+        "doc_token": ""
+      },
+      {
         "kind": "swift.init",
         "name": "ArtifactSourceFailure.init(disposition:)",
         "doc_token": ""
@@ -3045,10 +3075,12 @@
       "`ConnectionControllerOptions`",
       "`ArtifactSource`",
       "`ArtifactSourceError`",
+      "`ArtifactSourceError::code()`",
       "`ConnectionSnapshot`",
       "`ConnectionController::wait_for_snapshot_change(...)`",
       "`ConnectionState`",
       "`ConnectionFailure`",
+      "`ConnectionFailure::code()`",
       "`RetryDisposition`",
       "`TunnelRuntime`",
       "`TunnelRuntimeOptions`",
@@ -3181,6 +3213,7 @@
       "let _ = flowersec::ArtifactSourceError::retryable",
       "let _ = flowersec::ArtifactSourceError::retry_after",
       "let _ = flowersec::ArtifactSourceError::disposition",
+      "let _: fn(flowersec::ArtifactSourceError) -> flowersec::ConnectErrorCode = flowersec::ArtifactSourceError::code",
       "let _: Option<&dyn flowersec::ArtifactSource> = None",
       "let _ = std::mem::size_of::<flowersec::ConnectionController>()",
       "let _ = flowersec::ConnectionController::new",
@@ -3196,6 +3229,7 @@
       "let _ = flowersec::ConnectionControllerOptions::maximum_attempts",
       "let _ = std::mem::size_of::<flowersec::ConnectionFailure>()",
       "let _ = flowersec::ConnectionFailure::disposition",
+      "let _: fn(flowersec::ConnectionFailure) -> flowersec::ConnectErrorCode = flowersec::ConnectionFailure::code",
       "let _ = std::mem::size_of::<flowersec::ConnectionState>()",
       "let _ = std::mem::size_of::<flowersec::ConnectionSnapshot>()",
       "let _ = std::mem::size_of::<flowersec::RetryDisposition>()"

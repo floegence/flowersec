@@ -38,6 +38,7 @@ import {
 type ScenarioExpected = Readonly<{
   final_state: string;
   public_error: string | null;
+  failure_phase: "artifact" | "connect" | "session" | null;
   disposition: string | null;
   acquisitions: number;
   connect_attempts: number;
@@ -68,6 +69,7 @@ type ControllerFixture = Readonly<{
 type ControllerObservation = Readonly<{
   final_state: string;
   public_error: string | null;
+  failure_phase: "artifact" | "connect" | "session" | null;
   disposition: string | null;
   acquisitions: number;
   connect_attempts: number;
@@ -106,6 +108,7 @@ const scenarioRunners: Readonly<Record<string, ScenarioRunner>> = Object.freeze(
   "lease-cancellation-first": runLeaseCancellation,
   "lease-delivery-first": runLeaseCancellation,
   "attempt-exhaustion": runAttemptExhaustion,
+  "invalid-source-retry-after": runInvalidSourceRetryAfter,
   "retry-after-and-monotonic-backoff": runRetryAfterController,
   "race-order-independent-security-priority": runSecurityPriority,
   "failure-ordinal-counts-attempt-once": runFailureOrdinal,
@@ -343,6 +346,35 @@ async function runAttemptExhaustion(scenario: ControllerScenario): Promise<void>
     throw new Error("connector must not run");
   }, controllerOptions(numberInput(scenario, "maximum_attempts"), tracker.clock));
   await finishControllerScenario(controller, scenario, tracker);
+}
+
+async function runInvalidSourceRetryAfter(scenario: ControllerScenario): Promise<void> {
+  expect(scenario.driver).toBe("source-contract-validation");
+  const tracker = new VectorTracker([]);
+  const controller = createConnectionControllerV3({
+    acquire: async (): Promise<ArtifactSourceResultV3> => {
+      tracker.acquisitions += 1;
+      return {
+        kind: "failure",
+        code: "connection_failed",
+        disposition: {
+          kind: "retry_after",
+          absoluteUnixMilliseconds: numberInput(scenario, "retry_after_unix_ms"),
+        },
+      };
+    },
+  }, async () => {
+    throw new Error("connector must not run for an invalid source disposition");
+  }, controllerOptions(0, tracker.clock));
+  controller.start();
+  await waitForControllerState(controller, "failed");
+
+  let attempt = -1;
+  const unsubscribe = controller.subscribe((snapshot) => { attempt = snapshot.attempt; });
+  unsubscribe();
+  expect(attempt).toBe(1);
+  assertObservation(scenario, tracker.observe(controller));
+  await controller.close();
 }
 
 async function runRetryAfterController(scenario: ControllerScenario): Promise<void> {
@@ -812,6 +844,7 @@ async function runConcurrentCapabilityReplacementBarrier(scenario: ControllerSce
     const observed = {
       final_state: refreshController.state,
       public_error: refreshController.failure?.code ?? null,
+      failure_phase: refreshController.failure?.phase ?? null,
       disposition: controllerDisposition(refreshController),
       acquisitions,
       connect_attempts: dialCalls,
@@ -943,6 +976,7 @@ class VectorTracker {
     return {
       final_state: controller.state,
       public_error: controller.failure?.code ?? null,
+      failure_phase: controller.failure?.phase ?? null,
       disposition,
       acquisitions: this.acquisitions,
       connect_attempts: this.connectAttempts,
@@ -1062,6 +1096,7 @@ function assertObservation(scenario: ControllerScenario, observed: ControllerObs
   const expected: ControllerObservation = {
     final_state: scenario.expected.final_state,
     public_error: scenario.expected.public_error,
+    failure_phase: scenario.expected.failure_phase,
     disposition: scenario.expected.disposition,
     acquisitions: scenario.expected.acquisitions,
     connect_attempts: scenario.expected.connect_attempts,

@@ -17,9 +17,10 @@ import (
 )
 
 type controllerV3VectorFile struct {
-	Version      int      `json:"version"`
-	PublicErrors []string `json:"public_errors"`
-	Defaults     struct {
+	Version       int      `json:"version"`
+	PublicErrors  []string `json:"public_errors"`
+	FailurePhases []string `json:"failure_phases"`
+	Defaults      struct {
 		MaximumAttempts                           uint64 `json:"maximum_attempts"`
 		InitialBackoffMS                          int    `json:"initial_backoff_ms"`
 		MaximumBackoffMS                          int    `json:"maximum_backoff_ms"`
@@ -84,6 +85,7 @@ type controllerVectorScenario struct {
 type controllerVectorExpected struct {
 	FinalState                    string   `json:"final_state"`
 	PublicError                   *string  `json:"public_error"`
+	FailurePhase                  *string  `json:"failure_phase"`
 	Disposition                   *string  `json:"disposition"`
 	Acquisitions                  int      `json:"acquisitions"`
 	ConnectAttempts               int      `json:"connect_attempts"`
@@ -135,6 +137,9 @@ func TestConnectionControllerSharedLifecycleVectors(t *testing.T) {
 			t.Fatalf("public errors = %v, want %v", fixture.PublicErrors, wantErrors)
 		}
 	}
+	if got, want := strings.Join(fixture.FailurePhases, ","), "artifact,connect,session"; got != want {
+		t.Fatalf("failure phases = %q, want %q", got, want)
+	}
 	if defaults.ConnectionControllerInitialDelay != time.Duration(fixture.Defaults.InitialBackoffMS)*time.Millisecond ||
 		defaults.ConnectionControllerMaxDelay != time.Duration(fixture.Defaults.MaximumBackoffMS)*time.Millisecond ||
 		fixture.Defaults.MaximumAttempts != 0 || fixture.Defaults.JitterMS != 0 ||
@@ -163,6 +168,7 @@ func TestConnectionControllerSharedLifecycleVectors(t *testing.T) {
 		"lease-cancellation-first":                              runControllerVectorCancellationFirst,
 		"lease-delivery-first":                                  runControllerVectorDeliveryFirst,
 		"attempt-exhaustion":                                    runControllerVectorAttemptExhaustion,
+		"invalid-source-retry-after":                            runControllerVectorSourceContract,
 		"retry-after-and-monotonic-backoff":                     runControllerVectorRetryAfter,
 		"race-order-independent-security-priority":              runControllerVectorSecurityPriority,
 		"failure-ordinal-counts-attempt-once":                   runControllerVectorExtended,
@@ -202,6 +208,16 @@ func TestConnectionControllerSharedLifecycleVectors(t *testing.T) {
 		}
 		if scenario.Driver == "" || len(scenario.Steps) == 0 || scenario.Expected.FinalState == "" {
 			t.Fatalf("scenario %q has an incomplete executable contract", scenario.ID)
+		}
+		if scenario.Expected.PublicError != nil {
+			if scenario.Expected.FailurePhase == nil ||
+				(*scenario.Expected.FailurePhase != string(ConnectionFailureArtifact) &&
+					*scenario.Expected.FailurePhase != string(ConnectionFailureConnect) &&
+					*scenario.Expected.FailurePhase != string(ConnectionFailureSession)) {
+				t.Fatalf("scenario %q failure phase = %v, want closed phase", scenario.ID, scenario.Expected.FailurePhase)
+			}
+		} else if scenario.Expected.FailurePhase != nil {
+			t.Fatalf("scenario %q has phase without public failure: %q", scenario.ID, *scenario.Expected.FailurePhase)
 		}
 		t.Run(scenario.ID, func(t *testing.T) { run(t, scenario) })
 		delete(runners, scenario.ID)
@@ -666,6 +682,9 @@ func TestConnectionControllerCloseWinsBeforeAcquisitionAdmission(t *testing.T) {
 	if got := source.callCount(); got != 0 {
 		t.Fatalf("source calls after Close won admission = %d, want 0", got)
 	}
+	if got := controller.Snapshot().Attempt; got != 0 {
+		t.Fatalf("attempt after Close won admission = %d, want 0", got)
+	}
 }
 
 func TestConnectionControllerCloseRetainsCurrentSessionCleanup(t *testing.T) {
@@ -823,10 +842,63 @@ func testControllerAttemptExhaustion(t *testing.T) {
 	}
 	snapshot := controller.Snapshot()
 	if snapshot.Failure == nil || connectErrorCode(snapshot.Failure.Error) != ConnectConnectionFailed ||
+		snapshot.Failure.Phase() != ConnectionFailureArtifact ||
 		snapshot.Failure.Disposition.Kind != RetryDispositionTerminal {
-		t.Fatalf("attempt exhaustion failure = %+v, want connection_failed/terminal", snapshot.Failure)
+		t.Fatalf("attempt exhaustion failure = %+v, want artifact/connection_failed/terminal", snapshot.Failure)
+	}
+	var connectError *ConnectError
+	if !errors.As(snapshot.Failure.Error, &connectError) {
+		t.Fatalf("attempt exhaustion error does not preserve errors.As: %T", snapshot.Failure.Error)
 	}
 	closeController(t, controller)
+}
+
+func TestConnectionControllerFailurePhases(t *testing.T) {
+	t.Run("artifact", testControllerAttemptExhaustion)
+
+	t.Run("connect", func(t *testing.T) {
+		first, second := controllerTestLeases(t)
+		source := &controllerTestSource{results: []controllerAcquireResult{{lease: first}, {lease: second}}}
+		controller := newControllerForTest(t, source, 2)
+		controller.connect = func(context.Context, ArtifactLease, ConnectorOptions) (Session, error) {
+			return nil, &ConnectError{code: ConnectConnectionFailed}
+		}
+		startController(t, controller)
+		waitControllerState(t, controller, ConnectionWaiting)
+		if !controller.RetryNow() {
+			t.Fatal("RetryNow rejected connect failure wait")
+		}
+		waitControllerState(t, controller, ConnectionFailed)
+		failure := controller.Snapshot().Failure
+		if failure == nil || failure.Phase() != ConnectionFailureConnect ||
+			connectErrorCode(failure.Error) != ConnectConnectionFailed ||
+			failure.Disposition.Kind != RetryDispositionTerminal {
+			t.Fatalf("connect failure = %+v, want connect/connection_failed/terminal", failure)
+		}
+		closeController(t, controller)
+	})
+
+	t.Run("session", func(t *testing.T) {
+		lease, _ := controllerTestLeases(t)
+		source := &controllerTestSource{results: []controllerAcquireResult{{lease: lease}}}
+		controller := newControllerForTest(t, source, 0)
+		session := newControllerTestSession(SessionOperationFailed)
+		controller.connect = func(context.Context, ArtifactLease, ConnectorOptions) (Session, error) {
+			return session, nil
+		}
+		startController(t, controller)
+		waitControllerSession(t, controller, session)
+		session.terminate()
+		waitControllerState(t, controller, ConnectionFailed)
+		failure := controller.Snapshot().Failure
+		var sessionError *SessionError
+		if failure == nil || failure.Phase() != ConnectionFailureSession ||
+			!errors.As(failure.Error, &sessionError) || sessionError.Code() != SessionOperationFailed ||
+			failure.Disposition.Kind != RetryDispositionTerminal {
+			t.Fatalf("session failure = %+v, want session/operation_failed/terminal", failure)
+		}
+		closeController(t, controller)
+	})
 }
 
 func testControllerCloseCancelsAcquire(t *testing.T) {

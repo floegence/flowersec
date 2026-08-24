@@ -1,6 +1,6 @@
 [package]
 name = "flowersec-node-native"
-version = "3.0.1"
+version = "3.0.2"
 edition = "2024"
 rust-version = "1.88"
 publish = false
@@ -10,7 +10,7 @@ build = "build.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-flowersec-native-transport = { path = "../flowersec-native-transport", version = "=3.0.1" }
+flowersec-native-transport = { path = "../flowersec-native-transport", version = "=3.0.2" }
 napi = { version = "=3.12.1", features = ["napi8", "tokio_rt"] }
 napi-derive = "=3.6.3"
 
