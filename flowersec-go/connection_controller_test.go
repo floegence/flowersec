@@ -712,6 +712,61 @@ func TestConnectionControllerCloseRetainsCurrentSessionCleanup(t *testing.T) {
 	}
 }
 
+func TestConnectionControllerCloseRacingTerminalSettlement(t *testing.T) {
+	firstLease, _ := controllerTestLeases(t)
+	source := &controllerTestSource{results: []controllerAcquireResult{{lease: firstLease}}}
+	controller := newControllerForTest(t, source, 0)
+	session := newControllerTestSession(SessionCanceled)
+	controller.connect = func(context.Context, ArtifactLease, ConnectorOptions) (Session, error) {
+		return session, nil
+	}
+	contextChecked := make(chan struct{})
+	releaseSettlement := make(chan struct{})
+	controller.afterTerminationContextCheck = func() {
+		close(contextChecked)
+		<-releaseSettlement
+	}
+	controller.Start(context.Background())
+	waitControllerSession(t, controller, session)
+
+	session.terminate()
+	select {
+	case <-contextChecked:
+	case <-time.After(time.Second):
+		t.Fatal("scheduler did not reach the post-termination context boundary")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- controller.Close(context.Background()) }()
+	deadline := time.After(time.Second)
+	for controller.Snapshot().State != ConnectionClosed {
+		select {
+		case <-deadline:
+			t.Fatal("Close did not publish the closed snapshot")
+		default:
+			runtime.Gosched()
+		}
+	}
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned before transferred session settlement: %v", err)
+	default:
+	}
+	if got := session.closeCount(); got != 0 {
+		t.Fatalf("session close count before settlement = %d, want 0", got)
+	}
+
+	close(releaseSettlement)
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+	if got := session.closeCount(); got != 1 {
+		t.Fatalf("session cleanup count = %d, want exactly one", got)
+	}
+	if snapshot := controller.Snapshot(); snapshot.State != ConnectionClosed || snapshot.CurrentSession != nil {
+		t.Fatalf("closed snapshot = %+v, want closed without a live session", snapshot)
+	}
+}
+
 func testControllerRetryAfter(t *testing.T) {
 	firstLease, _ := controllerTestLeases(t)
 	retryAt := time.Now().Add(100 * time.Millisecond).UnixMilli()

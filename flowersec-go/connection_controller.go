@@ -204,6 +204,9 @@ type ConnectionController struct {
 	// beforeAcquireAdmission is a test-only scheduler hook. Production leaves
 	// it nil; tests use it to stop exactly before the lifecycle admission check.
 	beforeAcquireAdmission func()
+	// afterTerminationContextCheck is a test-only scheduler hook. Production
+	// leaves it nil; tests use it to expose Close racing session settlement.
+	afterTerminationContextCheck func()
 }
 
 // NewConnectionController creates an idle controller over a refreshable
@@ -434,11 +437,7 @@ func (controller *ConnectionController) acquire(ctx context.Context) (ArtifactLe
 }
 
 func (controller *ConnectionController) run(ctx context.Context) {
-	defer func() {
-		controller.mu.Lock()
-		controller.closeDoneLocked()
-		controller.mu.Unlock()
-	}()
+	defer controller.finishRun()
 
 	cycle := newControllerCycle()
 	for {
@@ -599,6 +598,9 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			controller.finishClosed()
 			return
 		}
+		if controller.afterTerminationContextCheck != nil {
+			controller.afterTerminationContextCheck()
+		}
 		controller.closeCurrentSession()
 		var terminalError error
 		var disposition RetryDisposition
@@ -614,6 +616,28 @@ func (controller *ConnectionController) run(ctx context.Context) {
 		if !controller.handleFailure(ctx, terminalError, disposition, cycle.consecutiveFailures, cycle.attempts) {
 			return
 		}
+	}
+}
+
+// finishRun settles every session still owned by the scheduler before it
+// publishes done. Close may transfer currentSession to closingSession while the
+// run loop is between its cancellation check and normal session settlement.
+func (controller *ConnectionController) finishRun() {
+	for {
+		controller.mu.Lock()
+		current := controller.closingSession
+		if current == nil {
+			current = controller.currentSession
+		}
+		controller.closingSession = nil
+		controller.currentSession = nil
+		if current == nil {
+			controller.closeDoneLocked()
+			controller.mu.Unlock()
+			return
+		}
+		controller.mu.Unlock()
+		_ = current.Close()
 	}
 }
 
