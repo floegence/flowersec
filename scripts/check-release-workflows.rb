@@ -310,12 +310,12 @@ codeql_swift_job = require_job(codeql_workflow, "analyze-swift", "the CodeQL wor
 codeql_plan_job = require_job(codeql_workflow, "plan", "the CodeQL workflow")
 scorecard_job = require_job(scorecard_workflow, "analysis", "the Scorecard workflow")
 
-require_exact_keys(prepare_job, ["runs-on", "outputs", "steps"], "the unified release workflow prepare job")
-require_exact_keys(release_job, ["needs", "if", "runs-on", "permissions", "steps"], "the unified release workflow release job")
+require_exact_keys(prepare_job, ["runs-on", "timeout-minutes", "outputs", "steps"], "the unified release workflow prepare job")
+require_exact_keys(release_job, ["needs", "if", "runs-on", "timeout-minutes", "permissions", "steps"], "the unified release workflow release job")
 require_exact_keys(rust_reuse_job, ["needs", "if", "permissions", "uses", "with"], "the unified release workflow rust-publish job")
-require_exact_keys(native_prebuilt_job, ["needs", "if", "strategy", "runs-on", "permissions", "steps"], "the unified release workflow native-prebuilt job")
-require_exact_keys(npm_recovery_job, ["needs", "if", "runs-on", "permissions", "steps"], "the unified release workflow npm recovery job")
-require_exact_keys(rust_publish_job, ["runs-on", "permissions", "steps"], "the Rust recovery workflow publish job")
+require_exact_keys(native_prebuilt_job, ["needs", "if", "strategy", "runs-on", "timeout-minutes", "permissions", "steps"], "the unified release workflow native-prebuilt job")
+require_exact_keys(npm_recovery_job, ["needs", "if", "runs-on", "timeout-minutes", "permissions", "steps"], "the unified release workflow npm recovery job")
+require_exact_keys(rust_publish_job, ["runs-on", "timeout-minutes", "permissions", "steps"], "the Rust recovery workflow publish job")
 require_exact_keys(repository_job, ["runs-on", "steps"], "the hosted CI repository job")
 require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI precommit job")
 require_exact_keys(node_current_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI current Node job")
@@ -332,6 +332,11 @@ require_exact_value(node_current_job["timeout-minutes"], 10, "the hosted CI curr
 require_exact_value(dependency_review_job["name"], "Dependency review", "the hosted CI dependency review job name")
 require_exact_value(dependency_review_job["runs-on"], "ubuntu-latest", "the hosted CI dependency review runner")
 require_exact_value(dependency_review_job["timeout-minutes"], 5, "the hosted CI dependency review timeout")
+require_exact_value(prepare_job["timeout-minutes"], 10, "the unified release workflow prepare timeout")
+require_exact_value(native_prebuilt_job["timeout-minutes"], 45, "the unified release workflow native-prebuilt timeout")
+require_exact_value(release_job["timeout-minutes"], 45, "the unified release workflow release timeout")
+require_exact_value(npm_recovery_job["timeout-minutes"], 90, "the unified release workflow npm recovery timeout")
+require_exact_value(rust_publish_job["timeout-minutes"], 60, "the Rust recovery workflow publish timeout")
 require_exact_keys(codeql_plan_job, ["name", "runs-on", "timeout-minutes", "permissions", "outputs", "steps"], "the CodeQL plan job")
 require_exact_value(codeql_plan_job["name"], "Plan scheduled analysis", "the CodeQL plan job name")
 require_exact_value(codeql_plan_job["runs-on"], "ubuntu-latest", "the CodeQL plan runner")
@@ -632,7 +637,7 @@ validate_step_contracts(release_steps, [
       "IMAGE_REPOSITORY" => "ghcr.io/${{ github.repository_owner }}/flowersec-runtime",
       "IMAGE_VERSION" => "${{ steps.vars.outputs.version }}",
     },
-  }, run_sha256: "dc44dfc798e48cba289ef21361d4fd3772b7579f631637c4729caf05511e01f8" },
+  }, run_sha256: "b0f51d418f8b29062db49e64a0a70d5df3cf160b86a3dafe7a585df2477af123" },
 ], "the unified release workflow release job")
 validate_step_contracts(native_prebuilt_steps, [
   { name: nil, keys: ["uses", "with"], values: {
@@ -673,7 +678,7 @@ validate_step_contracts(npm_recovery_steps, [
   { name: "Publish or recover npm registry packages from immutable release assets", keys: ["name", "env", "run"], values: { "env" => {
     "GH_TOKEN" => "${{ github.token }}",
     "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
-  } }, run_sha256: "98e690f3bcda9155b5151de002a96412d1ced5c8d3f4bbb9ddf4e0ff259194c0" },
+  } }, run_sha256: "8a0442128c01859b6235102f868345b03bf28c398612d8c1ee89cb58a4731d28" },
 ], "the unified release workflow npm recovery job")
 validate_step_contracts(rust_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
@@ -682,11 +687,11 @@ validate_step_contracts(rust_steps, [
   { name: "Setup Rust", keys: ["name", "uses"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4" } },
   { name: "Validate release version facts", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "9431ce4342dcd8f8af90607321f1ceb9e6e61c13f455b06acd242d96f53e0087" },
   { name: "Verify release tags", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "3e5e103b4b32e468d370d25613885b564a2f9f0dfebe2ced9b182a1691038830" },
-  { name: "Check whether native transport version is already published", keys: ["name", "id", "env", "run"], values: { "id" => "native-published", "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "35043da6ab7f3b9809adc65264a983823eb3020507fb191256aeacf903bc29ba" },
+  { name: "Check whether native transport version is already published", keys: ["name", "id", "env", "run"], values: { "id" => "native-published", "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "66070c8554794b49acd86aa2f9e6177b2857685c1adf85c71a0e2f1f1a485fa4" },
   { name: "Authenticate native transport publication", keys: ["name", "if", "id", "uses"], values: { "if" => "steps.native-published.outputs.exists != 'true'", "id" => "native-auth", "uses" => "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18" } },
   { name: "Publish native transport crate", keys: ["name", "if", "working-directory", "env", "run"], values: { "if" => "steps.native-published.outputs.exists != 'true'", "working-directory" => "flowersec-native-transport", "env" => { "CARGO_REGISTRY_TOKEN" => "${{ steps.native-auth.outputs.token }}" } }, run_sha256: "0990bd3b2f0dd14204dc600e8a8bce3fd1e41ab5a6404e75e59f7c41b49ea0d5" },
   { name: "Wait for native transport registry readback", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "55c8d909b7748b4ed9596feb4556a426d474b5355c9321075b74b456554bb93d" },
-  { name: "Check whether Flowersec Rust SDK version is already published", keys: ["name", "id", "env", "run"], values: { "id" => "sdk-published", "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "712e2393343ff375abca1a8046cc8aa0b85be961fda34cc5125f7397248d5de0" },
+  { name: "Check whether Flowersec Rust SDK version is already published", keys: ["name", "id", "env", "run"], values: { "id" => "sdk-published", "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "ae85f352899c7320d14552667db2783903626215ff2565c5822d0e0bd73cdddc" },
   { name: "Authenticate Flowersec Rust SDK publication", keys: ["name", "if", "id", "uses"], values: { "if" => "steps.sdk-published.outputs.exists != 'true'", "id" => "sdk-auth", "uses" => "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18" } },
   { name: "Publish Flowersec Rust SDK", keys: ["name", "if", "working-directory", "env", "run"], values: { "if" => "steps.sdk-published.outputs.exists != 'true'", "working-directory" => "flowersec-rust", "env" => { "CARGO_REGISTRY_TOKEN" => "${{ steps.sdk-auth.outputs.token }}" } }, run_sha256: "0990bd3b2f0dd14204dc600e8a8bce3fd1e41ab5a6404e75e59f7c41b49ea0d5" },
   { name: "Verify Flowersec Rust SDK registry readback", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "5d0dee062187ebcd7c435a23d84b5e8c4992ebd9a70f6b6b2b50f2cff26f140b" },

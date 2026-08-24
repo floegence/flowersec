@@ -28,6 +28,7 @@ permissions:
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
       mode: ${{ steps.version.outputs.mode }}
@@ -116,6 +117,7 @@ jobs:
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -170,6 +172,7 @@ jobs:
       ((needs.prepare.outputs.release_exists == 'false' && needs.native-prebuilt.result == 'success') ||
       (needs.prepare.outputs.release_exists == 'true' && needs.native-prebuilt.result == 'skipped'))
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
       packages: write
@@ -412,24 +415,28 @@ jobs:
             local image="$1"
             local max_attempts=6
             local inspect_timeout_seconds=30
-            local attempt output observed status detail
+            local attempt output observed status detail timeout_marker
             # GHCR can take a short time to expose a just-pushed manifest.
             for ((attempt = 1; attempt <= max_attempts; attempt++)); do
-              if output="$(timeout --foreground --kill-after=5s "${inspect_timeout_seconds}s" docker buildx imagetools inspect "$image" 2>&1)"; then
+              timeout_marker="$(mktemp)"
+              set +e
+              output="$(TIMEOUT_MARKER="$timeout_marker" timeout --preserve-status --signal=USR1 --kill-after=5s "${inspect_timeout_seconds}s" bash -c 'trap "printf timeout > \"$TIMEOUT_MARKER\"; exit 75" USR1; docker buildx imagetools inspect "$1" 2>&1' -- "$image" 2>&1)"
+              status=$?
+              set -e
+              if [[ -s "$timeout_marker" ]]; then
+                detail="inspect timed out after ${inspect_timeout_seconds}s (killed after 5s grace)"
+              elif [[ "$status" -eq 0 ]]; then
                 observed="$(awk '$1 == "Digest:" { print $2; exit }' <<<"$output")"
                 if [[ "$observed" == "$IMAGE_DIGEST" ]]; then
+                  unlink "$timeout_marker"
                   echo "GHCR manifest readback passed for $image ($observed)"
                   return 0
                 fi
                 detail="digest ${observed:-<missing>}"
               else
-                status=$?
-                if [[ "$status" -eq 124 ]]; then
-                  detail="inspect timed out after ${inspect_timeout_seconds}s"
-                else
-                  detail="inspect exit $status: $(tail -n 1 <<<"$output")"
-                fi
+                detail="inspect exit $status: $(tail -n 1 <<<"$output")"
               fi
+              unlink "$timeout_marker"
               echo "GHCR manifest readback attempt $attempt/$max_attempts failed for $image: expected $IMAGE_DIGEST, got $detail" >&2
               if (( attempt < max_attempts )); then
                 sleep $((attempt * 5))
@@ -450,6 +457,7 @@ jobs:
       ((needs.prepare.outputs.mode == 'full' && needs.release.result == 'success') ||
       (needs.prepare.outputs.mode == 'npm-only' && needs.release.result == 'skipped'))
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       contents: read
       id-token: write
@@ -481,7 +489,7 @@ jobs:
           scripts/verify-release-tags.sh "$VERSION" "$SHA"
 
           mkdir npm-release-assets
-          gh release download "flowersec-go/v${VERSION}" \
+          timeout --kill-after=5s 120s gh release download "flowersec-go/v${VERSION}" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern checksums.txt \
             --pattern 'checksums.txt.sig' \
@@ -611,7 +619,7 @@ jobs:
             local_integrity="sha512-$(openssl dgst -sha512 -binary "$archive" | openssl base64 -A)"
             npm_error="$(mktemp)"
             set +e
-            metadata="$(npm view "${package}@${VERSION}" --json 2>"$npm_error")"
+            metadata="$(timeout --kill-after=5s 60s npm view "${package}@${VERSION}" --json 2>"$npm_error")"
             view_status=$?
             set -e
             npm_error_text="$(cat "$npm_error")"
@@ -633,7 +641,7 @@ jobs:
                 echo "unsupported package repository URL: $repository_url" >&2
                 return 2
               fi
-              npx -y npm@11.5.1 publish "${publish_args[@]}" "./$archive"
+              timeout --kill-after=5s 180s npx -y npm@11.5.1 publish "${publish_args[@]}" "./$archive"
             else
               sed -E 's/(token|authorization)[^ ]*/\1=<redacted>/Ig' <<<"$npm_error_text" >&2
               return "$view_status"

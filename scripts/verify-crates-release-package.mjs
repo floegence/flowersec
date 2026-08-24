@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 2 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 30_000;
 const [crateName, version, sourceSHA] = process.argv.slice(2);
 assert.match(crateName ?? "", /^flowersec(?:-native-transport)?$/);
 assert.match(version ?? "", /^\d+\.\d+\.\d+$/);
@@ -16,7 +17,7 @@ const requestHeaders = Object.freeze({
 
 let metadata;
 for (let attempt = 1; attempt <= 30; attempt++) {
-  const response = await fetch(`https://crates.io/api/v1/crates/${crateName}/${version}`, { headers: requestHeaders });
+  const response = await fetchWithTimeout(`https://crates.io/api/v1/crates/${crateName}/${version}`, { headers: requestHeaders });
   if (response.ok) {
     metadata = await response.json();
     break;
@@ -26,7 +27,7 @@ for (let attempt = 1; attempt <= 30; attempt++) {
 }
 assert.equal(metadata.version?.num, version);
 assert.match(metadata.version?.checksum ?? "", /^[0-9a-f]{64}$/);
-const response = await fetch(`https://crates.io/api/v1/crates/${crateName}/${version}/download`, { headers: requestHeaders });
+const response = await fetchWithTimeout(`https://crates.io/api/v1/crates/${crateName}/${version}/download`, { headers: requestHeaders });
 assert.equal(response.ok, true);
 assertRegistryURL(response.url, new Set(["crates.io", "static.crates.io"]));
 assertResponseSize(response, MAX_ARCHIVE_BYTES);
@@ -56,6 +57,21 @@ function assertResponseSize(response, maximum) {
   if (value === null) return;
   const length = Number(value);
   assert.ok(Number.isSafeInteger(length) && length >= 0 && length <= maximum, "invalid registry archive size");
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`registry request timed out after ${REQUEST_TIMEOUT_MS}ms: ${url}`, { cause: error });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function assertRegistryURL(value, allowedHosts) {

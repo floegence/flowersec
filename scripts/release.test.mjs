@@ -85,6 +85,67 @@ function extractWorkflowStepRun(workflowFile, jobName, stepName) {
   return extracted.stdout;
 }
 
+function runGhcrReadbackHarness(t, mode) {
+  const run = extractWorkflowStepRun(
+    path.join(sourceRoot, ".github/workflows/release.yml"),
+    "release",
+    "Verify GHCR runtime manifest readback",
+  );
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-ghcr-readback-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const fakeBin = path.join(root, "bin");
+  fs.mkdirSync(fakeBin);
+  fs.writeFileSync(path.join(fakeBin, "timeout"), `#!/usr/bin/env bash
+set -euo pipefail
+while [[ "$1" == --* ]]; do shift; done
+shift
+if [[ "\${FAKE_TIMEOUT_MODE:-run}" == timeout ]]; then
+  printf timeout > "$TIMEOUT_MARKER"
+  exit 75
+fi
+"$@"
+`);
+  fs.writeFileSync(path.join(fakeBin, "docker"), `#!/usr/bin/env bash
+set -euo pipefail
+count_file="$FAKE_COUNT_FILE"
+count=0
+if [[ -f "$count_file" ]]; then count="$(<"$count_file")"; fi
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+case "\${FAKE_DOCKER_MODE:-match}" in
+  match) printf 'Digest: %s\\n' "$IMAGE_DIGEST" ;;
+  eventual) if (( count % 2 == 0 )); then printf 'Digest: %s\\n' "$IMAGE_DIGEST"; else printf 'Digest: sha256:stale\\n'; fi ;;
+  exit124) printf 'inspect failed\\n' >&2; exit 124 ;;
+  mismatch) printf 'Digest: sha256:stale\\n' ;;
+esac
+`);
+  fs.writeFileSync(path.join(fakeBin, "sleep"), `#!/usr/bin/env bash
+printf '%s\\n' "$1" >> "$FAKE_SLEEP_FILE"
+`);
+  for (const executable of ["timeout", "docker", "sleep"]) fs.chmodSync(path.join(fakeBin, executable), 0o755);
+  const countFile = path.join(root, "count");
+  const sleepFile = path.join(root, "sleep");
+  return {
+    result: spawnSync("bash", ["-c", run], {
+      cwd: sourceRoot,
+      encoding: "utf8",
+      env: {
+        ...isolatedEnvironment(),
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        IMAGE_DIGEST: "sha256:expected",
+        IMAGE_REPOSITORY: "ghcr.io/test/flowersec-runtime",
+        IMAGE_VERSION: "3.0.1",
+        FAKE_TIMEOUT_MODE: mode.timeout ?? "run",
+        FAKE_DOCKER_MODE: mode.docker ?? "match",
+        FAKE_COUNT_FILE: countFile,
+        FAKE_SLEEP_FILE: sleepFile,
+      },
+    }),
+    countFile,
+    sleepFile,
+  };
+}
+
 test("release test helpers use literal executables", () => {
   const source = fs.readFileSync(import.meta.filename, "utf8");
   assert.doesNotMatch(source, /spawnSync\(\s*command\s*,/);
@@ -148,7 +209,7 @@ test("crates registry readback sends a compliant User-Agent for metadata and dow
     /const requestHeaders = Object\.freeze\(\{\s*"User-Agent": `flowersec-release-readback\/\$\{version\} \(https:\/\/github\.com\/floegence\/flowersec\)`,\s*\}\);/,
   );
   assert.equal(
-    [...readback.matchAll(/fetch\([^;]+, \{ headers: requestHeaders \}\)/g)].length,
+    [...readback.matchAll(/fetchWithTimeout\([^;]+, \{ headers: requestHeaders \}\)/g)].length,
     2,
     "metadata and crate download requests must both send the reviewed User-Agent",
   );
@@ -188,6 +249,26 @@ test("native prebuilt release only packages the built addon", () => {
   const uploadIndex = workflow.indexOf("name: Upload native prebuilt");
   const buildIndex = workflow.indexOf("name: Build native addon");
   assert.ok(buildIndex >= 0 && buildIndex < uploadIndex, "native build must precede upload");
+});
+
+test("GHCR manifest readback retries, classifies timeout, and checks both tags", (t) => {
+  const eventual = runGhcrReadbackHarness(t, { docker: "eventual" });
+  assert.equal(eventual.result.status, 0, `${eventual.result.stdout}${eventual.result.stderr}`);
+  assert.match(eventual.result.stdout, /flowersec-runtime:3\.0\.1/);
+  assert.match(eventual.result.stdout, /flowersec-runtime:latest/);
+  assert.equal(Number(fs.readFileSync(eventual.countFile, "utf8")), 4);
+  assert.deepEqual(fs.readFileSync(eventual.sleepFile, "utf8").trim().split("\n"), ["5", "5"]);
+
+  const timedOut = runGhcrReadbackHarness(t, { timeout: "timeout" });
+  assert.notEqual(timedOut.result.status, 0);
+  assert.match(timedOut.result.stderr, /inspect timed out after 30s \(killed after 5s grace\)/);
+  assert.equal(Number(fs.existsSync(timedOut.countFile) ? fs.readFileSync(timedOut.countFile, "utf8") : "0"), 0);
+  assert.deepEqual(fs.readFileSync(timedOut.sleepFile, "utf8").trim().split("\n"), ["5", "10", "15", "20", "25"]);
+
+  const childExit = runGhcrReadbackHarness(t, { docker: "exit124" });
+  assert.notEqual(childExit.result.status, 0);
+  assert.match(childExit.result.stderr, /inspect exit 124:/);
+  assert.doesNotMatch(childExit.result.stderr, /inspect timed out/);
 });
 
 test("documentation distinguishes injector, real weaknet, required performance, and optional WebTransport", () => {
@@ -1000,7 +1081,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/rust-release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
-    const marker = "  publish:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      id-token: write\n    steps:\n";
+    const marker = "  publish:\n    runs-on: ubuntu-latest\n    timeout-minutes: 60\n    permissions:\n      contents: read\n      id-token: write\n    steps:\n";
     assert.ok(workflow.includes(marker));
     fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}      - name: Unreviewed cargo publication\n        run: cargo publish\n\n`));
     const result = runReleasePolicy(root);

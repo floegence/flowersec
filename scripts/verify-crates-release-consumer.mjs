@@ -8,6 +8,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const COMMAND_TIMEOUT_MS = 120_000;
 const [crateName, version] = process.argv.slice(2);
 assert.match(crateName ?? "", /^flowersec(?:-native-transport)?$/);
 assert.match(version ?? "", /^\d+\.\d+\.\d+$/);
@@ -16,9 +17,10 @@ let lastError;
 for (let attempt = 1; attempt <= 30; attempt++) {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "flowersec-crate-consumer-"));
   try {
-    await execFileAsync("cargo", ["init", "--lib", "--name", "flowersec_registry_consumer", "--quiet"], { cwd: temporary });
-    await execFileAsync("cargo", ["add", `${crateName}@=${version}`, "--quiet"], { cwd: temporary });
-    await execFileAsync("cargo", ["check", "--quiet"], { cwd: temporary });
+    const commandOptions = { cwd: temporary, timeout: COMMAND_TIMEOUT_MS, killSignal: "SIGKILL" };
+    await execFileAsync("cargo", ["init", "--lib", "--name", "flowersec_registry_consumer", "--quiet"], commandOptions);
+    await execFileAsync("cargo", ["add", `${crateName}@=${version}`, "--quiet"], commandOptions);
+    await execFileAsync("cargo", ["check", "--quiet"], commandOptions);
     lastError = undefined;
     break;
   } catch (error) {

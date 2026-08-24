@@ -7,6 +7,8 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 16 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 30_000;
+const COMMAND_TIMEOUT_MS = 30_000;
 const [packageName, version, sourceSHA] = process.argv.slice(2);
 assert.match(packageName ?? "", /^@floegence\//);
 assert.match(version ?? "", /^\d+\.\d+\.\d+$/);
@@ -15,7 +17,11 @@ assert.match(sourceSHA ?? "", /^[0-9a-f]{40}$/);
 let metadata;
 for (let attempt = 1; attempt <= 30; attempt++) {
   try {
-    metadata = JSON.parse((await execFileAsync("npm", ["view", `${packageName}@${version}`, "--json"], { encoding: "utf8" })).stdout);
+    metadata = JSON.parse((await execFileAsync("npm", ["view", `${packageName}@${version}`, "--json"], {
+      encoding: "utf8",
+      timeout: COMMAND_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+    })).stdout);
     if (metadata?.version === version && metadata?.dist?.tarball && metadata?.dist?.integrity) break;
   } catch (error) {
     if (attempt === 30) throw error;
@@ -29,7 +35,7 @@ assert.match(metadata.dist?.tarball ?? "", /^https:\/\//);
 assert.match(metadata.dist?.integrity ?? "", /^sha512-/);
 assertRegistryURL(metadata.dist.tarball, new Set(["registry.npmjs.org"]));
 
-const response = await fetch(metadata.dist.tarball);
+const response = await fetchWithTimeout(metadata.dist.tarball);
 assert.equal(response.ok, true);
 assertRegistryURL(response.url, new Set(["registry.npmjs.org"]));
 assertResponseSize(response, MAX_ARCHIVE_BYTES);
@@ -72,6 +78,21 @@ function assertResponseSize(response, maximum) {
   if (value === null) return;
   const length = Number(value);
   assert.ok(Number.isSafeInteger(length) && length >= 0 && length <= maximum, "invalid registry archive size");
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`registry request timed out after ${REQUEST_TIMEOUT_MS}ms: ${url}`, { cause: error });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function assertRegistryURL(value, allowedHosts) {

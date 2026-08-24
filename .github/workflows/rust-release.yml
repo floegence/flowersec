@@ -23,6 +23,7 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
@@ -80,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           URL="https://crates.io/api/v1/crates/flowersec-native-transport/${RELEASE_VERSION}"
-          STATUS="$(curl --silent --show-error --location \
+          STATUS="$(curl --silent --show-error --location --connect-timeout 10 --max-time 30 \
             --user-agent "flowersec-release-recovery/${RELEASE_VERSION} (https://github.com/floegence/flowersec)" \
             --output /dev/null --write-out '%{http_code}' "$URL")"
           case "$STATUS" in
@@ -116,7 +117,7 @@ jobs:
         run: |
           set -euo pipefail
           URL="https://crates.io/api/v1/crates/flowersec/${RELEASE_VERSION}"
-          STATUS="$(curl --silent --show-error --location \
+          STATUS="$(curl --silent --show-error --location --connect-timeout 10 --max-time 30 \
             --user-agent "flowersec-release-recovery/${RELEASE_VERSION} (https://github.com/floegence/flowersec)" \
             --output /dev/null --write-out '%{http_code}' "$URL")"
           case "$STATUS" in
