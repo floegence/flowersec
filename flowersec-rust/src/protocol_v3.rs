@@ -1054,10 +1054,11 @@ fn open_chacha(
 }
 
 fn record_nonce(prefix: [u8; 4], sequence: u64) -> [u8; 12] {
-    let mut nonce = [0_u8; 12];
-    nonce[..4].copy_from_slice(&prefix);
-    nonce[4..].copy_from_slice(&sequence.to_be_bytes());
-    nonce
+    let sequence_bytes = sequence.to_be_bytes();
+    std::array::from_fn(|index| match index {
+        0..4 => prefix[index],
+        index => sequence_bytes[index - 4],
+    })
 }
 
 fn valid_logical_stream_id(role: StreamOpenerRoleV3, logical_stream_id: u64) -> bool {

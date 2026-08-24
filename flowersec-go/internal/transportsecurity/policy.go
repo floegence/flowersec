@@ -146,34 +146,45 @@ func BuildClientTLSSnapshot(base *tls.Config, normalizedURL string, policy artif
 			return nil, &Error{detail: FailureUnsupported}
 		}
 		priorVerify := config.VerifyConnection
-		config.RootCAs = nil
-		config.InsecureSkipVerify = true // Pin verification below is the sole identity decision.
-		config.VerifyConnection = func(state tls.ConnectionState) error {
-			if len(state.PeerCertificates) == 0 {
-				return &Error{detail: FailureUnknown}
-			}
-			leaf := state.PeerCertificates[0]
-			if err := validatePinnedLeaf(leaf, verificationTime()); err != nil {
-				return err
-			}
-			digest := sha256.Sum256(leaf.Raw)
-			matched := 0
-			for _, pin := range active {
-				matched |= subtle.ConstantTimeCompare(digest[:], pin[:])
-			}
-			if matched != 1 {
-				return &Error{detail: FailurePinMismatch}
-			}
-			if priorVerify != nil {
-				if err := priorVerify(state); err != nil {
-					return &Error{detail: FailureUnknown}
-				}
-			}
-			return nil
-		}
+		installPinVerifier(config, active, verificationTime, priorVerify)
 		return config, nil
 	default:
 		return nil, &Error{detail: FailureUnsupported}
+	}
+}
+
+func installPinVerifier(
+	config *tls.Config,
+	active [][32]byte,
+	verificationTime func() time.Time,
+	priorVerify func(tls.ConnectionState) error,
+) {
+	// Go requires this flag when a custom VerifyConnection callback is the sole
+	// identity decision. CA mode never uses this path and keeps the platform verifier.
+	config.RootCAs = nil
+	config.InsecureSkipVerify = true
+	config.VerifyConnection = func(state tls.ConnectionState) error {
+		if len(state.PeerCertificates) == 0 {
+			return &Error{detail: FailureUnknown}
+		}
+		leaf := state.PeerCertificates[0]
+		if err := validatePinnedLeaf(leaf, verificationTime()); err != nil {
+			return err
+		}
+		digest := sha256.Sum256(leaf.Raw)
+		matched := 0
+		for _, pin := range active {
+			matched |= subtle.ConstantTimeCompare(digest[:], pin[:])
+		}
+		if matched != 1 {
+			return &Error{detail: FailurePinMismatch}
+		}
+		if priorVerify != nil {
+			if err := priorVerify(state); err != nil {
+				return &Error{detail: FailureUnknown}
+			}
+		}
+		return nil
 	}
 }
 
