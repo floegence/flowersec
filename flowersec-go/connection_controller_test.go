@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -623,6 +624,47 @@ func TestConnectionControllerCloseBlocksNewAcquisitionWhileCancellationStalled(t
 	}
 	if controller.RetryNow() {
 		t.Fatal("RetryNow accepted a wait after Close")
+	}
+}
+
+func TestConnectionControllerCloseWinsBeforeAcquisitionAdmission(t *testing.T) {
+	source := &controllerTestSource{}
+	controller := newControllerForTest(t, source, 0)
+	reachedBoundary := make(chan struct{})
+	releaseBoundary := make(chan struct{})
+	controller.beforeAcquireAdmission = func() {
+		close(reachedBoundary)
+		<-releaseBoundary
+	}
+	controller.Start(context.Background())
+	select {
+	case <-reachedBoundary:
+	case <-time.After(time.Second):
+		t.Fatal("scheduler did not reach acquisition admission boundary")
+	}
+
+	closed := make(chan error, 1)
+	go func() { closed <- controller.Close(context.Background()) }()
+	deadline := time.After(time.Second)
+	for controller.Snapshot().State != ConnectionClosed {
+		select {
+		case <-deadline:
+			t.Fatal("closed snapshot was not observable while acquisition cleanup was unsettled")
+		default:
+			runtime.Gosched()
+		}
+	}
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned before scheduler cleanup settled: %v", err)
+	default:
+	}
+	close(releaseBoundary)
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+	if got := source.callCount(); got != 0 {
+		t.Fatalf("source calls after Close won admission = %d, want 0", got)
 	}
 }
 

@@ -148,12 +148,21 @@ describe("transport v3 server admission", () => {
     expect(carrierAbort).toHaveBeenCalled();
   });
 
-  test("rejects a v2 admission header before waiting for its declared payload", async () => {
+  test.each([
+    ["v2 magic", (header: Uint8Array) => { header[3] = 0x32; }],
+    ["v2 version", (header: Uint8Array) => { header[4] = 2; }],
+    ["invalid path", (header: Uint8Array) => { header[5] = 0; }],
+    ["nonzero reserved[0]", (header: Uint8Array) => { header[6] = 1; }],
+    ["nonzero reserved[1]", (header: Uint8Array) => { header[7] = 1; }],
+  ] as const)("rejects an invalid streaming admission header (%s) before waiting for its declared payload", async (
+    _name,
+    mutateHeader,
+  ) => {
     const chosen = directArtifact.path.candidates.find(({ carrier }) => carrier === "websocket");
     if (chosen === undefined) throw new Error("WebSocket candidate required");
     const valid = encodeFSB3RequestV3(buildFSB3RequestV3(directArtifact, chosen.id));
     const header = valid.slice(0, 12);
-    header[3] = 0x32;
+    mutateHeader(header);
     new DataView(header.buffer, header.byteOffset, header.byteLength).setUint32(8, 32_768, false);
 
     const read = vi.fn<CarrierStreamV3["read"]>(async () => {

@@ -201,6 +201,9 @@ type ConnectionController struct {
 	currentSession                 Session
 	closingSession                 Session
 	clock                          controllerClock
+	// beforeAcquireAdmission is a test-only scheduler hook. Production leaves
+	// it nil; tests use it to stop exactly before the lifecycle admission check.
+	beforeAcquireAdmission func()
 }
 
 // NewConnectionController creates an idle controller over a refreshable
@@ -373,17 +376,24 @@ type controllerSourceAcquireResult struct {
 // lease, drains the source result, and performs the only legal claim/retire
 // cleanup before the scheduler can finish closing.
 func (controller *ConnectionController) acquire(ctx context.Context) (ArtifactLease, *ArtifactSourceError) {
-	controller.mu.Lock()
-	if controller.closing || controller.snapshot.State == ConnectionClosed {
-		controller.mu.Unlock()
-		return ArtifactLease{}, nil
-	}
 	result := make(chan controllerSourceAcquireResult, 1)
-	started := make(chan struct{})
 	var gate atomic.Uint32 // 0 pending, 1 delivered, 2 cancellation
 	go func() {
 		var acquired controllerSourceAcquireResult
-		close(started)
+		if controller.beforeAcquireAdmission != nil {
+			controller.beforeAcquireAdmission()
+		}
+		controller.mu.Lock()
+		if controller.closing || controller.snapshot.State == ConnectionClosed || ctx.Err() != nil {
+			controller.mu.Unlock()
+			result <- acquired
+			return
+		}
+		// Admission under the lifecycle lock is the acquisition start
+		// linearization point. Close cannot publish closed before this decision;
+		// once admitted, the source call belongs to the closing controller and
+		// done remains open until its result and cleanup settle.
+		controller.mu.Unlock()
 		func() {
 			defer func() {
 				if recover() != nil {
@@ -405,11 +415,6 @@ func (controller *ConnectionController) acquire(ctx context.Context) (ArtifactLe
 		}
 		result <- controllerSourceAcquireResult{}
 	}()
-	// Hold the lifecycle mutex until the source call has crossed its entry
-	// boundary. Close therefore cannot publish closed between the admission
-	// check above and the actual source acquisition.
-	<-started
-	controller.mu.Unlock()
 
 	select {
 	case acquired := <-result:
