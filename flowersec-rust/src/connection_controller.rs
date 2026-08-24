@@ -254,6 +254,8 @@ struct ControllerInner {
     acquisition_gate: Mutex<()>,
     #[cfg(test)]
     before_acquire_admission: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    #[cfg(test)]
+    after_acquire_claim: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl fmt::Debug for ControllerInner {
@@ -342,6 +344,8 @@ impl ConnectionController {
                 acquisition_gate: Mutex::new(()),
                 #[cfg(test)]
                 before_acquire_admission: Mutex::new(None),
+                #[cfg(test)]
+                after_acquire_claim: Mutex::new(None),
             }),
             task: Mutex::new(None),
             close_lock: AsyncMutex::new(()),
@@ -463,6 +467,13 @@ impl ControllerInner {
     #[cfg(test)]
     fn run_before_acquire_admission(&self) {
         let hook = lock(&self.before_acquire_admission).clone();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+    #[cfg(test)]
+    fn run_after_acquire_claim(&self) {
+        let hook = lock(&self.after_acquire_claim).clone();
         if let Some(hook) = hook {
             hook();
         }
@@ -1000,6 +1011,8 @@ async fn acquire_lease(
             RetryDisposition::Terminal,
         )
     })?;
+    #[cfg(test)]
+    inner.run_after_acquire_claim();
     if inner.cancellation.is_cancelled() {
         // Delivery won the source race, so the Controller owns the lease even
         // when cancellation is observed immediately afterward.
@@ -1910,6 +1923,94 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(500), &mut second)
             .await
             .expect("later close remained blocked after scheduler cleanup");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn delivery_first_close_waits_for_claimed_lease_retirement() {
+        let claim_entered = Arc::new(std::sync::Barrier::new(2));
+        let claim_release = Arc::new(std::sync::Barrier::new(2));
+        let claim_entered_hook = claim_entered.clone();
+        let claim_release_hook = claim_release.clone();
+        let retire_entered = Arc::new(Notify::new());
+        let retire_release = Arc::new(Notify::new());
+        let retire_entered_capture = retire_entered.clone();
+        let retire_release_capture = retire_release.clone();
+        let spends = Arc::new(AtomicU64::new(0));
+        let spends_capture = spends.clone();
+        let retires = Arc::new(AtomicU64::new(0));
+        let retires_capture = retires.clone();
+        let connector_calls = Arc::new(AtomicU64::new(0));
+        let lease = ArtifactLeaseV3::new_with_retire(
+            pin_only_artifact([0x11; 32]),
+            move || async move {
+                spends_capture.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+            move || async move {
+                retires_capture.fetch_add(1, Ordering::SeqCst);
+                retire_entered_capture.notify_one();
+                retire_release_capture.notified().await;
+                Ok(())
+            },
+        );
+        let lease_copy = lease.clone();
+        let controller = Arc::new(ConnectionController::new_with_connector(
+            Arc::new(QueueSource::new([Ok(lease)])),
+            test_options(None),
+            counting_connector([ConnectorStep::Success], connector_calls.clone()),
+        ));
+        *lock(&controller.inner.after_acquire_claim) = Some(Arc::new(move || {
+            claim_entered_hook.wait();
+            claim_release_hook.wait();
+        }));
+
+        controller.start();
+        tokio::task::block_in_place(|| claim_entered.wait());
+        let close_controller = controller.clone();
+        let mut close = tokio::spawn(async move {
+            close_controller.close().await;
+        });
+        let closed = tokio::time::timeout(Duration::from_millis(500), async {
+            let closed = controller.snapshot();
+            if closed.state == ConnectionState::Closed {
+                closed
+            } else {
+                controller.wait_for_snapshot_change(&closed).await
+            }
+        })
+        .await
+        .expect("close did not publish Closed while acquisition was paused");
+        assert_eq!(closed.state, ConnectionState::Closed);
+        assert_eq!(closed.failure, None);
+        assert!(!close.is_finished());
+        assert_eq!(connector_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(spends.load(Ordering::SeqCst), 0);
+        assert_eq!(retires.load(Ordering::SeqCst), 0);
+
+        tokio::task::block_in_place(|| claim_release.wait());
+        tokio::select! {
+            biased;
+            result = &mut close => panic!("close returned before retirement started: {result:?}"),
+            _ = retire_entered.notified() => {}
+        }
+        assert_eq!(retires.load(Ordering::SeqCst), 1);
+        assert_eq!(connector_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(spends.load(Ordering::SeqCst), 0);
+        assert!(
+            lease_copy.claim().is_err(),
+            "Controller-claimed lease became reusable"
+        );
+
+        retire_release.notify_one();
+        tokio::time::timeout(Duration::from_millis(500), &mut close)
+            .await
+            .expect("close did not complete after retirement cleanup")
+            .expect("close task panicked");
+        assert_eq!(controller.snapshot().state, ConnectionState::Closed);
+        assert_eq!(controller.snapshot().failure, None);
+        assert_eq!(retires.load(Ordering::SeqCst), 1);
+        assert_eq!(connector_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(spends.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

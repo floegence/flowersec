@@ -411,6 +411,11 @@ preserves normal `errors.Is` and `errors.As` traversal. TypeScript carries the
 same string in the failure snapshot, while Rust and Swift preserve it in their
 closed failure enum cases.
 
+Rust exposes the canonical redacted `ConnectErrorCode` through
+`ArtifactSourceError::code()` and `ConnectionFailure::code()`. These accessors
+preserve the source, connect, and session failure boundaries without exposing
+underlying source, transport, credential, or peer diagnostics.
+
 A source failure increments consecutive failures once. Each claimed lease
 that does not establish a Session increments once at its unique final result.
 Candidate failures, loser cancellation, repeated checks, and Close do not add
