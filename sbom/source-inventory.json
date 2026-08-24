@@ -1966,6 +1966,176 @@
         },
         {
           "ecosystem": "npm",
+          "name": "@floegence/flowersec-node-native",
+          "version": "3.0.1",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://registry.npmjs.org/@floegence/flowersec-node-native/-/flowersec-node-native-3.0.1.tgz",
+          "purl": "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-08-07",
+            "policyRevision": "source-license-policy-v3",
+            "sourceEvidenceKind": "npm-lock-integrity",
+            "sourceEvidenceValue": "sha512-2EnkT6yETFACr1sfjzp8/4qRTDtq0jqZyoehKHK3KgZ3RJkO78Tv27yqhrnbqr0jea3fc4ey1sBgSfc8XqhIIw==",
+            "sourceEvidenceSha256": "9b59551b19b5cfb4ffb650372b14effb33b0bb45d5f2cabb91aab6af008f5928",
+            "expressionEvidenceSha256": "ac96fd0684ec08b9045917284e008251d9bacacdc5e22a6cd41bd8befb687e89",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "npm",
+          "name": "@floegence/flowersec-node-native-darwin-arm64",
+          "version": "3.0.1",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-darwin-arm64/-/flowersec-node-native-darwin-arm64-3.0.1.tgz",
+          "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@3.0.1",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-08-07",
+            "policyRevision": "source-license-policy-v3",
+            "sourceEvidenceKind": "npm-lock-integrity",
+            "sourceEvidenceValue": "sha512-7BaYTuy+4N/gVB0a2X8waw6Krc00nGMjmfZs/Wx8ir7mROMYjNi0zqEbBGUSc+5Fafi3h1bV2r1E73zt99vDug==",
+            "sourceEvidenceSha256": "7424959536bf6dc6d45e814f484992f6590c44709f1d158800d7809e0ff730ce",
+            "expressionEvidenceSha256": "afc223e6dabd830f246058de2160cb497df5a2e67d0d73776aaf1310cf497bd8",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "npm",
+          "name": "@floegence/flowersec-node-native-darwin-x64",
+          "version": "3.0.1",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-darwin-x64/-/flowersec-node-native-darwin-x64-3.0.1.tgz",
+          "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@3.0.1",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-08-07",
+            "policyRevision": "source-license-policy-v3",
+            "sourceEvidenceKind": "npm-lock-integrity",
+            "sourceEvidenceValue": "sha512-yhfqvg04684/E7H5OL2T7bbliWWg2pKKrWQFWQrPAQ6DMVz4OJMsuBsAKWc/gaVI8ujrE95YJoccn4APlISP+g==",
+            "sourceEvidenceSha256": "2940b236d52257e62e97deffb1c1a23ce59f21bcfe38f9a93d324c086ceaad01",
+            "expressionEvidenceSha256": "a5537cd1dda1382a434bfffab47cd2cc8c63e712e966a25309a3905b9fc9a10a",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "npm",
+          "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
+          "version": "3.0.1",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-linux-arm64-gnu/-/flowersec-node-native-linux-arm64-gnu-3.0.1.tgz",
+          "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@3.0.1",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-08-07",
+            "policyRevision": "source-license-policy-v3",
+            "sourceEvidenceKind": "npm-lock-integrity",
+            "sourceEvidenceValue": "sha512-M1EH3Ai0sc3cXq9SWoZd3rKtNt4oTwUvpYDT5kt5IbEihYOfkhsyfatymiiAi97ZJUzHcqVRtBWXJssbRDAx+A==",
+            "sourceEvidenceSha256": "818a90afd38e289b8cb8744f784d54d9ade5526049e33e00f79ab85607e25164",
+            "expressionEvidenceSha256": "27601ccb5fe7c0ea8fa8e96cd7b1dcdc50cbda05e0b0672b7ab44d5be9b149e4",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "npm",
+          "name": "@floegence/flowersec-node-native-linux-x64-gnu",
+          "version": "3.0.1",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-linux-x64-gnu/-/flowersec-node-native-linux-x64-gnu-3.0.1.tgz",
+          "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@3.0.1",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-08-07",
+            "policyRevision": "source-license-policy-v3",
+            "sourceEvidenceKind": "npm-lock-integrity",
+            "sourceEvidenceValue": "sha512-EPFO7ueSyY1q0Pzug/iuv/7RdohShRvjsnocGHgDukDySmz2SRjnp4aQ0k+8QKd4m5GkQh9CvvsT01qJWLvkFw==",
+            "sourceEvidenceSha256": "b630fa7911034c360baaad0b2116c52607fd9ea19b140248d352cace5ceb08ab",
+            "expressionEvidenceSha256": "02f486652b5d41968c5c1e1d8a8a6acf0370bc5fe4760837b635ef50582680dc",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "npm",
           "name": "@humanfs/core",
           "version": "0.19.1",
           "declaredLicense": "Apache-2.0",
@@ -8330,6 +8500,11 @@
         },
         {
           "from": "pkg:npm/%40floegence/flowersec-core@3.0.1",
+          "to": "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
+          "kind": "optional"
+        },
+        {
+          "from": "pkg:npm/%40floegence/flowersec-core@3.0.1",
           "to": "pkg:npm/%40noble/ciphers@2.3.0",
           "kind": "runtime"
         },
@@ -8422,6 +8597,26 @@
           "from": "pkg:npm/%40floegence/flowersec-core@3.0.1",
           "to": "pkg:npm/ws@8.21.3",
           "kind": "runtime"
+        },
+        {
+          "from": "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
+          "to": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@3.0.1",
+          "kind": "optional"
+        },
+        {
+          "from": "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
+          "to": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@3.0.1",
+          "kind": "optional"
+        },
+        {
+          "from": "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
+          "to": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@3.0.1",
+          "kind": "optional"
+        },
+        {
+          "from": "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
+          "to": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@3.0.1",
+          "kind": "optional"
         },
         {
           "from": "pkg:npm/%40humanfs/node@0.16.7",
@@ -61646,6 +61841,176 @@
     },
     {
       "ecosystem": "npm",
+      "name": "@floegence/flowersec-node-native",
+      "version": "3.0.1",
+      "declaredLicense": "MIT",
+      "concludedLicense": "MIT",
+      "source": "https://registry.npmjs.org/@floegence/flowersec-node-native/-/flowersec-node-native-3.0.1.tgz",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "MIT",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-08-07",
+        "policyRevision": "source-license-policy-v3",
+        "sourceEvidenceKind": "npm-lock-integrity",
+        "sourceEvidenceValue": "sha512-2EnkT6yETFACr1sfjzp8/4qRTDtq0jqZyoehKHK3KgZ3RJkO78Tv27yqhrnbqr0jea3fc4ey1sBgSfc8XqhIIw==",
+        "sourceEvidenceSha256": "9b59551b19b5cfb4ffb650372b14effb33b0bb45d5f2cabb91aab6af008f5928",
+        "expressionEvidenceSha256": "ac96fd0684ec08b9045917284e008251d9bacacdc5e22a6cd41bd8befb687e89",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@floegence/flowersec-node-native-darwin-arm64",
+      "version": "3.0.1",
+      "declaredLicense": "MIT",
+      "concludedLicense": "MIT",
+      "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-darwin-arm64/-/flowersec-node-native-darwin-arm64-3.0.1.tgz",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@3.0.1",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "MIT",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-08-07",
+        "policyRevision": "source-license-policy-v3",
+        "sourceEvidenceKind": "npm-lock-integrity",
+        "sourceEvidenceValue": "sha512-7BaYTuy+4N/gVB0a2X8waw6Krc00nGMjmfZs/Wx8ir7mROMYjNi0zqEbBGUSc+5Fafi3h1bV2r1E73zt99vDug==",
+        "sourceEvidenceSha256": "7424959536bf6dc6d45e814f484992f6590c44709f1d158800d7809e0ff730ce",
+        "expressionEvidenceSha256": "afc223e6dabd830f246058de2160cb497df5a2e67d0d73776aaf1310cf497bd8",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@floegence/flowersec-node-native-darwin-x64",
+      "version": "3.0.1",
+      "declaredLicense": "MIT",
+      "concludedLicense": "MIT",
+      "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-darwin-x64/-/flowersec-node-native-darwin-x64-3.0.1.tgz",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@3.0.1",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "MIT",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-08-07",
+        "policyRevision": "source-license-policy-v3",
+        "sourceEvidenceKind": "npm-lock-integrity",
+        "sourceEvidenceValue": "sha512-yhfqvg04684/E7H5OL2T7bbliWWg2pKKrWQFWQrPAQ6DMVz4OJMsuBsAKWc/gaVI8ujrE95YJoccn4APlISP+g==",
+        "sourceEvidenceSha256": "2940b236d52257e62e97deffb1c1a23ce59f21bcfe38f9a93d324c086ceaad01",
+        "expressionEvidenceSha256": "a5537cd1dda1382a434bfffab47cd2cc8c63e712e966a25309a3905b9fc9a10a",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
+      "version": "3.0.1",
+      "declaredLicense": "MIT",
+      "concludedLicense": "MIT",
+      "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-linux-arm64-gnu/-/flowersec-node-native-linux-arm64-gnu-3.0.1.tgz",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@3.0.1",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "MIT",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-08-07",
+        "policyRevision": "source-license-policy-v3",
+        "sourceEvidenceKind": "npm-lock-integrity",
+        "sourceEvidenceValue": "sha512-M1EH3Ai0sc3cXq9SWoZd3rKtNt4oTwUvpYDT5kt5IbEihYOfkhsyfatymiiAi97ZJUzHcqVRtBWXJssbRDAx+A==",
+        "sourceEvidenceSha256": "818a90afd38e289b8cb8744f784d54d9ade5526049e33e00f79ab85607e25164",
+        "expressionEvidenceSha256": "27601ccb5fe7c0ea8fa8e96cd7b1dcdc50cbda05e0b0672b7ab44d5be9b149e4",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@floegence/flowersec-node-native-linux-x64-gnu",
+      "version": "3.0.1",
+      "declaredLicense": "MIT",
+      "concludedLicense": "MIT",
+      "source": "https://registry.npmjs.org/@floegence/flowersec-node-native-linux-x64-gnu/-/flowersec-node-native-linux-x64-gnu-3.0.1.tgz",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@3.0.1",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "MIT",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-08-07",
+        "policyRevision": "source-license-policy-v3",
+        "sourceEvidenceKind": "npm-lock-integrity",
+        "sourceEvidenceValue": "sha512-EPFO7ueSyY1q0Pzug/iuv/7RdohShRvjsnocGHgDukDySmz2SRjnp4aQ0k+8QKd4m5GkQh9CvvsT01qJWLvkFw==",
+        "sourceEvidenceSha256": "b630fa7911034c360baaad0b2116c52607fd9ea19b140248d352cace5ceb08ab",
+        "expressionEvidenceSha256": "02f486652b5d41968c5c1e1d8a8a6acf0370bc5fe4760837b635ef50582680dc",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "npm",
       "name": "@humanfs/core",
       "version": "0.19.1",
       "declaredLicense": "Apache-2.0",
@@ -71198,6 +71563,11 @@
     },
     {
       "from": "pkg:generic/flowersec-source@3.0.1",
+      "to": "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
+      "kind": "optional"
+    },
+    {
+      "from": "pkg:generic/flowersec-source@3.0.1",
       "to": "pkg:npm/%40noble/ciphers@2.3.0",
       "kind": "runtime"
     },
@@ -71520,6 +71890,26 @@
       "from": "pkg:npm/%40eslint/plugin-kit@0.7.2",
       "to": "pkg:npm/levn@0.4.1",
       "kind": "runtime"
+    },
+    {
+      "from": "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
+      "to": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@3.0.1",
+      "kind": "optional"
+    },
+    {
+      "from": "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
+      "to": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@3.0.1",
+      "kind": "optional"
+    },
+    {
+      "from": "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
+      "to": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@3.0.1",
+      "kind": "optional"
+    },
+    {
+      "from": "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
+      "to": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@3.0.1",
+      "kind": "optional"
     },
     {
       "from": "pkg:npm/%40humanfs/node@0.16.7",

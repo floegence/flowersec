@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:7c0074af-2a58-5394-8572-4c22fd177e8a",
+  "serialNumber": "urn:uuid:060b763b-3c2e-576e-86b7-b7b1613ebe02",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,11 +14,151 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "428d40c24d97553e640a89f6e0397fed24c3106752eb8397571157fb9ea19172"
+        "value": "5bc748f518bce83d338376f62b6df58f8b1649426b80ec388a22119ac4b28b26"
       }
     ]
   },
   "components": [
+    {
+      "type": "library",
+      "name": "@floegence/flowersec-node-native",
+      "version": "3.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@floegence/flowersec-node-native/-/flowersec-node-native-3.0.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@floegence/flowersec-node-native-darwin-arm64",
+      "version": "3.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@3.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@3.0.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@floegence/flowersec-node-native-darwin-arm64/-/flowersec-node-native-darwin-arm64-3.0.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@floegence/flowersec-node-native-darwin-x64",
+      "version": "3.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@3.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@3.0.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@floegence/flowersec-node-native-darwin-x64/-/flowersec-node-native-darwin-x64-3.0.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
+      "version": "3.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@3.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@3.0.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@floegence/flowersec-node-native-linux-arm64-gnu/-/flowersec-node-native-linux-arm64-gnu-3.0.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@floegence/flowersec-node-native-linux-x64-gnu",
+      "version": "3.0.1",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@3.0.1",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@3.0.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@floegence/flowersec-node-native-linux-x64-gnu/-/flowersec-node-native-linux-x64-gnu-3.0.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
     {
       "type": "library",
       "name": "@noble/ciphers",
@@ -192,12 +332,38 @@
     {
       "ref": "pkg:npm/%40floegence/flowersec-core@3.0.1",
       "dependsOn": [
+        "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
         "pkg:npm/%40noble/ciphers@2.3.0",
         "pkg:npm/%40noble/curves@2.3.0",
         "pkg:npm/%40noble/hashes@2.3.0",
         "pkg:npm/tr46@5.0.0",
         "pkg:npm/ws@8.21.3"
       ]
+    },
+    {
+      "ref": "pkg:npm/%40floegence/flowersec-node-native@3.0.1",
+      "dependsOn": [
+        "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@3.0.1",
+        "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@3.0.1",
+        "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@3.0.1",
+        "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@3.0.1"
+      ]
+    },
+    {
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@3.0.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@3.0.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@3.0.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@3.0.1",
+      "dependsOn": []
     },
     {
       "ref": "pkg:npm/%40noble/ciphers@2.3.0",
