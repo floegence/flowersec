@@ -16,6 +16,7 @@ import {
   acceptCarrierSessionV3,
   createAdmissionReasonRegistryV3,
   acceptReceivedSessionV3,
+  receiveSessionAdmissionV3,
   rejectSessionAdmissionV3,
   type ReceivedSessionAdmissionV3,
 } from "./serverAdmission.js";
@@ -145,6 +146,55 @@ describe("transport v3 server admission", () => {
     expect(write).not.toHaveBeenCalled();
     expect(streamAbort).toHaveBeenCalledOnce();
     expect(carrierAbort).toHaveBeenCalled();
+  });
+
+  test("rejects a v2 admission header before waiting for its declared payload", async () => {
+    const chosen = directArtifact.path.candidates.find(({ carrier }) => carrier === "websocket");
+    if (chosen === undefined) throw new Error("WebSocket candidate required");
+    const valid = encodeFSB3RequestV3(buildFSB3RequestV3(directArtifact, chosen.id));
+    const header = valid.slice(0, 12);
+    header[3] = 0x32;
+    new DataView(header.buffer, header.byteOffset, header.byteLength).setUint32(8, 32_768, false);
+
+    const read = vi.fn<CarrierStreamV3["read"]>(async () => {
+      if (read.mock.calls.length === 1) return header;
+      return await new Promise<Uint8Array | null>(() => {});
+    });
+    const streamAbort = vi.fn<CarrierStreamV3["abort"]>();
+    const stream = {
+      read,
+      write: async (value: Uint8Array) => value.length,
+      closeWrite: async () => undefined,
+      stopSending: async () => undefined,
+      reset: async () => undefined,
+      abort: streamAbort,
+    } satisfies CarrierStreamV3;
+    const carrierAbort = vi.fn<CarrierSessionV3["abort"]>();
+    const carrier = {
+      kind: "websocket",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+      openStream: async () => stream,
+      acceptStream: async () => stream,
+      waitTermination: async () => undefined,
+      close: async () => undefined,
+      abort: carrierAbort,
+    } satisfies CarrierSessionV3;
+
+    const outcome = await Promise.race([
+      receiveSessionAdmissionV3(carrier).then(
+        () => "accepted",
+        () => "rejected",
+      ),
+      new Promise<"payload timeout">((resolve) => {
+        setTimeout(() => resolve("payload timeout"), 100);
+      }),
+    ]);
+
+    expect(outcome).toBe("rejected");
+    expect(read).toHaveBeenCalledOnce();
+    expect(streamAbort).toHaveBeenCalledOnce();
+    expect(carrierAbort).toHaveBeenCalledOnce();
   });
 
   test("rejects tunnel path mismatch before authorization, FSA3, or resource reuse", async () => {

@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::Value;
-use tokio::sync::{Barrier, Notify};
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use super::*;
@@ -80,6 +80,8 @@ struct ExpectedV3 {
     timer_saturated: Option<bool>,
     #[serde(default)]
     concurrent_acquisition_peak: Option<u64>,
+    #[serde(default)]
+    controller_connector_attempts: Option<u64>,
     #[serde(default)]
     capability_snapshots: Option<Vec<String>>,
     #[serde(default)]
@@ -166,8 +168,102 @@ impl TrackedLease {
         }
     }
 
+    fn new_with_retire_gate(artifact: ArtifactV3, gate: Arc<AsyncGate>) -> Self {
+        let terminal = Arc::new(Mutex::new(None));
+        let spends = Arc::new(AtomicU64::new(0));
+        let retires = Arc::new(AtomicU64::new(0));
+        let spend_terminal = terminal.clone();
+        let spend_count = spends.clone();
+        let retire_terminal = terminal.clone();
+        let retire_count = retires.clone();
+        let lease = ArtifactLeaseV3::new_with_retire(
+            artifact,
+            move || async move {
+                spend_count.fetch_add(1, Ordering::SeqCst);
+                *lock(&spend_terminal) = Some("consumed");
+                Ok(())
+            },
+            move || async move {
+                retire_count.fetch_add(1, Ordering::SeqCst);
+                gate.enter();
+                gate.wait_for_release().await;
+                *lock(&retire_terminal) = Some("retired");
+                Ok(())
+            },
+        );
+        Self {
+            lease,
+            terminal,
+            spends,
+            retires,
+        }
+    }
+
     fn state(&self) -> String {
         lock(&self.terminal).unwrap_or("idle").to_owned()
+    }
+}
+
+#[derive(Debug)]
+struct AsyncGate {
+    entered: AtomicBool,
+    released: AtomicBool,
+    changed: Notify,
+}
+
+impl AsyncGate {
+    fn new() -> Self {
+        Self {
+            entered: AtomicBool::new(false),
+            released: AtomicBool::new(false),
+            changed: Notify::new(),
+        }
+    }
+
+    fn enter(&self) {
+        self.entered.store(true, Ordering::Release);
+        self.changed.notify_waiters();
+    }
+
+    fn release(&self) {
+        self.released.store(true, Ordering::Release);
+        self.changed.notify_waiters();
+    }
+
+    async fn wait_for_entry(&self) {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let changed = self.changed.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                if self.entered.load(Ordering::Acquire) {
+                    return;
+                }
+                changed.await;
+            }
+        })
+        .await
+        .expect("retirement gate was not entered");
+    }
+
+    async fn wait_for_release(&self) {
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.released.load(Ordering::Acquire) {
+                return;
+            }
+            changed.await;
+        }
+    }
+}
+
+struct GateReleaseGuard(Arc<AsyncGate>);
+
+impl Drop for GateReleaseGuard {
+    fn drop(&mut self) {
+        self.0.release();
     }
 }
 
@@ -850,7 +946,7 @@ async fn every_registered_controller_scenario_executes_production_state() {
 }
 
 #[tokio::test]
-async fn every_registered_browser_controller_scenario_executes_barrier_model() {
+async fn every_registered_browser_controller_scenario_executes_production_barrier_path() {
     let scenarios = browser_scenarios();
     let mut executed = HashSet::new();
     for scenario in &scenarios {
@@ -878,89 +974,495 @@ async fn run_browser_capability_scenario(scenario: &ScenarioV3) {
         "synchronous_not_supported"
     );
 
-    let barrier = Arc::new(Barrier::new(2));
-    let active = Arc::new(AtomicU64::new(0));
-    let peak = Arc::new(AtomicU64::new(0));
-    let acquire = |barrier: Arc<Barrier>, active: Arc<AtomicU64>, peak: Arc<AtomicU64>| async move {
-        let current = active.fetch_add(1, Ordering::SeqCst) + 1;
-        peak.fetch_max(current, Ordering::SeqCst);
-        barrier.wait().await;
-        active.fetch_sub(1, Ordering::SeqCst);
-        "enabled"
-    };
-    let first = acquire(barrier.clone(), active.clone(), peak.clone());
-    let second = acquire(barrier, active, peak.clone());
-    let (first_snapshot, second_snapshot) = tokio::join!(first, second);
+    let primary_retirement = Arc::new(AsyncGate::new());
+    let _retirement_release = GateReleaseGuard(primary_retirement.clone());
+    let refresh_primary = TrackedLease::new_with_retire_gate(
+        browser_pin_artifact("refresh-pin", "refresh-primary.example", [0x11; 32]),
+        primary_retirement.clone(),
+    );
+    let stale_primary = TrackedLease::new(browser_pin_artifact_with_candidates([
+        ("stale-blocked", "stale-blocked.example", [0x21; 32]),
+        ("stale-invalidator", "stale-invalidator.example", [0x22; 32]),
+    ]));
+    let refresh_replacement = TrackedLease::new(browser_replacement_artifact());
+    let acquisitions = Arc::new(BrowserAcquisitionCoordinator::new());
+    let refresh_source = Arc::new(BrowserBarrierSource::new(
+        acquisitions.clone(),
+        [
+            SourceEntry {
+                replacement: false,
+                result: Ok(refresh_primary.lease.clone()),
+            },
+            SourceEntry {
+                replacement: true,
+                result: Ok(refresh_replacement.lease.clone()),
+            },
+        ],
+    ));
+    let stale_source = Arc::new(BrowserBarrierSource::new(
+        acquisitions.clone(),
+        [SourceEntry {
+            replacement: false,
+            result: Ok(stale_primary.lease.clone()),
+        }],
+    ));
+    let state = Arc::new(BrowserBarrierState::new(primary_retirement.clone()));
+    let preparer = Arc::new(BrowserBarrierPreparer::new(state.clone()));
+    let connector = browser_barrier_connector(state.clone(), preparer);
+    let refresh_controller = ConnectionController::new_with_connector(
+        refresh_source,
+        browser_test_options(2),
+        connector.clone(),
+    );
+    let stale_controller =
+        ConnectionController::new_with_connector(stale_source, browser_test_options(1), connector);
 
-    let capability_enabled = Arc::new(AtomicBool::new(true));
-    capability_enabled.store(false, Ordering::SeqCst);
-    let stale_live_gate_failure = if !capability_enabled.load(Ordering::SeqCst) {
-        1
-    } else {
-        0
-    };
-    let replacement_snapshot = if capability_enabled.load(Ordering::SeqCst) {
-        "enabled"
-    } else {
-        "ca_only"
-    };
-    let observed_snapshots = vec![
-        first_snapshot.to_owned(),
-        second_snapshot.to_owned(),
-        replacement_snapshot.to_owned(),
-    ];
+    refresh_controller.start();
+    stale_controller.start();
+    let release_initial = GateReleaseGuard(acquisitions.initial_release.clone());
+    acquisitions.wait_for_initial_acquisitions().await;
+    acquisitions.release_initial();
+    acquisitions.wait_for_initial_release_observed().await;
+    primary_retirement.wait_for_entry().await;
     assert_eq!(
-        peak.load(Ordering::SeqCst),
+        acquisitions.acquisitions.load(Ordering::SeqCst),
+        2,
+        "replacement acquisition crossed the primary retirement barrier"
+    );
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        wait_for_state(&stale_controller, ConnectionState::Failed),
+    )
+    .await
+    .expect("stale controller reaches failed state before replacement retirement release");
+    assert_eq!(
+        acquisitions.acquisitions.load(Ordering::SeqCst),
+        2,
+        "replacement acquisition occurred before retirement completed"
+    );
+    primary_retirement.release();
+    drop(release_initial);
+    let refresh_status = wait_for_state(&refresh_controller, ConnectionState::Failed).await;
+    let stale_status = stale_controller.status();
+
+    assert_eq!(
+        acquisitions.peak.load(Ordering::SeqCst),
         scenario.expected.concurrent_acquisition_peak.unwrap()
     );
     assert_eq!(
-        observed_snapshots,
+        state.capability_snapshots(),
         scenario.expected.capability_snapshots.clone().unwrap()
     );
     assert_eq!(
-        stale_live_gate_failure,
+        state.old_snapshot_live_gate_failures.load(Ordering::SeqCst),
         scenario.expected.old_snapshot_live_gate_failures.unwrap()
     );
-    assert_eq!(scenario.expected.pin_constructor_calls, Some(2));
-    assert_eq!(scenario.expected.ca_constructor_calls, Some(1));
     assert_eq!(
-        scenario.expected.post_invalidation_pin_constructor_calls,
-        Some(0)
+        state.pin_constructor_calls.load(Ordering::SeqCst),
+        scenario.expected.pin_constructor_calls.unwrap()
     );
     assert_eq!(
-        scenario.expected.replacement_dial_candidate_ids.as_deref(),
-        Some(["replacement-ca".to_owned()].as_slice())
+        state.ca_constructor_calls.load(Ordering::SeqCst),
+        scenario.expected.ca_constructor_calls.unwrap()
     );
+    assert_eq!(
+        state
+            .post_invalidation_pin_constructor_calls
+            .load(Ordering::SeqCst),
+        scenario
+            .expected
+            .post_invalidation_pin_constructor_calls
+            .unwrap()
+    );
+    assert_eq!(
+        state.replacement_dial_candidate_ids(),
+        scenario
+            .expected
+            .replacement_dial_candidate_ids
+            .clone()
+            .unwrap()
+    );
+    assert_eq!(
+        state.connector_attempts.load(Ordering::SeqCst),
+        scenario.expected.controller_connector_attempts.unwrap()
+    );
+    assert_eq!(stale_status.state, ConnectionState::Failed);
+    assert!(matches!(
+        stale_status.last_failure,
+        Some(ConnectionFailure::Connect {
+            code: ConnectErrorCode::TransportSecurityUnsupported,
+            disposition: RetryDisposition::Terminal,
+        })
+    ));
     assert_eq!(
         scenario.expected.peer_final_state.as_deref(),
-        Some("failed")
+        Some(state_name(stale_status.state))
     );
     assert_eq!(
         scenario.expected.peer_public_error.as_deref(),
-        Some("transport_security_unsupported")
+        stale_status.last_failure.and_then(|failure| match failure {
+            ConnectionFailure::Connect { code, .. } => Some(code.as_str()),
+            _ => None,
+        })
     );
-    assert_eq!(scenario.expected.acquisitions, 3);
-    assert_eq!(scenario.expected.connect_attempts, 4);
-    assert_eq!(scenario.expected.transports_created, 2);
-    assert_eq!(scenario.expected.replacement_acquisitions, 1);
-    assert_eq!(scenario.expected.spend_callbacks, 0);
-    assert_eq!(scenario.expected.retire_callbacks, 3);
-    assert!(scenario.expected.retry_delays_ms.is_empty());
-    assert_eq!(scenario.expected.final_state, "failed");
-    assert_eq!(
-        scenario.expected.public_error.as_deref(),
-        Some("connection_failed")
+    let (public_error, disposition) = match refresh_status.last_failure {
+        Some(ConnectionFailure::Connect { code, disposition }) => (
+            Some(code.as_str().to_owned()),
+            Some(disposition_name(disposition).to_owned()),
+        ),
+        failure => panic!("unexpected refresh controller failure: {failure:?}"),
+    };
+    assert_observed(
+        scenario,
+        ObservedV3 {
+            final_state: state_name(refresh_status.state).to_owned(),
+            public_error,
+            disposition,
+            acquisitions: acquisitions.acquisitions.load(Ordering::SeqCst),
+            connect_attempts: state.dial_attempts.load(Ordering::SeqCst),
+            transports_created: state.transports_created.load(Ordering::SeqCst),
+            replacement_acquisitions: acquisitions.replacement_acquisitions.load(Ordering::SeqCst),
+            replacement_quota_used: acquisitions.replacement_acquisitions.load(Ordering::SeqCst),
+            spend_callbacks: refresh_primary.spends.load(Ordering::SeqCst)
+                + stale_primary.spends.load(Ordering::SeqCst)
+                + refresh_replacement.spends.load(Ordering::SeqCst),
+            retire_callbacks: refresh_primary.retires.load(Ordering::SeqCst)
+                + stale_primary.retires.load(Ordering::SeqCst)
+                + refresh_replacement.retires.load(Ordering::SeqCst),
+            lease_terminal_states: vec![
+                refresh_primary.state(),
+                stale_primary.state(),
+                refresh_replacement.state(),
+            ],
+            retry_delays_ms: Vec::new(),
+        },
     );
-    assert_eq!(scenario.expected.disposition.as_deref(), Some("terminal"));
-    assert_eq!(scenario.expected.replacement_quota_used, 1);
-    assert_eq!(
-        scenario.expected.lease_terminal_states,
-        [
-            "retired".to_owned(),
-            "retired".to_owned(),
-            "retired".to_owned()
-        ]
-    );
+    refresh_controller.close().await;
+    stale_controller.close().await;
+}
+
+#[derive(Debug)]
+struct BrowserAcquisitionCoordinator {
+    initial_release: Arc<AsyncGate>,
+    active: AtomicU64,
+    peak: AtomicU64,
+    acquisitions: AtomicU64,
+    replacement_acquisitions: AtomicU64,
+    changed: Notify,
+}
+
+impl BrowserAcquisitionCoordinator {
+    fn new() -> Self {
+        Self {
+            initial_release: Arc::new(AsyncGate::new()),
+            active: AtomicU64::new(0),
+            peak: AtomicU64::new(0),
+            acquisitions: AtomicU64::new(0),
+            replacement_acquisitions: AtomicU64::new(0),
+            changed: Notify::new(),
+        }
+    }
+
+    fn enter_initial(&self) {
+        let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(active, Ordering::SeqCst);
+        self.changed.notify_waiters();
+    }
+
+    fn leave_initial(&self) {
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        self.changed.notify_waiters();
+    }
+
+    fn release_initial(&self) {
+        self.initial_release.release();
+    }
+
+    async fn wait_for_initial_acquisitions(&self) {
+        self.wait_for_acquisition_condition(
+            || self.peak.load(Ordering::SeqCst) == 2,
+            "two initial controller acquisitions did not reach the barrier",
+        )
+        .await;
+    }
+
+    async fn wait_for_initial_release_observed(&self) {
+        self.wait_for_acquisition_condition(
+            || self.active.load(Ordering::SeqCst) == 0,
+            "initial controller acquisitions did not leave the barrier",
+        )
+        .await;
+    }
+
+    async fn wait_for_acquisition_condition(
+        &self,
+        condition: impl Fn() -> bool,
+        message: &'static str,
+    ) {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let changed = self.changed.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                if condition() {
+                    return;
+                }
+                changed.await;
+            }
+        })
+        .await
+        .expect(message);
+    }
+}
+
+#[derive(Debug)]
+struct BrowserBarrierSource {
+    coordinator: Arc<BrowserAcquisitionCoordinator>,
+    entries: Mutex<VecDeque<SourceEntry>>,
+    initial_pending: AtomicBool,
+}
+
+impl BrowserBarrierSource {
+    fn new(
+        coordinator: Arc<BrowserAcquisitionCoordinator>,
+        entries: impl IntoIterator<Item = SourceEntry>,
+    ) -> Self {
+        Self {
+            coordinator,
+            entries: Mutex::new(entries.into_iter().collect()),
+            initial_pending: AtomicBool::new(true),
+        }
+    }
+}
+
+#[async_trait]
+impl ArtifactSource for BrowserBarrierSource {
+    async fn acquire(
+        &self,
+        cancellation: CancellationToken,
+    ) -> Result<ArtifactLeaseV3, ArtifactSourceError> {
+        let entry = lock(&self.entries)
+            .pop_front()
+            .unwrap_or_else(|| SourceEntry {
+                replacement: false,
+                result: Err(ArtifactSourceError::terminal()),
+            });
+        self.coordinator.acquisitions.fetch_add(1, Ordering::SeqCst);
+        if entry.replacement {
+            self.coordinator
+                .replacement_acquisitions
+                .fetch_add(1, Ordering::SeqCst);
+        }
+        if self.initial_pending.swap(false, Ordering::AcqRel) {
+            self.coordinator.enter_initial();
+            let released = tokio::select! {
+                _ = self.coordinator.initial_release.wait_for_release() => true,
+                _ = cancellation.cancelled() => false,
+            };
+            self.coordinator.leave_initial();
+            if !released {
+                return Err(ArtifactSourceError::terminal());
+            }
+        }
+        entry.result
+    }
+}
+
+#[derive(Debug)]
+struct BrowserBarrierState {
+    pin_enabled: AtomicBool,
+    capability_changed: Notify,
+    primary_retirement: Arc<AsyncGate>,
+    capability_snapshots: Mutex<Vec<String>>,
+    connector_attempts: AtomicU64,
+    dial_attempts: AtomicU64,
+    transports_created: AtomicU64,
+    pin_constructor_calls: AtomicU64,
+    ca_constructor_calls: AtomicU64,
+    old_snapshot_live_gate_failures: AtomicU64,
+    post_invalidation_pin_constructor_calls: AtomicU64,
+    replacement_dial_candidate_ids: Mutex<Vec<String>>,
+}
+
+impl BrowserBarrierState {
+    fn new(primary_retirement: Arc<AsyncGate>) -> Self {
+        Self {
+            pin_enabled: AtomicBool::new(true),
+            capability_changed: Notify::new(),
+            primary_retirement,
+            capability_snapshots: Mutex::new(Vec::new()),
+            connector_attempts: AtomicU64::new(0),
+            dial_attempts: AtomicU64::new(0),
+            transports_created: AtomicU64::new(0),
+            pin_constructor_calls: AtomicU64::new(0),
+            ca_constructor_calls: AtomicU64::new(0),
+            old_snapshot_live_gate_failures: AtomicU64::new(0),
+            post_invalidation_pin_constructor_calls: AtomicU64::new(0),
+            replacement_dial_candidate_ids: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn capability_name(&self) -> &'static str {
+        if self.pin_enabled.load(Ordering::Acquire) {
+            "enabled"
+        } else {
+            "ca_only"
+        }
+    }
+
+    fn record_capability_snapshot(&self) {
+        lock(&self.capability_snapshots).push(self.capability_name().to_owned());
+    }
+
+    fn capability_snapshots(&self) -> Vec<String> {
+        lock(&self.capability_snapshots).clone()
+    }
+
+    fn invalidate_pin_support(&self) {
+        assert!(
+            self.pin_enabled.swap(false, Ordering::AcqRel),
+            "pin capability invalidated more than once"
+        );
+        self.capability_changed.notify_waiters();
+    }
+
+    async fn wait_for_ca_only(&self) {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let changed = self.capability_changed.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                if !self.pin_enabled.load(Ordering::Acquire) {
+                    return;
+                }
+                changed.await;
+            }
+        })
+        .await
+        .expect("runtime capability did not become ca_only");
+    }
+
+    fn replacement_dial_candidate_ids(&self) -> Vec<String> {
+        lock(&self.replacement_dial_candidate_ids).clone()
+    }
+}
+
+struct BrowserBarrierPreparer {
+    state: Arc<BrowserBarrierState>,
+}
+
+impl BrowserBarrierPreparer {
+    fn new(state: Arc<BrowserBarrierState>) -> Self {
+        Self { state }
+    }
+}
+
+impl CandidatePreparerV3 for BrowserBarrierPreparer {
+    fn prepare<'a>(
+        &'a self,
+        candidate: &'a CanonicalCandidateV3,
+        _plan: &'a ConnectionPlanV3,
+        _options: &'a ConnectorOptions,
+        _deadline: tokio::time::Instant,
+        _cancellation: &'a CancellationToken,
+    ) -> CandidatePrepareFutureV3<'a> {
+        Box::pin(async move {
+            match candidate.id.as_str() {
+                "stale-blocked" => {
+                    self.state.dial_attempts.fetch_add(1, Ordering::SeqCst);
+                    self.state.wait_for_ca_only().await;
+                    self.state
+                        .old_snapshot_live_gate_failures
+                        .fetch_add(1, Ordering::SeqCst);
+                    Err(CandidateFailureV3::Unsupported)
+                }
+                "stale-invalidator" => {
+                    self.state.dial_attempts.fetch_add(1, Ordering::SeqCst);
+                    self.state.primary_retirement.wait_for_entry().await;
+                    assert!(self.state.pin_enabled.load(Ordering::Acquire));
+                    self.state
+                        .pin_constructor_calls
+                        .fetch_add(1, Ordering::SeqCst);
+                    self.state.invalidate_pin_support();
+                    Err(CandidateFailureV3::Unsupported)
+                }
+                "refresh-pin" if !self.state.pin_enabled.load(Ordering::Acquire) => {
+                    Err(CandidateFailureV3::Unsupported)
+                }
+                "refresh-pin" => {
+                    self.state.dial_attempts.fetch_add(1, Ordering::SeqCst);
+                    self.state
+                        .pin_constructor_calls
+                        .fetch_add(1, Ordering::SeqCst);
+                    if !self.state.pin_enabled.load(Ordering::Acquire) {
+                        self.state
+                            .post_invalidation_pin_constructor_calls
+                            .fetch_add(1, Ordering::SeqCst);
+                    }
+                    self.state.transports_created.fetch_add(1, Ordering::SeqCst);
+                    Err(CandidateFailureV3::Security)
+                }
+                "replacement-ca" => {
+                    self.state.dial_attempts.fetch_add(1, Ordering::SeqCst);
+                    self.state
+                        .ca_constructor_calls
+                        .fetch_add(1, Ordering::SeqCst);
+                    self.state.transports_created.fetch_add(1, Ordering::SeqCst);
+                    lock(&self.state.replacement_dial_candidate_ids).push(candidate.id.clone());
+                    Err(CandidateFailureV3::Connection)
+                }
+                _ => Err(CandidateFailureV3::InvalidArtifact),
+            }
+        })
+    }
+}
+
+fn browser_barrier_connector(
+    state: Arc<BrowserBarrierState>,
+    preparer: Arc<BrowserBarrierPreparer>,
+) -> ConnectOneShot {
+    Arc::new(move |lease, options, cancellation| {
+        state.connector_attempts.fetch_add(1, Ordering::SeqCst);
+        state.record_capability_snapshot();
+        let primary_opaque = {
+            let candidates = lease.artifact_for_connector().controller_candidates();
+            candidates.len() == 1 && candidates[0].id == "refresh-pin"
+        };
+        let preparer = preparer.clone();
+        Box::pin(async move {
+            match connect_v3_with_cancellation_and_preparer(
+                lease,
+                options,
+                cancellation,
+                preparer.as_ref(),
+            )
+            .await
+            {
+                Err(error)
+                    if primary_opaque
+                        && error.code() == ConnectErrorCode::TransportSecurityFailed =>
+                {
+                    Err(
+                        ConnectError::from_runtime_code(ConnectErrorCode::ConnectionFailed)
+                            .with_v3_candidate_masks(
+                                error.v3_policy_trigger_mask(),
+                                error.v3_failed_candidate_mask(),
+                            ),
+                    )
+                }
+                result => result,
+            }
+        })
+    })
+}
+
+fn browser_test_options(maximum_attempts: u64) -> ConnectionControllerOptions {
+    let connector = ConnectorOptions::new()
+        .with_websocket_origin("https://example.org")
+        .expect("browser barrier websocket origin");
+    ConnectionControllerOptions::new(connector)
+        .with_maximum_attempts(NonZeroU64::new(maximum_attempts).expect("nonzero"))
+        .expect("safe maximum attempts")
 }
 
 async fn run_scenario(scenario: &ScenarioV3) {
@@ -2281,6 +2783,40 @@ fn pin_artifact(pin: [u8; 32]) -> ArtifactV3 {
         "wss://pin.example.org/flowersec/v3/direct",
         pin
     )]))
+}
+
+fn browser_pin_artifact(id: &str, host: &str, pin: [u8; 32]) -> ArtifactV3 {
+    browser_pin_artifact_with_candidates([(id, host, pin)])
+}
+
+fn browser_pin_artifact_with_candidates<const N: usize>(
+    candidates: [(&str, &str, [u8; 32]); N],
+) -> ArtifactV3 {
+    artifact_with_candidates(Value::Array(
+        candidates
+            .into_iter()
+            .map(|(id, host, pin)| {
+                pin_candidate(id, &format!("wss://{host}/flowersec/v3/direct"), pin)
+            })
+            .collect(),
+    ))
+}
+
+fn browser_replacement_artifact() -> ArtifactV3 {
+    artifact_with_candidates(serde_json::json!([
+        pin_candidate(
+            "refresh-pin",
+            "wss://refresh-primary.example/flowersec/v3/direct",
+            [0x12; 32]
+        ),
+        {
+            "carrier": "websocket",
+            "id": "replacement-ca",
+            "tls": {"mode": "ca"},
+            "url": "wss://replacement-ca.example/flowersec/v3/direct",
+            "wire_profile": "flowersec-direct/3"
+        }
+    ]))
 }
 
 fn pin_artifact_with_expiry(pin: [u8; 32], expires_at_unix_seconds: u64) -> ArtifactV3 {

@@ -340,6 +340,7 @@ final class ConnectionControllerTests: XCTestCase {
 
   func testPinMismatchUsesOneChangedPinReplacementAndEstablishes() async throws {
     let expected = try controllerExpectedV3("pin-mismatch-changed-pin-success")
+    let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let retired = AsyncCounterV3()
     let spent = AsyncCounterV3()
     let primary = try lease(artifact: artifactV3(), spent: spent, retired: retired)
@@ -349,6 +350,7 @@ final class ConnectionControllerTests: XCTestCase {
     let session = ControllerSessionV3()
     let controller = try ConnectionController(
       source: source,
+      clock: clock.controllerClock,
       connectOneShot: { lease, _ in
         if await attempts.increment() == 1 { throw nativePinFailureV3() }
         let claimed = try await lease.claim()
@@ -372,7 +374,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int)
     XCTAssertEqual(spends, expected["spend_callbacks"] as? Int)
     XCTAssertEqual(expected["lease_terminal_states"] as? [String], ["retired", "consumed"])
-    XCTAssertEqual(expected["retry_delays_ms"] as? [Int], [])
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int])
     XCTAssertTrue(expected["public_error"] is NSNull)
     XCTAssertTrue(expected["disposition"] is NSNull)
     await controller.close()
@@ -635,6 +637,7 @@ final class ConnectionControllerTests: XCTestCase {
 
   func testBrowserOpaquePinFailureRefreshesOnceAndKeepsConnectionError() async throws {
     let expected = try controllerExpectedV3("browser-opaque-exhausted")
+    let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let retired = AsyncCounterV3()
     let source = SequenceArtifactSourceV3([
       try lease(artifact: artifactV3(), retired: retired),
@@ -643,6 +646,7 @@ final class ConnectionControllerTests: XCTestCase {
     let calls = AsyncCounterV3()
     let controller = try ConnectionController(
       source: source,
+      clock: clock.controllerClock,
       connectOneShot: { _, _ in
         _ = await calls.increment()
         throw ControllerConnectFailureV3.connection(
@@ -664,11 +668,13 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(attempts, expected["connect_attempts"] as? Int)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int)
     XCTAssertEqual(expected["tls_error_claimed"] as? Bool, false)
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int])
     await controller.close()
   }
 
   func testMixedSecurityAndOpaqueTriggersRefresh() async throws {
     let expected = try controllerExpectedV3("mixed-security-opaque-policy-refresh")
+    let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let retired = AsyncCounterV3()
     let spent = AsyncCounterV3()
     let source = SequenceArtifactSourceV3([
@@ -679,6 +685,7 @@ final class ConnectionControllerTests: XCTestCase {
     let session = ControllerSessionV3()
     let controller = try ConnectionController(
       source: source,
+      clock: clock.controllerClock,
       connectOneShot: { lease, _ in
         if await calls.increment() == 1 {
           throw ControllerConnectFailureV3.connection(
@@ -704,6 +711,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(attempts, expected["connect_attempts"] as? Int)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int)
     XCTAssertEqual(spends, expected["spend_callbacks"] as? Int)
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int])
     await controller.close()
   }
 
@@ -713,6 +721,7 @@ final class ConnectionControllerTests: XCTestCase {
       ("pin-to-ca-filtered", try caOnlyArtifactV3()),
     ] {
       let expected = try controllerExpectedV3(scenarioID)
+      let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
       let retired = AsyncCounterV3()
       let spent = AsyncCounterV3()
       let source = SequenceArtifactSourceV3([
@@ -722,6 +731,7 @@ final class ConnectionControllerTests: XCTestCase {
       let calls = AsyncCounterV3()
       let controller = try ConnectionController(
         source: source,
+        clock: clock.controllerClock,
         connectOneShot: { _, _ in
           _ = await calls.increment()
           throw nativePinFailureV3()
@@ -747,7 +757,8 @@ final class ConnectionControllerTests: XCTestCase {
       XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int)
       XCTAssertEqual(spends, expected["spend_callbacks"] as? Int)
       XCTAssertEqual(expected["lease_terminal_states"] as? [String], ["retired", "retired"])
-      XCTAssertEqual(expected["retry_delays_ms"] as? [Int], [])
+      XCTAssertEqual(
+        clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], scenarioID)
       if scenarioID == "pin-to-ca-filtered" {
         XCTAssertEqual(expected["no_mode_downgrade"] as? Bool, true)
       }
@@ -858,6 +869,7 @@ final class ConnectionControllerTests: XCTestCase {
 
   func testAllUnsupportedIsTerminalWithoutCreatingTransport() async throws {
     let expected = try controllerExpectedV3("all-unsupported")
+    let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let retired = AsyncCounterV3()
     let spent = AsyncCounterV3()
     let source = SequenceArtifactSourceV3([
@@ -868,6 +880,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       maximumAttempts: 1,
+      clock: clock.controllerClock,
       connectOneShot: { _, _ in
         _ = await connectAttempts.increment()
         throw ConnectError.transportSecurityUnsupported
@@ -895,7 +908,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(spends, expected["spend_callbacks"] as? Int)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int)
     XCTAssertEqual(expected["lease_terminal_states"] as? [String], ["retired"])
-    XCTAssertEqual(expected["retry_delays_ms"] as? [Int], [])
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int])
     await controller.close()
   }
 
@@ -910,6 +923,8 @@ final class ConnectionControllerTests: XCTestCase {
 
   private func runExpiredReplacementVector(_ id: String, beforeRace: Bool) async throws {
     let expected = try controllerExpectedV3(id)
+    let clock = VectorManualClockV3(
+      wallMilliseconds: beforeRace ? 2_000 : 0, monotonicMilliseconds: 0)
     let retired = AsyncCounterV3()
     let spent = AsyncCounterV3()
     let source = SequenceArtifactSourceV3([
@@ -924,6 +939,7 @@ final class ConnectionControllerTests: XCTestCase {
     let session = ControllerSessionV3()
     let controller = try ConnectionController(
       source: source,
+      clock: clock.controllerClock,
       connectOneShot: { lease, _ in
         switch await calls.increment() {
         case 1: throw nativePinFailureV3()
@@ -938,6 +954,7 @@ final class ConnectionControllerTests: XCTestCase {
     )
     await controller.start()
     let waiting = await waitForState(.waiting, controller: controller)
+    assertTrueV3(await clock.waitForSleepCount(1), id)
     let initialAcquisitions = await source.acquisitions
     let initialRetirements = await retired.value
     let woke = await controller.retryNow()
@@ -963,7 +980,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(finalRetirements, expected["retire_callbacks"] as? Int)
     XCTAssertEqual(
       expected["lease_terminal_states"] as? [String], ["retired", "retired", "consumed"])
-    XCTAssertEqual(expected["retry_delays_ms"] as? [Int], [500])
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int])
     XCTAssertEqual(expected["blocked_policy_remains_blocked"] as? Bool, true)
     XCTAssertTrue(expected["public_error"] is NSNull)
     XCTAssertTrue(expected["disposition"] is NSNull)
@@ -972,6 +989,7 @@ final class ConnectionControllerTests: XCTestCase {
 
   func testRetryableReplacementAcquisitionContinuesSearch() async throws {
     let expected = try controllerExpectedV3("replacement-acquisition-retryable-continues-search")
+    let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let retired = AsyncCounterV3()
     let spent = AsyncCounterV3()
     let source = ResultArtifactSourceV3([
@@ -983,6 +1001,7 @@ final class ConnectionControllerTests: XCTestCase {
     let session = ControllerSessionV3()
     let controller = try ConnectionController(
       source: source,
+      clock: clock.controllerClock,
       connectOneShot: { lease, _ in
         if await calls.increment() == 1 { throw nativePinFailureV3() }
         let claimed = try await lease.claim()
@@ -992,6 +1011,8 @@ final class ConnectionControllerTests: XCTestCase {
     )
     await controller.start()
     let waiting = await waitForState(.waiting, controller: controller)
+    assertTrueV3(
+      await clock.waitForSleepCount(1), "replacement-acquisition-retryable-continues-search")
     let woke = await controller.retryNow()
     let connected = await waitForState(.connected, controller: controller)
     let acquisitions = await source.acquisitions
@@ -1009,12 +1030,15 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(spends, expected["spend_callbacks"] as? Int)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int)
     XCTAssertEqual(expected["lease_terminal_states"] as? [String], ["retired", "consumed"])
-    XCTAssertEqual(expected["retry_delays_ms"] as? [Int], [500])
+    XCTAssertEqual(
+      clock.requestedSleeps().map(Int.init),
+      expected["retry_delays_ms"] as? [Int])
     await controller.close()
   }
 
   func testPostSpendRetryPreservesReplacementQuota() async throws {
     let expected = try controllerExpectedV3("post-spend-retry-preserves-quota")
+    let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let retired = AsyncCounterV3()
     let spent = AsyncCounterV3()
     let source = SequenceArtifactSourceV3([
@@ -1025,6 +1049,7 @@ final class ConnectionControllerTests: XCTestCase {
     let calls = AsyncCounterV3()
     let controller = try ConnectionController(
       source: source,
+      clock: clock.controllerClock,
       connectOneShot: { lease, _ in
         let call = await calls.increment()
         if call == 2 {
@@ -1045,6 +1070,7 @@ final class ConnectionControllerTests: XCTestCase {
     )
     await controller.start()
     let waiting = await waitForState(.waiting, controller: controller)
+    assertTrueV3(await clock.waitForSleepCount(1), "post-spend-retry-preserves-quota")
     let initialSpends = await spent.value
     let woke = await controller.retryNow()
     let failed = await waitForState(.failed, controller: controller)
@@ -1068,17 +1094,21 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(finalRetirements, expected["retire_callbacks"] as? Int)
     XCTAssertEqual(
       expected["lease_terminal_states"] as? [String], ["retired", "consumed", "retired"])
-    XCTAssertEqual(expected["retry_delays_ms"] as? [Int], [500])
+    XCTAssertEqual(
+      clock.requestedSleeps().map(Int.init),
+      expected["retry_delays_ms"] as? [Int])
     await controller.close()
   }
 
   func testAttemptExhaustionUsesFirstBackoffAndCreatesNoTransport() async throws {
     let expected = try controllerExpectedV3("attempt-exhaustion")
+    let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let source = RetryableFailureArtifactSourceV3()
     let connectAttempts = AsyncCounterV3()
     let controller = try ConnectionController(
       source: source,
       maximumAttempts: 2,
+      clock: clock.controllerClock,
       connectOneShot: { _, _ in
         _ = await connectAttempts.increment()
         throw ConnectError.connectionFailed
@@ -1087,6 +1117,7 @@ final class ConnectionControllerTests: XCTestCase {
 
     await controller.start()
     let waiting = await waitForState(.waiting, controller: controller)
+    assertTrueV3(await clock.waitForSleepCount(1), "attempt-exhaustion")
     let woke = await controller.retryNow()
     let failed = await waitForState(.failed, controller: controller)
     let snapshot = await controller.snapshot()
@@ -1110,7 +1141,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(expected["spend_callbacks"] as? Int, 0)
     XCTAssertEqual(expected["retire_callbacks"] as? Int, 0)
     XCTAssertEqual(expected["lease_terminal_states"] as? [String], [])
-    XCTAssertEqual(expected["retry_delays_ms"] as? [Int], [250])
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int])
     await controller.close()
   }
 
@@ -1370,7 +1401,7 @@ final class ConnectionControllerTests: XCTestCase {
     await staleController.start()
     guard await barrier.waitForInitialAcquisitions() else {
       XCTFail("browser barrier timed out before both initial acquisitions arrived")
-      await barrier.releaseInitialAcquisitions()
+      await barrier.releaseAllWaiters()
       await primaryRetireGate.release()
       await refreshController.close()
       await staleController.close()
@@ -1380,18 +1411,33 @@ final class ConnectionControllerTests: XCTestCase {
     let primaryRetirementEntered = await waitUntilV3 { await primaryRetireGate.entered }
     if !primaryRetirementEntered {
       XCTFail("opaque primary did not enter its retirement barrier")
+      await barrier.releaseAllWaiters()
       await primaryRetireGate.release()
       await refreshController.close()
       await staleController.close()
       return
     }
     let staleFailed = await waitForState(.failed, controller: staleController)
+    guard staleFailed else {
+      XCTFail("stale controller did not fail after capability invalidation")
+      await barrier.releaseAllWaiters()
+      await primaryRetireGate.release()
+      await refreshController.close()
+      await staleController.close()
+      return
+    }
     let replacementAcquisitionsBeforePrimaryRetirement = await refreshSource.replacementAcquisitions
     XCTAssertEqual(replacementAcquisitionsBeforePrimaryRetirement, 0)
     await primaryRetireGate.release()
     let refreshFailed = await waitForState(.failed, controller: refreshController)
-    XCTAssertTrue(staleFailed, "stale controller")
-    XCTAssertTrue(refreshFailed, "refresh controller")
+    guard refreshFailed else {
+      XCTFail("refresh controller did not fail after replacement acquisition")
+      await barrier.releaseAllWaiters()
+      await primaryRetireGate.release()
+      await refreshController.close()
+      await staleController.close()
+      return
+    }
 
     let refreshSnapshot = await refreshController.snapshot()
     let staleSnapshot = await staleController.snapshot()
@@ -1440,6 +1486,8 @@ final class ConnectionControllerTests: XCTestCase {
       case .connection(let staleFailure) = staleSnapshot.failure
     else {
       XCTFail("browser barrier did not produce connection failures")
+      await barrier.releaseAllWaiters()
+      await primaryRetireGate.release()
       await refreshController.close()
       await staleController.close()
       return
@@ -1455,6 +1503,7 @@ final class ConnectionControllerTests: XCTestCase {
 
   private func runCancellationVectorV3(_ id: String) async throws {
     let expected = try controllerExpectedV3(id)
+    let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let retired = AsyncCounterV3()
     let retireGate = BlockingRetireGateV3()
     let tracked = ArtifactLeaseV3(
@@ -1469,6 +1518,7 @@ final class ConnectionControllerTests: XCTestCase {
       let connects = AsyncCounterV3()
       let controller = try ConnectionController(
         source: source,
+        clock: clock.controllerClock,
         connectOneShot: { _, _ in
           _ = await connects.increment()
           throw ConnectError.connectionFailed
@@ -1494,6 +1544,8 @@ final class ConnectionControllerTests: XCTestCase {
       XCTAssertEqual(snapshot.state.rawValue, expected["final_state"] as? String, id)
       XCTAssertEqual(attempts, expected["connect_attempts"] as? Int, id)
       XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
+      XCTAssertEqual(
+        clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
       XCTAssertEqual(expected["source_cancellation_propagated"] as? Bool, true, id)
       XCTAssertEqual(expected["close_waits_for_acquire_settlement"] as? Bool, true, id)
       return
@@ -1503,6 +1555,7 @@ final class ConnectionControllerTests: XCTestCase {
     let started = AsyncCounterV3()
     let controller = try ConnectionController(
       source: source,
+      clock: clock.controllerClock,
       connectOneShot: { _, _ in
         _ = await started.increment()
         do { try await Task.sleep(for: .seconds(60)) } catch { throw ConnectError.canceled }
@@ -1527,6 +1580,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(snapshot.state.rawValue, expected["final_state"] as? String, id)
     XCTAssertEqual(attempts, expected["connect_attempts"] as? Int, id)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
     XCTAssertEqual(expected["source_cancellation_propagated"] as? Bool, true, id)
     XCTAssertEqual(expected["close_waits_for_acquire_settlement"] as? Bool, true, id)
   }
@@ -1633,6 +1687,7 @@ final class ConnectionControllerTests: XCTestCase {
         permutations, expected: expected, scenarioID: id)
       return
     }
+    let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let retired = AsyncCounterV3()
     let source = SequenceArtifactSourceV3([
       try lease(artifact: caOnlyArtifactV3(), retired: retired)
@@ -1641,6 +1696,7 @@ final class ConnectionControllerTests: XCTestCase {
     let expectedAttempts = try XCTUnwrap(expected["connect_attempts"] as? Int)
     let controller = try ConnectionController(
       source: source,
+      clock: clock.controllerClock,
       connectOneShot: { _, _ in
         for _ in 0..<expectedAttempts { _ = await attempts.increment() }
         throw ControllerConnectFailureV3.connection(
@@ -1655,6 +1711,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(snapshot.failure, .connection(.transportSecurityFailed), id)
     XCTAssertEqual(actualAttempts, expectedAttempts, id)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
     await controller.close()
   }
 
@@ -1686,12 +1743,14 @@ final class ConnectionControllerTests: XCTestCase {
       let label = "\(scenarioID): \(permutation.joined(separator: " -> "))"
       let spent = AsyncCounterV3()
       let retired = AsyncCounterV3()
+      let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
       let runtime = PermutationFailureRuntimeV3()
       let source = SequenceArtifactSourceV3([
         try lease(artifact: threeFailureCandidateArtifactV3(), spent: spent, retired: retired)
       ])
       let controller = try ConnectionController(
         source: source,
+        clock: clock.controllerClock,
         connectOneShot: { lease, options in
           try await SessionConnectorV3(
             lease: lease, options: options, runtime: runtime,
@@ -1727,6 +1786,8 @@ final class ConnectionControllerTests: XCTestCase {
       XCTAssertEqual(spendCount, expectedSpends, label)
       XCTAssertEqual(retireCount, expectedRetirements, label)
       XCTAssertEqual(expected["lease_terminal_states"] as? [String], ["retired"], label)
+      XCTAssertEqual(
+        clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], label)
       await controller.close()
     }
   }
@@ -1756,7 +1817,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(snapshot.state.rawValue, expected["final_state"] as? String, id)
     XCTAssertEqual(actualAttempts, expected["connect_attempts"] as? Int, id)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
-    XCTAssertEqual(clock.requestedSleeps().first, 250, id)
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
     await controller.close()
   }
 
@@ -1766,7 +1827,7 @@ final class ConnectionControllerTests: XCTestCase {
     let spent = AsyncCounterV3()
     let retired = AsyncCounterV3()
     let source = SequenceArtifactSourceV3([
-      try lease(artifact: artifactV3(), spent: spent, retired: retired)
+      try lease(artifact: artifactV3(), spent: spent, retired: retired),
     ])
     let attempts = AsyncCounterV3()
     let preRace = id == "artifact-expiry-before-race"
@@ -1792,6 +1853,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(spends, expected["spend_callbacks"] as? Int, id)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
     XCTAssertEqual(expected["credential_bytes_written"] as? Int, 0, id)
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
     await controller.close()
   }
 
@@ -1838,21 +1900,23 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(attempts, expected["connect_attempts"] as? Int, id)
     XCTAssertEqual(spends, expected["spend_callbacks"] as? Int, id)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
-    XCTAssertEqual(clock.requestedSleeps(), [250, 250], id)
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
     await controller.close()
   }
 
   private func runTerminalCycleResetVectorV3(_ id: String) async throws {
     let expected = try controllerExpectedV3(id)
+    let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let spent = AsyncCounterV3()
     let retired = AsyncCounterV3()
     let source = SequenceArtifactSourceV3([
-      try lease(artifact: artifactV3(), spent: spent, retired: retired),
+      try lease(artifact: artifactV3(), spent: spent, retired: retired)
     ])
     let session = ControllerSessionV3(terminationError: .operationFailed)
     let calls = AsyncCounterV3()
     let controller = try ConnectionController(
       source: source,
+      clock: clock.controllerClock,
       connectOneShot: { lease, _ in
         _ = await calls.increment()
         let claimed = try await lease.claim()
@@ -1876,6 +1940,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(spends, expected["spend_callbacks"] as? Int, id)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
     XCTAssertEqual(expected["failure_ordinal"] as? Int, 1, id)
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
     await controller.close()
   }
 
@@ -1979,6 +2044,7 @@ final class ConnectionControllerTests: XCTestCase {
 
   private func runMultiTriggerVectorV3(_ id: String) async throws {
     let expected = try controllerExpectedV3(id)
+    let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let retired = AsyncCounterV3()
     let source = SequenceArtifactSourceV3([
       try lease(artifact: twoPinArtifactV3(), retired: retired),
@@ -1988,6 +2054,7 @@ final class ConnectionControllerTests: XCTestCase {
     let replacementCandidates = CandidateIDRecorderV3()
     let controller = try ConnectionController(
       source: source,
+      clock: clock.controllerClock,
       connectOneShot: { lease, _ in
         let call = await calls.increment()
         if call == 2 {
@@ -2011,6 +2078,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
     XCTAssertEqual(candidates, ["w-pin"], id)
     XCTAssertEqual(expected["no_mode_downgrade"] as? Bool, true, id)
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
     await controller.close()
   }
 
@@ -2055,6 +2123,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(spends, expected["spend_callbacks"] as? Int, id)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
     XCTAssertEqual(expected["cleanup_error_ignored"] as? Bool, true, id)
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
     await controller.close()
   }
 
@@ -2098,16 +2167,19 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(attempts, expected["connect_attempts"] as? Int, id)
     XCTAssertEqual(spends, expected["spend_callbacks"] as? Int, id)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
     await controller.close()
   }
 
   private func runAttemptSaturationVectorV3(_ id: String) async throws {
     let expected = try controllerExpectedV3(id)
+    let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let maxSafe = UInt64(9_007_199_254_740_991)
     let source = NeverArtifactSourceV3()
     let controller = try ConnectionController(
       source: source,
       maximumAttempts: maxSafe,
+      clock: clock.controllerClock,
       initialAttempt: maxSafe,
       connectOneShot: { _, _ in throw ConnectError.connectionFailed })
     await controller.start()
@@ -2118,11 +2190,13 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(
       snapshot.attempt, UInt64(try XCTUnwrap(expected["attempt"] as? NSNumber).uint64Value), id)
     XCTAssertEqual(expected["counter_saturated"] as? Bool, true, id)
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
     await controller.close()
   }
 
   private func runCapabilityBarrierVectorV3(_ id: String) async throws {
     let expected = try controllerExpectedV3(id)
+    let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let retired = AsyncCounterV3()
     let runtime = CapabilityInvalidatingRuntimeV3()
     let source = SequenceArtifactSourceV3([
@@ -2130,6 +2204,7 @@ final class ConnectionControllerTests: XCTestCase {
     ])
     let controller = try ConnectionController(
       source: source,
+      clock: clock.controllerClock,
       connectOneShot: { lease, options in
         try await SessionConnectorV3(
           lease: lease, options: options, runtime: runtime,
@@ -2150,6 +2225,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(transports, expected["transports_created"] as? Int, id)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
     XCTAssertEqual(expected["capability_rechecked"] as? Bool, true, id)
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
     await controller.close()
   }
 
@@ -2197,9 +2273,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(attempts, expected["connect_attempts"] as? Int, id)
     XCTAssertEqual(spends, expected["spend_callbacks"] as? Int, id)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
-    if retryable {
-      XCTAssertEqual(clock.requestedSleeps().first, replacement ? 500 : 250, id)
-    }
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
     await controller.close()
   }
 
@@ -2240,6 +2314,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(attempts, expected["connect_attempts"] as? Int, id)
     XCTAssertEqual(spends, expected["spend_callbacks"] as? Int, id)
     XCTAssertEqual(retirements, expected["retire_callbacks"] as? Int, id)
+    XCTAssertEqual(clock.requestedSleeps().map(Int.init), expected["retry_delays_ms"] as? [Int], id)
     await controller.close()
   }
 
@@ -2743,6 +2818,18 @@ private actor CapabilityLinearizationBarrierV3 {
     initialReleased = true
     let waiters = releaseWaiters
     releaseWaiters.removeAll()
+    for waiter in waiters { waiter.resume() }
+  }
+
+  // Test-harness fail-open cleanup: no barrier waiter may outlive a failed setup.
+  func releaseAllWaiters() {
+    initialReleased = true
+    invalidated = true
+    primaryConstructed = true
+    let waiters = releaseWaiters + invalidationWaiters + primaryConstructorWaiters
+    releaseWaiters.removeAll()
+    invalidationWaiters.removeAll()
+    primaryConstructorWaiters.removeAll()
     for waiter in waiters { waiter.resume() }
   }
 

@@ -196,7 +196,10 @@ type ConnectionController struct {
 	cancel                         context.CancelFunc
 	done                           chan struct{}
 	started                        bool
+	closing                        bool
 	doneClosed                     bool
+	currentSession                 Session
+	closingSession                 Session
 	clock                          controllerClock
 }
 
@@ -313,6 +316,7 @@ func (controller *ConnectionController) Close(ctx context.Context) error {
 	}
 	controller.mu.Lock()
 	if !controller.started {
+		controller.closing = true
 		if controller.snapshot.State != ConnectionClosed {
 			controller.retryNotBeforeUnixMilliseconds = -1
 			controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionClosed, Attempt: controller.snapshot.Attempt})
@@ -321,14 +325,31 @@ func (controller *ConnectionController) Close(ctx context.Context) error {
 		controller.mu.Unlock()
 		return nil
 	}
+	if controller.closing {
+		done := controller.done
+		controller.mu.Unlock()
+		select {
+		case <-done:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	// Mark closing and detach the current session under the same lock that
+	// publishes the closed state. This is the lifecycle linearization point:
+	// no later scheduler step may begin an acquisition, even if cancellation
+	// itself is temporarily blocked by an underlying runtime.
+	controller.closing = true
 	cancel := controller.cancel
 	done := controller.done
+	controller.closingSession = controller.currentSession
+	controller.currentSession = nil
 	controller.retryNotBeforeUnixMilliseconds = -1
 	controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionClosed, Attempt: controller.snapshot.Attempt})
-	controller.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
+	controller.mu.Unlock()
 	select {
 	case <-done:
 		controller.mu.Lock()
@@ -352,10 +373,17 @@ type controllerSourceAcquireResult struct {
 // lease, drains the source result, and performs the only legal claim/retire
 // cleanup before the scheduler can finish closing.
 func (controller *ConnectionController) acquire(ctx context.Context) (ArtifactLease, *ArtifactSourceError) {
+	controller.mu.Lock()
+	if controller.closing || controller.snapshot.State == ConnectionClosed {
+		controller.mu.Unlock()
+		return ArtifactLease{}, nil
+	}
 	result := make(chan controllerSourceAcquireResult, 1)
+	started := make(chan struct{})
 	var gate atomic.Uint32 // 0 pending, 1 delivered, 2 cancellation
 	go func() {
 		var acquired controllerSourceAcquireResult
+		close(started)
 		func() {
 			defer func() {
 				if recover() != nil {
@@ -377,6 +405,11 @@ func (controller *ConnectionController) acquire(ctx context.Context) (ArtifactLe
 		}
 		result <- controllerSourceAcquireResult{}
 	}()
+	// Hold the lifecycle mutex until the source call has crossed its entry
+	// boundary. Close therefore cannot publish closed between the admission
+	// check above and the actual source acquisition.
+	<-started
+	controller.mu.Unlock()
 
 	select {
 	case acquired := <-result:
@@ -404,7 +437,7 @@ func (controller *ConnectionController) run(ctx context.Context) {
 
 	cycle := newControllerCycle()
 	for {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || controller.isClosing() {
 			controller.finishClosed()
 			return
 		}
@@ -420,7 +453,7 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			if claimedOK {
 				_ = claimed.retire(ctx)
 			}
-			if ctx.Err() != nil {
+			if ctx.Err() != nil || controller.isClosing() {
 				controller.finishClosed()
 				return
 			}
@@ -428,7 +461,7 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			return
 		}
 		claimed, claimedOK := lease.claimArtifact()
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || controller.isClosing() {
 			if claimedOK {
 				_ = claimed.retire(ctx)
 			}
@@ -492,10 +525,7 @@ func (controller *ConnectionController) run(ctx context.Context) {
 			session, outcome = connectForController(ctx, claimed, controller.options, allowed)
 		}
 		if ctx.Err() != nil {
-			if session != nil {
-				_ = session.Close()
-			}
-			controller.finishClosed()
+			controller.finishClosed(session)
 			return
 		}
 		if outcome.err != nil {
@@ -554,14 +584,17 @@ func (controller *ConnectionController) run(ctx context.Context) {
 		}
 
 		cycle = newControllerCycle()
-		controller.publishConnected(session)
-		termination, waitErr := session.WaitTermination(ctx)
-		if ctx.Err() != nil {
+		if !controller.publishConnected(session) {
 			_ = session.Close()
 			controller.finishClosed()
 			return
 		}
-		_ = session.Close()
+		termination, waitErr := session.WaitTermination(ctx)
+		if ctx.Err() != nil {
+			controller.finishClosed()
+			return
+		}
+		controller.closeCurrentSession()
 		var terminalError error
 		var disposition RetryDisposition
 		if waitErr != nil {
@@ -855,10 +888,15 @@ func (controller *ConnectionController) beginNextAttempt(attempt uint64) {
 	controller.mu.Unlock()
 }
 
-func (controller *ConnectionController) publishConnected(session Session) {
+func (controller *ConnectionController) publishConnected(session Session) bool {
 	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	if controller.closing || controller.snapshot.State == ConnectionClosed {
+		return false
+	}
+	controller.currentSession = session
 	controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionConnected, Attempt: controller.snapshot.Attempt, CurrentSession: session})
-	controller.mu.Unlock()
+	return true
 }
 
 func (controller *ConnectionController) fail(err error, disposition RetryDisposition) {
@@ -880,15 +918,39 @@ func (controller *ConnectionController) setFailureLocked(err error, disposition 
 	})
 }
 
-func (controller *ConnectionController) finishClosed() {
+func (controller *ConnectionController) finishClosed(late ...Session) {
 	controller.mu.Lock()
-	current := controller.snapshot.CurrentSession
+	current := controller.closingSession
+	if current == nil {
+		current = controller.currentSession
+	}
+	if current == nil && len(late) != 0 {
+		current = late[0]
+	}
+	controller.closingSession = nil
+	controller.currentSession = nil
 	controller.retryNotBeforeUnixMilliseconds = -1
 	controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionClosed, Attempt: controller.snapshot.Attempt})
 	controller.mu.Unlock()
 	if current != nil {
 		_ = current.Close()
 	}
+}
+
+func (controller *ConnectionController) closeCurrentSession() {
+	controller.mu.Lock()
+	current := controller.currentSession
+	controller.currentSession = nil
+	controller.mu.Unlock()
+	if current != nil {
+		_ = current.Close()
+	}
+}
+
+func (controller *ConnectionController) isClosing() bool {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	return controller.closing || controller.snapshot.State == ConnectionClosed
 }
 
 func (controller *ConnectionController) setSnapshotLocked(snapshot ConnectionSnapshot) {

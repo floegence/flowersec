@@ -242,43 +242,7 @@ func runBrowserCapabilityScenariosContract(t *testing.T, scenarios []controllerV
 		strings.Join(expected.LeaseTerminalStates, ",") != "retired,retired,retired" {
 		t.Fatalf("browser capability barrier ordering changed: %+v", expected)
 	}
-	// Execute the two-controller acquisition barrier and then apply the live gate
-	// before the replacement constructor is selected.
-	var mu sync.Mutex
-	var active, peak int
-	snapshots := make([]string, 0, 3)
-	release := make(chan struct{})
-	ready := make(chan struct{}, 2)
-	var workers sync.WaitGroup
-	worker := func() {
-		defer workers.Done()
-		mu.Lock()
-		active++
-		if active > peak {
-			peak = active
-		}
-		mu.Unlock()
-		ready <- struct{}{}
-		<-release
-		mu.Lock()
-		active--
-		mu.Unlock()
-	}
-	workers.Add(2)
-	go worker()
-	go worker()
-	<-ready
-	<-ready
-	snapshots = append(snapshots, "enabled", "enabled")
-	close(release)
-	workers.Wait()
-	snapshots = append(snapshots, "ca_only")
-	if peak != expected.ConcurrentAcquisitionPeak || strings.Join(snapshots, ",") != strings.Join(expected.CapabilitySnapshots, ",") {
-		t.Fatalf("browser capability barrier execution changed: peak=%d snapshots=%v", peak, snapshots)
-	}
-	if expected.PinConstructorCalls != 2 || expected.CAConstructorCalls != 1 || expected.PostInvalidationPinCalls != 0 {
-		t.Fatalf("browser capability constructor projection changed: %+v", expected)
-	}
+	runBrowserCapabilityScenarioProduction(t, scenario)
 }
 
 func TestConnectionControllerTopLevelContractVectors(t *testing.T) {
@@ -618,7 +582,7 @@ func testControllerRetryNowOutsideWaiting(t *testing.T) {
 	}
 }
 
-func TestConnectionControllerClosePublishesClosedBeforeCancellation(t *testing.T) {
+func TestConnectionControllerCloseBlocksNewAcquisitionWhileCancellationStalled(t *testing.T) {
 	source := &controllerTestSource{results: []controllerAcquireResult{{
 		failure: NewRetryableArtifactSourceError(errors.New("temporary source failure")),
 	}}}
@@ -644,15 +608,65 @@ func TestConnectionControllerClosePublishesClosedBeforeCancellation(t *testing.T
 	case <-time.After(time.Second):
 		t.Fatal("Close did not reach cancellation")
 	}
-	if snapshot := controller.Snapshot(); snapshot.State != ConnectionClosed {
-		t.Fatalf("state during Close cancellation = %s, want closed", snapshot.State)
-	}
-	if controller.RetryNow() {
-		t.Fatal("RetryNow accepted a wait after Close began")
+	// Simulate a timer/retry wake arriving after Close's linearization point.
+	controller.retry <- struct{}{}
+	time.Sleep(20 * time.Millisecond)
+	if got := source.callCount(); got != 1 {
+		t.Fatalf("acquisitions after stalled cancellation = %d, want initial call only", got)
 	}
 	close(releaseCancel)
 	if err := <-closed; err != nil {
 		t.Fatal(err)
+	}
+	if snapshot := controller.Snapshot(); snapshot.State != ConnectionClosed {
+		t.Fatalf("state after cancellation = %s, want closed", snapshot.State)
+	}
+	if controller.RetryNow() {
+		t.Fatal("RetryNow accepted a wait after Close")
+	}
+}
+
+func TestConnectionControllerCloseRetainsCurrentSessionCleanup(t *testing.T) {
+	firstLease, _ := controllerTestLeases(t)
+	source := &controllerTestSource{results: []controllerAcquireResult{{lease: firstLease}}}
+	controller := newControllerForTest(t, source, 0)
+	session := newControllerTestSession(SessionClosed)
+	controller.connect = func(context.Context, ArtifactLease, ConnectorOptions) (Session, error) {
+		return session, nil
+	}
+	controller.Start(context.Background())
+	waitControllerSession(t, controller, session)
+
+	cancelEntered := make(chan struct{})
+	releaseCancel := make(chan struct{})
+	controller.mu.Lock()
+	underlyingCancel := controller.cancel
+	controller.cancel = func() {
+		close(cancelEntered)
+		<-releaseCancel
+		underlyingCancel()
+	}
+	controller.mu.Unlock()
+
+	closed := make(chan error, 1)
+	go func() { closed <- controller.Close(context.Background()) }()
+	select {
+	case <-cancelEntered:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not reach cancellation")
+	}
+	if got := session.closeCount(); got != 0 {
+		t.Fatalf("session closed before cancellation completed = %d, want 0", got)
+	}
+	close(releaseCancel)
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+	if got := session.closeCount(); got != 1 {
+		t.Fatalf("session cleanup count = %d, want exactly one", got)
+	}
+	if snapshot := controller.Snapshot(); snapshot.State != ConnectionClosed || snapshot.CurrentSession != nil {
+		t.Fatalf("closed snapshot = %+v, want closed without a live session", snapshot)
 	}
 }
 

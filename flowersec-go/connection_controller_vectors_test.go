@@ -3,10 +3,13 @@ package flowersec
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +17,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/candidatev3"
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/runtimev3"
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/transportsecurity"
 )
 
@@ -918,6 +922,477 @@ func runControllerVectorCapabilityBarrier(t *testing.T, scenario controllerVecto
 		controller, source.callCount(), 1, 0, 0, []*controllerVectorLease{lease}, nil,
 	))
 	closeController(t, controller)
+}
+
+func runBrowserCapabilityScenarioProduction(t *testing.T, scenario controllerVectorScenario) {
+	t.Helper()
+	barrier := newBrowserCapabilityBarrier()
+	refreshPrimary, refreshReplacement, stalePrimary := browserCapabilityArtifacts(t)
+	leasses := []*controllerVectorLease{
+		newBrowserCapabilityLease(t, refreshPrimary, barrier.retirePrimary),
+		newBrowserCapabilityLease(t, refreshReplacement, nil),
+		newBrowserCapabilityLease(t, stalePrimary, nil),
+	}
+	refreshSource := &browserCapabilitySource{barrier: barrier, leases: []ArtifactLease{leasses[0].lease, leasses[1].lease}}
+	staleSource := &browserCapabilitySource{barrier: barrier, leases: []ArtifactLease{leasses[2].lease}}
+	enabled := loadBrowserCapabilityDescriptor(t, "typescript-browser-chromium-151.0.7922.34")
+	caOnly := loadBrowserCapabilityDescriptor(t, "typescript-browser-ca-only")
+
+	refreshController := newControllerForTest(t, refreshSource, 2)
+	staleController := newControllerForTest(t, staleSource, 1)
+	var refreshConnectors atomic.Int32
+	var staleConnectors atomic.Int32
+	refreshController.connectDetailed = func(ctx context.Context, claimed claimedArtifactLease, _ ConnectorOptions, allowed map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome) {
+		attempt := refreshConnectors.Add(1)
+		mode := browserCapabilityPrimary
+		capabilities := enabled
+		if attempt == 2 {
+			mode = browserCapabilityReplacement
+			capabilities = caOnly
+		}
+		internalErr := connectBrowserCapabilityAttempt(ctx, claimed, allowed, &browserCapabilityFactory{
+			barrier: barrier, mode: mode, capabilities: capabilities,
+		})
+		if mode == browserCapabilityPrimary {
+			return nil, browserOpaqueControllerOutcome(claimed)
+		}
+		return nil, analyzeControllerConnectOutcome(claimed, internalErr)
+	}
+	staleController.connectDetailed = func(ctx context.Context, claimed claimedArtifactLease, _ ConnectorOptions, allowed map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome) {
+		staleConnectors.Add(1)
+		_ = connectBrowserCapabilityAttempt(ctx, claimed, allowed, &browserCapabilityFactory{
+			barrier: barrier, mode: browserCapabilityStale, capabilities: enabled,
+		})
+		return nil, controllerConnectOutcome{err: &ConnectError{code: ConnectTransportSecurityUnsupported}}
+	}
+
+	refreshController.Start(context.Background())
+	staleController.Start(context.Background())
+	defer func() {
+		barrier.releaseInitialAcquisitions()
+		barrier.releasePrimaryRetirement()
+		closeController(t, refreshController)
+		closeController(t, staleController)
+	}()
+	waitBrowserCapabilitySignal(t, barrier.initialReady, "both initial artifact acquisitions")
+	barrier.releaseInitialAcquisitions()
+	waitBrowserCapabilitySignal(t, barrier.primaryRetirementEntered, "opaque primary retirement")
+	waitBrowserCapabilitySignal(t, barrier.invalidated, "browser capability invalidation")
+	waitControllerState(t, staleController, ConnectionFailed)
+	if got := refreshSource.callCount(); got != 1 {
+		t.Fatalf("replacement acquisitions before primary retirement = %d, want 0", got-1)
+	}
+	barrier.releasePrimaryRetirement()
+	waitControllerState(t, refreshController, ConnectionFailed)
+
+	observed := barrier.observation()
+	assertControllerVectorObserved(t, scenario.Expected, controllerVectorObservation(
+		refreshController, observed.acquisitions, observed.connectAttempts, observed.transportsCreated,
+		observed.replacementAcquisitions, leasses, nil,
+	))
+	if got := int(refreshConnectors.Load() + staleConnectors.Load()); got != scenario.Expected.ControllerConnectorAttempts {
+		t.Fatalf("controller connector attempts = %d, want %d", got, scenario.Expected.ControllerConnectorAttempts)
+	}
+	if observed.concurrentAcquisitionPeak != scenario.Expected.ConcurrentAcquisitionPeak ||
+		!reflect.DeepEqual(observed.capabilitySnapshots, scenario.Expected.CapabilitySnapshots) ||
+		observed.pinConstructorCalls != scenario.Expected.PinConstructorCalls ||
+		observed.caConstructorCalls != scenario.Expected.CAConstructorCalls ||
+		observed.oldSnapshotLiveGateFailures != scenario.Expected.OldSnapshotLiveGateFailures ||
+		observed.postInvalidationPinCalls != scenario.Expected.PostInvalidationPinCalls ||
+		!reflect.DeepEqual(observed.replacementDialCandidateIDs, scenario.Expected.ReplacementDialCandidateIDs) {
+		t.Fatalf("browser capability production observation = %+v, want %+v", observed, scenario.Expected)
+	}
+	staleSnapshot := staleController.Snapshot()
+	if string(staleSnapshot.State) != scenario.Expected.PeerFinalState || staleSnapshot.Failure == nil ||
+		string(connectErrorCode(staleSnapshot.Failure.Error)) != scenario.Expected.PeerPublicError {
+		t.Fatalf("peer result = %+v, want %s/%s", staleSnapshot, scenario.Expected.PeerFinalState, scenario.Expected.PeerPublicError)
+	}
+}
+
+type browserCapabilityMode uint8
+
+const (
+	browserCapabilityPrimary browserCapabilityMode = iota
+	browserCapabilityStale
+	browserCapabilityReplacement
+)
+
+type browserCapabilityObservation struct {
+	acquisitions                int
+	replacementAcquisitions     int
+	concurrentAcquisitionPeak   int
+	connectAttempts             int
+	transportsCreated           int
+	pinConstructorCalls         int
+	caConstructorCalls          int
+	oldSnapshotLiveGateFailures int
+	postInvalidationPinCalls    int
+	capabilitySnapshots         []string
+	replacementDialCandidateIDs []string
+}
+
+type browserCapabilityBarrier struct {
+	mu                        sync.Mutex
+	initialRelease            chan struct{}
+	initialReady              chan struct{}
+	primaryRetirementEntered  chan struct{}
+	primaryRetirementRelease  chan struct{}
+	invalidated               chan struct{}
+	initialReleaseOnce        sync.Once
+	initialReadyOnce          sync.Once
+	primaryEnteredOnce        sync.Once
+	primaryReleaseOnce        sync.Once
+	invalidationOnce          sync.Once
+	initialArrivals           int
+	activeInitialAcquisitions int
+	observationValue          browserCapabilityObservation
+}
+
+func newBrowserCapabilityBarrier() *browserCapabilityBarrier {
+	return &browserCapabilityBarrier{
+		initialRelease: make(chan struct{}), initialReady: make(chan struct{}),
+		primaryRetirementEntered: make(chan struct{}), primaryRetirementRelease: make(chan struct{}),
+		invalidated: make(chan struct{}),
+	}
+}
+
+func (barrier *browserCapabilityBarrier) acquireInitial(ctx context.Context) bool {
+	barrier.mu.Lock()
+	barrier.initialArrivals++
+	barrier.activeInitialAcquisitions++
+	if barrier.activeInitialAcquisitions > barrier.observationValue.concurrentAcquisitionPeak {
+		barrier.observationValue.concurrentAcquisitionPeak = barrier.activeInitialAcquisitions
+	}
+	barrier.observationValue.acquisitions++
+	barrier.observationValue.capabilitySnapshots = append(barrier.observationValue.capabilitySnapshots, "enabled")
+	if barrier.initialArrivals == 2 {
+		barrier.initialReadyOnce.Do(func() { close(barrier.initialReady) })
+	}
+	barrier.mu.Unlock()
+	select {
+	case <-barrier.initialRelease:
+	case <-ctx.Done():
+		return false
+	}
+	barrier.mu.Lock()
+	barrier.activeInitialAcquisitions--
+	barrier.mu.Unlock()
+	return true
+}
+
+func (barrier *browserCapabilityBarrier) acquireReplacement() {
+	barrier.mu.Lock()
+	barrier.observationValue.acquisitions++
+	barrier.observationValue.replacementAcquisitions++
+	barrier.observationValue.capabilitySnapshots = append(barrier.observationValue.capabilitySnapshots, "ca_only")
+	barrier.mu.Unlock()
+}
+
+func (barrier *browserCapabilityBarrier) releaseInitialAcquisitions() {
+	barrier.initialReleaseOnce.Do(func() { close(barrier.initialRelease) })
+}
+
+func (barrier *browserCapabilityBarrier) retirePrimary(ctx context.Context) error {
+	barrier.primaryEnteredOnce.Do(func() { close(barrier.primaryRetirementEntered) })
+	select {
+	case <-barrier.primaryRetirementRelease:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (barrier *browserCapabilityBarrier) releasePrimaryRetirement() {
+	barrier.primaryReleaseOnce.Do(func() { close(barrier.primaryRetirementRelease) })
+}
+
+func (barrier *browserCapabilityBarrier) waitForPrimaryRetirement(ctx context.Context) error {
+	select {
+	case <-barrier.primaryRetirementEntered:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (barrier *browserCapabilityBarrier) invalidate() {
+	barrier.invalidationOnce.Do(func() { close(barrier.invalidated) })
+}
+
+func (barrier *browserCapabilityBarrier) waitForInvalidation(ctx context.Context) error {
+	select {
+	case <-barrier.invalidated:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (barrier *browserCapabilityBarrier) recordPrimaryConstructor() {
+	barrier.mu.Lock()
+	barrier.observationValue.connectAttempts++
+	barrier.observationValue.pinConstructorCalls++
+	barrier.observationValue.transportsCreated++
+	barrier.mu.Unlock()
+}
+
+func (barrier *browserCapabilityBarrier) recordStaleInvalidator() {
+	barrier.mu.Lock()
+	barrier.observationValue.connectAttempts++
+	barrier.observationValue.pinConstructorCalls++
+	barrier.mu.Unlock()
+	barrier.invalidate()
+}
+
+func (barrier *browserCapabilityBarrier) recordOldSnapshotLiveGateFailure() {
+	barrier.mu.Lock()
+	barrier.observationValue.connectAttempts++
+	barrier.observationValue.oldSnapshotLiveGateFailures++
+	barrier.mu.Unlock()
+}
+
+func (barrier *browserCapabilityBarrier) recordReplacement(candidate artifactv3.Candidate) {
+	barrier.mu.Lock()
+	barrier.observationValue.connectAttempts++
+	if candidate.TLS.Mode == artifactv3.TLSModePin {
+		barrier.observationValue.pinConstructorCalls++
+		barrier.observationValue.postInvalidationPinCalls++
+	} else {
+		barrier.observationValue.caConstructorCalls++
+		barrier.observationValue.transportsCreated++
+		barrier.observationValue.replacementDialCandidateIDs = append(
+			barrier.observationValue.replacementDialCandidateIDs, candidate.ID,
+		)
+	}
+	barrier.mu.Unlock()
+}
+
+func (barrier *browserCapabilityBarrier) observation() browserCapabilityObservation {
+	barrier.mu.Lock()
+	defer barrier.mu.Unlock()
+	copy := barrier.observationValue
+	copy.capabilitySnapshots = append([]string(nil), copy.capabilitySnapshots...)
+	copy.replacementDialCandidateIDs = append([]string(nil), copy.replacementDialCandidateIDs...)
+	return copy
+}
+
+type browserCapabilitySource struct {
+	mu      sync.Mutex
+	barrier *browserCapabilityBarrier
+	leases  []ArtifactLease
+	calls   int
+}
+
+func (source *browserCapabilitySource) Acquire(ctx context.Context) (ArtifactLease, *ArtifactSourceError) {
+	source.mu.Lock()
+	index := source.calls
+	source.calls++
+	source.mu.Unlock()
+	if index >= len(source.leases) {
+		return ArtifactLease{}, NewTerminalArtifactSourceError(ErrInvalidArtifact)
+	}
+	if index == 0 {
+		if !source.barrier.acquireInitial(ctx) {
+			return ArtifactLease{}, NewTerminalArtifactSourceError(ctx.Err())
+		}
+	} else {
+		source.barrier.acquireReplacement()
+	}
+	return source.leases[index], nil
+}
+
+func (source *browserCapabilitySource) callCount() int {
+	source.mu.Lock()
+	defer source.mu.Unlock()
+	return source.calls
+}
+
+type browserCapabilityFactory struct {
+	barrier      *browserCapabilityBarrier
+	mode         browserCapabilityMode
+	capabilities runtimev3.CapabilityDescriptor
+}
+
+func (factory *browserCapabilityFactory) Capabilities() runtimev3.CapabilityDescriptor {
+	return factory.capabilities
+}
+
+func (factory *browserCapabilityFactory) NewAttempt(candidate artifactv3.Candidate, _ artifactv3.SessionContract, _ time.Time) (connectv3.CandidateAttempt, error) {
+	return &browserCapabilityAttempt{barrier: factory.barrier, mode: factory.mode, candidate: candidate}, nil
+}
+
+type browserCapabilityAttempt struct {
+	barrier   *browserCapabilityBarrier
+	mode      browserCapabilityMode
+	candidate artifactv3.Candidate
+}
+
+func (attempt *browserCapabilityAttempt) Ready(ctx context.Context) (connectv3.AdmissionCommit, error) {
+	switch attempt.mode {
+	case browserCapabilityPrimary:
+		attempt.barrier.recordPrimaryConstructor()
+		return nil, errors.New("opaque browser pin failure")
+	case browserCapabilityStale:
+		switch attempt.candidate.ID {
+		case "stale-invalidator":
+			if err := attempt.barrier.waitForPrimaryRetirement(ctx); err != nil {
+				return nil, err
+			}
+			attempt.barrier.recordStaleInvalidator()
+			return nil, errors.New("synchronous browser NotSupportedError")
+		case "stale-blocked":
+			if err := attempt.barrier.waitForInvalidation(ctx); err != nil {
+				return nil, err
+			}
+			attempt.barrier.recordOldSnapshotLiveGateFailure()
+			return nil, errors.New("old browser capability snapshot rejected by live gate")
+		}
+	case browserCapabilityReplacement:
+		attempt.barrier.recordReplacement(attempt.candidate)
+		return nil, errors.New("replacement transport failed before admission")
+	}
+	return nil, errors.New("unexpected browser capability attempt")
+}
+
+func (*browserCapabilityAttempt) Abort(context.Context) error { return nil }
+
+func connectBrowserCapabilityAttempt(
+	ctx context.Context,
+	claimed claimedArtifactLease,
+	allowed map[transportEndpointKey]struct{},
+	factory connectv3.CandidateFactory,
+) error {
+	var filter func(artifactv3.Candidate) bool
+	if allowed != nil {
+		path := claimed.lease.artifact.value.Path.Kind
+		filter = func(candidate artifactv3.Candidate) bool {
+			_, ok := allowed[endpointKey(path, candidate)]
+			return ok
+		}
+	}
+	options := []connectv3.ConnectorOption{connectv3.WithConnectorClock(func() time.Time {
+		return time.Unix(1_900_000_000, 0)
+	})}
+	if filter != nil {
+		options = append(options, connectv3.WithCandidateFilter(filter))
+	}
+	connector := connectv3.NewConnector(connectv3.ArtifactLease{
+		Artifact: *claimed.lease.artifact.value, CommitSpend: claimed.lease.commitSpend,
+	}, factory, options...)
+	_, err := connector.Connect(ctx)
+	return err
+}
+
+func browserOpaqueControllerOutcome(claimed claimedArtifactLease) controllerConnectOutcome {
+	candidate := claimed.lease.artifact.value.Path.Candidates[0]
+	key := endpointKey(claimed.lease.artifact.value.Path.Kind, candidate)
+	return controllerConnectOutcome{
+		err:               &ConnectError{code: ConnectConnectionFailed},
+		opaqueTrigger:     true,
+		triggerCandidates: map[transportEndpointKey]artifactv3.Candidate{key: candidate},
+		failedEndpoints:   map[transportEndpointKey]struct{}{key: {}},
+	}
+}
+
+func browserCapabilityArtifacts(t *testing.T) (Artifact, Artifact, Artifact) {
+	t.Helper()
+	base := mustParseInternalFixtureArtifact(t)
+	var template artifactv3.Candidate
+	for _, candidate := range base.value.Path.Candidates {
+		if candidate.ID == "t-pin" {
+			template = candidate
+			break
+		}
+	}
+	if template.ID == "" {
+		t.Fatal("fixture WebTransport pin candidate is missing")
+	}
+	pinA := controllerPinPolicy("ERERERERERERERERERERERERERERERERERERERERERE")
+	pinB := controllerPinPolicy("gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIA")
+	candidate := func(id, rawURL string, policy artifactv3.TLSPolicy) artifactv3.Candidate {
+		copy := template
+		copy.ID = id
+		copy.URL = rawURL
+		copy.NormalizedURL = rawURL
+		copy.TLS = artifactv3.CloneTLSPolicy(policy)
+		return copy
+	}
+	artifact := func(candidates ...artifactv3.Candidate) Artifact {
+		value := *base.value
+		value.Path.Candidates = append([]artifactv3.Candidate(nil), candidates...)
+		return Artifact{value: &value}
+	}
+	refreshURL := "https://refresh-primary.example/flowersec/webtransport/v3/direct"
+	return artifact(candidate("refresh-pin", refreshURL, pinA)),
+		artifact(
+			candidate("refresh-pin", refreshURL, pinB),
+			candidate("replacement-ca", "https://replacement-ca.example/flowersec/webtransport/v3/direct", artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA}),
+		),
+		artifact(
+			candidate("stale-blocked", "https://stale-blocked.example/flowersec/webtransport/v3/direct", pinA),
+			candidate("stale-invalidator", "https://stale-invalidator.example/flowersec/webtransport/v3/direct", pinA),
+		)
+}
+
+func newBrowserCapabilityLease(t *testing.T, artifact Artifact, retire func(context.Context) error) *controllerVectorLease {
+	t.Helper()
+	tracked := &controllerVectorLease{}
+	lease, err := NewArtifactLeaseWithRetirement(
+		artifact,
+		func(context.Context) error { tracked.spent.Add(1); return nil },
+		func(ctx context.Context) error {
+			if retire != nil {
+				if err := retire(ctx); err != nil {
+					return err
+				}
+			}
+			tracked.retired.Add(1)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracked.lease = lease
+	return tracked
+}
+
+func loadBrowserCapabilityDescriptor(t *testing.T, name string) runtimev3.CapabilityDescriptor {
+	t.Helper()
+	raw, err := os.ReadFile("../testdata/transport_v3/capability_vectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Vectors []struct {
+			Name          string `json:"name"`
+			CanonicalJSON string `json:"canonical_json"`
+		} `json:"vectors"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	for _, vector := range fixture.Vectors {
+		if vector.Name != name {
+			continue
+		}
+		descriptor, err := runtimev3.DecodeCapabilityDescriptor([]byte(vector.CanonicalJSON))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return descriptor
+	}
+	t.Fatalf("browser capability vector %q is missing", name)
+	return runtimev3.CapabilityDescriptor{}
+}
+
+func waitBrowserCapabilitySignal(t *testing.T, signal <-chan struct{}, boundary string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(time.Second):
+		t.Fatalf("browser capability scenario timed out at %s", boundary)
+	}
 }
 
 func runControllerVectorAdmissionBoundary(t *testing.T, scenario controllerVectorScenario) {

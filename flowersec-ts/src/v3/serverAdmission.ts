@@ -235,6 +235,18 @@ async function respondAdmission(
 async function readFSB3(stream: CarrierStreamV3, signal?: AbortSignal): Promise<Uint8Array> {
   const reader = new ExactReader(stream);
   const header = await reader.readExactly(12, signal);
+  if (
+    header[0] !== 0x46 ||
+    header[1] !== 0x53 ||
+    header[2] !== 0x42 ||
+    header[3] !== 0x33 ||
+    header[4] !== 3 ||
+    (header[5] !== 1 && header[5] !== 2) ||
+    header[6] !== 0 ||
+    header[7] !== 0
+  ) {
+    throw new Error("invalid FSB3 header");
+  }
   const length = new DataView(header.buffer, header.byteOffset, header.byteLength).getUint32(8, false);
   if (length < 1 || length > 32_768) throw new Error("invalid FSB3 payload length");
   const payload = await reader.readExactly(length, signal);
