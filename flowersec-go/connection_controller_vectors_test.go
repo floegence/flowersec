@@ -24,6 +24,7 @@ import (
 type controllerVectorObserved struct {
 	FinalState              string
 	PublicError             *string
+	FailurePhase            *string
 	Disposition             *string
 	Acquisitions            int
 	ConnectAttempts         int
@@ -419,6 +420,29 @@ func runControllerVectorAttemptExhaustion(t *testing.T, scenario controllerVecto
 	waitControllerState(t, controller, ConnectionFailed)
 	assertControllerVectorObserved(t, scenario.Expected, controllerVectorObservation(
 		controller, source.callCount(), 0, 0, 0, nil, scenario.Expected.RetryDelaysMS,
+	))
+	closeController(t, controller)
+}
+
+func runControllerVectorSourceContract(t *testing.T, scenario controllerVectorScenario) {
+	if scenario.Input.RetryAfterUnixMS <= maximumRetryAfterUnixMilliseconds {
+		t.Fatalf("source contract vector retry_after = %d, want out of range", scenario.Input.RetryAfterUnixMS)
+	}
+	source := &controllerTestSource{results: []controllerAcquireResult{{
+		failure: newArtifactSourceError(errors.New("invalid vector retry-after"), retryAfterDisposition(scenario.Input.RetryAfterUnixMS)),
+	}}}
+	controller := newControllerForTest(t, source, 0)
+	controller.Start(context.Background())
+	waitControllerState(t, controller, ConnectionFailed)
+	snapshot := controller.Snapshot()
+	if snapshot.Attempt != scenario.Expected.Attempt {
+		t.Fatalf("source contract attempt = %d, want %d", snapshot.Attempt, scenario.Expected.Attempt)
+	}
+	if scenario.Expected.FailureOrdinal != 1 {
+		t.Fatalf("source contract failure ordinal = %d, want one", scenario.Expected.FailureOrdinal)
+	}
+	assertControllerVectorObserved(t, scenario.Expected, controllerVectorObservation(
+		controller, source.callCount(), 0, 0, 0, nil, nil,
 	))
 	closeController(t, controller)
 }
@@ -1500,7 +1524,9 @@ func controllerVectorObservation(
 	if snapshot.Failure != nil {
 		code := string(connectErrorCode(snapshot.Failure.Error))
 		disposition := string(snapshot.Failure.Disposition.Kind)
+		phase := string(snapshot.Failure.Phase())
 		observed.PublicError = &code
+		observed.FailurePhase = &phase
 		observed.Disposition = &disposition
 	}
 	for _, tracked := range leases {
@@ -1537,7 +1563,7 @@ func controllerVectorLeaseState(lease ArtifactLease) string {
 func assertControllerVectorObserved(t *testing.T, expected controllerVectorExpected, observed controllerVectorObserved) {
 	t.Helper()
 	want := controllerVectorObserved{
-		FinalState: expected.FinalState, PublicError: expected.PublicError, Disposition: expected.Disposition,
+		FinalState: expected.FinalState, PublicError: expected.PublicError, FailurePhase: expected.FailurePhase, Disposition: expected.Disposition,
 		Acquisitions: expected.Acquisitions, ConnectAttempts: expected.ConnectAttempts,
 		TransportsCreated: expected.TransportsCreated, ReplacementAcquisitions: expected.ReplacementAcquisitions,
 		ReplacementQuotaUsed: expected.ReplacementQuotaUsed, SpendCallbacks: expected.SpendCallbacks,

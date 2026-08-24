@@ -51,6 +51,11 @@ export async function fetchResponseBody(url, options = {}, maximumBytes, timeout
     }
     return { response, body: Buffer.concat(chunks, total) };
   } catch (error) {
+    try {
+      await response?.body?.cancel();
+    } catch {
+      // Preserve the original validation, size, or body-read failure.
+    }
     if (error?.name === "AbortError") {
       throw new Error(`registry request timed out after ${timeoutMs}ms: ${currentURL}`, { cause: error });
     }

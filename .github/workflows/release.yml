@@ -71,20 +71,61 @@ jobs:
           set -euo pipefail
           TAG="flowersec-go/v${RELEASE_VERSION}"
           error_file="$(mktemp)"
+          assets_file="$(mktemp)"
+          expected_file="$(mktemp)"
+          actual_file="$(mktemp)"
+          cleanup() {
+            unlink "$error_file" "$assets_file" "$expected_file" "$actual_file" 2>/dev/null || true
+          }
+          trap cleanup EXIT
           set +e
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" >/dev/null 2>"$error_file"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+            --jq '.assets[] | [.name, (.size // 0), (.state // "")] | @tsv' \
+            >"$assets_file" 2>"$error_file"
           status=$?
           set -e
           if [[ $status -eq 0 ]]; then
+            expected_assets=(
+              checksums.txt
+              checksums.txt.sig
+              checksums.txt.pem
+              "floegence-flowersec-core-${RELEASE_VERSION}.tgz"
+              "floegence-flowersec-core-${RELEASE_VERSION}.tgz.sig"
+              "floegence-flowersec-core-${RELEASE_VERSION}.tgz.pem"
+              "floegence-flowersec-node-native-${RELEASE_VERSION}.tgz"
+              "floegence-flowersec-node-native-${RELEASE_VERSION}.tgz.sig"
+              "floegence-flowersec-node-native-${RELEASE_VERSION}.tgz.pem"
+              "flowersec-runtime_${RELEASE_VERSION}_linux_amd64.tar.gz"
+              "flowersec-runtime_${RELEASE_VERSION}_linux_amd64.tar.gz.sig"
+              "flowersec-runtime_${RELEASE_VERSION}_linux_amd64.tar.gz.pem"
+              "flowersec-runtime_${RELEASE_VERSION}_linux_arm64.tar.gz"
+              "flowersec-runtime_${RELEASE_VERSION}_linux_arm64.tar.gz.sig"
+              "flowersec-runtime_${RELEASE_VERSION}_linux_arm64.tar.gz.pem"
+            )
+            for platform in darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu; do
+              archive="floegence-flowersec-node-native-${platform}-${RELEASE_VERSION}.tgz"
+              expected_assets+=("$archive" "$archive.sig" "$archive.pem")
+            done
+            printf '%s\n' "${expected_assets[@]}" | LC_ALL=C sort >"$expected_file"
+            while IFS=$'\t' read -r name size state; do
+              [[ -n "$name" && "$size" =~ ^[1-9][0-9]*$ && "$state" == uploaded ]] || {
+                echo "existing GitHub Release has an invalid, empty, or incomplete asset" >&2
+                exit 1
+              }
+              printf '%s\n' "$name" >>"$actual_file"
+            done <"$assets_file"
+            LC_ALL=C sort "$actual_file" -o "$actual_file"
+            cmp -s "$expected_file" "$actual_file" || {
+              echo "existing GitHub Release asset closure is incomplete or contains extras" >&2
+              exit 1
+            }
             exists=true
           elif grep -Fq "HTTP 404" "$error_file"; then
             exists=false
           else
             sed -E 's/(token|authorization)[^ ]*/\1=<redacted>/Ig' "$error_file" >&2
-            unlink "$error_file"
             exit "$status"
           fi
-          unlink "$error_file"
           if [[ "$RELEASE_MODE" == "npm-only" && "$exists" != true ]]; then
             echo "npm-only recovery requires an existing immutable GitHub Release" >&2
             exit 1

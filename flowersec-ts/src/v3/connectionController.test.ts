@@ -13,6 +13,8 @@ import {
 } from "./artifactLease.js";
 import {
   createConnectionControllerV3,
+  type ConnectionControllerSnapshotV3,
+  type ConnectionControllerV3,
   type LeaseAttemptContextV3,
   type LeaseAttemptResultV3,
   type ArtifactSourceResultV3,
@@ -1155,7 +1157,7 @@ describe("transport v3 production connection controller", () => {
     expect(controller.state).toBe("closed");
   });
 
-  test("does not acquire after a connecting subscriber closes synchronously", async () => {
+  test("does not deliver stale connecting snapshots after a subscriber closes synchronously", async () => {
     const acquire = vi.fn(async (): Promise<ArtifactSourceResultV3> => {
       throw new Error("acquisition must not start after close");
     });
@@ -1163,20 +1165,52 @@ describe("transport v3 production connection controller", () => {
       throw new Error("connector must not run");
     });
     const controller = createConnectionControllerV3({ acquire }, connector, { capabilitySnapshot });
-    const states: string[] = [];
+    const firstStates: string[] = [];
+    const secondStates: string[] = [];
     let subscriberClose: Promise<void> | undefined;
     controller.subscribe((snapshot) => {
-      states.push(snapshot.state);
+      firstStates.push(snapshot.state);
       if (snapshot.state === "connecting") subscriberClose = controller.close();
     });
+    controller.subscribe((snapshot) => { secondStates.push(snapshot.state); });
 
     controller.start();
     const repeatedClose = controller.close();
 
     expect(subscriberClose).toBe(repeatedClose);
     await repeatedClose;
-    expect(states).toEqual(["idle", "connecting", "closed"]);
+    expect(firstStates).toEqual(["idle", "connecting", "closed"]);
+    expect(secondStates).toEqual(["idle", "closed"]);
     expect(controller.state).toBe("closed");
+    expect(acquire).not.toHaveBeenCalled();
+    expect(connector).not.toHaveBeenCalled();
+  });
+
+  test("does not count or acquire when capability snapshot closes synchronously", async () => {
+    const acquire = vi.fn(async (): Promise<ArtifactSourceResultV3> => {
+      throw new Error("acquisition must not start after close");
+    });
+    const connector = vi.fn(async () => {
+      throw new Error("connector must not run");
+    });
+    let capabilityClose: Promise<void> | undefined;
+    let controller!: ConnectionControllerV3;
+    controller = createConnectionControllerV3({ acquire }, connector, {
+      capabilitySnapshot: () => {
+        capabilityClose = controller.close();
+        return capabilitySnapshot();
+      },
+    });
+    const snapshots: ConnectionControllerSnapshotV3[] = [];
+    controller.subscribe((snapshot) => { snapshots.push(snapshot); });
+
+    controller.start();
+    const repeatedClose = controller.close();
+
+    expect(capabilityClose).toBe(repeatedClose);
+    await repeatedClose;
+    expect(snapshots.map(({ state }) => state)).toEqual(["idle", "connecting", "closed"]);
+    expect(snapshots.at(-1)).toMatchObject({ state: "closed", attempt: 0 });
     expect(acquire).not.toHaveBeenCalled();
     expect(connector).not.toHaveBeenCalled();
   });

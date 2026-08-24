@@ -85,6 +85,7 @@ describe("transport v3 controller, lease, and retry semantics", () => {
       "retire-cleanup",
       "retry-after-clock",
       "retry-clock-boundary",
+      "source-contract-validation",
     ]);
     const observedDrivers = new Set<string>();
     for (const scenario of controllerFixture.scenarios) {

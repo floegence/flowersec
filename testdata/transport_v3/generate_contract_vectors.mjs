@@ -1323,6 +1323,19 @@ const controllerVectors = {
       },
     },
     {
+      id: "invalid-source-retry-after",
+      driver: "source-contract-validation",
+      steps: ["acquire_primary_invalid_retry_after", "reject_source_contract", "terminalize_artifact_invalid"],
+      input: { retry_after_unix_ms: 253402300800000 },
+      expected: {
+        final_state: "failed", public_error: "artifact_invalid", failure_phase: "artifact",
+        disposition: "terminal", acquisitions: 1, connect_attempts: 0, transports_created: 0,
+        replacement_acquisitions: 0, replacement_quota_used: 0,
+        spend_callbacks: 0, retire_callbacks: 0,
+        lease_terminal_states: [], retry_delays_ms: [], attempt: 1, failure_ordinal: 1,
+      },
+    },
+    {
       id: "retry-after-and-monotonic-backoff",
       driver: "retry-after-clock",
       steps: ["acquire_primary_retry_after", "wait_wall_recheck", "reject_retry_now", "advance_wall_and_monotonic", "wait_wall_recheck", "advance_wall_to_deadline", "acquire_primary", "claim_A", "commit_spend_A", "established"],
@@ -1652,6 +1665,7 @@ const controllerFailurePhaseByScenario = new Map([
   ["all-unsupported", "connect"],
   ["post-spend-retry-preserves-quota", "connect"],
   ["attempt-exhaustion", "artifact"],
+  ["invalid-source-retry-after", "artifact"],
   ["race-order-independent-security-priority", "connect"],
   ["failure-ordinal-counts-attempt-once", "connect"],
   ["artifact-expiry-before-race", "connect"],

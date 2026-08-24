@@ -132,6 +132,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
   #disposition: RetryDispositionV3 | undefined;
   #scheduler: Promise<void> | undefined;
   #closeOperation: Promise<void> | undefined;
+  #transitionGeneration = 0;
 
   constructor(source: ArtifactSourceV3, connector: LeaseConnectorV3<Session>, options: ConnectionControllerOptionsV3) {
     if (source === null || typeof source !== "object" || typeof source.acquire !== "function") {
@@ -278,9 +279,11 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         capability = this.#capabilitySnapshot();
         validateRuntimeCapabilityDescriptorV3(capability);
       } catch {
+        if (this.#lifetime.signal.aborted) return;
         this.#recordFailure("connect", "artifact_invalid", { kind: "terminal" });
         return;
       }
+      if (this.#lifetime.signal.aborted) return;
       if (!this.#cycle.beginAcquisition()) {
         this.#forceTerminalDisposition();
         return;
@@ -627,8 +630,11 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
   #transition(state: ConnectionControllerStateV3): void {
     if (this.#state === "closed" && state !== "closed") return;
     this.#state = state;
+    const generation = ++this.#transitionGeneration;
     const snapshot = this.#snapshot();
-    for (const listener of this.#listeners) {
+    for (const listener of [...this.#listeners]) {
+      if (generation !== this.#transitionGeneration) return;
+      if (!this.#listeners.has(listener)) continue;
       try { listener(snapshot); } catch { /* listener isolation */ }
     }
   }

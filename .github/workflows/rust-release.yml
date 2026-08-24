@@ -20,6 +20,10 @@ env:
 permissions:
   contents: read
 
+concurrency:
+  group: flowersec-release
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest

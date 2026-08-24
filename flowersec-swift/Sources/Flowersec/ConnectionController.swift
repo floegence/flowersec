@@ -417,7 +417,8 @@ public actor ConnectionController {
         await acquisition.settle()
         let sourceAttemptFailure = ConnectionAttemptFailure.artifactSource(sourceFailure)
         guard validRetryDisposition(sourceFailure.disposition) else {
-          return .terminal(.connection(.artifactInvalid))
+          return .terminal(
+            .artifactSource(ArtifactSourceFailure(disposition: .terminal)))
         }
         guard
           await scheduleRetry(
@@ -624,7 +625,12 @@ public actor ConnectionController {
     guard active else { return false }
     let disposition = dispositionOverride ?? attemptFailure.retryDisposition
     guard validRetryDisposition(disposition) else {
-      fail(.connection(.artifactInvalid))
+      switch attemptFailure {
+      case .artifactSource:
+        fail(.artifactSource(ArtifactSourceFailure(disposition: .terminal)))
+      case .connection, .session:
+        fail(.connection(.artifactInvalid))
+      }
       return false
     }
     guard disposition != .terminal else {
@@ -635,6 +641,7 @@ public actor ConnectionController {
       fail(terminalFailure(attemptFailure))
       return false
     }
+    failure = attemptFailure
     if !alreadyCounted { failures = increment(failures) }
     let monotonicNow = min(clock.monotonicMilliseconds(), Self.maxSafeInteger)
     let backoffDeadline = saturatingAdd(

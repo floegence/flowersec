@@ -1097,6 +1097,25 @@ test("unresolved first-party optional npm packages fail closed on manifest versi
   );
 });
 
+test("unresolved third-party optional npm packages fail closed", async () => {
+  const { collectNpmContext } = await loadGenerator();
+  const policy = JSON.parse(fs.readFileSync(path.join(sourceRoot, "scripts/source-license-policy.json"), "utf8"));
+  const lockfile = {
+    packages: {
+      "": {
+        name: "@floegence/flowersec-core",
+        version: "3.0.2",
+        license: "MIT",
+        optionalDependencies: { "third-party-native": "1.2.3" },
+      },
+    },
+  };
+  assert.throws(
+    () => collectNpmContext(lockfile, policy),
+    /npm dependency third-party-native from <root> is unresolved/,
+  );
+});
+
 test("native npm package SBOM roots use the canonical purl builder", () => {
   const source = fs.readFileSync(generatorPath, "utf8");
   assert.doesNotMatch(source, /packageName\.replace\("@", "%40"\)/);

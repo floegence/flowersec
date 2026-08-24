@@ -168,6 +168,7 @@ func TestConnectionControllerSharedLifecycleVectors(t *testing.T) {
 		"lease-cancellation-first":                              runControllerVectorCancellationFirst,
 		"lease-delivery-first":                                  runControllerVectorDeliveryFirst,
 		"attempt-exhaustion":                                    runControllerVectorAttemptExhaustion,
+		"invalid-source-retry-after":                            runControllerVectorSourceContract,
 		"retry-after-and-monotonic-backoff":                     runControllerVectorRetryAfter,
 		"race-order-independent-security-priority":              runControllerVectorSecurityPriority,
 		"failure-ordinal-counts-attempt-once":                   runControllerVectorExtended,

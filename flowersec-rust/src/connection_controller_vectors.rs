@@ -684,7 +684,7 @@ fn observe_counts(
         status.last_failure.map_or((None, None, None), |failure| {
             let (code, phase, disposition) = match failure {
                 ConnectionFailure::ArtifactSource(error) => {
-                    ("connection_failed", "artifact", error.disposition())
+                    (error.code().as_str(), "artifact", error.disposition())
                 }
                 ConnectionFailure::Connect { code, disposition } => {
                     (code.as_str(), "connect", disposition)
@@ -1503,6 +1503,7 @@ async fn run_scenario(scenario: &ScenarioV3) {
             run_lease_cancel_race(scenario).await
         }
         "attempt-exhaustion" => run_attempt_exhaustion(scenario).await,
+        "invalid-source-retry-after" => run_invalid_source_retry_after(scenario).await,
         "retry-after-and-monotonic-backoff" => run_retry_after(scenario).await,
         "race-order-independent-security-priority"
         | "single-ca-untrusted-terminal"
@@ -2039,6 +2040,37 @@ async fn run_attempt_exhaustion(scenario: &ScenarioV3) {
     assert_observed(
         scenario,
         observe(status, &source, &metrics, &[], retry_delays([0])),
+    );
+    controller.close().await;
+}
+
+async fn run_invalid_source_retry_after(scenario: &ScenarioV3) {
+    assert_eq!(scenario.driver, "source-contract-validation");
+    let retry_after = scenario.input["retry_after_unix_ms"]
+        .as_u64()
+        .expect("invalid source retry_after unix milliseconds");
+    let source = Arc::new(VectorSource::new([source_error(
+        ArtifactSourceError::retry_after(retry_after),
+    )]));
+    let metrics = Arc::new(ConnectorMetrics::default());
+    let controller = ConnectionController::new_with_connector(
+        source.clone(),
+        test_options(None),
+        vector_connector([], metrics.clone()),
+    );
+    controller.start();
+    let status = wait_for_state(&controller, ConnectionState::Failed).await;
+    assert_eq!(Some(status.attempt), scenario.expected.attempt);
+    assert_eq!(scenario.expected.failure_ordinal, Some(1));
+    assert_eq!(
+        status.last_failure,
+        Some(ConnectionFailure::ArtifactSource(
+            ArtifactSourceError::invalid()
+        ))
+    );
+    assert_observed(
+        scenario,
+        observe(status, &source, &metrics, &[], Vec::new()),
     );
     controller.close().await;
 }

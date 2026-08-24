@@ -1030,13 +1030,13 @@ export function collectNpmContext(lockfile, policy, options = {}) {
         const targetPath = resolveNpmDependency(packages, packagePath, dependencyName);
         if (!targetPath) {
           const peerOptional = kind === "peer" && metadata.peerDependenciesMeta?.[dependencyName]?.optional === true;
-          if (kind === "optional" || peerOptional) continue;
+          if (peerOptional) continue;
           throw new Error(`npm dependency ${dependencyName} from ${packagePath || "<root>"} is unresolved`);
         }
         const target = byPackagePath.get(targetPath);
         if (!target) {
           const peerOptional = kind === "peer" && metadata.peerDependenciesMeta?.[dependencyName]?.optional === true;
-          if (kind === "optional" || peerOptional) continue;
+          if (peerOptional) continue;
           throw new Error(`npm dependency ${dependencyName} from ${packagePath || "<root>"} has no inventory metadata`);
         }
         const localTarget = localByPackagePath.get(targetPath);

@@ -1227,6 +1227,7 @@ test("release workflow reports bounded asset and registry publication timeouts",
 
 test("registry readback bounds chunked bodies and metadata deadlines", async (t) => {
   let mode = "stall";
+  let closedConnections = 0;
   const server = createServer((request, response) => {
     if (mode === "redirect" && request.url !== "/final") {
       response.writeHead(302, { location: "/final" });
@@ -1238,6 +1239,11 @@ test("registry readback bounds chunked bodies and metadata deadlines", async (t)
       response.end();
       return;
     }
+    if (mode === "header-oversize") {
+      response.writeHead(200, { "content-type": "application/octet-stream", "content-length": "999" });
+      response.write("partial");
+      return;
+    }
     response.writeHead(200, { "content-type": "application/octet-stream" });
     if (mode === "stall") {
       response.write("partial");
@@ -1245,10 +1251,16 @@ test("registry readback bounds chunked bodies and metadata deadlines", async (t)
     }
     response.end("0123456789abcdef");
   });
+  server.on("connection", (socket) => socket.once("close", () => { closedConnections += 1; }));
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
   const url = `http://127.0.0.1:${server.address().port}`;
   await assert.rejects(fetchResponseBody(url, {}, 64, 50), /timed out after 50ms/);
+  const closedBeforeHeaderValidation = closedConnections;
+  mode = "header-oversize";
+  await assert.rejects(fetchResponseBody(url, {}, 8, 500), /invalid registry archive size/);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(closedConnections > closedBeforeHeaderValidation, "header validation failure must close the response connection");
   mode = "oversize";
   await assert.rejects(fetchResponseBody(url, {}, 8, 500), /exceeds 8-byte limit/);
   mode = "redirect";
@@ -1351,6 +1363,9 @@ test("release recovery preserves immutable assets and publishes npm from those e
   assert.match(workflow, /release_exists: \$\{\{ steps\.release-state\.outputs\.exists \}\}/);
   assert.match(workflow, /name: Inspect immutable GitHub Release state/);
   assert.match(workflow, /npm-only recovery requires an existing immutable GitHub Release/);
+  assert.match(workflow, /\.assets\[\].*\.name.*\.size.*\.state/);
+  assert.match(workflow, /cmp -s "\$expected_file" "\$actual_file"/);
+  assert.match(workflow, /existing GitHub Release asset closure is incomplete or contains extras/);
   assert.match(
     workflow,
     /native-prebuilt:[\s\S]*if: needs\.prepare\.outputs\.mode == 'full' && needs\.prepare\.outputs\.release_exists == 'false'/,
@@ -1426,12 +1441,29 @@ test("release state inspection fails closed and permits only valid recovery mode
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const bin = path.join(root, "bin");
   const ghLog = path.join(root, "gh.log");
+  const version = "3.0.0";
+  const archives = [
+    `floegence-flowersec-core-${version}.tgz`,
+    `floegence-flowersec-node-native-${version}.tgz`,
+    ...["darwin-arm64", "darwin-x64", "linux-arm64-gnu", "linux-x64-gnu"]
+      .map((platform) => `floegence-flowersec-node-native-${platform}-${version}.tgz`),
+    `flowersec-runtime_${version}_linux_amd64.tar.gz`,
+    `flowersec-runtime_${version}_linux_arm64.tar.gz`,
+  ];
+  const expectedAssets = ["checksums.txt", ...archives]
+    .flatMap((asset) => [asset, `${asset}.sig`, `${asset}.pem`]);
+  const assetRows = expectedAssets.map((asset) => `${asset}\t1\tuploaded`).join("\n");
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(bin, "gh"), [
     "#!/bin/sh",
     `printf '%s\\n' \"$*\" >> ${JSON.stringify(ghLog)}`,
     "case \"$GH_BEHAVIOR\" in",
-    "  exists) exit 0 ;;",
+    `  exists) cat <<'EOF'\n${assetRows}\nEOF\n    exit 0 ;;`,
+    `  partial) printf '%s\\n' '${expectedAssets[0]}\t1\tuploaded'; exit 0 ;;`,
+    `  duplicate) cat <<'EOF'\n${assetRows}\n${expectedAssets[0]}\t1\tuploaded\nEOF\n    exit 0 ;;`,
+    `  extra) cat <<'EOF'\n${assetRows}\nunexpected.bin\t1\tuploaded\nEOF\n    exit 0 ;;`,
+    `  empty) awk 'BEGIN { OFS="\\t" } NR == 1 { $2 = 0 } { print $1, $2, $3 }' <<'EOF'\n${assetRows}\nEOF\n    exit 0 ;;`,
+    `  pending) awk 'BEGIN { OFS="\\t" } NR == 1 { $3 = "pending" } { print $1, $2, $3 }' <<'EOF'\n${assetRows}\nEOF\n    exit 0 ;;`,
     "  missing) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;",
     "  *) echo 'gh: upstream unavailable (HTTP 503)' >&2; exit 1 ;;",
     "esac",
@@ -1449,7 +1481,7 @@ test("release state inspection fails closed and permits only valid recovery mode
         GITHUB_REPOSITORY: "floegence/flowersec",
         PATH: `${bin}:${process.env.PATH}`,
         RELEASE_MODE: mode,
-        RELEASE_VERSION: "3.0.0",
+        RELEASE_VERSION: version,
       }),
     });
     return { result, output: fs.existsSync(output) ? fs.readFileSync(output, "utf8") : "" };
@@ -1458,6 +1490,13 @@ test("release state inspection fails closed and permits only valid recovery mode
   const existing = inspect("exists", "full");
   assert.equal(existing.result.status, 0, existing.result.stderr);
   assert.equal(existing.output, "exists=true\n");
+
+  for (const behavior of ["partial", "duplicate", "extra", "empty", "pending"]) {
+    const invalid = inspect(behavior, "full");
+    assert.equal(invalid.result.status, 1, `${behavior}: ${invalid.result.stderr}`);
+    assert.match(invalid.result.stderr, /asset|release/i);
+    assert.equal(invalid.output, "");
+  }
 
   const firstRelease = inspect("missing", "full");
   assert.equal(firstRelease.result.status, 0, firstRelease.result.stderr);
@@ -2261,6 +2300,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     ["CARGO_REGISTRY_TOKEN: ${{ steps.native-auth.outputs.token }}", "CARGO_REGISTRY_TOKEN: attacker-token"],
     ["timeout --kill-after=5s 600s cargo publish --no-verify", "timeout --kill-after=5s 600s cargo publish --allow-dirty"],
     ["uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18", "uses: example/auth-action@v1"],
+    ["group: flowersec-release", "group: flowersec-rust-release"],
   ]) {
     schedulePolicyTest(`Rust publication rejects changed contract ${mutation[0]}`, () => {
       const root = createReleasePolicyFixture(t);

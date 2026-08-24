@@ -233,9 +233,10 @@ require_exact_value(dependabot, {
 },
 }, "Dependabot configuration")
 
-[rust_workflow, ci_workflow, codeql_workflow].each do |workflow|
+[ci_workflow, codeql_workflow].each do |workflow|
   require_exact_keys(workflow, ["name", true, "env", "permissions", "jobs"], "workflow #{workflow["name"].inspect}")
 end
+require_exact_keys(rust_workflow, ["name", true, "env", "permissions", "concurrency", "jobs"], "workflow #{rust_workflow["name"].inspect}")
 require_exact_keys(release_workflow, ["name", true, "env", "permissions", "concurrency", "jobs"], "workflow #{release_workflow["name"].inspect}")
 [release_workflow, rust_workflow, ci_workflow, codeql_workflow].each do |workflow|
   require_exact_value(workflow["env"], { "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24" => "true" }, "workflow #{workflow["name"].inspect} environment")
@@ -290,6 +291,10 @@ require_exact_value(rust_workflow[true], {
   } } },
 }, "Rust recovery triggers")
 require_exact_value(rust_workflow["permissions"], { "contents" => "read" }, "Rust recovery permissions")
+require_exact_value(rust_workflow["concurrency"], {
+  "group" => "flowersec-release",
+  "cancel-in-progress" => false,
+}, "Rust recovery concurrency")
 
 release_jobs = require_hash(release_workflow["jobs"], "the unified release workflow jobs")
 rust_jobs = require_hash(rust_workflow["jobs"], "the Rust recovery workflow jobs")
@@ -502,7 +507,7 @@ validate_step_contracts(prepare_steps, [
       "RELEASE_MODE" => "${{ steps.version.outputs.mode }}",
       "RELEASE_VERSION" => "${{ steps.version.outputs.version }}",
     },
-  }, run_sha256: "1f3e030ed115e357a112ce25c395e0243e0bf771a986d3668deac675bbf02fc0" },
+  }, run_sha256: "54070e0b1b33c6fd4cc1046b36b152e622607210a82ca84823e90ec36aad804d" },
 ], "the unified release workflow prepare job")
 validate_step_contracts(ci_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
