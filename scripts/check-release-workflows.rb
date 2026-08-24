@@ -411,6 +411,7 @@ require_exact_value(prepare_job["outputs"], {
   "version" => "${{ steps.version.outputs.version }}",
   "mode" => "${{ steps.version.outputs.mode }}",
   "release_exists" => "${{ steps.release-state.outputs.exists }}",
+  "release_complete" => "${{ steps.release-state.outputs.complete }}",
 }, "the prepare job outputs")
 require_exact_value(rust_reuse_job["needs"], "prepare", "the rust-publish job dependency")
 require_exact_value(rust_reuse_job["permissions"], {
@@ -459,9 +460,9 @@ require_exact_value(npm_recovery_job["permissions"], {
   [codeql_plan_job, "the CodeQL plan job"],
   [scorecard_job, "the Scorecard analysis job"],
 ].each { |job, context| require_unconditional(job, context) }
-require_condition_value(release_job, "always() && needs.prepare.result == 'success' && needs.prepare.outputs.mode == 'full' && needs.rust-publish.result == 'success' && ((needs.prepare.outputs.release_exists == 'false' && needs.native-prebuilt.result == 'success') || (needs.prepare.outputs.release_exists == 'true' && needs.native-prebuilt.result == 'skipped'))", "the unified release workflow release job")
+require_condition_value(release_job, "always() && needs.prepare.result == 'success' && needs.prepare.outputs.mode == 'full' && needs.rust-publish.result == 'success' && ((needs.prepare.outputs.release_complete == 'false' && needs.native-prebuilt.result == 'success') || (needs.prepare.outputs.release_complete == 'true' && needs.native-prebuilt.result == 'skipped'))", "the unified release workflow release job")
 require_condition_value(rust_reuse_job, "needs.prepare.outputs.mode == 'full'", "the unified release workflow rust-publish job")
-require_condition_value(native_prebuilt_job, "needs.prepare.outputs.mode == 'full' && needs.prepare.outputs.release_exists == 'false'", "the unified release workflow native-prebuilt job")
+require_condition_value(native_prebuilt_job, "needs.prepare.outputs.mode == 'full' && needs.prepare.outputs.release_complete == 'false'", "the unified release workflow native-prebuilt job")
 require_condition_value(npm_recovery_job, "always() && needs.prepare.result == 'success' && ((needs.prepare.outputs.mode == 'full' && needs.release.result == 'success') || (needs.prepare.outputs.mode == 'npm-only' && needs.release.result == 'skipped'))", "the unified release workflow npm recovery job")
 require_condition_value(dependency_review_job, "github.event_name == 'pull_request'", "the hosted CI dependency review job")
 require_condition_value(codeql_job, "needs.plan.outputs.should_scan == 'true'", "the CodeQL analyze job")
@@ -511,6 +512,10 @@ validate_step_contracts(prepare_steps, [
       "RELEASE_MODE_INPUT" => "${{ inputs.mode }}",
     },
   }, run_sha256: "a6ae5453b78e4d35fcfd50e172b465130f1e159898b009cb9a7154503f7ab7c7" },
+  { name: "Setup cosign", keys: ["name", "uses", "with"], values: {
+    "uses" => "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+    "with" => { "cosign-release" => "v3.0.6" },
+  } },
   { name: "Inspect immutable GitHub Release state", keys: ["name", "id", "env", "run"], values: {
     "id" => "release-state",
     "env" => {
@@ -518,7 +523,7 @@ validate_step_contracts(prepare_steps, [
       "RELEASE_MODE" => "${{ steps.version.outputs.mode }}",
       "RELEASE_VERSION" => "${{ steps.version.outputs.version }}",
     },
-  }, run_sha256: "54070e0b1b33c6fd4cc1046b36b152e622607210a82ca84823e90ec36aad804d" },
+  }, run_sha256: "1035ea2e08107a16388e847268cfbf30f548fe96bc6c30299639ca70adfbc91b" },
 ], "the unified release workflow prepare job")
 validate_step_contracts(ci_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
@@ -627,7 +632,7 @@ validate_step_contracts(release_steps, [
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
   } }, run_sha256: "2dc2aa66b184f05c334e60ef6d1ca9421fc40c42ace1a5e74f6236355f3b8613" },
   { name: "Download native prebuilt packages", keys: ["name", "if", "uses", "with"], values: {
-    "if" => "needs.prepare.outputs.release_exists == 'false'",
+    "if" => "needs.prepare.outputs.release_complete == 'false'",
     "uses" => "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
     "with" => { "pattern" => "flowersec-node-native-*", "path" => "native-prebuilt", "merge-multiple" => false },
   } },
@@ -635,21 +640,25 @@ validate_step_contracts(release_steps, [
     "uses" => "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
     "with" => { "cosign-release" => "v3.0.6" },
   } },
-  { name: "Build release artifacts", keys: ["name", "if", "env", "run"], values: { "if" => "needs.prepare.outputs.release_exists == 'false'", "env" => {
+  { name: "Build release artifacts", keys: ["name", "if", "env", "run"], values: { "if" => "needs.prepare.outputs.release_complete == 'false'", "env" => {
     "RELEASE_DATE" => "${{ steps.vars.outputs.date }}",
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
   } }, run_sha256: "26aba6fb64fb35e6c5bcc407afac4d1ee220314296dae9210a859d4e6c17f5bc" },
-  { name: "Generate release notes", keys: ["name", "if", "env", "run"], values: { "if" => "needs.prepare.outputs.release_exists == 'false'", "env" => {
+  { name: "Generate release notes", keys: ["name", "if", "env", "run"], values: { "if" => "needs.prepare.outputs.release_complete == 'false'", "env" => {
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_TAG" => "${{ steps.vars.outputs.tag }}",
   } }, run_sha256: "1bd88ea62d5cfa76a864986943ea296ec1def96e507dcdb60077ac446e1f2658" },
-  { name: "Publish GitHub Release", keys: ["name", "if", "uses", "with"], values: { "if" => "needs.prepare.outputs.release_exists == 'false'", "uses" => "softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228", "with" => {
+  { name: "Publish GitHub Release", keys: ["name", "if", "uses", "with"], values: { "if" => "needs.prepare.outputs.release_complete == 'false'", "uses" => "softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228", "with" => {
     "files" => "dist/*\n",
     "body_path" => "release-notes.md",
     "tag_name" => "${{ steps.vars.outputs.tag }}",
-    "overwrite_files" => false,
+    "overwrite_files" => true,
   } } },
+  { name: "Verify GitHub Release asset readback", keys: ["name", "env", "run"], values: { "env" => {
+    "GH_TOKEN" => "${{ github.token }}",
+    "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
+  } }, run_sha256: "48914de45e63a903ad232d6411666da7c131afb03f21e9ebac1868e98b40d78e" },
   { name: "Setup Docker Buildx", keys: ["name", "uses", "with"], values: { "uses" => "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c", "with" => { "driver-opts" => "image=moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec" } } },
   { name: "Login to GHCR", keys: ["name", "uses", "with"], values: { "uses" => "docker/login-action@dbcb813823bdd20940b903addbd779551569679f", "with" => { "registry" => "ghcr.io", "username" => "${{ github.actor }}", "password" => "${{ secrets.GITHUB_TOKEN }}" } } },
   { name: "Inspect immutable GHCR version tag", keys: ["name", "id", "env", "run"], values: {
@@ -745,7 +754,7 @@ validate_step_contracts(npm_recovery_steps, [
   { name: "Publish or recover npm registry packages from immutable release assets", keys: ["name", "env", "run"], values: { "env" => {
     "GH_TOKEN" => "${{ github.token }}",
     "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
-  } }, run_sha256: "341b810fe50214186df1d6a4faf325cdee8a29798e0d698d932ea4cfc4a9c9ad" },
+  } }, run_sha256: "4694ff6f5b87792c934779c80cfc4ec28813ed0f086d1f1eea2d60f4ad7b2cd2" },
 ], "the unified release workflow npm recovery job")
 validate_step_contracts(rust_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
@@ -778,10 +787,16 @@ require_step_field(release_tags, "run", 'scripts/verify-release-tags.sh "$RELEAS
 end
 require_condition(release_setup_index < release_version_index && release_version_index < release_tags_index, "the unified release workflow must run Rust setup, version validation, and tag verification in order")
 
+release_asset_publish, release_asset_publish_index = require_named_step(release_steps, "Publish GitHub Release", "the unified release workflow")
+release_asset_readback, release_asset_readback_index = require_named_step(release_steps, "Verify GitHub Release asset readback", "the unified release workflow")
+require_condition_value(release_asset_publish, "needs.prepare.outputs.release_complete == 'false'", "the recoverable GitHub Release publication")
+require_unconditional(release_asset_readback, "the GitHub Release full asset readback")
+require_condition(release_asset_publish_index < release_asset_readback_index, "the unified release workflow must read back every GitHub Release asset after initial or recovery publication")
+
 release_publication_steps = {
-  "Build release artifacts" => "needs.prepare.outputs.release_exists == 'false'",
-  "Generate release notes" => "needs.prepare.outputs.release_exists == 'false'",
-  "Publish GitHub Release" => "needs.prepare.outputs.release_exists == 'false'",
+  "Build release artifacts" => "needs.prepare.outputs.release_complete == 'false'",
+  "Generate release notes" => "needs.prepare.outputs.release_complete == 'false'",
+  "Publish GitHub Release" => "needs.prepare.outputs.release_complete == 'false'",
   "Build and push runtime image by digest" => "steps.runtime-state.outputs.exists == 'false'",
   "Sign new GHCR runtime digest" => "steps.runtime-state.outputs.exists == 'false'",
   "Publish immutable GHCR version tag" => "steps.runtime-state.outputs.exists == 'false'",

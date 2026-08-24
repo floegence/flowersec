@@ -478,6 +478,8 @@ archives=(
   "floegence-flowersec-node-native-linux-x64-gnu-\${RELEASE_VERSION}.tgz"
   "floegence-flowersec-node-native-\${RELEASE_VERSION}.tgz"
   "floegence-flowersec-core-\${RELEASE_VERSION}.tgz"
+  "flowersec-runtime_\${RELEASE_VERSION}_linux_amd64.tar.gz"
+  "flowersec-runtime_\${RELEASE_VERSION}_linux_arm64.tar.gz"
 )
 : > "$destination/checksums.txt"
 touch "$destination/checksums.txt.sig" "$destination/checksums.txt.pem"
@@ -1520,27 +1522,32 @@ test("release recovery preserves immutable assets and publishes npm from those e
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
   assert.match(workflow, /mode:\n\s+description: "Recovery scope"[\s\S]*default: npm-only[\s\S]*options:\n\s+- full\n\s+- npm-only/);
   assert.match(workflow, /release_exists: \$\{\{ steps\.release-state\.outputs\.exists \}\}/);
+  assert.match(workflow, /release_complete: \$\{\{ steps\.release-state\.outputs\.complete \}\}/);
   assert.match(workflow, /name: Inspect immutable GitHub Release state/);
   assert.match(workflow, /npm-only recovery requires an existing immutable GitHub Release/);
   assert.match(workflow, /\.assets\[\].*\.name.*\.size.*\.state/);
   assert.match(workflow, /cmp -s "\$expected_file" "\$actual_file"/);
-  assert.match(workflow, /existing GitHub Release asset closure is incomplete or contains extras/);
+  assert.match(workflow, /existing GitHub Release failed content readback and will require full recovery/);
   assert.match(
     workflow,
-    /native-prebuilt:[\s\S]*if: needs\.prepare\.outputs\.mode == 'full' && needs\.prepare\.outputs\.release_exists == 'false'/,
+    /native-prebuilt:[\s\S]*if: needs\.prepare\.outputs\.mode == 'full' && needs\.prepare\.outputs\.release_complete == 'false'/,
   );
   assert.match(
     workflow,
-    /release:[\s\S]*needs\.prepare\.outputs\.release_exists == 'false' && needs\.native-prebuilt\.result == 'success'[\s\S]*needs\.prepare\.outputs\.release_exists == 'true' && needs\.native-prebuilt\.result == 'skipped'/,
+    /release:[\s\S]*needs\.prepare\.outputs\.release_complete == 'false' && needs\.native-prebuilt\.result == 'success'[\s\S]*needs\.prepare\.outputs\.release_complete == 'true' && needs\.native-prebuilt\.result == 'skipped'/,
   );
   for (const step of ["Download native prebuilt packages", "Build release artifacts", "Generate release notes", "Publish GitHub Release"]) {
     assert.match(
       workflow,
-      new RegExp(`name: ${step}\\n\\s+if: needs\\.prepare\\.outputs\\.release_exists == 'false'`),
-      `${step} must be disabled once the immutable release exists`,
+      new RegExp(`name: ${step}\\n\\s+if: needs\\.prepare\\.outputs\\.release_complete == 'false'`),
+      `${step} must run only when the release is absent or failed content verification`,
     );
   }
-  assert.match(workflow, /name: Publish GitHub Release[\s\S]*overwrite_files: false/);
+  assert.match(workflow, /name: Publish GitHub Release[\s\S]*overwrite_files: true/);
+  assert.match(workflow, /name: Verify GitHub Release asset readback/);
+  assert.match(workflow, /GitHub Release full asset readback closure mismatch/);
+  assert.match(workflow, /flowersec-runtime_\$\{VERSION\}_linux_amd64\.tar\.gz/);
+  assert.match(workflow, /flowersec-runtime_\$\{VERSION\}_linux_arm64\.tar\.gz/);
   assert.match(workflow, /DATE="\$\(git show -s --format='%cI' HEAD\)"/);
   assert.doesNotMatch(workflow, /DATE="\$\(date|date -u/);
   assert.match(workflow, /npm-recovery:\n\s+needs: \[prepare, release\]/);
@@ -1564,9 +1571,9 @@ test("release recovery preserves immutable assets and publishes npm from those e
   assert.match(workflow, /checksums\.txt\.pem/);
   assert.equal(
     workflow.match(/uses: sigstore\/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6/g)?.length,
-    2,
+    3,
   );
-  assert.equal(workflow.match(/cosign-release: v3\.0\.6/g)?.length, 2);
+  assert.equal(workflow.match(/cosign-release: v3\.0\.6/g)?.length, 3);
   assert.match(workflow, /downloaded\[\*\].*expected\[\*\]/);
   assert.match(workflow, /awk -v file="\$archive"/);
   assert.match(workflow, /validate_manifest "\$archive" "\$package"/);
@@ -1613,21 +1620,81 @@ test("release state inspection fails closed and permits only valid recovery mode
     .flatMap((asset) => [asset, `${asset}.sig`, `${asset}.pem`]);
   const assetRows = expectedAssets.map((asset) => `${asset}\t1\tuploaded`).join("\n");
   fs.mkdirSync(bin);
-  fs.writeFileSync(path.join(bin, "gh"), [
-    "#!/bin/sh",
-    `printf '%s\\n' \"$*\" >> ${JSON.stringify(ghLog)}`,
-    "case \"$GH_BEHAVIOR\" in",
-    `  exists) cat <<'EOF'\n${assetRows}\nEOF\n    exit 0 ;;`,
-    `  partial) printf '%s\\n' '${expectedAssets[0]}\t1\tuploaded'; exit 0 ;;`,
-    `  duplicate) cat <<'EOF'\n${assetRows}\n${expectedAssets[0]}\t1\tuploaded\nEOF\n    exit 0 ;;`,
-    `  extra) cat <<'EOF'\n${assetRows}\nunexpected.bin\t1\tuploaded\nEOF\n    exit 0 ;;`,
-    `  empty) awk 'BEGIN { OFS="\\t" } NR == 1 { $2 = 0 } { print $1, $2, $3 }' <<'EOF'\n${assetRows}\nEOF\n    exit 0 ;;`,
-    `  pending) awk 'BEGIN { OFS="\\t" } NR == 1 { $3 = "pending" } { print $1, $2, $3 }' <<'EOF'\n${assetRows}\nEOF\n    exit 0 ;;`,
-    "  missing) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;",
-    "  *) echo 'gh: upstream unavailable (HTTP 503)' >&2; exit 1 ;;",
-    "esac",
-  ].join("\n"));
-  fs.chmodSync(path.join(bin, "gh"), 0o755);
+  writeExecutable(path.join(bin, "gh"), `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> ${JSON.stringify(ghLog)}
+if [[ "$1" == api ]]; then
+  case "$GH_BEHAVIOR" in
+    exists|corrupt-checksum|signature-mismatch|readback-missing) cat <<'EOF'
+${assetRows}
+EOF
+      ;;
+    partial) printf '%s\n' '${expectedAssets[0]}\t1\tuploaded' ;;
+    duplicate) cat <<'EOF'
+${assetRows}
+${expectedAssets[0]}\t1\tuploaded
+EOF
+      ;;
+    extra) cat <<'EOF'
+${assetRows}
+unexpected.bin\t1\tuploaded
+EOF
+      ;;
+    empty) awk 'BEGIN { OFS="\t" } NR == 1 { $2 = 0 } { print $1, $2, $3 }' <<'EOF'
+${assetRows}
+EOF
+      ;;
+    pending) awk 'BEGIN { OFS="\t" } NR == 1 { $3 = "pending" } { print $1, $2, $3 }' <<'EOF'
+${assetRows}
+EOF
+      ;;
+    missing) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+    *) echo 'gh: upstream unavailable (HTTP 503)' >&2; exit 1 ;;
+  esac
+  exit 0
+fi
+destination=""
+while (( $# > 0 )); do
+  if [[ "$1" == --dir ]]; then destination="$2"; shift 2; else shift; fi
+done
+test -n "$destination"
+mkdir -p "$destination"
+assets=(
+${expectedAssets.map((asset) => `  ${JSON.stringify(asset)}`).join("\n")}
+)
+if [[ "$GH_BEHAVIOR" == partial ]]; then assets=("${expectedAssets[0]}"); fi
+for asset in "\${assets[@]}"; do printf x > "$destination/$asset"; done
+if [[ "$GH_BEHAVIOR" == readback-missing ]]; then
+  rm "$destination/flowersec-runtime_${version}_linux_arm64.tar.gz"
+fi
+if [[ "$GH_BEHAVIOR" != partial ]]; then
+  : > "$destination/checksums.txt"
+  for archive in ${archives.map((archive) => JSON.stringify(archive)).join(" ")}; do
+    printf '%064d  %s\n' 0 "$archive" >> "$destination/checksums.txt"
+  done
+fi
+`);
+  writeExecutable(path.join(bin, "timeout"), `#!/usr/bin/env bash
+set -euo pipefail
+while [[ "$1" == --* ]]; do shift; done
+shift
+"$@"
+`);
+  writeExecutable(path.join(bin, "sha256sum"), `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$GH_BEHAVIOR" == corrupt-checksum ]]; then
+  printf 'injected checksum mismatch\n' >&2
+  exit 1
+fi
+`);
+  writeExecutable(path.join(bin, "cosign"), `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$GH_BEHAVIOR" == signature-mismatch ]]; then exit 1; fi
+`);
+  writeExecutable(path.join(bin, "find"), `#!/usr/bin/env bash
+set -euo pipefail
+for file in "$1"/*; do basename "$file"; done
+`);
 
   const inspect = (behavior, mode) => {
     const output = path.join(root, `output-${behavior}-${mode}`);
@@ -1648,9 +1715,15 @@ test("release state inspection fails closed and permits only valid recovery mode
 
   const existing = inspect("exists", "full");
   assert.equal(existing.result.status, 0, existing.result.stderr);
-  assert.equal(existing.output, "exists=true\n");
+  assert.equal(existing.output, "exists=true\ncomplete=true\n");
 
-  for (const behavior of ["partial", "duplicate", "extra", "empty", "pending"]) {
+  for (const behavior of ["partial", "corrupt-checksum", "signature-mismatch"]) {
+    const recoverable = inspect(behavior, "full");
+    assert.equal(recoverable.result.status, 0, `${behavior}: ${recoverable.result.stderr}`);
+    assert.equal(recoverable.output, "exists=true\ncomplete=false\n", behavior);
+  }
+
+  for (const behavior of ["duplicate", "extra", "empty", "pending", "readback-missing"]) {
     const invalid = inspect(behavior, "full");
     assert.equal(invalid.result.status, 1, `${behavior}: ${invalid.result.stderr}`);
     assert.match(invalid.result.stderr, /asset|release/i);
@@ -1659,18 +1732,121 @@ test("release state inspection fails closed and permits only valid recovery mode
 
   const firstRelease = inspect("missing", "full");
   assert.equal(firstRelease.result.status, 0, firstRelease.result.stderr);
-  assert.equal(firstRelease.output, "exists=false\n");
+  assert.equal(firstRelease.output, "exists=false\ncomplete=false\n");
 
   const invalidRecovery = inspect("missing", "npm-only");
   assert.equal(invalidRecovery.result.status, 1, invalidRecovery.result.stderr);
   assert.match(invalidRecovery.result.stderr, /requires an existing immutable GitHub Release/);
   assert.equal(invalidRecovery.output, "");
 
+  const incompleteNpmRecovery = inspect("partial", "npm-only");
+  assert.equal(incompleteNpmRecovery.result.status, 1, incompleteNpmRecovery.result.stderr);
+  assert.match(incompleteNpmRecovery.result.stderr, /requires a complete immutable GitHub Release/);
+  assert.equal(incompleteNpmRecovery.output, "");
+
   const apiFailure = inspect("error", "full");
   assert.equal(apiFailure.result.status, 1, apiFailure.result.stderr);
   assert.match(apiFailure.result.stderr, /HTTP 503/);
   assert.equal(apiFailure.output, "");
   assert.match(fs.readFileSync(ghLog, "utf8"), /repos\/floegence\/flowersec\/releases\/tags\/flowersec-go\/v3\.0\.0/);
+});
+
+test("GitHub Release readback verifies full runtime and npm asset closure", (t) => {
+  const readback = extractWorkflowStepRun(
+    ".github/workflows/release.yml",
+    "release",
+    "Verify GitHub Release asset readback",
+  );
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-release-readback-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const bin = path.join(root, "bin");
+  fs.mkdirSync(bin);
+  const version = "3.0.0";
+  const archives = [
+    `floegence-flowersec-core-${version}.tgz`,
+    `floegence-flowersec-node-native-${version}.tgz`,
+    ...["darwin-arm64", "darwin-x64", "linux-arm64-gnu", "linux-x64-gnu"]
+      .map((platform) => `floegence-flowersec-node-native-${platform}-${version}.tgz`),
+    `flowersec-runtime_${version}_linux_amd64.tar.gz`,
+    `flowersec-runtime_${version}_linux_arm64.tar.gz`,
+  ];
+  const assets = ["checksums.txt", ...archives]
+    .flatMap((asset) => [asset, `${asset}.sig`, `${asset}.pem`]);
+  const cosignLog = path.join(root, "cosign.log");
+  writeExecutable(path.join(bin, "timeout"), `#!/usr/bin/env bash
+set -euo pipefail
+while [[ "$1" == --* ]]; do shift; done
+shift
+"$@"
+`);
+  writeExecutable(path.join(bin, "gh"), `#!/usr/bin/env bash
+set -euo pipefail
+destination=""
+while (( $# > 0 )); do
+  if [[ "$1" == --dir ]]; then destination="$2"; shift 2; else shift; fi
+done
+test -n "$destination"
+mkdir -p "$destination"
+assets=(
+${assets.map((asset) => `  ${JSON.stringify(asset)}`).join("\n")}
+)
+for asset in "\${assets[@]}"; do printf x > "$destination/$asset"; done
+: > "$destination/checksums.txt"
+for archive in ${archives.map((archive) => JSON.stringify(archive)).join(" ")}; do
+  printf '%064d  %s\n' 0 "$archive" >> "$destination/checksums.txt"
+done
+case "$FAKE_READBACK_MODE" in
+  missing-runtime) rm "$destination/flowersec-runtime_${version}_linux_arm64.tar.gz" ;;
+  missing-signature) rm "$destination/flowersec-runtime_${version}_linux_amd64.tar.gz.sig" ;;
+esac
+`);
+  writeExecutable(path.join(bin, "sha256sum"), `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$FAKE_READBACK_MODE" == corrupt-checksum ]]; then
+  printf 'injected checksum mismatch\n' >&2
+  exit 1
+fi
+`);
+  writeExecutable(path.join(bin, "cosign"), `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_COSIGN_LOG"
+if [[ "$FAKE_READBACK_MODE" == runtime-signature && "$*" == *flowersec-runtime_3.0.0_linux_arm64.tar.gz* ]]; then
+  exit 1
+fi
+`);
+  writeExecutable(path.join(bin, "find"), `#!/usr/bin/env bash
+set -euo pipefail
+for file in "$1"/*; do basename "$file"; done
+`);
+
+  const runReadback = (mode) => spawnSync("bash", ["-c", readback], {
+    cwd: root,
+    encoding: "utf8",
+    env: isolatedEnvironment({
+      FAKE_COSIGN_LOG: cosignLog,
+      FAKE_READBACK_MODE: mode,
+      GITHUB_REPOSITORY: "floegence/flowersec",
+      PATH: `${bin}:${process.env.PATH}`,
+      RELEASE_VERSION: version,
+    }),
+  });
+
+  const success = runReadback("success");
+  assert.equal(success.status, 0, `${success.stdout}${success.stderr}`);
+  const cosignCalls = fs.readFileSync(cosignLog, "utf8");
+  assert.match(cosignCalls, /flowersec-runtime_3\.0\.0_linux_amd64\.tar\.gz/);
+  assert.match(cosignCalls, /flowersec-runtime_3\.0\.0_linux_arm64\.tar\.gz/);
+
+  for (const [mode, evidence] of [
+    ["missing-runtime", /full asset readback closure mismatch/],
+    ["missing-signature", /full asset readback closure mismatch/],
+    ["corrupt-checksum", /injected checksum mismatch/],
+    ["runtime-signature", /asset signature does not match a trusted workflow identity/],
+  ]) {
+    const rejected = runReadback(mode);
+    assert.notEqual(rejected.status, 0, `${mode} was accepted`);
+    assert.match(rejected.stderr, evidence);
+  }
 });
 
 test("native npm platform packages carry repository metadata for provenance", () => {
@@ -2384,13 +2560,13 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     },
     {
       name: "native artifacts rebuild after release publication",
-      from: "    if: needs.prepare.outputs.mode == 'full' && needs.prepare.outputs.release_exists == 'false'\n",
+      from: "    if: needs.prepare.outputs.mode == 'full' && needs.prepare.outputs.release_complete == 'false'\n",
       to: "    if: needs.prepare.outputs.mode == 'full'\n",
     },
     {
-      name: "release assets may be overwritten",
-      from: "          overwrite_files: false\n",
-      to: "          overwrite_files: true\n",
+      name: "partial release assets are not recoverably replaced",
+      from: "          overwrite_files: true\n",
+      to: "          overwrite_files: false\n",
     },
     {
       name: "release build date is wall-clock dependent",

@@ -410,18 +410,9 @@ impl ConnectionController {
             self.inner.start_close_workflow();
         }
         let task = lock(&self.task).take();
-        let reentrant_scheduler_close = task
-            .as_ref()
-            .is_some_and(|task| tokio::task::try_id().is_some_and(|current| current == task.id()));
         self.inner.start_scheduler_join_workflow(task);
         self.inner.wait_close_completion().await;
-        // A source future is polled by the scheduler. If it closes its own
-        // controller, waiting for that scheduler here would wait on the
-        // current task. The join workflow still publishes the full barrier as
-        // soon as this reentrant call returns and lets the scheduler exit.
-        if !reentrant_scheduler_close {
-            self.inner.wait_scheduler_join_completion().await;
-        }
+        self.inner.wait_scheduler_join_completion().await;
     }
 }
 
@@ -1003,15 +994,19 @@ async fn acquire_lease(
         }
         _ => ConnectionFailure::ArtifactSource(error),
     })?;
-    lease
-        .claim_for_controller()
-        .map_err(|_| {
-            connect_failure(
-                ConnectErrorCode::ArtifactInvalid,
-                RetryDisposition::Terminal,
-            )
-        })
-        .map(Some)
+    let claimed = lease.claim_for_controller().map_err(|_| {
+        connect_failure(
+            ConnectErrorCode::ArtifactInvalid,
+            RetryDisposition::Terminal,
+        )
+    })?;
+    if inner.cancellation.is_cancelled() {
+        // Delivery won the source race, so the Controller owns the lease even
+        // when cancellation is observed immediately afterward.
+        let _ = claimed.retire().await;
+        return Ok(None);
+    }
+    Ok(Some(claimed))
 }
 
 fn valid_retry_after(deadline: u64) -> bool {
@@ -2089,28 +2084,41 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn source_first_poll_can_close_controller_without_locking_the_acquisition_gate() {
-        let source = Arc::new(ReentrantCloseSource {
+    async fn source_first_poll_close_drains_late_lease_before_returning() {
+        let spent = Arc::new(AtomicU64::new(0));
+        let retired = Arc::new(AtomicU64::new(0));
+        let connector_calls = Arc::new(AtomicU64::new(0));
+        let close_returned = Arc::new(AtomicBool::new(false));
+        let source = Arc::new(FirstPollCloseSource {
             controller: Mutex::new(None),
-            close_returned: AtomicBool::new(false),
+            lease: Mutex::new(Some(test_lease(
+                pin_only_artifact([0x11; 32]),
+                spent.clone(),
+                retired.clone(),
+            ))),
+            close_returned: close_returned.clone(),
         });
         let controller = Arc::new(ConnectionController::new_with_connector(
             source.clone(),
             test_options(None),
-            scripted_connector(std::iter::empty::<ConnectorStep>()),
+            counting_connector([ConnectorStep::Success], connector_calls.clone()),
         ));
         *lock(&source.controller) = Some(Arc::downgrade(&controller));
 
         controller.start();
         tokio::time::timeout(Duration::from_millis(500), async {
-            while !source.close_returned.load(Ordering::Acquire) {
+            while !close_returned.load(Ordering::Acquire) {
                 tokio::task::yield_now().await;
             }
         })
         .await
-        .expect("source reentrant close did not return");
-        assert_eq!(controller.snapshot().state, ConnectionState::Closed);
-        assert_eq!(controller.snapshot().failure, None);
+        .expect("close started by the source first poll did not return");
+        assert_eq!(retired.load(Ordering::SeqCst), 1);
+        assert_eq!(spent.load(Ordering::SeqCst), 0);
+        assert_eq!(connector_calls.load(Ordering::SeqCst), 0);
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.state, ConnectionState::Closed);
+        assert_eq!(snapshot.failure, None);
     }
 
     #[tokio::test]
@@ -2837,9 +2845,10 @@ mod tests {
     struct ConstructorPanicSource;
 
     #[derive(Debug)]
-    struct ReentrantCloseSource {
+    struct FirstPollCloseSource {
         controller: Mutex<Option<std::sync::Weak<ConnectionController>>>,
-        close_returned: AtomicBool,
+        lease: Mutex<Option<ArtifactLeaseV3>>,
+        close_returned: Arc<AtomicBool>,
     }
 
     #[async_trait]
@@ -2868,18 +2877,24 @@ mod tests {
     }
 
     #[async_trait]
-    impl ArtifactSource for ReentrantCloseSource {
+    impl ArtifactSource for FirstPollCloseSource {
         async fn acquire(
             &self,
-            _cancellation: CancellationToken,
+            cancellation: CancellationToken,
         ) -> Result<ArtifactLeaseV3, ArtifactSourceError> {
             let controller = lock(&self.controller)
                 .as_ref()
                 .and_then(std::sync::Weak::upgrade)
                 .expect("controller installed");
-            controller.close().await;
-            self.close_returned.store(true, Ordering::Release);
-            Err(ArtifactSourceError::terminal())
+            let close_returned = self.close_returned.clone();
+            tokio::spawn(async move {
+                controller.close().await;
+                close_returned.store(true, Ordering::Release);
+            });
+            cancellation.cancelled().await;
+            lock(&self.lease)
+                .take()
+                .ok_or_else(ArtifactSourceError::terminal)
         }
     }
 
