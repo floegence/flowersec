@@ -583,7 +583,7 @@ validate_step_contracts(release_steps, [
   { name: "Compute version vars", keys: ["name", "id", "env", "run"], values: {
     "id" => "vars",
     "env" => { "RELEASE_VERSION_INPUT" => "${{ needs.prepare.outputs.version }}" },
-  }, run_sha256: "479845d981a22d9aa135c767fed353641737e1c73587d14d188562b5d5fa06f9" },
+  }, run_sha256: "e4edf2d7bba126e16a16bd2ecf830300b5598e530692cac1f70b4404fa071b9b" },
   { name: "Verify tagged commit is the remote main tip", keys: ["name", "env", "run"], values: {
     "env" => { "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}" },
   }, run_sha256: "d4c29c98aae2d8fb96522062eb3fc3d245e24e8bad4f4972c37603f325dd7158" },
@@ -682,7 +682,7 @@ validate_step_contracts(npm_recovery_steps, [
 ], "the unified release workflow npm recovery job")
 validate_step_contracts(rust_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
-  { name: "Checkout release commit", keys: ["name", "id", "env", "run"], values: { "id" => "version", "env" => { "RELEASE_VERSION_INPUT" => "${{ inputs.version }}" } }, run_sha256: "ac06a1217c1f7df7c9e899d1fd91e3eb5a9c16f30aba50503028c62b391ac398" },
+  { name: "Checkout release commit", keys: ["name", "id", "env", "run"], values: { "id" => "version", "env" => { "RELEASE_VERSION_INPUT" => "${{ inputs.version }}" } }, run_sha256: "5d68a3db64a236498aee55916814fc9d89875553f6ef470b683d96b78b62a336" },
   { name: "Verify tagged commit is the remote main tip", keys: ["name", "run"], run_sha256: "c6b6362a10a06dc03d1e88283f854c3642c9fd2de2c08861a8ba1ac6467b98ab" },
   { name: "Setup Rust", keys: ["name", "uses"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4" } },
   { name: "Validate release version facts", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "9431ce4342dcd8f8af90607321f1ceb9e6e61c13f455b06acd242d96f53e0087" },

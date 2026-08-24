@@ -89,7 +89,7 @@ if (platform !== null) {
 
 function isRetryableNpmError(error) {
   const text = `${error.code ?? ""} ${error.message ?? ""} ${error.stderr ?? ""}`;
-  return /E404|E408|E429|E5\d\d|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|timed out/i.test(text);
+  return /E404|E408|E429|E5\d\d|EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|fetch failed|socket|timed out/i.test(text);
 }
 
 function isRetryableRegistryError(error) {

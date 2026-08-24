@@ -45,6 +45,10 @@ jobs:
           fi
           git fetch --force origin "refs/tags/flowersec-rust/v${VERSION}:refs/tags/flowersec-rust/v${VERSION}"
           git checkout --detach "refs/tags/flowersec-rust/v${VERSION}"
+          git checkout "$GITHUB_SHA" -- \
+            scripts/release-readback.mjs \
+            scripts/verify-crates-release-package.mjs \
+            scripts/verify-crates-release-consumer.mjs
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Verify tagged commit is the remote main tip

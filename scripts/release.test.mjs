@@ -345,6 +345,7 @@ test("npm release readback verifies tarball integrity, manifest, platform metada
   const readback = fs.readFileSync(path.join(sourceRoot, "scripts/verify-npm-release-package.mjs"), "utf8");
   assert.match(workflow, /node scripts\/verify-npm-release-package\.mjs/);
   assert.match(readback, /npm.*view/);
+  assert.match(readback, /EAI_AGAIN/);
   assert.match(readback, /dist\.tarball/);
   assert.match(readback, /dist\.integrity/);
   assert.match(workflow, /stage-npm-release-metadata\.mjs/);
@@ -371,6 +372,18 @@ test("npm release readback verifies tarball integrity, manifest, platform metada
   assert.match(goConsumer, /SessionClosed/);
   assert.match(goConsumer, /accepted lease was not released/);
   assert.doesNotMatch(goConsumer, /\/internal\//);
+});
+
+test("release recovery restores readback scripts from the reviewed workflow SHA after immutable tag checkout", () => {
+  const releaseWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
+  const rustWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/rust-release.yml"), "utf8");
+  for (const [workflow, files] of [[releaseWorkflow, ["scripts/release-readback.mjs", "scripts/verify-npm-release-package.mjs"]], [rustWorkflow, ["scripts/release-readback.mjs", "scripts/verify-crates-release-package.mjs", "scripts/verify-crates-release-consumer.mjs"]]]) {
+    const restore = workflow.indexOf("git checkout \"$GITHUB_SHA\" --");
+    assert.ok(restore >= 0);
+    const checkout = workflow.lastIndexOf("refs/tags/flowersec-", restore);
+    assert.ok(checkout >= 0);
+    for (const file of files) assert.match(workflow.slice(restore, restore + 500), new RegExp(file.replaceAll(".", "\\.")));
+  }
 });
 
 test("release recovery preserves immutable assets and publishes npm from those exact archives", () => {

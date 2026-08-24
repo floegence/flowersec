@@ -193,6 +193,9 @@ jobs:
           TAG="flowersec-go/v${VERSION}"
           SHA="$(git rev-parse HEAD)"
           DATE="$(git show -s --format='%cI' HEAD)"
+          git checkout "$GITHUB_SHA" -- \
+            scripts/release-readback.mjs \
+            scripts/verify-npm-release-package.mjs
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
