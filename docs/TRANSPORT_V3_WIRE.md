@@ -90,6 +90,13 @@ a BOM, unknown or missing fixed fields, non-canonical bytes, trailing bytes,
 bad base64url, invalid array order or duplicates, and resource-limit
 violations.
 
+Those rejection rules apply only to the JCS objects listed above. The FSH3 JSON
+payload inherits the frozen FSH2 canonical encoding and handshake vectors byte
+for byte, with only the specified v3 version and domain replacements. RPC and
+application JSON retain the fixed v2 codec and value domain. FSH3, FSS3, OPEN,
+RPC, and application payloads MUST NOT be subjected to artifact/FSB3 JCS
+rejection rules; each retains its own inherited or explicitly specified codec.
+
 JCS never reorders arrays. Artifact candidates accept input order but canonical
 candidates sort by candidate ID. Canonical candidates, capability tuples, and
 unsupported carrier entries require their specified strict ASCII order. Pins
@@ -394,6 +401,10 @@ and the v2 baseline it explicitly inherits. `testdata/transport_v3` records the
 derived exact vectors and negative examples; it cannot narrow or replace those
 general rules. Wrong magic, version, route, ALPN, subprotocol, reserved data,
 truncation, or trailing data fails closed.
+
+In particular, FSH3 uses the byte-for-byte inherited FSH2 canonical JSON
+payload and handshake vectors rather than JCS. The v3 version and domain
+replacements do not change that payload codec or its value domain.
 
 The session rekey transition counter starts at 1 and never wraps on the wire.
 `UINT64_MAX` is usable exactly once; its committed successor is the internal

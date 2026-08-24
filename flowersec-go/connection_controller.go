@@ -314,6 +314,7 @@ func (controller *ConnectionController) Close(ctx context.Context) error {
 	controller.mu.Lock()
 	if !controller.started {
 		if controller.snapshot.State != ConnectionClosed {
+			controller.retryNotBeforeUnixMilliseconds = -1
 			controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionClosed, Attempt: controller.snapshot.Attempt})
 		}
 		controller.closeDoneLocked()
@@ -322,6 +323,8 @@ func (controller *ConnectionController) Close(ctx context.Context) error {
 	}
 	cancel := controller.cancel
 	done := controller.done
+	controller.retryNotBeforeUnixMilliseconds = -1
+	controller.setSnapshotLocked(ConnectionSnapshot{State: ConnectionClosed, Attempt: controller.snapshot.Attempt})
 	controller.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -554,6 +557,7 @@ func (controller *ConnectionController) run(ctx context.Context) {
 		controller.publishConnected(session)
 		termination, waitErr := session.WaitTermination(ctx)
 		if ctx.Err() != nil {
+			_ = session.Close()
 			controller.finishClosed()
 			return
 		}
@@ -888,6 +892,9 @@ func (controller *ConnectionController) finishClosed() {
 }
 
 func (controller *ConnectionController) setSnapshotLocked(snapshot ConnectionSnapshot) {
+	if controller.snapshot.State == ConnectionClosed {
+		return
+	}
 	snapshot.revision = controller.snapshot.revision + 1
 	controller.snapshot = snapshot
 	close(controller.changed)

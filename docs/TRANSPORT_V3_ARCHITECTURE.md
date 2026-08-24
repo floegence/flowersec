@@ -151,6 +151,17 @@ securityModes
 sessionRole
 ~~~
 
+`language`, `runtime`, and `unsupported.reason` match
+`[a-z][a-z0-9_]{0,127}`. The language/runtime pair MUST be present in the
+initial registry, and each reason MUST be the exact value registered for that
+runtime, carrier, and state. A reason cannot be selected from a generic shared
+set. `carrier` is one of `websocket`, `raw_quic`, or `webtransport`;
+`networkMode` is `dial` or `listen`; `path` is `direct` or `tunnel`; and
+`sessionRole` is `client` or `server`. `reliableStreams`, `datagrams`, and
+`migration` are booleans. `securityModes` is an array whose only valid dial
+values are `ca`, `pin`, or `ca` followed by `pin`, without duplicates; it is
+empty for listen tuples.
+
 Tuple identity is carrier, networkMode, sessionRole, and path. Identities are
 unique and strictly ordered by ASCII comparison of those four fields.
 Unsupported entries contain exactly carrier and reason and are strictly
@@ -453,10 +464,14 @@ terminal and never reach a connector.
 
 ## 10. Go Control Plane
 
-The Go v3 issuer accepts structured EndpointConfig values with stable ID, URL,
-and opaque TLSPolicy. CAPolicy constructs CA. PinPolicy accepts 1..4
-CertificatePin values, each containing a fixed 32-byte SHA256 value and a
-whole-second NotAfter time. A zero TLSPolicy is invalid and never means CA.
+The Go v3 issuer accepts structured EndpointConfig values with an explicit,
+stable ID, URL, and opaque TLSPolicy. An ID obeys the candidate-ID constraints
+and MUST NOT be derived from array position or the number of endpoints using a
+carrier. URL scheme mapping is exactly `wss` to `websocket`, `quic` to
+`raw_quic`, and `https` to `webtransport`; every other scheme is invalid.
+CAPolicy constructs CA. PinPolicy accepts 1..4 CertificatePin values, each
+containing a fixed 32-byte SHA256 value and a whole-second NotAfter time. A zero
+TLSPolicy is invalid and never means CA.
 
 PinPolicy rejects empty or oversized sets, duplicate hashes, subsecond times,
 and times outside 1..9007199254740991. It converts to UTC Unix seconds,
@@ -469,6 +484,8 @@ full path-aware validation, URL normalization, endpoint-key uniqueness,
 canonicalization, and the requirement that every pin policy has at least one
 pin where issuance_now is before expiry. No issuer path connects to an
 endpoint, fetches a certificate, computes a pin, or changes roots.
+If every pin in a policy is expired at issuance_now, issuance returns
+`invalid_tls_policy` with field path `endpoints[<index>].tls`.
 
 ControlPlaneError is redacted and provides a stable code and field path.
 Allowed codes are invalid_endpoint_count, invalid_endpoint_id,

@@ -618,6 +618,44 @@ func testControllerRetryNowOutsideWaiting(t *testing.T) {
 	}
 }
 
+func TestConnectionControllerClosePublishesClosedBeforeCancellation(t *testing.T) {
+	source := &controllerTestSource{results: []controllerAcquireResult{{
+		failure: NewRetryableArtifactSourceError(errors.New("temporary source failure")),
+	}}}
+	controller := newControllerForTest(t, source, 0)
+	controller.Start(context.Background())
+	waitControllerState(t, controller, ConnectionWaiting)
+
+	cancelEntered := make(chan struct{})
+	releaseCancel := make(chan struct{})
+	controller.mu.Lock()
+	underlyingCancel := controller.cancel
+	controller.cancel = func() {
+		close(cancelEntered)
+		<-releaseCancel
+		underlyingCancel()
+	}
+	controller.mu.Unlock()
+
+	closed := make(chan error, 1)
+	go func() { closed <- controller.Close(context.Background()) }()
+	select {
+	case <-cancelEntered:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not reach cancellation")
+	}
+	if snapshot := controller.Snapshot(); snapshot.State != ConnectionClosed {
+		t.Fatalf("state during Close cancellation = %s, want closed", snapshot.State)
+	}
+	if controller.RetryNow() {
+		t.Fatal("RetryNow accepted a wait after Close began")
+	}
+	close(releaseCancel)
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testControllerRetryAfter(t *testing.T) {
 	firstLease, _ := controllerTestLeases(t)
 	retryAt := time.Now().Add(100 * time.Millisecond).UnixMilli()
