@@ -377,12 +377,14 @@ test("npm release readback verifies tarball integrity, manifest, platform metada
 test("release recovery restores readback scripts from the reviewed workflow SHA after immutable tag checkout", () => {
   const releaseWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
   const rustWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/rust-release.yml"), "utf8");
-  for (const [workflow, files] of [[releaseWorkflow, ["scripts/release-readback.mjs", "scripts/verify-npm-release-package.mjs"]], [rustWorkflow, ["scripts/release-readback.mjs", "scripts/verify-crates-release-package.mjs", "scripts/verify-crates-release-consumer.mjs"]]]) {
+  const npmRecovery = releaseWorkflow.slice(releaseWorkflow.indexOf("\n  npm-recovery:"));
+  for (const [workflow, files, invocation] of [[npmRecovery, ["scripts/release-readback.mjs", "scripts/verify-npm-release-package.mjs"], "node scripts/verify-npm-release-package.mjs"], [rustWorkflow, ["scripts/release-readback.mjs", "scripts/verify-crates-release-package.mjs", "scripts/verify-crates-release-consumer.mjs"], "node scripts/verify-crates-release-package.mjs"]]) {
     const restore = workflow.indexOf("git checkout \"$GITHUB_SHA\" --");
     assert.ok(restore >= 0);
     const checkout = workflow.lastIndexOf("refs/tags/flowersec-", restore);
     assert.ok(checkout >= 0);
     for (const file of files) assert.match(workflow.slice(restore, restore + 500), new RegExp(file.replaceAll(".", "\\.")));
+    assert.ok(workflow.indexOf(invocation) > restore);
   }
 });
 

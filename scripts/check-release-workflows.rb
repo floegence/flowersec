@@ -583,7 +583,7 @@ validate_step_contracts(release_steps, [
   { name: "Compute version vars", keys: ["name", "id", "env", "run"], values: {
     "id" => "vars",
     "env" => { "RELEASE_VERSION_INPUT" => "${{ needs.prepare.outputs.version }}" },
-  }, run_sha256: "e4edf2d7bba126e16a16bd2ecf830300b5598e530692cac1f70b4404fa071b9b" },
+  }, run_sha256: "479845d981a22d9aa135c767fed353641737e1c73587d14d188562b5d5fa06f9" },
   { name: "Verify tagged commit is the remote main tip", keys: ["name", "env", "run"], values: {
     "env" => { "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}" },
   }, run_sha256: "d4c29c98aae2d8fb96522062eb3fc3d245e24e8bad4f4972c37603f325dd7158" },
@@ -678,7 +678,7 @@ validate_step_contracts(npm_recovery_steps, [
   { name: "Publish or recover npm registry packages from immutable release assets", keys: ["name", "env", "run"], values: { "env" => {
     "GH_TOKEN" => "${{ github.token }}",
     "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
-  } }, run_sha256: "8a0442128c01859b6235102f868345b03bf28c398612d8c1ee89cb58a4731d28" },
+  } }, run_sha256: "c17205710ab82e65fb06647e5424d23dc6218278bed120ebb67c2238180fb2d1" },
 ], "the unified release workflow npm recovery job")
 validate_step_contracts(rust_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
