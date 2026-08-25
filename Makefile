@@ -331,7 +331,7 @@ stability-source-check:
 
 stability-swift-check:
 	cd tools/stabilitycheck && go run . verify-swift
-	$(MAKE) swift-public-api-check
+	node scripts/test-swift-public-api-surface.mjs --reuse-verified-graph
 
 stability-rust-check:
 	cd tools/stabilitycheck && go run . verify-rust

@@ -99,14 +99,20 @@ function spawnReviewedExecutable(file, args, options) {
       return spawn("bash", args, spawnOptions);
     case "cargo":
       return spawn("cargo", args, spawnOptions);
-    case "npm":
-      return spawn("npm", args, spawnOptions);
     default:
       throw new Error("unsupported release readback executable");
   }
 }
 
-export function execFileBounded(file, args, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+export function execBashBounded(args, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  return execFileBounded("bash", args, options, timeoutMs);
+}
+
+export function execCargoCheckBounded(options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  return execFileBounded("cargo", ["check", "--quiet"], options, timeoutMs);
+}
+
+function execFileBounded(file, args, options, timeoutMs) {
   return new Promise((resolve, reject) => {
     let child;
     try {

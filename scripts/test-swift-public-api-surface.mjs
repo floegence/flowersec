@@ -5,14 +5,21 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-execFileSync(
-  'swift',
-  ['package', 'dump-symbol-graph', '--minimum-access-level', 'public'],
-  { cwd: root, stdio: 'pipe' },
+const reuseVerifiedGraph = process.argv[2] === '--reuse-verified-graph';
+assert.equal(
+  process.argv.length,
+  reuseVerifiedGraph ? 3 : 2,
+  'usage: test-swift-public-api-surface.mjs [--reuse-verified-graph]',
 );
+if (!reuseVerifiedGraph) {
+  execFileSync('go', ['run', '.', 'verify-swift'], {
+    cwd: path.join(root, 'tools', 'stabilitycheck'),
+    stdio: 'inherit',
+  });
+}
 
-const graphPath = findFile(path.join(root, '.build'), 'Flowersec.symbols.json');
-assert.notEqual(graphPath, undefined, 'Swift package did not produce the Flowersec symbol graph');
+const graphPath = path.join(root, '.build', 'stability-symbolgraph', 'Flowersec.symbols.json');
+assert.equal(fs.existsSync(graphPath), true, 'Swift stability verifier did not produce the Flowersec symbol graph');
 const graph = JSON.parse(fs.readFileSync(graphPath, 'utf8'));
 const surface = graph.symbols.map((symbol) => ({
   title: symbol.names?.title ?? '',
@@ -69,17 +76,3 @@ assert.equal(
   true,
   'Swift notification subscriptions must expose async cancellation',
 );
-
-function findFile(directory, name) {
-  if (!fs.existsSync(directory)) return undefined;
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const target = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      const found = findFile(target, name);
-      if (found !== undefined) return found;
-    } else if (entry.name === name) {
-      return target;
-    }
-  }
-  return undefined;
-}

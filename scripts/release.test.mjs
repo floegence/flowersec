@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { execFileBounded, fetchResponseBody } from "./release-readback.mjs";
+import { execBashBounded, fetchResponseBody } from "./release-readback.mjs";
 
 const sourceRoot = path.resolve(import.meta.dirname, "..");
 const testImageDigest = `sha256:${"0".repeat(64)}`;
@@ -684,29 +684,13 @@ globalThis.fetch = async (input) => {
   };
 };
 `);
-  writeExecutable(path.join(fakeBin, "npm"), `#!/usr/bin/env bash
-set -euo pipefail
-count=0
-[[ ! -f "$FAKE_COMMAND_COUNT_FILE" ]] || count="$(<"$FAKE_COMMAND_COUNT_FILE")"
-count=$((count + 1))
-printf '%s' "$count" > "$FAKE_COMMAND_COUNT_FILE"
-if (( count <= FAKE_COMMAND_FAILURES )); then
-  printf '%s: injected npm failure\n' "$FAKE_COMMAND_ERROR" >&2
-  exit 1
-fi
-if [[ "$FAKE_COMMAND_MODE" == invalid-json ]]; then
-  printf '{\n'
-else
-  printf '%s\n' "$FAKE_NPM_METADATA"
-fi
-`);
   writeExecutable(path.join(fakeBin, "cargo"), `#!/usr/bin/env bash
 set -euo pipefail
 count=0
 [[ ! -f "$FAKE_COMMAND_COUNT_FILE" ]] || count="$(<"$FAKE_COMMAND_COUNT_FILE")"
 count=$((count + 1))
 printf '%s' "$count" > "$FAKE_COMMAND_COUNT_FILE"
-if [[ "$FAKE_COMMAND_MODE" == cargo-retry && "$1" == add && $count -le 2 ]]; then
+if [[ "$FAKE_COMMAND_MODE" == cargo-retry && "$1" == check && $count -le 2 ]]; then
   printf 'registry temporarily unavailable\n' >&2
   exit 1
 fi
@@ -772,6 +756,15 @@ esac
     },
     ...options.npmMetadataOverrides,
   });
+  const npmMetadataURL = `https://registry.npmjs.org/${encodeURIComponent(npmPackage)}/${version}`;
+  const metadataResponses = (options.metadataResponses ?? [{ status: 200 }]).map((response) => ({
+    ...response,
+    url: response.url ?? npmMetadataURL,
+    ...(response.body === undefined && response.status === 200 ? { body: npmMetadata } : {}),
+  }));
+  const fetchResponses = options.kind === "npm"
+    ? [...metadataResponses, ...(options.fetchResponses ?? [])]
+    : (options.fetchResponses ?? []);
   const crateName = "flowersec-native-transport";
   const crateRoot = `${crateName}-${version}`;
   const crateMetadata = JSON.stringify({
@@ -781,13 +774,10 @@ esac
     PATH: `${fakeBin}:${process.env.PATH}`,
     NODE_OPTIONS: `--import=${preload}`,
     FAKE_FETCH_COUNT_FILE: fetchCountFile,
-    FAKE_FETCH_RESPONSES: JSON.stringify(options.fetchResponses ?? []),
+    FAKE_FETCH_RESPONSES: JSON.stringify(fetchResponses),
     FAKE_CLAMP_OPERATION_TIMEOUT: options.clampOperationTimeout ? "true" : "false",
     FAKE_COMMAND_COUNT_FILE: commandCountFile,
-    FAKE_COMMAND_FAILURES: String(options.commandFailures ?? 0),
-    FAKE_COMMAND_ERROR: options.commandError ?? "E404",
     FAKE_COMMAND_MODE: options.commandMode ?? "success",
-    FAKE_NPM_METADATA: npmMetadata,
     FAKE_TAR_COUNT_FILE: tarCountFile,
     FAKE_TAR_MODE: options.tarMode ?? "normal",
     FAKE_TAR_OUTPUT_BYTES: options.kind === "npm" ? "20000000" : "3000000",
@@ -905,35 +895,39 @@ test("registry package readback avoids dynamic regex and network-derived archive
   }
 });
 
-test("npm registry readback CLI enforces retries, status classes, JSON, and redirect policy", (t) => {
+test("npm registry readback enforces retries, status classes, JSON, and redirect policy", (t) => {
   const archiveBody = "hermetic registry archive";
   const tarballURL = "https://registry.npmjs.org/@floegence/flowersec-node-native/-/flowersec-node-native-3.0.1.tgz";
   const success = [{ status: 200, url: tarballURL, body: archiveBody }];
-  for (const code of ["E404", "E408", "E429", "E500"]) {
+  for (const status of [404, 408, 429, 503]) {
     const harness = createRegistryReadbackHarness(t, {
-      kind: "npm", commandFailures: 1, commandError: code, fetchResponses: success,
+      kind: "npm",
+      metadataResponses: [{ status }, { status: 200 }],
+      fetchResponses: success,
     });
-    assert.equal(harness.result.status, 0, `${code}: ${harness.result.stdout}${harness.result.stderr}`);
-    assert.equal(harness.commandCount, 2, `${code} must retry exactly once before success`);
+    assert.equal(harness.result.status, 0, `${status}: ${harness.result.stdout}${harness.result.stderr}`);
+    assert.equal(harness.fetchCount, 3, `${status} must retry metadata exactly once before download`);
   }
 
   const exhausted = createRegistryReadbackHarness(t, {
-    kind: "npm", commandFailures: 99, commandError: "E404", fetchResponses: [],
+    kind: "npm",
+    metadataResponses: Array.from({ length: 6 }, () => ({ status: 404 })),
+    fetchResponses: [],
   });
   assert.notEqual(exhausted.result.status, 0);
-  assert.equal(exhausted.commandCount, 6);
+  assert.equal(exhausted.fetchCount, 6);
 
   const forbidden = createRegistryReadbackHarness(t, {
-    kind: "npm", commandFailures: 99, commandError: "E403", fetchResponses: [],
+    kind: "npm", metadataResponses: [{ status: 403 }], fetchResponses: [],
   });
   assert.notEqual(forbidden.result.status, 0);
-  assert.equal(forbidden.commandCount, 1);
+  assert.equal(forbidden.fetchCount, 1);
 
   const invalidJSON = createRegistryReadbackHarness(t, {
-    kind: "npm", commandMode: "invalid-json", fetchResponses: [],
+    kind: "npm", metadataResponses: [{ status: 200, body: "{" }], fetchResponses: [],
   });
   assert.notEqual(invalidJSON.result.status, 0);
-  assert.equal(invalidJSON.commandCount, 1);
+  assert.equal(invalidJSON.fetchCount, 1);
 
   for (const status of [408, 429, 503]) {
     const retried = createRegistryReadbackHarness(t, {
@@ -944,14 +938,14 @@ test("npm registry readback CLI enforces retries, status classes, JSON, and redi
       ],
     });
     assert.equal(retried.result.status, 0, `${status}: ${retried.result.stdout}${retried.result.stderr}`);
-    assert.equal(retried.fetchCount, 2);
+    assert.equal(retried.fetchCount, 3);
   }
 
   const downloadForbidden = createRegistryReadbackHarness(t, {
     kind: "npm", fetchResponses: [{ status: 403, url: tarballURL }],
   });
   assert.notEqual(downloadForbidden.result.status, 0);
-  assert.equal(downloadForbidden.fetchCount, 1);
+  assert.equal(downloadForbidden.fetchCount, 2);
 
   const trustedRedirect = createRegistryReadbackHarness(t, {
     kind: "npm",
@@ -961,7 +955,7 @@ test("npm registry readback CLI enforces retries, status classes, JSON, and redi
     ],
   });
   assert.equal(trustedRedirect.result.status, 0, `${trustedRedirect.result.stdout}${trustedRedirect.result.stderr}`);
-  assert.equal(trustedRedirect.fetchCount, 2);
+  assert.equal(trustedRedirect.fetchCount, 3);
 
   const untrustedRedirect = createRegistryReadbackHarness(t, {
     kind: "npm",
@@ -969,7 +963,7 @@ test("npm registry readback CLI enforces retries, status classes, JSON, and redi
   });
   assert.notEqual(untrustedRedirect.result.status, 0);
   assert.match(untrustedRedirect.result.stderr, /unexpected registry download host/);
-  assert.equal(untrustedRedirect.fetchCount, 1);
+  assert.equal(untrustedRedirect.fetchCount, 2);
 });
 
 test("crates registry readback CLI enforces retries, status classes, JSON, and redirect policy", (t) => {
@@ -1109,7 +1103,7 @@ test("Cargo consumer readback CLI retries a failed dependency resolution attempt
     kind: "cargo", commandMode: "cargo-retry",
   });
   assert.equal(harness.result.status, 0, `${harness.result.stdout}${harness.result.stderr}`);
-  assert.equal(harness.commandCount, 5);
+  assert.equal(harness.commandCount, 3);
 });
 
 test("registry archive CLI kills tar descendants on timeout and output cap", async (t) => {
@@ -1154,9 +1148,10 @@ test("registry archive CLI kills tar descendants on timeout and output cap", asy
 test("Rust registry publication waits for exact consumer resolution at each dependency layer", () => {
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/rust-release.yml"), "utf8");
   const consumer = fs.readFileSync(path.join(sourceRoot, "scripts/verify-crates-release-consumer.mjs"), "utf8");
-  assert.match(consumer, /cargo.*add/);
-  assert.match(consumer, /@=\$\{version\}/);
-  assert.match(consumer, /cargo.*check/);
+  assert.match(consumer, /\[dependencies\]/);
+  assert.match(consumer, /\$\{crateName\} = \{ version = "=\$\{version\}" \}/);
+  assert.match(consumer, /execCargoCheckBounded/);
+  assert.doesNotMatch(consumer, /cargo\s+add|cargo\s+init/);
   assert.match(consumer, /const MAX_ATTEMPTS = 12/);
   const nativeConsumer = workflow.indexOf("verify-crates-release-consumer.mjs flowersec-native-transport");
   const sdkPublish = workflow.indexOf("name: Publish Flowersec Rust SDK");
@@ -1444,23 +1439,16 @@ test("bounded child readback classifies limits and kills background descendants"
   const outputMarker = path.join(root, "output-marker");
   const timeoutMarker = path.join(root, "timeout-marker");
   await assert.rejects(
-    execFileBounded("bash", ["-c", '(sleep 0.2; printf leaked > "$1") & while :; do printf xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; done', "--", outputMarker], { maxStdoutBytes: 1024 }, 10_000),
+    execBashBounded(["-c", '(sleep 0.2; printf leaked > "$1") & while :; do printf xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; done', "--", outputMarker], { maxStdoutBytes: 1024 }, 10_000),
     /output exceeded the bounded readback limit/,
   );
   await assert.rejects(
-    execFileBounded("bash", ["-c", '(sleep 0.2; printf leaked > "$1") & sleep 2', "--", timeoutMarker], {}, 50),
+    execBashBounded(["-c", '(sleep 0.2; printf leaked > "$1") & sleep 2', "--", timeoutMarker], {}, 50),
     (error) => error.code === "ETIMEDOUT" && /timed out after 50ms/.test(error.message),
   );
   await new Promise((resolve) => setTimeout(resolve, 300));
   assert.equal(fs.existsSync(outputMarker), false, "output-capped background descendant survived");
   assert.equal(fs.existsSync(timeoutMarker), false, "timed-out background descendant survived");
-});
-
-test("bounded child readback rejects unreviewed executables", async () => {
-  await assert.rejects(
-    execFileBounded("sh", ["-c", "exit 0"]),
-    /unsupported release readback executable/,
-  );
 });
 
 test("documentation distinguishes injector, real weaknet, required performance, and optional WebTransport", () => {
@@ -1481,7 +1469,9 @@ test("npm release readback verifies tarball integrity, manifest, platform metada
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
   const readback = fs.readFileSync(path.join(sourceRoot, "scripts/verify-npm-release-package.mjs"), "utf8");
   assert.match(workflow, /node scripts\/verify-npm-release-package\.mjs/);
-  assert.match(readback, /npm.*view/);
+  assert.match(readback, /registry\.npmjs\.org/);
+  assert.match(readback, /encodeURIComponent\(packageName\)/);
+  assert.doesNotMatch(readback, /execFileBounded|spawn\("npm"/);
   assert.match(readback, /EAI_AGAIN/);
   assert.match(readback, /dist\.tarball/);
   assert.match(readback, /dist\.integrity/);

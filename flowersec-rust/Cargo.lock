@@ -508,7 +508,7 @@ checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
 
 [[package]]
 name = "flowersec"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "flowersec-native-transport"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "bytes",
  "quinn",
@@ -1743,7 +1743,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

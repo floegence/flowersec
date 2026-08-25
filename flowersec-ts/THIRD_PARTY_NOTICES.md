@@ -3,11 +3,11 @@
 This file is generated from the canonical Flowersec source dependency inventory for flowersec-ts.
 Do not edit it manually. License decisions are reviewed by the repository source license policy.
 
-- @floegence/flowersec-node-native 3.1.0 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
-- @floegence/flowersec-node-native-darwin-arm64 3.1.0 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
-- @floegence/flowersec-node-native-darwin-x64 3.1.0 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
-- @floegence/flowersec-node-native-linux-arm64-gnu 3.1.0 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
-- @floegence/flowersec-node-native-linux-x64-gnu 3.1.0 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
+- @floegence/flowersec-node-native 3.1.1 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
+- @floegence/flowersec-node-native-darwin-arm64 3.1.1 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
+- @floegence/flowersec-node-native-darwin-x64 3.1.1 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
+- @floegence/flowersec-node-native-linux-arm64-gnu 3.1.1 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
+- @floegence/flowersec-node-native-linux-x64-gnu 3.1.1 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
 - @noble/ciphers 2.3.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@noble/ciphers/-/ciphers-2.3.0.tgz)
 - @noble/curves 2.3.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@noble/curves/-/curves-2.3.0.tgz)
 - @noble/hashes 2.3.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@noble/hashes/-/hashes-2.3.0.tgz)

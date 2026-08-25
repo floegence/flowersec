@@ -2,24 +2,47 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
-import { execFileBounded, fetchResponseBody, killProcessGroup } from "./release-readback.mjs";
+import { fetchResponseBody, killProcessGroup } from "./release-readback.mjs";
 
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 16 * 1024 * 1024;
+const MAX_METADATA_BYTES = 4 * 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
 const MAX_ATTEMPTS = 6;
 const [packageName, version, sourceSHA] = process.argv.slice(2);
 assert.match(packageName ?? "", /^@floegence\//);
 assert.match(version ?? "", /^\d+\.\d+\.\d+$/);
 assert.match(sourceSHA ?? "", /^[0-9a-f]{40}$/);
+const requestHeaders = Object.freeze({
+  "User-Agent": `flowersec-release-readback/${version} (https://github.com/floegence/flowersec)`,
+});
+const metadataURL = `https://registry.npmjs.org/${encodeURIComponent(packageName)}/${version}`;
 
 let metadata;
 for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
   try {
-    metadata = JSON.parse((await execFileBounded("npm", ["view", `${packageName}@${version}`, "--json"], { maxStdoutBytes: 4 * 1024 * 1024 }, COMMAND_TIMEOUT_MS)).stdout);
-    if (metadata?.version === version && metadata?.dist?.tarball && metadata?.dist?.integrity) break;
+    const { response, body } = await fetchResponseBody(
+      metadataURL,
+      { headers: requestHeaders },
+      MAX_METADATA_BYTES,
+      COMMAND_TIMEOUT_MS,
+      (candidate) => assertRegistryURL(candidate.url, new Set(["registry.npmjs.org"])),
+    );
+    if (response.ok) {
+      try {
+        metadata = JSON.parse(body.toString("utf8"));
+      } catch (error) {
+        error.retryable = false;
+        throw error;
+      }
+      if (metadata?.version === version && metadata?.dist?.tarball && metadata?.dist?.integrity) break;
+    } else if (response.status !== 404) {
+      const error = new Error(`${packageName}@${version} registry status ${response.status}`);
+      error.retryable = response.status === 408 || response.status === 429 || response.status >= 500;
+      throw error;
+    }
   } catch (error) {
-    if (attempt === MAX_ATTEMPTS || !isRetryableNpmError(error)) throw error;
+    if (attempt === MAX_ATTEMPTS || !isRetryableRegistryError(error)) throw error;
   }
   if (attempt === MAX_ATTEMPTS) throw new Error(`${packageName}@${version} did not become readable`);
   await new Promise((resolve) => setTimeout(resolve, 10_000));
@@ -35,7 +58,7 @@ for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
   try {
     archive = await fetchResponseBody(
       metadata.dist.tarball,
-      {},
+      { headers: requestHeaders },
       MAX_ARCHIVE_BYTES,
       undefined,
       (candidate) => assertRegistryURL(candidate.url, new Set(["registry.npmjs.org"]), candidate.redirectedFrom),
@@ -85,11 +108,6 @@ if (platform !== null) {
   assert.equal(manifest.main, expectedMain);
   assert.ok(manifest.files?.includes(expectedMain));
   assert.ok(entries.has(`package/${expectedMain}`));
-}
-
-function isRetryableNpmError(error) {
-  const text = `${error.code ?? ""} ${error.message ?? ""} ${error.stderr ?? ""}`;
-  return /E404|E408|E429|E5\d\d|EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|fetch failed|socket|timed out/i.test(text);
 }
 
 function isRetryableRegistryError(error) {
