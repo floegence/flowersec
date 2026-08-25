@@ -863,11 +863,11 @@ test("Rust publication installs the shared native driver before the SDK", () => 
     new RegExp(`flowersec-native-transport\\s*=\\s*\\{\\s*version\\s*=\\s*"=${releaseVersion.replaceAll(".", "\\.")}",\\s*path\\s*=\\s*"\\.\\.\\/flowersec-native-transport"\\s*\\}`),
   );
   assert.match(makefile, /cargo package --manifest-path flowersec-native-transport\/Cargo\.toml --locked --allow-dirty/);
-  assert.match(makefile, /cargo publish --manifest-path flowersec-native-transport\/Cargo\.toml --locked --dry-run --allow-dirty --no-verify/);
+  assert.match(makefile, /cargo publish --manifest-path flowersec-native-transport\/Cargo\.toml --locked --dry-run --allow-dirty/);
   assert.match(makefile, /cargo package --manifest-path flowersec-rust\/Cargo\.toml --locked --allow-dirty --list/);
-  assert.match(rustWorkflow, /name: Publish native transport crate[\s\S]*working-directory: flowersec-native-transport[\s\S]*timeout --kill-after=5s 600s cargo publish --no-verify/);
+  assert.match(rustWorkflow, /name: Publish native transport crate[\s\S]*working-directory: flowersec-native-transport[\s\S]*timeout --kill-after=5s 600s cargo publish --locked/);
   assert.match(rustWorkflow, /name: Wait for native transport registry readback/);
-  assert.match(rustWorkflow, /name: Publish Flowersec Rust SDK[\s\S]*working-directory: flowersec-rust[\s\S]*timeout --kill-after=5s 600s cargo publish --no-verify/);
+  assert.match(rustWorkflow, /name: Publish Flowersec Rust SDK[\s\S]*working-directory: flowersec-rust[\s\S]*timeout --kill-after=5s 600s cargo publish --locked/);
   assert.match(rustWorkflow, /name: Verify Flowersec Rust SDK registry readback/);
   assert.match(rustWorkflow, /verify-crates-release-package\.mjs flowersec-native-transport/);
   assert.match(rustWorkflow, /verify-crates-release-package\.mjs flowersec /);
@@ -1454,6 +1454,13 @@ test("bounded child readback classifies limits and kills background descendants"
   await new Promise((resolve) => setTimeout(resolve, 300));
   assert.equal(fs.existsSync(outputMarker), false, "output-capped background descendant survived");
   assert.equal(fs.existsSync(timeoutMarker), false, "timed-out background descendant survived");
+});
+
+test("bounded child readback rejects unreviewed executables", async () => {
+  await assert.rejects(
+    execFileBounded("sh", ["-c", "exit 0"]),
+    /unsupported release readback executable/,
+  );
 });
 
 test("documentation distinguishes injector, real weaknet, required performance, and optional WebTransport", () => {
@@ -2633,7 +2640,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
   for (const mutation of [
     ["working-directory: flowersec-rust", "working-directory: ."],
     ["CARGO_REGISTRY_TOKEN: ${{ steps.native-auth.outputs.token }}", "CARGO_REGISTRY_TOKEN: attacker-token"],
-    ["timeout --kill-after=5s 600s cargo publish --no-verify", "timeout --kill-after=5s 600s cargo publish --allow-dirty"],
+    ["timeout --kill-after=5s 600s cargo publish --locked", "timeout --kill-after=5s 600s cargo publish --allow-dirty"],
     ["uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18", "uses: example/auth-action@v1"],
     ["group: ${{ inputs.release_lock_held && format('flowersec-release-child-{0}', github.run_id) || 'flowersec-release' }}", "group: flowersec-rust-release"],
   ]) {

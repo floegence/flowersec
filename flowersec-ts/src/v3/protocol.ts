@@ -569,6 +569,7 @@ export function decodeStreamKeyUpdateACKV3(raw: Uint8Array): StreamKeyUpdateACKV
   } as const;
   assertLogicalStreamID(value.logicalStreamID);
   if (value.transition === 0n) throw new ProtocolV3Error("stream rekey transition must be non-zero");
+  if (value.epoch === 0) throw new ProtocolV3Error("stream rekey epoch must be non-zero");
   return value;
 }
 

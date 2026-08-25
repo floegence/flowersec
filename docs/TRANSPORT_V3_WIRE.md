@@ -5,12 +5,12 @@ Status: final
 Version: 3.0.0
 
 This is the normative English wire specification for Flowersec Transport v3.
-Its normative source is the final Chinese design recorded in
+Its normative source is the final English design recorded in
 `stability/transport_v3_contract.json` under `design`: version `3.0.0`,
 baseline commit `026cb52d116d2a04de50d0f0621fff57c7657120`, and SHA-256
-`236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba`.
+`17d85ca8f20a534c69fb78014e8942bafc7096f510c1a75019634691f250e0c0`.
 The checked-in release-controlled source input is
-`docs/TRANSPORT_V3_DESIGN.zh-CN.md`; release tooling MUST verify that file
+`docs/TRANSPORT_V3_DESIGN.md`; release tooling MUST verify that file
 against the recorded digest before regenerating derived artifacts. This
 document is its complete English transcription. This document, the
 machine-readable registry, and the vectors are derived consistency artifacts.
@@ -21,7 +21,7 @@ MUST NOT, SHOULD, SHOULD NOT, and MAY have the meanings from RFC 2119 and RFC
 
 ## Normative v2 Baseline and Priority
 
-Rules not explicitly rewritten by the Chinese v3 design are inherited from the
+Rules not explicitly rewritten by the English v3 design are inherited from the
 frozen v2 baseline at design commit `026cb52d116d2a04de50d0f0621fff57c7657120`:
 
 - `docs/TRANSPORT_V2_WIRE.md` and `stability/transport_v2_contract.json` for
@@ -39,7 +39,7 @@ frozen v2 baseline at design commit `026cb52d116d2a04de50d0f0621fff57c7657120`:
 
 Normative priority is:
 
-1. the final Chinese v3 design;
+1. the final English v3 design;
 2. the frozen v2 baseline sources listed above, only within their stated
    inherited scope; and
 3. the audited v3 machine-readable registry and v3 vectors generated from the

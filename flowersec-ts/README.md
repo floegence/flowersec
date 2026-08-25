@@ -15,7 +15,7 @@ npm install @floegence/flowersec-core
 
 - `@floegence/flowersec-core` exports the portable artifact, lease, session, stream, RPC, stream-metadata, and connection-controller API, plus profile-owned unreliable messages when negotiated.
 - `@floegence/flowersec-core/browser` adds `connect(...)`, `createConnectionController(...)`, and their options.
-- `@floegence/flowersec-core/node` adds the V3 `connect(...)`, `createConnectionController(...)`, direct-only `createAcceptor(...)`, opaque `createTunnelRuntime(...)`, `AcceptedSession`, `SessionHandlers`, and `RPCHandlers` APIs. Legacy V2 server, control-plane, and `ProxyServer` APIs are available only under the explicit `node.v2` namespace.
+- `@floegence/flowersec-core/node` adds the V3 `connect(...)`, `createConnectionController(...)`, direct-only `createAcceptor(...)`, opaque `createTunnelRuntime(...)`, `AcceptedSession`, `SessionHandlers`, and `RPCHandlers` APIs. Legacy V2 server, control-plane, and `ProxyServer` APIs are available only under the explicit `node.v2` namespace; the Go control-plane remains the only v3 invitation issuer.
 - `@floegence/flowersec-core/proxy` adds the `Session`-based HTTP/WebSocket runtime, Service Worker and controller/app-window bridges, strict `proxy.runtime@2` validation, and `connectProxyBrowser(...)` composition.
 
 The root type exports are:
@@ -151,7 +151,8 @@ Flowersec-owned optional native addon wrapper and one of its supported
 prebuilt platform packages; it never loads from the browser entrypoint. The
 wrapper selects the matching optional package for macOS arm64/x64 or Linux
 arm64/x64 glibc. Windows and musl packages are not published. The V3 Node
-entrypoint keeps the control plane and `ProxyServer` behind `node.v2`; the
+entrypoint keeps the legacy control plane and `ProxyServer` behind `node.v2`; it
+does not issue v3 invitations, which are produced by the Go control-plane. The
 relay never terminates an E2EE Session. WebTransport is an optional adapter
 profile and the Node.js runtime
 does not currently expose a production adapter.

@@ -211,7 +211,12 @@ func (provider *httpAuthorizationProvider) ReleaseContext(ctx context.Context, l
 	if logger == nil {
 		logger = log.Default()
 	}
-	logger.Printf("authorization lease %q release was not acknowledged after %d attempts: %v", leaseID, maxReleaseAttempts, err)
+	logger.Printf("authorization lease %s release was not acknowledged after %d attempts: %v", redactedLeaseID(leaseID), maxReleaseAttempts, err)
+}
+
+func redactedLeaseID(leaseID string) string {
+	digest := sha256.Sum256([]byte(leaseID))
+	return fmt.Sprintf("sha256:%x", digest[:6])
 }
 
 func (provider *httpAuthorizationProvider) releaseAttempt(ctx context.Context, body []byte) error {

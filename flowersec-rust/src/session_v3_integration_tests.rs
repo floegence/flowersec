@@ -3064,7 +3064,7 @@ async fn dropping_a_committed_rekey_future_keeps_owned_completion_running() {
 }
 
 #[tokio::test]
-async fn close_waits_for_a_dropped_committed_rekey_to_release_its_lock() {
+async fn close_is_bounded_when_a_dropped_committed_rekey_holds_its_lock() {
     let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
     let gate = Arc::new(AtomicBool::new(false));
     let entered = Arc::new(Notify::new());
@@ -3103,22 +3103,16 @@ async fn close_waits_for_a_dropped_committed_rekey_to_release_its_lock() {
         .await
         .expect_err("caller future must be canceled after commit");
 
-    let mut closing = {
+    let closing = {
         let client = client.clone();
         tokio::spawn(async move { client.close().await })
     };
-    assert!(
-        tokio::time::timeout(Duration::from_millis(75), &mut closing)
-            .await
-            .is_err(),
-        "Close returned while the session-owned rekey still held its lock"
-    );
-    release.notify_waiters();
-    let close_result = tokio::time::timeout(Duration::from_millis(500), closing)
+    let close_result = tokio::time::timeout(Duration::from_millis(200), closing)
         .await
-        .expect("Close did not join the released owned rekey")
+        .expect("Close escaped its close_flush deadline")
         .expect("join Close");
     assert_eq!(close_result, Err(SessionError::Timeout));
+    release.notify_waiters();
     assert_eq!(client.rekey().await, Err(SessionError::Closed));
 
     let _ = server.close().await;

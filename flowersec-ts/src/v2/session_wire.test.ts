@@ -122,5 +122,8 @@ describe("transport v2 session wire", () => {
     const encoded = encodeStreamKeyUpdateACKV2(value);
     expect(Buffer.from(encoded).toString("hex")).toBe(vector.payload_hex);
     expect(decodeStreamKeyUpdateACKV2(fromHex(vector.payload_hex))).toEqual(value);
+    const zeroEpoch = encoded.slice();
+    zeroEpoch.fill(0, 16);
+    expect(() => decodeStreamKeyUpdateACKV2(zeroEpoch)).toThrow();
   });
 });

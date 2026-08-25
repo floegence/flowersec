@@ -852,6 +852,33 @@ describe("transport v3 production connection controller", () => {
     await controller.close();
   });
 
+  test("closes a session established while controller close is already in flight", async () => {
+    const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined);
+    const closeSession = vi.fn(async () => undefined);
+    const session: ManagedSessionV3 = {
+      waitTermination: async () => await new Promise<Readonly<{ error: Error }>>(() => undefined),
+      close: closeSession,
+    };
+    let releaseConnector!: () => void;
+    let connectorEntered!: () => void;
+    const connectorReady = new Promise<void>((resolve) => { connectorEntered = resolve; });
+    const release = new Promise<void>((resolve) => { releaseConnector = resolve; });
+    const controller = createConnectionControllerV3({
+      acquire: async () => ({ kind: "lease", lease }),
+    }, async (context) => {
+      await commitArtifactLeaseSpendV3(context.claim);
+      connectorEntered();
+      await release;
+      return { kind: "established" as const, session };
+    }, { nowUnixSeconds: () => 1_900_000_000, capabilitySnapshot });
+    controller.start();
+    await connectorReady;
+    const closing = controller.close();
+    releaseConnector();
+    await closing;
+    expect(closeSession).toHaveBeenCalledOnce();
+  });
+
   test("projects an unexpected session termination rejection as terminal", async () => {
     const lease = createArtifactLeaseV3Internal(primaryArtifact, async () => undefined);
     const session: ManagedSessionV3 = {

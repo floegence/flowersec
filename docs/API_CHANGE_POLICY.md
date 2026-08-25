@@ -6,11 +6,11 @@ registry values, and published artifacts follow SemVer and immutable-tag rules.
 
 ## Contract Authority
 
-1. Wire and security invariants are defined by the final Chinese design in
-   `docs/TRANSPORT_V3_DESIGN.zh-CN.md`. The English wire and architecture
-   documents, `stability/transport_v3_contract.json`, and the shared fixtures
-   under `testdata/transport_v3/` are derived consistency artifacts. A conflict
-   stops release and is resolved against the Chinese design; derived artifacts
+1. Wire and security invariants are defined by the final English design in
+   `docs/TRANSPORT_V3_DESIGN.md`. The wire and architecture documents,
+   `stability/transport_v3_contract.json`, and the shared fixtures under
+   `testdata/transport_v3/` are derived consistency artifacts. A conflict
+   stops release and is resolved against the English design; derived artifacts
    never replace or extend its general rules.
 2. Public API and package boundaries are defined by
    `stability/api_contract_manifest.json`; shared portable defaults remain in

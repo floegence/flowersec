@@ -86,14 +86,35 @@ export function killProcessGroup(child) {
   }
 }
 
+function spawnReviewedExecutable(file, args, options) {
+  const spawnOptions = {
+    cwd: options.cwd,
+    env: options.env,
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  };
+
+  switch (file) {
+    case "bash":
+      return spawn("bash", args, spawnOptions);
+    case "cargo":
+      return spawn("cargo", args, spawnOptions);
+    case "npm":
+      return spawn("npm", args, spawnOptions);
+    default:
+      throw new Error("unsupported release readback executable");
+  }
+}
+
 export function execFileBounded(file, args, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, {
-      cwd: options.cwd,
-      env: options.env,
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    let child;
+    try {
+      child = spawnReviewedExecutable(file, args, options);
+    } catch (error) {
+      reject(error);
+      return;
+    }
     const stdout = [];
     const stderr = [];
     let timedOut = false;

@@ -68,17 +68,32 @@ assert.equal(
 assert.equal(registry.version, 3);
 assert.equal(registry.status, "final");
 assert.equal(registry.design.version, "3.0.0");
-assert.equal(registry.design.baseline_commit, "026cb52d116d2a04de50d0f0621fff57c7657120");
-assert.equal(
-  registry.design.sha256,
-  "236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba",
-);
-assert.equal(registry.design.source_path, "docs/TRANSPORT_V3_DESIGN.zh-CN.md");
+assert.equal(registry.design.source_path, "docs/TRANSPORT_V3_DESIGN.md");
 assert.equal(
   createHash("sha256").update(read(registry.design.source_path)).digest("hex"),
   registry.design.sha256,
-  "the checked-in Chinese v3 source must match the frozen design digest",
 );
+const designSource = read(registry.design.source_path).toString("utf8");
+assert.doesNotMatch(designSource, /\p{Script=Han}/u,
+  "the registered transport v3 design source must be maintained in English");
+for (const token of ["Status: final", "Version: 3.0.0", "flowersec/3", "FSB3"]) {
+  assert.match(designSource, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+}
+for (const heading of [
+  "### 12.1 Contract Freeze",
+  "### 12.2 Codecs and Core State Machines",
+  "### 12.3 Adapters and Controller",
+  "### 12.4 SDK Major and Deployment Isolation",
+  "### 13.1 Cross-Language Vectors",
+  "### 13.2 Real TLS and Browser Tests",
+  "### 13.3 Controller and Security Invariants",
+  "### 13.4 Acceptance and Release Boundary",
+  "## 14. Explicit Exclusions",
+  "## 15. Final Security Invariants",
+]) {
+  assert.match(designSource, new RegExp(`^${heading}$`, "m"),
+    `English design source is missing normative section ${heading}`);
+}
 assert.equal(registry.profiles.session, "flowersec/3");
 assert.equal(registry.frame_family.bootstrap, "FSB3");
 assert.equal(registry.frame_family.datagram, "FSD3");
@@ -225,7 +240,7 @@ const wireDocument = read(registry.docs.wire).toString("utf8");
 const architectureDocument = read(registry.docs.architecture).toString("utf8");
 assert(!wireDocument.includes("flowersec-v2-tls-policy"),
   "the v3-only TLS policy domain must not be represented as a v2 replacement");
-assert.match(wireDocument, /Normative priority is:\s*\n\s*1\. the final Chinese v3 design;\s*\n\s*2\. the frozen v2 baseline sources/,
+assert.match(wireDocument, /Normative priority is:\s*\n\s*1\. the final English v3 design;\s*\n\s*2\. the frozen v2 baseline sources/,
   "the wire contract must preserve the final design's frozen-v2 priority tier");
 assert.match(wireDocument, /English transcription is a required derived consistency artifact, not an\s+independent priority tier/,
   "the derived English transcription must not become a normative priority tier");

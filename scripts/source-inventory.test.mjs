@@ -669,7 +669,7 @@ test("npm, Rust, Go, and Swift source archives carry exact generated distributio
 
   const rustTarget = path.join(root, "rust-target");
   run("cargo", [
-    "package", "--allow-dirty", "--no-verify",
+    "package", "--allow-dirty",
     "--manifest-path", path.join(sourceRoot, "flowersec-rust/Cargo.toml"),
     "--target-dir", rustTarget,
     "--config", "patch.crates-io.flowersec-native-transport.path=\"flowersec-native-transport\"",

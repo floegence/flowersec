@@ -1191,7 +1191,13 @@ func parseStreamKeyUpdateACK(payload []byte) (logicalID, transition uint64, epoc
 	if len(payload) != 20 {
 		return 0, 0, 0, ErrSessionProtocol
 	}
-	return binary.BigEndian.Uint64(payload[0:8]), binary.BigEndian.Uint64(payload[8:16]), binary.BigEndian.Uint32(payload[16:20]), nil
+	logicalID = binary.BigEndian.Uint64(payload[0:8])
+	transition = binary.BigEndian.Uint64(payload[8:16])
+	epoch = binary.BigEndian.Uint32(payload[16:20])
+	if logicalID == 0 || transition == 0 || epoch == 0 {
+		return 0, 0, 0, ErrSessionProtocol
+	}
+	return logicalID, transition, epoch, nil
 }
 
 func (s *encryptedStream) Reset() error {

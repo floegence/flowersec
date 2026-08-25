@@ -2342,11 +2342,13 @@ fn decode_stream_key_update_ack_v3(payload: &[u8]) -> io::Result<(u64, u64, u32)
     if payload.len() != 20 {
         return Err(invalid("invalid STREAM_KEY_UPDATE_ACK"));
     }
-    Ok((
-        u64::from_be_bytes(payload[..8].try_into().unwrap()),
-        u64::from_be_bytes(payload[8..16].try_into().unwrap()),
-        u32::from_be_bytes(payload[16..20].try_into().unwrap()),
-    ))
+    let logical_id = u64::from_be_bytes(payload[..8].try_into().unwrap());
+    let transition = u64::from_be_bytes(payload[8..16].try_into().unwrap());
+    let next_epoch = u32::from_be_bytes(payload[16..20].try_into().unwrap());
+    if logical_id == 0 || transition == 0 || next_epoch == 0 {
+        return Err(invalid("invalid STREAM_KEY_UPDATE_ACK"));
+    }
+    Ok((logical_id, transition, next_epoch))
 }
 
 fn active_send_streams_v3(session: &EncryptedSessionV3) -> Vec<Arc<EncryptedStreamV3>> {
@@ -2463,6 +2465,7 @@ async fn send_goaway_v3(session: &EncryptedSessionV3, reason: u16) -> io::Result
 }
 
 async fn close_session_v3(session: &EncryptedSessionV3) -> io::Result<()> {
+    let close_deadline = tokio::time::Instant::now() + session.config.deadlines.close_flush;
     let waits_for_close_workflow = if session.begin_closing() {
         let Some(owner) = session.self_weak.get().and_then(Weak::upgrade) else {
             session.finish_close_workflow();
@@ -2487,7 +2490,7 @@ async fn close_session_v3(session: &EncryptedSessionV3) -> io::Result<()> {
     }
     // Close remains a barrier even when another failure path already
     // published terminal state before the owned rekey task released its plan.
-    let _rekey_operation = session.rekey_lock.lock().await;
+    let _rekey_operation = acquire_rekey_for_close(&session.rekey_lock, close_deadline).await?;
     session
         .close_error
         .lock()
@@ -2495,6 +2498,15 @@ async fn close_session_v3(session: &EncryptedSessionV3) -> io::Result<()> {
         .map_or(Ok(()), |kind| {
             Err(io::Error::new(kind, "Flowersec v3 close failed"))
         })
+}
+
+async fn acquire_rekey_for_close<'a>(
+    rekey_lock: &'a Mutex<()>,
+    close_deadline: tokio::time::Instant,
+) -> io::Result<tokio::sync::MutexGuard<'a, ()>> {
+    tokio::time::timeout_at(close_deadline, rekey_lock.lock())
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Flowersec v3 rekey close timeout"))
 }
 
 async fn close_session_workflow_v3(session: &EncryptedSessionV3) -> io::Result<()> {
@@ -2546,8 +2558,11 @@ async fn close_session_workflow_v3(session: &EncryptedSessionV3) -> io::Result<(
             ))
         }
     };
-    let _rpc_operation = session.rpc.serial.lock().await;
-    flush.and(carrier)
+    let rpc_operation = tokio::time::timeout_at(deadline, session.rpc.serial.lock())
+        .await
+        .map(|_| ())
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Flowersec v3 RPC close timeout"));
+    flush.and(carrier).and(rpc_operation)
 }
 
 async fn wait_for_close_completion_v3(session: &EncryptedSessionV3) {
@@ -5970,6 +5985,9 @@ mod tests {
             decode_stream_key_update_ack_v3(&payload).unwrap(),
             (logical_id, transition, next_epoch)
         );
+        let mut zero_epoch = payload;
+        zero_epoch[16..].fill(0);
+        assert!(decode_stream_key_update_ack_v3(&zero_epoch).is_err());
 
         let boundary = &fixture["transition_boundary"];
         let maximum =
@@ -6584,6 +6602,18 @@ mod tests {
         .await;
         assert!(timed_out.is_err());
         assert_eq!(pings.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn rekey_close_barrier_respects_the_close_deadline() {
+        let rekey_lock = Mutex::new(());
+        let _rekey_operation = rekey_lock.lock().await;
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(10);
+        let error = acquire_rekey_for_close(&rekey_lock, deadline)
+            .await
+            .expect_err("close must not wait indefinitely for an owned rekey operation");
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(error.to_string(), "Flowersec v3 rekey close timeout");
     }
 
     #[test]

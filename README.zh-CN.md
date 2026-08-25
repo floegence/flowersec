@@ -67,7 +67,7 @@ Flowersec 将应用会话与承载它的网络路径分离：
 
 ## 示例
 
-从 [Cookbook 索引](examples/README.md)开始，里面的示例使用与生产应用相同的公共 API，涵盖客户端连接、控制面签发连接邀请、持久化单次使用处理、活性探测和会话生命周期。
+从 [Cookbook 索引](examples/README.md)开始，里面的示例使用与生产应用相同的公共 API，涵盖客户端连接、由 Go 控制面签发 v3 连接邀请、持久化单次使用处理、活性探测和会话生命周期。
 
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>

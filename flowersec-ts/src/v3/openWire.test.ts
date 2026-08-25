@@ -142,6 +142,9 @@ describe("transport v3 inherited session wire boundaries", () => {
       expect(Buffer.from(encodeStreamKeyUpdateACKV3(value)).toString("hex")).toBe(vector.payload_hex);
       expect(decodeStreamKeyUpdateACKV3(fromHex(vector.payload_hex))).toEqual(value);
     }
+    const zeroEpoch = fromHex(wireFixture.stream_key_update_ack[0]!.payload_hex);
+    zeroEpoch.fill(0, 16);
+    expect(() => decodeStreamKeyUpdateACKV3(zeroEpoch)).toThrow();
 
     expect(wireFixture.transition_boundary).toEqual({
       maximum_transition_id_hex: "ffffffffffffffff",

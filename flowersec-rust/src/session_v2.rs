@@ -2236,11 +2236,13 @@ fn decode_stream_key_update_ack_v2(payload: &[u8]) -> io::Result<(u64, u64, u32)
     if payload.len() != 20 {
         return Err(invalid("invalid STREAM_KEY_UPDATE_ACK"));
     }
-    Ok((
-        u64::from_be_bytes(payload[..8].try_into().unwrap()),
-        u64::from_be_bytes(payload[8..16].try_into().unwrap()),
-        u32::from_be_bytes(payload[16..20].try_into().unwrap()),
-    ))
+    let logical_id = u64::from_be_bytes(payload[..8].try_into().unwrap());
+    let transition = u64::from_be_bytes(payload[8..16].try_into().unwrap());
+    let next_epoch = u32::from_be_bytes(payload[16..20].try_into().unwrap());
+    if logical_id == 0 || transition == 0 || next_epoch == 0 {
+        return Err(invalid("invalid STREAM_KEY_UPDATE_ACK"));
+    }
+    Ok((logical_id, transition, next_epoch))
 }
 
 fn active_send_streams_v2(session: &EncryptedSessionV2) -> Vec<Arc<EncryptedStreamV2>> {
@@ -2406,10 +2408,14 @@ async fn close_session_v2(session: &EncryptedSessionV2) -> io::Result<()> {
                 ))
             }
         };
-        let _rpc_operation = session.rpc.serial.lock().await;
+        let rpc_operation = tokio::time::timeout_at(deadline, session.rpc.serial.lock())
+            .await
+            .map(|_| ())
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Flowersec v2 RPC close timeout"));
         session.finish_closed();
         flush?;
         carrier?;
+        rpc_operation?;
     }
     Ok(())
 }
@@ -4886,6 +4892,9 @@ mod tests {
             decode_stream_key_update_ack_v2(&payload).unwrap(),
             (logical_id, transition, next_epoch)
         );
+        let mut zero_epoch = payload;
+        zero_epoch[16..].fill(0);
+        assert!(decode_stream_key_update_ack_v2(&zero_epoch).is_err());
     }
 
     #[test]

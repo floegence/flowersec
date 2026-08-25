@@ -313,7 +313,15 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	if registry.Version != 3 || registry.Status != "final" || registry.Design.Version != "3.0.0" {
 		return fmt.Errorf("%s does not describe final transport v3.0.0", transportV3ContractPath)
 	}
-	if registry.Design.SHA256 != "236b332e6cf2f755b918721c8535191b2f8c8861bc32c07da329f823c1f04eba" {
+	if registry.Design.SourcePath != "docs/TRANSPORT_V3_DESIGN.md" {
+		return fmt.Errorf("%s design source path drifted", transportV3ContractPath)
+	}
+	designSource, err := os.ReadFile(filepath.Join(repoRoot, registry.Design.SourcePath))
+	if err != nil {
+		return fmt.Errorf("v3 design source %s: %w", registry.Design.SourcePath, err)
+	}
+	designDigest := sha256.Sum256(designSource)
+	if hex.EncodeToString(designDigest[:]) != registry.Design.SHA256 {
 		return fmt.Errorf("%s design hash drifted", transportV3ContractPath)
 	}
 	if registry.Design.Baseline != "026cb52d116d2a04de50d0f0621fff57c7657120" {

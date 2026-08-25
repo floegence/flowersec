@@ -295,6 +295,7 @@ export class SessionV2 implements SessionV2Contract {
   private idleWatchdogStarted = false;
   private idleTimerCancel: (() => void) | undefined;
   private readonly terminationState = deferred<SessionTerminationV2>();
+  private readonly terminationController = new AbortController();
   private readonly rpcRouter: RpcRouter;
 
   constructor(
@@ -441,6 +442,10 @@ export class SessionV2 implements SessionV2Contract {
 
   receiveDirectionValue(): DirectionV2 {
     return this.receiveDirection;
+  }
+
+  terminationSignal(): AbortSignal {
+    return this.terminationController.signal;
   }
 
   async sendStreamRecord(
@@ -1312,6 +1317,7 @@ export class SessionV2 implements SessionV2Contract {
 
   private fail(error: Error, abortCarrier = true): void {
     if (this.lifecycle === "closed") return;
+    this.terminationController.abort(error);
     this.controlTerminalSealed = true;
     this.beginClosing();
     const normalPeerCarrierClose = this.sessionCloseCommitted && error instanceof CarrierError && error.code === "closed";
@@ -1376,6 +1382,7 @@ class EncryptedStreamV2 implements ByteStreamV2 {
     epoch: number;
     acknowledged: Deferred<void>;
   }> | undefined;
+  private receiveRekeyChanged = deferred<void>();
 
   constructor(
     readonly session: SessionV2,
@@ -1493,7 +1500,7 @@ class EncryptedStreamV2 implements ByteStreamV2 {
         await raceAbort(pending.acknowledged.promise, signal);
         return;
       }
-      await raceAbort(new Promise<void>((resolve) => setTimeout(resolve, 0)), signal);
+      await raceAbort(this.receiveRekeyChanged.promise, signal);
       if (this.terminalError !== undefined || this.remoteFIN) return;
     }
   }
@@ -1502,6 +1509,12 @@ class EncryptedStreamV2 implements ByteStreamV2 {
     if (this.receiveRekey?.transition === transition && this.receiveRekey.epoch === epoch) {
       this.receiveRekey = undefined;
     }
+  }
+
+  private notifyReceiveRekeyChanged(): void {
+    const changed = this.receiveRekeyChanged;
+    this.receiveRekeyChanged = deferred<void>();
+    changed.resolve();
   }
 
   startPump(): void {
@@ -1521,6 +1534,7 @@ class EncryptedStreamV2 implements ByteStreamV2 {
     this.pendingSendRekey = undefined;
     pendingSendRekey?.armed.reject(error);
     pendingSendRekey?.done.reject(error);
+    this.notifyReceiveRekeyChanged();
     this.opened.reject(error);
     this.data.fail(error);
     return true;
@@ -1653,11 +1667,12 @@ class EncryptedStreamV2 implements ByteStreamV2 {
     this.receiveSequence = 0n;
     const pending = { transition, epoch: nextEpoch, acknowledged: deferred<void>() } as const;
     this.receiveRekey = pending;
+    this.notifyReceiveRekeyChanged();
     await this.send(InnerTypeV2.StreamKeyUpdateACK, encodeStreamKeyUpdateACKV2({
       logicalStreamID: this.id,
       transition,
       epoch: nextEpoch,
-    }));
+    }), this.session.terminationSignal());
     pending.acknowledged.resolve();
   }
 

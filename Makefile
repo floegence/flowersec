@@ -189,11 +189,11 @@ rust-fetch:
 
 rust-package-check:
 	rustup run 1.88.0 cargo package --manifest-path flowersec-native-transport/Cargo.toml --locked --allow-dirty
-	rustup run 1.88.0 cargo publish --manifest-path flowersec-native-transport/Cargo.toml --locked --dry-run --allow-dirty --no-verify
+	rustup run 1.88.0 cargo publish --manifest-path flowersec-native-transport/Cargo.toml --locked --dry-run --allow-dirty
 	rustup run 1.88.0 cargo package --manifest-path flowersec-rust/Cargo.toml --locked --allow-dirty --list
 
 rust-publish-preflight:
-	rustup run 1.88.0 cargo publish --manifest-path flowersec-native-transport/Cargo.toml --locked --dry-run --allow-dirty --no-verify
+	rustup run 1.88.0 cargo publish --manifest-path flowersec-native-transport/Cargo.toml --locked --dry-run --allow-dirty
 	rustup run 1.88.0 cargo package --manifest-path flowersec-rust/Cargo.toml --locked --allow-dirty --list
 
 rust-package-offline-check:
