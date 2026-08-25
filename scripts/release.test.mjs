@@ -1469,7 +1469,7 @@ test("npm release readback verifies tarball integrity, manifest, platform metada
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
   const readback = fs.readFileSync(path.join(sourceRoot, "scripts/verify-npm-release-package.mjs"), "utf8");
   assert.match(workflow, /node scripts\/verify-npm-release-package\.mjs/);
-  assert.match(readback, /registry\.npmjs\.org/);
+  assert.equal(readback.includes("registry.npmjs.org"), true);
   assert.match(readback, /encodeURIComponent\(packageName\)/);
   assert.doesNotMatch(readback, /execFileBounded|spawn\("npm"/);
   assert.match(readback, /EAI_AGAIN/);
