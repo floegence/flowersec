@@ -74,8 +74,21 @@ assert.equal(
   registry.design.sha256,
 );
 const designSource = read(registry.design.source_path).toString("utf8");
+const wireSource = read("docs/TRANSPORT_V3_WIRE.md").toString("utf8");
 assert.doesNotMatch(designSource, /\p{Script=Han}/u,
   "the registered transport v3 design source must be maintained in English");
+assert.equal(designSource.endsWith(wireSource), true,
+  "the final design must embed the complete byte-identical wire contract");
+const registeredDesignStatement = [
+  `version \`${registry.design.version}\`, baseline commit`,
+  `\`${registry.design.baseline_commit}\`, source path`,
+  `\`${registry.design.source_path}\`, and SHA-256 of the complete checked-in design.`,
+];
+for (const statement of registeredDesignStatement) assert.match(wireSource, new RegExp(
+  statement.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+));
+assert.doesNotMatch(wireSource, /SHA-256\s+`[0-9a-f]{64}`/,
+  "derived documentation must not hard-code the digest of its containing design");
 for (const token of ["Status: final", "Version: 3.0.0", "flowersec/3", "FSB3"]) {
   assert.match(designSource, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 }
