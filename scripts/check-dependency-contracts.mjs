@@ -289,7 +289,11 @@ function check(root) {
   const localPackages = localNpmPackages(root);
 
   for (const entry of contract.dependencies) {
-    if (!manifests[entry.ecosystem].has(entry.package)) {
+    const stagedNativeOptional = entry.ecosystem === "npm"
+      && entry.package === "@floegence/flowersec-node-native"
+      && localPackages.has(entry.package)
+      && !npmDependencies.has(entry.package);
+    if (!manifests[entry.ecosystem].has(entry.package) && !stagedNativeOptional) {
       errors.push(`${entry.ecosystem} dependency ${entry.package} is not present in its production manifest`);
     }
     if (entry.ecosystem === "cargo" && !cargoLockPackages.has(entry.package)) {
@@ -304,8 +308,10 @@ function check(root) {
     if (entry.ecosystem === "npm") {
       const metadata = npmLock.packages?.[`node_modules/${entry.package}`];
       if (metadata === undefined) {
-        errors.push(`npm dependency ${entry.package} is missing from flowersec-ts/package-lock.json`);
-      } else if (typeof metadata.version !== "string" || typeof metadata.integrity !== "string") {
+        if (!stagedNativeOptional) errors.push(`npm dependency ${entry.package} is missing from flowersec-ts/package-lock.json`);
+        continue;
+      }
+      if (typeof metadata.version !== "string" || typeof metadata.integrity !== "string") {
         const local = localPackages.get(entry.package);
         if (local === undefined) {
           errors.push(`npm dependency ${entry.package} has no exact version and integrity in flowersec-ts/package-lock.json`);

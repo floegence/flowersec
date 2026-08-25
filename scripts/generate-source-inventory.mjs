@@ -959,7 +959,7 @@ export function collectNpmContext(lockfile, policy, options = {}) {
   if (!lockfile || typeof lockfile.packages !== "object" || lockfile.packages === null) {
     throw new Error("npm lockfile has no packages object");
   }
-  const rootMetadata = lockfile.packages[""];
+  const rootMetadata = { ...lockfile.packages[""] };
   if (!rootMetadata?.name || !rootMetadata?.version) throw new Error("npm lockfile has no root package");
   const root = rootComponent(
     "npm",
@@ -967,7 +967,7 @@ export function collectNpmContext(lockfile, policy, options = {}) {
     rootMetadata.version,
     npmPurl(rootMetadata.name, rootMetadata.version),
   );
-  const packages = { ...lockfile.packages };
+  const packages = { ...lockfile.packages, "": rootMetadata };
   const localByPackagePath = new Map();
   for (const [name, local] of options.localOptionalPackages ?? []) {
     const packagePath = `node_modules/${name}`;
@@ -975,6 +975,20 @@ export function collectNpmContext(lockfile, policy, options = {}) {
     if (locked === undefined) packages[packagePath] = { optional: true };
     else if (locked.link === true) throw new Error(`first-party native package ${name} cannot be a lockfile link`);
     if (typeof packages[packagePath].version !== "string") localByPackagePath.set(packagePath, local);
+  }
+
+  // The source checkout omits the not-yet-published native wrapper from
+  // package.json and package-lock.json so a fresh npm ci is installable. The
+  // release staging step injects this exact optional edge before npm pack;
+  // keep the source SBOM aligned with that published graph.
+  const nativeWrapper = options.localOptionalPackages?.get("@floegence/flowersec-node-native");
+  if (nativeWrapper !== undefined
+    && rootMetadata.name === "@floegence/flowersec-core"
+    && rootMetadata.optionalDependencies?.["@floegence/flowersec-node-native"] === undefined) {
+    rootMetadata.optionalDependencies = {
+      ...(rootMetadata.optionalDependencies ?? {}),
+      "@floegence/flowersec-node-native": nativeWrapper.metadata.version,
+    };
   }
 
   const byPackagePath = new Map();

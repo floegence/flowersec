@@ -1046,7 +1046,7 @@ test("TypeScript runtime inventory includes the complete optional native package
   assert.deepEqual([...nativeComponents.keys()].sort(), [...expectedNames].sort());
   for (const name of expectedNames) {
     const component = nativeComponents.get(name);
-    assert.equal(component.version, "3.0.2", `${name} version`);
+    assert.equal(component.version, "3.0.3", `${name} version`);
     assert.equal(component.review.sourceEvidenceKind, "repository-package-manifest", `${name} evidence`);
   }
 

@@ -1869,15 +1869,15 @@ test("native npm platform packages carry repository metadata for provenance", ()
   }
 });
 
-test("npm lock marker is backed by the complete local native package closure", () => {
+test("npm source install omits the unpublished native package closure", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8"));
   const lock = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package-lock.json"), "utf8"));
   const wrapperManifest = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-node-native/package.json"), "utf8"));
-  const version = manifest.optionalDependencies?.["@floegence/flowersec-node-native"];
-  assert.match(version ?? "", /^\d+\.\d+\.\d+$/);
-  const wrapper = lock.packages?.["node_modules/@floegence/flowersec-node-native"];
-  assert.deepEqual(wrapper, { optional: true });
-  assert.equal(wrapperManifest.version, version);
+  const version = wrapperManifest.version;
+  assert.match(version, /^\d+\.\d+\.\d+$/);
+  assert.equal(manifest.optionalDependencies?.["@floegence/flowersec-node-native"], undefined);
+  assert.equal(lock.packages?.[""].optionalDependencies?.["@floegence/flowersec-node-native"], undefined);
+  assert.equal(lock.packages?.["node_modules/@floegence/flowersec-node-native"], undefined);
   for (const platform of ["darwin-arm64", "darwin-x64", "linux-arm64-gnu", "linux-x64-gnu"]) {
     const packageName = `@floegence/flowersec-node-native-${platform}`;
     assert.equal(wrapperManifest.optionalDependencies?.[packageName], version);
@@ -1891,9 +1891,9 @@ test("npm lock marker is backed by the complete local native package closure", (
 });
 
 test("npm SBOM contains the complete native optional dependency closure", () => {
-  const manifest = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8"));
+  const wrapperManifest = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-node-native/package.json"), "utf8"));
   const sbom = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-ts/sbom/cyclonedx.json"), "utf8"));
-  const version = manifest.optionalDependencies?.["@floegence/flowersec-node-native"];
+  const version = wrapperManifest.version;
   const purl = (name) => `pkg:npm/${encodeURIComponent(name).replaceAll("%2F", "/")}@${version}`;
   const wrapperRef = purl("@floegence/flowersec-node-native");
   const platforms = ["darwin-arm64", "darwin-x64", "linux-arm64-gnu", "linux-x64-gnu"]
@@ -1928,9 +1928,24 @@ test("npm release metadata staging binds every published manifest to one source 
     "flowersec-node-native/npm/linux-arm64-gnu/package.json",
     "flowersec-node-native/npm/linux-x64-gnu/package.json",
   ];
-  for (const relative of manifests) {
-    fs.mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
-    fs.writeFileSync(path.join(root, relative), '{"name":"fixture","version":"2.3.7"}\n');
+  fs.mkdirSync(path.join(root, "flowersec-ts"), { recursive: true });
+  fs.mkdirSync(path.join(root, "flowersec-node-native"), { recursive: true });
+  for (const platform of ["darwin-arm64", "darwin-x64", "linux-arm64-gnu", "linux-x64-gnu"]) {
+    fs.mkdirSync(path.join(root, `flowersec-node-native/npm/${platform}`), { recursive: true });
+  }
+  fs.writeFileSync(
+    path.join(root, "flowersec-ts/package.json"),
+    '{"name":"@floegence/flowersec-core","version":"2.3.7"}\n',
+  );
+  fs.writeFileSync(
+    path.join(root, "flowersec-node-native/package.json"),
+    '{"name":"@floegence/flowersec-node-native","version":"2.3.7"}\n',
+  );
+  for (const platform of ["darwin-arm64", "darwin-x64", "linux-arm64-gnu", "linux-x64-gnu"]) {
+    fs.writeFileSync(
+      path.join(root, `flowersec-node-native/npm/${platform}/package.json`),
+      JSON.stringify({ name: `@floegence/flowersec-node-native-${platform}`, version: "2.3.7" }) + "\n",
+    );
   }
   const sourceCommit = "a".repeat(40);
   const result = spawnSync(process.execPath, [path.join(root, "scripts/stage-npm-release-metadata.mjs"), sourceCommit], { encoding: "utf8" });
@@ -1938,6 +1953,10 @@ test("npm release metadata staging binds every published manifest to one source 
   for (const relative of manifests) {
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, relative), "utf8")).flowersecSourceCommit, sourceCommit);
   }
+  const stagedCore = JSON.parse(fs.readFileSync(path.join(root, "flowersec-ts/package.json"), "utf8"));
+  assert.deepEqual(stagedCore.optionalDependencies, {
+    "@floegence/flowersec-node-native": "2.3.7",
+  });
 });
 
 test("release policy mutations use bounded isolated concurrency", () => {

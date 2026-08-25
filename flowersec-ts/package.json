@@ -76,9 +76,6 @@
     "tr46": "5.0.0",
     "ws": "^8.21.2"
   },
-  "optionalDependencies": {
-    "@floegence/flowersec-node-native": "3.0.3"
-  },
   "devDependencies": {
     "@playwright/test": "1.62.1",
     "@types/node": "^26.1.2",
