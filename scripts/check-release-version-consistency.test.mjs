@@ -106,6 +106,12 @@ test("coordinated release fields do not rewrite third-party lookalike versions",
   ));
   assert.equal(npmLock.packages["node_modules/fsevents"].version, "2.3.3");
   assert.equal(npmLock.packages["node_modules/punycode"].version, "2.3.1");
+  assert.equal(npmLock.packages["node_modules/extend"].version, "3.0.2");
+  assert.equal(
+    npmLock.packages["node_modules/extend"].resolved,
+    "https://registry.npmjs.org/extend/-/extend-3.0.2.tgz",
+  );
+  assert.equal(npmLock.packages["node_modules/p-locate"].dependencies["p-limit"], "^3.0.2");
 
   for (const relative of [
     "flowersec-rust/Cargo.lock",

@@ -1033,6 +1033,9 @@ test("TypeScript runtime inventory includes the complete optional native package
   const { generateSourceArtifacts } = await loadGenerator();
   const artifacts = generateSourceArtifacts(sourceRoot);
   const inventory = JSON.parse(artifacts.get("sbom/source-inventory.json"));
+  const nativeVersion = JSON.parse(fs.readFileSync(
+    path.join(sourceRoot, "flowersec-node-native/package.json"), "utf8",
+  )).version;
   const context = inventory.contexts.find(({ id }) => id === "npm:flowersec-ts");
   assert.ok(context, "missing TypeScript npm context");
 
@@ -1046,7 +1049,7 @@ test("TypeScript runtime inventory includes the complete optional native package
   assert.deepEqual([...nativeComponents.keys()].sort(), [...expectedNames].sort());
   for (const name of expectedNames) {
     const component = nativeComponents.get(name);
-    assert.equal(component.version, "3.0.3", `${name} version`);
+    assert.equal(component.version, nativeVersion, `${name} version`);
     assert.equal(component.review.sourceEvidenceKind, "repository-package-manifest", `${name} evidence`);
   }
 
