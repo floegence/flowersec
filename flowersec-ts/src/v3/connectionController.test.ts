@@ -12,6 +12,7 @@ import {
   type ClaimedArtifactLeaseV3,
 } from "./artifactLease.js";
 import {
+  connectionDiagnosticV3,
   createConnectionControllerV3,
   type ConnectionControllerSnapshotV3,
   type ConnectionControllerV3,
@@ -63,6 +64,35 @@ const controllerFixture = JSON.parse(readFileSync(
 }>[] }>;
 
 describe("transport v3 production connection controller", () => {
+  test("waitForSession is passive and diagnostics omit the live session", async () => {
+    const acquire = vi.fn(async (): Promise<ArtifactSourceResultV3> => ({
+      kind: "failure",
+      code: "connection_failed",
+      disposition: { kind: "terminal" },
+    }));
+    const controller = createConnectionControllerV3(
+      { acquire },
+      async () => { throw new Error("connector must not run"); },
+      { capabilitySnapshot },
+    );
+    const cancellation = new AbortController();
+    cancellation.abort();
+    await expect(controller.waitForSession({ signal: cancellation.signal })).rejects.toMatchObject({
+      code: "canceled",
+      diagnostic: { state: "idle", attempt: 0 },
+    });
+    expect(acquire).not.toHaveBeenCalled();
+    expect(controller.state).toBe("idle");
+
+    const diagnostic = connectionDiagnosticV3({
+      state: "connected",
+      attempt: 2,
+      currentSession: managedSession(),
+    });
+    expect(diagnostic).toEqual({ state: "connected", attempt: 2 });
+    expect("currentSession" in diagnostic).toBe(false);
+  });
+
   test("binds the closed shared failure-phase set", () => {
     expect(controllerFixture.failure_phases).toEqual(["artifact", "connect", "session"]);
     for (const scenario of controllerFixture.scenarios) {

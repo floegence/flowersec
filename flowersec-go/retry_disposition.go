@@ -16,8 +16,8 @@ const (
 // ConnectionController. RetryAtUnixMilliseconds is required only for
 // RetryAfter and is an exact Unix wall-clock not-before deadline.
 type RetryDisposition struct {
-	Kind                    RetryDispositionKind
-	RetryAtUnixMilliseconds int64
+	Kind                    RetryDispositionKind `json:"kind"`
+	RetryAtUnixMilliseconds int64                `json:"notBeforeUnixMilliseconds,omitempty"`
 }
 
 func terminalDisposition() RetryDisposition {

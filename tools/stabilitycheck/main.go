@@ -3,6 +3,8 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,7 +34,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: go run . <verify-source|verify-manifest|verify-go|verify-ts|verify-swift|verify-rust|verify-docs|verify-go-coverage-short|verify-go-coverage|verify-parity|verify-server-parity-completion|verify-defaults|report>")
+		return errors.New("usage: go run . <verify-source|verify-manifest|verify-go|verify-ts|verify-swift|update-swift-manifest|verify-rust|verify-docs|verify-go-coverage-short|verify-go-coverage|verify-parity|verify-server-parity-completion|verify-defaults|report>")
 	}
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
@@ -54,6 +56,8 @@ func run(args []string) error {
 		return verifyTS(repoRoot, m)
 	case "verify-swift":
 		return verifySwift(repoRoot, m)
+	case "update-swift-manifest":
+		return updateSwiftManifest(repoRoot, m)
 	case "verify-rust":
 		return verifyRust(repoRoot, m)
 	case "verify-docs":
@@ -415,13 +419,42 @@ func verifySwift(repoRoot string, m *manifest) error {
 	if diff := diffSwiftSymbols(m.Swift.Symbols, actual); diff != "" {
 		return errors.New(diff)
 	}
-	fmt.Printf("swift symbols OK: %d symbols verified\n", len(m.Swift.Symbols))
+	actualSignature := swiftSignatureSHA256(symbols)
+	if actualSignature != m.Swift.SignatureSHA256 {
+		return fmt.Errorf("Swift public signature manifest is out of sync: got %s, want %s", actualSignature, m.Swift.SignatureSHA256)
+	}
+	fmt.Printf("swift symbols OK: %d symbols and normalized signatures verified\n", len(m.Swift.Symbols))
+	return nil
+}
+
+func updateSwiftManifest(repoRoot string, m *manifest) error {
+	symbols, err := dumpSwiftPublicSymbols(repoRoot, m.Swift.Module)
+	if err != nil {
+		return err
+	}
+	m.Swift.Symbols = make([]swiftSymbol, 0, len(symbols))
+	for _, symbol := range symbols {
+		m.Swift.Symbols = append(m.Swift.Symbols, swiftSymbol{Kind: symbol.Kind, Name: symbol.Name})
+	}
+	m.Swift.SignatureSHA256 = swiftSignatureSHA256(symbols)
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(m); err != nil {
+		return fmt.Errorf("encode updated API contract manifest: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, manifestPath), encoded.Bytes(), 0o644); err != nil {
+		return fmt.Errorf("write updated API contract manifest: %w", err)
+	}
+	fmt.Printf("updated Swift manifest: %d symbols, signature %s\n", len(symbols), m.Swift.SignatureSHA256)
 	return nil
 }
 
 type dumpedSwiftSymbol struct {
-	Kind string
-	Name string
+	Kind        string
+	Name        string
+	Declaration string
 }
 
 type swiftSymbolGraph struct {
@@ -434,6 +467,9 @@ type swiftSymbolGraph struct {
 		Identifier     struct {
 			InterfaceLanguage string `json:"interfaceLanguage"`
 		} `json:"identifier"`
+		DeclarationFragments []struct {
+			Spelling string `json:"spelling"`
+		} `json:"declarationFragments"`
 	} `json:"symbols"`
 }
 
@@ -500,14 +536,38 @@ func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error
 			continue
 		}
 		symbols = append(symbols, dumpedSwiftSymbol{
-			Kind: item.Kind.Identifier,
-			Name: strings.Join(item.PathComponents, "."),
+			Kind:        item.Kind.Identifier,
+			Name:        strings.Join(item.PathComponents, "."),
+			Declaration: normalizeSwiftDeclaration(item.DeclarationFragments),
 		})
 	}
 	slices.SortFunc(symbols, func(a, b dumpedSwiftSymbol) int {
 		return strings.Compare(a.Kind+"\x00"+a.Name, b.Kind+"\x00"+b.Name)
 	})
 	return symbols, nil
+}
+
+func normalizeSwiftDeclaration(fragments []struct {
+	Spelling string `json:"spelling"`
+}) string {
+	var declaration strings.Builder
+	for _, fragment := range fragments {
+		declaration.WriteString(fragment.Spelling)
+	}
+	return strings.Join(strings.Fields(declaration.String()), " ")
+}
+
+func swiftSignatureSHA256(symbols []dumpedSwiftSymbol) string {
+	hash := sha256.New()
+	for _, symbol := range symbols {
+		_, _ = io.WriteString(hash, symbol.Kind)
+		_, _ = io.WriteString(hash, "\x00")
+		_, _ = io.WriteString(hash, symbol.Name)
+		_, _ = io.WriteString(hash, "\x00")
+		_, _ = io.WriteString(hash, symbol.Declaration)
+		_, _ = io.WriteString(hash, "\n")
+	}
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func buildSwiftTarget(repoRoot, module string) error {

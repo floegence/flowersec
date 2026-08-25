@@ -1,6 +1,6 @@
 [package]
 name = "flowersec"
-version = "3.0.4"
+version = "3.1.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Native Rust SDK for Flowersec secure direct and tunneled sessions"
@@ -19,7 +19,7 @@ async-trait = "0.1"
 base64 = "0.23"
 bytes = "1"
 futures-util = { version = "0.3", features = ["io", "sink", "std"] }
-flowersec-native-transport = { version = "=3.0.4", path = "../flowersec-native-transport" }
+flowersec-native-transport = { version = "=3.1.0", path = "../flowersec-native-transport" }
 hkdf = "0.13"
 hmac = "0.13"
 http = "1"
@@ -52,7 +52,7 @@ subtle = "2"
 time = { version = "0.3", features = ["parsing", "formatting"] }
 
 [dev-dependencies]
-flowersec-native-transport = { version = "=3.0.4", path = "../flowersec-native-transport", features = ["__flowersec_internal_test_support"] }
+flowersec-native-transport = { version = "=3.1.0", path = "../flowersec-native-transport", features = ["__flowersec_internal_test_support"] }
 proptest = "1"
 tempfile = "3"
 cert_test_builder = { package = "rcgen", version = "0.14" }

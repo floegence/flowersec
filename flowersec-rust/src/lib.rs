@@ -127,21 +127,33 @@ mod defaults_contract;
 pub use acceptor_v3::{
     AcceptError, AcceptErrorCode, Acceptor, AcceptorOptions, WebSocketAcceptorOptions,
 };
+#[deprecated(since = "3.1.0", note = "use ArtifactError")]
+pub use artifact_v3::ArtifactErrorV3;
+#[deprecated(since = "3.1.0", note = "use ArtifactLease")]
+pub use artifact_v3::ArtifactLeaseV3;
+#[deprecated(since = "3.1.0", note = "use ArtifactSpendError")]
+pub use artifact_v3::ArtifactSpendErrorV3;
+#[deprecated(since = "3.1.0", note = "use Artifact")]
+pub use artifact_v3::ArtifactV3;
 pub use artifact_v3::{
-    ArtifactErrorV3 as ArtifactError, ArtifactErrorV3, ArtifactLeaseV3 as ArtifactLease,
-    ArtifactLeaseV3, ArtifactSpendErrorV3 as ArtifactSpendError, ArtifactSpendErrorV3,
-    ArtifactV3 as Artifact, ArtifactV3,
+    ArtifactErrorV3 as ArtifactError, ArtifactLeaseV3 as ArtifactLease,
+    ArtifactSpendErrorV3 as ArtifactSpendError, ArtifactV3 as Artifact,
 };
 pub use connection_controller::{
     ArtifactSource, ArtifactSourceError, ConnectionController,
-    ConnectionControllerConfigurationError, ConnectionControllerOptions, ConnectionFailure,
-    ConnectionSnapshot, ConnectionState, RetryDisposition,
+    ConnectionControllerConfigurationError, ConnectionControllerError,
+    ConnectionControllerErrorCode, ConnectionControllerOptions, ConnectionDiagnostic,
+    ConnectionDiagnosticFailure, ConnectionFailure, ConnectionFailurePhase, ConnectionSnapshot,
+    ConnectionState, RetryDisposition,
 };
+#[deprecated(since = "3.1.0", note = "use connect")]
+pub use connector_v3::connect_v3;
+#[deprecated(since = "3.1.0", note = "use connect_with_cancellation")]
+pub use connector_v3::connect_v3_with_cancellation;
 pub use connector_v3::{
     ConnectError, ConnectErrorCode, ConnectorOptions, connect_v3 as connect,
     connect_v3_with_cancellation as connect_with_cancellation,
 };
-pub use connector_v3::{connect_v3, connect_v3_with_cancellation};
 pub use proxy_server::{ProxyErrorReporter, ProxyServer, ProxyServerError, ProxyServerOptions};
 pub use session_handlers::{
     AcceptedSession, HandlerRegistrationError, NotificationHandler, RpcHandler, RpcHandlers,
@@ -151,7 +163,8 @@ pub use session_handlers::{
 pub use transport_v2::{
     ByteStream, IncomingStream, JsonObject, NotificationSubscription, RpcCallError, RpcError,
     RpcPeer, RpcPeerExt, Session, SessionError, SessionTermination, StreamMetadata,
-    StreamMetadataError, UnreliableMessageChannel, UnreliableMessageError, UnreliableSendOutcome,
+    StreamMetadataError, UnreliableMessageChannel, UnreliableMessageError,
+    UnreliableMessageErrorCode, UnreliableSendOutcome,
 };
 pub use tunnel_runtime_v3::{
     RuntimeAuthorizationRequest, TunnelAdmissionOptions, TunnelAuthorizationError,
@@ -193,11 +206,13 @@ pub mod v3 {
         AcceptError, AcceptErrorCode, Acceptor, AcceptorOptions, Artifact, ArtifactError,
         ArtifactLease, ArtifactSource, ArtifactSourceError, ArtifactSpendError, ConnectError,
         ConnectErrorCode, ConnectionController, ConnectionControllerConfigurationError,
-        ConnectionControllerOptions, ConnectionFailure, ConnectionSnapshot, ConnectionState,
-        ConnectorOptions, RetryDisposition, RuntimeAuthorizationRequest, Session,
-        TunnelAdmissionOptions, TunnelAuthorizationError, TunnelAuthorizationResponse,
-        TunnelAuthorizer, TunnelRuntime, TunnelRuntimeError, TunnelRuntimeOptions,
-        WebSocketAcceptorOptions, connect, connect_with_cancellation,
+        ConnectionControllerError, ConnectionControllerErrorCode, ConnectionControllerOptions,
+        ConnectionDiagnostic, ConnectionDiagnosticFailure, ConnectionFailure,
+        ConnectionFailurePhase, ConnectionSnapshot, ConnectionState, ConnectorOptions,
+        RetryDisposition, RuntimeAuthorizationRequest, Session, TunnelAdmissionOptions,
+        TunnelAuthorizationError, TunnelAuthorizationResponse, TunnelAuthorizer, TunnelRuntime,
+        TunnelRuntimeError, TunnelRuntimeOptions, WebSocketAcceptorOptions, connect,
+        connect_with_cancellation,
     };
 }
 

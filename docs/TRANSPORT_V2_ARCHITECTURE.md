@@ -29,9 +29,10 @@ must never manufacture a Flowersec handshake result.
 The native server capability profile has 18 aggregate runtime-role-carrier
 tuples, six per runtime, and 24 supported path-specific units. The separate
 interoperability matrix declares 18 direct client/server coordinates and 18
-pairwise tunnel coordinates. All current pairwise cells are explicitly
-unsupported because none has one release-gating v3 test for its complete case
-set.
+pairwise tunnel coordinates. The release gate proves all 10 direct cells and 14
+pairwise tunnel cells that include Go. The remaining 8 direct and 4 tunnel
+cells remain explicitly unverified, and four WSS client profiles separately
+prove Swift and browser TypeScript against Go over direct and tunneled paths.
 
 WebSocket and raw QUIC are the required server carriers. Go, Rust, and Node.js
 implement both for client, direct-server, and opaque tunnel-runtime roles.

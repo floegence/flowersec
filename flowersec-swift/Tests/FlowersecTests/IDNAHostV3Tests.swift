@@ -41,7 +41,7 @@ struct IDNAHostV3Tests {
     }
     for vector in vectors.negative {
       #expect(vector.errorCode == "invalid_artifact", Comment(rawValue: vector.id))
-      #expect(throws: ArtifactErrorV3.invalidArtifact, Comment(rawValue: vector.id)) {
+      #expect(throws: ArtifactError.invalidArtifact, Comment(rawValue: vector.id)) {
         try ArtifactCodecV3.normalizeURL(
           vector.input, carrier: vector.carrier, kind: vector.pathKind)
       }

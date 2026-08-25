@@ -13,9 +13,9 @@ public protocol ArtifactSourceV2: Sendable {
 ///
 /// Any other error thrown by ``ArtifactSourceV2/acquireArtifact()`` is terminal.
 public struct ArtifactSourceFailureV2: Error, Equatable, Sendable {
-  public let disposition: RetryDisposition
+  public let disposition: RetryDispositionV2
 
-  public init(disposition: RetryDisposition) {
+  public init(disposition: RetryDispositionV2) {
     self.disposition = disposition
   }
 }
@@ -36,16 +36,16 @@ public enum ConnectionAttemptFailureV2: Error, Equatable, Sendable {
   case connection(ConnectErrorV2)
   case session(SessionError)
 
-  public var retryDisposition: RetryDisposition {
+  public var retryDisposition: RetryDispositionV2 {
     switch self {
     case .artifactSource(let failure):
       return failure.disposition
     case .unknownArtifactSource:
       return .terminal
     case .connection(let error):
-      return error.retryDisposition
+      return error.retryDispositionV2
     case .session(let error):
-      return error.retryDisposition
+      return error.retryDispositionV2
     }
   }
 }
@@ -149,7 +149,7 @@ public actor ConnectionControllerV2 {
   }
 
   /// Wakes only the scheduler's current wait. It never starts a second scheduler or attempt.
-  /// An explicit ``RetryDisposition/retryAfter(_:)`` deadline remains authoritative.
+  /// An explicit ``RetryDispositionV2/retryAfter(_:)`` deadline remains authoritative.
   public func retryNow() async -> Bool {
     guard state == .waiting, let retryGate else { return false }
     let now = ContinuousClock.now

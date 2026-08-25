@@ -283,7 +283,7 @@ final class ConnectorV2Tests: XCTestCase {
       let runtime = UnsupportedCountingRuntimeV3()
       let spend = ConnectorSpendCounter()
       let connector = try SessionConnectorV3(
-        lease: ArtifactLeaseV3(artifact: artifact) { await spend.commit() },
+        lease: ArtifactLease(artifact: artifact) { await spend.commit() },
         options: ConnectorOptions(
           origin: "https://client.example", connectTimeout: .milliseconds(250)),
         runtime: runtime
@@ -312,10 +312,10 @@ final class ConnectorV2Tests: XCTestCase {
         tls: pinPolicyV3(hash: Data(repeating: 0xA5, count: 32), expiresIn: 3_600)
       )
       let spend = ConnectorSpendCounter()
-      let lease = ArtifactLeaseV3(artifact: artifact) { await spend.commit() }
+      let lease = ArtifactLease(artifact: artifact) { await spend.commit() }
 
       do {
-        _ = try await connectV3(
+        _ = try await connect(
           lease: lease,
           options: ConnectorOptions(
             origin: "https://client.example", connectTimeout: .seconds(2)))
@@ -336,8 +336,8 @@ final class ConnectorV2Tests: XCTestCase {
           hash: Data(SHA256.hash(data: peer.leafDER)), expiresIn: 3_600))
       let spend = ConnectorSpendCounter()
       do {
-        _ = try await connectV3(
-          lease: ArtifactLeaseV3(artifact: artifact) { await spend.commit() },
+        _ = try await connect(
+          lease: ArtifactLease(artifact: artifact) { await spend.commit() },
           options: ConnectorOptions(
             origin: "https://client.example", connectTimeout: .seconds(3)))
         XCTFail("invalid TLS proof unexpectedly established a session")
@@ -379,8 +379,8 @@ final class ConnectorV2Tests: XCTestCase {
         tls: pinPolicyV3(hash: Data(repeating: 0xA5, count: 32), expiresIn: 3_600)
       )
       do {
-        _ = try await connectV3(
-          lease: ArtifactLeaseV3(artifact: artifact) {},
+        _ = try await connect(
+          lease: ArtifactLease(artifact: artifact) {},
           options: ConnectorOptions(
             origin: "https://client.example", connectTimeout: .milliseconds(250)))
         XCTFail("closed endpoint unexpectedly established a carrier")
@@ -395,10 +395,10 @@ final class ConnectorV2Tests: XCTestCase {
         tls: pinPolicyV3(hash: Data(repeating: 0xA5, count: 32), expiresIn: -1)
       )
       let spend = ConnectorSpendCounter()
-      let lease = ArtifactLeaseV3(artifact: artifact) { await spend.commit() }
+      let lease = ArtifactLease(artifact: artifact) { await spend.commit() }
 
       do {
-        _ = try await connectV3(
+        _ = try await connect(
           lease: lease,
           options: ConnectorOptions(
             origin: "https://client.example", connectTimeout: .milliseconds(250)))
@@ -417,7 +417,7 @@ final class ConnectorV2Tests: XCTestCase {
         let retire = ConnectorSpendCounter()
         let runtime = FSAResponseRuntimeV3(status: status)
         let connector = try SessionConnectorV3(
-          lease: ArtifactLeaseV3(
+          lease: ArtifactLease(
             artifact: artifact,
             commitSpend: { await spend.commit() },
             retire: { await retire.commit() }
@@ -479,8 +479,8 @@ final class ConnectorV2Tests: XCTestCase {
         origin: "https://client.example", connectTimeout: .seconds(5))
       async let serverSession = Self.establishServerSessionV3(
         artifact: artifact, accepted: accepted)
-      async let clientSession = connectV3(
-        lease: ArtifactLeaseV3(artifact: artifact) {}, options: options)
+      async let clientSession = connect(
+        lease: ArtifactLease(artifact: artifact) {}, options: options)
       let (client, serverPeer) = try await (clientSession, serverSession)
       async let closeClient = client.close()
       async let closeServer = serverPeer.close()
@@ -508,7 +508,7 @@ final class ConnectorV2Tests: XCTestCase {
     }
 
     private static func establishServerSessionV3(
-      artifact: ArtifactV3, accepted: ConnectorAcceptedTransport
+      artifact: Artifact, accepted: ConnectorAcceptedTransport
     ) async throws -> TransportV3Session {
       let transport = try await accepted.accept()
       let fsb3 = try AdmissionCodecV3.decodeFSB3(try await transport.readBinary())
@@ -543,7 +543,7 @@ final class ConnectorV2Tests: XCTestCase {
     let runtime = CandidateFailureRuntimeV3()
     let spend = ConnectorSpendCounter()
     let connector = try SessionConnectorV3(
-      lease: ArtifactLeaseV3(
+      lease: ArtifactLease(
         artifact: artifact,
         commitSpend: { await spend.commit() }),
       options: ConnectorOptions(
@@ -570,7 +570,7 @@ final class ConnectorV2Tests: XCTestCase {
 
   func testV3BrowserOpaqueMarkerStaysOrdinaryButTriggersPinRefresh() async throws {
     let connector = try SessionConnectorV3(
-      lease: ArtifactLeaseV3(artifact: try baseArtifactV3ForConnector()) {},
+      lease: ArtifactLease(artifact: try baseArtifactV3ForConnector()) {},
       options: ConnectorOptions(connectTimeout: .seconds(1)),
       runtime: OpaqueCandidateFailureRuntimeV3()
     )
@@ -593,7 +593,7 @@ final class ConnectorV2Tests: XCTestCase {
     let runtime = CandidateRaceRuntimeV3(recorder: recorder, slowCandidateID: "w-ca")
     let spent = ConnectorSpendCounter()
     let connector = try SessionConnectorV3(
-      lease: ArtifactLeaseV3(
+      lease: ArtifactLease(
         artifact: try expiringArtifactV3ForConnector(at: 101),
         commitSpend: { await spent.commit() }),
       options: ConnectorOptions(connectTimeout: .seconds(1)),
@@ -623,7 +623,7 @@ final class ConnectorV2Tests: XCTestCase {
     let gate = CandidatePrepareGateV3()
     let spent = ConnectorSpendCounter()
     let connector = try SessionConnectorV3(
-      lease: ArtifactLeaseV3(
+      lease: ArtifactLease(
         artifact: try baseArtifactV3ForConnector(),
         commitSpend: { await spent.commit() }),
       options: ConnectorOptions(connectTimeout: .seconds(1)),
@@ -658,7 +658,7 @@ final class ConnectorV2Tests: XCTestCase {
     let gate = CandidatePrepareGateV3()
     let spent = ConnectorSpendCounter()
     let connector = try SessionConnectorV3(
-      lease: ArtifactLeaseV3(
+      lease: ArtifactLease(
         artifact: try baseArtifactV3ForConnector(),
         commitSpend: { await spent.commit() }),
       options: ConnectorOptions(connectTimeout: .milliseconds(20)),
@@ -694,7 +694,7 @@ final class ConnectorV2Tests: XCTestCase {
     let gate = CandidatePrepareGateV3()
     let spent = ConnectorSpendCounter()
     let connector = try SessionConnectorV3(
-      lease: ArtifactLeaseV3(
+      lease: ArtifactLease(
         artifact: try baseArtifactV3ForConnector(),
         commitSpend: { await spent.commit() }),
       options: ConnectorOptions(connectTimeout: .seconds(1)),
@@ -730,7 +730,7 @@ final class ConnectorV2Tests: XCTestCase {
     let recorder = CandidateRaceRecorderV3()
     let clock = SteppingUnixClockV3(values: [100, 101])
     let connector = try SessionConnectorV3(
-      lease: ArtifactLeaseV3(artifact: try expiringArtifactV3ForConnector(at: 101)) {},
+      lease: ArtifactLease(artifact: try expiringArtifactV3ForConnector(at: 101)) {},
       options: ConnectorOptions(connectTimeout: .seconds(1)),
       runtime: CandidateRaceRuntimeV3(recorder: recorder, failAll: true),
       currentUnixSeconds: { clock.read() }
@@ -751,7 +751,7 @@ final class ConnectorV2Tests: XCTestCase {
     let clock = MutableUnixClockV3(value: 100)
     let spent = ConnectorSpendCounter()
     let connector = try SessionConnectorV3(
-      lease: ArtifactLeaseV3(
+      lease: ArtifactLease(
         artifact: try expiringArtifactV3ForConnector(at: 101),
         commitSpend: {
           await spent.commit()
@@ -779,7 +779,7 @@ final class ConnectorV2Tests: XCTestCase {
     let recorder = HangingAdmissionRecorderV3()
     let spent = ConnectorSpendCounter()
     let connector = try SessionConnectorV3(
-      lease: ArtifactLeaseV3(
+      lease: ArtifactLease(
         artifact: try baseArtifactV3ForConnector(),
         commitSpend: { await spent.commit() }
       ),
@@ -827,8 +827,8 @@ final class ConnectorV2Tests: XCTestCase {
           lease: ArtifactLeaseV2(artifact: try parseArtifactV2(Data(artifactJSON.utf8))) {},
           options: options)
       } else {
-        session = try await connectV3(
-          lease: ArtifactLeaseV3(artifact: try parseArtifactV3(Data(artifactJSON.utf8))) {},
+        session = try await connect(
+          lease: ArtifactLease(artifact: try parseArtifact(Data(artifactJSON.utf8))) {},
           options: options)
       }
       let echo: [String: String] = try await session.rpc.call(7001, ["value": "ping"], as: [String: String].self, timeout: .seconds(5))
@@ -845,6 +845,9 @@ final class ConnectorV2Tests: XCTestCase {
       do { _ = try await reset.read(maxBytes: 32); XCTFail("reset stream succeeded") } catch { }
       try await session.rekey()
       _ = try await session.probeLiveness()
+      let completed: [String: String] = try await session.rpc.call(
+        7003, ["value": "complete"], as: [String: String].self, timeout: .seconds(5))
+      XCTAssertEqual(completed["value"], "complete")
       try await session.close()
     #else
       throw ConnectError.runtimeUnsupported
@@ -1330,7 +1333,7 @@ final class ConnectorV2Tests: XCTestCase {
       port: Int,
       host: String = "localhost",
       tls: [String: Any]
-    ) throws -> ArtifactV3 {
+    ) throws -> Artifact {
       let resources = try XCTUnwrap(Bundle.module.resourceURL?.appendingPathComponent("Fixtures"))
       let fixture = resources.appendingPathComponent("transport_v3_direct_artifact.json")
       var root = try JSONSerialization.jsonObject(
@@ -1347,7 +1350,7 @@ final class ConnectorV2Tests: XCTestCase {
       var session = root["session"] as! [String: Any]
       session["init_expire_at_unix_s"] = Int(Date().timeIntervalSince1970) + 3_600
       root["session"] = session
-      return try parseArtifactV3(FlowersecJCSV3.encode(root))
+      return try parseArtifact(FlowersecJCSV3.encode(root))
     }
 
     private func pinPolicyV3(hash: Data, expiresIn seconds: Int) -> [String: Any] {
@@ -1541,20 +1544,20 @@ final class ConnectorV2Tests: XCTestCase {
   }
 }
 
-private func baseArtifactV3ForConnector() throws -> ArtifactV3 {
+private func baseArtifactV3ForConnector() throws -> Artifact {
   let url = packageRoot().appendingPathComponent("testdata/transport_v3/artifact_vectors.json")
   let root = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
   let positive = root["positive"] as! [[String: Any]]
-  return try parseArtifactV3(Data((positive[0]["artifact_json"] as! String).utf8))
+  return try parseArtifact(Data((positive[0]["artifact_json"] as! String).utf8))
 }
 
-private func expiringArtifactV3ForConnector(at expiry: Int) throws -> ArtifactV3 {
+private func expiringArtifactV3ForConnector(at expiry: Int) throws -> Artifact {
   let artifact = try baseArtifactV3ForConnector()
   var root = try JSONSerialization.jsonObject(with: artifact.canonicalJSON) as! [String: Any]
   var session = root["session"] as! [String: Any]
   session["init_expire_at_unix_s"] = expiry
   root["session"] = session
-  return try parseArtifactV3(FlowersecJCSV3.encode(root))
+  return try parseArtifact(FlowersecJCSV3.encode(root))
 }
 
 private struct ConnectorBinaryPair {

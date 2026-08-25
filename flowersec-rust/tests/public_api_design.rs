@@ -134,6 +134,21 @@ fn exposes_explicit_options_and_typed_rpc() {
     let _ = compile_retry_disposition;
 }
 
+#[allow(deprecated)]
+#[test]
+fn deprecated_v3_root_names_remain_source_compatible() {
+    fn parse(encoded: &[u8]) -> Result<flowersec::ArtifactV3, flowersec::ArtifactErrorV3> {
+        flowersec::ArtifactV3::parse(encoded)
+    }
+    fn lease(artifact: flowersec::ArtifactV3) -> flowersec::ArtifactLeaseV3 {
+        flowersec::ArtifactLeaseV3::new(artifact, || async { Ok(()) })
+    }
+    let _ = parse;
+    let _ = lease;
+    let _ = flowersec::connect_v3;
+    let _ = flowersec::connect_v3_with_cancellation;
+}
+
 #[test]
 fn exposes_a_production_websocket_direct_listener() {
     fn compile_listener(options: WebSocketAcceptorOptions) {

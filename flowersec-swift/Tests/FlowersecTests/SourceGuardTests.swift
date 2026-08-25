@@ -249,14 +249,16 @@ final class SourceGuardTests: XCTestCase {
     let connector = try String(
       contentsOf: sourceRoot.appendingPathComponent("Connector.swift"), encoding: .utf8)
 
-    XCTAssertTrue(artifact.contains("public typealias Artifact = ArtifactV3"))
-    XCTAssertTrue(artifact.contains("public typealias ArtifactLease = ArtifactLeaseV3"))
+    XCTAssertTrue(artifact.contains("public final class Artifact:"))
+    XCTAssertTrue(artifact.contains("public struct ArtifactLease:"))
+    XCTAssertTrue(artifact.contains("public typealias ArtifactV3 = Artifact"))
+    XCTAssertTrue(artifact.contains("public typealias ArtifactLeaseV3 = ArtifactLease"))
     XCTAssertTrue(
       artifact.contains("public func parseArtifact(_ data: Data) throws -> Artifact"))
-    XCTAssertTrue(artifact.contains("try parseArtifactV3(data)"))
+    XCTAssertTrue(artifact.contains("try ArtifactCodecV3.decode(data)"))
     XCTAssertEqual(connector.components(separatedBy: "public func connect(").count - 1, 1)
     XCTAssertTrue(connector.contains("lease: ArtifactLease,"))
-    XCTAssertTrue(connector.contains("try await connectV3(lease: lease, options: options)"))
+    XCTAssertTrue(connector.contains("try await connectOneShotV3(lease: lease, options: options)"))
   }
 
   private func swiftFiles(under root: URL) throws -> [URL] {

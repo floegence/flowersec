@@ -346,10 +346,10 @@ private actor RetryAfterArtifactSourceV2: ArtifactSourceV2 {
 }
 
 private actor AlwaysFailingArtifactSourceV2: ArtifactSourceV2 {
-  private let disposition: RetryDisposition
+  private let disposition: RetryDispositionV2
   private(set) var acquisitionCount = 0
 
-  init(disposition: RetryDisposition) {
+  init(disposition: RetryDispositionV2) {
     self.disposition = disposition
   }
 

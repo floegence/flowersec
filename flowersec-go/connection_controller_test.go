@@ -17,10 +17,34 @@ import (
 )
 
 type controllerV3VectorFile struct {
-	Version       int      `json:"version"`
-	PublicErrors  []string `json:"public_errors"`
-	FailurePhases []string `json:"failure_phases"`
-	Defaults      struct {
+	Version           int      `json:"version"`
+	PublicErrors      []string `json:"public_errors"`
+	FailurePhases     []string `json:"failure_phases"`
+	SDKAPIConsistency struct {
+		ConnectionErrorCodes  []string `json:"connection_error_codes"`
+		UnreliableErrorCodes  []string `json:"unreliable_error_codes"`
+		UnreliableSendResults []string `json:"unreliable_send_results"`
+		Retry                 struct {
+			ErrorProperty                string `json:"error_property"`
+			DeprecatedErrorProperty      string `json:"deprecated_error_property"`
+			RetryAfterProperty           string `json:"retry_after_property"`
+			DeprecatedRetryAfterProperty string `json:"deprecated_retry_after_property"`
+		} `json:"retry"`
+		ConnectionDiagnostic struct {
+			Fields          []string `json:"fields"`
+			FailureFields   []string `json:"failure_fields"`
+			ForbiddenFields []string `json:"forbidden_fields"`
+		} `json:"connection_diagnostic"`
+		WaitForSession struct {
+			StartsController   bool     `json:"starts_controller"`
+			Outcomes           []string `json:"outcomes"`
+			MigratesOperations bool     `json:"migrates_operations"`
+		} `json:"wait_for_session"`
+		Swift struct {
+			UnreliableMessages string `json:"unreliable_messages"`
+		} `json:"swift"`
+	} `json:"sdk_api_consistency"`
+	Defaults struct {
 		MaximumAttempts                           uint64 `json:"maximum_attempts"`
 		InitialBackoffMS                          int    `json:"initial_backoff_ms"`
 		MaximumBackoffMS                          int    `json:"maximum_backoff_ms"`
@@ -139,6 +163,40 @@ func TestConnectionControllerSharedLifecycleVectors(t *testing.T) {
 	}
 	if got, want := strings.Join(fixture.FailurePhases, ","), "artifact,connect,session"; got != want {
 		t.Fatalf("failure phases = %q, want %q", got, want)
+	}
+	api := fixture.SDKAPIConsistency
+	if got, want := strings.Join(api.ConnectionErrorCodes, ","),
+		"artifact_invalid,expired_artifact,transport_security_unsupported,transport_security_failed,connection_failed"; got != want {
+		t.Fatalf("connection error codes = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(api.UnreliableErrorCodes, ","),
+		"unavailable,invalid_message,too_large,canceled,closed,operation_failed"; got != want {
+		t.Fatalf("unreliable error codes = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(api.UnreliableSendResults, ","),
+		"accepted,dropped_budget,dropped_expired,dropped_carrier"; got != want {
+		t.Fatalf("unreliable send results = %q, want %q", got, want)
+	}
+	if api.Retry.ErrorProperty != "retryDisposition" || api.Retry.DeprecatedErrorProperty != "disposition" ||
+		api.Retry.RetryAfterProperty != "notBeforeUnixMilliseconds" ||
+		api.Retry.DeprecatedRetryAfterProperty != "absoluteUnixMilliseconds" {
+		t.Fatalf("retry API vector = %+v", api.Retry)
+	}
+	if got, want := strings.Join(api.ConnectionDiagnostic.Fields, ","),
+		"state,attempt,failure,retryDisposition"; got != want {
+		t.Fatalf("diagnostic fields = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(api.ConnectionDiagnostic.FailureFields, ","), "phase,code"; got != want {
+		t.Fatalf("diagnostic failure fields = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(api.ConnectionDiagnostic.ForbiddenFields, ","),
+		"url,carrier,candidates,error,credentials,peer,session"; got != want {
+		t.Fatalf("diagnostic forbidden fields = %q, want %q", got, want)
+	}
+	if api.WaitForSession.StartsController || api.WaitForSession.MigratesOperations ||
+		strings.Join(api.WaitForSession.Outcomes, ",") != "connected,failed,closed,canceled" ||
+		api.Swift.UnreliableMessages != "unsupported" {
+		t.Fatalf("wait/capability API vector = %+v / %+v", api.WaitForSession, api.Swift)
 	}
 	if defaults.ConnectionControllerInitialDelay != time.Duration(fixture.Defaults.InitialBackoffMS)*time.Millisecond ||
 		defaults.ConnectionControllerMaxDelay != time.Duration(fixture.Defaults.MaximumBackoffMS)*time.Millisecond ||
@@ -339,7 +397,7 @@ func TestConnectionControllerTopLevelContractVectors(t *testing.T) {
 		t.Fatalf("internal transport result count = %d, want %d", len(seen), len(expectedActions))
 	}
 
-	if fixture.RetryAfter.Aggregate != "maximum_absolute_unix_ms" {
+	if fixture.RetryAfter.Aggregate != "maximum_not_before_unix_ms" {
 		t.Fatalf("retry_after aggregate = %q", fixture.RetryAfter.Aggregate)
 	}
 	var maximum int64
@@ -898,6 +956,82 @@ func TestConnectionControllerFailurePhases(t *testing.T) {
 			t.Fatalf("session failure = %+v, want session/operation_failed/terminal", failure)
 		}
 		closeController(t, controller)
+	})
+}
+
+func TestConnectionControllerWaitForSessionAndDiagnostic(t *testing.T) {
+	t.Run("does not start controller", func(t *testing.T) {
+		source := &controllerTestSource{}
+		controller := newControllerForTest(t, source, 0)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := controller.WaitForSession(ctx)
+		var controllerError *ConnectionControllerError
+		if !errors.As(err, &controllerError) || controllerError.Code() != ConnectionControllerCanceled {
+			t.Fatalf("WaitForSession error = %#v, want canceled", err)
+		}
+		if source.callCount() != 0 || controller.Snapshot().State != ConnectionIdle {
+			t.Fatalf("WaitForSession started controller: calls=%d state=%q", source.callCount(), controller.Snapshot().State)
+		}
+	})
+
+	t.Run("returns established session", func(t *testing.T) {
+		lease, _ := controllerTestLeases(t)
+		source := &controllerTestSource{results: []controllerAcquireResult{{lease: lease}}}
+		controller := newControllerForTest(t, source, 0)
+		session := newControllerTestSession(SessionClosed)
+		controller.connect = func(context.Context, ArtifactLease, ConnectorOptions) (Session, error) {
+			return session, nil
+		}
+		startController(t, controller)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		got, err := controller.WaitForSession(ctx)
+		if err != nil || got != session {
+			t.Fatalf("WaitForSession = (%#v, %v), want established session", got, err)
+		}
+		diagnostic := controller.Snapshot().Diagnostic()
+		if diagnostic.State != ConnectionConnected || diagnostic.Attempt != 1 ||
+			diagnostic.Failure != nil || diagnostic.RetryDisposition != nil {
+			t.Fatalf("connected diagnostic = %+v", diagnostic)
+		}
+		closeController(t, controller)
+	})
+
+	t.Run("returns redacted terminal failure", func(t *testing.T) {
+		source := &controllerTestSource{results: []controllerAcquireResult{{
+			failure: NewTerminalArtifactSourceError(errors.New("secret source detail")),
+		}}}
+		controller := newControllerForTest(t, source, 1)
+		startController(t, controller)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, err := controller.WaitForSession(ctx)
+		var controllerError *ConnectionControllerError
+		if !errors.As(err, &controllerError) || controllerError.Code() != ConnectionControllerFailed {
+			t.Fatalf("WaitForSession error = %#v, want failed", err)
+		}
+		diagnostic := controllerError.Diagnostic()
+		if diagnostic.State != ConnectionFailed || diagnostic.Attempt != 1 || diagnostic.Failure == nil ||
+			diagnostic.Failure.Phase != ConnectionFailureArtifact ||
+			diagnostic.Failure.Code != ConnectConnectionFailed.String() ||
+			diagnostic.RetryDisposition == nil || diagnostic.RetryDisposition.Kind != RetryDispositionTerminal {
+			t.Fatalf("failure diagnostic = %+v", diagnostic)
+		}
+		if strings.Contains(controllerError.Error(), "secret") {
+			t.Fatalf("controller error leaks source detail: %q", controllerError.Error())
+		}
+		closeController(t, controller)
+	})
+
+	t.Run("returns closed", func(t *testing.T) {
+		controller := newControllerForTest(t, &controllerTestSource{}, 0)
+		closeController(t, controller)
+		_, err := controller.WaitForSession(context.Background())
+		var controllerError *ConnectionControllerError
+		if !errors.As(err, &controllerError) || controllerError.Code() != ConnectionControllerClosed {
+			t.Fatalf("WaitForSession error = %#v, want closed", err)
+		}
 	})
 }
 

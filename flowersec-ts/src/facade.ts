@@ -16,6 +16,7 @@ export type {
   RpcPeer,
   RpcResult,
   SessionErrorCode,
+  UnreliableMessageErrorCode,
   StreamOpenOptions,
   UnreliableMessageChannel,
   UnreliableMessageSendOptions,
@@ -36,47 +37,62 @@ export type {
 } from "./public/streamHandlers.js";
 export {
   ArtifactHandleV3 as Artifact,
-  ArtifactHandleV3,
   ArtifactParseErrorV3 as ArtifactError,
-  ArtifactParseErrorV3,
   createArtifactLeaseV3 as createArtifactLease,
-  createArtifactLeaseV3,
   parseArtifactV3 as parseArtifact,
-  parseArtifactV3,
 } from "./v3/publicApi.js";
 export type {
   ArtifactParseErrorCodeV3 as ArtifactErrorCode,
-  ArtifactParseErrorCodeV3,
 } from "./v3/publicApi.js";
+/** @deprecated Use Artifact, ArtifactError, createArtifactLease, and parseArtifact. */
+export {
+  ArtifactHandleV3,
+  ArtifactParseErrorV3,
+  createArtifactLeaseV3,
+  parseArtifactV3,
+} from "./v3/publicApi.js";
+/** @deprecated Use ArtifactErrorCode. */
+export type { ArtifactParseErrorCodeV3 } from "./v3/publicApi.js";
 export {
   ArtifactLeaseV3 as ArtifactLease,
-  ArtifactLeaseV3,
   ArtifactLeaseV3Error as ArtifactLeaseError,
-  ArtifactLeaseV3Error,
 } from "./v3/artifactLease.js";
+/** @deprecated Use ArtifactLease and ArtifactLeaseError. */
+export { ArtifactLeaseV3, ArtifactLeaseV3Error } from "./v3/artifactLease.js";
 export type {
   ArtifactSourceResultV3 as ArtifactSourceResult,
-  ArtifactSourceResultV3,
   ArtifactSourceV3 as ArtifactSource,
-  ArtifactSourceV3,
+  ConnectionDiagnosticV3 as ConnectionDiagnostic,
   ConnectionControllerFailureV3 as ConnectionControllerFailure,
+  ConnectionControllerStateV3 as ConnectionState,
+} from "./v3/connectionController.js";
+/** @deprecated Use the corresponding unversioned controller types. */
+export type {
+  ArtifactSourceResultV3,
+  ArtifactSourceV3,
+  ConnectionDiagnosticV3,
   ConnectionControllerFailureV3,
   ConnectionControllerSnapshotV3,
-  ConnectionControllerStateV3 as ConnectionState,
   ConnectionControllerStateV3,
   ConnectionControllerV3,
 } from "./v3/connectionController.js";
+export { connectionDiagnosticV3 as connectionDiagnostic } from "./v3/connectionController.js";
+/** @deprecated Use connectionDiagnostic. */
+export { connectionDiagnosticV3 } from "./v3/connectionController.js";
 export type ConnectionController = CoreConnectionControllerV3<PublicSession>;
 export type ConnectionSnapshot = CoreConnectionControllerSnapshotV3<PublicSession>;
 export type ConnectionControllerOptions = Readonly<{ maximumAttempts?: number }>;
 export {
   ConnectionControllerV3Error as ConnectionControllerError,
-  ConnectionControllerV3Error,
 } from "./v3/connectionController.js";
-export { ConnectErrorV3 as ConnectError, ConnectErrorV3 } from "./v3/security.js";
+/** @deprecated Use ConnectionControllerError. */
+export { ConnectionControllerV3Error } from "./v3/connectionController.js";
+export { ConnectErrorV3 as ConnectError } from "./v3/security.js";
+/** @deprecated Use ConnectError. */
+export { ConnectErrorV3 } from "./v3/security.js";
 export type {
   PublicConnectErrorCodeV3 as ConnectErrorCode,
-  PublicConnectErrorCodeV3,
   RetryDispositionV3 as RetryDisposition,
-  RetryDispositionV3,
 } from "./v3/security.js";
+/** @deprecated Use ConnectErrorCode and RetryDisposition. */
+export type { PublicConnectErrorCodeV3, RetryDispositionV3 } from "./v3/security.js";

@@ -572,7 +572,7 @@ func TestRequiredInteropMatrixContainsOnlyWebSocketAndRawQUIC(t *testing.T) {
 	}
 }
 
-func TestInteropMatrixDoesNotPromotePartialV3Evidence(t *testing.T) {
+func TestInteropMatrixPublishesOnlyCompleteGoBaselineEvidence(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
 		t.Fatal(err)
@@ -581,14 +581,57 @@ func TestInteropMatrixDoesNotPromotePartialV3Evidence(t *testing.T) {
 	if err := decodeStrictJSONFile(filepath.Join(repoRoot, interopMatrixPath), &matrix); err != nil {
 		t.Fatal(err)
 	}
+	directSupported, directUnsupported := 0, 0
 	for _, cell := range matrix.DirectCells {
-		if cell.Status != "unsupported" || len(cell.TestIDs) != 0 || cell.Reason != "No release-gating v3 interoperability test exercises the complete executable case set for this cell." {
-			t.Fatalf("direct cell %s overclaims partial v3 evidence", cell.ID)
+		switch cell.Status {
+		case "supported":
+			directSupported++
+			if cell.Client != "go" && cell.Server != "go" {
+				t.Fatalf("direct cell %s claims support without the Go baseline", cell.ID)
+			}
+			if len(cell.TestIDs) != 1 || cell.TestIDs[0] != "interop/v3/native/direct/go-baseline" || cell.Reason != "" {
+				t.Fatalf("direct cell %s does not use the complete parameterized release gate", cell.ID)
+			}
+		case "unsupported":
+			directUnsupported++
+			if len(cell.TestIDs) != 0 || cell.Reason != "No release-gating v3 interoperability test exercises the complete executable case set for this cell." {
+				t.Fatalf("direct cell %s has an invalid unverified declaration", cell.ID)
+			}
 		}
 	}
+	if directSupported != 10 || directUnsupported != 8 {
+		t.Fatalf("direct evidence = supported:%d unsupported:%d, want 10/8", directSupported, directUnsupported)
+	}
+
+	tunnelSupported, tunnelUnsupported := 0, 0
 	for _, topology := range matrix.TunnelTopologies {
-		if topology.Status != "unsupported" || len(topology.TestIDs) != 0 || topology.Reason != "No release-gating v3 interoperability test exercises the complete executable case set for this topology." {
-			t.Fatalf("tunnel topology %s overclaims partial v3 evidence", topology.ID)
+		switch topology.Status {
+		case "supported":
+			tunnelSupported++
+			if topology.EndpointA != "go" && topology.TunnelRuntime != "go" && topology.EndpointB != "go" {
+				t.Fatalf("tunnel topology %s claims support without the Go baseline", topology.ID)
+			}
+			if len(topology.TestIDs) != 1 || topology.TestIDs[0] != "interop/v3/native/tunnel/go-baseline" || topology.Reason != "" {
+				t.Fatalf("tunnel topology %s does not use the complete parameterized release gate", topology.ID)
+			}
+		case "unsupported":
+			tunnelUnsupported++
+			if len(topology.TestIDs) != 0 || topology.Reason != "No release-gating v3 interoperability test exercises the complete executable case set for this topology." {
+				t.Fatalf("tunnel topology %s has an invalid unverified declaration", topology.ID)
+			}
+		}
+	}
+	if tunnelSupported != 14 || tunnelUnsupported != 4 {
+		t.Fatalf("tunnel evidence = supported:%d unsupported:%d, want 14/4", tunnelSupported, tunnelUnsupported)
+	}
+
+	if len(matrix.ClientProfiles) != 4 {
+		t.Fatalf("client profile evidence = %d, want 4", len(matrix.ClientProfiles))
+	}
+	for _, profile := range matrix.ClientProfiles {
+		if profile.Status != "supported" || profile.Server != "go" || profile.Carrier != "websocket" ||
+			(profile.Client != "swift" && profile.Client != "typescript-browser") {
+			t.Fatalf("client profile %s is outside the exact Swift/browser-to-Go WSS gate", profile.ID)
 		}
 	}
 }

@@ -33,7 +33,7 @@ struct DecodedFSB3: Equatable, Sendable {
 }
 
 enum AdmissionCodecV3 {
-  static func encodeFSB3(artifact: ArtifactV3, chosenCandidateID: String) throws -> EncodedFSB3 {
+  static func encodeFSB3(artifact: Artifact, chosenCandidateID: String) throws -> EncodedFSB3 {
     guard artifact.canonicalCandidates.contains(where: { $0.id == chosenCandidateID }) else {
       throw AdmissionCodecErrorV3.invalid
     }

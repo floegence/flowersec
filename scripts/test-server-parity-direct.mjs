@@ -62,6 +62,19 @@ const peersV3 = {
     command: "go",
     arguments: ["run", "./internal/cmd/server-parity-peer"],
   },
+  rust: {
+    cwd: repositoryRoot,
+    command: "rustup",
+    arguments: [
+      "run", "1.88.0", "cargo", "run", "--quiet", "--manifest-path", "flowersec-rust/Cargo.toml",
+      "--example", "server_parity_peer", "--",
+    ],
+  },
+  "node-typescript": {
+    cwd: path.join(repositoryRoot, "flowersec-ts"),
+    command: process.execPath,
+    arguments: ["--import", "tsx", "src/interop/serverParityPeer.ts"],
+  },
 };
 const peers = clientProfileProtocol === "v2" ? peersV2 : peersV3;
 
@@ -170,6 +183,7 @@ function selectClientProfileCell() {
   const cells = [
     { profile: "browser", client: "typescript-browser", server: "go", carrier: "websocket", path: "direct", test_id: "compat/v2/browser/chromium/websocket/go/direct" },
     { profile: "browser", client: "typescript-browser", server: "node-typescript", carrier: "websocket", path: "direct", test_id: "compat/v2/browser/chromium/websocket/node/direct" },
+    { profile: "browser", client: "typescript-browser", server: "go", carrier: "websocket", path: "direct", test_id: "interop/browser-go/wss/direct" },
     { profile: "swift", client: "swift", server: "go", carrier: "websocket", path: "direct", test_id: "interop/swift-go/wss/direct" },
   ].filter((cell) => cell.profile === clientProfile && cell.test_id === clientProfileTestID);
   if (cells.length !== 1) throw new Error(`${clientProfileTestID}: client-profile direct cell is absent or ambiguous`);
@@ -198,7 +212,7 @@ async function runClientProfileCell(cell) {
     externalClient = startExternalClient(ready, "direct", browserPort);
     await requireSuccessfulExit(externalClient, `${id} ${clientProfile} client`);
     const serverResult = await serverPeer.stdout.nextJSON();
-    assertResult(serverResult, "server-result", cell.server, "websocket", ["admission", "rpc", "notification", "stream-metadata", "stream-fin", "stream-reset", "close", "cleanup"], id);
+    assertResult(serverResult, "server-result", cell.server, "websocket", commonCases, id);
     await requireSuccessfulExit(serverPeer, `${id} server`);
   } catch (error) {
     serverPeer.kill("SIGKILL");
@@ -240,7 +254,7 @@ function startPeer(runtime, roleArguments, environment = {}) {
   const peer = peers[runtime];
   const child = spawn(peer.command, [...peer.arguments, ...roleArguments], {
     cwd: peer.cwd,
-    env: { ...process.env, ...nativeAddon.environment, ...environment, FLOWERSEC_SERVER_PARITY_PEER: "1" },
+    env: { ...process.env, ...nativeAddon.environment, ...environment, FLOWERSEC_SERVER_PARITY_PEER: "1", FLOWERSEC_PARITY_PROTOCOL: clientProfileProtocol },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const stderr = collectText(child.stderr);

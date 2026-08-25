@@ -196,8 +196,12 @@ describe("FSD2 unreliable message channel", () => {
   test("enforces payload, expiry, and the 64-send budget before native transport", async () => {
     const transport = new HangingTransport();
     const channel = createChannel(transport, DirectionV2.ClientToServer, DirectionV2.ServerToClient);
-    await expect(channel.send(new Uint8Array(), { expiresAtUnixMs: 2_000 })).rejects.toThrow(UnreliableMessageError);
-    await expect(channel.send(new Uint8Array(1_025), { expiresAtUnixMs: 2_000 })).rejects.toThrow(UnreliableMessageError);
+    await expect(channel.send(new Uint8Array(), { expiresAtUnixMs: 2_000 })).rejects.toMatchObject({
+      code: "invalid_message",
+    });
+    await expect(channel.send(new Uint8Array(1_025), { expiresAtUnixMs: 2_000 })).rejects.toMatchObject({
+      code: "too_large",
+    });
     await expect(channel.send(Uint8Array.of(1), {
       expiresAtUnixMs: 999,
     })).resolves.toBe("dropped_expired");
@@ -213,6 +217,19 @@ describe("FSD2 unreliable message channel", () => {
     expect(transport.sendCount).toBe(64);
     transport.release();
     await expect(Promise.all(pending)).resolves.toEqual(new Array(64).fill("accepted"));
+  });
+
+  test("reports cancellation and carrier closure with portable error codes", async () => {
+    const transport = new CapturingTransport();
+    const channel = createChannel(transport, DirectionV2.ClientToServer, DirectionV2.ServerToClient);
+    const cancellation = new AbortController();
+    cancellation.abort();
+    await expect(channel.receive({ signal: cancellation.signal })).rejects.toMatchObject({
+      code: "canceled",
+    });
+    const closed = createChannel(
+      new ClosedTransport(), DirectionV2.ClientToServer, DirectionV2.ServerToClient);
+    await expect(closed.receive()).rejects.toMatchObject({ code: "closed" });
   });
 
   test("returns carrier-level datagram drops as a public send result", async () => {
@@ -358,6 +375,12 @@ class DroppingTransport extends CapturingTransport {
   override async send(data: Uint8Array): Promise<"dropped_carrier"> {
     this.sent.push(data.slice());
     return "dropped_carrier";
+  }
+}
+
+class ClosedTransport extends CapturingTransport {
+  override async receive(): Promise<Uint8Array> {
+    throw new Error("private carrier closure");
   }
 }
 

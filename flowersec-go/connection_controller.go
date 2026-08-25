@@ -166,6 +166,18 @@ func (failure *ConnectionFailure) Phase() ConnectionFailurePhase {
 	return ""
 }
 
+func connectionDiagnosticFailureCode(err error) string {
+	var connectError *ConnectError
+	if errors.As(err, &connectError) {
+		return connectError.Code().String()
+	}
+	var sessionError *SessionError
+	if errors.As(err, &sessionError) {
+		return string(sessionError.Code())
+	}
+	return ConnectConnectionFailed.String()
+}
+
 type phasedConnectionFailureError struct {
 	phase ConnectionFailurePhase
 	cause error
@@ -184,6 +196,86 @@ type ConnectionSnapshot struct {
 	CurrentSession Session
 	Failure        *ConnectionFailure
 	revision       uint64
+}
+
+// ConnectionDiagnosticFailure is a stable failure projection without an
+// underlying error, transport, endpoint, or credential.
+type ConnectionDiagnosticFailure struct {
+	Phase ConnectionFailurePhase `json:"phase"`
+	Code  string                 `json:"code"`
+}
+
+// ConnectionDiagnostic is the privacy-safe observable controller state.
+type ConnectionDiagnostic struct {
+	State            ConnectionState              `json:"state"`
+	Attempt          uint64                       `json:"attempt"`
+	Failure          *ConnectionDiagnosticFailure `json:"failure,omitempty"`
+	RetryDisposition *RetryDisposition            `json:"retryDisposition,omitempty"`
+}
+
+// Diagnostic removes the live Session and raw error from a controller snapshot.
+func (snapshot ConnectionSnapshot) Diagnostic() ConnectionDiagnostic {
+	diagnostic := ConnectionDiagnostic{State: snapshot.State, Attempt: snapshot.Attempt}
+	if snapshot.Failure == nil {
+		return diagnostic
+	}
+	diagnostic.Failure = &ConnectionDiagnosticFailure{
+		Phase: snapshot.Failure.Phase(),
+		Code:  connectionDiagnosticFailureCode(snapshot.Failure.Error),
+	}
+	disposition := snapshot.Failure.Disposition
+	diagnostic.RetryDisposition = &disposition
+	return diagnostic
+}
+
+// ConnectionControllerErrorCode is the complete WaitForSession outcome set.
+type ConnectionControllerErrorCode string
+
+const (
+	ConnectionControllerFailed   ConnectionControllerErrorCode = "failed"
+	ConnectionControllerClosed   ConnectionControllerErrorCode = "closed"
+	ConnectionControllerCanceled ConnectionControllerErrorCode = "canceled"
+)
+
+// ConnectionControllerError is a stable WaitForSession failure. Diagnostic
+// contains no Session or implementation error.
+type ConnectionControllerError struct {
+	code       ConnectionControllerErrorCode
+	diagnostic ConnectionDiagnostic
+	cause      error
+}
+
+func (err *ConnectionControllerError) Error() string {
+	if err == nil {
+		return "<nil>"
+	}
+	return "Flowersec connection controller stopped (code=" + string(err.Code()) + ")"
+}
+
+func (err *ConnectionControllerError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.cause
+}
+
+func (err *ConnectionControllerError) Code() ConnectionControllerErrorCode {
+	if err == nil {
+		return ConnectionControllerFailed
+	}
+	switch err.code {
+	case ConnectionControllerFailed, ConnectionControllerClosed, ConnectionControllerCanceled:
+		return err.code
+	default:
+		return ConnectionControllerFailed
+	}
+}
+
+func (err *ConnectionControllerError) Diagnostic() ConnectionDiagnostic {
+	if err == nil {
+		return ConnectionDiagnostic{State: ConnectionFailed}
+	}
+	return err.diagnostic
 }
 
 type connectionAttempt func(context.Context, ArtifactLease, ConnectorOptions) (Session, error)
@@ -302,6 +394,46 @@ func (controller *ConnectionController) Snapshot() ConnectionSnapshot {
 // CurrentSession returns the currently established one-shot Session, or nil.
 func (controller *ConnectionController) CurrentSession() Session {
 	return controller.Snapshot().CurrentSession
+}
+
+// WaitForSession waits for the current or next established Session. It does
+// not start the controller and does not replay or migrate application work.
+func (controller *ConnectionController) WaitForSession(ctx context.Context) (Session, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if controller == nil {
+		return nil, &ConnectionControllerError{
+			code:       ConnectionControllerFailed,
+			diagnostic: ConnectionDiagnostic{State: ConnectionFailed},
+			cause:      ErrInvalidConnectionController,
+		}
+	}
+	for {
+		snapshot := controller.Snapshot()
+		switch snapshot.State {
+		case ConnectionConnected:
+			if snapshot.CurrentSession != nil {
+				return snapshot.CurrentSession, nil
+			}
+		case ConnectionFailed:
+			return nil, &ConnectionControllerError{
+				code: ConnectionControllerFailed, diagnostic: snapshot.Diagnostic(),
+			}
+		case ConnectionClosed:
+			return nil, &ConnectionControllerError{
+				code: ConnectionControllerClosed, diagnostic: snapshot.Diagnostic(),
+			}
+		}
+		_, err := controller.WaitForSnapshotChange(ctx, snapshot)
+		if err != nil {
+			return nil, &ConnectionControllerError{
+				code:       ConnectionControllerCanceled,
+				diagnostic: snapshot.Diagnostic(),
+				cause:      err,
+			}
+		}
+	}
 }
 
 // WaitForSnapshotChange blocks until the controller advances beyond after.

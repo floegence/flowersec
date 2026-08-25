@@ -77,11 +77,12 @@ type tsSubpath struct {
 }
 
 type swiftManifest struct {
-	PackageName string        `json:"package_name"`
-	Product     string        `json:"product"`
-	Module      string        `json:"module"`
-	DocTokens   []string      `json:"doc_tokens"`
-	Symbols     []swiftSymbol `json:"symbols"`
+	PackageName     string        `json:"package_name"`
+	Product         string        `json:"product"`
+	Module          string        `json:"module"`
+	DocTokens       []string      `json:"doc_tokens"`
+	SignatureSHA256 string        `json:"signature_sha256"`
+	Symbols         []swiftSymbol `json:"symbols"`
 }
 
 type swiftSymbol struct {
@@ -303,6 +304,9 @@ func validateManifest(repoRoot string, m *manifest) error {
 	}
 	if len(m.Swift.Symbols) == 0 {
 		return errors.New("swift.symbols must not be empty")
+	}
+	if len(m.Swift.SignatureSHA256) != 64 || strings.Trim(m.Swift.SignatureSHA256, "0123456789abcdef") != "" {
+		return errors.New("swift.signature_sha256 must be a lowercase SHA-256 digest")
 	}
 	swiftNames := make([]string, 0, len(m.Swift.Symbols))
 	for _, symbol := range m.Swift.Symbols {

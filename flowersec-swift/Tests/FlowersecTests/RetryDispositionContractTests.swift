@@ -7,10 +7,10 @@ struct RetryDispositionContractTests {
   @Test func dispositionsMatchSharedRecoveryContract() throws {
     let document = try loadContract()
     try verifyCases(document["connect"], language: "swift") { code in
-      try #require(ConnectErrorV2(rawValue: code)).retryDisposition
+      try #require(ConnectErrorV2(rawValue: code)).retryDispositionV2
     }
     try verifyCases(document["session"], language: "swift") { code in
-      try #require(SessionError(rawValue: code)).retryDisposition
+      try #require(SessionError(rawValue: code)).retryDispositionV2
     }
   }
 
@@ -23,7 +23,7 @@ struct RetryDispositionContractTests {
   private func verifyCases(
     _ rawCases: Any?,
     language: String,
-    disposition: (String) throws -> RetryDisposition
+    disposition: (String) throws -> RetryDispositionV2
   ) throws {
     let cases = try #require(rawCases as? [[String: Any]])
     for item in cases {

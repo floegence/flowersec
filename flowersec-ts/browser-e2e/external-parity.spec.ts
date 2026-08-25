@@ -45,6 +45,8 @@ test("Chromium runs the WebSocket client profile", async ({ page, browserName })
       if (!resetCleanup.ok || resetCleanup.payload.value !== "ping") throw new Error("reset cleanup barrier failed");
       await session.rekey();
       await session.probeLiveness();
+      const completion = await session.rpc.call(7003, { value: "complete" }, (payload) => payload);
+      if (!completion.ok || completion.payload.value !== "complete") throw new Error("completion barrier failed");
       await session.close();
       return true;
     }, { artifactJSON: ready.artifact_json, path: ready.path, protocol });

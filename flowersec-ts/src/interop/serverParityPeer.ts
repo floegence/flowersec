@@ -1,5 +1,7 @@
 import { createInterface } from "node:readline";
 import { createPrivateKey, createPublicKey, X509Certificate } from "node:crypto";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import {
   createStreamMetadata,
@@ -11,8 +13,15 @@ import { parseArtifact } from "../public/artifact.js";
 import { connect } from "../node/connectSession.js";
 import { Issuer, createEndpointSet } from "../node/controlplane.js";
 import { SessionError, type ByteStream, type JsonValue, type Session } from "../public/contract.js";
+import { createAcceptorV3, type AcceptorListenerV3 } from "../node/acceptorV3.js";
+import { createTunnelRuntimeV3, type TunnelRuntimeListenerV3 } from "../node/tunnelRuntimeV3.js";
+import { verifyTunnelAuthorizationGrantV3 } from "../node/runtimeAuthorizationV3.js";
+import { connectV3 } from "../node/connectSessionV3.js";
+import { createArtifactLeaseV3, parseArtifactV3 } from "../v3/publicApi.js";
+import { SessionHandlersV3 } from "../node/acceptor.js";
 
 const RUNTIME = "node-typescript";
+const PROTOCOL = process.env.FLOWERSEC_PARITY_PROTOCOL ?? "v2";
 const ORIGIN = process.env.FLOWERSEC_PARITY_ORIGIN ?? "https://client.example";
 const ECHO_RPC = 7001;
 const NOTIFY_RPC = 7002;
@@ -92,6 +101,15 @@ type EndpointBReady = Readonly<{
   endpoint_b_artifact_json: string;
   relay: RelayReady;
   authorizations: readonly TunnelAuthorizationWire[];
+  verification_records?: Readonly<Record<string, string>>;
+}>;
+
+type IssuerResponse = Readonly<{
+  artifact_json?: string;
+  endpoint_a_artifact_json?: string;
+  endpoint_b_artifact_json?: string;
+  authorizations?: readonly TunnelAuthorizationWire[];
+  verification_records?: Readonly<Record<string, string>>;
 }>;
 
 type TunnelInput = Readonly<{
@@ -140,7 +158,7 @@ class PeerInput {
 
 type HandlerState = Readonly<{
   rpcHandlers: RPCHandlers;
-  sessionHandlers: SessionHandlers;
+  sessionHandlers: SessionHandlers | SessionHandlersV3;
   notifications: SignalQueue;
   activeStreams: { value: number };
   executed: ExecutedCases;
@@ -160,7 +178,9 @@ class ExecutedCases {
 
 function createHandlers(path: "direct" | "tunnel"): HandlerState {
   const rpcHandlers = new RPCHandlers();
-  const sessionHandlers = new SessionHandlers({ maxConcurrentStreams: 16 });
+  const sessionHandlers = PROTOCOL === "v3"
+    ? new SessionHandlersV3({ maxConcurrentStreams: 16 })
+    : new SessionHandlers({ maxConcurrentStreams: 16 });
   const notifications = new SignalQueue();
   const activeStreams = { value: 0 };
   const executed = new ExecutedCases();
@@ -484,7 +504,36 @@ async function connectArtifact(
   );
 }
 
+async function connectArtifactV3(
+  artifactJSON: string,
+  relay: Pick<RelayReady, "origin" | "trust_pem">,
+  rpcHandlers: RPCHandlers,
+): Promise<Session> {
+  return await connectV3(
+    createArtifactLeaseV3(parseArtifactV3(artifactJSON), async () => undefined),
+    { origin: relay.origin, roots: relay.trust_pem, rpcHandlers },
+  );
+}
+
+async function issueV3(input: Readonly<{ mode: "direct" | "tunnel"; endpoint: string; topology_id?: string }>): Promise<IssuerResponse> {
+  const goRoot = fileURLToPath(new URL("../../../flowersec-go", import.meta.url));
+  const child = spawn("go", ["run", "./internal/cmd/parity-artifact-issuer"], {
+    cwd: goRoot,
+    env: { ...process.env, FLOWERSEC_SERVER_PARITY_PEER: "1" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  child.stdin.end(`${JSON.stringify(input)}\n`);
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+  child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+  const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
+  if (code !== 0) throw new Error(`v3 parity issuer failed: ${Buffer.concat(stderr).toString("utf8").trim()}`);
+  return JSON.parse(Buffer.concat(stdout).toString("utf8")) as IssuerResponse;
+}
+
 async function runServer(tls: TLSFixture, carrier: ParityCarrier): Promise<void> {
+  if (PROTOCOL === "v3") return await runServerV3(tls, carrier);
   const issuedByLookup = new Map<string, ReturnType<typeof parseArtifact>>();
   const state = createHandlers("direct");
   const acceptor = await createAcceptor({
@@ -496,7 +545,7 @@ async function runServer(tls: TLSFixture, carrier: ParityCarrier): Promise<void>
         ? { decision: "reject" as const, reason: "invalid_credential" }
         : { decision: "allow" as const, artifact };
     },
-    resolveHandlers: () => state.sessionHandlers,
+    resolveHandlers: () => state.sessionHandlers as SessionHandlers,
   });
   try {
     const address = acceptor.addresses()[0];
@@ -542,6 +591,46 @@ async function runServer(tls: TLSFixture, carrier: ParityCarrier): Promise<void>
   }
 }
 
+async function runServerV3(tls: TLSFixture, carrier: ParityCarrier): Promise<void> {
+  const state = createHandlers("direct");
+  let trustedArtifact: ReturnType<typeof parseArtifactV3> | undefined;
+  const acceptor = await createAcceptorV3({
+    listeners: [directListenerOptionsV3(carrier, tls)],
+    maxInboundStreams: 16,
+    authorize: async () => trustedArtifact === undefined
+      ? { accepted: false, retryable: false, reason: "invalid_credential" }
+      : { accepted: true, artifact: trustedArtifact },
+    resolveHandlers: () => state.sessionHandlers as SessionHandlersV3,
+  });
+  try {
+    const address = acceptor.addresses()[0];
+    if (address === undefined) throw new Error(`direct ${carrier} listener did not bind`);
+    const issued = await issueV3({ mode: "direct", endpoint: endpointURLV3(carrier, "direct", address.port) });
+    if (issued.artifact_json === undefined) throw new Error("v3 parity issuer omitted direct artifact");
+    trustedArtifact = parseArtifactV3(issued.artifact_json);
+    const accepting = acceptor.accept();
+    writeJSON({
+      type: "ready", runtime: RUNTIME, carrier, path: "direct",
+      artifact_json: issued.artifact_json, trust_pem: tls.tls.root_certificate_pem, origin: ORIGIN,
+    });
+    const accepted = await accepting;
+    state.executed.record("admission");
+    const serving = accepted.serve().catch((error: unknown) => error);
+    if (process.env.FLOWERSEC_PARITY_CLIENT_PROFILE !== undefined) {
+      await externalServer(accepted.session, state);
+    } else {
+      await exerciseServer(accepted.session, state, "direct", true, carrier);
+    }
+    await serving;
+    await accepted.close().catch(() => undefined);
+    if (state.activeStreams.value !== 0) throw new Error(`direct server cleanup left ${state.activeStreams.value} streams`);
+    state.executed.record("cleanup");
+    writeJSON(result("server-result", "direct", state.executed.snapshot(), carrier));
+  } finally {
+    await acceptor.close();
+  }
+}
+
 async function runClient(input: PeerInput, carrier: ParityCarrier): Promise<void> {
   const ready = await input.next<Ready>();
   if (
@@ -552,11 +641,9 @@ async function runClient(input: PeerInput, carrier: ParityCarrier): Promise<void
   )
     throw new Error("invalid direct ready message");
   const state = createHandlers("direct");
-  const session = await connectArtifact(
-    ready.artifact_json,
-    ready,
-    state.rpcHandlers,
-  );
+  const session = PROTOCOL === "v3"
+    ? await connectArtifactV3(ready.artifact_json, ready, state.rpcHandlers)
+    : await connectArtifact(ready.artifact_json, ready, state.rpcHandlers);
   state.executed.record("admission");
   await exerciseClient(session, state, "direct", carrier);
   await session.close().catch((error: unknown) => {
@@ -571,6 +658,7 @@ async function runClient(input: PeerInput, carrier: ParityCarrier): Promise<void
 }
 
 async function runRelay(tls: TLSFixture, input: PeerInput, carrier: ParityCarrier): Promise<void> {
+  if (PROTOCOL === "v3") return await runRelayV3(tls, input, carrier);
   const decisions = new Map<
     string,
     Extract<TunnelAuthorizationDecision, Readonly<{ decision: "allow" }>>
@@ -660,7 +748,74 @@ async function runRelay(tls: TLSFixture, input: PeerInput, carrier: ParityCarrie
   });
 }
 
+async function runRelayV3(tls: TLSFixture, input: PeerInput, carrier: ParityCarrier): Promise<void> {
+  const authorizations = new Map<string, TunnelAuthorizationWire>();
+  const verificationRecords = new Map<string, string>();
+  const released = new Set<string>();
+  const executed = new ExecutedCases();
+  const runtime = createTunnelRuntimeV3({
+    listeners: [tunnelListenerOptionsV3(carrier, tls)],
+    maxInboundStreams: 16,
+    maxPendingLegs: 16,
+    maxActivePairs: 8,
+    authorize: async (request) => {
+      const item = authorizations.get(request.lookupKey());
+      const artifactJSON = verificationRecords.get(request.lookupKey());
+      if (item === undefined || artifactJSON === undefined) return { decision: "reject", reason: "invalid_credential" };
+      return {
+        decision: "allow",
+        grant: verifyTunnelAuthorizationGrantV3(request, parseArtifactV3(artifactJSON), {
+          leaseId: item.leaseId,
+          allowReplacement: item.allowReplacement,
+        }),
+      };
+    },
+    release: (leaseId) => { released.add(leaseId); },
+  });
+  try {
+    await runtime.start();
+    const address = runtime.addresses()[0];
+    if (address === undefined) throw new Error(`tunnel ${carrier} listener did not bind`);
+    writeJSON({
+      type: "relay-ready", runtime: RUNTIME, carrier, path: "tunnel",
+      endpoint_url: endpointURLV3(carrier, "tunnel", address.port),
+      trust_pem: tls.tls.root_certificate_pem,
+      trust_roots_der: [tls.tls.root_certificate_der_base64],
+      server_certificate_der: tls.tls.leaf_certificate_der_base64,
+      origin: ORIGIN,
+    });
+    const configure = await input.next<{
+      type: string;
+      authorizations: readonly TunnelAuthorizationWire[];
+      verification_records?: Readonly<Record<string, string>>;
+    }>();
+    if (configure.type !== "configure" || !Array.isArray(configure.authorizations) ||
+        configure.authorizations.length === 0 || configure.verification_records === undefined) {
+      throw new Error("invalid v3 tunnel relay configuration");
+    }
+    for (const item of configure.authorizations) authorizations.set(item.credentialId, item);
+    for (const [credentialID, artifactJSON] of Object.entries(configure.verification_records)) {
+      verificationRecords.set(credentialID, artifactJSON);
+    }
+    const close = await input.next<{ type: string }>();
+    if (close.type !== "close") throw new Error("invalid tunnel relay close command");
+    executed.record("close");
+  } finally {
+    await runtime.close();
+    executed.record("cancel");
+  }
+  if (released.size !== authorizations.size) throw new Error(`relay cleanup released ${released.size} of ${authorizations.size} leases`);
+  executed.record("admission", "pairing", "opaque-forwarding");
+  if (carrier === "raw-quic") executed.record("datagram-forwarding");
+  executed.record("cleanup");
+  writeJSON({
+    type: "relay-result", runtime: RUNTIME, carrier, path: "tunnel", cases: executed.snapshot(),
+    observed_plaintext: false, released_leases: released.size,
+  });
+}
+
 async function runTunnelEndpointB(input: PeerInput, carrier: ParityCarrier): Promise<void> {
+  if (PROTOCOL === "v3") return await runTunnelEndpointBV3(input, carrier);
   const envelope = await input.next<TunnelInput>();
   const { topology, relay } = envelope;
   validateTunnelDimensions(topology, relay, "endpoint_b", carrier);
@@ -707,7 +862,49 @@ async function runTunnelEndpointB(input: PeerInput, carrier: ParityCarrier): Pro
   writeJSON(result("endpoint-b-result", "tunnel", state.executed.snapshot(), carrier));
 }
 
+async function runTunnelEndpointBV3(input: PeerInput, carrier: ParityCarrier): Promise<void> {
+  const envelope = await input.next<TunnelInput>();
+  const { topology, relay } = envelope;
+  validateTunnelDimensions(topology, relay, "endpoint_b", carrier);
+  const issued = await issueV3({ mode: "tunnel", endpoint: relay.endpoint_url, topology_id: topology.id });
+  if (issued.endpoint_a_artifact_json === undefined || issued.endpoint_b_artifact_json === undefined ||
+      issued.authorizations === undefined || issued.verification_records === undefined) {
+    throw new Error("v3 parity issuer omitted tunnel material");
+  }
+  const ready: EndpointBReady = {
+    type: "endpoint-b-ready", runtime: RUNTIME, carrier, path: "tunnel",
+    endpoint_a_artifact_json: issued.endpoint_a_artifact_json,
+    endpoint_b_artifact_json: issued.endpoint_b_artifact_json,
+    relay, authorizations: issued.authorizations, verification_records: issued.verification_records,
+  };
+  writeJSON(ready);
+  const command = await input.next<{ type: string }>();
+  if (command.type !== "connect") throw new Error("endpoint B did not receive connect command");
+  const state = createHandlers("tunnel");
+  const session = await connectArtifactV3(ready.endpoint_b_artifact_json, relay, state.rpcHandlers);
+  state.executed.record("admission");
+  if (process.env.FLOWERSEC_PARITY_CLIENT_PROFILE !== undefined) {
+    await externalServer(session, state);
+  } else {
+    await exerciseServer(session, state, "tunnel", false, carrier);
+  }
+  await session.close().catch(() => undefined);
+  state.executed.record("close");
+  if (state.activeStreams.value !== 0) throw new Error(`endpoint B cleanup left ${state.activeStreams.value} streams`);
+  state.executed.record("cleanup");
+  writeJSON(result("endpoint-b-result", "tunnel", state.executed.snapshot(), carrier));
+}
+
 async function externalServer(session: Session, state: HandlerState): Promise<void> {
+  const cancellation = new AbortController();
+  cancellation.abort();
+  try {
+    await session.waitTermination({ signal: cancellation.signal });
+  } catch (error) {
+    if (!(error instanceof SessionError) || error.code !== "canceled") throw error;
+  }
+  state.executed.record("cancel");
+  await session.probeLiveness();
   await session.waitTermination();
   state.executed.record("close");
 }
@@ -729,11 +926,9 @@ async function runTunnelEndpointA(input: PeerInput, carrier: ParityCarrier): Pro
   )
     throw new Error("invalid endpoint B ready message");
   const state = createHandlers("tunnel");
-  const session = await connectArtifact(
-    ready.endpoint_a_artifact_json,
-    ready.relay,
-    state.rpcHandlers,
-  );
+  const session = PROTOCOL === "v3"
+    ? await connectArtifactV3(ready.endpoint_a_artifact_json, ready.relay, state.rpcHandlers)
+    : await connectArtifact(ready.endpoint_a_artifact_json, ready.relay, state.rpcHandlers);
   state.executed.record("admission");
   await exerciseClient(session, state, "tunnel", carrier);
   await session.close().catch(() => undefined);
@@ -836,6 +1031,12 @@ function endpointURL(carrier: ParityCarrier, path: "direct" | "tunnel", port: nu
     : `quic://127.0.0.1:${port}`;
 }
 
+function endpointURLV3(carrier: ParityCarrier, path: "direct" | "tunnel", port: number): string {
+  return carrier === "websocket"
+    ? `wss://localhost:${port}/flowersec/v3/${path}`
+    : `quic://127.0.0.1:${port}`;
+}
+
 function directListenerOptions(
   carrier: ParityCarrier,
   tls: TLSFixture,
@@ -850,6 +1051,26 @@ function tunnelListenerOptions(
   carrier: ParityCarrier,
   tls: TLSFixture,
 ): TunnelRuntimeListener {
+  const material = { certificate: tls.tls.certificate_chain_pem, privateKey: tls.tls.private_key_pem };
+  return carrier === "websocket"
+    ? { carrier, host: "127.0.0.1", port: 0, tls: material, allowedOrigins: [ORIGIN] }
+    : { carrier: "raw_quic", host: "127.0.0.1", port: 0, tls: material };
+}
+
+function directListenerOptionsV3(
+  carrier: ParityCarrier,
+  tls: TLSFixture,
+): AcceptorListenerV3 {
+  const material = { certificate: tls.tls.certificate_chain_pem, privateKey: tls.tls.private_key_pem };
+  return carrier === "websocket"
+    ? { carrier, path: "direct", host: "127.0.0.1", port: 0, tls: material, allowedOrigins: [ORIGIN] }
+    : { carrier: "raw_quic", path: "direct", host: "127.0.0.1", port: 0, tls: material };
+}
+
+function tunnelListenerOptionsV3(
+  carrier: ParityCarrier,
+  tls: TLSFixture,
+): TunnelRuntimeListenerV3 {
   const material = { certificate: tls.tls.certificate_chain_pem, privateKey: tls.tls.private_key_pem };
   return carrier === "websocket"
     ? { carrier, host: "127.0.0.1", port: 0, tls: material, allowedOrigins: [ORIGIN] }

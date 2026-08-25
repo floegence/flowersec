@@ -66,6 +66,7 @@ public struct ConnectError: Error, Equatable, Sendable {
   }
 }
 
+@available(*, deprecated, renamed: "ConnectError")
 public typealias ConnectErrorV3 = ConnectError
 
 /// Establishes an explicit legacy Transport v2 session.
@@ -92,12 +93,20 @@ public func connect(
   lease: ArtifactLease,
   options: ConnectorOptions = ConnectorOptions()
 ) async throws -> any Session {
-  try await connectV3(lease: lease, options: options)
+  try await connectOneShotV3(lease: lease, options: options)
 }
 
+@available(*, deprecated, renamed: "connect(lease:options:)")
 public func connectV3(
   lease: ArtifactLeaseV3,
   options: ConnectorOptions = ConnectorOptions()
+) async throws -> any Session {
+  try await connect(lease: lease, options: options)
+}
+
+private func connectOneShotV3(
+  lease: ArtifactLease,
+  options: ConnectorOptions
 ) async throws -> any Session {
   #if os(macOS) || os(iOS)
     return try await SessionConnectorV3(
@@ -110,7 +119,7 @@ public func connectV3(
     let claimed: ClaimedArtifactLeaseV3
     do {
       claimed = try await lease.claim()
-    } catch is ArtifactLeaseErrorV3 {
+    } catch is ArtifactLeaseError {
       throw ConnectError.artifactInvalid
     }
     try? await claimed.retire()
@@ -119,7 +128,7 @@ public func connectV3(
 }
 
 func connectV3ForController(
-  lease: ArtifactLeaseV3,
+  lease: ArtifactLease,
   options: ConnectorOptions = ConnectorOptions()
 ) async throws -> any Session {
   #if os(macOS) || os(iOS)

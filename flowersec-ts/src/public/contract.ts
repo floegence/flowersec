@@ -33,8 +33,16 @@ export interface UnreliableMessageChannel {
   receive(options?: OperationOptions): Promise<Uint8Array>;
 }
 
+export type UnreliableMessageErrorCode =
+  | "unavailable"
+  | "invalid_message"
+  | "too_large"
+  | "canceled"
+  | "closed"
+  | "operation_failed";
+
 export class UnreliableMessageError extends Error {
-  constructor(readonly code: "invalid_message" | "closed" | "operation_failed") {
+  constructor(readonly code: UnreliableMessageErrorCode) {
     super(`Flowersec unreliable message failed (code=${code})`);
     this.name = "UnreliableMessageError";
   }
@@ -43,6 +51,12 @@ export class UnreliableMessageError extends Error {
 export type StreamOpenOptions = OperationOptions & Readonly<{
   metadata?: StreamMetadata;
 }>;
+
+/** @deprecated Unreliable-message operations use UnreliableMessageErrorCode. */
+export type LegacyUnreliableSessionErrorCode =
+  | "unreliable_unavailable"
+  | "unreliable_too_large"
+  | "unreliable_dropped";
 
 export type SessionErrorCode =
   | "canceled"
@@ -54,9 +68,7 @@ export type SessionErrorCode =
   | "stream_reset"
   | "rekey_failed"
   | "liveness_failed"
-  | "unreliable_unavailable"
-  | "unreliable_too_large"
-  | "unreliable_dropped"
+  | LegacyUnreliableSessionErrorCode
   | "operation_failed";
 
 /** A closed, carrier-neutral session failure with no internal cause or peer detail. */

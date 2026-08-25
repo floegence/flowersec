@@ -48,13 +48,13 @@ protocol PreparedCarrierConnectionV3: Sendable {
 }
 
 struct SessionConnectorV3: Sendable {
-  private let lease: ArtifactLeaseV3
+  private let lease: ArtifactLease
   private let options: ConnectorOptions
   private let runtime: any RuntimeCarrierAdapterV3
   private let currentUnixSeconds: @Sendable () -> UInt64
 
   init(
-    lease: ArtifactLeaseV3,
+    lease: ArtifactLease,
     options: ConnectorOptions,
     runtime: any RuntimeCarrierAdapterV3,
     currentUnixSeconds: @escaping @Sendable () -> UInt64 = {
@@ -78,7 +78,7 @@ struct SessionConnectorV3: Sendable {
       return try await connectWithDeadline()
     } catch is CancellationError {
       throw ConnectError.canceled
-    } catch is ArtifactLeaseErrorV3 {
+    } catch is ArtifactLeaseError {
       throw ConnectError.artifactInvalid
     } catch ConnectorBoundaryErrorV3.artifactInvalid {
       throw ConnectError.artifactInvalid
@@ -135,7 +135,7 @@ struct SessionConnectorV3: Sendable {
     } catch is CancellationError {
       throw ControllerConnectFailureV3.connection(
         .canceled, .terminal, policyTriggerIDs: [], opaquePolicyTriggerIDs: [], failedIDs: [])
-    } catch is ArtifactLeaseErrorV3 {
+    } catch is ArtifactLeaseError {
       throw ControllerConnectFailureV3.connection(
         .artifactInvalid, .terminal, policyTriggerIDs: [], opaquePolicyTriggerIDs: [],
         failedIDs: [])

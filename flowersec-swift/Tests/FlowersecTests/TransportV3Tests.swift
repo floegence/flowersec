@@ -12,7 +12,7 @@ struct TransportV3Tests {
   }
 
   @Test func strictArtifactCanonicalizationFSBAndDomainBinding() throws {
-    let artifact = try parseArtifactV3(Self.validArtifact())
+    let artifact = try parseArtifact(Self.validArtifact())
     #expect(
       artifact.canonicalCandidates[0].normalizedURL == "wss://example.com/flowersec/v3/direct")
     let encoded = try AdmissionCodecV3.encodeFSB3(artifact: artifact, chosenCandidateID: "a")
@@ -20,8 +20,8 @@ struct TransportV3Tests {
     var expected = Data("flowersec-v3-admission\0".utf8)
     expected.append(encoded.frame)
     #expect(encoded.admissionBinding == Data(SHA256.hash(data: expected)))
-    #expect(throws: ArtifactErrorV3.self) {
-      try parseArtifactV3(Data([0x20]) + Self.validArtifact())
+    #expect(throws: ArtifactError.self) {
+      try parseArtifact(Data([0x20]) + Self.validArtifact())
     }
   }
 
@@ -60,11 +60,11 @@ struct TransportV3Tests {
     #expect(throws: JSONPreflightV3.ValidationError.self) {
       try JSONPreflightV3.validateArtifact(Data(duplicateArtifact.utf8))
     }
-    #expect(throws: ArtifactErrorV3.self) {
-      try parseArtifactV3(Data(duplicateArtifact.utf8))
+    #expect(throws: ArtifactError.self) {
+      try parseArtifact(Data(duplicateArtifact.utf8))
     }
 
-    let artifact = try parseArtifactV3(Self.validArtifact())
+    let artifact = try parseArtifact(Self.validArtifact())
     let admission = try AdmissionCodecV3.encodeFSB3(artifact: artifact, chosenCandidateID: "a")
     let payloadText = try #require(String(data: admission.frame.dropFirst(12), encoding: .utf8))
     let duplicatePayload = Data(
@@ -84,7 +84,7 @@ struct TransportV3Tests {
     let duplicateCapability = capabilityText.replacingOccurrences(
       of: "\"carrier\":\"websocket\"",
       with: "\"carrier\":\"websocket\",\"carri\\u0065r\":\"websocket\"")
-    #expect(throws: ArtifactErrorV3.self) {
+    #expect(throws: ArtifactError.self) {
       try RuntimeCapabilityDescriptorV3.decode(Data(duplicateCapability.utf8))
     }
   }
@@ -110,22 +110,22 @@ struct TransportV3Tests {
   }
 
   @Test func copiedLeaseHasOneOwnerAndTerminalSpend() async throws {
-    let artifact = try parseArtifactV3(Self.validArtifact())
+    let artifact = try parseArtifact(Self.validArtifact())
     let counter = CounterV3()
-    let lease = ArtifactLeaseV3(artifact: artifact, commitSpend: { await counter.increment() })
+    let lease = ArtifactLease(artifact: artifact, commitSpend: { await counter.increment() })
     let claimed = try await lease.claim()
-    await #expect(throws: ArtifactLeaseErrorV3.unavailable) { try await lease.claim() }
+    await #expect(throws: ArtifactLeaseError.unavailable) { try await lease.claim() }
     try await claimed.commitSpend()
     #expect(await counter.value == 1)
-    await #expect(throws: ArtifactLeaseErrorV3.unavailable) { try await lease.claim() }
+    await #expect(throws: ArtifactLeaseError.unavailable) { try await lease.claim() }
   }
 
   #if !os(macOS) && !os(iOS)
     @Test func unsupportedPublicConnectorRetiresItsClaimedLease() async throws {
       let spend = CounterV3()
       let retired = CounterV3()
-      let lease = ArtifactLeaseV3(
-        artifact: try parseArtifactV3(Self.validArtifact()),
+      let lease = ArtifactLease(
+        artifact: try parseArtifact(Self.validArtifact()),
         commitSpend: { await spend.increment() },
         retire: { await retired.increment() })
 
@@ -134,7 +134,7 @@ struct TransportV3Tests {
       }
       #expect(await spend.value == 0)
       #expect(await retired.value == 1)
-      await #expect(throws: ArtifactLeaseErrorV3.unavailable) {
+      await #expect(throws: ArtifactLeaseError.unavailable) {
         try await lease.claim()
       }
       await #expect(throws: ConnectError.artifactInvalid) {
@@ -145,10 +145,10 @@ struct TransportV3Tests {
   #endif
 
   @Test func canceledSpendWithUnknownCallbackResultIsConsumed() async throws {
-    let artifact = try parseArtifactV3(Self.validArtifact())
+    let artifact = try parseArtifact(Self.validArtifact())
     let started = AsyncStream<Void>.makeStream()
     let release = AsyncStream<Void>.makeStream()
-    let lease = ArtifactLeaseV3(
+    let lease = ArtifactLease(
       artifact: artifact,
       commitSpend: {
         started.continuation.yield(())
@@ -173,8 +173,8 @@ struct TransportV3Tests {
   }
 
   @Test func failedSpendIsConsumed() async throws {
-    let artifact = try parseArtifactV3(Self.validArtifact())
-    let lease = ArtifactLeaseV3(
+    let artifact = try parseArtifact(Self.validArtifact())
+    let lease = ArtifactLease(
       artifact: artifact,
       commitSpend: {
         throw SpendFailureV3.durabilityUnavailable
@@ -183,7 +183,7 @@ struct TransportV3Tests {
     await #expect(throws: SpendFailureV3.durabilityUnavailable) {
       try await claimed.commitSpend()
     }
-    await #expect(throws: ArtifactLeaseErrorV3.unavailable) {
+    await #expect(throws: ArtifactLeaseError.unavailable) {
       try await lease.claim()
     }
   }
@@ -221,7 +221,7 @@ struct TransportV3Tests {
       "ws://127.0.0.1/flowersec/v3/direct", "wss://127.1/flowersec/v3/direct",
       "wss://example.1/flowersec/v3/direct", "wss://example.0x/flowersec/v3/direct",
     ] {
-      #expect(throws: ArtifactErrorV3.self) {
+      #expect(throws: ArtifactError.self) {
         try ArtifactCodecV3.normalizeURL(value, carrier: "websocket", kind: "direct")
       }
     }
@@ -248,7 +248,7 @@ struct TransportV3Tests {
     for vector in positive {
       let id = try #require(vector["id"] as? String)
       let artifactJSON = try #require(vector["artifact_json"] as? String)
-      let artifact = try parseArtifactV3(Data(artifactJSON.utf8))
+      let artifact = try parseArtifact(Data(artifactJSON.utf8))
       #expect(artifact.canonicalJSON == Data(artifactJSON.utf8), Comment(rawValue: id))
       let artifactObject = try #require(
         JSONSerialization.jsonObject(with: Data(artifactJSON.utf8)) as? [String: Any])
@@ -327,8 +327,8 @@ struct TransportV3Tests {
     for vector in negative {
       let id = try #require(vector["id"] as? String)
       let value = try #require(vector["value"] as? String)
-      #expect(throws: ArtifactErrorV3.self, Comment(rawValue: id)) {
-        try parseArtifactV3(Data(value.utf8))
+      #expect(throws: ArtifactError.self, Comment(rawValue: id)) {
+        try parseArtifact(Data(value.utf8))
       }
     }
 
@@ -339,11 +339,11 @@ struct TransportV3Tests {
         let accepted = try #require(vector["accepted"] as? Bool)
         let value = Data(try #require(vector["artifact_json"] as? String).utf8)
         if accepted {
-          let artifact = try parseArtifactV3(value)
+          let artifact = try parseArtifact(value)
           #expect(artifact.canonicalJSON == value, Comment(rawValue: id))
         } else {
-          #expect(throws: ArtifactErrorV3.self, Comment(rawValue: id)) {
-            try parseArtifactV3(value)
+          #expect(throws: ArtifactError.self, Comment(rawValue: id)) {
+            try parseArtifact(value)
           }
         }
       }
@@ -354,7 +354,7 @@ struct TransportV3Tests {
       let id = try #require(vector["id"] as? String)
       let value = try Data(hexV3: #require(vector["value_hex"] as? String))
       let expected = try Self.artifactError(code: #require(vector["error_code"] as? String))
-      #expect(throws: expected, Comment(rawValue: id)) { try parseArtifactV3(value) }
+      #expect(throws: expected, Comment(rawValue: id)) { try parseArtifact(value) }
     }
     let fsb3Negative = try #require(vectors["fsb3_negative"] as? [[String: Any]])
     for vector in fsb3Negative {
@@ -427,8 +427,8 @@ struct TransportV3Tests {
     }
   }
 
-  private static func artifactError(code: String) throws -> ArtifactErrorV3 {
-    guard code == "invalid_artifact" else { throw ArtifactErrorV3.invalidArtifact }
+  private static func artifactError(code: String) throws -> ArtifactError {
+    guard code == "invalid_artifact" else { throw ArtifactError.invalidArtifact }
     return .invalidArtifact
   }
 
@@ -437,14 +437,14 @@ struct TransportV3Tests {
     case "invalid_fsb3", "invalid_fsa3": return .invalid
     case "fsb3_payload_too_large": return .payloadTooLarge
     case "noncanonical_fsb3": return .nonCanonical
-    default: throw ArtifactErrorV3.invalidArtifact
+    default: throw ArtifactError.invalidArtifact
     }
   }
 
   @Test func consumesGoProductionIssuerAdmissionVector() throws {
     let root = try Self.loadVectorObject("go_issuer_admission_vectors.json")
     let artifactJSON = try #require(root["artifact_json"] as? String)
-    let artifact = try parseArtifactV3(Data(artifactJSON.utf8))
+    let artifact = try parseArtifact(Data(artifactJSON.utf8))
     let candidateID = try #require(root["chosen_candidate_id"] as? String)
     let admission = try AdmissionCodecV3.encodeFSB3(
       artifact: artifact, chosenCandidateID: candidateID)
@@ -522,7 +522,7 @@ struct TransportV3Tests {
     }
     let tunnelArtifactText = try #require(
       tunnelArtifacts.first {
-        ($0.data(using: String.Encoding.utf8).flatMap { try? parseArtifactV3($0) })?.value.path.kind
+        ($0.data(using: String.Encoding.utf8).flatMap { try? parseArtifact($0) })?.value.path.kind
           == "tunnel"
       })
     let profileMutations = try #require(root["profile_mutations"] as? [[String: Any]])
@@ -545,8 +545,8 @@ struct TransportV3Tests {
       let sourceText = id == "tunnel" ? tunnelArtifactText : artifactText
       let mutated = sourceText.replacingOccurrences(
         of: marker, with: marker.replacingOccurrences(of: "/3", with: "/2"))
-      #expect(throws: ArtifactErrorV3.self, Comment(rawValue: "profile_mutations/\(id)")) {
-        try parseArtifactV3(Data(mutated.utf8))
+      #expect(throws: ArtifactError.self, Comment(rawValue: "profile_mutations/\(id)")) {
+        try parseArtifact(Data(mutated.utf8))
       }
       #expect(v2.hasSuffix("/2"))
     }
@@ -568,7 +568,7 @@ struct TransportV3Tests {
           "\(carrier == "webtransport" ? "https" : "wss")://example.com\(v3)",
           carrier: carrier, kind: kind)
           == "\(carrier == "webtransport" ? "https" : "wss")://example.com\(expectedPath)")
-      #expect(throws: ArtifactErrorV3.self, Comment(rawValue: "path_mutations/\(id)")) {
+      #expect(throws: ArtifactError.self, Comment(rawValue: "path_mutations/\(id)")) {
         try ArtifactCodecV3.normalizeURL(
           "\(carrier == "webtransport" ? "https" : "wss")://example.com\(v2)", carrier: carrier,
           kind: kind)
@@ -838,7 +838,7 @@ struct TransportV3Tests {
     let go = try #require(vectors.first(where: { $0["name"] as? String == "go-native" }))
     let decodedGo = try RuntimeCapabilityDescriptorV3.decode(
       Data(try #require(go["canonical_json"] as? String).utf8))
-    #expect(throws: ArtifactErrorV3.self) {
+    #expect(throws: ArtifactError.self) {
       try decodedGo.validateLocalRuntimeProfile("macos")
     }
     let invalid = try #require(root["invalid"] as? [[String: Any]])
@@ -846,7 +846,7 @@ struct TransportV3Tests {
     for vector in invalid {
       let id = try #require(vector["id"] as? String)
       let value = Data(try #require(vector["value"] as? String).utf8)
-      #expect(throws: ArtifactErrorV3.self, Comment(rawValue: id)) {
+      #expect(throws: ArtifactError.self, Comment(rawValue: id)) {
         try RuntimeCapabilityDescriptorV3.decode(value)
       }
     }
@@ -927,14 +927,14 @@ private enum SpendFailureV3: Error, Equatable {
 
 extension Data {
   fileprivate init(hexV3 value: String) throws {
-    guard value.count.isMultiple(of: 2) else { throw ArtifactErrorV3.invalidArtifact }
+    guard value.count.isMultiple(of: 2) else { throw ArtifactError.invalidArtifact }
     var bytes: [UInt8] = []
     bytes.reserveCapacity(value.count / 2)
     var index = value.startIndex
     while index < value.endIndex {
       let next = value.index(index, offsetBy: 2)
       guard let byte = UInt8(value[index..<next], radix: 16) else {
-        throw ArtifactErrorV3.invalidArtifact
+        throw ArtifactError.invalidArtifact
       }
       bytes.append(byte)
       index = next

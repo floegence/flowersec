@@ -7,13 +7,13 @@ import Foundation
   import Glibc
 #endif
 
-public enum ArtifactErrorV3: Error, Equatable, Sendable {
+public enum ArtifactError: Error, Equatable, Sendable {
   case artifactTooLarge
   case invalidArtifact
 }
 
 /// An opaque, fully validated Flowersec v3 artifact.
-public final class ArtifactV3: @unchecked Sendable, CustomStringConvertible,
+public final class Artifact: @unchecked Sendable, CustomStringConvertible,
   CustomDebugStringConvertible, CustomReflectable
 {
   let value: ArtifactWireV3
@@ -36,8 +36,8 @@ public final class ArtifactV3: @unchecked Sendable, CustomStringConvertible,
     self.candidateSetHash = candidateSetHash
   }
 
-  func filteredForController(candidateIDs: Set<String>) -> ArtifactV3 {
-    ArtifactV3(
+  func filteredForController(candidateIDs: Set<String>) -> Artifact {
+    Artifact(
       value: value,
       canonicalJSON: canonicalJSON,
       canonicalCandidates: canonicalCandidates.filter { candidateIDs.contains($0.id) },
@@ -46,36 +46,39 @@ public final class ArtifactV3: @unchecked Sendable, CustomStringConvertible,
     )
   }
 
-  public var description: String { "Flowersec.ArtifactV3(<redacted>)" }
+  public var description: String { "Flowersec.Artifact(<redacted>)" }
   public var debugDescription: String { description }
   public var customMirror: Mirror { Mirror(self, unlabeledChildren: [Any]()) }
 }
 
 /// Parses the strict JCS Flowersec v3 wire contract without exposing credentials.
-public func parseArtifactV3(_ data: Data) throws -> ArtifactV3 {
+public func parseArtifact(_ data: Data) throws -> Artifact {
   try ArtifactCodecV3.decode(data)
 }
 
-/// The unversioned artifact surface is the strict v3 wire contract.
-public typealias Artifact = ArtifactV3
-public typealias ArtifactError = ArtifactErrorV3
+@available(*, deprecated, renamed: "Artifact")
+public typealias ArtifactV3 = Artifact
 
-public func parseArtifact(_ data: Data) throws -> Artifact {
-  try parseArtifactV3(data)
+@available(*, deprecated, renamed: "ArtifactError")
+public typealias ArtifactErrorV3 = ArtifactError
+
+@available(*, deprecated, renamed: "parseArtifact")
+public func parseArtifactV3(_ data: Data) throws -> Artifact {
+  try parseArtifact(data)
 }
 
-public enum ArtifactLeaseErrorV3: Error, Equatable, Sendable {
+public enum ArtifactLeaseError: Error, Equatable, Sendable {
   case unavailable
 }
 
 /// A copyable handle backed by one shared, atomic v3 lease state.
-public struct ArtifactLeaseV3: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
-  let artifact: ArtifactV3
+public struct ArtifactLease: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
+  let artifact: Artifact
   private let state: ArtifactLeaseStateV3
   private let controllerCapability: ControllerLeaseCapabilityV3?
 
   public init(
-    artifact: ArtifactV3,
+    artifact: Artifact,
     commitSpend: @escaping @Sendable () async throws -> Void,
     retire: @escaping @Sendable () async throws -> Void = {}
   ) {
@@ -85,7 +88,7 @@ public struct ArtifactLeaseV3: Sendable, CustomStringConvertible, CustomDebugStr
   }
 
   fileprivate init(
-    artifact: ArtifactV3,
+    artifact: Artifact,
     state: ArtifactLeaseStateV3,
     controllerCapability: ControllerLeaseCapabilityV3
   ) {
@@ -94,7 +97,7 @@ public struct ArtifactLeaseV3: Sendable, CustomStringConvertible, CustomDebugStr
     self.controllerCapability = controllerCapability
   }
 
-  public var description: String { "Flowersec.ArtifactLeaseV3(<redacted>)" }
+  public var description: String { "Flowersec.ArtifactLease(<redacted>)" }
   public var debugDescription: String { description }
 
   func claim() async throws -> ClaimedArtifactLeaseV3 {
@@ -110,16 +113,19 @@ public struct ArtifactLeaseV3: Sendable, CustomStringConvertible, CustomDebugStr
   }
 }
 
-public typealias ArtifactLease = ArtifactLeaseV3
-public typealias ArtifactLeaseError = ArtifactLeaseErrorV3
+@available(*, deprecated, renamed: "ArtifactLease")
+public typealias ArtifactLeaseV3 = ArtifactLease
+
+@available(*, deprecated, renamed: "ArtifactLeaseError")
+public typealias ArtifactLeaseErrorV3 = ArtifactLeaseError
 
 struct ClaimedArtifactLeaseV3: Sendable {
-  let artifact: ArtifactV3
+  let artifact: Artifact
   fileprivate let state: ArtifactLeaseStateV3
   fileprivate let controllerCapability: ControllerLeaseCapabilityV3?
 
   fileprivate init(
-    artifact: ArtifactV3,
+    artifact: Artifact,
     state: ArtifactLeaseStateV3,
     controllerCapability: ControllerLeaseCapabilityV3? = nil
   ) {
@@ -133,13 +139,13 @@ struct ClaimedArtifactLeaseV3: Sendable {
   var isConsumed: Bool { get async { await state.isConsumed } }
   var isSpending: Bool { get async { await state.isSpending } }
 
-  func connectorLease() -> ArtifactLeaseV3 {
+  func connectorLease() -> ArtifactLease {
     connectorLease(artifact: artifact)
   }
 
-  func connectorLease(artifact: ArtifactV3) -> ArtifactLeaseV3 {
+  func connectorLease(artifact: Artifact) -> ArtifactLease {
     precondition(controllerCapability != nil)
-    return ArtifactLeaseV3(
+    return ArtifactLease(
       artifact: artifact, state: state, controllerCapability: controllerCapability!)
   }
 }
@@ -168,16 +174,16 @@ private actor ArtifactLeaseStateV3 {
       guard state == .claimed,
         self.controllerCapability == ObjectIdentifier(controllerCapability),
         !controllerCapabilityUsed
-      else { throw ArtifactLeaseErrorV3.unavailable }
+      else { throw ArtifactLeaseError.unavailable }
       controllerCapabilityUsed = true
     } else {
-      guard state == .idle else { throw ArtifactLeaseErrorV3.unavailable }
+      guard state == .idle else { throw ArtifactLeaseError.unavailable }
       state = .claimed
     }
   }
 
   func claimForConnectionController(capability: ControllerLeaseCapabilityV3) throws {
-    guard state == .idle else { throw ArtifactLeaseErrorV3.unavailable }
+    guard state == .idle else { throw ArtifactLeaseError.unavailable }
     state = .claimed
     controllerCapability = ObjectIdentifier(capability)
   }
@@ -187,7 +193,7 @@ private actor ArtifactLeaseStateV3 {
   var isSpending: Bool { state == .spending }
 
   func commitSpend() async throws {
-    guard state == .claimed else { throw ArtifactLeaseErrorV3.unavailable }
+    guard state == .claimed else { throw ArtifactLeaseError.unavailable }
     state = .spending
 
     let completion = ArtifactSpendCompletionV3()
@@ -218,7 +224,7 @@ private actor ArtifactLeaseStateV3 {
   }
 
   func retire() async throws {
-    guard state == .claimed else { throw ArtifactLeaseErrorV3.unavailable }
+    guard state == .claimed else { throw ArtifactLeaseError.unavailable }
     state = .retired
     try await cleanup()
   }
@@ -429,13 +435,13 @@ struct CanonicalCandidateV3: Equatable, Sendable {
     case "pin":
       let active = try (tls.pins ?? []).filter { unixSeconds < $0.notAfterUnixSeconds }.map {
         guard let value = FlowersecJCSV3.canonical32($0.valueBase64URL) else {
-          throw ArtifactErrorV3.invalidArtifact
+          throw ArtifactError.invalidArtifact
         }
         return value
       }
       guard !active.isEmpty else { throw TransportSecurityFailureV3.tlsPolicyExpired }
       return active
-    default: throw ArtifactErrorV3.invalidArtifact
+    default: throw ArtifactError.invalidArtifact
     }
   }
 }
@@ -444,33 +450,33 @@ enum ArtifactCodecV3 {
   static let maximumSafeInteger: UInt64 = 9_007_199_254_740_991
   static let maxBytes = 65_536
 
-  static func decode(_ data: Data) throws -> ArtifactV3 {
-    guard data.count <= maxBytes else { throw ArtifactErrorV3.artifactTooLarge }
+  static func decode(_ data: Data) throws -> Artifact {
+    guard data.count <= maxBytes else { throw ArtifactError.artifactTooLarge }
     do {
       try JSONPreflightV3.validateArtifact(data)
       let rawRoot = try JSONSerialization.jsonObject(with: data)
       guard let root = rawRoot as? [String: Any], try FlowersecJCSV3.encode(rawRoot) == data else {
-        throw ArtifactErrorV3.invalidArtifact
+        throw ArtifactError.invalidArtifact
       }
       try validateShapes(root)
       let value = try JSONDecoder().decode(ArtifactWireV3.self, from: data)
       let candidates = try validate(value, rawRoot: root)
       let candidateObjects = candidates.map { $0.object() }
       let candidateJSON = try FlowersecJCSV3.encode(candidateObjects)
-      guard candidateJSON.count <= 12_288 else { throw ArtifactErrorV3.invalidArtifact }
+      guard candidateJSON.count <= 12_288 else { throw ArtifactError.invalidArtifact }
       let candidateHash = FlowersecJCSV3.hashLP(
         domain: TransportV3Contract.candidatesLabel, canonical: candidateJSON)
-      return ArtifactV3(
+      return Artifact(
         value: value,
         canonicalJSON: data,
         canonicalCandidates: candidates,
         candidateSetJSON: candidateJSON,
         candidateSetHash: candidateHash
       )
-    } catch let error as ArtifactErrorV3 {
+    } catch let error as ArtifactError {
       throw error
     } catch {
-      throw ArtifactErrorV3.invalidArtifact
+      throw ArtifactError.invalidArtifact
     }
   }
 
@@ -483,7 +489,7 @@ enum ArtifactCodecV3 {
       let correlation = root["correlation"] as? [String: Any],
       let candidates = path["candidates"] as? [[String: Any]],
       let tags = correlation["tags"] as? [[String: Any]]
-    else { throw ArtifactErrorV3.invalidArtifact }
+    else { throw ArtifactError.invalidArtifact }
     try exact(
       session,
       [
@@ -492,7 +498,7 @@ enum ArtifactCodecV3 {
         "rekey_completion_timeout_seconds", "max_inbound_streams", "e2ee_psk_b64u",
         "allowed_suites", "default_suite", "selected_features", "contract_hash_b64u",
       ])
-    guard let kind = path["kind"] as? String else { throw ArtifactErrorV3.invalidArtifact }
+    guard let kind = path["kind"] as? String else { throw ArtifactError.invalidArtifact }
     if kind == "direct" {
       try exact(
         path, ["kind", "rendezvous_group_id", "listener_audience", "routing_token", "candidates"])
@@ -504,12 +510,12 @@ enum ArtifactCodecV3 {
           "local_endpoint_instance_id", "expected_peer_endpoint_instance_id", "token", "candidates",
         ])
     } else {
-      throw ArtifactErrorV3.invalidArtifact
+      throw ArtifactError.invalidArtifact
     }
     for candidate in candidates {
       try exact(candidate, ["id", "carrier", "url", "wire_profile", "tls"])
       guard let tls = candidate["tls"] as? [String: Any], let mode = tls["mode"] as? String else {
-        throw ArtifactErrorV3.invalidArtifact
+        throw ArtifactError.invalidArtifact
       }
       if mode == "ca" {
         try exact(tls, ["mode"])
@@ -517,12 +523,12 @@ enum ArtifactCodecV3 {
         try exact(tls, ["mode", "pins"])
         for pin in pins { try exact(pin, ["algorithm", "not_after_unix_s", "value_b64u"]) }
       } else {
-        throw ArtifactErrorV3.invalidArtifact
+        throw ArtifactError.invalidArtifact
       }
     }
     for scope in scopes {
       try exact(scope, ["scope", "scope_version", "critical", "payload"])
-      guard scope["payload"] is [String: Any] else { throw ArtifactErrorV3.invalidArtifact }
+      guard scope["payload"] is [String: Any] else { throw ArtifactError.invalidArtifact }
     }
     try exact(correlation, ["v", "tags"])
     for tag in tags { try exact(tag, ["key", "value"]) }
@@ -532,17 +538,17 @@ enum ArtifactCodecV3 {
     _ artifact: ArtifactWireV3, rawRoot: [String: Any]
   ) throws -> [CanonicalCandidateV3] {
     guard artifact.v == 3, artifact.profile == TransportV3Contract.sessionProfile else {
-      throw ArtifactErrorV3.invalidArtifact
+      throw ArtifactError.invalidArtifact
     }
     try validateSession(artifact.session)
     let path = artifact.path
     guard registry(path.rendezvousGroupID, max: 128), registry(path.listenerAudience, max: 128),
       (1...4).contains(path.candidates.count)
-    else { throw ArtifactErrorV3.invalidArtifact }
+    else { throw ArtifactError.invalidArtifact }
     switch path.kind {
     case "direct":
       guard ascii(path.routingToken ?? "", max: 8_192) else {
-        throw ArtifactErrorV3.invalidArtifact
+        throw ArtifactError.invalidArtifact
       }
     case "tunnel":
       guard path.role == 1 || path.role == 2,
@@ -550,8 +556,8 @@ enum ArtifactCodecV3 {
         registry(path.expectedPeerEndpointInstanceID ?? "", max: 128),
         path.localEndpointInstanceID != path.expectedPeerEndpointInstanceID,
         ascii(path.token ?? "", max: 8_192)
-      else { throw ArtifactErrorV3.invalidArtifact }
-    default: throw ArtifactErrorV3.invalidArtifact
+      else { throw ArtifactError.invalidArtifact }
+    default: throw ArtifactError.invalidArtifact
     }
 
     var ids = Set<String>()
@@ -561,16 +567,16 @@ enum ArtifactCodecV3 {
       guard validCandidateID(candidate.id), ids.insert(candidate.id).inserted,
         ["websocket", "raw_quic", "webtransport"].contains(candidate.carrier),
         candidate.wireProfile == TransportV3Contract.wireProfile(for: path.kind)
-      else { throw ArtifactErrorV3.invalidArtifact }
+      else { throw ArtifactError.invalidArtifact }
       try validateTLSPolicy(candidate.tls)
       let normalized = try normalizeURL(candidate.url, carrier: candidate.carrier, kind: path.kind)
       let endpoint = candidate.carrier + "\0" + path.kind + "\0" + normalized
-      guard endpoints.insert(endpoint).inserted else { throw ArtifactErrorV3.invalidArtifact }
+      guard endpoints.insert(endpoint).inserted else { throw ArtifactError.invalidArtifact }
       let canonical = CanonicalCandidateV3(
         carrier: candidate.carrier, id: candidate.id, normalizedURL: normalized,
         tls: candidate.tls, wireProfile: candidate.wireProfile)
       guard try FlowersecJCSV3.encode(canonical.object()).count <= 2_304 else {
-        throw ArtifactErrorV3.invalidArtifact
+        throw ArtifactError.invalidArtifact
       }
       candidates.append(canonical)
     }
@@ -579,26 +585,26 @@ enum ArtifactCodecV3 {
     guard artifact.scoped.count <= 8,
       let rawScopes = rawRoot["scoped"] as? [[String: Any]],
       rawScopes.count == artifact.scoped.count
-    else { throw ArtifactErrorV3.invalidArtifact }
+    else { throw ArtifactError.invalidArtifact }
     var scopes = Set<String>()
     for (index, scope) in artifact.scoped.enumerated() {
       guard validLowerID(scope.scope, max: 64), (1...65_535).contains(scope.scopeVersion),
         scopes.insert(scope.scope).inserted,
         let payload = rawScopes[index]["payload"] as? [String: Any],
         try FlowersecJCSV3.encode(payload).count <= 4_096
-      else { throw ArtifactErrorV3.invalidArtifact }
+      else { throw ArtifactError.invalidArtifact }
       var nodes = 0
       try validateScoped(payload, depth: 1, nodes: &nodes, root: true)
     }
 
     guard artifact.correlation.v == 3, artifact.correlation.tags.count <= 8 else {
-      throw ArtifactErrorV3.invalidArtifact
+      throw ArtifactError.invalidArtifact
     }
     var tags = Set<String>()
     for tag in artifact.correlation.tags {
       guard validLowerID(tag.key, max: 32), ascii(tag.value, max: 128),
         tags.insert(tag.key).inserted
-      else { throw ArtifactErrorV3.invalidArtifact }
+      else { throw ArtifactError.invalidArtifact }
     }
     return candidates
   }
@@ -615,7 +621,7 @@ enum ArtifactCodecV3 {
       zip(session.allowedSuites, session.allowedSuites.dropFirst()).allSatisfy(<),
       session.allowedSuites.allSatisfy({ $0 == 1 || $0 == 2 }),
       session.allowedSuites.contains(session.defaultSuite)
-    else { throw ArtifactErrorV3.invalidArtifact }
+    else { throw ArtifactError.invalidArtifact }
     let projection: [String: Any] = [
       "allowed_suites": session.allowedSuites, "channel_id": session.channelID,
       "default_suite": session.defaultSuite,
@@ -630,53 +636,53 @@ enum ArtifactCodecV3 {
     let expected = try FlowersecJCSV3.hashLP(
       domain: TransportV3Contract.sessionContractLabel, value: projection
     ).base64URLEncodedStringV3()
-    guard expected == session.contractHashBase64URL else { throw ArtifactErrorV3.invalidArtifact }
+    guard expected == session.contractHashBase64URL else { throw ArtifactError.invalidArtifact }
   }
 
   private static func validateTLSPolicy(_ policy: TLSPolicyWireV3) throws {
     if policy.mode == "ca" {
-      guard policy.pins == nil else { throw ArtifactErrorV3.invalidArtifact }
+      guard policy.pins == nil else { throw ArtifactError.invalidArtifact }
       return
     }
     guard policy.mode == "pin", let pins = policy.pins, (1...4).contains(pins.count) else {
-      throw ArtifactErrorV3.invalidArtifact
+      throw ArtifactError.invalidArtifact
     }
     for pin in pins {
       guard pin.algorithm == "sha-256", (1...maximumSafeInteger).contains(pin.notAfterUnixSeconds),
         FlowersecJCSV3.canonical32(pin.valueBase64URL) != nil
-      else { throw ArtifactErrorV3.invalidArtifact }
+      else { throw ArtifactError.invalidArtifact }
     }
     guard
       zip(pins, pins.dropFirst()).allSatisfy({ left, right in
         (left.algorithm, left.valueBase64URL) < (right.algorithm, right.valueBase64URL)
       })
-    else { throw ArtifactErrorV3.invalidArtifact }
+    else { throw ArtifactError.invalidArtifact }
   }
 
   private static func validateScoped(
     _ value: Any, depth: Int, nodes: inout Int, root: Bool = false
   ) throws {
-    guard depth <= 16 else { throw ArtifactErrorV3.invalidArtifact }
+    guard depth <= 16 else { throw ArtifactError.invalidArtifact }
     nodes += 1
-    guard nodes <= 256 else { throw ArtifactErrorV3.invalidArtifact }
+    guard nodes <= 256 else { throw ArtifactError.invalidArtifact }
     switch value {
     case is NSNull, is Bool: return
     case let string as String:
-      guard string.utf8.count <= 1_024 else { throw ArtifactErrorV3.invalidArtifact }
+      guard string.utf8.count <= 1_024 else { throw ArtifactError.invalidArtifact }
     case let number as NSNumber:
       let value = number.doubleValue
       guard value.isFinite, value.rounded(.towardZero) == value,
         value >= -Double(maximumSafeInteger), value <= Double(maximumSafeInteger)
-      else { throw ArtifactErrorV3.invalidArtifact }
+      else { throw ArtifactError.invalidArtifact }
     case let array as [Any]:
-      guard !root, array.count <= 64 else { throw ArtifactErrorV3.invalidArtifact }
+      guard !root, array.count <= 64 else { throw ArtifactError.invalidArtifact }
       for item in array { try validateScoped(item, depth: depth + 1, nodes: &nodes) }
     case let object as [String: Any]:
       guard object.count <= 64, object.keys.allSatisfy({ $0.utf8.count <= 128 }) else {
-        throw ArtifactErrorV3.invalidArtifact
+        throw ArtifactError.invalidArtifact
       }
       for item in object.values { try validateScoped(item, depth: depth + 1, nodes: &nodes) }
-    default: throw ArtifactErrorV3.invalidArtifact
+    default: throw ArtifactError.invalidArtifact
     }
   }
 
@@ -684,36 +690,36 @@ enum ArtifactCodecV3 {
     guard (1...2_048).contains(raw.utf8.count),
       !raw.contains(where: { "\\?#%".contains($0) }),
       let separator = raw.range(of: "://")
-    else { throw ArtifactErrorV3.invalidArtifact }
+    else { throw ArtifactError.invalidArtifact }
     let rawScheme = String(raw[..<separator.lowerBound])
     let schemeBytes = Array(rawScheme.utf8)
     guard !schemeBytes.isEmpty, asciiAlpha(schemeBytes[0]),
       schemeBytes.allSatisfy({ asciiAlphaNumeric($0) || "+.-".utf8.contains($0) })
-    else { throw ArtifactErrorV3.invalidArtifact }
+    else { throw ArtifactError.invalidArtifact }
     let scheme = rawScheme.lowercased()
     let remainder = String(raw[separator.upperBound...])
     let slash = remainder.firstIndex(of: "/")
     let authority = slash.map { String(remainder[..<$0]) } ?? remainder
     let path = slash.map { String(remainder[$0...]) } ?? ""
     guard !authority.isEmpty, !authority.contains("@") else {
-      throw ArtifactErrorV3.invalidArtifact
+      throw ArtifactError.invalidArtifact
     }
     let normalizedAuthority = try normalizeAuthority(authority)
     let normalizedPath: String
     switch (carrier, scheme) {
     case ("websocket", "wss"):
       normalizedPath = TransportV3Contract.webSocketPath(for: kind)
-      guard path == normalizedPath else { throw ArtifactErrorV3.invalidArtifact }
+      guard path == normalizedPath else { throw ArtifactError.invalidArtifact }
     case ("raw_quic", "quic"):
-      guard path.isEmpty || path == "/" else { throw ArtifactErrorV3.invalidArtifact }
+      guard path.isEmpty || path == "/" else { throw ArtifactError.invalidArtifact }
       normalizedPath = ""
     case ("webtransport", "https"):
       normalizedPath = TransportV3Contract.webTransportPath(for: kind)
-      guard path == normalizedPath else { throw ArtifactErrorV3.invalidArtifact }
-    default: throw ArtifactErrorV3.invalidArtifact
+      guard path == normalizedPath else { throw ArtifactError.invalidArtifact }
+    default: throw ArtifactError.invalidArtifact
     }
     let result = "\(scheme)://\(normalizedAuthority)\(normalizedPath)"
-    guard result.utf8.count <= 2_048 else { throw ArtifactErrorV3.invalidArtifact }
+    guard result.utf8.count <= 2_048 else { throw ArtifactError.invalidArtifact }
     return result
   }
 
@@ -721,30 +727,30 @@ enum ArtifactCodecV3 {
     let host: String
     let portText: String?
     if authority.hasPrefix("[") {
-      guard let close = authority.firstIndex(of: "]") else { throw ArtifactErrorV3.invalidArtifact }
+      guard let close = authority.firstIndex(of: "]") else { throw ArtifactError.invalidArtifact }
       let address = String(authority[authority.index(after: authority.startIndex)..<close])
-      guard !address.isEmpty, !address.contains(".") else { throw ArtifactErrorV3.invalidArtifact }
+      guard !address.isEmpty, !address.contains(".") else { throw ArtifactError.invalidArtifact }
       let tail = String(authority[authority.index(after: close)...])
       if tail.isEmpty {
         portText = nil
       } else {
-        guard tail.hasPrefix(":"), tail.count > 1 else { throw ArtifactErrorV3.invalidArtifact }
+        guard tail.hasPrefix(":"), tail.count > 1 else { throw ArtifactError.invalidArtifact }
         portText = String(tail.dropFirst())
       }
       var parsed = in6_addr()
       guard inet_pton(AF_INET6, address, &parsed) == 1 else {
-        throw ArtifactErrorV3.invalidArtifact
+        throw ArtifactError.invalidArtifact
       }
       var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
       guard inet_ntop(AF_INET6, &parsed, &buffer, socklen_t(INET6_ADDRSTRLEN)) != nil else {
-        throw ArtifactErrorV3.invalidArtifact
+        throw ArtifactError.invalidArtifact
       }
       let end = buffer.firstIndex(of: 0) ?? buffer.endIndex
       host =
         "[" + String(decoding: buffer[..<end].map(UInt8.init(bitPattern:)), as: UTF8.self) + "]"
     } else {
       guard authority.filter({ $0 == ":" }).count <= 1 else {
-        throw ArtifactErrorV3.invalidArtifact
+        throw ArtifactError.invalidArtifact
       }
       if let colon = authority.firstIndex(of: ":") {
         host = try normalizeHost(String(authority[..<colon]))
@@ -757,18 +763,18 @@ enum ArtifactCodecV3 {
     guard let portText else { return host }
     guard !portText.isEmpty, portText.utf8.allSatisfy({ (48...57).contains($0) }),
       let port = UInt32(portText), (1...65_535).contains(port)
-    else { throw ArtifactErrorV3.invalidArtifact }
+    else { throw ArtifactError.invalidArtifact }
     return port == 443 ? host : "\(host):\(port)"
   }
 
   private static func normalizeHost(_ raw: String) throws -> String {
-    guard !raw.isEmpty else { throw ArtifactErrorV3.invalidArtifact }
+    guard !raw.isEmpty else { throw ArtifactError.invalidArtifact }
     if raw.utf8.allSatisfy({ (48...57).contains($0) || $0 == 46 }) {
       let parts = raw.split(separator: ".", omittingEmptySubsequences: false)
-      guard parts.count == 4 else { throw ArtifactErrorV3.invalidArtifact }
+      guard parts.count == 4 else { throw ArtifactError.invalidArtifact }
       return try parts.map { part in
         guard !part.isEmpty, !(part.count > 1 && part.first == "0"), let octet = UInt8(part)
-        else { throw ArtifactErrorV3.invalidArtifact }
+        else { throw ArtifactError.invalidArtifact }
         return String(octet)
       }.joined(separator: ".")
     }
@@ -776,7 +782,7 @@ enum ArtifactCodecV3 {
     do {
       ascii = try IDNAHostV3.lookupASCII(raw)
     } catch {
-      throw ArtifactErrorV3.invalidArtifact
+      throw ArtifactError.invalidArtifact
     }
     let last =
       ascii.split(separator: ".", omittingEmptySubsequences: false).last.map(String.init) ?? ""
@@ -787,12 +793,12 @@ enum ArtifactCodecV3 {
       && lower.dropFirst(2).utf8.allSatisfy({ byte in
         (48...57).contains(byte) || (97...102).contains(byte)
       })
-    guard !numeric, !hex else { throw ArtifactErrorV3.invalidArtifact }
+    guard !numeric, !hex else { throw ArtifactError.invalidArtifact }
     return ascii
   }
 
   private static func exact(_ object: [String: Any], _ keys: Set<String>) throws {
-    guard Set(object.keys) == keys else { throw ArtifactErrorV3.invalidArtifact }
+    guard Set(object.keys) == keys else { throw ArtifactError.invalidArtifact }
   }
 
   private static func registry(_ value: String, max: Int) -> Bool {
@@ -833,7 +839,7 @@ enum ArtifactCodecV3 {
 
 enum FlowersecJCSV3 {
   static func encode(_ value: Any) throws -> Data {
-    guard JSONSerialization.isValidJSONObject(value) else { throw ArtifactErrorV3.invalidArtifact }
+    guard JSONSerialization.isValidJSONObject(value) else { throw ArtifactError.invalidArtifact }
     return try encodeValue(value)
   }
 
@@ -855,7 +861,7 @@ enum FlowersecJCSV3 {
     if let object = value as? NSDictionary {
       var converted: [String: Any] = [:]
       for (key, item) in object {
-        guard let key = key as? String else { throw ArtifactErrorV3.invalidArtifact }
+        guard let key = key as? String else { throw ArtifactError.invalidArtifact }
         converted[key] = item
       }
       return try encodeValue(converted)
@@ -879,7 +885,7 @@ enum FlowersecJCSV3 {
     guard JSONSerialization.isValidJSONObject([value]),
       let data = try? JSONSerialization.data(
         withJSONObject: [value], options: [.withoutEscapingSlashes]),
-      data.count >= 2 else { throw ArtifactErrorV3.invalidArtifact }
+      data.count >= 2 else { throw ArtifactError.invalidArtifact }
     return Data(data.dropFirst().dropLast())
   }
 

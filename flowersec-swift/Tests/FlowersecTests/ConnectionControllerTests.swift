@@ -4,8 +4,113 @@ import XCTest
 @testable import Flowersec
 
 final class ConnectionControllerTests: XCTestCase {
+  func testWaitForSessionIsPassiveAndReturnsStructuredOutcomes() async throws {
+    let idleSource = SequenceArtifactSourceV3([])
+    let idle = try ConnectionController(
+      source: idleSource,
+      maximumAttempts: 1,
+      connectOneShot: { _, _ in ControllerSessionV3() })
+    let waiting = Task { try await idle.waitForSession() }
+    waiting.cancel()
+    do {
+      _ = try await waiting.value
+      XCTFail("a canceled wait returned a session")
+    } catch let error as ConnectionControllerError {
+      XCTAssertEqual(error.code, .canceled)
+      XCTAssertEqual(error.diagnostic.state, .idle)
+    }
+    let idleAcquisitions = await idleSource.acquisitions
+    XCTAssertEqual(idleAcquisitions, 0)
+
+    let session = ControllerSessionV3()
+    let connected = try ConnectionController(
+      source: SequenceArtifactSourceV3([
+        ArtifactLease(artifact: try artifactV3(), commitSpend: {})
+      ]),
+      maximumAttempts: 1,
+      connectOneShot: { lease, _ in
+        let claimed = try await lease.claim()
+        try await claimed.commitSpend()
+        return session
+      })
+    await connected.start()
+    let established = try await connected.waitForSession()
+    XCTAssertTrue(established is ControllerSessionV3)
+    let connectedDiagnostic = await connected.snapshot().diagnostic
+    XCTAssertEqual(
+      connectedDiagnostic,
+      ConnectionDiagnostic(
+        state: .connected, attempt: 1, failure: nil, retryDisposition: nil))
+    await connected.close()
+
+    let failed = try ConnectionController(
+      source: SequenceArtifactSourceV3([]),
+      maximumAttempts: 1,
+      connectOneShot: { _, _ in ControllerSessionV3() })
+    await failed.start()
+    do {
+      _ = try await failed.waitForSession()
+      XCTFail("a failed controller returned a session")
+    } catch let error as ConnectionControllerError {
+      XCTAssertEqual(error.code, .failed)
+      XCTAssertEqual(error.diagnostic.state, .failed)
+      XCTAssertEqual(error.diagnostic.attempt, 1)
+      XCTAssertEqual(
+        error.diagnostic.failure,
+        ConnectionDiagnosticFailure(phase: .artifact, code: "connection_failed"))
+      XCTAssertEqual(error.diagnostic.retryDisposition, .terminal)
+    }
+    await failed.close()
+
+    let closed = try ConnectionController(
+      source: SequenceArtifactSourceV3([]),
+      connectOneShot: { _, _ in ControllerSessionV3() })
+    await closed.close()
+    do {
+      _ = try await closed.waitForSession()
+      XCTFail("a closed controller returned a session")
+    } catch let error as ConnectionControllerError {
+      XCTAssertEqual(error.code, .closed)
+      XCTAssertEqual(error.diagnostic.state, .closed)
+    }
+  }
+
   func testTopLevelControllerVectorsBindProductionResultsRetryAndLeaseState() async throws {
     let root = try controllerVectorsV3()
+    let api = try XCTUnwrap(root["sdk_api_consistency"] as? [String: Any])
+    XCTAssertEqual(
+      api["connection_error_codes"] as? [String],
+      [
+        "artifact_invalid", "expired_artifact", "transport_security_unsupported",
+        "transport_security_failed", "connection_failed",
+      ])
+    XCTAssertEqual(
+      api["unreliable_error_codes"] as? [String],
+      ["unavailable", "invalid_message", "too_large", "canceled", "closed", "operation_failed"])
+    XCTAssertEqual(
+      api["unreliable_send_results"] as? [String],
+      ["accepted", "dropped_budget", "dropped_expired", "dropped_carrier"])
+    XCTAssertEqual(
+      api["retry"] as? [String: String],
+      [
+        "error_property": "retryDisposition",
+        "deprecated_error_property": "disposition",
+        "retry_after_property": "notBeforeUnixMilliseconds",
+        "deprecated_retry_after_property": "absoluteUnixMilliseconds",
+      ])
+    let diagnostic = try XCTUnwrap(api["connection_diagnostic"] as? [String: Any])
+    XCTAssertEqual(
+      diagnostic["fields"] as? [String], ["state", "attempt", "failure", "retryDisposition"])
+    XCTAssertEqual(diagnostic["failure_fields"] as? [String], ["phase", "code"])
+    XCTAssertEqual(
+      diagnostic["forbidden_fields"] as? [String],
+      ["url", "carrier", "candidates", "error", "credentials", "peer", "session"])
+    let waiting = try XCTUnwrap(api["wait_for_session"] as? [String: Any])
+    XCTAssertEqual(waiting["starts_controller"] as? Bool, false)
+    XCTAssertEqual(waiting["outcomes"] as? [String], ["connected", "failed", "closed", "canceled"])
+    XCTAssertEqual(waiting["migrates_operations"] as? Bool, false)
+    XCTAssertEqual((api["swift"] as? [String: String])?["unreliable_messages"], "unsupported")
+
     let rows = try XCTUnwrap(root["internal_transport_results"] as? [[Any]])
     let expectedActions = [
       "invalid_artifact/": "terminal",
@@ -47,7 +152,7 @@ final class ConnectionControllerTests: XCTestCase {
     let retryAfter = try XCTUnwrap(root["retry_after"] as? [String: Any])
     let valid = try XCTUnwrap(retryAfter["valid"] as? [NSNumber])
     let invalid = try XCTUnwrap(retryAfter["invalid"] as? [Any])
-    XCTAssertEqual(retryAfter["aggregate"] as? String, "maximum_absolute_unix_ms")
+    XCTAssertEqual(retryAfter["aggregate"] as? String, "maximum_not_before_unix_ms")
     for value in valid {
       XCTAssertTrue(validRetryAfterVectorValue(value), "valid retry_after \(value)")
       XCTAssertEqual(
@@ -74,7 +179,7 @@ final class ConnectionControllerTests: XCTestCase {
     XCTAssertEqual(leaseMachine["terminal_states"] as? [String], ["consumed", "retired"])
 
     let spends = AsyncCounterV3()
-    let spendingLease = ArtifactLeaseV3(
+    let spendingLease = ArtifactLease(
       artifact: try artifactV3(), commitSpend: { _ = await spends.increment() })
     let spendingCopy = spendingLease
     let spendClaim = try await spendingLease.claim()
@@ -86,7 +191,7 @@ final class ConnectionControllerTests: XCTestCase {
     await assertThrowsArtifactLeaseUnavailable { try await spendingCopy.claim() }
 
     let retires = AsyncCounterV3()
-    let retiringLease = ArtifactLeaseV3(
+    let retiringLease = ArtifactLease(
       artifact: try artifactV3(), commitSpend: {}, retire: { _ = await retires.increment() })
     let retiringCopy = retiringLease
     try await retiringLease.claim().retire()
@@ -97,7 +202,7 @@ final class ConnectionControllerTests: XCTestCase {
 
   func testControllerClaimOwnsTheSharedOneShotLease() async throws {
     let spent = AsyncCounterV3()
-    let lease = ArtifactLeaseV3(
+    let lease = ArtifactLease(
       artifact: try artifactV3(),
       commitSpend: { _ = await spent.increment() })
     let oneShotCopy = lease
@@ -107,7 +212,7 @@ final class ConnectionControllerTests: XCTestCase {
       _ = try await oneShotCopy.claim()
       XCTFail("one-shot copy claimed a controller-owned lease")
     } catch {
-      XCTAssertEqual(error as? ArtifactLeaseErrorV3, .unavailable)
+      XCTAssertEqual(error as? ArtifactLeaseError, .unavailable)
     }
     let connectorLease = controllerClaim.connectorLease()
     let connectorCopy = connectorLease
@@ -116,7 +221,7 @@ final class ConnectionControllerTests: XCTestCase {
       _ = try await connectorCopy.claim()
       XCTFail("a second connector claim succeeded")
     } catch {
-      XCTAssertEqual(error as? ArtifactLeaseErrorV3, .unavailable)
+      XCTAssertEqual(error as? ArtifactLeaseError, .unavailable)
     }
     try await connectorClaim.commitSpend()
     let spendCount = await spent.value
@@ -124,7 +229,7 @@ final class ConnectionControllerTests: XCTestCase {
   }
 
   func testControllerAndOneShotClaimsHaveExactlyOneConcurrentWinner() async throws {
-    let lease = ArtifactLeaseV3(artifact: try artifactV3(), commitSpend: {})
+    let lease = ArtifactLease(artifact: try artifactV3(), commitSpend: {})
     let controllerTask = Task { try await lease.claimForConnectionController() }
     let oneShotTask = Task { try await lease.claim() }
     let controller = await controllerTask.result
@@ -141,7 +246,7 @@ final class ConnectionControllerTests: XCTestCase {
 
   func testCloseCancelsBlockedRetirementWithoutPublishingRetryState() async throws {
     let retireGate = CancellationAwareRetireGateV3()
-    let lease = ArtifactLeaseV3(
+    let lease = ArtifactLease(
       artifact: try artifactV3(),
       commitSpend: {},
       retire: { try await retireGate.wait() }
@@ -174,7 +279,7 @@ final class ConnectionControllerTests: XCTestCase {
 
   func testSpendCancellationDoesNotWaitForUncooperativeCallback() async throws {
     let gate = UncooperativeSpendGateV3()
-    let lease = ArtifactLeaseV3(
+    let lease = ArtifactLease(
       artifact: try artifactV3(),
       commitSpend: { await gate.wait() })
     let claimed = try await lease.claim()
@@ -211,14 +316,14 @@ final class ConnectionControllerTests: XCTestCase {
       _ = try await lease.claim()
       XCTFail("a canceled spend must leave the lease unavailable")
     } catch {
-      XCTAssertEqual(error as? ArtifactLeaseErrorV3, .unavailable)
+      XCTAssertEqual(error as? ArtifactLeaseError, .unavailable)
     }
   }
 
   func testCloseDoesNotWaitForUncooperativeSpendCallback() async throws {
     let gate = UncooperativeSpendGateV3()
     let cancellationObserved = AsyncFlagV3()
-    let tracked = ArtifactLeaseV3(
+    let tracked = ArtifactLease(
       artifact: try artifactV3(),
       commitSpend: { await gate.wait() })
     let source = SequenceArtifactSourceV3([tracked])
@@ -258,7 +363,7 @@ final class ConnectionControllerTests: XCTestCase {
       _ = try await tracked.claim()
       XCTFail("the spend attempt must consume the controller lease")
     } catch {
-      XCTAssertEqual(error as? ArtifactLeaseErrorV3, .unavailable)
+      XCTAssertEqual(error as? ArtifactLeaseError, .unavailable)
     }
   }
 
@@ -1430,7 +1535,7 @@ final class ConnectionControllerTests: XCTestCase {
     let leaseStates = [LeaseTerminalStateV3(), LeaseTerminalStateV3(), LeaseTerminalStateV3()]
     let refreshSource = CoordinatedCapabilityArtifactSourceV3(
       leases: [
-      ArtifactLeaseV3(
+      ArtifactLease(
         artifact: try artifactV3(),
         commitSpend: {
           _ = await spent.increment()
@@ -1594,7 +1699,7 @@ final class ConnectionControllerTests: XCTestCase {
     let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let retired = AsyncCounterV3()
     let retireGate = BlockingRetireGateV3()
-    let tracked = ArtifactLeaseV3(
+    let tracked = ArtifactLease(
       artifact: try artifactV3(),
       commitSpend: {},
       retire: {
@@ -2098,7 +2203,7 @@ final class ConnectionControllerTests: XCTestCase {
     let retryAtMilliseconds = Int64(try XCTUnwrap(input["retry_after_unix_ms"] as? Int))
     let deadline = UInt64(retryAtMilliseconds)
     var sourceResults = Array(
-      repeating: Result<ArtifactLeaseV3, ArtifactSourceFailure>.failure(
+      repeating: Result<ArtifactLease, ArtifactSourceFailure>.failure(
         ArtifactSourceFailure(disposition: .retryable)),
       count: failureOrdinal - 1)
     sourceResults.append(.failure(ArtifactSourceFailure(disposition: .retryAfter(deadline))))
@@ -2200,7 +2305,7 @@ final class ConnectionControllerTests: XCTestCase {
     let clock = VectorManualClockV3(wallMilliseconds: 0, monotonicMilliseconds: 0)
     let retired = AsyncCounterV3()
     let spent = AsyncCounterV3()
-    let first = ArtifactLeaseV3(
+    let first = ArtifactLease(
       artifact: try artifactV3(),
       commitSpend: {},
       retire: {
@@ -2479,9 +2584,9 @@ private func assertThrowsArtifactLeaseUnavailable(
 ) async {
   do {
     _ = try await operation()
-    XCTFail("expected ArtifactLeaseErrorV3.unavailable", file: file, line: line)
+    XCTFail("expected ArtifactLeaseError.unavailable", file: file, line: line)
   } catch {
-    XCTAssertEqual(error as? ArtifactLeaseErrorV3, .unavailable, file: file, line: line)
+    XCTAssertEqual(error as? ArtifactLeaseError, .unavailable, file: file, line: line)
   }
 }
 
@@ -2544,7 +2649,7 @@ private func controllerInputV3(_ id: String) throws -> [String: Any] {
   return try XCTUnwrap(scenario["input"] as? [String: Any])
 }
 
-private func artifactV3() throws -> ArtifactV3 {
+private func artifactV3() throws -> Artifact {
   try mutateArtifactV3 { root in
     var path = root["path"] as! [String: Any]
     let candidates = path["candidates"] as! [[String: Any]]
@@ -2553,14 +2658,14 @@ private func artifactV3() throws -> ArtifactV3 {
   }
 }
 
-private func baseArtifactV3() throws -> ArtifactV3 {
+private func baseArtifactV3() throws -> Artifact {
   let url = packageRootV3().appendingPathComponent("testdata/transport_v3/artifact_vectors.json")
   let root = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
   let positive = root["positive"] as! [[String: Any]]
-  return try parseArtifactV3(Data((positive[0]["artifact_json"] as! String).utf8))
+  return try parseArtifact(Data((positive[0]["artifact_json"] as! String).utf8))
 }
 
-private func changedPinArtifactV3() throws -> ArtifactV3 {
+private func changedPinArtifactV3() throws -> Artifact {
   try mutateArtifactV3 { root in
     var path = root["path"] as! [String: Any]
     var candidates = path["candidates"] as! [[String: Any]]
@@ -2580,7 +2685,7 @@ private func changedPinArtifactV3() throws -> ArtifactV3 {
   }
 }
 
-private func changedPinWithCAArtifactV3() throws -> ArtifactV3 {
+private func changedPinWithCAArtifactV3() throws -> Artifact {
   try mutateArtifactV3 { root in
     var path = root["path"] as! [String: Any]
     var candidates = path["candidates"] as! [[String: Any]]
@@ -2603,7 +2708,7 @@ private func changedPinWithCAArtifactV3() throws -> ArtifactV3 {
   }
 }
 
-private func staleCapabilityArtifactV3() throws -> ArtifactV3 {
+private func staleCapabilityArtifactV3() throws -> Artifact {
   try mutateArtifactV3 { root in
     var path = root["path"] as! [String: Any]
     var candidates = path["candidates"] as! [[String: Any]]
@@ -2621,7 +2726,7 @@ private func staleCapabilityArtifactV3() throws -> ArtifactV3 {
   }
 }
 
-private func changedPinExpiryArtifactV3() throws -> ArtifactV3 {
+private func changedPinExpiryArtifactV3() throws -> Artifact {
   try mutateArtifactV3 { root in
     var path = root["path"] as! [String: Any]
     var candidates = path["candidates"] as! [[String: Any]]
@@ -2636,17 +2741,17 @@ private func changedPinExpiryArtifactV3() throws -> ArtifactV3 {
   }
 }
 
-private func caOnlyArtifactV3() throws -> ArtifactV3 {
+private func caOnlyArtifactV3() throws -> Artifact {
   let original = try baseArtifactV3()
   var root = try JSONSerialization.jsonObject(with: original.canonicalJSON) as! [String: Any]
   var path = root["path"] as! [String: Any]
   let candidates = path["candidates"] as! [[String: Any]]
   path["candidates"] = candidates.filter { $0["id"] as? String == "w-ca" }
   root["path"] = path
-  return try parseArtifactV3(FlowersecJCSV3.encode(root))
+  return try parseArtifact(FlowersecJCSV3.encode(root))
 }
 
-private func threeFailureCandidateArtifactV3() throws -> ArtifactV3 {
+private func threeFailureCandidateArtifactV3() throws -> Artifact {
   try mutateArtifactV3 { root in
     var path = root["path"] as! [String: Any]
     let candidates = path["candidates"] as! [[String: Any]]
@@ -2657,7 +2762,7 @@ private func threeFailureCandidateArtifactV3() throws -> ArtifactV3 {
   }
 }
 
-private func mixedCAPinArtifactV3() throws -> ArtifactV3 {
+private func mixedCAPinArtifactV3() throws -> Artifact {
   try mutateArtifactV3 { root in
     var path = root["path"] as! [String: Any]
     let candidates = path["candidates"] as! [[String: Any]]
@@ -2668,7 +2773,7 @@ private func mixedCAPinArtifactV3() throws -> ArtifactV3 {
   }
 }
 
-private func twoPinArtifactV3() throws -> ArtifactV3 {
+private func twoPinArtifactV3() throws -> Artifact {
   try mutateArtifactV3 { root in
     var path = root["path"] as! [String: Any]
     let candidates = path["candidates"] as! [[String: Any]]
@@ -2679,7 +2784,7 @@ private func twoPinArtifactV3() throws -> ArtifactV3 {
   }
 }
 
-private func changedOneOfTwoPinsArtifactV3() throws -> ArtifactV3 {
+private func changedOneOfTwoPinsArtifactV3() throws -> Artifact {
   try mutateArtifactV3 { root in
     var path = root["path"] as! [String: Any]
     var candidates = path["candidates"] as! [[String: Any]]
@@ -2701,7 +2806,7 @@ private func changedOneOfTwoPinsArtifactV3() throws -> ArtifactV3 {
   }
 }
 
-private func expiredArtifactV3() throws -> ArtifactV3 {
+private func expiredArtifactV3() throws -> Artifact {
   try mutateArtifactV3 { root in
     var session = root["session"] as! [String: Any]
     session["init_expire_at_unix_s"] = 1
@@ -2711,19 +2816,19 @@ private func expiredArtifactV3() throws -> ArtifactV3 {
 
 private func mutateArtifactV3(
   _ mutate: (inout [String: Any]) -> Void
-) throws -> ArtifactV3 {
+) throws -> Artifact {
   let original = try baseArtifactV3()
   var root = try JSONSerialization.jsonObject(with: original.canonicalJSON) as! [String: Any]
   mutate(&root)
-  return try parseArtifactV3(FlowersecJCSV3.encode(root))
+  return try parseArtifact(FlowersecJCSV3.encode(root))
 }
 
 private func lease(
-  artifact: ArtifactV3,
+  artifact: Artifact,
   spent: AsyncCounterV3 = AsyncCounterV3(),
   retired: AsyncCounterV3
-) throws -> ArtifactLeaseV3 {
-  ArtifactLeaseV3(
+) throws -> ArtifactLease {
+  ArtifactLease(
     artifact: artifact,
     commitSpend: { _ = await spent.increment() },
     retire: { _ = await retired.increment() }
@@ -2731,12 +2836,12 @@ private func lease(
 }
 
 private func leaseWithState(
-  artifact: ArtifactV3,
+  artifact: Artifact,
   spent: AsyncCounterV3,
   retired: AsyncCounterV3,
   state: LeaseTerminalStateV3
-) -> ArtifactLeaseV3 {
-  ArtifactLeaseV3(
+) -> ArtifactLease {
+  ArtifactLease(
     artifact: artifact,
     commitSpend: {
       _ = await spent.increment()
@@ -2755,12 +2860,12 @@ private func packageRootV3() -> URL {
 }
 
 private actor SequenceArtifactSourceV3: ArtifactSource {
-  private var leases: [ArtifactLeaseV3]
+  private var leases: [ArtifactLease]
   private(set) var acquisitions = 0
 
-  init(_ leases: [ArtifactLeaseV3]) { self.leases = leases }
+  init(_ leases: [ArtifactLease]) { self.leases = leases }
 
-  func acquireArtifact() throws -> ArtifactLeaseV3 {
+  func acquireArtifact() throws -> ArtifactLease {
     acquisitions += 1
     guard !leases.isEmpty else { throw ArtifactSourceFailure(disposition: .terminal) }
     return leases.removeFirst()
@@ -2768,14 +2873,14 @@ private actor SequenceArtifactSourceV3: ArtifactSource {
 }
 
 private actor CoordinatedCapabilityArtifactSourceV3: ArtifactSource {
-  private var leases: [ArtifactLeaseV3]
+  private var leases: [ArtifactLease]
   private let barrier: CapabilityLinearizationBarrierV3
   private let hasReplacement: Bool
   private(set) var acquisitions = 0
   private(set) var replacementAcquisitions = 0
 
   init(
-    leases: [ArtifactLeaseV3], barrier: CapabilityLinearizationBarrierV3,
+    leases: [ArtifactLease], barrier: CapabilityLinearizationBarrierV3,
     hasReplacement: Bool
   ) {
     self.leases = leases
@@ -2783,7 +2888,7 @@ private actor CoordinatedCapabilityArtifactSourceV3: ArtifactSource {
     self.hasReplacement = hasReplacement
   }
 
-  func acquireArtifact() async throws -> ArtifactLeaseV3 {
+  func acquireArtifact() async throws -> ArtifactLease {
     acquisitions += 1
     if acquisitions == 1 {
       await barrier.acquireInitialSnapshot()
@@ -2800,12 +2905,12 @@ private actor CoordinatedCapabilityArtifactSourceV3: ArtifactSource {
 }
 
 private actor ResultArtifactSourceV3: ArtifactSource {
-  private var results: [Result<ArtifactLeaseV3, ArtifactSourceFailure>]
+  private var results: [Result<ArtifactLease, ArtifactSourceFailure>]
   private(set) var acquisitions = 0
 
-  init(_ results: [Result<ArtifactLeaseV3, ArtifactSourceFailure>]) { self.results = results }
+  init(_ results: [Result<ArtifactLease, ArtifactSourceFailure>]) { self.results = results }
 
-  func acquireArtifact() throws -> ArtifactLeaseV3 {
+  func acquireArtifact() throws -> ArtifactLease {
     acquisitions += 1
     guard !results.isEmpty else { throw ArtifactSourceFailure(disposition: .terminal) }
     return try results.removeFirst().get()
@@ -2815,21 +2920,21 @@ private actor ResultArtifactSourceV3: ArtifactSource {
 private actor RetryableFailureArtifactSourceV3: ArtifactSource {
   private(set) var acquisitions = 0
 
-  func acquireArtifact() throws -> ArtifactLeaseV3 {
+  func acquireArtifact() throws -> ArtifactLease {
     acquisitions += 1
     throw ArtifactSourceFailure(disposition: .retryable)
   }
 }
 
 private actor BlockingArtifactSourceV3: ArtifactSource {
-  private let lease: ArtifactLeaseV3
+  private let lease: ArtifactLease
   private var released = false
   private var waiters: [CheckedContinuation<Void, Never>] = []
   private(set) var acquisitions = 0
 
-  init(_ lease: ArtifactLeaseV3) { self.lease = lease }
+  init(_ lease: ArtifactLease) { self.lease = lease }
 
-  func acquireArtifact() async throws -> ArtifactLeaseV3 {
+  func acquireArtifact() async throws -> ArtifactLease {
     acquisitions += 1
     if !released {
       await withCheckedContinuation { waiters.append($0) }
@@ -2850,7 +2955,7 @@ private actor BlockingErrorArtifactSourceV3: ArtifactSource {
   private var waiters: [CheckedContinuation<Void, Never>] = []
   private(set) var acquisitions = 0
 
-  func acquireArtifact() async throws -> ArtifactLeaseV3 {
+  func acquireArtifact() async throws -> ArtifactLease {
     acquisitions += 1
     if !released {
       await withCheckedContinuation { waiters.append($0) }
@@ -2871,7 +2976,7 @@ private enum LateArtifactSourceErrorV3: Error {
 }
 
 private actor NeverArtifactSourceV3: ArtifactSource {
-  func acquireArtifact() async throws -> ArtifactLeaseV3 {
+  func acquireArtifact() async throws -> ArtifactLease {
     try await Task.sleep(for: .seconds(60))
     throw ArtifactSourceFailure(disposition: .terminal)
   }

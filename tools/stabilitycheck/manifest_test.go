@@ -208,11 +208,12 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 			RuntimeExports:    []string{"connect"},
 		}}},
 		Swift: swiftManifest{
-			PackageName: "Flowersec",
-			Product:     "Flowersec",
-			Module:      "Flowersec",
-			DocTokens:   []string{"`Flowersec`"},
-			Symbols:     []swiftSymbol{{Kind: "swift.struct", Name: "FlowersecClient"}},
+			PackageName:     "Flowersec",
+			Product:         "Flowersec",
+			Module:          "Flowersec",
+			DocTokens:       []string{"`Flowersec`"},
+			SignatureSHA256: strings.Repeat("0", 64),
+			Symbols:         []swiftSymbol{{Kind: "swift.struct", Name: "FlowersecClient"}},
 		},
 		Rust: rustManifest{
 			Package:        "flowersec",
@@ -362,6 +363,26 @@ func TestDiffSwiftSymbolsDetectsMissingAndExtra(t *testing.T) {
 	}
 	if !strings.Contains(diff, "extra public symbols not listed in manifest") {
 		t.Fatalf("expected extra section, got:\n%s", diff)
+	}
+}
+
+func TestSwiftSignatureDigestIncludesNormalizedDeclarations(t *testing.T) {
+	base := []dumpedSwiftSymbol{{
+		Kind: "swift.method", Name: "Client.connect()", Declaration: "public func connect() async throws",
+	}}
+	spacingOnly := []dumpedSwiftSymbol{{
+		Kind: "swift.method", Name: "Client.connect()", Declaration: "public   func connect()\nasync throws",
+	}}
+	changed := []dumpedSwiftSymbol{{
+		Kind: "swift.method", Name: "Client.connect()", Declaration: "public func connect() async",
+	}}
+	base[0].Declaration = strings.Join(strings.Fields(base[0].Declaration), " ")
+	spacingOnly[0].Declaration = strings.Join(strings.Fields(spacingOnly[0].Declaration), " ")
+	if swiftSignatureSHA256(base) != swiftSignatureSHA256(spacingOnly) {
+		t.Fatal("normalized Swift declaration whitespace changed the signature digest")
+	}
+	if swiftSignatureSHA256(base) == swiftSignatureSHA256(changed) {
+		t.Fatal("Swift declaration change did not change the signature digest")
 	}
 }
 

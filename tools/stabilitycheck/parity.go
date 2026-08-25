@@ -232,6 +232,7 @@ type interopMatrix struct {
 	ServerRuntimes     []string                   `json:"server_runtimes"`
 	Cases              []string                   `json:"cases"`
 	DirectCells        []directInteropCell        `json:"direct_cells"`
+	ClientProfiles     []clientInteropProfile     `json:"client_profiles"`
 	TunnelTopologies   []tunnelInteropTopology    `json:"tunnel_topologies"`
 	CapabilityCoverage map[string]interopCoverage `json:"capability_coverage"`
 }
@@ -245,6 +246,18 @@ type directInteropCell struct {
 	Status  string   `json:"status"`
 	Reason  string   `json:"reason,omitempty"`
 	TestIDs []string `json:"test_ids,omitempty"`
+}
+
+type clientInteropProfile struct {
+	ID            string   `json:"id"`
+	Client        string   `json:"client"`
+	Server        string   `json:"server"`
+	TunnelRuntime string   `json:"tunnel_runtime,omitempty"`
+	Path          string   `json:"path"`
+	Carrier       string   `json:"carrier"`
+	Cases         []string `json:"cases"`
+	Status        string   `json:"status"`
+	TestIDs       []string `json:"test_ids"`
 }
 
 type tunnelInteropTopology struct {
@@ -441,6 +454,9 @@ func verifyRequiredServerParityComplete(repoRoot string) error {
 		return fmt.Errorf("interop matrix server_runtimes must match native-server-core claimed runtimes")
 	}
 	if err := validateDirectInteropCells(matrix, registryIDs, carriers); err != nil {
+		return err
+	}
+	if err := validateClientInteropProfiles(matrix.ClientProfiles, registryIDs); err != nil {
 		return err
 	}
 	return validateTunnelInteropTopologies(matrix, registryIDs, runtimes, carriers)
@@ -676,7 +692,40 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	if len(matrix.CapabilityCoverage) != len(requiredPortableCapabilityIDs) {
 		return errors.New("interop capability coverage must contain every portable capability exactly once")
 	}
-	fmt.Printf("Transport v3 interop matrix OK: %d direct cells, %d tunnel topologies, %d cases\n", len(matrix.DirectCells), len(matrix.TunnelTopologies), len(matrix.Cases))
+	fmt.Printf("Transport v3 interop matrix OK: %d direct cells, %d client profiles, %d tunnel topologies, %d cases\n", len(matrix.DirectCells), len(matrix.ClientProfiles), len(matrix.TunnelTopologies), len(matrix.Cases))
+	return nil
+}
+
+func validateClientInteropProfiles(profiles []clientInteropProfile, registryIDs map[string]struct{}) error {
+	expected := map[string]clientInteropProfile{
+		"swift_to_go_websocket_direct_profile":              {Client: "swift", Server: "go", Path: "direct", Carrier: "websocket"},
+		"swift_to_go_websocket_tunnel_profile":              {Client: "swift", Server: "go", TunnelRuntime: "go", Path: "tunnel", Carrier: "websocket"},
+		"browser_typescript_to_go_websocket_direct_profile": {Client: "typescript-browser", Server: "go", Path: "direct", Carrier: "websocket"},
+		"browser_typescript_to_go_websocket_tunnel_profile": {Client: "typescript-browser", Server: "go", TunnelRuntime: "go", Path: "tunnel", Carrier: "websocket"},
+	}
+	if len(profiles) != len(expected) {
+		return fmt.Errorf("interop matrix must contain exactly %d Swift and browser client profiles", len(expected))
+	}
+	for _, profile := range profiles {
+		want, ok := expected[profile.ID]
+		if !ok || profile.Client != want.Client || profile.Server != want.Server || profile.TunnelRuntime != want.TunnelRuntime || profile.Path != want.Path || profile.Carrier != want.Carrier {
+			return fmt.Errorf("interop client profile %s does not match its required configuration", profile.ID)
+		}
+		wantCases := slices.Clone(directInteropCases)
+		if profile.Path == "tunnel" {
+			wantCases = slices.Clone(tunnelInteropCases)
+		}
+		if !slices.Equal(profile.Cases, wantCases) {
+			return fmt.Errorf("interop client profile %s cases do not match its executable contract", profile.ID)
+		}
+		if profile.Status != "supported" {
+			return fmt.Errorf("interop client profile %s must be release-gating supported", profile.ID)
+		}
+		if err := requireRegistryConsumers(registryIDs, "interop client profile "+profile.ID, profile.TestIDs); err != nil {
+			return err
+		}
+		delete(expected, profile.ID)
+	}
 	return nil
 }
 

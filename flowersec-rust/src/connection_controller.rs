@@ -22,7 +22,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    ArtifactLeaseV3, ConnectError, ConnectErrorCode, ConnectorOptions, SessionError,
+    ArtifactLease, ConnectError, ConnectErrorCode, ConnectorOptions, SessionError,
     artifact_v3::{ArtifactV3, ClaimedArtifactLeaseV3, TlsPolicyWireV3},
     connector_v3::connect_v3_with_cancellation,
     transport_v2::Session,
@@ -38,7 +38,7 @@ type ConnectFuture =
     Pin<Box<dyn Future<Output = Result<Arc<dyn Session>, ConnectError>> + Send + 'static>>;
 type ClockSleep = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 type ConnectOneShot = Arc<
-    dyn Fn(ArtifactLeaseV3, ConnectorOptions, CancellationToken) -> ConnectFuture
+    dyn Fn(ArtifactLease, ConnectorOptions, CancellationToken) -> ConnectFuture
         + Send
         + Sync
         + 'static,
@@ -132,7 +132,7 @@ pub trait ArtifactSource: fmt::Debug + Send + Sync + 'static {
     async fn acquire(
         &self,
         cancellation: CancellationToken,
-    ) -> Result<ArtifactLeaseV3, ArtifactSourceError>;
+    ) -> Result<ArtifactLease, ArtifactSourceError>;
 }
 
 #[derive(Clone, Debug)]
@@ -206,6 +206,22 @@ impl ConnectionFailure {
             Self::Connect { disposition, .. } | Self::Session { disposition, .. } => disposition,
         }
     }
+
+    pub const fn phase(self) -> ConnectionFailurePhase {
+        match self {
+            Self::ArtifactSource(_) => ConnectionFailurePhase::Artifact,
+            Self::Connect { .. } => ConnectionFailurePhase::Connect,
+            Self::Session { .. } => ConnectionFailurePhase::Session,
+        }
+    }
+
+    pub const fn diagnostic_code(self) -> &'static str {
+        match self {
+            Self::ArtifactSource(error) => error.code().as_str(),
+            Self::Connect { code, .. } => code.as_str(),
+            Self::Session { error, .. } => error.as_str(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -215,6 +231,66 @@ pub struct ConnectionSnapshot {
     pub current_session: Option<Arc<dyn Session>>,
     pub failure: Option<ConnectionFailure>,
     revision: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConnectionFailurePhase {
+    Artifact,
+    Connect,
+    Session,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ConnectionDiagnosticFailure {
+    pub phase: ConnectionFailurePhase,
+    pub code: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ConnectionDiagnostic {
+    pub state: ConnectionState,
+    pub attempt: u64,
+    pub failure: Option<ConnectionDiagnosticFailure>,
+    pub retry_disposition: Option<RetryDisposition>,
+}
+
+impl ConnectionSnapshot {
+    /// Removes the live Session and retains only stable, redacted state.
+    pub fn diagnostic(&self) -> ConnectionDiagnostic {
+        ConnectionDiagnostic {
+            state: self.state,
+            attempt: self.attempt,
+            failure: self.failure.map(|failure| ConnectionDiagnosticFailure {
+                phase: failure.phase(),
+                code: failure.diagnostic_code(),
+            }),
+            retry_disposition: self.failure.map(ConnectionFailure::disposition),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConnectionControllerErrorCode {
+    Failed,
+    Closed,
+    Canceled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("Flowersec connection controller stopped")]
+pub struct ConnectionControllerError {
+    code: ConnectionControllerErrorCode,
+    diagnostic: ConnectionDiagnostic,
+}
+
+impl ConnectionControllerError {
+    pub const fn code(&self) -> ConnectionControllerErrorCode {
+        self.code
+    }
+
+    pub const fn diagnostic(&self) -> ConnectionDiagnostic {
+        self.diagnostic
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -365,6 +441,51 @@ impl ConnectionController {
         self.inner.snapshot()
     }
 
+    /// Waits for an established Session without starting the controller.
+    pub async fn wait_for_session(&self) -> Result<Arc<dyn Session>, ConnectionControllerError> {
+        self.wait_for_session_with_cancellation(CancellationToken::new())
+            .await
+    }
+
+    /// Waits for an established Session or explicit caller cancellation.
+    pub async fn wait_for_session_with_cancellation(
+        &self,
+        cancellation: CancellationToken,
+    ) -> Result<Arc<dyn Session>, ConnectionControllerError> {
+        loop {
+            let snapshot = self.snapshot();
+            match snapshot.state {
+                ConnectionState::Connected => {
+                    if let Some(session) = snapshot.current_session.clone() {
+                        return Ok(session);
+                    }
+                }
+                ConnectionState::Failed => {
+                    return Err(connection_controller_error(
+                        ConnectionControllerErrorCode::Failed,
+                        &snapshot,
+                    ));
+                }
+                ConnectionState::Closed => {
+                    return Err(connection_controller_error(
+                        ConnectionControllerErrorCode::Closed,
+                        &snapshot,
+                    ));
+                }
+                ConnectionState::Idle | ConnectionState::Connecting | ConnectionState::Waiting => {}
+            }
+            tokio::select! {
+                _ = self.wait_for_snapshot_change(&snapshot) => {}
+                _ = cancellation.cancelled() => {
+                    return Err(connection_controller_error(
+                        ConnectionControllerErrorCode::Canceled,
+                        &snapshot,
+                    ));
+                }
+            }
+        }
+    }
+
     pub async fn wait_for_snapshot_change(&self, after: &ConnectionSnapshot) -> ConnectionSnapshot {
         loop {
             let changed = self.inner.changed.notified();
@@ -417,6 +538,16 @@ impl ConnectionController {
         self.inner.start_scheduler_join_workflow(task);
         self.inner.wait_close_completion().await;
         self.inner.wait_scheduler_join_completion().await;
+    }
+}
+
+fn connection_controller_error(
+    code: ConnectionControllerErrorCode,
+    snapshot: &ConnectionSnapshot,
+) -> ConnectionControllerError {
+    ConnectionControllerError {
+        code,
+        diagnostic: snapshot.diagnostic(),
     }
 }
 
@@ -1340,6 +1471,7 @@ mod tests {
     struct ControllerVectorsV3 {
         version: u64,
         public_errors: Vec<String>,
+        sdk_api_consistency: serde_json::Value,
         defaults: DefaultsV3,
         backoff_vectors: Vec<BackoffV3>,
         scenarios: Vec<ScenarioV3>,
@@ -1445,6 +1577,67 @@ mod tests {
                 ConnectErrorCode::ConnectionFailed,
             ]
             .map(ConnectErrorCode::as_str)
+        );
+        assert_eq!(
+            vectors.sdk_api_consistency["connection_error_codes"],
+            serde_json::json!([
+                "artifact_invalid",
+                "expired_artifact",
+                "transport_security_unsupported",
+                "transport_security_failed",
+                "connection_failed",
+            ])
+        );
+        assert_eq!(
+            vectors.sdk_api_consistency["unreliable_error_codes"],
+            serde_json::json!([
+                "unavailable",
+                "invalid_message",
+                "too_large",
+                "canceled",
+                "closed",
+                "operation_failed",
+            ])
+        );
+        assert_eq!(
+            vectors.sdk_api_consistency["unreliable_send_results"],
+            serde_json::json!([
+                "accepted",
+                "dropped_budget",
+                "dropped_expired",
+                "dropped_carrier",
+            ])
+        );
+        assert_eq!(
+            vectors.sdk_api_consistency["retry"],
+            serde_json::json!({
+                "error_property": "retryDisposition",
+                "deprecated_error_property": "disposition",
+                "retry_after_property": "notBeforeUnixMilliseconds",
+                "deprecated_retry_after_property": "absoluteUnixMilliseconds",
+            })
+        );
+        assert_eq!(
+            vectors.sdk_api_consistency["connection_diagnostic"],
+            serde_json::json!({
+                "fields": ["state", "attempt", "failure", "retryDisposition"],
+                "failure_fields": ["phase", "code"],
+                "forbidden_fields": [
+                    "url", "carrier", "candidates", "error", "credentials", "peer", "session"
+                ],
+            })
+        );
+        assert_eq!(
+            vectors.sdk_api_consistency["wait_for_session"],
+            serde_json::json!({
+                "starts_controller": false,
+                "outcomes": ["connected", "failed", "closed", "canceled"],
+                "migrates_operations": false,
+            })
+        );
+        assert_eq!(
+            vectors.sdk_api_consistency["swift"]["unreliable_messages"],
+            "unsupported"
         );
         assert_eq!(vectors.defaults.initial_backoff_ms, 250);
         assert_eq!(vectors.defaults.maximum_backoff_ms, 30_000);
@@ -1830,7 +2023,7 @@ mod tests {
     async fn cancellation_drain_close_completes_after_retire_panic() {
         let retire_calls = Arc::new(AtomicU64::new(0));
         let retire_calls_capture = retire_calls.clone();
-        let lease = ArtifactLeaseV3::new_with_retire(
+        let lease = ArtifactLease::new_with_retire(
             pin_only_artifact([0x11; 32]),
             || async { Ok(()) },
             move || {
@@ -1875,7 +2068,7 @@ mod tests {
         let retire_release = Arc::new(Notify::new());
         let retire_entered_capture = retire_entered.clone();
         let retire_release_capture = retire_release.clone();
-        let lease = ArtifactLeaseV3::new_with_retire(
+        let lease = ArtifactLease::new_with_retire(
             pin_only_artifact([0x11; 32]),
             || async { Ok(()) },
             move || async move {
@@ -1937,7 +2130,7 @@ mod tests {
         let retires = Arc::new(AtomicU64::new(0));
         let retires_capture = retires.clone();
         let connector_calls = Arc::new(AtomicU64::new(0));
-        let lease = ArtifactLeaseV3::new_with_retire(
+        let lease = ArtifactLease::new_with_retire(
             pin_only_artifact([0x11; 32]),
             move || async move {
                 spends_capture.fetch_add(1, Ordering::SeqCst);
@@ -2597,7 +2790,7 @@ mod tests {
     async fn ordinary_pre_spend_retry_continues_after_retire_panic() {
         let retire_calls = Arc::new(AtomicU64::new(0));
         let retire_calls_capture = retire_calls.clone();
-        let first = ArtifactLeaseV3::new_with_retire(
+        let first = ArtifactLease::new_with_retire(
             pin_only_artifact([0x11; 32]),
             || async { Ok(()) },
             move || {
@@ -2926,13 +3119,13 @@ mod tests {
 
     #[derive(Debug)]
     struct QueueSource {
-        items: Mutex<VecDeque<Result<ArtifactLeaseV3, ArtifactSourceError>>>,
+        items: Mutex<VecDeque<Result<ArtifactLease, ArtifactSourceError>>>,
         acquisitions: AtomicU64,
     }
 
     #[derive(Debug)]
     struct LateLeaseSource {
-        lease: Mutex<Option<ArtifactLeaseV3>>,
+        lease: Mutex<Option<ArtifactLease>>,
         acquisitions: AtomicU64,
     }
 
@@ -2945,7 +3138,7 @@ mod tests {
     #[derive(Debug)]
     struct FirstPollCloseSource {
         controller: Mutex<Option<std::sync::Weak<ConnectionController>>>,
-        lease: Mutex<Option<ArtifactLeaseV3>>,
+        lease: Mutex<Option<ArtifactLease>>,
         close_returned: Arc<AtomicBool>,
     }
 
@@ -2954,7 +3147,7 @@ mod tests {
         async fn acquire(
             &self,
             _cancellation: CancellationToken,
-        ) -> Result<ArtifactLeaseV3, ArtifactSourceError> {
+        ) -> Result<ArtifactLease, ArtifactSourceError> {
             panic!("source contract violation");
         }
     }
@@ -2964,7 +3157,7 @@ mod tests {
             &'source self,
             _cancellation: CancellationToken,
         ) -> Pin<
-            Box<dyn Future<Output = Result<ArtifactLeaseV3, ArtifactSourceError>> + Send + 'future>,
+            Box<dyn Future<Output = Result<ArtifactLease, ArtifactSourceError>> + Send + 'future>,
         >
         where
             'source: 'future,
@@ -2979,7 +3172,7 @@ mod tests {
         async fn acquire(
             &self,
             cancellation: CancellationToken,
-        ) -> Result<ArtifactLeaseV3, ArtifactSourceError> {
+        ) -> Result<ArtifactLease, ArtifactSourceError> {
             let controller = lock(&self.controller)
                 .as_ref()
                 .and_then(std::sync::Weak::upgrade)
@@ -3001,7 +3194,7 @@ mod tests {
         async fn acquire(
             &self,
             cancellation: CancellationToken,
-        ) -> Result<ArtifactLeaseV3, ArtifactSourceError> {
+        ) -> Result<ArtifactLease, ArtifactSourceError> {
             self.acquisitions.fetch_add(1, Ordering::SeqCst);
             cancellation.cancelled().await;
             lock(&self.lease)
@@ -3012,7 +3205,7 @@ mod tests {
 
     impl QueueSource {
         fn new(
-            items: impl IntoIterator<Item = Result<ArtifactLeaseV3, ArtifactSourceError>>,
+            items: impl IntoIterator<Item = Result<ArtifactLease, ArtifactSourceError>>,
         ) -> Self {
             Self {
                 items: Mutex::new(items.into_iter().collect()),
@@ -3026,7 +3219,7 @@ mod tests {
         async fn acquire(
             &self,
             _cancellation: CancellationToken,
-        ) -> Result<ArtifactLeaseV3, ArtifactSourceError> {
+        ) -> Result<ArtifactLease, ArtifactSourceError> {
             self.acquisitions.fetch_add(1, Ordering::SeqCst);
             lock(&self.items)
                 .pop_front()
@@ -3087,7 +3280,7 @@ mod tests {
         })
     }
 
-    async fn spend_lease(lease: ArtifactLeaseV3) -> Result<(), ConnectError> {
+    async fn spend_lease(lease: ArtifactLease) -> Result<(), ConnectError> {
         let claimed = lease
             .claim()
             .map_err(|_| ConnectError::from_runtime_code(ConnectErrorCode::ArtifactInvalid))?;
@@ -3102,8 +3295,8 @@ mod tests {
         artifact: ArtifactV3,
         spends: Arc<AtomicU64>,
         retires: Arc<AtomicU64>,
-    ) -> ArtifactLeaseV3 {
-        ArtifactLeaseV3::new_with_retire(
+    ) -> ArtifactLease {
+        ArtifactLease::new_with_retire(
             artifact,
             move || async move {
                 spends.fetch_add(1, Ordering::SeqCst);
@@ -3156,6 +3349,97 @@ mod tests {
 
     #[derive(Debug)]
     struct TestSession;
+
+    #[tokio::test]
+    async fn wait_for_session_is_passive_and_returns_structured_outcomes() {
+        let idle_source = Arc::new(QueueSource::new([]));
+        let idle = ConnectionController::new_with_connector(
+            idle_source.clone(),
+            test_options(Some(1)),
+            scripted_connector([]),
+        );
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let canceled = idle
+            .wait_for_session_with_cancellation(cancellation)
+            .await
+            .expect_err("canceled wait");
+        assert_eq!(canceled.code(), ConnectionControllerErrorCode::Canceled);
+        assert_eq!(canceled.diagnostic().state, ConnectionState::Idle);
+        assert_eq!(idle_source.acquisitions.load(Ordering::SeqCst), 0);
+
+        let source = Arc::new(QueueSource::new([Ok(test_lease(
+            pin_only_artifact([0x11; 32]),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+        ))]));
+        let connected = ConnectionController::new_with_connector(
+            source,
+            test_options(Some(1)),
+            scripted_connector([ConnectorStep::Success]),
+        );
+        connected.start();
+        let session = connected
+            .wait_for_session()
+            .await
+            .expect("established session");
+        assert!(Arc::ptr_eq(
+            &session,
+            connected
+                .snapshot()
+                .current_session
+                .as_ref()
+                .expect("snapshot session")
+        ));
+        assert_eq!(
+            connected.snapshot().diagnostic(),
+            ConnectionDiagnostic {
+                state: ConnectionState::Connected,
+                attempt: 1,
+                failure: None,
+                retry_disposition: None,
+            }
+        );
+        connected.close().await;
+
+        let failed = ConnectionController::new_with_connector(
+            Arc::new(QueueSource::new([Err(ArtifactSourceError::terminal())])),
+            test_options(Some(1)),
+            scripted_connector([]),
+        );
+        failed.start();
+        let failure = failed
+            .wait_for_session()
+            .await
+            .expect_err("terminal failure");
+        assert_eq!(failure.code(), ConnectionControllerErrorCode::Failed);
+        assert_eq!(
+            failure.diagnostic(),
+            ConnectionDiagnostic {
+                state: ConnectionState::Failed,
+                attempt: 1,
+                failure: Some(ConnectionDiagnosticFailure {
+                    phase: ConnectionFailurePhase::Artifact,
+                    code: "connection_failed",
+                }),
+                retry_disposition: Some(RetryDisposition::Terminal),
+            }
+        );
+        failed.close().await;
+
+        let closed = ConnectionController::new_with_connector(
+            Arc::new(QueueSource::new([])),
+            test_options(Some(1)),
+            scripted_connector([]),
+        );
+        closed.close().await;
+        let error = closed
+            .wait_for_session()
+            .await
+            .expect_err("closed controller");
+        assert_eq!(error.code(), ConnectionControllerErrorCode::Closed);
+        assert_eq!(error.diagnostic().state, ConnectionState::Closed);
+    }
 
     #[async_trait]
     impl Session for TestSession {

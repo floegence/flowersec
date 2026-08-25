@@ -95,6 +95,31 @@ export type ConnectionControllerSnapshotV3<Session extends ManagedSessionV3 = Ma
   retryDisposition?: RetryDispositionV3;
 }>;
 
+export type ConnectionDiagnosticV3 = Readonly<{
+  state: ConnectionControllerStateV3;
+  attempt: number;
+  failure?: ConnectionControllerFailureV3;
+  retryDisposition?: RetryDispositionV3;
+}>;
+
+/** Produces a stable diagnostic value without retaining a Session or transport detail. */
+export function connectionDiagnosticV3(
+  snapshot: ConnectionControllerSnapshotV3,
+): ConnectionDiagnosticV3 {
+  const failure = snapshot.failure === undefined
+    ? undefined
+    : Object.freeze({ phase: snapshot.failure.phase, code: snapshot.failure.code });
+  const retryDisposition = snapshot.retryDisposition === undefined
+    ? undefined
+    : validateRetryDispositionV3(snapshot.retryDisposition);
+  return Object.freeze({
+    state: snapshot.state,
+    attempt: snapshot.attempt,
+    ...(failure === undefined ? {} : { failure }),
+    ...(retryDisposition === undefined ? {} : { retryDisposition }),
+  });
+}
+
 export type ConnectionControllerOptionsV3 = Readonly<{
   maximumAttempts?: number;
   clock?: ControllerClockV3;
@@ -104,13 +129,24 @@ export type ConnectionControllerOptionsV3 = Readonly<{
 }>;
 
 export class ConnectionControllerV3Error extends Error {
+  readonly diagnostic: ConnectionDiagnosticV3;
+
   constructor(
     readonly code: "failed" | "closed" | "canceled",
     readonly failure?: ConnectionControllerFailureV3,
     readonly retryDisposition?: RetryDispositionV3,
+    diagnostic?: ConnectionDiagnosticV3,
   ) {
-    super(`Flowersec v3 connection controller stopped (code=${code})`);
+    super(`Flowersec connection controller stopped (code=${code})`);
     this.name = "ConnectionControllerError";
+    this.diagnostic = diagnostic ?? Object.freeze({
+      state: code === "failed" ? "failed" : code === "closed" ? "closed" : "idle",
+      attempt: 0,
+      ...(failure === undefined ? {} : { failure }),
+      ...(retryDisposition === undefined ? {} : {
+        retryDisposition: validateRetryDispositionV3(retryDisposition),
+      }),
+    });
   }
 }
 
@@ -191,14 +227,24 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
   async waitForSession(options: Readonly<{ signal?: AbortSignal }> = {}): Promise<Session> {
     if (this.currentSession !== undefined) return this.currentSession;
     if (this.#state === "failed") {
-      throw new ConnectionControllerV3Error("failed", this.#failure, this.#disposition);
+      const snapshot = this.#snapshot();
+      throw new ConnectionControllerV3Error(
+        "failed", this.#failure, this.#disposition, connectionDiagnosticV3(snapshot));
     }
     if (this.#state === "closed") {
-      throw new ConnectionControllerV3Error("closed", this.#failure, this.#disposition);
+      const snapshot = this.#snapshot();
+      throw new ConnectionControllerV3Error(
+        "closed", this.#failure, this.#disposition, connectionDiagnosticV3(snapshot));
     }
-    if (options.signal?.aborted === true) throw new ConnectionControllerV3Error("canceled");
+    if (options.signal?.aborted === true) {
+      throw new ConnectionControllerV3Error(
+        "canceled", undefined, undefined, connectionDiagnosticV3(this.#snapshot()));
+    }
     return await new Promise<Session>((resolve, reject) => {
+      let settled = false;
       const finish = (session: Session | undefined, error?: ConnectionControllerV3Error) => {
+        if (settled) return;
+        settled = true;
         this.#listeners.delete(listener);
         options.signal?.removeEventListener("abort", canceled);
         session === undefined ? reject(error) : resolve(session);
@@ -211,18 +257,26 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
             "failed",
             snapshot.failure,
             snapshot.retryDisposition,
+            connectionDiagnosticV3(snapshot),
           ));
         } else if (snapshot.state === "closed") {
           finish(undefined, new ConnectionControllerV3Error(
             "closed",
             snapshot.failure,
             snapshot.retryDisposition,
+            connectionDiagnosticV3(snapshot),
           ));
         }
       };
-      const canceled = () => finish(undefined, new ConnectionControllerV3Error("canceled"));
+      const canceled = () => {
+        const snapshot = this.#snapshot();
+        finish(undefined, new ConnectionControllerV3Error(
+          "canceled", undefined, undefined, connectionDiagnosticV3(snapshot)));
+      };
       this.#listeners.add(listener);
       options.signal?.addEventListener("abort", canceled, { once: true });
+      if (options.signal?.aborted === true) canceled();
+      else listener(this.#snapshot());
     });
   }
 
@@ -297,9 +351,9 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
       if (acquisition.kind === "failure") {
         const error = sourceFailure(acquisition);
         const ordinal = this.#cycle.recordFailedAcquisitionOrLease();
-        this.#recordFailure("artifact", error.code, error.disposition);
-        if (error.disposition.kind === "terminal" || this.#attemptBudgetExhausted()) return;
-        pendingDisposition = error.disposition;
+        this.#recordFailure("artifact", error.code, error.retryDisposition);
+        if (error.retryDisposition.kind === "terminal" || this.#attemptBudgetExhausted()) return;
+        pendingDisposition = error.retryDisposition;
         void ordinal;
         continue;
       }
@@ -328,7 +382,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         await retireArtifactLeaseV3(claim);
         this.#cycle.recordFailedAcquisitionOrLease();
         const error = new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
-        this.#recordFailure("connect", error.code, error.disposition);
+        this.#recordFailure("connect", error.code, error.retryDisposition);
         return;
       }
       try {
@@ -337,11 +391,11 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         await retireArtifactLeaseV3(claim);
         this.#cycle.recordFailedAcquisitionOrLease();
         const error = new ConnectErrorV3("expired_artifact", { kind: "retryable" });
-        this.#recordFailure("connect", error.code, error.disposition);
+        this.#recordFailure("connect", error.code, error.retryDisposition);
         if (this.#attemptBudgetExhausted()) return;
         next = "primary";
         replacementContext = undefined;
-        pendingDisposition = error.disposition;
+        pendingDisposition = error.retryDisposition;
         continue;
       }
 
@@ -361,7 +415,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         const error = next === "replacement"
           ? replacementTerminal(replacementContext)
           : this.#cycle.blockedPolicyTerminal();
-        this.#recordFailure("connect", error.code, error.disposition);
+        this.#recordFailure("connect", error.code, error.retryDisposition);
         return;
       }
 
@@ -425,11 +479,11 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         let sessionFailure: ConnectErrorV3;
         try {
           sessionFailure = this.#projectSessionFailure(termination.error);
-          validateRetryDispositionV3(sessionFailure.disposition);
+          validateRetryDispositionV3(sessionFailure.retryDisposition);
         } catch {
           sessionFailure = new ConnectErrorV3("connection_failed", { kind: "terminal" });
         }
-        const disposition = sessionFailure.disposition;
+        const disposition = sessionFailure.retryDisposition;
         this.#cycle.recordFailedAcquisitionOrLease();
         this.#recordFailure("session", sessionFailure.code, disposition);
         if (disposition.kind === "terminal") return;
@@ -450,12 +504,12 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
         const error = next === "replacement" && result.error.code !== "expired_artifact"
           ? replacementTerminal(replacementContext)
           : result.error;
-        const disposition = error.disposition;
+        const disposition = error.retryDisposition;
         this.#recordFailure("connect", error.code, disposition);
         if (disposition.kind === "terminal" || this.#attemptBudgetExhausted()) return;
         next = "primary";
         replacementContext = undefined;
-        pendingDisposition = result.error.disposition;
+        pendingDisposition = result.error.retryDisposition;
         continue;
       }
 
@@ -469,11 +523,11 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
           };
         }
         this.#cycle.recordFailedAcquisitionOrLease();
-        this.#recordFailure("connect", postSpendResult.error.code, postSpendResult.error.disposition);
-        if (postSpendResult.error.disposition.kind === "terminal" || this.#attemptBudgetExhausted()) return;
+        this.#recordFailure("connect", postSpendResult.error.code, postSpendResult.error.retryDisposition);
+        if (postSpendResult.error.retryDisposition.kind === "terminal" || this.#attemptBudgetExhausted()) return;
         next = "primary";
         replacementContext = undefined;
-        pendingDisposition = postSpendResult.error.disposition;
+        pendingDisposition = postSpendResult.error.retryDisposition;
         continue;
       }
 
@@ -486,17 +540,17 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
       this.#cycle.recordFailedAcquisitionOrLease();
       if (isExpired(artifact, this.#nowUnixSeconds)) {
         const error = new ConnectErrorV3("expired_artifact", { kind: "retryable" });
-        this.#recordFailure("connect", error.code, error.disposition);
+        this.#recordFailure("connect", error.code, error.retryDisposition);
         if (this.#attemptBudgetExhausted()) return;
         next = "primary";
         replacementContext = undefined;
-        pendingDisposition = error.disposition;
+        pendingDisposition = error.retryDisposition;
         continue;
       }
 
       if (next === "replacement") {
         const error = replacementTerminal(replacementContext);
-        this.#recordFailure("connect", error.code, error.disposition);
+        this.#recordFailure("connect", error.code, error.retryDisposition);
         return;
       }
       const triggerKeys = blockPolicyRefreshTriggersV3(artifact.path.kind, result.failures, this.#cycle);
@@ -510,13 +564,13 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
       }
       if (triggerKeys.size > 0 && refresh.code === "connection_failed") {
         const terminal = this.#cycle.blockedPolicyTerminal();
-        this.#recordFailure("connect", terminal.code, terminal.disposition);
+        this.#recordFailure("connect", terminal.code, terminal.retryDisposition);
         return;
       }
-      this.#recordFailure("connect", refresh.code, refresh.disposition);
-      if (refresh.disposition.kind === "terminal" || this.#attemptBudgetExhausted()) return;
+      this.#recordFailure("connect", refresh.code, refresh.retryDisposition);
+      if (refresh.retryDisposition.kind === "terminal" || this.#attemptBudgetExhausted()) return;
       next = "primary";
-      pendingDisposition = refresh.disposition;
+      pendingDisposition = refresh.retryDisposition;
     }
   }
 
@@ -563,7 +617,7 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
           return {
             kind: "failure",
             code: error.code,
-            disposition: validateRetryDispositionV3(error.disposition),
+            disposition: validateRetryDispositionV3(error.retryDisposition),
           };
         } catch {
           return invalidSourceResult();
@@ -796,7 +850,7 @@ function normalizeLeaseAttemptResultV3<Session extends ManagedSessionV3>(
     if (!hasExactOwnKeys(value, ["kind", "error"])) return undefined;
     const error = Reflect.get(value, "error");
     if (!(error instanceof ConnectErrorV3) || !CONNECT_ERROR_CODES_V3.has(error.code)) return undefined;
-    const normalizedError = new ConnectErrorV3(error.code, validateRetryDispositionV3(error.disposition));
+    const normalizedError = new ConnectErrorV3(error.code, validateRetryDispositionV3(error.retryDisposition));
     return Object.freeze({ kind, error: normalizedError }) as LeaseAttemptResultV3<Session>;
   } catch {
     return undefined;

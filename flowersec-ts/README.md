@@ -22,12 +22,19 @@ The root type exports are:
 
 - Artifact lifecycle: `Artifact`, closed `ArtifactError` parse failures, and `ArtifactLease`.
 - Sessions: `Session`, `SessionTermination`, `RpcPeer`, `RpcResult<Response>`, `ByteStream`, `IncomingStream`, `StreamMetadata`, `OperationOptions`, and `StreamOpenOptions`. Create metadata with `createStreamMetadata(...)`; invalid values throw `StreamMetadataError` before opening a stream.
-- Unreliable messages: `UnreliableMessageChannel`, `UnreliableMessageSendOptions`, and `UnreliableMessageSendResult`.
+- Unreliable messages: `UnreliableMessageChannel`, `UnreliableMessageSendOptions`, `UnreliableMessageSendResult`, and the closed `UnreliableMessageErrorCode` set.
 - JSON values: `JsonPrimitive`, `JsonValue`, and `JsonObject`.
 - Errors: `ConnectErrorCode`, `SessionErrorCode`, and structured `RetryDisposition`.
-- Connection lifecycle: `ArtifactSource`, `ArtifactSourceResult`, `ConnectionController`, `ConnectionState`, `ConnectionSnapshot`, `ConnectionControllerFailure`, `ConnectionControllerError`, and `RetryDisposition`.
+- Connection lifecycle: `ArtifactSource`, `ArtifactSourceResult`, `ConnectionController`, `ConnectionState`, `ConnectionSnapshot`, `ConnectionDiagnostic`, `ConnectionControllerFailure`, `ConnectionControllerError`, and `RetryDisposition`.
 
-Retry ownership belongs to `ConnectionController`; applications do not classify error text or run a parallel retry scheduler. Public failures remain redacted and reveal no carrier, candidate, URL, credential, stage, key, or diagnostic details.
+Unversioned names are the recommended strict-v3 API. Explicit `V3` exports are
+deprecated aliases. `ConnectError.retryDisposition` and
+`retry_after.notBeforeUnixMilliseconds` are canonical; deprecated
+`disposition` and `absoluteUnixMilliseconds` properties remain readable through
+their aliases. Retry ownership belongs to `ConnectionController`;
+applications do not classify error text or run a parallel retry scheduler.
+Public failures remain redacted and reveal no carrier, candidate, URL,
+credential, stage, key, or implementation details.
 
 `RpcResult<Response>` is a discriminated union. `RpcPeer.call(...)` requires a decoder for successful payloads, so the typed success value has passed application validation before it is returned. Check `result.ok` before reading either the typed success `payload` or bounded application `error`; a result cannot contain both. RPC call and notify accept only `JsonValue` payloads and reject values that cannot be represented on the wire before sending. TypeScript `RpcPeer.onNotify(typeId, decoder, handler)` receives peer outbound notifications through the local Session's inbound reserved RPC stream. A notification reaches the handler only after its decoder succeeds; decoder and handler failures are isolated from RPC serving.
 
@@ -50,7 +57,11 @@ const session = await connect(lease, {
 ### Long-lived Node client
 
 ```ts
-import { RPCHandlers, createConnectionController } from "@floegence/flowersec-core/node";
+import {
+  RPCHandlers,
+  connectionDiagnostic,
+  createConnectionController,
+} from "@floegence/flowersec-core/node";
 
 const rpcHandlers = new RPCHandlers();
 rpcHandlers.handleRPC(7, async (payload) => ({ payload }));
@@ -60,10 +71,15 @@ const controller = createConnectionController(source, {
 });
 controller.start();
 const session = await controller.waitForSession();
+const unsubscribe = controller.subscribe((snapshot) => {
+  monitor(connectionDiagnostic(snapshot));
+});
 ```
 
 The immutable callback definition applies to every generation, while each
-Session gets a fresh router. Terminated Session work is never replayed.
+Session gets a fresh router. `waitForSession()` never starts the controller.
+Diagnostics contain only state, attempt, failure phase/code, and retry
+disposition. Terminated Session work is never replayed.
 
 ### Application streams on any Session
 

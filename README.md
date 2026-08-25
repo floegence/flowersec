@@ -120,11 +120,12 @@ The machine-readable native-server-core profile contains 18 aggregate
 runtime-role-carrier tuples (six per native runtime) and 24 supported
 path-specific server units; Go H4 adds two WebTransport server tuples and two
 path-specific units. The interoperability matrix separately declares a
-coordinate universe of 18 direct cells and 18 tunnel cells. All 36 pairwise
-cells are currently explicit `unsupported` declarations because no
-release-gating v3 test exercises a cell's complete executable case set. A
-profile never changes Artifact, handshake, RPC, stream, close, rekey, or
-authorization wire semantics.
+coordinate universe of 18 direct cells and 18 tunnel cells. The release gate
+proves all 10 direct cells and 14 pairwise tunnel cells that include Go; the
+remaining 8 direct and 4 tunnel cells stay explicitly unverified. Four
+additional WSS client profiles prove Swift and browser TypeScript against Go
+over direct and tunneled paths. A profile never changes Artifact, handshake,
+RPC, stream, close, rekey, or authorization wire semantics.
 
 See the SDK guides for the exact platform and connection combinations supported
 by each package.

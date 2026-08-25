@@ -128,7 +128,7 @@ struct LeaseStateMachineVectorsV3 {
 
 #[derive(Debug)]
 struct TrackedLease {
-    lease: ArtifactLeaseV3,
+    lease: ArtifactLease,
     terminal: Arc<Mutex<Option<&'static str>>>,
     spends: Arc<AtomicU64>,
     retires: Arc<AtomicU64>,
@@ -150,7 +150,7 @@ impl TrackedLease {
         let spend_count = spends.clone();
         let retire_terminal = terminal.clone();
         let retire_count = retires.clone();
-        let lease = ArtifactLeaseV3::new_with_retire(
+        let lease = ArtifactLease::new_with_retire(
             artifact,
             move || async move {
                 spend_count.fetch_add(1, Ordering::SeqCst);
@@ -179,7 +179,7 @@ impl TrackedLease {
         let spend_count = spends.clone();
         let retire_terminal = terminal.clone();
         let retire_count = retires.clone();
-        let lease = ArtifactLeaseV3::new_with_retire(
+        let lease = ArtifactLease::new_with_retire(
             artifact,
             move || async move {
                 spend_count.fetch_add(1, Ordering::SeqCst);
@@ -273,7 +273,7 @@ impl Drop for GateReleaseGuard {
 #[derive(Debug)]
 struct SourceEntry {
     replacement: bool,
-    result: Result<ArtifactLeaseV3, ArtifactSourceError>,
+    result: Result<ArtifactLease, ArtifactSourceError>,
 }
 
 #[derive(Debug)]
@@ -322,7 +322,7 @@ impl ArtifactSource for ClockBoundarySource {
     async fn acquire(
         &self,
         cancellation: CancellationToken,
-    ) -> Result<ArtifactLeaseV3, ArtifactSourceError> {
+    ) -> Result<ArtifactLease, ArtifactSourceError> {
         let acquisition = self.acquisitions.fetch_add(1, Ordering::SeqCst) + 1;
         self.changed.notify_waiters();
         if acquisition < self.retry_after_acquisition {
@@ -453,7 +453,7 @@ impl ArtifactSource for VectorSource {
     async fn acquire(
         &self,
         _cancellation: CancellationToken,
-    ) -> Result<ArtifactLeaseV3, ArtifactSourceError> {
+    ) -> Result<ArtifactLease, ArtifactSourceError> {
         self.acquisitions.fetch_add(1, Ordering::SeqCst);
         lock(&self.acquisition_times).push(SystemTime::now());
         let entry = lock(&self.entries)
@@ -558,7 +558,7 @@ fn vector_connector(
     })
 }
 
-async fn spend(lease: ArtifactLeaseV3) -> Result<(), ConnectError> {
+async fn spend(lease: ArtifactLease) -> Result<(), ConnectError> {
     lease
         .claim()
         .map_err(|_| ConnectError::from_runtime_code(ConnectErrorCode::ArtifactInvalid))?
@@ -873,7 +873,7 @@ async fn top_level_controller_vectors_bind_production_results_retry_and_lease_st
     }
     assert_eq!(seen.len(), 8);
 
-    assert_eq!(vectors.retry_after.aggregate, "maximum_absolute_unix_ms");
+    assert_eq!(vectors.retry_after.aggregate, "maximum_not_before_unix_ms");
     for value in &vectors.retry_after.valid {
         assert!(valid_retry_after(*value), "valid retry_after {value}");
         assert_eq!(
@@ -1256,7 +1256,7 @@ impl ArtifactSource for BrowserBarrierSource {
     async fn acquire(
         &self,
         cancellation: CancellationToken,
-    ) -> Result<ArtifactLeaseV3, ArtifactSourceError> {
+    ) -> Result<ArtifactLease, ArtifactSourceError> {
         let entry = lock(&self.entries)
             .pop_front()
             .unwrap_or_else(|| SourceEntry {
@@ -1932,7 +1932,7 @@ async fn run_post_spend_retry(scenario: &ScenarioV3) {
 
 #[derive(Debug)]
 struct LateVectorSource {
-    lease: Mutex<Option<ArtifactLeaseV3>>,
+    lease: Mutex<Option<ArtifactLease>>,
     acquisitions: AtomicU64,
 }
 
@@ -1941,7 +1941,7 @@ impl ArtifactSource for LateVectorSource {
     async fn acquire(
         &self,
         cancellation: CancellationToken,
-    ) -> Result<ArtifactLeaseV3, ArtifactSourceError> {
+    ) -> Result<ArtifactLease, ArtifactSourceError> {
         self.acquisitions.fetch_add(1, Ordering::SeqCst);
         cancellation.cancelled().await;
         lock(&self.lease)

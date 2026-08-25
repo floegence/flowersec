@@ -104,7 +104,7 @@ Flowersec はアプリケーションセッションを、それを運ぶネッ�
 | `apple-client` | Apple プラットフォームの Swift | WSS endpoint client | なし |
 | `webtransport-server` | Go | WebTransport direct server と opaque tunnel runtime | なし |
 
-機械可読な native-server-core profile には、native runtime ごとに 6 個、合計 18 個の集約 runtime-role-carrier tuple と、対応済みの path 固有 server unit 24 個があります。Go H4 は、WebTransport server tuple 2 個と path 固有 unit 2 個を追加します。interoperability matrix は direct cell 18 個と tunnel cell 18 個を別に宣言します。36 個すべての pairwise cell は、cell の完全な executable case set を実行する release-gating v3 test がないため、現在は明示的な `unsupported` 宣言です。profile が Artifact、handshake、RPC、stream、close、rekey、authorization の wire semantics を変更することはありません。
+機械可読な native-server-core profile には、native runtime ごとに 6 個、合計 18 個の集約 runtime-role-carrier tuple と、対応済みの path 固有 server unit 24 個があります。Go H4 は、WebTransport server tuple 2 個と path 固有 unit 2 個を追加します。interoperability matrix は direct cell 18 個と tunnel cell 18 個を別に宣言します。release gate は Go を含む direct cell 10 個と pairwise tunnel cell 14 個をすべて検証し、残る direct cell 8 個と tunnel cell 4 個は明示的に未検証です。さらに 4 個の WSS client profile が、Swift と browser TypeScript から Go への direct および tunnel path を検証します。profile が Artifact、handshake、RPC、stream、close、rekey、authorization の wire semantics を変更することはありません。
 
 各パッケージが対応するプラットフォームと接続方式の組み合わせは、SDK ガイドで確認してください。
 

@@ -104,6 +104,11 @@ const typescriptReadme = read("flowersec-ts/README.md");
 const directParityRunner = read("scripts/test-server-parity-direct.mjs");
 const tunnelParityRunner = read("scripts/test-server-parity-tunnel.mjs");
 const parityMatrixGenerator = read("scripts/server-parity-matrix.mjs");
+const typescriptParityPeer = read("flowersec-ts/src/interop/serverParityPeer.ts");
+const goParityPeers = [
+  read("flowersec-go/internal/cmd/server-parity-peer-v2/main.go"),
+  read("flowersec-go/internal/cmd/server-parity-peer/main.go"),
+];
 const browserExternalParity = read("flowersec-ts/browser-e2e/external-parity.spec.ts");
 const browserV3TransportTests = read("flowersec-ts/browser-e2e/transport-v3.spec.ts");
 const browserCarrier = read("flowersec-ts/src/browser/webTransportClient.ts") + read("flowersec-ts/src/transport/webTransportAdapter.ts");
@@ -256,22 +261,10 @@ assert.match(directParityRunner, /throw new Error\("server parity direct matrix 
   "the direct matrix runner must fail closed when no supported v3 cells are selected");
 assert.match(tunnelParityRunner, /throw new Error\("server parity tunnel matrix selected no supported v3 topologies"\)/,
   "the tunnel matrix runner must fail closed when no supported v3 topologies are selected");
-for (const [name, relative, expected] of [
-  ["direct", "scripts/test-server-parity-direct.mjs", /selected no supported v3 cells/],
-  ["tunnel", "scripts/test-server-parity-tunnel.mjs", /selected no supported v3 topologies/],
-]) {
-  const environment = { ...process.env };
-  delete environment.FLOWERSEC_PARITY_CLIENT_PROFILE;
-  delete environment.FLOWERSEC_PARITY_TEST_ID;
-  const result = spawnSync(process.execPath, [relative], {
-    cwd: root,
-    encoding: "utf8",
-    env: environment,
-  });
-  assert.notEqual(result.status, 0, `${name} matrix runner passed without a supported v3 cell`);
-  assert.match(`${result.stdout}\n${result.stderr}`, expected,
-    `${name} matrix runner failed for an unexpected reason`);
-}
+assert.match(registry, /commandEntry\("interop\/v3\/native\/direct\/go-baseline"/,
+  "the direct Go-baseline matrix must be release-gating");
+assert.match(registry, /commandEntry\("interop\/v3\/native\/tunnel\/go-baseline"/,
+  "the tunnel Go-baseline matrix must be release-gating");
 assert.match(parityMatrixGenerator, /language_capabilities\.json/,
   "server parity dimensions must derive from the capability manifest");
 assert.match(directParityRunner, /FLOWERSEC_PARITY_CLIENT_PROFILE/,
@@ -286,6 +279,14 @@ for (const [name, runner] of [["direct", directParityRunner], ["tunnel", tunnelP
   assert.match(runner, /FLOWERSEC_PARITY_PROTOCOL: clientProfileProtocol/,
     `${name} client-profile parity must pass the selected protocol to the external SDK`);
 }
+for (const peer of goParityPeers) {
+  assert.match(peer,
+    /func exerciseExternalServer[\s\S]*session\.WaitTermination\(canceled\)[\s\S]*executed\.record\("cancel"\)[\s\S]*session\.ProbeLiveness\(ctx\)/,
+    "Go client-profile parity must prove that cancellation is local and leaves the session live");
+}
+assert.match(typescriptParityPeer,
+  /async function externalServer[\s\S]*session\.waitTermination\(\{ signal: cancellation\.signal \}\)[\s\S]*state\.executed\.record\("cancel"\)[\s\S]*session\.probeLiveness\(\)/,
+  "TypeScript client-profile parity must prove that cancellation is local and leaves the session live");
 assert.match(browserExternalParity, /protocol === "v2"[\s\S]{0,200}sdk\.v2\.connect[\s\S]{0,300}sdk\.connect/,
   "browser external parity must select only an explicit v2 or v3 SDK namespace");
 assert.match(registry, /browserSmokeEntry\("browser\/chromium\/websocket\/self-contained", "Portable browsers run the v3 WebSocket client contract"\)/);
@@ -455,12 +456,27 @@ if (fs.existsSync(path.join(root, "flowersec-node-native/package.json"))) {
 assert.deepEqual(parityContractProblems, [], "server parity required tuple contract is incomplete");
 const interopCells = [...interopMatrix.direct_cells, ...interopMatrix.tunnel_topologies];
 assert.ok(interopMatrix.direct_cells.length > 0 && interopMatrix.tunnel_topologies.length > 0);
-assert.equal(interopCells.filter(({ status }) => status === "supported").length, 0,
-  "documentation declares that the current pairwise v3 matrix has no supported cells");
-assert.match(testMatrix, /All 36 declarations are unsupported/,
-  "the test matrix must state the current pairwise support boundary");
-assert.match(read("README.md"), /All 36 pairwise\s+cells are currently explicit `unsupported` declarations/,
-  "the root README must not promote the pairwise coordinate universe to supported parity");
+assert.equal(interopMatrix.direct_cells.filter(({ status }) => status === "supported").length, 10,
+  "the direct Go-baseline matrix must contain 10 supported cells");
+assert.equal(interopMatrix.tunnel_topologies.filter(({ status }) => status === "supported").length, 14,
+  "the tunnel Go-baseline matrix must contain 14 supported topologies");
+assert.equal(interopCells.filter(({ status }) => status === "unsupported").length, 12,
+  "the 12 native combinations outside the Go baseline must remain unverified");
+assert.ok(interopMatrix.direct_cells.filter(({ status }) => status === "supported")
+  .every(({ client, server }) => client === "go" || server === "go"));
+assert.ok(interopMatrix.tunnel_topologies.filter(({ status }) => status === "supported")
+  .every(({ endpoint_a, endpoint_b, tunnel_runtime }) => [endpoint_a, endpoint_b, tunnel_runtime].includes("go")));
+assert.match(testMatrix, /10 direct cells and 14 tunnel topologies containing Go/,
+  "the test matrix must state the current Go-baseline support boundary");
+assert.match(read("README.md"), /10 direct cells and 14 pairwise tunnel cells that include Go/,
+  "the root README must state the current Go-baseline support boundary");
+assert.equal(interopMatrix.client_profiles?.length, 4,
+  "the matrix must contain four Swift and browser WSS client profiles");
+for (const profile of interopMatrix.client_profiles) {
+  assert.equal(profile.status, "supported", `${profile.id} client profile must be supported`);
+  assert.equal(profile.test_ids?.length, 1, `${profile.id} client profile must use one test ID`);
+  assert.ok(registryIDs.has(profile.test_ids[0]), `${profile.id} references unknown test_id ${profile.test_ids[0]}`);
+}
 for (const cell of interopCells) {
   assert.ok(["supported", "unsupported"].includes(cell.status), `interop cell ${cell.id} has invalid status`);
   if (cell.status === "supported") {

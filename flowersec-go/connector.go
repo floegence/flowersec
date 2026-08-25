@@ -80,6 +80,56 @@ type UnreliableSendOptions struct {
 	ExpiresAt time.Time
 }
 
+// UnreliableMessageErrorCode is the complete carrier-neutral unreliable-message
+// failure set. Dropped sends are reported as UnreliableSendStatus values.
+type UnreliableMessageErrorCode string
+
+const (
+	UnreliableMessageUnavailable     UnreliableMessageErrorCode = "unavailable"
+	UnreliableMessageInvalid         UnreliableMessageErrorCode = "invalid_message"
+	UnreliableMessageTooLarge        UnreliableMessageErrorCode = "too_large"
+	UnreliableMessageCanceled        UnreliableMessageErrorCode = "canceled"
+	UnreliableMessageClosed          UnreliableMessageErrorCode = "closed"
+	UnreliableMessageOperationFailed UnreliableMessageErrorCode = "operation_failed"
+)
+
+func (code UnreliableMessageErrorCode) String() string { return string(code) }
+
+// UnreliableMessageError is a stable, redacted unreliable-message failure.
+// Unwrap preserves compatibility with the SessionError returned by Flowersec
+// 3.0 while new code should inspect Code.
+type UnreliableMessageError struct {
+	code   UnreliableMessageErrorCode
+	legacy *SessionError
+}
+
+func (err *UnreliableMessageError) Error() string {
+	if err == nil {
+		return "<nil>"
+	}
+	return "Flowersec unreliable message failed (code=" + string(err.Code()) + ")"
+}
+
+func (err *UnreliableMessageError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.legacy
+}
+
+func (err *UnreliableMessageError) Code() UnreliableMessageErrorCode {
+	if err == nil {
+		return UnreliableMessageOperationFailed
+	}
+	switch err.code {
+	case UnreliableMessageUnavailable, UnreliableMessageInvalid, UnreliableMessageTooLarge,
+		UnreliableMessageCanceled, UnreliableMessageClosed, UnreliableMessageOperationFailed:
+		return err.code
+	default:
+		return UnreliableMessageOperationFailed
+	}
+}
+
 // SessionTermination is the stable, redacted terminal state of a session.
 type SessionTermination struct {
 	Error SessionError
@@ -385,7 +435,7 @@ func (current *opaqueSession) RPC() RPCPeer { return &opaqueRPCPeer{inner: curre
 func (current *opaqueSession) UnreliableMessages() (UnreliableMessageChannel, error) {
 	channel, err := current.inner.UnreliableMessages()
 	if err != nil {
-		return nil, redactSessionError(err)
+		return nil, redactUnreliableMessageError(err)
 	}
 	return &opaqueUnreliableMessageChannel{inner: channel}, nil
 }
@@ -453,11 +503,11 @@ func (channel *opaqueUnreliableMessageChannel) MaxMessageBytes() int {
 }
 func (channel *opaqueUnreliableMessageChannel) Send(ctx context.Context, payload []byte, options UnreliableSendOptions) (UnreliableSendStatus, error) {
 	status, err := channel.inner.Send(ctx, payload, session.UnreliableSendOptions{ExpiresAt: options.ExpiresAt})
-	return UnreliableSendStatus(status), redactNilSessionError(err)
+	return UnreliableSendStatus(status), redactNilUnreliableMessageError(err)
 }
 func (channel *opaqueUnreliableMessageChannel) Receive(ctx context.Context) ([]byte, error) {
 	payload, err := channel.inner.Receive(ctx)
-	return payload, redactNilSessionError(err)
+	return payload, redactNilUnreliableMessageError(err)
 }
 
 // RPCError is a sanitized application error returned by a remote RPC handler.
@@ -554,7 +604,7 @@ func (current *opaqueSessionV3) RPC() RPCPeer { return &opaqueRPCPeerV3{inner: c
 func (current *opaqueSessionV3) UnreliableMessages() (UnreliableMessageChannel, error) {
 	channel, err := current.inner.UnreliableMessages()
 	if err != nil {
-		return nil, redactSessionError(err)
+		return nil, redactUnreliableMessageError(err)
 	}
 	return &opaqueUnreliableMessageChannelV3{inner: channel}, nil
 }
@@ -648,11 +698,11 @@ func (channel *opaqueUnreliableMessageChannelV3) MaxMessageBytes() int {
 }
 func (channel *opaqueUnreliableMessageChannelV3) Send(ctx context.Context, payload []byte, options UnreliableSendOptions) (UnreliableSendStatus, error) {
 	status, err := channel.inner.Send(ctx, payload, sessionv3.UnreliableSendOptions{ExpiresAt: options.ExpiresAt})
-	return UnreliableSendStatus(status), redactNilSessionError(err)
+	return UnreliableSendStatus(status), redactNilUnreliableMessageError(err)
 }
 func (channel *opaqueUnreliableMessageChannelV3) Receive(ctx context.Context) ([]byte, error) {
 	payload, err := channel.inner.Receive(ctx)
-	return payload, redactNilSessionError(err)
+	return payload, redactNilUnreliableMessageError(err)
 }
 
 type opaqueByteStreamV3 struct{ inner sessionv3.ByteStream }
@@ -688,6 +738,31 @@ func redactNilSessionError(err error) error {
 		return nil
 	}
 	return redactSessionError(err)
+}
+
+func redactNilUnreliableMessageError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return redactUnreliableMessageError(err)
+}
+
+func redactUnreliableMessageError(err error) *UnreliableMessageError {
+	legacy := redactSessionError(err)
+	code := UnreliableMessageOperationFailed
+	switch {
+	case errors.Is(err, context.Canceled):
+		code = UnreliableMessageCanceled
+	case errors.Is(err, session.ErrSessionClosed), errors.Is(err, sessionv3.ErrSessionClosed):
+		code = UnreliableMessageClosed
+	case errors.Is(err, session.ErrUnreliableUnavailable), errors.Is(err, sessionv3.ErrUnreliableUnavailable):
+		code = UnreliableMessageUnavailable
+	case errors.Is(err, session.ErrUnreliableInvalidExpiry), errors.Is(err, sessionv3.ErrUnreliableInvalidExpiry):
+		code = UnreliableMessageInvalid
+	case errors.Is(err, session.ErrUnreliableMessageTooLarge), errors.Is(err, sessionv3.ErrUnreliableMessageTooLarge):
+		code = UnreliableMessageTooLarge
+	}
+	return &UnreliableMessageError{code: code, legacy: legacy}
 }
 
 func redactRPCError(err error) error {

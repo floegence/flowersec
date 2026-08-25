@@ -47,8 +47,10 @@
         "cancel",
         "cleanup"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/direct/go-baseline"
+      ]
     },
     {
       "id": "go_to_go_raw_quic_direct",
@@ -69,8 +71,10 @@
         "cleanup",
         "datagram"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/direct/go-baseline"
+      ]
     },
     {
       "id": "go_to_rust_websocket_direct",
@@ -90,8 +94,10 @@
         "cancel",
         "cleanup"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/direct/go-baseline"
+      ]
     },
     {
       "id": "go_to_rust_raw_quic_direct",
@@ -112,8 +118,10 @@
         "cleanup",
         "datagram"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/direct/go-baseline"
+      ]
     },
     {
       "id": "go_to_node_websocket_direct",
@@ -133,8 +141,10 @@
         "cancel",
         "cleanup"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/direct/go-baseline"
+      ]
     },
     {
       "id": "go_to_node_raw_quic_direct",
@@ -155,8 +165,10 @@
         "cleanup",
         "datagram"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/direct/go-baseline"
+      ]
     },
     {
       "id": "rust_to_go_websocket_direct",
@@ -176,8 +188,10 @@
         "cancel",
         "cleanup"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/direct/go-baseline"
+      ]
     },
     {
       "id": "rust_to_go_raw_quic_direct",
@@ -198,8 +212,10 @@
         "cleanup",
         "datagram"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/direct/go-baseline"
+      ]
     },
     {
       "id": "rust_to_rust_websocket_direct",
@@ -305,8 +321,10 @@
         "cancel",
         "cleanup"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/direct/go-baseline"
+      ]
     },
     {
       "id": "node_to_go_raw_quic_direct",
@@ -327,8 +345,10 @@
         "cleanup",
         "datagram"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/direct/go-baseline"
+      ]
     },
     {
       "id": "node_to_rust_websocket_direct",
@@ -417,6 +437,110 @@
       "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this cell."
     }
   ],
+  "client_profiles": [
+    {
+      "id": "swift_to_go_websocket_direct_profile",
+      "client": "swift",
+      "server": "go",
+      "path": "direct",
+      "carrier": "websocket",
+      "cases": [
+        "admission",
+        "rpc",
+        "notification",
+        "stream-metadata",
+        "stream-fin",
+        "stream-reset",
+        "rekey",
+        "liveness",
+        "close",
+        "cancel",
+        "cleanup"
+      ],
+      "status": "supported",
+      "test_ids": [
+        "connector/swift-v3/interop/swift-go/wss/direct"
+      ]
+    },
+    {
+      "id": "swift_to_go_websocket_tunnel_profile",
+      "client": "swift",
+      "server": "go",
+      "tunnel_runtime": "go",
+      "path": "tunnel",
+      "carrier": "websocket",
+      "cases": [
+        "admission",
+        "rpc",
+        "notification",
+        "stream-metadata",
+        "stream-fin",
+        "stream-reset",
+        "rekey",
+        "liveness",
+        "close",
+        "cancel",
+        "cleanup",
+        "pairing",
+        "opaque-forwarding"
+      ],
+      "status": "supported",
+      "test_ids": [
+        "connector/swift-v3/interop/swift-go/wss/tunnel"
+      ]
+    },
+    {
+      "id": "browser_typescript_to_go_websocket_direct_profile",
+      "client": "typescript-browser",
+      "server": "go",
+      "path": "direct",
+      "carrier": "websocket",
+      "cases": [
+        "admission",
+        "rpc",
+        "notification",
+        "stream-metadata",
+        "stream-fin",
+        "stream-reset",
+        "rekey",
+        "liveness",
+        "close",
+        "cancel",
+        "cleanup"
+      ],
+      "status": "supported",
+      "test_ids": [
+        "connector/browser-v3/interop/browser-go/wss/direct"
+      ]
+    },
+    {
+      "id": "browser_typescript_to_go_websocket_tunnel_profile",
+      "client": "typescript-browser",
+      "server": "go",
+      "tunnel_runtime": "go",
+      "path": "tunnel",
+      "carrier": "websocket",
+      "cases": [
+        "admission",
+        "rpc",
+        "notification",
+        "stream-metadata",
+        "stream-fin",
+        "stream-reset",
+        "rekey",
+        "liveness",
+        "close",
+        "cancel",
+        "cleanup",
+        "pairing",
+        "opaque-forwarding"
+      ],
+      "status": "supported",
+      "test_ids": [
+        "connector/browser-v3/interop/browser-go/wss/tunnel"
+      ]
+    }
+  ],
   "tunnel_topologies": [
     {
       "id": "go_via_go_to_go_websocket_tunnel",
@@ -440,8 +564,10 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/tunnel/go-baseline"
+      ]
     },
     {
       "id": "rust_via_go_to_rust_raw_quic_tunnel",
@@ -467,8 +593,10 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/tunnel/go-baseline"
+      ]
     },
     {
       "id": "go_via_go_to_go_raw_quic_tunnel",
@@ -494,8 +622,10 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/tunnel/go-baseline"
+      ]
     },
     {
       "id": "go_via_rust_to_rust_websocket_tunnel",
@@ -519,8 +649,10 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/tunnel/go-baseline"
+      ]
     },
     {
       "id": "go_via_rust_to_rust_raw_quic_tunnel",
@@ -546,8 +678,10 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/tunnel/go-baseline"
+      ]
     },
     {
       "id": "go_via_node_to_node_websocket_tunnel",
@@ -571,8 +705,10 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/tunnel/go-baseline"
+      ]
     },
     {
       "id": "go_via_node_to_node_raw_quic_tunnel",
@@ -598,8 +734,10 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/tunnel/go-baseline"
+      ]
     },
     {
       "id": "rust_via_node_to_go_websocket_tunnel",
@@ -623,8 +761,10 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/tunnel/go-baseline"
+      ]
     },
     {
       "id": "rust_via_node_to_go_raw_quic_tunnel",
@@ -650,8 +790,10 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/tunnel/go-baseline"
+      ]
     },
     {
       "id": "rust_via_go_to_rust_websocket_tunnel",
@@ -675,8 +817,10 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/tunnel/go-baseline"
+      ]
     },
     {
       "id": "rust_via_rust_to_node_websocket_tunnel",
@@ -752,8 +896,10 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/tunnel/go-baseline"
+      ]
     },
     {
       "id": "node_via_rust_to_go_raw_quic_tunnel",
@@ -779,8 +925,10 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/tunnel/go-baseline"
+      ]
     },
     {
       "id": "node_via_node_to_rust_websocket_tunnel",
@@ -856,8 +1004,10 @@
         "pairing",
         "opaque-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/tunnel/go-baseline"
+      ]
     },
     {
       "id": "node_via_go_to_node_raw_quic_tunnel",
@@ -883,8 +1033,10 @@
         "datagram",
         "datagram-forwarding"
       ],
-      "status": "unsupported",
-      "reason": "No release-gating v3 interoperability test exercises the complete executable case set for this topology."
+      "status": "supported",
+      "test_ids": [
+        "interop/v3/native/tunnel/go-baseline"
+      ]
     }
   ],
   "capability_coverage": {

@@ -104,7 +104,7 @@ Bereitstellungsprofile trennen die Plattformverfuegbarkeit vom gemeinsamen Flowe
 | `apple-client` | Swift auf Apple-Plattformen | WSS-Endpunktclient | Keine |
 | `webtransport-server` | Go | WebTransport-Direktserver und opake Tunnellaufzeit | Keine |
 
-Das maschinenlesbare native-server-core-Profil enthaelt 18 aggregierte Runtime-Rollen-Carrier-Tupel, sechs pro nativer Laufzeit, und 24 unterstuetzte pfadspezifische Servereinheiten. Go H4 fuegt zwei WebTransport-Server-Tupel und zwei pfadspezifische Einheiten hinzu. Die Interoperabilitaetsmatrix deklariert separat 18 direkte Zellen und 18 Tunnelzellen. Alle 36 paarweisen Zellen sind derzeit explizite `unsupported`-Deklarationen, weil kein release-sperrender v3-Test den vollstaendigen ausfuehrbaren Fallsatz einer Zelle prueft. Ein Profil aendert niemals die Wire-Semantik fuer Artifact, Handshake, RPC, Stream, Close, Rekey oder Autorisierung.
+Das maschinenlesbare native-server-core-Profil enthaelt 18 aggregierte Runtime-Rollen-Carrier-Tupel, sechs pro nativer Laufzeit, und 24 unterstuetzte pfadspezifische Servereinheiten. Go H4 fuegt zwei WebTransport-Server-Tupel und zwei pfadspezifische Einheiten hinzu. Die Interoperabilitaetsmatrix deklariert separat 18 direkte Zellen und 18 Tunnelzellen. Das Release-Gate prueft alle 10 direkten Zellen und 14 paarweisen Tunnelzellen mit Go; die verbleibenden 8 direkten und 4 Tunnelzellen bleiben explizit ungeprueft. Vier zusaetzliche WSS-Clientprofile pruefen Swift und Browser-TypeScript gegen Go ueber direkte und getunnelte Pfade. Ein Profil aendert niemals die Wire-Semantik fuer Artifact, Handshake, RPC, Stream, Close, Rekey oder Autorisierung.
 
 Die SDK-Anleitungen nennen die genauen unterstützten Kombinationen aus Plattform und Verbindung.
 

@@ -134,7 +134,17 @@ describe("transport v3 controller, lease, and retry semantics", () => {
     }
     for (const value of controllerFixture.retry_after.valid) {
       expect(validateRetryDispositionV3({ kind: "retry_after", absoluteUnixMilliseconds: value }))
-        .toEqual({ kind: "retry_after", absoluteUnixMilliseconds: value });
+        .toEqual({
+          kind: "retry_after",
+          notBeforeUnixMilliseconds: value,
+          absoluteUnixMilliseconds: value,
+        });
+      expect(validateRetryDispositionV3({ kind: "retry_after", notBeforeUnixMilliseconds: value }))
+        .toEqual({
+          kind: "retry_after",
+          notBeforeUnixMilliseconds: value,
+          absoluteUnixMilliseconds: value,
+        });
     }
     for (const value of controllerFixture.retry_after.invalid) {
       expect(() => validateRetryDispositionV3({
@@ -146,7 +156,11 @@ describe("transport v3 controller, lease, and retry semantics", () => {
       { kind: "retryable" },
       { kind: "retry_after", absoluteUnixMilliseconds: 4_000 },
       { kind: "retry_after", absoluteUnixMilliseconds: 5_000 },
-    ])).toEqual({ kind: "retry_after", absoluteUnixMilliseconds: 5_000 });
+    ])).toEqual({
+      kind: "retry_after",
+      notBeforeUnixMilliseconds: 5_000,
+      absoluteUnixMilliseconds: 5_000,
+    });
   });
 
   test("filters same-endpoint pin-to-CA and every blocked old policy", () => {

@@ -104,7 +104,7 @@ Flowersec отделяет сеанс приложения от сетевого
 | `apple-client` | Swift на платформах Apple | WSS endpoint client | Нет |
 | `webtransport-server` | Go | WebTransport direct server и opaque tunnel runtime | Нет |
 
-Машиночитаемый профиль native-server-core содержит 18 агрегированных runtime-role-carrier tuple, по шесть для каждой нативной среды, и 24 поддерживаемые серверные единицы, специфичные для пути. Go H4 добавляет два серверных WebTransport tuple и две специфичные для пути единицы. Матрица interoperability отдельно объявляет 18 direct cells и 18 tunnel cells. Все 36 попарных cells сейчас являются явными объявлениями `unsupported`, поскольку ни один блокирующий release v3 test не выполняет полный набор случаев cell. Профиль никогда не меняет wire-семантику Artifact, handshake, RPC, stream, close, rekey или authorization.
+Машиночитаемый профиль native-server-core содержит 18 агрегированных runtime-role-carrier tuple, по шесть для каждой нативной среды, и 24 поддерживаемые серверные единицы, специфичные для пути. Go H4 добавляет два серверных WebTransport tuple и две специфичные для пути единицы. Матрица interoperability отдельно объявляет 18 direct cells и 18 tunnel cells. Release gate проверяет все 10 direct cells и 14 попарных tunnel cells с участием Go; оставшиеся 8 direct cells и 4 tunnel cells явно отмечены как непроверенные. Еще четыре клиентских WSS profile проверяют Swift и браузерный TypeScript с Go по direct и tunnel путям. Профиль никогда не меняет wire-семантику Artifact, handshake, RPC, stream, close, rekey или authorization.
 
 Точные сочетания платформ и типов соединений перечислены в руководствах SDK.
 

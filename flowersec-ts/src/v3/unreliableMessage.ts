@@ -70,9 +70,11 @@ class InternalUnreliableMessageChannelV3 implements UnreliableMessageChannelV3 {
     options: UnreliableMessageSendOptionsV3,
   ): Promise<UnreliableMessageSendResultV3> {
     throwIfAborted(options.signal);
-    if (!(message instanceof Uint8Array) || message.byteLength < 1 ||
-        message.byteLength > UNRELIABLE_MESSAGE_MAX_PLAINTEXT_BYTES_V3) {
+    if (!(message instanceof Uint8Array) || message.byteLength < 1) {
       throw new UnreliableMessageError("invalid_message");
+    }
+    if (message.byteLength > UNRELIABLE_MESSAGE_MAX_PLAINTEXT_BYTES_V3) {
+      throw new UnreliableMessageError("too_large");
     }
     const payload = message.slice();
     const expiresAt = requireFutureExpiry(options.expiresAtUnixMs, this.now());
@@ -104,7 +106,7 @@ class InternalUnreliableMessageChannelV3 implements UnreliableMessageChannelV3 {
         expiresAt,
       });
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      if (isAbortError(error)) throw new UnreliableMessageError("canceled");
       throw new UnreliableMessageError("operation_failed");
     } finally {
       this.pendingSends--;
@@ -118,7 +120,7 @@ class InternalUnreliableMessageChannelV3 implements UnreliableMessageChannelV3 {
       try {
         wire = await this.options.transport.receive(options);
       } catch (error) {
-        if (isAbortError(error)) throw error;
+        if (isAbortError(error)) throw new UnreliableMessageError("canceled");
         throw new UnreliableMessageError("closed");
       }
       if (isPreviousVersionDatagram(wire)) {
@@ -347,7 +349,7 @@ function requireFutureExpiry(value: number, now: number): number | undefined {
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted === true) throw new DOMException("operation aborted", "AbortError");
+  if (signal?.aborted === true) throw new UnreliableMessageError("canceled");
 }
 
 function isAbortError(error: unknown): boolean {

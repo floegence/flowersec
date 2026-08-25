@@ -146,7 +146,9 @@ test("README states the machine-readable parity counts without ambiguous aliases
   assert.match(content, /24 supported\s+path-specific server units/u);
   assert.match(content, /18\s+direct cells/u);
   assert.match(content, /18\s+tunnel cells/u);
-  assert.match(content, /All 36 pairwise\s+cells are currently explicit `unsupported` declarations/u);
+  assert.match(content, /10 direct cells and 14 pairwise tunnel cells that include Go/u);
+  assert.match(content, /remaining 8 direct and 4 tunnel cells stay explicitly unverified/u);
+  assert.match(content, /Four\s+additional WSS client profiles prove Swift and browser TypeScript against Go/u);
 });
 
 test("README localization contract captures structure and literals", () => {

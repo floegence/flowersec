@@ -44,13 +44,29 @@ func unversionedOneShotPublicAPICompiles() async throws {
 
 @Test
 func retryDispositionsMatchPortableContract() {
-  #expect(ConnectErrorV2.invalidOptions.retryDisposition == .terminal)
+  #expect(ConnectErrorV2.invalidOptions.retryDispositionV2 == .terminal)
   #expect(ConnectError.expiredArtifact.retryDisposition == .retryable)
   #expect(ConnectError.canceled.code == .connectionFailed)
   #expect(ConnectError.canceled.retryDisposition == .terminal)
-  #expect(SessionError.canceled.retryDisposition == .terminal)
-  #expect(SessionError.closed.retryDisposition == .retryable)
+  #expect(SessionError.canceled.retryDispositionV2 == .terminal)
+  #expect(SessionError.closed.retryDispositionV2 == .retryable)
 
   let deadline = Date(timeIntervalSince1970: 1_234)
-  #expect(RetryDisposition.retryAfter(deadline) == .retryAfter(deadline))
+  #expect(RetryDispositionV2.retryAfter(deadline) == .retryAfter(deadline))
+  #expect(RetryDispositionV3.retryAfter(1_234_000) == .retryAfter(1_234_000))
+}
+
+@available(*, deprecated)
+@Test
+func versionedCompatibilityAliasesStillCompile() async throws {
+  let parse: (Data) throws -> ArtifactV3 = parseArtifactV3
+  let connectAttempt: @Sendable (ArtifactLeaseV3, ConnectorOptions) async throws -> any Session = {
+    lease, options in
+    try await connectV3(lease: lease, options: options)
+  }
+  let retry: RetryDisposition = .terminal
+
+  _ = parse
+  _ = connectAttempt
+  _ = retry
 }

@@ -38,7 +38,7 @@ RPC type `7001` with `{ "value": "ping" }`, exchanges
 sends FIN, and reads `world` through peer FIN. The repository server-parity
 fixtures implement this application contract; a deployed service must register
 equivalent handlers. Connection and session failures expose only a structured
-`RetryDisposition`.
+`RetryDispositionV3`.
 Long-lived applications give `ConnectionController` a refreshable artifact
 source; this one-shot example never reuses its spend receipt.
 

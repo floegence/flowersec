@@ -168,6 +168,7 @@ async function readAll(stream, signal) {
 function reportRecovery(error) {
   if (error instanceof ConnectError) {
     console.error(`connection_error=${error.code}`);
+    console.error(`retry=${error.retryDisposition.kind}`);
   } else if (error instanceof SessionError) {
     console.error(`session_error=${error.code}`);
   }

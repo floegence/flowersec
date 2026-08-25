@@ -104,7 +104,7 @@ Flowersec 将应用会话与承载它的网络路径分离：
 | `apple-client` | Apple 平台上的 Swift | WSS endpoint client | 无 |
 | `webtransport-server` | Go | WebTransport direct server 与 opaque tunnel runtime | 无 |
 
-机器可读的 native-server-core profile 包含 18 个聚合的运行时-角色-carrier tuple（每个原生运行时 6 个）和 24 个已支持的特定路径服务端单元；Go H4 另增加 2 个 WebTransport 服务端 tuple 和 2 个特定路径单元。互操作矩阵另行声明 18 个 direct cell 和 18 个 tunnel cell。由于当前没有 release-gating v3 测试覆盖任一 cell 的完整可执行用例集，全部 36 个两两 cell 都是明确的 `unsupported` 声明。profile 绝不会改变 Artifact、handshake、RPC、stream、close、rekey 或 authorization wire 语义。
+机器可读的 native-server-core profile 包含 18 个聚合的运行时-角色-carrier tuple（每个原生运行时 6 个）和 24 个已支持的特定路径服务端单元；Go H4 另增加 2 个 WebTransport 服务端 tuple 和 2 个特定路径单元。互操作矩阵另行声明 18 个 direct cell 和 18 个 tunnel cell。发布门禁已验证所有包含 Go 的 10 个 direct cell 和 14 个两两 tunnel cell；其余 8 个 direct cell 和 4 个 tunnel cell 仍明确标记为未验证。另有 4 个 WSS 客户端 profile 验证 Swift 和浏览器 TypeScript 通过 direct 与 tunnel 路径连接 Go。profile 绝不会改变 Artifact、handshake、RPC、stream、close、rekey 或 authorization wire 语义。
 
 请查看各 SDK 指南，了解每个包支持的平台和连接组合。
 

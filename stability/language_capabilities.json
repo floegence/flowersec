@@ -142,6 +142,17 @@
       }
     },
     {
+      "id": "negotiated_unreliable_messages",
+      "layer": "portable_core",
+      "description": "Negotiated carrier-neutral unreliable-message channels with portable error codes and accepted or dropped send outcomes",
+      "implementations": {
+        "go": { "status": "supported", "test_ids": ["carrier/go-direct"] },
+        "typescript": { "status": "supported", "test_ids": ["protocol/typescript"] },
+        "swift": { "status": "unsupported", "reason": "The Apple client SDK does not expose an unreliable-message channel." },
+        "rust": { "status": "supported", "test_ids": ["interop/rust-go/raw-quic/direct"] }
+      }
+    },
+    {
       "id": "client_rpc_handlers",
       "layer": "portable_core",
       "description": "Reusable inbound RPC and notification definitions for one-shot and controller-managed endpoint-client sessions, with a fresh router for every connection generation",
@@ -287,27 +298,6 @@
       "owner": "swift",
       "reason": "The Swift production connector supports WSS direct and tunnel dialing on iOS.",
       "test_ids": ["connector/swift-v3/ios-simulator"]
-    },
-    {
-      "id": "go_negotiated_unreliable_messages",
-      "layer": "sdk_profile",
-      "owner": "go",
-      "reason": "Go exposes negotiated carrier-neutral unreliable-message channels with accepted and dropped send outcome semantics.",
-      "test_ids": ["carrier/go-direct"]
-    },
-    {
-      "id": "typescript_negotiated_unreliable_messages",
-      "layer": "sdk_profile",
-      "owner": "typescript",
-      "reason": "TypeScript exposes negotiated carrier-neutral unreliable-message channels with accepted and dropped send outcome semantics.",
-      "test_ids": ["protocol/typescript"]
-    },
-    {
-      "id": "rust_negotiated_unreliable_messages",
-      "layer": "sdk_profile",
-      "owner": "rust",
-      "reason": "Rust exposes negotiated carrier-neutral unreliable-message channels with accepted and dropped send outcome semantics.",
-      "test_ids": ["interop/rust-go/raw-quic/direct"]
     }
   ],
   "server_parity_contract": {

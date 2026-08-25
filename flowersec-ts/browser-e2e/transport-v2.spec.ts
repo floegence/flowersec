@@ -91,6 +91,8 @@ for (const compatibility of [
         try { await reset.read(); } catch { resetObserved = true; }
         await session.rekey();
         const liveness = await session.probeLiveness();
+        const completed = await session.rpc.call(7003, { value: "complete" }, (payload) => payload);
+        if (!completed.ok || completed.payload.value !== "complete") throw new Error("completion barrier failed");
         await session.close();
         return { response, eof, resetObserved, liveness };
       }, {

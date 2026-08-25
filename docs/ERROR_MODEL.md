@@ -47,6 +47,13 @@ the latest valid `retry_after` wins, then `retryable`, then `terminal`.
 `retryNow` may skip only an existing backoff and cannot cross a future absolute
 deadline.
 
+`waitForSession` / `WaitForSession` / `wait_for_session` never starts a
+controller. It returns immediately for an established Session and otherwise
+waits for a state transition. Failed, closed, and caller-canceled outcomes use
+a structured controller error. Its `ConnectionDiagnostic` contains only state,
+attempt, failure phase/code, and retry disposition; it never retains a Session,
+raw error, URL, carrier, candidate, credential, or peer identity.
+
 One connection cycle may obtain at most one policy-sensitive replacement
 lease. A pin trigger blocks the same endpoint and policy digest immediately.
 A replacement must keep that endpoint in pin mode with a changed complete
@@ -64,6 +71,11 @@ Remote RPC application errors remain separate from connection and session
 failures. They may contain only their bounded semantic code and sanitized
 message. Session replacement never migrates streams or replays RPC calls,
 notifications, or writes.
+
+Negotiated unreliable-message operations use one portable error set:
+`unavailable`, `invalid_message`, `too_large`, `canceled`, `closed`, and
+`operation_failed`. Accepted and dropped sends are outcomes, not errors. Swift
+does not expose this optional capability.
 
 The normative ordering, retry clocks, replacement state machine, and redaction
 requirements are defined in

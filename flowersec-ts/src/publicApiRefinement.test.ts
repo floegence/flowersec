@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import ts from "typescript";
+import * as core from "./facade.js";
 import * as browser from "./browser/index.js";
 import * as node from "./node/index.js";
 
@@ -21,6 +22,15 @@ describe("final public SDK names", () => {
     expect("createBrowserConnectionController" in browser).toBe(false);
     expect("connectNodeSession" in node).toBe(false);
     expect("createNodeConnectionController" in node).toBe(false);
+  });
+
+  test("deprecated v3 names remain source-compatible aliases", () => {
+    expect(core.parseArtifactV3).toBe(core.parseArtifact);
+    expect(core.createArtifactLeaseV3).toBe(core.createArtifactLease);
+    expect(browser.connectV3).toBe(browser.connect);
+    expect(browser.createConnectionControllerV3).toBe(browser.createConnectionController);
+    expect(node.connectV3).toBe(node.connect);
+    expect(node.createConnectionControllerV3).toBe(node.createConnectionController);
   });
 
   test("built public declarations expose v2 only through the explicit compatibility namespaces", async () => {

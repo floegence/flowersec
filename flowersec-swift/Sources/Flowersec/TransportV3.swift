@@ -76,12 +76,12 @@ struct RuntimeCapabilityDescriptorV3: Codable, Equatable, Sendable {
       try JSONPreflightV3.validate(data)
       let raw = try JSONSerialization.jsonObject(with: data)
       guard let object = raw as? [String: Any], try FlowersecJCSV3.encode(raw) == data else {
-        throw ArtifactErrorV3.invalidArtifact
+        throw ArtifactError.invalidArtifact
       }
       try exact(object, ["language", "runtime", "schemaVersion", "tuples", "unsupported"])
       guard let tuples = object["tuples"] as? [[String: Any]],
         let unsupported = object["unsupported"] as? [[String: Any]]
-      else { throw ArtifactErrorV3.invalidArtifact }
+      else { throw ArtifactError.invalidArtifact }
       for tuple in tuples {
         try exact(
           tuple,
@@ -94,10 +94,10 @@ struct RuntimeCapabilityDescriptorV3: Codable, Equatable, Sendable {
       let descriptor = try JSONDecoder().decode(RuntimeCapabilityDescriptorV3.self, from: data)
       try descriptor.validateWireDescriptor()
       return descriptor
-    } catch let error as ArtifactErrorV3 {
+    } catch let error as ArtifactError {
       throw error
     } catch {
-      throw ArtifactErrorV3.invalidArtifact
+      throw ArtifactError.invalidArtifact
     }
   }
 
@@ -105,19 +105,19 @@ struct RuntimeCapabilityDescriptorV3: Codable, Equatable, Sendable {
     try validateWireDescriptor()
     guard language == "swift", runtime == expectedRuntime,
       self == RuntimeCapabilitiesV3.uncheckedProfile(for: expectedRuntime)
-    else { throw ArtifactErrorV3.invalidArtifact }
+    else { throw ArtifactError.invalidArtifact }
   }
 
   private func validateWireDescriptor() throws {
     guard schemaVersion == 3, capabilityTokenV3(language), capabilityTokenV3(runtime),
       !tuples.isEmpty || !unsupported.isEmpty
-    else { throw ArtifactErrorV3.invalidArtifact }
+    else { throw ArtifactError.invalidArtifact }
 
     var previousTuple: RuntimeCapabilityTupleV3?
     for tuple in tuples {
       try validateCapabilityTupleV3(tuple)
       if let previousTuple, compareCapabilityTupleIdentityV3(previousTuple, tuple) >= 0 {
-        throw ArtifactErrorV3.invalidArtifact
+        throw ArtifactError.invalidArtifact
       }
       previousTuple = tuple
     }
@@ -125,24 +125,24 @@ struct RuntimeCapabilityDescriptorV3: Codable, Equatable, Sendable {
     for item in unsupported {
       guard registeredUnsupportedReasonV3(item.reason),
         !tuples.contains(where: { $0.carrier == item.carrier })
-      else { throw ArtifactErrorV3.invalidArtifact }
+      else { throw ArtifactError.invalidArtifact }
       if let previousUnsupported,
         previousUnsupported.rawValue >= item.carrier.rawValue
       {
-        throw ArtifactErrorV3.invalidArtifact
+        throw ArtifactError.invalidArtifact
       }
       previousUnsupported = item.carrier
     }
     for carrier in [RuntimeCarrierV3.rawQUIC, .webSocket, .webTransport] {
       let supported = tuples.contains(where: { $0.carrier == carrier })
       let unavailable = unsupported.contains(where: { $0.carrier == carrier })
-      guard supported != unavailable else { throw ArtifactErrorV3.invalidArtifact }
+      guard supported != unavailable else { throw ArtifactError.invalidArtifact }
     }
     try validateRegisteredRuntimeV3(self)
   }
 
   private static func exact(_ object: [String: Any], _ expected: [String]) throws {
-    guard object.keys.sorted() == expected.sorted() else { throw ArtifactErrorV3.invalidArtifact }
+    guard object.keys.sorted() == expected.sorted() else { throw ArtifactError.invalidArtifact }
   }
 }
 
@@ -242,7 +242,7 @@ private func validateCapabilityTupleV3(_ tuple: RuntimeCapabilityTupleV3) throws
       || tuple.securityModes == ["ca", "pin"]
   guard tuple.reliableStreams, validDeployment, validModes,
     tuple.carrier != .webSocket || (!tuple.datagrams && !tuple.migration)
-  else { throw ArtifactErrorV3.invalidArtifact }
+  else { throw ArtifactError.invalidArtifact }
 }
 
 private func registeredCapabilityTuplesV3(
@@ -280,9 +280,9 @@ private func validateRegisteredCarrierV3(
   let actual = descriptor.tuples.filter { $0.carrier == carrier }
   if let item = descriptor.unsupported.first(where: { $0.carrier == carrier }) {
     guard actual.isEmpty, unsupportedReasons.contains(item.reason)
-    else { throw ArtifactErrorV3.invalidArtifact }
+    else { throw ArtifactError.invalidArtifact }
   } else {
-    guard tupleSets.contains(actual) else { throw ArtifactErrorV3.invalidArtifact }
+    guard tupleSets.contains(actual) else { throw ArtifactError.invalidArtifact }
   }
 }
 
@@ -368,7 +368,7 @@ private func validateRegisteredRuntimeV3(_ descriptor: RuntimeCapabilityDescript
       descriptor, carrier: .webTransport, tupleSets: [],
       unsupportedReasons: ["swift_apple_client_profile_excludes_webtransport"])
   default:
-    throw ArtifactErrorV3.invalidArtifact
+    throw ArtifactError.invalidArtifact
   }
 }
 

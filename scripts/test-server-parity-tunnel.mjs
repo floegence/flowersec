@@ -35,6 +35,8 @@ const peersV2 = {
 };
 const peersV3 = {
   go: { cwd: path.join(repositoryRoot, "flowersec-go"), command: "go", arguments: ["run", "./internal/cmd/server-parity-peer"] },
+  rust: { cwd: repositoryRoot, command: "rustup", arguments: ["run", "1.88.0", "cargo", "run", "--quiet", "--manifest-path", "flowersec-rust/Cargo.toml", "--example", "server_parity_peer", "--"] },
+  "node-typescript": { cwd: path.join(repositoryRoot, "flowersec-ts"), command: process.execPath, arguments: ["--import", "tsx", "src/interop/serverParityPeer.ts"] },
 };
 const peers = clientProfileProtocol === "v2" ? peersV2 : peersV3;
 
@@ -87,7 +89,11 @@ async function runTopology(topology) {
     if (!Array.isArray(endpointBReady.authorizations) || endpointBReady.authorizations.length !== 2) {
       throw new Error(`${id}: endpoint B did not publish two secret-free relay authorizations`);
     }
-    relay.child.stdin.write(`${JSON.stringify({ type: "configure", authorizations: endpointBReady.authorizations })}\n`);
+    relay.child.stdin.write(`${JSON.stringify({
+      type: "configure",
+      authorizations: endpointBReady.authorizations,
+      verification_records: endpointBReady.verification_records,
+    })}\n`);
 
     endpointA = startPeer(topology.endpoint_a, ["tunnel-endpoint-a", "--carrier", carrierA]);
     endpointA.child.stdin.end(`${JSON.stringify({ topology, endpoint_b: endpointBReady })}\n`);
@@ -127,6 +133,8 @@ function selectClientProfileTopology() {
   const cells = [
     { profile: "browser", client: "typescript-browser", tunnel_runtime: "go", endpoint_b: "rust", carrier: "websocket", path: "tunnel", test_id: "compat/v2/browser/chromium/websocket/via-go-to-rust/tunnel" },
     { profile: "swift", client: "swift", tunnel_runtime: "go", endpoint_b: "rust", carrier: "websocket", path: "tunnel", test_id: "compat/v2/interop/swift-via-go-to-rust/wss/tunnel" },
+    { profile: "browser", client: "typescript-browser", tunnel_runtime: "go", endpoint_b: "go", carrier: "websocket", path: "tunnel", test_id: "interop/browser-go/wss/tunnel" },
+    { profile: "swift", client: "swift", tunnel_runtime: "go", endpoint_b: "go", carrier: "websocket", path: "tunnel", test_id: "interop/swift-go/wss/tunnel" },
   ].filter((cell) => cell.profile === clientProfile && cell.test_id === clientProfileTestID);
   if (cells.length !== 1) throw new Error(`${clientProfileTestID}: client-profile tunnel cell is absent or ambiguous`);
   const cell = cells[0];
@@ -161,7 +169,11 @@ async function runClientProfileTopology(topology) {
     endpointB.child.stdin.write(`${JSON.stringify({ topology, relay: relayReady })}\n`);
     const endpointBReady = await nextPeerJSON(endpointB, `${id} endpoint B ready`);
     assertDimensions(endpointBReady, "endpoint-b-ready", topology.endpoint_b, "websocket", id);
-    relay.child.stdin.write(`${JSON.stringify({ type: "configure", authorizations: endpointBReady.authorizations })}\n`);
+    relay.child.stdin.write(`${JSON.stringify({
+      type: "configure",
+      authorizations: endpointBReady.authorizations,
+      verification_records: endpointBReady.verification_records,
+    })}\n`);
 
     endpointB.child.stdin.end(`${JSON.stringify({ type: "connect" })}\n`);
     endpointA = startExternalClient({
@@ -176,7 +188,7 @@ async function runClientProfileTopology(topology) {
     await requireSuccessfulExit(endpointA, `${id} ${clientProfile} endpoint A`);
 
     const endpointBResult = await nextPeerJSON(endpointB, `${id} endpoint B result`);
-    assertResult(endpointBResult, "endpoint-b-result", topology.endpoint_b, "websocket", ["admission", "cancel", "rpc", "notification", "stream-metadata", "stream-fin", "stream-reset", "close", "cleanup"], `${id} endpoint B`);
+    assertResult(endpointBResult, "endpoint-b-result", topology.endpoint_b, "websocket", endpointExpectedCases("websocket"), `${id} endpoint B`);
     await requireSuccessfulExit(endpointB, `${id} endpoint B`);
 
     relay.child.stdin.end(`${JSON.stringify({ type: "close" })}\n`);
@@ -289,7 +301,7 @@ function assertNoRelaySessionMaterial(value, id, allowedKeys = new Set()) {
 
 function startPeer(runtime, roleArguments, environment = {}) {
   const peer = peers[runtime];
-  const child = spawn(peer.command, [...peer.arguments, ...roleArguments], { cwd: peer.cwd, env: { ...process.env, ...nativeAddon.environment, ...environment, FLOWERSEC_SERVER_PARITY_PEER: "1" }, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(peer.command, [...peer.arguments, ...roleArguments], { cwd: peer.cwd, env: { ...process.env, ...nativeAddon.environment, ...environment, FLOWERSEC_SERVER_PARITY_PEER: "1", FLOWERSEC_PARITY_PROTOCOL: clientProfileProtocol }, stdio: ["pipe", "pipe", "pipe"] });
   const stderr = collectText(child.stderr);
   return { child, stderr, stdout: jsonLines(child.stdout), kill(signal) { if (child.exitCode === null && child.signalCode === null) child.kill(signal); } };
 }

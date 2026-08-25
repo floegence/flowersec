@@ -3,7 +3,7 @@ import Foundation
 
 /// Supplies one fresh, independently spendable v3 artifact lease per attempt.
 public protocol ArtifactSource: Sendable {
-  func acquireArtifact() async throws -> ArtifactLeaseV3
+  func acquireArtifact() async throws -> ArtifactLease
 }
 
 public struct ArtifactSourceFailure: Error, Equatable, Sendable {
@@ -52,6 +52,56 @@ public struct ConnectionSnapshot: Sendable {
   public let retryDisposition: RetryDispositionV3?
 }
 
+public enum ConnectionFailurePhase: String, Equatable, Sendable {
+  case artifact
+  case connect
+  case session
+}
+
+public struct ConnectionDiagnosticFailure: Equatable, Sendable {
+  public let phase: ConnectionFailurePhase
+  public let code: String
+}
+
+public struct ConnectionDiagnostic: Equatable, Sendable {
+  public let state: ConnectionState
+  public let attempt: UInt64
+  public let failure: ConnectionDiagnosticFailure?
+  public let retryDisposition: RetryDispositionV3?
+}
+
+extension ConnectionSnapshot {
+  /// Removes the live Session and retains only stable, redacted state.
+  public var diagnostic: ConnectionDiagnostic {
+    ConnectionDiagnostic(
+      state: state,
+      attempt: attempt,
+      failure: failure.map { value in
+        switch value {
+        case .artifactSource(let error):
+          ConnectionDiagnosticFailure(phase: .artifact, code: error.code.rawValue)
+        case .connection(let error):
+          ConnectionDiagnosticFailure(phase: .connect, code: error.code.rawValue)
+        case .session(let error):
+          ConnectionDiagnosticFailure(phase: .session, code: error.rawValue)
+        }
+      },
+      retryDisposition: retryDisposition
+    )
+  }
+}
+
+public enum ConnectionControllerErrorCode: String, Equatable, Sendable {
+  case failed
+  case closed
+  case canceled
+}
+
+public struct ConnectionControllerError: Error, Equatable, Sendable {
+  public let code: ConnectionControllerErrorCode
+  public let diagnostic: ConnectionDiagnostic
+}
+
 public enum ConnectionControllerConfigurationError: Error, Equatable, Sendable {
   case invalidMaximumAttempts
 }
@@ -69,7 +119,7 @@ public actor ConnectionController {
   private let options: ConnectorOptions
   private let maximumAttempts: UInt64?
   private let connectOneShot:
-    @Sendable (ArtifactLeaseV3, ConnectorOptions) async throws -> any Session
+    @Sendable (ArtifactLease, ConnectorOptions) async throws -> any Session
   private let clock: ConnectionControllerClockV3
   private var scheduler: Task<Void, Never>?
   private var inFlightAttempt: Task<AttemptOutcomeV3, Never>?
@@ -103,7 +153,7 @@ public actor ConnectionController {
     clock: ConnectionControllerClockV3 = .live,
     initialAttempt: UInt64 = 0,
     connectOneShot:
-      @escaping @Sendable (ArtifactLeaseV3, ConnectorOptions) async throws -> any Session
+      @escaping @Sendable (ArtifactLease, ConnectorOptions) async throws -> any Session
   ) throws {
     let normalizedMaximumAttempts = try Self.validate(maximumAttempts: maximumAttempts)
     self.source = source
@@ -125,6 +175,31 @@ public actor ConnectionController {
   public func start() {
     guard state == .idle, scheduler == nil else { return }
     scheduler = Task { [weak self] in await self?.run() }
+  }
+
+  /// Waits for an established Session without starting the controller.
+  public func waitForSession() async throws -> any Session {
+    let stream = updates()
+    for await value in stream {
+      if Task.isCancelled {
+        throw ConnectionControllerError(code: .canceled, diagnostic: value.diagnostic)
+      }
+      switch value.state {
+      case .connected:
+        if let session = value.currentSession { return session }
+      case .failed:
+        throw ConnectionControllerError(code: .failed, diagnostic: value.diagnostic)
+      case .closed:
+        throw ConnectionControllerError(code: .closed, diagnostic: value.diagnostic)
+      case .idle, .connecting, .waiting:
+        break
+      }
+    }
+    let value = snapshot().diagnostic
+    throw ConnectionControllerError(
+      code: Task.isCancelled ? .canceled : .closed,
+      diagnostic: value
+    )
   }
 
   public func updates() -> AsyncStream<ConnectionSnapshot> {
@@ -330,7 +405,7 @@ public actor ConnectionController {
     let acquisition = SourceAcquisitionRaceV3(source: source)
     inFlightAcquisition = acquisition
     let task = Task<AttemptOutcomeV3, Never> {
-      let lease: ArtifactLeaseV3
+      let lease: ArtifactLease
       do {
         lease = try await acquisition.value()
       } catch let sourceFailure as ArtifactSourceFailure {
@@ -421,7 +496,7 @@ public actor ConnectionController {
       failure = nil
       retryDisposition = nil
       publish()
-      let lease: ArtifactLeaseV3
+      let lease: ArtifactLease
       let acquisition = SourceAcquisitionRaceV3(source: source)
       inFlightAcquisition = acquisition
       do {
@@ -534,7 +609,7 @@ public actor ConnectionController {
   }
 
   private func policyIdentity(
-    _ artifact: ArtifactV3, provenance: CandidateFailureProvenanceV3
+    _ artifact: Artifact, provenance: CandidateFailureProvenanceV3
   ) -> PolicyIdentityV3 {
     let sourceEndpoints = Set(
       artifact.canonicalCandidates.map { endpoint(for: $0, artifact: artifact) })
@@ -566,7 +641,7 @@ public actor ConnectionController {
   }
 
   private func replacementCandidateIDs(
-    _ artifact: ArtifactV3,
+    _ artifact: Artifact,
     after trigger: PolicyIdentityV3,
     blockedPinPolicy: BlockedPinPolicyV3
   ) -> Set<String>? {
@@ -605,7 +680,7 @@ public actor ConnectionController {
   }
 
   nonisolated private func primaryCandidateIDs(
-    _ artifact: ArtifactV3,
+    _ artifact: Artifact,
     blockedPinPolicy: BlockedPinPolicyV3
   ) -> Set<String> {
     Set(
@@ -624,7 +699,7 @@ public actor ConnectionController {
   }
 
   nonisolated private func endpoint(
-    for candidate: CanonicalCandidateV3, artifact: ArtifactV3
+    for candidate: CanonicalCandidateV3, artifact: Artifact
   ) -> EndpointKeyV3 {
     EndpointKeyV3(
       carrier: candidate.carrier, path: artifact.value.path.kind, url: candidate.normalizedURL)
@@ -865,8 +940,8 @@ struct ConnectionControllerClockV3: Sendable {
 /// close can join all source-side cleanup.
 private final class SourceAcquisitionRaceV3: @unchecked Sendable {
   private let lock = NSLock()
-  private var result: Result<ArtifactLeaseV3, Error>?
-  private var continuation: CheckedContinuation<ArtifactLeaseV3, Error>?
+  private var result: Result<ArtifactLease, Error>?
+  private var continuation: CheckedContinuation<ArtifactLease, Error>?
   private var sourceTask: Task<Void, Never>?
 
   init(source: any ArtifactSource) {
@@ -881,11 +956,11 @@ private final class SourceAcquisitionRaceV3: @unchecked Sendable {
     }
   }
 
-  func value() async throws -> ArtifactLeaseV3 {
+  func value() async throws -> ArtifactLease {
     if Task.isCancelled { cancel() }
     return try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
-        let resolved = lock.withLock { () -> Result<ArtifactLeaseV3, Error>? in
+        let resolved = lock.withLock { () -> Result<ArtifactLease, Error>? in
           if let result { return result }
           self.continuation = continuation
           return nil
@@ -898,7 +973,7 @@ private final class SourceAcquisitionRaceV3: @unchecked Sendable {
   }
 
   func cancel() {
-    var continuation: CheckedContinuation<ArtifactLeaseV3, Error>?
+    var continuation: CheckedContinuation<ArtifactLease, Error>?
     let won = lock.withLock { () -> Bool in
       guard result == nil else { return false }
       result = .failure(CancellationError())
@@ -915,8 +990,8 @@ private final class SourceAcquisitionRaceV3: @unchecked Sendable {
     await sourceTask?.value
   }
 
-  private func deliver(_ lease: ArtifactLeaseV3) async {
-    var continuation: CheckedContinuation<ArtifactLeaseV3, Error>?
+  private func deliver(_ lease: ArtifactLease) async {
+    var continuation: CheckedContinuation<ArtifactLease, Error>?
     let late = lock.withLock { () -> Bool in
       guard result == nil else { return true }
       result = .success(lease)
@@ -937,7 +1012,7 @@ private final class SourceAcquisitionRaceV3: @unchecked Sendable {
   }
 
   private func deliverFailure(_ failure: Error) {
-    var continuation: CheckedContinuation<ArtifactLeaseV3, Error>?
+    var continuation: CheckedContinuation<ArtifactLease, Error>?
     let won = lock.withLock { () -> Bool in
       guard result == nil else { return false }
       result = .failure(failure)

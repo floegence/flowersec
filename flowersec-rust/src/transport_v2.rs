@@ -791,6 +791,48 @@ pub enum UnreliableMessageError {
     Failed,
 }
 
+/// Portable code set for unreliable-message failures. Dropped sends remain
+/// observable outcomes rather than failures.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnreliableMessageErrorCode {
+    Unavailable,
+    InvalidMessage,
+    TooLarge,
+    Canceled,
+    Closed,
+    OperationFailed,
+}
+
+impl UnreliableMessageErrorCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unavailable => "unavailable",
+            Self::InvalidMessage => "invalid_message",
+            Self::TooLarge => "too_large",
+            Self::Canceled => "canceled",
+            Self::Closed => "closed",
+            Self::OperationFailed => "operation_failed",
+        }
+    }
+}
+
+impl UnreliableMessageError {
+    pub const fn code(self) -> UnreliableMessageErrorCode {
+        match self {
+            Self::Unavailable => UnreliableMessageErrorCode::Unavailable,
+            Self::InvalidInput | Self::Expired => UnreliableMessageErrorCode::InvalidMessage,
+            Self::TooLarge => UnreliableMessageErrorCode::TooLarge,
+            Self::Canceled => UnreliableMessageErrorCode::Canceled,
+            Self::Closed => UnreliableMessageErrorCode::Closed,
+            Self::DroppedBudget | Self::Failed => UnreliableMessageErrorCode::OperationFailed,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        self.code().as_str()
+    }
+}
+
 /// Observable result of submitting one message to the native unreliable
 /// carrier. It does not imply delivery or ordering.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1052,6 +1094,23 @@ pub trait Session: fmt::Debug + Send + Sync + 'static {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn unreliable_error_codes_collapse_legacy_variants() {
+        let cases = [
+            (UnreliableMessageError::Unavailable, "unavailable"),
+            (UnreliableMessageError::InvalidInput, "invalid_message"),
+            (UnreliableMessageError::Expired, "invalid_message"),
+            (UnreliableMessageError::TooLarge, "too_large"),
+            (UnreliableMessageError::Canceled, "canceled"),
+            (UnreliableMessageError::Closed, "closed"),
+            (UnreliableMessageError::DroppedBudget, "operation_failed"),
+            (UnreliableMessageError::Failed, "operation_failed"),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(error.as_str(), expected);
+        }
+    }
 
     #[derive(Debug)]
     struct TypedRpcPeer {

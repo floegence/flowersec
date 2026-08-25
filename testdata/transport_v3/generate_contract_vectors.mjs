@@ -1125,6 +1125,54 @@ const controllerVectors = {
     "connection_failed",
   ],
   failure_phases: ["artifact", "connect", "session"],
+  sdk_api_consistency: {
+    connection_error_codes: [
+      "artifact_invalid",
+      "expired_artifact",
+      "transport_security_unsupported",
+      "transport_security_failed",
+      "connection_failed",
+    ],
+    retry: {
+      error_property: "retryDisposition",
+      deprecated_error_property: "disposition",
+      retry_after_property: "notBeforeUnixMilliseconds",
+      deprecated_retry_after_property: "absoluteUnixMilliseconds",
+    },
+    unreliable_error_codes: [
+      "unavailable",
+      "invalid_message",
+      "too_large",
+      "canceled",
+      "closed",
+      "operation_failed",
+    ],
+    unreliable_send_results: [
+      "accepted",
+      "dropped_budget",
+      "dropped_expired",
+      "dropped_carrier",
+    ],
+    connection_diagnostic: {
+      fields: ["state", "attempt", "failure", "retryDisposition"],
+      failure_fields: ["phase", "code"],
+      forbidden_fields: [
+        "url",
+        "carrier",
+        "candidates",
+        "error",
+        "credentials",
+        "peer",
+        "session",
+      ],
+    },
+    wait_for_session: {
+      starts_controller: false,
+      outcomes: ["connected", "failed", "closed", "canceled"],
+      migrates_operations: false,
+    },
+    swift: { unreliable_messages: "unsupported" },
+  },
   internal_transport_results: [
     ["invalid_artifact", null, "terminal"],
     ["expired_artifact", null, "acquire_primary"],
@@ -1138,7 +1186,7 @@ const controllerVectors = {
   retry_after: {
     valid: [0, 253402300799999],
     invalid: [-1, 1.5, "1000", 253402300800000, "NaN", "Infinity"],
-    aggregate: "maximum_absolute_unix_ms",
+    aggregate: "maximum_not_before_unix_ms",
   },
   backoff_vectors: Array.from({ length: 12 }, (_, index) => ({
     consecutive_failure: index + 1,

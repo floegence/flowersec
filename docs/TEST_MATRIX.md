@@ -19,11 +19,11 @@ instances, namespaces, faults, and temporary files that they create.
 | Accepted-session RPC, notification, stream dispatch, rejection, concurrency, and cleanup | Go, Rust, and Node TypeScript Acceptor handler suites |
 | Declared Go/Rust/Node WebSocket and raw QUIC direct coordinate universe | `stability/interop_matrix.json` defines 18 client/server/carrier cells and each cell's complete executable case set; declaration alone is not a support claim |
 | Declared Go/Rust/Node WebSocket and raw QUIC tunnel coordinate universe | `stability/interop_matrix.json` defines 18 endpoint-A/runtime/endpoint-B/carrier topologies and each topology's complete executable case set; declaration alone is not a support claim |
-| Current direct and tunnel matrix support | All 36 declarations are unsupported because no single release-gating v3 test exercises the declaration's complete executable case set |
+| Current direct and tunnel matrix support | The parameterized release gate proves all 10 direct cells and 14 tunnel topologies containing Go; the remaining 8 direct and 4 tunnel declarations stay explicitly unverified |
 | Scoped carrier, server, and cross-runtime behavior | Capability and product tests use their own stable IDs and remain support evidence for exactly the behavior they execute; they do not promote a complete matrix declaration to supported |
 | Go WebTransport H4 | Go production conformance covers encrypted DATAGRAM round trips through direct endpoint/listener and WebTransport-to-raw-QUIC tunnel-runtime paths |
 | Node raw-QUIC-only no-origin and Rust rootless loopback profiles | Node native connector one-shot and Controller generations; Rust direct WebSocket plus spend-before-roots validation |
-| Swift WSS production connector | The v3 Swift connector suite validates the production adapter; scoped Swift-Go interoperability, when registered, remains separate from the complete 18-cell matrix |
+| Swift WSS production connector | The v3 Swift connector suite validates the production adapter; direct and tunneled Swift-to-Go client profiles are separate release-gating units outside the native 18-cell matrix |
 | Chromium direct, WebTransport-to-WSS tunnel, and WebTransport-to-QUIC tunnel | Local `make browser-smoke` using Chromium production paths; direct H3 includes an encrypted DATAGRAM round trip, while tunnel topologies remain scoped bridge workloads |
 | Firefox and WebKit native WebTransport capability | Local `make browser-compat`; unsupported runtime surfaces are asserted explicitly |
 | Fault injector and kernel topology conformance | Four `diagnostic/kernel/*` tests using netns, tc, eBPF counters, and generic socket workloads |
@@ -31,7 +31,7 @@ instances, namespaces, faults, and temporary files that they create.
 | Go-owned capacity, resource, soak, and payload throughput | Explicit `make performance`; this is not multi-language performance parity |
 | Optional WebTransport and Chromium performance | The optional partition of integrated `make performance`; capability success executes it in the same structured report, a structured missing-WebTransport result records its cases as `UNSUPPORTED`, and browser/runner failures block the suite |
 | Manual published Go-to-Node raw QUIC consumer diagnostic | `release/npm-consumer/go-node-raw-quic/direct-session` can install registry packages and the tagged Go module, then verify handshake, RPC, stream FIN, close, and cleanup after publication. No workflow invokes this diagnostic, it is not release-gating evidence, and it is separate from the release workflow's package-integrity and source-commit readback. |
-| Apple/browser client-profile WSS interoperability | Registered scoped v3 interop IDs and the Chromium production runner validate only their named paths; Swift is Darwin-only and browser trust is runner-managed |
+| Apple/browser client-profile WSS interoperability | Four registered v3 units prove Swift-to-Go and browser-TypeScript-to-Go WSS over direct and tunneled paths; Swift is Darwin-only and browser trust is runner-managed |
 
 The expensive inventory is grouped by execution boundary and has no second manifest:
 

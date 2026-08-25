@@ -315,6 +315,15 @@ func runServer(ctx context.Context, carrier string) error {
 }
 
 func exerciseExternalServer(ctx context.Context, session flowersec.Session, executed *executionLedger) error {
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := session.WaitTermination(canceled); !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("external client termination wait did not honor cancellation: %w", err)
+	}
+	executed.record("cancel")
+	if _, err := session.ProbeLiveness(ctx); err != nil {
+		return fmt.Errorf("external client session did not survive cancellation: %w", err)
+	}
 	if _, err := session.WaitTermination(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}

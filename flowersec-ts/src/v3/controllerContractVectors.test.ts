@@ -26,6 +26,23 @@ type InternalTransportResult = readonly [
 ];
 
 type ControllerContractFixture = Readonly<{
+  sdk_api_consistency: Readonly<{
+    connection_error_codes: readonly string[];
+    retry: Readonly<Record<string, string>>;
+    unreliable_error_codes: readonly string[];
+    unreliable_send_results: readonly string[];
+    connection_diagnostic: Readonly<{
+      fields: readonly string[];
+      failure_fields: readonly string[];
+      forbidden_fields: readonly string[];
+    }>;
+    wait_for_session: Readonly<{
+      starts_controller: boolean;
+      outcomes: readonly string[];
+      migrates_operations: boolean;
+    }>;
+    swift: Readonly<{ unreliable_messages: string }>;
+  }>;
   internal_transport_results: readonly InternalTransportResult[];
   retry_after: Readonly<{
     valid: readonly number[];
@@ -53,6 +70,38 @@ const caCandidate = candidates.find(({ tls }) => tls.mode === "ca")!;
 const pinCandidate = candidates.find(({ tls }) => tls.mode === "pin")!;
 
 describe("transport v3 top-level controller contract vectors", () => {
+  test("binds the portable SDK API and diagnostic privacy contract", () => {
+    expect(fixture.sdk_api_consistency).toEqual({
+      connection_error_codes: [
+        "artifact_invalid", "expired_artifact", "transport_security_unsupported",
+        "transport_security_failed", "connection_failed",
+      ],
+      retry: {
+        error_property: "retryDisposition",
+        deprecated_error_property: "disposition",
+        retry_after_property: "notBeforeUnixMilliseconds",
+        deprecated_retry_after_property: "absoluteUnixMilliseconds",
+      },
+      unreliable_error_codes: [
+        "unavailable", "invalid_message", "too_large", "canceled", "closed", "operation_failed",
+      ],
+      unreliable_send_results: [
+        "accepted", "dropped_budget", "dropped_expired", "dropped_carrier",
+      ],
+      connection_diagnostic: {
+        fields: ["state", "attempt", "failure", "retryDisposition"],
+        failure_fields: ["phase", "code"],
+        forbidden_fields: ["url", "carrier", "candidates", "error", "credentials", "peer", "session"],
+      },
+      wait_for_session: {
+        starts_controller: false,
+        outcomes: ["connected", "failed", "closed", "canceled"],
+        migrates_operations: false,
+      },
+      swift: { unreliable_messages: "unsupported" },
+    });
+  });
+
   test("binds every internal result tuple to production aggregation and projection", () => {
     const expectedActions = new Map<string, string>([
       ["invalid_artifact/", "terminal"],
@@ -102,12 +151,16 @@ describe("transport v3 top-level controller contract vectors", () => {
   });
 
   test("executes retry-after boundaries and the complete lease transition table", async () => {
-    expect(fixture.retry_after.aggregate).toBe("maximum_absolute_unix_ms");
+    expect(fixture.retry_after.aggregate).toBe("maximum_not_before_unix_ms");
     for (const value of fixture.retry_after.valid) {
       expect(validateRetryDispositionV3({
         kind: "retry_after",
         absoluteUnixMilliseconds: value,
-      })).toEqual({ kind: "retry_after", absoluteUnixMilliseconds: value });
+      })).toEqual({
+        kind: "retry_after",
+        notBeforeUnixMilliseconds: value,
+        absoluteUnixMilliseconds: value,
+      });
     }
     for (const value of fixture.retry_after.invalid) {
       expect(() => validateRetryDispositionV3({
@@ -120,6 +173,7 @@ describe("transport v3 top-level controller contract vectors", () => {
       absoluteUnixMilliseconds: value,
     })))).toEqual({
       kind: "retry_after",
+      notBeforeUnixMilliseconds: 253_402_300_799_999,
       absoluteUnixMilliseconds: 253_402_300_799_999,
     });
 

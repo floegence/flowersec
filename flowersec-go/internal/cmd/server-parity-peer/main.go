@@ -78,6 +78,7 @@ type tunnelEndpointBReadyMessage struct {
 	EndpointBArtifactJSON string                    `json:"endpoint_b_artifact_json"`
 	Relay                 tunnelRelayReadyMessage   `json:"relay"`
 	Authorizations        []tunnelAuthorizationWire `json:"authorizations"`
+	VerificationRecords   map[string]string         `json:"verification_records"`
 }
 
 type tunnelAuthorizationWire struct {
@@ -323,6 +324,15 @@ func runServer(ctx context.Context, carrier string) error {
 }
 
 func exerciseExternalServer(ctx context.Context, session flowersec.Session, executed *executionLedger) error {
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := session.WaitTermination(canceled); !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("external client termination wait did not honor cancellation: %w", err)
+	}
+	executed.record("cancel")
+	if _, err := session.ProbeLiveness(ctx); err != nil {
+		return fmt.Errorf("external client session did not survive cancellation: %w", err)
+	}
 	if _, err := session.WaitTermination(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
@@ -629,6 +639,9 @@ func runTunnelEndpointB(ctx context.Context, carrier string) error {
 		Type: "endpoint-b-ready", Runtime: "go", Carrier: carrier, Path: "tunnel",
 		EndpointAArtifactJSON: firstArtifact, EndpointBArtifactJSON: secondArtifact,
 		Relay: relay, Authorizations: authorizations,
+		VerificationRecords: map[string]string{
+			pair.First.LookupKey(): firstArtifact, pair.Second.LookupKey(): secondArtifact,
+		},
 	}); err != nil {
 		return err
 	}

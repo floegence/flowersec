@@ -74,7 +74,7 @@ test("consumer examples expose structured connection and session recovery", () =
     {
       name: "Swift",
       source: read("examples/swift/Sources/FlowersecSwiftClientExample/main.swift"),
-      classifiers: [/retryDispositionV3/],
+      classifiers: [/retryDisposition\(for:/],
     },
     {
       name: "Rust",
@@ -137,5 +137,5 @@ test("portable contract documents unreliable messages as an explicit SDK profile
 
   assert.match(readme, /\| Unreliable messages when available \| Yes \| Yes \| No \| Yes \|/u);
   assert.match(apiContract, /Unreliable messages are an SDK-profile capability/u);
-  assert.match(apiContract, /Swift currently exposes no public unreliable-message channel/u);
+  assert.match(apiContract, /Swift explicitly reports the capability as unsupported/u);
 });

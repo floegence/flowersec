@@ -36,16 +36,34 @@ export type PublicConnectErrorCodeV3 =
 export type RetryDispositionV3 =
   | Readonly<{ kind: "terminal" }>
   | Readonly<{ kind: "retryable" }>
-  | Readonly<{ kind: "retry_after"; absoluteUnixMilliseconds: number }>;
+  | Readonly<{
+      kind: "retry_after";
+      notBeforeUnixMilliseconds: number;
+      /** @deprecated Use notBeforeUnixMilliseconds. */
+      absoluteUnixMilliseconds?: number;
+    }>;
+
+type RetryDispositionInputV3 = RetryDispositionV3 | Readonly<{
+  kind: "retry_after";
+  /** @deprecated Use notBeforeUnixMilliseconds. */
+  absoluteUnixMilliseconds: number;
+  notBeforeUnixMilliseconds?: number;
+}>;
 
 export class ConnectErrorV3 extends Error {
+  readonly retryDisposition: RetryDispositionV3;
+
   constructor(
     readonly code: PublicConnectErrorCodeV3,
-    readonly disposition: RetryDispositionV3,
+    disposition: RetryDispositionInputV3,
   ) {
     super(`Flowersec connection failed (code=${code})`);
     this.name = "ConnectError";
+    this.retryDisposition = validateRetryDispositionValueV3(disposition);
   }
+
+  /** @deprecated Use retryDisposition. */
+  get disposition(): RetryDispositionV3 { return this.retryDisposition; }
 }
 
 export type TransportSecuritySnapshotV3 =
@@ -104,25 +122,25 @@ export function projectTransportFailureV3(
   }
 }
 
-export function validateRetryDispositionV3(value: RetryDispositionV3): RetryDispositionV3 {
-  if (value.kind === "terminal") return terminal();
-  if (value.kind === "retryable") return retryable();
-  if (value.kind !== "retry_after" || !Number.isSafeInteger(value.absoluteUnixMilliseconds) ||
-      value.absoluteUnixMilliseconds < 0 || value.absoluteUnixMilliseconds > 253_402_300_799_999) {
+export function validateRetryDispositionV3(value: RetryDispositionInputV3): RetryDispositionV3 {
+  try {
+    return validateRetryDispositionValueV3(value);
+  } catch {
     throw new ConnectErrorV3("artifact_invalid", terminal());
   }
-  return Object.freeze({ kind: "retry_after", absoluteUnixMilliseconds: value.absoluteUnixMilliseconds });
 }
 
-export function aggregateRetryDispositionsV3(values: readonly RetryDispositionV3[]): RetryDispositionV3 {
+export function aggregateRetryDispositionsV3(values: readonly RetryDispositionInputV3[]): RetryDispositionV3 {
   let latest: number | undefined;
   let canRetry = false;
   for (const input of values) {
     const value = validateRetryDispositionV3(input);
-    if (value.kind === "retry_after") latest = Math.max(latest ?? 0, value.absoluteUnixMilliseconds);
+    if (value.kind === "retry_after") {
+      latest = Math.max(latest ?? 0, value.notBeforeUnixMilliseconds);
+    }
     else if (value.kind === "retryable") canRetry = true;
   }
-  if (latest !== undefined) return Object.freeze({ kind: "retry_after", absoluteUnixMilliseconds: latest });
+  if (latest !== undefined) return retryAfter(latest);
   return canRetry ? retryable() : terminal();
 }
 
@@ -136,3 +154,23 @@ export function controllerBackoffMillisecondsV3(consecutiveFailure: number): num
 
 const terminal = (): RetryDispositionV3 => Object.freeze({ kind: "terminal" });
 const retryable = (): RetryDispositionV3 => Object.freeze({ kind: "retryable" });
+
+const retryAfter = (notBeforeUnixMilliseconds: number): RetryDispositionV3 => Object.freeze({
+  kind: "retry_after",
+  notBeforeUnixMilliseconds,
+  absoluteUnixMilliseconds: notBeforeUnixMilliseconds,
+});
+
+function validateRetryDispositionValueV3(value: RetryDispositionInputV3): RetryDispositionV3 {
+  if (value.kind === "terminal") return terminal();
+  if (value.kind === "retryable") return retryable();
+  const legacy = value.absoluteUnixMilliseconds;
+  const canonical = value.notBeforeUnixMilliseconds;
+  const deadline = canonical ?? legacy;
+  if (deadline === undefined ||
+      canonical !== undefined && legacy !== undefined && canonical !== legacy ||
+      !Number.isSafeInteger(deadline) || deadline < 0 || deadline > 253_402_300_799_999) {
+    throw new TypeError("invalid Flowersec retry-after deadline");
+  }
+  return retryAfter(deadline);
+}

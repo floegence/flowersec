@@ -104,7 +104,7 @@ Flowersec은 애플리케이션 세션과 이를 전달하는 네트워크 경�
 | `apple-client` | Apple 플랫폼의 Swift | WSS endpoint client | 없음 |
 | `webtransport-server` | Go | WebTransport direct server 및 opaque tunnel runtime | 없음 |
 
-기계 판독 native-server-core profile에는 native runtime별 6개씩 집계된 runtime-role-carrier tuple 18개와 지원되는 path별 server unit 24개가 있습니다. Go H4는 WebTransport server tuple 2개와 path별 unit 2개를 추가합니다. interoperability matrix는 direct cell 18개와 tunnel cell 18개를 별도로 선언합니다. cell의 전체 executable case set을 실행하는 release-gating v3 test가 없으므로 36개 pairwise cell은 현재 모두 명시적인 `unsupported` 선언입니다. profile은 Artifact, handshake, RPC, stream, close, rekey 또는 authorization wire semantics를 변경하지 않습니다.
+기계 판독 native-server-core profile에는 native runtime별 6개씩 집계된 runtime-role-carrier tuple 18개와 지원되는 path별 server unit 24개가 있습니다. Go H4는 WebTransport server tuple 2개와 path별 unit 2개를 추가합니다. interoperability matrix는 direct cell 18개와 tunnel cell 18개를 별도로 선언합니다. release gate는 Go를 포함하는 direct cell 10개와 pairwise tunnel cell 14개를 모두 검증하며, 나머지 direct cell 8개와 tunnel cell 4개는 명시적으로 미검증 상태입니다. 추가 WSS client profile 4개는 Swift 및 browser TypeScript에서 Go로 연결하는 direct와 tunnel path를 검증합니다. profile은 Artifact, handshake, RPC, stream, close, rekey 또는 authorization wire semantics를 변경하지 않습니다.
 
 각 패키지가 지원하는 정확한 플랫폼과 연결 조합은 SDK 가이드를 확인하세요.
 

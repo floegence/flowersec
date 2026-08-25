@@ -284,7 +284,7 @@ export class ControllerRetryWaitV3 {
     this.#waiting = true;
     this.#manual = false;
     this.#absoluteDeadline = validated.kind === "retry_after"
-      ? validated.absoluteUnixMilliseconds
+      ? validated.notBeforeUnixMilliseconds!
       : undefined;
     try {
       while (!signal.aborted) {
@@ -340,11 +340,21 @@ function saturatingDifferenceMilliseconds(deadline: number, now: number): number
 
 function validateControllerWaitDisposition(value: RetryDispositionV3): RetryDispositionV3 {
   if (value.kind === "terminal" || value.kind === "retryable") return value;
-  if (value.kind !== "retry_after" || !Number.isSafeInteger(value.absoluteUnixMilliseconds) ||
-      value.absoluteUnixMilliseconds < 0 || value.absoluteUnixMilliseconds > 253_402_300_799_999) {
+  if (value.kind !== "retry_after") {
     throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
   }
-  return value;
+  const deadline = value.notBeforeUnixMilliseconds ?? value.absoluteUnixMilliseconds;
+  if (deadline === undefined || !Number.isSafeInteger(deadline) || deadline < 0 ||
+      deadline > 253_402_300_799_999 || value.notBeforeUnixMilliseconds !== undefined &&
+      value.absoluteUnixMilliseconds !== undefined &&
+      value.notBeforeUnixMilliseconds !== value.absoluteUnixMilliseconds) {
+    throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
+  }
+  return Object.freeze({
+    kind: "retry_after",
+    notBeforeUnixMilliseconds: deadline,
+    absoluteUnixMilliseconds: deadline,
+  });
 }
 
 function controllerBackoffForWait(consecutiveFailure: number): number {

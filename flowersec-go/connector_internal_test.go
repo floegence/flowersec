@@ -396,9 +396,43 @@ func TestUnreliableUnavailableProjectsStablePublicCode(t *testing.T) {
 	if channel != nil {
 		t.Fatalf("channel = %#v, want nil", channel)
 	}
-	var projected *SessionError
-	if !errors.As(err, &projected) || projected.Code() != SessionUnreliableUnavailable {
-		t.Fatalf("UnreliableMessages error = %#v, want %q", err, SessionUnreliableUnavailable)
+	var projected *UnreliableMessageError
+	if !errors.As(err, &projected) || projected.Code() != UnreliableMessageUnavailable {
+		t.Fatalf("UnreliableMessages error = %#v, want %q", err, UnreliableMessageUnavailable)
+	}
+	var legacy *SessionError
+	if !errors.As(err, &legacy) || legacy.Code() != SessionUnreliableUnavailable {
+		t.Fatalf("legacy UnreliableMessages error = %#v, want %q", err, SessionUnreliableUnavailable)
+	}
+}
+
+func TestUnreliableMessageErrorCodeSetAndLegacyMatching(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want UnreliableMessageErrorCode
+	}{
+		{name: "unavailable", err: session.ErrUnreliableUnavailable, want: UnreliableMessageUnavailable},
+		{name: "invalid_message", err: session.ErrUnreliableInvalidExpiry, want: UnreliableMessageInvalid},
+		{name: "too_large", err: session.ErrUnreliableMessageTooLarge, want: UnreliableMessageTooLarge},
+		{name: "canceled", err: context.Canceled, want: UnreliableMessageCanceled},
+		{name: "closed", err: session.ErrSessionClosed, want: UnreliableMessageClosed},
+		{name: "operation_failed", err: errors.New("private carrier failure"), want: UnreliableMessageOperationFailed},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			projected := redactUnreliableMessageError(test.err)
+			if projected.Code() != test.want {
+				t.Fatalf("Code() = %q, want %q", projected.Code(), test.want)
+			}
+			if strings.Contains(projected.Error(), test.err.Error()) {
+				t.Fatalf("public error leaks its cause: %q", projected.Error())
+			}
+			var legacy *SessionError
+			if !errors.As(projected, &legacy) {
+				t.Fatalf("errors.As(%T, *SessionError) = false", projected)
+			}
+		})
 	}
 }
 

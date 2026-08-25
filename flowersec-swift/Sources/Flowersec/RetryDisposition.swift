@@ -2,7 +2,7 @@ import Foundation
 
 /// The structured decision used by ``ConnectionController`` after a failed
 /// artifact acquisition, connection attempt, or established session.
-public enum RetryDisposition: Equatable, Sendable {
+public enum RetryDispositionV2: Equatable, Sendable {
   /// The failure is authoritative and ends the connection lifecycle.
   case terminal
   /// A fresh artifact and a new one-shot session may be attempted after backoff.
@@ -11,8 +11,11 @@ public enum RetryDisposition: Equatable, Sendable {
   case retryAfter(Date)
 }
 
+@available(*, deprecated, renamed: "RetryDispositionV2")
+public typealias RetryDisposition = RetryDispositionV2
+
 extension ConnectErrorV2 {
-  public var retryDisposition: RetryDisposition {
+  public var retryDispositionV2: RetryDispositionV2 {
     switch self {
     case .invalidOptions, .artifactInvalid, .runtimeUnsupported,
       .transportSecurityUnsupported, .transportSecurityFailed, .canceled:
@@ -21,10 +24,13 @@ extension ConnectErrorV2 {
       return .retryable
     }
   }
+
+  @available(*, deprecated, renamed: "retryDispositionV2")
+  public var retryDisposition: RetryDispositionV2 { retryDispositionV2 }
 }
 
 extension SessionError {
-  public var retryDisposition: RetryDisposition {
+  public var retryDispositionV2: RetryDispositionV2 {
     switch self {
     case .canceled, .streamRejected, .operationFailed:
       return .terminal
@@ -33,6 +39,9 @@ extension SessionError {
       return .retryable
     }
   }
+
+  @available(*, deprecated, renamed: "retryDispositionV2")
+  public var retryDisposition: RetryDispositionV2 { retryDispositionV2 }
 }
 
 /// The v3 retry decision uses an exact Unix-millisecond deadline on every

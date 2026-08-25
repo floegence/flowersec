@@ -146,7 +146,11 @@ continue to be served.
 gets a fresh `ArtifactLease`, and callers receive clear `idle`, `connecting`,
 `connected`, `waiting`, `failed`, and `closed` states. Retry decisions are
 structured; applications do not need to infer policy from error text or run a
-second retry loop.
+second retry loop. `wait_for_session()` is passive, and
+`ConnectionSnapshot::diagnostic()` contains only state, attempt, failure
+phase/code, and retry disposition. The unversioned artifact, lease, connector,
+error, and controller names are the recommended strict-v3 API; old root
+v3-suffixed names remain deprecated aliases.
 
 ## Security
 
