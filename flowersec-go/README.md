@@ -79,6 +79,17 @@ accepted Session. `Handler()` is intentionally fail-closed when installed on a
 caller-owned `http.Server`; `NewWebSocketHTTPServer(...)` owns the TLS boundary,
 forces TLS 1.3 only, and disables session tickets before the first handshake.
 
+An application that already owns an authenticated numeric-loopback HTTP
+bridge may use `Issuer.IssuePrivateLoopbackDirect(...)` together with
+`Acceptor.PrivateLoopbackHandler(...)`. This is the separate
+`flowersec-private-loopback/1` profile: it requires a fixed direct path, exact
+same-origin loopback requests, and an application authorization callback
+before WebSocket upgrade. It does not add a TLS mode to `flowersec/3` or
+weaken `Acceptor.Handler()`.
+
+The complete boundary is documented in the
+[private loopback profile](../docs/PRIVATE_LOOPBACK_V1.md).
+
 For application streams on any established connector or accepted Session, use
 `NewStreamHandlers(...)`, register handlers with `HandleStream(...)`, and run
 `Serve(...)` under the Session owner's context. The same bounded dispatcher is

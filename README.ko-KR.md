@@ -110,6 +110,8 @@ Flowersec은 애플리케이션 세션과 이를 전달하는 네트워크 경�
 
 WebTransport는 필수 native-server carrier contract에 포함되지 않는 선택적 adapter입니다. Go는 별도의 완전한 H4 webtransport-server profile을 선언하고 Browser profile은 브라우저 WebTransport API를 사용할 수 있을 때 H3를 사용합니다. Node.js와 Rust는 현재 production WebTransport adapter를 제공하지 않습니다. Go, Rust, Node.js의 native-server carrier surface는 WebSocket과 raw QUIC이며, pairwise interoperability는 matrix의 supported entry로만 선언합니다.
 
+`flowersec-private-loopback/1`은 공개 deployment capability registry 외부의 제품 전용 profile입니다. 전용 Go server 및 TypeScript browser API는 application 인증 numeric-loopback HTTP bridge로만 제한됩니다.
+
 <!-- readme-section:security -->
 <a id="security"></a>
 
@@ -117,6 +119,7 @@ WebTransport는 필수 native-server carrier contract에 포함되지 않는 선
 
 - 직접 및 릴레이 세션 모두 애플리케이션 데이터를 종단 간 암호화합니다.
 - TLS 신뢰 정책은 각 v3 전송 후보에 바인딩됩니다. 공개 또는 배포 제공 CA 루트와 명시적 리프 인증서 pin은 상호 배타적이며 실패 후 강등되지 않습니다.
+- `flowersec-private-loopback/1`은 격리된 transport envelope이며 `flowersec/3`의 TLS mode나 capability가 아닙니다. 전용 API는 authority가 동일한 numeric-loopback origin과 일치하고 server application이 upgrade 전에 request를 승인한 경우에만 변경되지 않은 CA-mode v3 candidate 하나를 `ws://`로 매핑합니다. 일반 Go, TypeScript, Rust, Swift, Provider 및 tunnel path는 이 envelope을 거부합니다.
 - 연결 초대는 불투명하고 수명이 짧으며 한 번만 사용할 수 있습니다.
 - 자격 증명은 사용 전에 소비 처리되어 이미 사용한 초대를 재사용할 수 없습니다.
 - 릴레이는 암호화된 트래픽만 전달하며 애플리케이션 세션을 종료하지 않습니다.

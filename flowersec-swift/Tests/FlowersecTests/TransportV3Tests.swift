@@ -89,6 +89,25 @@ struct TransportV3Tests {
     }
   }
 
+  @Test func publicDecoderRejectsPrivateLoopbackProfileAndAcceptsOnlyItsNestedArtifact() throws {
+    let url = packageRoot().appendingPathComponent(
+      "testdata/private_loopback_v1/profile_vectors.json")
+    let root = try #require(
+      JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+    #expect(root["profile"] as? String == "flowersec-private-loopback/1")
+    #expect(root["nested_profile"] as? String == "flowersec/3")
+    let positive = try #require(root["positive"] as? [[String: Any]])
+    let artifactJSON = try #require(positive.first?["artifact_json"] as? String)
+    #expect(throws: ArtifactError.self) {
+      try parseArtifact(Data(artifactJSON.utf8))
+    }
+    let envelope = try #require(
+      JSONSerialization.jsonObject(with: Data(artifactJSON.utf8)) as? [String: Any])
+    let encoded = try #require(envelope["artifact_b64u"] as? String)
+    let inner = try #require(Data(base64URLEncoded: encoded))
+    _ = try parseArtifact(inner)
+  }
+
   @Test func activePinsUseExclusiveExpiryAndDeclaredPolicyDigest() throws {
     let first = Data(repeating: 1, count: 32).base64URLEncodedStringV3()
     let second = Data(repeating: 2, count: 32).base64URLEncodedStringV3()

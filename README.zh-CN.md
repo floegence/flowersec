@@ -110,6 +110,8 @@ Flowersec 将应用会话与承载它的网络路径分离：
 
 WebTransport 是可选能力，不属于必需的 native-server carrier 合同。Go 声明独立且完整的 H4 webtransport-server profile；Browser profile 在浏览器 WebTransport API 可用时使用 H3；Node.js 和 Rust 当前没有 production WebTransport adapter。Go、Rust 和 Node.js 的 native-server carrier 范围是 WebSocket 与 raw QUIC；两两互操作支持只由矩阵中标记 supported 的条目声明。
 
+`flowersec-private-loopback/1` 是公开 deployment capability registry 之外的产品私有 profile。它的专用 Go server 和 TypeScript browser API 仅限应用已认证的数字回环 HTTP bridge。
+
 <!-- readme-section:security -->
 <a id="security"></a>
 
@@ -117,6 +119,7 @@ WebTransport 是可选能力，不属于必需的 native-server carrier 合同�
 
 - 直连和中继会话中的应用数据都采用端到端加密。
 - TLS 信任策略会绑定到每个 v3 传输候选项。公共或部署提供的 CA 根与显式叶证书 pin 互斥，失败后绝不降级。
+- `flowersec-private-loopback/1` 是隔离的传输 envelope，不是 `flowersec/3` 的 TLS mode 或 capability。它的专用 API 仅在 authority 与同一数字回环 origin 一致，且 server application 在 upgrade 前完成授权时，才把一个未修改的 CA-mode v3 candidate 映射到 `ws://`。普通 Go、TypeScript、Rust、Swift、Provider 和 tunnel 路径都会拒绝该 envelope。
 - 连接邀请不透明、有效期短且只能使用一次。
 - 凭据会在使用前完成核销，已消费的邀请无法重放。
 - 中继只转发加密流量，不会终止应用会话。

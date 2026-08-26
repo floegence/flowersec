@@ -137,6 +137,10 @@ do not currently provide a production WebTransport adapter. The native-server ca
 WebSocket and raw QUIC for Go, Rust, and Node.js; pairwise interoperability
 support is claimed only by supported entries in the matrix.
 
+`flowersec-private-loopback/1` is a product-private profile outside the public
+deployment capability registry. Its dedicated Go server and TypeScript browser
+APIs are limited to an application-authenticated numeric-loopback HTTP bridge.
+
 <!-- readme-section:security -->
 <a id="security"></a>
 
@@ -144,6 +148,7 @@ support is claimed only by supported entries in the matrix.
 
 - Application data is encrypted end to end for both direct and relayed sessions.
 - TLS trust policy is bound to every v3 transport candidate. Public or deployment-provided CA roots and explicit leaf-certificate pins are mutually exclusive and never downgrade after failure.
+- `flowersec-private-loopback/1` is an isolated transport envelope, not a `flowersec/3` TLS mode or capability. Its dedicated APIs map one unchanged CA-mode v3 candidate to `ws://` only when the authority is the same numeric loopback origin and the server application authorizes the request before upgrade. Ordinary Go, TypeScript, Rust, Swift, Provider, and tunnel paths reject the envelope.
 - Connection invitations are opaque, short-lived, and single-use.
 - Credentials are committed before use, so a consumed invitation cannot be replayed.
 - Relays forward encrypted traffic only; they do not terminate application sessions.

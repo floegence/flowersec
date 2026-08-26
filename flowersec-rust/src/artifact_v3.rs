@@ -1809,6 +1809,37 @@ mod tests {
     }
 
     #[derive(Deserialize)]
+    struct PrivateLoopbackVectorsV1 {
+        profile: String,
+        nested_profile: String,
+        positive: Vec<PrivateLoopbackPositiveV1>,
+    }
+
+    #[derive(Deserialize)]
+    struct PrivateLoopbackPositiveV1 {
+        artifact_json: String,
+    }
+
+    #[test]
+    fn public_v3_decoder_rejects_private_loopback_profile_and_accepts_only_its_nested_v3_artifact()
+    {
+        let raw = std::fs::read_to_string("../testdata/private_loopback_v1/profile_vectors.json")
+            .expect("shared private loopback vectors");
+        let vectors: PrivateLoopbackVectorsV1 = serde_json::from_str(&raw).unwrap();
+        assert_eq!(vectors.profile, "flowersec-private-loopback/1");
+        assert_eq!(vectors.nested_profile, "flowersec/3");
+        let envelope: Value = serde_json::from_str(&vectors.positive[0].artifact_json).unwrap();
+        assert!(matches!(
+            ArtifactV3::parse(vectors.positive[0].artifact_json.as_bytes()),
+            Err(ArtifactErrorV3::Invalid)
+        ));
+        let inner = URL_SAFE_NO_PAD
+            .decode(envelope["artifact_b64u"].as_str().unwrap())
+            .unwrap();
+        assert!(ArtifactV3::parse(inner).is_ok());
+    }
+
+    #[derive(Deserialize)]
     struct PositiveArtifactVectorV3 {
         id: String,
         artifact_json: String,

@@ -110,6 +110,8 @@ Flowersec отделяет сеанс приложения от сетевого
 
 WebTransport является необязательным адаптером и не входит в обязательный контракт carrier native-server. Go заявляет отдельный полный профиль H4 webtransport-server; профиль Browser использует H3, если доступен API WebTransport браузера. Node.js и Rust в настоящее время не предоставляют production-адаптер WebTransport. Поверхность carrier native-server для Go, Rust и Node.js включает WebSocket и raw QUIC; попарная interoperability заявляется только поддерживаемыми записями матрицы.
 
+`flowersec-private-loopback/1` — приватный профиль продукта вне публичного deployment capability registry. Его специализированные API для Go server и TypeScript browser ограничены аутентифицированным приложением numeric-loopback HTTP bridge.
+
 <!-- readme-section:security -->
 <a id="security"></a>
 
@@ -117,6 +119,7 @@ WebTransport является необязательным адаптером и
 
 - Данные приложения зашифрованы от конца до конца и в прямых сеансах, и при работе через relay.
 - Политика доверия TLS привязана к каждому транспортному кандидату v3. Публичные или предоставленные развёртыванием корни CA и явные pin-значения конечного сертификата взаимоисключающи; после сбоя понижение режима запрещено.
+- `flowersec-private-loopback/1` — изолированный transport envelope, а не TLS mode или capability профиля `flowersec/3`. Его специализированные API сопоставляют один неизменённый CA-mode v3 candidate с `ws://` только когда authority совпадает с тем же numeric-loopback origin, а server application авторизует request до upgrade. Обычные пути Go, TypeScript, Rust, Swift, Provider и tunnel отклоняют этот envelope.
 - Приглашения на подключение непрозрачны, краткосрочны и одноразовы.
 - Учётные данные фиксируются до использования, поэтому потраченное приглашение нельзя воспроизвести.
 - Relay только пересылает зашифрованный трафик и не завершает сеанс приложения.

@@ -110,6 +110,8 @@ Consulta las guías de cada SDK para ver las combinaciones exactas de plataforma
 
 WebTransport es un adaptador opcional y no forma parte del contrato de carrier native-server obligatorio. Go declara el perfil H4 webtransport-server independiente y completo; el perfil Browser usa H3 cuando la API WebTransport del navegador está disponible. Node.js y Rust no ofrecen actualmente un adaptador WebTransport de producción. La superficie carrier native-server es WebSocket y raw QUIC para Go, Rust y Node.js; la interoperabilidad por pares solo se declara mediante entradas compatibles de la matriz.
 
+`flowersec-private-loopback/1` es un perfil privado del producto, fuera del deployment capability registry público. Sus API dedicadas de servidor Go y navegador TypeScript se limitan a un bridge HTTP de loopback numérico autenticado por la aplicación.
+
 <!-- readme-section:security -->
 <a id="security"></a>
 
@@ -117,6 +119,7 @@ WebTransport es un adaptador opcional y no forma parte del contrato de carrier n
 
 - Los datos de la aplicación se cifran de extremo a extremo tanto en sesiones directas como con relay.
 - La política de confianza TLS está vinculada a cada candidato de transporte v3. Las raíces de CA públicas o proporcionadas por el despliegue y los pins explícitos del certificado hoja son mutuamente excluyentes, sin degradación tras un fallo.
+- `flowersec-private-loopback/1` es un envelope de transporte aislado, no un modo TLS ni una capability de `flowersec/3`. Sus API dedicadas solo asignan un candidato v3 sin cambios en modo CA a `ws://` cuando la autoridad coincide con el mismo origen de loopback numérico y la aplicación del servidor autoriza la solicitud antes del upgrade. Las rutas ordinarias de Go, TypeScript, Rust, Swift, Provider y tunnel rechazan el envelope.
 - Las invitaciones de conexión son opacas, de corta duración y de un solo uso.
 - Las credenciales se consumen antes de usarse, por lo que una invitación gastada no puede reproducirse.
 - Los relays solo reenvían tráfico cifrado; no terminan las sesiones de la aplicación.

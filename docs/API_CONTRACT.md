@@ -40,6 +40,11 @@ and 14 pairwise tunnel cells that include Go; the remaining 8 direct and 4
 tunnel cells remain explicitly unverified. Four additional WSS client profiles
 prove Swift and browser TypeScript against Go over direct and tunneled paths.
 
+The separate `flowersec-private-loopback/1` product-private profile is not a
+deployment capability registry entry and does not extend the closed
+`flowersec/3` TLS policy. Its complete security and wire boundary is documented
+in `docs/PRIVATE_LOOPBACK_V1.md`.
+
 Trust-root sourcing is policy-specific. CA candidates use platform roots or
 deployment-provided private roots. Pin candidates use only the complete leaf
 DER SHA-256 pin set and never fall back to CA. Browser WebTransport passes only
@@ -58,6 +63,40 @@ a native verifier or an explicitly browser-supported profile.
 Every production CA-mode TLS connector validates both the certificate chain and the requested target identity; an untrusted root or hostname/IP mismatch fails closed. Pin mode instead uses only the complete leaf DER hashes authorized by the artifact, while still enforcing the certificate profile and the TLS private-key proof; it never adds or falls back to CA chain or hostname authorization. Test-only roots are supplied explicitly by acceptance fixtures or the browser test runner. No production connector has an insecure verification fallback.
 
 The public contract is split into four layers. The portable core is the shared artifact, lease, one-shot connector, session, RPC, and stream model implemented by every SDK. An optional `ConnectionController` is the sole Flowersec long-lived connection owner above a refreshable artifact source. Each SDK profile records runtime-owned carrier support, listener support, and platform trust constraints. A language convenience is an ecosystem-specific API shape layered on top of the portable core, not a promise that every SDK exposes the same syntax. Retry decisions are structured as `terminal`, `retryable`, or an absolute `retry_after` deadline. The public connection, session, controller, and unreliable-message codes are frozen cross-language values; only application-defined RPC error-code taxonomies remain SDK-local. Unversioned artifact, lease, connector, error, and controller names are the recommended strict-v3 entrypoints. Explicit `V3` spellings are deprecated aliases.
+
+## Product-private loopback adapter
+
+The Go server surface adds `flowersec.PrivateLoopbackHandlerOptions` and
+`flowersec.Acceptor.PrivateLoopbackHandler()`. The Go control plane exposes
+`controlplane.PrivateLoopbackProfile`,
+`controlplane.PrivateLoopbackIssueOptions`,
+`controlplane.Issuer.IssuePrivateLoopbackDirect(...)`, and the opaque
+`controlplane.IssuedPrivateLoopbackArtifact`. Its only delivery and durable
+authorization boundaries are
+`controlplane.IssuedPrivateLoopbackArtifact.ArtifactJSON()`,
+`controlplane.IssuedPrivateLoopbackArtifact.AuthorizationRecord()`, and
+`controlplane.IssuedPrivateLoopbackArtifact.LookupKey()`; its
+`controlplane.IssuedPrivateLoopbackArtifact.String()`,
+`controlplane.IssuedPrivateLoopbackArtifact.GoString()`, and
+`controlplane.IssuedPrivateLoopbackArtifact.MarshalJSON()` representations are
+redacted.
+
+The TypeScript browser entrypoint exposes the runtime values
+`PRIVATE_LOOPBACK_PROFILE_V1`, `PrivateLoopbackArtifactErrorV1`,
+`parsePrivateLoopbackArtifactV1(...)`,
+`createPrivateLoopbackArtifactLeaseV1(...)`,
+`connectPrivateLoopbackV1(...)`, and
+`createPrivateLoopbackConnectionControllerV1(...)`. Its opaque types are
+`PrivateLoopbackArtifactV1`, `PrivateLoopbackArtifactLeaseV1`,
+`PrivateLoopbackArtifactSourceV1`,
+`PrivateLoopbackArtifactSourceResultV1`,
+`PrivateLoopbackSessionOptionsV1`, and
+`PrivateLoopbackConnectionControllerOptionsV1`.
+
+These APIs accept only the explicit private envelope and exact numeric-loopback
+origin. Ordinary connectors continue to reject it, and the dedicated
+controller preserves the existing attempt, cancellation, timeout, backoff,
+lease, and replacement-session semantics.
 
 ## Go
 

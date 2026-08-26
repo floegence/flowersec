@@ -110,6 +110,8 @@ Die SDK-Anleitungen nennen die genauen unterstützten Kombinationen aus Plattfor
 
 WebTransport ist optional und nicht Teil des erforderlichen native-server-carrier-Vertrags. Go beansprucht das separate vollstaendige H4-webtransport-server-Profil; das Browser-Profil verwendet H3, wenn die Browser-WebTransport-API verfügbar ist. Node.js und Rust bieten derzeit keinen produktiven WebTransport-Adapter. Die native-server-carrier-Oberflaeche ist WebSocket und raw QUIC fuer Go, Rust und Node.js; paarweise Interoperabilitaet wird nur durch unterstuetzte Matrixeintraege beansprucht.
 
+`flowersec-private-loopback/1` ist ein produktprivates Profil außerhalb des öffentlichen deployment capability registry. Seine dedizierten APIs für Go-Server und TypeScript-Browser sind auf eine von der Anwendung authentifizierte numerische Loopback-HTTP-Bridge beschränkt.
+
 <!-- readme-section:security -->
 <a id="security"></a>
 
@@ -117,6 +119,7 @@ WebTransport ist optional und nicht Teil des erforderlichen native-server-carrie
 
 - Anwendungsdaten sind bei direkten und weitergeleiteten Sitzungen Ende zu Ende verschlüsselt.
 - Die TLS-Vertrauensrichtlinie ist an jeden v3-Transportkandidaten gebunden. Öffentliche oder bereitgestellte CA-Wurzeln und explizite Leaf-Zertifikat-Pins schließen sich gegenseitig aus; nach einem Fehler gibt es keine Herabstufung.
+- `flowersec-private-loopback/1` ist ein isolierter Transport-Envelope und kein TLS-Modus oder Capability von `flowersec/3`. Seine dedizierten APIs bilden genau einen unveränderten CA-Modus-v3-Kandidaten nur dann auf `ws://` ab, wenn die Authority demselben numerischen Loopback-Origin entspricht und die Serveranwendung die Anfrage vor dem Upgrade autorisiert. Gewöhnliche Go-, TypeScript-, Rust-, Swift-, Provider- und Tunnelpfade lehnen den Envelope ab.
 - Verbindungseinladungen sind undurchsichtig, kurzlebig und nur einmal verwendbar.
 - Zugangsdaten werden vor der Nutzung fest verbucht, damit eine verbrauchte Einladung nicht wiederholt werden kann.
 - Relays leiten nur verschlüsselten Datenverkehr weiter und beenden keine Anwendungssitzungen.

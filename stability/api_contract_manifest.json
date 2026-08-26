@@ -648,6 +648,11 @@
           },
           {
             "kind": "type",
+            "expr": "flowersec.PrivateLoopbackHandlerOptions",
+            "doc_token": "`flowersec.PrivateLoopbackHandlerOptions`"
+          },
+          {
+            "kind": "type",
             "expr": "flowersec.DirectListener",
             "doc_token": "`flowersec.DirectListener`"
           },
@@ -680,6 +685,11 @@
             "kind": "method",
             "expr": "(*flowersec.Acceptor).Handler",
             "doc_token": "`flowersec.Acceptor.Handler()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.Acceptor).PrivateLoopbackHandler",
+            "doc_token": "`flowersec.Acceptor.PrivateLoopbackHandler()`"
           },
           {
             "kind": "method",
@@ -1343,6 +1353,16 @@
             "doc_token": "`controlplane.ArtifactMetadata`"
           },
           {
+            "kind": "const",
+            "expr": "controlplane.PrivateLoopbackProfile",
+            "doc_token": "`controlplane.PrivateLoopbackProfile`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.PrivateLoopbackIssueOptions",
+            "doc_token": "`controlplane.PrivateLoopbackIssueOptions`"
+          },
+          {
             "kind": "type",
             "expr": "controlplane.DirectIssueOptions",
             "doc_token": "`controlplane.DirectIssueOptions`"
@@ -1359,6 +1379,11 @@
           },
           {
             "kind": "method",
+            "expr": "(*controlplane.Issuer).IssuePrivateLoopbackDirect",
+            "doc_token": "`controlplane.Issuer.IssuePrivateLoopbackDirect(...)`"
+          },
+          {
+            "kind": "method",
             "expr": "(*controlplane.Issuer).IssueTunnelPair",
             "doc_token": "`controlplane.Issuer.IssueTunnelPair(...)`"
           },
@@ -1366,6 +1391,11 @@
             "kind": "type",
             "expr": "controlplane.IssuedArtifact",
             "doc_token": "`controlplane.IssuedArtifact`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.IssuedPrivateLoopbackArtifact",
+            "doc_token": "`controlplane.IssuedPrivateLoopbackArtifact`"
           },
           {
             "kind": "type",
@@ -1401,6 +1431,36 @@
             "kind": "method",
             "expr": "controlplane.IssuedArtifact.MarshalJSON",
             "doc_token": "`controlplane.IssuedArtifact.MarshalJSON()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedPrivateLoopbackArtifact.ArtifactJSON",
+            "doc_token": "`controlplane.IssuedPrivateLoopbackArtifact.ArtifactJSON()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedPrivateLoopbackArtifact.AuthorizationRecord",
+            "doc_token": "`controlplane.IssuedPrivateLoopbackArtifact.AuthorizationRecord()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedPrivateLoopbackArtifact.LookupKey",
+            "doc_token": "`controlplane.IssuedPrivateLoopbackArtifact.LookupKey()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedPrivateLoopbackArtifact.String",
+            "doc_token": "`controlplane.IssuedPrivateLoopbackArtifact.String()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedPrivateLoopbackArtifact.GoString",
+            "doc_token": "`controlplane.IssuedPrivateLoopbackArtifact.GoString()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedPrivateLoopbackArtifact.MarshalJSON",
+            "doc_token": "`controlplane.IssuedPrivateLoopbackArtifact.MarshalJSON()`"
           },
           {
             "kind": "type",
@@ -1831,7 +1891,12 @@
           "`@floegence/flowersec-core/browser`",
           "`connect(...)`",
           "`ConnectionController`",
-          "`StreamHandlers`"
+          "`StreamHandlers`",
+          "`PRIVATE_LOOPBACK_PROFILE_V1`",
+          "`parsePrivateLoopbackArtifactV1(...)`",
+          "`createPrivateLoopbackArtifactLeaseV1(...)`",
+          "`connectPrivateLoopbackV1(...)`",
+          "`createPrivateLoopbackConnectionControllerV1(...)`"
         ],
         "runtime_exports": [
           "Artifact",
@@ -1847,6 +1912,8 @@
           "ConnectionControllerError",
           "ConnectionControllerV3Error",
           "HandlerRegistrationError",
+          "PRIVATE_LOOPBACK_PROFILE_V1",
+          "PrivateLoopbackArtifactErrorV1",
           "SessionError",
           "StreamHandlers",
           "StreamMetadataError",
@@ -1854,13 +1921,17 @@
           "connectionDiagnostic",
           "connectionDiagnosticV3",
           "connect",
+          "connectPrivateLoopbackV1",
           "connectV3",
           "createArtifactLease",
           "createArtifactLeaseV3",
           "createConnectionController",
+          "createPrivateLoopbackArtifactLeaseV1",
+          "createPrivateLoopbackConnectionControllerV1",
           "createConnectionControllerV3",
           "createStreamMetadata",
           "parseArtifact",
+          "parsePrivateLoopbackArtifactV1",
           "parseArtifactV3",
           "v2"
         ],
@@ -1904,6 +1975,12 @@
           "JsonValue",
           "OperationOptions",
           "PublicConnectErrorCodeV3",
+          "PrivateLoopbackArtifactLeaseV1",
+          "PrivateLoopbackArtifactSourceResultV1",
+          "PrivateLoopbackArtifactSourceV1",
+          "PrivateLoopbackArtifactV1",
+          "PrivateLoopbackConnectionControllerOptionsV1",
+          "PrivateLoopbackSessionOptionsV1",
           "RetryDisposition",
           "RetryDispositionV3",
           "RpcPeer",

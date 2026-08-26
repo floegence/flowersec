@@ -110,6 +110,8 @@ Consultez les guides des SDK pour connaître les combinaisons exactes de platefo
 
 WebTransport est un adaptateur facultatif et ne fait pas partie du contrat de carrier native-server requis. Go revendique le profil H4 webtransport-server séparé et complet ; le profil Browser utilise H3 lorsque l'API WebTransport du navigateur est disponible. Node.js et Rust ne fournissent actuellement aucun adaptateur WebTransport de production. La surface carrier native-server est WebSocket et raw QUIC pour Go, Rust et Node.js ; l'interopérabilité par paires n'est revendiquée que par les entrées prises en charge de la matrice.
 
+`flowersec-private-loopback/1` est un profil privé au produit, hors du deployment capability registry public. Ses API dédiées de serveur Go et de navigateur TypeScript sont limitées à un bridge HTTP de loopback numérique authentifié par l'application.
+
 <!-- readme-section:security -->
 <a id="security"></a>
 
@@ -117,6 +119,7 @@ WebTransport est un adaptateur facultatif et ne fait pas partie du contrat de ca
 
 - Les données applicatives sont chiffrées de bout en bout pour les sessions directes et relayées.
 - La politique de confiance TLS est liée à chaque candidat de transport v3. Les racines d'AC publiques ou fournies par le déploiement et les pins explicites de certificat feuille sont mutuellement exclusifs, sans dégradation après un échec.
+- `flowersec-private-loopback/1` est une enveloppe de transport isolée, et non un mode TLS ni une capability de `flowersec/3`. Ses API dédiées ne mappent un candidat v3 en mode CA inchangé vers `ws://` que si l'autorité correspond à la même origine de loopback numérique et si l'application serveur autorise la requête avant l'upgrade. Les chemins Go, TypeScript, Rust, Swift, Provider et tunnel ordinaires rejettent cette enveloppe.
 - Les invitations de connexion sont opaques, éphémères et à usage unique.
 - Les identifiants sont validés avant utilisation afin qu'une invitation consommée ne puisse pas être rejouée.
 - Les relais transmettent uniquement du trafic chiffré et ne terminent pas les sessions applicatives.

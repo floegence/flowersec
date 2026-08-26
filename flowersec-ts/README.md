@@ -18,6 +18,16 @@ npm install @floegence/flowersec-core
 - `@floegence/flowersec-core/node` adds the V3 `connect(...)`, `createConnectionController(...)`, direct-only `createAcceptor(...)`, opaque `createTunnelRuntime(...)`, `AcceptedSession`, `SessionHandlers`, and `RPCHandlers` APIs. Legacy V2 server, control-plane, and `ProxyServer` APIs are available only under the explicit `node.v2` namespace; the Go control-plane remains the only v3 invitation issuer.
 - `@floegence/flowersec-core/proxy` adds the `Session`-based HTTP/WebSocket runtime, Service Worker and controller/app-window bridges, strict `proxy.runtime@2` validation, and `connectProxyBrowser(...)` composition.
 
+The browser entrypoint also exposes the isolated
+`flowersec-private-loopback/1` parser, lease, one-shot connector, and
+connection controller. Only these dedicated APIs accept the profile, and they
+require the exact numeric-loopback HTTP origin. Ordinary `connect(...)`
+continues to accept only standard `flowersec/3` artifacts and WSS/WebTransport
+security capabilities.
+
+The complete boundary is documented in the
+[private loopback profile](../docs/PRIVATE_LOOPBACK_V1.md).
+
 The root type exports are:
 
 - Artifact lifecycle: `Artifact`, closed `ArtifactError` parse failures, and `ArtifactLease`.

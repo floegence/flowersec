@@ -110,6 +110,8 @@ Flowersec はアプリケーションセッションを、それを運ぶネッ�
 
 WebTransport は必須の native-server carrier contract に含まれないオプションの adapter です。Go は独立した完全な H4 webtransport-server profile を宣言し、Browser profile はブラウザーの WebTransport API が利用可能な場合に H3 を使用します。Node.js と Rust は現在 production WebTransport adapter を提供しません。Go、Rust、Node.js の native-server carrier surface は WebSocket と raw QUIC であり、pairwise interoperability は matrix の supported entry だけが宣言します。
 
+`flowersec-private-loopback/1` は公開 deployment capability registry の外にある製品専用 profile です。専用の Go server と TypeScript browser API は、application が認証する numeric-loopback HTTP bridge だけに制限されます。
+
 <!-- readme-section:security -->
 <a id="security"></a>
 
@@ -117,6 +119,7 @@ WebTransport は必須の native-server carrier contract に含まれないオ�
 
 - 直接接続とリレー接続のどちらでも、アプリケーションデータはエンドツーエンドで暗号化されます。
 - TLS 信頼ポリシーは各 v3 トランスポート候補に結び付けられます。公開またはデプロイ提供の CA ルートと明示的なリーフ証明書 pin は排他的で、失敗後に降格しません。
+- `flowersec-private-loopback/1` は分離された transport envelope であり、`flowersec/3` の TLS mode や capability ではありません。専用 API は authority が同じ numeric-loopback origin と一致し、server application が upgrade 前に request を認可した場合に限り、変更されていない CA-mode v3 candidate を `ws://` にマップします。通常の Go、TypeScript、Rust、Swift、Provider、tunnel path はこの envelope を拒否します。
 - 接続招待は不透明で、有効期間が短く、1 回だけ使用できます。
 - 認証情報は使用前に消費済みとして確定されるため、使用済み招待は再利用できません。
 - リレーは暗号化トラフィックだけを転送し、アプリケーションセッションを終端しません。

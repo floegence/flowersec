@@ -22,6 +22,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocketv3"
 	carrierwt "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/webtransportv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/privateloopbackv1"
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
 	internalrpc "github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
 	session "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
@@ -36,6 +37,10 @@ const (
 )
 
 var ErrInvalidAcceptor = errors.New("invalid Flowersec acceptor")
+
+type PrivateLoopbackHandlerOptions struct {
+	AuthorizeRequest func(*http.Request) bool
+}
 
 // AcceptorOptions configures one carrier-neutral application session owner.
 // Authorize must atomically reserve the control-plane record before returning
@@ -293,6 +298,30 @@ func (acceptor *Acceptor) Handler() http.Handler {
 	return &webSocketBoundary{handler: mux, enabled: direct}
 }
 
+// PrivateLoopbackHandler returns the direct WebSocket boundary for an
+// application-owned HTTP loopback bridge. It accepts only an exact numeric
+// loopback Host, RemoteAddr, and same-origin HTTP Origin, and it requires the
+// caller to authorize every request before the WebSocket upgrade.
+func (acceptor *Acceptor) PrivateLoopbackHandler(options PrivateLoopbackHandlerOptions) (http.Handler, error) {
+	if acceptor == nil || options.AuthorizeRequest == nil {
+		return nil, ErrInvalidAcceptor
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc(WebSocketDirectPath, func(writer http.ResponseWriter, request *http.Request) {
+		authorized := false
+		acceptor.handleDirectWithAdmission(writer, request, false, func(candidate *http.Request) bool {
+			if !privateloopbackv1.RequestAllowed(candidate) {
+				return false
+			}
+			if !authorized {
+				authorized = options.AuthorizeRequest(candidate)
+			}
+			return authorized
+		})
+	})
+	return mux, nil
+}
+
 func (acceptor *Acceptor) allowedOrigin(request *http.Request) bool {
 	if request == nil {
 		return false
@@ -307,11 +336,16 @@ func (acceptor *Acceptor) allowedOrigin(request *http.Request) bool {
 }
 
 func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodGet || !acceptor.allowedOrigin(request) || carrierws.ValidateServerRequest(request) != nil {
+	acceptor.handleDirectWithAdmission(writer, request, true, acceptor.allowedOrigin)
+}
+
+func (acceptor *Acceptor) handleDirectWithAdmission(writer http.ResponseWriter, request *http.Request, requireTLS bool, admitted func(*http.Request) bool) {
+	if request == nil || admitted == nil || request.Method != http.MethodGet || !admitted(request) ||
+		(requireTLS && carrierws.ValidateServerRequest(request) != nil) {
 		http.Error(writer, "request rejected", http.StatusForbidden)
 		return
 	}
-	connection, err := (&gorillaws.Upgrader{Subprotocols: []string{carrierws.SubprotocolDirect}, CheckOrigin: acceptor.allowedOrigin, HandshakeTimeout: 10 * time.Second}).Upgrade(writer, request, nil)
+	connection, err := (&gorillaws.Upgrader{Subprotocols: []string{carrierws.SubprotocolDirect}, CheckOrigin: admitted, HandshakeTimeout: 10 * time.Second}).Upgrade(writer, request, nil)
 	if err != nil {
 		return
 	}

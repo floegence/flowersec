@@ -3,15 +3,52 @@ package flowersec_test
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 
 	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
 	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
+	gorillaws "github.com/gorilla/websocket"
 )
+
+func TestPublicArtifactParserRejectsPrivateLoopbackProfileAndAcceptsOnlyItsNestedArtifact(t *testing.T) {
+	raw, err := os.ReadFile("../testdata/private_loopback_v1/profile_vectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors struct {
+		Positive []struct {
+			ArtifactJSON string `json:"artifact_json"`
+		} `json:"positive"`
+	}
+	if err := json.Unmarshal(raw, &vectors); err != nil || len(vectors.Positive) == 0 {
+		t.Fatalf("parse private loopback vectors: %v", err)
+	}
+	outer := []byte(vectors.Positive[0].ArtifactJSON)
+	if _, err := flowersec.ParseArtifact(outer); err == nil {
+		t.Fatal("public parser unexpectedly accepted the private loopback envelope")
+	}
+	var envelope struct {
+		ArtifactBase64URL string `json:"artifact_b64u"`
+	}
+	if err := json.Unmarshal(outer, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	inner, err := base64.RawURLEncoding.DecodeString(envelope.ArtifactBase64URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flowersec.ParseArtifact(inner); err != nil {
+		t.Fatalf("public parser rejected the nested flowersec/3 artifact: %v", err)
+	}
+}
 
 func TestAcceptorHandlerRejectsResumedTLSBeforeAuthorization(t *testing.T) {
 	var authorized atomic.Int32
@@ -33,6 +70,100 @@ func TestAcceptorHandlerRejectsResumedTLSBeforeAuthorization(t *testing.T) {
 	acceptor.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusForbidden || authorized.Load() != 0 {
 		t.Fatalf("resumed request status/authorizations = %d/%d, want 403/0", response.Code, authorized.Load())
+	}
+}
+
+func TestPrivateLoopbackHandlerRequiresExactLoopbackAndCallerAuthorization(t *testing.T) {
+	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
+		AllowedOrigins: []string{"http://127.0.0.1:23998"},
+		Authorize: func(context.Context, controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
+			return controlplane.AuthorizationResponse{}, nil
+		},
+		OnSession: func(context.Context, flowersec.Session, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bridgeAuthorized atomic.Int32
+	handler, err := acceptor.PrivateLoopbackHandler(flowersec.PrivateLoopbackHandlerOptions{
+		AuthorizeRequest: func(*http.Request) bool {
+			bridgeAuthorized.Add(1)
+			return false
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, flowersec.WebSocketDirectPath, nil)
+	request.Host = "127.0.0.1:23998"
+	request.RemoteAddr = "127.0.0.1:53000"
+	request.Header.Set("Origin", "http://127.0.0.1:23998")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || bridgeAuthorized.Load() != 1 {
+		t.Fatalf("authorized loopback status/callbacks = %d/%d, want 403/1", response.Code, bridgeAuthorized.Load())
+	}
+
+	for _, mutate := range []func(*http.Request){
+		func(candidate *http.Request) { candidate.Host = "localhost:23998" },
+		func(candidate *http.Request) { candidate.RemoteAddr = "192.0.2.1:53000" },
+		func(candidate *http.Request) { candidate.Header.Set("Origin", "http://127.0.0.1:23999") },
+		func(candidate *http.Request) {
+			candidate.URL.RawPath = "/flowersec/v3/%64irect"
+			candidate.RequestURI = "/flowersec/v3/%64irect"
+		},
+		func(candidate *http.Request) {
+			candidate.URL.Scheme = "http"
+			candidate.URL.Host = candidate.Host
+		},
+	} {
+		bridgeAuthorized.Store(0)
+		candidate := request.Clone(request.Context())
+		candidate.Header = request.Header.Clone()
+		mutate(candidate)
+		response = httptest.NewRecorder()
+		handler.ServeHTTP(response, candidate)
+		if response.Code != http.StatusForbidden || bridgeAuthorized.Load() != 0 {
+			t.Fatalf("invalid loopback status/callbacks = %d/%d, want 403/0", response.Code, bridgeAuthorized.Load())
+		}
+	}
+}
+
+func TestPrivateLoopbackHandlerAuthorizesOnceBeforePlaintextUpgrade(t *testing.T) {
+	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
+		AllowedOrigins: []string{"https://public.example"},
+		Authorize: func(context.Context, controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
+			return controlplane.AuthorizationResponse{}, nil
+		},
+		OnSession: func(context.Context, flowersec.Session, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bridgeAuthorized atomic.Int32
+	handler, err := acceptor.PrivateLoopbackHandler(flowersec.PrivateLoopbackHandlerOptions{
+		AuthorizeRequest: func(*http.Request) bool {
+			bridgeAuthorized.Add(1)
+			return true
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	origin := server.URL
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + flowersec.WebSocketDirectPath
+	dialer := *gorillaws.DefaultDialer
+	dialer.Subprotocols = []string{"flowersec.direct.v3"}
+	connection, response, err := dialer.Dial(endpoint, http.Header{"Origin": []string{origin}})
+	if err != nil {
+		t.Fatalf("private loopback upgrade failed: %v (response=%v)", err, response)
+	}
+	_ = connection.Close()
+	if bridgeAuthorized.Load() != 1 {
+		t.Fatalf("private bridge authorization callbacks = %d, want 1", bridgeAuthorized.Load())
 	}
 }
 
