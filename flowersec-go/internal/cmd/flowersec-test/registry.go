@@ -71,6 +71,7 @@ func registry() []registeredTest {
 		commandEntry("compat/v2/carrier/go-tunnel", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestProductionTunnelCarrierCartesianMatrixCarriesEncryptedSessions$", "./internal/tunnelv2"),
 		vitestEntry("interop/typescript-go/wss/direct", "acceptance", "src/interop/goSessionV3.integration.test.ts", "runs direct FSB3/FSH3 and Session semantics over Go WSS"),
 		vitestEntry("interop/typescript-go/wss/tunnel", "acceptance", "src/interop/goSessionV3.integration.test.ts", "runs tunnel-role FSB3/FSH3 and Session semantics over Go WSS"),
+		vitestEntry("interop/typescript-go/private-loopback/direct", "acceptance", "src/interop/privateLoopbackV1.integration.test.ts", "establishes a real Session, performs RPC, spends once, and releases once"),
 		commandEntry("interop/v3/native/direct/go-baseline", "acceptance", 10*time.Minute, "node", "scripts/test-server-parity-direct.mjs"),
 		commandEntry("interop/v3/native/tunnel/go-baseline", "acceptance", 10*time.Minute, "node", "scripts/test-server-parity-tunnel.mjs"),
 		vitestEntry("compat/v2/interop/typescript-go/wss/direct", "acceptance", "src/interop/goSession.integration.test.ts", "runs direct admission and Session semantics over WSS"),

@@ -28,7 +28,11 @@ const vectors = JSON.parse(readFileSync(
   new URL("../../../testdata/private_loopback_v1/profile_vectors.json", import.meta.url),
   "utf8",
 )) as PrivateLoopbackVectors;
-const positive = vectors.positive[0]!;
+const positive = vectors.positive.find((vector) => vector.id === "ipv4-direct")!;
+const publicVectors = JSON.parse(readFileSync(
+  new URL("../../../testdata/transport_v3/artifact_vectors.json", import.meta.url),
+  "utf8",
+)) as Readonly<{ positive: readonly Readonly<{ id: string; artifact_json: string }>[] }>;
 
 describe("private loopback transport profile v1", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -110,28 +114,32 @@ describe("private loopback transport profile v1", () => {
     const envelope = JSON.parse(positive.artifact_json) as Record<string, unknown> & { artifact_b64u: string };
     const inner = decodeArtifactV3JSON(base64urlDecode(envelope.artifact_b64u));
     const candidate = inner.path.candidates[0]!;
-    for (const mutatedCandidate of [
-      { ...candidate, id: "other" },
-      { ...candidate, wire_profile: "flowersec-tunnel/3" },
-      { ...candidate, carrier: "webtransport" },
-      { ...candidate, normalized_url: "wss://127.0.0.1:23999/flowersec/v3/direct" },
+    for (const mutation of [
+      { id: "candidate-id", candidate: { ...candidate, id: "other" } },
+      { id: "wire-profile", candidate: { ...candidate, wire_profile: "flowersec-tunnel/3" } },
+      { id: "carrier", candidate: { ...candidate, carrier: "webtransport" } },
+      { id: "normalized-url", candidate: { ...candidate, normalized_url: "wss://127.0.0.1:23999/flowersec/v3/direct" } },
     ]) {
-      let encoded: Uint8Array;
+      let result: Readonly<{ kind: "encoded"; bytes: Uint8Array }> | Readonly<{ kind: "rejected"; error: unknown }>;
       try {
-        encoded = encodeArtifactV3JSON({
+        result = { kind: "encoded", bytes: encodeArtifactV3JSON({
           ...inner,
-          path: { ...inner.path, candidates: [mutatedCandidate] },
-        } as typeof inner);
-      } catch {
-        continue;
+          path: { ...inner.path, candidates: [mutation.candidate] },
+        } as typeof inner) };
+      } catch (error) {
+        result = { kind: "rejected", error };
       }
-      const mutated = canonicalizeJCSV3({
-        ...envelope,
-        artifact_b64u: base64urlEncode(encoded),
-      } as JCSValue);
-      expect(() => parsePrivateLoopbackArtifactV1(mutated)).toThrow(
-        expect.objectContaining({ code: "invalid_artifact" }),
-      );
+      if (result.kind === "rejected") {
+        expect(result.error, mutation.id).toEqual(expect.objectContaining({ code: expect.any(String) }));
+      } else {
+        const mutated = canonicalizeJCSV3({
+          ...envelope,
+          artifact_b64u: base64urlEncode(result.bytes),
+        } as JCSValue);
+        expect(() => parsePrivateLoopbackArtifactV1(mutated), mutation.id).toThrow(
+          expect.objectContaining({ code: "invalid_artifact" }),
+        );
+      }
     }
     const innerWire = JSON.parse(new TextDecoder().decode(base64urlDecode(envelope.artifact_b64u))) as {
       path: { candidates: Array<Record<string, unknown>> };
@@ -147,6 +155,42 @@ describe("private loopback transport profile v1", () => {
       ...envelope,
       artifact_b64u: base64urlEncode(duplicated),
     } as JCSValue))).toThrow(expect.objectContaining({ code: "invalid_artifact" }));
+  });
+
+  test("rejects valid standard v3 tunnel and pin artifacts inside the private envelope", () => {
+    const wrap = (artifactJSON: string): string => canonicalizeJCSV3({
+      artifact_b64u: base64urlEncode(new TextEncoder().encode(artifactJSON)),
+      endpoint: positive.endpoint,
+      profile: "flowersec-private-loopback/1",
+      v: 1,
+    });
+    const tunnel = publicVectors.positive.find((vector) => vector.id === "tunnel-mixed-security")!;
+    expect(() => parsePrivateLoopbackArtifactV1(wrap(tunnel.artifact_json))).toThrow(
+      expect.objectContaining({ code: "invalid_artifact" }),
+    );
+
+    const direct = publicVectors.positive.find((vector) => vector.id === "direct-mixed-security")!;
+    const decoded = decodeArtifactV3JSON(new TextEncoder().encode(direct.artifact_json));
+    const pin = decoded.path.candidates.find((candidate) => candidate.carrier === "websocket" && candidate.tls.mode === "pin")!;
+    const exactPrivateURL = "wss://127.0.0.1:23998/flowersec/v3/direct";
+    const pinOnly = encodeArtifactV3JSON({
+      ...decoded,
+      path: {
+        ...decoded.path,
+        candidates: [{
+          ...pin,
+          id: "private-loopback",
+          url: exactPrivateURL,
+          normalized_url: exactPrivateURL,
+        }],
+      },
+    });
+    expect(() => parsePrivateLoopbackArtifactV1(canonicalizeJCSV3({
+      artifact_b64u: base64urlEncode(pinOnly),
+      endpoint: positive.endpoint,
+      profile: "flowersec-private-loopback/1",
+      v: 1,
+    }))).toThrow(expect.objectContaining({ code: "invalid_artifact" }));
   });
 
   test("requires the exact HTTP origin and dials only the mapped loopback WebSocket", async () => {

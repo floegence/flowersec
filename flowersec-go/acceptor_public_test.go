@@ -135,6 +135,11 @@ func TestPrivateLoopbackHandlerRequiresExactLoopbackAndCallerAuthorization(t *te
 		func(candidate *http.Request) { candidate.Header.Set("Sec-WebSocket-Key", "not-base64") },
 		func(candidate *http.Request) { candidate.Header.Add("Sec-WebSocket-Key", "AAECAwQFBgcICQoLDA0ODw==") },
 		func(candidate *http.Request) {
+			candidate.URL.RawQuery = "query=1"
+			candidate.RequestURI = flowersec.WebSocketDirectPath + "?query=1"
+		},
+		func(candidate *http.Request) { candidate.TLS = &tls.ConnectionState{Version: tls.VersionTLS13} },
+		func(candidate *http.Request) {
 			candidate.URL.RawPath = "/flowersec/v3/%64irect"
 			candidate.RequestURI = "/flowersec/v3/%64irect"
 		},
@@ -152,6 +157,18 @@ func TestPrivateLoopbackHandlerRequiresExactLoopbackAndCallerAuthorization(t *te
 		if response.Code != http.StatusForbidden || bridgeAuthorized.Load() != 0 {
 			t.Fatalf("invalid loopback status/callbacks = %d/%d, want 403/0", response.Code, bridgeAuthorized.Load())
 		}
+	}
+
+	bridgeAuthorized.Store(0)
+	ipv6 := request.Clone(request.Context())
+	ipv6.Header = request.Header.Clone()
+	ipv6.Host = "[::1]:23998"
+	ipv6.RemoteAddr = "[::1]:53000"
+	ipv6.Header.Set("Origin", "http://[::1]:23998")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, ipv6)
+	if response.Code != http.StatusForbidden || bridgeAuthorized.Load() != 1 {
+		t.Fatalf("valid IPv6 upgrade status/callbacks = %d/%d, want 403/1", response.Code, bridgeAuthorized.Load())
 	}
 }
 

@@ -106,6 +106,15 @@ func TestRegistryEntriesSatisfyRunnerBounds(t *testing.T) {
 	}
 }
 
+func TestAcceptanceRegistryOwnsPrivateLoopbackInterop(t *testing.T) {
+	for _, entry := range registry() {
+		if entry.ID == "interop/typescript-go/private-loopback/direct" && entry.Suite == "acceptance" {
+			return
+		}
+	}
+	t.Fatal("private loopback TypeScript-Go interop is missing from the acceptance registry")
+}
+
 func TestGoAcceptorRegistryPatternEnumeratesProductionNativeListeners(t *testing.T) {
 	command := exec.Command("go", "test", "-list", goAcceptorTestPattern, "../../..")
 	output, err := command.CombinedOutput()
