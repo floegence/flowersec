@@ -96,13 +96,6 @@ func NewAcceptor(options AcceptorOptions) (*Acceptor, error) {
 		seen[key] = struct{}{}
 		listeners = append(listeners, listener)
 	}
-	webSocketConfigured := len(listeners) == 0
-	for _, listener := range listeners {
-		webSocketConfigured = webSocketConfigured || listener.acceptorCarrier() == carrier.KindWebSocket
-	}
-	if webSocketConfigured && len(options.AllowedOrigins) == 0 {
-		return nil, ErrInvalidAcceptor
-	}
 	acceptor := &Acceptor{options: options, resources: resources, directSlots: make(chan struct{}, options.MaxDirectSessions), listeners: listeners}
 	return acceptor, nil
 }
@@ -292,6 +285,7 @@ func (acceptor *Acceptor) Handler() http.Handler {
 		}
 		direct = direct || listener.acceptorPath() == carrier.PathDirect
 	}
+	direct = direct && len(acceptor.options.AllowedOrigins) > 0
 	if direct {
 		mux.HandleFunc(WebSocketDirectPath, acceptor.handleDirect)
 	}

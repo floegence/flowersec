@@ -49,7 +49,6 @@ func main() {
 	var releases atomic.Int32
 	released := make(chan struct{}, 1)
 	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
-		AllowedOrigins: []string{"https://unused.invalid"},
 		Authorize: func(_ context.Context, request controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
 			runtimeAuthorizations.Add(1)
 			return controlplane.AuthorizeRuntime(request, issued.AuthorizationRecord(), "private-loopback-lease")

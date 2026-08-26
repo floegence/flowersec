@@ -77,7 +77,6 @@ func TestAcceptorHandlerRejectsResumedTLSBeforeAuthorization(t *testing.T) {
 
 func TestPrivateLoopbackHandlerRequiresExactLoopbackAndCallerAuthorization(t *testing.T) {
 	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
-		AllowedOrigins: []string{"http://127.0.0.1:23998"},
 		Authorize: func(context.Context, controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
 			return controlplane.AuthorizationResponse{}, nil
 		},
@@ -174,7 +173,6 @@ func TestPrivateLoopbackHandlerRequiresExactLoopbackAndCallerAuthorization(t *te
 
 func TestPrivateLoopbackHandlerAuthorizesOnceBeforePlaintextUpgrade(t *testing.T) {
 	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
-		AllowedOrigins: []string{"https://public.example"},
 		Authorize: func(context.Context, controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
 			return controlplane.AuthorizationResponse{}, nil
 		},
@@ -273,11 +271,17 @@ func TestAcceptorListenerRegistrationValidation(t *testing.T) {
 
 	webSocket := base
 	webSocket.Listeners = []flowersec.DirectListener{flowersec.NewWebSocketDirectListener()}
-	if _, err := flowersec.NewAcceptor(webSocket); err == nil {
-		t.Fatal("WebSocket acceptor without an exact origin allowlist unexpectedly succeeded")
+	acceptor, err := flowersec.NewAcceptor(webSocket)
+	if err != nil {
+		t.Fatalf("private-capable acceptor unexpectedly required public origins: %v", err)
+	}
+	if server, err := flowersec.NewWebSocketHTTPServer(flowersec.WebSocketHTTPServerOptions{
+		Handler: acceptor.Handler(), TLSConfig: serverTLS,
+	}); err == nil || server != nil {
+		t.Fatal("public WebSocket handler without an exact origin allowlist unexpectedly enabled")
 	}
 	webSocket.AllowedOrigins = []string{"https://app.example"}
-	acceptor, err := flowersec.NewAcceptor(webSocket)
+	acceptor, err = flowersec.NewAcceptor(webSocket)
 	if err != nil {
 		t.Fatal(err)
 	}
