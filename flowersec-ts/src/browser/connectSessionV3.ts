@@ -1,9 +1,14 @@
 import type { Session } from "../public/contract.js";
 import { SDK_DEFAULTS } from "../defaults.js";
-import type { ArtifactLeaseV3 } from "../v3/artifactLease.js";
+import {
+  claimArtifactLeaseV3,
+  retireArtifactLeaseV3,
+  type ArtifactLeaseV3,
+} from "../v3/artifactLease.js";
 import {
   createConnectionControllerV3 as createCoreControllerV3,
   type ArtifactSourceV3,
+  type ArtifactSourceResultV3,
   type ConnectionControllerOptionsV3 as CoreControllerOptionsV3,
   type ConnectionControllerV3,
 } from "../v3/connectionController.js";
@@ -13,7 +18,7 @@ import {
 } from "../v3/browserRuntime.js";
 import { attemptClaimedArtifactLeaseV3, connectArtifactLeaseV3, type SessionConnectorRuntimeV3 } from "../v3/sessionConnector.js";
 import { readyNativeAdmissionV3, readyWebSocketAdmissionV3, type WebSocketLikeV3 } from "../v3/runtimeAdapters.js";
-import { TransportFailureV3, ConnectErrorV3 } from "../v3/security.js";
+import { TransportFailureV3, ConnectErrorV3, type RetryDispositionV3 } from "../v3/security.js";
 import { browserSessionRuntimeV3 } from "../v3/browserSessionRuntime.js";
 import {
   unwrapPrivateLoopbackArtifactLeaseV1,
@@ -78,9 +83,10 @@ export async function connectPrivateLoopbackV1(
   lease: PrivateLoopbackArtifactLeaseV1,
   options: PrivateLoopbackSessionOptionsV1,
 ): Promise<Session> {
-  const privateOrigin = validatePrivateLoopbackOriginV1(options.origin);
+  const privateOrigin = requirePrivateLoopbackOrigin(options.origin);
   const unwrapped = unwrapPrivateLoopbackLease(lease);
   if (new URL(unwrapped.endpoint).origin.replace(/^ws:/, "http:") !== privateOrigin) {
+    await retireInnerLease(unwrapped.innerLease);
     throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
   }
   const registry = await BrowserRuntimeCapabilityRegistryV3.create();
@@ -95,23 +101,13 @@ export async function createPrivateLoopbackConnectionControllerV1(
   source: PrivateLoopbackArtifactSourceV1,
   options: PrivateLoopbackConnectionControllerOptionsV1,
 ): Promise<ConnectionControllerV3<Session>> {
-  const privateOrigin = validatePrivateLoopbackOriginV1(options.origin);
+  const privateOrigin = requirePrivateLoopbackOrigin(options.origin);
   const registry = await BrowserRuntimeCapabilityRegistryV3.create();
   const runtime = privateLoopbackBrowserRuntime(registry, options.connectTimeoutMs, privateOrigin);
   const mappedSource: ArtifactSourceV3 = {
     acquire: async ({ signal }) => {
-      const result = await source.acquire({ signal });
-      if (result.kind === "failure") return result;
-      let unwrapped: ReturnType<typeof unwrapPrivateLoopbackArtifactLeaseV1>;
-      try {
-        unwrapped = unwrapPrivateLoopbackArtifactLeaseV1(result.lease);
-      } catch {
-        return { kind: "failure", code: "artifact_invalid", disposition: { kind: "terminal" } };
-      }
-      if (new URL(unwrapped.endpoint).origin.replace(/^ws:/, "http:") !== privateOrigin) {
-        return { kind: "failure", code: "artifact_invalid", disposition: { kind: "terminal" } };
-      }
-      return { kind: "lease", lease: unwrapped.innerLease };
+      const result: unknown = await source.acquire({ signal });
+      return await mapPrivateLoopbackSourceResult(result, privateOrigin);
     },
   };
   return createCoreControllerV3(
@@ -123,6 +119,78 @@ export async function createPrivateLoopbackConnectionControllerV1(
       ...(options.maximumAttempts === undefined ? {} : { maximumAttempts: options.maximumAttempts }),
     },
   );
+}
+
+function requirePrivateLoopbackOrigin(raw: string): string {
+  try {
+    return validatePrivateLoopbackOriginV1(raw);
+  } catch {
+    throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
+  }
+}
+
+const invalidPrivateSourceResult = (): ArtifactSourceResultV3 => ({
+  kind: "failure",
+  code: "artifact_invalid",
+  disposition: { kind: "terminal" },
+});
+
+async function mapPrivateLoopbackSourceResult(
+  result: unknown,
+  privateOrigin: string,
+): Promise<ArtifactSourceResultV3> {
+  let descriptors: Record<PropertyKey, PropertyDescriptor>;
+  let keys: PropertyKey[];
+  try {
+    if (typeof result !== "object" || result === null || Array.isArray(result)) {
+      return invalidPrivateSourceResult();
+    }
+    descriptors = Object.getOwnPropertyDescriptors(result);
+    keys = Reflect.ownKeys(result).sort((left, right) => String(left).localeCompare(String(right)));
+  } catch {
+    return invalidPrivateSourceResult();
+  }
+  const values = keys.every((key) => typeof key === "string" && descriptors[key]?.enumerable === true &&
+    Object.hasOwn(descriptors[key]!, "value"));
+  const exactKeys = (expected: readonly string[]) => values && keys.length === expected.length &&
+    keys.every((key, index) => key === expected[index]);
+  const kind = descriptors.kind?.value;
+  if (kind === "lease" && exactKeys(["kind", "lease"])) {
+    let unwrapped: ReturnType<typeof unwrapPrivateLoopbackArtifactLeaseV1>;
+    try {
+      unwrapped = unwrapPrivateLoopbackArtifactLeaseV1(descriptors.lease!.value as PrivateLoopbackArtifactLeaseV1);
+    } catch {
+      return invalidPrivateSourceResult();
+    }
+    if (new URL(unwrapped.endpoint).origin.replace(/^ws:/, "http:") !== privateOrigin) {
+      await retireInnerLease(unwrapped.innerLease);
+      return invalidPrivateSourceResult();
+    }
+    return { kind: "lease", lease: unwrapped.innerLease };
+  }
+  if (kind === "failure" && exactKeys(["code", "disposition", "kind"])) {
+    return {
+      kind: "failure",
+      code: descriptors.code!.value as string,
+      disposition: descriptors.disposition!.value as RetryDispositionV3,
+    };
+  }
+  const deliveredLease = descriptors.lease?.value;
+  try {
+    const unwrapped = unwrapPrivateLoopbackArtifactLeaseV1(deliveredLease as PrivateLoopbackArtifactLeaseV1);
+    await retireInnerLease(unwrapped.innerLease);
+  } catch {
+    // Malformed results without an authentic private lease own no cleanup.
+  }
+  return invalidPrivateSourceResult();
+}
+
+async function retireInnerLease(lease: ArtifactLeaseV3): Promise<void> {
+  try {
+    await retireArtifactLeaseV3(claimArtifactLeaseV3(lease));
+  } catch {
+    // Retirement is best-effort only when the lease is already terminal.
+  }
 }
 
 function unwrapPrivateLoopbackLease(

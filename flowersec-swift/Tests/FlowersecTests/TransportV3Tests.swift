@@ -97,15 +97,17 @@ struct TransportV3Tests {
     #expect(root["profile"] as? String == "flowersec-private-loopback/1")
     #expect(root["nested_profile"] as? String == "flowersec/3")
     let positive = try #require(root["positive"] as? [[String: Any]])
-    let artifactJSON = try #require(positive.first?["artifact_json"] as? String)
-    #expect(throws: ArtifactError.self) {
-      try parseArtifact(Data(artifactJSON.utf8))
+    for vector in positive {
+      let artifactJSON = try #require(vector["artifact_json"] as? String)
+      #expect(throws: ArtifactError.self) {
+        try parseArtifact(Data(artifactJSON.utf8))
+      }
+      let envelope = try #require(
+        JSONSerialization.jsonObject(with: Data(artifactJSON.utf8)) as? [String: Any])
+      let encoded = try #require(envelope["artifact_b64u"] as? String)
+      let inner = try #require(Data(base64URLEncoded: encoded))
+      _ = try parseArtifact(inner)
     }
-    let envelope = try #require(
-      JSONSerialization.jsonObject(with: Data(artifactJSON.utf8)) as? [String: Any])
-    let encoded = try #require(envelope["artifact_b64u"] as? String)
-    let inner = try #require(Data(base64URLEncoded: encoded))
-    _ = try parseArtifact(inner)
   }
 
   @Test func activePinsUseExclusiveExpiryAndDeclaredPolicyDigest() throws {

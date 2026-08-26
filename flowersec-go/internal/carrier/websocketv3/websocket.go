@@ -116,10 +116,30 @@ const (
 // admission message to hop-local Yamux. Admission bytes must be exchanged by
 // the caller before invoking this function.
 func NewAfterAdmission(conn *gorillaws.Conn, role Role, subprotocol string, resources ResourcePolicy) (*Session, error) {
+	return newAfterAdmission(conn, role, subprotocol, resources, ValidateReady)
+}
+
+// NewPrivateLoopbackAfterAdmission switches the isolated private-loopback
+// direct profile to Yamux after admission. Ordinary v3 callers must use
+// NewAfterAdmission, which remains TLS-only.
+func NewPrivateLoopbackAfterAdmission(conn *gorillaws.Conn, role Role, resources ResourcePolicy) (*Session, error) {
+	return newAfterAdmission(conn, role, SubprotocolDirect, resources, ValidatePrivateLoopbackReady)
+}
+
+func newAfterAdmission(
+	conn *gorillaws.Conn,
+	role Role,
+	subprotocol string,
+	resources ResourcePolicy,
+	validate func(*gorillaws.Conn, string) error,
+) (*Session, error) {
 	if role != ClientRole && role != ServerRole {
 		return nil, ErrInvalidRole
 	}
-	if err := ValidateReady(conn, subprotocol); err != nil {
+	if validate == nil {
+		return nil, ErrInvalidSubprotocol
+	}
+	if err := validate(conn, subprotocol); err != nil {
 		return nil, err
 	}
 	normalized, err := yamuxLimitsFromResourcePolicy(resources)
@@ -174,6 +194,26 @@ func ValidateReady(conn *gorillaws.Conn, subprotocol string) error {
 		return ErrInvalidSubprotocol
 	}
 	return validateTransportSecurity(conn)
+}
+
+// ValidatePrivateLoopbackReady accepts only the dedicated direct subprotocol
+// over a plaintext TCP connection whose local and remote endpoints are both
+// loopback. It does not weaken the ordinary TLS-only v3 readiness boundary.
+func ValidatePrivateLoopbackReady(conn *gorillaws.Conn, subprotocol string) error {
+	if conn == nil {
+		return net.ErrClosed
+	}
+	if subprotocol != SubprotocolDirect || conn.Subprotocol() != SubprotocolDirect {
+		return ErrInvalidSubprotocol
+	}
+	underlying := conn.NetConn()
+	if _, usesTLS := underlying.(*tls.Conn); usesTLS {
+		return ErrTLS13Required
+	}
+	if !loopbackTCPAddress(underlying.LocalAddr()) || !loopbackTCPAddress(underlying.RemoteAddr()) {
+		return ErrTLS13Required
+	}
+	return nil
 }
 
 // ValidateServerRequest rejects an HTTP Upgrade before any v3 admission bytes
@@ -481,6 +521,11 @@ func validateTLSState(state tls.ConnectionState) error {
 		return ErrTLSResumptionForbidden
 	}
 	return nil
+}
+
+func loopbackTCPAddress(address net.Addr) bool {
+	tcpAddress, ok := address.(*net.TCPAddr)
+	return ok && tcpAddress != nil && tcpAddress.IP != nil && tcpAddress.IP.IsLoopback()
 }
 
 func validateApplicationError(applicationError carrier.ApplicationError) error {

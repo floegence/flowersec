@@ -41,7 +41,7 @@ credential spending, session encryption, or authorization.
 The server accepts a request only when all of these conditions hold:
 
 - the method is `GET`;
-- the endpoint is canonical `ws://` with an explicit port;
+- the endpoint is canonical `ws://` with an explicit unprivileged port in the inclusive range `1024..65535`;
 - Host and remote address are canonical numeric loopback addresses;
 - the path is exactly `/flowersec/v3/direct` with no query or fragment;
 - Origin is the exact same `http://` origin as Host;

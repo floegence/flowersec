@@ -308,18 +308,35 @@ func (acceptor *Acceptor) PrivateLoopbackHandler(options PrivateLoopbackHandlerO
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc(WebSocketDirectPath, func(writer http.ResponseWriter, request *http.Request) {
-		authorized := false
-		acceptor.handleDirectWithAdmission(writer, request, false, func(candidate *http.Request) bool {
-			if !privateloopbackv1.RequestAllowed(candidate) {
-				return false
-			}
-			if !authorized {
-				authorized = options.AuthorizeRequest(candidate)
-			}
-			return authorized
-		})
+		acceptor.handleDirectWithAdmission(
+			writer,
+			request,
+			validatePrivateLoopbackUpgradeRequest,
+			options.AuthorizeRequest,
+			true,
+		)
 	})
 	return mux, nil
+}
+
+func validatePrivateLoopbackUpgradeRequest(request *http.Request) bool {
+	if request == nil || request.TLS != nil || !privateloopbackv1.RequestAllowed(request) ||
+		!gorillaws.IsWebSocketUpgrade(request) {
+		return false
+	}
+	if versions := request.Header.Values("Sec-WebSocket-Version"); len(versions) != 1 || versions[0] != "13" {
+		return false
+	}
+	protocols := gorillaws.Subprotocols(request)
+	if len(protocols) != 1 || protocols[0] != carrierws.SubprotocolDirect {
+		return false
+	}
+	keys := request.Header.Values("Sec-WebSocket-Key")
+	if len(keys) != 1 {
+		return false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(keys[0])
+	return err == nil && len(decoded) == 16 && base64.StdEncoding.EncodeToString(decoded) == keys[0]
 }
 
 func (acceptor *Acceptor) allowedOrigin(request *http.Request) bool {
@@ -336,16 +353,30 @@ func (acceptor *Acceptor) allowedOrigin(request *http.Request) bool {
 }
 
 func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http.Request) {
-	acceptor.handleDirectWithAdmission(writer, request, true, acceptor.allowedOrigin)
+	acceptor.handleDirectWithAdmission(writer, request, func(candidate *http.Request) bool {
+		return candidate != nil && candidate.Method == http.MethodGet && carrierws.ValidateServerRequest(candidate) == nil
+	}, acceptor.allowedOrigin, false)
 }
 
-func (acceptor *Acceptor) handleDirectWithAdmission(writer http.ResponseWriter, request *http.Request, requireTLS bool, admitted func(*http.Request) bool) {
-	if request == nil || admitted == nil || request.Method != http.MethodGet || !admitted(request) ||
-		(requireTLS && carrierws.ValidateServerRequest(request) != nil) {
+func (acceptor *Acceptor) handleDirectWithAdmission(
+	writer http.ResponseWriter,
+	request *http.Request,
+	validateRequest func(*http.Request) bool,
+	authorizeRequest func(*http.Request) bool,
+	privateLoopback bool,
+) {
+	if request == nil || validateRequest == nil || authorizeRequest == nil ||
+		!validateRequest(request) || !authorizeRequest(request) {
 		http.Error(writer, "request rejected", http.StatusForbidden)
 		return
 	}
-	connection, err := (&gorillaws.Upgrader{Subprotocols: []string{carrierws.SubprotocolDirect}, CheckOrigin: admitted, HandshakeTimeout: 10 * time.Second}).Upgrade(writer, request, nil)
+	connection, err := (&gorillaws.Upgrader{
+		Subprotocols: []string{carrierws.SubprotocolDirect},
+		CheckOrigin: func(candidate *http.Request) bool {
+			return validateRequest(candidate)
+		},
+		HandshakeTimeout: 10 * time.Second,
+	}).Upgrade(writer, request, nil)
 	if err != nil {
 		return
 	}
@@ -362,7 +393,11 @@ func (acceptor *Acceptor) handleDirectWithAdmission(writer http.ResponseWriter, 
 	var router *internalrpc.Router
 	var serveHandlers func(context.Context, session.Session) error
 	defer func() { acceptor.releaseLease(request.Context(), leaseID) }()
-	decoded, err = websocketadmission.Serve(ctx, connection, acceptor.reasons(), func(authCtx context.Context, candidate *artifactv3.DecodedRequest) (artifactv3.AdmissionResponse, error) {
+	serveAdmission := websocketadmission.Serve
+	if privateLoopback {
+		serveAdmission = websocketadmission.ServePrivateLoopback
+	}
+	decoded, err = serveAdmission(ctx, connection, acceptor.reasons(), func(authCtx context.Context, candidate *artifactv3.DecodedRequest) (artifactv3.AdmissionResponse, error) {
 		if candidate == nil || candidate.Request.PathKind != artifactv3.PathDirect {
 			return artifactv3.AdmissionResponse{}, ErrInvalidAcceptor
 		}
@@ -402,7 +437,12 @@ func (acceptor *Acceptor) handleDirectWithAdmission(writer http.ResponseWriter, 
 		_ = connection.Close()
 		return
 	}
-	carrierSession, err := carrierws.NewAfterAdmission(connection, carrierws.ServerRole, carrierws.SubprotocolDirect, acceptor.resources)
+	var carrierSession *carrierws.Session
+	if privateLoopback {
+		carrierSession, err = carrierws.NewPrivateLoopbackAfterAdmission(connection, carrierws.ServerRole, acceptor.resources)
+	} else {
+		carrierSession, err = carrierws.NewAfterAdmission(connection, carrierws.ServerRole, carrierws.SubprotocolDirect, acceptor.resources)
+	}
 	if err != nil {
 		_ = connection.Close()
 		return

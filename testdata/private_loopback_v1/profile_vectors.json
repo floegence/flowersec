@@ -7,11 +7,21 @@
       "id": "ipv4-direct",
       "endpoint": "ws://127.0.0.1:23998/flowersec/v3/direct",
       "artifact_json": "{\"artifact_b64u\":\"eyJjb3JyZWxhdGlvbiI6eyJ0YWdzIjpbXSwidiI6M30sInBhdGgiOnsiY2FuZGlkYXRlcyI6W3siY2FycmllciI6IndlYnNvY2tldCIsImlkIjoicHJpdmF0ZS1sb29wYmFjayIsInRscyI6eyJtb2RlIjoiY2EifSwidXJsIjoid3NzOi8vMTI3LjAuMC4xOjIzOTk4L2Zsb3dlcnNlYy92My9kaXJlY3QiLCJ3aXJlX3Byb2ZpbGUiOiJmbG93ZXJzZWMtZGlyZWN0LzMifV0sImtpbmQiOiJkaXJlY3QiLCJsaXN0ZW5lcl9hdWRpZW5jZSI6Imxpc3RlbmVyIiwicmVuZGV6dm91c19ncm91cF9pZCI6Imdyb3VwIiwicm91dGluZ190b2tlbiI6IkJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2MifSwicHJvZmlsZSI6ImZsb3dlcnNlYy8zIiwic2NvcGVkIjpbXSwic2Vzc2lvbiI6eyJhbGxvd2VkX3N1aXRlcyI6WzEsMl0sImNoYW5uZWxfaWQiOiJjaGFubmVsIiwiY29udHJhY3RfaGFzaF9iNjR1IjoiLTJBaHFZWWVaRGw4NTY1LTRVNmUxN2szdTYtZHB4b2pTQThiRFBQN3VQTSIsImRlZmF1bHRfc3VpdGUiOjEsImUyZWVfcHNrX2I2NHUiOiJCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjIiwiZXN0YWJsaXNoX3RpbWVvdXRfc2Vjb25kcyI6MzAsImlkbGVfdGltZW91dF9zZWNvbmRzIjo2MCwiaW5pdF9leHBpcmVfYXRfdW5peF9zIjoxOTAwMDAwMDYwLCJtYXhfaW5ib3VuZF9zdHJlYW1zIjozMiwicmVrZXlfY29tcGxldGlvbl90aW1lb3V0X3NlY29uZHMiOjMwLCJyZWtleV9wcmVwYXJlX3RpbWVvdXRfc2Vjb25kcyI6MTAsInNlbGVjdGVkX2ZlYXR1cmVzIjowfSwidiI6M30\",\"endpoint\":\"ws://127.0.0.1:23998/flowersec/v3/direct\",\"profile\":\"flowersec-private-loopback/1\",\"v\":1}"
+    },
+    {
+      "id": "ipv6-direct",
+      "endpoint": "ws://[::1]:23998/flowersec/v3/direct",
+      "artifact_json": "{\"artifact_b64u\":\"eyJjb3JyZWxhdGlvbiI6eyJ0YWdzIjpbXSwidiI6M30sInBhdGgiOnsiY2FuZGlkYXRlcyI6W3siY2FycmllciI6IndlYnNvY2tldCIsImlkIjoicHJpdmF0ZS1sb29wYmFjayIsInRscyI6eyJtb2RlIjoiY2EifSwidXJsIjoid3NzOi8vWzo6MV06MjM5OTgvZmxvd2Vyc2VjL3YzL2RpcmVjdCIsIndpcmVfcHJvZmlsZSI6ImZsb3dlcnNlYy1kaXJlY3QvMyJ9XSwia2luZCI6ImRpcmVjdCIsImxpc3RlbmVyX2F1ZGllbmNlIjoibGlzdGVuZXIiLCJyZW5kZXp2b3VzX2dyb3VwX2lkIjoiZ3JvdXAiLCJyb3V0aW5nX3Rva2VuIjoiQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3YyJ9LCJwcm9maWxlIjoiZmxvd2Vyc2VjLzMiLCJzY29wZWQiOltdLCJzZXNzaW9uIjp7ImFsbG93ZWRfc3VpdGVzIjpbMSwyXSwiY2hhbm5lbF9pZCI6ImNoYW5uZWwiLCJjb250cmFjdF9oYXNoX2I2NHUiOiItMkFocVlZZVpEbDg1NjUtNFU2ZTE3azN1Ni1kcHhvalNBOGJEUFA3dVBNIiwiZGVmYXVsdF9zdWl0ZSI6MSwiZTJlZV9wc2tfYjY0dSI6IkJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2MiLCJlc3RhYmxpc2hfdGltZW91dF9zZWNvbmRzIjozMCwiaWRsZV90aW1lb3V0X3NlY29uZHMiOjYwLCJpbml0X2V4cGlyZV9hdF91bml4X3MiOjE5MDAwMDAwNjAsIm1heF9pbmJvdW5kX3N0cmVhbXMiOjMyLCJyZWtleV9jb21wbGV0aW9uX3RpbWVvdXRfc2Vjb25kcyI6MzAsInJla2V5X3ByZXBhcmVfdGltZW91dF9zZWNvbmRzIjoxMCwic2VsZWN0ZWRfZmVhdHVyZXMiOjB9LCJ2IjozfQ\",\"endpoint\":\"ws://[::1]:23998/flowersec/v3/direct\",\"profile\":\"flowersec-private-loopback/1\",\"v\":1}"
     }
   ],
   "negative_endpoint_values": [
     "ws://localhost:23998/flowersec/v3/direct",
     "ws://192.0.2.1:23998/flowersec/v3/direct",
+    "ws://127.0.0.1:80/flowersec/v3/direct",
+    "ws://127.0.0.1:443/flowersec/v3/direct",
+    "ws://127.0.0.1:1023/flowersec/v3/direct",
+    "ws://[::1]:80/flowersec/v3/direct",
+    "ws://[::1]:443/flowersec/v3/direct",
     "wss://127.0.0.1:23998/flowersec/v3/direct",
     "ws://127.0.0.1:23998/flowersec/v3/tunnel",
     "ws://127.0.0.1:23998/flowersec/v3/direct?query=1"

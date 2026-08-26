@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v3/internal/privateloopbackv1"
 )
 
 type privateLoopbackVectors struct {
@@ -43,50 +44,77 @@ func loadPrivateLoopbackVectors(t *testing.T) privateLoopbackVectors {
 func TestIssuePrivateLoopbackDirectKeepsFlowersecV3ArtifactUnchanged(t *testing.T) {
 	vectors := loadPrivateLoopbackVectors(t)
 	now := time.Unix(1_900_000_000, 0)
-	issued, err := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{7}, 256)), now).IssuePrivateLoopbackDirect(
-		PrivateLoopbackIssueOptions{
-			Session:           SessionOptions{ChannelID: "channel", ExpiresAt: now.Add(time.Minute)},
-			Endpoint:          "ws://127.0.0.1:23998/flowersec/v3/direct",
-			RendezvousGroupID: "group", ListenerAudience: "listener", UpstreamAddress: "127.0.0.1:23998",
-		},
-	)
+	for _, positive := range vectors.Positive {
+		positive := positive
+		t.Run(positive.ID, func(t *testing.T) {
+			issued, err := newIssuerForTest(bytes.NewReader(bytes.Repeat([]byte{7}, 256)), now).IssuePrivateLoopbackDirect(PrivateLoopbackIssueOptions{
+				Session:           SessionOptions{ChannelID: "channel", ExpiresAt: now.Add(time.Minute)},
+				Endpoint:          positive.Endpoint,
+				RendezvousGroupID: "group", ListenerAudience: "listener", UpstreamAddress: "127.0.0.1:23998",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := string(issued.ArtifactJSON()), positive.ArtifactJSON; got != want {
+				t.Fatalf("issued private profile does not match shared vector\ngot:  %s\nwant: %s", got, want)
+			}
+			var envelope struct {
+				ArtifactBase64URL string `json:"artifact_b64u"`
+				Endpoint          string `json:"endpoint"`
+				Profile           string `json:"profile"`
+				Version           uint8  `json:"v"`
+			}
+			if err := json.Unmarshal(issued.ArtifactJSON(), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			if envelope.Version != 1 || envelope.Profile != PrivateLoopbackProfile || envelope.Endpoint != positive.Endpoint {
+				t.Fatalf("private profile envelope = %#v", envelope)
+			}
+			innerJSON, err := base64.RawURLEncoding.DecodeString(envelope.ArtifactBase64URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inner, err := artifactv3.DecodeArtifactJSON(bytes.NewReader(innerJSON))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, candidateURL, err := privateloopbackv1.ValidateEndpoint(positive.Endpoint)
+			if err != nil || inner.Profile != artifactv3.Profile || len(inner.Path.Candidates) != 1 ||
+				inner.Path.Candidates[0].URL != candidateURL || inner.Path.Candidates[0].TLS.Mode != artifactv3.TLSModeCA {
+				t.Fatalf("nested v3 artifact = %#v, endpoint error = %v", inner, err)
+			}
+			if _, err := artifactv3.DecodeArtifactJSON(bytes.NewReader(issued.ArtifactJSON())); !errors.Is(err, artifactv3.ErrInvalidArtifact) {
+				t.Fatalf("ordinary v3 decoder error = %v, want invalid artifact", err)
+			}
+			if issued.LookupKey() == "" || issued.AuthorizationRecord().LookupKey() != issued.LookupKey() {
+				t.Fatal("private profile lost its authorization record")
+			}
+		})
+	}
+}
+
+func TestIssuedPrivateLoopbackArtifactIsOpaqueAndReturnsClones(t *testing.T) {
+	issued, err := NewIssuer().IssuePrivateLoopbackDirect(PrivateLoopbackIssueOptions{
+		Session:           SessionOptions{ChannelID: "opaque", ExpiresAt: time.Now().Add(time.Minute)},
+		Endpoint:          "ws://127.0.0.1:23998/flowersec/v3/direct",
+		RendezvousGroupID: "opaque", ListenerAudience: "listener", UpstreamAddress: "127.0.0.1:23998",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(issued.ArtifactJSON()), vectors.Positive[0].ArtifactJSON; got != want {
-		t.Fatalf("issued private profile does not match shared vector\ngot:  %s\nwant: %s", got, want)
+	first := issued.ArtifactJSON()
+	first[0] ^= 0xff
+	if second := issued.ArtifactJSON(); len(second) == 0 || second[0] != '{' {
+		t.Fatal("ArtifactJSON did not return an independent clone")
 	}
-	var envelope struct {
-		ArtifactBase64URL string `json:"artifact_b64u"`
-		Endpoint          string `json:"endpoint"`
-		Profile           string `json:"profile"`
-		Version           uint8  `json:"v"`
+	if got := issued.String(); got != "Flowersec.IssuedPrivateLoopbackArtifact" {
+		t.Fatalf("String() = %q", got)
 	}
-	if err := json.Unmarshal(issued.ArtifactJSON(), &envelope); err != nil {
-		t.Fatal(err)
+	if got := issued.GoString(); got != "controlplane.IssuedPrivateLoopbackArtifact" {
+		t.Fatalf("GoString() = %q", got)
 	}
-	if envelope.Version != 1 || envelope.Profile != PrivateLoopbackProfile ||
-		envelope.Endpoint != "ws://127.0.0.1:23998/flowersec/v3/direct" {
-		t.Fatalf("private profile envelope = %#v", envelope)
-	}
-	innerJSON, err := base64.RawURLEncoding.DecodeString(envelope.ArtifactBase64URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inner, err := artifactv3.DecodeArtifactJSON(bytes.NewReader(innerJSON))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if inner.Profile != artifactv3.Profile || len(inner.Path.Candidates) != 1 ||
-		inner.Path.Candidates[0].URL != "wss://127.0.0.1:23998/flowersec/v3/direct" ||
-		inner.Path.Candidates[0].TLS.Mode != artifactv3.TLSModeCA {
-		t.Fatalf("nested v3 artifact = %#v", inner)
-	}
-	if _, err := artifactv3.DecodeArtifactJSON(bytes.NewReader(issued.ArtifactJSON())); !errors.Is(err, artifactv3.ErrInvalidArtifact) {
-		t.Fatalf("ordinary v3 decoder error = %v, want invalid artifact", err)
-	}
-	if issued.LookupKey() == "" || issued.AuthorizationRecord().LookupKey() != issued.LookupKey() {
-		t.Fatal("private profile lost its authorization record")
+	if raw, err := json.Marshal(issued); err != nil || string(raw) != "{}" {
+		t.Fatalf("MarshalJSON() = %s, %v", raw, err)
 	}
 }
 

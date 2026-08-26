@@ -7,6 +7,7 @@ import type { RetryDispositionV3 } from "../v3/security.js";
 
 export const PRIVATE_LOOPBACK_PROFILE_V1 = "flowersec-private-loopback/1";
 const DIRECT_PATH = "/flowersec/v3/direct";
+const MIN_PRIVATE_LOOPBACK_PORT = 1024;
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const encoder = new TextEncoder();
 
@@ -99,8 +100,8 @@ export function unwrapPrivateLoopbackArtifactLeaseV1(lease: PrivateLoopbackArtif
 export function validatePrivateLoopbackOriginV1(raw: string): string {
   let parsed: URL;
   try { parsed = new URL(raw); } catch { throw new PrivateLoopbackArtifactErrorV1(); }
-  if (parsed.href !== `${parsed.origin}/` || parsed.protocol !== "http:" || parsed.username !== "" || parsed.password !== "" ||
-      parsed.port === "" || !numericLoopbackHostname(parsed.hostname)) {
+  if (raw !== parsed.origin || parsed.protocol !== "http:" || parsed.username !== "" || parsed.password !== "" ||
+      !privateLoopbackPort(parsed.port) || !numericLoopbackHostname(parsed.hostname)) {
     throw new PrivateLoopbackArtifactErrorV1();
   }
   return parsed.origin;
@@ -110,11 +111,17 @@ function validatePrivateLoopbackEndpointV1(raw: string): string {
   let parsed: URL;
   try { parsed = new URL(raw); } catch { throw new PrivateLoopbackArtifactErrorV1(); }
   if (parsed.href !== raw || parsed.protocol !== "ws:" || parsed.username !== "" || parsed.password !== "" ||
-      parsed.port === "" || parsed.pathname !== DIRECT_PATH || parsed.search !== "" || parsed.hash !== "" ||
+      !privateLoopbackPort(parsed.port) || parsed.pathname !== DIRECT_PATH || parsed.search !== "" || parsed.hash !== "" ||
       !numericLoopbackHostname(parsed.hostname)) {
     throw new PrivateLoopbackArtifactErrorV1();
   }
   return raw;
+}
+
+function privateLoopbackPort(raw: string): boolean {
+  if (!/^(0|[1-9][0-9]*)$/.test(raw)) return false;
+  const port = Number(raw);
+  return Number.isSafeInteger(port) && port >= MIN_PRIVATE_LOOPBACK_PORT && port <= 65_535;
 }
 
 function validateNestedArtifact(artifact: ArtifactV3, endpoint: string): void {

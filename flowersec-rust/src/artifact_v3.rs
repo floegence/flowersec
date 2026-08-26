@@ -1828,15 +1828,17 @@ mod tests {
         let vectors: PrivateLoopbackVectorsV1 = serde_json::from_str(&raw).unwrap();
         assert_eq!(vectors.profile, "flowersec-private-loopback/1");
         assert_eq!(vectors.nested_profile, "flowersec/3");
-        let envelope: Value = serde_json::from_str(&vectors.positive[0].artifact_json).unwrap();
-        assert!(matches!(
-            ArtifactV3::parse(vectors.positive[0].artifact_json.as_bytes()),
-            Err(ArtifactErrorV3::Invalid)
-        ));
-        let inner = URL_SAFE_NO_PAD
-            .decode(envelope["artifact_b64u"].as_str().unwrap())
-            .unwrap();
-        assert!(ArtifactV3::parse(inner).is_ok());
+        for positive in vectors.positive {
+            let envelope: Value = serde_json::from_str(&positive.artifact_json).unwrap();
+            assert!(matches!(
+                ArtifactV3::parse(positive.artifact_json.as_bytes()),
+                Err(ArtifactErrorV3::Invalid)
+            ));
+            let inner = URL_SAFE_NO_PAD
+                .decode(envelope["artifact_b64u"].as_str().unwrap())
+                .unwrap();
+            assert!(ArtifactV3::parse(inner).is_ok());
+        }
     }
 
     #[derive(Deserialize)]

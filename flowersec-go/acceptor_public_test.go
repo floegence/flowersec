@@ -31,22 +31,24 @@ func TestPublicArtifactParserRejectsPrivateLoopbackProfileAndAcceptsOnlyItsNeste
 	if err := json.Unmarshal(raw, &vectors); err != nil || len(vectors.Positive) == 0 {
 		t.Fatalf("parse private loopback vectors: %v", err)
 	}
-	outer := []byte(vectors.Positive[0].ArtifactJSON)
-	if _, err := flowersec.ParseArtifact(outer); err == nil {
-		t.Fatal("public parser unexpectedly accepted the private loopback envelope")
-	}
-	var envelope struct {
-		ArtifactBase64URL string `json:"artifact_b64u"`
-	}
-	if err := json.Unmarshal(outer, &envelope); err != nil {
-		t.Fatal(err)
-	}
-	inner, err := base64.RawURLEncoding.DecodeString(envelope.ArtifactBase64URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := flowersec.ParseArtifact(inner); err != nil {
-		t.Fatalf("public parser rejected the nested flowersec/3 artifact: %v", err)
+	for _, positive := range vectors.Positive {
+		outer := []byte(positive.ArtifactJSON)
+		if _, err := flowersec.ParseArtifact(outer); err == nil {
+			t.Fatal("public parser unexpectedly accepted the private loopback envelope")
+		}
+		var envelope struct {
+			ArtifactBase64URL string `json:"artifact_b64u"`
+		}
+		if err := json.Unmarshal(outer, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		inner, err := base64.RawURLEncoding.DecodeString(envelope.ArtifactBase64URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := flowersec.ParseArtifact(inner); err != nil {
+			t.Fatalf("public parser rejected the nested flowersec/3 artifact: %v", err)
+		}
 	}
 }
 
@@ -101,14 +103,37 @@ func TestPrivateLoopbackHandlerRequiresExactLoopbackAndCallerAuthorization(t *te
 	request.Header.Set("Origin", "http://127.0.0.1:23998")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || bridgeAuthorized.Load() != 0 {
+		t.Fatalf("non-upgrade loopback status/callbacks = %d/%d, want 403/0", response.Code, bridgeAuthorized.Load())
+	}
+
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	request.Header.Set("Sec-WebSocket-Version", "13")
+	request.Header.Set("Sec-WebSocket-Protocol", "flowersec.direct.v3")
+	request.Header.Set("Sec-WebSocket-Key", "AAECAwQFBgcICQoLDA0ODw==")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusForbidden || bridgeAuthorized.Load() != 1 {
-		t.Fatalf("authorized loopback status/callbacks = %d/%d, want 403/1", response.Code, bridgeAuthorized.Load())
+		t.Fatalf("valid upgrade status/callbacks = %d/%d, want 403/1", response.Code, bridgeAuthorized.Load())
 	}
 
 	for _, mutate := range []func(*http.Request){
+		func(candidate *http.Request) { candidate.Method = http.MethodPost },
 		func(candidate *http.Request) { candidate.Host = "localhost:23998" },
 		func(candidate *http.Request) { candidate.RemoteAddr = "192.0.2.1:53000" },
 		func(candidate *http.Request) { candidate.Header.Set("Origin", "http://127.0.0.1:23999") },
+		func(candidate *http.Request) { candidate.Header.Add("Origin", "http://127.0.0.1:23998") },
+		func(candidate *http.Request) { candidate.Header.Del("Connection") },
+		func(candidate *http.Request) { candidate.Header.Del("Upgrade") },
+		func(candidate *http.Request) { candidate.Header.Set("Sec-WebSocket-Version", "12") },
+		func(candidate *http.Request) { candidate.Header.Add("Sec-WebSocket-Version", "13") },
+		func(candidate *http.Request) { candidate.Header.Set("Sec-WebSocket-Protocol", "flowersec.tunnel.v3") },
+		func(candidate *http.Request) {
+			candidate.Header.Set("Sec-WebSocket-Protocol", "flowersec.direct.v3, flowersec.tunnel.v3")
+		},
+		func(candidate *http.Request) { candidate.Header.Set("Sec-WebSocket-Key", "not-base64") },
+		func(candidate *http.Request) { candidate.Header.Add("Sec-WebSocket-Key", "AAECAwQFBgcICQoLDA0ODw==") },
 		func(candidate *http.Request) {
 			candidate.URL.RawPath = "/flowersec/v3/%64irect"
 			candidate.RequestURI = "/flowersec/v3/%64irect"

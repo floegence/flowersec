@@ -14,6 +14,7 @@ import (
 const (
 	Profile    = "flowersec-private-loopback/1"
 	DirectPath = "/flowersec/v3/direct"
+	MinPort    = 1024
 )
 
 var ErrInvalidProfile = errors.New("invalid Flowersec private loopback profile")
@@ -63,7 +64,7 @@ func ValidateEndpoint(raw string) (string, string, error) {
 		return "", "", ErrInvalidProfile
 	}
 	port, err := strconv.ParseUint(portText, 10, 16)
-	if err != nil || port == 0 || strconv.FormatUint(port, 10) != portText {
+	if err != nil || port < MinPort || strconv.FormatUint(port, 10) != portText {
 		return "", "", ErrInvalidProfile
 	}
 	authority := net.JoinHostPort(host, portText)
@@ -88,7 +89,11 @@ func RequestAllowed(request *http.Request) bool {
 	if err != nil || !canonicalLoopbackIP(remoteHost) {
 		return false
 	}
-	origin, err := url.Parse(request.Header.Get("Origin"))
+	origins := request.Header.Values("Origin")
+	if len(origins) != 1 {
+		return false
+	}
+	origin, err := url.Parse(origins[0])
 	return err == nil && origin.String() == "http://"+request.Host && origin.Scheme == "http" &&
 		origin.Host == request.Host && origin.Path == "" && origin.RawQuery == "" &&
 		origin.Fragment == "" && origin.User == nil

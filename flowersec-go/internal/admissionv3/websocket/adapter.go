@@ -119,6 +119,23 @@ func commit(ctx context.Context, conn *gorillaws.Conn, rawFSB3 []byte, parseResp
 // exactly one bounded FSA3 binary response. The authorizer is never called for
 // invalid framing or a path that does not match the negotiated subprotocol.
 func Serve(ctx context.Context, conn *gorillaws.Conn, reasons artifactv3.ReasonRegistry, authorize admissionv3.Authorize) (decoded *artifactv3.DecodedRequest, err error) {
+	return serve(ctx, conn, reasons, authorize, carrierws.ValidateReady)
+}
+
+// ServePrivateLoopback runs the unchanged FSB3/FSA3 admission exchange for
+// the isolated private-loopback direct profile. Ordinary admission remains
+// TLS-only through Serve.
+func ServePrivateLoopback(ctx context.Context, conn *gorillaws.Conn, reasons artifactv3.ReasonRegistry, authorize admissionv3.Authorize) (decoded *artifactv3.DecodedRequest, err error) {
+	return serve(ctx, conn, reasons, authorize, carrierws.ValidatePrivateLoopbackReady)
+}
+
+func serve(
+	ctx context.Context,
+	conn *gorillaws.Conn,
+	reasons artifactv3.ReasonRegistry,
+	authorize admissionv3.Authorize,
+	validate func(*gorillaws.Conn, string) error,
+) (decoded *artifactv3.DecodedRequest, err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -142,7 +159,10 @@ func Serve(ctx context.Context, conn *gorillaws.Conn, reasons artifactv3.ReasonR
 	if authorize == nil {
 		return nil, admissionv3.ErrInvalidAuthorizer
 	}
-	if err := carrierws.ValidateReady(conn, conn.Subprotocol()); err != nil {
+	if validate == nil {
+		return nil, carrierws.ErrInvalidSubprotocol
+	}
+	if err := validate(conn, conn.Subprotocol()); err != nil {
 		return nil, err
 	}
 	kind, err := pathKindForSubprotocol(conn.Subprotocol())
