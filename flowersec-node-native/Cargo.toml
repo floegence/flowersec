@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 flowersec-native-transport = { path = "../flowersec-native-transport", version = "=3.2.0" }
-napi = { version = "=3.12.1", features = ["napi8", "tokio_rt"] }
+napi = { version = "=3.12.2", features = ["napi8", "tokio_rt"] }
 napi-derive = "=3.6.3"
 
 [build-dependencies]
