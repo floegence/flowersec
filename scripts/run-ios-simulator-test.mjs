@@ -41,7 +41,23 @@ export function selectIOSSimulator(payload) {
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { cwd: root, stdio: "inherit", ...options });
   if (result.error) throw result.error;
-  if (result.status !== 0) process.exit(result.status ?? 1);
+  if (result.status !== 0) {
+    const error = new Error(`${command} exited with status ${result.status ?? 1}`);
+    error.exitStatus = result.status ?? 1;
+    throw error;
+  }
+}
+
+function runCleanup(commands) {
+  let failure;
+  for (const [command, args] of commands) {
+    try {
+      run(command, args);
+    } catch (error) {
+      failure ??= error;
+    }
+  }
+  if (failure) throw failure;
 }
 
 function main() {
@@ -68,9 +84,23 @@ function main() {
     execFileSync("openssl", [
       "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
       "-sha256", "-nodes", "-days", "7", "-subj", "/CN=localhost",
+      "-addext", "basicConstraints=critical,CA:FALSE",
+      "-addext", "keyUsage=critical,digitalSignature",
+      "-addext", "extendedKeyUsage=serverAuth",
       "-addext", "subjectAltName=DNS:localhost", "-keyout", privateKeyPath,
       "-out", certificatePath,
     ], { cwd: root, stdio: "ignore" });
+    // xcodebuild does not forward arbitrary parent environment variables to
+    // Simulator test runners. Set them in the Simulator launch environment and
+    // always remove them before deleting the short-lived fixture.
+    run("xcrun", [
+      "simctl", "spawn", simulator.udid, "launchctl", "setenv",
+      "FLOWERSEC_IOS_TEST_CERT", certificatePath,
+    ]);
+    run("xcrun", [
+      "simctl", "spawn", simulator.udid, "launchctl", "setenv",
+      "FLOWERSEC_IOS_TEST_KEY", privateKeyPath,
+    ]);
     run("xcodebuild", [
       "-quiet", "-scheme", "Flowersec",
       "-destination", `platform=iOS Simulator,id=${simulator.udid}`,
@@ -78,14 +108,33 @@ function main() {
       "-only-testing:FlowersecTests/ConnectorV2Tests/testProductionV3IOSAdapterBuildsPinnedTLSHandlerAndVerifiesLeaf",
       "-only-testing:FlowersecTests/ConnectorV2Tests/testProductionV3IOSAdapterRejectsWrongPinAndBuildsConfiguredCA",
       "CODE_SIGNING_ALLOWED=NO",
-    ], { env: {
-      ...process.env,
-      FLOWERSEC_IOS_TEST_CERT: certificatePath,
-      FLOWERSEC_IOS_TEST_KEY: privateKeyPath,
-    } });
+    ]);
   } finally {
-    rmSync(fixtureDirectory, { recursive: true, force: true });
+    try {
+      runCleanup([
+        ["xcrun", [
+          "simctl", "spawn", simulator.udid, "launchctl", "unsetenv",
+          "FLOWERSEC_IOS_TEST_CERT",
+        ]],
+        ["xcrun", [
+          "simctl", "spawn", simulator.udid, "launchctl", "unsetenv",
+          "FLOWERSEC_IOS_TEST_KEY",
+        ]],
+      ]);
+    } finally {
+      rmSync(fixtureDirectory, { recursive: true, force: true });
+    }
   }
 }
 
-if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) main();
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  try {
+    main();
+  } catch (error) {
+    if (Number.isInteger(error?.exitStatus)) {
+      process.exitCode = error.exitStatus;
+    } else {
+      throw error;
+    }
+  }
+}
