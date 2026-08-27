@@ -571,18 +571,18 @@ validate_step_contracts(dependency_review_steps, [
 ], "the hosted CI dependency review job")
 validate_step_contracts(codeql_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" } },
-  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
-  { name: "Autobuild Go", keys: ["name", "if", "uses"], values: { "if" => "matrix.language == 'go'", "uses" => "github/codeql-action/autobuild@5595ccaf912efad79be6eef63a5619ff05969be3" } },
-  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3" } },
+  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
+  { name: "Autobuild Go", keys: ["name", "if", "uses"], values: { "if" => "matrix.language == 'go'", "uses" => "github/codeql-action/autobuild@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28" } },
+  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28" } },
 ], "the CodeQL analyze job")
 validate_step_contracts(codeql_swift_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" } },
   { name: "Resolve Swift cache key", keys: ["name", "id", "run"], values: { "id" => "swift-cache-key", "run" => "swift --version | shasum -a 256 | awk '{ print \"toolchain=\" $1 }' >> \"$GITHUB_OUTPUT\"\n" } },
   { name: "Restore Swift build cache", keys: ["name", "uses", "with"], values: { "uses" => "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", "with" => { "path" => ".build", "key" => "swift-codeql-${{ runner.os }}-${{ steps.swift-cache-key.outputs.toolchain }}-${{ hashFiles('Package.swift', 'Package.resolved') }}" } } },
   { name: "Prepare Swift build cache", keys: ["name", "run"], values: { "run" => "swift package --skip-update --only-use-versions-from-resolved-file resolve\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
-  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3", "with" => { "languages" => "swift", "build-mode" => "manual", "queries" => "security-extended" } } },
+  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28", "with" => { "languages" => "swift", "build-mode" => "manual", "queries" => "security-extended" } } },
   { name: "Build Swift library", keys: ["name", "run"], values: { "run" => "find flowersec-swift/Sources/Flowersec -type f -name '*.swift' -exec touch {} +\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
-  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3" } },
+  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28" } },
 ], "the CodeQL Swift analyze job")
 validate_step_contracts(codeql_plan_steps, [
   { name: "Check for new main commits", keys: ["name", "id", "env", "run"], values: {
@@ -610,7 +610,7 @@ validate_step_contracts(scorecard_steps, [
     "with" => { "name" => "scorecard-results", "path" => "results.sarif", "retention-days" => 5 },
   } },
   { name: "Upload Scorecard results", keys: ["name", "uses", "with"], values: {
-    "uses" => "github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3",
+    "uses" => "github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28",
     "with" => { "sarif_file" => "results.sarif" },
   } },
 ], "the Scorecard analysis job")

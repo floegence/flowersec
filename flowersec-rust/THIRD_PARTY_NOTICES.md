@@ -5,7 +5,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 
 - aead 0.6.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/traits)
 - aes 0.9.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/block-ciphers)
-- aes-gcm 0.11.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/AEADs)
+- aes-gcm 0.11.1 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/AEADs)
 - asn1-rs 0.7.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rusticata/asn1-rs.git)
 - asn1-rs-derive 0.6.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rusticata/asn1-rs.git)
 - asn1-rs-impl 0.2.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rusticata/asn1-rs.git)

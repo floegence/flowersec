@@ -46,7 +46,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - memchr 2.8.3 (Declared: Unlicense OR MIT; selected: MIT; source: https://github.com/BurntSushi/memchr)
 - minimal-lexical 0.2.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/Alexhuszagh/minimal-lexical)
 - mio 1.2.2 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/mio)
-- napi 3.12.1 (Declared: MIT; selected: MIT; source: https://github.com/napi-rs/napi-rs)
+- napi 3.12.2 (Declared: MIT; selected: MIT; source: https://github.com/napi-rs/napi-rs)
 - napi-build 2.4.1 (Declared: MIT; selected: MIT; source: https://github.com/napi-rs/napi-rs)
 - napi-derive 3.6.3 (Declared: MIT; selected: MIT; source: https://github.com/napi-rs/napi-rs)
 - napi-derive-backend 6.1.2 (Declared: MIT; selected: MIT; source: https://github.com/napi-rs/napi-rs)
