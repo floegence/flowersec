@@ -212,6 +212,11 @@ test("TypeScript 7 compilation and TypeScript 6 tooling APIs stay explicitly sep
     makefile,
     /^native-addon-test:\n(?:\t.*\n)*\tcd flowersec-ts && npm run typecheck:native-integration$/m,
   );
+  assert.match(
+    fs.readFileSync(path.join(sourceRoot, "scripts/native-addon-smoke.mjs"), "utf8"),
+    /tlsMode:\s*"ca"/u,
+    "native addon smoke must exercise the current explicit TLS mode contract",
+  );
   const nativeIntegrationConfig = JSON.parse(fs.readFileSync(
     path.join(sourceRoot, "flowersec-ts/tsconfig.native-integration.json"),
     "utf8",

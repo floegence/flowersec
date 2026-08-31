@@ -72,6 +72,23 @@ async function runNativeIntegration(repositoryRoot, title) {
   await runVitestWithNativeAddon(repositoryRoot, arguments_);
 }
 
+async function runNativeSmoke(repositoryRoot) {
+  const fixture = await prepareServerParityNativeAddon(repositoryRoot, true);
+  try {
+    const result = await execFileAsync(process.execPath, [
+      path.join(repositoryRoot, "scripts/native-addon-smoke.mjs"),
+    ], {
+      cwd: repositoryRoot,
+      env: { ...process.env, ...fixture.environment },
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    process.stdout.write(result.stdout);
+    process.stderr.write(result.stderr);
+  } finally {
+    await fixture.cleanup();
+  }
+}
+
 async function runCoverage(repositoryRoot) {
   await runVitestWithNativeAddon(repositoryRoot, ["run", "--coverage"]);
 }
@@ -106,5 +123,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   }
   const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   if (runAllCoverage) await runCoverage(repositoryRoot);
-  else await runNativeIntegration(repositoryRoot, runTitle ? process.argv[3] : undefined);
+  else {
+    await runNativeIntegration(repositoryRoot, runTitle ? process.argv[3] : undefined);
+    if (runAll) await runNativeSmoke(repositoryRoot);
+  }
 }

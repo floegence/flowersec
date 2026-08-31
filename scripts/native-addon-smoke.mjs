@@ -26,7 +26,8 @@ try {
   const address = listener.address();
   const operation = addon.connectRawQuic({
     host: address.host, port: address.port, serverName: "localhost", path: "direct",
-    trustRootsDer: certificateChainDer, inboundBidirectionalStreamCapacity: 4, handshakeTimeoutMs: 2_000,
+    tlsMode: "ca", trustRootsDer: certificateChainDer,
+    inboundBidirectionalStreamCapacity: 4, handshakeTimeoutMs: 2_000,
   });
   const client = await operation.result();
   const server = await accepting.result();
