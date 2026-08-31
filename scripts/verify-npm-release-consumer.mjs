@@ -59,7 +59,7 @@ const ready = JSON.parse(await fs.readFile(process.argv[2], "utf8"));
 assert.equal(ready.test_id, ${JSON.stringify(testID)});
 const session = await connect(
   createArtifactLease(parseArtifact(ready.artifact_json), async () => undefined),
-  { origin: ready.origin, tls: { ca: ready.trust_pem } },
+  { origin: ready.origin, roots: ready.trust_pem },
 );
 const rpc = await session.rpc.call(7001, { value: "ping" }, (payload) => payload);
 assert.deepEqual(rpc, { ok: true, payload: { server: "go-release-consumer" } });

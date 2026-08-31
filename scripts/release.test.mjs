@@ -1495,6 +1495,8 @@ test("npm release readback verifies tarballs, ABI, CLI, and public consumers", (
   assert.match(consumer, /release\/npm-consumer\/cli-websocket GREEN/);
   assert.match(consumer, /cliPath, "server"/);
   assert.match(consumer, /cliPath, "client"/);
+  assert.match(consumer, /\{ origin: ready\.origin, roots: ready\.trust_pem \}/);
+  assert.doesNotMatch(consumer, /tls:\s*\{\s*ca:/);
   assert.match(workflow, /actions\/setup-go/);
   const goConsumer = fs.readFileSync(
     path.join(sourceRoot, "scripts/fixtures/npm-release-go-node-raw-quic/main.go"),
